@@ -134,6 +134,36 @@ test('each component is a named native button with its matching icon and dialog 
   assert.doesNotMatch(markup, /role="dialog"/)
 })
 
+test('plugin skill details omit enablement status while retaining description and environments', () => {
+  for (const enabled of [true, false, undefined]) {
+    const item = plugin()
+    item.skillDetails![0].enabled = enabled
+    const component = phiPluginInspectableComponents(item)[1]
+    const listMarkup = themed(createElement(PhiPluginComponentDetails, { plugin: item }))
+    const dialogMarkup = themed(
+      createElement(PhiPluginComponentDialog, {
+        plugin: item,
+        component,
+        open: true,
+        icon: createElement('span'),
+        onClose: () => undefined
+      })
+    )
+
+    for (const markup of [listMarkup, dialogMarkup]) {
+      assert.match(markup, /omics-visualization/)
+      assert.match(markup, /完整技能说明。/)
+      assert.doesNotMatch(markup, /已启用|已停用|状态未知/)
+    }
+    assert.match(dialogMarkup, /技能详情/)
+    assert.match(dialogMarkup, /科研绘图 · v1.0.2/)
+    assert.match(dialogMarkup, /绘图环境/)
+    assert.match(dialogMarkup, /plugin:viz/)
+    assert.match(dialogMarkup, /环境需要修复。/)
+    assert.doesNotMatch(dialogMarkup, />状态</)
+  }
+})
+
 test('inspection dialog shows complete script description, owner, approval and environment', () => {
   const item = plugin(),
     component = phiPluginInspectableComponents(item)[2]

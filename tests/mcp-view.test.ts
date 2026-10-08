@@ -96,7 +96,7 @@ test('closing the connector detail leaves no installed row selected', () => {
   assert.equal(markup.match(/class="[^"]*Mui-selected[^"]*"/g)?.length ?? 0, 0)
 })
 
-test('installed connector detail retains its catalog introduction and MCP address', () => {
+test('installed connector detail centers content and retains its catalog introduction and MCP address', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -130,6 +130,13 @@ test('installed connector detail retains its catalog introduction and MCP addres
       })
     )
   )
+  const contentRule = markup.match(/\{[^{}]*max-width:1000px;[^{}]*\}/)?.[0] ?? ''
+  assert.match(contentRule, /width:100%;/)
+  assert.match(contentRule, /margin-left:auto;/)
+  assert.match(contentRule, /margin-right:auto;/)
+  assert.match(markup, /min-width:0;min-height:0;overflow:auto;/)
+  assert.match(markup, /padding-left:24px;padding-right:24px;/)
+  assert.match(markup, /padding-left:40px;padding-right:40px;/)
   assert.match(markup, /检索靶点、疾病、药物及其关联数据/)
   assert.match(markup, /https:\/\/mcp\.platform\.opentargets\.org\/mcp/)
   assert.match(markup, /\/tmp\/mcp\.json/)

@@ -275,6 +275,8 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
           }
         },
         paper: ({ theme }) => ({
+          // Modal content must override window drag regions behind it.
+          WebkitAppRegion: 'no-drag',
           borderRadius: 16,
           boxShadow: theme.customShadows.dialog
         })

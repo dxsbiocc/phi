@@ -141,9 +141,7 @@ export function SkillSidebar({
       searchPlaceholder="搜索技能"
       summary={`${skills.length} 个技能 · ${enabledCount} 已启用`}
       action={
-        onOpenCatalog ? (
-          <DiscoverButton expanded={false} onClick={onOpenCatalog} label="从目录添加" />
-        ) : undefined
+        onOpenCatalog ? <DiscoverButton expanded={false} onClick={onOpenCatalog} /> : undefined
       }
     >
       <List ref={listRef} disablePadding sx={{ overflow: 'hidden', minHeight: 0, flex: 1, py: 1 }}>

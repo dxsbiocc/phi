@@ -310,8 +310,8 @@ export function SkillDetail({
   const enabled = skillIsEnabled(selectedSkill)
   const cannotDelete = deleteDisabledReason(selectedSkill)
   return (
-    <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-      <Box sx={{ maxWidth: 860, px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
+    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+      <Box sx={{ width: '100%', maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
         <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
           <Box
             sx={{

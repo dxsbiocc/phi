@@ -421,7 +421,7 @@ export function WrapperSidebar({
       onQueryChange={setQuery}
       searchPlaceholder="搜索 wrapper"
       summary={`${chosenCatalog.length} 个 wrapper · ${chosenCatalog.filter((entry) => entry.packageEnabled !== false).length} 已启用`}
-      action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} label="从目录添加" />}
+      action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} />}
     >
       <List
         ref={listRef}
@@ -445,7 +445,7 @@ export function WrapperSidebar({
         ) : filteredCatalog.length === 0 ? (
           <Box sx={{ px: 1.5, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              {query.trim() ? '没有匹配的 wrapper' : '尚未添加 wrapper，从目录选择需要的内容。'}
+              {query.trim() ? '没有匹配的 wrapper' : '尚未添加 wrapper。点击“发现”浏览目录。'}
             </Typography>
           </Box>
         ) : (

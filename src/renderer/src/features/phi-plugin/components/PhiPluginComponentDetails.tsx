@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Box, ButtonBase, Chip, Stack, Typography } from '@mui/material'
+import { Box, ButtonBase, Stack, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../../icons'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
@@ -94,18 +94,6 @@ function ComponentItem({
           >
             {component.description}
           </Typography>
-        )}
-        {component.kind === 'skill' && (
-          <Chip
-            component="span"
-            size="small"
-            variant="outlined"
-            color={component.enabled ? 'success' : 'default'}
-            label={
-              component.enabled === undefined ? '状态未知' : component.enabled ? '已启用' : '已停用'
-            }
-            sx={{ mt: 0.5 }}
-          />
         )}
         {component.kind === 'script' && (component.approval || component.skillName) && (
           <Typography

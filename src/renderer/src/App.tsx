@@ -3491,7 +3491,6 @@ function App(): React.JSX.Element {
           return nextKeys
         })
         setWorkspaceSidebarMode(tab.sidebarMode)
-        setIsSidebarOpen(true)
         navigateToView('chat')
         if (tab.sessionPath && tab.sessionPath !== useSessionStore.getState().activeSessionPath) {
           void onSelectSession(tab.sessionPath)
@@ -3507,7 +3506,6 @@ function App(): React.JSX.Element {
       }
 
       setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
-      setIsSidebarOpen(true)
       if (tab.kind === 'skills') {
         setActiveSkillId(tab.itemId)
       } else if (tab.kind === 'mcp') {
@@ -4583,7 +4581,10 @@ function App(): React.JSX.Element {
                   <WorkspaceResourceHeader
                     tabs={visibleWorkspaceTabs}
                     activeKey={effectiveActiveWorkspaceTabKey}
-                    onSelect={selectWorkspaceTab}
+                    onSelect={(tab) => {
+                      closeWorkspaceSidebarPreview()
+                      selectWorkspaceTab(tab)
+                    }}
                     onClose={onCloseWorkspaceTab}
                     actions={
                       <OfficeCreateButton

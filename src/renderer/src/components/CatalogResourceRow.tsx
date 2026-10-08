@@ -69,9 +69,9 @@ export function CatalogResourceRow({
             pointerEvents: 'none',
             transition: 'opacity 120ms ease'
           },
-          '&:hover .catalog-enable-control, &:focus-within .catalog-enable-control, &[data-phi-catalog-pending="true"] .catalog-enable-control':
+          '&:hover .catalog-enable-control, &:has(:focus-visible) .catalog-enable-control, &[data-phi-catalog-pending="true"] .catalog-enable-control':
             { opacity: 1, pointerEvents: 'auto' },
-          '&:hover .catalog-row-content, &:focus-within .catalog-row-content, &[data-phi-catalog-pending="true"] .catalog-row-content':
+          '&:hover .catalog-row-content, &:has(:focus-visible) .catalog-row-content, &[data-phi-catalog-pending="true"] .catalog-row-content':
             { pr: '44px' },
           '@media (hover: none)': {
             '& .catalog-enable-control': { opacity: 1, pointerEvents: 'auto' },

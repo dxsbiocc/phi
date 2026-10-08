@@ -387,7 +387,7 @@ test('plugin detail contains management, components, environment state and sourc
   assert.match(markup, /卸载/)
 })
 
-test('plugin detail renders component descriptions, statuses, approvals and legacy fallbacks', () => {
+test('plugin detail renders descriptions, plugin status, approvals and legacy fallbacks', () => {
   const longDescription =
     '这是一个很长的技能说明，用于验证界面只显示一行、省略溢出内容，并且可以通过点击查看完整说明。'
   const detailed = plugin({
@@ -423,8 +423,8 @@ test('plugin detail renders component descriptions, statuses, approvals and lega
   )
 
   assert.match(markup, /无专属智能体（由主智能体按技能调用）/)
-  assert.match(markup, /已启用/)
-  assert.match(markup, /已停用/)
+  assert.equal(markup.match(/已启用/g)?.length, 1)
+  assert.doesNotMatch(markup, /已停用|状态未知/)
   assert.match(markup, /审批：执行/)
   assert.match(markup, /所属技能：omics-visualization/)
   assert.match(markup, /data-phi-description-truncated="true"/)
@@ -456,7 +456,7 @@ test('plugin detail renders component descriptions, statuses, approvals and lega
   assert.match(legacyMarkup, /LegacyAgent/)
   assert.match(legacyMarkup, /legacy-skill/)
   assert.match(legacyMarkup, /legacy_tool/)
-  assert.match(legacyMarkup, /状态未知/)
+  assert.doesNotMatch(legacyMarkup, /状态未知/)
 })
 
 test('plugin environment aggregation matches used refs and preserves private declarations', () => {
@@ -933,7 +933,7 @@ test('catalog shows installed, update and install states plus local-directory ac
   assert.equal(busyMarkup.match(/disabled=""/g)?.length ?? 0, 4)
 })
 
-test('plugin selection uses resource tabs, keeps the sidebar open, and uninstall stays confirmed', () => {
+test('plugin selection uses resource tabs, preserves sidebar visibility, and uninstall stays confirmed', () => {
   const appSource = readFileSync('src/renderer/src/App.tsx', 'utf8')
   const detailSource = readFileSync(
     'src/renderer/src/features/phi-plugin/components/PhiPluginDetail.tsx',
@@ -945,11 +945,18 @@ test('plugin selection uses resource tabs, keeps the sidebar open, and uninstall
   assert.match(appSource, /kind: 'plugins',[\s\S]{0,80}itemId: plugin\.id/)
   assert.match(appSource, /const onOpenPhiPlugins = useCallback[\s\S]{0,160}itemId: 'installed'/)
   assert.match(appSource, /activeResourcePhiPlugin[\s\S]{0,700}<PhiPluginsView/)
-  assert.doesNotMatch(appSource, /setIsSidebarOpen\(tab\.kind !== 'plugins'\)/)
-  assert.match(
-    appSource,
-    /setWorkspaceSidebarMode\(workspaceResourceKindToSidebarMode\(tab\.kind\)\)[\s\S]{0,80}setIsSidebarOpen\(true\)/
+  const selectionStart = appSource.indexOf('  const selectWorkspaceTab = useCallback(')
+  const selectionEnd = appSource.indexOf(
+    '  const openWorkspaceResourceTab = useCallback(',
+    selectionStart
   )
+  assert.ok(selectionStart >= 0 && selectionEnd > selectionStart)
+  const tabSelectionSource = appSource.slice(selectionStart, selectionEnd)
+  assert.match(
+    tabSelectionSource,
+    /setWorkspaceSidebarMode\(workspaceResourceKindToSidebarMode\(tab\.kind\)\)/
+  )
+  assert.doesNotMatch(tabSelectionSource, /setIsSidebarOpen/)
   assert.match(sidebarHostSource, /mode === 'plugins'[\s\S]{0,180}<PhiPluginSidebar/)
   assert.match(detailSource, /onClick=\{\(\) => setPendingUninstall\(plugin\)\}/)
   assert.match(detailSource, /open=\{pendingUninstall !== null\}/)

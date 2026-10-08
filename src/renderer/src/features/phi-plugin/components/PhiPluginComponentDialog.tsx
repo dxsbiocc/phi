@@ -2,7 +2,6 @@ import { useId } from 'react'
 import {
   Alert,
   Box,
-  Chip,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -94,22 +93,6 @@ export function PhiPluginComponentDialog({
               {plugin.title} · v{plugin.version}
             </Typography>
           </DetailField>
-          {component.kind === 'skill' && (
-            <DetailField label="状态">
-              <Chip
-                size="small"
-                variant="outlined"
-                color={component.enabled ? 'success' : 'default'}
-                label={
-                  component.enabled === undefined
-                    ? '状态未知'
-                    : component.enabled
-                      ? '已启用'
-                      : '已停用'
-                }
-              />
-            </DetailField>
-          )}
           {component.kind === 'script' && (
             <>
               <DetailField label="审批">

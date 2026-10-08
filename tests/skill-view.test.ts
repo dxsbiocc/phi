@@ -138,7 +138,19 @@ test('skill view groups skills by source category and exposes the skill markdown
   assert.match(markup, /内置·核心/)
   assert.match(markup, /SKILL\.md/)
   assert.match(markup, /需要重启 Phi/)
-  assert.match(markup, /从目录添加/)
+  assert.match(markup, /aria-label="发现"/)
+})
+
+test('skill detail centers capped content while retaining scrolling and responsive padding', () => {
+  const markup = themed(createElement(SkillDetail, { selectedSkill: skill() }))
+  const contentRule = markup.match(/\{[^{}]*max-width:860px;[^{}]*\}/)?.[0] ?? ''
+
+  assert.match(contentRule, /width:100%;/)
+  assert.match(contentRule, /margin-left:auto;/)
+  assert.match(contentRule, /margin-right:auto;/)
+  assert.match(markup, /min-width:0;min-height:0;overflow:auto;/)
+  assert.match(markup, /padding-left:24px;padding-right:24px;/)
+  assert.match(markup, /padding-left:40px;padding-right:40px;/)
 })
 
 test('skill sidebar keeps management actions out of the browsing list', () => {
