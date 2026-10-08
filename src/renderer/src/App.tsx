@@ -23,7 +23,7 @@ import {
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
-import type { WrapperCompositionManifest } from '../../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionCatalogItem } from '../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
@@ -163,6 +163,7 @@ import {
   isWorkspaceFileTabKind,
   isWorkspaceResourceKind,
   upsertWorkspaceResourceTab,
+  resolveWorkspaceResourceTabIcons,
   workspaceFileTabKey,
   workspaceResourceKindLabel,
   workspaceResourceKindToSidebarMode,
@@ -2996,19 +2997,26 @@ function App(): React.JSX.Element {
     activeView === 'analysis' && workspaceSidebarMode === 'conversations'
   )
   const visibleWorkspaceTabs = useMemo(() => {
-    return visibleWorkspaceTabsForState({
-      currentSessionTab,
-      workspaceTabs,
-      workspaceFileTabs: workspaceFileWorkspaceTabs,
-      closedSessionTabKeys: closedWorkspaceSessionTabKeys,
-      shouldShowSessionTab: shouldShowSessionWorkspaceTab,
-      sessionTabWasOpened
-    })
+    return resolveWorkspaceResourceTabIcons(
+      visibleWorkspaceTabsForState({
+        currentSessionTab,
+        workspaceTabs,
+        workspaceFileTabs: workspaceFileWorkspaceTabs,
+        closedSessionTabKeys: closedWorkspaceSessionTabKeys,
+        shouldShowSessionTab: shouldShowSessionWorkspaceTab,
+        sessionTabWasOpened
+      }),
+      { plugins: phiPluginsState.plugins, skills, mcp: mcpServers, wrappers: wrapperCatalog }
+    )
   }, [
     closedWorkspaceSessionTabKeys,
     currentSessionTab,
     sessionTabWasOpened,
     shouldShowSessionWorkspaceTab,
+    phiPluginsState.plugins,
+    skills,
+    mcpServers,
+    wrapperCatalog,
     workspaceFileWorkspaceTabs,
     workspaceTabs
   ])
@@ -3552,6 +3560,7 @@ function App(): React.JSX.Element {
         kind: 'plugins',
         itemId: plugin.id,
         title: plugin.title,
+        icon: plugin.icon,
         subtitle: plugin.directory
       })
     },
@@ -3565,6 +3574,7 @@ function App(): React.JSX.Element {
         kind: 'skills',
         itemId: skill.id,
         title: skill.name,
+        icon: skill.icon,
         subtitle: skill.filePath
       })
     },
@@ -3683,12 +3693,13 @@ function App(): React.JSX.Element {
   )
 
   const onOpenWrapperTab = useCallback(
-    (entry: WrapperCompositionManifest): void => {
+    (entry: WrapperCompositionCatalogItem): void => {
       setSelectedWrapperId(entry.id)
       openWorkspaceResourceTab({
         kind: 'wrappers',
         itemId: entry.id,
         title: entry.name,
+        icon: entry.icon,
         subtitle: entry.id
       })
       // Runs the agent started while this view was closed (wrapper_run) only exist on disk.

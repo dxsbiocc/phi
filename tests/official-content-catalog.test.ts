@@ -50,6 +50,31 @@ const official: KnownPackageRegistryView = {
   removable: false
 }
 
+test('an old backend returning only a bundled source reports restart instead of an empty catalog', async () => {
+  const result = await loadContentCatalog({
+    listPackageRegistries: async () => [
+      { id: 'builtin', kind: 'bundled', path: '/resources', removable: false }
+    ],
+    readPackageRegistry: async () => {
+      throw new Error('bundled sources must not be read')
+    }
+  })
+  assert.deepEqual(result.registries, [])
+  assert.match(result.errors.join('\n'), /后台.*旧版本.*重新启动 Phi/)
+})
+
+test('old backend feedback does not hide a usable user-imported source', async () => {
+  const result = await loadContentCatalog({
+    listPackageRegistries: async () => [
+      { id: 'builtin', kind: 'bundled', path: '/resources', removable: false },
+      { id: 'local', kind: 'directory', path: '/local', removable: true }
+    ],
+    readPackageRegistry: async (path) => registry(path, 'directory')
+  })
+  assert.equal(result.registries[0].dir, '/local')
+  assert.match(result.errors.join('\n'), /后台.*旧版本/)
+})
+
 test('catalog loads official first, excludes bundled sources, and keeps the actual generation path', async () => {
   const reads: string[] = []
   const result = await loadContentCatalog({

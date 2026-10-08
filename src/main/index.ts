@@ -9421,7 +9421,8 @@ app.whenReady().then(async () => {
             ...server,
             connectorId: connector.id,
             category: connector.category,
-            title: connector.name
+            title: connector.name,
+            icon: server.icon ?? connector.icon
           }
         : server
     })

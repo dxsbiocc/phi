@@ -1,6 +1,7 @@
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../icons'
+import { ResourceIcon, type ResourceIconProps } from './ResourceIcon'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import type {
   WorkspaceFileWorkspaceTab,
@@ -20,6 +21,13 @@ const resourceIcons: Record<WorkspaceTabKind, ResourceIconComponent> = {
   skills: PhiIcons.nav.skills,
   mcp: PhiIcons.nav.mcp,
   wrappers: PhiIcons.nav.wrappers
+}
+
+const contentIconKinds: Partial<Record<WorkspaceTabKind, ResourceIconProps['kind']>> = {
+  plugins: 'plugin',
+  skills: 'skill',
+  mcp: 'mcp',
+  wrappers: 'wrapper'
 }
 
 export function WorkspaceResourceTabs({
@@ -59,6 +67,7 @@ export function WorkspaceResourceTabs({
       {tabs.map((tab) => {
         const selected = tab.key === activeKey
         const Icon = resourceIcons[tab.kind]
+        const contentKind = contentIconKinds[tab.kind]
         return (
           <Box
             key={tab.key}
@@ -118,6 +127,8 @@ export function WorkspaceResourceTabs({
           >
             {tab.kind === 'mcp' && connectorIcon ? (
               connectorIcon(tab.icon)
+            ) : contentKind && 'icon' in tab && tab.icon ? (
+              <ResourceIcon icon={tab.icon} kind={contentKind} size={20} fallbackSize={18} />
             ) : (tab.kind === 'file' || tab.kind === 'directory' || tab.kind === 'notebook') &&
               fileIcon ? (
               fileIcon(tab)

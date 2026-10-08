@@ -107,7 +107,12 @@ export function SkillCatalogDialog({
         if (!active) return
         setKnownRegistries(catalog.registries)
         setSourceError(catalog.errors.join('\n') || null)
-        setSourceNotice(catalog.notices.join('\n') || '首选来源：Phi Packages')
+        setSourceNotice(
+          catalog.notices.join('\n') ||
+            (catalog.registries.some((source) => source.kind === 'official')
+              ? '首选来源：Phi Packages'
+              : null)
+        )
       })
       .catch((cause) => {
         if (active) setSourceError(errorMessage(cause))

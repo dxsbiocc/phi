@@ -131,6 +131,26 @@ export function upsertWorkspaceResourceTab(
   return tabs.map((item, index) => (index === existingIndex ? { ...item, ...tab } : item))
 }
 
+type ResourceIconMetadata = { id: string; icon?: ResourceIconRef }
+
+/** Open tabs follow current resource metadata, including refreshed process-scoped icon keys. */
+export function resolveWorkspaceResourceTabIcons(
+  tabs: WorkspaceTab[],
+  resources: Record<Exclude<WorkspaceResourceKind, 'runtime'>, readonly ResourceIconMetadata[]>
+): WorkspaceTab[] {
+  return tabs.map((tab) => {
+    if (
+      tab.kind !== 'plugins' &&
+      tab.kind !== 'skills' &&
+      tab.kind !== 'mcp' &&
+      tab.kind !== 'wrappers'
+    )
+      return tab
+    const icon = resources[tab.kind].find((resource) => resource.id === tab.itemId)?.icon
+    return icon?.key === tab.icon?.key ? tab : { ...tab, icon }
+  })
+}
+
 export function workspaceFileTabKey(path: string): string {
   return `file:${path}`
 }

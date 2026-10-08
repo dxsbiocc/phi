@@ -24,7 +24,11 @@ function message(cause: unknown): string {
 
 /** Load the official source first; a failed source remains visible as feedback. */
 export async function loadContentCatalog(api: ContentCatalogApi): Promise<ContentCatalogResult> {
-  const sources = (await api.listPackageRegistries())
+  const knownSources = await api.listPackageRegistries()
+  const backendNeedsRestart =
+    knownSources.some((source) => source.kind === 'bundled') &&
+    !knownSources.some((source) => source.kind === 'official')
+  const sources = knownSources
     .filter((source) => source.kind !== 'bundled')
     .sort((left, right) => Number(right.kind === 'official') - Number(left.kind === 'official'))
   const results = await Promise.all(
@@ -55,7 +59,12 @@ export async function loadContentCatalog(api: ContentCatalogApi): Promise<Conten
   )
   return {
     registries: results.flatMap((result) => (result.registry ? [result.registry] : [])),
-    errors: results.flatMap((result) => (result.error ? [result.error] : [])),
+    errors: [
+      ...(backendNeedsRestart
+        ? ['Phi 后台仍在运行旧版本，请完整退出并重新启动 Phi 后加载官方内容源。']
+        : []),
+      ...results.flatMap((result) => (result.error ? [result.error] : []))
+    ],
     notices: results.flatMap((result) => (result.notice ? [result.notice] : []))
   }
 }

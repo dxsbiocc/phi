@@ -8,6 +8,7 @@ import { ConnectorIcon } from '../src/renderer/src/features/mcp/components/Conne
 import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 import {
   activeTabKeyAfterPrompt,
+  resolveWorkspaceResourceTabIcons,
   upsertWorkspaceResourceTab,
   workspaceResourceTabKey,
   type WorkspaceResourceTab
@@ -106,6 +107,72 @@ test('connector tab icons follow metadata even when the configured server has a 
     assert.ok(markup.includes(`data-phi-resource-icon-key="${key}"`))
     assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/)
   }
+})
+
+test('plugin, skill and wrapper tabs render their resource-owned images', async () => {
+  for (const kind of ['plugins', 'skills', 'wrappers'] as const) {
+    const key = `owned-${kind}-tab-icon`
+    await cacheResourceIconFixture(key)
+    const tab: WorkspaceResourceTab = {
+      key: kind,
+      kind,
+      itemId: 'selected',
+      title: kind,
+      icon: { key }
+    }
+    const markup = renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(WorkspaceResourceTabs, {
+          tabs: [tab],
+          activeKey: tab.key,
+          onSelect: () => undefined,
+          onClose: () => undefined
+        })
+      )
+    )
+    assert.ok(markup.includes(`data-phi-resource-icon-key="${key}"`), kind)
+    assert.match(markup, /<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/)
+  }
+})
+
+test('already-open resource tabs receive fresh icons from current metadata', () => {
+  const kinds = ['plugins', 'skills', 'mcp', 'wrappers'] as const
+  const tabs: WorkspaceResourceTab[] = kinds.map((kind, index) => ({
+    key: kind,
+    kind,
+    itemId: `${kind}-selected`,
+    title: kind,
+    ...(index % 2 ? { icon: { key: 'old-process-icon' } } : {})
+  }))
+  const resources = Object.fromEntries(
+    kinds.map((kind) => [kind, [{ id: `${kind}-selected`, icon: { key: `current-${kind}` } }]])
+  ) as Record<(typeof kinds)[number], Array<{ id: string; icon: { key: string } }>>
+  const refreshed = resolveWorkspaceResourceTabIcons(tabs, resources) as WorkspaceResourceTab[]
+  assert.deepEqual(
+    refreshed.map((tab) => tab.icon?.key),
+    kinds.map((kind) => `current-${kind}`)
+  )
+  assert.deepEqual(
+    refreshed.map((tab) => tab.itemId),
+    tabs.map((tab) => tab.itemId)
+  )
+  assert.equal(tabs[1].icon?.key, 'old-process-icon', 'tab state is not mutated')
+  resources.mcp[0].icon = { key: 'new-process-mcp' }
+  const reloaded = resolveWorkspaceResourceTabIcons(refreshed, resources) as WorkspaceResourceTab[]
+  assert.equal(reloaded[2].icon?.key, 'new-process-mcp')
+  assert.equal(reloaded[0], refreshed[0], 'unchanged metadata keeps the existing tab')
+  const removed = resolveWorkspaceResourceTabIcons(reloaded, {
+    plugins: [],
+    skills: [],
+    mcp: [],
+    wrappers: []
+  }) as WorkspaceResourceTab[]
+  assert.ok(
+    removed.every((tab) => tab.icon === undefined),
+    'removed resources cannot retain stale keys'
+  )
 })
 
 test('a modified notebook tab keeps a visible unsaved marker', () => {

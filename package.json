@@ -24,7 +24,7 @@
     "prestart": "bun run sync:electron-icon && bun run runtime:fetch && bun run office:fetch",
     "start": "electron-vite preview",
     "predev": "bun run sync:electron-icon && bun run runtime:fetch && bun run office:fetch",
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --watch",
     "build": "bun run typecheck && bun run runtime:fetch && bun run office:fetch && electron-vite build",
     "sync:electron-icon": "node scripts/sync-electron-dev-icon.mjs",
     "sync:plugin-palettes": "node scripts/content/sync-plugin-palettes.mjs",
