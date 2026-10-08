@@ -21,6 +21,7 @@ export type WorkspaceResourceTab = {
   itemId: string
   title: string
   subtitle?: string
+  connectorId?: string
   connectorUrl?: string
 }
 

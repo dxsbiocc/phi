@@ -116,7 +116,7 @@ export function WorkspaceResourceTabs({
             }}
           >
             {tab.kind === 'mcp' && connectorIcon ? (
-              connectorIcon(tab.itemId)
+              connectorIcon(tab.connectorId ?? tab.itemId)
             ) : (tab.kind === 'file' || tab.kind === 'directory' || tab.kind === 'notebook') &&
               fileIcon ? (
               fileIcon(tab)

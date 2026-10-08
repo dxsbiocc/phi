@@ -73,6 +73,36 @@ test('connector tabs display the selected connector icon', () => {
   assert.match(markup, /Firecrawl/)
 })
 
+test('connector tabs use the brand identity even when the configured server has a scoped ID', () => {
+  for (const [connectorId, asset] of [
+    ['cbioportal', 'cbioportal.png'],
+    ['firecrawl', 'firecrawl.png'],
+    ['open-targets', 'open-targets.svg']
+  ]) {
+    const tab: WorkspaceResourceTab = {
+      key: 'mcp',
+      kind: 'mcp',
+      itemId: `/Users/test/.phi/mcp.json:${connectorId}`,
+      connectorId,
+      title: connectorId
+    }
+    const markup = renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(WorkspaceResourceTabs, {
+          tabs: [tab],
+          activeKey: tab.key,
+          onSelect: () => undefined,
+          onClose: () => undefined,
+          connectorIcon: (id) => createElement(ConnectorIcon, { connectorId: id, size: 20 })
+        })
+      )
+    )
+    assert.ok(markup.includes(asset), `${connectorId} tab should display ${asset}`)
+  }
+})
+
 test('a modified notebook tab keeps a visible unsaved marker', () => {
   const tab = {
     key: 'file:/project/notes.ipynb',

@@ -3675,6 +3675,7 @@ function App(): React.JSX.Element {
         itemId: server.id,
         title: server.title ?? server.name,
         subtitle: server.sourcePath ?? server.command,
+        connectorId: server.connectorId ?? server.packageId,
         connectorUrl: server.url
       })
     },
