@@ -75,9 +75,13 @@ if [ "$1" = "-version" ]; then
   echo '      version 26.04.6 build 12646'
   exit 0
 fi
+if [ -n "$FAKE_NF_GATE" ]; then
+  while [ ! -e "$FAKE_NF_GATE" ]; do sleep 0.02; done
+fi
 echo $$ > "$FAKE_NF_PIDFILE"
 sleep 300 &
 echo $! > "$FAKE_NF_PIDFILE.child"
+: > "$FAKE_NF_PIDFILE.ready"
 wait
 `
 

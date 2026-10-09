@@ -19,6 +19,7 @@ import {
   FAKE_NEXTFLOW_TREE,
   bundledEntry,
   isAlive,
+  settlesWithin,
   waitFor,
   withSandbox,
   type Sandbox
@@ -256,33 +257,112 @@ test('cancel stops the remote process group and resolves as cancelled', async ()
   })
 })
 
-test('cancelling run A leaves concurrent run B alive', async () => {
+test('cancelling run A leaves concurrent run B alive after their delayed fake starts', async () => {
   await withSandbox(async (sb) => {
     await withHarness(sb, async (h) => {
       sb.useFake(FAKE_NEXTFLOW_TREE)
-      process.env.FAKE_NF_MS = '30000'
-      const first = start(h, {}, 'wrun_cancel_a')
-      await waitFor(() =>
-        h.snapshots.some((snapshot) => snapshot.runId === 'wrun_cancel_a' && snapshot.pid)
-      )
-      const second = start(h, {}, 'wrun_cancel_b')
-      await waitFor(() =>
-        h.snapshots.some((snapshot) => snapshot.runId === 'wrun_cancel_b' && snapshot.pid)
-      )
-      const aPid = h.snapshots.find(
-        (snapshot) => snapshot.runId === 'wrun_cancel_a' && snapshot.pid
-      )!.pid!
-      const bPid = h.snapshots.find(
-        (snapshot) => snapshot.runId === 'wrun_cancel_b' && snapshot.pid
-      )!.pid!
+      sb.holdGate()
+      const runs: Array<{
+        runId: string
+        pidFile: string
+        process: ReturnType<typeof start>
+        descendants: number[]
+      }> = []
+      const launchPid = (runId: string): number | undefined =>
+        h.snapshots.find((snapshot) => snapshot.runId === runId && snapshot.pid)?.pid
+      const readyRun = async (runId: string): Promise<(typeof runs)[number]> => {
+        const pidFile = join(sb.root, `${runId}.pid`)
+        process.env.FAKE_NF_PIDFILE = pidFile
+        const run: (typeof runs)[number] = {
+          runId,
+          pidFile,
+          process: start(h, {}, runId),
+          descendants: []
+        }
+        runs.push(run)
+        await waitFor(() => launchPid(runId) !== undefined)
+        assert.equal(existsSync(`${pidFile}.ready`), false)
+        sb.releaseGate()
+        await waitFor(() => existsSync(`${pidFile}.ready`))
+        run.descendants = [pidFile, `${pidFile}.child`].map((path) =>
+          Number(readFileSync(path, 'utf8').trim())
+        )
+        assert.ok(run.descendants.every((pid) => Number.isSafeInteger(pid) && pid > 1))
+        assert.ok(run.descendants.every(isAlive))
+        return run
+      }
+      const receiptPid = (run: (typeof runs)[number]): number | undefined => {
+        const receipt = join(h.remoteRoot, 'wrappers/runs', run.runId, 'pid')
+        return (
+          launchPid(run.runId) ??
+          (existsSync(receipt) ? Number(readFileSync(receipt, 'utf8').trim()) : undefined)
+        )
+      }
+      const processIds = (run: (typeof runs)[number]): number[] => {
+        const written = [run.pidFile, `${run.pidFile}.child`]
+          .filter(existsSync)
+          .map((path) => Number(readFileSync(path, 'utf8').trim()))
+        return [...new Set([...run.descendants, ...written, receiptPid(run)])].filter(
+          (value): value is number =>
+            value !== undefined && Number.isSafeInteger(value) && value > 1
+        )
+      }
+      const killKnownProcess = (pid: number): void => {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        }
+      }
       try {
-        first.cancel()
-        assert.equal((await first.done).cancelled, true)
-        assert.equal(isAlive(aPid), false)
-        assert.equal(isAlive(bPid), true)
+        const first = await readyRun('wrun_cancel_a')
+        rmSync(process.env.FAKE_NF_GATE!)
+        const second = await readyRun('wrun_cancel_b')
+        assert.equal(new Set([...first.descendants, ...second.descendants]).size, 4)
+        first.process.cancel()
+        const result = await settlesWithin(
+          first.process.done,
+          'run A cancellation did not settle',
+          20_000
+        )
+        assert.equal(result.cancelled, true)
+        await waitFor(() => processIds(first).every((pid) => !isAlive(pid)), 10_000)
+        assert.ok(
+          processIds(second).every(isAlive),
+          'run B and both descendants survive run A cancellation'
+        )
+        second.process.cancel()
+        assert.equal(
+          (await settlesWithin(second.process.done, 'run B cancellation did not settle', 20_000))
+            .cancelled,
+          true
+        )
+        await waitFor(() => processIds(second).every((pid) => !isAlive(pid)), 10_000)
       } finally {
-        second.cancel()
-        await second.done
+        for (const run of runs) run.process.cancel()
+        try {
+          await settlesWithin(
+            Promise.all(runs.map((run) => run.process.done)),
+            'cancel test cleanup did not settle',
+            20_000
+          )
+        } finally {
+          for (const run of runs) {
+            run.process.detach?.()
+            const pid = receiptPid(run)
+            if (pid && isAlive(pid)) killKnownProcess(-pid)
+            for (const descendant of processIds(run).filter(isAlive)) killKnownProcess(descendant)
+          }
+          await waitFor(
+            () => runs.every((run) => processIds(run).every((pid) => !isAlive(pid))),
+            10_000
+          )
+          await settlesWithin(
+            Promise.all(runs.map((run) => run.process.done)),
+            'detached cancel test watchers did not settle',
+            10_000
+          )
+        }
       }
     })
   })
