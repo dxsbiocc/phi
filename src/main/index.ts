@@ -40,6 +40,8 @@ import type {
   WrapperSubmitConfirmation
 } from '../shared/wrapperTypes'
 import './agent-env'
+import { createMainWindowStartup } from './window-startup'
+import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -63,7 +65,6 @@ import {
   dialog,
   ipcMain,
   nativeImage,
-  nativeTheme,
   net,
   Notification,
   powerSaveBlocker
@@ -401,12 +402,9 @@ import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-
 import {
   createManagedEnvironmentActions,
   detectConfiguredAnalysisKernels,
-  dismissEnvironmentSummary,
-  getEnvironment,
-  listManagedEnvironments,
-  redetectEnvironment,
-  setEnvironmentToolPath
+  listManagedEnvironments
 } from './agent/environment'
+import { createBackgroundEnvironment } from './agent/environment/background'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import {
   AnalysisNotebookExecutor,
@@ -562,6 +560,7 @@ function applyDockIcon(): void {
   }
 }
 
+const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMainWindowStartup>>()
 let mainWindow: BrowserWindow | null = null
 let mainWindowCleanupStarted = false
 type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
@@ -571,6 +570,20 @@ let browserWorkspaceRegistryDisposal: Promise<void> | null = null
 let terminalManager: TerminalManager | null = null
 let terminalDraftService: TerminalDraftService | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
+
+function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
+  const window = mainWindow
+  if (
+    !window ||
+    window.isDestroyed() ||
+    event.sender !== window.webContents ||
+    event.sender.isDestroyed() ||
+    event.senderFrame !== event.sender.mainFrame
+  ) {
+    throw new Error('Window renderer is not authorized')
+  }
+  return window
+}
 
 function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolean): void {
   if (mainWindow !== window || window.isDestroyed() || window.webContents.isDestroyed()) {
@@ -1747,6 +1760,7 @@ function syncPreventSleepBlocker(): void {
     preventSleepBlockerId = null
   }
 }
+const backgroundEnvironment = createBackgroundEnvironment({ agentDir: AGENT_DIR })
 const environmentBuilds = createEnvironmentBuilds({
   root: getRuntimeRoot(),
   build: (root, descriptor, options) =>
@@ -7398,7 +7412,7 @@ function createWindow(): void {
     height: DEFAULT_WINDOW_HEIGHT,
     minWidth: MIN_WINDOW_WIDTH,
     minHeight: MIN_WINDOW_HEIGHT,
-    show: true,
+    show: false,
     autoHideMenuBar: true,
     transparent: false,
     // macOS titleBarStyle paints a system sidebar material behind the left pane.
@@ -7406,7 +7420,8 @@ function createWindow(): void {
     // owns every background pixel.
     ...(process.platform === 'darwin' ? { frame: false } : {}),
     backgroundMaterial: 'none',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0B262D' : '#FFFFFF',
+    // Hidden until the renderer supplies its selected theme and first content frame.
+    backgroundColor: '#FFFFFF',
     icon: appIcon,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
@@ -7416,7 +7431,36 @@ function createWindow(): void {
   })
   mainWindow = window
 
-  window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#0B262D' : '#FFFFFF')
+  const startup = createMainWindowStartup(window, (reason) => {
+    writeAppLog({ level: 'error', event: 'window_startup_failed', metadata: { reason } })
+    void dialog
+      .showMessageBox({
+        type: 'error',
+        title: APP_NAME,
+        message: 'Phi 界面未能完成加载',
+        detail: '可以重新加载窗口，或关闭后再次启动。',
+        buttons: ['重新加载', '关闭'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      })
+      .then(({ response }) => {
+        if (window.isDestroyed()) return
+        if (response === 0) {
+          if (startup.retry()) window.webContents.reload()
+        } else {
+          window.close()
+        }
+      })
+      .catch(() => {
+        if (!window.isDestroyed()) window.close()
+      })
+  })
+  mainWindowStartups.set(window, startup)
+  window.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
+    if (isMainFrame && errorCode !== -3) startup.fail('main-frame-load-failed')
+  })
+  window.webContents.on('render-process-gone', () => startup.fail('renderer-process-gone'))
   window.webContents.setBackgroundThrottling(false)
   if (OFFICE_DEV_ENABLED) {
     installOfficeWebviewSecurity(
@@ -7442,15 +7486,14 @@ function createWindow(): void {
     })
   }
 
-  window.on('ready-to-show', () => {
-    window.show()
-  })
+  window.once('ready-to-show', startup.painted)
 
   window.on('close', () => {
     void cleanupMainWindowRuntime()
   })
 
   window.on('closed', () => {
+    startup.dispose()
     if (mainWindow === window) {
       mainWindow = null
     }
@@ -7480,9 +7523,13 @@ function createWindow(): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    window.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    void window
+      .loadURL(process.env['ELECTRON_RENDERER_URL'])
+      .catch(() => startup.fail('load-failed'))
   } else {
-    window.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    void window
+      .loadFile(join(import.meta.dirname, '../renderer/index.html'))
+      .catch(() => startup.fail('load-failed'))
   }
 }
 
@@ -7651,17 +7698,11 @@ app.whenReady().then(async () => {
     window.setFullScreen(!window.isFullScreen())
   })
   ipcMain.handle('window:get-fullscreen', (event) => {
-    const window = mainWindow
-    if (
-      !window ||
-      window.isDestroyed() ||
-      event.sender !== window.webContents ||
-      event.sender.isDestroyed() ||
-      event.senderFrame !== event.sender.mainFrame
-    ) {
-      throw new Error('Window renderer is not authorized')
-    }
-    return window.isFullScreen()
+    return requireMainWindowRenderer(event).isFullScreen()
+  })
+  ipcMain.handle('window:renderer-ready', (event, background: unknown) => {
+    const window = requireMainWindowRenderer(event)
+    mainWindowStartups.get(window)?.rendererReady(background)
   })
   ipcMain.handle('files:reveal', async (_, filePath: string) => {
     shell.showItemInFolder(assertRevealPathAllowed(filePath))
@@ -7893,9 +7934,9 @@ app.whenReady().then(async () => {
     getOmpBridge().request('settings.webSearch.apiKey.clear', { agentDir: AGENT_DIR, providerId })
   )
 
-  ipcMain.handle('environment:get', async () => getEnvironment())
-  ipcMain.handle('environment:redetect', async () => redetectEnvironment())
-  ipcMain.handle('environment:dismissSummary', async () => dismissEnvironmentSummary())
+  ipcMain.handle('environment:get', () => backgroundEnvironment.get())
+  ipcMain.handle('environment:redetect', () => backgroundEnvironment.redetect())
+  ipcMain.handle('environment:dismissSummary', () => backgroundEnvironment.dismissSummary())
   ipcMain.handle('environment:setToolPath', async (_, toolId: unknown, path: unknown) => {
     if (typeof toolId !== 'string' || !toolId.trim()) {
       throw new Error('工具 id 无效')
@@ -7903,7 +7944,10 @@ app.whenReady().then(async () => {
     if (path !== null && typeof path !== 'string') {
       throw new Error('工具路径必须是字符串或 null')
     }
-    return setEnvironmentToolPath(toolId as Parameters<typeof setEnvironmentToolPath>[0], path)
+    return backgroundEnvironment.setToolPath(
+      toolId as Parameters<typeof backgroundEnvironment.setToolPath>[0],
+      path
+    )
   })
   ipcMain.handle('environment:pickBinary', async () => {
     const window = getActiveWindow()
@@ -10008,7 +10052,12 @@ app.on(
         writeAppLog({ level: 'error', event: 'power_blocker_cleanup_failed' })
       }
     },
-    cleanup: cleanupMainWindowRuntime,
+    cleanup: async () => {
+      await Promise.all([
+        cleanupMainWindowRuntime(),
+        safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose())
+      ])
+    },
     quit: () => app.quit(),
     timeoutMs: APP_QUIT_CLEANUP_TIMEOUT_MS
   })

@@ -48,11 +48,14 @@ test('preload exposes the initial fullscreen state and an independently cancella
   )
 
   const api = exposed.get('api') as {
+    readyWindow: (background: string) => Promise<void>
     getWindowFullscreen: () => Promise<boolean>
     onWindowFullscreenChanged: (callback: (fullscreen: boolean) => void) => () => void
   }
   assert.equal(await api.getWindowFullscreen(), true)
   assert.deepEqual(calls, [{ channel: 'window:get-fullscreen', args: [] }])
+  await api.readyWindow('#0D1218')
+  assert.deepEqual(calls.at(-1), { channel: 'window:renderer-ready', args: ['#0D1218'] })
 
   const first: boolean[] = []
   const second: boolean[] = []
@@ -82,6 +85,7 @@ test('fullscreen state is typed end to end and only sourced from the trusted mai
   const main = source('src/main/index.ts')
 
   for (const apiSource of [preload, ambient, renderer]) {
+    assert.match(apiSource, /readyWindow: \(background: string\) => Promise<void>/)
     assert.match(apiSource, /getWindowFullscreen: \(\) => Promise<boolean>/)
     assert.match(
       apiSource,

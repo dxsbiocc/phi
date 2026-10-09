@@ -14,8 +14,6 @@ import {
   Switch,
   TextField,
   Tooltip,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography
 } from '@mui/material'
 import { GoPlus, GoSync } from 'react-icons/go'
@@ -23,11 +21,12 @@ import { PhiIcons } from '../icons'
 import type { ModelOption, PhiAppSettingsPatch, ProviderAuthStatus } from '../types'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
-import { accentAt, ACCENT_PALETTE } from '../theme'
+import { accentAt } from '../theme'
 import type { ThemeFamily } from '../useThemeMode'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
+import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
 import DeveloperExtensionsView from '../features/developer-extensions/DeveloperExtensionsView'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
@@ -450,85 +449,6 @@ function GeneralSection({
   )
 }
 
-function AppearanceSection({
-  mode,
-  onSelectMode,
-  family,
-  onSelectFamily
-}: {
-  mode: ThemeMode
-  onSelectMode: (mode: ThemeMode) => void
-  family: ThemeFamily
-  onSelectFamily: (family: ThemeFamily) => void
-}): React.JSX.Element {
-  return (
-    <Stack spacing={2}>
-      <Box>
-        <Typography variant="h5">外观</Typography>
-        <Typography variant="body2" color="text.secondary">
-          选择界面主题。
-        </Typography>
-      </Box>
-
-      <Box>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          主题风格
-        </Typography>
-        <ToggleButtonGroup
-          exclusive
-          value={family}
-          onChange={(_, next: ThemeFamily | null) => {
-            if (next) onSelectFamily(next)
-          }}
-        >
-          <ToggleButton value="default" sx={{ minHeight: 44, px: 2 }}>
-            默认
-          </ToggleButton>
-          <ToggleButton value="minimal" sx={{ minHeight: 44, px: 2 }}>
-            Minimal 风格
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
-
-      <Box>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          明暗
-        </Typography>
-        <ToggleButtonGroup
-          exclusive
-          value={mode}
-          onChange={(_, next: ThemeMode | null) => {
-            if (next) onSelectMode(next)
-          }}
-        >
-          <ToggleButton value="light" sx={{ minHeight: 44, px: 2 }}>
-            浅色
-          </ToggleButton>
-          <ToggleButton value="dark" sx={{ minHeight: 44, px: 2 }}>
-            深色
-          </ToggleButton>
-          <ToggleButton value="system" sx={{ minHeight: 44, px: 2 }}>
-            跟随系统
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
-
-      {family === 'default' && (
-        <Box>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            配色
-          </Typography>
-          <Stack direction="row" spacing={1}>
-            {ACCENT_PALETTE.map((color) => (
-              <Box key={color} sx={{ width: 28, height: 28, borderRadius: 1, bgcolor: color }} />
-            ))}
-          </Stack>
-        </Box>
-      )}
-    </Stack>
-  )
-}
-
 function DiagnosticsSection({
   onCopyDiagnostics
 }: {
@@ -856,7 +776,7 @@ function SettingsDialog({
           )}
           {category === 'advanced' && <DeveloperExtensionsView />}
           {category === 'appearance' && (
-            <AppearanceSection
+            <AppearanceSettingsSection
               mode={themeMode}
               onSelectMode={onSelectThemeMode}
               family={themeFamily}

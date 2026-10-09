@@ -687,6 +687,7 @@ type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   office: OfficeRendererBridge
+  readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>
@@ -1119,6 +1120,8 @@ const api: RendererAuthApi = {
   browser: browserBridge,
   terminal: terminalBridge,
   office: officeBridge,
+  readyWindow: (background: string): Promise<void> =>
+    ipcRenderer.invoke('window:renderer-ready', background),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),

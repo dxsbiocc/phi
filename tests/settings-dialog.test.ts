@@ -78,6 +78,8 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onSetEnvironmentToolPath: async () => undefined,
     themeMode: 'system',
     onSelectThemeMode: () => undefined,
+    themeFamily: 'minimal',
+    onSelectThemeFamily: () => undefined,
     ...overrides
   }
 
@@ -170,6 +172,15 @@ test('settings dialog exposes developer extensions under advanced settings', () 
   assert.match(markup, /添加目录/)
   assert.match(markup, /没有找到开发者扩展/)
   assert.doesNotMatch(markup, /没有找到插件/)
+})
+
+test('settings dialog integrates theme family radio rows under appearance', () => {
+  const markup = renderSettingsDialog({ category: 'appearance', themeFamily: 'default' })
+  assert.match(markup, /role="radiogroup"/)
+  assert.match(markup, /主题风格/)
+  assert.match(markup, /Minimal 风格/)
+  const checkedRadio = markup.match(/<input[^>]*type="radio"[^>]*checked=""[^>]*>/)?.[0]
+  assert.ok(checkedRadio?.includes('value="default"'))
 })
 
 test('settings dialog exposes general application settings', () => {

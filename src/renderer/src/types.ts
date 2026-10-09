@@ -711,6 +711,7 @@ export type RendererApi = AutoCompactionApi & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   office: OfficeRendererBridge
+  readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
   toggleWindowFullscreen: () => Promise<void>

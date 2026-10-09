@@ -1,5 +1,6 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
+import * as windowStartup from '../src/main/window-startup'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
@@ -46,7 +47,16 @@ import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 
 const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
-test.after(() => rmSync(fixtureStateDir, { recursive: true, force: true }))
+const pendingStartupWindows = new Set<EventEmitter>()
+test.after(() => {
+  try {
+    // Shown or closed startup controllers clear their deadlines. A hidden
+    // fixture left here would retain a timer even after this suite completes.
+    assert.equal(pendingStartupWindows.size, 0, 'all startup gates must finish or be disposed')
+  } finally {
+    rmSync(fixtureStateDir, { recursive: true, force: true })
+  }
+})
 
 const officialRegistryFixture = {
   id: 'phi-packages',
@@ -302,6 +312,8 @@ type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
   officeDev?: boolean
   officeService?: Record<string, unknown>
+  holdRendererReady?: boolean
+  environmentGet?: () => Promise<unknown>
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -912,6 +924,7 @@ async function harness(
       }
     }
     webContents = {
+      mainFrame: {},
       send: (channel: string, data: unknown): void => {
         operationLog.push({ type: 'webContents.send', channel, data })
         events.push({ channel, data })
@@ -929,8 +942,11 @@ async function harness(
       setBackgroundThrottling: noop,
       isDestroyed: (): boolean => false
     }
-    constructor() {
+    constructor(windowOptions: { show?: boolean; backgroundColor?: string }) {
       super()
+      this.visible = windowOptions.show !== false
+      if (!this.visible) pendingStartupWindows.add(this)
+      operationLog.push({ type: 'window.create', ...windowOptions })
       Window.windows.push(this)
     }
     static getAllWindows(): Window[] {
@@ -947,6 +963,7 @@ async function harness(
       const index = Window.windows.indexOf(this)
       if (index >= 0) Window.windows.splice(index, 1)
       this.emit('closed')
+      pendingStartupWindows.delete(this)
     }
     getContentBounds(): { x: number; y: number; width: number; height: number } {
       return { x: 0, y: 0, width: 1200, height: 800 }
@@ -970,16 +987,30 @@ async function harness(
       this.emit('hide')
     }
     isFullScreen = (): boolean => false
-    setBackgroundColor = noop
+    setBackgroundColor = (background: string): void => {
+      operationLog.push({ type: 'window.background', background })
+    }
     setFullScreen = noop
     setVibrancy = noop
     setWindowButtonVisibility = noop
     show = (): void => {
       this.visible = true
+      pendingStartupWindows.delete(this)
+      operationLog.push({ type: 'window.show' })
       this.emit('show')
     }
-    loadURL = noop
-    loadFile = noop
+    loadURL = async (): Promise<void> => {
+      this.emit('ready-to-show')
+      if (!options.holdRendererReady) {
+        const ready = handlers.get('window:renderer-ready')
+        assert.ok(ready, 'Missing startup IPC handler')
+        await ready(
+          { sender: this.webContents, senderFrame: this.webContents.mainFrame },
+          '#0D1218'
+        )
+      }
+    }
+    loadFile = this.loadURL
   }
   class TestJupyterServerRegistry {
     connection(workingDirectory: string): Record<string, unknown> | null {
@@ -1250,6 +1281,7 @@ async function harness(
     }
   }
   const modules: Record<string, unknown> = {
+    './window-startup': windowStartup,
     'node:crypto': { createHash, randomUUID },
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
@@ -1301,6 +1333,20 @@ async function harness(
       listManagedEnvironments: async () => [],
       redetectEnvironment: (): Record<string, never> => ({}),
       setEnvironmentToolPath: (): Record<string, never> => ({})
+    },
+    './agent/environment/background': {
+      createBackgroundEnvironment: () => ({
+        get: async () => (options.environmentGet ? options.environmentGet() : {}),
+        redetect: async () => ({}),
+        dismissSummary: async () => ({}),
+        setToolPath: async (id: string, path: string | null) => {
+          operationLog.push({ type: 'environment.background.setToolPath', id, path })
+          return {}
+        },
+        dispose: async () => {
+          operationLog.push({ type: 'environment.background.dispose' })
+        }
+      })
     },
     'node:child_process': {
       execFile: (
@@ -3237,7 +3283,8 @@ async function harness(
     invoke: async (channel, ...args): Promise<unknown> => {
       const handler = handlers.get(channel)
       assert.ok(handler, `Missing IPC handler ${channel}`)
-      return handler({ sender: Window.getFocusedWindow()?.webContents }, ...args)
+      const sender = Window.getFocusedWindow()?.webContents
+      return handler({ sender, senderFrame: sender?.mainFrame }, ...args)
     },
     invokeFromForeign: async (channel, ...args): Promise<unknown> => {
       const handler = handlers.get(channel)
@@ -10282,6 +10329,66 @@ test('main IPC: fullscreen state is available only to the trusted main renderer'
     app.invokeFromForeign('window:get-fullscreen'),
     /Window renderer is not authorized/
   )
+})
+
+test('main IPC: the saved renderer background is applied before the only initial window reveal', async () => {
+  const app = await harness(undefined, { holdRendererReady: true })
+  assert.equal(app.operationLog.find((entry) => entry.type === 'window.create')?.show, false)
+  assert.equal(
+    app.operationLog.some((entry) => entry.type === 'window.show'),
+    false
+  )
+  await assert.rejects(
+    app.invokeFromForeign('window:renderer-ready', '#0D1218'),
+    /Window renderer is not authorized/
+  )
+  await app.invoke('window:renderer-ready', '#0D1218')
+  assert.deepEqual(
+    app.operationLog.filter((entry) =>
+      ['window.background', 'window.show'].includes(String(entry.type))
+    ),
+    [{ type: 'window.background', background: '#0D1218' }, { type: 'window.show' }]
+  )
+  await app.invoke('window:renderer-ready', '#FFFFFF')
+  assert.equal(app.operationLog.filter((entry) => entry.type === 'window.show').length, 1)
+  app.closeMainWindow()
+})
+
+test('main IPC: an unfinished environment scan cannot hold up the themed window reveal', async () => {
+  let finishScan!: (value: unknown) => void
+  const scan = new Promise<unknown>((resolve) => {
+    finishScan = resolve
+  })
+  const app = await harness(undefined, {
+    holdRendererReady: true,
+    environmentGet: () => scan
+  })
+  let environmentReturned = false
+  const pending = app.invoke('environment:get').then((value) => {
+    environmentReturned = true
+    return value
+  })
+  await tick()
+  assert.equal(environmentReturned, false)
+  await app.invoke('window:renderer-ready', '#0D1218')
+  assert.equal(app.operationLog.filter((entry) => entry.type === 'window.show').length, 1)
+  assert.equal(await app.invoke('window:get-fullscreen'), false)
+  assert.equal(environmentReturned, false)
+  const detected = { snapshot: { firstScanCompleted: true }, showSummary: true }
+  finishScan(detected)
+  assert.deepEqual(await pending, detected)
+
+  await app.invoke('environment:setToolPath', 'nextflow', '/fixture/nextflow')
+  assert.ok(
+    app.operationLog.some(
+      (entry) =>
+        entry.type === 'environment.background.setToolPath' && entry.path === '/fixture/nextflow'
+    )
+  )
+  app.beforeQuit()
+  await tick()
+  assert.ok(app.operationLog.some((entry) => entry.type === 'environment.background.dispose'))
+  app.closeMainWindow()
 })
 
 test('main IPC: closing the window stops all active prompt runs', { timeout: 3000 }, async () => {

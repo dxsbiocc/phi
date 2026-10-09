@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -29,7 +31,6 @@ import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
-import ChatView from './features/chat/ChatView'
 import { ChatArtifactSplit } from './features/chat/components/ChatArtifactSplit'
 import {
   shouldEnableOfficeChatSplit,
@@ -87,7 +88,7 @@ import FilePreviewPanel, {
   FilePreviewTitleTab,
   type FilePreviewPanelState
 } from './features/file-preview/FilePreviewPanel'
-import AnalysisView, { type AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
+import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
@@ -95,6 +96,7 @@ import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createAppTheme } from './theme'
 import { createMinimalTheme } from './minimalTheme'
 import { useThemeMode } from './useThemeMode'
+import { syncWindowBackground } from './lib/windowStartup'
 import { useProviderAuth } from './useProviderAuth'
 import { modelOptionFromSelection, useModelSelection } from './useModelSelection'
 import { useProjects } from './useProjects'
@@ -233,6 +235,8 @@ type SendPromptOptions = {
 }
 
 const activityBarWidth = 48
+const ChatView = lazy(() => import('./features/chat/ChatView'))
+const AnalysisView = lazy(() => import('./features/analysis/AnalysisView'))
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
 const workspaceSidePanelWidthDefault = 340
@@ -667,6 +671,9 @@ function App(): React.JSX.Element {
       themeFamily === 'minimal' ? createMinimalTheme(effectiveMode) : createAppTheme(effectiveMode),
     [themeFamily, effectiveMode]
   )
+  useEffect(() => {
+    syncWindowBackground(theme.palette.background.default)
+  }, [theme])
 
   const {
     sessions,
@@ -3977,95 +3984,111 @@ function App(): React.JSX.Element {
             onRetry={onRetryRemoteConnection}
           />
         ) : null}
-        <ChatView
-          messages={messages}
-          input={input}
-          images={inputImages}
-          onImagesAdded={addInputImages}
-          onRemoveImage={removeInputImage}
-          scrollResetKey={activeChatScrollResetKey}
-          scrollPositionStore={chatScrollPositionStore}
-          canSend={
-            !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+        <Suspense
+          fallback={
+            <Box
+              role="status"
+              aria-live="polite"
+              sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                正在加载对话…
+              </Typography>
+            </Box>
           }
-          canQueue={
-            !isSessionChanging && currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
-          }
-          isGenerating={currentSessionIsBusy}
-          currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
-          models={availableModels}
-          selectedModel={selectedModel}
-          contextUsageTarget={{
-            sessionPath: activeSessionPath,
-            phiSessionId: activePhiSessionId ?? null,
-            sessionGeneration: activeSessionGeneration
-          }}
-          contextUsageRefreshKey={contextUsageRefreshKey}
-          contextCompacting={currentSessionIsCompacting}
-          skills={skills}
-          promptAgents={promptAgents}
-          plugins={plugins}
-          onSelectModel={(model) => {
-            void onSelectModel(model)
-          }}
-          thinkingLevel={thinkingLevel}
-          onSelectThinkingLevel={(level) => {
-            void onSelectThinkingLevel(level)
-          }}
-          onInputChange={setActiveInput}
-          onRetryUserMessage={onRetryUserMessage}
-          onForkUserMessage={
-            currentSessionIsBusy || currentSessionIsCompacting || !activePhiSessionId
-              ? undefined
-              : onForkUserMessage
-          }
-          onOpenInputAddMenu={onOpenInputAddMenu}
-          onPickInputFiles={onPickInputFiles}
-          onGetPathForInputFile={rendererApi.getPathForFile}
-          onInputFilesDropped={rendererApi.onInputFilesDropped}
-          onListInputDirectory={onListInputDirectory}
-          onChatSubmit={onChatSubmit}
-          officeTarget={officeDevelopmentEnabled ? (officeComposerTarget ?? undefined) : undefined}
-          onRemoveOfficeTarget={
-            officeComposerTarget
-              ? () => setDismissedOfficeArtifactId(officeComposerTarget.artifactId)
-              : undefined
-          }
-          onClearOfficeSelection={
-            officeComposerTarget?.selection
-              ? () => onClearOfficeSelection(officeComposerTarget.artifactId)
-              : undefined
-          }
-          planReviewEnabled={planReviewEnabled}
-          onTogglePlanReview={togglePlanReview}
-          disablePlanReview={activeProjectLocation?.kind === 'ssh'}
-          onStopGeneration={onStopGeneration}
-          onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
-          onGoSettings={onGoProviderSettings}
-          onOpenBackgroundJobs={onOpenBackgroundJobs}
-          permissionMode={activePermissionMode}
-          onSelectPermissionMode={(mode) => {
-            void onSelectPermissionMode(mode)
-          }}
-          disablePermissionModeSelect={isSessionChanging || currentSessionIsCompacting}
-          disableModelControls={isSessionChanging || currentSessionIsCompacting}
-          pendingApproval={pendingApproval}
-          pendingUserInteraction={pendingUserInteraction}
-          queuedPrompts={activeQueuedPrompts.map((item) => ({
-            id: item.id,
-            text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
-          }))}
-          queuedPromptsPaused={queuedPromptsPaused}
-          onRespondApproval={onRespondToolApproval}
-          onRespondUserInteraction={onRespondAgentUserInteraction}
-          onRemoveQueuedPrompt={removeQueuedPrompt}
-          onOpenApprovalSession={onOpenApprovalSession}
-          onOpenLocalPath={onOpenLocalPath}
-          onOpenWebUrl={onOpenWebUrl}
-          onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
-          compactComposerControls={activeView === 'analysis'}
-          cwd={activeDisplayCwd}
-        />
+        >
+          <ChatView
+            messages={messages}
+            input={input}
+            images={inputImages}
+            onImagesAdded={addInputImages}
+            onRemoveImage={removeInputImage}
+            scrollResetKey={activeChatScrollResetKey}
+            scrollPositionStore={chatScrollPositionStore}
+            canSend={
+              !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+            }
+            canQueue={
+              !isSessionChanging && currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+            }
+            isGenerating={currentSessionIsBusy}
+            currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
+            models={availableModels}
+            selectedModel={selectedModel}
+            contextUsageTarget={{
+              sessionPath: activeSessionPath,
+              phiSessionId: activePhiSessionId ?? null,
+              sessionGeneration: activeSessionGeneration
+            }}
+            contextUsageRefreshKey={contextUsageRefreshKey}
+            contextCompacting={currentSessionIsCompacting}
+            skills={skills}
+            promptAgents={promptAgents}
+            plugins={plugins}
+            onSelectModel={(model) => {
+              void onSelectModel(model)
+            }}
+            thinkingLevel={thinkingLevel}
+            onSelectThinkingLevel={(level) => {
+              void onSelectThinkingLevel(level)
+            }}
+            onInputChange={setActiveInput}
+            onRetryUserMessage={onRetryUserMessage}
+            onForkUserMessage={
+              currentSessionIsBusy || currentSessionIsCompacting || !activePhiSessionId
+                ? undefined
+                : onForkUserMessage
+            }
+            onOpenInputAddMenu={onOpenInputAddMenu}
+            onPickInputFiles={onPickInputFiles}
+            onGetPathForInputFile={rendererApi.getPathForFile}
+            onInputFilesDropped={rendererApi.onInputFilesDropped}
+            onListInputDirectory={onListInputDirectory}
+            onChatSubmit={onChatSubmit}
+            officeTarget={
+              officeDevelopmentEnabled ? (officeComposerTarget ?? undefined) : undefined
+            }
+            onRemoveOfficeTarget={
+              officeComposerTarget
+                ? () => setDismissedOfficeArtifactId(officeComposerTarget.artifactId)
+                : undefined
+            }
+            onClearOfficeSelection={
+              officeComposerTarget?.selection
+                ? () => onClearOfficeSelection(officeComposerTarget.artifactId)
+                : undefined
+            }
+            planReviewEnabled={planReviewEnabled}
+            onTogglePlanReview={togglePlanReview}
+            disablePlanReview={activeProjectLocation?.kind === 'ssh'}
+            onStopGeneration={onStopGeneration}
+            onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
+            onGoSettings={onGoProviderSettings}
+            onOpenBackgroundJobs={onOpenBackgroundJobs}
+            permissionMode={activePermissionMode}
+            onSelectPermissionMode={(mode) => {
+              void onSelectPermissionMode(mode)
+            }}
+            disablePermissionModeSelect={isSessionChanging || currentSessionIsCompacting}
+            disableModelControls={isSessionChanging || currentSessionIsCompacting}
+            pendingApproval={pendingApproval}
+            pendingUserInteraction={pendingUserInteraction}
+            queuedPrompts={activeQueuedPrompts.map((item) => ({
+              id: item.id,
+              text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
+            }))}
+            queuedPromptsPaused={queuedPromptsPaused}
+            onRespondApproval={onRespondToolApproval}
+            onRespondUserInteraction={onRespondAgentUserInteraction}
+            onRemoveQueuedPrompt={removeQueuedPrompt}
+            onOpenApprovalSession={onOpenApprovalSession}
+            onOpenLocalPath={onOpenLocalPath}
+            onOpenWebUrl={onOpenWebUrl}
+            onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
+            compactComposerControls={activeView === 'analysis'}
+            cwd={activeDisplayCwd}
+          />
+        </Suspense>
       </Box>
     </RemoteProjectFileContext.Provider>
   )
@@ -4129,70 +4152,84 @@ function App(): React.JSX.Element {
         </Typography>
       </Box>
     ) : (
-      <AnalysisView
-        hideLeftRail
-        notebookRegistry={analysisNotebookRegistry}
-        notebookFile={activeAnalysisNotebook}
-        workspaceFileTabs={workspaceFileTabs}
-        activeWorkspaceFilePath={activeWorkspaceFilePath}
-        onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
-        onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
-        isLoadingNotebooks={isLoadingAnalysisNotebooks}
-        isOpeningNotebook={isOpeningAnalysisNotebook}
-        notebookError={analysisNotebookError}
-        notebookContentError={analysisNotebookContentError}
-        kernelDiagnostics={analysisKernelDiagnostics}
-        isLoadingKernels={isLoadingAnalysisKernels}
-        kernelError={analysisKernelError}
-        notebookSessionStatus={analysisNotebookSessionStatus}
-        isStartingNotebookSession={isStartingAnalysisNotebookSession}
-        notebookSessionError={analysisNotebookSessionError}
-        executingNotebookCellId={executingAnalysisCellId}
-        notebookCellExecutionError={analysisCellExecutionError}
-        agentFocus={analysisAgentFocus}
-        onRefreshNotebooks={() => {
-          void refreshAnalysisNotebooks()
-        }}
-        onStartNotebookSession={(file, document) => {
-          return onStartAnalysisNotebookSession(file, document)
-        }}
-        onSyncNotebookDraft={(file, document) => {
-          void onSyncAnalysisNotebookDraft(file, document)
-        }}
-        onNotebookDirtyChange={onNotebookDirtyChange}
-        onStopNotebookSession={(file) => {
-          return onStopAnalysisNotebookSession(file)
-        }}
-        onRunNotebookCell={(file, document, cellId) => {
-          void onRunAnalysisNotebookCell(file, document, cellId)
-        }}
-        onStopNotebookCell={(file, cellId) => {
-          void onStopAnalysisNotebookCell(file, cellId)
-        }}
-        onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
-        onFormatNotebookCell={onFormatAnalysisNotebookCell}
-        onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
-        onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
-        notebookAiModelOptions={availableModels}
-        notebookAiDefaultModel={notebookAiDefaultModel}
-        onPickNotebookContextFiles={onPickInputFiles}
-        onInitializeProjectAnalysis={(cwd) => {
-          void onInitializeProjectAnalysis(cwd)
-        }}
-        onOpenNotebook={(path) => {
-          onOpenNotebookWorkspaceFile(path)
-        }}
-        onCloseNotebook={() => {
-          closeActiveNotebook()
-          navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
-        }}
-        onSaveNotebook={(file, document) => {
-          void onSaveAnalysisNotebook(file, document)
-        }}
-        onCreateNotebook={(cwd) => {
-          void onCreateAnalysisNotebook(cwd)
-        }}
-      />
+      <Suspense
+        fallback={
+          <Box
+            role="status"
+            aria-live="polite"
+            sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Typography variant="body2" color="text.secondary">
+              正在加载分析工作区…
+            </Typography>
+          </Box>
+        }
+      >
+        <AnalysisView
+          hideLeftRail
+          notebookRegistry={analysisNotebookRegistry}
+          notebookFile={activeAnalysisNotebook}
+          workspaceFileTabs={workspaceFileTabs}
+          activeWorkspaceFilePath={activeWorkspaceFilePath}
+          onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
+          onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
+          isLoadingNotebooks={isLoadingAnalysisNotebooks}
+          isOpeningNotebook={isOpeningAnalysisNotebook}
+          notebookError={analysisNotebookError}
+          notebookContentError={analysisNotebookContentError}
+          kernelDiagnostics={analysisKernelDiagnostics}
+          isLoadingKernels={isLoadingAnalysisKernels}
+          kernelError={analysisKernelError}
+          notebookSessionStatus={analysisNotebookSessionStatus}
+          isStartingNotebookSession={isStartingAnalysisNotebookSession}
+          notebookSessionError={analysisNotebookSessionError}
+          executingNotebookCellId={executingAnalysisCellId}
+          notebookCellExecutionError={analysisCellExecutionError}
+          agentFocus={analysisAgentFocus}
+          onRefreshNotebooks={() => {
+            void refreshAnalysisNotebooks()
+          }}
+          onStartNotebookSession={(file, document) => {
+            return onStartAnalysisNotebookSession(file, document)
+          }}
+          onSyncNotebookDraft={(file, document) => {
+            void onSyncAnalysisNotebookDraft(file, document)
+          }}
+          onNotebookDirtyChange={onNotebookDirtyChange}
+          onStopNotebookSession={(file) => {
+            return onStopAnalysisNotebookSession(file)
+          }}
+          onRunNotebookCell={(file, document, cellId) => {
+            void onRunAnalysisNotebookCell(file, document, cellId)
+          }}
+          onStopNotebookCell={(file, cellId) => {
+            void onStopAnalysisNotebookCell(file, cellId)
+          }}
+          onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
+          onFormatNotebookCell={onFormatAnalysisNotebookCell}
+          onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+          onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
+          notebookAiModelOptions={availableModels}
+          notebookAiDefaultModel={notebookAiDefaultModel}
+          onPickNotebookContextFiles={onPickInputFiles}
+          onInitializeProjectAnalysis={(cwd) => {
+            void onInitializeProjectAnalysis(cwd)
+          }}
+          onOpenNotebook={(path) => {
+            onOpenNotebookWorkspaceFile(path)
+          }}
+          onCloseNotebook={() => {
+            closeActiveNotebook()
+            navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+          }}
+          onSaveNotebook={(file, document) => {
+            void onSaveAnalysisNotebook(file, document)
+          }}
+          onCreateNotebook={(cwd) => {
+            void onCreateAnalysisNotebook(cwd)
+          }}
+        />
+      </Suspense>
     )
 
   const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (

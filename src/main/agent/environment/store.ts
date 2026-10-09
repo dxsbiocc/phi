@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import {
@@ -65,7 +66,14 @@ function readPersisted(agentDir: string): PersistedEnvironmentFile {
 
 function writePersisted(agentDir: string, data: PersistedEnvironmentFile): void {
   mkdirSync(agentDir, { recursive: true })
-  writeFileSync(getEnvironmentPath(agentDir), `${JSON.stringify(data, null, 2)}\n`, 'utf-8')
+  const path = getEnvironmentPath(agentDir)
+  const temporary = `${path}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temporary, `${JSON.stringify(data, null, 2)}\n`, 'utf-8')
+    renameSync(temporary, path)
+  } finally {
+    rmSync(temporary, { force: true })
+  }
 }
 
 function normalizeCustomPaths(raw: unknown): PersistedCustomPaths {

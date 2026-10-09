@@ -47,10 +47,20 @@ export default defineConfig({
     plugins: [copyOmpWorkerPlugin(), copyTerminalWorkersPlugin()],
     build: {
       rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'environment-worker': resolve('src/main/agent/environment/scan-worker.ts')
+        },
         output: {
           format: 'es',
           entryFileNames: '[name].mjs',
-          chunkFileNames: '[name].mjs'
+          chunkFileNames: '[name].mjs',
+          // Both entry points use the runtime barrel. Keep its mutually dependent
+          // modules together so exported bindings initialize in the same chunk.
+          manualChunks(id): string | undefined {
+            if (id.includes('/src/main/agent/envs/')) return 'environment-runtime'
+            return undefined
+          }
         }
       }
     }

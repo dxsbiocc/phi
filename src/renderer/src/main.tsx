@@ -5,6 +5,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { AppErrorBoundary } from './components/AppErrorBoundary'
+import { observeWindowFirstFrame } from './lib/windowStartup'
 
 // Auto-hide scrollbars: scrolling reveals the capsule thumb (see base.css);
 // 0.5s after scrolling stops it fades out over 250ms (the theme's standard
@@ -60,7 +61,9 @@ function initScrollbarAutoHide(): void {
 }
 initScrollbarAutoHide()
 
-createRoot(document.getElementById('root')!).render(
+const root = document.getElementById('root')!
+observeWindowFirstFrame(root)
+createRoot(root).render(
   <StrictMode>
     <AppErrorBoundary>
       <App />
