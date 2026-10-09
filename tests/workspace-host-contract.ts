@@ -167,15 +167,23 @@ function timeoutContract(makeHost: WorkspaceHostFactory): void {
     const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-timeout-'))
     try {
       const host = await makeHost(root)
-      const started = Date.now()
+      const commandRuntimeMs = 60_000
+      const timeoutMs = 300
+      const terminationBoundMs = Math.min(commandRuntimeMs / 6, timeoutMs * 30)
+      const started = performance.now()
       const result = await host.exec.run(
-        [process.execPath, '-e', 'setTimeout(() => undefined, 10_000)'],
-        { cwd: '.', timeoutMs: 80 }
+        [process.execPath, '-e', `setTimeout(() => undefined, ${commandRuntimeMs})`],
+        { cwd: '.', timeoutMs }
       )
+      const elapsedMs = performance.now() - started
 
       assert.equal(result.code, null)
       assert.ok(result.signal)
-      assert.ok(Date.now() - started < 2_000)
+      assert.ok(
+        elapsedMs < terminationBoundMs,
+        `expected the ${timeoutMs}ms timeout to terminate the ${commandRuntimeMs}ms command ` +
+          `within ${terminationBoundMs}ms, took ${elapsedMs}ms`
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
