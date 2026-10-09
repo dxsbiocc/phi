@@ -176,10 +176,11 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
     - 验证方式：每一块都在只含该块改动的干净 `HEAD` 副本里重跑 typecheck、架构检查、ESLint 与相关测试，不采信带用户在途改动的工作区结果。R1.5 末次为 56 个测试文件 448/448；两个 Linux 产物确认为静态链接（amd64 为 3,252,384 字节）。注：同一份源码在不同时间点构建出过不同的 sha256（`2428c95c…` 与 `913a9268…`），原因未查明，所以**不要把构建当作跨时间可复现**；完整性依赖安装时服务器文件与构建清单的哈希比对，这一点已在真实服务器上验证。Go 1.27.2 的四个平台校验值已与 go.dev 官方 JSON 逐项核对。
     - **真实服务器验证（2026-10-09，GPU 与 HPC-node3，驱动脚本经项目自己的探测/注册表/SshHost 代码）**：
       - 通过：GPU 机探测结果与真实值一致；有档案时 helper 装上、`--selftest` 通过、会话期间 1 个进程、释放后 0 个；删除或截断 helper 后下次连接自动重装；降级到纯 SSH 时读写与命令仍正常；两台服务器清理干净。HPC-node3（glibc 2.17）上手动上传 helper：`--version`、`--selftest` 通过，`serve` 在 stdin 关闭时退出码 0，无残留进程。
-      - **发现三个缺陷（R1.6 修复）**：(1) 没有缓存档案时 helper 永远不安装，因为 `RemoteWorkspaceHostRegistry.create` 只在读到缓存档案时才带 helper 配置，用户不先点「测试连接」就走纯 SSH；(2) HPC-node3 上能力探测超过 30 秒默认超时，整份档案变成全部未知（连 `uname` 都丢），helper 因此被降级，探测应分成快速阶段（平台、libc、存储）与慢速阶段（工具链版本），慢阶段超时不得丢掉快阶段结果；(3) 平台未知时降级原因被写成「remote helper supports Linux only」，应为「平台未知（探测不完整）」，且不完整的档案不应被当作最终结果缓存。
+      - **发现三个缺陷（已由 R1.6 修复，提交 `2fe21b7e`；它依赖的“开发模式按需准备 helper”先提交为 `fb9a95d4`）**：(1) 没有缓存档案时 helper 永远不安装，因为 `RemoteWorkspaceHostRegistry.create` 只在读到缓存档案时才带 helper 配置，用户不先点「测试连接」就走纯 SSH；(2) HPC-node3 上能力探测超过 30 秒默认超时，整份档案变成全部未知（连 `uname` 都丢），helper 因此被降级，探测应分成快速阶段（平台、libc、存储）与慢速阶段（工具链版本），慢阶段超时不得丢掉快阶段结果；(3) 平台未知时降级原因被写成「remote helper supports Linux only」，应为「平台未知（探测不完整）」，且不完整的档案不应被当作最终结果缓存。
       - **R1.6 修复后重跑（同日，GPU 与 HPC-node3）**：(1) 无缓存档案时 helper 自动安装并运行（两台均是），释放后进程为 0；(2) HPC-node3 上探测从超时变为 76 秒内完成，平台与 libc（glibc 2.17）、存储、git/java/sbatch/singularity 完整且正确，`nextflow` 与 `conda` 如实标为「版本检查超时」而非「未安装」；(3) 删除或截断 helper 后自动重装，降级时工具仍可用。两台服务器验证后无残留进程、目录或 `~/.phi`。helper 在 glibc 2.17 上以 `fs.stat` 实测可响应。
       - **统计 helper 进程时要用进程名**（`ps -u "$(id -un)" -o comm= | grep -c '^phi-helper$'`）。HPC 的老版本 `ps` 在管道输出时把整行截断在约 101 个字符，按命令行统计会漏掉 helper，曾因此误判「helper 没有被使用」。
       - **仍未验证**：在真实 Phi 界面里「测试连接」与档案摘要的展示与脱敏、E 组 Wrapper 回归（RNA-seq 小样本、提交后立即取消、并发取消、Slurm `scancel`）、`remote-ssh-real-identity` 测试（需在沙箱外跑）。
+    - 待收紧：R1.1 契约测试 `workspace host terminates commands after their timeout` 断言耗时 `< 2000ms`，机器上有其他测试并行时会在约 2.1 秒失败（单独重跑 6/6 通过），应放宽上限或改为相对超时的比例。
     - 启动调整（2026-10-09）：`predev`/`prestart` 不再准备 Go 或编译 Helper。开发版在首次远程使用时按服务器架构准备，源码、工具链指纹及产物校验一致时复用；发布 `build` 仍生成两个 Linux 目标，安装后的客户端连接服务器时使用预构建产物。
     - 遗留：远程 Nextflow 的 curl 安装器为过渡实现，见第 2 步；并发取消测试的 `waitFor` 原先没有超时上限，已在新增回归测试里加了有限超时，旧测试未改。
 
