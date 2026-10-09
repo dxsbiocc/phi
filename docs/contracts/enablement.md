@@ -48,15 +48,21 @@ For an item in a project, the first defined value wins:
 
 | Source                                                                                                           | Default                           |
 | ---------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| core skills shipped with Phi that the engine depends on (`create-wrapper`, `nextflow`)                           | enabled; cannot be disabled       |
-| other bundled skills (`resources/skills/`)                                                                       | disabled — added from the catalog |
+| core authoring skill shipped with Phi that the engine depends on (`create-wrapper`)                              | enabled; cannot be disabled       |
+| legacy bundled skill source markers                                                                              | disabled unless explicitly enabled |
 | skills installed as packages, user-authored skills (`~/.phi/skills/`), project skills (`<project>/.phi/skills/`) | enabled                           |
-| bundled plugins                                                                                                  | enabled                           |
+| legacy bundled plugin installations                                                                              | enabled                           |
 | plugins installed as packages                                                                                    | enabled                           |
 | wrapper packages (bundled or installed) and user-authored wrappers (1.1.0)                                       | enabled                           |
 | connector packages the user added (1.1.0)                                                                        | enabled                           |
 
 The core list lives in one place in the engine and is shown in the UI as "built-in".
+The standalone `nextflow` skill is installed from the content catalog and follows
+ordinary skill-package enablement, including global and project overrides. Its
+enablement does not change the bundled `phi-nextflow` runtime environment.
+Current Phi builds load only the core authoring skill from `resources/skills/`;
+domain skills and plugins are installed explicitly. The legacy source rows above
+describe compatibility state, not a bundled domain catalog or startup installation.
 
 ## 4. Effect
 
@@ -87,3 +93,6 @@ decision record and a deprecation window.
 ## Changes
 
 - **1.1.0** (2026-10-02): `wrapper:` and `mcp:` items with their defaults. Additive.
+- **Source alignment** (2026-10-09): `create-wrapper` is the remaining engine-owned
+  core skill; standalone `nextflow` uses installed-package enablement. State format
+  and resolution rules are unchanged.

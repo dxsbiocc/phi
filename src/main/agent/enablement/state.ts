@@ -15,7 +15,7 @@ import type { SkillSourceCategory } from '../../../shared/skillTypes'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 
-export const CORE_SKILL_NAMES = ['create-wrapper', 'nextflow'] as const
+export const CORE_SKILL_NAMES = ['create-wrapper'] as const
 
 export type EnablementSource = SkillSourceCategory
 

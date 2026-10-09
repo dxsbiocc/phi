@@ -362,6 +362,128 @@ test('setSkillDisabled updates enablement without rewriting skill files', async 
   assert.equal(readFileSync(filePath, 'utf-8'), original)
 })
 
+test('installed Nextflow can be disabled for the main agent, overridden per project, and re-enabled', async () => {
+  const { listSkills, setSkillDisabled } = await import('../src/main/agent/resources')
+  const { createDeterministicTarGz } = await import('../src/main/agent/packages/archive')
+  const { installPackages, planInstall, readRegistry } =
+    await import('../src/main/agent/packages/installer')
+  const { createRuntimeResourceLoader } = await import('../src/main/agent/runtime/runtime-adapter')
+  const { filterEnabledMainSkills, selectDeclaredSpecialistSkills, setEnabled } =
+    await import('../src/main/agent/enablement')
+  const registryDir = join(tempRoot, 'nextflow-registry')
+  mkdirSync(registryDir)
+  const skillText =
+    '---\nname: nextflow\ndescription: Build and debug Nextflow pipelines.\n---\nRead the supplied pipeline before editing it.\n'
+  const files = [
+    { path: 'SKILL.md', data: Buffer.from(skillText) },
+    {
+      path: 'phi-package.yaml',
+      data: Buffer.from(
+        'schemaVersion: 1\nid: nextflow\ntype: skill\nversion: 1.0.0\ntitle: Nextflow\nsummary: Installed workflow authoring fixture.\nfiles: files.json\n'
+      )
+    }
+  ]
+  const archive = createDeterministicTarGz([
+    ...files,
+    {
+      path: 'files.json',
+      data: Buffer.from(
+        JSON.stringify({
+          version: 1,
+          files: files.map(({ path, data }) => ({
+            path,
+            size: data.length,
+            sha256: createHash('sha256').update(data).digest('hex')
+          }))
+        })
+      )
+    }
+  ])
+  const archiveName = 'skill-nextflow-1.0.0.tar.gz'
+  writeFileSync(join(registryDir, archiveName), archive)
+  writeFileSync(
+    join(registryDir, 'index.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: '2026-10-09T00:00:00Z',
+      packages: [
+        {
+          id: 'nextflow',
+          type: 'skill',
+          version: '1.0.0',
+          title: 'Nextflow',
+          summary: 'Installed workflow authoring fixture.',
+          archive: archiveName,
+          sha256: createHash('sha256').update(archive).digest('hex'),
+          size: archive.length,
+          dependsOn: []
+        }
+      ]
+    })
+  )
+  const options = { agentDir, appVersion: '1.0.0' }
+  const installed = await installPackages(
+    planInstall(readRegistry(registryDir), { type: 'skill', id: 'nextflow' }, options),
+    options
+  )
+  const nextflowPackage = installed.find((item) => item.type === 'skill' && item.id === 'nextflow')
+  assert.ok(nextflowPackage)
+  const filePath = join(nextflowPackage.dir, 'SKILL.md')
+  const initial = (await listSkills(projectA)).find((skill) => skill.filePath === filePath)
+  assert.ok(initial)
+  assert.equal(initial.sourceCategory, 'installed-package')
+  assert.equal(initial.core, false)
+  assert.equal(initial.enabled, true)
+
+  const disabled = (await setSkillDisabled(filePath, true, projectA)).find(
+    (skill) => skill.filePath === filePath
+  )
+  assert.equal(disabled?.disabled, true)
+  assert.equal(disabled?.globalEnabled, false)
+  const loader = createRuntimeResourceLoader({ cwd: projectA, agentDir })
+  await loader.reload()
+  const skills = loader.getSkills().skills
+  assert.equal(
+    filterEnabledMainSkills(skills, { agentDir, projectDir: projectA }).some(
+      (skill) => skill.name === 'nextflow'
+    ),
+    false
+  )
+  assert.deepEqual(
+    selectDeclaredSpecialistSkills(skills, ['nextflow']).map((skill) => skill.name),
+    ['nextflow']
+  )
+
+  setEnabled('skill:nextflow', true, { agentDir, projectDir: projectA })
+  const overridden = (await listSkills(projectA)).find((skill) => skill.filePath === filePath)
+  assert.equal(overridden?.enabled, true)
+  assert.equal(overridden?.globalEnabled, false)
+  assert.equal(overridden?.projectOverride, true)
+  assert.equal(
+    filterEnabledMainSkills(skills, { agentDir, projectDir: projectA }).some(
+      (skill) => skill.name === 'nextflow'
+    ),
+    true
+  )
+  assert.equal(
+    (await listSkills(projectB)).find((skill) => skill.filePath === filePath)?.disabled,
+    true
+  )
+
+  setEnabled('skill:nextflow', null, { agentDir, projectDir: projectA })
+  const enabled = (await setSkillDisabled(filePath, false, projectA)).find(
+    (skill) => skill.filePath === filePath
+  )
+  assert.equal(enabled?.enabled, true)
+  assert.equal(enabled?.core, false)
+  assert.equal(readFileSync(filePath, 'utf8'), skillText)
+  assert.equal(
+    filterEnabledMainSkills(skills, { agentDir, projectDir: projectA }).some(
+      (skill) => skill.name === 'nextflow'
+    ),
+    true
+  )
+})
 
 test('deleteSkill removes mutable cataloged skill directories', async () => {
   const { deleteSkill } = await import('../src/main/agent/resources')

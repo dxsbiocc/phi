@@ -66,12 +66,12 @@ test('source defaults keep only non-core bundled skills disabled', () => {
     const logger = createLogger()
     const options = { agentDir, logger }
 
-    assert.deepEqual(CORE_SKILL_NAMES, ['create-wrapper', 'nextflow'])
+    assert.deepEqual(CORE_SKILL_NAMES, ['create-wrapper'])
     assert.equal(isCoreSkill('create-wrapper'), true)
-    assert.equal(isCoreSkill('nextflow'), true)
+    assert.equal(isCoreSkill('nextflow'), false)
     assert.equal(isCoreSkill('scanpy'), false)
     assert.equal(isEnabled({ key: 'skill:create-wrapper', source: 'bundled' }, options), true)
-    assert.equal(isEnabled({ key: 'skill:nextflow', source: 'bundled' }, options), true)
+    assert.equal(isEnabled({ key: 'skill:nextflow', source: 'installed-package' }, options), true)
     assert.equal(isEnabled({ key: 'skill:scanpy', source: 'bundled' }, options), false)
     assert.equal(isEnabled({ key: 'skill:scanpy', source: 'installed-package' }, options), true)
     assert.equal(isEnabled({ key: 'skill:mine', source: 'user' }, options), true)
@@ -143,7 +143,7 @@ test('project overrides are stored under the project real path', () => {
   })
 })
 
-test('core skills stay enabled and cannot be disabled by stored or requested overrides', () => {
+test('core authoring stays enabled while installed Nextflow honors stored and requested overrides', () => {
   withSandbox(({ root, agentDir }) => {
     const logger = createLogger()
     const projectDir = join(root, 'project')
@@ -163,16 +163,20 @@ test('core skills stay enabled and cannot be disabled by stored or requested ove
       true
     )
     assert.equal(
-      isEnabled({ key: 'skill:nextflow', source: 'bundled' }, { agentDir, logger }),
-      true
+      isEnabled({ key: 'skill:nextflow', source: 'installed-package' }, { agentDir, logger }),
+      false
     )
     assert.throws(
       () => setEnabled('skill:create-wrapper', false, { agentDir, logger }),
       /cannot be disabled/
     )
-    assert.throws(
-      () => setEnabled('skill:nextflow', false, { agentDir, logger, projectDir }),
-      /cannot be disabled/
+    setEnabled('skill:nextflow', false, { agentDir, logger, projectDir })
+    assert.equal(
+      isEnabled(
+        { key: 'skill:nextflow', source: 'installed-package' },
+        { agentDir, logger, projectDir }
+      ),
+      false
     )
   })
 })
