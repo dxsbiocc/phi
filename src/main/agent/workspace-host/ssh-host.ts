@@ -1,5 +1,7 @@
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
+import { refreshCapabilityProfile, saveCapabilityProfile } from './capability-profile-store'
 import { openHelperWorkspaceHost, type HelperWorkspaceHost } from './helper-host'
+import { resolveRemoteHelperPreparation } from './helper-development'
 import { installRemoteHelper, recordRemoteHelperFallback } from './helper-installer'
 import { createSshExecution } from './ssh-host-exec'
 import { createSshFileSystem } from './ssh-host-fs'
@@ -33,6 +35,18 @@ function workspaceProfile(profile: HostCapabilityProfile): HostCapabilityProfile
   }
 }
 
+function missingArtifactProfile(profile: ProbedHostCapabilityProfile): ProbedHostCapabilityProfile {
+  const reason = 'bundled remote helper artifact is unavailable'
+  const fallback = `${reason}; using pure SSH fallback`
+  return {
+    ...profile,
+    helperCompatibility: { state: 'degraded', reason },
+    fs: { state: 'degraded', reason: fallback },
+    exec: { state: 'degraded', reason: fallback },
+    background: { state: 'degraded', reason: fallback }
+  }
+}
+
 export class SshHost implements WorkspaceHost {
   readonly fs: WorkspaceHost['fs']
   readonly exec: WorkspaceHost['exec']
@@ -44,6 +58,7 @@ export class SshHost implements WorkspaceHost {
   private readonly pureExec: WorkspaceHost['exec']
   private profile: HostCapabilityProfile
   private helperProfile?: ProbedHostCapabilityProfile
+  private helperConfig?: SshHelperConfig
   private helper?: HelperWorkspaceHost
   private helperInitialization?: Promise<void>
   private helperDisabled = false
@@ -57,6 +72,7 @@ export class SshHost implements WorkspaceHost {
     this.fs = this.negotiatedFileSystem()
     this.exec = this.negotiatedExecution()
     this.helperProfile = config.helper?.profile
+    this.helperConfig = config.helper
     this.profile = workspaceProfile(
       config.helper?.profile ?? config.capabilityProfile ?? this.pureCapabilities()
     )
@@ -120,7 +136,7 @@ export class SshHost implements WorkspaceHost {
 
   private async selected(): Promise<Pick<WorkspaceHost, 'fs' | 'exec'>> {
     if (this.disposed) throw new Error('SSH workspace host is closed')
-    if (!this.context.helper || this.helperDisabled) {
+    if ((!this.context.helper && !this.context.helperBootstrap) || this.helperDisabled) {
       return { fs: this.pureFs, exec: this.pureExec }
     }
     this.helperInitialization ??= this.initializeHelper()
@@ -130,8 +146,6 @@ export class SshHost implements WorkspaceHost {
   }
 
   private async initializeHelper(): Promise<void> {
-    const config = this.context.helper
-    if (!config) return
     const session = await this.context.connect().catch((error) => {
       this.disableHelper(error)
       return undefined
@@ -139,6 +153,11 @@ export class SshHost implements WorkspaceHost {
     if (!session) return
     try {
       if (this.disposed) {
+        await session.close()
+        return
+      }
+      const config = await this.resolveHelperConfig(session)
+      if (!config) {
         await session.close()
         return
       }
@@ -177,6 +196,39 @@ export class SshHost implements WorkspaceHost {
     if (this.disposed) await this.helper.close()
   }
 
+  private async resolveHelperConfig(
+    session: Parameters<typeof refreshCapabilityProfile>[0]
+  ): Promise<SshHelperConfig | undefined> {
+    if (this.helperConfig) return this.helperConfig
+    const bootstrap = this.context.helperBootstrap
+    if (!bootstrap) return undefined
+    const profile = await refreshCapabilityProfile(session, bootstrap.profileKey, {
+      agentDir: bootstrap.agentDir
+    })
+    this.helperProfile = profile
+    this.profile = workspaceProfile(profile)
+    const preparation = resolveRemoteHelperPreparation(profile, {
+      resourceRoot: bootstrap.resourceRoot,
+      developmentRoot: bootstrap.developmentRoot
+    })
+    if (!preparation) {
+      const fallback = missingArtifactProfile(profile)
+      this.helperProfile = fallback
+      this.profile = workspaceProfile(fallback)
+      saveCapabilityProfile(bootstrap.profileKey, fallback, bootstrap.agentDir)
+      this.helperDisabled = true
+      return undefined
+    }
+    this.helperConfig = {
+      profile,
+      profileKey: bootstrap.profileKey,
+      artifact: preparation.artifact,
+      prepareArtifact: preparation.prepareArtifact,
+      agentDir: bootstrap.agentDir
+    }
+    return this.helperConfig
+  }
+
   private helperDisconnected(error: Error): void {
     const helper = this.helper
     this.helper = undefined
@@ -185,7 +237,7 @@ export class SshHost implements WorkspaceHost {
   }
 
   private disableHelper(error: unknown): void {
-    const config = this.context.helper
+    const config = this.helperConfig
     if (!config || this.helperDisabled) return
     this.helperDisabled = true
     const reason = error instanceof Error ? error.message : 'remote helper transport failed'

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { describe, it } from 'node:test'
 
 import {
-  HOST_CAPABILITY_PROBE_SCRIPT,
+  HOST_CAPABILITY_FAST_PROBE_SCRIPT,
   parseHostCapabilityProbe,
   probeHostCapabilities
 } from '../src/main/agent/workspace-host/probe'
@@ -185,8 +185,8 @@ tool.git.version=git version 2.43.0
 
     assert.equal(calls.length, 1)
     assert.equal(calls[0]?.command, 'sh -s')
-    assert.equal(calls[0]?.input, HOST_CAPABILITY_PROBE_SCRIPT)
-    assert.match(HOST_CAPABILITY_PROBE_SCRIPT, /^#!\/bin\/sh\n/)
+    assert.equal(calls[0]?.input, HOST_CAPABILITY_FAST_PROBE_SCRIPT)
+    assert.match(HOST_CAPABILITY_FAST_PROBE_SCRIPT, /^#!\/bin\/sh\n/)
     assert.equal(profile.probedAt, '2026-10-09T00:00:00.000Z')
   })
 

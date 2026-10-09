@@ -5,7 +5,14 @@ import type {
   HostStorageCapabilities
 } from './types'
 import { HOST_CAPABILITY_PROFILE_VERSION } from './types'
-import { PROBE_END_SENTINEL, PROBE_START_SENTINEL } from './probe-script'
+import {
+  FAST_PROBE_END_SENTINEL,
+  FAST_PROBE_START_SENTINEL,
+  PROBE_END_SENTINEL,
+  PROBE_START_SENTINEL,
+  SLOW_PROBE_END_SENTINEL,
+  SLOW_PROBE_START_SENTINEL
+} from './probe-script'
 
 const HELPER_MISSING = 'helper 未安装'
 const KNOWN_OPERATING_SYSTEMS = [
@@ -33,6 +40,19 @@ interface ProbeBlock {
   rows: ReadonlyMap<string, string>
   hasStart: boolean
   hasEnd: boolean
+  phase: 'legacy' | 'split'
+  fastComplete: boolean
+  slowStatus: 'complete' | 'incomplete' | 'timed-out' | 'failed'
+}
+
+interface SentinelBlock {
+  rows: ReadonlyMap<string, string>
+  hasStart: boolean
+  hasEnd: boolean
+}
+
+interface ProbeParseOptions {
+  slowFailure?: 'timed-out' | 'failed'
 }
 
 export interface ProbedHostCapabilityProfile extends HostCapabilityProfile {
@@ -71,11 +91,15 @@ function knownValue(value: string | undefined, allowed: readonly string[]): stri
   return normalized && allowed.includes(normalized) ? normalized : 'unknown'
 }
 
-function parseBlock(output: string): ProbeBlock {
-  const start = output.lastIndexOf(PROBE_START_SENTINEL)
-  const end = start < 0 ? -1 : output.indexOf(PROBE_END_SENTINEL, start)
+function parseSentinelBlock(
+  output: string,
+  startSentinel: string,
+  endSentinel: string
+): SentinelBlock {
+  const start = output.lastIndexOf(startSentinel)
+  const end = start < 0 ? -1 : output.indexOf(endSentinel, start)
   const body =
-    start < 0 ? '' : output.slice(start + PROBE_START_SENTINEL.length, end < 0 ? undefined : end)
+    start < 0 ? '' : output.slice(start + startSentinel.length, end < 0 ? undefined : end)
   const entries = body.split(/\r?\n/).flatMap((line): Array<[string, string]> => {
     const separator = line.indexOf('=')
     if (separator <= 0) return []
@@ -84,17 +108,58 @@ function parseBlock(output: string): ProbeBlock {
   return { rows: new Map(entries), hasStart: start >= 0, hasEnd: end >= 0 }
 }
 
+function parseBlock(output: string, options: ProbeParseOptions): ProbeBlock {
+  const fast = parseSentinelBlock(output, FAST_PROBE_START_SENTINEL, FAST_PROBE_END_SENTINEL)
+  if (fast.hasStart) {
+    const slow = parseSentinelBlock(output, SLOW_PROBE_START_SENTINEL, SLOW_PROBE_END_SENTINEL)
+    const slowComplete = slow.hasEnd && slow.rows.get('probe.slow_complete') === '1'
+    return {
+      rows: new Map([...fast.rows, ...slow.rows]),
+      hasStart: true,
+      hasEnd: fast.hasEnd && slow.hasEnd,
+      phase: 'split',
+      fastComplete: fast.hasEnd && fast.rows.get('probe.fast_complete') === '1',
+      slowStatus: options.slowFailure ?? (slowComplete ? 'complete' : 'incomplete')
+    }
+  }
+  const legacy = parseSentinelBlock(output, PROBE_START_SENTINEL, PROBE_END_SENTINEL)
+  return {
+    ...legacy,
+    phase: 'legacy',
+    fastComplete: legacy.hasEnd && legacy.rows.get('probe.complete') === '1',
+    slowStatus: 'complete'
+  }
+}
+
 function probeCapability(block: ProbeBlock): HostCapability {
   if (!block.hasStart) return unavailable('probe output did not contain a valid sentinel block')
-  if (!block.hasEnd || block.rows.get('probe.complete') !== '1') {
-    return { state: 'degraded', reason: 'probe output was incomplete' }
+  if (block.phase === 'legacy') {
+    if (!block.hasEnd || block.rows.get('probe.complete') !== '1') {
+      return { state: 'degraded', reason: 'probe output was incomplete' }
+    }
+    return { state: 'available' }
+  }
+  if (!block.fastComplete) {
+    return unavailable('fast capability detection was incomplete')
+  }
+  if (block.slowStatus === 'timed-out') {
+    return { state: 'degraded', reason: 'slow capability detection timed out' }
+  }
+  if (block.slowStatus === 'failed') {
+    return { state: 'degraded', reason: 'slow capability detection failed' }
+  }
+  if (block.slowStatus === 'incomplete') {
+    return { state: 'degraded', reason: 'slow capability detection was incomplete' }
   }
   return { state: 'available' }
 }
 
 function prerequisite(rows: ReadonlyMap<string, string>, name: string): HostCapability {
   if (rows.get(`prerequisite.${name}.available`) === '1') return { state: 'available' }
-  return unavailable(`${name} is not installed`)
+  if (rows.get(`prerequisite.${name}.available`) === '0') {
+    return unavailable(`${name} is not installed`)
+  }
+  return unavailable(`${name} availability could not be determined`)
 }
 
 function safeVersion(value: string | undefined): string | undefined {
@@ -123,26 +188,41 @@ function availableSpaceCapability(value: number | null): HostCapability {
     : { state: 'available' }
 }
 
-function sharedFileSystem(value: string | undefined): HostCapability {
+function incompleteDetection(label: string, status: ProbeBlock['slowStatus']): HostCapability {
+  const detail =
+    status === 'timed-out' ? 'timed out' : status === 'failed' ? 'failed' : 'was incomplete'
+  return { state: 'degraded', reason: `${label} detection ${detail}` }
+}
+
+function sharedFileSystem(
+  value: string | undefined,
+  status: ProbeBlock['slowStatus']
+): HostCapability {
   if (value === '1') return { state: 'available' }
   if (value === '0') return unavailable('filesystem appears to be local')
+  if (status !== 'complete') return incompleteDetection('shared filesystem', status)
   return unavailable('shared filesystem could not be determined')
 }
 
 function toolCapability(
   rows: ReadonlyMap<string, string>,
   key: string,
-  label = key
+  label: string,
+  status: ProbeBlock['slowStatus']
 ): HostCapability {
   const availability = rows.get(`tool.${key}.available`)
+  if (rows.get(`tool.${key}.version_timeout`) === '1') {
+    return { state: 'degraded', reason: `${label} version check timed out` }
+  }
+  if (availability === 'unknown') {
+    return { state: 'degraded', reason: `${label} availability could not be determined` }
+  }
   if (availability === '0') {
     return unavailable(`${label} is not installed`)
   }
   if (availability !== '1') {
+    if (status !== 'complete') return incompleteDetection(label, status)
     return unavailable(`${label} availability could not be determined`)
-  }
-  if (rows.get(`tool.${key}.version_timeout`) === '1') {
-    return { state: 'degraded', reason: `${label} version check timed out` }
   }
   if (rows.get(`tool.${key}.version_unavailable`) === '1') {
     return { state: 'degraded', reason: `${label} version check failed` }
@@ -151,21 +231,25 @@ function toolCapability(
   return { state: 'available', ...(version ? { version } : {}) }
 }
 
-function containerRuntimes(rows: ReadonlyMap<string, string>): HostContainerRuntimeCapabilities {
+function containerRuntimes(
+  rows: ReadonlyMap<string, string>,
+  status: ProbeBlock['slowStatus']
+): HostContainerRuntimeCapabilities {
   return {
-    docker: toolCapability(rows, 'container.docker', 'docker'),
-    singularity: toolCapability(rows, 'container.singularity', 'singularity'),
-    apptainer: toolCapability(rows, 'container.apptainer', 'apptainer'),
-    podman: toolCapability(rows, 'container.podman', 'podman')
+    docker: toolCapability(rows, 'container.docker', 'docker', status),
+    singularity: toolCapability(rows, 'container.singularity', 'singularity', status),
+    apptainer: toolCapability(rows, 'container.apptainer', 'apptainer', status),
+    podman: toolCapability(rows, 'container.podman', 'podman', status)
   }
 }
 
 function containerCapability(
   rows: ReadonlyMap<string, string>,
-  runtimes: HostContainerRuntimeCapabilities
+  runtimes: HostContainerRuntimeCapabilities,
+  status: ProbeBlock['slowStatus']
 ): HostCapability {
   if (rows.has('tool.container.available')) {
-    const legacy = toolCapability(rows, 'container', 'container runtime')
+    const legacy = toolCapability(rows, 'container', 'container runtime', status)
     const name = rows.get('tool.container.name')
     const safeName = ['docker', 'singularity', 'apptainer', 'podman'].find((item) => item === name)
     if (legacy.state !== 'available') return legacy
@@ -174,6 +258,12 @@ function containerCapability(
       ...legacy,
       version: legacy.version ? `${safeName} ${legacy.version}` : safeName
     }
+  }
+  const observedRuntime = ['docker', 'singularity', 'apptainer', 'podman'].some((name) =>
+    rows.has(`tool.container.${name}.available`)
+  )
+  if (status !== 'complete' && !observedRuntime) {
+    return incompleteDetection('container runtime', status)
   }
   const available = Object.entries(runtimes).find(([, capability]) =>
     ['available', 'degraded'].includes(capability.state)
@@ -204,7 +294,8 @@ function platform(rows: ReadonlyMap<string, string>): ProbedHostCapabilityProfil
   }
 }
 
-function storage(rows: ReadonlyMap<string, string>): HostStorageCapabilities {
+function storage(block: ProbeBlock): HostStorageCapabilities {
+  const { rows } = block
   const availableSpaceKiB = availableSpace(rows)
   return {
     homeWritable: flagCapability(
@@ -217,21 +308,22 @@ function storage(rows: ReadonlyMap<string, string>): HostStorageCapabilities {
     ),
     availableSpace: availableSpaceCapability(availableSpaceKiB),
     availableSpaceKiB,
-    sharedFileSystem: sharedFileSystem(rows.get('storage.shared'))
+    sharedFileSystem: sharedFileSystem(rows.get('storage.shared'), block.slowStatus)
   }
 }
 
-function toolchain(rows: ReadonlyMap<string, string>): ProbedHostCapabilityProfile['toolchain'] {
-  const runtimes = containerRuntimes(rows)
+function toolchain(block: ProbeBlock): ProbedHostCapabilityProfile['toolchain'] {
+  const { rows, slowStatus } = block
+  const runtimes = containerRuntimes(rows, slowStatus)
   return {
-    git: toolCapability(rows, 'git'),
-    nextflow: toolCapability(rows, 'nextflow'),
-    java: toolCapability(rows, 'java'),
-    conda: toolCapability(rows, 'conda'),
-    sbatch: toolCapability(rows, 'sbatch'),
-    containerRuntime: containerCapability(rows, runtimes),
+    git: toolCapability(rows, 'git', 'git', slowStatus),
+    nextflow: toolCapability(rows, 'nextflow', 'nextflow', slowStatus),
+    java: toolCapability(rows, 'java', 'java', slowStatus),
+    conda: toolCapability(rows, 'conda', 'conda', slowStatus),
+    sbatch: toolCapability(rows, 'sbatch', 'sbatch', slowStatus),
+    containerRuntime: containerCapability(rows, runtimes, slowStatus),
     containerRuntimes: runtimes,
-    module: toolCapability(rows, 'module')
+    module: toolCapability(rows, 'module', 'module', slowStatus)
   }
 }
 
@@ -257,11 +349,14 @@ function baseProfile(block: ProbeBlock): ProbedHostCapabilityProfile {
       tar: prerequisite(rows, 'tar'),
       sha256sum: prerequisite(rows, 'sha256sum')
     },
-    storage: storage(rows),
-    toolchain: toolchain(rows)
+    storage: storage(block),
+    toolchain: toolchain(block)
   }
 }
 
-export function parseHostCapabilityProbe(output: string): ProbedHostCapabilityProfile {
-  return baseProfile(parseBlock(output))
+export function parseHostCapabilityProbe(
+  output: string,
+  options: ProbeParseOptions = {}
+): ProbedHostCapabilityProfile {
+  return baseProfile(parseBlock(output, options))
 }

@@ -46,6 +46,17 @@ function unavailableTool(label: string, capability: RemoteHostCapability): strin
   return `${label}：${capability.reason ?? fallback}`
 }
 
+function probeWarning(capability: RemoteHostCapability | undefined): string | null {
+  if (!capability || capability.state === 'available') return null
+  if (
+    capability.state === 'degraded' &&
+    /tim(?:e|ed)?\s*out|timeout|超时/i.test(capability.reason ?? '')
+  ) {
+    return '探测：部分检测超时'
+  }
+  return unavailableTool('探测', capability)
+}
+
 function formatSpace(availableSpaceKiB: number | null): string {
   if (availableSpaceKiB === null) return '未知'
   const gibibytes = availableSpaceKiB / 1024 / 1024
@@ -75,10 +86,10 @@ function environmentSummary(profile: RemoteHostCapabilityProfile): {
         unavailableTool('共享文件系统', profile.storage.sharedFileSystem)
       ].filter((warning): warning is string => Boolean(warning))
     : []
-  const probeWarning = profile.probe ? unavailableTool('探测', profile.probe) : null
+  const probeStatus = probeWarning(profile.probe)
   return {
     detail: profile.storage ? `可用空间：${formatSpace(profile.storage.availableSpaceKiB)}` : null,
-    warnings: [...(probeWarning ? [probeWarning] : []), ...prerequisiteWarnings, ...storageWarnings]
+    warnings: [...(probeStatus ? [probeStatus] : []), ...prerequisiteWarnings, ...storageWarnings]
   }
 }
 

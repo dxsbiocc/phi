@@ -1,18 +1,21 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 
 import {
   capabilityProfileStorePath,
+  capabilityProfileCacheKey,
   invalidateCapabilityProfile,
   readLatestCapabilityProfileForHost,
   readCapabilityProfile,
   refreshCapabilityProfile,
   saveCapabilityProfile
 } from '../src/main/agent/workspace-host/capability-profile-store'
+import { installRemoteHelper } from '../src/main/agent/workspace-host/helper-installer'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 
 const temporaryDirectories: string[] = []
 
@@ -71,6 +74,102 @@ describe('workspace host capability profile cache', () => {
     assert.equal(readCapabilityProfile(key, { agentDir, expectedProfileVersion: 2 }), undefined)
     invalidateCapabilityProfile(key, agentDir)
     assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
+  })
+
+  it('ignores an incomplete legacy profile so the next connection probes again', () => {
+    const agentDir = makeTempDir()
+    const key = { hostAlias: 'cluster', projectRoot: '/work/project' }
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(
+      capabilityProfileStorePath(agentDir),
+      `${JSON.stringify({
+        version: 1,
+        entries: { [capabilityProfileCacheKey(key)]: profile('unknown', 'unknown') },
+        latestByHost: {}
+      })}\n`
+    )
+
+    assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
+  })
+
+  it('does not persist a profile when fast capability detection failed', () => {
+    const agentDir = makeTempDir()
+    const key = { hostAlias: 'cluster', projectRoot: '/work/project' }
+    const detected = profile('Linux', 'x86_64')
+
+    saveCapabilityProfile(
+      key,
+      { ...detected, probe: { state: 'unavailable', reason: 'fast detection failed' } },
+      agentDir
+    )
+
+    assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
+  })
+
+  it('degrades an unknown platform accurately without caching it', async () => {
+    const agentDir = makeTempDir()
+    const key = { hostAlias: 'cluster', projectRoot: '/work/project' }
+    const unexpected = async (): Promise<never> => {
+      throw new Error('an unknown platform must not touch the remote session')
+    }
+    const session: RemoteSshSession = {
+      exec: unexpected,
+      readTextFile: unexpected,
+      writeTextFile: unexpected,
+      mkdirp: unexpected,
+      exists: unexpected,
+      uploadFile: unexpected,
+      close: async () => undefined
+    }
+    const result = await installRemoteHelper({
+      session,
+      profile: profile('unknown', 'unknown'),
+      profileKey: key,
+      artifact: { version: '0.1.0', localPath: '/unused', sha256: 'a'.repeat(64) },
+      agentDir
+    })
+
+    assert.match(result.reason, /platform.*unknown/i)
+    assert.match(result.reason, /retry.*next connection/i)
+    assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
+  })
+
+  it('forwards independent fast and slow timeouts when refreshing a profile', async () => {
+    const agentDir = makeTempDir()
+    let calls = 0
+    const refreshed = await refreshCapabilityProfile(
+      {
+        async execWithInput() {
+          calls += 1
+          if (calls === 1) {
+            return {
+              stdout:
+                '__PHI_CAPABILITY_PROBE_V2_FAST_BEGIN__\n' +
+                'platform.os=Linux\nplatform.arch=x86_64\nprobe.fast_complete=1\n' +
+                '__PHI_CAPABILITY_PROBE_V2_FAST_END__\n',
+              stderr: '',
+              code: 0,
+              signal: null
+            }
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 20))
+          return {
+            stdout:
+              '__PHI_CAPABILITY_PROBE_V2_SLOW_BEGIN__\n' +
+              'probe.slow_complete=1\n' +
+              '__PHI_CAPABILITY_PROBE_V2_SLOW_END__\n',
+            stderr: '',
+            code: 0,
+            signal: null
+          }
+        }
+      },
+      { hostAlias: 'cluster', projectRoot: '/work/project' },
+      { agentDir, timeoutMs: 5, fastTimeoutMs: 50, slowTimeoutMs: 50 }
+    )
+
+    assert.equal(calls, 2)
+    assert.deepEqual(refreshed.probe, { state: 'available' })
   })
 
   it('manually re-detects and atomically replaces the selected profile', async () => {

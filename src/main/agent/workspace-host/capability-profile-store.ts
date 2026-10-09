@@ -59,7 +59,10 @@ function isProfile(value: unknown): value is ProbedHostCapabilityProfile {
     typeof profile.profileVersion === 'number' &&
     typeof profile.probedAt === 'string' &&
     typeof profile.platform?.os === 'string' &&
+    profile.platform.os !== 'unknown' &&
     typeof profile.platform.arch === 'string' &&
+    profile.platform.arch !== 'unknown' &&
+    profile.probe?.state !== 'unavailable' &&
     typeof profile.toolchain === 'object' &&
     profile.toolchain !== null
   )
@@ -173,6 +176,13 @@ export function saveCapabilityProfile(
   profile: ProbedHostCapabilityProfile,
   agentDir = getPhiAgentDir()
 ): void {
+  if (
+    profile.platform.os === 'unknown' ||
+    profile.platform.arch === 'unknown' ||
+    profile.probe.state === 'unavailable'
+  ) {
+    return
+  }
   const store = readStore(agentDir)
   const cacheKey = capabilityProfileCacheKey(key)
   writeStore(agentDir, {
@@ -215,6 +225,8 @@ export async function refreshCapabilityProfile(
 ): Promise<ProbedHostCapabilityProfile> {
   const profile = await probeHostCapabilities(session, {
     timeoutMs: options.timeoutMs,
+    fastTimeoutMs: options.fastTimeoutMs,
+    slowTimeoutMs: options.slowTimeoutMs,
     now: options.now
   })
   saveCapabilityProfile(key, profile, options.agentDir)

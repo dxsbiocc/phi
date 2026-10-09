@@ -17,14 +17,23 @@ export function doctorCheckFromCapability(
   capability: RemoteHostCapability,
   input: CapabilityDoctorCheckInput
 ): RemoteDoctorCheck {
-  return capability.state === 'unavailable'
-    ? {
-        id: input.id,
-        status: input.missingStatus,
-        message: input.missing,
-        suggestion: input.suggestion
-      }
-    : { id: input.id, status: 'ok', message: input.success }
+  if (capability.state === 'unavailable') {
+    return {
+      id: input.id,
+      status: input.missingStatus,
+      message: input.missing,
+      suggestion: input.suggestion
+    }
+  }
+  if (capability.state === 'degraded') {
+    return {
+      id: input.id,
+      status: 'warning',
+      message: capability.reason ?? '能力检测未完成',
+      suggestion: '重新检测服务器能力后，再判断工具是否已安装。'
+    }
+  }
+  return { id: input.id, status: 'ok', message: input.success }
 }
 
 export function selectedRuntimeCapability(

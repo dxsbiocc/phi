@@ -65,6 +65,9 @@ function fallbackProfile(
 }
 
 function unsupportedReason(profile: ProbedHostCapabilityProfile): string | undefined {
+  if (profile.platform.os === 'unknown' || profile.platform.arch === 'unknown') {
+    return 'remote platform is unknown because capability probe is incomplete; retry on next connection'
+  }
   if (profile.platform.os !== 'linux') return 'remote helper supports Linux only'
   if (!['x86_64', 'amd64', 'aarch64', 'arm64'].includes(profile.platform.arch)) {
     return 'unsupported remote helper architecture'

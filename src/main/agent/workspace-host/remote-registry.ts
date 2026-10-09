@@ -32,6 +32,63 @@ interface HostEntry {
   host: WorkspaceHost
 }
 
+function helperBootstrapConfig(
+  profileKey: { hostAlias: string; projectRoot: string },
+  dependencies: RemoteWorkspaceHostRegistryDependencies
+): NonNullable<SshHostConfig['helperBootstrap']> {
+  return {
+    profileKey,
+    agentDir: dependencies.agentDir,
+    resourceRoot: dependencies.helperResourceRoot,
+    developmentRoot: dependencies.helperDevelopmentRoot
+  }
+}
+
+function sshHostConfig(
+  binding: RemoteWorkspaceHostBinding,
+  dependencies: RemoteWorkspaceHostRegistryDependencies
+): SshHostConfig {
+  const profileKey = { hostAlias: binding.hostAlias, projectRoot: binding.remoteRoot }
+  const cached = readCapabilityProfile(profileKey, { agentDir: dependencies.agentDir })
+  const profile = cached
+    ? reconcileRemoteHelperProfile(cached, {
+        profileKey,
+        agentDir: dependencies.agentDir,
+        resourceRoot: dependencies.helperResourceRoot
+      })
+    : undefined
+  if (!profile || profile.probe?.state === 'degraded') {
+    return {
+      ...binding.config,
+      capabilityProfile: profile,
+      helperBootstrap: helperBootstrapConfig(profileKey, dependencies)
+    }
+  }
+  const preparation = resolveRemoteHelperPreparation(profile, {
+    resourceRoot: dependencies.helperResourceRoot,
+    developmentRoot: dependencies.helperDevelopmentRoot
+  })
+  const artifact = preparation?.artifact
+  const helperDegraded =
+    profile.helperVersion === artifact?.version &&
+    profile.helperStatus?.state === 'degraded' &&
+    !preparation?.prepareArtifact
+  return {
+    ...binding.config,
+    ...(artifact && !helperDegraded
+      ? {
+          helper: {
+            profile,
+            profileKey,
+            artifact,
+            prepareArtifact: preparation?.prepareArtifact,
+            agentDir: dependencies.agentDir
+          }
+        }
+      : { platform: profile.platform, capabilityProfile: profile })
+  }
+}
+
 export class RemoteWorkspaceHostRegistry {
   private readonly entries = new Map<string, HostEntry>()
 
@@ -79,46 +136,12 @@ export class RemoteWorkspaceHostRegistry {
   }
 
   private create(binding: RemoteWorkspaceHostBinding): HostEntry {
-    const profileKey = { hostAlias: binding.hostAlias, projectRoot: binding.remoteRoot }
-    const cached = readCapabilityProfile(profileKey, { agentDir: this.dependencies.agentDir })
-    const profile = cached
-      ? reconcileRemoteHelperProfile(cached, {
-          profileKey,
-          agentDir: this.dependencies.agentDir,
-          resourceRoot: this.dependencies.helperResourceRoot
-        })
-      : undefined
-    const preparation = profile
-      ? resolveRemoteHelperPreparation(profile, {
-          resourceRoot: this.dependencies.helperResourceRoot,
-          developmentRoot: this.dependencies.helperDevelopmentRoot
-        })
-      : undefined
-    const artifact = preparation?.artifact
-    const helperDegraded =
-      profile?.helperVersion === artifact?.version &&
-      profile?.helperStatus?.state === 'degraded' &&
-      !preparation?.prepareArtifact
-    const config: SshHostConfig = {
-      ...binding.config,
-      ...(profile && artifact && !helperDegraded
-        ? {
-            helper: {
-              profile,
-              profileKey,
-              artifact,
-              prepareArtifact: preparation?.prepareArtifact,
-              agentDir: this.dependencies.agentDir
-            }
-          }
-        : { platform: profile?.platform, capabilityProfile: profile })
-    }
     const createHost = this.dependencies.createHost ?? ((input) => new SshHost(input))
     return {
       projectId: binding.projectId,
       cacheKey: binding.cacheKey,
       canonicalRoot: binding.canonicalRoot,
-      host: createHost(config)
+      host: createHost(sshHostConfig(binding, this.dependencies))
     }
   }
 }

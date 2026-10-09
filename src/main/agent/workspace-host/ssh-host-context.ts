@@ -21,6 +21,12 @@ export interface SshHelperConfig {
   agentDir?: string
 }
 
+export interface SshHelperBootstrapConfig {
+  profileKey: CapabilityProfileKey
+  agentDir?: string
+  resourceRoot?: string
+  developmentRoot?: string
+}
 
 export interface SshHostConfig {
   remoteRoot: string
@@ -29,6 +35,7 @@ export interface SshHostConfig {
   platform?: { os: string; arch: string }
   capabilityProfile?: HostCapabilityProfile
   helper?: SshHelperConfig
+  helperBootstrap?: SshHelperBootstrapConfig
 }
 
 function pathError(): WorkspaceHostError {
@@ -51,12 +58,14 @@ export class SshHostContext {
   readonly canonicalRoot: string
   readonly platform: { os: string; arch: string }
   readonly helper?: SshHelperConfig
+  readonly helperBootstrap?: SshHelperBootstrapConfig
 
   constructor(private readonly config: SshHostConfig) {
     this.remoteRoot = checkedRoot(config.remoteRoot)
     this.canonicalRoot = checkedRoot(config.canonicalRoot)
     this.platform = config.platform ?? { os: 'remote', arch: 'unknown' }
     this.helper = config.helper
+    this.helperBootstrap = config.helperBootstrap
   }
 
   candidate(path: string): string {
