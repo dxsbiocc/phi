@@ -96,7 +96,7 @@ export function HomeActivityHeatmap({
           pb: 1.5
         }}
       >
-        <Box sx={{ width: '100%', minWidth: 620 }}>
+        <Box sx={{ width: '100%', minWidth: 620, boxSizing: 'border-box', pr: '4px' }}>
           <Box
             aria-hidden="true"
             sx={{
