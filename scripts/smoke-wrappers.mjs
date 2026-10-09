@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// Smoke-tests every bundled wrapper under `resources/wrappers/`, in tiers:
+// Smoke-tests the selected phi-packages wrapper source tree, in tiers:
 //
 //   1. static   (always)   wrapper triad present, params.json validates against
 //                          wrapper.yaml, includes resolve, a primary output exists.
@@ -14,6 +14,7 @@
 // Usage (needs the TS loader, so go through the npm script):
 //   npm run smoke:wrappers                            # static + urls, all wrappers
 //   npm run smoke:wrappers -- --offline               # static only
+//   npm run smoke:wrappers -- --source ../phi-packages --offline
 //   npm run smoke:wrappers -- fastqc samtools         # only ids containing these
 //   npm run smoke:wrappers -- --preview               # + nextflow -preview
 //   npm run smoke:wrappers -- --run --profile docker  # + real runs (slow)
@@ -32,11 +33,14 @@ import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import {
+  phiSourceRoot,
+  requirePackageSourceRoot,
+  requireSourceDirectory
+} from './content/source-roots.mjs'
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-process.chdir(repoRoot) // getBundledWrapperPackagesDir() resolves against cwd outside Electron
+process.chdir(phiSourceRoot) // Core managed runtime specs belong to Phi.
 
 // Node's fetch ignores HTTP(S)_PROXY by default, which would report every URL as
 // unreachable behind a proxy. Opt in when this Node has the API (24.5+).
@@ -71,7 +75,8 @@ function parseArgs(argv) {
     profile: 'docker',
     timeoutMin: 20,
     jobs: 8,
-    json: undefined
+    json: undefined,
+    source: undefined
   }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -88,6 +93,7 @@ function parseArgs(argv) {
     else if (arg === '--timeout-min') options.timeoutMin = Number(value())
     else if (arg === '--jobs') options.jobs = Number(value())
     else if (arg === '--json') options.json = value()
+    else if (arg === '--source') options.source = value()
     else if (arg.startsWith('-')) fail(`Unknown option: ${arg}`)
     else options.filters.push(arg)
   }
@@ -233,9 +239,15 @@ function dockerIsUp() {
 // --- main ------------------------------------------------------------------
 
 const options = parseArgs(process.argv.slice(2))
+const wrappersRoot = requireSourceDirectory(
+  requirePackageSourceRoot(options.source),
+  'resources/wrappers'
+)
 const label = (entry) => entry.manifest.id
 
-let entries = listWrapperCompositionCatalog().sort((a, b) => label(a).localeCompare(label(b)))
+let entries = listWrapperCompositionCatalog({ sourceRoot: wrappersRoot }).sort((a, b) =>
+  label(a).localeCompare(label(b))
+)
 if (options.filters.length > 0) {
   entries = entries.filter((entry) =>
     options.filters.some((filter) => label(entry).includes(filter))
@@ -339,6 +351,8 @@ if (options.json) {
 if (count('fail') > 0) process.exitCode = 1
 
 // Guard against a stray leftover from an interrupted earlier run in this repo.
-if (existsSync(join(repoRoot, 'resources', 'wrappers', '.nextflow'))) {
-  console.warn('Note: resources/wrappers/.nextflow exists; remove it if it is not intentional.')
+if (existsSync(join(wrappersRoot, '.nextflow'))) {
+  console.warn(
+    `Note: ${join(wrappersRoot, '.nextflow')} exists; remove it if it is not intentional.`
+  )
 }

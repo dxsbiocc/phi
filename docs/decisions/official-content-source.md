@@ -21,6 +21,9 @@ This supersedes the earlier local-registry-first rollout choice for the current 
   `~/.phi/wrappers/tree/`, with ownership/provenance in `wrappers/tree.json`.
 - Desktop packaging excludes domain connector/plugin/wrapper/skill sources. Core
   runtimes, palettes, system agents and `create-wrapper` remain in the application.
+  Duplicate source trees have also been removed from Phi's `resources/`; the
+  canonical source checkout is phi-packages. Core tests use isolated fixtures;
+  `test:packages` and `check:package-content` validate that external checkout.
 - Former bundled plugin installations without `.source.json` are recognized only
   after the plugin loader validates them. Malformed existing provenance remains rejected.
 

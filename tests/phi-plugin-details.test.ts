@@ -152,20 +152,22 @@ test('office details expose five skills, six final tools and shared Python consu
   assert.deepEqual(item.environments, [])
 })
 
-test('visualization details attribute phi-r to its skill and agent', () => {
-  const item = buildPhiPluginListItem(bundledPlugin('visualization'))
-
+test('details group agents and skills sharing the same declared environment', () => {
+  const declared = skill('environment-skill')
+  declared.phi = { environment: 'phi:r@1' }
+  const item = buildPhiPluginListItem(
+    barePlugin({ skills: [declared], agents: [agent('EnvironmentSpecialist', 'phi:r@1')] })
+  )
   assert.deepEqual(item.usedEnvironments, [
     {
       ref: 'phi:r@1',
       name: 'phi-r',
       scope: 'builtin',
-      skillNames: ['omics-visualization'],
-      agentNames: ['Visualization']
+      skillNames: ['environment-skill'],
+      agentNames: ['EnvironmentSpecialist']
     }
   ])
-  assert.match(item.agentDetails?.[0]?.description ?? '', /template-guided/)
-  assert.equal(item.skillDetails?.[0]?.enabled, true)
+  assert.equal(item.skillDetails?.[0]?.environmentWarning, undefined)
 })
 
 test('fallback warnings, unused private declarations and empty references stay truthful', () => {

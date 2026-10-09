@@ -325,20 +325,3 @@ test('installation preserves the verified icon and rejects a payload changed aft
   await assert.rejects(installPackages(corruptPlan, { agentDir: rejectedAgentDir }), /icon\.svg/)
   assert.equal(existsSync(join(rejectedAgentDir, 'packages/mcp', entry.id, entry.version)), false)
 })
-
-test('migrated connector payloads retain original logo hashes and patch versions', () => {
-  const attribution = readFileSync(join(process.cwd(), 'docs/content-icons.md'), 'utf8')
-  const records = [
-    ...attribution.matchAll(
-      /`(resources\/connectors\/[^`]+)`\s*\|\s*`([a-f0-9]{64})`\s*\|\s*(\d+)/g
-    )
-  ]
-  assert.equal(records.length, 18)
-  for (const [, path, hash, size] of records) {
-    const data = readFileSync(join(process.cwd(), path))
-    assert.equal(sha256(data), hash, path)
-    assert.equal(data.length, Number(size), path)
-    const manifest = readFileSync(join(process.cwd(), dirname(path), 'phi-package.yaml'), 'utf8')
-    assert.match(manifest, /^version: 1\.0\.1$/m, path)
-  }
-})

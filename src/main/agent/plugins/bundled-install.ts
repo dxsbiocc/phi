@@ -3,7 +3,6 @@ import { join } from 'node:path'
 
 import semver from 'semver'
 
-import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import {
   installPlugin,
   upgradePlugin,
@@ -64,11 +63,14 @@ function appendOperation(
   if (operation.ok && operation.plugin) target.push(operation.plugin)
 }
 
-/** Install newer bundled packages through the same lifecycle as local plugins. */
+/** Explicit legacy migration; current catalog installs use verified package registries. */
 export async function installBundledPlugins(
   options: BundledPluginInstallOptions = {}
 ): Promise<BundledPluginInstallResult> {
-  const bundledDir = options.bundledDir ?? getBundledResourceDir('plugins')
+  if (!options.bundledDir) {
+    throw new Error('Legacy plugin migration requires an explicit bundledDir')
+  }
+  const bundledDir = options.bundledDir
   const result: BundledPluginInstallResult = {
     installed: [],
     upgraded: [],

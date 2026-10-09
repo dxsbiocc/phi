@@ -13,7 +13,6 @@ import { installPlugin, loadedPlugins, type LoadedPlugin } from '../src/main/age
 import { isPluginSkillPreviewPath } from '../src/main/agent/plugins/preview'
 import { createRuntimeResourceLoader } from '../src/main/agent/runtime/runtime-adapter'
 
-const VISUALIZATION_SOURCE = join(process.cwd(), 'resources', 'plugins', 'visualization')
 const OFFICE_SOURCE = join(process.cwd(), 'resources', 'plugins', 'office')
 
 function withTemp(body: (root: string) => void | Promise<void>): Promise<void> {
@@ -23,6 +22,51 @@ function withTemp(body: (root: string) => void | Promise<void>): Promise<void> {
     .finally(() => rmSync(root, { recursive: true, force: true }))
 }
 
+/** A small plugin payload isolates engine behavior from the external content checkout. */
+function visualizationFixture(root: string): string {
+  const source = join(root, 'plugin-source')
+  const skill = join(source, 'skills', 'omics-visualization')
+  mkdirSync(join(source, 'agents'), { recursive: true })
+  mkdirSync(join(skill, 'scripts', 'tree', 'basic'), { recursive: true })
+  writeFileSync(
+    join(source, 'phi-package.yaml'),
+    `schemaVersion: 1
+id: visualization
+type: plugin
+version: 1.0.0
+title: Engine fixture
+summary: Test installed resource discovery.
+toolPrefix: viz
+components:
+  agents: [agents/Visualization.md]
+  skills: [skills/omics-visualization]
+`
+  )
+  writeFileSync(
+    join(source, 'agents', 'Visualization.md'),
+    `---
+name: Visualization
+description: Fixture plugin agent.
+environment: phi:r@1
+tools: [read]
+skills: [omics-visualization]
+---
+Read the installed fixture skill.
+`
+  )
+  writeFileSync(
+    join(skill, 'SKILL.md'),
+    `---
+name: omics-visualization
+description: Fixture for installed skill loading.
+---
+# Test skill
+`
+  )
+  writeFileSync(join(skill, 'scripts', 'tree', 'basic', 'preview.png'), 'fixture preview')
+  return source
+}
+
 function installVisualization(root: string): {
   agentDir: string
   runtimeRoot: string
@@ -30,7 +74,7 @@ function installVisualization(root: string): {
 } {
   const agentDir = join(root, 'agent')
   const runtimeRoot = join(root, 'runtime')
-  const result = installPlugin(VISUALIZATION_SOURCE, { agentDir, runtimeRoot })
+  const result = installPlugin(visualizationFixture(root), { agentDir, runtimeRoot })
   assert.equal(result.ok, true, JSON.stringify(result.errors))
   assert.ok(result.plugin)
   return { agentDir, runtimeRoot, plugin: result.plugin }
@@ -65,7 +109,7 @@ test('installed plugin metadata and components come from the installed copy', as
       loaded.map((item) => item.id),
       ['visualization']
     )
-    const { version } = readPackageManifest(VISUALIZATION_SOURCE)
+    const { version } = readPackageManifest(join(root, 'plugin-source'))
     assert.equal(plugin.version, version)
     assert.equal(plugin.toolPrefix, 'viz')
     assert.ok(plugin.dir.endsWith(join('packages', 'plugin', 'visualization', version)))
@@ -145,7 +189,7 @@ test('runtime skill loading and preview access use installed plugin files', asyn
 
     const installedPreview = join(skillDir, 'scripts', 'tree', 'basic', 'preview.png')
     const sourcePreview = join(
-      VISUALIZATION_SOURCE,
+      join(root, 'plugin-source'),
       'skills',
       'omics-visualization',
       'scripts',

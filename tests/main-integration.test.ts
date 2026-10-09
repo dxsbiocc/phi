@@ -51,6 +51,9 @@ const officialRegistryFixture = {
   generatedAt: '2026-10-08T00:00:00.000Z',
   packages: []
 }
+const installedFigurePreviewFixture =
+  '/installed/packages/plugin/visualization/1.0.0/skills/omics-visualization/preview.png'
+
 const officialSourceDetailsFixture = {
   id: 'phi-packages',
   kind: 'official',
@@ -593,18 +596,6 @@ async function harness(
     filePaths: []
   }
   let saveDialogResult: { canceled: boolean; filePath?: string } = { canceled: true }
-  const bundledFigurePreview = path.join(
-    process.cwd(),
-    'resources',
-    'plugins',
-    'visualization',
-    'skills',
-    'omics-visualization',
-    'scripts',
-    'scatter',
-    'volcano',
-    'preview.png'
-  )
   const previewFiles = new Map<string, Buffer>([
     ['/projects/current/src/App.tsx', Buffer.from('export const app = true\n')],
     ['/projects/current/README.md', Buffer.from('# Project\n')],
@@ -612,7 +603,7 @@ async function harness(
     ['/projects/current/notebooks/eda.ipynb', Buffer.from('{"nbformat":4,"cells":[]}')],
     ['/projects/current/large.txt', Buffer.alloc(320010, 'a')],
     ['/projects/current/plot.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
-    [bundledFigurePreview, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    [installedFigurePreviewFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
     ['/projects/current/photo.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
     ['/projects/current/animation.gif', Buffer.from('GIF89a\x01\x00\x01\x00', 'binary')],
     [
@@ -2616,26 +2607,17 @@ async function harness(
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
-    // Real scan of the repo's bundled agents, but never the developer's own ~/.claude etc.
+    // Scan core agents and explicitly supplied plugin directories, never the developer's home.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
         discoverPhiAgents({
           ...options,
-          homeDir: '/nonexistent-home',
-          ...(options.pluginAgentDirs === undefined
-            ? {
-                pluginAgentDirs: [
-                  path.join(process.cwd(), 'resources', 'plugins', 'visualization', 'agents')
-                ]
-              }
-            : {})
+          homeDir: '/nonexistent-home'
         })
     },
     './agent/plugins/preview': {
       isPluginSkillPreviewPath: (target: string): boolean =>
-        target.includes(
-          path.join('resources', 'plugins', 'visualization', 'skills', 'omics-visualization')
-        ) && target.endsWith('preview.png')
+        target.includes(path.join('packages', 'plugin')) && target.endsWith('preview.png')
     },
     './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
@@ -4753,18 +4735,7 @@ test('main IPC: file preview is limited to project and Phi-owned files', async (
 test('main IPC: an installed template preview image is displayable outside the project', async () => {
   const app = await harness()
   await app.invoke('projects:newSession', '/projects/current', 'ask')
-  const previewPath = path.join(
-    process.cwd(),
-    'resources',
-    'plugins',
-    'visualization',
-    'skills',
-    'omics-visualization',
-    'scripts',
-    'scatter',
-    'volcano',
-    'preview.png'
-  )
+  const previewPath = installedFigurePreviewFixture
   assert.deepEqual(await app.invoke('files:statLocalPaths', '/projects/current', [previewPath]), [
     { path: previewPath, kind: 'file' }
   ])
@@ -4777,21 +4748,7 @@ test('main IPC: an installed template preview image is displayable outside the p
   assert.equal(preview.path, previewPath)
   assert.match(preview.dataUrl, /^data:image\/png;base64,/)
   await assert.rejects(
-    app.invoke(
-      'files:preview',
-      path.join(
-        process.cwd(),
-        'resources',
-        'plugins',
-        'visualization',
-        'skills',
-        'omics-visualization',
-        'scripts',
-        'scatter',
-        'volcano',
-        'plot.R'
-      )
-    ),
+    app.invoke('files:preview', path.join(path.dirname(previewPath), 'plot.R')),
     /只能预览 Phi 保存的文件或当前项目内的文件/
   )
 })

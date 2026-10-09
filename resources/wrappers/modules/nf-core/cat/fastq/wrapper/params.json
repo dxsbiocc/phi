@@ -1,4 +1,0 @@
-{
-  "reads": "tests/data/test_*.fastq.gz",
-  "outdir": "results"
-}

@@ -1,13 +1,13 @@
-// Validates every bundled Phi plugin under resources/plugins/. Exits 1 on errors.
+// Validates private plugins, or package content selected with --packages/--source.
 
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
+import { parseContentSourceArgs, requireSourceDirectory } from './source-roots.mjs'
 
-const root = fileURLToPath(new URL('../..', import.meta.url))
-const pluginsRoot = join(root, 'resources', 'plugins')
+const root = parseContentSourceArgs(process.argv.slice(2))
+const pluginsRoot = requireSourceDirectory(root, 'resources/plugins')
 const ids = readdirSync(pluginsRoot)
   .filter((id) => {
     try {

@@ -1,4 +1,0 @@
-{
-  "sequences": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/generic/fasta/resolvetaxonomy_embedded.fasta",
-  "outdir": "results"
-}

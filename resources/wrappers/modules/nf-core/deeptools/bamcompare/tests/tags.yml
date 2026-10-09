@@ -1,3 +1,0 @@
-deeptools/bamcompare:
-  - "modules/nf-core/deeptools/bamcompare/**"
-  - "tests/modules/nf-core/deeptools/bamcompare/**"

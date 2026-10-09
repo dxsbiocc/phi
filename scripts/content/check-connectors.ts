@@ -1,13 +1,13 @@
-// Validates every bundled MCP connector under resources/connectors/. Exits 1 on errors.
+// Explicit package-content check; defaults to the sibling phi-packages checkout.
 
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { validatePackage, type PackageProblem } from '../../src/main/agent/packages/manifest'
+import { parseContentSourceArgs, requireSourceDirectory } from './source-roots.mjs'
 
-const root = fileURLToPath(new URL('../..', import.meta.url))
-const connectorsRoot = join(root, 'resources', 'connectors')
+const root = parseContentSourceArgs(process.argv.slice(2), { defaultToPackages: true })
+const connectorsRoot = requireSourceDirectory(root, 'resources/connectors')
 const ids = readdirSync(connectorsRoot)
   .filter((id) => {
     try {
@@ -27,7 +27,7 @@ for (const id of ids) {
     extraErrors.push({
       level: 'error',
       path: 'type',
-      message: `bundled connector must have type 'mcp', got '${result.package.manifest.type}'`
+      message: `connector must have type 'mcp', got '${result.package.manifest.type}'`
     })
   }
   if (result.package && result.package.manifest.id !== id) {

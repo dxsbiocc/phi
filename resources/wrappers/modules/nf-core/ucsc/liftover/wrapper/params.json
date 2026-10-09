@@ -1,5 +1,0 @@
-{
-  "bed": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/genome.bed",
-  "chain": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/genome.chain.gz",
-  "outdir": "results"
-}

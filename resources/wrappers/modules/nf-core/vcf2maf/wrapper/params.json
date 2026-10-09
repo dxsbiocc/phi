@@ -1,5 +1,0 @@
-{
-  "vcf": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/illumina/gvcf/test.genome.vcf",
-  "fasta": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/genome.fasta",
-  "outdir": "results"
-}

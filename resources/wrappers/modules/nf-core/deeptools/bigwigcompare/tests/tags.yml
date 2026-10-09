@@ -1,3 +1,0 @@
-deeptools/bigwigcompare:
-  - "modules/nf-core/deeptools/bigwigcompare/**"
-  - "tests/modules/nf-core/deeptools/bigwigcompare/**"

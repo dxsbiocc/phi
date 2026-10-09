@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
 import {
   collectWrapperSingularityImages,
   singularityCacheFileName,
@@ -43,31 +42,24 @@ test('cache file names follow Nextflow singularity cache naming', () => {
   )
 })
 
-test('a wrapper needs the images of every module it includes, followed through includes', () => {
-  const root = getBundledWrapperPackagesDir()
-  const star = collectWrapperSingularityImages(
-    join(root, 'modules/nf-core/star/align/wrapper/main.nf')
-  )
-  // star-align composes star/genomegenerate and star/align.
-  const genomegenerate = readFileSync(
-    join(root, 'modules/nf-core/star/genomegenerate/main.nf'),
-    'utf-8'
-  )
-  const align = readFileSync(join(root, 'modules/nf-core/star/align/main.nf'), 'utf-8')
-  for (const image of star) {
-    assert.match(image.url, /^https:\/\//)
-    assert.ok(genomegenerate.includes(image.url) || align.includes(image.url), image.url)
-  }
-  assert.ok(star.length >= 1)
-  assert.equal(new Set(star.map((image) => image.url)).size, star.length)
-
-  const subworkflow = collectWrapperSingularityImages(
-    join(root, 'subworkflows/local/align_star/wrapper/main.nf')
-  )
-  assert.ok(
-    subworkflow.length > star.length,
-    'a subworkflow pulls in more modules than one aligner'
-  )
+test('a wrapper follows nested and cyclic includes, deduplicates images and ignores Docker-only tags', () => {
+  return withTempDir((root) => {
+    const files = {
+      'wrapper.nf': "include { FIRST } from './first'\ninclude { SECOND } from './second'\n",
+      'first.nf':
+        "include { SECOND } from './second'\nprocess FIRST {\n container 'https://example.org/first.sif'\n}\n",
+      'second/main.nf':
+        "include { FIRST } from '../first.nf'\nprocess SECOND {\n container 'https://example.org/first.sif'\n}\nprocess THIRD {\n container 'https://example.org/third.sif'\n}\nprocess DOCKER {\n container 'docker/example:1.0'\n}\n"
+    }
+    for (const [name, contents] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, name)), { recursive: true })
+      writeFileSync(join(root, name), contents)
+    }
+    assert.deepEqual(collectWrapperSingularityImages(join(root, 'wrapper.nf')), [
+      { url: 'https://example.org/first.sif', fileName: 'example.org-first.sif' },
+      { url: 'https://example.org/third.sif', fileName: 'example.org-third.sif' }
+    ])
+  })
 })
 
 test('images already in the cache are left alone; missing ones are fetched on the server', async () => {

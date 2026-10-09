@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { parse as parseYaml } from 'yaml'
@@ -12,7 +12,7 @@ type PaletteResult = {
   palettes: Array<{ id: string; kind: string; colors: string[]; use_when: string }>
 }
 
-test('Phi owns one shared palette catalog outside the visualization skill', () => {
+test('the core palette index matches the shared color catalog', () => {
   const paletteDir = getBundledPalettesDir()
   const index = parseYaml(readFileSync(join(paletteDir, 'palettes.yaml'), 'utf8')) as {
     source: string
@@ -25,12 +25,6 @@ test('Phi owns one shared palette catalog outside the visualization skill', () =
   assert.deepEqual(
     index.recommended.find((palette) => palette.id === 'Qualitative.Safe')?.colors,
     colors.Qualitative.Safe
-  )
-  assert.equal(
-    existsSync(
-      join(process.cwd(), 'resources/skills/omics-visualization/references/palettes.yaml')
-    ),
-    false
   )
 })
 

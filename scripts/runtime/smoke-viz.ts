@@ -3,8 +3,8 @@
 //
 // Usage (needs the TS loader, so go through the Bun script):
 //   bun run runtime:smoke:viz
-//   bun run runtime:smoke:viz -- --spec resources/runtime/environments/phi-r \
-//     --templates resources/plugins/visualization/skills/omics-visualization/scripts
+//   bun run runtime:smoke:viz -- --source ../phi-packages
+//   bun run runtime:smoke:viz -- --spec resources/runtime/environments/phi-r --templates <scripts>
 //
 // The runtime root is PHI_TEST_RUNTIME_ROOT when that variable is set, otherwise
 // a fresh temporary directory. The prefix is left in place.
@@ -25,6 +25,7 @@ import {
   type EnvironmentSpec,
   type PhiPlatform
 } from '../../src/main/agent/envs'
+import { packageSourceRoot, requireSourceDirectory } from '../content/source-roots.mjs'
 
 const RENDER_TIMEOUT_MS = 180_000
 const QA_TIMEOUT_MS = 60_000
@@ -70,13 +71,16 @@ function repoRoot(): string {
 export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
   const root = repoRoot()
   let specDir = join(root, 'resources/runtime/environments/phi-r')
-  let templatesDir = join(
-    root,
-    'resources/plugins/visualization/skills/omics-visualization/scripts'
-  )
+  let source: string | undefined
+  let templatesDir: string | undefined
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
+    if (arg === '--source') {
+      source = requireValue(argv, index, '--source requires a checkout')
+      index += 1
+      continue
+    }
     if (arg === '--spec') {
       specDir = requireValue(argv, index, '--spec requires a directory')
       index += 1
@@ -90,7 +94,15 @@ export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
     throw new Error(`unknown argument ${arg ?? ''}`)
   }
 
-  return { specDir: resolve(specDir), templatesDir: resolve(templatesDir) }
+  return {
+    specDir: resolve(specDir),
+    templatesDir: templatesDir
+      ? resolve(templatesDir)
+      : requireSourceDirectory(
+          packageSourceRoot(source),
+          'resources/plugins/visualization/skills/omics-visualization/scripts'
+        )
+  }
 }
 
 function requireValue(argv: readonly string[], index: number, message: string): string {

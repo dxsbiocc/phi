@@ -63,10 +63,13 @@ Unknown keys under `connector` are errors.
 
 ## 4. Catalog
 
-The connector catalog shown to the user is the list of `type: mcp` packages from the
-registries Phi knows: the bundled registry built from `resources/connectors/` and any
-local or remote registry the user added. An entry already present in `mcp.json` shows
-as added. Entries that need an app newer than this one show but cannot be added.
+The connector catalog shows `type: mcp` packages from the verified official Phi
+Packages registry, user-imported registries, and installed connectors. The official
+source takes precedence for duplicate IDs; connector sources are not bundled with
+Phi. An entry already present in `mcp.json` shows as added. Entries that need a newer
+app version remain visible but cannot be added. Raw directory imports retain
+imported trust, regardless of their directory name or location. See the
+[official content source decision](../decisions/official-content-source.md).
 
 ## 5. Versioning
 

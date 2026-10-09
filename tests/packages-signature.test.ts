@@ -162,6 +162,15 @@ test('registry keygen and sign CLIs round-trip without exposing or overwriting t
 
 test('registry:build --sign-key signs the exact generated index bytes', () => {
   const root = temporaryDir('phi-registry-build-signing-')
+  const source = join(root, 'source')
+  const skill = join(source, 'resources/skills/signing-fixture')
+  mkdirSync(skill, { recursive: true })
+  writeFileSync(
+    join(skill, 'SKILL.md'),
+    '---\nname: signing-fixture\ndescription: Isolated signing test content.\n---\n\n# Signing fixture\n'
+  )
+  execFileSync('git', ['init', '--quiet'], { cwd: source })
+  execFileSync('git', ['add', 'resources'], { cwd: source })
   const keysDir = join(root, 'keys')
   const registryDir = join(root, 'registry')
   execFileSync('bun', ['run', 'registry:keygen', '--', '--out', keysDir], {
@@ -174,6 +183,8 @@ test('registry:build --sign-key signs the exact generated index bytes', () => {
       'run',
       'registry:build',
       '--',
+      '--source',
+      source,
       '--out',
       registryDir,
       '--sign-key',

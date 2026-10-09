@@ -13,6 +13,7 @@ files:
   - '!**/.DS_Store'
   # Domain content is installed from the signed Phi Packages catalog.
   - '!resources/connectors/**'
+  - '!resources/db-connectors/**'
   - '!resources/plugins/**'
   - '!resources/wrappers/**'
   - '!resources/skills/!(create-wrapper)/**'

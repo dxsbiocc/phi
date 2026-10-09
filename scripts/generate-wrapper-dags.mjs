@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Regenerates `wrapper/dag.mmd` next to every `wrapper/wrapper.yaml` under
-// `resources/wrappers/{modules,subworkflows,workflows}/`, using Nextflow's
+// the selected phi-packages checkout's `resources/wrappers/`, using Nextflow's
 // own `-preview -with-dag` (skips executing any process — just traces
 // channel/process topology from the script + the wrapper's own
 // params.json, so this runs in seconds with no Docker/network data
@@ -21,10 +21,10 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { parseContentSourceArgs, requireSourceDirectory } from './content/source-roots.mjs'
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const wrappersRoot = join(repoRoot, 'resources', 'wrappers')
+const repoRoot = parseContentSourceArgs(process.argv.slice(2), { defaultToPackages: true })
+const wrappersRoot = requireSourceDirectory(repoRoot, 'resources/wrappers')
 const COMPONENT_ROOTS = ['modules', 'subworkflows', 'workflows']
 const MAX_SCAN_DEPTH = 6
 

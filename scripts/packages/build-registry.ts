@@ -10,6 +10,7 @@ import semver from 'semver'
 import { stringify as stringifyYaml } from 'yaml'
 
 import { offendingResourcePaths } from '../check-resources.mjs'
+import { requirePackageSourceRoot } from '../content/source-roots.mjs'
 import { parseSkillFile, validateSkill } from '../../src/main/agent/content/skill'
 import {
   createDeterministicTarGz,
@@ -99,9 +100,7 @@ export function buildRegistry(options: BuildRegistryOptions = {}): RegistryIndex
 }
 
 export function buildRegistryWithReport(options: BuildRegistryOptions = {}): RegistryBuildResult {
-  const repoRoot = resolve(
-    options.repoRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-  )
+  const repoRoot = requirePackageSourceRoot(options.repoRoot)
   const outDir = resolve(repoRoot, options.outDir ?? 'dist/registry')
   const generatedAt = options.generatedAt ?? new Date().toISOString()
   if (options.wrapperVersion && !semver.valid(options.wrapperVersion))

@@ -1,14 +1,20 @@
 ---
 name: create-wrapper
-description: Playbook for the Wrapper agent — the main agent should delegate wrapper requests to `Wrapper` rather than follow this itself. Create a new agent-facing Nextflow wrapper (the wrapper/main.nf + wrapper/params.json + wrapper/wrapper.yaml triad) for a module, subworkflow, or full pipeline vendored under resources/wrappers/, so it becomes searchable and runnable through the wrapper_search / wrapper_inspect / wrapper_run agent tools. Use this whenever asked to "add a wrapper", "wrap this tool/module", "expose <tool> to the agent", "make <tool> callable", or when a module/subworkflow under resources/wrappers/{modules,subworkflows,workflows} has no wrapper/ subdirectory yet.
-metadata: {"version": "1.0"}
+description: Playbook for the core Wrapper agent — delegate wrapper requests to `Wrapper`. Author a Nextflow adapter (wrapper/main.nf + wrapper/params.json + wrapper/wrapper.yaml) under the selected phi-packages checkout's resources/wrappers/, validate it with Phi's tooling, then build and explicitly install its package. Use when asked to add or change an agent-callable module, subworkflow, or pipeline.
+metadata: {"version": "1.1"}
 ---
 
 # Create Wrapper
 
 ## Overview
 
-Phi does not expose raw Nextflow modules/subworkflows to the agent directly — a module is an `include` target, not a standalone pipeline. Instead, each callable tool is a thin **wrapper adapter**: a `wrapper/` directory sitting beside a vendored component's own `main.nf`, containing exactly three files (`main.nf`, `params.json`, `wrapper.yaml`) plus an auto-picked-up `nextflow.config`. The agent's `wrapper_search` / `wrapper_inspect` / `wrapper_run` tools scan for `wrapper/wrapper.yaml` files and use whatever they find — creating a wrapper is purely adding files under `resources/wrappers/`; no code changes and no registration step are needed.
+Phi does not expose raw Nextflow modules/subworkflows to the agent directly — a module is an `include` target, not a standalone pipeline. Instead, each callable tool is a thin **wrapper adapter**: a `wrapper/` directory sitting beside a vendored component's own `main.nf`, containing exactly three files (`main.nf`, `params.json`, `wrapper.yaml`) plus an auto-picked-up `nextflow.config`. Author these files in phi-packages; no Phi engine code change is needed. The live tools discover installed packages under `~/.phi/wrappers/tree/` and user-authored wrappers. Editing the source checkout does not install or update a package.
+
+### Select the two checkouts
+
+Phi contains the core agent, this skill, and validation/build scripts. phi-packages contains the distributable source. Locate both before editing. In the examples below, `PHI_ROOT` is the absolute Phi checkout path and `PHI_PACKAGES_ROOT` is the absolute selected content checkout path. They are normally sibling directories; do not assume that layout when explicit paths were provided. All `resources/wrappers/...` paths below are relative to **phi-packages**, and source edits run from that checkout. Never recreate that directory inside Phi or edit installed package files as a substitute for source changes.
+
+If either required checkout or write access is missing, report the missing requirement. This bundled skill may also be loaded by a packaged app, which does not contain the development scripts.
 
 Full design rationale: [docs/design/phi-wrapper-agent-composition-design.md](../../../docs/design/phi-wrapper-agent-composition-design.md). This skill is the practical how-to; read the design doc if something here is ambiguous.
 
@@ -32,7 +38,7 @@ resources/wrappers/
   workflows/<pipeline>/              # same shape, wraps a whole vendored nf-core pipeline (rare — see "Full pipelines" below)
 ```
 
-Discovery walks `modules/**/wrapper/wrapper.yaml`, `subworkflows/**/wrapper/wrapper.yaml`, and `workflows/**/wrapper/wrapper.yaml` under `resources/wrappers/` (see `src/main/agent/wrappers/composition/discovery.ts`). If a component has no `wrapper/` directory it stays invisible to the agent — most vendored modules today are in this state; adding a wrapper is what makes one usable.
+Discovery walks `modules/**/wrapper/wrapper.yaml`, `subworkflows/**/wrapper/wrapper.yaml`, and `workflows/**/wrapper/wrapper.yaml` in the installed tree (see Phi's `src/main/agent/wrappers/composition/discovery.ts`). Source validation explicitly selects phi-packages' `resources/wrappers/` tree. A component without an adapter is not callable; a new adapter becomes callable after its package is built and installed.
 
 ## Step-by-step
 
@@ -193,20 +199,21 @@ Local paths are relative to the **component's own root** (the module/subworkflow
 
 Run the exact fixed command Phi's `wrapper_run` tool uses, from the component's own root:
 
-Needs Nextflow, Java 17+, and a running Docker daemon. On this machine Nextflow lives in the conda env `nextflow` and is not on `PATH`: `export PATH=$HOME/miniconda3/envs/nextflow/bin:$PATH` first (that env also provides Java).
+The direct command needs a version-checked Nextflow and Java on `PATH`, plus Docker for the Docker profile. Prefer Phi's smoke script below, which uses the managed `phi:nextflow@1` environment unless an explicit host override was configured. Do not assume a developer-specific Conda installation.
 
 ```bash
-cd resources/wrappers/modules/<provider>/<tool>
+cd "$PHI_PACKAGES_ROOT/resources/wrappers/modules/<provider>/<tool>"
 nextflow run wrapper/main.nf -params-file wrapper/params.json -profile docker
 # clean up run artifacts before committing:
 rm -rf work .nextflow* results
 ```
 
-Or let the smoke script do it (from the Phi repo root; it also checks the triad, `params.json` against `wrapper.yaml`, the includes, every URL in `params.json`, and each primary output, and cleans up `work/`, `results/`, `.nextflow*` itself):
+Or use Phi's smoke script with an explicit source (it also checks the triad, `params.json` against `wrapper.yaml`, the includes, every URL in `params.json`, and each primary output, and cleans up its run artifacts):
 
 ```bash
-npm run smoke:wrappers -- <part of the wrapper id> --preview     # compile check, no processes run
-npm run smoke:wrappers -- <part of the wrapper id> --run --profile docker
+npm --prefix "$PHI_ROOT" run smoke:wrappers -- --source "$PHI_PACKAGES_ROOT" <part of the wrapper id> --offline
+npm --prefix "$PHI_ROOT" run smoke:wrappers -- --source "$PHI_PACKAGES_ROOT" <part of the wrapper id> --preview
+npm --prefix "$PHI_ROOT" run smoke:wrappers -- --source "$PHI_PACKAGES_ROOT" <part of the wrapper id> --run --profile docker
 ```
 
 Then confirm the primary output exists under `results/`. If the run fails, the channel shape from step 3 almost always doesn't match `main.nf`'s `input:` block — recheck `tests/main.nf.test`; if the tool itself errors on the data (e.g. "no features were loaded"), the test data and the tool's defaults disagree — set an option in `params.json`/`nextflow.config` rather than changing the data.
@@ -214,22 +221,27 @@ Then confirm the primary output exists under `results/`. If the run fails, the c
 ### 7. Generate the DAG
 
 ```bash
-node scripts/generate-wrapper-dags.mjs
+node "$PHI_ROOT/scripts/generate-wrapper-dags.mjs" --source "$PHI_PACKAGES_ROOT"
 ```
 
 This regenerates `wrapper/dag.mmd` for every wrapper via `nextflow -preview -with-dag` (no execution, seconds to run) — needed for the Wrappers UI's structure view. Commit the refreshed `dag.mmd`.
 
-### 8. Update the hardcoded id list in tests
+### 8. Check the content catalog expectations
 
-`tests/wrapper-nf-core-modules.test.ts` asserts the **exact, alphabetically-sorted** list of every wrapper id discovery should find (`EXPECTED_MODULE_WRAPPER_IDS`). Add your new `id` to that array in sorted position — the test suite fails otherwise, not because your wrapper is wrong, but because the list is now stale. This is the single most common thing to forget.
+Phi's `tests/package-content/wrapper-nf-core-modules.test.ts` keeps required baseline wrapper IDs in `EXPECTED_MODULE_WRAPPER_IDS` and allows additional entries. When an intentional catalog change affects those expectations, update them explicitly. Its discovery and validation checks read the selected external source; ordinary Phi unit tests use independent fixtures.
 
 ### 9. Run the tests
 
 ```bash
-node --import ./scripts/test-loader.mjs --test tests/wrapper-nf-core-modules.test.ts
+PHI_PACKAGES_ROOT="$PHI_PACKAGES_ROOT" npm --prefix "$PHI_ROOT" run test:packages
+npm --prefix "$PHI_ROOT" run check:package-content -- --source "$PHI_PACKAGES_ROOT"
 ```
 
-This exercises discovery, `wrapper_search`, and `wrapper_inspect` against the real `resources/wrappers/` tree and checks that **every wrapper's own `params.json` passes `wrapper.yaml` validation** — it will catch a malformed `wrapper.yaml`, a missing id in the list from step 8, a required param with no default, a wrong type/enum, a non-existent local input path, or a broken dag read. Follow with the full suite (`npm test`) before considering the work done.
+This exercises discovery, `wrapper_search`, and `wrapper_inspect` against the real phi-packages source and checks that **every wrapper's own `params.json` passes `wrapper.yaml` validation**. It catches malformed manifests, retired baseline IDs, missing defaults, wrong types/enums, invalid local inputs, and broken DAGs. Run Phi's core suite when engine behavior changed; adding source content alone does not require replacing its independent unit fixtures.
+
+### 10. Build and explicitly install the package
+
+Stage only the reviewed source files in phi-packages before building: the registry builder packages Git-tracked files and rejects untracked content. Build into an explicit temporary output directory with Phi's `registry:build -- --source <phi-packages checkout> --out <output directory>`, selecting a new wrapper package version for changed published payloads. Import the resulting registry in Phi and explicitly install/update the affected wrapper family. Confirm it with `wrapper_search` and `wrapper_inspect`. Do not overwrite a published version with changed bytes. Public catalog signing and publishing require a task that authorizes publication; source authoring alone does not.
 
 ## Subworkflow wrappers
 
@@ -263,9 +275,9 @@ A complete vendored nf-core pipeline (e.g. `resources/wrappers/workflows/rna-seq
 
 ## Common pitfalls
 
-- **Forgetting `EXPECTED_MODULE_WRAPPER_IDS`** (step 8) — tests fail with a diff that looks unrelated to what you wrote.
+- **Editing the wrong checkout or expecting a source edit to appear immediately** — author in phi-packages, then build and explicitly install/update its package.
 - **Inventing test data** instead of using a `tests/data/` fixture or the module's own nf-core test-datasets URL.
-- **A `params.json` that fails validation** — the "every bundled wrapper passes validation" test will name the wrapper and the problem.
+- **A `params.json` that fails validation** — the "every distributed wrapper passes validation" test names the wrapper and the problem.
 - **Guessing the channel shape** instead of reading `tests/main.nf.test`'s `input[N] = ...` values.
 - **Surfacing every module parameter** as a wrapper param — keep the contract small; hard-code sane defaults for anything the agent doesn't need to touch (document the choice in a comment, like `fastp/wrapper/wrapper.yaml` does).
 - **Editing the vendored `../main.nf`** to make the adapter simpler — always adapt around it instead.

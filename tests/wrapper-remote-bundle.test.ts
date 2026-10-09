@@ -18,10 +18,7 @@ import {
   ensureRemoteBundle,
   hashBundleFiles
 } from '../src/main/agent/wrappers/composition/remote-bundle'
-import {
-  ensureBundledWrappersInstalled,
-  getBundledWrapperPackagesDir
-} from '../src/main/agent/wrappers/catalog'
+import { ensureBundledWrappersInstalled } from '../src/main/agent/wrappers/catalog'
 import { getWrapperTreeDir } from '../src/main/agent/packages/wrapper-tree'
 import { componentBundleScope } from '../src/main/agent/wrappers/composition/includes'
 import { createLocalShellSession } from './helpers/localShellSession'
@@ -45,8 +42,8 @@ const TREE = {
   'modules/nf-core/fastqc/.DS_Store': 'junk',
   'modules/nf-core/fastqc/work/ab/cd/out.txt': 'stale run output',
   'subworkflows/nf-core/x/main.nf': 'workflow X {}',
-  // Shared conda env / Dockerfile a module reaches via ../../../../images/...
-  'images/differential-expression-r/environment.yml': 'name: de',
+  // A generic legacy support directory remains part of a runnable bundle.
+  'images/shared/environment.yml': 'name: de',
   'README.md': 'not part of a bundle'
 }
 
@@ -61,7 +58,7 @@ test('bundle files are the runnable sources only, sorted, with posix relative pa
   const { root, cleanup } = makeTree(TREE)
   try {
     assert.deepEqual(collectBundleFiles(root), [
-      'images/differential-expression-r/environment.yml',
+      'images/shared/environment.yml',
       'modules/nf-core/fastqc/environment.yml',
       'modules/nf-core/fastqc/main.nf',
       'modules/nf-core/fastqc/wrapper/main.nf',
@@ -466,14 +463,26 @@ test('an archive damaged in transfer is rejected before it is unpacked', async (
   }
 })
 
-test('a run bundle scope covers the component and every module it includes', () => {
-  const root = getBundledWrapperPackagesDir()
-  assert.deepEqual(componentBundleScope(join(root, 'modules/nf-core/star/align'), root), [
-    'modules/nf-core/star/align',
-    'modules/nf-core/star/genomegenerate'
-  ])
-  const scope = componentBundleScope(join(root, 'subworkflows/local/align_star'), root)
-  assert.ok(scope.includes('subworkflows/local/align_star'))
-  assert.ok(scope.includes('modules/nf-core/star/genomegenerate'))
-  assert.ok(scope.some((dir) => dir.startsWith('modules/nf-core/samtools/')))
+test('a run bundle scope includes nested dependencies without duplicate child scopes', () => {
+  const tree = makeTree({
+    'modules/acme/align/wrapper/main.nf':
+      "include { ALIGN } from '../main.nf'\ninclude { INDEX } from '../../index/main.nf'\n",
+    'modules/acme/align/main.nf': "include { INDEX } from '../index/main.nf'\nprocess ALIGN {}\n",
+    'modules/acme/index/main.nf': 'process INDEX {}\n',
+    'subworkflows/acme/pipeline/wrapper/main.nf':
+      "include { ALIGN } from '../../../../modules/acme/align/main.nf'\ninclude { QC } from '../../../../modules/acme/qc/main.nf'\n",
+    'modules/acme/qc/main.nf': 'process QC {}\n'
+  })
+  try {
+    assert.deepEqual(componentBundleScope(join(tree.root, 'modules/acme/align'), tree.root), [
+      'modules/acme/align',
+      'modules/acme/index'
+    ])
+    assert.deepEqual(
+      componentBundleScope(join(tree.root, 'subworkflows/acme/pipeline'), tree.root),
+      ['modules/acme/align', 'modules/acme/index', 'modules/acme/qc', 'subworkflows/acme/pipeline']
+    )
+  } finally {
+    tree.cleanup()
+  }
 })

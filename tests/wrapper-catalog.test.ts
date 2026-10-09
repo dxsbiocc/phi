@@ -6,11 +6,9 @@ import test from 'node:test'
 
 import {
   addCustomWrapper,
-  BUNDLED_WRAPPER_SOURCE_FINGERPRINT,
   ensureBundledWrappersInstalled,
   fingerprintBundledWrapperSource,
   findWrapperCatalogEntry,
-  getBundledWrapperPackagesDir,
   listDefaultAgentToolWrappers,
   listWrapperCatalog,
   migrateLegacyCustomWrappers
@@ -99,11 +97,19 @@ outputs:
   )
 }
 
-test('bundled wrapper source fingerprint matches the shipped wrapper tree', () => {
-  assert.equal(
-    fingerprintBundledWrapperSource(getBundledWrapperPackagesDir()),
-    BUNDLED_WRAPPER_SOURCE_FINGERPRINT
-  )
+test('explicit wrapper source fingerprints are stable across equivalent trees', () => {
+  const first = mkdtempSync(join(tmpdir(), 'phi-wrapper-fingerprint-a-'))
+  const second = mkdtempSync(join(tmpdir(), 'phi-wrapper-fingerprint-b-'))
+  try {
+    writeBundledCompositionFixture(first)
+    writeBundledCompositionFixture(second)
+    const fingerprint = fingerprintBundledWrapperSource(first)
+    assert.match(fingerprint, /^[a-f0-9]{64}$/)
+    assert.equal(fingerprintBundledWrapperSource(second), fingerprint)
+  } finally {
+    rmSync(first, { recursive: true, force: true })
+    rmSync(second, { recursive: true, force: true })
+  }
 })
 
 test('Finder metadata does not change a bundled wrapper source fingerprint', () => {

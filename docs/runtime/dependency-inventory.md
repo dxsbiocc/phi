@@ -3,6 +3,14 @@
 Date: 2026-10-07
 Updated: 2026-10-07 — visualization dependencies consolidated into `phi-r`.
 
+Source layout note (2026-10-09): this is a dated dependency snapshot. The listed
+standalone skill, visualization, and wrapper source paths now belong to the
+phi-packages checkout. Phi retains core runtime manifests/locks and the private
+Office source. Historical counts and inspection commands below describe the
+original inventory; use the selected phi-packages source for current content
+checks. See [core resource ownership](../../resources/README.md) and
+[the official content source decision](../decisions/official-content-source.md).
+
 Input for the `phi-python`, `phi-r`, `phi-nextflow`, and `phi-jupyter` specs
 ([runtime foundation](../design/phi-runtime-foundation.md) §3, §3.2, §5, §10;
 [implementation plan](../roadmap/content-distribution-implementation.md) step

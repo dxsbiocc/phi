@@ -11,7 +11,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -55,7 +54,6 @@ import {
   type McpPackageManifest
 } from './packages/manifest'
 import { localArchivePath, sha256 } from './packages/installer-utils'
-import { getBundledResourceDir } from './runtime/runtime-adapter'
 import { getPhiAgentDir } from './runtime-paths'
 import { API_KEY_CONNECTOR_IDS, apiKeyConnector } from './mcp-key-credentials'
 import {
@@ -127,10 +125,6 @@ interface CatalogSource {
   registryDir: string
   packageDir?: string
   iconAsset?: RegistryIconAsset
-}
-
-export function getBundledConnectorsDir(): string {
-  return getBundledResourceDir('connectors')
 }
 
 /** Catalog data from supplied verified indexes and installed connectors. */
@@ -287,8 +281,7 @@ export async function installCatalogConnector(
   }
   const temporary = mkdtempSync(join(tmpdir(), 'phi-connector-registry-'))
   try {
-    const trust = isBundledConnectorSource(source) ? 'builtin' : 'imported'
-    const registry = materializeConnectorRegistry(packageDir, temporary, source, trust)
+    const registry = materializeConnectorRegistry(packageDir, temporary, source, 'imported')
     return await installConnectorFromRegistry(registry, id, version, options)
   } finally {
     rmSync(temporary, { recursive: true, force: true })
@@ -626,14 +619,6 @@ function materializeConnectorRegistry(
     schemaVersion: 1,
     generatedAt: new Date(0).toISOString(),
     packages: [entry]
-  }
-}
-
-function isBundledConnectorSource(source: string): boolean {
-  try {
-    return realpathSync(source) === realpathSync(getBundledConnectorsDir())
-  } catch {
-    return false
   }
 }
 

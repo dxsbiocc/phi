@@ -29,9 +29,10 @@ or external content before display; invalid images retain the type fallback.
 
 The following 18 icons were copied byte-for-byte on 2026-10-08 from Phi's former
 `src/renderer/src/features/mcp/assets/` catalog assets into
-`resources/connectors/<id>/icon.<extension>`. Each affected connector's package
-version changed from 1.0.0 to 1.0.1 because its payload changed. BioMCP has no existing
-logo and keeps its 1.0.0 package and fallback. These provider assets identify services;
+`resources/connectors/<id>/icon.<extension>` in phi-packages. Phi no longer keeps a
+second connector source tree. Each affected connector's package version changed
+from 1.0.0 to 1.0.1 because its payload changed. BioMCP is maintained separately in
+the public repository. These provider assets identify services;
 this attribution does not change their owners' licensing or trademark terms.
 
 | Icon                  | Listing                                                                                                 |

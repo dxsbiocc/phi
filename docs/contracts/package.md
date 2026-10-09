@@ -104,7 +104,7 @@ the trusted first-party public keys. Reading a registry gives it a **trust tier*
 
 | Registry                                                                    | Tier         |
 | --------------------------------------------------------------------------- | ------------ |
-| the bundled registry shipped with the app                                   | `builtin`    |
+| explicitly engine-owned legacy migration registry                         | `builtin`    |
 | valid signature by an embedded key                                          | `official`   |
 | no `index.sig.json`, or signed by a key Phi does not know                   | `imported`   |
 | `index.sig.json` unreadable, or an embedded key's signature does not verify | **rejected** |
@@ -112,6 +112,10 @@ the trusted first-party public keys. Reading a registry gives it a **trust tier*
 Archives are covered by the signature through their `sha256` in the index. A remote
 (`https://`) registry must be `official`; the fixed Phi Packages source now implements this requirement;
 a local directory registry may be `imported`, because the user chose it.
+
+Current builds ship no bundled domain-content registry. `builtin` remains for
+legacy installations and explicit engine-owned migrations. A raw connector source
+directory receives imported trust; its name or location cannot grant builtin trust.
 
 ### 4.2 Content icons (1.3.0)
 

@@ -1,4 +1,0 @@
-{
-  "fastq": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/sarscov2/illumina/fastq/test_1.fastq.gz",
-  "outdir": "results"
-}

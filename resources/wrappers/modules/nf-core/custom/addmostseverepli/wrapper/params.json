@@ -1,4 +1,0 @@
-{
-  "vcf": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/vcf/genmod_compound.vcf",
-  "outdir": "results"
-}

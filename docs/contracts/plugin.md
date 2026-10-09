@@ -53,7 +53,7 @@ Example:
 schemaVersion: 1
 id: visualization
 type: plugin
-version: 1.0.2
+version: 1.0.3
 title: 科研绘图
 summary: 用模板生成可直接发表的组学图表，配有专属绘图智能体。
 toolPrefix: viz
@@ -62,7 +62,7 @@ components:
   skills: [skills/omics-visualization]
 ```
 
-The bundled visualization plugin deliberately omits `environments`: its agent
+The catalog visualization plugin deliberately omits `environments`: its agent
 and `omics-visualization` skill both declare `phi:r@1`. The shared `phi-r`
 environment contains R, the visualization packages, and Python 3.12 for the
 plugin's standard-library-only command-line scripts. Other plugins may still
@@ -108,10 +108,13 @@ step below; a plugin contains no install code.
    the plugin's environment references; garbage collection removes environments no
    longer referenced.
 
-**Bundled plugins** ship with the app under `resources/plugins/<id>/` and are
-installed through the same loader: on start, a bundled plugin that is not
-installed, or whose version is newer than the installed one, is installed or
-upgraded. A user who uninstalled a bundled plugin keeps it uninstalled.
+**Catalog plugins** are installed or upgraded only after the user selects them
+from the verified official Phi Packages source or an imported registry. Startup
+loads existing installations without automatically copying plugin source from the
+app. The private Office source retained in Phi is excluded from the app package
+and public catalog because some components restrict redistribution. Explicit
+legacy migration helpers still respect a user's bundled-uninstall tombstone.
+See the [official content source decision](../decisions/official-content-source.md).
 
 For the visualization upgrade that removes its former private environment, the
 atomic switch drops the installed version's `plugin:viz` reference. The normal

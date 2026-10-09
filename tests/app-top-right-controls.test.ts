@@ -158,7 +158,7 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /workspaceFileTabKey\(tab\.path\)/)
   assert.match(appSource, /isWorkspaceFileWorkspaceTab\(tab\)/)
   assert.match(appSource, /tabs=\{visibleWorkspaceTabs\}/)
-  assert.match(appSource, /onSelect=\{selectWorkspaceTab\}/)
+  assert.match(appSource, /onSelect=\{\(tab\) => \{[\s\S]{0,250}selectWorkspaceTab\(tab\)/)
   assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
   assert.match(
     appSource,

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,7 +12,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // `resources/office/officecli/` holds the OfficeCLI binary from `bun run office:fetch`.
 const ALLOWED_UNTRACKED_RESOURCES = {
   basenames: new Set(['.DS_Store']),
-  paths: new Set(),
+  paths: new Set(['resources/README.md']),
   prefixes: ['resources/runtime/micromamba/', 'resources/office/officecli/']
 }
 
@@ -33,6 +34,45 @@ function isAllowedUntrackedResource(filePath) {
 
 export function offendingResourcePaths(paths) {
   return paths.filter((filePath) => !isAllowedUntrackedResource(filePath))
+}
+
+// Distributable sources belong to phi-packages. These are the only source
+// roots retained in Phi; Office's licensed plugin is a private exception.
+const PHI_RESOURCE_FILES = new Set(['resources/README.md', 'resources/icon.png'])
+const PHI_RESOURCE_PARENTS = new Set(['resources/skills', 'resources/plugins'])
+const PHI_RESOURCE_ROOTS = [
+  'resources/agents',
+  'resources/office',
+  'resources/palettes',
+  'resources/runtime',
+  'resources/skills/create-wrapper',
+  'resources/plugins/office'
+]
+
+export function misplacedPhiResourcePaths(paths) {
+  return paths.filter((filePath) => {
+    const normalized = normalizedResourcePath(filePath)
+    return !(
+      path.posix.basename(normalized) === '.DS_Store' ||
+      PHI_RESOURCE_FILES.has(normalized) ||
+      PHI_RESOURCE_PARENTS.has(normalized) ||
+      PHI_RESOURCE_ROOTS.some(
+        (root) => normalized === root || normalized.startsWith(`${root}/`)
+      )
+    )
+  })
+}
+
+function listPhiResourceEntries() {
+  const roots = readdirSync(path.join(repoRoot, 'resources'), { withFileTypes: true })
+  return roots.flatMap((entry) => {
+    const relative = `resources/${entry.name}`
+    if (!entry.isDirectory() || !PHI_RESOURCE_PARENTS.has(relative)) return [relative]
+    return [
+      relative,
+      ...readdirSync(path.join(repoRoot, relative)).map((child) => `${relative}/${child}`)
+    ]
+  })
 }
 
 function textOf(value) {
@@ -68,6 +108,14 @@ function listUntrackedResourcePaths() {
 }
 
 function main() {
+  const misplaced = misplacedPhiResourcePaths(listPhiResourceEntries())
+  if (misplaced.length > 0) {
+    console.error('Content sources outside Phi core resources (maintain them in phi-packages):')
+    for (const filePath of misplaced.slice(0, MAX_LISTED_OFFENDING_PATHS)) {
+      console.error(`- ${filePath}`)
+    }
+    process.exit(1)
+  }
   let paths
   try {
     paths = listUntrackedResourcePaths()

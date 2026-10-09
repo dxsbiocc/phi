@@ -4,9 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { listWrapperCompositionCatalog } from '../src/main/agent/wrappers/composition/discovery'
 import { parseWrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
-import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
 import {
   checkWrapperStatic,
   collectRemoteUrls,
@@ -279,15 +277,4 @@ test('probeUrl gives up after the retry budget on a persistent failure', async (
   })
   assert.equal(result.ok, false)
   assert.equal(calls, 3)
-})
-
-test('every bundled wrapper passes the static smoke checks', () => {
-  const entries = listWrapperCompositionCatalog({ sourceRoot: getBundledWrapperPackagesDir() })
-  assert.ok(entries.length > 0)
-  const failures = entries.flatMap((entry) =>
-    checkWrapperStatic(entry)
-      .filter((issue) => issue.level === 'error')
-      .map((issue) => `${entry.manifest.id}: ${issue.message}`)
-  )
-  assert.deepEqual(failures, [])
 })

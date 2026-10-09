@@ -1,22 +1,26 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseContentSourceArgs, requireSourceDirectory } from './source-roots.mjs'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
-const pluginReferences = join(
-  root,
-  'resources',
-  'plugins',
-  'visualization',
-  'skills',
-  'omics-visualization',
-  'references'
+const argv = process.argv.slice(2)
+const check = argv.includes('--check')
+if (!check && !argv.includes('--source')) {
+  throw new Error('Palette sync writes package content; pass --source <phi-packages checkout>.')
+}
+const sourceRoot = parseContentSourceArgs(
+  argv.filter((arg) => arg !== '--check'),
+  { defaultToPackages: true }
+)
+const pluginReferences = requireSourceDirectory(
+  sourceRoot,
+  'resources/plugins/visualization/skills/omics-visualization/references'
 )
 const copies = [
   ['resources/palettes/palettes.yaml', join(pluginReferences, 'palettes.yaml')],
   ['resources/palettes/colors.json', join(pluginReferences, 'palettes', 'colors.json')]
 ]
-const check = process.argv.includes('--check')
 
 let drift = false
 for (const [sourceRelative, destination] of copies) {
@@ -34,6 +38,8 @@ for (const [sourceRelative, destination] of copies) {
 }
 
 if (drift) {
-  console.error('Run `bun run sync:plugin-palettes` and commit the generated copies.')
+  console.error(
+    `Run \`bun run sync:plugin-palettes --source ${sourceRoot}\` and commit the generated copies.`
+  )
   process.exit(1)
 }

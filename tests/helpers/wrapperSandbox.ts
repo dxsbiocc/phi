@@ -1,6 +1,5 @@
 import {
   chmodSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -17,13 +16,13 @@ import {
   findWrapperCompositionEntry,
   resetWrapperCompositionCatalogCache
 } from '../../src/main/agent/wrappers/composition/discovery'
-import { getBundledWrapperPackagesDir } from '../../src/main/agent/wrappers/catalog'
+import { writeGffreadFixture } from './compositionFixtures'
 import {
   getWrapperTreeDir,
   getWrapperTreeOwnershipPath
 } from '../../src/main/agent/packages/wrapper-tree'
 
-/** A bundled wrapper that needs no downloads: its default `gff` is a local fixture. */
+/** An installed test wrapper that needs no downloads: its default `gff` is a local fixture. */
 export const WRAPPER_ID = 'nf-core/modules/gffread'
 
 /**
@@ -86,6 +85,7 @@ export interface Sandbox {
   root: string
   agentDir: string
   outdir: string
+  wrappersRoot: string
   pidFile: string
   useFake: (script?: string) => void
   /** Hold the fake pipeline open (FAKE_NF_GATE) until `releaseGate` is called. */
@@ -104,10 +104,7 @@ const ENV_KEYS = [
 
 function seedGffreadPackage(agentDir: string): void {
   const tree = getWrapperTreeDir(agentDir)
-  const source = join(getBundledWrapperPackagesDir(), 'modules', 'nf-core', 'gffread')
-  const target = join(tree, 'modules', 'nf-core', 'gffread')
-  mkdirSync(join(target, '..'), { recursive: true })
-  cpSync(source, target, { recursive: true })
+  const target = writeGffreadFixture(tree)
   const paths: string[] = []
   const walk = (dir: string): void => {
     for (const name of readdirSync(dir)) {
@@ -168,6 +165,7 @@ export async function withSandbox(fn: (sandbox: Sandbox) => Promise<void>): Prom
     root,
     agentDir: join(root, 'agent'),
     outdir: join(root, 'out'),
+    wrappersRoot: getWrapperTreeDir(join(root, 'agent')),
     pidFile: join(root, 'nf.pid'),
     useFake: (script = FAKE_NEXTFLOW) => {
       const bin = join(root, 'fake-nextflow')
@@ -247,7 +245,7 @@ export async function settlesWithin<T>(
 
 export function bundledEntry(): NonNullable<ReturnType<typeof findWrapperCompositionEntry>> {
   const found = findWrapperCompositionEntry(WRAPPER_ID)
-  assert.ok(found, `${WRAPPER_ID} should be bundled`)
+  assert.ok(found, `${WRAPPER_ID} should be installed as a test fixture`)
   return found
 }
 

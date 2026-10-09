@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { after } from 'node:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { resetWrapperCompositionCatalogCache } from '../src/main/agent/wrappers/composition/discovery'
 import { rankWrapperEntries } from '../src/main/agent/wrappers/composition/search'
@@ -7,9 +10,6 @@ import {
   buildWrapperCompositionInspectTool,
   buildWrapperCompositionSearchTool
 } from '../src/main/agent/wrappers/composition/tools'
-import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
-
-const DISCOVERY = { sourceRoot: getBundledWrapperPackagesDir() }
 
 function wrapper(
   id: string,
@@ -31,6 +31,26 @@ const CATALOG = [
   ),
   wrapper('nf-core/modules/multiqc', 'Aggregate results from many tools; also reads FastQC output.')
 ]
+
+// The tool boundary uses the same small metadata cases as the ranking tests.
+const sourceRoot = mkdtempSync(join(tmpdir(), 'phi-wrapper-search-'))
+for (const { manifest } of CATALOG) {
+  const [provider, kind, name] = manifest.id.split('/')
+  const dir = join(sourceRoot, kind, provider, name, 'wrapper')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'main.nf'), 'workflow {}\n')
+  writeFileSync(join(dir, 'params.json'), '{}\n')
+  writeFileSync(
+    join(dir, 'wrapper.yaml'),
+    JSON.stringify({
+      ...manifest,
+      params: {},
+      outputs: { report: { type: 'path', path: 'results/report.txt', primary: true } }
+    })
+  )
+}
+const DISCOVERY = { sourceRoot }
+after(() => rmSync(sourceRoot, { recursive: true, force: true }))
 
 const ids = (entries: ReadonlyArray<{ manifest: { id: string } }>): string[] =>
   entries.map((entry) => entry.manifest.id)

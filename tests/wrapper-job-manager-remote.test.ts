@@ -151,7 +151,7 @@ test('SSH project starts the same wrapper on its server without a target argumen
       })
       const remoteGff = join(env.remoteRoot, 'genome.gff3')
       copyFileSync(
-        join(process.cwd(), 'resources/wrappers/modules/nf-core/gffread/tests/data/genome.gff3'),
+        join(sb.wrappersRoot, 'modules/nf-core/gffread/tests/data/genome.gff3'),
         remoteGff
       )
       const result = await m.start({
@@ -249,10 +249,7 @@ test('local project keeps local default and can explicitly select its saved remo
         checkRemoteEnvironment: async () => readyDoctor(env)
       })
       const remoteGff = join(env.remoteRoot, 'genome.gff3')
-      const localGff = join(
-        process.cwd(),
-        'resources/wrappers/modules/nf-core/gffread/tests/data/genome.gff3'
-      )
+      const localGff = join(sb.wrappersRoot, 'modules/nf-core/gffread/tests/data/genome.gff3')
       copyFileSync(localGff, remoteGff)
       const stillLocal = await remoteManager.start({
         id: WRAPPER_ID,
@@ -293,10 +290,7 @@ test('local input references use the saved mapping and persist final server path
       const remoteDataRoot = join(env.remoteRoot, 'data')
       mkdirSync(localRoot)
       mkdirSync(remoteDataRoot)
-      const source = join(
-        process.cwd(),
-        'resources/wrappers/modules/nf-core/gffread/tests/data/genome.gff3'
-      )
+      const source = join(sb.wrappersRoot, 'modules/nf-core/gffread/tests/data/genome.gff3')
       const localGff = join(localRoot, 'genome.gff3')
       const remoteGff = join(remoteDataRoot, 'genome.gff3')
       copyFileSync(source, localGff)

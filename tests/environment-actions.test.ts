@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { writeRuntimePluginFixture } from './helpers/runtimePluginFixture'
 import { createManagedEnvironmentActions } from '../src/main/agent/environment/actions'
 import { readEnvironmentIndex, updateEnvironmentEntry } from '../src/main/agent/envs'
 import type { EnvironmentBuilds } from '../src/main/agent/content/environment-builds'
@@ -123,7 +124,7 @@ test('plugin environment builds require the installed owning plugin and remember
   const starts: Array<{ owner?: string; requestedBy?: string }> = []
   const repairs: Array<{ owner?: string; name: string }> = []
   try {
-    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+    const installed = installPlugin(writeRuntimePluginFixture(temp), {
       agentDir,
       runtimeRoot: root
     })

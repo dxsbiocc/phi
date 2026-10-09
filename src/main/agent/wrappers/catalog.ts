@@ -10,7 +10,6 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import semver from 'semver'
@@ -61,59 +60,9 @@ interface WrapperSourceMarker {
 const SOURCE_MARKER_FILE = '.source.json'
 const MANIFEST_FILE = 'wrapper.yaml'
 
-const nodeRequire = createRequire(import.meta.url)
-
-/**
- * Locates `resources/wrappers/` — the shipped source tree from which bundled
- * wrapper packages are materialized. Not
- * `src/main/agent/wrappers/fixtures/`, where these lived until this
- * function replaced a rollup copy-plugin hack
- * (`copyWrapperFixturesPlugin` in electron.vite.config.ts's history):
- * `resources/` is this app's existing, already-packaging-aware home for
- * "shipped content that isn't compiled code" — electron-builder.yml's
- * `asarUnpack: - resources/**` already un-compresses it from the app
- * bundle at build time, so nothing here needs a custom build step.
- *
- * Three contexts, three answers:
- *  - Packaged Electron app: electron-builder's `asarUnpack` extracts
- *    matched files OUT of the compressed `app.asar` at build time into a
- *    sibling `app.asar.unpacked/` directory that mirrors the same
- *    project-relative layout — a standard, documented electron-builder
- *    idiom, not something to re-derive via relative path arithmetic from
- *    wherever this compiled file happens to load from (rollup flattens the
- *    whole main process into one file, so that arithmetic isn't even
- *    stable across rollup config changes — exactly what the old
- *    fixtures-under-src/ approach ran into).
- *  - Dev Electron app (`electron-vite dev`/`preview`, unpackaged):
- *    `app.getAppPath()` is the project root — no asar involved at all.
- *  - Plain `node --test` (this project's whole test suite, no Electron
- *    runtime present — `require('electron')` here returns a bare string,
- *    the path to the Electron binary, not the API object): falls back to
- *    `process.cwd()`, which every test invocation in package.json's `test`
- *    script already runs from the project root.
- */
-export function getBundledWrapperPackagesDir(): string {
-  const electronModule = nodeRequire('electron') as
-    { app?: { isPackaged: boolean; getAppPath(): string } } | string
-  const electronApp = typeof electronModule === 'object' ? electronModule.app : undefined
-
-  if (!electronApp) {
-    return join(process.cwd(), 'resources', 'wrappers')
-  }
-  if (!electronApp.isPackaged) {
-    return join(electronApp.getAppPath(), 'resources', 'wrappers')
-  }
-  return join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'wrappers')
-}
-
 const BUNDLED_MARKER_VERSION = 1
 const DEFAULT_BUNDLED_PACKAGE_VERSION = '1.0.0'
 const BUNDLED_REGISTRY_ID = 'bundled-wrappers'
-// This is the version-independent digest of resources/wrappers. Bump the
-// fingerprint prefix and update this value if package partitioning semantics
-// change without a corresponding resource-tree change.
-export const BUNDLED_WRAPPER_SOURCE_FINGERPRINT =
-  '7728ba5493c7d55239c97eba41a1ffa559c5c0b2487453d42afd8c01bc6bc0a8'
 
 interface BundledWrapperMarker {
   version: 1
@@ -467,14 +416,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Installs the shipped wrapper source as ordinary wrapper packages. Archives
- * are materialized only into a temporary local registry, avoiding a second
- * permanent copy of the 40+ MB source tree in the application bundle.
+ * Explicit legacy wrapper migration helper. The caller must supply its source
+ * tree; current startup and catalog installs use verified package registries.
  */
 export async function ensureBundledWrappersInstalled(
   agentDir = getPhiAgentDir(),
   options: BundledWrapperInstallOptions = {}
 ): Promise<BundledWrapperInstallResult> {
+  if (!options.sourceRoot) {
+    throw new Error('Legacy wrapper migration requires an explicit sourceRoot')
+  }
   const packageVersion = options.packageVersion ?? DEFAULT_BUNDLED_PACKAGE_VERSION
   if (!semver.valid(packageVersion)) {
     throw new Error(`Invalid bundled wrapper package version: ${packageVersion}`)
@@ -499,10 +450,8 @@ export async function ensureBundledWrappersInstalled(
     }
   }
 
-  const sourceRoot = options.sourceRoot ?? getBundledWrapperPackagesDir()
-  const sourceFingerprint = options.sourceRoot
-    ? fingerprintBundledWrapperSource(sourceRoot)
-    : BUNDLED_WRAPPER_SOURCE_FINGERPRINT
+  const sourceRoot = options.sourceRoot
+  const sourceFingerprint = fingerprintBundledWrapperSource(sourceRoot)
   if (
     marker?.sourceFingerprint === sourceFingerprint &&
     markerMatchesInstalledTree(agentDir, marker)

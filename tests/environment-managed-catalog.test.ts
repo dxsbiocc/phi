@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { writeRuntimePluginFixture } from './helpers/runtimePluginFixture'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { listManagedEnvironments } from '../src/main/agent/environment/managed'
 import { updateEnvironmentEntry } from '../src/main/agent/envs'
@@ -45,7 +46,7 @@ test('managed catalog includes shared phi-r, project overrides, and orphaned env
     copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
     copyMinimal(join(environmentsDir, 'phi-nextflow'), 'phi-nextflow')
     copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
-    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+    const installed = installPlugin(writeRuntimePluginFixture(temp), {
       agentDir,
       runtimeRoot: root,
       platform: 'darwin-arm64'
@@ -165,7 +166,7 @@ test('managed catalog does not add a private environment for the disabled visual
   const environmentsDir = join(temp, 'official')
   try {
     copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
-    const installed = installPlugin(join(process.cwd(), 'resources', 'plugins', 'visualization'), {
+    const installed = installPlugin(writeRuntimePluginFixture(temp), {
       agentDir,
       runtimeRoot: root,
       platform: 'darwin-arm64'
@@ -186,7 +187,7 @@ test('managed catalog does not add a private environment for the disabled visual
       false
     )
     assert.equal(
-      catalog.some((entry) => entry.name === 'viz'),
+      catalog.some((entry) => entry.label === 'viz'),
       false
     )
     assert.equal(

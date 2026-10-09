@@ -1,4 +1,0 @@
-{
-  "fasta": "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/sarscov2/illumina/fasta/contigs.fasta",
-  "outdir": "results"
-}

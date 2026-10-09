@@ -1,20 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import {
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
+import { writeRuntimePluginFixture } from './helpers/runtimePluginFixture'
 import { findResourceIcon, readResourceIcon } from '../src/main/agent/resource-icons'
 import type { LoadedPlugin } from '../src/main/agent/plugins/loader'
 
+import { writeMcpRegistryFixture } from './helpers/mcpRegistryFixture'
 const root = mkdtempSync(join(tmpdir(), 'phi-resource-icon-metadata-'))
 const agentDir = join(root, 'agent')
 const project = join(root, 'project')
@@ -38,23 +32,6 @@ const SOURCE_ICON = ICON.replace('#0369a1', '#e11d48')
 
 after(() => {
   rmSync(root, { recursive: true, force: true })
-})
-
-test('all 18 shipped connector logos resolve to safe image data', () => {
-  const connectors = join(process.cwd(), 'resources', 'connectors')
-  const directories = readdirSync(connectors, { withFileTypes: true }).filter((entry) =>
-    entry.isDirectory()
-  )
-  assert.equal(directories.length, 18)
-  for (const directory of directories) {
-    const icon = findResourceIcon(join(connectors, directory.name))
-    assert.ok(icon, directory.name)
-    assert.match(
-      readResourceIcon(icon.key) ?? '',
-      /^data:image\/(svg\+xml|png|jpeg|webp);base64,/,
-      directory.name
-    )
-  }
 })
 
 test('skill metadata includes own-folder icons for project and installed skills', async () => {
@@ -88,8 +65,7 @@ test('skill metadata includes own-folder icons for project and installed skills'
 })
 
 test('installed Phi plugins expose root icons and plugin skills inherit the root fallback', async () => {
-  const source = join(root, 'plugin-source')
-  cpSync(join(process.cwd(), 'resources', 'plugins', 'visualization'), source, { recursive: true })
+  const source = writeRuntimePluginFixture(root)
   writeFileSync(join(source, 'icon.svg'), ICON)
   const result = installPlugin(source, { agentDir, runtimeRoot: join(root, 'runtime') })
   assert.equal(result.ok, true, JSON.stringify(result.errors))
@@ -117,12 +93,25 @@ test('MCP catalog prefers installed icons and survives removal of the source reg
     agentDir,
     appVersion: '1.0.0'
   })
-  assert.equal(installed.length, 1)
+  const installedConnector = installed.find(
+    (entry) => entry.type === 'mcp' && entry.id === 'icon-connector'
+  )
+  assert.ok(installedConnector)
+  assert.equal(installedConnector.trust, 'imported')
   writeFileSync(join(source, 'icon.svg'), SOURCE_ICON)
+  const registry = writeMcpRegistryFixture(join(root, 'icon-source-registry'), [
+    readFileSync(join(source, 'phi-package.yaml'), 'utf8')
+  ])
+  writeFileSync(join(registry.dir, 'icon.svg'), SOURCE_ICON)
+  registry.packages[0].iconAsset = {
+    path: 'icon.svg',
+    sha256: createHash('sha256').update(SOURCE_ICON).digest('hex'),
+    size: Buffer.byteLength(SOURCE_ICON)
+  }
   const before = listConnectorCatalog({
     agentDir,
     appVersion: '1.0.0',
-    bundledConnectorsDir: source
+    registries: [registry]
   })
   assert.equal(before[0]?.added, true)
   assert.ok(before[0]?.icon)
@@ -131,11 +120,11 @@ test('MCP catalog prefers installed icons and survives removal of the source reg
     `data:image/svg+xml;base64,${Buffer.from(ICON).toString('base64')}`
   )
   rmSync(source, { recursive: true, force: true })
+  rmSync(registry.dir, { recursive: true, force: true })
   const after = listConnectorCatalog({
     agentDir,
     appVersion: '1.0.0',
-    bundledConnectorsDir: source,
-    registryDirs: [join(root, 'deleted-registry')]
+    registryDirs: [registry.dir]
   })
   const connector = after.find((entry) => entry.id === 'icon-connector')
   assert.ok(connector?.icon)
@@ -188,7 +177,6 @@ test('not-installed registry connectors expose verified sidecar refs without a s
   const options = {
     agentDir,
     appVersion: '1.0.0',
-    bundledConnectorsDir: join(root, 'missing-source'),
     registryDirs: [registry]
   }
   const item = listConnectorCatalog(options).find((entry) => entry.id === 'sidecar-connector')

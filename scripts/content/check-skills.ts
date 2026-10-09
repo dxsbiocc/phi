@@ -1,14 +1,14 @@
-// Validates every bundled skill under resources/skills/ and each bundled plugin's skills/.
+// Validates core/private skills, or package content selected with --packages/--source.
 // Plugin skills are validated with insidePlugin. Exits 1 when any skill has errors.
 
 import { readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import { validateSkill } from '../../src/main/agent/content/skill'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
+import { parseContentSourceArgs, requireSourceDirectory } from './source-roots.mjs'
 
-const root = fileURLToPath(new URL('../..', import.meta.url))
+const root = parseContentSourceArgs(process.argv.slice(2))
 
 interface SkillCheck {
   label: string
@@ -28,13 +28,15 @@ function skillDirs(skillsRoot: string): string[] {
     .sort()
 }
 
-const checks: SkillCheck[] = skillDirs(join(root, 'resources', 'skills')).map((name) => ({
+const skillsRoot = requireSourceDirectory(root, 'resources/skills')
+const pluginsRoot = requireSourceDirectory(root, 'resources/plugins')
+const checks: SkillCheck[] = skillDirs(skillsRoot).map((name) => ({
   label: name,
   dir: join(root, 'resources', 'skills', name),
   insidePlugin: false
 }))
 
-for (const id of skillDirs(join(root, 'resources', 'plugins'))) {
+for (const id of skillDirs(pluginsRoot)) {
   const pluginDir = join(root, 'resources', 'plugins', id)
   const result = validatePlugin(pluginDir)
   if (!result.plugin) continue

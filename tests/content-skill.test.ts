@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import { PHI_PLATFORMS } from '../src/main/agent/envs/contract'
@@ -602,16 +601,6 @@ test('scriptToolsOf prefixes the tool and resolves run paths and output schemas'
   const attached = assertValid(skillDir([scriptEntry()], { attachTo: '[main, Bio]' }))
   assert.ok(attached.skill)
   assert.deepEqual(scriptToolsOf(attached.skill, { prefix: 'demo' })[0].attachTo, ['main', 'Bio'])
-})
-
-test('bundled scanpy validates with phi:python@1', () => {
-  const dir = fileURLToPath(new URL('../resources/skills/scanpy', import.meta.url))
-  const result = validateSkill(dir)
-  assert.equal(result.ok, true)
-  assert.deepEqual(result.errors, [])
-  assert.deepEqual(result.warnings, [])
-  assert.ok(result.skill)
-  assert.equal(result.skill.phi?.environment, 'phi:python@1')
 })
 
 function skillMdBody(): string {

@@ -1,5 +1,0 @@
-{
-  "counts": "https://raw.githubusercontent.com/nf-core/test-datasets/rnaseq/testdata/deseq2qc/countFile.tsv",
-  "vst": false,
-  "outdir": "results"
-}

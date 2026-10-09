@@ -18,7 +18,6 @@ import { stringify as stringifyYaml } from 'yaml'
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import {
   connectorEnvironmentBuildAction,
-  getBundledConnectorsDir,
   installCatalogConnector,
   listConnectorCatalog,
   refreshPersistedManagedStdioServers,
@@ -270,30 +269,37 @@ test('HTTP packages install, upgrade, and uninstall without touching user server
   assert.deepEqual(listInstalledPackages({ agentDir: fixture.agentDir }), [])
 })
 
-test('only the real bundled connector source installs with builtin trust', async () => {
-  const fixture = sandbox()
-  const bundledLink = join(fixture.root, 'bundled-connectors-link')
-  symlinkSync(
-    getBundledConnectorsDir(),
-    bundledLink,
-    process.platform === 'win32' ? 'junction' : 'dir'
-  )
+test('directory connector sources and symlinked directories retain imported trust and icons', async () => {
+  const icon =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M2 2h12v12H2z"/></svg>'
+  for (const linked of [false, true]) {
+    const fixture = sandbox()
+    const connectorDir = writeConnector(fixture.connectorsDir, httpManifest('local-data'), {
+      'icon.svg': { content: icon }
+    })
+    const link = join(fixture.root, 'connector-source-link')
+    if (linked) {
+      symlinkSync(fixture.connectorsDir, link, process.platform === 'win32' ? 'junction' : 'dir')
+    }
+    await installCatalogConnector(
+      linked ? link : fixture.connectorsDir,
+      'local-data',
+      '1.0.0',
+      installOptions(fixture)
+    )
 
-  const manifest = parsePackageManifestText(
-    readFileSync(join(bundledLink, 'pubmed', 'phi-package.yaml'), 'utf8')
-  )
-  await installCatalogConnector(bundledLink, 'pubmed', manifest.version, installOptions(fixture))
-
-  const installed = listInstalledPackages({ agentDir: fixture.agentDir })[0]
-  assert.equal(installed?.trust, 'builtin')
-  assert.deepEqual(
-    readFileSync(join(installed?.dir ?? '', 'icon.svg')),
-    readFileSync(join(bundledLink, 'pubmed', 'icon.svg'))
-  )
-  assert.equal(
-    JSON.parse(readFileSync(join(installed?.dir ?? '', '.source.json'), 'utf8')).trust,
-    'builtin'
-  )
+    const installed = listInstalledPackages({ agentDir: fixture.agentDir })[0]
+    assert.ok(installed)
+    assert.equal(installed.trust, 'imported')
+    assert.deepEqual(
+      readFileSync(join(installed.dir, 'icon.svg')),
+      readFileSync(join(connectorDir, 'icon.svg'))
+    )
+    assert.equal(
+      JSON.parse(readFileSync(join(installed.dir, '.source.json'), 'utf8')).trust,
+      'imported'
+    )
+  }
 })
 
 test('HTTP package install refuses to overwrite a same-name user server', async () => {
@@ -333,6 +339,7 @@ test('ready stdio package runs an executable package-relative command under env 
   assert.ok(installed)
   const entry = readConfig(fixture.agentDir).mcpServers['local-ready']
   assert.equal(entry.command, '/usr/bin/env')
+  assert.ok(entry.args)
   assert.equal(entry.args[0], '-i')
   assert.ok(entry.args.includes(join(installed.dir, 'server.sh')))
   assert.equal(entry.args.at(-1), join(installed.dir, 'payload.txt'))

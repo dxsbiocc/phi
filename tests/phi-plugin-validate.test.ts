@@ -471,14 +471,6 @@ test('component warnings are retained with their component path', () => {
   assert.ok(result.plugin)
 })
 
-test('the bundled Visualization plugin validates without errors', () => {
-  const result = validatePlugin(join(REPO_ROOT, 'resources', 'plugins', 'visualization'))
-  assert.equal(result.ok, true, texts(result.errors).join('\n'))
-  assert.deepEqual(result.errors, [])
-  assert.ok(result.plugin)
-  assert.equal(result.plugin.manifest.id, 'visualization')
-})
-
 test('the published schema remains parseable YAML-compatible JSON', () => {
   const text = readFileSync(join(REPO_ROOT, 'docs', 'contracts', 'plugin.schema.json'), 'utf8')
   assert.deepEqual(parseYaml(text), pluginManifestSchema)

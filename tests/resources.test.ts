@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { after } from 'node:test'
 
+import { writeRuntimePluginFixture } from './helpers/runtimePluginFixture'
 import { installPlugin } from '../src/main/agent/plugins/loader'
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'pi-resources-test-'))
@@ -110,10 +112,10 @@ writeFileSync(
 process.env.PI_CODING_AGENT_DIR = agentDir
 process.env.CODEX_HOME = codexHome
 
-const visualizationInstall = installPlugin(
-  join(process.cwd(), 'resources', 'plugins', 'visualization'),
-  { agentDir, runtimeRoot: join(tempRoot, 'runtime') }
-)
+const visualizationInstall = installPlugin(writeRuntimePluginFixture(tempRoot), {
+  agentDir,
+  runtimeRoot: join(tempRoot, 'runtime')
+})
 assert.equal(visualizationInstall.ok, true, JSON.stringify(visualizationInstall.errors))
 assert.ok(visualizationInstall.plugin)
 const visualizationSkillDir = visualizationInstall.plugin.components.skills[0]
@@ -359,6 +361,7 @@ test('setSkillDisabled updates enablement without rewriting skill files', async 
   assert.equal(enabledSkills.find((skill) => skill.filePath === filePath)?.disabled, false)
   assert.equal(readFileSync(filePath, 'utf-8'), original)
 })
+
 
 test('deleteSkill removes mutable cataloged skill directories', async () => {
   const { deleteSkill } = await import('../src/main/agent/resources')

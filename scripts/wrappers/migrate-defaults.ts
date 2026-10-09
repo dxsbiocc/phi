@@ -4,6 +4,7 @@ import { relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { parse } from 'yaml'
+import { parseContentSourceArgs, requireSourceDirectory } from '../content/source-roots.mjs'
 
 export interface WrapperDefaultConflict {
   wrapper: string
@@ -138,7 +139,15 @@ export function migrateWrapperDefaults(root: string): WrapperDefaultMigrationRep
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined
 if (invokedPath === import.meta.url) {
-  const root = process.argv[2] ?? 'resources/wrappers'
+  const args = process.argv.slice(2)
+  // Preserve explicit wrapper-root usage for older one-off migration commands.
+  const root =
+    args.length === 1 && !args[0].startsWith('-')
+      ? resolve(args[0])
+      : requireSourceDirectory(
+          parseContentSourceArgs(args, { defaultToPackages: true }),
+          'resources/wrappers'
+        )
   const report = migrateWrapperDefaults(root)
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (report.conflicts.length > 0) process.exitCode = 1

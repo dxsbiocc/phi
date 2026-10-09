@@ -26,6 +26,7 @@ test('desktop packaging keeps the executable and engine while excluding installa
     'resources/skills/anndata/SKILL.md',
     'resources/skills/future-skill/scripts/run.py',
     'resources/connectors/cbioportal/phi-package.yaml',
+    'resources/db-connectors/entrez/connector.yaml',
     'resources/plugins/visualization/phi-package.yaml',
     'resources/wrappers/modules/local/example/wrapper/wrapper.yaml'
   ]

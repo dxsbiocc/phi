@@ -13,61 +13,41 @@ import {
   removeRemoteMcpConnector,
   setMcpConnectorEnabled
 } from '../src/main/agent/mcp-connectors'
-import {
-  mcpConnectorCategories,
-  type RemoteMcpConnectorOptions
-} from '../src/shared/mcpConnectorCatalog'
+import type { RemoteMcpConnectorOptions } from '../src/shared/mcpConnectorCatalog'
+import { writeMcpRegistryFixture } from './helpers/mcpRegistryFixture'
 
-test('curated connector directory has distinct HTTPS services in every group', () => {
-  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-catalog-'))
+test('connector catalog uses explicit registries, selects the newest version, and preserves version requirements', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-registry-catalog-'))
   try {
+    assert.deepEqual(listConnectorCatalog({ agentDir, appVersion: '1.0.0' }), [])
+    const manifest = (version: string): string => `schemaVersion: 1
+id: catalog-fixture
+type: mcp
+version: ${version}
+title: Catalog fixture
+summary: Explicit registry fixture.
+minAppVersion: 2.0.0
+connector:
+  transport: http
+  publisher: Fixture
+  category: 科研数据
+  url: https://fixture.example/mcp
+  auth: none
+`
+    const registry = writeMcpRegistryFixture(join(agentDir, 'registry'), [
+      manifest('1.0.0'),
+      manifest('1.1.0')
+    ])
     const connectors = listConnectorCatalog({
       agentDir,
       appVersion: '1.0.0',
-      bundledConnectorsDir: join(process.cwd(), 'resources', 'connectors')
+      registries: [registry]
     })
-    const ids = connectors.map((connector) => connector.id)
-    const urls = connectors.map((connector) => connector.url).filter((url) => url !== undefined)
-    assert.equal(new Set(ids).size, ids.length)
-    assert.equal(new Set(urls).size, urls.length)
-    assert.ok(urls.every((url) => url.startsWith('https://')))
-    assert.ok(connectors.every((connector) => mcpConnectorCategories.includes(connector.category)))
-    assert.deepEqual(
-      connectors
-        .filter((connector) => connector.signIn === '无需登录')
-        .map((connector) => connector.id)
-        .sort(),
-      ['biorxiv', 'clinical-trials', 'open-targets', 'pubmed']
-    )
-    assert.equal(
-      connectors.find((connector) => connector.id === 'open-targets')?.url,
-      'https://mcp.platform.opentargets.org/mcp'
-    )
-    const composio = connectors.find((connector) => connector.id === 'composio')
-    assert.equal(composio?.url, 'https://connect.composio.dev/mcp')
-    assert.equal(composio?.oauthAuthorizationOrigin, 'https://connect.composio.dev')
-    const cbioportal = connectors.find((connector) => connector.id === 'cbioportal')
-    assert.equal(cbioportal?.url, 'https://mcp.cbioportal.org/db/mcp')
-    assert.equal(cbioportal?.category, '健康与生命科学')
-    assert.equal(cbioportal?.auth, 'oauth')
-    assert.equal(cbioportal?.signIn, '需要登录')
-    assert.equal(cbioportal?.oauthAuthorizationOrigin, 'https://mcp.cbioportal.org')
-    assert.equal(cbioportal?.added, false)
-    assert.deepEqual(
-      connectors
-        .filter((connector) => connector.oauthAuthorizationOrigin)
-        .map((connector) => [connector.id, connector.oauthAuthorizationOrigin] as const)
-        .sort(([left], [right]) => left.localeCompare(right)),
-      [
-        ['biorender', 'https://mcp.services.biorender.com'],
-        ['canva', 'https://mcp.canva.com'],
-        ['cbioportal', 'https://mcp.cbioportal.org'],
-        ['composio', 'https://connect.composio.dev'],
-        ['figma', 'https://www.figma.com'],
-        ['linear', 'https://mcp.linear.app'],
-        ['notion', 'https://mcp.notion.com']
-      ]
-    )
+    assert.equal(connectors.length, 1)
+    assert.equal(connectors[0].version, '1.1.0')
+    assert.equal(connectors[0].signIn, '无需登录')
+    assert.equal(connectors[0].added, false)
+    assert.equal(connectors[0].unavailableReason, '需要 Phi 2.0.0 或更高版本')
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
@@ -221,9 +201,14 @@ test('custom OAuth credentials are normalized, stored privately, and excluded fr
       listConnectorCatalog({
         agentDir,
         appVersion: '1.0.0',
-        bundledConnectorsDir: join(process.cwd(), 'resources', 'connectors')
+        registries: [
+          writeMcpRegistryFixture(join(agentDir, 'registry'), [
+            'schemaVersion: 1\nid: cbioportal\ntype: mcp\nversion: 1.0.0\ntitle: OAuth fixture\nsummary: Credential redaction fixture.\nconnector:\n  transport: http\n  publisher: Fixture\n  category: 健康与生命科学\n  url: https://mcp.cbioportal.org/db/mcp\n  auth: oauth\n'
+          ])
+        ]
       })
     )
+    assert.ok(catalog.includes('cbioportal'))
     assert.equal(catalog.includes('private-client'), false)
     assert.equal(catalog.includes('private-secret'), false)
     addRemoteMcpConnector('cbioportal', url, agentDir, options)

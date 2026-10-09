@@ -1,5 +1,0 @@
-{
-  "reads": "tests/data/test_{1,2}.fastq.gz",
-  "bc_pattern": "NNNN",
-  "outdir": "results"
-}

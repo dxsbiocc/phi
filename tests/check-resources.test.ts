@@ -1,12 +1,46 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { offendingResourcePaths } from '../scripts/check-resources.mjs'
+import { misplacedPhiResourcePaths, offendingResourcePaths } from '../scripts/check-resources.mjs'
+
+test('Phi resources retain core assets and the private Office plugin', () => {
+  assert.deepEqual(
+    misplacedPhiResourcePaths([
+      'resources/README.md',
+      'resources/icon.png',
+      'resources/agents/Wrapper.md',
+      'resources/runtime/manifest.json',
+      'resources/runtime/micromamba/darwin-arm64/micromamba',
+      'resources/office/manifest.json',
+      'resources/office/officecli/darwin-arm64/officecli',
+      'resources/palettes/default.yaml',
+      'resources/skills',
+      'resources/skills/create-wrapper/SKILL.md',
+      'resources/plugins',
+      'resources/plugins/office/skills/xlsx/SKILL.md'
+    ]),
+    []
+  )
+})
+
+test('Phi resources reject retired and distributable source roots even when empty', () => {
+  const misplaced = [
+    'resources/db-connectors',
+    'resources/connectors/pubmed/phi-package.yaml',
+    'resources/wrappers',
+    'resources/skills/nextflow/SKILL.md',
+    'resources/plugins/visualization',
+    'resources\\plugins\\future-plugin\\phi-plugin.yaml',
+    'resources/unknown'
+  ]
+  assert.deepEqual(misplacedPhiResourcePaths(misplaced), misplaced)
+})
 
 test('resource check allows .DS_Store but no retired wrapper pack index', () => {
   assert.deepEqual(
     offendingResourcePaths([
       'resources/.DS_Store',
+      'resources/README.md',
       'resources/wrappers/modules/local/differential-expression/deseq2/.DS_Store'
     ]),
     []
