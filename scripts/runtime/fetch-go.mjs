@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { withBuildLock } from './build-lock.mjs'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(scriptDirectory, '../..')
@@ -124,28 +125,43 @@ function extractToolchain(archive, cacheRoot) {
   }
 }
 
-export function ensureGoToolchain({ platform = process.platform, arch = process.arch } = {}) {
+export function ensureGoToolchain({
+  platform = process.platform,
+  arch = process.arch,
+  cacheRoot = goCacheRoot(),
+  verifyArchive = verifyFileSha256,
+  versionMatches = goVersionMatches,
+  download = downloadArchive,
+  extract = extractToolchain,
+  lockTimeoutMs = 120_000
+} = {}) {
   const platformId = goArchivePlatform(platform, arch)
   if (!platformId) fail(`unsupported host platform ${platform}-${arch}`)
   const release = GO_RELEASE.platforms[platformId]
-  const cacheRoot = goCacheRoot()
   const binary = goBinaryPath(cacheRoot)
   const archive = archivePath(cacheRoot, release)
   mkdirSync(cacheRoot, { recursive: true })
   mkdirSync(path.join(cacheRoot, 'gocache'), { recursive: true })
   mkdirSync(path.join(cacheRoot, 'gopath'), { recursive: true })
-  if (verifyFileSha256(archive, release.sha256) && goVersionMatches(binary, cacheRoot)) {
-    return binary
-  }
-  if (!verifyFileSha256(archive, release.sha256)) {
-    rmSync(archive, { force: true })
-    downloadArchive(release, archive)
-  }
-  extractToolchain(archive, cacheRoot)
-  if (!goVersionMatches(binary, cacheRoot))
-    fail(`extracted toolchain is not Go ${GO_RELEASE.version}`)
-  console.log(`fetch-go: ready ${platformId} (go${GO_RELEASE.version})`)
-  return binary
+  const isReady = () => verifyArchive(archive, release.sha256) && versionMatches(binary, cacheRoot)
+  if (isReady()) return binary
+  return withBuildLock(
+    path.join(cacheRoot, 'install.lock'),
+    () => {
+      // A competing architecture may have completed installation while this caller waited.
+      if (isReady()) return binary
+      if (!verifyArchive(archive, release.sha256)) {
+        rmSync(archive, { force: true })
+        download(release, archive)
+      }
+      extract(archive, cacheRoot)
+      if (!versionMatches(binary, cacheRoot))
+        fail(`extracted toolchain is not Go ${GO_RELEASE.version}`)
+      console.log(`fetch-go: ready ${platformId} (go${GO_RELEASE.version})`)
+      return binary
+    },
+    { timeoutMs: lockTimeoutMs, description: 'Go toolchain installation' }
+  )
 }
 
 function main() {

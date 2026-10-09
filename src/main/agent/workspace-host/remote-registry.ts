@@ -4,7 +4,8 @@ import {
 } from '../remote-workspace-boundary'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { readCapabilityProfile } from './capability-profile-store'
-import { reconcileRemoteHelperProfile, resolveRemoteHelperArtifact } from './helper-installer'
+import { reconcileRemoteHelperProfile } from './helper-installer'
+import { resolveRemoteHelperPreparation } from './helper-development'
 import { createWorkspaceHostRemoteSession } from './remote-session'
 import { SshHost } from './ssh-host'
 import type { SshHostConfig } from './ssh-host-context'
@@ -21,6 +22,7 @@ interface RemoteWorkspaceHostRegistryDependencies {
   createHost?: (config: SshHostConfig) => WorkspaceHost
   agentDir?: string
   helperResourceRoot?: string
+  helperDevelopmentRoot?: string
 }
 
 interface HostEntry {
@@ -86,11 +88,17 @@ export class RemoteWorkspaceHostRegistry {
           resourceRoot: this.dependencies.helperResourceRoot
         })
       : undefined
-    const artifact = profile
-      ? resolveRemoteHelperArtifact(profile, this.dependencies.helperResourceRoot)
+    const preparation = profile
+      ? resolveRemoteHelperPreparation(profile, {
+          resourceRoot: this.dependencies.helperResourceRoot,
+          developmentRoot: this.dependencies.helperDevelopmentRoot
+        })
       : undefined
+    const artifact = preparation?.artifact
     const helperDegraded =
-      profile?.helperVersion === artifact?.version && profile?.helperStatus?.state === 'degraded'
+      profile?.helperVersion === artifact?.version &&
+      profile?.helperStatus?.state === 'degraded' &&
+      !preparation?.prepareArtifact
     const config: SshHostConfig = {
       ...binding.config,
       ...(profile && artifact && !helperDegraded
@@ -99,6 +107,7 @@ export class RemoteWorkspaceHostRegistry {
               profile,
               profileKey,
               artifact,
+              prepareArtifact: preparation?.prepareArtifact,
               agentDir: this.dependencies.agentDir
             }
           }

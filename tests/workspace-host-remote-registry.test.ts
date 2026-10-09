@@ -258,3 +258,79 @@ __PHI_CAPABILITY_PROBE_V1_END__
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('remote registry configures a cold development helper without compiling or connecting at construction', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-helper-registry-development-'))
+  const agentDir = join(root, 'agent')
+  const profileKey = { hostAlias: 'cluster-a', projectRoot: '/remote/project' }
+  let captured: SshHostConfig | undefined
+  try {
+    mkdirSync(join(root, 'helper'))
+    mkdirSync(join(root, 'scripts'))
+    writeFileSync(join(root, 'helper', 'VERSION'), '0.1.0\n')
+    writeFileSync(join(root, 'scripts', 'build-helper.mjs'), 'throw new Error("must not compile")')
+    const detected = parseHostCapabilityProbe(`
+__PHI_CAPABILITY_PROBE_V1_BEGIN__
+platform.os=Linux
+platform.arch=aarch64
+probe.complete=1
+__PHI_CAPABILITY_PROBE_V1_END__
+`)
+    saveCapabilityProfile(profileKey, detected, agentDir)
+    const registry = new RemoteWorkspaceHostRegistry({
+      agentDir,
+      helperDevelopmentRoot: root,
+      resolveBinding: (request) => ({
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        hostAlias: profileKey.hostAlias,
+        remoteRoot: profileKey.projectRoot,
+        canonicalRoot: profileKey.projectRoot,
+        cacheKey: 'cluster-a:/remote/project',
+        config: {
+          remoteRoot: profileKey.projectRoot,
+          canonicalRoot: profileKey.projectRoot,
+          connect: async () => {
+            throw new Error('must not connect')
+          }
+        }
+      }),
+      createHost: (config) => {
+        captured = config
+        return {
+          fs: {} as WorkspaceHost['fs'],
+          exec: {} as WorkspaceHost['exec'],
+          capabilities: () => detected
+        }
+      }
+    })
+    await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+    assert.equal(captured?.helper?.artifact.version, '0.1.0')
+    assert.equal(captured?.helper?.artifact.localPath, '')
+    assert.equal(typeof captured?.helper?.prepareArtifact, 'function')
+
+    await registry.releaseAll()
+    saveCapabilityProfile(
+      profileKey,
+      {
+        ...detected,
+        helperVersion: '0.1.0',
+        helperStatus: {
+          state: 'degraded',
+          reason: 'previous development build failed',
+          version: '0.1.0',
+          affectedCapabilities: ['fs', 'exec', 'background']
+        }
+      },
+      agentDir
+    )
+    await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+    assert.equal(
+      typeof captured?.helper?.prepareArtifact,
+      'function',
+      'development build failure must permit a later connection to retry'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

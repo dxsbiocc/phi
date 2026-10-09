@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { isAbsolute, join, posix, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -206,7 +206,7 @@ export function recordRemoteHelperFallback(
   return { state: 'degraded', reason: safeReason, profile }
 }
 
-function helperPlatform(profile: ProbedHostCapabilityProfile): string | undefined {
+export function helperPlatform(profile: ProbedHostCapabilityProfile): string | undefined {
   if (profile.platform.os !== 'linux') return undefined
   if (['x86_64', 'amd64'].includes(profile.platform.arch)) return 'linux-amd64'
   if (['aarch64', 'arm64'].includes(profile.platform.arch)) return 'linux-arm64'
@@ -224,25 +224,49 @@ export function remoteHelperResourceCandidates(
   return allowRepositoryFallback ? [...packaged, repository] : packaged
 }
 
-function electronPackagedState(): boolean | undefined {
+function electronApplication(): { isPackaged: boolean; getAppPath(): string } | undefined {
   try {
     const electron = createRequire(import.meta.url)('electron') as
-      string | { app?: { isPackaged: boolean } }
-    return typeof electron === 'object' ? electron.app?.isPackaged : undefined
+      string | { app?: { isPackaged: boolean; getAppPath(): string } }
+    return typeof electron === 'object' ? electron.app : undefined
   } catch {
     return undefined
+  }
+}
+
+export function remoteHelperDevelopmentRoot(
+  options: {
+    appPath?: string
+    isPackaged?: boolean
+    moduleUrl?: string
+  } = {}
+): string | undefined {
+  const app = electronApplication()
+  if ((options.isPackaged ?? app?.isPackaged) === true) return undefined
+  const isRepository = (root: string): boolean =>
+    existsSync(join(root, 'helper', 'VERSION')) &&
+    existsSync(join(root, 'scripts', 'build-helper.mjs'))
+  const appPath = options.appPath ?? app?.getAppPath()
+  if (appPath && isRepository(appPath)) return resolve(appPath)
+  // The module can run from source or be bundled into out/main/index.mjs.
+  let candidate = dirname(fileURLToPath(options.moduleUrl ?? import.meta.url))
+  for (;;) {
+    if (isRepository(candidate)) return candidate
+    const parent = dirname(candidate)
+    if (candidate === parent) return undefined
+    candidate = parent
   }
 }
 
 function defaultResourceRoot(): string {
   const resourcesPath =
     typeof process.resourcesPath === 'string' ? process.resourcesPath : undefined
-  const candidates = remoteHelperResourceCandidates(
-    resourcesPath,
-    fileURLToPath(new URL('../../../../', import.meta.url)),
-    !resourcesPath || electronPackagedState() === false || process.defaultApp === true
-  )
-  return candidates.find((root) => existsSync(join(root, 'manifest.json'))) ?? candidates.at(-1)!
+  const developmentRoot = remoteHelperDevelopmentRoot()
+  const candidates = [
+    ...(developmentRoot ? [join(developmentRoot, 'resources', 'remote-helper')] : []),
+    ...(resourcesPath ? [join(resourcesPath, 'remote-helper')] : [])
+  ]
+  return candidates.find((root) => existsSync(join(root, 'manifest.json'))) ?? candidates[0] ?? ''
 }
 
 function containedResourcePath(root: string, path: string): string | undefined {

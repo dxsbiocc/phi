@@ -183,6 +183,15 @@ bun install
 bun run dev
 ```
 
+Development startup does not download Go or compile the remote Helper. The first
+remote operation prepares only the server's architecture when development sources
+are present; unchanged artifacts are reused after source and checksum validation.
+Packaged builds include both Linux Helper binaries, so remote connections use those
+prebuilt files. `bun run build:helper` remains available for explicit preparation.
+
+`bun run dev` includes Vite compilation and hot reload. To preview an existing
+build without that compilation step, use `bun run start` after `bun run build`.
+
 ## Verification
 
 Use Node.js 22.15+ (or 24+) for the regression test loader. Dependencies must already

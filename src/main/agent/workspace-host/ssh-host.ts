@@ -1,9 +1,10 @@
+import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { openHelperWorkspaceHost, type HelperWorkspaceHost } from './helper-host'
 import { installRemoteHelper, recordRemoteHelperFallback } from './helper-installer'
 import { createSshExecution } from './ssh-host-exec'
 import { createSshFileSystem } from './ssh-host-fs'
 import type { ProbedHostCapabilityProfile } from './probe-parse'
-import { SshHostContext, type SshHostConfig } from './ssh-host-context'
+import { SshHostContext, type SshHelperConfig, type SshHostConfig } from './ssh-host-context'
 import type {
   HostCapability,
   HostCapabilityProfile,
@@ -47,6 +48,7 @@ export class SshHost implements WorkspaceHost {
   private helperInitialization?: Promise<void>
   private helperDisabled = false
   private disposed = false
+  private readonly preparation = new AbortController()
 
   constructor(config: SshHostConfig) {
     this.context = new SshHostContext(config)
@@ -66,6 +68,7 @@ export class SshHost implements WorkspaceHost {
 
   async close(): Promise<void> {
     this.disposed = true
+    this.preparation.abort()
     await this.helperInitialization?.catch(() => undefined)
     const helper = this.helper
     this.helper = undefined
@@ -116,11 +119,13 @@ export class SshHost implements WorkspaceHost {
   }
 
   private async selected(): Promise<Pick<WorkspaceHost, 'fs' | 'exec'>> {
-    if (!this.context.helper || this.helperDisabled || this.disposed) {
+    if (this.disposed) throw new Error('SSH workspace host is closed')
+    if (!this.context.helper || this.helperDisabled) {
       return { fs: this.pureFs, exec: this.pureExec }
     }
     this.helperInitialization ??= this.initializeHelper()
     await this.helperInitialization
+    if (this.disposed) throw new Error('SSH workspace host is closed')
     return this.helper ?? { fs: this.pureFs, exec: this.pureExec }
   }
 
@@ -133,28 +138,43 @@ export class SshHost implements WorkspaceHost {
     })
     if (!session) return
     try {
-      const installed = await installRemoteHelper({ session, ...config })
-      this.helperProfile = installed.profile
-      this.profile = workspaceProfile(installed.profile)
-      if (installed.state !== 'available' || !installed.remotePath) {
-        this.helperDisabled = true
+      if (this.disposed) {
         await session.close()
         return
       }
-      this.helper = await openHelperWorkspaceHost({
-        session,
-        remotePath: installed.remotePath,
-        remoteRoot: this.context.remoteRoot,
-        root: this.context.canonicalRoot,
-        profile: installed.profile,
-        glob: this.pureFs.glob,
-        onDisconnect: (error) => this.helperDisconnected(error)
-      })
-      if (this.disposed) await this.helper.close()
+      await this.activateHelper(session, config)
     } catch (error) {
-      this.disableHelper(error)
+      if (!this.disposed) this.disableHelper(error)
       await session.close().catch(() => undefined)
     }
+  }
+
+  private async activateHelper(session: RemoteSshSession, config: SshHelperConfig): Promise<void> {
+    const artifact = config.prepareArtifact
+      ? await config.prepareArtifact(this.preparation.signal)
+      : config.artifact
+    if (this.disposed) {
+      await session.close()
+      return
+    }
+    const installed = await installRemoteHelper({ session, ...config, artifact })
+    this.helperProfile = installed.profile
+    this.profile = workspaceProfile(installed.profile)
+    if (installed.state !== 'available' || !installed.remotePath) {
+      this.helperDisabled = true
+      await session.close()
+      return
+    }
+    this.helper = await openHelperWorkspaceHost({
+      session,
+      remotePath: installed.remotePath,
+      remoteRoot: this.context.remoteRoot,
+      root: this.context.canonicalRoot,
+      profile: installed.profile,
+      glob: this.pureFs.glob,
+      onDisconnect: (error) => this.helperDisconnected(error)
+    })
+    if (this.disposed) await this.helper.close()
   }
 
   private helperDisconnected(error: Error): void {

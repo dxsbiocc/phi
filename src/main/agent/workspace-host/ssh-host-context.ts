@@ -17,8 +17,10 @@ export interface SshHelperConfig {
   profile: ProbedHostCapabilityProfile
   profileKey: CapabilityProfileKey
   artifact: RemoteHelperArtifact
+  prepareArtifact?: (signal?: AbortSignal) => Promise<RemoteHelperArtifact>
   agentDir?: string
 }
+
 
 export interface SshHostConfig {
   remoteRoot: string

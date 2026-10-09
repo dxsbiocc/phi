@@ -29,6 +29,9 @@ extraResources:
   # remote host, rather than the desktop host, determines the selected binary.
   - from: resources/remote-helper
     to: remote-helper
+    filter:
+      - manifest.json
+      - '**/phi-helper'
 asarUnpack:
   - resources/**
   # The OMP worker runs under bun, which cannot read inside app.asar: the worker,
