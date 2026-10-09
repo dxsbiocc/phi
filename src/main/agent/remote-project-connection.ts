@@ -3,6 +3,7 @@ import { getProject, setRemoteProjectConnectionState, type Project } from './pro
 import { resolveRemoteWorkspacePath } from './remote-workspace-boundary'
 import { findPhiSessionById, type PhiSessionManifest } from './session/session-store'
 import { RemoteSshConnectionError, sshConnectionDiagnosis } from './wrappers/remote-ssh-diagnostics'
+import { remoteWorkspaceHosts } from './workspace-host/remote-registry'
 
 function connectionState(
   phase: RemoteProjectConnectionState['phase'],
@@ -58,12 +59,19 @@ export interface RemoteProjectConnectionDependencies {
   getManifest?: (id: string) => PhiSessionManifest | null
   setState?: (id: string, state: RemoteProjectConnectionState) => void
   resolvePath?: typeof resolveRemoteWorkspacePath
+  releaseProjectHosts?: (projectId: string) => void
 }
 
 export class RemoteProjectConnectionTracker {
   private readonly revisions = new Map<string, number>()
 
   constructor(private readonly dependencies: RemoteProjectConnectionDependencies = {}) {}
+
+  private releaseHosts(projectId: string): void {
+    const release =
+      this.dependencies.releaseProjectHosts ?? ((id) => remoteWorkspaceHosts.releaseProject(id))
+    release(projectId)
+  }
 
   private nextRevision(projectId: string): number {
     const revision = (this.revisions.get(projectId) ?? 0) + 1
@@ -106,6 +114,7 @@ export class RemoteProjectConnectionTracker {
       this.set(projectId, ready, revision)
       return ready
     } catch (error) {
+      this.releaseHosts(projectId)
       const failed =
         classifyRemoteProjectConnectionError(error) ??
         connectionState(
@@ -130,6 +139,7 @@ export class RemoteProjectConnectionTracker {
       ) {
         const reason = 'reason' in result ? result.reason : undefined
         if (reason !== 'cancelled') {
+          this.releaseHosts(projectId)
           this.set(
             projectId,
             connectionState(
@@ -146,13 +156,17 @@ export class RemoteProjectConnectionTracker {
       return result
     } catch (error) {
       const failed = classifyRemoteProjectConnectionError(error)
-      if (failed) this.set(projectId, failed, revision)
+      if (failed) {
+        this.releaseHosts(projectId)
+        this.set(projectId, failed, revision)
+      }
       throw error
     }
   }
 
   noteRemoteRunLost(projectId: string): void {
     const revision = this.validProject(projectId) ? this.nextRevision(projectId) : 0
+    this.releaseHosts(projectId)
     this.set(
       projectId,
       connectionState(

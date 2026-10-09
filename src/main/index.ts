@@ -2077,10 +2077,27 @@ getOmpBridge().registerHostHandler('remoteWorkspace.resolveBashContext', (params
     resolveRemoteBashContext(params)
   )
 )
+const connectRemoteWorkspaceHost = async (request: {
+  sessionId: string
+  projectId: string
+  execTimeoutMs: number
+}): Promise<import('./agent/wrappers/remote-ssh-session').RemoteSshSession> =>
+  (await import('./agent/workspace-host/remote-registry')).remoteWorkspaceHosts.connect(request)
+const releaseRemoteWorkspaceHost = (sessionId: string): void => {
+  void import('./agent/workspace-host/remote-registry').then(({ remoteWorkspaceHosts }) =>
+    remoteWorkspaceHosts.releaseSession(sessionId)
+  )
+}
+const releaseAllRemoteWorkspaceHosts = (): void => {
+  void import('./agent/workspace-host/remote-registry').then(({ remoteWorkspaceHosts }) =>
+    remoteWorkspaceHosts.releaseAll()
+  )
+}
 const remoteReadBasis = new RemoteWorkspaceReadBasis()
 getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     readRemoteWorkspacePath(params, {
+      connectHost: connectRemoteWorkspaceHost,
       onFileRead: (authorized, content) =>
         remoteReadBasis.record(
           authorized.sessionId,
@@ -2093,16 +2110,26 @@ getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
   )
 )
 getOmpBridge().registerHostHandler('remoteWorkspace.glob', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () => remoteGlob(params))
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteGlob(params, { connectHost: connectRemoteWorkspaceHost })
+  )
 )
 getOmpBridge().registerHostHandler('remoteWorkspace.grep', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () => remoteGrep(params))
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteGrep(params, { connectHost: connectRemoteWorkspaceHost })
+  )
 )
-const remoteBashManager = new RemoteWorkspaceBashManager({ beforeRun: requireRemoteBashApproval })
+const remoteBashManager = new RemoteWorkspaceBashManager({
+  beforeRun: requireRemoteBashApproval,
+  connectHost: connectRemoteWorkspaceHost,
+  releaseHostSession: releaseRemoteWorkspaceHost,
+  releaseAllHosts: releaseAllRemoteWorkspaceHosts
+})
 const remoteMutationManager = new RemoteWorkspaceMutationManager({
   basis: remoteReadBasis,
   beforeWrite: requireRemoteWriteApproval,
-  beforeEdit: requireRemoteEditApproval
+  beforeEdit: requireRemoteEditApproval,
+  connectHost: connectRemoteWorkspaceHost
 })
 getOmpBridge().registerHostHandler('remoteWorkspace.write', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>

@@ -1559,127 +1559,113 @@ async function createSession(params: unknown): Promise<unknown> {
     }
   )
   const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
+  const remoteWorkspaceCustomTools = (() => {
+    if (!remoteRoot) return []
+    return [
+      buildRemoteWorkspaceEditTool(async (toolCallId, input, signal) => {
+        if (signal?.aborted) throw new Error('远程编辑在提交前已取消')
+        const requestId = randomUUID()
+        const identity = {
+          sessionId: remoteRecord?.phiSessionId,
+          projectId: remoteRecord?.projectId,
+          requestId
+        }
+        const cancel = (): void => {
+          void requestHost('remoteWorkspace.cancelEdit', identity).catch(() => undefined)
+        }
+        const pending = requestHost('remoteWorkspace.edit', {
+          ...identity,
+          toolCallId,
+          ...input
+        })
+        signal?.addEventListener('abort', cancel, { once: true })
+        if (signal?.aborted) cancel()
+        try {
+          const result = (await pending) as RemoteMutationResult
+          if (result.status !== 'updated') return result
+          const preview = editDiffString(result.oldText, result.newText, result.path)
+          return { ...result, ...preview }
+        } finally {
+          signal?.removeEventListener('abort', cancel)
+        }
+      }),
+      buildRemoteWorkspaceWriteTool(async (toolCallId, path, content, signal) => {
+        if (signal?.aborted) throw new Error('远程写入在提交前已取消')
+        const requestId = randomUUID()
+        const identity = {
+          sessionId: remoteRecord?.phiSessionId,
+          projectId: remoteRecord?.projectId,
+          requestId
+        }
+        const cancel = (): void => {
+          void requestHost('remoteWorkspace.cancelWrite', identity).catch(() => undefined)
+        }
+        const pending = requestHost('remoteWorkspace.write', {
+          ...identity,
+          toolCallId,
+          path,
+          content
+        })
+        signal?.addEventListener('abort', cancel, { once: true })
+        if (signal?.aborted) cancel()
+        try {
+          return (await pending) as RemoteMutationResult
+        } finally {
+          signal?.removeEventListener('abort', cancel)
+        }
+      }),
+      buildRemoteWorkspaceReadTool(
+        async (path) =>
+          (await requestHost('remoteWorkspace.read', {
+            sessionId: remoteRecord?.phiSessionId,
+            projectId: remoteRecord?.projectId,
+            path
+          })) as RemoteWorkspaceReadResult
+      ),
+      buildRemoteWorkspaceGlobTool(
+        async (input) =>
+          (await requestHost('remoteWorkspace.glob', {
+            ...input,
+            sessionId: remoteRecord?.phiSessionId,
+            projectId: remoteRecord?.projectId
+          })) as RemoteGlobResult
+      ),
+      buildRemoteWorkspaceGrepTool(
+        async (input) =>
+          (await requestHost('remoteWorkspace.grep', {
+            ...input,
+            sessionId: remoteRecord?.phiSessionId,
+            projectId: remoteRecord?.projectId
+          })) as RemoteGrepResult
+      ),
+      buildRemoteWorkspaceBashTool(async (toolCallId, input, signal) => {
+        if (signal?.aborted) throw new Error('远程命令在提交前已取消')
+        const requestId = randomUUID()
+        const identity = {
+          sessionId: remoteRecord?.phiSessionId,
+          projectId: remoteRecord?.projectId,
+          requestId
+        }
+        const cancel = (): void => {
+          void requestHost('remoteWorkspace.cancelBash', identity).catch(() => undefined)
+        }
+        const pending = requestHost('remoteWorkspace.bash', {
+          ...input,
+          ...identity,
+          toolCallId
+        })
+        signal?.addEventListener('abort', cancel, { once: true })
+        if (signal?.aborted) cancel()
+        try {
+          return (await pending) as RemoteBashResult
+        } finally {
+          signal?.removeEventListener('abort', cancel)
+        }
+      })
+    ]
+  })()
   const customTools = [
-    ...(remoteRoot
-      ? [
-          buildRemoteWorkspaceEditTool(async (toolCallId, input, signal) => {
-            if (signal?.aborted) throw new Error('远程编辑在提交前已取消')
-            const requestId = randomUUID()
-            const identity = {
-              sessionId: remoteRecord?.phiSessionId,
-              projectId: remoteRecord?.projectId,
-              requestId
-            }
-            const cancel = (): void => {
-              void requestHost('remoteWorkspace.cancelEdit', identity).catch(() => undefined)
-            }
-            const pending = requestHost('remoteWorkspace.edit', {
-              ...identity,
-              toolCallId,
-              ...input
-            })
-            signal?.addEventListener('abort', cancel, { once: true })
-            if (signal?.aborted) cancel()
-            try {
-              const result = (await pending) as RemoteMutationResult
-              if (result.status !== 'updated') return result
-              const preview = editDiffString(result.oldText, result.newText, result.path)
-              return { ...result, ...preview }
-            } finally {
-              signal?.removeEventListener('abort', cancel)
-            }
-          })
-        ]
-      : []),
-    ...(remoteRoot
-      ? [
-          buildRemoteWorkspaceWriteTool(async (toolCallId, path, content, signal) => {
-            if (signal?.aborted) throw new Error('远程写入在提交前已取消')
-            const requestId = randomUUID()
-            const identity = {
-              sessionId: remoteRecord?.phiSessionId,
-              projectId: remoteRecord?.projectId,
-              requestId
-            }
-            const cancel = (): void => {
-              void requestHost('remoteWorkspace.cancelWrite', identity).catch(() => undefined)
-            }
-            const pending = requestHost('remoteWorkspace.write', {
-              ...identity,
-              toolCallId,
-              path,
-              content
-            })
-            signal?.addEventListener('abort', cancel, { once: true })
-            if (signal?.aborted) cancel()
-            try {
-              return (await pending) as RemoteMutationResult
-            } finally {
-              signal?.removeEventListener('abort', cancel)
-            }
-          })
-        ]
-      : []),
-    ...(remoteRoot
-      ? [
-          buildRemoteWorkspaceReadTool(
-            async (path) =>
-              (await requestHost('remoteWorkspace.read', {
-                sessionId: remoteRecord?.phiSessionId,
-                projectId: remoteRecord?.projectId,
-                path
-              })) as RemoteWorkspaceReadResult
-          )
-        ]
-      : []),
-    ...(remoteRoot
-      ? [
-          buildRemoteWorkspaceGlobTool(
-            async (input) =>
-              (await requestHost('remoteWorkspace.glob', {
-                ...input,
-                sessionId: remoteRecord?.phiSessionId,
-                projectId: remoteRecord?.projectId
-              })) as RemoteGlobResult
-          ),
-          buildRemoteWorkspaceGrepTool(
-            async (input) =>
-              (await requestHost('remoteWorkspace.grep', {
-                ...input,
-                sessionId: remoteRecord?.phiSessionId,
-                projectId: remoteRecord?.projectId
-              })) as RemoteGrepResult
-          )
-        ]
-      : []),
-    ...(remoteRoot
-      ? [
-          buildRemoteWorkspaceBashTool(async (toolCallId, input, signal) => {
-            if (signal?.aborted) throw new Error('远程命令在提交前已取消')
-            const requestId = randomUUID()
-            const identity = {
-              sessionId: remoteRecord?.phiSessionId,
-              projectId: remoteRecord?.projectId,
-              requestId
-            }
-            const cancel = (): void => {
-              void requestHost('remoteWorkspace.cancelBash', identity).catch(() => undefined)
-            }
-            const pending = requestHost('remoteWorkspace.bash', {
-              ...input,
-              ...identity,
-              toolCallId
-            })
-            signal?.addEventListener('abort', cancel, { once: true })
-            if (signal?.aborted) cancel()
-            try {
-              return (await pending) as RemoteBashResult
-            } finally {
-              signal?.removeEventListener('abort', cancel)
-            }
-          })
-        ]
-      : []),
+    ...remoteWorkspaceCustomTools,
     ...agentCustomTools,
     ...agentRunTools,
     ...(!remoteRoot
@@ -1691,7 +1677,7 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]
       : []),
-    buildProjectDownloadTool(cwd, agentDir),
+    buildProjectDownloadTool(cwd, agentDir, { remoteProject: Boolean(remoteRoot) }),
     ...notebookCustomTools,
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),

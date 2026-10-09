@@ -141,7 +141,7 @@ function suggestedFilename(url: URL): string {
 export function buildProjectDownloadTool(
   cwd: string,
   _agentDir: string,
-  options: { transport?: DownloadTransport } = {}
+  options: { remoteProject?: boolean; transport?: DownloadTransport } = {}
 ): CustomTool {
   return {
     name: 'download_file',
@@ -160,6 +160,17 @@ export function buildProjectDownloadTool(
     },
     approval: 'write',
     async execute(_toolCallId, params, onUpdate, _ctx, signal) {
+      if (options.remoteProject) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '远程项目暂不支持 download_file；不会回退到本机项目锚点。请先在服务器上准备文件。'
+            }
+          ],
+          isError: true
+        }
+      }
       try {
         const input = params as Record<string, unknown>
         if (typeof input.url !== 'string') throw new Error('url is required')

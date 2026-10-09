@@ -68,6 +68,9 @@ export interface CommandResult {
   code: number | null
   signal: string | null
   truncated: boolean
+  stdoutTruncated?: boolean
+  stderrTruncated?: boolean
+  terminationReason?: 'cancelled' | 'timeout' | 'terminated'
 }
 
 export interface BackgroundProcessState {

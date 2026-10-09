@@ -17,9 +17,11 @@ function fixture(resolvePath?: () => Promise<unknown>): {
   tracker: RemoteProjectConnectionTracker
   updates: RemoteProjectConnectionState[]
   requests: Array<Record<string, unknown>>
+  releasedProjects: string[]
 } {
   const updates: RemoteProjectConnectionState[] = []
   const requests: Array<Record<string, unknown>> = []
+  const releasedProjects: string[] = []
   const project = {
     id: 'project-a',
     location: {
@@ -39,13 +41,14 @@ function fixture(resolvePath?: () => Promise<unknown>): {
     getProject: (id) => (id === project.id ? project : undefined),
     getManifest: (id) => (id === manifest.sessionId ? manifest : null),
     setState: (_id, state) => updates.push(state),
+    releaseProjectHosts: (id) => releasedProjects.push(id),
     resolvePath: async (input) => {
       requests.push(input as Record<string, unknown>)
       await resolvePath?.()
       return { path: '/data/work' } as never
     }
   })
-  return { tracker, updates, requests }
+  return { tracker, updates, requests, releasedProjects }
 }
 
 test('switch/retry probe uses the saved session and project, then reports ready', async () => {
@@ -121,6 +124,7 @@ test('a command error does not mean offline; unknown transport does, user cancel
     reason: 'connection_lost'
   }))
   assert.equal(f.updates.at(-1)?.phase, 'offline')
+  assert.deepEqual(f.releasedProjects, ['project-a'])
   const beforeCancel = f.updates.length
   await f.tracker.observe('project-a', async () => ({ status: 'unknown', reason: 'cancelled' }))
   assert.equal(f.updates.length, beforeCancel)

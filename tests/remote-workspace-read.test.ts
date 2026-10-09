@@ -143,6 +143,32 @@ test('ordinary remote read returns exact UTF-8 text and an SSH source, including
   }
 })
 
+test('remote read uses the WorkspaceHost session supplied by the main process', async () => {
+  const sample = fixture()
+  try {
+    writeFileSync(join(sample.root, 'host.txt'), 'through host')
+    const connect = sample.dependencies.connectImpl
+    assert.ok(connect)
+    let hostConnections = 0
+    const result = await readRemoteWorkspacePath(request('host.txt'), {
+      ...sample.dependencies,
+      connectImpl: async () => {
+        throw new Error('legacy SSH connection path was used')
+      },
+      connectHost: async () => {
+        hostConnections += 1
+        return connect({ host: 'cluster-a' })
+      }
+    })
+
+    assert.equal(result.kind, 'file')
+    assert.equal(result.content, 'through host')
+    assert.equal(hostConnections, 1)
+  } finally {
+    sample.cleanup()
+  }
+})
+
 test('directory records preserve newlines and quotes, sort directories first, and report empty', async () => {
   const sample = fixture()
   try {

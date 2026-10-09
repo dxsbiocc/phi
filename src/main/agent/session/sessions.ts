@@ -20,6 +20,7 @@ import {
   type UnreadKind
 } from './session-store'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
+import { remoteWorkspaceHosts } from '../workspace-host/remote-registry'
 
 // Fixed cwd for ad-hoc conversations (not tied to a project) — independent of how
 // Electron happens to be launched (double-clicked vs `electron-vite dev` from some
@@ -295,6 +296,7 @@ export function deleteSession(path: string): void {
     if (manifest?.runtimeSessionPath && existsSync(manifest.runtimeSessionPath)) {
       unlinkSync(manifest.runtimeSessionPath)
     }
+    remoteWorkspaceHosts.releaseSession(phiSessionId)
     deletePhiSession(phiSessionId)
     return
   }

@@ -43,6 +43,8 @@ export type RemoteBashResult =
 export interface RemoteBashManagerDependencies extends RemoteWorkspaceBoundaryDependencies {
   beforeRun?: (request: RemoteBashRequest) => void
   now?: () => number
+  releaseHostSession?: (sessionId: string) => void
+  releaseAllHosts?: () => void
 }
 
 function validRequest(value: unknown): RemoteBashRequest {
@@ -270,9 +272,11 @@ export class RemoteWorkspaceBashManager {
     for (const entry of this.active.values()) {
       if (entry.sessionId === sessionId) this.stopLocalSsh(entry)
     }
+    this.dependencies.releaseHostSession?.(sessionId)
   }
 
   cancelAll(): void {
     for (const entry of this.active.values()) this.stopLocalSsh(entry)
+    this.dependencies.releaseAllHosts?.()
   }
 }

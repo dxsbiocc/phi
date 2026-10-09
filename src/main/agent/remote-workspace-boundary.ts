@@ -58,7 +58,26 @@ export interface RemoteWorkspaceBoundaryDependencies {
   getProject?: (projectId: string) => Project | undefined
   getHostProfile?: (hostProfileId: string, agentDir: string) => RemoteHostProfile | undefined
   connectImpl?: (config: RemoteConnectionConfig) => Promise<RemoteSshSession>
+  connectHost?: (request: {
+    sessionId: string
+    projectId: string
+    execTimeoutMs: number
+  }) => Promise<RemoteSshSession>
   onConnected?: (session: RemoteSshSession) => void
+}
+
+export interface RemoteWorkspaceHostBinding {
+  sessionId: string
+  projectId: string
+  hostAlias: string
+  remoteRoot: string
+  canonicalRoot: string
+  cacheKey: string
+  config: {
+    remoteRoot: string
+    canonicalRoot: string
+    connect: () => Promise<RemoteSshSession>
+  }
 }
 
 export function validRemoteAbsolutePath(path: string): boolean {
@@ -184,6 +203,40 @@ function boundProject(
   return { project, profile }
 }
 
+export function resolveRemoteWorkspaceHostBinding(
+  input: { sessionId: string; projectId: string },
+  dependencies: RemoteWorkspaceBoundaryDependencies = {}
+): RemoteWorkspaceHostBinding {
+  const request = checkedRequest({ ...input, path: '.', mode: 'existing' })
+  const agentDir = dependencies.agentDir ?? getPhiAgentDir()
+  const { project, profile } = boundProject(request, dependencies, agentDir)
+  if (project.location.kind !== 'ssh') throw new Error('远程项目位置无效')
+  const connection = {
+    ...remoteConnectionConfigForProfile(profile),
+    readyTimeoutMs: 10_000,
+    execTimeoutMs: 30_000
+  }
+  const connect = dependencies.connectImpl ?? connectRemoteSshSession
+  return {
+    sessionId: request.sessionId,
+    projectId: request.projectId,
+    hostAlias: profile.hostAlias,
+    remoteRoot: project.location.remoteRoot,
+    canonicalRoot: project.location.canonicalRoot,
+    cacheKey: JSON.stringify([
+      project.location.hostProfileId,
+      project.location.remoteRoot,
+      project.location.canonicalRoot,
+      profile
+    ]),
+    config: {
+      remoteRoot: project.location.remoteRoot,
+      canonicalRoot: project.location.canonicalRoot,
+      connect: () => connect(connection)
+    }
+  }
+}
+
 const RESOLVE_ERRORS: Record<number, string> = {
   30: '项目根目录已变化或不可访问',
   31: '目标不存在',
@@ -258,12 +311,17 @@ export async function withAuthorizedRemoteWorkspacePath<T>(
   if (project.location.kind !== 'ssh') throw new Error('远程项目位置无效')
   const { remoteRoot, canonicalRoot } = project.location
   const candidate = candidatePath(request.path, remoteRoot, canonicalRoot, request.mode)
-  const connect = dependencies.connectImpl ?? connectRemoteSshSession
-  const session = await connect({
-    ...remoteConnectionConfigForProfile(profile),
-    readyTimeoutMs: 10_000,
-    execTimeoutMs: dependencies.execTimeoutMs ?? 10_000
-  })
+  const session = dependencies.connectHost
+    ? await dependencies.connectHost({
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        execTimeoutMs: dependencies.execTimeoutMs ?? 10_000
+      })
+    : await (dependencies.connectImpl ?? connectRemoteSshSession)({
+        ...remoteConnectionConfigForProfile(profile),
+        readyTimeoutMs: 10_000,
+        execTimeoutMs: dependencies.execTimeoutMs ?? 10_000
+      })
   try {
     dependencies.onConnected?.(session)
     const path = await resolveRemotePathOnSession(

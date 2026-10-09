@@ -49,6 +49,35 @@ test('main download tool keeps output in the project and writes a verified file'
   }
 })
 
+test('remote project download refuses to write through the local anchor', async () => {
+  const anchor = await mkdtemp(join(tmpdir(), 'phi-remote-download-anchor-'))
+  try {
+    let fetches = 0
+    const tool = buildProjectDownloadTool(anchor, anchor, {
+      remoteProject: true,
+      transport: {
+        async fetch() {
+          fetches += 1
+          return new Response('must stay remote')
+        }
+      }
+    })
+    const result = await tool.execute(
+      'remote-download',
+      { url: 'https://example.org/data.txt', outputPath: 'downloads/data.txt' },
+      undefined,
+      {} as never
+    )
+
+    assert.equal(result.isError, true)
+    assert.match(String(result.content[0]?.text), /不会回退到本机项目锚点/)
+    assert.equal(fetches, 0)
+    await assert.rejects(readFile(join(anchor, 'downloads/data.txt')))
+  } finally {
+    await rm(anchor, { recursive: true, force: true })
+  }
+})
+
 test('main download tool rejects a redirect to a private host', async () => {
   const root = await mkdtemp(join(tmpdir(), 'phi-project-download-'))
   try {

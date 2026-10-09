@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { buildRemoteBashCommand, REMOTE_BASH_MAX_OUTPUT_BYTES } from '../remote-workspace-bash'
+import { REMOTE_BASH_MAX_OUTPUT_BYTES } from '../remote-workspace-bash'
 import {
   buildDetachedLaunchCommand,
   readDetachedStatus,
@@ -59,6 +59,20 @@ function invocation(command: HostCommand): string {
   return `exec ${command.map(shellQuote).join(' ')}`
 }
 
+function workspaceCommand(
+  cwd: string,
+  command: HostCommand,
+  env: Readonly<Record<string, string>> = {}
+): string {
+  const body = [
+    `cd -P -- ${shellQuote(cwd)} || exit 72`,
+    `[ "$PWD" = ${shellQuote(cwd)} ] || exit 72`,
+    ...Object.entries(env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
+    invocation(command)
+  ].join('\n')
+  return `bash -c ${shellQuote(body)}`
+}
+
 function parsePid(raw: string): number {
   const value = raw.trim()
   const pid = Number(value)
@@ -99,6 +113,7 @@ class SshProcess implements BackgroundProcessHandle {
   private timer?: ReturnType<typeof setTimeout>
   private abort?: () => void
   private abortSignal?: AbortSignal
+  private terminationReason?: CommandResult['terminationReason']
 
   constructor(
     private readonly context: SshHostContext,
@@ -109,14 +124,15 @@ class SshProcess implements BackgroundProcessHandle {
   }
 
   attach(options: RunCommandOptions): void {
-    const terminate = (): void => {
+    const terminate = (reason: CommandResult['terminationReason']): void => {
+      this.terminationReason ??= reason
       void this.terminate()
     }
-    this.abort = terminate
+    this.abort = () => terminate('cancelled')
     this.abortSignal = options.signal
-    options.signal?.addEventListener('abort', terminate, { once: true })
-    if (options.signal?.aborted) terminate()
-    this.timer = setTimeout(terminate, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    options.signal?.addEventListener('abort', this.abort, { once: true })
+    this.timer = setTimeout(() => terminate('timeout'), options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (options.signal?.aborted) this.abort()
   }
 
   async query(): Promise<BackgroundProcessState> {
@@ -143,6 +159,7 @@ class SshProcess implements BackgroundProcessHandle {
   async terminate(): Promise<CommandResult> {
     if (this.result) return { ...this.result }
     if (this.settling) return { ...(await this.settling) }
+    this.terminationReason ??= 'terminated'
     this.settling = this.stopAndCollect()
     return { ...(await this.settling) }
   }
@@ -193,7 +210,11 @@ class SshProcess implements BackgroundProcessHandle {
         stderr: stderr.text,
         code: signal ? null : (status.exitCode ?? null),
         signal,
-        truncated: stdout.size + stderr.size > this.maxOutputBytes
+        truncated: stdout.size + stderr.size > this.maxOutputBytes,
+        stdoutTruncated: stdout.size > this.maxOutputBytes,
+        stderrTruncated:
+          stderr.size > Math.max(0, this.maxOutputBytes - Buffer.byteLength(stdout.text)),
+        ...(signal && this.terminationReason ? { terminationReason: this.terminationReason } : {})
       }
     })
     this.result = result
@@ -245,9 +266,7 @@ class SshExecution {
       const claimDir = posix.join(runDir, '.phi-launch-claim')
       await session.mkdirp(claimDir)
       await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
-      const script = wrapWithExitCodeTrap(
-        buildRemoteBashCommand(cwd, cwd, invocation(command), { ...options.env })
-      )
+      const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
       await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
       const launched = await session.exec(buildDetachedLaunchCommand(runDir))
       if (launched.code !== 0) {
