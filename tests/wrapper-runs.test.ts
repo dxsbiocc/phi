@@ -789,10 +789,28 @@ test('cancelWrapperRun moves a running slurm-controller run to "cancelling" and 
       connectImpl: async () => fakeSession
     })
     assert.equal(cancelled.state, 'cancelling')
-    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    const waitForCancellation = async (): Promise<WrapperRun | undefined> => {
+      const deadline = Date.now() + 3_000
+      for (;;) {
+        const persisted = readWrapperRun(run.runId, agentDir)
+        if (
+          fakeSession.closed &&
+          persisted?.state === 'cancelled' &&
+          persisted.cancelConfirmedAt !== undefined
+        ) {
+          return persisted
+        }
+        if (Date.now() >= deadline) return persisted
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+    const persisted = await waitForCancellation()
+
     assert.ok(fakeSession.execLog.some((command) => command.startsWith('scancel 12345')))
     assert.equal(fakeSession.closed, true)
-    assert.ok(readWrapperRun(run.runId, agentDir)?.cancelConfirmedAt)
+    assert.equal(persisted?.state, 'cancelled')
+    assert.ok(persisted.cancelConfirmedAt)
   })
 })
 
