@@ -158,7 +158,6 @@ import {
   subscribeRemoteProjectConnection,
   updateProjectPermissionMode,
   updateProjectDefaults,
-  updateProjectRemoteConnection,
   updateProjectRemoteDefaults,
   type PermissionMode,
   type ModelSelection,
@@ -173,9 +172,15 @@ import {
 import {
   deleteRemoteHostProfile,
   getRemoteHostProfile,
-  listAvailableRemoteHostProfiles,
   saveRemoteHostProfile
 } from './agent/remote-hosts'
+import {
+  clearRemoteRuntimeRootSetting,
+  listRemoteHostsWithRuntimeRoots,
+  remoteHostProfileWithRuntimeRoot,
+  saveRemoteRuntimeRootSetting,
+  updateProjectRemoteConnectionRuntimeAware
+} from './agent/remote-runtime-root-settings'
 import { listOpenSshHosts } from './agent/ssh-config-discovery'
 import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
@@ -2234,11 +2239,13 @@ const wrapperJobs = new WrapperJobManager({
     return resolveProjectRemoteTarget(project, connectionId)
   },
   checkRemoteEnvironment: async ({ project, resolved, profile }) => {
+    const remoteConnection = project.remoteConnections?.find(
+      (connection) => connection.id === resolved.connectionId
+    )
     const hostProfileId =
       project.location.kind === 'ssh'
         ? project.location.hostProfileId
-        : project.remoteConnections?.find((connection) => connection.id === resolved.connectionId)
-            ?.hostProfileId
+        : remoteConnection?.hostProfileId
     if (!hostProfileId) throw new Error('找不到 Wrapper 运行连接的服务器档案')
     const hpc = resolved.target.hpc ?? { scheduler: 'local' as const }
     const controller = hpc.controller ?? 'login'
@@ -2250,6 +2257,14 @@ const wrapperJobs = new WrapperJobManager({
         scheduler: hpc.scheduler,
         controller,
         runtime: profile,
+        ...(remoteConnection?.runtimeRoot
+          ? {
+              runtimeRootOverride: {
+                source: 'project' as const,
+                configured: remoteConnection.runtimeRoot
+              }
+            }
+          : {}),
         ...(hpc.nextflowBin ? { nextflowBin: hpc.nextflowBin } : {})
       },
       { deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length) }
@@ -8482,7 +8497,7 @@ app.whenReady().then(async () => {
       return updateProjectDefaults(id, defaults)
     }
   )
-  ipcMain.handle('projects:listRemoteHosts', async () => listAvailableRemoteHostProfiles())
+  ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
   ipcMain.handle('projects:listRemoteDirectories', async (_, input: unknown) =>
     listRemoteProjectDirectories(input)
   )
@@ -8513,7 +8528,7 @@ app.whenReady().then(async () => {
     const alias = await saveOpenSshHost(input)
     const profile = getRemoteHostProfile(sshConfigHostId(alias))
     if (!profile) throw new Error('SSH 配置已保存，但重新读取服务器失败；请刷新列表')
-    return profile
+    return remoteHostProfileWithRuntimeRoot(profile)
   })
   ipcMain.handle(
     'projects:saveRemoteHost',
@@ -8545,7 +8560,7 @@ app.whenReady().then(async () => {
       ) {
         throw new Error('该服务器已绑定项目；请先解除项目绑定，再修改地址或认证设置')
       }
-      return saveRemoteHostProfile(input)
+      return remoteHostProfileWithRuntimeRoot(saveRemoteHostProfile(input))
     }
   )
   ipcMain.handle('projects:deleteRemoteHost', async (_, id: string) => {
@@ -8558,8 +8573,21 @@ app.whenReady().then(async () => {
     ) {
       throw new Error('该服务器仍被项目使用，请先移除项目中的远程连接')
     }
+    clearRemoteRuntimeRootSetting(id)
     deleteRemoteHostProfile(id)
   })
+  ipcMain.handle(
+    'remote:saveRuntimeRoot',
+    async (_, hostProfileId: unknown, runtimeRoot: unknown) => {
+      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
+        throw new Error('SSH 服务器档案 ID 无效')
+      }
+      if (runtimeRoot !== undefined && runtimeRoot !== null && typeof runtimeRoot !== 'string') {
+        throw new Error('远程运行时根目录无效')
+      }
+      return saveRemoteRuntimeRootSetting(hostProfileId, runtimeRoot)
+    }
+  )
   ipcMain.handle(
     'remote:doctor',
     async (_, hostProfileId: unknown, remotePath: unknown, options: unknown) => {
@@ -8583,7 +8611,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'projects:updateRemoteConnection',
     async (_, id: string, connectionId: string, patch: ProjectRemoteConnection | null) =>
-      updateProjectRemoteConnection(id, connectionId, patch)
+      updateProjectRemoteConnectionRuntimeAware(id, connectionId, patch)
   )
   ipcMain.handle(
     'projects:updateRemoteDefaults',

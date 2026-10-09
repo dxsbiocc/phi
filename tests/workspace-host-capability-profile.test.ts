@@ -8,6 +8,7 @@ import {
   capabilityProfileStorePath,
   capabilityProfileCacheKey,
   invalidateCapabilityProfile,
+  invalidateCapabilityProfilesForHost,
   readLatestCapabilityProfileForHost,
   readCapabilityProfile,
   refreshCapabilityProfile,
@@ -15,7 +16,9 @@ import {
 } from '../src/main/agent/workspace-host/capability-profile-store'
 import { installRemoteHelper } from '../src/main/agent/workspace-host/helper-installer'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
+import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
 
 const temporaryDirectories: string[] = []
 
@@ -59,6 +62,54 @@ describe('workspace host capability profile cache', () => {
     assert.equal(statSync(capabilityProfileStorePath(agentDir)).mode & 0o777, 0o600)
   })
 
+  it('persists only a redacted runtime-root summary in the capability profile', () => {
+    const agentDir = makeTempDir()
+    const key = { hostAlias: 'private-cluster', projectRoot: '/srv/private/project' }
+    const runtimeCheck: RemoteRuntimeRootCheckResult = {
+      configured: '/data/private-user/phi-runtime',
+      checkedAt: '2026-10-09T04:00:00.000Z',
+      status: 'checked',
+      expandedPath: '/data/private-user/phi-runtime',
+      exists: false,
+      nearestExistingAncestor: '/data/private-user',
+      ancestorWritable: true,
+      ownedByCurrentUser: false,
+      groupOrOtherWritable: true,
+      hasSymlink: false,
+      fsType: 'nfs4',
+      availableKiB: 20 * 1024 * 1024,
+      diskUsePercent: 73,
+      inodeUsePercent: 12,
+      executable: true,
+      sharedFilesystem: true,
+      computeNodeVisibility: 'unknown',
+      hardErrors: [],
+      warnings: [
+        {
+          code: 'shared-filesystem-info',
+          message: '检测到共享文件系统',
+          consequence: '计算节点可见性仍未知'
+        }
+      ]
+    }
+
+    saveCapabilityProfile(
+      key,
+      {
+        ...profile('Linux', 'x86_64'),
+        runtimeRoot: runtimeRootCapabilityProfile('project', runtimeCheck)
+      },
+      agentDir
+    )
+
+    const saved = readCapabilityProfile(key, { agentDir })
+    assert.equal(saved?.runtimeRoot?.source, 'project')
+    assert.deepEqual(saved?.runtimeRoot?.warningCodes, ['shared-filesystem-info'])
+    assert.equal(saved?.runtimeRoot?.checks.ownership, 'warning')
+    const persisted = readFileSync(capabilityProfileStorePath(agentDir), 'utf8')
+    assert.doesNotMatch(persisted, /private-cluster|private-user|\/srv\/private|\/data\//)
+  })
+
   it('invalidates entries when the profile or helper version changes and on request', () => {
     const agentDir = makeTempDir()
     const key = { hostAlias: 'cluster', projectRoot: '/work/project' }
@@ -74,6 +125,43 @@ describe('workspace host capability profile cache', () => {
     assert.equal(readCapabilityProfile(key, { agentDir, expectedProfileVersion: 2 }), undefined)
     invalidateCapabilityProfile(key, agentDir)
     assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
+  })
+
+  it('invalidates every project profile when a host-level runtime override changes', () => {
+    const agentDir = makeTempDir()
+    const first = { hostAlias: 'cluster-a', projectRoot: '/work/first' }
+    const second = { hostAlias: 'cluster-a', projectRoot: '/work/second' }
+    const other = { hostAlias: 'cluster-b', projectRoot: '/work/other' }
+    saveCapabilityProfile(first, profile('Linux', 'x86_64'), agentDir)
+    saveCapabilityProfile(second, profile('Linux', 'x86_64'), agentDir)
+    saveCapabilityProfile(other, profile('Linux', 'x86_64'), agentDir)
+
+    invalidateCapabilityProfilesForHost('cluster-a', agentDir)
+
+    assert.equal(readCapabilityProfile(first, { agentDir }), undefined)
+    assert.equal(readCapabilityProfile(second, { agentDir }), undefined)
+    assert.ok(readCapabilityProfile(other, { agentDir }))
+  })
+
+  it('conservatively clears a legacy store whose host index cannot identify every project', () => {
+    const agentDir = makeTempDir()
+    const first = { hostAlias: 'cluster-a', projectRoot: '/work/first' }
+    const second = { hostAlias: 'cluster-a', projectRoot: '/work/second' }
+    const other = { hostAlias: 'cluster-b', projectRoot: '/work/other' }
+    saveCapabilityProfile(first, profile('Linux', 'x86_64'), agentDir)
+    saveCapabilityProfile(second, profile('Linux', 'x86_64'), agentDir)
+    saveCapabilityProfile(other, profile('Linux', 'x86_64'), agentDir)
+    const path = capabilityProfileStorePath(agentDir)
+    const legacy = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    delete legacy.cacheKeysByHost
+    delete legacy.hostIndexComplete
+    writeFileSync(path, `${JSON.stringify(legacy)}\n`)
+
+    invalidateCapabilityProfilesForHost('cluster-a', agentDir)
+
+    assert.equal(readCapabilityProfile(first, { agentDir }), undefined)
+    assert.equal(readCapabilityProfile(second, { agentDir }), undefined)
+    assert.equal(readCapabilityProfile(other, { agentDir }), undefined)
   })
 
   it('ignores an incomplete legacy profile so the next connection probes again', () => {

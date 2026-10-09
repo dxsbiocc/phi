@@ -5,14 +5,23 @@ import type {
   RemoteDoctorReport,
   RemoteDoctorStatus
 } from '../../shared/remoteDoctorTypes'
+import type {
+  RemoteRuntimeRootCheckResult,
+  ResolvedRemoteRuntimeRoot
+} from '../../shared/remoteRuntimeRootTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
+import { readHostRuntimeRoot } from './remote-runtime-root-store'
+import { DEFAULT_REMOTE_RUNTIME_ROOT, resolveRemoteRuntimeRoot } from './remote-runtime-root'
 import { getPhiAgentDir } from './runtime-paths'
 import {
   getCapabilityProfile,
-  readLatestCapabilityProfileForHost
+  readLatestCapabilityProfileForHost,
+  saveCapabilityProfile
 } from './workspace-host/capability-profile-store'
 import { capabilityToolchainChecks } from './workspace-host/capability-toolchain-checks'
 import { reconcileRemoteHelperProfile } from './workspace-host/helper-installer'
+import { checkRemoteRuntimeRoot } from './workspace-host/runtime-root-check'
+import { runtimeRootCapabilityProfile } from './workspace-host/runtime-root-profile'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import {
   diagnoseSshConnectionFailure,
@@ -37,6 +46,7 @@ export interface RemoteDoctorDependencies {
   checkTimeoutMs?: number
   connectTimeoutMs?: number
   probeTimeoutMs?: number
+  runtimeRootTimeoutMs?: number
   now?: () => Date
   /** Tool checks are repeated after saved setup at launch; Doctor never executes setup lines. */
   deferToolChecksToLaunch?: boolean
@@ -65,6 +75,10 @@ async function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> 
 
 function normalizedOptions(input: unknown): RemoteDoctorOptions {
   const value = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const rootOverride =
+    value.runtimeRootOverride && typeof value.runtimeRootOverride === 'object'
+      ? (value.runtimeRootOverride as Record<string, unknown>)
+      : undefined
   return {
     ...(value.scope === 'connection' || value.scope === 'workspace' || value.scope === 'full'
       ? { scope: value.scope }
@@ -81,7 +95,36 @@ function normalizedOptions(input: unknown): RemoteDoctorOptions {
     ...(typeof value.nextflowBin === 'string' && value.nextflowBin.trim().length <= 512
       ? { nextflowBin: value.nextflowBin.trim() }
       : {}),
-    ...(value.refreshCapabilities === true ? { refreshCapabilities: true } : {})
+    ...(value.refreshCapabilities === true ? { refreshCapabilities: true } : {}),
+    ...(rootOverride && (rootOverride.source === 'host' || rootOverride.source === 'project')
+      ? {
+          runtimeRootOverride: {
+            source: rootOverride.source,
+            ...(typeof rootOverride.configured === 'string'
+              ? { configured: rootOverride.configured }
+              : {})
+          }
+        }
+      : {})
+  }
+}
+
+function selectedRuntimeRoot(
+  options: RemoteDoctorOptions,
+  hostOverride: string | undefined
+): ResolvedRemoteRuntimeRoot {
+  const override = options.runtimeRootOverride
+  const input =
+    override?.source === 'project'
+      ? { projectOverride: override.configured, hostOverride }
+      : { hostOverride: override?.source === 'host' ? override.configured : hostOverride }
+  try {
+    return resolveRemoteRuntimeRoot(input)
+  } catch {
+    return {
+      source: override?.source ?? 'default',
+      configured: override?.configured ?? DEFAULT_REMOTE_RUNTIME_ROOT
+    }
   }
 }
 
@@ -98,14 +141,16 @@ function report(
   hostProfileId: string,
   checks: RemoteDoctorCheck[],
   now: () => Date,
-  capabilityProfile?: RemoteDoctorReport['capabilityProfile']
+  capabilityProfile?: RemoteDoctorReport['capabilityProfile'],
+  runtimeRootCheck?: RemoteRuntimeRootCheckResult
 ): RemoteDoctorReport {
   return {
     hostProfileId,
     checkedAt: now().toISOString(),
-    ok: checks.every((check) => check.status !== 'error'),
+    ok: checks.every((check) => check.status !== 'error') && !runtimeRootCheck?.hardErrors.length,
     checks,
-    ...(capabilityProfile ? { capabilityProfile } : {})
+    ...(capabilityProfile ? { capabilityProfile } : {}),
+    ...(runtimeRootCheck ? { runtimeRootCheck } : {})
   }
 }
 
@@ -166,6 +211,7 @@ export async function remoteDoctor(
   const checkTimeoutMs = dependencies.checkTimeoutMs ?? CHECK_TIMEOUT_MS
   const connectTimeoutMs = dependencies.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
   const probeTimeoutMs = dependencies.probeTimeoutMs ?? PROBE_TIMEOUT_MS
+  const runtimeRootTimeoutMs = dependencies.runtimeRootTimeoutMs ?? CHECK_TIMEOUT_MS
   const connect = dependencies.connectImpl ?? connectRemoteSshSession
   let session: RemoteSshSession
   try {
@@ -196,13 +242,29 @@ export async function remoteDoctor(
 
   checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
   try {
+    const rootResolution = selectedRuntimeRoot(
+      selected,
+      readHostRuntimeRoot(hostProfileId, agentDir)
+    )
+    const runtimeRootCheck = await checkRemoteRuntimeRoot(session, rootResolution.configured, {
+      timeoutMs: runtimeRootTimeoutMs,
+      now
+    })
     if (selected.scope === 'connection') {
       const latest = readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
+      const withRuntimeRoot =
+        latest && rootResolution && runtimeRootCheck
+          ? {
+              ...latest,
+              runtimeRoot: runtimeRootCapabilityProfile(rootResolution.source, runtimeRootCheck)
+            }
+          : latest
       return report(
         hostProfileId,
         checks,
         now,
-        latest ? reconcileRemoteHelperProfile(latest) : undefined
+        withRuntimeRoot ? reconcileRemoteHelperProfile(withRuntimeRoot) : undefined,
+        runtimeRootCheck
       )
     }
     checks.push(
@@ -267,7 +329,9 @@ export async function remoteDoctor(
       suggestion: '确认登录 shell 可启动 Bash；Wrapper 预检使用 Bash。'
     })
     checks.push(shell)
-    if (shell.status !== 'ok') return report(hostProfileId, checks, now)
+    if (shell.status !== 'ok') {
+      return report(hostProfileId, checks, now, undefined, runtimeRootCheck)
+    }
     const profileKey = remotePath
       ? { hostAlias: profile.hostAlias, projectRoot: remotePath }
       : undefined
@@ -284,12 +348,22 @@ export async function remoteDoctor(
             }
           )
         : undefined
-    const capabilityProfile =
-      detectedProfile && profileKey
-        ? reconcileRemoteHelperProfile(detectedProfile, { profileKey, agentDir })
+    const detectedWithRuntimeRoot =
+      detectedProfile && rootResolution && runtimeRootCheck
+        ? {
+            ...detectedProfile,
+            runtimeRoot: runtimeRootCapabilityProfile(rootResolution.source, runtimeRootCheck)
+          }
         : detectedProfile
+    if (detectedWithRuntimeRoot && profileKey) {
+      saveCapabilityProfile(profileKey, detectedWithRuntimeRoot, agentDir)
+    }
+    const capabilityProfile =
+      detectedWithRuntimeRoot && profileKey
+        ? reconcileRemoteHelperProfile(detectedWithRuntimeRoot, { profileKey, agentDir })
+        : detectedWithRuntimeRoot
     if (selected.scope === 'workspace') {
-      return report(hostProfileId, checks, now, capabilityProfile)
+      return report(hostProfileId, checks, now, capabilityProfile, runtimeRootCheck)
     }
 
     const deferTools = dependencies.deferToolChecksToLaunch === true
@@ -301,7 +375,7 @@ export async function remoteDoctor(
         run: (input) => commandCheck(session, checkTimeoutMs, input)
       }))
     )
-    return report(hostProfileId, checks, now, capabilityProfile)
+    return report(hostProfileId, checks, now, capabilityProfile, runtimeRootCheck)
   } finally {
     await bounded(session.close(), 3_000).catch(() => undefined)
   }

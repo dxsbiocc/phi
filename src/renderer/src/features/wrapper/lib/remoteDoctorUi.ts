@@ -24,12 +24,26 @@ export type RemoteDoctorRequest = (
   options?: RemoteDoctorOptions
 ) => Promise<RemoteDoctorReport>
 
-export function remoteHostDoctorTarget(hostId: string, hostAlias: string): RemoteDoctorTarget {
+export function remoteHostDoctorTarget(
+  hostId: string,
+  hostAlias: string,
+  runtimeRoot?: string
+): RemoteDoctorTarget {
   return {
     identity: `host:${hostId}`,
     revision: hostAlias,
     hostProfileId: hostId,
-    options: { scope: 'connection' }
+    options: {
+      scope: 'connection',
+      ...(runtimeRoot !== undefined
+        ? {
+            runtimeRootOverride: {
+              source: 'host' as const,
+              ...(runtimeRoot ? { configured: runtimeRoot } : {})
+            }
+          }
+        : {})
+    } as RemoteDoctorOptions
   }
 }
 

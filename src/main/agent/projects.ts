@@ -10,6 +10,7 @@ import type {
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 import type { WrapperInputPathMapping } from '../../shared/wrapperTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
+import { normalizeRemoteRuntimeRoot } from './remote-runtime-root'
 import { getPhiAgentDir } from './runtime-paths'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import { validateInputPathMapping } from './wrappers/path-mapping'
@@ -59,6 +60,7 @@ export interface ProjectRemoteConnection {
   label: string
   hostProfileId: string
   hpc?: RemoteHpcSettings
+  runtimeRoot?: string
   inputPathMapping?: WrapperInputPathMapping
 }
 
@@ -510,6 +512,9 @@ export function updateProjectRemoteConnection(
     }
     remoteConnections.push({
       ...patch,
+      ...(patch.runtimeRoot !== undefined
+        ? { runtimeRoot: normalizeRemoteRuntimeRoot(patch.runtimeRoot) }
+        : {}),
       ...(patch.inputPathMapping
         ? {
             inputPathMapping: {

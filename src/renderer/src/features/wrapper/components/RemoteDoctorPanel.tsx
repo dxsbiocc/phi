@@ -12,7 +12,9 @@ import {
 
 import type { RemoteDoctorStatus } from '../../../../../shared/remoteDoctorTypes'
 import type { RemoteDoctorUiState } from '../lib/remoteDoctorUi'
+import { remoteRuntimeRootResultStatus } from '../lib/remoteRuntimeRootUi'
 import { RemoteCapabilityProfileSummary } from './RemoteCapabilityProfileSummary'
+import { RemoteRuntimeRootResults } from './RemoteRuntimeRootResults'
 
 const CHECK_LABELS: Record<string, string> = {
   ssh: 'SSH 连接',
@@ -79,10 +81,24 @@ export function RemoteDoctorPanel({
 
   const { report } = state
   const sshOk = report.checks.some((check) => check.id === 'ssh' && check.status === 'ok')
-  const hasWarning = report.checks.some((check) => check.status === 'warning')
+  const rootCheck = report.runtimeRootCheck
+  const cachedRoot = report.capabilityProfile?.runtimeRoot
+  const runtimeRootUnchecked = !rootCheck && !report.capabilityProfile?.runtimeRoot
+  const cachedRootIssue = Boolean(
+    cachedRoot &&
+    (cachedRoot.status !== 'checked' ||
+      cachedRoot.hasHardError ||
+      cachedRoot.warningCodes.length > 0)
+  )
+  const runtimeRootError = Boolean(rootCheck?.hardErrors.length || cachedRoot?.hasHardError)
+  const hasWarning =
+    report.checks.some((check) => check.status === 'warning') ||
+    runtimeRootUnchecked ||
+    cachedRootIssue ||
+    Boolean(rootCheck && (rootCheck.status !== 'checked' || rootCheck.warnings.length > 0))
   const summary = !sshOk
     ? '无法建立 SSH 连接'
-    : !report.ok
+    : !report.ok || runtimeRootError
       ? 'SSH 已连接，部分检查仍需处理'
       : hasWarning
         ? '检查完成，存在提醒'
@@ -109,6 +125,23 @@ export function RemoteDoctorPanel({
       {report.capabilityProfile && (
         <>
           <RemoteCapabilityProfileSummary profile={report.capabilityProfile} />
+          <Divider sx={{ my: 1 }} />
+        </>
+      )}
+      {report.runtimeRootCheck && (
+        <>
+          <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+            运行时根目录检测
+          </Typography>
+          <RemoteRuntimeRootResults
+            status={remoteRuntimeRootResultStatus(report.runtimeRootCheck)}
+          />
+          <Divider sx={{ my: 1 }} />
+        </>
+      )}
+      {runtimeRootUnchecked && !report.capabilityProfile && (
+        <>
+          <Typography variant="caption">运行时根目录：未检查</Typography>
           <Divider sx={{ my: 1 }} />
         </>
       )}

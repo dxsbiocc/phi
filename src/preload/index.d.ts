@@ -146,6 +146,7 @@ type PreloadProjectRemoteConnection = {
   label: string
   hostProfileId: string
   hpc?: RemoteHpcSettings
+  runtimeRoot?: string
   inputPathMapping?: WrapperInputPathMapping
 }
 
@@ -157,6 +158,7 @@ type PreloadRemoteHostProfile = {
   port?: number
   identityFile?: string
   source?: 'ssh-config'
+  runtimeRoot?: string
 }
 type PreloadOpenSshHost = {
   alias: string
@@ -875,6 +877,10 @@ declare global {
         identityFile?: string
       }) => Promise<PreloadRemoteHostProfile>
       deleteRemoteHost: (id: string) => Promise<void>
+      saveRemoteRuntimeRoot: (
+        hostProfileId: string,
+        runtimeRoot?: string
+      ) => Promise<PreloadRemoteHostProfile>
       remoteDoctor: (
         hostProfileId: string,
         remotePath?: string,

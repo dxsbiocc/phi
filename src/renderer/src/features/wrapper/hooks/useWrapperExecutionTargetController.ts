@@ -7,6 +7,7 @@ import type {
   WrapperExecutionTargetDialogModel
 } from '../components/WrapperExecutionTargetDialog'
 import { installRemoteNextflowAndRefreshProfile } from '../lib/remoteNextflowInstall'
+import { remoteRuntimeRootValueError } from '../lib/remoteRuntimeRootUi'
 import {
   INITIAL_CONTROLLER_STATE,
   controllerConnectionPatch,
@@ -18,6 +19,7 @@ import {
   executionTargetEnvironmentKey,
   installedControllerPatch,
   patchControllerState,
+  runtimeRootCandidateKey,
   type ControllerState,
   type DerivedState
 } from '../lib/wrapperExecutionTargetController'
@@ -101,6 +103,8 @@ function createEnvironmentCheck(
     if (!root.startsWith('/') || /[\r\n\0]/.test(root)) {
       return patchControllerState(setState, { error: '服务器工作目录必须是绝对路径' })
     }
+    const runtimeRootError = remoteRuntimeRootValueError(state.runtimeRootOverride)
+    if (runtimeRootError) return patchControllerState(setState, { error: runtimeRootError })
     const key = executionTargetEnvironmentKey(state, nextflowBin)
     const requestId = sequence.next()
     patchControllerState(setState, { error: null, environmentState: { phase: 'running', key } })
@@ -108,7 +112,7 @@ function createEnvironmentCheck(
       const report = await window.api.remoteDoctor(
         state.hostProfileId,
         root,
-        executionTargetDoctorOptions(state.hpc, nextflowBin)
+        executionTargetDoctorOptions(state.hpc, nextflowBin, state.runtimeRootOverride)
       )
       if (sequence.current() === requestId) {
         patchControllerState(setState, { environmentState: { phase: 'done', key, report } })
@@ -187,7 +191,11 @@ function createNextflowInstall(
         {
           hostProfileId: state.hostProfileId,
           projectRoot: state.remoteRoot.trim(),
-          doctorOptions: executionTargetDoctorOptions(state.hpc)
+          doctorOptions: executionTargetDoctorOptions(
+            state.hpc,
+            state.hpc.nextflowBin,
+            state.runtimeRootOverride
+          )
         },
         {
           install: window.api.installRemoteNextflow,
@@ -290,6 +298,7 @@ function createOpenAction(
 
 function createDialogActions(
   input: WrapperExecutionTargetControllerInput,
+  state: ControllerState,
   derived: DerivedState,
   setState: StateSetter,
   close: () => void,
@@ -305,8 +314,11 @@ function createDialogActions(
           derived
         )
       ),
-    setHostProfileId: (hostProfileId) => patchControllerState(setState, { hostProfileId }),
+    setHostProfileId: (hostProfileId) =>
+      patchControllerState(setState, { hostProfileId, runtimeRootConfirmedKey: null }),
     setRemoteRoot: (remoteRoot) => patchControllerState(setState, { remoteRoot }),
+    setRuntimeRootOverride: (runtimeRootOverride) =>
+      patchControllerState(setState, { runtimeRootOverride, runtimeRootConfirmedKey: null }),
     setHpc: (hpc) => patchControllerState(setState, { hpc }),
     setLocalInputRoot: (localInputRoot) => patchControllerState(setState, { localInputRoot }),
     setRemoteInputRoot: (remoteInputRoot) => patchControllerState(setState, { remoteInputRoot }),
@@ -319,6 +331,11 @@ function createDialogActions(
     close,
     save: () => void save(),
     checkEnvironment: () => void checkEnvironment(),
+    checkRuntimeRoot: () => void checkEnvironment(),
+    confirmRuntimeRootWarnings: () =>
+      patchControllerState(setState, {
+        runtimeRootConfirmedKey: runtimeRootCandidateKey(state)
+      }),
     installNextflow: () => patchControllerState(setState, { installConfirmOpen: true })
   }
 }
@@ -334,7 +351,15 @@ export function useWrapperExecutionTargetController(
   const confirmInstall = createNextflowInstall(state, setState, sequenceActions)
   const save = createSaveAction(input, state, derived, setState, sequenceActions)
   const close = createCloseAction(state, setState, sequenceActions)
-  const actions = createDialogActions(input, derived, setState, close, checkEnvironment, save)
+  const actions = createDialogActions(
+    input,
+    state,
+    derived,
+    setState,
+    close,
+    checkEnvironment,
+    save
+  )
   return {
     model: createExecutionTargetDialogModel(input.project, state, derived),
     actions,

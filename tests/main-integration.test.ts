@@ -2769,6 +2769,27 @@ async function harness(
       }),
       deleteRemoteHostProfile: (): void => {}
     },
+    './agent/remote-runtime-root-settings': {
+      listRemoteHostsWithRuntimeRoots: (): unknown[] => [
+        { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
+      ],
+      remoteHostProfileWithRuntimeRoot: (profile: unknown): unknown => profile,
+      saveRemoteRuntimeRootSetting: (id: string, runtimeRoot?: string) => ({
+        id,
+        label: 'Cluster',
+        hostAlias: 'cluster-one',
+        ...(runtimeRoot ? { runtimeRoot } : {})
+      }),
+      clearRemoteRuntimeRootSetting: (): void => {},
+      updateProjectRemoteConnectionRuntimeAware: (id: string) => ({
+        id,
+        name: 'Project',
+        workingDirectory: '/projects/defaults',
+        permissionMode: 'ask',
+        pathAvailable: true,
+        createdAt: '2026-09-05T00:00:00.000Z'
+      })
+    },
     './agent/ssh-config-discovery': {
       listOpenSshHosts: async () => [
         {
@@ -5292,6 +5313,24 @@ test('main IPC: remote doctor accepts a host profile before any project exists',
   await assert.rejects(app.invoke('remote:doctor', '', '/cluster/work'), /档案 ID 无效/)
   await assert.rejects(app.invoke('remote:doctor', 'host-1', 42), /路径无效/)
   assert.equal(app.sessions.length, 0)
+})
+
+test('main IPC: saves and clears a host runtime-root override without credentials', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('remote:saveRuntimeRoot', 'host-1', '/data/runtime'), {
+    id: 'host-1',
+    label: 'Cluster',
+    hostAlias: 'cluster-one',
+    runtimeRoot: '/data/runtime'
+  })
+  assert.deepEqual(await app.invoke('remote:saveRuntimeRoot', 'host-1', undefined), {
+    id: 'host-1',
+    label: 'Cluster',
+    hostAlias: 'cluster-one'
+  })
+  await assert.rejects(app.invoke('remote:saveRuntimeRoot', '', '/data/runtime'), /档案 ID 无效/)
+  await assert.rejects(app.invoke('remote:saveRuntimeRoot', 'host-1', 42), /根目录无效/)
 })
 
 test('main IPC lists remote project directories before a project exists', async () => {

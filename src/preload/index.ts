@@ -261,6 +261,7 @@ type ProjectRemoteConnection = {
   label: string
   hostProfileId: string
   hpc?: RemoteHpcSettings
+  runtimeRoot?: string
   inputPathMapping?: WrapperInputPathMapping
 }
 
@@ -272,6 +273,7 @@ type RemoteHostProfile = {
   port?: number
   identityFile?: string
   source?: 'ssh-config'
+  runtimeRoot?: string
 }
 type OpenSshHost = {
   alias: string
@@ -833,6 +835,7 @@ type RendererAuthApi = {
     identityFile?: string
   }) => Promise<RemoteHostProfile>
   deleteRemoteHost: (id: string) => Promise<void>
+  saveRemoteRuntimeRoot: (hostProfileId: string, runtimeRoot?: string) => Promise<RemoteHostProfile>
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,
@@ -1373,6 +1376,11 @@ const api: RendererAuthApi = {
   }): Promise<RemoteHostProfile> => ipcRenderer.invoke('projects:saveRemoteHost', input),
   deleteRemoteHost: (id: string): Promise<void> =>
     ipcRenderer.invoke('projects:deleteRemoteHost', id),
+  saveRemoteRuntimeRoot: (
+    hostProfileId: string,
+    runtimeRoot?: string
+  ): Promise<RemoteHostProfile> =>
+    ipcRenderer.invoke('remote:saveRuntimeRoot', hostProfileId, runtimeRoot),
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,

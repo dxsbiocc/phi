@@ -6,6 +6,7 @@ export interface ProjectRemoteConnection {
   label: string
   hostProfileId: string
   hpc?: RemoteHpcSettings
+  runtimeRoot?: string
   inputPathMapping?: WrapperInputPathMapping
 }
 
@@ -16,6 +17,7 @@ export interface RemoteHostProfile {
   user?: string
   port?: number
   identityFile?: string
+  runtimeRoot?: string
   source?: 'ssh-config'
 }
 

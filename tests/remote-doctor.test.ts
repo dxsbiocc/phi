@@ -255,6 +255,7 @@ test('workspace check probes once through stdin and returns only a sanitized cap
     const probeInputs: string[] = []
     fake.session.execWithInput = async (command, input) => {
       assert.equal(command, 'sh -s')
+      if (input.includes('__PHI_RUNTIME_ROOT_CHECK_V1_BEGIN__')) return MISSING
       probeInputs.push(input)
       return {
         ...OK,
@@ -318,7 +319,8 @@ test('capability profiles cache by host alias and project root until manually re
     let probes = 0
     const connectImpl = async (): Promise<RemoteSshSession> => {
       const fake = fakeSession()
-      fake.session.execWithInput = async () => {
+      fake.session.execWithInput = async (_command, input) => {
+        if (input.includes('__PHI_RUNTIME_ROOT_CHECK_V1_BEGIN__')) return MISSING
         probes += 1
         return { ...OK, stdout: capabilityProbeOutput() }
       }

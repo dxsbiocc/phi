@@ -16,12 +16,14 @@ import {
 } from '@mui/material'
 
 import type { RemoteDoctorReport } from '../../../../../shared/remoteDoctorTypes'
+import type { ResolvedRemoteRuntimeRoot } from '../../../../../shared/remoteRuntimeRootTypes'
 import { PhiIcons } from '../../../icons'
 import type { ProjectRemoteConnection, RemoteHostProfile } from '../../../types'
 import type { HpcDraft } from '../lib/remoteHpcDraft'
 import type { RemoteDoctorUiState } from '../lib/remoteDoctorUi'
 import { RemoteDependencyActions } from './RemoteDependencyActions'
 import { RemoteDoctorPanel } from './RemoteDoctorPanel'
+import { RemoteRuntimeRootControl } from './RemoteRuntimeRootControl'
 import { WrapperHpcSettingsFields } from './WrapperHpcSettingsFields'
 
 const ExpandIcon = PhiIcons.action.expand
@@ -36,6 +38,10 @@ export interface WrapperExecutionTargetDialogModel {
   hosts: RemoteHostProfile[]
   hostProfileId: string
   remoteRoot: string
+  runtimeRootOverride: string
+  runtimeRootEffective: ResolvedRemoteRuntimeRoot
+  runtimeRootValueError: string | null
+  runtimeRootHardBlocked: boolean
   hpc: HpcDraft
   localInputRoot: string
   remoteInputRoot: string
@@ -54,6 +60,7 @@ export interface WrapperExecutionTargetDialogActions {
   chooseConnection: (id: string) => void
   setHostProfileId: (id: string) => void
   setRemoteRoot: (root: string) => void
+  setRuntimeRootOverride: (root: string) => void
   setHpc: (draft: HpcDraft) => void
   setLocalInputRoot: (root: string) => void
   setRemoteInputRoot: (root: string) => void
@@ -61,6 +68,8 @@ export interface WrapperExecutionTargetDialogActions {
   close: () => void
   save: () => void
   checkEnvironment: () => void
+  checkRuntimeRoot: () => void
+  confirmRuntimeRootWarnings: () => void
   installNextflow: () => void
 }
 
@@ -153,6 +162,23 @@ function RemoteRootField({ model, actions }: DialogPartProps): React.JSX.Element
       }
       slotProps={model.isRemoteProject ? { input: { readOnly: true } } : undefined}
       sx={{ '& input': { fontFamily: 'var(--font-mono)' } }}
+    />
+  )
+}
+
+function RuntimeRootField({ model, actions }: DialogPartProps): React.JSX.Element {
+  return (
+    <RemoteRuntimeRootControl
+      label="项目覆盖"
+      value={model.runtimeRootOverride}
+      effective={model.runtimeRootEffective}
+      doctorState={model.environmentState}
+      doctorTargetKey={model.environmentKey}
+      busy={model.loading || model.saving || model.checkingEnvironment}
+      valueError={model.runtimeRootValueError}
+      onChange={actions.setRuntimeRootOverride}
+      onCheck={actions.checkRuntimeRoot}
+      onConfirmWarnings={actions.confirmRuntimeRootWarnings}
     />
   )
 }
@@ -293,6 +319,7 @@ function DialogBody(props: DialogPartProps): React.JSX.Element {
         </Button>
       )}
       <RemoteRootField {...props} />
+      <RuntimeRootField {...props} />
       <RuntimeFields {...props} />
       <InputPathMapping {...props} />
       <EnvironmentSection {...props} />
@@ -325,7 +352,9 @@ export function WrapperExecutionTargetDialog({
         <Button
           variant="contained"
           onClick={actions.save}
-          disabled={model.saving || model.loading || model.installing}
+          disabled={
+            model.saving || model.loading || model.installing || model.runtimeRootHardBlocked
+          }
         >
           {model.saving ? '保存中…' : model.isRemoteProject ? '保存运行方式' : '保存计算目标'}
         </Button>

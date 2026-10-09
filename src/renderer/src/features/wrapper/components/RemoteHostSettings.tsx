@@ -158,6 +158,20 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     }
   }
 
+  async function saveRuntimeRoot(host: RemoteHostProfile, runtimeRoot?: string): Promise<void> {
+    setHostBusy(true)
+    setHostError(null)
+    try {
+      const profile = await window.api.saveRemoteRuntimeRoot(host.id, runtimeRoot)
+      setHosts((previous) => [...previous.filter((item) => item.id !== profile.id), profile])
+      doctorController.invalidate(host.id)
+    } catch (error) {
+      setHostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
   function openEditHost(host: RemoteHostProfile): void {
     const configured = openSshHosts.find((item) => item.alias === host.hostAlias)
     setHostDraft({
@@ -232,6 +246,12 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
         onDelete={(id) => void removeHost(id)}
         onTest={(host) =>
           void doctorController.check(remoteHostDoctorTarget(host.id, host.hostAlias))
+        }
+        onRuntimeRootSave={(host, runtimeRoot) => void saveRuntimeRoot(host, runtimeRoot)}
+        onRuntimeRootCheck={(host, runtimeRoot) =>
+          void doctorController.check(
+            remoteHostDoctorTarget(host.id, host.hostAlias, runtimeRoot ?? '')
+          )
         }
       />
       {bootstrapTarget && (

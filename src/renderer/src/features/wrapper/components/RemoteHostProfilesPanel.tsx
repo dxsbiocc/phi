@@ -21,6 +21,7 @@ import {
 } from '../lib/remoteDoctorUi'
 import { RemoteDoctorPanel } from './RemoteDoctorPanel'
 import { RemoteHostDialog, type RemoteHostDraft } from './RemoteHostDialog'
+import { RemoteHostRuntimeRootEditor } from './RemoteHostRuntimeRootEditor'
 
 export type { RemoteHostDraft } from './RemoteHostDialog'
 
@@ -75,7 +76,9 @@ export function RemoteHostProfilesPanel({
   onSave,
   onPasswordBootstrap,
   onDelete,
-  onTest
+  onTest,
+  onRuntimeRootSave,
+  onRuntimeRootCheck
 }: {
   hosts: RemoteHostProfile[]
   openSshHosts: OpenSshHost[]
@@ -95,6 +98,8 @@ export function RemoteHostProfilesPanel({
   onPasswordBootstrap?: () => void
   onDelete: (id: string) => void
   onTest: (host: RemoteHostProfile) => void
+  onRuntimeRootSave?: (host: RemoteHostProfile, runtimeRoot?: string) => void
+  onRuntimeRootCheck?: (host: RemoteHostProfile, runtimeRoot?: string) => void
 }): React.JSX.Element {
   const rows = hostRows(hosts, openSshHosts)
   return (
@@ -147,7 +152,7 @@ export function RemoteHostProfilesPanel({
               const host = row.saved
               const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
               const check = remoteHostCheckPresentation(hostDoctorStates[host.id], key)
-              const checking = check.tone === 'running'
+              const checking = hostDoctorStates[host.id]?.phase === 'running'
               return (
                 <Box
                   key={row.alias}
@@ -272,6 +277,18 @@ export function RemoteHostProfilesPanel({
                     state={hostDoctorStates[host.id] ?? { phase: 'idle' }}
                     targetKey={key}
                   />
+                  {onRuntimeRootSave && onRuntimeRootCheck && (
+                    <Box sx={{ mt: 1.5 }}>
+                      <RemoteHostRuntimeRootEditor
+                        key={`${host.id}:${host.runtimeRoot ?? ''}`}
+                        host={host}
+                        doctorState={hostDoctorStates[host.id] ?? { phase: 'idle' }}
+                        busy={busy || checking}
+                        onSave={onRuntimeRootSave}
+                        onCheck={onRuntimeRootCheck}
+                      />
+                    </Box>
+                  )}
                 </Box>
               )
             })}

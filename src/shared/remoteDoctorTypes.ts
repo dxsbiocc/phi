@@ -1,4 +1,9 @@
 import type { RemoteContainerRuntime, RemoteController } from './wrapperRemoteTypes'
+import type {
+  RemoteRuntimeRootCapabilityProfile,
+  RemoteRuntimeRootCheckResult,
+  RemoteRuntimeRootSource
+} from './remoteRuntimeRootTypes'
 
 export interface RemoteDoctorOptions {
   scope?: 'connection' | 'workspace' | 'full'
@@ -7,6 +12,10 @@ export interface RemoteDoctorOptions {
   runtime?: RemoteContainerRuntime
   nextflowBin?: string
   refreshCapabilities?: boolean
+  runtimeRootOverride?: {
+    source: Exclude<RemoteRuntimeRootSource, 'default'>
+    configured?: string
+  }
 }
 
 export type RemoteDoctorStatus = 'ok' | 'warning' | 'error'
@@ -58,6 +67,7 @@ export interface RemoteHostCapabilityProfile {
     availableSpace?: RemoteHostCapability
     sharedFileSystem: RemoteHostCapability
   }
+  runtimeRoot?: RemoteRuntimeRootCapabilityProfile
   toolchain: {
     git: RemoteHostCapability
     nextflow: RemoteHostCapability
@@ -81,6 +91,7 @@ export interface RemoteDoctorReport {
   ok: boolean
   checks: RemoteDoctorCheck[]
   capabilityProfile?: RemoteHostCapabilityProfile
+  runtimeRootCheck?: RemoteRuntimeRootCheckResult
 }
 
 export interface RemoteNextflowInstallResult {

@@ -1,3 +1,5 @@
+import type { RemoteRuntimeRootCapabilityProfile } from '../../../shared/remoteRuntimeRootTypes'
+
 export type WorkspaceContent = string | Uint8Array
 
 export interface AtomicWriteOptions {
@@ -142,6 +144,7 @@ export interface HostCapabilityProfile {
   probe?: HostCapability
   prerequisites?: HostPrerequisiteCapabilities
   storage?: HostStorageCapabilities
+  runtimeRoot?: RemoteRuntimeRootCapabilityProfile
   toolchain: {
     git: HostCapability
     nextflow: HostCapability

@@ -4,6 +4,7 @@ import type {
   RemoteDoctorOptions,
   RemoteNextflowInstallResult
 } from '../../../../../shared/remoteDoctorTypes'
+import type { ResolvedRemoteRuntimeRoot } from '../../../../../shared/remoteRuntimeRootTypes'
 import type { Project, ProjectRemoteConnection, RemoteHostProfile } from '../../../types'
 import type { WrapperExecutionTargetDialogModel } from '../components/WrapperExecutionTargetDialog'
 import {
@@ -14,6 +15,13 @@ import {
   type HpcDraft
 } from './remoteHpcDraft'
 import type { RemoteDoctorUiState } from './remoteDoctorUi'
+import {
+  normalizeRemoteRuntimeRootValue,
+  remoteRuntimeRootUiStatus,
+  remoteRuntimeRootValueError,
+  runtimeRootHasHardErrors,
+  runtimeRootNeedsWarningConfirmation
+} from './remoteRuntimeRootUi'
 
 export type InstallStatus = { message: string; severity: 'success' | 'error' } | null
 
@@ -26,6 +34,8 @@ export interface ControllerState {
   connectionId: string
   hostProfileId: string
   remoteRoot: string
+  runtimeRootOverride: string
+  runtimeRootConfirmedKey: string | null
   hpc: HpcDraft
   localInputRoot: string
   remoteInputRoot: string
@@ -56,6 +66,8 @@ export const INITIAL_CONTROLLER_STATE: ControllerState = {
   connectionId: '',
   hostProfileId: '',
   remoteRoot: '',
+  runtimeRootOverride: '',
+  runtimeRootConfirmedKey: null,
   hpc: EMPTY_HPC_DRAFT,
   localInputRoot: '',
   remoteInputRoot: '',
@@ -76,6 +88,7 @@ export function executionTargetEnvironmentKey(state: ControllerState, nextflowBi
   return JSON.stringify([
     state.hostProfileId,
     state.remoteRoot.trim(),
+    normalizeRemoteRuntimeRootValue(state.runtimeRootOverride) ?? null,
     state.hpc.scheduler,
     state.hpc.controller,
     state.hpc.runtime,
@@ -83,9 +96,28 @@ export function executionTargetEnvironmentKey(state: ControllerState, nextflowBi
   ])
 }
 
+export function runtimeRootResolutionForController(
+  state: ControllerState
+): ResolvedRemoteRuntimeRoot {
+  const projectOverride = normalizeRemoteRuntimeRootValue(state.runtimeRootOverride)
+  if (projectOverride) return { source: 'project', configured: projectOverride }
+  const hostOverride = state.hosts.find((host) => host.id === state.hostProfileId)?.runtimeRoot
+  if (hostOverride) return { source: 'host', configured: hostOverride }
+  return { source: 'default', configured: '~/.phi/runtime' }
+}
+
+export function runtimeRootCandidateKey(state: ControllerState): string {
+  return JSON.stringify([
+    state.hostProfileId,
+    normalizeRemoteRuntimeRootValue(state.runtimeRootOverride) ?? null,
+    state.hosts.find((host) => host.id === state.hostProfileId)?.runtimeRoot ?? null
+  ])
+}
+
 export function executionTargetDoctorOptions(
   hpc: HpcDraft,
-  nextflowBin = hpc.nextflowBin
+  nextflowBin = hpc.nextflowBin,
+  runtimeRootOverride?: string
 ): RemoteDoctorOptions {
   return {
     scope: 'full',
@@ -93,8 +125,14 @@ export function executionTargetDoctorOptions(
     controller: hpc.controller,
     runtime: hpc.runtime,
     refreshCapabilities: true,
+    runtimeRootOverride: {
+      source: 'project',
+      ...(normalizeRemoteRuntimeRootValue(runtimeRootOverride ?? '')
+        ? { configured: normalizeRemoteRuntimeRootValue(runtimeRootOverride ?? '') }
+        : {})
+    },
     ...(nextflowBin.trim() ? { nextflowBin: nextflowBin.trim() } : {})
-  }
+  } as RemoteDoctorOptions
 }
 
 export function deriveControllerState(project: Project, state: ControllerState): DerivedState {
@@ -150,6 +188,8 @@ export function controllerConnectionPatch(
   return {
     connectionId: connection?.id ?? '',
     hostProfileId: derived.boundHostProfileId ?? connection?.hostProfileId ?? '',
+    runtimeRootOverride: connection?.runtimeRoot ?? '',
+    runtimeRootConfirmedKey: null,
     hpc: connection?.hpc
       ? hpcDraftFromSettings(connection.hpc)
       : derived.isRemoteProject
@@ -170,6 +210,18 @@ export function controllerSaveError(state: ControllerState, derived: DerivedStat
       : '请选择 SSH 服务器'
   }
   if (!root.startsWith('/') || /[\r\n\0]/.test(root)) return '服务器工作目录必须是绝对路径'
+  const runtimeRootError = remoteRuntimeRootValueError(state.runtimeRootOverride)
+  if (runtimeRootError) return runtimeRootError
+  const runtimeStatus = remoteRuntimeRootUiStatus(state.environmentState, derived.environmentKey)
+  if (runtimeStatus.phase === 'checked' && runtimeStatus.result.hardErrors.length > 0) {
+    return runtimeStatus.result.hardErrors[0]?.message ?? '运行时根目录存在硬性错误'
+  }
+  if (
+    runtimeRootNeedsWarningConfirmation(state.environmentState, derived.environmentKey) &&
+    state.runtimeRootConfirmedKey !== runtimeRootCandidateKey(state)
+  ) {
+    return '运行时根目录存在提醒，请先点击“仍然使用”确认。'
+  }
   if (!derived.isRemoteProject && Boolean(localRoot) !== Boolean(serverRoot)) {
     return '本机和服务器输入根目录需要同时填写'
   }
@@ -193,6 +245,9 @@ export function createControllerConnection(
     id: derived.selected?.id ?? crypto.randomUUID(),
     label: derived.selected?.hostProfileId === host.id ? derived.selected.label : host.label,
     hostProfileId: host.id,
+    ...(normalizeRemoteRuntimeRootValue(state.runtimeRootOverride)
+      ? { runtimeRoot: normalizeRemoteRuntimeRootValue(state.runtimeRootOverride) }
+      : {}),
     hpc: hpcSettingsFromDraft(state.hpc),
     ...(!derived.isRemoteProject && localRoot && serverRoot
       ? { inputPathMapping: { localRoot, remoteRoot: serverRoot } }
@@ -211,6 +266,11 @@ export function createExecutionTargetDialogModel(
     remoteHostLabel: project.remoteHostAlias ?? derived.boundHostProfileId ?? '',
     boundHostAvailable: derived.boundHostAvailable,
     connections: derived.connections,
+    runtimeRootEffective: runtimeRootResolutionForController(state),
+    runtimeRootValueError: remoteRuntimeRootValueError(state.runtimeRootOverride),
+    runtimeRootHardBlocked:
+      Boolean(remoteRuntimeRootValueError(state.runtimeRootOverride)) ||
+      runtimeRootHasHardErrors(state.environmentState, derived.environmentKey),
     checkingEnvironment: derived.checkingEnvironment,
     environmentKey: derived.environmentKey,
     environmentReport: derived.environmentReport

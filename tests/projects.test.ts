@@ -226,6 +226,58 @@ test('project remote connections are added, replaced, and removed independently 
   })
 })
 
+test('project remote connection persists a normalized runtime root beside HPC settings', () => {
+  withPhiDir(({ root }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    const host = saveRemoteHostProfile({ label: 'Lab HPC', hostAlias: 'lab-hpc' })
+
+    const updated = updateProjectRemoteConnection(project.id, 'conn-runtime', {
+      id: 'conn-runtime',
+      label: 'Lab HPC',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'slurm' },
+      runtimeRoot: '/data/scientist/phi-runtime///'
+    })
+
+    assert.equal(updated.remoteConnections?.[0].runtimeRoot, '/data/scientist/phi-runtime')
+    assert.equal(
+      listProjects()[0].remoteConnections?.[0].runtimeRoot,
+      '/data/scientist/phi-runtime'
+    )
+    assert.equal(updated.remoteConnections?.[0].hpc?.scheduler, 'slurm')
+  })
+})
+
+test('project remote connection rejects unsafe runtime roots and clears an omitted override', () => {
+  withPhiDir(({ root }) => {
+    const projectDir = join(root, 'demo')
+    mkdirSync(projectDir)
+    const project = createProject({
+      name: 'Demo',
+      workingDirectory: projectDir,
+      permissionMode: 'ask'
+    })
+    const host = saveRemoteHostProfile({ label: 'Lab HPC', hostAlias: 'lab-hpc' })
+    const base = { id: 'conn-runtime', label: 'Lab HPC', hostProfileId: host.id }
+
+    for (const runtimeRoot of ['', 'relative/runtime', '/data/../runtime', '/bad\npath']) {
+      assert.throws(() =>
+        updateProjectRemoteConnection(project.id, base.id, { ...base, runtimeRoot })
+      )
+    }
+
+    updateProjectRemoteConnection(project.id, base.id, { ...base, runtimeRoot: '~/runtime/' })
+    const cleared = updateProjectRemoteConnection(project.id, base.id, base)
+    assert.equal(cleared.remoteConnections?.[0].runtimeRoot, undefined)
+  })
+})
+
 test('only local projects can save a valid local-root to server-root input mapping', () => {
   withPhiDir(({ root, phiDir }) => {
     const projectDir = join(root, 'demo')

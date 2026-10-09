@@ -5,6 +5,7 @@ import type {
   RemoteHostCapability,
   RemoteHostCapabilityProfile
 } from '../../../../../shared/remoteDoctorTypes'
+import type { RemoteRuntimeRootCapabilityProfile } from '../../../../../shared/remoteRuntimeRootTypes'
 
 const TOOL_LABELS = [
   ['git', 'Git'],
@@ -22,6 +23,33 @@ const PREREQUISITE_LABELS = [
   ['tar', 'tar'],
   ['sha256sum', 'sha256sum']
 ] as const
+
+const RUNTIME_SOURCE_LABELS = { project: '项目', host: '主机', default: '默认' } as const
+const RUNTIME_CHECK_LABELS = {
+  pathResolution: '路径',
+  creation: '创建',
+  ownership: '所有者',
+  permissions: '权限',
+  filesystem: '文件系统',
+  space: '空间',
+  executable: '执行',
+  sharedFilesystem: '共享盘'
+} as const
+const RUNTIME_STATE_LABELS = {
+  ok: '正常',
+  warning: '提醒',
+  error: '错误',
+  unknown: '未知'
+} as const
+const RUNTIME_WARNING_LABELS = {
+  'not-owned': '不归当前用户所有',
+  'group-or-other-writable': '组或其他用户可写',
+  symlink: '路径含符号链接',
+  'low-space': '剩余空间偏少',
+  'high-disk-use': '磁盘使用率较高',
+  noexec: '不可执行',
+  'shared-filesystem-info': '共享文件系统'
+} as const
 
 function platformLabel(profile: RemoteHostCapabilityProfile): string {
   const os =
@@ -130,6 +158,46 @@ function helperSummary(profile: RemoteHostCapabilityProfile): string | null {
   return `辅助能力：${reasons.join('；') || '部分不可用'}`
 }
 
+function runtimeRootStatus(profile: RemoteRuntimeRootCapabilityProfile): string {
+  if (profile.status === 'timed-out') return '检测超时'
+  if (profile.status === 'failed' || profile.status === 'incomplete') return '未完成'
+  if (profile.hasHardError) return '有硬性错误'
+  if (profile.warningCodes.length > 0) return '有提醒'
+  return '已检查'
+}
+
+function RuntimeRootSummary({
+  profile
+}: {
+  profile?: RemoteRuntimeRootCapabilityProfile
+}): React.JSX.Element {
+  if (!profile) {
+    return <Typography variant="caption">运行时根目录：未检查</Typography>
+  }
+  const checks = Object.entries(profile.checks)
+    .map(
+      ([key, state]) =>
+        `${RUNTIME_CHECK_LABELS[key as keyof typeof RUNTIME_CHECK_LABELS]} ${RUNTIME_STATE_LABELS[state]}`
+    )
+    .join('、')
+  return (
+    <Stack spacing={0.25}>
+      <Typography variant="caption">
+        运行时根目录：来自{RUNTIME_SOURCE_LABELS[profile.source]} · {runtimeRootStatus(profile)}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        检查：{checks}
+      </Typography>
+      {profile.warningCodes.length > 0 && (
+        <Typography variant="caption" color="warning.main">
+          告警：
+          {profile.warningCodes.map((code) => RUNTIME_WARNING_LABELS[code]).join('、')}
+        </Typography>
+      )}
+    </Stack>
+  )
+}
+
 export function RemoteCapabilityProfileSummary({
   profile
 }: {
@@ -164,6 +232,7 @@ export function RemoteCapabilityProfileSummary({
           环境限制：{environment.warnings.join('；')}
         </Typography>
       )}
+      <RuntimeRootSummary profile={profile.runtimeRoot} />
       {helper && (
         <Typography variant="caption" color="text.secondary">
           {helper}

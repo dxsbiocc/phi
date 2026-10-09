@@ -26,6 +26,8 @@ interface CapabilityProfileStore {
   version: number
   entries: Readonly<Record<string, ProbedHostCapabilityProfile>>
   latestByHost: Readonly<Record<string, string>>
+  cacheKeysByHost: Readonly<Record<string, readonly string[]>>
+  hostIndexComplete: boolean
 }
 
 export interface CapabilityProfileKey {
@@ -49,7 +51,13 @@ export interface CapabilityProfileGetOptions
 }
 
 function emptyStore(): CapabilityProfileStore {
-  return { version: STORE_VERSION, entries: {}, latestByHost: {} }
+  return {
+    version: STORE_VERSION,
+    entries: {},
+    latestByHost: {},
+    cacheKeysByHost: {},
+    hostIndexComplete: true
+  }
 }
 
 function isProfile(value: unknown): value is ProbedHostCapabilityProfile {
@@ -91,7 +99,21 @@ function readStore(agentDir: string): CapabilityProfileStore {
             )
           )
         : {}
-    return { version: STORE_VERSION, entries, latestByHost }
+    const rawHostIndex =
+      typeof store.cacheKeysByHost === 'object' && store.cacheKeysByHost
+        ? store.cacheKeysByHost
+        : undefined
+    const cacheKeysByHost = rawHostIndex
+      ? Object.fromEntries(
+          Object.entries(rawHostIndex).flatMap(([key, value]) =>
+            Array.isArray(value) && value.every((item) => typeof item === 'string')
+              ? [[key, value]]
+              : []
+          )
+        )
+      : {}
+    const hostIndexComplete = Boolean(rawHostIndex) && store.hostIndexComplete !== false
+    return { version: STORE_VERSION, entries, latestByHost, cacheKeysByHost, hostIndexComplete }
   } catch {
     return emptyStore()
   }
@@ -102,7 +124,14 @@ function writeStore(agentDir: string, store: CapabilityProfileStore): void {
   const target = capabilityProfileStorePath(agentDir)
   const temporary = join(agentDir, `.${STORE_FILE}.${process.pid}.${randomUUID()}.tmp`)
   try {
-    writeFileSync(temporary, `${JSON.stringify(store, null, 2)}\n`, {
+    const document: CapabilityProfileStore = {
+      version: STORE_VERSION,
+      entries: store.entries,
+      latestByHost: store.latestByHost,
+      cacheKeysByHost: store.cacheKeysByHost,
+      hostIndexComplete: store.hostIndexComplete
+    }
+    writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
       flag: 'wx'
@@ -185,6 +214,8 @@ export function saveCapabilityProfile(
   }
   const store = readStore(agentDir)
   const cacheKey = capabilityProfileCacheKey(key)
+  const hostKey = capabilityProfileHostKey(key.hostAlias)
+  const hostCacheKeys = [...new Set([...(store.cacheKeysByHost[hostKey] ?? []), cacheKey])]
   writeStore(agentDir, {
     ...store,
     entries: {
@@ -193,9 +224,34 @@ export function saveCapabilityProfile(
     },
     latestByHost: {
       ...store.latestByHost,
-      [capabilityProfileHostKey(key.hostAlias)]: cacheKey
+      [hostKey]: cacheKey
+    },
+    cacheKeysByHost: {
+      ...store.cacheKeysByHost,
+      [hostKey]: hostCacheKeys
     }
   })
+}
+
+function withoutEntry(
+  store: CapabilityProfileStore,
+  hostKey: string,
+  cacheKey: string
+): CapabilityProfileStore {
+  const remaining = (store.cacheKeysByHost[hostKey] ?? []).filter((key) => key !== cacheKey)
+  const entries = Object.fromEntries(
+    Object.entries(store.entries).filter(([entryKey]) => entryKey !== cacheKey)
+  )
+  const latestByHost = { ...store.latestByHost }
+  if (latestByHost[hostKey] === cacheKey) {
+    const fallback = remaining.at(-1)
+    if (fallback) latestByHost[hostKey] = fallback
+    else delete latestByHost[hostKey]
+  }
+  const cacheKeysByHost = { ...store.cacheKeysByHost }
+  if (remaining.length > 0) cacheKeysByHost[hostKey] = remaining
+  else delete cacheKeysByHost[hostKey]
+  return { ...store, entries, latestByHost, cacheKeysByHost }
 }
 
 export function invalidateCapabilityProfile(
@@ -205,17 +261,32 @@ export function invalidateCapabilityProfile(
   const store = readStore(agentDir)
   const cacheKey = capabilityProfileCacheKey(key)
   if (!(cacheKey in store.entries)) return
-  const entries = Object.fromEntries(
-    Object.entries(store.entries).filter(([entryKey]) => entryKey !== cacheKey)
-  )
   const hostKey = capabilityProfileHostKey(key.hostAlias)
-  const latestByHost =
-    store.latestByHost[hostKey] === cacheKey
-      ? Object.fromEntries(
-          Object.entries(store.latestByHost).filter(([entryKey]) => entryKey !== hostKey)
-        )
-      : store.latestByHost
-  writeStore(agentDir, { ...store, entries, latestByHost })
+  writeStore(agentDir, withoutEntry(store, hostKey, cacheKey))
+}
+
+export function invalidateCapabilityProfilesForHost(
+  hostAlias: string,
+  agentDir = getPhiAgentDir()
+): void {
+  const store = readStore(agentDir)
+  if (!store.hostIndexComplete) {
+    writeStore(agentDir, emptyStore())
+    return
+  }
+  const hostKey = capabilityProfileHostKey(hostAlias)
+  const knownKeys = store.cacheKeysByHost[hostKey] ?? []
+  const cacheKeys = knownKeys.length > 0 ? knownKeys : [store.latestByHost[hostKey]].filter(Boolean)
+  if (cacheKeys.length === 0) return
+  const removals = new Set(cacheKeys)
+  const entries = Object.fromEntries(
+    Object.entries(store.entries).filter(([cacheKey]) => !removals.has(cacheKey))
+  )
+  const latestByHost = { ...store.latestByHost }
+  const cacheKeysByHost = { ...store.cacheKeysByHost }
+  delete latestByHost[hostKey]
+  delete cacheKeysByHost[hostKey]
+  writeStore(agentDir, { ...store, entries, latestByHost, cacheKeysByHost })
 }
 
 export async function refreshCapabilityProfile(
