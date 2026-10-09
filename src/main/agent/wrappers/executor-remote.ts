@@ -230,7 +230,12 @@ export async function signalDetachedRun(
   if (process.code !== 0 || !process.stdout.includes(`${handle.remoteRunDir}/launch.sh`)) {
     throw new Error(`远程进程 ${handle.pid} 不再属于运行 ${handle.runId}，拒绝发送取消信号`)
   }
-  await session.exec(`kill -${signal} -${handle.pid} 2>/dev/null || true`)
+  // The detached launch command records $! before `setsid` has necessarily made that PID a
+  // process-group leader. Signal the group, the verified launcher, then the group again: this
+  // covers either side of that transition while still stopping an established Nextflow tree.
+  await session.exec(
+    `kill -${signal} -${handle.pid} 2>/dev/null || true; kill -${signal} ${handle.pid} 2>/dev/null || true; kill -${signal} -${handle.pid} 2>/dev/null || true`
+  )
 }
 
 /** The `detached_ssh` controller — see module doc comment above. */

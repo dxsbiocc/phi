@@ -95,16 +95,26 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
  */
 export function installSetsidShim(dir: string): () => void {
   const savedPath = process.env.PATH
-  try {
-    execFileSync('which', ['setsid'], { stdio: 'ignore' })
-    return () => undefined
-  } catch {
-    // fall through to the shim
+  if (!process.env.FAKE_SETSID_GATE) {
+    try {
+      execFileSync('which', ['setsid'], { stdio: 'ignore' })
+      return () => undefined
+    } catch {
+      // fall through to the shim
+    }
   }
   const shim = join(dir, 'setsid')
   writeFileSync(
     shim,
-    '#!/usr/bin/perl\nuse POSIX;\nPOSIX::setsid();\nexec @ARGV or die "exec: $!";\n'
+    [
+      '#!/usr/bin/perl',
+      'use POSIX;',
+      'my $gate = $ENV{"FAKE_SETSID_GATE"};',
+      'while (defined($gate) && length($gate) && !-e $gate) { select undef, undef, undef, 0.02; }',
+      'POSIX::setsid();',
+      'exec @ARGV or die "exec: $!";',
+      ''
+    ].join('\n')
   )
   chmodSync(shim, 0o755)
   process.env.PATH = `${dir}:${savedPath ?? ''}`
