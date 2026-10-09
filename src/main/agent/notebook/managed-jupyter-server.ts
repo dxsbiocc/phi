@@ -1,6 +1,5 @@
-// The notebook's Jupyter server runs `jupyter server` from `phi:jupyter@1` (roadmap 5.3).
-// Readiness goes through the shared gate; a missing environment is never replaced by the
-// host's `jupyter`.
+// The notebook's Jupyter server defaults to `phi:jupyter@1` (roadmap 5.3). An explicitly
+// configured host Jupyter path may override it; automatic PATH detection never does.
 
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -8,7 +7,12 @@ import { join } from 'node:path'
 import type { ConfirmBuildRequest } from '../content/environment-gate'
 import { ensureEnvironmentReady } from '../content/environment-gate'
 import type { EnvironmentBuilds } from '../content/environment-builds'
-import { environmentVariables, getRuntimeRoot, type EnvHandle } from '../envs'
+import {
+  environmentVariables,
+  getRuntimeRoot,
+  sanitizeHostEnvironment,
+  type EnvHandle
+} from '../envs'
 import { DEFAULT_KERNEL_NAME, JUPYTER_ENVIRONMENT_REF } from './analysis-kernels'
 import {
   describeManagedEnvironment,
@@ -33,6 +37,8 @@ export interface ManagedJupyterOptions extends Partial<ManagedEnvironmentContext
   /** Needed for the build prompt; without it only an already running build is joined. */
   runtimeSessionId?: string
   signal?: AbortSignal
+  /** Explicit user-selected host Jupyter. Automatic detection remains informational only. */
+  hostJupyterPath?: () => string | undefined
 }
 
 /** The gate said no: not built, declined, failed, or aborted. The message is the gate's. */
@@ -76,6 +82,25 @@ export function managedJupyterLaunch(
   }
 }
 
+/** A user-selected host Jupyter with Phi-owned state directories and kernel discovery. */
+export function hostJupyterLaunch(
+  command: string,
+  launch: ManagedJupyterLaunch,
+  ctx: ManagedEnvironmentContext
+): Required<ManagedJupyterLaunch> {
+  const directories = jupyterDirectoryVariables(ctx.root)
+  for (const directory of Object.values(directories)) mkdirSync(directory, { recursive: true })
+  const baseEnv = ctx.baseEnv ?? process.env
+  const env = { ...sanitizeHostEnvironment(baseEnv), ...directories }
+  env.PATH = baseEnv.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin'
+  return {
+    port: launch.port,
+    command,
+    args: [...(launch.args ?? []), ...managedKernelArgs(ctx.root)],
+    env
+  }
+}
+
 /**
  * Resolves `phi:jupyter@1` through `ensureEnvironmentReady`, writes the managed kernelspecs,
  * and returns the launch. Throws `JupyterEnvironmentNotReadyError` when the gate says no.
@@ -85,6 +110,11 @@ export async function resolveManagedJupyterLaunch(
   options: ManagedJupyterOptions = {}
 ): Promise<Required<ManagedJupyterLaunch>> {
   const ctx: ManagedEnvironmentContext = { ...options, root: options.root ?? getRuntimeRoot() }
+  const hostJupyterPath = options.hostJupyterPath?.()
+  if (hostJupyterPath) {
+    syncManagedKernels(ctx)
+    return hostJupyterLaunch(hostJupyterPath, launch, ctx)
+  }
   const descriptor = describeManagedEnvironment(JUPYTER_ENVIRONMENT_REF, ctx)
   const outcome = await ensureEnvironmentReady({
     root: ctx.root,

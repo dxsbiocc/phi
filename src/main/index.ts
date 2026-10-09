@@ -403,6 +403,7 @@ import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-
 import {
   createManagedEnvironmentActions,
   detectConfiguredAnalysisKernels,
+  getCustomToolPath,
   listManagedEnvironments
 } from './agent/environment'
 import { createBackgroundEnvironment } from './agent/environment/background'
@@ -1787,7 +1788,12 @@ const managedEnvironmentActions = createManagedEnvironmentActions({
     })
 })
 // The notebook server joins builds started elsewhere (chat prompt or the environment panel).
-const jupyterServerRegistry = new JupyterServerRegistry({ managed: { builds: environmentBuilds } })
+const jupyterServerRegistry = new JupyterServerRegistry({
+  managed: {
+    builds: environmentBuilds,
+    hostJupyterPath: () => getCustomToolPath('jupyter', AGENT_DIR)
+  }
+})
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })

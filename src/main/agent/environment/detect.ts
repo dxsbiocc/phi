@@ -335,16 +335,7 @@ export function detectHostDependencies(
     singularityName ? `检测到 ${singularityName}` : undefined
   )
 
-  const libreOfficePath =
-    firstExisting([
-      '/Applications/LibreOffice.app/Contents/MacOS/soffice',
-      '/usr/lib/libreoffice/program/soffice'
-    ]) ?? resolveNamedBinary(['soffice'], which)
-  const libreOffice = hostDependency('libreoffice', 'LibreOffice', libreOfficePath, runner, [
-    '--version'
-  ])
-
-  return [docker, singularity, libreOffice]
+  return [docker, singularity]
 }
 
 function hostKernels(

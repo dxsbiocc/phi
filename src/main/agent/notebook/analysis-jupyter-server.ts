@@ -107,9 +107,9 @@ export function jupyterServerArgs(launch: JupyterServerLaunch): string[] {
 }
 
 function defaultProcessFactory(cwd: string, launch: JupyterServerLaunch): ManagedJupyterProcess {
-  // Never the host's `jupyter`: only a resolved managed launch is spawned.
+  // Never an unresolved PATH lookup: only a managed or explicitly selected absolute launch.
   if (!launch.command || !launch.env) {
-    throw new Error('Jupyter Server launch is not resolved to phi:jupyter@1')
+    throw new Error('Jupyter Server launch is not resolved')
   }
   return spawn(launch.command, launch.args ?? jupyterServerArgs(launch), {
     cwd,

@@ -1,10 +1,14 @@
 import Box from '@mui/material/Box'
-import Chip from '@mui/material/Chip'
-import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
+import { TbContainer } from 'react-icons/tb'
 
-import type { EnvironmentHostDependency } from '../../../../../shared/environmentTypes'
+import type {
+  EnvironmentHostDependency,
+  EnvironmentHostDependencyId
+} from '../../../../../shared/environmentTypes'
+import { PhiIcons } from '../../../icons'
+import { HostEnvironmentItem } from './HostEnvironmentItem'
 
 function dependencyStatus(dependency: EnvironmentHostDependency): {
   label: string
@@ -15,19 +19,24 @@ function dependencyStatus(dependency: EnvironmentHostDependency): {
   return { label: '未检测到', color: 'default' }
 }
 
+function dependencyIcon(id: EnvironmentHostDependencyId): React.JSX.Element {
+  if (id === 'docker') return <PhiIcons.file.docker size={22} />
+  return <TbContainer aria-hidden size={22} />
+}
+
 export function HostDependenciesSection({
   dependencies
 }: {
   dependencies: readonly EnvironmentHostDependency[]
 }): React.JSX.Element {
   return (
-    <Stack component="section" spacing={1.25} aria-labelledby="host-dependencies-title">
+    <Stack component="section" spacing={1} aria-labelledby="host-dependencies-title">
       <Box>
         <Typography id="host-dependencies-title" variant="h6">
           宿主依赖
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Docker、Singularity / Apptainer 和 LibreOffice 由本机提供；Phi 只检查，不会安装。
+          容器运行时由本机提供；Phi 只检查，不会安装。
         </Typography>
       </Box>
 
@@ -39,43 +48,23 @@ export function HostDependenciesSection({
         <Stack spacing={1}>
           {dependencies.map((dependency) => {
             const status = dependencyStatus(dependency)
+            const summary = [
+              dependency.version,
+              dependency.detail,
+              dependency.path,
+              ...(dependency.messages ?? [])
+            ]
+              .filter(Boolean)
+              .join(' · ')
             return (
-              <Paper key={dependency.id} variant="outlined" sx={{ p: 2, borderRadius: 1 }}>
-                <Stack spacing={0.75}>
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    useFlexGap
-                    sx={{ alignItems: 'center', flexWrap: 'wrap' }}
-                  >
-                    <Typography variant="body1" sx={{ fontWeight: 700 }}>
-                      {dependency.label}
-                    </Typography>
-                    <Chip
-                      size="small"
-                      color={status.color}
-                      variant="outlined"
-                      label={status.label}
-                    />
-                  </Stack>
-                  {dependency.path || dependency.version || dependency.detail ? (
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ wordBreak: 'break-all' }}
-                    >
-                      {[dependency.path, dependency.version, dependency.detail]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Typography>
-                  ) : null}
-                  {dependency.messages?.map((message) => (
-                    <Typography key={message} variant="caption" color="text.secondary">
-                      {message}
-                    </Typography>
-                  ))}
-                </Stack>
-              </Paper>
+              <HostEnvironmentItem
+                key={dependency.id}
+                id={dependency.id}
+                icon={dependencyIcon(dependency.id)}
+                title={dependency.label}
+                summary={summary || '未检测到可用路径'}
+                status={status}
+              />
             )
           })}
         </Stack>

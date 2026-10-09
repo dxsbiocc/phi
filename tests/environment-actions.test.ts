@@ -229,6 +229,36 @@ test('clean reports collected prefixes and the bytes they occupied', async () =>
   }
 })
 
+test('clean drops legacy versioned plugin references from orphaned environments', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-environment-clean-legacy-plugin-'))
+  const envId = 'plugin-visualization-viz-abcdef012345'
+  try {
+    const prefix = addIndexEntry(root, ['plugin:visualization@1.0.2'], envId, 'viz')
+    const environmentActions = createManagedEnvironmentActions({
+      root,
+      builds: fakeBuilds(),
+      catalog: async () => [
+        {
+          ref: `orphaned:${envId}`,
+          envId,
+          state: 'ready',
+          source: 'orphaned',
+          referrers: ['plugin:visualization@1.0.2'],
+          consumers: []
+        }
+      ]
+    })
+
+    const result = await environmentActions.clean()
+
+    assert.deepEqual(result.removed, [envId])
+    assert.equal(existsSync(prefix), false)
+    assert.equal(readEnvironmentIndex(root).environments[envId], undefined)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('clean skips the actively building environment and still removes unrelated entries', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-environment-clean-building-'))
   const removableId = 'phi-r-abcdef012345'

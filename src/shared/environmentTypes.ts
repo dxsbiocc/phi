@@ -65,7 +65,7 @@ export const ENVIRONMENT_TOOL_LABELS: Record<EnvironmentToolId, string> = {
   rscript: 'Rscript'
 }
 
-export type EnvironmentHostDependencyId = 'docker' | 'singularity' | 'libreoffice'
+export type EnvironmentHostDependencyId = 'docker' | 'singularity'
 export type EnvironmentHostDependencyStatus = 'ready' | 'missing' | 'unavailable'
 
 export interface EnvironmentHostDependency {

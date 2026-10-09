@@ -176,12 +176,35 @@ test(
       assert.equal(await settle(unresolved, fixture.project), 'error')
       assert.match(
         unresolved.status(fixture.project).message ?? '',
-        /not resolved to phi:jupyter@1/
+        /Jupyter Server launch is not resolved/
       )
       assert.equal(existsSync(marker), false)
     } finally {
       process.env.PATH = previousPath
     }
+  })
+)
+
+test(
+  'an explicitly selected host Jupyter takes priority while keeping Phi-owned state',
+  withFixture(async (fixture) => {
+    install(fixture, 'phi:python@1')
+    const launch = await resolveManagedJupyterLaunch(
+      { port: 31888, args: ['server', '--no-browser'] },
+      {
+        ...options(fixture),
+        hostJupyterPath: () => '/opt/host-jupyter/bin/jupyter'
+      }
+    )
+
+    assert.equal(launch.command, '/opt/host-jupyter/bin/jupyter')
+    assert.equal(launch.env.PATH, '/opt/homebrew/bin:/usr/bin')
+    assert.equal(launch.env.PYTHONPATH, undefined)
+    assert.equal(launch.env.PHI_ENV_PREFIX, undefined)
+    assert.equal(launch.env.JUPYTER_PATH, join(fixture.root, 'jupyter'))
+    assert.ok(
+      launch.args.includes(`--KernelSpecManager.kernel_dirs=${managedKernelsDir(fixture.root)}`)
+    )
   })
 )
 

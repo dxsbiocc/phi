@@ -22,6 +22,7 @@ import {
 } from './detect'
 
 const ENVIRONMENT_FILE = 'environment.json'
+const HOST_DEPENDENCY_IDS = new Set(['docker', 'singularity'])
 
 type PersistedCustomPaths = Partial<Record<EnvironmentToolId, string>>
 
@@ -88,6 +89,16 @@ function normalizeCustomPaths(raw: unknown): PersistedCustomPaths {
   return out
 }
 
+function normalizeHostDependencies(raw: unknown): EnvironmentHostDependency[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter(
+    (dependency): dependency is EnvironmentHostDependency =>
+      isRecord(dependency) &&
+      typeof dependency.id === 'string' &&
+      HOST_DEPENDENCY_IDS.has(dependency.id)
+  )
+}
+
 /** Apply user custom paths on top of a fresh detection result. */
 export function mergeDetectedWithCustoms(
   detected: EnvironmentToolState[],
@@ -150,7 +161,7 @@ export function readEnvironmentSnapshot(agentDir = getPhiAgentDir()): Environmen
   if (Array.isArray(persisted.tools) && persisted.tools.length > 0) {
     return toSnapshot(
       persisted.tools,
-      Array.isArray(persisted.hostDependencies) ? persisted.hostDependencies : [],
+      normalizeHostDependencies(persisted.hostDependencies),
       Array.isArray(persisted.hostTools) ? persisted.hostTools : [],
       {
         scannedAt:

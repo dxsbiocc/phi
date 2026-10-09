@@ -30,6 +30,7 @@ const ENV_ID = /^[a-z][a-z0-9-]*-[0-9a-f]{12}$/
 const PLUGIN_ID = /^[a-z][a-z0-9-]{1,63}$/
 const REMOVABLE_STATES = new Set(['ready', 'failed', 'drifted'])
 const CLEAN_BUILD_GUARD_REFERRER = 'environment-panel:active-build'
+const LEGACY_VERSIONED_PLUGIN_REFERRER = /^plugin:[a-z][a-z0-9-]*@/u
 
 type Catalog = (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
 
@@ -268,7 +269,22 @@ export function createManagedEnvironmentActions(
         .filter((build) => build.state === 'building')
         .map((build) => build.envId)
     )
+    const orphanedIds = new Set(
+      (await dependencies.catalog())
+        .filter((entry) => entry.source === 'orphaned')
+        .map((entry) => entry.envId)
+    )
     let index = readEnvironmentIndex(dependencies.root)
+    for (const envId of orphanedIds) {
+      if (buildingIds.has(envId)) continue
+      const entry = index.environments[envId]
+      for (const referrer of entry?.referrers ?? []) {
+        if (LEGACY_VERSIONED_PLUGIN_REFERRER.test(referrer)) {
+          removeReferrer(dependencies.root, envId, referrer)
+        }
+      }
+    }
+    index = readEnvironmentIndex(dependencies.root)
     for (const [envId, entry] of Object.entries(index.environments)) {
       if (!buildingIds.has(envId) && entry.referrers.includes(CLEAN_BUILD_GUARD_REFERRER)) {
         removeReferrer(dependencies.root, envId, CLEAN_BUILD_GUARD_REFERRER)

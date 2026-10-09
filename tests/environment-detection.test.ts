@@ -67,13 +67,11 @@ test('host dependency probing requires a reachable Docker daemon and reports ver
     which: (name) => {
       if (name === 'docker') return '/usr/local/bin/docker'
       if (name === 'apptainer') return '/usr/local/bin/apptainer'
-      if (name === 'soffice') return '/Applications/LibreOffice.app/Contents/MacOS/soffice'
       return undefined
     },
     runner: (command, args) => {
       if (command.endsWith('/docker') && args[0] === 'info') return '27.2.1\n'
       if (command.endsWith('/apptainer')) return 'apptainer version 1.3.5\n'
-      if (command.endsWith('/soffice')) return 'LibreOffice 24.8.1.2\n'
       throw new Error(`unexpected ${command} ${args.join(' ')}`)
     }
   })
@@ -82,8 +80,7 @@ test('host dependency probing requires a reachable Docker daemon and reports ver
     dependencies.map(({ id, status, version }) => ({ id, status, version })),
     [
       { id: 'docker', status: 'ready', version: '27.2.1' },
-      { id: 'singularity', status: 'ready', version: 'apptainer version 1.3.5' },
-      { id: 'libreoffice', status: 'ready', version: 'LibreOffice 24.8.1.2' }
+      { id: 'singularity', status: 'ready', version: 'apptainer version 1.3.5' }
     ]
   )
 })
@@ -176,7 +173,7 @@ test('environment store scans once then dismisses summary', () => {
   try {
     const first = getEnvironment(agentDir)
     assert.equal(first.snapshot.firstScanCompleted, true)
-    assert.equal(first.snapshot.hostDependencies.length, 3)
+    assert.equal(first.snapshot.hostDependencies.length, 2)
     assert.equal(first.snapshot.hostTools.length, 2)
     assert.equal(first.showSummary, true)
 
@@ -191,6 +188,33 @@ test('environment store scans once then dismisses summary', () => {
     const again = redetectEnvironment(agentDir)
     assert.equal(again.firstScanCompleted, true)
     assert.equal(again.summaryDismissed, true)
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('reading a legacy snapshot drops removed host dependencies without requiring a rescan', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-env-legacy-dependencies-'))
+  try {
+    writeFileSync(
+      join(agentDir, 'environment.json'),
+      JSON.stringify({
+        firstScanCompleted: true,
+        scannedAt: '2026-10-03T05:00:31.000Z',
+        tools: [{ id: 'jupyter', label: 'Jupyter', status: 'missing', source: 'none' }],
+        hostDependencies: [
+          { id: 'docker', label: 'Docker', status: 'ready', path: '/usr/local/bin/docker' },
+          { id: 'libreoffice', label: 'LibreOffice', status: 'missing' }
+        ],
+        hostTools: []
+      })
+    )
+
+    const snapshot = getEnvironment(agentDir).snapshot
+    assert.deepEqual(
+      snapshot.hostDependencies.map((dependency) => dependency.id),
+      ['docker']
+    )
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
@@ -219,6 +243,39 @@ test('setEnvironmentToolPath stores custom nextflow path after probe', () => {
     assert.equal(nextflow?.management, 'host-unmanaged')
     assert.equal(nextflow?.detail, HOST_UNMANAGED)
     assert.equal(getCustomToolPath('nextflow', agentDir), fakeBin)
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('setEnvironmentToolPath stores an explicitly selected host Jupyter Server', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-env-jupyter-path-'))
+  const fakeBin = join(agentDir, 'jupyter')
+  try {
+    writeFileSync(fakeBin, '#!/bin/sh\n')
+    const snapshot = setEnvironmentToolPath('jupyter', fakeBin, agentDir, {
+      which: () => undefined,
+      runner: (command, args) => {
+        if (command === fakeBin && args.join(' ') === 'server --version') return '2.14.0'
+        if (command === fakeBin && args.join(' ') === 'kernelspec list --json') {
+          return JSON.stringify({
+            kernelspecs: {
+              python3: {
+                resource_dir: '/host/kernels/python3',
+                spec: { display_name: 'Python 3', language: 'python' }
+              }
+            }
+          })
+        }
+        throw new Error('missing')
+      }
+    })
+
+    const jupyter = snapshot.hostTools.find((tool) => tool.id === 'jupyter')
+    assert.equal(jupyter?.selected, true)
+    assert.equal(jupyter?.path, fakeBin)
+    assert.equal(jupyter?.version, '2.14.0')
+    assert.equal(getCustomToolPath('jupyter', agentDir), fakeBin)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
