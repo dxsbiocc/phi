@@ -159,7 +159,10 @@ function createBridgeError(message: string, stack?: string): Error {
 export type WorkerSpawner = (workerPath: string, agentDir: string) => ChildProcessWithoutNullStreams
 
 function spawnBunWorker(workerPath: string, agentDir: string): ChildProcessWithoutNullStreams {
-  const bunPath = resolveBunExecutable()
+  const resourcesPath = process.resourcesPath
+  const bunPath = resolveBunExecutable({
+    resourcesPath: typeof resourcesPath === 'string' ? resourcesPath : undefined
+  })
   return spawn(bunPath, [workerPath], {
     cwd: process.cwd(),
     env: {

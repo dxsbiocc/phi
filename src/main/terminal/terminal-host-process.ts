@@ -51,7 +51,10 @@ function terminalChildEnvironment(): NodeJS.ProcessEnv {
 }
 
 export function spawnBunProcess(scriptPath: string): ChildProcessWithoutNullStreams {
-  const bunExecutable = resolveBunExecutable(process.env)
+  const resourcesPath = process.resourcesPath
+  const bunExecutable = resolveBunExecutable(process.env, undefined, {
+    resourcesPath: typeof resourcesPath === 'string' ? resourcesPath : undefined
+  })
   return spawn(bunExecutable, [scriptPath], {
     cwd: process.cwd(),
     env: terminalChildEnvironment(),

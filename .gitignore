@@ -12,6 +12,10 @@ out
 # sha256 live in resources/runtime/manifest.json, which is committed.
 resources/runtime/micromamba/
 
+# Bun binaries downloaded by `bun run bun:fetch`. Version, archive sha256, and
+# extracted executable sha256 live in resources/runtime/manifest.json.
+resources/runtime/bun/
+
 # Remote helper binaries and their generated checksum manifest are produced by
 # `bun run build:helper`; source and the canonical version remain tracked.
 resources/remote-helper/

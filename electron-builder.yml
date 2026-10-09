@@ -22,6 +22,7 @@ files:
   - '!resources/**/work/**'
   - '!resources/**/results/**'
   - '!resources/runtime/micromamba/**'
+  - '!resources/runtime/bun/**'
   - '!resources/remote-helper/**'
   - '!resources/office/officecli/**'
 extraResources:
@@ -144,6 +145,8 @@ mac:
   extraResources:
     - from: resources/runtime/micromamba/darwin-${arch}
       to: runtime/micromamba/darwin-${arch}
+    - from: resources/runtime/bun/darwin-${arch}
+      to: runtime/bun/darwin-${arch}
     - from: resources/office/officecli/darwin-${arch}
       to: office/officecli/darwin-${arch}
   icon: build/icon.icns

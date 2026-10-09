@@ -1,5 +1,4 @@
-import { accessSync, constants } from 'node:fs'
-import { delimiter, isAbsolute, join } from 'node:path'
+import { findBunExecutable, type BunLookupOptions } from '../agent/omp/bun-executable'
 
 export type BunExecutableFileExists = (path: string) => boolean
 
@@ -10,38 +9,19 @@ export class BunExecutableNotFoundError extends Error {
   }
 }
 
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
-}
+export type TerminalBunLookupOptions = Omit<BunLookupOptions, 'env' | 'isExecutableFile'>
 
 /** Resolve Bun without relying on the sparse PATH inherited by Finder-launched apps. */
 export function resolveBunExecutable(
   env: NodeJS.ProcessEnv,
-  fileExists: BunExecutableFileExists = isExecutable
+  fileExists?: BunExecutableFileExists,
+  options: TerminalBunLookupOptions = {}
 ): string {
-  const candidates: string[] = []
-  const add = (candidate: string | undefined): void => {
-    if (candidate && isAbsolute(candidate) && !candidates.includes(candidate)) {
-      candidates.push(candidate)
-    }
-  }
-
-  add(env.PHI_BUN_PATH)
-  if (env.BUN_INSTALL) add(join(env.BUN_INSTALL, 'bin', 'bun'))
-  if (env.HOME) add(join(env.HOME, '.bun', 'bin', 'bun'))
-  add('/opt/homebrew/bin/bun')
-  add('/usr/local/bin/bun')
-  for (const entry of env.PATH?.split(delimiter) ?? []) {
-    if (entry) add(join(entry, 'bun'))
-  }
-
-  for (const candidate of candidates) {
-    if (fileExists(candidate)) return candidate
-  }
+  const found = findBunExecutable({
+    ...options,
+    env,
+    ...(fileExists ? { isExecutableFile: fileExists } : {})
+  })
+  if (found) return found
   throw new BunExecutableNotFoundError()
 }

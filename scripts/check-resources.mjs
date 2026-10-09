@@ -9,6 +9,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // Untracked files under resources/ that lint accepts. Anything else is a run
 // leftover and must not ship. `.DS_Store` is macOS noise.
 // `resources/runtime/micromamba/` holds binaries from `bun run runtime:fetch`;
+// `resources/runtime/bun/` holds binaries from `bun run bun:fetch`;
 // `resources/office/officecli/` holds the OfficeCLI binary from `bun run office:fetch`;
 // `resources/remote-helper/` holds cross-compiled output from `bun run build:helper`.
 const ALLOWED_UNTRACKED_RESOURCES = {
@@ -16,6 +17,7 @@ const ALLOWED_UNTRACKED_RESOURCES = {
   paths: new Set(['resources/README.md']),
   prefixes: [
     'resources/runtime/micromamba/',
+    'resources/runtime/bun/',
     'resources/office/officecli/',
     'resources/remote-helper/'
   ]

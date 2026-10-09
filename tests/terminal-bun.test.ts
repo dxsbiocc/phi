@@ -21,6 +21,7 @@ function executableSet(paths: readonly string[]): {
 test('resolves executable Bun candidates in packaged-app priority order', () => {
   const files = executableSet([
     '/explicit/bun',
+    '/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64/bun',
     '/bun-install/bin/bun',
     '/Users/tester/.bun/bin/bun',
     '/opt/homebrew/bin/bun',
@@ -35,34 +36,74 @@ test('resolves executable Bun candidates in packaged-app priority order', () => 
         HOME: '/Users/tester',
         PATH: '/custom/bin:/usr/bin'
       },
-      files.exists
+      files.exists,
+      {
+        resourcesPath: '/Applications/Phi.app/Contents/Resources',
+        platform: 'darwin',
+        arch: 'arm64',
+        homeDir: '/Users/tester',
+        readLoginShellPath: () => undefined
+      }
     ),
     '/explicit/bun'
   )
   assert.deepEqual(files.checked, ['/explicit/bun'])
 })
 
-test('falls through invalid and unavailable Bun candidates to PATH', () => {
+test('prefers packaged bun over PATH for terminal workers', () => {
+  const files = executableSet([
+    '/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64/bun',
+    '/custom/bin/bun'
+  ])
+
+  assert.equal(
+    resolveBunExecutable({ PATH: '/custom/bin' }, files.exists, {
+      resourcesPath: '/Applications/Phi.app/Contents/Resources',
+      platform: 'darwin',
+      arch: 'arm64',
+      homeDir: '/Users/tester',
+      readLoginShellPath: () => undefined
+    }),
+    '/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64/bun'
+  )
+})
+
+test('falls through unavailable packaged and known Bun candidates to PATH', () => {
   const files = executableSet(['/custom/bin/bun'])
   assert.equal(
     resolveBunExecutable(
       {
-        PHI_BUN_PATH: 'relative/bun',
         BUN_INSTALL: '/missing-install',
         HOME: '/missing-home',
         PATH: 'relative-bin:/custom/bin:/other/bin'
       },
-      files.exists
+      files.exists,
+      {
+        resourcesPath: '/Applications/Phi.app/Contents/Resources',
+        platform: 'darwin',
+        arch: 'arm64',
+        homeDir: '/missing-home',
+        readLoginShellPath: () => undefined
+      }
     ),
     '/custom/bin/bun'
   )
   assert.deepEqual(files.checked, [
-    '/missing-install/bin/bun',
-    '/missing-home/.bun/bin/bun',
-    '/opt/homebrew/bin/bun',
-    '/usr/local/bin/bun',
+    '/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64/bun',
+    'relative-bin/bun',
     '/custom/bin/bun'
   ])
+})
+
+test('does not silently replace an invalid explicit Bun override', () => {
+  assert.throws(
+    () =>
+      resolveBunExecutable(
+        { PHI_BUN_PATH: '/missing/explicit/bun', PATH: '/custom/bin' },
+        (path) => path === '/custom/bin/bun'
+      ),
+    BunExecutableNotFoundError
+  )
 })
 
 test('uses BUN_INSTALL and HOME before system locations', () => {
@@ -79,6 +120,19 @@ test('uses BUN_INSTALL and HOME before system locations', () => {
       (path) => path === '/Users/tester/.bun/bin/bun'
     ),
     '/Users/tester/.bun/bin/bun'
+  )
+})
+
+test('falls back to the login shell when packaged, PATH, and known Bun locations are unavailable', () => {
+  const files = executableSet(['/Users/tester/.mise/bin/bun'])
+  assert.equal(
+    resolveBunExecutable({ HOME: '/Users/tester', PATH: '/usr/bin:/bin' }, files.exists, {
+      resourcesPath: '/Applications/Phi.app/Contents/Resources',
+      platform: 'darwin',
+      arch: 'arm64',
+      readLoginShellPath: () => '/Users/tester/.mise/bin:/usr/bin:/bin'
+    }),
+    '/Users/tester/.mise/bin/bun'
   )
 })
 

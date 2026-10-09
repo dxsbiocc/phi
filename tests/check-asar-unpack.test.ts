@@ -1,8 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { parse } from 'yaml'
 
 import {
   collectOmpWorkerPackageAssets,
@@ -11,6 +20,7 @@ import {
   copyOmpWorkerClosure,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
+import { assertBundledBun } from '../scripts/build/after-pack.mjs'
 import {
   checkAsarUnpack,
   globToRegExp,
@@ -26,6 +36,59 @@ test('asarUnpack covers the OMP worker, its copied closure and its runtime packa
 
 test('electron-builder distributes the remote helper outside the asar', () => {
   assert.deepEqual(missingExtraResourceMappings(repoRoot), [])
+})
+
+test('asar check reports a missing arch-specific Bun resource mapping', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-bun-mapping-'))
+  try {
+    writeFileSync(
+      path.join(root, 'electron-builder.yml'),
+      [
+        'extraResources:',
+        '  - from: resources/remote-helper',
+        '    to: remote-helper',
+        'mac:',
+        '  extraResources: []',
+        ''
+      ].join('\n')
+    )
+    assert.deepEqual(missingExtraResourceMappings(root), [
+      'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}'
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('electron-builder packages Bun as a macOS arch-specific external resource', () => {
+  const config = parse(readFileSync(path.join(repoRoot, 'electron-builder.yml'), 'utf8'))
+  assert.ok(config.files.includes('!resources/runtime/bun/**'))
+  assert.ok(
+    config.mac.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/bun/darwin-${arch}' &&
+        entry.to === 'runtime/bun/darwin-${arch}'
+    )
+  )
+  assert.match(
+    readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'),
+    /resources\/runtime\/bun\//u
+  )
+})
+
+test('afterPack rejects a packaged app with a missing or non-executable Bun', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-packaged-bun-'))
+  const bunPath = path.join(root, 'runtime', 'bun', 'darwin-arm64', 'bun')
+  try {
+    assert.throws(() => assertBundledBun(root, 'darwin-arm64'), /missing bundled Bun/u)
+    mkdirSync(path.dirname(bunPath), { recursive: true })
+    writeFileSync(bunPath, '#!/bin/sh\n')
+    assert.throws(() => assertBundledBun(root, 'darwin-arm64'), /not executable/u)
+    chmodSync(bunPath, 0o755)
+    assert.equal(assertBundledBun(root, 'darwin-arm64'), bunPath)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('worker closure follows relative imports beyond the old hand-maintained list', () => {

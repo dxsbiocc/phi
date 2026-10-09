@@ -8,6 +8,7 @@ import {
   BUN_PATH_ENV,
   findBunExecutable,
   readLoginShellPath,
+  resolveBunExecutable,
   workerPathWithBun
 } from '../src/main/agent/omp/bun-executable'
 
@@ -48,6 +49,74 @@ test('finds bun in ~/.bun/bin when launched from Finder', () => {
   })
 })
 
+test('prefers packaged bun over the inherited PATH', () => {
+  withTempDir((root) => {
+    const resourcesPath = join(root, 'Phi.app', 'Contents', 'Resources')
+    const bundled = fakeBun(join(resourcesPath, 'runtime', 'bun', 'darwin-arm64'))
+    fakeBun(join(root, 'path-bin'))
+
+    assert.equal(
+      findBunExecutable({
+        env: { PATH: join(root, 'path-bin') },
+        homeDir: join(root, 'home'),
+        platform: 'darwin',
+        arch: 'arm64',
+        resourcesPath,
+        readLoginShellPath: noLoginShell
+      }),
+      bundled
+    )
+  })
+})
+
+test('falls back from a non-executable packaged bun to PATH', () => {
+  withTempDir((root) => {
+    const resourcesPath = join(root, 'Phi.app', 'Contents', 'Resources')
+    const bundled = fakeBun(join(resourcesPath, 'runtime', 'bun', 'darwin-arm64'))
+    chmodSync(bundled, 0o644)
+    const onPath = fakeBun(join(root, 'path-bin'))
+
+    assert.equal(
+      findBunExecutable({
+        env: { PATH: join(root, 'path-bin') },
+        homeDir: join(root, 'home'),
+        platform: 'darwin',
+        arch: 'arm64',
+        resourcesPath,
+        readLoginShellPath: noLoginShell
+      }),
+      onPath
+    )
+  })
+})
+
+test('reports a packaged bun that exists but is not executable when no fallback exists', () => {
+  withTempDir((root) => {
+    const resourcesPath = join(root, 'Phi.app', 'Contents', 'Resources')
+    const bundled = fakeBun(join(resourcesPath, 'runtime', 'bun', 'darwin-arm64'))
+    chmodSync(bundled, 0o644)
+
+    assert.throws(
+      () =>
+        resolveBunExecutable({
+          env: { PATH: '' },
+          homeDir: join(root, 'home'),
+          platform: 'darwin',
+          arch: 'arm64',
+          resourcesPath,
+          isExecutableFile: () => false,
+          readLoginShellPath: noLoginShell
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error)
+        assert.match(error.message, /内置 bun 不可执行/u)
+        assert.match(error.message, new RegExp(bundled.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'))
+        return true
+      }
+    )
+  })
+})
+
 test('honours BUN_INSTALL and prefers the inherited PATH', () => {
   withTempDir((root) => {
     const installed = fakeBun(join(root, 'custom', 'bin'))
@@ -55,6 +124,8 @@ test('honours BUN_INSTALL and prefers the inherited PATH', () => {
     const base = {
       homeDir: join(root, 'home'),
       platform: 'darwin' as const,
+      arch: 'arm64' as const,
+      resourcesPath: join(root, 'missing-resources'),
       readLoginShellPath: noLoginShell
     }
     assert.equal(
@@ -83,6 +154,8 @@ test('falls back to the login shell PATH for custom installs', () => {
         env: { PATH: FINDER_PATH, SHELL: '/bin/zsh' },
         homeDir: join(root, 'home'),
         platform: 'darwin',
+        arch: 'arm64',
+        resourcesPath: join(root, 'missing-resources'),
         readLoginShellPath: (env) => {
           shellEnv = env
           return [join(root, 'mise', 'bin'), FINDER_PATH].join(delimiter)
@@ -97,10 +170,14 @@ test('falls back to the login shell PATH for custom installs', () => {
 test('explicit override wins and is not silently replaced when broken', () => {
   withTempDir((root) => {
     const explicit = fakeBun(join(root, 'explicit'))
+    const resourcesPath = join(root, 'Phi.app', 'Contents', 'Resources')
+    fakeBun(join(resourcesPath, 'runtime', 'bun', 'darwin-arm64'))
     fakeBun(join(root, 'home', '.bun', 'bin'))
     const base = {
       homeDir: join(root, 'home'),
       platform: 'darwin' as const,
+      arch: 'arm64' as const,
+      resourcesPath,
       readLoginShellPath: noLoginShell
     }
     assert.equal(
@@ -113,6 +190,22 @@ test('explicit override wins and is not silently replaced when broken', () => {
         env: { PATH: FINDER_PATH, [BUN_PATH_ENV]: join(root, 'missing') }
       }),
       undefined
+    )
+  })
+})
+
+test('development mode without a resources root keeps PATH resolution unchanged', () => {
+  withTempDir((root) => {
+    const onPath = fakeBun(join(root, 'path-bin'))
+    assert.equal(
+      findBunExecutable({
+        env: { PATH: join(root, 'path-bin') },
+        homeDir: join(root, 'home'),
+        platform: 'darwin',
+        arch: 'arm64',
+        readLoginShellPath: noLoginShell
+      }),
+      onPath
     )
   })
 })

@@ -51,13 +51,15 @@ test('resource check allows .DS_Store but no retired wrapper pack index', () => 
   ])
 })
 
-test('resource check allows fetched micromamba binaries and nothing else under resources/runtime', () => {
+test('resource check allows fetched runtime binaries and nothing else under resources/runtime', () => {
   assert.deepEqual(
     offendingResourcePaths([
       'resources/runtime/micromamba/darwin-arm64/micromamba',
       'resources/runtime/micromamba/darwin-x64/micromamba',
       'resources/runtime/micromamba/linux-x64/micromamba',
-      'resources\\runtime\\micromamba\\linux-x64\\micromamba'
+      'resources\\runtime\\micromamba\\linux-x64\\micromamba',
+      'resources/runtime/bun/darwin-arm64/bun',
+      'resources\\runtime\\bun\\darwin-arm64\\bun'
     ]),
     []
   )
@@ -65,12 +67,16 @@ test('resource check allows fetched micromamba binaries and nothing else under r
     offendingResourcePaths([
       'resources/runtime/manifest.json',
       'resources/runtime/micromamba',
-      'resources/runtime/micromamba-extra'
+      'resources/runtime/micromamba-extra',
+      'resources/runtime/bun',
+      'resources/runtime/bun-extra'
     ]),
     [
       'resources/runtime/manifest.json',
       'resources/runtime/micromamba',
-      'resources/runtime/micromamba-extra'
+      'resources/runtime/micromamba-extra',
+      'resources/runtime/bun',
+      'resources/runtime/bun-extra'
     ]
   )
 })

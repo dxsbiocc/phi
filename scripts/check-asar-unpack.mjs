@@ -13,7 +13,14 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 // Directories the OMP copy plugin writes into, checked as built when present.
 const BUILT_WORKER_DIRS = ['out/main/agent', 'out/shared']
-const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [{ from: 'resources/remote-helper', to: 'remote-helper' }]
+const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [
+  { section: 'extraResources', from: 'resources/remote-helper', to: 'remote-helper' },
+  {
+    section: 'mac.extraResources',
+    from: 'resources/runtime/bun/darwin-${arch}',
+    to: 'runtime/bun/darwin-${arch}'
+  }
+]
 
 export function globToRegExp(glob) {
   let pattern = ''
@@ -52,16 +59,17 @@ function normalizedPath(value) {
 
 export function missingExtraResourceMappings(root = repoRoot) {
   const config = parse(readFileSync(path.join(root, 'electron-builder.yml'), 'utf8'))
-  const entries = Array.isArray(config?.extraResources) ? config.extraResources : []
-  return REQUIRED_EXTRA_RESOURCE_MAPPINGS.filter((required) =>
-    entries.every((entry) => {
+  return REQUIRED_EXTRA_RESOURCE_MAPPINGS.filter((required) => {
+    const value = required.section.split('.').reduce((current, key) => current?.[key], config)
+    const entries = Array.isArray(value) ? value : []
+    return entries.every((entry) => {
       if (typeof entry !== 'object' || entry === null) return true
       return (
         normalizedPath(String(entry.from ?? '')) !== required.from ||
         normalizedPath(String(entry.to ?? '')) !== required.to
       )
     })
-  ).map(({ from, to }) => `${from} -> ${to}`)
+  }).map(({ section, from, to }) => `${section}: ${from} -> ${to}`)
 }
 
 function listFiles(root, dir) {
