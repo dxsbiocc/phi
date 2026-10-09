@@ -1,3 +1,4 @@
+// Transitional: replace this file after roadmap step 2 uploads Linux micromamba and builds phi-nextflow.
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import type { RemoteNextflowInstallResult } from '../../shared/remoteDoctorTypes'
 import { getPhiAgentDir } from './runtime-paths'

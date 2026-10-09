@@ -19,6 +19,7 @@ import {
   remoteHostCheckPresentation,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
+import { RemoteDoctorPanel } from './RemoteDoctorPanel'
 import { RemoteHostDialog, type RemoteHostDraft } from './RemoteHostDialog'
 
 export type { RemoteHostDraft } from './RemoteHostDialog'
@@ -265,6 +266,10 @@ export function RemoteHostProfilesPanel({
                       )}
                     </Stack>
                   </Stack>
+                  <RemoteDoctorPanel
+                    state={hostDoctorStates[host.id] ?? { phase: 'idle' }}
+                    targetKey={key}
+                  />
                 </Box>
               )
             })}

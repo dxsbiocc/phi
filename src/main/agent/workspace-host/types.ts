@@ -87,17 +87,43 @@ export interface BackgroundProcessHandle {
 
 export type CapabilityState = 'available' | 'degraded' | 'unavailable'
 
+export const HOST_CAPABILITY_PROFILE_VERSION = 1
+
 export interface HostCapability {
   state: CapabilityState
   reason?: string
+  version?: string
+}
+
+export type HostPrerequisiteCapabilities = Readonly<Record<string, HostCapability>>
+
+export interface HostStorageCapabilities {
+  homeWritable: HostCapability
+  homeExecutable: HostCapability
+  availableSpace: HostCapability
+  availableSpaceKiB: number | null
+  sharedFileSystem: HostCapability
+}
+
+export interface HostContainerRuntimeCapabilities {
+  docker: HostCapability
+  singularity: HostCapability
+  apptainer: HostCapability
+  podman: HostCapability
 }
 
 export interface HostCapabilityProfile {
+  profileVersion?: number
   platform: {
     os: string
     arch: string
+    libc?: {
+      name: 'glibc' | 'musl' | 'unknown'
+      version?: string
+    }
   }
   helperVersion?: string
+  helperCompatibility?: HostCapability
   probedAt: string
   fs: HostCapability
   exec: HostCapability
@@ -105,6 +131,9 @@ export interface HostCapabilityProfile {
   pty: HostCapability
   watch: HostCapability
   forwardPort: HostCapability
+  probe?: HostCapability
+  prerequisites?: HostPrerequisiteCapabilities
+  storage?: HostStorageCapabilities
   toolchain: {
     git: HostCapability
     nextflow: HostCapability
@@ -112,6 +141,7 @@ export interface HostCapabilityProfile {
     conda: HostCapability
     sbatch: HostCapability
     containerRuntime: HostCapability
+    containerRuntimes?: HostContainerRuntimeCapabilities
     module: HostCapability
   }
 }

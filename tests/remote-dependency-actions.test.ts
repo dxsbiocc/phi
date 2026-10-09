@@ -53,3 +53,19 @@ test('automatic Nextflow install stays unavailable until Java is ready', () => {
   assert.match(button, /disabled/)
   assert.match(markup, /Java 17\+/)
 })
+
+test('capability-backed missing Nextflow keeps install beside module and phi-base guidance', () => {
+  const markup = render({
+    ...report,
+    checks: report.checks.map((check) =>
+      check.id === 'nextflow'
+        ? { ...check, suggestion: 'module load nextflow，或使用 phi-base 环境。' }
+        : check
+    )
+  })
+
+  assert.match(markup, /自动安装 Nextflow/)
+  assert.match(markup, /module load nextflow，或使用 phi-base 环境/)
+  assert.match(markup, /复制建议/)
+  assert.match(markup, /手动安装说明/)
+})

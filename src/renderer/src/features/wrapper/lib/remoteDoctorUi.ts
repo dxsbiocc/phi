@@ -48,7 +48,8 @@ export function remoteConnectionDoctorTarget(
       scheduler: connection.hpc?.scheduler,
       controller: connection.hpc?.controller,
       runtime: connection.hpc?.runtime,
-      nextflowBin: connection.hpc?.nextflowBin
+      nextflowBin: connection.hpc?.nextflowBin,
+      refreshCapabilities: true
     }
   }
 }

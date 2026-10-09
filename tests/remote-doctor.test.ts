@@ -7,6 +7,8 @@ import test from 'node:test'
 import type { RemoteDoctorOptions } from '../src/shared/remoteDoctorTypes'
 import { remoteDoctor } from '../src/main/agent/remote-doctor'
 import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
+import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
+import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import {
   RemoteSshConnectionError,
   sshConnectionDiagnosis,
@@ -67,6 +69,28 @@ function status(report: Awaited<ReturnType<typeof remoteDoctor>>, id: string): s
   return report.checks.find((check) => check.id === id)?.status
 }
 
+function capabilityProbeOutput(rows: Record<string, string> = {}): string {
+  const values = {
+    'platform.os': 'Linux',
+    'platform.arch': 'x86_64',
+    'libc.name': 'glibc',
+    'libc.version': '2.17',
+    'storage.home_writable': '1',
+    'storage.home_executable': '1',
+    'storage.available_kib': '1048576',
+    'storage.shared': 'unknown',
+    'probe.complete': '1',
+    ...rows
+  }
+  return [
+    'private motd for scientist@lab-hpc',
+    '__PHI_CAPABILITY_PROBE_V1_BEGIN__',
+    ...Object.entries(values).map(([key, value]) => `${key}=${value}`),
+    '__PHI_CAPABILITY_PROBE_V1_END__',
+    '/home/scientist/private'
+  ].join('\n')
+}
+
 test('remote doctor checks a saved host and candidate directory before any project exists', async () => {
   await fixture(async (agentDir, hostProfileId) => {
     const fake = fakeSession()
@@ -84,7 +108,7 @@ test('remote doctor checks a saved host and candidate directory before any proje
           assert.deepEqual(config, {
             host: 'lab-hpc',
             readyTimeoutMs: 15_000,
-            execTimeoutMs: 5_000
+            execTimeoutMs: 31_000
           })
           return fake.session
         },
@@ -144,6 +168,26 @@ test('connection-only check succeeds without probing SFTP, shell or Wrapper tool
   })
 })
 
+test('connection-only check returns the latest cached profile without probing again', async () => {
+  await fixture(async (agentDir, hostProfileId) => {
+    saveCapabilityProfile(
+      { hostAlias: 'lab-hpc', projectRoot: '/cluster/project' },
+      parseHostCapabilityProbe(capabilityProbeOutput({ 'tool.git.available': '1' })),
+      agentDir
+    )
+    const fake = fakeSession()
+    const result = await remoteDoctor(
+      hostProfileId,
+      undefined,
+      { scope: 'connection' },
+      { agentDir, connectImpl: async () => fake.session }
+    )
+    assert.equal(result.capabilityProfile?.platform.os, 'linux')
+    assert.deepEqual(fake.commands, [])
+    assert.equal(fake.closed(), true)
+  })
+})
+
 test('remote doctor tests the same user, port and key used by project operations', async () => {
   await fixture(async (agentDir, hostProfileId) => {
     saveRemoteHostProfile(
@@ -171,7 +215,7 @@ test('remote doctor tests the same user, port and key used by project operations
             port: 22022,
             identityFile: '/tmp/lab-key',
             readyTimeoutMs: 15_000,
-            execTimeoutMs: 5_000
+            execTimeoutMs: 31_000
           })
           return fakeSession().session
         }
@@ -202,6 +246,96 @@ test('workspace creation check stops after SSH, directory and shell checks', asy
       fake.commands.some((command) => /nextflow|sbatch|docker/.test(command)),
       false
     )
+  })
+})
+
+test('workspace check probes once through stdin and returns only a sanitized capability profile', async () => {
+  await fixture(async (agentDir, hostProfileId) => {
+    const fake = fakeSession()
+    const probeInputs: string[] = []
+    fake.session.execWithInput = async (command, input) => {
+      assert.equal(command, 'sh -s')
+      probeInputs.push(input)
+      return {
+        ...OK,
+        stdout: capabilityProbeOutput({ 'tool.nextflow.available': '0' })
+      }
+    }
+    const report = await remoteDoctor(
+      hostProfileId,
+      '/cluster/private/project',
+      { scope: 'workspace' },
+      { agentDir, ...SFTP_READY, connectImpl: async () => fake.session }
+    )
+    assert.equal(probeInputs.length, 1)
+    assert.equal(report.capabilityProfile?.platform.libc?.version, '2.17')
+    assert.equal(report.capabilityProfile?.toolchain.nextflow.state, 'unavailable')
+    const serialized = JSON.stringify(report.capabilityProfile)
+    assert.doesNotMatch(serialized, /scientist|lab-hpc|\/home\/|\/cluster\//)
+  })
+})
+
+test('full doctor reuses capability tool results instead of probing the same commands twice', async () => {
+  await fixture(async (agentDir, hostProfileId) => {
+    const fake = fakeSession(async (command) =>
+      /nextflow|'java'|sbatch|singularity|apptainer/.test(command) ? MISSING : OK
+    )
+    fake.session.execWithInput = async () => ({
+      ...OK,
+      stdout: capabilityProbeOutput({
+        'tool.nextflow.available': '0',
+        'tool.java.available': '1',
+        'tool.java.version': 'openjdk 17.0.12',
+        'tool.sbatch.available': '1',
+        'tool.sbatch.version': 'slurm 23.11.4',
+        'tool.container.singularity.available': '1',
+        'tool.container.singularity.version': 'singularity-ce version 4.1.2'
+      })
+    })
+    const report = await remoteDoctor(
+      hostProfileId,
+      '/cluster/project',
+      { scope: 'full', scheduler: 'slurm', runtime: 'singularity' },
+      { agentDir, ...SFTP_READY, connectImpl: async () => fake.session }
+    )
+    assert.equal(status(report, 'nextflow'), 'error')
+    assert.equal(status(report, 'java'), 'ok')
+    assert.equal(status(report, 'slurm_submit'), 'ok')
+    assert.equal(status(report, 'runtime'), 'ok')
+    assert.match(
+      report.checks.find((check) => check.id === 'nextflow')?.suggestion ?? '',
+      /module load.*phi-base/
+    )
+    assert.equal(
+      fake.commands.some((command) => /nextflow|'java'|sbatch|singularity|apptainer/.test(command)),
+      false
+    )
+  })
+})
+
+test('capability profiles cache by host alias and project root until manually refreshed', async () => {
+  await fixture(async (agentDir, hostProfileId) => {
+    let probes = 0
+    const connectImpl = async (): Promise<RemoteSshSession> => {
+      const fake = fakeSession()
+      fake.session.execWithInput = async () => {
+        probes += 1
+        return { ...OK, stdout: capabilityProbeOutput() }
+      }
+      return fake.session
+    }
+    const check = (root: string, refreshCapabilities = false): Promise<unknown> =>
+      remoteDoctor(
+        hostProfileId,
+        root,
+        { scope: 'workspace', refreshCapabilities },
+        { agentDir, ...SFTP_READY, connectImpl }
+      )
+    await check('/cluster/a')
+    await check('/cluster/a')
+    await check('/cluster/b')
+    await check('/cluster/a', true)
+    assert.equal(probes, 3)
   })
 })
 

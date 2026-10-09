@@ -11,6 +11,7 @@ import {
 
 import type { RemoteDoctorStatus } from '../../../../../shared/remoteDoctorTypes'
 import type { RemoteDoctorUiState } from '../lib/remoteDoctorUi'
+import { RemoteCapabilityProfileSummary } from './RemoteCapabilityProfileSummary'
 
 const CHECK_LABELS: Record<string, string> = {
   ssh: 'SSH 连接',
@@ -87,6 +88,12 @@ export function RemoteDoctorPanel({
         </Typography>
       </Stack>
       <Divider sx={{ my: 1 }} />
+      {report.capabilityProfile && (
+        <>
+          <RemoteCapabilityProfileSummary profile={report.capabilityProfile} />
+          <Divider sx={{ my: 1 }} />
+        </>
+      )}
       <Stack spacing={1.25}>
         {report.checks.map((check) => (
           <Box key={check.id}>

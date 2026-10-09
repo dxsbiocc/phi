@@ -44,6 +44,39 @@ const report: RemoteDoctorReport = {
   ]
 }
 
+const capabilityProfile = {
+  platform: { os: 'linux', arch: 'x86_64' },
+  probedAt: '2026-10-09T02:00:00.000Z',
+  fs: { state: 'available' },
+  exec: { state: 'available' },
+  background: { state: 'available' },
+  pty: { state: 'unavailable', reason: 'helper 未安装' },
+  watch: { state: 'unavailable', reason: 'helper 未安装' },
+  forwardPort: { state: 'unavailable', reason: 'helper 未安装' },
+  probe: { state: 'available' },
+  prerequisites: {
+    perl: { state: 'unavailable', reason: '未发现 Perl' },
+    python3: { state: 'available', version: '3.11.9' },
+    tar: { state: 'available' },
+    sha256sum: { state: 'available' }
+  },
+  storage: {
+    homeWritable: { state: 'available' },
+    homeExecutable: { state: 'unavailable', reason: '家目录禁止执行文件' },
+    availableSpaceKiB: 10 * 1024 * 1024,
+    sharedFileSystem: { state: 'degraded', reason: '无法判断是否为共享文件系统' }
+  },
+  toolchain: {
+    git: { state: 'available', version: '2.43.0' },
+    nextflow: { state: 'unavailable', reason: '未发现 Nextflow' },
+    java: { state: 'available', version: '17.0.12' },
+    conda: { state: 'unavailable', reason: '未发现 Conda' },
+    sbatch: { state: 'available', version: '23.11' },
+    containerRuntime: { state: 'available', version: 'Apptainer 1.3.4' },
+    module: { state: 'available', version: 'Modules 5.4.0' }
+  }
+} satisfies NonNullable<RemoteDoctorReport['capabilityProfile']>
+
 const hostTarget = remoteHostDoctorTarget('host-1', 'lab-hpc')
 
 test('host test requests SSH connectivity only', () => {
@@ -207,11 +240,9 @@ test('changing project, host alias, directory or runtime never shows an old chec
   first.resolve(report)
   await oldRequest
   assert.equal(calls, 2)
-  assert.equal(controller.getState().phase, 'done')
-  assert.equal(
-    'key' in controller.getState() ? controller.getState().key : '',
-    remoteDoctorTargetKey(newTarget)
-  )
+  const state = controller.getState()
+  assert.equal(state.phase, 'done')
+  assert.equal(state.phase === 'done' ? state.key : '', remoteDoctorTargetKey(newTarget))
 })
 
 test('host failures keep a scoped warning message for the icon tooltip', () => {
@@ -499,6 +530,50 @@ test('server card routes add, edit, delete and test clicks to their own actions'
   ])
 })
 
+test('server card shows the retained capability profile after testing that host', () => {
+  const host = { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' }
+  const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
+  const markup = render(
+    createElement(RemoteHostProfilesPanel, {
+      hosts: [host],
+      openSshHosts: [],
+      configLoading: false,
+      configError: null,
+      dialogOpen: false,
+      draft: {
+        id: '',
+        label: '',
+        hostAlias: '',
+        hostname: '',
+        user: '',
+        port: '',
+        identityFile: '',
+        source: 'ssh-config'
+      },
+      busy: false,
+      error: null,
+      hostDoctorStates: {
+        [host.id]: {
+          phase: 'done',
+          key,
+          report: { ...report, capabilityProfile }
+        }
+      },
+      onDraftChange: () => undefined,
+      onOpenAdd: () => undefined,
+      onOpenEdit: () => undefined,
+      onCloseDialog: () => undefined,
+      onReloadConfig: () => undefined,
+      onSave: () => undefined,
+      onDelete: () => undefined,
+      onTest: () => undefined
+    })
+  )
+  assert.match(markup, /服务器能力档案/)
+  assert.match(markup, /Linux · x86_64/)
+  assert.match(markup, /检查时间/)
+})
+
 test('project connection test uses its own host, directory and HPC settings', () => {
   const calls: string[] = []
   const connection = {
@@ -535,7 +610,8 @@ test('project connection test uses its own host, directory and HPC settings', ()
       {
         scheduler: 'slurm',
         runtime: 'conda',
-        nextflowBin: '/opt/nf'
+        nextflowBin: '/opt/nf',
+        refreshCapabilities: true
       }
     ]),
     'edit',
@@ -569,6 +645,39 @@ test('result panel identifies each failed setting and shows a checked time and r
     ),
     ''
   )
+})
+
+test('result panel summarizes the safe server capability profile without rendering unknown fields', () => {
+  const key = remoteDoctorTargetKey(hostTarget)
+  const capabilityReport = {
+    ...report,
+    capabilityProfile: {
+      ...capabilityProfile,
+      platform: { os: 'darwin', arch: 'arm64' },
+      helperCompatibility: {
+        state: 'unavailable',
+        reason: 'macOS 远端暂不支持 helper'
+      },
+      hostname: 'private.example.test',
+      homePath: '/home/private-user'
+    }
+  } as RemoteDoctorReport
+  const markup = render(
+    createElement(RemoteDoctorPanel, {
+      state: { phase: 'done', key, report: capabilityReport },
+      targetKey: key
+    })
+  )
+  assert.match(markup, /服务器能力档案/)
+  assert.match(markup, /macOS · arm64/)
+  assert.match(markup, /macOS 远端暂不支持 helper/)
+  assert.match(markup, /Git 2\.43\.0/)
+  assert.match(markup, /Nextflow：未发现 Nextflow/)
+  assert.match(markup, /Perl：未发现 Perl/)
+  assert.match(markup, /家目录禁止执行文件/)
+  assert.match(markup, /可用空间：10 GiB/)
+  assert.match(markup, /helper 未安装/)
+  assert.doesNotMatch(markup, /private\.example\.test|\/home\/private-user/)
 })
 
 test('result panel separates directory, Nextflow and Slurm failures', () => {

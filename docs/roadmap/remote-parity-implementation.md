@@ -126,6 +126,7 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 - `runInEnvironment` 支持 host；服务器按需安装 `phi-base`；离线集群走"本机打包 lock + 离线包 → 上传共享盘"。
 - 解除 `skillTools`、`env_request`、bundled skills 的远程关闭；专家子智能体统一获得 host 提供的工具集（不再仅 Wrapper）。
+- **用受管环境替换远程 Nextflow 的 curl 安装器**（2026-10-09 用户要求）：`remote-nextflow-install.ts` 现在在服务器上执行 `curl https://get.nextflow.io` 并装到 `~/.local/bin`，它早于运行时基础，Java 另需预装、版本不锁定、需要服务器联网。目标是改为：从本机上传 linux micromamba，按 `resources/runtime/environments/phi-nextflow/environment.yml` 的锁在服务器上构建 `phi-nextflow` 环境（Nextflow 与 Java 同锁）；离线集群走本机打包的离线包。本机目前只打包 darwin-arm64 的 micromamba，需先补 linux-x86_64/aarch64 的获取与校验（`scripts/runtime/fetch-micromamba.mjs`、`resources/runtime/manifest.json`）。完成前保留 curl 安装器作为过渡，界面上仍由用户点击触发，不自动执行。
 - 前置：第 1 步完成；需单独确认远程环境存放位置与配额策略。
 
 ### 第 3 步：远程终端

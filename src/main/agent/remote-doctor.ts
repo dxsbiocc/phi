@@ -5,10 +5,13 @@ import type {
   RemoteDoctorReport,
   RemoteDoctorStatus
 } from '../../shared/remoteDoctorTypes'
-import { DEFAULT_REMOTE_RUNTIME } from '../../shared/wrapperRemoteTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import { getPhiAgentDir } from './runtime-paths'
-import { remotePreflightRequirements } from './wrappers/composition/remote-config'
+import {
+  getCapabilityProfile,
+  readLatestCapabilityProfileForHost
+} from './workspace-host/capability-profile-store'
+import { capabilityToolchainChecks } from './workspace-host/capability-toolchain-checks'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import {
   diagnoseSshConnectionFailure,
@@ -23,6 +26,7 @@ import {
 
 const CHECK_TIMEOUT_MS = 5_000
 const CONNECT_TIMEOUT_MS = 15_000
+const PROBE_TIMEOUT_MS = 30_000
 
 export interface RemoteDoctorDependencies {
   agentDir?: string
@@ -30,6 +34,7 @@ export interface RemoteDoctorDependencies {
   sftpAvailable?: () => boolean
   checkTimeoutMs?: number
   connectTimeoutMs?: number
+  probeTimeoutMs?: number
   now?: () => Date
   /** Tool checks are repeated after saved setup at launch; Doctor never executes setup lines. */
   deferToolChecksToLaunch?: boolean
@@ -73,7 +78,8 @@ function normalizedOptions(input: unknown): RemoteDoctorOptions {
       : {}),
     ...(typeof value.nextflowBin === 'string' && value.nextflowBin.trim().length <= 512
       ? { nextflowBin: value.nextflowBin.trim() }
-      : {})
+      : {}),
+    ...(value.refreshCapabilities === true ? { refreshCapabilities: true } : {})
   }
 }
 
@@ -89,13 +95,15 @@ function validRemotePath(path: unknown): path is string {
 function report(
   hostProfileId: string,
   checks: RemoteDoctorCheck[],
-  now: () => Date
+  now: () => Date,
+  capabilityProfile?: RemoteDoctorReport['capabilityProfile']
 ): RemoteDoctorReport {
   return {
     hostProfileId,
     checkedAt: now().toISOString(),
     ok: checks.every((check) => check.status !== 'error'),
-    checks
+    checks,
+    ...(capabilityProfile ? { capabilityProfile } : {})
   }
 }
 
@@ -131,13 +139,6 @@ async function commandCheck(
   }
 }
 
-function availableCommand(candidates: string[]): string {
-  const probe = candidates
-    .map((binary) => `command -v -- ${shellQuote(binary)} >/dev/null 2>&1`)
-    .join(' || ')
-  return `bash -lc ${shellQuote(probe)}`
-}
-
 /** Read-only server and candidate-directory checks, usable before a project exists. */
 export async function remoteDoctor(
   hostProfileId: string,
@@ -162,6 +163,7 @@ export async function remoteDoctor(
   const selected = normalizedOptions(options)
   const checkTimeoutMs = dependencies.checkTimeoutMs ?? CHECK_TIMEOUT_MS
   const connectTimeoutMs = dependencies.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
+  const probeTimeoutMs = dependencies.probeTimeoutMs ?? PROBE_TIMEOUT_MS
   const connect = dependencies.connectImpl ?? connectRemoteSshSession
   let session: RemoteSshSession
   try {
@@ -169,7 +171,7 @@ export async function remoteDoctor(
       connect({
         ...remoteConnectionConfigForProfile(profile),
         readyTimeoutMs: connectTimeoutMs,
-        execTimeoutMs: checkTimeoutMs
+        execTimeoutMs: Math.max(checkTimeoutMs, probeTimeoutMs + 1_000)
       }),
       connectTimeoutMs + 1_000
     )
@@ -191,7 +193,14 @@ export async function remoteDoctor(
 
   checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
   try {
-    if (selected.scope === 'connection') return report(hostProfileId, checks, now)
+    if (selected.scope === 'connection') {
+      return report(
+        hostProfileId,
+        checks,
+        now,
+        readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
+      )
+    }
     checks.push(
       (dependencies.sftpAvailable ?? systemSftpAvailable)()
         ? { id: 'sftp', status: 'ok', message: '系统 SFTP 程序可用' }
@@ -255,85 +264,33 @@ export async function remoteDoctor(
     })
     checks.push(shell)
     if (shell.status !== 'ok') return report(hostProfileId, checks, now)
-    if (selected.scope === 'workspace') return report(hostProfileId, checks, now)
+    const capabilityProfile =
+      remotePath && validRemotePath(remotePath) && session.execWithInput
+        ? await getCapabilityProfile(
+            session,
+            { hostAlias: profile.hostAlias, projectRoot: remotePath },
+            {
+              agentDir,
+              refresh: selected.refreshCapabilities,
+              timeoutMs: probeTimeoutMs,
+              now
+            }
+          )
+        : undefined
+    if (selected.scope === 'workspace') {
+      return report(hostProfileId, checks, now, capabilityProfile)
+    }
 
-    const requirements = remotePreflightRequirements(
-      {
-        scheduler: selected.scheduler ?? 'local',
-        controller: selected.controller,
-        nextflowBin: selected.nextflowBin
-      },
-      selected.runtime ?? DEFAULT_REMOTE_RUNTIME
-    )
     const deferTools = dependencies.deferToolChecksToLaunch === true
     checks.push(
-      await commandCheck(session, checkTimeoutMs, {
-        id: 'nextflow',
-        command: availableCommand([requirements.nextflow]),
-        success: '找到 Nextflow 命令',
-        missing: '未找到 Nextflow',
-        missingStatus: selected.controller === 'sbatch' || deferTools ? 'warning' : 'error',
-        suggestion:
-          selected.controller === 'sbatch'
-            ? '控制进程由 sbatch 在计算节点启动；请确认计算节点上的启动命令能提供 Nextflow。'
-            : '检查 Nextflow 路径；如果需要 module load，请在运行配置中设置启动命令。'
-      })
+      ...(await capabilityToolchainChecks({
+        profile: capabilityProfile,
+        options: selected,
+        deferTools,
+        run: (input) => commandCheck(session, checkTimeoutMs, input)
+      }))
     )
-    checks.push(
-      await commandCheck(session, checkTimeoutMs, {
-        id: 'java',
-        command: availableCommand(['java']),
-        success: '找到 Java 命令',
-        missing: '未找到 Java',
-        missingStatus: selected.controller === 'sbatch' || deferTools ? 'warning' : 'error',
-        suggestion:
-          selected.controller === 'sbatch'
-            ? '请确认计算节点上的启动命令能提供 Java。'
-            : '安装 Java，或在运行配置中加载提供 Java 的环境模块。'
-      })
-    )
-    for (const [id, binary, label] of [
-      ['slurm_submit', 'sbatch', 'Slurm 提交命令'],
-      ['slurm_status', 'squeue', 'Slurm 状态命令'],
-      ['slurm_detail', 'scontrol', 'Slurm 详情命令'],
-      ['slurm_cancel', 'scancel', 'Slurm 取消命令']
-    ]) {
-      checks.push(
-        await commandCheck(session, checkTimeoutMs, {
-          id,
-          command: availableCommand([binary]),
-          success: `找到${label}`,
-          missing: `未找到${label}`,
-          missingStatus: requirements.requiresSbatch && !deferTools ? 'error' : 'warning',
-          suggestion: requirements.requiresSbatch
-            ? '当前运行方式需要 Slurm；检查集群环境或在运行配置中加载 Slurm 命令。'
-            : '仅在选择 Slurm 运行方式时需要此命令。'
-        })
-      )
-    }
-    const runtime = selected.runtime ?? DEFAULT_REMOTE_RUNTIME
-    checks.push(
-      await commandCheck(session, checkTimeoutMs, {
-        id: 'runtime',
-        command: availableCommand(requirements.runtimeCandidates),
-        success: `登录节点可找到 ${runtime} 运行时`,
-        missing: `${runtime} 运行时在登录节点未找到`,
-        missingStatus: selected.scheduler === 'slurm' || deferTools ? 'warning' : 'error',
-        suggestion:
-          selected.scheduler === 'slurm'
-            ? '部分集群只在计算节点提供容器运行时；请核对作业节点环境和运行配置。'
-            : '当前选择直接在主机运行，须在该主机提供所选运行时或配置加载命令。'
-      })
-    )
-    if (selected.scheduler === 'slurm' && selected.controller !== 'sbatch') {
-      checks.push({
-        id: 'login_controller',
-        status: 'warning',
-        message: 'Nextflow 控制进程将在登录节点持续运行',
-        suggestion: '若集群禁止登录节点长进程，请将控制方式改为 sbatch。'
-      })
-    }
-    return report(hostProfileId, checks, now)
+    return report(hostProfileId, checks, now, capabilityProfile)
   } finally {
     await bounded(session.close(), 3_000).catch(() => undefined)
   }
