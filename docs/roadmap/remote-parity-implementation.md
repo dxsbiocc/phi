@@ -184,7 +184,7 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
         - GPU docker 配置下取消会杀掉已启动的任务：任务 `.exitcode` 为 143，容器在取消后约 10 秒内停止。
         - **缺陷（Slurm + sbatch 控制器）**：取消只取消了控制器作业，Nextflow 已提交的任务作业不会被一起取消。实证：控制器作业 `CANCELLED`，其任务作业 `nf-FASTP` 在控制器被取消 18 秒后 `COMPLETED`（退出码 0:0），而不是 `CANCELLED`。单样本 fastp 只多跑了 18 秒；取消长时间的 STAR 比对则会一直占用集群直到任务自己结束，并继续写入该 run 的工作目录。即「未做」清单里的“Nextflow 被硬杀后残留的 Slurm 任务作业清理”。建议修复方向：取消控制器时先 `scancel --full --signal=TERM` 让 Nextflow 自行清理，再按任务作业的 `WorkDir`（位于该 run 的 `work/` 下，唯一）扫描并 `scancel` 残留。
         - **已修复（`6c7a8b4c`、`7896a9f4`，同日在真实 HPC 上复测）**：取消时先 `scancel --full --signal=TERM` 让 Nextflow 自行清理，宽限期后取消控制器，再按任务作业的 `WorkDir`（按目录边界匹配 `<runDir>/work`）扫描并取消残留并最终确认；复测任务作业 `CANCELLED`（退出码 143），队列 3 秒内清空，取消前后作业数 0→0。第一版修复把用户取消报告成了失败（Slurm 17.11 把被 TERM 终止的批处理脚本记为 `FAILED ExitCode=0:15`，而解析时丢了信号位），由 `7896a9f4` 修正：仅当 Phi 已发出取消请求且无残留时才判为 cancelled，其余仍为 failed/lost。假 Slurm 没有复现这一状态转换，是真实集群才暴露的。轮询循环遇到取消不再自行宣布 cancelled，保持 `cancelling` 直到清理确认；已用测试证明它在清理成功、仍有残留、连接中断、重启对账四类情况下都会收敛，未发现卡死路径。
-        - 脚本若不主动退出会多挂约 9 分钟（Node 事件循环里有句柄未释放），应用本身是长驻进程不受影响，但值得查出是哪个定时器或连接。
+        - **已查明并修复**：远程 Wrapper watcher 的可取消轮询用 `Promise.race` 提前唤醒时，没有清除输掉竞态的轮询定时器；会话虽已关闭，该句柄仍会存活到当次轮询时限（实测脚本约多挂 9 分钟）。`Control.pause` 现在在完成、取消或脱离路径都清除定时器，并有无网络的活动句柄回归测试覆盖。
       - **仍未验证**：在真实 Phi 界面里「测试连接」与档案摘要的展示与脱敏、E 组 Wrapper 回归（RNA-seq 小样本、提交后立即取消、并发取消、Slurm `scancel`）、`remote-ssh-real-identity` 测试（需在沙箱外跑）。
     - 已收紧：R1.1 契约测试 `workspace host terminates commands after their timeout` 改用相对命令运行时间和 timeout 的终止上界，同时保留退出码与信号断言；目标契约单独运行 5/5 轮、并行负载 6/6 个进程及全部 WorkspaceHost 测试均通过。
     - 启动调整（2026-10-09）：`predev`/`prestart` 不再准备 Go 或编译 Helper。开发版在首次远程使用时按服务器架构准备，源码、工具链指纹及产物校验一致时复用；发布 `build` 仍生成两个 Linux 目标，安装后的客户端连接服务器时使用预构建产物。

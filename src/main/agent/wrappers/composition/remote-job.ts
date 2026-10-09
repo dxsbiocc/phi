@@ -135,8 +135,6 @@ const PREFLIGHT_MAX_OUTPUT = 64 * 1024
 const DEFAULT_MAX_POLL_FAILURES = 12
 const DEFAULT_KILL_GRACE_MS = 10_000
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
 const failure = (output: string, extra: Partial<WrapperRunResult> = {}): WrapperRunResult => ({
   success: false,
   exitCode: -1,
@@ -179,8 +177,16 @@ class Control {
 
   /** Waits `ms`, or less if cancel/detach arrives. */
   async pause(ms: number): Promise<void> {
-    await Promise.race([sleep(ms), new Promise<void>((resolve) => (this.wake = resolve))])
-    this.wake = undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const elapsed = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms)
+    })
+    try {
+      await Promise.race([elapsed, new Promise<void>((resolve) => (this.wake = resolve))])
+    } finally {
+      if (timer) clearTimeout(timer)
+      this.wake = undefined
+    }
   }
 }
 
