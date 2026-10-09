@@ -368,6 +368,83 @@ test('cancelling run A leaves concurrent run B alive after their delayed fake st
   })
 })
 
+test('cancelling run A before setsid leaves concurrent run B alive', async () => {
+  await withSandbox(async (sb) => {
+    const setsidGate = join(sb.root, 'setsid.gate')
+    process.env.FAKE_SETSID_GATE = setsidGate
+    await withHarness(sb, async (h) => {
+      sb.useFake(FAKE_NEXTFLOW_TREE)
+      const launchPid = (runId: string): number | undefined =>
+        h.snapshots.find((snapshot) => snapshot.runId === runId && snapshot.pid)?.pid
+      const killKnownProcess = (pid: number): void => {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        }
+      }
+      const firstPidFile = join(sb.root, 'wrun_cancel_a.pid')
+      process.env.FAKE_NF_PIDFILE = firstPidFile
+      const first = start(h, {}, 'wrun_cancel_a')
+      let second: ReturnType<typeof start> | undefined
+      let aPid: number | undefined
+      let bPid: number | undefined
+      let bDescendants: number[] = []
+      try {
+        await waitFor(() => launchPid('wrun_cancel_a') !== undefined)
+        aPid = launchPid('wrun_cancel_a')!
+        assert.equal(
+          existsSync(`${firstPidFile}.ready`),
+          false,
+          'run A must still be waiting before setsid'
+        )
+
+        delete process.env.FAKE_SETSID_GATE
+        const secondPidFile = join(sb.root, 'wrun_cancel_b.pid')
+        process.env.FAKE_NF_PIDFILE = secondPidFile
+        second = start(h, {}, 'wrun_cancel_b')
+        await waitFor(() => existsSync(`${secondPidFile}.ready`))
+        bPid = launchPid('wrun_cancel_b')!
+        bDescendants = [secondPidFile, `${secondPidFile}.child`].map((path) =>
+          Number(readFileSync(path, 'utf8').trim())
+        )
+        assert.ok(bDescendants.every((pid) => Number.isSafeInteger(pid) && pid > 1))
+        assert.ok(bDescendants.every(isAlive))
+
+        first.cancel()
+        const result = await settlesWithin(first.done, 'run A cancellation did not settle', 10_000)
+        assert.equal(result.cancelled, true)
+        assert.equal(isAlive(aPid), false)
+        assert.ok(
+          [bPid, ...bDescendants].every(isAlive),
+          'run B and both descendants survive run A cancellation'
+        )
+        second.cancel()
+        assert.equal(
+          (await settlesWithin(second.done, 'run B cancellation did not settle', 10_000)).cancelled,
+          true
+        )
+        await waitFor(() => [bPid!, ...bDescendants].every((pid) => !isAlive(pid)), 10_000)
+      } finally {
+        first.detach?.()
+        second?.detach?.()
+        if (aPid && isAlive(aPid)) killKnownProcess(aPid)
+        writeFileSync(setsidGate, '')
+        try {
+          await settlesWithin(
+            Promise.all([first.done, ...(second ? [second.done] : [])]),
+            'cancel test cleanup did not settle',
+            5_000
+          )
+        } finally {
+          if (bPid && isAlive(bPid)) killKnownProcess(-bPid)
+          for (const pid of bDescendants.filter(isAlive)) killKnownProcess(pid)
+        }
+      }
+    })
+  })
+})
+
 test('an unconfirmed cancel signal never turns a vanished run into cancelled', async () => {
   await withSandbox(async (sb) => {
     await withHarness(sb, async (h) => {

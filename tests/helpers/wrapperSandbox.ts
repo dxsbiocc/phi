@@ -103,7 +103,8 @@ const ENV_KEYS = [
   'FAKE_NF_PIDFILE',
   'FAKE_NF_MODE',
   'FAKE_NF_MS',
-  'FAKE_NF_GATE'
+  'FAKE_NF_GATE',
+  'FAKE_SETSID_GATE'
 ]
 
 function seedGffreadPackage(agentDir: string): void {
