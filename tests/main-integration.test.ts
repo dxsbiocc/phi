@@ -28,6 +28,7 @@ import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
+import type { HomeActivitySummary } from '../src/shared/homeActivityTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { createBeforeQuitHandler } from '../src/main/app-quit'
@@ -1729,6 +1730,17 @@ async function harness(
       deleteSession: (file: string): void => {
         deleted.push(file)
       }
+    },
+    './agent/session/home-activity': {
+      getHomeActivity: (): HomeActivitySummary => ({
+        generatedAt: '2026-10-09T00:00:00.000Z',
+        dayBuckets: [],
+        periods: {
+          week: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 },
+          month: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 },
+          year: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 }
+        }
+      })
     },
     './agent/projects': {
       subscribeRemoteProjectConnection: (): (() => void) => noop,
