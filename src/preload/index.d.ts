@@ -40,6 +40,7 @@ import type {
   ManualCompactionTarget
 } from '../shared/contextUsageTypes'
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
+import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 import type {
   WrapperRetargetRequest,
   WrapperInputPathMapping,
@@ -771,6 +772,7 @@ declare global {
       skipOnboarding: () => Promise<void>
       completeOnboarding: (description: string) => Promise<string>
       listSessions: () => Promise<PreloadSessionSummary[]>
+      getHomeActivity: () => Promise<HomeActivitySummary>
       getCurrentSession: () => Promise<{
         path: string | null
         phiSessionId?: string

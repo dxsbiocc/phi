@@ -146,6 +146,7 @@ import {
   phiSessionIdFromPath,
   renameSession
 } from './agent/session/sessions'
+import { getHomeActivity } from './agent/session/home-activity'
 import {
   createProject,
   deleteProject,
@@ -8138,6 +8139,7 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('sessions:list', async () => listSessions(getNoProjectTaskFolder()))
+  ipcMain.handle('sessions:homeActivity', async () => getHomeActivity())
   ipcMain.handle('sessions:current', async () => getCurrentSessionPayloadWithMessages())
   ipcMain.handle('sessions:contextUsage', async () => getCurrentContextUsage())
   ipcMain.handle('sessions:autoCompactionSettings', async (_, target: unknown) =>

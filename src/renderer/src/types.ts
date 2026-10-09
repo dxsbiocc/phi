@@ -44,6 +44,12 @@ import type {
 } from '../../shared/mcpConnectorCatalog'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
+export type {
+  HomeActivityDay,
+  HomeActivityPeriodSummary,
+  HomeActivitySummary
+} from '../../shared/homeActivityTypes'
 import type {
   EnablementItemKey,
   EnablementScope,
@@ -789,6 +795,7 @@ export type RendererApi = AutoCompactionApi & {
   skipOnboarding: () => Promise<void>
   completeOnboarding: (description: string) => Promise<string>
   listSessions: () => Promise<SessionSummary[]>
+  getHomeActivity: () => Promise<HomeActivitySummary>
   getCurrentSession: () => Promise<CurrentSession>
   getCurrentContextUsage: () => Promise<CurrentContextUsage>
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>

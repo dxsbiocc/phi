@@ -42,6 +42,7 @@ import type {
   ManualCompactionTarget
 } from '../shared/contextUsageTypes'
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
+import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -770,6 +771,7 @@ type RendererAuthApi = {
   skipOnboarding: () => Promise<void>
   completeOnboarding: (description: string) => Promise<string>
   listSessions: () => Promise<SessionSummary[]>
+  getHomeActivity: () => Promise<HomeActivitySummary>
   getCurrentSession: () => Promise<CurrentSession>
   getCurrentContextUsage: () => Promise<CurrentContextUsage>
   getAutoCompactionSettings: (
@@ -1274,6 +1276,7 @@ const api: RendererAuthApi = {
   completeOnboarding: (description: string): Promise<string> =>
     ipcRenderer.invoke('persona:completeOnboarding', description),
   listSessions: (): Promise<SessionSummary[]> => ipcRenderer.invoke('sessions:list'),
+  getHomeActivity: (): Promise<HomeActivitySummary> => ipcRenderer.invoke('sessions:homeActivity'),
   getCurrentSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:current'),
   getCurrentContextUsage: (): Promise<CurrentContextUsage> =>
     ipcRenderer.invoke('sessions:contextUsage'),
