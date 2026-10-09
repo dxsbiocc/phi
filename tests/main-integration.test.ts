@@ -2771,6 +2771,12 @@ async function harness(
     './agent/ssh-config-editor': {
       saveOpenSshHost: async (input: { alias: string }) => input.alias
     },
+    './agent/ssh-bootstrap/default-coordinator': {
+      createDefaultSshBootstrapCoordinator: () => ({})
+    },
+    './agent/ssh-bootstrap/ipc': {
+      registerSshBootstrapIpc: (): void => {}
+    },
     './agent/remote-doctor': {
       remoteDoctor: async (hostProfileId: string, remotePath?: string, options?: unknown) => {
         remoteDoctorCalls.push({ hostProfileId, remotePath, options })

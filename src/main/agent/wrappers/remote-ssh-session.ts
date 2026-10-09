@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -11,6 +11,7 @@ import {
   recordSshFailure,
   type RemoteSshAuthGate
 } from './remote-ssh-auth-gate'
+import { assertEncryptedIdentityLoaded } from './ssh-agent-identity'
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
 import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
 
@@ -82,6 +83,11 @@ export interface OpenSshRuntime {
   spawnImpl?: SpawnImpl
   tempRoot?: string
   authGate?: RemoteSshAuthGate
+  assertIdentityReady?: (identityFile: string) => Promise<void>
+  resolveIdentityFiles?: (
+    host: string,
+    config: RemoteConnectionConfig
+  ) => Promise<readonly string[]>
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 15_000
@@ -280,6 +286,35 @@ function remoteSshAuthGateKey(host: string, config: RemoteConnectionConfig): str
     effective.port ?? null,
     effective.identityFile ?? null
   ])
+}
+
+async function configuredPhiIdentityFiles(
+  spawnImpl: SpawnImpl,
+  host: string,
+  config: RemoteConnectionConfig
+): Promise<string[]> {
+  const expectedName = `phi_${host}_ed25519`
+  const checked = validateRemoteConnectionOverrides(config)
+  const result = await runProcess(
+    spawnImpl,
+    'ssh',
+    [
+      '-G',
+      ...(checked.user ? ['-l', checked.user] : []),
+      ...(checked.port !== undefined ? ['-p', String(checked.port)] : []),
+      host
+    ],
+    3_000,
+    MAX_CONTROL_OUTPUT_BYTES
+  ).catch(() => null)
+  if (!result || result.code !== 0) return []
+  return result.stdout.split(/\r?\n/).flatMap((line) => {
+    const value = /^identityfile\s+(.+)$/i.exec(line.trim())?.[1]?.trim()
+    if (!value) return []
+    const unquoted = value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value
+    const path = unquoted.startsWith('~/') ? join(homedir(), unquoted.slice(2)) : unquoted
+    return isAbsolute(path) && basename(path) === expectedName ? [path] : []
+  })
 }
 
 /** SFTP batch paths are quoted separately from the remote POSIX shell. */
@@ -488,6 +523,15 @@ export async function connectRemoteSshSession(
   if (!config.userInitiated) authGate.assertSshNotBlocked(hostKey)
   const spawnImpl: SpawnImpl =
     runtime.spawnImpl ?? ((binary, args, options) => spawn(binary, args, options))
+  const explicitIdentity = validateRemoteConnectionOverrides(config).identityFile
+  const identityFiles = explicitIdentity
+    ? [explicitIdentity]
+    : await (runtime.resolveIdentityFiles
+        ? runtime.resolveIdentityFiles(host, config)
+        : configuredPhiIdentityFiles(spawnImpl, host, config))
+  for (const identityFile of identityFiles) {
+    await (runtime.assertIdentityReady ?? assertEncryptedIdentityLoaded)(identityFile)
+  }
   const dir = await mkdtemp(join(runtime.tempRoot ?? '/tmp', 'phi-ssh-'))
   await chmod(dir, 0o700)
   const controlPath = join(dir, 'master')

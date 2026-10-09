@@ -43,6 +43,7 @@ import type {
 } from '../shared/contextUsageTypes'
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 import type { HomeActivitySummary } from '../shared/homeActivityTypes'
+import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -688,6 +689,7 @@ type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   office: OfficeRendererBridge
+  sshBootstrap: SshBootstrapRendererBridge
   readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -1118,10 +1120,21 @@ const officeBridge: OfficeRendererBridge = {
   }
 }
 
+const sshBootstrapBridge: SshBootstrapRendererBridge = {
+  inspectTarget: (input) => ipcRenderer.invoke('sshBootstrap:inspectTarget', input),
+  confirmHostKey: (attemptId) => ipcRenderer.invoke('sshBootstrap:confirmHostKey', attemptId),
+  completeWithCredentials: (attemptId, input) =>
+    ipcRenderer.invoke('sshBootstrap:completeWithCredentials', attemptId, input),
+  saveConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:saveConfig', operationId),
+  declineConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:declineConfig', operationId),
+  cancel: (id) => ipcRenderer.invoke('sshBootstrap:cancel', id)
+}
+
 const api: RendererAuthApi = {
   browser: browserBridge,
   terminal: terminalBridge,
   office: officeBridge,
+  sshBootstrap: sshBootstrapBridge,
   readyWindow: (background: string): Promise<void> =>
     ipcRenderer.invoke('window:renderer-ready', background),
   closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),

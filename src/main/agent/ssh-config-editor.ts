@@ -11,7 +11,8 @@ import { discoverOpenSshAliases } from './ssh-config-discovery'
 import { validateHostAlias, validateRemoteConnectionOverrides } from './wrappers/remote-ssh-session'
 
 const execFileAsync = promisify(execFile)
-const MANAGED_DIRECTIVE = /^\s*(?:HostName|User|Port|IdentityFile)\s+/i
+const MANAGED_DIRECTIVE =
+  /^\s*(?:(?:HostName|User|Port|IdentityFile|IdentitiesOnly|AddKeysToAgent|UseKeychain)\s+|IgnoreUnknown\s+UseKeychain(?:\s+#.*)?$)/i
 const SECTION_DIRECTIVE = /^\s*(?:Host|Match)\s+/i
 
 function checkedInput(input: OpenSshHostInput): OpenSshHostInput {
@@ -29,11 +30,17 @@ function checkedInput(input: OpenSshHostInput): OpenSshHostInput {
   if (!hostname || hostname.length > 255 || /[\s#\0]/.test(hostname) || hostname.startsWith('-')) {
     throw new Error('服务器地址必须是单个主机名或 IP 地址')
   }
+  const overrides = validateRemoteConnectionOverrides(input)
+  const identityInput = input.identityFile?.trim()
   return {
     alias,
     hostname,
     ...(originalAlias ? { originalAlias } : {}),
-    ...validateRemoteConnectionOverrides(input)
+    ...overrides,
+    ...(identityInput?.startsWith('~/') ? { identityFile: identityInput } : {}),
+    ...(input.identitiesOnly === true ? { identitiesOnly: true } : {}),
+    ...(input.addKeysToAgent === true ? { addKeysToAgent: true } : {}),
+    ...(input.useKeychain === true ? { useKeychain: true } : {})
   }
 }
 
@@ -52,7 +59,10 @@ function hostBlock(input: OpenSshHostInput): string[] {
     `  HostName ${input.hostname}`,
     ...(input.user ? [`  User ${input.user}`] : []),
     ...(input.port ? [`  Port ${input.port}`] : []),
-    ...(input.identityFile ? [`  IdentityFile ${quoteConfigValue(input.identityFile)}`] : [])
+    ...(input.identityFile ? [`  IdentityFile ${quoteConfigValue(input.identityFile)}`] : []),
+    ...(input.identitiesOnly ? ['  IdentitiesOnly yes'] : []),
+    ...(input.addKeysToAgent ? ['  AddKeysToAgent yes'] : []),
+    ...(input.useKeychain ? ['  IgnoreUnknown UseKeychain', '  UseKeychain yes'] : [])
   ]
 }
 
@@ -136,6 +146,19 @@ async function validateEffectiveConfig(path: string, input: OpenSshHostInput): P
   }
   if (input.identityFile && !effectiveValue(stdout, 'identityfile').includes(input.identityFile)) {
     throw new Error('OpenSSH 未读取所选私钥路径；原文件未改变')
+  }
+  if (input.identitiesOnly && effectiveValue(stdout, 'identitiesonly')[0] !== 'yes') {
+    throw new Error('其他 SSH 规则覆盖了 IdentitiesOnly；原文件未改变')
+  }
+  if (
+    input.addKeysToAgent &&
+    !['yes', 'true'].includes(effectiveValue(stdout, 'addkeystoagent')[0] ?? '')
+  ) {
+    throw new Error('其他 SSH 规则覆盖了 AddKeysToAgent；原文件未改变')
+  }
+  const useKeychain = effectiveValue(stdout, 'usekeychain')[0]
+  if (input.useKeychain && useKeychain && !['yes', 'true'].includes(useKeychain)) {
+    throw new Error('其他 SSH 规则覆盖了 UseKeychain；原文件未改变')
   }
 }
 

@@ -73,6 +73,7 @@ export function RemoteHostProfilesPanel({
   onCloseDialog,
   onReloadConfig,
   onSave,
+  onPasswordBootstrap,
   onDelete,
   onTest
 }: {
@@ -91,6 +92,7 @@ export function RemoteHostProfilesPanel({
   onCloseDialog: () => void
   onReloadConfig: () => void
   onSave: () => void
+  onPasswordBootstrap?: () => void
   onDelete: (id: string) => void
   onTest: (host: RemoteHostProfile) => void
 }): React.JSX.Element {
@@ -284,6 +286,7 @@ export function RemoteHostProfilesPanel({
         onDraftChange={onDraftChange}
         onClose={onCloseDialog}
         onSave={onSave}
+        onPasswordBootstrap={onPasswordBootstrap}
       />
     </Paper>
   )

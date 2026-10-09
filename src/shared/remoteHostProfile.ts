@@ -13,4 +13,7 @@ export interface OpenSshHostInput {
   user?: string
   port?: number
   identityFile?: string
+  identitiesOnly?: boolean
+  addKeysToAgent?: boolean
+  useKeychain?: boolean
 }

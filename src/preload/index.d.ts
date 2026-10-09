@@ -25,6 +25,7 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -576,6 +577,7 @@ declare global {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
       office: OfficeRendererBridge
+      sshBootstrap: SshBootstrapRendererBridge
       readyWindow: (background: string) => Promise<void>
       closeWindow: () => Promise<void>
       minimizeWindow: () => Promise<void>

@@ -115,8 +115,12 @@ discovered host updates its entry there. Phi validates the resulting OpenSSH
 configuration before atomically replacing it and keeps a private backup next to the
 file. The form contains only alias, address, user, port and local private-key path;
 blank optional fields keep OpenSSH defaults. Phi stores the key **path**, not the key
-itself. Password login is not yet supported: use non-interactive key or
-`ssh-agent` authentication and a trusted host key in `known_hosts`. Then create a
+itself. On macOS and Linux, **用密码设置免密登录** can use a server password once
+after explicit host-fingerprint confirmation, install a dedicated key, verify key
+login, and preview the `Host` block before writing it. Phi does not save that password
+or the private-key passphrase; jump hosts, MFA/OTP, and Windows bootstrap are not
+supported. Existing non-interactive key or `ssh-agent` authentication remains
+available. Then create a
 project with **Remote server** and an absolute, readable and writable directory
 on that server. Testing a project connection checks its directory and reports
 missing server tools. A remote project always runs its Wrappers on its bound

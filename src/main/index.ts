@@ -178,6 +178,8 @@ import {
 } from './agent/remote-hosts'
 import { listOpenSshHosts } from './agent/ssh-config-discovery'
 import { saveOpenSshHost } from './agent/ssh-config-editor'
+import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
+import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
 import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
@@ -7744,6 +7746,11 @@ app.whenReady().then(async () => {
   ipcMain.on('ping', () => console.log('pong'))
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
   registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
+  registerSshBootstrapIpc(
+    ipcMain,
+    () => mainWindow?.webContents ?? null,
+    createDefaultSshBootstrapCoordinator()
+  )
   registerOfficeIpc()
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()

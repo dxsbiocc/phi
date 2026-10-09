@@ -2,12 +2,17 @@ import { Box, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { OpenSshHost, RemoteHostProfile } from '../../../types'
+import type {
+  SshBootstrapFinalResult,
+  SshBootstrapTarget
+} from '../../../../../shared/sshBootstrapTypes'
 import {
   createRemoteHostDoctorUiController,
   remoteHostDoctorTarget,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
 import { RemoteHostProfilesPanel, type RemoteHostDraft } from './RemoteHostProfilesPanel'
+import { RemoteHostPasswordBootstrapDialog } from './RemoteHostPasswordBootstrapDialog'
 
 const EMPTY_HOST_DRAFT: RemoteHostDraft = {
   id: '',
@@ -30,6 +35,8 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
   const [hostDialogOpen, setHostDialogOpen] = useState(false)
   const [hostBusy, setHostBusy] = useState(false)
   const [hostError, setHostError] = useState<string | null>(null)
+  const [bootstrapTarget, setBootstrapTarget] = useState<SshBootstrapTarget | null>(null)
+  const [bootstrapResult, setBootstrapResult] = useState<SshBootstrapFinalResult | null>(null)
   const [hostDoctorStates, setHostDoctorStates] = useState<Record<string, RemoteDoctorUiState>>({})
   const doctorController = useMemo(
     () =>
@@ -167,6 +174,27 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     setHostDialogOpen(true)
   }
 
+  function openPasswordBootstrap(): void {
+    try {
+      const rawPort = hostDraft.port.trim()
+      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error('SSH 端口必须为 1–65535 的整数')
+      const port = rawPort ? Number(rawPort) : 22
+      if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+        throw new Error('SSH 端口必须为 1–65535 的整数')
+      }
+      const alias = hostDraft.hostAlias.trim()
+      const hostname = hostDraft.hostname.trim()
+      const user = hostDraft.user.trim()
+      if (!alias || !hostname || !user) throw new Error('请填写 SSH 别名、服务器地址和用户名')
+      setHostError(null)
+      setBootstrapResult(null)
+      setBootstrapTarget({ alias, hostname, user, port })
+      setHostDialogOpen(false)
+    } catch (error) {
+      setHostError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <Stack spacing={3}>
       <Box>
@@ -200,11 +228,29 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
         }}
         onReloadConfig={() => void reloadOpenSshHosts()}
         onSave={() => void saveHost()}
+        onPasswordBootstrap={openPasswordBootstrap}
         onDelete={(id) => void removeHost(id)}
         onTest={(host) =>
           void doctorController.check(remoteHostDoctorTarget(host.id, host.hostAlias))
         }
       />
+      {bootstrapTarget && (
+        <RemoteHostPasswordBootstrapDialog
+          open
+          target={bootstrapTarget}
+          client={window.api.sshBootstrap}
+          onCompleted={(result) => {
+            setBootstrapResult(result)
+            if (result.configured) void reloadOpenSshHosts(false)
+          }}
+          onClose={() => {
+            setBootstrapTarget(null)
+            if (!bootstrapResult?.configured) setHostDialogOpen(true)
+            else setHostDraft(EMPTY_HOST_DRAFT)
+            setBootstrapResult(null)
+          }}
+        />
+      )}
     </Stack>
   )
 }

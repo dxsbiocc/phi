@@ -3,6 +3,7 @@ export type SshConnectionIssueCode =
   | 'host_key_unknown'
   | 'host_key_unverified'
   | 'authentication_failed'
+  | 'identity_not_loaded'
   | 'proxy_unreachable'
   | 'ssh_missing'
   | 'configuration_invalid'
@@ -32,6 +33,10 @@ const DIAGNOSES: Record<SshConnectionIssueCode, Omit<SshConnectionDiagnosis, 'co
   authentication_failed: {
     message: 'SSH 非交互认证失败',
     suggestion: '检查 ~/.ssh/config 的用户和密钥、SSH agent，以及服务器是否要求交互式 MFA。'
+  },
+  identity_not_loaded: {
+    message: 'SSH 私钥尚未加载到 ssh-agent',
+    suggestion: '请在设置中重新加载这把密钥；Phi 已在连接前停止，不会触发认证失败冷却。'
   },
   proxy_unreachable: {
     message: 'SSH 跳板机或代理连接失败',

@@ -28,7 +28,8 @@ export function RemoteHostDialog({
   error,
   onDraftChange,
   onClose,
-  onSave
+  onSave,
+  onPasswordBootstrap
 }: {
   open: boolean
   draft: RemoteHostDraft
@@ -37,6 +38,7 @@ export function RemoteHostDialog({
   onDraftChange: (draft: RemoteHostDraft) => void
   onClose: () => void
   onSave: () => void
+  onPasswordBootstrap?: () => void
 }): React.JSX.Element {
   const legacy = draft.source === 'phi'
   return (
@@ -101,6 +103,17 @@ export function RemoteHostDialog({
         <Button onClick={onClose} disabled={busy}>
           取消
         </Button>
+        {!legacy && onPasswordBootstrap && (
+          <Button
+            variant="outlined"
+            disabled={
+              busy || !draft.hostAlias.trim() || !draft.hostname.trim() || !draft.user.trim()
+            }
+            onClick={onPasswordBootstrap}
+          >
+            用密码设置免密登录
+          </Button>
+        )}
         <Button
           variant="contained"
           disabled={busy || !draft.hostAlias.trim() || (!legacy && !draft.hostname.trim())}
