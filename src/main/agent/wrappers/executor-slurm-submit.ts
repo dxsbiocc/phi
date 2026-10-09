@@ -27,6 +27,7 @@ import { SbatchRunner } from './executor-slurm'
 import type { WrapperManifest } from './manifest-types'
 import { checkRemoteWrapperInputs } from './remote-input-check'
 import { RemoteLaunchUnknownError } from './remote-launch-claim'
+import { isRequestedCancellationStatus } from './remote-cancel'
 import {
   connectRemoteSshSession,
   shellQuote,
@@ -326,20 +327,16 @@ export async function runSlurmWrapperExecution(
       })
     }
 
-    // A concurrent `cancelWrapperRun` call may have moved the run to
-    // `cancelling` (and issued `scancel`) while this poll loop was waiting —
-    // re-read the current record rather than trusting `running`, which is a
-    // stale snapshot from before that happened. Slurm reports a cancelled
-    // job the same way it reports any other non-zero exit ("failed" states),
-    // so without this check a user-requested cancellation would land as
-    // `failed`, not the `cancelled` the design doc's state diagram promises.
+    // Re-read cancellation state after polling. A matching signal keeps the run pending until
+    // the cancellation path confirms its WorkDir sweep; only then may it become cancelled.
     const current = readWrapperRun(run.runId, agentDir) ?? running
-    const cancelled =
+    if (
       current.state === 'cancelling' &&
-      (current.cancelConfirmedAt !== undefined ||
-        status.detail?.startsWith('CANCELLED') === true ||
-        status.exitCode === 143 ||
-        status.exitCode === 137)
+      current.cancelConfirmedAt === undefined &&
+      isRequestedCancellationStatus(status)
+    )
+      return current
+    const cancelled = current.state === 'cancelling' && current.cancelConfirmedAt !== undefined
     return transitionUnlessCancelled(running, agentDir, cancelled ? 'cancelled' : 'failed', {
       completedAt: new Date().toISOString(),
       exitCode: status.exitCode

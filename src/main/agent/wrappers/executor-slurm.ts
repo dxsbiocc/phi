@@ -145,28 +145,32 @@ export function parseSbatchJobId(stdout: string): string | undefined {
   return match?.[1]
 }
 
+type ParsedSlurmStatus = { state: string; exitCode?: number; exitSignal?: number }
+
 /**
  * Parses one `sacct -n -P --format=JobID,State,ExitCode` line for the exact
  * job id (not its `.batch`/`.extern` sub-steps, which sacct also lists).
  */
-function parseSacctLine(
-  stdout: string,
-  jobId: string
-): { state: string; exitCode?: number } | undefined {
+function parseSacctLine(stdout: string, jobId: string): ParsedSlurmStatus | undefined {
   const line = stdout
     .split('\n')
     .map((entry) => entry.trim())
     .find((entry) => entry.split('|')[0] === jobId)
   if (!line) return undefined
   const [, state = '', exitCodeRaw = ''] = line.split('|')
-  const exitCode = Number.parseInt(exitCodeRaw.split(':')[0], 10)
-  return { state, exitCode: Number.isFinite(exitCode) ? exitCode : undefined }
+  const [codeRaw, signalRaw] = exitCodeRaw.split(':')
+  const exitCode = Number.parseInt(codeRaw, 10)
+  const exitSignal = Number.parseInt(signalRaw, 10)
+  return {
+    state,
+    exitCode: Number.isFinite(exitCode) ? exitCode : undefined,
+    ...(Number.isFinite(exitSignal) && exitSignal !== 0 ? { exitSignal } : {})
+  }
 }
 
 /**
- * Parses `scontrol show job <id>`'s free-text `Key=Value` report for
- * `JobState`/`ExitCode`. Verified against a real cluster where `sacct` is
- * unconditionally broken (`accounting_storage_slurmdbd.so` fails to load —
+ * Parses `scontrol show job <id>`'s free-text `JobState`/`ExitCode` report.
+ * `sacct` can be unavailable (`accounting_storage_slurmdbd.so` fails to load —
  * no working `slurmdbd`) while `squeue`/`sbatch`/`scancel`/`scontrol` all
  * work fine: `scontrol` only talks to `slurmctld`, which every Slurm
  * install runs, unlike the optional accounting daemon `sacct` depends on.
@@ -177,12 +181,13 @@ function parseSacctLine(
  * source in practice. `status()` below tries this first and falls back to
  * `sacct` only when `scontrol` doesn't have an answer either.
  */
-function parseScontrolShowJob(stdout: string): { state: string; exitCode?: number } | undefined {
+function parseScontrolShowJob(stdout: string): ParsedSlurmStatus | undefined {
   const stateMatch = stdout.match(/JobState=(\S+)/)
   if (!stateMatch) return undefined
-  const exitMatch = stdout.match(/ExitCode=(\d+):\d+/)
+  const exitMatch = stdout.match(/ExitCode=(\d+):(\d+)/)
   const exitCode = exitMatch ? Number.parseInt(exitMatch[1], 10) : undefined
-  return { state: stateMatch[1], exitCode: Number.isFinite(exitCode ?? NaN) ? exitCode : undefined }
+  const exitSignal = exitMatch ? Number.parseInt(exitMatch[2], 10) : undefined
+  return { state: stateMatch[1], exitCode, ...(exitSignal ? { exitSignal } : {}) }
 }
 
 /**
@@ -227,11 +232,16 @@ export async function readSlurmJobStatus(
     // guidance for detached_ssh.
     return { outcome: 'lost' }
   }
-  if (parsed.state.startsWith('COMPLETED')) {
-    return { outcome: 'completed', exitCode: parsed.exitCode ?? 0 }
-  }
+  const signal = parsed.exitSignal ? { exitSignal: parsed.exitSignal } : {}
+  if (parsed.state.startsWith('COMPLETED'))
+    return { outcome: 'completed', exitCode: parsed.exitCode ?? 0, ...signal }
   if (FAILED_STATES.some((state) => parsed.state.startsWith(state))) {
-    return { outcome: 'failed', exitCode: parsed.exitCode, detail: parsed.state }
+    return {
+      outcome: 'failed',
+      exitCode: parsed.exitCode,
+      ...signal,
+      detail: parsed.state
+    }
   }
   // An sacct state we don't recognize, or a PENDING/RUNNING row that
   // raced ahead of squeue falling behind — treat as still running rather

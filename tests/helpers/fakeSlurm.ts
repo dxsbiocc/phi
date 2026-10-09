@@ -32,16 +32,23 @@ function state(id) {
   if (!job) return undefined
   const override = read('job-' + id + '.state')
   const exit = read('job-' + id + '.exit')
-  if (override) return { state: override.trim(), code: exit === undefined ? 1 : Number(exit) }
-  if (exit !== undefined && fs.existsSync(file('job-' + id + '.term-signalled'))) {
-    return { state: 'CANCELLED', code: Number(exit) }
+  if (override) return { state: override.trim(), code: exit === undefined ? 1 : Number(exit), signal: 0 }
+  if (
+    exit !== undefined &&
+    fs.existsSync(file('job-' + id + '.full-term-signalled')) &&
+    read('full-term-behavior') === 'failed'
+  ) {
+    return { state: 'FAILED', code: 0, signal: 15 }
   }
-  if (exit !== undefined) return { state: Number(exit) === 0 ? 'COMPLETED' : 'FAILED', code: Number(exit) }
-  if (alive(job.pid)) return { state: 'RUNNING', code: 0 }
+  if (exit !== undefined && fs.existsSync(file('job-' + id + '.term-signalled'))) {
+    return { state: 'CANCELLED', code: Number(exit), signal: 0 }
+  }
+  if (exit !== undefined) return { state: Number(exit) === 0 ? 'COMPLETED' : 'FAILED', code: Number(exit), signal: 0 }
+  if (alive(job.pid)) return { state: 'RUNNING', code: 0, signal: 0 }
   const signalled =
     fs.existsSync(file('job-' + id + '.cancelled')) ||
     fs.existsSync(file('job-' + id + '.term-signalled'))
-  return { state: signalled ? 'CANCELLED' : 'NODE_FAIL', code: 0 }
+  return { state: signalled ? 'CANCELLED' : 'NODE_FAIL', code: 0, signal: 0 }
 }
 
 if (command === 'sbatch') {
@@ -92,7 +99,7 @@ if (command === 'sbatch') {
   if (!s) process.exit(1)
   const job = meta(id)
   const name = job?.directives.find((directive) => directive.startsWith('--job-name='))?.slice('--job-name='.length) || 'unknown'
-  console.log('JobId=' + id + ' JobName=' + name + ' JobState=' + s.state + ' Reason=None ExitCode=' + s.code + ':0 WorkDir=' + job.workDir)
+  console.log('JobId=' + id + ' JobName=' + name + ' JobState=' + s.state + ' Reason=None ExitCode=' + s.code + ':' + s.signal + ' WorkDir=' + job.workDir)
 } else if (command === 'scancel') {
   const id = args.filter((a) => !a.startsWith('-')).pop()
   const job = meta(id)
@@ -106,6 +113,9 @@ if (command === 'sbatch') {
   if (job && alive(job.pid) && read('job-' + id + '.unkillable') !== '1') {
     const marker = signalName === 'TERM' ? 'term-signalled' : 'cancelled'
     fs.writeFileSync(file('job-' + id + '.' + marker), '1')
+    if (signalName === 'TERM' && args.includes('--full')) {
+      fs.writeFileSync(file('job-' + id + '.full-term-signalled'), '1')
+    }
     try { process.kill(-job.pid, signal) } catch {}
   }
 } else if (command === 'sacct') {
@@ -135,6 +145,8 @@ export interface FakeSlurm {
   scancelCalls: () => FakeSlurmCancelCall[]
   /** Make squeue reject or accept the `%Z` WorkDir format. */
   setSqueueWorkDirSupported: (supported: boolean) => void
+  /** Choose how `scancel --full --signal=TERM` is recorded after the process exits. */
+  setFullTermBehavior: (behavior: 'cancelled' | 'failed') => void
   /** Keep a job alive across scancel calls to exercise residual-job reporting. */
   setUnkillable: (jobId: string, unkillable: boolean) => void
   restore: () => void
@@ -174,6 +186,7 @@ export function installFakeSlurm(dir: string): FakeSlurm {
     },
     setSqueueWorkDirSupported: (supported) =>
       writeFileSync(join(state, 'squeue-workdir-supported'), supported ? '1' : '0'),
+    setFullTermBehavior: (behavior) => writeFileSync(join(state, 'full-term-behavior'), behavior),
     setUnkillable: (jobId, unkillable) =>
       writeFileSync(join(state, `job-${jobId}.unkillable`), unkillable ? '1' : '0'),
     restore: () => {

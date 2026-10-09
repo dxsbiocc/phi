@@ -46,9 +46,13 @@ interface FakeRun {
   taskId: string
 }
 
-async function createRun(cooperative: boolean): Promise<FakeRun> {
+async function createRun(
+  cooperative: boolean,
+  fullTermBehavior: 'cancelled' | 'failed' = 'cancelled'
+): Promise<FakeRun> {
   const root = mkdtempSync(join(tmpdir(), 'phi-wrapper-slurm-cleanup-'))
   const fake = installFakeSlurm(root)
+  fake.setFullTermBehavior(fullTermBehavior)
   const runDir = join(root, 'wrappers', 'runs', RUN_ID)
   const taskWorkDir = join(runDir, 'work', 'task-a')
   const receipt = join(runDir, 'task.receipt')
@@ -125,6 +129,20 @@ test('cooperative Nextflow receives full TERM and cancels its Slurm task', async
         .scancelCalls()
         .some((call) => call.jobId === run.controllerId && call.full && call.signal === 'TERM')
     )
+  } finally {
+    destroyRun(run)
+  }
+})
+
+test('Slurm 17.11 FAILED with signal 15 confirms a requested cancellation', async () => {
+  const run = await createRun(true, 'failed')
+  try {
+    const { result } = await cancel(run, 2_000)
+    assert.equal(result.kind, 'confirmed')
+    assert.equal(result.status.outcome, 'failed')
+    assert.equal(result.status.exitCode, 0)
+    assert.equal(result.status.exitSignal, 15)
+    assert.equal(queued(run.taskId), false)
   } finally {
     destroyRun(run)
   }

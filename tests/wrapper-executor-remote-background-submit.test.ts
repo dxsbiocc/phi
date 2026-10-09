@@ -7,11 +7,16 @@ import test from 'node:test'
 
 import { runRemoteBackgroundWrapperExecution } from '../src/main/agent/wrappers/executor-remote-background-submit'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
+import { cancelWrapperRun } from '../src/main/agent/wrappers/runs'
 import type {
   RemoteExecResult,
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
-import { getWrapperRunsDir, writeWrapperRun } from '../src/main/agent/wrappers/store'
+import {
+  getWrapperRunsDir,
+  readWrapperRun,
+  readWrapperRunEvents
+} from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
 import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
@@ -39,6 +44,7 @@ class FakeDetachedHost implements RemoteSshSession {
   private processes = new Map<number, boolean>()
   private nextPid = 5000
   closed = false
+  keepAliveUntilTerm = false
 
   constructor(
     private readonly remoteRunDir: string,
@@ -68,8 +74,8 @@ class FakeDetachedHost implements RemoteSshSession {
       this.launchFault = undefined
       if (fault === 'before') throw new Error('SSH closed before detached launch')
       const pid = this.nextPid++
-      this.processes.set(pid, false)
-      if (this.outcome !== 'lost') {
+      this.processes.set(pid, this.keepAliveUntilTerm)
+      if (this.outcome !== 'lost' && !this.keepAliveUntilTerm) {
         this.files.set(`${this.remoteRunDir}/exit_code`, `${this.outcome.exitCode}`)
       }
       this.files.set(`${this.remoteRunDir}/pid`, `${pid}`)
@@ -84,9 +90,22 @@ class FakeDetachedHost implements RemoteSshSession {
       const alive = this.processes.get(pid) === true
       return { stdout: alive ? 'alive\n' : 'dead\n', stderr: '', code: 0, signal: null }
     }
+    if (command.startsWith('ps -ww -o args= -p ')) {
+      const pid = Number.parseInt(command.split(' ').at(-1) ?? '', 10)
+      const known = this.processes.has(pid)
+      return {
+        stdout: known ? `bash ${this.remoteRunDir}/launch.sh\n` : '',
+        stderr: '',
+        code: known ? 0 : 1,
+        signal: null
+      }
+    }
     if (command.startsWith('kill -TERM -')) {
       const pid = Number.parseInt(command.slice('kill -TERM -'.length), 10)
       this.processes.set(pid, false)
+      if (this.outcome !== 'lost') {
+        this.files.set(`${this.remoteRunDir}/exit_code`, `${this.outcome.exitCode}`)
+      }
       return { stdout: '', stderr: '', code: 0, signal: null }
     }
     throw new Error(`FakeDetachedHost: unhandled command: ${command}`)
@@ -125,6 +144,14 @@ function withHarness<T>(
   return callback({ agentDir, projectDir }).finally(() =>
     rmSync(root, { recursive: true, force: true })
   )
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for cancellation to settle')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 function writeFastqPair(projectDir: string, sample: string): void {
@@ -463,17 +490,23 @@ test('runRemoteBackgroundWrapperExecution finalizes as cancelled, not failed, wh
     // here is that the orchestrator must tell that apart from an ordinary
     // failure by re-checking the run's own persisted state.
     const cluster = new FakeDetachedHost(remoteRunDir, { exitCode: 143 })
+    cluster.keepAliveUntilTerm = true
     const realExec = cluster.exec.bind(cluster)
+    let releaseTerm!: () => void
+    const termBlocked = new Promise<void>((resolve) => {
+      releaseTerm = resolve
+    })
     cluster.exec = async (command: string): Promise<RemoteExecResult> => {
       const result = await realExec(command)
       if (command.includes('setsid bash')) {
-        // Simulate cancelWrapperRun landing concurrently, right after this
-        // app session's own launch — before the first status() poll.
-        writeWrapperRun(
-          { ...run, state: 'cancelling', updatedAt: new Date().toISOString() },
-          agentDir
-        )
+        const requested = cancelWrapperRun(run.runId, agentDir, {
+          connection: FAKE_CONNECTION,
+          remoteWorkspaceRoot: '/data/lab/.phi',
+          connectImpl: async () => cluster
+        })
+        assert.equal(requested.state, 'cancelling')
       }
+      if (command.startsWith('kill -TERM -')) await termBlocked
       return result
     }
 
@@ -485,5 +518,14 @@ test('runRemoteBackgroundWrapperExecution finalizes as cancelled, not failed, wh
       pollIntervalMs: 1
     })
 
-    assert.equal(result.state, 'cancelled')
+    assert.equal(result.state, 'cancelling')
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelling')
+    releaseTerm()
+    await waitFor(() => readWrapperRun(run.runId, agentDir)?.state !== 'cancelling')
+    assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelled')
+    assert.ok(
+      readWrapperRunEvents(run.runId, agentDir).some(
+        (event) => event.type === 'run_state_changed' && event.state === 'cancelled'
+      )
+    )
   }))

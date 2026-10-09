@@ -1,4 +1,4 @@
-import type { RemoteJobHandle, RemoteRunStatus } from './executor-remote'
+import { readRemoteLog, type RemoteJobHandle, type RemoteRunStatus } from './executor-remote'
 import { controllerForHandle } from './composition/remote-controller'
 import type { RemoteSshSession } from './remote-ssh-session'
 import { cleanupSlurmRunJobs, type SlurmRunCleanupOptions } from './remote-slurm-cleanup'
@@ -15,21 +15,32 @@ export type RemoteCancelResult =
 
 export interface RemoteCancelOptions extends SlurmRunCleanupOptions {
   cleanupSlurmJobs?: boolean
+  previouslyRequested?: boolean
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** Cancellation evidence used only after the caller establishes Phi's cancellation intent. */
+export function isRequestedCancellationStatus(status: RemoteRunStatus): boolean {
+  return (
+    status.outcome === 'failed' &&
+    (status.detail?.startsWith('CANCELLED') === true ||
+      status.exitSignal === 15 ||
+      status.exitSignal === 9 ||
+      status.exitCode === 143 ||
+      status.exitCode === 137)
+  )
+}
+
 function cancellationObservation(
   handle: RemoteJobHandle,
-  status: RemoteRunStatus
+  status: RemoteRunStatus,
+  cancelledAt: boolean
 ): RemoteCancelResult | undefined {
   if (status.outcome === 'completed') return { kind: 'already-ended', status }
   if (status.outcome === 'failed') {
-    const signalled =
-      status.detail?.startsWith('CANCELLED') === true ||
-      status.exitCode === 143 ||
-      status.exitCode === 137
-    return { kind: signalled ? 'confirmed' : 'already-ended', status }
+    const confirmed = isRequestedCancellationStatus(status) || cancelledAt
+    return { kind: confirmed ? 'confirmed' : 'already-ended', status }
   }
   // A detached process group that vanished after a delivered signal may leave no exit file.
   // Slurm losing its accounting record proves nothing.
@@ -37,6 +48,28 @@ function cancellationObservation(
     return { kind: handle.jobId === undefined ? 'confirmed' : 'unknown', status }
   }
   return undefined
+}
+
+async function hasMatchingCancelledAt(
+  session: RemoteSshSession,
+  handle: RemoteJobHandle,
+  status: RemoteRunStatus
+): Promise<boolean> {
+  if (
+    status.outcome !== 'failed' ||
+    status.exitCode !== 0 ||
+    isRequestedCancellationStatus(status) ||
+    handle.jobId === undefined ||
+    !/^[1-9][0-9]*$/.test(handle.jobId)
+  )
+    return false
+  const logs = await Promise.all(
+    (['stdout', 'stderr'] as const).map((stream) =>
+      readRemoteLog(session, handle.remoteRunDir, stream).catch(() => '')
+    )
+  )
+  const marker = new RegExp(`\\bJOB\\s+${handle.jobId}\\b[^\\r\\n]*\\bCANCELLED\\s+AT\\b`, 'i')
+  return logs.some((log) => marker.test(log))
 }
 
 /** Send a run-bound signal, then observe the remote before claiming cancellation. */
@@ -50,15 +83,23 @@ export async function cancelRemoteController(
   const before = await controller.status(session, handle)
   if (before.outcome === 'completed' || before.outcome === 'failed') {
     const schedulerCancelled =
-      handle.jobId !== undefined && before.detail?.startsWith('CANCELLED') === true
+      handle.jobId !== undefined &&
+      (before.detail?.startsWith('CANCELLED') === true ||
+        (options.previouslyRequested &&
+          (isRequestedCancellationStatus(before) ||
+            (await hasMatchingCancelledAt(session, handle, before)))))
     const kind = schedulerCancelled ? 'confirmed' : 'already-ended'
     return withSlurmCleanup(session, handle, { kind, status: before }, options)
   }
   if (before.outcome === 'lost') return { kind: 'unknown', status: before }
-
   await controller.signal(session, handle, 'TERM')
   const observe = async (): Promise<RemoteCancelResult | undefined> => {
-    return cancellationObservation(handle, await controller.status(session, handle))
+    const status = await controller.status(session, handle)
+    return cancellationObservation(
+      handle,
+      status,
+      await hasMatchingCancelledAt(session, handle, status)
+    )
   }
   const deadline = Date.now() + Math.max(0, graceMs)
   for (;;) {
@@ -67,7 +108,6 @@ export async function cancelRemoteController(
     if (Date.now() >= deadline) break
     await sleep(Math.min(100, Math.max(1, deadline - Date.now())))
   }
-
   await controller.signal(session, handle, 'KILL')
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const result = await observe()

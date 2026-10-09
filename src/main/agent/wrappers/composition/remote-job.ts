@@ -352,7 +352,6 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
   let inconclusiveStatuses = 0
   let lastError = ''
   let cancellation: Promise<RemoteCancelResult | undefined> | undefined
-
   const deliver = async (): Promise<number> => {
     const delta = await readRemoteLogDelta(
       session,
@@ -376,7 +375,6 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
     }
     return delta.bytesRead
   }
-
   const stopRemote = async (): Promise<RemoteCancelResult | undefined> => {
     try {
       const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
@@ -410,10 +408,12 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
       if (status.outcome !== 'lost') inconclusiveStatuses = 0
       if (control.cancelled && cancellation) {
         const outcome = await cancellation
+        if (outcome?.kind === 'confirmed' && status.outcome !== 'completed')
+          return reported(options, '运行已取消。', {
+            cancelled: true,
+            exitCode: outcome.status.exitCode ?? -1
+          })
         if (outcome?.message) return reported(options, outcome.message, { lost: true })
-        if (outcome?.kind === 'confirmed' && status.outcome !== 'completed') {
-          return failure('', { cancelled: true })
-        }
       }
       if (status.outcome !== 'running') {
         // A completed job can leave a large final log; drain it through repeated bounded pages.

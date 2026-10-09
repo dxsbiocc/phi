@@ -295,13 +295,11 @@ export async function runRemoteBackgroundWrapperExecution(
       })
     }
 
-    // A cancel request alone does not prove the process was stopped by Phi.
+    // A signal exit does not prove the run's independently submitted tasks were cleaned.
     const current = readWrapperRun(run.runId, agentDir) ?? running
-    const cancelled =
-      current.state === 'cancelling' &&
-      (current.cancelConfirmedAt !== undefined ||
-        status.exitCode === 143 ||
-        status.exitCode === 137)
+    const signalEnded = status.exitCode === 143 || status.exitCode === 137
+    if (current.state === 'cancelling' && !current.cancelConfirmedAt && signalEnded) return current
+    const cancelled = current.state === 'cancelling' && current.cancelConfirmedAt !== undefined
     return transitionUnlessCancelled(running, agentDir, cancelled ? 'cancelled' : 'failed', {
       completedAt: new Date().toISOString(),
       exitCode: status.exitCode

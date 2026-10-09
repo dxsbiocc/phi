@@ -54,6 +54,8 @@ export interface RemoteRunStatus {
   outcome: RemoteRunOutcome
   /** Present once the process has exited and recorded its exit code. */
   exitCode?: number
+  /** Scheduler-reported signal component, e.g. 15 from Slurm `ExitCode=0:15`. */
+  exitSignal?: number
   /** The scheduler's own state name when it ended badly (e.g. `TIMEOUT`, `OUT_OF_MEMORY`). */
   detail?: string
 }

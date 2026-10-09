@@ -39,8 +39,9 @@ class FakeSlurmHost implements RemoteSshSession {
   exitOnLastAlive?: string
   activeSlurmJob = false
 
-  constructor(private readonly outcome: { state: string; exitCode: number } | 'untracked') {}
-
+  constructor(
+    private readonly outcome: { state: string; exitCode: number; exitSignal?: number } | 'untracked'
+  ) {}
   async exec(command: string): Promise<RemoteExecResult> {
     this.execLog.push(command)
     if (command.startsWith('kill -0 ')) {
@@ -80,7 +81,7 @@ class FakeSlurmHost implements RemoteSshSession {
         }
       }
       return {
-        stdout: `JobId=1 JobName=phi-${[...this.files.entries()].find(([path]) => path.endsWith('/.phi-launch-claim/run-id'))?.[1].trim() ?? 'test'}\n   JobState=${this.outcome.state} Reason=None\n   ExitCode=${this.outcome.exitCode}:0\n`,
+        stdout: `JobId=1 JobName=phi-${[...this.files.entries()].find(([path]) => path.endsWith('/.phi-launch-claim/run-id'))?.[1].trim() ?? 'test'}\n   JobState=${this.outcome.state} Reason=None\n   ExitCode=${this.outcome.exitCode}:${this.outcome.exitSignal ?? 0}\n`,
         stderr: '',
         code: 0,
         signal: null

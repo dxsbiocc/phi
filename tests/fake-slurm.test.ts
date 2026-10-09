@@ -107,6 +107,7 @@ test('full TERM reaches a cooperative controller which cancels its task job', as
     })
     command('scancel', ['--full', '--signal=TERM', controllerId])
     await waitFor(() => command('squeue', ['-h', '-j', taskId!, '-o', '%T']) === '')
+    assert.match(command('scontrol', ['show', 'job', controllerId]), /JobState=CANCELLED/)
     assert.ok(
       fake
         .scancelCalls()
@@ -115,6 +116,31 @@ test('full TERM reaches a cooperative controller which cancels its task job', as
   } finally {
     if (controllerId) command('scancel', ['--signal=KILL', controllerId])
     if (taskId) command('scancel', ['--signal=KILL', taskId])
+    fake.restore()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Slurm 17.11 mode records a full TERM controller as FAILED with signal 15', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-fake-slurm-17-test-'))
+  const fake = installFakeSlurm(root)
+  const runDir = join(root, 'run')
+  mkdirSync(runDir, { recursive: true })
+  const controllerScript = join(runDir, 'controller.sh')
+  writeJob(controllerScript, runDir, "trap 'exit 143' TERM\nwhile true; do sleep 1; done")
+
+  let controllerId: string | undefined
+  try {
+    fake.setFullTermBehavior('failed')
+    controllerId = command('sbatch', [controllerScript]).match(/\d+/)?.[0]
+    assert.ok(controllerId)
+    command('scancel', ['--full', '--signal=TERM', controllerId])
+    await waitFor(() => command('squeue', ['-h', '-j', controllerId!, '-o', '%T']) === '')
+    const detail = command('scontrol', ['show', 'job', controllerId])
+    assert.match(detail, /JobState=FAILED/)
+    assert.match(detail, /ExitCode=0:15/)
+  } finally {
+    if (controllerId) command('scancel', ['--signal=KILL', controllerId])
     fake.restore()
     rmSync(root, { recursive: true, force: true })
   }

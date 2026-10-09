@@ -7,11 +7,16 @@ import test from 'node:test'
 
 import { runSlurmWrapperExecution } from '../src/main/agent/wrappers/executor-slurm-submit'
 import { createWrapperRunPlan } from '../src/main/agent/wrappers/plans'
+import { cancelWrapperRun } from '../src/main/agent/wrappers/runs'
 import type {
   RemoteExecResult,
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
-import { getWrapperRunsDir, writeWrapperRun } from '../src/main/agent/wrappers/store'
+import {
+  getWrapperRunsDir,
+  readWrapperRun,
+  readWrapperRunEvents
+} from '../src/main/agent/wrappers/store'
 import type { WrapperRun, WrapperRunPlan } from '../src/main/agent/wrappers/types'
 import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
@@ -33,12 +38,13 @@ class FakeSlurmHost implements RemoteSshSession {
   claims = new Set<string>()
   submitCommands = 0
   submitFault: 'before' | 'after' | undefined
-  private jobOutcomes = new Map<string, { state: string; exitCode: number }>()
+  private jobOutcomes = new Map<string, { state: string; exitCode: number; exitSignal?: number }>()
   private nextJobId = 7000
   closed = false
 
   constructor(
-    private readonly defaultOutcome: { state: string; exitCode: number } | 'untracked',
+    private readonly defaultOutcome:
+      { state: string; exitCode: number; exitSignal?: number } | 'untracked',
     private readonly inputProbeCode?: number,
     private readonly preflightCode = 0
   ) {}
@@ -88,8 +94,11 @@ class FakeSlurmHost implements RemoteSshSession {
           signal: null
         }
       }
+      const runId = [...this.files.entries()]
+        .find(([path]) => path.endsWith('/.phi-launch-claim/run-id'))?.[1]
+        .trim()
       return {
-        stdout: `JobId=${jobId} JobName=phi-test\n   JobState=${outcome.state} Reason=None\n   ExitCode=${outcome.exitCode}:0\n`,
+        stdout: `JobId=${jobId} JobName=phi-${runId ?? 'test'}\n   JobState=${outcome.state} Reason=None\n   ExitCode=${outcome.exitCode}:${outcome.exitSignal ?? 0}\n`,
         stderr: '',
         code: 0,
         signal: null
@@ -100,7 +109,7 @@ class FakeSlurmHost implements RemoteSshSession {
       const outcome = jobId !== undefined ? this.jobOutcomes.get(jobId) : undefined
       if (!outcome) return { stdout: '', stderr: '', code: 0, signal: null }
       return {
-        stdout: `${jobId}|${outcome.state}|${outcome.exitCode}:0\n`,
+        stdout: `${jobId}|${outcome.state}|${outcome.exitCode}:${outcome.exitSignal ?? 0}\n`,
         stderr: '',
         code: 0,
         signal: null
@@ -145,6 +154,14 @@ function withHarness<T>(
   return callback({ agentDir, projectDir }).finally(() =>
     rmSync(root, { recursive: true, force: true })
   )
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 4_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for cancellation to settle')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 function writeFastqPair(projectDir: string, sample: string): void {
@@ -504,38 +521,73 @@ test('runSlurmWrapperExecution fails the run and records the exit code when the 
     assert.equal(result.exitCode, 1)
   }))
 
-test('runSlurmWrapperExecution finalizes as cancelled, not failed, when cancelWrapperRun raced the poll loop', () =>
-  withHarness(async ({ agentDir, projectDir }) => {
-    const plan = await createSlurmPlan(agentDir, projectDir)
-    const run = runFromPlan(plan)
-    // Slurm reports a scancel'd job the same way it reports any other
-    // non-zero-exit job (a FAILED_STATES entry) — runSlurmWrapperExecution
-    // has to re-check the run's live state to tell the two apart.
-    const cluster = new FakeSlurmHost({ state: 'CANCELLED', exitCode: 0 })
-    const realExec = cluster.exec.bind(cluster)
-    cluster.exec = async (command: string): Promise<RemoteExecResult> => {
-      const result = await realExec(command)
-      if (command.startsWith('sbatch ')) {
-        // Simulate cancelWrapperRun landing concurrently, right after this
-        // app session's own submit — before the first status() poll.
-        writeWrapperRun(
-          { ...run, state: 'cancelling', updatedAt: new Date().toISOString() },
-          agentDir
-        )
+for (const cancellation of [
+  {
+    title:
+      'runSlurmWrapperExecution finalizes as cancelled, not failed, when cancelWrapperRun raced the poll loop',
+    outcome: { state: 'CANCELLED', exitCode: 0 }
+  },
+  {
+    title: 'runSlurmWrapperExecution accepts FAILED 0:15 after a persisted cancel request',
+    outcome: { state: 'FAILED', exitCode: 0, exitSignal: 15 }
+  }
+]) {
+  test(cancellation.title, () =>
+    withHarness(async ({ agentDir, projectDir }) => {
+      const plan = await createSlurmPlan(agentDir, projectDir)
+      const run = runFromPlan(plan)
+      const remoteRunDir = `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`
+      const cluster = new FakeSlurmHost(cancellation.outcome)
+      const realExec = cluster.exec.bind(cluster)
+      let cancelRequested = false
+      let signalDelivered = false
+      let releaseCleanup!: () => void
+      const cleanupBlocked = new Promise<void>((resolve) => {
+        releaseCleanup = resolve
+      })
+      cluster.exec = async (command: string): Promise<RemoteExecResult> => {
+        if (command.startsWith('squeue -h -j ') && !signalDelivered) {
+          if (!cancelRequested) {
+            cancelRequested = true
+            const requested = cancelWrapperRun(run.runId, agentDir, {
+              connection: FAKE_CONNECTION,
+              remoteWorkspaceRoot: '/data/lab/.phi',
+              connectImpl: async () => cluster
+            })
+            assert.equal(requested.state, 'cancelling')
+          }
+          return { stdout: 'RUNNING\n', stderr: '', code: 0, signal: null }
+        }
+        if (command.includes(' --full --signal=TERM ')) {
+          signalDelivered = true
+          return { stdout: '', stderr: '', code: 0, signal: null }
+        }
+        const result = await realExec(command)
+        if (command === 'squeue -u "$USER" -h -o "%i|%T|%Z"') await cleanupBlocked
+        return result
       }
-      return result
-    }
 
-    const result = await runSlurmWrapperExecution(run, plan, {
-      agentDir,
-      remoteRunDir: `${REMOTE_RUN_DIR_PREFIX}/${run.runId}`,
-      connection: FAKE_CONNECTION,
-      connectImpl: async () => cluster,
-      pollIntervalMs: 1
+      const pollingResult = await runSlurmWrapperExecution(run, plan, {
+        agentDir,
+        remoteRunDir,
+        connection: FAKE_CONNECTION,
+        connectImpl: async () => cluster,
+        pollIntervalMs: 1
+      })
+
+      assert.equal(pollingResult.state, 'cancelling')
+      assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelling')
+      releaseCleanup()
+      await waitFor(() => readWrapperRun(run.runId, agentDir)?.state !== 'cancelling')
+      assert.equal(readWrapperRun(run.runId, agentDir)?.state, 'cancelled')
+      assert.ok(
+        readWrapperRunEvents(run.runId, agentDir).some(
+          (event) => event.type === 'run_state_changed' && event.state === 'cancelled'
+        )
+      )
     })
-
-    assert.equal(result.state, 'cancelled')
-  }))
+  )
+}
 
 test('runSlurmWrapperExecution marks the run lost when Slurm loses track of the job', () =>
   withHarness(async ({ agentDir, projectDir }) => {

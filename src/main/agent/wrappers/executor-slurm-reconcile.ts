@@ -11,7 +11,7 @@ import {
 import { SshExecRunner } from './executor-remote'
 import { SbatchRunner } from './executor-slurm'
 import { observeRemoteLaunch } from './remote-launch-claim'
-import { cancelRemoteController } from './remote-cancel'
+import { cancelRemoteController, isRequestedCancellationStatus } from './remote-cancel'
 import { connectRemoteSshSession, type RemoteSshSession } from './remote-ssh-session'
 import { resolveRemoteSubmitOptions } from './runs'
 import { appendWrapperAuditEvent, listWrapperRuns } from './store'
@@ -156,7 +156,8 @@ async function reconcileOneRun(
       // Both controllers verify the run ID and receipt before signalling; Slurm cleanup still
       // runs when the controller already ended, covering a crash between head cancel and sweep.
       const cancellation = await cancelRemoteController(probe, handle, undefined, {
-        cleanupSlurmJobs: run.executor === 'slurm-controller' || run.executor === 'slurm'
+        cleanupSlurmJobs: run.executor === 'slurm-controller' || run.executor === 'slurm',
+        previouslyRequested: true
       })
       if (cancellation.kind === 'unknown') {
         markLost(run, agentDir, cancellation.message ?? '远程取消请求后无法确认进程或作业已停止')
@@ -219,10 +220,7 @@ async function reconcileOneRun(
       markLost(currentRun, agentDir, '远端进程或调度器未提供可确认的结束状态')
       return
     }
-    const cancellationEvidence =
-      cancelDelivered ||
-      status.detail?.startsWith('CANCELLED') === true ||
-      (wasCancelling && (status.exitCode === 143 || status.exitCode === 137))
+    const cancellationEvidence = cancelDelivered || isRequestedCancellationStatus(status)
     transition(
       currentRun,
       agentDir,
