@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { getBundledWrapperPackagesDir } from '../src/main/agent/wrappers/catalog'
+import { getWrapperTreeDir } from '../src/main/agent/packages/wrapper-tree'
 import {
   attachRemoteWrapperComposition,
   startRemoteWrapperComposition,
@@ -28,6 +28,7 @@ interface Harness {
   session: ReturnType<typeof createLocalShellSession>
   target: RemoteTarget
   remoteRoot: string
+  wrappersRoot: string
   output: string[]
   snapshots: RemoteJobSnapshot[]
 }
@@ -44,6 +45,7 @@ async function withHarness(
   const harness: Harness = {
     session,
     remoteRoot,
+    wrappersRoot: getWrapperTreeDir(sb.agentDir),
     output: [],
     snapshots: [],
     target: {
@@ -79,7 +81,7 @@ function start(
     params: { gff: 'tests/data/genome.gff3', outdir: 'results', ...overrides },
     profile,
     target: h.target,
-    wrappersRoot: getBundledWrapperPackagesDir(),
+    wrappersRoot: h.wrappersRoot,
     onOutput: (chunk) => h.output.push(chunk),
     onSnapshot: (snapshot) => h.snapshots.push(snapshot),
     killGraceMs: 500
@@ -90,6 +92,8 @@ test('a remote run ships the bundle, launches Nextflow detached, streams its log
   await withSandbox(async (sb) => {
     await withHarness(sb, async (h) => {
       const result = await start(h).done
+      const inputProbe = h.session.commands.find((command) => command.includes('genome.gff3'))
+      assert.ok(inputProbe?.includes(`${h.remoteRoot}/wrappers/bundles/`), inputProbe)
       assert.equal(result.success, true, result.output)
       assert.match(h.output.join(''), /\[PROCESS 87\/ef5c73\] GFFREAD/)
       assert.equal(h.session.uploads.length, 1)
