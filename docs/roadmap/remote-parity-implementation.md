@@ -179,6 +179,11 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
       - **发现三个缺陷（已由 R1.6 修复，提交 `2fe21b7e`；它依赖的“开发模式按需准备 helper”先提交为 `fb9a95d4`）**：(1) 没有缓存档案时 helper 永远不安装，因为 `RemoteWorkspaceHostRegistry.create` 只在读到缓存档案时才带 helper 配置，用户不先点「测试连接」就走纯 SSH；(2) HPC-node3 上能力探测超过 30 秒默认超时，整份档案变成全部未知（连 `uname` 都丢），helper 因此被降级，探测应分成快速阶段（平台、libc、存储）与慢速阶段（工具链版本），慢阶段超时不得丢掉快阶段结果；(3) 平台未知时降级原因被写成「remote helper supports Linux only」，应为「平台未知（探测不完整）」，且不完整的档案不应被当作最终结果缓存。
       - **R1.6 修复后重跑（同日，GPU 与 HPC-node3）**：(1) 无缓存档案时 helper 自动安装并运行（两台均是），释放后进程为 0；(2) HPC-node3 上探测从超时变为 76 秒内完成，平台与 libc（glibc 2.17）、存储、git/java/sbatch/singularity 完整且正确，`nextflow` 与 `conda` 如实标为「版本检查超时」而非「未安装」；(3) 删除或截断 helper 后自动重装，降级时工具仍可用。两台服务器验证后无残留进程、目录或 `~/.phi`。helper 在 glibc 2.17 上以 `fs.stat` 实测可响应。
       - **统计 helper 进程时要用进程名**（`ps -u "$(id -un)" -o comm= | grep -c '^phi-helper$'`）。HPC 的老版本 `ps` 在管道输出时把整行截断在约 101 个字符，按命令行统计会漏掉 helper，曾因此误判「helper 没有被使用」。
+      - **E 组 Wrapper 回归（2026-10-09，单样本 fastp，经 `startRemoteWrapperComposition`/`attachRemoteWrapperComposition`，状态目录与启用配置为临时副本）**：
+        - GPU（local 执行器、docker）与 HPC-node3（Slurm、sbatch 控制器、conda、`--exclude=node4`）均通过：E1 提交并完成（32 秒 / 91 秒，输出与 9 月 28 日链路一致）；E2 脱离后接管（启动器进程号/作业号前后一致，没有重复提交，日志重复行 0）；E3 提交后立即取消（`0c3f1719` 修的竞态场景，取消成功、无残留）；E4 并发取消互不影响；E5（HPC）`squeue` 可见控制器作业、排除节点为 node4、取消后该作业消失；E6 读取小结果字节数一致。结束后两台服务器均无残留进程、目录、Slurm 作业与容器。
+        - GPU docker 配置下取消会杀掉已启动的任务：任务 `.exitcode` 为 143，容器在取消后约 10 秒内停止。
+        - **缺陷（Slurm + sbatch 控制器）**：取消只取消了控制器作业，Nextflow 已提交的任务作业不会被一起取消。实证：控制器作业 `CANCELLED`，其任务作业 `nf-FASTP` 在控制器被取消 18 秒后 `COMPLETED`（退出码 0:0），而不是 `CANCELLED`。单样本 fastp 只多跑了 18 秒；取消长时间的 STAR 比对则会一直占用集群直到任务自己结束，并继续写入该 run 的工作目录。即「未做」清单里的“Nextflow 被硬杀后残留的 Slurm 任务作业清理”。建议修复方向：取消控制器时先 `scancel --full --signal=TERM` 让 Nextflow 自行清理，再按任务作业的 `WorkDir`（位于该 run 的 `work/` 下，唯一）扫描并 `scancel` 残留。
+        - 脚本若不主动退出会多挂约 9 分钟（Node 事件循环里有句柄未释放），应用本身是长驻进程不受影响，但值得查出是哪个定时器或连接。
       - **仍未验证**：在真实 Phi 界面里「测试连接」与档案摘要的展示与脱敏、E 组 Wrapper 回归（RNA-seq 小样本、提交后立即取消、并发取消、Slurm `scancel`）、`remote-ssh-real-identity` 测试（需在沙箱外跑）。
     - 待收紧：R1.1 契约测试 `workspace host terminates commands after their timeout` 断言耗时 `< 2000ms`，机器上有其他测试并行时会在约 2.1 秒失败（单独重跑 6/6 通过），应放宽上限或改为相对超时的比例。
     - 启动调整（2026-10-09）：`predev`/`prestart` 不再准备 Go 或编译 Helper。开发版在首次远程使用时按服务器架构准备，源码、工具链指纹及产物校验一致时复用；发布 `build` 仍生成两个 Linux 目标，安装后的客户端连接服务器时使用预构建产物。
