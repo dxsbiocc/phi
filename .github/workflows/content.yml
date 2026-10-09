@@ -1,0 +1,111 @@
+name: Content conformance
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'resources/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docs/contracts/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'electron-builder.yml'
+      - '.github/workflows/content.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'resources/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docs/contracts/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'electron-builder.yml'
+      - '.github/workflows/content.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: content-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: Phi
+
+jobs:
+  core:
+    name: Independent core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - name: Checkout Phi
+        uses: actions/checkout@v4
+        with:
+          path: Phi
+          persist-credentials: false
+      - name: Set isolated test paths
+        # No content checkout exists in this job. An accidental source dependency fails.
+        run: printf 'PHI_PACKAGES_ROOT=%s/absent-phi-packages\nTMPDIR=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Core lint and resource boundary
+        run: bun run lint
+      - name: Production typecheck
+        run: bun run typecheck
+      - name: Independent core regressions
+        run: node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit tests/*.test.ts
+
+  packages:
+    name: Pinned package content
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Update this reviewed revision with intentional catalog changes; never track main implicitly.
+      PHI_PACKAGES_REVISION: b5a1261ac03c471a740f4f2e77df33111a0d6d25
+    steps:
+      - name: Checkout Phi
+        uses: actions/checkout@v4
+        with:
+          path: Phi
+          persist-credentials: false
+      - name: Set selected package paths
+        run: printf 'PHI_PACKAGES_ROOT=%s/phi-packages\nTMPDIR=%s\n' "$GITHUB_WORKSPACE" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Checkout pinned public content
+        uses: actions/checkout@v4
+        with:
+          repository: dxsbiocc/phi-packages
+          ref: ${{ env.PHI_PACKAGES_REVISION }}
+          path: phi-packages
+          persist-credentials: false
+      - name: Verify selected content revision
+        run: test "$(git -C "$PHI_PACKAGES_ROOT" rev-parse HEAD)" = "$PHI_PACKAGES_REVISION"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Require Python for visualization CLI checks
+        run: python3 --version
+      - name: Validate public package content
+        run: bun run check:package-content
+      - name: Package content regressions
+        run: bun run test:packages
+      - name: Wrapper static conformance
+        run: bun run smoke:wrappers -- --offline

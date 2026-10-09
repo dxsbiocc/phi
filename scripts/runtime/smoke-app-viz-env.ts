@@ -9,6 +9,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { connect, type Browser, type Page } from 'puppeteer-core'
 
 import type { PhiPluginListItem } from '../../src/shared/phiPluginTypes'
+import { parseContentSourceArgs } from '../content/source-roots.mjs'
+import { installVisualizationSmokePlugin } from './install-smoke-visualization'
 
 const repoRoot = resolve(import.meta.dirname, '..', '..')
 const electronPath = join(repoRoot, 'node_modules', '.bin', 'electron')
@@ -402,20 +404,21 @@ async function assertVisualizationSkill(page: Page): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const sourceRoot = parseContentSourceArgs(process.argv.slice(2), { defaultToPackages: true })
   const smokeRoot = mkdtempSync(join(tmpdir(), 'phi-app-viz-env-smoke-'))
   const homeDir = join(smokeRoot, 'home')
-  const agentDir = join(smokeRoot, 'agent')
+  // Phi startup normalizes its account to HOME/.phi; install into that exact isolated account.
+  const agentDir = join(homeDir, '.phi')
   const userDataDir = join(smokeRoot, 'user-data')
   const screenshotDir = mkdtempSync(join(tmpdir(), 'phi-viz-plugin-detail-shots-'))
   for (const path of [homeDir, agentDir, userDataDir]) mkdirSync(path, { recursive: true })
   // Without this a fresh account opens the persona onboarding dialog right after the environment check.
-  // The onboarding state lives under the account's ~/.phi, which is not the same as PI_CODING_AGENT_DIR here.
-  mkdirSync(join(homeDir, '.phi'), { recursive: true })
-  writeFileSync(join(homeDir, '.phi', 'onboarding.json'), '{"onboarded":true}\n')
+  writeFileSync(join(agentDir, 'onboarding.json'), '{"onboarded":true}\n')
 
   let app: RunningApp | null = null
   let completed = false
   try {
+    installVisualizationSmokePlugin({ agentDir, sourceRoot })
     app = await launch(homeDir, agentDir, userDataDir)
     await dismissFirstRunEnvironmentSummary(app.page)
     const plugin = await assertVisualizationPlugin(app.page, screenshotDir)
