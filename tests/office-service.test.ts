@@ -182,6 +182,37 @@ test('import shares a pending request, adopts its resident, and exposes the priv
   assert.equal(left.document.residentPid, 303)
 })
 
+test('unsupported platforms degrade create and import to actionable error states', async () => {
+  let prepareCalls = 0
+  const service = new OfficeService(
+    dependencies({
+      detectRuntime: async () => ({ state: 'unsupported-platform', platform: 'linux-x64' }),
+      prepareBlankDraft: async (...args) => {
+        prepareCalls += 1
+        return dependencies().prepareBlankDraft(...args)
+      },
+      prepareImportedDraft: async (...args) => {
+        prepareCalls += 1
+        return dependencies().prepareImportedDraft!(...args)
+      }
+    })
+  )
+
+  assert.deepEqual(await service.create(createRequest), {
+    state: 'error',
+    requestId: 'create-1',
+    code: 'unsupported-platform',
+    message: '当前平台暂不支持 Office：linux-x64'
+  })
+  assert.deepEqual(await service.importDocument(importRequest), {
+    state: 'error',
+    requestId: 'import-request-1',
+    code: 'unsupported-platform',
+    message: '当前平台暂不支持 Office：linux-x64'
+  })
+  assert.equal(prepareCalls, 0)
+})
+
 test('a failed imported preview closes the resident and removes only the imported artifact', async () => {
   const closed: string[] = []
   const removed: string[] = []
@@ -889,7 +920,7 @@ test('open returns a readable runtime error without preparing a draft', async ()
       detectRuntime: async () => ({
         state: 'missing',
         expectedPath: '/missing/officecli',
-        hint: '运行 bun run office:fetch'
+        hint: '请将已校验的 OfficeCLI 安装到 /missing/officecli 后重试。'
       }),
       prepareDraft: async () => {
         draftCalls += 1
@@ -903,7 +934,7 @@ test('open returns a readable runtime error without preparing a draft', async ()
     state: 'error',
     sourcePath: request.sourcePath,
     code: 'missing',
-    message: 'OfficeCLI 未安装。运行 bun run office:fetch'
+    message: 'Office 支持尚未安装。请将已校验的 OfficeCLI 安装到 /missing/officecli 后重试。'
   })
   assert.equal(draftCalls, 0)
 })

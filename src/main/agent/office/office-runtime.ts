@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getBundledResourceDir } from '../runtime/runtime-adapter'
+import { getPhiAgentDir } from '../runtime-paths'
 import { runOfficeCli, type OfficeCliRunResult } from './office-driver'
 
 export const OFFICECLI_PLATFORM_IDS = ['darwin-arm64', 'darwin-x64'] as const
@@ -34,7 +35,6 @@ const REQUIRED_BATCH_FLAGS = ['--input', '--commands', '--best-effort'] as const
 // The first execution of a newly installed binary can spend ~8 s in macOS's security assessment
 // (measured on the packaged app); later runs take ~0.1 s. Leave headroom so that is not an error.
 const PROBE_TIMEOUT_MS = 30_000
-const FETCH_HINT = 'Run `bun run office:fetch` to download the pinned OfficeCLI binary.'
 export const MAX_ACTIVE_OFFICE_DOCUMENTS = 3
 
 export interface OfficePlatformRelease {
@@ -60,7 +60,7 @@ export interface DetectOfficeRuntimeOptions {
   manifest?: OfficeManifest
   platform?: string
   arch?: string
-  /** Binary locations in priority order; defaults to the packaged then repository bundle. */
+  /** Binary locations in priority order; defaults to packaged, development, then user-installed. */
   candidates?: readonly string[]
   /** Directory for the probe processes; they never create files, but keep them away from projects. */
   cwd?: string
@@ -74,14 +74,25 @@ export function officePlatformId(platform: string, arch: string): OfficePlatform
     : undefined
 }
 
-/** Packaged extraResources path first, then the repository bundle used in development. */
+/** Legacy packaged path first, then development and the user-writable Phi install location. */
 export function officeBinaryCandidates(
   platformId: OfficePlatformId,
-  options: { resourcesPath?: string; bundledOfficeDir: string }
+  options: { resourcesPath?: string; bundledOfficeDir: string; agentDir?: string }
 ): string[] {
   const bundled = join(options.bundledOfficeDir, 'officecli', platformId, 'officecli')
-  if (typeof options.resourcesPath !== 'string') return [bundled]
-  return [join(options.resourcesPath, 'office', 'officecli', platformId, 'officecli'), bundled]
+  const userInstalled = join(
+    options.agentDir ?? getPhiAgentDir(),
+    'office',
+    'officecli',
+    platformId,
+    'officecli'
+  )
+  if (typeof options.resourcesPath !== 'string') return [bundled, userInstalled]
+  return [
+    join(options.resourcesPath, 'office', 'officecli', platformId, 'officecli'),
+    bundled,
+    userInstalled
+  ]
 }
 
 export function parseOfficeManifest(raw: unknown): OfficeManifest {
@@ -178,10 +189,11 @@ export async function detectOfficeRuntime(
   const candidates = options.candidates ?? defaultCandidates(platformId)
   const binaryPath = candidates.find((candidate) => existsSync(candidate))
   if (!binaryPath) {
+    const expectedPath = candidates[candidates.length - 1] ?? ''
     return {
       state: 'missing',
-      expectedPath: candidates[candidates.length - 1] ?? '',
-      hint: FETCH_HINT
+      expectedPath,
+      hint: `请将已校验的 OfficeCLI 安装到 ${expectedPath} 后重试。`
     }
   }
 

@@ -53,10 +53,10 @@ function archName(arch) {
 
 export async function afterPack(context) {
   const resourcesDir = context.packager.getResourcesDir(context.appOutDir)
-  if (context.electronPlatformName === 'darwin') {
+  if (context.electronPlatformName === 'darwin' || context.electronPlatformName === 'linux') {
     const arch = archName(context.arch)
     if (!arch) throw new Error(`afterPack: unsupported architecture ${context.arch}`)
-    assertBundledBun(resourcesDir, `darwin-${arch}`)
+    assertBundledBun(resourcesDir, `${context.electronPlatformName}-${arch}`)
   }
   const restored = restoreOmpWorkerAssets(repoRoot, path.join(resourcesDir, 'app.asar.unpacked'))
   console.log(`  • restored ${restored.length} OMP worker asset(s) into app.asar.unpacked`)

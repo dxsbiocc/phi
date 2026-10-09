@@ -92,6 +92,16 @@ test('resource check allows cross-compiled remote helper artifacts', () => {
   )
 })
 
+test('resource check allows developer-fetched OfficeCLI while rejecting adjacent leftovers', () => {
+  assert.deepEqual(
+    offendingResourcePaths(['resources/office/officecli/darwin-arm64/officecli']),
+    []
+  )
+  assert.deepEqual(offendingResourcePaths(['resources/office/officecli-backup/officecli']), [
+    'resources/office/officecli-backup/officecli'
+  ])
+})
+
 test('resource check rejects Nextflow leftovers and other untracked files', () => {
   const untracked = [
     'resources/wrappers/modules/local/differential-expression/deseq2/.nextflow/x',

@@ -19,6 +19,11 @@ const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [
     section: 'mac.extraResources',
     from: 'resources/runtime/bun/darwin-${arch}',
     to: 'runtime/bun/darwin-${arch}'
+  },
+  {
+    section: 'linux.extraResources',
+    from: 'resources/runtime/bun/linux-${arch}',
+    to: 'runtime/bun/linux-${arch}'
   }
 ]
 

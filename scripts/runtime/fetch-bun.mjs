@@ -18,7 +18,7 @@ const MAX_BUN_BINARY_BYTES = 128 * 1024 * 1024
 
 // Phi ids are `${process.platform}-${process.arch}`. The manifest can add more
 // targets without changing the download/extraction flow.
-export const BUN_PLATFORM_IDS = ['darwin-arm64']
+export const BUN_PLATFORM_IDS = ['darwin-arm64', 'linux-x64']
 
 export function bunPlatformId(platform = process.platform, arch = process.arch) {
   const id = `${platform}-${arch}`
@@ -124,23 +124,28 @@ function extractExecutable(archive, archivePath) {
   }
 }
 
-function fetchPlatform(manifest, platformId) {
+function downloadArchive(url, destination) {
+  execFileSync('curl', ['-fsSL', '--retry', '5', '--retry-all-errors', '-o', destination, url], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'ignore', 'pipe']
+  })
+}
+
+export function fetchBunPlatform(manifest, platformId, options = {}) {
   const release = lookupBunPlatform(manifest, platformId)
   if (!release) {
     fail(`fetch-bun: resources/runtime/manifest.json has no Bun release for ${platformId}`)
   }
 
   const target = path.join(
-    repoRoot,
-    'resources',
-    'runtime',
+    options.runtimeDir ?? path.join(repoRoot, 'resources', 'runtime'),
     'bun',
     platformId,
     bunFileName(platformId)
   )
   if (existsSync(target) && fileSha256(target) === release.executableSha256) {
     chmodSync(target, 0o755)
-    return
+    return target
   }
 
   const directory = path.dirname(target)
@@ -151,11 +156,8 @@ function fetchPlatform(manifest, platformId) {
   rmSync(partial, { force: true })
 
   try {
-    execFileSync(
-      'curl',
-      ['-fsSL', '--retry', '5', '--retry-all-errors', '-o', archive, release.url],
-      { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] }
-    )
+    const download = options.download ?? downloadArchive
+    download(release.url, archive)
   } catch (error) {
     rmSync(archive, { force: true })
     fail(`fetch-bun: download failed for ${platformId}: ${errorText(error)}`)
@@ -190,12 +192,13 @@ function fetchPlatform(manifest, platformId) {
   renameSync(partial, target)
   const version = typeof manifest.bun?.version === 'string' ? manifest.bun.version : 'unknown'
   console.log(`fetch-bun: downloaded ${platformId} (${version})`)
+  return target
 }
 
 function main() {
   const manifest = loadManifest()
   for (const platformId of selectedPlatforms(process.argv.slice(2))) {
-    fetchPlatform(manifest, platformId)
+    fetchBunPlatform(manifest, platformId)
   }
 }
 

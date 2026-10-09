@@ -580,6 +580,20 @@ test('office_read returns only the host error code and Chinese message to the mo
   assert.doesNotMatch(text, /private|secret|4242|draftPath|residentPid/u)
 })
 
+test('office_read returns clear missing and unsupported runtime failures instead of throwing', async () => {
+  const failures = [
+    { code: 'missing', message: 'Office 支持尚未安装，请先完成用户级安装' },
+    { code: 'unsupported-platform', message: '当前平台暂不支持 Office' }
+  ]
+  for (const failure of failures) {
+    const tool = buildOfficeReadTool(async () => ({ ok: false, error: failure }))
+    const result = await tool.execute('call-runtime-unavailable', {}, undefined, {} as never)
+
+    assert.equal(result.isError, true)
+    assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), failure)
+  }
+})
+
 test('office_read never emits a tool result larger than the Office read byte limit', async () => {
   const response = {
     revision: 1,

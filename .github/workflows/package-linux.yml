@@ -1,0 +1,66 @@
+name: Package Linux x64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: AppImage and deb
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2.0.2
+        with:
+          bun-version: '1.3.14'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22.15.0'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build Linux packages
+        run: bun run build:linux
+
+      - name: Check package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(dist/*.AppImage)
+          debs=(dist/*.deb)
+          if (( ${#appimages[@]} == 0 )); then
+            echo "No AppImage artifact found in dist/" >&2
+            exit 1
+          fi
+          if (( ${#debs[@]} == 0 )); then
+            echo "No deb artifact found in dist/" >&2
+            exit 1
+          fi
+          for artifact in "${appimages[@]}" "${debs[@]}"; do
+            printf '%s: %s bytes\n' "$artifact" "$(stat -c '%s' "$artifact")"
+            sha256sum "$artifact"
+          done
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: Phi-linux-x64
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error

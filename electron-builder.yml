@@ -147,8 +147,6 @@ mac:
       to: runtime/micromamba/darwin-${arch}
     - from: resources/runtime/bun/darwin-${arch}
       to: runtime/bun/darwin-${arch}
-    - from: resources/office/officecli/darwin-${arch}
-      to: office/officecli/darwin-${arch}
   icon: build/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
@@ -161,17 +159,30 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
+  executableName: phi
+  icon: build/icon.png
   extraResources:
     - from: resources/runtime/micromamba/linux-${arch}
       to: runtime/micromamba/linux-${arch}
+    - from: resources/runtime/bun/linux-${arch}
+      to: runtime/bun/linux-${arch}
   target:
-    - AppImage
-    - snap
-    - deb
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
   maintainer: Phi Science
   category: Utility
+  synopsis: Local scientific AI workbench
+  description: A local desktop workbench for scientific AI workflows
+  desktop:
+    entry:
+      Name: Phi
+      Icon: phi
 appImage:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: Phi-${version}-${arch}.${ext}
 npmRebuild: false
 # Restores worker assets the node_modules copier strips (*.d.ts, CHANGELOG.md).
 afterPack: ./scripts/build/after-pack.mjs

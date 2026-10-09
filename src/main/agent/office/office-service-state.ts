@@ -357,9 +357,8 @@ export function importError(requestId: string, error: unknown): OfficeImportStat
 export function runtimeMessage(
   status: Exclude<OfficeRuntimeStatus, { state: 'available' }>
 ): string {
-  if (status.state === 'missing') return `OfficeCLI 未安装。${status.hint}`
-  if (status.state === 'unsupported-platform')
-    return `当前平台不支持 Office 实时预览：${status.platform}`
+  if (status.state === 'missing') return `Office 支持尚未安装。${status.hint}`
+  if (status.state === 'unsupported-platform') return `当前平台暂不支持 Office：${status.platform}`
   if (status.state === 'version-mismatch') {
     return `OfficeCLI 版本不匹配：需要 ${status.expected}，当前为 ${status.found}`
   }

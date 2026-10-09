@@ -38,6 +38,14 @@ test('preview failures always have an explicit rendering label', () => {
     '预览渲染失败：首批正文未出现'
   )
   assert.equal(officePanelErrorMessage('open_failed', '无法打开文档'), '无法打开文档')
+  assert.equal(
+    officePanelErrorMessage('missing', 'Office 支持尚未安装，请先完成用户级安装'),
+    'Office 支持尚未安装，请先完成用户级安装'
+  )
+  assert.equal(
+    officePanelErrorMessage('unsupported-platform', '当前平台暂不支持 Office'),
+    '当前平台暂不支持 Office'
+  )
 })
 
 test('save toolbar distinguishes source drafts, progress, failure retry, and frozen state', () => {

@@ -20,7 +20,7 @@ import {
   copyOmpWorkerClosure,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
-import { assertBundledBun } from '../scripts/build/after-pack.mjs'
+import { afterPack, assertBundledBun } from '../scripts/build/after-pack.mjs'
 import {
   checkAsarUnpack,
   globToRegExp,
@@ -53,14 +53,15 @@ test('asar check reports a missing arch-specific Bun resource mapping', () => {
       ].join('\n')
     )
     assert.deepEqual(missingExtraResourceMappings(root), [
-      'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}'
+      'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}',
+      'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}'
     ])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('electron-builder packages Bun as a macOS arch-specific external resource', () => {
+test('electron-builder packages Bun as arch-specific external resources', () => {
   const config = parse(readFileSync(path.join(repoRoot, 'electron-builder.yml'), 'utf8'))
   assert.ok(config.files.includes('!resources/runtime/bun/**'))
   assert.ok(
@@ -68,6 +69,13 @@ test('electron-builder packages Bun as a macOS arch-specific external resource',
       (entry: { from?: string; to?: string }) =>
         entry.from === 'resources/runtime/bun/darwin-${arch}' &&
         entry.to === 'runtime/bun/darwin-${arch}'
+    )
+  )
+  assert.ok(
+    config.linux.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/bun/linux-${arch}' &&
+        entry.to === 'runtime/bun/linux-${arch}'
     )
   )
   assert.match(
@@ -86,6 +94,26 @@ test('afterPack rejects a packaged app with a missing or non-executable Bun', ()
     assert.throws(() => assertBundledBun(root, 'darwin-arm64'), /not executable/u)
     chmodSync(bunPath, 0o755)
     assert.equal(assertBundledBun(root, 'darwin-arm64'), bunPath)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-linux-packaged-bun-'))
+  const bunPath = path.join(root, 'runtime', 'bun', 'linux-x64', 'bun')
+  const context = {
+    appOutDir: root,
+    // electron-builder passes its Arch enum; x64 is index 1.
+    arch: 1,
+    electronPlatformName: 'linux',
+    packager: { getResourcesDir: () => root }
+  }
+  try {
+    await assert.rejects(() => afterPack(context), /missing bundled Bun.*linux-x64/u)
+    mkdirSync(path.dirname(bunPath), { recursive: true })
+    writeFileSync(bunPath, '#!/bin/sh\n')
+    await assert.rejects(() => afterPack(context), /not executable.*linux-x64/u)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

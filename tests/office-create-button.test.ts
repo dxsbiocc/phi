@@ -174,6 +174,35 @@ test('create failure shows a readable error state and never opens a draft', asyn
   assert.deepEqual(createdPaths, [])
 })
 
+test('a missing Office runtime remains an actionable create error state', async () => {
+  const states: OfficeCreateUiState[] = []
+  const controller = createOfficeCreateController({
+    bridge: {
+      ...officeBridge(true),
+      create: async () => ({
+        ok: true,
+        value: {
+          state: 'error',
+          requestId: 'create-missing',
+          code: 'missing',
+          message: 'Office 支持尚未安装，请先完成用户级安装'
+        }
+      })
+    },
+    requestIdFactory: () => 'create-missing',
+    onState: (state) => states.push(state),
+    onCreated: () => assert.fail('missing runtime must not open a draft')
+  })
+
+  await controller.submit()
+
+  assert.deepEqual(states.at(-1), {
+    state: 'error',
+    code: 'missing',
+    message: 'Office 支持尚未安装，请先完成用户级安装'
+  })
+})
+
 test('a thrown PowerPoint create request reports the requested product instead of Excel', async () => {
   const states: OfficeCreateUiState[] = []
   const controller = createOfficeCreateController({

@@ -153,20 +153,28 @@ test('office platform ids cover macOS only', () => {
   assert.equal(officePlatformId('win32', 'x64'), undefined)
 })
 
-test('binary candidates prefer the packaged resources path over the repository bundle', () => {
+test('binary candidates recognize the user-writable Phi install location after bundled paths', () => {
   assert.deepEqual(
     officeBinaryCandidates('darwin-arm64', {
       resourcesPath: '/App/Contents/Resources',
-      bundledOfficeDir: '/repo/resources/office'
+      bundledOfficeDir: '/repo/resources/office',
+      agentDir: '/Users/example/.phi'
     }),
     [
       '/App/Contents/Resources/office/officecli/darwin-arm64/officecli',
-      '/repo/resources/office/officecli/darwin-arm64/officecli'
+      '/repo/resources/office/officecli/darwin-arm64/officecli',
+      '/Users/example/.phi/office/officecli/darwin-arm64/officecli'
     ]
   )
   assert.deepEqual(
-    officeBinaryCandidates('darwin-arm64', { bundledOfficeDir: '/repo/resources/office' }),
-    ['/repo/resources/office/officecli/darwin-arm64/officecli']
+    officeBinaryCandidates('darwin-arm64', {
+      bundledOfficeDir: '/repo/resources/office',
+      agentDir: '/Users/example/.phi'
+    }),
+    [
+      '/repo/resources/office/officecli/darwin-arm64/officecli',
+      '/Users/example/.phi/office/officecli/darwin-arm64/officecli'
+    ]
   )
 })
 
@@ -181,14 +189,18 @@ test('an unsupported platform is reported without running anything', async () =>
   }
 })
 
-test('a missing binary reports where it was expected and how to fetch it', async () => {
+test('a missing binary reports the user installation target without offering an in-app download', async () => {
   const fixture = makeFixture()
   try {
     const missing = join(fixture.root, 'nowhere', 'officecli')
     const status = await detect(fixture, { candidates: [join(fixture.root, 'a'), missing] })
     assert.equal(status.state, 'missing')
     assert.equal(status.state === 'missing' && status.expectedPath, missing)
-    assert.match(status.state === 'missing' ? status.hint : '', /office:fetch/)
+    assert.equal(
+      status.state === 'missing' ? status.hint : '',
+      `请将已校验的 OfficeCLI 安装到 ${missing} 后重试。`
+    )
+    assert.doesNotMatch(status.state === 'missing' ? status.hint : '', /下载|office:fetch/u)
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
   }

@@ -69,6 +69,25 @@ test('prefers packaged bun over the inherited PATH', () => {
   })
 })
 
+test('resolves the packaged Linux x64 Bun from the platform-specific resource path', () => {
+  withTempDir((root) => {
+    const resourcesPath = join(root, 'resources')
+    const bundled = fakeBun(join(resourcesPath, 'runtime', 'bun', 'linux-x64'))
+
+    assert.equal(
+      findBunExecutable({
+        env: { PATH: FINDER_PATH },
+        homeDir: join(root, 'home'),
+        platform: 'linux',
+        arch: 'x64',
+        resourcesPath,
+        readLoginShellPath: noLoginShell
+      }),
+      bundled
+    )
+  })
+})
+
 test('falls back from a non-executable packaged bun to PATH', () => {
   withTempDir((root) => {
     const resourcesPath = join(root, 'Phi.app', 'Contents', 'Resources')

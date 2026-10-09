@@ -106,6 +106,35 @@ describe('Office import UI', () => {
     assert.deepEqual(opened, ['/private/session/import-1/data.xlsx'])
   })
 
+  it('keeps an unsupported platform as an actionable import error state', async () => {
+    const states: OfficeImportUiState[] = []
+    const controller = createOfficeImportController({
+      bridge: {
+        ...bridge(),
+        importFile: async () => ({
+          ok: true,
+          value: {
+            state: 'error',
+            requestId: 'import-unsupported',
+            code: 'unsupported-platform',
+            message: '当前平台暂不支持 Office'
+          }
+        })
+      },
+      requestIdFactory: () => 'import-unsupported',
+      onState: (state) => states.push(state),
+      onImported: () => assert.fail('unsupported platform must not open a draft')
+    })
+
+    await controller.submit('/project/data.csv', 'csv')
+
+    assert.deepEqual(states.at(-1), {
+      state: 'error',
+      code: 'unsupported-platform',
+      message: '当前平台暂不支持 Office'
+    })
+  })
+
   it('cancels a preparing import and ignores a late ready result', async () => {
     let resolveImport:
       ((value: { ok: false; error: { code: string; message: string } }) => void) | undefined

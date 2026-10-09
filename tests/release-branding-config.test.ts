@@ -8,8 +8,22 @@ const builderText = readFileSync('electron-builder.yml', 'utf8')
 const builder = parse(builderText) as Record<string, unknown> & {
   appId?: string
   productName?: string
-  linux?: { maintainer?: string }
-  mac?: { extendInfo?: Record<string, string | null> }
+  linux?: {
+    category?: string
+    description?: string
+    desktop?: { entry?: Record<string, string> }
+    executableName?: string
+    icon?: string
+    maintainer?: string
+    synopsis?: string
+    target?: Array<{ target?: string; arch?: string[] }>
+  }
+  appImage?: { artifactName?: string }
+  files?: string[]
+  mac?: {
+    extendInfo?: Record<string, string | null>
+    extraResources?: Array<{ from?: string; to?: string }>
+  }
   publish?: { provider?: string; url?: string }
 }
 const packageText = readFileSync('package.json', 'utf8')
@@ -72,4 +86,27 @@ test('macOS permission descriptions match the file workflows Phi actually uses',
       'Phi accesses documents and project files you choose to open.',
     NSDownloadsFolderUsageDescription: 'Phi saves exported and downloaded results where you choose.'
   })
+})
+
+test('Linux packages are branded x64 AppImage and deb artifacts with desktop metadata', () => {
+  assert.equal(builder.linux?.executableName, 'phi')
+  assert.equal(builder.linux?.icon, 'build/icon.png')
+  assert.deepEqual(builder.linux?.target, [
+    { target: 'AppImage', arch: ['x64'] },
+    { target: 'deb', arch: ['x64'] }
+  ])
+  assert.equal(builder.linux?.category, 'Utility')
+  assert.equal(builder.linux?.synopsis, 'Local scientific AI workbench')
+  assert.equal(builder.linux?.description, 'A local desktop workbench for scientific AI workflows')
+  assert.deepEqual(builder.linux?.desktop?.entry, { Name: 'Phi', Icon: 'phi' })
+  assert.equal(builder.appImage?.artifactName, 'Phi-${version}-${arch}.${ext}')
+  assert.equal(builderText.includes('snap'), false)
+})
+
+test('officecli stays out of every packaged application', () => {
+  assert.ok(builder.files?.includes('!resources/office/officecli/**'))
+  assert.equal(
+    builder.mac?.extraResources?.some((entry) => entry.from?.includes('office/officecli')),
+    false
+  )
 })
