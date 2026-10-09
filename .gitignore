@@ -8,9 +8,13 @@ out
 *.tsbuildinfo
 *.key.pem
 
-# Micromamba binaries downloaded by `npm run runtime:fetch`. Version, URL, and
+# Micromamba binaries downloaded by `bun run runtime:fetch`. Version, URL, and
 # sha256 live in resources/runtime/manifest.json, which is committed.
 resources/runtime/micromamba/
+
+# Remote helper binaries and their generated checksum manifest are produced by
+# `bun run build:helper`; source and the canonical version remain tracked.
+resources/remote-helper/
 
 # OfficeCLI binaries downloaded by `bun run office:fetch`. Version, URL, and sha256
 # live in resources/office/manifest.json, which is committed.

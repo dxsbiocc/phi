@@ -7,13 +7,18 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 // Untracked files under resources/ that lint accepts. Anything else is a run
-// leftover and must not ship. `.DS_Store` is macOS noise (also excluded from
-// `resources/runtime/micromamba/` holds binaries from `npm run runtime:fetch`;
-// `resources/office/officecli/` holds the OfficeCLI binary from `bun run office:fetch`.
+// leftover and must not ship. `.DS_Store` is macOS noise.
+// `resources/runtime/micromamba/` holds binaries from `bun run runtime:fetch`;
+// `resources/office/officecli/` holds the OfficeCLI binary from `bun run office:fetch`;
+// `resources/remote-helper/` holds cross-compiled output from `bun run build:helper`.
 const ALLOWED_UNTRACKED_RESOURCES = {
   basenames: new Set(['.DS_Store']),
   paths: new Set(['resources/README.md']),
-  prefixes: ['resources/runtime/micromamba/', 'resources/office/officecli/']
+  prefixes: [
+    'resources/runtime/micromamba/',
+    'resources/office/officecli/',
+    'resources/remote-helper/'
+  ]
 }
 
 const MAX_LISTED_OFFENDING_PATHS = 50
@@ -44,6 +49,7 @@ const PHI_RESOURCE_ROOTS = [
   'resources/agents',
   'resources/office',
   'resources/palettes',
+  'resources/remote-helper',
   'resources/runtime',
   'resources/skills/create-wrapper',
   'resources/plugins/office'
@@ -56,9 +62,7 @@ export function misplacedPhiResourcePaths(paths) {
       path.posix.basename(normalized) === '.DS_Store' ||
       PHI_RESOURCE_FILES.has(normalized) ||
       PHI_RESOURCE_PARENTS.has(normalized) ||
-      PHI_RESOURCE_ROOTS.some(
-        (root) => normalized === root || normalized.startsWith(`${root}/`)
-      )
+      PHI_RESOURCE_ROOTS.some((root) => normalized === root || normalized.startsWith(`${root}/`))
     )
   })
 }

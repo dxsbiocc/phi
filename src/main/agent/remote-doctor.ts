@@ -12,6 +12,7 @@ import {
   readLatestCapabilityProfileForHost
 } from './workspace-host/capability-profile-store'
 import { capabilityToolchainChecks } from './workspace-host/capability-toolchain-checks'
+import { reconcileRemoteHelperProfile } from './workspace-host/helper-installer'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import {
   diagnoseSshConnectionFailure,
@@ -194,11 +195,12 @@ export async function remoteDoctor(
   checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
   try {
     if (selected.scope === 'connection') {
+      const latest = readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
       return report(
         hostProfileId,
         checks,
         now,
-        readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
+        latest ? reconcileRemoteHelperProfile(latest) : undefined
       )
     }
     checks.push(
@@ -264,7 +266,10 @@ export async function remoteDoctor(
     })
     checks.push(shell)
     if (shell.status !== 'ok') return report(hostProfileId, checks, now)
-    const capabilityProfile =
+    const profileKey = remotePath
+      ? { hostAlias: profile.hostAlias, projectRoot: remotePath }
+      : undefined
+    const detectedProfile =
       remotePath && validRemotePath(remotePath) && session.execWithInput
         ? await getCapabilityProfile(
             session,
@@ -277,6 +282,10 @@ export async function remoteDoctor(
             }
           )
         : undefined
+    const capabilityProfile =
+      detectedProfile && profileKey
+        ? reconcileRemoteHelperProfile(detectedProfile, { profileKey, agentDir })
+        : detectedProfile
     if (selected.scope === 'workspace') {
       return report(hostProfileId, checks, now, capabilityProfile)
     }

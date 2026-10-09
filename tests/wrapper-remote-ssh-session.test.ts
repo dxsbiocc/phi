@@ -277,6 +277,23 @@ test('OpenSSH session uses one private master and executes file operations throu
   )
 })
 
+test('closing an OpenSSH session terminates its raw stdio channel', async () => {
+  const fixture = fakeOpenSsh()
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  assert.ok(session.openStdio)
+  const channel = await session.openStdio('cat')
+  const echoed = new Promise<string>((resolve) =>
+    channel.stdout.once('data', (chunk: Buffer) => resolve(chunk.toString('utf8')))
+  )
+  channel.stdin.write('helper-frame')
+
+  assert.equal(await echoed, 'helper-frame')
+  const closed = channel.closed
+  await session.close()
+  const result = await closed
+  assert.ok(result.signal || result.code !== null)
+})
+
 test('writeTextFile streams content over stdin so large files never hit the argv limit', async () => {
   const fixture = fakeOpenSsh()
   const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)

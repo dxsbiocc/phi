@@ -13,6 +13,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 // Directories the OMP copy plugin writes into, checked as built when present.
 const BUILT_WORKER_DIRS = ['out/main/agent', 'out/shared']
+const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [{ from: 'resources/remote-helper', to: 'remote-helper' }]
 
 export function globToRegExp(glob) {
   let pattern = ''
@@ -45,6 +46,24 @@ export function readAsarUnpackGlobs(root = repoRoot) {
   return globs
 }
 
+function normalizedPath(value) {
+  return value.split('\\').join('/').replace(/\/$/, '')
+}
+
+export function missingExtraResourceMappings(root = repoRoot) {
+  const config = parse(readFileSync(path.join(root, 'electron-builder.yml'), 'utf8'))
+  const entries = Array.isArray(config?.extraResources) ? config.extraResources : []
+  return REQUIRED_EXTRA_RESOURCE_MAPPINGS.filter((required) =>
+    entries.every((entry) => {
+      if (typeof entry !== 'object' || entry === null) return true
+      return (
+        normalizedPath(String(entry.from ?? '')) !== required.from ||
+        normalizedPath(String(entry.to ?? '')) !== required.to
+      )
+    })
+  ).map(({ from, to }) => `${from} -> ${to}`)
+}
+
 function listFiles(root, dir) {
   const absolute = path.join(root, dir)
   if (!existsSync(absolute)) return []
@@ -72,10 +91,17 @@ export function checkAsarUnpack(root = repoRoot) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const missing = checkAsarUnpack()
-  if (missing.length > 0) {
-    console.error('electron-builder.yml asarUnpack misses files the OMP worker needs at runtime:')
-    for (const filePath of missing) console.error(`  - ${filePath}`)
+  const missingResources = missingExtraResourceMappings()
+  if (missing.length > 0 || missingResources.length > 0) {
+    if (missing.length > 0) {
+      console.error('electron-builder.yml asarUnpack misses files the OMP worker needs at runtime:')
+      for (const filePath of missing) console.error(`  - ${filePath}`)
+    }
+    if (missingResources.length > 0) {
+      console.error('electron-builder.yml extraResources misses required mappings:')
+      for (const mapping of missingResources) console.error(`  - ${mapping}`)
+    }
     process.exit(1)
   }
-  console.log('asarUnpack covers the OMP worker closure.')
+  console.log('asarUnpack covers the OMP worker closure and packaged helper resources.')
 }

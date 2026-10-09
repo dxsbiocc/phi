@@ -11,6 +11,7 @@ test('Phi resources retain core assets and the private Office plugin', () => {
       'resources/agents/Wrapper.md',
       'resources/runtime/manifest.json',
       'resources/runtime/micromamba/darwin-arm64/micromamba',
+      'resources/remote-helper/0.1.0/linux-amd64/phi-helper',
       'resources/office/manifest.json',
       'resources/office/officecli/darwin-arm64/officecli',
       'resources/palettes/default.yaml',
@@ -71,6 +72,17 @@ test('resource check allows fetched micromamba binaries and nothing else under r
       'resources/runtime/micromamba',
       'resources/runtime/micromamba-extra'
     ]
+  )
+})
+
+test('resource check allows cross-compiled remote helper artifacts', () => {
+  assert.deepEqual(
+    offendingResourcePaths([
+      'resources/remote-helper/manifest.json',
+      'resources/remote-helper/0.1.0/linux-amd64/phi-helper',
+      'resources/remote-helper/0.1.0/linux-arm64/phi-helper'
+    ]),
+    []
   )
 })
 

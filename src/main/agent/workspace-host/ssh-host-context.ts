@@ -8,13 +8,25 @@ import {
   type RemoteWorkspacePathMode
 } from '../remote-workspace-boundary'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
-import { WorkspaceHostError } from './types'
+import type { CapabilityProfileKey } from './capability-profile-store'
+import type { RemoteHelperArtifact } from './helper-installer'
+import type { ProbedHostCapabilityProfile } from './probe-parse'
+import { WorkspaceHostError, type HostCapabilityProfile } from './types'
+
+export interface SshHelperConfig {
+  profile: ProbedHostCapabilityProfile
+  profileKey: CapabilityProfileKey
+  artifact: RemoteHelperArtifact
+  agentDir?: string
+}
 
 export interface SshHostConfig {
   remoteRoot: string
   canonicalRoot: string
   connect: () => Promise<RemoteSshSession>
   platform?: { os: string; arch: string }
+  capabilityProfile?: HostCapabilityProfile
+  helper?: SshHelperConfig
 }
 
 function pathError(): WorkspaceHostError {
@@ -36,11 +48,13 @@ export class SshHostContext {
   readonly remoteRoot: string
   readonly canonicalRoot: string
   readonly platform: { os: string; arch: string }
+  readonly helper?: SshHelperConfig
 
   constructor(private readonly config: SshHostConfig) {
     this.remoteRoot = checkedRoot(config.remoteRoot)
     this.canonicalRoot = checkedRoot(config.canonicalRoot)
     this.platform = config.platform ?? { os: 'remote', arch: 'unknown' }
+    this.helper = config.helper
   }
 
   candidate(path: string): string {
@@ -68,12 +82,16 @@ export class SshHostContext {
   }
 
   async withSession<T>(operation: (session: RemoteSshSession) => Promise<T>): Promise<T> {
-    const session = await this.config.connect()
+    const session = await this.connect()
     try {
       return await operation(session)
     } finally {
       await session.close()
     }
+  }
+
+  connect(): Promise<RemoteSshSession> {
+    return this.config.connect()
   }
 
   async resolve(

@@ -22,7 +22,13 @@ files:
   - '!resources/**/work/**'
   - '!resources/**/results/**'
   - '!resources/runtime/micromamba/**'
+  - '!resources/remote-helper/**'
   - '!resources/office/officecli/**'
+extraResources:
+  # Both Linux helpers ship on every desktop platform because the connected
+  # remote host, rather than the desktop host, determines the selected binary.
+  - from: resources/remote-helper
+    to: remote-helper
 asarUnpack:
   - resources/**
   # The OMP worker runs under bun, which cannot read inside app.asar: the worker,

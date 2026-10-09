@@ -95,6 +95,13 @@ export interface HostCapability {
   version?: string
 }
 
+export type HelperAffectedCapability = 'fs' | 'exec' | 'background'
+
+export interface HostHelperStatus extends HostCapability {
+  version: string
+  affectedCapabilities: readonly HelperAffectedCapability[]
+}
+
 export type HostPrerequisiteCapabilities = Readonly<Record<string, HostCapability>>
 
 export interface HostStorageCapabilities {
@@ -123,6 +130,7 @@ export interface HostCapabilityProfile {
     }
   }
   helperVersion?: string
+  helperStatus?: HostHelperStatus
   helperCompatibility?: HostCapability
   probedAt: string
   fs: HostCapability
@@ -212,6 +220,7 @@ export interface WorkspaceHost {
   watch?: WorkspaceWatch
   forwardPort?: WorkspacePortForward
   capabilities(): HostCapabilityProfile
+  close?(): Promise<void>
 }
 
 export class WorkspaceHostError extends Error {

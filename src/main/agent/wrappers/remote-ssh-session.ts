@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import type { Readable, Writable } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
@@ -35,6 +36,14 @@ export interface RemoteExecBoundedOptions {
   signal?: AbortSignal
 }
 
+export interface RemoteStdioProcess {
+  stdin: Writable
+  stdout: Readable
+  stderr: Readable
+  closed: Promise<{ code: number | null; signal: string | null }>
+  close(): Promise<void>
+}
+
 /** The POSIX remote operations used by detached and Slurm wrapper runners. */
 export interface RemoteSshSession {
   exec(command: string): Promise<RemoteExecResult>
@@ -51,6 +60,8 @@ export interface RemoteSshSession {
   exists(remotePath: string): Promise<boolean>
   /** `timeoutMs` overrides the session's exec timeout, for large files such as container images. */
   uploadFile(localPath: string, remotePath: string, options?: { timeoutMs?: number }): Promise<void>
+  /** Optional raw stdio channel for a connection-scoped remote helper. */
+  openStdio?: (command: string) => Promise<RemoteStdioProcess>
   close(): Promise<void>
 }
 
@@ -405,6 +416,35 @@ function runProcessBounded(
   })
 }
 
+function remoteStdioProcess(
+  child: ChildProcessWithoutNullStreams,
+  signal: AbortSignal
+): RemoteStdioProcess {
+  let finished = false
+  const closed = new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', (code, exitSignal) => {
+      finished = true
+      signal.removeEventListener('abort', onAbort)
+      resolve({ code, signal: exitSignal })
+    })
+  })
+  const onAbort = (): void => {
+    child.stdin.end()
+    if (!finished) child.kill('SIGTERM')
+  }
+  signal.addEventListener('abort', onAbort, { once: true })
+  if (signal.aborted) onAbort()
+  const close = async (): Promise<void> => {
+    child.stdin.end()
+    await Promise.race([closed, delay(250)])
+    if (!finished) child.kill('SIGTERM')
+    await Promise.race([closed, delay(2_000)])
+    if (!finished) child.kill('SIGKILL')
+  }
+  return { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr, closed, close }
+}
+
 /**
  * Reuses a private OpenSSH master for command and SFTP channels. Adapted from
  * deepseek-harness packages/ssh/ssh/src/index.ts at
@@ -455,6 +495,7 @@ export async function connectRemoteSshSession(
   })
 
   const execTimeout = config.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS
+  const stdioChannels = new Set<RemoteStdioProcess>()
   let closed = false
   let closing: Promise<void> | undefined
   const checkOpen = (): void => {
@@ -486,6 +527,7 @@ export async function connectRemoteSshSession(
     closing ??= (async () => {
       closed = true
       operations.abort()
+      await Promise.allSettled([...stdioChannels].map((channel) => channel.close()))
       if (!masterClosed) {
         await runProcess(
           spawnImpl,
@@ -610,6 +652,23 @@ export async function connectRemoteSshSession(
         const failure = connectionFailureFromResult(result.stderr, result.code)
         if (failure) throw failure
         if (result.code !== 0) throw new Error(`远程上传文件失败: ${remotePath}`)
+      },
+      async openStdio(command) {
+        checkOpen()
+        let child: ChildProcessWithoutNullStreams
+        try {
+          child = spawnImpl('ssh', buildExecArgs(host, controlPath, command, config), {
+            stdio: ['pipe', 'pipe', 'pipe']
+          })
+        } catch (error) {
+          const diagnosis = diagnoseSshConnectionFailure(error)
+          if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
+          throw error
+        }
+        const channel = remoteStdioProcess(child, operations.signal)
+        stdioChannels.add(channel)
+        void channel.closed.finally(() => stdioChannels.delete(channel)).catch(() => undefined)
+        return channel
       },
       close
     }

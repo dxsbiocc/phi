@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   chmodSync,
   copyFileSync,
@@ -12,7 +12,8 @@ import { dirname, join } from 'node:path'
 
 import type {
   RemoteExecResult,
-  RemoteSshSession
+  RemoteSshSession,
+  RemoteStdioProcess
 } from '../../src/main/agent/wrappers/remote-ssh-session'
 
 /**
@@ -28,6 +29,7 @@ export interface LocalShellSession extends RemoteSshSession {
 }
 
 export function createLocalShellSession(remoteRoot?: string): LocalShellSession {
+  const stdioProcesses = new Set<ChildProcessWithoutNullStreams>()
   const session: LocalShellSession = {
     commands: [],
     uploads: [],
@@ -81,8 +83,36 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
       session.uploads.push({ localPath, remotePath })
       copyFileSync(localPath, remotePath)
     },
+    async openStdio(command): Promise<RemoteStdioProcess> {
+      const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+      stdioProcesses.add(child)
+      const closed = new Promise<{ code: number | null; signal: string | null }>(
+        (resolve, reject) => {
+          child.once('error', reject)
+          child.once('close', (code, signal) => {
+            stdioProcesses.delete(child)
+            resolve({ code, signal })
+          })
+        }
+      )
+      return {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        async close() {
+          child.stdin.end()
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+          await closed.catch(() => undefined)
+        }
+      }
+    },
     async close() {
       session.closed = true
+      for (const child of stdioProcesses) {
+        child.stdin.end()
+        child.kill('SIGTERM')
+      }
     }
   }
   return session

@@ -11,12 +11,21 @@ import {
   copyOmpWorkerClosure,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
-import { checkAsarUnpack, globToRegExp, uncoveredPaths } from '../scripts/check-asar-unpack.mjs'
+import {
+  checkAsarUnpack,
+  globToRegExp,
+  missingExtraResourceMappings,
+  uncoveredPaths
+} from '../scripts/check-asar-unpack.mjs'
 
 const repoRoot = process.cwd()
 
 test('asarUnpack covers the OMP worker, its copied closure and its runtime packages', () => {
   assert.deepEqual(checkAsarUnpack(repoRoot), [])
+})
+
+test('electron-builder distributes the remote helper outside the asar', () => {
+  assert.deepEqual(missingExtraResourceMappings(repoRoot), [])
 })
 
 test('worker closure follows relative imports beyond the old hand-maintained list', () => {
