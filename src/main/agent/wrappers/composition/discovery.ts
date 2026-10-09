@@ -21,7 +21,7 @@ import type {
 
 /**
  * Discovery for the agent-composition wrapper layout — see
- * docs/design/phi-wrapper-agent-composition-design.md section 4: scan
+ * resources/skills/create-wrapper/references/guide.md section 4: scan
  * `modules/**\/wrapper/wrapper.yaml` and `subworkflows/**\/wrapper/wrapper.yaml`
  * under the assembled installed tree, plus the same layout under
  * `wrappers/custom/` for user-authored wrappers. Package ownership and

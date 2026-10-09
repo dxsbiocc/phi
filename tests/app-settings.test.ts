@@ -27,6 +27,7 @@ test('app settings provide general preference defaults', () => {
   withTempAgentDir((agentDir) => {
     assert.deepEqual(readAppSettings(agentDir), {
       noProjectTaskFolder: join(agentDir, 'workspace'),
+      allowExternalFileRead: false,
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
       nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
     })
@@ -42,6 +43,7 @@ test('app settings update general preferences while preserving unknown fields', 
     const settings = updateAppSettings(
       {
         noProjectTaskFolder,
+        allowExternalFileRead: true,
         preventSleepDuringRuns: true,
         nextActionSuggestionsEnabled: false
       },
@@ -51,11 +53,13 @@ test('app settings update general preferences while preserving unknown fields', 
 
     assert.deepEqual(settings, {
       noProjectTaskFolder,
+      allowExternalFileRead: true,
       preventSleepDuringRuns: true,
       nextActionSuggestionsEnabled: false
     })
     assert.deepEqual(raw.custom, { keep: true })
     assert.equal(raw.noProjectTaskFolder, noProjectTaskFolder)
+    assert.equal(raw.allowExternalFileRead, true)
     assert.equal(existsSync(noProjectTaskFolder), true)
   })
 })

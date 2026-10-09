@@ -8,7 +8,7 @@ import type {
 
 /**
  * Parser for the minimal per-wrapper manifest described in
- * docs/design/phi-wrapper-agent-composition-design.md section 3 — NOT the
+ * resources/skills/create-wrapper/references/guide.md section 3 — NOT the
  * package manifest `packages/manifest.ts` parse (that one describes the
  * distributable tree unit; this one describes a single
  * `wrapper/wrapper.yaml` adapter beside a vendored nf-core module or

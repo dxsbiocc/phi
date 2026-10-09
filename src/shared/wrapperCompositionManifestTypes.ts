@@ -1,5 +1,5 @@
 // The minimal per-wrapper manifest shape described in
-// docs/design/phi-wrapper-agent-composition-design.md section 3 — a single
+// resources/skills/create-wrapper/references/guide.md section 3 — a single
 // `wrapper/wrapper.yaml` adapter beside a vendored nf-core module,
 // subworkflow, or full pipeline under `resources/wrappers/`. This is the
 // live schema the agent's composition discovery

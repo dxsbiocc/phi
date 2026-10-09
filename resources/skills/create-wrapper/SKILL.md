@@ -16,7 +16,7 @@ Phi contains the core agent, this skill, and validation/build scripts. phi-packa
 
 If either required checkout or write access is missing, report the missing requirement. This bundled skill may also be loaded by a packaged app, which does not contain the development scripts.
 
-Full design rationale: [docs/design/phi-wrapper-agent-composition-design.md](../../../docs/design/phi-wrapper-agent-composition-design.md). This skill is the practical how-to; read the design doc if something here is ambiguous.
+The complete design rationale is bundled with this skill in [references/guide.md](references/guide.md). This file is the practical how-to; read the bundled reference when the wrapper contract or composition model is ambiguous. Do not look for a project-level `docs/` checkout—the skill must remain self-contained after installation.
 
 ## Layout
 
@@ -61,8 +61,7 @@ This is the **agent-facing contract only** — not a full manifest, not a copy o
 
 ```yaml
 # Agent-facing wrapper adapter for the vendored <TOOL> module at ../main.nf.
-# Follows the minimal contract in
-# docs/design/phi-wrapper-agent-composition-design.md section 3.
+# Follows Phi's minimal agent-facing wrapper contract.
 id: <provider>/modules/<tool>
 name: <Human Name>
 summary: <One sentence, what it does>
@@ -85,7 +84,7 @@ outputs:
     primary: true               # exactly the output(s) that must exist after a successful run
 ```
 
-Rules (from the design doc, section 3 — do not deviate):
+Rules (from the [bundled design reference](references/guide.md#3-wrapper-contract) — do not deviate):
 
 - Every `required: true` param must have a value in `params.json` (or the agent must supply it): `wrapper_run` validates required params, `integer`/`boolean`/`string` types, `enum`, `minimum`/`maximum`, that plain-path `kind: input` values exist, and **rejects override keys that are neither declared in `wrapper.yaml` nor present in `params.json`** (typo guard). After a successful run it also fails the run if a `primary: true` output path is missing — so declare `primary` only on outputs that really appear under `${outdir}/...`.
 
@@ -103,7 +102,7 @@ Fixed skeleton — copy this shape, don't restructure it:
 ```groovy
 #!/usr/bin/env nextflow
 // Thin agent-facing adapter over the vendored module at ../main.nf.
-// See docs/design/phi-wrapper-agent-composition-design.md section 1.
+// Follows Phi's agent-facing wrapper entrypoint design.
 nextflow.enable.dsl = 2
 
 include { <PROCESS_NAME> } from '../main.nf'
@@ -269,9 +268,9 @@ Same triad and same smoke test; the reference example is `resources/wrappers/sub
 - A subworkflow with **alternative tools behind an `enum`** (`sortmerna` / `ribodetector` / `bowtie2`) needs a smoke test per tool, plus single-end vs paired-end for each that differs, and an up-front `error` when the chosen tool needs a file that wasn't given. Emulated (amd64-on-arm64) images can be slow: run long variants in the background and don't poll — a foreground Bash call is capped at 10 minutes.
 - Subworkflows whose `take:` needs several coordinated inputs (indexes, GTF, strandedness) are the hard ones — decide which inputs the wrapper builds internally (compose the index-building module, like `star/align`) versus exposes, and keep the public params to the few a user would really change.
 
-## Full pipelines (`workflows/` tier) — rare, read the design doc first
+## Full pipelines (`workflows/` tier) — rare, read the [bundled design reference](references/guide.md) first
 
-A complete vendored nf-core pipeline (e.g. `resources/wrappers/workflows/rna-seq/`) gets the same `wrapper/` adapter, but `wrapper/main.nf` is the pipeline's own real entrypoint copied one directory deeper (not hand-rewritten — relative `include` paths are mechanically adjusted from `./...` to `../...`), and `wrapper.yaml`'s `params` table is a deliberately small, curated subset of the pipeline's full `nextflow_schema.json` surface (100+ params typically exist; expose only the handful an agent would plausibly set — inputs, `outdir`, and any headline options like an aligner choice). This tier is exceptional — most wrapper work is a single module. See `resources/wrappers/workflows/rna-seq/wrapper/` and design doc section 4 ("Extended with a third root...") before attempting one.
+A complete vendored nf-core pipeline (e.g. `resources/wrappers/workflows/rna-seq/`) gets the same `wrapper/` adapter, but `wrapper/main.nf` is the pipeline's own real entrypoint copied one directory deeper (not hand-rewritten — relative `include` paths are mechanically adjusted from `./...` to `../...`), and `wrapper.yaml`'s `params` table is a deliberately small, curated subset of the pipeline's full `nextflow_schema.json` surface (100+ params typically exist; expose only the handful an agent would plausibly set — inputs, `outdir`, and any headline options like an aligner choice). This tier is exceptional — most wrapper work is a single module. Review `resources/wrappers/workflows/rna-seq/wrapper/` together with the bundled design reference's wrapper-contract and discovery principles before attempting one.
 
 ## Common pitfalls
 

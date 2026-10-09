@@ -43,6 +43,7 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onRespondApproval: () => undefined,
     onCopyDiagnostics: async () => '',
     noProjectTaskFolder: '/Users/example/Documents/Codex',
+    allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
     isSavingAppSettings: false,
@@ -191,6 +192,9 @@ test('settings dialog exposes general application settings', () => {
   assert.match(markup, /在项目外启动的任务默认存储数据的位置。/)
   assert.match(markup, /\/Users\/example\/Documents\/Codex/)
   assert.match(markup, /更改/)
+  assert.match(markup, /允许读取项目外文件/)
+  assert.match(markup, /仅用于文件悬停预览/)
+  assert.match(markup, /不会授予写入、执行或删除权限/)
   assert.match(markup, /运行任务时防止系统休眠/)
   assert.match(markup, /提示词建议/)
   assert.match(markup, /上下文压缩/)

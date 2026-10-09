@@ -171,7 +171,9 @@ function renderableLocalPathKind(
   if (isPathInsideDirectory(absolutePath, cwd)) {
     return localPathKindForReference(text, absolutePath, cwd, true)
   }
-  return localPathKinds.get(absolutePath) ?? null
+  return (
+    localPathKinds.get(absolutePath) ?? localPathKindForReference(text, absolutePath, cwd, false)
+  )
 }
 
 function syntaxLanguageForMarkdownCode(language: string | null): SyntaxLanguage {

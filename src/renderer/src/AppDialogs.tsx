@@ -70,6 +70,7 @@ export type AppDialogsProps = {
   themeFamily: ThemeFamily
   setThemeFamily: (family: ThemeFamily) => void
   noProjectTaskFolder: string
+  allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
   isSavingAppSettings: boolean
@@ -146,6 +147,7 @@ export default function AppDialogs({
   themeFamily,
   setThemeFamily,
   noProjectTaskFolder,
+  allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
   isSavingAppSettings,
@@ -224,6 +226,7 @@ export default function AppDialogs({
         onRespondApproval={onRespondToolApproval}
         onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
         noProjectTaskFolder={noProjectTaskFolder}
+        allowExternalFileRead={allowExternalFileRead}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
         isSavingAppSettings={isSavingAppSettings}

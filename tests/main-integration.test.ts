@@ -68,6 +68,17 @@ const officialRegistryFixture = {
 }
 const installedFigurePreviewFixture =
   '/installed/packages/plugin/visualization/1.0.0/skills/omics-visualization/preview.png'
+const bundledCreateWrapperSkillDir = path.join(
+  process.cwd(),
+  'resources',
+  'skills',
+  'create-wrapper'
+)
+const bundledCreateWrapperGuideFixture = path.join(
+  bundledCreateWrapperSkillDir,
+  'references',
+  'guide.md'
+)
 
 const officialSourceDetailsFixture = {
   id: 'phi-packages',
@@ -608,6 +619,7 @@ async function harness(
       })
     | undefined
   const appNoProjectTaskFolder = '/workspace'
+  let allowExternalFileRead = false
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
     filePaths: []
@@ -642,11 +654,17 @@ async function harness(
       )
     ],
     ['/projects/other/secret.txt', Buffer.from('secret\n')],
+    [bundledCreateWrapperGuideFixture, Buffer.from('# Agent-Facing Nextflow Wrappers\n')],
     ['/projects/saved/README.md', Buffer.from('# saved\n')],
     ['/isolated/sessions/session-1/tool-outputs/out.txt', Buffer.from('saved output\n')],
     ['/projects/current/binary.dat', Buffer.from([0, 1, 2])]
   ])
   const previewDirectories = new Map<string, Array<{ name: string; kind: 'directory' | 'file' }>>([
+    [bundledCreateWrapperSkillDir, [{ name: 'references', kind: 'directory' }]],
+    [
+      path.join(bundledCreateWrapperSkillDir, 'references'),
+      [{ name: 'guide.md', kind: 'file' }]
+    ],
     [
       '/projects/current',
       [
@@ -3026,14 +3044,21 @@ async function harness(
     './agent/app-settings': {
       readAppSettings: (): Record<string, unknown> => ({
         noProjectTaskFolder: appNoProjectTaskFolder,
+        allowExternalFileRead,
         preventSleepDuringRuns: false,
         nextActionSuggestionsEnabled: true
       }),
-      updateAppSettings: (): Record<string, unknown> => ({
-        noProjectTaskFolder: appNoProjectTaskFolder,
-        preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true
-      })
+      updateAppSettings: (patch: Record<string, unknown>): Record<string, unknown> => {
+        if (typeof patch.allowExternalFileRead === 'boolean') {
+          allowExternalFileRead = patch.allowExternalFileRead
+        }
+        return {
+          noProjectTaskFolder: appNoProjectTaskFolder,
+          allowExternalFileRead,
+          preventSleepDuringRuns: false,
+          nextActionSuggestionsEnabled: true
+        }
+      }
     },
     './agent/redaction': {
       isSecretMetadataKey,
@@ -4557,6 +4582,7 @@ test('main IPC: app settings exposes general preferences', async () => {
 
   assert.deepEqual(await app.invoke('settings:get'), {
     noProjectTaskFolder: '/workspace',
+    allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true
   })
@@ -4673,6 +4699,18 @@ test('main IPC: local path stats only report allowed existing files and director
   assert.deepEqual(await app.invoke('files:statLocalPaths', '/tmp/external', ['/workspace']), [
     { path: '/workspace', kind: 'missing' }
   ])
+
+  await app.invoke('settings:update', { allowExternalFileRead: true })
+  assert.deepEqual(
+    await app.invoke('files:statLocalPaths', '/tmp/external', [
+      '/projects/other/secret.txt',
+      'relative.txt'
+    ]),
+    [
+      { path: '/projects/other/secret.txt', kind: 'file' },
+      { path: 'relative.txt', kind: 'missing' }
+    ]
+  )
 })
 
 test('main IPC: input file picker returns selected paths without reading files', async () => {
@@ -4973,9 +5011,27 @@ test('main IPC: hover file preview is tiered and bounded', async () => {
       .map((request) => request.length),
     [512, 32768]
   )
+  const bundledGuidePreview = (await app.invoke(
+    'files:hoverPreview',
+    bundledCreateWrapperGuideFixture
+  )) as { kind: string; content: string }
+  assert.equal(bundledGuidePreview.kind, 'text')
+  assert.equal(bundledGuidePreview.content, '# Agent-Facing Nextflow Wrappers\n')
   await assert.rejects(
     app.invoke('files:hoverPreview', '/projects/other/secret.txt'),
-    /只能预览 Phi 保存的文件或当前项目内的文件/
+    /设置.*通用.*允许读取项目外文件/
+  )
+
+  await app.invoke('settings:update', { allowExternalFileRead: true })
+  const externalPreview = (await app.invoke(
+    'files:hoverPreview',
+    '/projects/other/secret.txt'
+  )) as { kind: string; content: string }
+  assert.equal(externalPreview.kind, 'text')
+  assert.equal(externalPreview.content, 'secret\n')
+  await assert.rejects(
+    app.invoke('files:openPath', '/projects/other/secret.txt'),
+    /只能打开 Phi 保存的文件或当前项目内的文件/
   )
 })
 

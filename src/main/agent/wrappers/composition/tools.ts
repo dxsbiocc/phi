@@ -13,7 +13,7 @@ import { rankWrapperEntries } from './search'
 
 /**
  * The generic, progressively-loaded `wrapper_*` tools described in
- * docs/design/phi-wrapper-agent-composition-design.md section 4 — search,
+ * resources/skills/create-wrapper/references/guide.md section 4 — search,
  * inspect, then run. Supersedes the older one-tool-per-bundled-wrapper
  * model in `../tools.ts` (`buildDefaultWrapperCustomTools`), which this
  * build's `omp-sdk-worker.ts` no longer wires in, to avoid two `wrapper_*`

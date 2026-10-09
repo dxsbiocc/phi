@@ -18,7 +18,7 @@ export type WrapperExecutionProfile = (typeof WRAPPER_EXECUTION_PROFILES)[number
 
 /**
  * Runs the fixed smoke command from
- * docs/design/phi-wrapper-agent-composition-design.md section 5/7:
+ * resources/skills/create-wrapper/references/guide.md section 5/7:
  * `nextflow run wrapper/main.nf -params-file wrapper/params.json`, with
  * agent-supplied overrides merged into the wrapper's own default params.
  *

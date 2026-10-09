@@ -407,7 +407,7 @@ test('markdown relative workspace paths render as clickable hover preview links'
   assert.doesNotMatch(markup, /href="omics_viz\/THRSP_network_omics\.png"/)
 })
 
-test('markdown leaves project-external absolute paths as non-clickable text', () => {
+test('markdown exposes project-external absolute files as guarded hover preview links', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -419,11 +419,11 @@ test('markdown leaves project-external absolute paths as non-clickable text', ()
     )
   )
 
-  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
-  assert.doesNotMatch(markup, /data-phi-hover-preview-path/)
-  assert.doesNotMatch(markup, /data-phi-path="\/Users\/example\/data\/plots\/volcano\.png"/)
-  assert.match(markup, /\/Users\/example\/data\/plots\/volcano\.png/)
-  assert.match(markup, /PNG/)
+  assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
+  assert.equal(markup.match(/data-phi-slot="local-file-hover-preview"/g)?.length ?? 0, 3)
+  assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/data\/plots\/volcano\.png"/)
+  assert.match(markup, /data-phi-path="\/Users\/example\/data\/plots\/volcano\.png"/)
+  assert.match(markup, /打开文件 \/Users\/example\/data\/plots\/volcano\.png/)
 })
 
 test('markdown local image syntax renders a local preview container', () => {

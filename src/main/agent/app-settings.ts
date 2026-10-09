@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import {
+  DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
@@ -57,6 +58,10 @@ function readRawSettings(agentDir: string, options: { strict: boolean }): Record
 function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): PhiAppSettings {
   return {
     noProjectTaskFolder: normalizeNoProjectTaskFolder(raw.noProjectTaskFolder, agentDir),
+    allowExternalFileRead: booleanSetting(
+      raw.allowExternalFileRead,
+      DEFAULT_ALLOW_EXTERNAL_FILE_READ
+    ),
     preventSleepDuringRuns: booleanSetting(
       raw.preventSleepDuringRuns,
       DEFAULT_PREVENT_SLEEP_DURING_RUNS
@@ -98,6 +103,13 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
       throw new Error('运行时防休眠设置必须是布尔值')
     }
     nextRaw.preventSleepDuringRuns = patch.preventSleepDuringRuns
+  }
+
+  if (hasOwnSetting(patch, 'allowExternalFileRead')) {
+    if (typeof patch.allowExternalFileRead !== 'boolean') {
+      throw new Error('项目外文件读取设置必须是布尔值')
+    }
+    nextRaw.allowExternalFileRead = patch.allowExternalFileRead
   }
 
   if (hasOwnSetting(patch, 'nextActionSuggestionsEnabled')) {

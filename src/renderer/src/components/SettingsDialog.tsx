@@ -317,6 +317,7 @@ function ProvidersSection({
 
 function GeneralSection({
   noProjectTaskFolder,
+  allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
   isSavingAppSettings,
@@ -329,6 +330,7 @@ function GeneralSection({
   onCompactContext
 }: {
   noProjectTaskFolder: string
+  allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
   isSavingAppSettings: boolean
@@ -400,6 +402,24 @@ function GeneralSection({
             更改
           </Button>
         </Stack>
+      </Box>
+
+      <Box>
+        <FormControlLabel
+          disabled={isSavingAppSettings}
+          control={
+            <Switch
+              checked={allowExternalFileRead}
+              onChange={(event) =>
+                onUpdateAppSettings({ allowExternalFileRead: event.target.checked })
+              }
+            />
+          }
+          label="允许读取项目外文件"
+        />
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
+          仅用于文件悬停预览；不会授予写入、执行或删除权限。默认关闭。
+        </Typography>
       </Box>
 
       <Box>
@@ -559,6 +579,7 @@ type SettingsDialogProps = {
   onRespondApproval: (requestId: string, approved: boolean) => void
   onCopyDiagnostics: () => Promise<string>
   noProjectTaskFolder: string
+  allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
   isSavingAppSettings: boolean
@@ -601,6 +622,7 @@ function SettingsDialog({
   onRespondApproval,
   onCopyDiagnostics,
   noProjectTaskFolder,
+  allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
   isSavingAppSettings,
@@ -720,6 +742,7 @@ function SettingsDialog({
           {category === 'general' && (
             <GeneralSection
               noProjectTaskFolder={noProjectTaskFolder}
+              allowExternalFileRead={allowExternalFileRead}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
               isSavingAppSettings={isSavingAppSettings}

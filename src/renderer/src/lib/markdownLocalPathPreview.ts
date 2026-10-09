@@ -9,6 +9,39 @@ import type { LocalPathStat } from '../types'
 
 export const HOVER_PREVIEW_OPEN_DELAY_MS = 350
 
+export type LocalFileHoverErrorDescription = {
+  title: string
+  message: string
+  action?: string
+}
+
+function hoverPreviewErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || '无法预览文件')
+  return raw
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
+    .replace(/^Error:\s*/, '')
+    .trim()
+}
+
+export function describeLocalFileHoverError(error: unknown): LocalFileHoverErrorDescription {
+  const message = hoverPreviewErrorMessage(error)
+  if (
+    message.includes('允许读取项目外文件') ||
+    message.includes('Phi 保存的文件或当前项目内的文件')
+  ) {
+    return {
+      title: '无法预览项目外文件',
+      message: '为保护本地文件，Phi 默认只读取当前项目或 Phi 保存的文件。',
+      action: '前往“设置 → 通用”，开启“允许读取项目外文件”后重试。'
+    }
+  }
+
+  return {
+    title: '无法预览文件',
+    message: message || '文件暂时无法读取'
+  }
+}
+
 const LOCAL_PATH_STAT_CACHE_LIMIT = 512
 const LOCAL_PATH_STAT_MISSING_TTL_MS = 30_000
 

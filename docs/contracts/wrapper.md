@@ -10,7 +10,7 @@ packages are assembled into (§ 3–5). It builds on the [package contract](pack
 (`type: wrapper`, added here as package contract 1.1.0) and the
 [enablement contract](enablement.md) (`wrapper:` items, enablement 1.1.0). See
 [content distribution design](../design/phi-content-distribution-design.md) §8.2 and
-[wrapper agent composition design](../design/phi-wrapper-agent-composition-design.md) §3–§4.
+[bundled wrapper agent composition guide](../../resources/skills/create-wrapper/references/guide.md) §3–§4.
 
 ## 1. Adapter layout
 

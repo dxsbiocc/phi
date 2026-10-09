@@ -4,7 +4,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { WrapperCompositionManifest, WrapperCompositionParam } from './manifest'
 
 /**
- * Light validation from docs/design/phi-wrapper-agent-composition-design.md
+ * Light validation from resources/skills/create-wrapper/references/guide.md
  * section 5: required params, simple type/enum/range checks, local input
  * path existence, and primary-output existence after a run. Deliberately
  * shallow — Nextflow itself is the authority on channel semantics.

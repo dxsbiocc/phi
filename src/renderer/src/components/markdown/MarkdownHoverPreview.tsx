@@ -1,12 +1,17 @@
 import { Box, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 import { formatBytes } from '../../lib/toolOutputPresentation'
+import { describeLocalFileHoverError } from '../../lib/markdownLocalPathPreview'
 import type { FileHoverPreview } from '../../types'
 
 type HoverPreviewState =
   | { status: 'idle' | 'loading'; path: string }
   | { status: 'ready'; path: string; preview: FileHoverPreview }
-  | { status: 'error'; path: string; message: string }
+  | {
+      status: 'error'
+      path: string
+      description: ReturnType<typeof describeLocalFileHoverError>
+    }
 
 const HOVER_PREVIEW_CACHE_LIMIT = 8
 const HOVER_PREVIEW_CACHE_CONTENT_LIMIT = 8 * 1024 * 1024
@@ -278,7 +283,7 @@ export function LocalFileHoverPreview({
             setState({
               status: 'error',
               path: absolutePath,
-              message: error instanceof Error ? error.message : '无法预览文件'
+              description: describeLocalFileHoverError(error)
             })
           }
           console.error('Failed to preview local file on hover:', error)
@@ -308,9 +313,32 @@ export function LocalFileHoverPreview({
         <HoverPreviewContent preview={preview} />
       ) : null}
       {state.path === absolutePath && state.status === 'error' ? (
-        <Typography variant="caption" color="error">
-          {state.message}
-        </Typography>
+        <Box
+          data-phi-slot="local-file-hover-error"
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0.35,
+            p: 1,
+            border: 1,
+            borderColor: 'warning.main',
+            borderRadius: 1,
+            bgcolor: 'warning.main',
+            color: 'warning.contrastText'
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 700, color: 'inherit' }}>
+            {state.description.title}
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'inherit' }}>
+            {state.description.message}
+          </Typography>
+          {state.description.action ? (
+            <Typography variant="caption" sx={{ color: 'inherit', fontWeight: 600 }}>
+              {state.description.action}
+            </Typography>
+          ) : null}
+        </Box>
       ) : null}
       {preview ? (
         <Typography data-phi-slot="local-file-hover-meta" variant="caption" color="text.secondary">

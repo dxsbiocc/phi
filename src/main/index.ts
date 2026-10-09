@@ -5627,12 +5627,21 @@ function enablementScopeOptions(value: unknown): { projectDir?: string } {
   return { projectDir: value.projectCwd }
 }
 
+function isCoreAuthoringSkillResourcePath(target: string): boolean {
+  try {
+    return isPathInsideRoot(realpathSync(getCoreAuthoringSkillDir()), target)
+  } catch {
+    return false
+  }
+}
+
 function isLocalFilePathAllowed(
   target: string,
   scope: LocalPathScope = currentLocalPathScope(),
   projectRoots: readonly string[] = []
 ): boolean {
   if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
+  if (isCoreAuthoringSkillResourcePath(target)) return true
   if (isPluginSkillPreviewPath(target)) return true
   return isLocalFilePathAllowedByRoots(
     target,
@@ -5715,6 +5724,38 @@ function assertLocalFilePathAllowed(
   return inspectedTarget
 }
 
+function assertFileHoverPreviewPathAllowed(filePath: string): string {
+  if (!readAppSettings().allowExternalFileRead) {
+    try {
+      return assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
+    } catch (error) {
+      if (
+        isAbsolute(filePath) &&
+        error instanceof Error &&
+        error.message.includes('Phi 保存的文件或当前项目内的文件')
+      ) {
+        throw new Error(
+          '此文件位于当前项目之外。请前往“设置 → 通用”，开启“允许读取项目外文件”后重试。'
+        )
+      }
+      throw error
+    }
+  }
+
+  if (!isAbsolute(filePath)) {
+    throw new Error('只能预览绝对路径')
+  }
+  const target = resolve(filePath)
+  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) {
+    throw new Error('远程项目文件不支持本地悬停预览')
+  }
+  const inspectedTarget = realpathSync(target)
+  if (isRemoteProjectAnchorPath(inspectedTarget, AGENT_DIR)) {
+    throw new Error('远程项目文件不支持本地悬停预览')
+  }
+  return inspectedTarget
+}
+
 function assertRevealPathAllowed(filePath: string): string {
   return assertLocalFilePathAllowed(filePath, '显示')
 }
@@ -5724,13 +5765,16 @@ type LocalPathStatPayload = {
   kind: 'file' | 'directory' | 'missing'
 }
 
-function localPathStatScope(cwd: unknown): LocalPathScope | null {
+function localPathStatScope(cwd: unknown, allowExternalFileRead: boolean): LocalPathScope | null {
   const rawCwd = typeof cwd === 'string' && cwd.trim() ? cwd : currentCwd
+  if (isRemoteProjectAnchorPath(rawCwd, AGENT_DIR)) return null
   const requestedCwd = resolve(rawCwd)
   if (requestedCwd === resolve(currentCwd)) return currentLocalPathScope()
 
   const project = getProjectByCwd(rawCwd)
-  if (!project) return null
+  if (!project) {
+    return allowExternalFileRead ? { cwd: requestedCwd } : null
+  }
 
   try {
     assertProjectPathAvailable(project.workingDirectory)
@@ -5748,16 +5792,22 @@ function missingLocalPathStats(paths: string[]): LocalPathStatPayload[] {
   return paths.map((path) => ({ path, kind: 'missing' as const }))
 }
 
-function statLocalPath(filePath: string, scope: LocalPathScope): LocalPathStatPayload {
+function statLocalPath(
+  filePath: string,
+  scope: LocalPathScope,
+  allowExternalFileRead: boolean
+): LocalPathStatPayload {
   const missing = { path: filePath, kind: 'missing' as const }
   if (typeof filePath !== 'string' || !isAbsolute(filePath)) return missing
 
   const target = resolve(filePath)
-  if (!isLocalFilePathAllowed(target, scope)) return missing
+  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return missing
+  if (!allowExternalFileRead && !isLocalFilePathAllowed(target, scope)) return missing
 
   try {
     const realTarget = realpathSync(target)
-    if (!isLocalFilePathAllowed(realTarget, scope)) return missing
+    if (isRemoteProjectAnchorPath(realTarget, AGENT_DIR)) return missing
+    if (!allowExternalFileRead && !isLocalFilePathAllowed(realTarget, scope)) return missing
 
     const stats = statSync(realTarget)
     if (stats.isDirectory()) return { path: target, kind: 'directory' }
@@ -5774,10 +5824,11 @@ function statLocalPaths(cwd: unknown, paths: unknown): LocalPathStatPayload[] {
 
   const uniquePaths = [...new Set(paths.filter((path): path is string => typeof path === 'string'))]
   const limitedPaths = uniquePaths.slice(0, LOCAL_PATH_STAT_LIMIT)
-  const scope = localPathStatScope(cwd)
+  const allowExternalFileRead = readAppSettings().allowExternalFileRead
+  const scope = localPathStatScope(cwd, allowExternalFileRead)
   if (!scope) return missingLocalPathStats(limitedPaths)
 
-  return limitedPaths.map((path) => statLocalPath(path, scope))
+  return limitedPaths.map((path) => statLocalPath(path, scope, allowExternalFileRead))
 }
 
 function readFilePreviewBytes(target: string, bytesToRead: number): Buffer {
@@ -5955,7 +6006,7 @@ function createFilePreview(filePath: string): FilePreviewPayload {
 }
 
 function createFileHoverPreview(filePath: string): FileHoverPreviewPayload {
-  const target = assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
+  const target = assertFileHoverPreviewPathAllowed(filePath)
   const stats = statSync(target)
   if (!stats.isFile()) {
     throw new Error('只能预览文件内容')

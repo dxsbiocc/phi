@@ -22,6 +22,7 @@ import {
 import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
+  DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
@@ -786,6 +787,9 @@ function App(): React.JSX.Element {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
   const [noProjectTaskFolder, setNoProjectTaskFolder] = useState('')
+  const [allowExternalFileRead, setAllowExternalFileRead] = useState(
+    DEFAULT_ALLOW_EXTERNAL_FILE_READ
+  )
   const [preventSleepDuringRuns, setPreventSleepDuringRuns] = useState(
     DEFAULT_PREVENT_SLEEP_DURING_RUNS
   )
@@ -883,6 +887,7 @@ function App(): React.JSX.Element {
 
   const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
+    setAllowExternalFileRead(settings.allowExternalFileRead)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
   }, [])
@@ -962,11 +967,15 @@ function App(): React.JSX.Element {
   const onUpdateAppSettings = useCallback(
     async (patch: PhiAppSettingsPatch): Promise<void> => {
       const previousNoProjectTaskFolder = noProjectTaskFolder
+      const previousAllowExternalFileRead = allowExternalFileRead
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
 
       if (patch.noProjectTaskFolder !== undefined) {
         setNoProjectTaskFolder(patch.noProjectTaskFolder)
+      }
+      if (patch.allowExternalFileRead !== undefined) {
+        setAllowExternalFileRead(patch.allowExternalFileRead)
       }
       if (patch.preventSleepDuringRuns !== undefined) {
         setPreventSleepDuringRuns(patch.preventSleepDuringRuns)
@@ -981,6 +990,7 @@ function App(): React.JSX.Element {
         applyAppSettings(settings)
       } catch (error) {
         setNoProjectTaskFolder(previousNoProjectTaskFolder)
+        setAllowExternalFileRead(previousAllowExternalFileRead)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
         showSnackbarError(error, '保存通用设置失败')
@@ -989,6 +999,7 @@ function App(): React.JSX.Element {
       }
     },
     [
+      allowExternalFileRead,
       applyAppSettings,
       nextActionSuggestionsEnabled,
       noProjectTaskFolder,
@@ -4894,6 +4905,7 @@ function App(): React.JSX.Element {
           themeFamily={themeFamily}
           setThemeFamily={setThemeFamily}
           noProjectTaskFolder={noProjectTaskFolder}
+          allowExternalFileRead={allowExternalFileRead}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
           isSavingAppSettings={isSavingAppSettings}
