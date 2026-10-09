@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
@@ -80,6 +81,18 @@ function manager(
     resolveRemoteTarget: env.resolver,
     ...extra
   })
+}
+
+async function withFakeSlurmAvailable(
+  sb: Sandbox,
+  fn: (slurm: ReturnType<typeof installFakeSlurm>) => Promise<void>
+): Promise<void> {
+  const slurm = installFakeSlurm(join(sb.root, 'fake-slurm'))
+  try {
+    await fn(slurm)
+  } finally {
+    slurm.restore()
+  }
 }
 
 async function startRemote(
@@ -550,43 +563,80 @@ test('an uncertain remote launch keeps its run ID and claim location in the save
 
 test('cancelling a remote run stops it and records it cancelled', async () => {
   await withSandbox(async (sb) => {
-    await withRemote(sb, async (env) => {
-      process.env.FAKE_NF_MODE = 'hang'
-      const m = manager(sb, env)
-      const started = await startRemote(m)
-      await waitFor(() => existsSync(sb.pidFile))
-      const nfPid = Number(readFileSync(sb.pidFile, 'utf-8'))
-      const cancelled = await m.cancel(started.runId)
-      assert.equal(cancelled.ok, true)
-      const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
-      assert.equal(done.state, 'cancelled')
-      await waitFor(() => !isAlive(nfPid))
-    })
+    await withFakeSlurmAvailable(sb, () =>
+      withRemote(sb, async (env) => {
+        process.env.FAKE_NF_MODE = 'hang'
+        const m = manager(sb, env)
+        const started = await startRemote(m)
+        await waitFor(() => existsSync(sb.pidFile))
+        const nfPid = Number(readFileSync(sb.pidFile, 'utf-8'))
+        const cancelled = await m.cancel(started.runId)
+        assert.equal(cancelled.ok, true)
+        const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
+        assert.equal(done.state, 'cancelled')
+        await waitFor(() => !isAlive(nfPid))
+      })
+    )
   })
 })
 
 test('a lost composition run can be reattached and cancelled without a second launch', async () => {
   await withSandbox(async (sb) => {
-    await withRemote(sb, async (env) => {
-      process.env.FAKE_NF_MODE = 'hang'
-      const first = manager(sb, env)
-      const started = await startRemote(first)
-      await waitFor(() => existsSync(sb.pidFile))
-      const pid = Number(readFileSync(sb.pidFile, 'utf-8'))
-      first.shutdown()
-      const saved = readWrapperRun(started.runId, sb.agentDir)!
-      markCompositionRunLost(saved, sb.agentDir, 'SSH disconnected')
+    await withFakeSlurmAvailable(sb, () =>
+      withRemote(sb, async (env) => {
+        process.env.FAKE_NF_MODE = 'hang'
+        const first = manager(sb, env)
+        const started = await startRemote(first)
+        await waitFor(() => existsSync(sb.pidFile))
+        const pid = Number(readFileSync(sb.pidFile, 'utf-8'))
+        first.shutdown()
+        const saved = readWrapperRun(started.runId, sb.agentDir)!
+        markCompositionRunLost(saved, sb.agentDir, 'SSH disconnected')
 
-      const restored = manager(sb, env)
-      const requested = await restored.cancel(started.runId)
-      assert.equal(requested.ok, true)
-      const done = (await restored.wait(started.runId, 60_000)) as WrapperJobStatus
-      assert.equal(done.state, 'cancelled')
-      await waitFor(() => !isAlive(pid))
-      const repeated = await restored.cancel(started.runId)
-      assert.equal(repeated.ok, true)
-      if (repeated.ok) assert.equal(repeated.status.state, 'cancelled')
-    })
+        const restored = manager(sb, env)
+        const requested = await restored.cancel(started.runId)
+        assert.equal(requested.ok, true)
+        const done = (await restored.wait(started.runId, 60_000)) as WrapperJobStatus
+        assert.equal(done.state, 'cancelled')
+        await waitFor(() => !isAlive(pid))
+        const repeated = await restored.cancel(started.runId)
+        assert.equal(repeated.ok, true)
+        if (repeated.ok) assert.equal(repeated.status.state, 'cancelled')
+      })
+    )
+  })
+})
+
+test('wrapper status reports residual Slurm task IDs instead of a clean cancellation', async () => {
+  await withSandbox(async (sb) => {
+    await withFakeSlurmAvailable(sb, (slurm) =>
+      withRemote(sb, async (env) => {
+        process.env.FAKE_NF_MODE = 'hang'
+        const m = manager(sb, env)
+        const started = await startRemote(m)
+        await waitFor(() => existsSync(sb.pidFile))
+        const taskDir = join(started.remote!.runDir, 'work', 'stubborn-task')
+        mkdirSync(taskDir, { recursive: true })
+        const script = join(sb.root, 'stubborn-task.sbatch')
+        writeFileSync(
+          script,
+          `#!/bin/bash\n#SBATCH --chdir=${taskDir}\n#SBATCH --output=${taskDir}/stdout.log\n#SBATCH --error=${taskDir}/stderr.log\nwhile true; do sleep 1; done\n`
+        )
+        const jobId = execFileSync('sbatch', [script], { encoding: 'utf8' }).match(/\d+/)?.[0]
+        assert.ok(jobId)
+        slurm.setUnkillable(jobId, true)
+        try {
+          assert.equal((await m.cancel(started.runId)).ok, true)
+          const done = (await m.wait(started.runId, 60_000)) as WrapperJobStatus
+          assert.equal(done.state, 'lost')
+          assert.match(done.logTail, new RegExp(jobId))
+          assert.match(formatJobStatus(done), new RegExp(jobId))
+        } finally {
+          slurm.setUnkillable(jobId, false)
+          execFileSync('scancel', ['--signal=KILL', jobId])
+        }
+      })
+    )
   })
 })
 

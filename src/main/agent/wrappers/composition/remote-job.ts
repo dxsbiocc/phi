@@ -379,11 +379,9 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
 
   const stopRemote = async (): Promise<RemoteCancelResult | undefined> => {
     try {
-      return await cancelRemoteController(
-        session,
-        handle,
-        options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
-      )
+      const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
+      const cleanupSlurmJobs = target.hpc?.scheduler === 'slurm'
+      return await cancelRemoteController(session, handle, graceMs, { cleanupSlurmJobs })
     } catch (error) {
       options.onOutput?.(
         `[Phi] 取消信号未能确认送达：${error instanceof Error ? error.message : String(error)}\n`
@@ -410,8 +408,9 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
         continue
       }
       if (status.outcome !== 'lost') inconclusiveStatuses = 0
-      if (control.cancelled && status.outcome !== 'running' && cancellation) {
+      if (control.cancelled && cancellation) {
         const outcome = await cancellation
+        if (outcome?.message) return reported(options, outcome.message, { lost: true })
         if (outcome?.kind === 'confirmed' && status.outcome !== 'completed') {
           return failure('', { cancelled: true })
         }

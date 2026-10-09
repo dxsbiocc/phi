@@ -532,9 +532,10 @@ async function dispatchRemoteCancel(
       remoteRunDir: snapshot.remoteRunDir,
       ...(slurmHead ? { jobId: observed.jobId } : { pid: observed.pid })
     }
-    const result = await cancelRemoteController(session, handle)
+    const cleanupSlurmJobs = run.executor === 'slurm-controller' || run.executor === 'slurm'
+    const result = await cancelRemoteController(session, handle, undefined, { cleanupSlurmJobs })
     if (result.kind === 'unknown') {
-      throw new Error('取消后远端状态仍未知，保留运行记录等待对账')
+      throw new Error(result.message ?? '取消后远端状态仍未知，保留运行记录等待对账')
     }
     if (result.kind === 'already-ended') {
       const current = readWrapperRun(run.runId, agentDir)

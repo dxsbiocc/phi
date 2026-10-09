@@ -151,12 +151,15 @@ async function reconcileOneRun(
     }
     const firstStatus = await runner.status(handle)
     let cancelDelivered = false
-    if (wasCancelling && firstStatus.outcome === 'running') {
+    if (wasCancelling) {
       // The previous process may have exited before its signal was sent.
-      // Both controllers verify the run ID and receipt before signalling.
-      const cancellation = await cancelRemoteController(probe, handle)
+      // Both controllers verify the run ID and receipt before signalling; Slurm cleanup still
+      // runs when the controller already ended, covering a crash between head cancel and sweep.
+      const cancellation = await cancelRemoteController(probe, handle, undefined, {
+        cleanupSlurmJobs: run.executor === 'slurm-controller' || run.executor === 'slurm'
+      })
       if (cancellation.kind === 'unknown') {
-        markLost(run, agentDir, '远程取消请求后无法确认进程或作业已停止')
+        markLost(run, agentDir, cancellation.message ?? '远程取消请求后无法确认进程或作业已停止')
         return
       }
       cancelDelivered = cancellation.kind === 'confirmed'

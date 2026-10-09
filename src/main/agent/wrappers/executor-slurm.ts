@@ -8,7 +8,6 @@ import {
   REMOTE_LAUNCH_ERROR_FILE,
   RemoteLaunchRejectedError,
   RemoteLaunchUnknownError,
-  verifyRemoteCancelTarget,
   type RemoteLaunchObservation
 } from './remote-launch-claim'
 import {
@@ -25,6 +24,9 @@ import {
   type RemoteControllerOptions
 } from './executor-remote'
 import type { WrapperRun, WrapperRunPlan } from './types'
+import { cancelSlurmControllerJob } from './remote-slurm-controller-cancel'
+
+export { signalSlurmJob } from './remote-slurm-controller-cancel'
 
 /**
  * The `sbatch` controller (`slurm-controller` executor) from
@@ -237,31 +239,6 @@ export async function readSlurmJobStatus(
   return { outcome: 'running' }
 }
 
-/**
- * `scancel` a job. TERM (the default signal path) lets Nextflow shut down and cancel its own
- * jobs; KILL is the last resort. Never throws for a job that is already gone.
- */
-export async function signalSlurmJob(
-  session: RemoteSshSession,
-  handle: RemoteJobHandle,
-  signal: 'TERM' | 'KILL'
-): Promise<void> {
-  const { jobId } = handle
-  if (jobId === undefined) return
-  if (!/^[1-9][0-9]*$/.test(jobId)) {
-    throw new Error('Slurm 作业号无效，拒绝发送取消信号')
-  }
-  await verifyRemoteCancelTarget(session, handle.remoteRunDir, handle.runId, 'sbatch', jobId)
-  const detail = await session.exec(`scontrol show job ${jobId}`)
-  const expectedName = `phi-${handle.runId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-  const actualName = detail.stdout.match(/(?:^|\s)JobName=(\S+)/)?.[1]
-  if (detail.code !== 0 || actualName !== expectedName) {
-    throw new Error(`Slurm 作业 ${jobId} 不再属于运行 ${handle.runId}，拒绝发送取消信号`)
-  }
-  const flag = signal === 'KILL' ? '--signal=KILL ' : ''
-  await session.exec(`scancel ${flag}${jobId} 2>/dev/null || true`)
-}
-
 /** The `sbatch` controller — see module doc comment above. */
 export class SbatchRunner implements RemoteRunner {
   private readonly options: RemoteControllerOptions
@@ -400,8 +377,8 @@ export class SbatchRunner implements RemoteRunner {
   }
 
   async cancel(handle: RemoteJobHandle): Promise<void> {
-    if (handle.jobId === undefined || (await this.status(handle)).outcome !== 'running') return
-    await signalSlurmJob(await this.getSession(), handle, 'TERM')
+    const session = await this.getSession()
+    await cancelSlurmControllerJob(session, handle, () => this.status(handle))
   }
 
   async close(): Promise<void> {
