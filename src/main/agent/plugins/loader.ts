@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import semver from 'semver'
 
 import type { PhiAgentDefinition } from '../agents/definition'
 import type { EnvironmentDescriptor } from '../content/environment-refs'
 import type { ValidatedSkill } from '../content/skill'
+import { validateApplicationInstallationSource } from '../envs/applications'
 import {
   addReferrer,
   collectGarbage,
@@ -290,6 +291,9 @@ function descriptorOf(
 ): EnvironmentDescriptor {
   const lockPath = environment.locks[platform]
   if (!lockPath) throw new Error(`plugin environment '${environment.name}' has no ${platform} lock`)
+  const sourceDir = dirname(environment.specPath)
+  if (environment.environment.installation)
+    validateApplicationInstallationSource(environment.environment.installation, sourceDir, platform)
   return {
     ref: `plugin:${environment.name}`,
     scope: 'plugin',
@@ -297,7 +301,8 @@ function descriptorOf(
     kind: 'package',
     spec: environment.environment,
     lockText: readFileSync(lockPath, 'utf8'),
-    platform
+    platform,
+    sourceDir
   }
 }
 
@@ -308,7 +313,8 @@ function environmentId(descriptor: EnvironmentDescriptor): string {
     name: descriptor.spec.name,
     platform: descriptor.platform,
     lockText: descriptor.lockText,
-    sourcePackages: descriptor.spec.sourcePackages
+    sourcePackages: descriptor.spec.sourcePackages,
+    installation: descriptor.spec.installation
   })
 }
 

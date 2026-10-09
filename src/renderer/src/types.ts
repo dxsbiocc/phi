@@ -39,6 +39,7 @@ import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type {
   FeaturedMcpConnector,
+  McpConnectorSetupProgress,
   RemoteMcpConnectorOptions
 } from '../../shared/mcpConnectorCatalog'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
@@ -969,6 +970,7 @@ export type RendererApi = AutoCompactionApi & {
   ) => Promise<InstalledPackageView[]>
   uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
   buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
+  onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void) => () => void
   addRemoteMcpConnector: (
     name: string,
     url: string,

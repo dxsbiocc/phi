@@ -1,6 +1,6 @@
 # Environment contract
 
-Version **1.3.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
+Version **1.4.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
 
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
@@ -9,7 +9,7 @@ The runtime copies live in `src/main/agent/envs/schemas.ts` and must stay deep-e
 
 ## Purpose
 
-An environment is an immutable micromamba prefix identified by `envId`. Authors declare it in `environment.yml`. Official environments ship one explicit lock per platform; clients install from that lock and do not solve. `host`, `sourcePackages`, and `description` are Phi data. They are not conda input.
+An environment is an immutable managed prefix identified by `envId`. Conda-backed environments use micromamba; a declared native application or fully pinned JavaScript runtime may use an artifact-only prefix. Authors declare it in `environment.yml`. Official environments ship one explicit lock per platform; clients install from that lock and do not solve. `host`, `sourcePackages`, `installation`, and `description` are Phi data. They are not conda input.
 
 ## Spec file (`environment.yml`)
 
@@ -23,10 +23,11 @@ UTF-8 YAML mapping. Unknown keys are errors, including conda keys this contract 
 | `description`    | no       | human-readable string; stripped before micromamba                                            |
 | `host`           | no       | Phi extension below                                                                          |
 | `sourcePackages` | no       | Phi extension below                                                                          |
+| `installation`   | no       | Private application installation; artifact-only environments may use empty runtime inputs    |
 
 ## Phi extensions
 
-`condaSpecOf` returns only `name`, `channels`, and `dependencies`. `description`, `host`, and `sourcePackages` are removed before anything is passed to micromamba. This contract does not invoke micromamba.
+`condaSpecOf` returns only `name`, `channels`, and `dependencies`. `description`, `host`, `sourcePackages`, and `installation` are removed before anything is passed to micromamba. This contract does not invoke micromamba.
 
 ### `host`
 
@@ -61,6 +62,41 @@ One explicit lock per platform, at `locks/<platform>.txt` (for example `locks/da
 - Every later non-empty, non-comment line is an `https://` URL ending in `#` and a 32-character lowercase md5.
 
 `lockSha256` is the SHA-256 hex digest of the lock after this normalisation: normalise line endings to `\n`, trim whitespace on every line, and drop comment lines and empty lines. A comment-only edit, blank lines, indentation, a CRLF versus LF difference, or a final newline does not change the hash.
+
+### `installation` (1.4.0)
+
+Optional declarative application provisioning for private package/project environments.
+Shared `phi:` bases cannot receive application installations. Unknown fields are errors.
+Every descriptor declares a safe plain `executable` name; names that shadow runtime
+commands such as Python, uv, Node or Bun are rejected.
+
+| Backend          | Pinned inputs                                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `python-uv`      | `requirements` package-relative lock and `requirementsSha256`; wheel-only exact versions/direct wheel URLs with hashes and complete dependency closure |
+| `javascript-bun` | `manifest: ./package.json`, `manifestSha256`, `lock: ./bun.lock` or `./package-lock.json`, `lockSha256`; optional `runtime: bun` (default) or `node`   |
+| `native`         | Per-platform `artifacts`: HTTPS URL, SHA256, exact size, `format: file`, `tar.gz` or `zip`; archives require a safe regular-file `member`              |
+
+JavaScript can additionally declare `bun` and `node` runtime pins, each with an exact
+`version` and per-platform native-artifact descriptors. The installer provisions those
+tools into the private prefix; undeclared runtimes must already be supplied by its
+locked Conda environment. It never falls back to a host executable.
+
+An artifact-only native environment may have empty channels/dependencies and an
+`@EXPLICIT` lock with no Conda packages. Artifact-only JavaScript additionally needs
+a declared Bun pin and, for `runtime: node`, a declared Node pin. All other environments
+retain the existing nonempty runtime requirements. No source-build fallback is selected.
+
+Python uses managed Python/uv, hash-enforced wheel installation and closure validation.
+JavaScript uses managed Bun, frozen locks, disabled dependency scripts, verified offline
+cache material, and the declared runtime. The initial Bun cache adapter supports exactly
+Bun **1.3.14**; unknown cache formats fail explicitly. Native artifacts copy only the
+selected verified executable. Installation assets must stay in the source directory and
+match their declared digest before cached readiness can be used.
+
+Application/tool artifacts and installer caches belong to
+`<runtime>/cache/<envId>/applications/`. Existing environment GC removes that ownership
+tree together with the prefix. Metadata records the backend, actual executable, spec
+hash, artifact references, resolved packages and installer version when available.
 
 ## Platforms
 
@@ -111,28 +147,30 @@ mcp:     mcp-<owner>-<name>-<hash12>        (1.3.0; owner is the connector packa
 }
 ```
 
-Object keys are sorted at every level. `sourcePackages` stays in declared order. Each package object contains `language`, `name`, `ref`, `sha256`, and `source`, plus `repo` only when it is set. `lockSha256` is the normalised lock digest above. An omitted `sourcePackages` list hashes as `[]`. Changing the normalised lock or the source-package list changes the id.
+Object keys are sorted at every level. `sourcePackages` stays in declared order. Each package object contains `language`, `name`, `ref`, `sha256`, and `source`, plus `repo` only when it is set. `lockSha256` is the normalised lock digest above. An omitted `sourcePackages` list hashes as `[]`. Changing the normalised lock or the source-package list changes the id. When present, canonical `installation` is included in the identity; its runtime selection, locks, pins and tool inputs therefore change the id. Omitting installation preserves all legacy IDs.
 
 ## `env.json`
 
-Path: `<prefix>/.phi/env.json`. Every field below is required. Use `{}` for `host` and `[]` for `sourcePackages` when there are none. Unknown top-level keys are errors.
+Path: `<prefix>/.phi/env.json`. The legacy fields below are required except `micromambaVersion` for an artifact-only `runtimeEngine: native`. Use `{}` for `host` and `[]` for `sourcePackages` when there are none. Unknown top-level keys are errors.
 
-| Field               | Rule                                                                                    |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `envId`             | starts with a lowercase letter and ends with `-<12 lowercase hex>`                      |
-| `name`              | environment name pattern                                                                |
-| `kind`              | `base`, `package`, or `project`                                                         |
-| `platform`          | a Phi platform id                                                                       |
-| `lockSha256`        | 64 lowercase hex characters                                                             |
-| `createdAt`         | ISO-8601 date-time with `Z` or a numeric offset, optional fractional seconds            |
-| `micromambaVersion` | non-empty string                                                                        |
-| `activation`        | `{ set: { <name>: <string> }, pathPrepend: [<string>, ...] }`, captured after the build |
-| `host`              | map of command name to an absolute path                                                 |
-| `sourcePackages`    | installed entries, same object shape as in the spec                                     |
-| `status`            | `absent`, `building`, `ready`, `failed`, or `drifted`                                   |
-| `contractVersion`   | `1.<minor>.<patch>`                                                                     |
+| Field               | Rule                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `envId`             | starts with a lowercase letter and ends with `-<12 lowercase hex>`                         |
+| `name`              | environment name pattern                                                                   |
+| `kind`              | `base`, `package`, or `project`                                                            |
+| `platform`          | a Phi platform id                                                                          |
+| `lockSha256`        | 64 lowercase hex characters                                                                |
+| `createdAt`         | ISO-8601 date-time with `Z` or a numeric offset, optional fractional seconds               |
+| `micromambaVersion` | non-empty string for Conda-backed environments; omitted for artifact-only native execution |
+| `activation`        | `{ set: { <name>: <string> }, pathPrepend: [<string>, ...] }`, captured after the build    |
+| `host`              | map of command name to an absolute path                                                    |
+| `sourcePackages`    | installed entries, same object shape as in the spec                                        |
+| `status`            | `absent`, `building`, `ready`, `failed`, or `drifted`                                      |
+| `contractVersion`   | `1.<minor>.<patch>`                                                                        |
 
 `activation.set` is the diff of `micromamba run -p <prefix> env` against the sanitised base environment, including variables set by `activate.d` scripts. Later runs apply this snapshot directly.
+
+Optional metadata fields: `runtimeEngine` (`micromamba` or `native`) and `installation` (backend, absolute executable, `specSha256`, owned artifact records, optional resolved package list and installer/version receipt). Native runtime metadata requires an application installation. Executables must remain within the prefix; missing or escaped paths are rejected even by direct environment loads.
 
 ## State machine
 
@@ -220,7 +258,7 @@ original environment is never modified.
 
 ## Versioning
 
-`ENVIRONMENT_CONTRACT_VERSION` is `1.3.0`. Per content distribution design §4.4:
+`ENVIRONMENT_CONTRACT_VERSION` is `1.4.0`. Per content distribution design §4.4:
 
 - Minor versions are additive only: new optional fields, no change to the meaning of existing fields.
 - A major version needs an ADR, a deprecation window of at least two app releases in which both versions are accepted, and a migration note.
@@ -229,6 +267,8 @@ original environment is never modified.
 The 1.0.0 schemas use `additionalProperties: false`. A conda key or typo that this version does not name fails validation instead of being forwarded. A later minor version adds an optional field by naming it in the schema.
 
 ## Changes
+
+- **1.4.0** (2026-10-09): private application installation with Python/uv, JavaScript/Bun and pinned native artifacts; installation-aware identity and metadata; declared artifact runtime tools; legacy IDs and environment behavior remain valid.
 
 - **1.1.0** (2026-09-30): envId scope `skill` for a standalone skill's own environment (`./environment.yml`), with the skill name as owner. Additive: no existing id or file changes.
 - **1.2.0** (2026-09-30): project environments under `<project>/.phi/environments/`, solved locally for the current platform, and `environments.json` overrides applied before every resolution in the project. Additive: a project without `environments.json` resolves exactly as before.

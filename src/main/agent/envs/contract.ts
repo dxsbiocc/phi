@@ -3,13 +3,18 @@ import { createHash } from 'node:crypto'
 import Ajv, { type ErrorObject } from 'ajv'
 import { parse as parseYaml } from 'yaml'
 
+import type {
+  ApplicationInstallation,
+  ApplicationInstallationMetadata,
+  NativeApplicationArtifact
+} from './applications/types'
 import { type PhiPlatform } from './platform'
 import { environmentSpecSchema } from './schemas'
 
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.3.0'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.4.0'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 
@@ -38,6 +43,7 @@ export interface EnvironmentSpec {
   description?: string
   host?: HostRequirement[]
   sourcePackages?: SourcePackage[]
+  installation?: ApplicationInstallation
 }
 
 export interface CondaEnvironmentSpec {
@@ -58,7 +64,10 @@ export interface EnvMetadata {
   platform: PhiPlatform
   lockSha256: string
   createdAt: string
-  micromambaVersion: string
+  /** Omitted only for a declared native runtime with native application metadata. */
+  micromambaVersion?: string
+  runtimeEngine?: 'micromamba' | 'native'
+  installation?: ApplicationInstallationMetadata
   activation: {
     set: Record<string, string>
     pathPrepend: string[]
@@ -106,7 +115,9 @@ function formatAjvError(error: ErrorObject): string {
     return `${path} is missing '${String(params.missingProperty)}'`
   }
   if (error.keyword === 'not') {
-    return `${path} must not include repo when source is cran`
+    return error.instancePath.startsWith('/sourcePackages/')
+      ? `${path} must not include repo when source is cran`
+      : `${path} contains a forbidden value or field`
   }
   if (error.keyword === 'pattern') {
     return `${path} does not match ${String(params.pattern)}`
@@ -126,7 +137,39 @@ export function parseEnvironmentSpec(yamlText: string): EnvironmentSpecParseResu
     return { ok: false, errors: ['environment spec must be a YAML mapping'] }
   }
   if (validateEnvironmentSpec(document)) {
-    return { ok: true, spec: document as unknown as EnvironmentSpec }
+    const spec = document as unknown as EnvironmentSpec
+    const installation = spec.installation
+    const sets: Array<{
+      path: string
+      artifacts: Partial<Record<PhiPlatform, NativeApplicationArtifact>>
+    }> = []
+    if (installation?.backend === 'native')
+      sets.push({ path: '/installation', artifacts: installation.artifacts })
+    if (installation?.backend === 'javascript-bun') {
+      for (const name of ['bun', 'node'] as const) {
+        const tool = installation[name]
+        if (tool) sets.push({ path: `/installation/${name}`, artifacts: tool.artifacts })
+      }
+    }
+    for (const set of sets) {
+      for (const [platform, artifact] of Object.entries(set.artifacts)) {
+        if (!artifact) continue
+        try {
+          const url = new URL(artifact.url)
+          if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
+            throw new Error('invalid artifact URL')
+          }
+        } catch {
+          return {
+            ok: false,
+            errors: [
+              `${set.path}/artifacts/${platform}/url must be a valid HTTPS URL without credentials or fragments`
+            ]
+          }
+        }
+      }
+    }
+    return { ok: true, spec }
   }
   const errors = (validateEnvironmentSpec.errors ?? []).map(formatAjvError)
   return { ok: false, errors: errors.length > 0 ? errors : ['environment spec is invalid'] }
@@ -148,7 +191,12 @@ function lockLines(text: string): string[] {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
 }
 
-export function parseExplicitLock(text: string): LockParseResult {
+export function parseExplicitLock(
+  text: string,
+  options: { allowEmpty?: boolean } = {}
+): LockParseResult {
+  // Native callers declare empty-lock intent; legacy empty locks remain valid as before.
+  void options.allowEmpty
   const errors: string[] = []
   const entries: LockEntry[] = []
   let seenHeader = false
@@ -248,6 +296,7 @@ export interface EnvIdInput {
   platform: PhiPlatform
   lockText: string
   sourcePackages?: SourcePackage[]
+  installation?: ApplicationInstallation
 }
 
 export function computeEnvId(input: EnvIdInput): string {
@@ -263,7 +312,8 @@ export function computeEnvId(input: EnvIdInput): string {
   const canonical = canonicalJson({
     platform: input.platform,
     lockSha256: lockSha256(input.lockText),
-    sourcePackages: (input.sourcePackages ?? []).map(canonicalSourcePackage)
+    sourcePackages: (input.sourcePackages ?? []).map(canonicalSourcePackage),
+    ...(input.installation === undefined ? {} : { installation: input.installation })
   })
   const hash12 = createHash('sha256').update(canonical, 'utf8').digest('hex').slice(0, 12)
   // Official specs are named `phi-python`, `phi-r`, …: the id is `phi-python-<hash12>`,

@@ -20,6 +20,13 @@ import {
 } from '../envs'
 import { projectOwner } from '../envs/project-environments'
 import type { ValidatedSkill } from './skill'
+import {
+  validateApplicationInstallationSource,
+  validateApplicationMetadata,
+  validateApplicationRuntimeTools,
+  usesNativeApplicationRuntime
+} from '../envs/applications'
+import type { ApplicationInstallationProvider } from '../envs/applications/types'
 
 const LOCAL_ENVIRONMENT = './environment.yml'
 const FALLBACK_ENVIRONMENT = 'phi:python@1'
@@ -32,6 +39,8 @@ export interface EnvironmentDescriptor {
   spec: EnvironmentSpec
   lockText: string
   platform: PhiPlatform
+  /** Directory containing the declared environment spec and its signed installation assets. */
+  sourceDir?: string
 }
 
 export function bundledEnvironmentsDir(): string {
@@ -137,16 +146,44 @@ export class EnvironmentNotReadyError extends Error {
 }
 
 export function readyEnvironment(root: string, descriptor: EnvironmentDescriptor): EnvHandle {
+  if (descriptor.spec.installation && descriptor.scope === 'phi')
+    throw new Error(
+      'application installations require a private environment, not a shared phi base'
+    )
+  if (descriptor.spec.installation)
+    validateApplicationInstallationSource(
+      descriptor.spec.installation,
+      descriptor.sourceDir,
+      descriptor.platform
+    )
   const envId = computeEnvId({
     scope: descriptor.scope,
     owner: descriptor.owner,
     name: descriptor.spec.name,
     platform: descriptor.platform,
     lockText: descriptor.lockText,
-    sourcePackages: descriptor.spec.sourcePackages
+    sourcePackages: descriptor.spec.sourcePackages,
+    installation: descriptor.spec.installation
   })
   try {
-    return loadEnvironment(root, envId)
+    const handle = loadEnvironment(root, envId)
+    if (descriptor.spec.installation) {
+      if (!handle.metadata.installation)
+        throw new Error('environment application metadata is missing')
+      validateApplicationMetadata(
+        handle.prefix,
+        descriptor.spec.installation,
+        handle.metadata.installation
+      )
+      validateApplicationRuntimeTools({
+        root,
+        prefix: handle.prefix,
+        sourceDir: descriptor.sourceDir!,
+        platform: descriptor.platform,
+        installation: descriptor.spec.installation
+      })
+    }
+    return handle
   } catch (error) {
     if (error instanceof Error && absentOrNotReady(error.message)) {
       throw new EnvironmentNotReadyError(descriptor.ref, envId, descriptor)
@@ -161,6 +198,8 @@ export function buildEnvironment(
   options: {
     signal?: AbortSignal
     onProgress?: (event: EnsureProgressEvent) => void
+    fetch?: typeof globalThis.fetch
+    applicationInstaller?: ApplicationInstallationProvider
   } = {}
 ): Promise<EnvHandle> {
   return ensureEnvironment({
@@ -172,7 +211,10 @@ export function buildEnvironment(
     lockText: descriptor.lockText,
     platform: descriptor.platform,
     signal: options.signal,
-    onProgress: options.onProgress
+    onProgress: options.onProgress,
+    sourceDir: descriptor.sourceDir,
+    fetch: options.fetch,
+    applicationInstaller: options.applicationInstaller
   }).then((result) => ({
     envId: result.envId,
     prefix: result.prefix,
@@ -227,7 +269,16 @@ function loadDescriptor(
     throw new Error(`environment spec ${specPath} is invalid: ${parsed.errors.join('; ')}`)
   }
   const lockText = readText(lockPath, 'environment lock')
-  const lock = parseExplicitLock(lockText)
+  if (parsed.spec.installation) {
+    if (scope === 'phi')
+      throw new Error(
+        'application installations require a private environment, not a shared phi base'
+      )
+    validateApplicationInstallationSource(parsed.spec.installation, dir, platform)
+  }
+  const lock = parseExplicitLock(lockText, {
+    allowEmpty: usesNativeApplicationRuntime(parsed.spec)
+  })
   if (!lock.ok) {
     throw new Error(`environment lock ${lockPath} is invalid: ${lock.errors.join('; ')}`)
   }
@@ -237,7 +288,8 @@ function loadDescriptor(
     kind,
     spec: parsed.spec,
     lockText,
-    platform
+    platform,
+    sourceDir: dir
   }
   if (owner !== undefined) descriptor.owner = owner
   return descriptor

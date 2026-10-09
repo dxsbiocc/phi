@@ -12,7 +12,6 @@
     },
     "channels": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "type": "string",
         "minLength": 1
@@ -20,7 +19,6 @@
     },
     "dependencies": {
       "type": "array",
-      "minItems": 1,
       "items": {
         "oneOf": [
           {
@@ -153,6 +151,628 @@
           }
         ]
       }
+    },
+    "installation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "requirements", "requirementsSha256", "executable"],
+          "properties": {
+            "backend": {
+              "const": "python-uv"
+            },
+            "requirements": {
+              "type": "string",
+              "pattern": "^\\./(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+            },
+            "requirementsSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "executable": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$(?![\\s\\S])",
+              "not": {
+                "pattern": "^(?:[pP][yY][tT][hH][oO][nN]|[pP][yY][tT][hH][oO][nN][wW]|[bB][uU][nN]|[bB][uU][nN][xX]|[pP][iI][pP]|[nN][oO][dD][eE]|[nN][oO][dD][eE][jJ][sS]|[nN][pP][mM]|[nN][pP][xX]|[uU][vV]|[uU][vV][xX]|[cC][oO][nN][dD][aA]|[mM][aA][mM][bB][aA]|[mM][iI][cC][rR][oO][mM][aA][mM][bB][aA]|[rR]|[rR][sS][cC][rR][iI][pP][tT])(?:[0-9]+(?:\\.[0-9]+)*)?$(?![\\s\\S])"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "manifest", "manifestSha256", "lock", "lockSha256", "executable"],
+          "properties": {
+            "backend": {
+              "const": "javascript-bun"
+            },
+            "manifest": {
+              "const": "./package.json"
+            },
+            "manifestSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "lock": {
+              "enum": ["./bun.lock", "./package-lock.json"]
+            },
+            "lockSha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+            },
+            "executable": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$(?![\\s\\S])",
+              "not": {
+                "pattern": "^(?:[pP][yY][tT][hH][oO][nN]|[pP][yY][tT][hH][oO][nN][wW]|[bB][uU][nN]|[bB][uU][nN][xX]|[pP][iI][pP]|[nN][oO][dD][eE]|[nN][oO][dD][eE][jJ][sS]|[nN][pP][mM]|[nN][pP][xX]|[uU][vV]|[uU][vV][xX]|[cC][oO][nN][dD][aA]|[mM][aA][mM][bB][aA]|[mM][iI][cC][rR][oO][mM][aA][mM][bB][aA]|[rR]|[rR][sS][cC][rR][iI][pP][tT])(?:[0-9]+(?:\\.[0-9]+)*)?$(?![\\s\\S])"
+              }
+            },
+            "runtime": {
+              "enum": ["bun", "node"]
+            },
+            "bun": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "artifacts"],
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$(?![\\s\\S])"
+                },
+                "artifacts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "minProperties": 1,
+                  "properties": {
+                    "darwin-arm64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    },
+                    "darwin-x64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    },
+                    "linux-x64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "node": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "artifacts"],
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$(?![\\s\\S])"
+                },
+                "artifacts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "minProperties": 1,
+                  "properties": {
+                    "darwin-arm64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    },
+                    "darwin-x64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    },
+                    "linux-x64": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["url", "sha256", "size", "format"],
+                      "properties": {
+                        "url": {
+                          "type": "string",
+                          "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                        },
+                        "size": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "format": {
+                          "enum": ["file", "tar.gz", "zip"]
+                        },
+                        "member": {
+                          "type": "string",
+                          "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "format": {
+                                "const": "file"
+                              }
+                            },
+                            "required": ["format"]
+                          },
+                          "then": {
+                            "not": {
+                              "required": ["member"]
+                            }
+                          },
+                          "else": {
+                            "required": ["member"]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["node"]
+              },
+              "then": {
+                "required": ["runtime"],
+                "properties": {
+                  "runtime": {
+                    "const": "node"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "executable", "artifacts"],
+          "properties": {
+            "backend": {
+              "const": "native"
+            },
+            "executable": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}$(?![\\s\\S])",
+              "not": {
+                "pattern": "^(?:[pP][yY][tT][hH][oO][nN]|[pP][yY][tT][hH][oO][nN][wW]|[bB][uU][nN]|[bB][uU][nN][xX]|[pP][iI][pP]|[nN][oO][dD][eE]|[nN][oO][dD][eE][jJ][sS]|[nN][pP][mM]|[nN][pP][xX]|[uU][vV]|[uU][vV][xX]|[cC][oO][nN][dD][aA]|[mM][aA][mM][bB][aA]|[mM][iI][cC][rR][oO][mM][aA][mM][bB][aA]|[rR]|[rR][sS][cC][rR][iI][pP][tT])(?:[0-9]+(?:\\.[0-9]+)*)?$(?![\\s\\S])"
+              }
+            },
+            "artifacts": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "darwin-arm64": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["url", "sha256", "size", "format"],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "format": {
+                      "enum": ["file", "tar.gz", "zip"]
+                    },
+                    "member": {
+                      "type": "string",
+                      "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "format": {
+                            "const": "file"
+                          }
+                        },
+                        "required": ["format"]
+                      },
+                      "then": {
+                        "not": {
+                          "required": ["member"]
+                        }
+                      },
+                      "else": {
+                        "required": ["member"]
+                      }
+                    }
+                  ]
+                },
+                "darwin-x64": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["url", "sha256", "size", "format"],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "format": {
+                      "enum": ["file", "tar.gz", "zip"]
+                    },
+                    "member": {
+                      "type": "string",
+                      "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "format": {
+                            "const": "file"
+                          }
+                        },
+                        "required": ["format"]
+                      },
+                      "then": {
+                        "not": {
+                          "required": ["member"]
+                        }
+                      },
+                      "else": {
+                        "required": ["member"]
+                      }
+                    }
+                  ]
+                },
+                "linux-x64": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["url", "sha256", "size", "format"],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "pattern": "^https://(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::[0-9]{1,5})?(?:[/?][^\\s#]*)?$(?![\\s\\S])"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "format": {
+                      "enum": ["file", "tar.gz", "zip"]
+                    },
+                    "member": {
+                      "type": "string",
+                      "pattern": "^(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+(?:/(?!\\.\\.?(?:/|$))[A-Za-z0-9._+-]+)*$(?![\\s\\S])"
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "format": {
+                            "const": "file"
+                          }
+                        },
+                        "required": ["format"]
+                      },
+                      "then": {
+                        "not": {
+                          "required": ["member"]
+                        }
+                      },
+                      "else": {
+                        "required": ["member"]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["installation"],
+        "properties": {
+          "installation": {
+            "anyOf": [
+              {
+                "required": ["backend"],
+                "properties": {
+                  "backend": {
+                    "const": "native"
+                  }
+                }
+              },
+              {
+                "required": ["backend", "bun"],
+                "properties": {
+                  "backend": {
+                    "const": "javascript-bun"
+                  }
+                },
+                "anyOf": [
+                  {
+                    "not": {
+                      "required": ["runtime"],
+                      "properties": {
+                        "runtime": {
+                          "const": "node"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "required": ["runtime", "node"],
+                    "properties": {
+                      "runtime": {
+                        "const": "node"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "channels": {
+            "minItems": 1
+          },
+          "dependencies": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
 }

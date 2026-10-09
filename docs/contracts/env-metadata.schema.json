@@ -11,7 +11,6 @@
     "platform",
     "lockSha256",
     "createdAt",
-    "micromambaVersion",
     "activation",
     "host",
     "sourcePackages",
@@ -45,6 +44,88 @@
     "micromambaVersion": {
       "type": "string",
       "minLength": 1
+    },
+    "runtimeEngine": {
+      "enum": ["micromamba", "native"]
+    },
+    "installation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "executable", "specSha256", "artifacts"],
+      "properties": {
+        "backend": {
+          "enum": ["python-uv", "javascript-bun", "native"]
+        },
+        "executable": {
+          "type": "string",
+          "pattern": "^/[^\\u0000\\r\\n]+$(?![\\s\\S])"
+        },
+        "specSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "sha256", "size"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        },
+        "installer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": {
+              "enum": ["bun", "uv"]
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[0-9]+(?:![0-9]+)?(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$(?![\\s\\S])"
+            }
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 214,
+                "pattern": "^(?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+$(?![\\s\\S])"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[0-9]+(?:![0-9]+)?(?:\\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?(?:\\.post[0-9]+)?(?:\\.dev[0-9]+)?(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$(?![\\s\\S])"
+              }
+            }
+          }
+        }
+      }
     },
     "activation": {
       "type": "object",
@@ -155,5 +236,33 @@
       "type": "string",
       "pattern": "^1\\.\\d+\\.\\d+$"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "runtimeEngine": {
+            "const": "native"
+          }
+        },
+        "required": ["runtimeEngine"]
+      },
+      "then": {
+        "required": ["installation"],
+        "properties": {
+          "installation": {
+            "properties": {
+              "backend": {
+                "enum": ["native", "javascript-bun"]
+              }
+            },
+            "required": ["backend"]
+          }
+        }
+      },
+      "else": {
+        "required": ["micromambaVersion"]
+      }
+    }
+  ]
 }

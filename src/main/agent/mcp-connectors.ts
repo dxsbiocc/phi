@@ -24,6 +24,7 @@ import semver from 'semver'
 
 import type {
   FeaturedMcpConnector,
+  McpConnectorSetupPhase,
   RemoteMcpConnectorOptions,
   RemoteMcpOAuthCredentials
 } from '../../shared/mcpConnectorCatalog'
@@ -251,23 +252,29 @@ export async function installCatalogConnector(
   registryDir: string,
   id: string,
   version?: string,
-  options: InstallerOptions & OfficialRegistryOptions = {}
+  options: InstallerOptions &
+    OfficialRegistryOptions & {
+      onPhase?: (phase: Extract<McpConnectorSetupPhase, 'downloading' | 'installing'>) => void
+    } = {}
 ): Promise<InstalledPackage[]> {
   if (
     registryDir === OFFICIAL_REGISTRY_ID ||
     isOfficialRegistryDirectory(registryDir, options.agentDir)
   ) {
+    options.onPhase?.('downloading')
     const registry = await readContentRegistry(registryDir, options)
     const prepared = await prepareContentPackageInstall(
       registry,
       { type: 'mcp', id, ...(version ? { version } : {}) },
       options
     )
+    options.onPhase?.('installing')
     return installConnectorFromRegistry(prepared, id, version, options)
   }
   const source = resolve(registryDir)
   if (isRegistryDirectory(source)) {
     const registry = readRegistry(source)
+    options.onPhase?.('installing')
     return installConnectorFromRegistry(registry, id, version, options)
   }
 
@@ -282,6 +289,7 @@ export async function installCatalogConnector(
   const temporary = mkdtempSync(join(tmpdir(), 'phi-connector-registry-'))
   try {
     const registry = materializeConnectorRegistry(packageDir, temporary, source, 'imported')
+    options.onPhase?.('installing')
     return await installConnectorFromRegistry(registry, id, version, options)
   } finally {
     rmSync(temporary, { recursive: true, force: true })

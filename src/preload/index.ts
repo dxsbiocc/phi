@@ -104,7 +104,11 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type { SkillContent, SkillSummary } from '../shared/skillTypes'
-import type { FeaturedMcpConnector, RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
+import type {
+  FeaturedMcpConnector,
+  McpConnectorSetupProgress,
+  RemoteMcpConnectorOptions
+} from '../shared/mcpConnectorCatalog'
 
 type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
@@ -987,6 +991,7 @@ type RendererAuthApi = {
   ) => Promise<InstalledPackageView[]>
   uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
   buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
+  onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void) => Unsubscribe
   addRemoteMcpConnector: (
     name: string,
     url: string,
@@ -1689,6 +1694,16 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:uninstallConnector', id),
   buildMcpConnectorEnvironment: (id: string): Promise<{ envId: string }> =>
     ipcRenderer.invoke('mcp:buildConnectorEnvironment', id),
+  onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void): Unsubscribe => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      progress: McpConnectorSetupProgress
+    ): void => cb(progress)
+    ipcRenderer.on('mcp:connectorSetupChanged', handler)
+    return () => {
+      ipcRenderer.removeListener('mcp:connectorSetupChanged', handler)
+    }
+  },
   addRemoteMcpConnector: (
     name: string,
     url: string,

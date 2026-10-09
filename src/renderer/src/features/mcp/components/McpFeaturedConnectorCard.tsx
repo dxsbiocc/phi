@@ -3,6 +3,7 @@ import { alpha } from '@mui/material/styles'
 import { GoCheck, GoKey, GoLock, GoPlay, GoPlus, GoSync } from 'react-icons/go'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { ConnectorIcon } from './ConnectorIcon'
+import { connectorSetupActive, connectorSetupLabel } from '../lib/connectorSetupPresentation'
 
 export type ConnectorAuthStatus = 'checking' | 'authenticated' | 'unauthenticated' | 'unavailable'
 
@@ -15,6 +16,7 @@ export function McpFeaturedConnectorCard({
   busy,
   authorizing = false,
   onOpen,
+  onRetry,
   onAdd,
   onAuthorize,
   onCancel,
@@ -29,6 +31,7 @@ export function McpFeaturedConnectorCard({
   busy: boolean
   authorizing?: boolean
   onOpen: () => void
+  onRetry?: () => void
   onAdd: () => void
   onAuthorize: () => void
   onCancel?: () => void
@@ -39,6 +42,9 @@ export function McpFeaturedConnectorCard({
   const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin || connector.apiKey)
   const authorized = !requiresSignIn || (supportsAuthorization && authStatus === 'authenticated')
   const needsEnvironment = connector.environmentState === 'not-built'
+  const settingUp = connectorSetupActive(connector.setup)
+  const localUnchecked =
+    connector.transport === 'stdio' && installed && connector.setup?.phase !== 'ready'
   const loginLabel = !requiresSignIn
     ? null
     : !supportsAuthorization
@@ -64,21 +70,24 @@ export function McpFeaturedConnectorCard({
                 : installed
                   ? '已配置 · 需登录'
                   : '需登录'
-  const actionLabel = authorizing
-    ? `取消授权 ${connector.name}`
-    : updateAvailable
-      ? `更新 ${connector.name}`
-      : needsEnvironment
-        ? `构建 ${connector.name} 环境`
-        : installed && authorized && !enabled
-          ? `启用 ${connector.name}`
-          : authorized
-            ? `添加 ${connector.name}`
-            : connector.apiKey
-              ? installed
-                ? `验证 API key ${connector.name}`
-                : `配置 ${connector.name}`
-              : `授权登录 ${connector.name}`
+  const actionLabel =
+    localUnchecked && !needsEnvironment
+      ? `${connector.setup?.phase === 'failed' ? '重试连接' : '检查连接'} ${connector.name}`
+      : authorizing
+        ? `取消授权 ${connector.name}`
+        : updateAvailable
+          ? `更新 ${connector.name}`
+          : needsEnvironment
+            ? `构建 ${connector.name} 环境`
+            : installed && authorized && !enabled
+              ? `启用 ${connector.name}`
+              : authorized
+                ? `添加 ${connector.name}`
+                : connector.apiKey
+                  ? installed
+                    ? `验证 API key ${connector.name}`
+                    : `配置 ${connector.name}`
+                  : `授权登录 ${connector.name}`
 
   return (
     <Box
@@ -154,15 +163,36 @@ export function McpFeaturedConnectorCard({
           {connector.unavailableReason && (
             <Chip size="small" variant="outlined" label="需要新版 Phi" />
           )}
-          {needsEnvironment && <Chip size="small" variant="outlined" label="环境未构建" />}
+          {connector.transport === 'stdio' &&
+            connector.setup &&
+            connector.setup.phase !== 'removed' && (
+              <Chip
+                size="small"
+                variant="outlined"
+                color={connector.setup.phase === 'failed' ? 'error' : 'default'}
+                label={connectorSetupLabel(connector.setup.phase)}
+              />
+            )}
+          {needsEnvironment && !settingUp && (
+            <Chip size="small" variant="outlined" label="环境未构建" />
+          )}
         </Stack>
       </Box>
-      {installed &&
-      authorized &&
-      enabled &&
-      !authorizing &&
-      !updateAvailable &&
-      !needsEnvironment ? (
+      {settingUp ? (
+        <Box
+          role="status"
+          aria-label={connectorSetupLabel(connector.setup!.phase)}
+          sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
+        >
+          <CircularProgress size={18} />
+        </Box>
+      ) : installed &&
+        authorized &&
+        enabled &&
+        !authorizing &&
+        !updateAvailable &&
+        !localUnchecked &&
+        !needsEnvironment ? (
         <Box
           role="img"
           aria-label={`已添加 ${connector.name}`}
@@ -208,6 +238,7 @@ export function McpFeaturedConnectorCard({
             event.stopPropagation()
             if (authorizing) onCancel?.()
             else if (needsEnvironment) onBuildEnvironment?.()
+            else if (localUnchecked) onRetry?.()
             else if (installed && authorized && !enabled && !updateAvailable) onEnable?.()
             else if (authorized) onAdd()
             else onAuthorize()
@@ -233,7 +264,7 @@ export function McpFeaturedConnectorCard({
         >
           {authorizing ? (
             <CircularProgress size={18} color="inherit" aria-label="等待授权" />
-          ) : updateAvailable ? (
+          ) : updateAvailable || localUnchecked ? (
             <GoSync size={18} aria-hidden="true" />
           ) : installed && authorized && !enabled ? (
             <GoPlay size={18} aria-hidden="true" />

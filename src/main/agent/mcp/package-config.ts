@@ -70,13 +70,14 @@ export function installMcpPackageConfig(
     throw new Error(`已有名为 ${manifest.id} 的用户 MCP 配置；不会覆盖`)
   }
   const existingMarker = readManagedMarker(existing)
-  const desiredEnabled =
-    existingMarker?.desiredEnabled ??
-    (isRecord(existing) && typeof existing.enabled === 'boolean'
+  const desiredEnabled = existingMarker?.pending
+    ? (existingMarker.desiredEnabled ?? true)
+    : isRecord(existing) && typeof existing.enabled === 'boolean'
       ? existing.enabled
-      : manifest.connector.transport === 'http' && manifest.connector.auth === 'header'
-        ? false
-        : true)
+      : (existingMarker?.desiredEnabled ??
+        (manifest.connector.transport === 'http' && manifest.connector.auth === 'header'
+          ? false
+          : true))
 
   let entry: Record<string, unknown>
   if (manifest.connector.transport === 'http') {

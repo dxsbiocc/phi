@@ -3,6 +3,8 @@ import { join } from 'node:path'
 
 import { removeTree } from './ensure'
 import { removeEnvironmentCache } from './execution'
+import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from './ownership'
+import { hasLiveEnvironmentLeases } from './leases'
 import { acquirePackageCacheLock, isLockedByLiveProcess, tryAcquireEnvironmentLock } from './lock'
 import {
   deleteEnvironmentEntry,
@@ -18,7 +20,7 @@ const REMOVABLE_STATUSES = new Set(['ready', 'failed', 'drifted'])
 export interface GarbageCollectionResult {
   removed: string[]
   orphans: string[]
-  skipped: { envId: string; reason: 'building' | 'locked' }[]
+  skipped: { envId: string; reason: 'building' | 'locked' | 'in-use' }[]
   logsRemoved: number
 }
 
@@ -26,6 +28,7 @@ interface GarbageCollectionOptions {
   dryRun?: boolean
   now?: Date
   logRetentionDays?: number
+  processAlive?: (pid: number) => boolean
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -91,6 +94,10 @@ export function collectGarbage(
   const dryRun = options.dryRun === true
   const now = options.now ?? new Date()
   const logRetentionDays = options.logRetentionDays ?? 30
+  const environmentsDirectory = ownedRuntimeDirectory(root, 'envs')
+  ownedRuntimeDirectory(root, 'cache')
+  ownedRuntimeDirectory(root, 'logs')
+  ownedRuntimeDirectory(root, 'state', 'tmp')
   const index = readEnvironmentIndex(root)
   const removed: string[] = []
   const orphans: string[] = []
@@ -102,6 +109,17 @@ export function collectGarbage(
       continue
     }
     if (!isRemovable(entry)) continue
+    ownedEnvironmentPrefix(root, envId, entry.prefix)
+    ownedRuntimeDirectory(root, 'cache', envId)
+    if (
+      hasLiveEnvironmentLeases(root, envId, {
+        processAlive: options.processAlive,
+        pruneStale: false
+      })
+    ) {
+      skipped.push({ envId, reason: 'in-use' })
+      continue
+    }
     if (dryRun) {
       if (isLockedByLiveProcess(root, envId)) {
         skipped.push({ envId, reason: 'locked' })
@@ -118,7 +136,12 @@ export function collectGarbage(
     try {
       const current = stillRemovable(root, envId)
       if (!current) continue
-      removeTree(current.prefix)
+      if (hasLiveEnvironmentLeases(root, envId, { processAlive: options.processAlive })) {
+        skipped.push({ envId, reason: 'in-use' })
+        continue
+      }
+      ownedRuntimeDirectory(root, 'cache', envId)
+      removeTree(ownedEnvironmentPrefix(root, envId, current.prefix))
       removeEnvironmentCache(root, envId)
       deleteEnvironmentEntry(root, envId)
       removed.push(envId)
@@ -128,10 +151,21 @@ export function collectGarbage(
   }
 
   const indexed = new Set(Object.keys(readEnvironmentIndex(root).environments))
-  for (const name of listNames(join(root, 'envs'))) {
+  for (const name of listNames(environmentsDirectory)) {
     if (indexed.has(name)) continue
     const directory = join(root, 'envs', name)
     if (!isRealDirectory(directory)) continue
+    ownedEnvironmentPrefix(root, name, directory)
+    ownedRuntimeDirectory(root, 'cache', name)
+    if (
+      hasLiveEnvironmentLeases(root, name, {
+        processAlive: options.processAlive,
+        pruneStale: false
+      })
+    ) {
+      skipped.push({ envId: name, reason: 'in-use' })
+      continue
+    }
     if (dryRun) {
       if (isLockedByLiveProcess(root, name)) {
         skipped.push({ envId: name, reason: 'locked' })
@@ -147,7 +181,12 @@ export function collectGarbage(
     }
     try {
       if (readEnvironmentIndex(root).environments[name]) continue
-      removeTree(directory)
+      if (hasLiveEnvironmentLeases(root, name, { processAlive: options.processAlive })) {
+        skipped.push({ envId: name, reason: 'in-use' })
+        continue
+      }
+      ownedRuntimeDirectory(root, 'cache', name)
+      removeTree(ownedEnvironmentPrefix(root, name, directory))
       removeEnvironmentCache(root, name)
       orphans.push(name)
     } finally {
@@ -156,8 +195,16 @@ export function collectGarbage(
   }
 
   const logsRemoved =
-    sweepFiles(join(root, 'logs'), now.getTime() - logRetentionDays * MS_PER_DAY, dryRun) +
-    sweepFiles(join(root, 'state', 'tmp'), now.getTime() - TEMP_RETENTION_DAYS * MS_PER_DAY, dryRun)
+    sweepFiles(
+      ownedRuntimeDirectory(root, 'logs'),
+      now.getTime() - logRetentionDays * MS_PER_DAY,
+      dryRun
+    ) +
+    sweepFiles(
+      ownedRuntimeDirectory(root, 'state', 'tmp'),
+      now.getTime() - TEMP_RETENTION_DAYS * MS_PER_DAY,
+      dryRun
+    )
 
   removed.sort()
   orphans.sort()

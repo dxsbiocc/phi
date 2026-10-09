@@ -1,4 +1,5 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
@@ -11,7 +12,8 @@ import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
@@ -42,6 +44,9 @@ import * as browserIpc from '../src/main/browser/browser-ipc'
 import * as browserToolHost from '../src/main/agent/browser/browser-tool-host'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
+
+const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
+test.after(() => rmSync(fixtureStateDir, { recursive: true, force: true }))
 
 const officialRegistryFixture = {
   id: 'phi-packages',
@@ -2090,6 +2095,25 @@ async function harness(
         cancel: () => undefined
       })
     },
+    // These callbacks are handed to the existing mocked build/actions layer.
+    // Never build or sweep real filesystem environments from this IPC fixture.
+    './agent/content/environment-refs': {
+      buildEnvironment: async (): Promise<never> => {
+        throw new Error('environment building is mocked')
+      }
+    } satisfies Pick<
+      typeof import('../src/main/agent/content/environment-refs'),
+      'buildEnvironment'
+    >,
+    './agent/envs/gc': {
+      collectGarbage: () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 })
+    } satisfies Pick<typeof import('../src/main/agent/envs/gc'), 'collectGarbage'>,
+    './agent/packages/mcp-version-cleanup': {
+      cleanupInactiveMcpVersions: (): string[] => []
+    } satisfies Pick<
+      typeof import('../src/main/agent/packages/mcp-version-cleanup'),
+      'cleanupInactiveMcpVersions'
+    >,
     './agent/content/environment-build-prompt': {
       BUILD_NOW: '现在构建',
       confirmedEnvironmentBuild: (): boolean => false,
@@ -2301,6 +2325,24 @@ async function harness(
     './agent/content/skill': {
       validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
     },
+    './agent/mcp/connector-setup': {
+      ...connectorSetup,
+      ConnectorSetupTracker: class extends connectorSetup.ConnectorSetupTracker {
+        constructor(
+          ...[publish, now, storage]: ConstructorParameters<
+            typeof connectorSetup.ConnectorSetupTracker
+          >
+        ) {
+          const isolatedStorage = storage
+            ? { path: path.join(fixtureStateDir, randomUUID(), 'connector-setup.json') }
+            : undefined
+          super(publish, now, isolatedStorage)
+          if (isolatedStorage) {
+            operationLog.push({ type: 'connector.setup.storage', path: isolatedStorage.path })
+          }
+        }
+      }
+    },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: (
         name: string,
@@ -2312,6 +2354,7 @@ async function harness(
       },
       disableFeaturedApiKeyAutoDiscovery: noop,
       removeRemoteMcpConnector: noop,
+      readMcpServerEntry: (): undefined => undefined,
       readCustomRemoteMcpConnector: (name: string): unknown => {
         const connector =
           typeof name === 'string' ? customRemoteConnectors.get(name.trim()) : undefined
@@ -6414,6 +6457,16 @@ test('main dedicated MCP installation passes Chromium fetch and the selected off
     ]
   )
   assert.ok(app.contentFetchRequests.includes('https://example.invalid/catalog/mcp-pubmed.tar.gz'))
+  const storagePath = app.operationLog.find(
+    (entry) => entry.type === 'connector.setup.storage'
+  )?.path
+  assert.equal(typeof storagePath, 'string')
+  const persisted = JSON.parse(readFileSync(storagePath as string, 'utf8')) as {
+    records: Array<{ id: string; phase: string }>
+  }
+  assert.ok(
+    persisted.records.some((record) => record.id === 'pubmed' && record.phase === 'installed')
+  )
 })
 
 test('main IPC forwards the owning plugin identity for private environment builds', async () => {

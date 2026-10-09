@@ -17,6 +17,7 @@ import {
   type EnsureEnvironmentResult
 } from './ensure'
 import { readEnvironmentIndex, updateEnvironmentEntry } from './index-store'
+import { hasLiveEnvironmentLeases } from './leases'
 import { ensureMambarc, ensureRuntimeLayout, runMicromamba } from './runtime'
 import { envMetadataSchema } from './schemas'
 
@@ -332,7 +333,8 @@ function environmentTarget(input: Parameters<typeof ensureEnvironment>[0]): {
     name: input.spec.name,
     platform: input.platform ?? currentPlatform(),
     lockText: input.lockText,
-    sourcePackages: input.spec.sourcePackages
+    sourcePackages: input.spec.sourcePackages,
+    installation: input.spec.installation
   })
   return { root, envId, prefix: join(root, 'envs', envId) }
 }
@@ -347,6 +349,8 @@ export async function repairEnvironment(
     signal: input.signal
   })
   try {
+    if (hasLiveEnvironmentLeases(target.root, target.envId))
+      throw new Error(`environment ${target.envId} is in use by active consumer leases`)
     removeTree(target.prefix)
   } finally {
     lock.release()

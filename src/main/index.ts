@@ -220,6 +220,7 @@ import {
   writeApprovalDigest
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
+import { buildEnvironment } from './agent/content/environment-refs'
 import { bindAgentSession } from './agent/content/environment-gate'
 import {
   createSkillHost,
@@ -227,6 +228,8 @@ import {
   type PresentArtifactsRequest
 } from './agent/content/skill-host'
 import { getRuntimeRoot } from './agent/envs/runtime'
+import { collectGarbage } from './agent/envs/gc'
+import { cleanupInactiveMcpVersions } from './agent/packages/mcp-version-cleanup'
 import {
   BUILD_NOW,
   confirmedEnvironmentBuild,
@@ -292,6 +295,7 @@ import {
   uninstallPackage as uninstallRegistryPackage
 } from './agent/packages/installer'
 import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
+import type { InstallerOptions } from './agent/packages/installer-types'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
 import { readResourceIcon } from './agent/resource-icons'
@@ -305,11 +309,13 @@ import {
   mcpOAuthAuthorizationOrigin,
   readCustomRemoteMcpConnector,
   refreshPersistedManagedStdioServers,
+  readMcpServerEntry,
   removeRemoteMcpConnector,
   setMcpConnectorEnabled,
   setMcpPackageEnabled,
   uninstallCatalogConnector
 } from './agent/mcp-connectors'
+import { ConnectorSetupTracker, type ConnectorSetupReporter } from './agent/mcp/connector-setup'
 import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
@@ -902,8 +908,21 @@ function officialContentSourceOptions(): {
   agentDir: string
   appVersion: string
   fetch: typeof fetch
+  buildMcpEnvironment: NonNullable<InstallerOptions['buildMcpEnvironment']>
+  verifyMcpStdio: NonNullable<InstallerOptions['verifyMcpStdio']>
 } {
-  return { agentDir: AGENT_DIR, appVersion: app.getVersion(), fetch: officialRegistryFetch }
+  return {
+    agentDir: AGENT_DIR,
+    appVersion: app.getVersion(),
+    fetch: officialRegistryFetch,
+    buildMcpEnvironment: (descriptor) =>
+      environmentBuilds.start(descriptor, {
+        ref: descriptor.ref,
+        requestedBy: { mcp: descriptor.owner ?? descriptor.spec.name }
+      }),
+    verifyMcpStdio: (request) =>
+      getOmpBridge().request<string[]>('mcp.configuredStdioTools', request)
+  }
 }
 
 function knownContentSourceOptions(): {
@@ -1730,6 +1749,8 @@ function syncPreventSleepBlocker(): void {
 }
 const environmentBuilds = createEnvironmentBuilds({
   root: getRuntimeRoot(),
+  build: (root, descriptor, options) =>
+    buildEnvironment(root, descriptor, { ...options, fetch: officialRegistryFetch }),
   onChange: (build) => {
     sendToAllWindows('environmentBuilds:changed', build)
   }
@@ -1738,6 +1759,11 @@ const managedEnvironmentActions = createManagedEnvironmentActions({
   root: getRuntimeRoot(),
   agentDir: AGENT_DIR,
   builds: environmentBuilds,
+  collect: (root, options) => {
+    const result = collectGarbage(root, options)
+    if (!options?.dryRun) cleanupInactiveMcpVersions(AGENT_DIR, root)
+    return result
+  },
   catalog: (projectDir) =>
     listManagedEnvironments({
       ...(projectDir ? { projectDir } : {}),
@@ -9430,13 +9456,46 @@ app.whenReady().then(async () => {
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
   )
+  const connectorSetups = new ConnectorSetupTracker(
+    (progress) => sendToAllWindows('mcp:connectorSetupChanged', progress),
+    undefined,
+    { path: join(AGENT_DIR, 'state', 'connector-setup.json') }
+  )
   const connectorCatalog = async (): Promise<ReturnType<typeof listConnectorCatalog>> =>
     listConnectorCatalog({
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
       registries: (await loadPackageRegistries()).registries
+    }).map((connector) => ({ ...connector, setup: connectorSetups.get(connector.id) }))
+
+  async function prepareStdioEnvironment(
+    id: string,
+    report: ConnectorSetupReporter
+  ): Promise<{ envId: string }> {
+    report('environment')
+    const action = connectorEnvironmentBuildAction(id, { agentDir: AGENT_DIR })
+    const handle = await environmentBuilds.start(action.descriptor, action.options)
+    const refreshed = refreshPersistedManagedStdioServers({
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot()
     })
+    const failure = refreshed.failures.find((entry) => entry.name === id)
+    if (failure) throw failure.error
+    return { envId: handle.envId }
+  }
+
+  async function probeStdioTools(id: string, report: ConnectorSetupReporter): Promise<string[]> {
+    const entry = readMcpServerEntry(id, AGENT_DIR)
+    if (!entry || entry.phiPackage !== id) throw new Error('请先安装这个本地连接器')
+    report('starting')
+    const toolNames = await getOmpBridge().request<string[]>('mcp.configuredStdioTools', {
+      name: id,
+      entry,
+      environment: { agentDir: AGENT_DIR, root: getRuntimeRoot() }
+    })
+    return toolNames
+  }
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
     const servers = await (isRemoteResourceScope(cwd)
       ? listGlobalMcpServers()
@@ -9478,44 +9537,81 @@ app.whenReady().then(async () => {
       )
       if (!connector?.registryDir) throw new Error(`连接器目录中找不到 ${id}`)
       if (connector.unavailableReason) throw new Error(connector.unavailableReason)
-      const result = await installCatalogConnector(
-        connector.registryDir,
+      const sourceRegistryDir = connector.registryDir
+      return connectorSetups.run(
         connector.id,
-        connector.version,
-        {
-          ...officialContentSourceOptions(),
-          runtimeRoot: getRuntimeRoot()
-        }
+        async (report) => {
+          const wasConfigured = readMcpServerEntry(connector.id, AGENT_DIR) !== undefined
+          let toolNames: string[] | undefined
+          const sourceOptions = officialContentSourceOptions()
+          const result = await installCatalogConnector(
+            sourceRegistryDir,
+            connector.id,
+            connector.version,
+            {
+              ...sourceOptions,
+              runtimeRoot: getRuntimeRoot(),
+              onPhase: report,
+              buildMcpEnvironment: (descriptor) => {
+                report('environment')
+                return sourceOptions.buildMcpEnvironment(descriptor)
+              },
+              verifyMcpStdio: async (request) => {
+                report('starting')
+                toolNames = await sourceOptions.verifyMcpStdio(request)
+                return toolNames
+              }
+            }
+          )
+          if (!wasConfigured) {
+            setEnabled(`mcp:${connector.id}`, true, { agentDir: AGENT_DIR })
+            setMcpPackageEnabled(connector.id, true, AGENT_DIR)
+          }
+          try {
+            if (connector.transport === 'stdio' && toolNames === undefined) {
+              await prepareStdioEnvironment(connector.id, report)
+              toolNames = await probeStdioTools(connector.id, report)
+            }
+          } finally {
+            await invalidateAgentSession()
+          }
+          if (toolNames) report('ready', { toolNames })
+          return result
+        },
+        connector.transport === 'stdio' ? 'ready' : 'installed'
       )
-      setEnabled(`mcp:${connector.id}`, true, { agentDir: AGENT_DIR })
-      setMcpPackageEnabled(connector.id, true, AGENT_DIR)
-      await invalidateAgentSession()
-      return result
     }
   )
   ipcMain.handle('mcp:uninstallConnector', async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
-    const result = uninstallCatalogConnector(id, {
-      agentDir: AGENT_DIR,
-      runtimeRoot: getRuntimeRoot()
-    })
-    setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
-    await invalidateAgentSession()
-    return result
+    return connectorSetups.run(
+      id,
+      async () => {
+        const result = uninstallCatalogConnector(id, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot()
+        })
+        setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+        await invalidateAgentSession()
+        return result
+      },
+      'removed'
+    )
   })
   ipcMain.handle('mcp:buildConnectorEnvironment', async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
-    const action = connectorEnvironmentBuildAction(id, {
-      agentDir: AGENT_DIR
+    return connectorSetups.run(id, async (report) => {
+      let environment: { envId: string }
+      let toolNames: string[]
+      try {
+        environment = await prepareStdioEnvironment(id, report)
+        toolNames = await probeStdioTools(id, report)
+      } finally {
+        await invalidateAgentSession()
+      }
+      report('ready', { toolNames })
+      return environment
     })
-    const handle = await environmentBuilds.start(action.descriptor, action.options)
-    const refreshed = refreshPersistedManagedStdioServers({
-      agentDir: AGENT_DIR,
-      runtimeRoot: getRuntimeRoot()
-    })
-    const failure = refreshed.failures.find((entry) => entry.name === id)
-    if (failure) throw failure.error
-    return { envId: handle.envId }
   })
   ipcMain.handle(
     'mcp:addRemoteConnector',
@@ -9572,7 +9668,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('连接器标识无效')
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
-    if (!connector?.url) throw new Error('连接器目录中找不到远程连接器')
+    if (!connector) throw new Error('连接器目录中找不到这个连接器')
+    if (connector.transport === 'stdio') {
+      return connectorSetups.run(id, async (report) => {
+        const toolNames = await probeStdioTools(id, report)
+        report('ready', { toolNames })
+        return toolNames
+      })
+    }
+    if (!connector.url) throw new Error('连接器的服务地址无效')
     return getOmpBridge().request<string[]>('mcp.featuredTools', {
       id,
       url: connector.url,

@@ -53,6 +53,14 @@ import {
   discoverCustomMcpOAuthEndpoints,
   listFeaturedMcpTools
 } from './featured-mcp-auth'
+import { listConfiguredStdioMcpTools } from './configured-stdio-tools'
+import { loadAllMCPConfigs } from '@oh-my-pi/pi-coding-agent/mcp/config'
+import { MCPManager } from '@oh-my-pi/pi-coding-agent/mcp/manager'
+import { OwnedStdioTransportScope } from './owned-stdio-transports'
+import { acquireEnvironmentLease, type EnvironmentLease } from '../envs/leases'
+import { getRuntimeRoot } from '../envs/runtime'
+import { readMcpConfig } from '../mcp/package-config'
+import { readManagedMarker } from '../mcp/stdio-environment'
 import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
@@ -167,6 +175,10 @@ type SessionEntry = {
   stopAgentRunNotices?: () => void
   browserTextVault?: BrowserTextVault
   activeHostRunId?: string
+  mcpLeases?: Map<string, EnvironmentLease>
+  ownedMcpManager?: MCPManager
+  ownedStdioTransports?: Map<string, OwnedStdioTransportScope>
+  disposing?: boolean
 }
 
 type WorkerPromptOptions = {
@@ -1298,6 +1310,12 @@ function injectableServerConfig(
       type: 'stdio',
       command: entry.command,
       ...(Array.isArray(entry.args) ? { args: entry.args } : {}),
+      ...(isRecord(entry.env) ? { env: entry.env } : {}),
+      ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}),
+      ...(typeof entry.timeout === 'number' ? { timeout: entry.timeout } : {}),
+      ...(entry.requestIdFormat === 'number' || entry.requestIdFormat === 'string'
+        ? { requestIdFormat: entry.requestIdFormat }
+        : {}),
       enabled: true
     }
   }
@@ -1310,11 +1328,9 @@ function injectableServerConfig(
   }
 }
 
-async function applyConnectorEnabledForSession(
-  result: CreateAgentSessionResult,
-  agentDir: string,
-  name: string
-): Promise<void> {
+async function applyConnectorEnabledForSession(session: SessionEntry, name: string): Promise<void> {
+  const { result, agentDir } = session
+  if (session.disposing) return
   if (API_KEY_CONNECTOR_IDS.includes(name as (typeof API_KEY_CONNECTOR_IDS)[number])) {
     await syncFeaturedApiKeysForSession(result, agentDir, name)
     return
@@ -1324,20 +1340,177 @@ async function applyConnectorEnabledForSession(
   const entry = readMcpServerEntry(name, agentDir)
   const disabled = isMcpConnectorUserDisabled(name, agentDir) || entry?.enabled === false
   if (disabled) {
-    await manager.disconnectServer(name)
+    const transports = session.ownedStdioTransports?.get(name)
+    if (transports) transports.stopping = true
+    try {
+      await manager.disconnectServer(name)
+    } finally {
+      await transports?.drain()
+    }
+    session.mcpLeases?.get(name)?.release()
+    session.mcpLeases?.delete(name)
+    session.ownedStdioTransports?.delete(name)
   } else if (entry) {
     const config = injectableServerConfig(entry)
-    if (config) await manager.connectServers({ [name]: config }, {})
+    if (config) {
+      const marker = readManagedMarker(entry)
+      if (!marker && entry.phiManaged !== undefined)
+        throw new Error('MCP managed environment metadata is invalid')
+      const existing = session.mcpLeases?.get(name)
+      // A running session keeps its original installation across package upgrades.
+      if (existing && marker && existing.envId !== marker.envId) return
+      let lease: EnvironmentLease | undefined
+      try {
+        if (marker && !existing) {
+          if (marker.pending) throw new Error('MCP environment is not ready')
+          lease = await acquireEnvironmentLease({
+            root: getRuntimeRoot(agentDir),
+            envId: marker.envId
+          })
+        }
+        if (session.disposing) return
+        await manager.connectServers({ [name]: config }, {})
+        if (session.disposing) {
+          await manager.disconnectServer(name)
+          return
+        }
+        if (lease) {
+          session.mcpLeases ??= new Map()
+          session.mcpLeases.set(name, lease)
+          lease = undefined
+        }
+      } finally {
+        if (lease) {
+          const transports = session.ownedStdioTransports?.get(name)
+          if (transports) transports.stopping = true
+          try {
+            await manager.disconnectServer(name)
+          } finally {
+            await transports?.drain()
+          }
+          session.ownedStdioTransports?.delete(name)
+          lease.release()
+        }
+      }
+    }
   }
   await result.session.refreshMCPTools(manager.getTools() as never)
 }
 
 async function applyConnectorEnabled(name: string): Promise<void> {
   await Promise.all(
-    [...sessions.values()].map((entry) =>
-      applyConnectorEnabledForSession(entry.result, entry.agentDir, name)
-    )
+    [...sessions.values()].map((entry) => applyConnectorEnabledForSession(entry, name))
   )
+}
+
+async function leasedProfileMcpManager(
+  agentDir: string,
+  cwd: string,
+  settings: Settings,
+  authStorage: AuthStorage
+): Promise<{
+  manager: MCPManager
+  leases: Map<string, EnvironmentLease>
+  transports: Map<string, OwnedStdioTransportScope>
+}> {
+  const profile = readMcpConfig(agentDir)
+  const snapshot = await loadAllMCPConfigs(cwd, {
+    enableProjectConfig: settings.get('mcp.enableProjectConfig') ?? true,
+    filterExa: true,
+    extensionRoots: {
+      explicit: [],
+      mode: 'merge',
+      configured: settings.get('extensions') ?? [],
+      configuredLevel: settings.extensionsSourceLevel()
+    }
+  })
+  const leases = new Map<string, EnvironmentLease>()
+  try {
+    for (const [name, config] of Object.entries(snapshot.configs)) {
+      if (
+        config.enabled === false ||
+        resolve(snapshot.sources[name]?.path ?? '') !== resolve(agentDir, 'mcp.json')
+      )
+        continue
+      const entry = profile.mcpServers?.[name]
+      if (!isRecord(entry))
+        throw new Error(`MCP profile changed while preparing ${name}; retry session creation`)
+      const marker = readManagedMarker(entry)
+      if (!marker) {
+        if (entry.phiManaged !== undefined)
+          throw new Error(`MCP managed environment metadata for ${name} is invalid`)
+        continue
+      }
+      if (marker.pending) throw new Error(`MCP environment for ${name} is not ready`)
+      if (
+        config.type !== 'stdio' ||
+        config.command !== entry.command ||
+        JSON.stringify(config.args ?? []) !== JSON.stringify(entry.args ?? []) ||
+        JSON.stringify(config.env ?? {}) !== JSON.stringify(entry.env ?? {}) ||
+        config.cwd !== entry.cwd
+      ) {
+        throw new Error(`MCP profile changed while preparing ${name}; retry session creation`)
+      }
+      leases.set(
+        name,
+        await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId: marker.envId })
+      )
+    }
+    const manager = new MCPManager(cwd, null, async () => snapshot)
+    const transports = trackOwnedStdioTransports(manager)
+    manager.setAuthStorage(authStorage)
+    if (settings.get('mcp.notifications')) manager.setNotificationsEnabled(true)
+    return { manager, leases, transports }
+  } catch (error) {
+    for (const lease of leases.values()) lease.release()
+    throw error
+  }
+}
+
+function trackOwnedStdioTransports(manager: MCPManager): Map<string, OwnedStdioTransportScope> {
+  const scopes = new Map<string, OwnedStdioTransportScope>()
+  const connect = manager.connectServers.bind(manager)
+  manager.connectServers = async (...args) => {
+    if (!Object.keys(args[0]).length) return connect(...args)
+    const results = await Promise.all(
+      Object.entries(args[0]).map(([name, config]) => {
+        const single = (): ReturnType<MCPManager['connectServers']> =>
+          connect({ [name]: config }, args[1][name] ? { [name]: args[1][name] } : {}, args[2])
+        if (config.type !== 'stdio') return single()
+        let scope = scopes.get(name)
+        if (!scope) {
+          scope = new OwnedStdioTransportScope()
+          scopes.set(name, scope)
+        }
+        return scope.run(single)
+      })
+    )
+    return {
+      tools: manager.getTools(),
+      errors: new Map(results.flatMap((result) => [...result.errors])),
+      connectedServers: [...new Set(results.flatMap((result) => result.connectedServers))],
+      exaApiKeys: results.flatMap((result) => result.exaApiKeys)
+    }
+  }
+  const reconnect = manager.reconnectServer.bind(manager)
+  manager.reconnectServer = (...args) => {
+    const scope = scopes.get(args[0])
+    if (scope?.stopping) return Promise.resolve(null)
+    return scope ? scope.run(() => reconnect(...args)) : reconnect(...args)
+  }
+  return scopes
+}
+
+async function disconnectLeasedMcpManager(
+  manager: MCPManager | undefined,
+  scopes?: Map<string, OwnedStdioTransportScope>
+): Promise<void> {
+  for (const scope of scopes?.values() ?? []) scope.stopping = true
+  try {
+    await manager?.disconnectAll()
+  } finally {
+    await Promise.all([...(scopes?.values() ?? [])].map((scope) => scope.drain()))
+  }
 }
 
 async function syncFeaturedApiKeys(id?: string): Promise<void> {
@@ -1708,101 +1881,130 @@ async function createSession(params: unknown): Promise<unknown> {
   ]
 
   const selectedModel = await modelBySelector(ctx, record.model)
-  const result = await createLegacyAgentSession({
-    agentId: `phi-main-${sessionId}`,
-    agentDisplayName: 'Main',
-    // The session manager retains the private history anchor. SDK discovery uses
-    // Phi's global directory so it never treats that anchor as a project root.
-    cwd: settingsCwd,
-    agentDir,
-    settings,
-    authStorage: ctx.authStorage,
-    modelRegistry: ctx.modelRegistry,
-    sessionManager,
-    thinkingLevel: configuredThinkingLevel(record.thinkingLevel),
-    systemPrompt: (defaultPrompt) =>
-      remoteRoot
-        ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
-            ...(personaMarkdown ? { personaMarkdown } : {})
-          })
-        : buildPhiMainSystemPrompt(defaultPrompt, {
-            ...(personaMarkdown ? { personaMarkdown } : {})
-          }),
-    ...(selectedModel ? { model: selectedModel } : {}),
-    ...(resources ? { resourceLoader: resources } : {}),
-    ...(customTools.length > 0 ? { customTools } : {}),
-    ...(remoteRoot
-      ? {
-          enableMCP: false,
-          enableLsp: false,
-          disableExtensionDiscovery: true,
-          includeWorkspaceTree: false,
-          contextFiles: remoteContextFiles ?? [],
-          promptTemplates: [],
-          slashCommands: []
-        }
-      : {}),
-    ...(noTools
-      ? {
-          enableMCP: false,
-          enableLsp: false,
-          disableExtensionDiscovery: true,
-          toolNames: [],
-          restrictToolNames: true,
-          skills: [],
-          contextFiles: [],
-          promptTemplates: [],
-          slashCommands: []
-        }
-      : {})
-  })
-
-  if (!remoteRoot && !noTools) await syncFeaturedApiKeysForSession(result, agentDir)
-
-  if (remoteRoot) {
-    await initializeExtensions(result.session, {
-      reportSendError: () => {
-        process.stderr.write('Phi remote extension message failed\n')
-      },
-      reportRuntimeError: () => {
-        process.stderr.write('Phi remote extension handler failed\n')
-      }
+  const leasedMcp =
+    !remoteRoot && !noTools
+      ? await leasedProfileMcpManager(agentDir, settingsCwd, settings, ctx.authStorage)
+      : undefined
+  const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
+  let created: CreateAgentSessionResult | undefined
+  try {
+    const mcpTools = leasedMcp ? (await leasedMcp.manager.discoverAndConnect()).tools : undefined
+    const result = await createLegacyAgentSession({
+      agentId: `phi-main-${sessionId}`,
+      agentDisplayName: 'Main',
+      // The session manager retains the private history anchor. SDK discovery uses
+      // Phi's global directory so it never treats that anchor as a project root.
+      cwd: settingsCwd,
+      agentDir,
+      settings,
+      authStorage: ctx.authStorage,
+      modelRegistry: ctx.modelRegistry,
+      sessionManager,
+      ...(leasedMcp ? { mcpManager: leasedMcp.manager } : {}),
+      thinkingLevel: configuredThinkingLevel(record.thinkingLevel),
+      systemPrompt: (defaultPrompt) =>
+        remoteRoot
+          ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
+              ...(personaMarkdown ? { personaMarkdown } : {})
+            })
+          : buildPhiMainSystemPrompt(defaultPrompt, {
+              ...(personaMarkdown ? { personaMarkdown } : {})
+            }),
+      ...(selectedModel ? { model: selectedModel } : {}),
+      ...(resources ? { resourceLoader: resources } : {}),
+      ...(customTools.length > 0 ? { customTools } : {}),
+      ...(remoteRoot
+        ? {
+            enableMCP: false,
+            enableLsp: false,
+            disableExtensionDiscovery: true,
+            includeWorkspaceTree: false,
+            contextFiles: remoteContextFiles ?? [],
+            promptTemplates: [],
+            slashCommands: []
+          }
+        : {}),
+      ...(noTools
+        ? {
+            enableMCP: false,
+            enableLsp: false,
+            disableExtensionDiscovery: true,
+            toolNames: [],
+            restrictToolNames: true,
+            skills: [],
+            contextFiles: [],
+            promptTemplates: [],
+            slashCommands: []
+          }
+        : {})
     })
-  }
+    created = result
+    if (leasedMcp) {
+      await result.session.refreshMCPTools(mcpTools ?? [])
+      leasedMcp.manager.setOnToolsChanged((tools) => result.session.refreshMCPTools(tools))
+    }
 
-  installBrowserTextPreDispatchRedaction(result.session, browserTextVault)
+    if (!remoteRoot && !noTools) await syncFeaturedApiKeysForSession(result, agentDir)
 
-  if (remoteRoot && !remoteWorkspaceToolsVerified(result.session.getAllToolInfos())) {
-    await result.session.dispose()
-    throw new Error(
-      '远程 read/bash/glob/grep/write/edit 工具未覆盖本地实现；远程会话已拒绝启动工具'
-    )
-  }
+    if (remoteRoot) {
+      await initializeExtensions(result.session, {
+        reportSendError: () => {
+          process.stderr.write('Phi remote extension message failed\n')
+        },
+        reportRuntimeError: () => {
+          process.stderr.write('Phi remote extension handler failed\n')
+        }
+      })
+    }
 
-  parentRef.current = result
+    installBrowserTextPreDispatchRedaction(result.session, browserTextVault)
 
-  result.session.subscribe((event) => {
-    const tokensAfter =
-      event.type === 'auto_compaction_end' && !event.aborted && !event.skipped
-        ? event.action === 'shake'
-          ? contextTokensNow(result.session)
-          : compactedTokensAfter(result.session)
-        : undefined
-    sendEvent('sessionEvent', tokensAfter === undefined ? event : { ...event, tokensAfter }, {
-      sessionId
+    if (remoteRoot && !remoteWorkspaceToolsVerified(result.session.getAllToolInfos())) {
+      await result.session.dispose()
+      throw new Error(
+        '远程 read/bash/glob/grep/write/edit 工具未覆盖本地实现；远程会话已拒绝启动工具'
+      )
+    }
+
+    parentRef.current = result
+
+    result.session.subscribe((event) => {
+      const tokensAfter =
+        event.type === 'auto_compaction_end' && !event.aborted && !event.skipped
+          ? event.action === 'shake'
+            ? contextTokensNow(result.session)
+            : compactedTokensAfter(result.session)
+          : undefined
+      sendEvent('sessionEvent', tokensAfter === undefined ? event : { ...event, tokensAfter }, {
+        sessionId
+      })
+      sendEvent('sessionState', serializeSessionState(result), { sessionId })
     })
-    sendEvent('sessionState', serializeSessionState(result), { sessionId })
-  })
-  sessions.set(sessionId, {
-    result,
-    agentDir,
-    agentRuns,
-    stopAgentRunNotices,
-    browserTextVault
-  })
-  return {
-    sessionId,
-    state: serializeSessionState(result)
+    sessions.set(sessionId, {
+      result,
+      agentDir,
+      agentRuns,
+      stopAgentRunNotices,
+      browserTextVault,
+      mcpLeases,
+      ...(leasedMcp
+        ? { ownedMcpManager: leasedMcp.manager, ownedStdioTransports: leasedMcp.transports }
+        : {})
+    })
+    return {
+      sessionId,
+      state: serializeSessionState(result)
+    }
+  } catch (error) {
+    try {
+      await created?.session.dispose()
+    } catch {
+      /* Preserve the original creation error while completing owned cleanup. */
+    } finally {
+      await disconnectLeasedMcpManager(leasedMcp?.manager, leasedMcp?.transports)
+      for (const lease of mcpLeases.values()) lease.release()
+    }
+    throw error
   }
 }
 
@@ -2141,11 +2343,18 @@ async function disposeSession(params: unknown): Promise<void> {
   // Background runs outlive their tool call, not their conversation. Stopping them is the
   // session going away, not news, so it is not announced.
   const entry = sessions.get(sessionId)
+  if (entry) entry.disposing = true
   entry?.stopAgentRunNotices?.()
   entry?.agentRuns?.stopAll()
   entry?.browserTextVault?.clear()
   sessions.delete(sessionId)
-  await result.session.dispose()
+  try {
+    await result.session.dispose()
+  } finally {
+    await disconnectLeasedMcpManager(entry?.ownedMcpManager, entry?.ownedStdioTransports)
+    for (const lease of entry?.mcpLeases?.values() ?? []) lease.release()
+    entry?.mcpLeases?.clear()
+  }
 }
 
 async function setSessionModel(params: unknown): Promise<unknown> {
@@ -2271,6 +2480,8 @@ async function renameSession(params: unknown): Promise<void> {
 
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'mcp.configuredStdioTools':
+      return listConfiguredStdioMcpTools(params)
     case 'mcp.featuredTools': {
       const record = isRecord(params) ? params : {}
       const id = stringValue(record.id)

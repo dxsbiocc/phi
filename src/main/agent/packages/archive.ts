@@ -30,10 +30,10 @@ export function createDeterministicTarGz(files: ArchiveFile[]): Buffer {
 }
 
 /** Parse tar metadata without writing anything, so callers can validate paths before extraction. */
-export function parseTarGz(archive: Buffer): TarEntry[] {
+export function parseTarGz(archive: Buffer, maxExpandedBytes?: number): TarEntry[] {
   let tar: Buffer
   try {
-    tar = gunzipSync(archive)
+    tar = gunzipSync(archive, { maxOutputLength: maxExpandedBytes })
   } catch (error) {
     throw new Error(`invalid gzip archive: ${errorMessage(error)}`)
   }

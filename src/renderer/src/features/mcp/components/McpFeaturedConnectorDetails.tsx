@@ -4,6 +4,8 @@ import type { McpServerSummary } from '../../../types'
 import { ConnectorIcon } from './ConnectorIcon'
 import type { ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpToolList } from './McpToolList'
+import { McpConnectorSetupStatus } from './McpConnectorSetupStatus'
+import { localConnectorToolsPrerequisite } from '../lib/connectorSetupPresentation'
 
 export function McpFeaturedConnectorDetails({
   connector,
@@ -44,6 +46,7 @@ export function McpFeaturedConnectorDetails({
   onEnabledChange?: (enabled: boolean) => void
   onRetry: () => void
 }): React.JSX.Element {
+  const localPrerequisite = localConnectorToolsPrerequisite(connector)
   const removeButton =
     server?.managed && onRemove ? (
       <Button color="error" variant="outlined" disabled={busy} onClick={onRemove}>
@@ -68,6 +71,19 @@ export function McpFeaturedConnectorDetails({
       <Button variant="contained" disabled={busy} onClick={onAdd}>
         更新
       </Button>
+    )
+  } else if (
+    connector.transport === 'stdio' &&
+    connector.setup?.phase === 'failed' &&
+    connector.added
+  ) {
+    actions = (
+      <Stack direction="row" spacing={1}>
+        <Button variant="contained" disabled={busy} onClick={onRetry}>
+          重试连接
+        </Button>
+        {removeButton}
+      </Stack>
     )
   } else if (connector.apiKey) {
     actions = (
@@ -195,18 +211,26 @@ export function McpFeaturedConnectorDetails({
                   : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
         </Alert>
       )}
+      <McpConnectorSetupStatus setup={connector.setup} />
+      {connector.transport === 'stdio' && !connector.added && !connector.setup && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          添加后会准备运行环境并启动本地服务；首次启动可能需要下载所需文件。
+        </Alert>
+      )}
       <McpToolList
         requiresSignIn={
+          Boolean(localPrerequisite) ||
           (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) ||
           Boolean(connector.oauthAuthorizationOrigin && authStatus !== 'authenticated') ||
           Boolean(connector.apiKey && authStatus !== 'authenticated')
         }
         signInMessage={
-          connector.apiKey
+          localPrerequisite ??
+          (connector.apiKey
             ? '验证 API key 后可读取服务端工具。'
             : connector.oauthAuthorizationOrigin
               ? '登录后可读取服务端工具。'
-              : undefined
+              : undefined)
         }
         loading={toolsLoading}
         names={toolNames}
@@ -223,7 +247,7 @@ export function McpFeaturedConnectorDetails({
         </Box>
         <Box>
           <Typography variant="overline" color="text.secondary">
-            MCP 地址
+            {connector.transport === 'stdio' ? '启动命令' : 'MCP 地址'}
           </Typography>
           <Typography sx={{ overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
             {connector.url ??

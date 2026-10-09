@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -12,6 +12,7 @@ import {
 } from '@mui/material'
 import {
   mcpConnectorCategories,
+  type McpConnectorSetupProgress,
   type FeaturedMcpConnector,
   type RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
@@ -37,6 +38,11 @@ import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
 import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
+import { useConnectorSetupProgress } from '../hooks/useConnectorSetupProgress'
+import {
+  connectorSetupActive,
+  localConnectorToolsPrerequisite
+} from '../lib/connectorSetupPresentation'
 
 type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number]
@@ -82,7 +88,7 @@ export function McpConnectorCatalogDialog({
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
   const [page, setPage] = useState<CatalogPage>('list')
-  const [connectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
+  const [catalogConnectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [group, setGroup] = useState<CatalogGroup>('生产力')
@@ -112,6 +118,37 @@ export function McpConnectorCatalogDialog({
   const [toolsError, setToolsError] = useState<string | null>(null)
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
   const toolRequestRef = useRef(0)
+
+  const onSetupChange = useCallback(
+    (progress: McpConnectorSetupProgress) => {
+      if (page !== 'detail' || selectedId !== progress.id) return
+      if (progress.phase === 'ready' && progress.toolNames) {
+        setToolNames(progress.toolNames)
+        setToolsError(null)
+        setToolsLoading(false)
+      } else if (progress.phase === 'failed') {
+        setToolNames(null)
+        setToolsError(progress.error ?? '本地服务启动失败')
+        setToolsLoading(false)
+      } else if (progress.phase === 'removed') {
+        setToolNames(null)
+        setToolsError(null)
+        setToolsLoading(false)
+      }
+    },
+    [page, selectedId]
+  )
+  const setupById = useConnectorSetupProgress(open, onSetupChange)
+  const connectors = useMemo(
+    () =>
+      catalogConnectors.map((connector) => {
+        const live = setupById[connector.id]
+        return live && live.revision >= (connector.setup?.revision ?? -1)
+          ? { ...connector, setup: live }
+          : connector
+      }),
+    [catalogConnectors, setupById]
+  )
 
   useEffect(() => {
     if (!open) return
@@ -213,6 +250,7 @@ export function McpConnectorCatalogDialog({
       await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      await Promise.allSettled([onRefresh(), refreshCatalog()])
     } finally {
       setBusy(null)
     }
@@ -227,6 +265,7 @@ export function McpConnectorCatalogDialog({
       await refreshCatalog()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      await Promise.allSettled([onRefresh(), refreshCatalog()])
     } finally {
       setBusy(null)
     }
@@ -397,6 +436,8 @@ export function McpConnectorCatalogDialog({
     setToolsError(null)
     const request = ++toolRequestRef.current
     if (
+      localConnectorToolsPrerequisite(connector) ||
+      (connector.transport === 'stdio' && connector.setup?.phase === 'failed' && !refresh) ||
       (connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) ||
       ((connector.apiKey || connector.oauthAuthorizationOrigin) &&
         authStatusById[connector.id] !== 'authenticated')
@@ -528,9 +569,10 @@ export function McpConnectorCatalogDialog({
         enabled={server?.enabled !== false}
         updateAvailable={updateAvailable}
         authStatus={authStatusById[connector.id] ?? 'checking'}
-        busy={busy !== null}
+        busy={busy !== null || connectorSetupActive(connector.setup)}
         authorizing={authorizingId === connector.id}
         onOpen={() => openDetail(connector)}
+        onRetry={() => openDetail(connector, true)}
         onCancel={() => cancelOAuth(connector)}
         onAdd={() =>
           connector.apiKey ? openApiKeyDialog(connector) : void addConnector(connector)
@@ -671,7 +713,7 @@ export function McpConnectorCatalogDialog({
                 connector={selected}
                 server={matchingServer(selected, servers)}
                 authStatus={selectedAuthStatus}
-                busy={busy !== null}
+                busy={busy !== null || connectorSetupActive(selected.setup)}
                 authorizing={authorizingId === selected.id}
                 updateAvailable={updates.some(
                   (update) => update.type === 'mcp' && update.id === selected.id

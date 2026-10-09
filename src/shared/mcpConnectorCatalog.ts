@@ -9,6 +9,27 @@ export interface RemoteMcpConnectorOptions {
   expectedOAuth?: RemoteMcpOAuthCredentials | null
 }
 
+export type McpConnectorSetupPhase =
+  | 'downloading'
+  | 'installing'
+  | 'environment'
+  | 'starting'
+  | 'ready'
+  | 'installed'
+  | 'removed'
+  | 'failed'
+
+export interface McpConnectorSetupProgress {
+  id: string
+  phase: McpConnectorSetupPhase
+  revision: number
+  updatedAt: string
+  operationId?: string
+  failedPhase?: Exclude<McpConnectorSetupPhase, 'failed'>
+  error?: string
+  toolNames?: string[]
+}
+
 export interface FeaturedMcpConnector {
   icon?: ResourceIconRef
   id: string
@@ -30,6 +51,8 @@ export interface FeaturedMcpConnector {
   added: boolean
   unavailableReason?: string
   environmentState?: 'ready' | 'not-built'
+  /** App-owned latest setup snapshot, retained independently of an open dialog. */
+  setup?: McpConnectorSetupProgress
   /** App-owned presentation copy; connector contract v1 has no long-description field. */
   overview?: string
   /** App-owned OAuth allowlist metadata; never accepted from a registry manifest. */

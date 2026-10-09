@@ -35,7 +35,8 @@ export function describeMcpPackageEnvironment(
     name: descriptor.spec.name,
     platform: descriptor.platform,
     lockText: descriptor.lockText,
-    sourcePackages: descriptor.spec.sourcePackages
+    sourcePackages: descriptor.spec.sourcePackages,
+    installation: descriptor.spec.installation
   })
   return {
     descriptor,

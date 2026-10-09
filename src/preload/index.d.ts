@@ -97,7 +97,11 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type { SkillContent, SkillSummary } from '../shared/skillTypes'
-import type { FeaturedMcpConnector, RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
+import type {
+  FeaturedMcpConnector,
+  McpConnectorSetupProgress,
+  RemoteMcpConnectorOptions
+} from '../shared/mcpConnectorCatalog'
 
 type PreloadSessionSummary = {
   path: string
@@ -1064,6 +1068,7 @@ declare global {
       ) => Promise<InstalledPackageView[]>
       uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
       buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
+      onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void) => Unsubscribe
       addRemoteMcpConnector: (
         name: string,
         url: string,

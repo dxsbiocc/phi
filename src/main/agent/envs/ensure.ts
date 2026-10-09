@@ -20,6 +20,14 @@ import Ajv from 'ajv'
 
 import { captureActivation } from './activation'
 import {
+  installEnvironmentApplication,
+  validateApplicationInstallationSource,
+  validateApplicationMetadata,
+  validateEnvironmentApplicationTools,
+  usesNativeApplicationRuntime
+} from './applications'
+import type { ApplicationInstallationProvider } from './applications/types'
+import {
   ENVIRONMENT_CONTRACT_VERSION,
   computeEnvId,
   currentPlatform,
@@ -35,6 +43,7 @@ import {
 import { probeHostRequirements } from './host'
 import { acquireEnvironmentLock, acquirePackageCacheLock, type EnvironmentLock } from './lock'
 import { updateEnvironmentEntry } from './index-store'
+import { hasLiveEnvironmentLeases } from './leases'
 import {
   isReplacedSourcePackageLinkFailure,
   linkScriptFailureFromOutput,
@@ -50,7 +59,15 @@ const validateEnvMetadata = ajv.compile(envMetadataSchema)
 const inflight = new Map<string, Promise<EnsureEnvironmentResult>>()
 
 export type EnsureProgressPhase =
-  'check' | 'wait' | 'create' | 'source-packages' | 'activation' | 'finalize' | 'done' | 'failed'
+  | 'check'
+  | 'wait'
+  | 'create'
+  | 'source-packages'
+  | 'application'
+  | 'activation'
+  | 'finalize'
+  | 'done'
+  | 'failed'
 
 export interface EnsureProgressEvent {
   phase: EnsureProgressPhase
@@ -74,6 +91,9 @@ export interface EnsureEnvironmentInput {
   signal?: AbortSignal
   onProgress?: (event: EnsureProgressEvent) => void
   sourcePackageInstaller?: SourcePackageInstaller
+  sourceDir?: string
+  fetch?: typeof globalThis.fetch
+  applicationInstaller?: ApplicationInstallationProvider
 }
 
 export interface EnsureEnvironmentResult {
@@ -115,7 +135,11 @@ function validationErrors(): string {
     .join('; ')
 }
 
-function readReadyMetadata(prefix: string, lockDigest: string): EnvMetadata | undefined {
+function readReadyMetadata(
+  prefix: string,
+  lockDigest: string,
+  input: EnsureEnvironmentInput
+): EnvMetadata | undefined {
   let text: string
   try {
     text = readFileSync(join(prefix, '.phi', 'env.json'), 'utf8')
@@ -132,7 +156,17 @@ function readReadyMetadata(prefix: string, lockDigest: string): EnvMetadata | un
   }
   if (!validateEnvMetadata(parsed)) return undefined
   const metadata = parsed as unknown as EnvMetadata
+  const installation = input.spec.installation
   if (metadata.status !== 'ready' || metadata.lockSha256 !== lockDigest) return undefined
+  if (installation) {
+    if (!metadata.installation) return undefined
+    try {
+      validateApplicationMetadata(prefix, installation, metadata.installation)
+      validateEnvironmentApplicationTools(input, prefix)
+    } catch {
+      return undefined
+    }
+  } else if (metadata.installation) return undefined
   return metadata
 }
 
@@ -154,8 +188,22 @@ function readyResult(
 function prepare(input: EnsureEnvironmentInput): PreparedEnvironment {
   const layout = ensureRuntimeLayout(input.root)
   const root = realpathSync(layout.root)
-  writeMambarc(root, input.settings)
-  const parsedLock = parseExplicitLock(input.lockText)
+  const installation = input.spec.installation
+  if (installation) {
+    if (input.scope === 'phi')
+      throw new Error(
+        'application installations require a private environment, not a shared phi base'
+      )
+    validateApplicationInstallationSource(
+      installation,
+      input.sourceDir,
+      input.platform ?? currentPlatform()
+    )
+  }
+  if (!usesNativeApplicationRuntime(input.spec)) writeMambarc(root, input.settings)
+  const parsedLock = parseExplicitLock(input.lockText, {
+    allowEmpty: usesNativeApplicationRuntime(input.spec)
+  })
   if (!parsedLock.ok) {
     throw new Error(`invalid explicit lock: ${parsedLock.errors.join('; ')}`)
   }
@@ -166,12 +214,13 @@ function prepare(input: EnsureEnvironmentInput): PreparedEnvironment {
     name: input.spec.name,
     platform,
     lockText: input.lockText,
-    sourcePackages: input.spec.sourcePackages
+    sourcePackages: input.spec.sourcePackages,
+    installation
   })
   const prefix = join(root, 'envs', envId)
   const lockDigest = lockSha256(input.lockText)
   input.onProgress?.({ phase: 'check', message: `checking ${envId}` })
-  const metadata = readReadyMetadata(prefix, lockDigest)
+  const metadata = readReadyMetadata(prefix, lockDigest, input)
   const prepared: PreparedEnvironment = {
     key: `${root}\0${envId}`,
     root,
@@ -454,25 +503,40 @@ async function runBuild(
         })
       }
     })
-    const ready = readReadyMetadata(prepared.prefix, prepared.lockDigest)
+    if (input.spec.installation)
+      validateApplicationInstallationSource(
+        input.spec.installation,
+        input.sourceDir,
+        prepared.platform
+      )
+    const ready = readReadyMetadata(prepared.prefix, prepared.lockDigest, input)
     if (ready) {
       const result = readyResult(prepared, ready, input.spec)
       input.onProgress?.({ phase: 'done', message: `${prepared.envId} is ready` })
       return result
     }
 
+    if (hasLiveEnvironmentLeases(prepared.root, prepared.envId))
+      throw new Error(`environment ${prepared.envId} is in use by active consumer leases`)
     building = true
     markEntry(input, prepared, 'building')
     if (existsSync(prepared.prefix)) removeTree(prepared.prefix)
-    await createFromLock(input, prepared)
+    const nativeOnly = usesNativeApplicationRuntime(input.spec)
+    if (nativeOnly) mkdirSync(join(prepared.prefix, 'bin'), { recursive: true })
+    else {
+      await createFromLock(input, prepared)
+    }
     await installSourcePackages(input, prepared.root, prepared.prefix)
-    await precompilePython(input, prepared.prefix)
-
-    input.onProgress?.({ phase: 'activation', message: 'capturing activation' })
-    const activation = await captureActivation(prepared.root, prepared.prefix, input.signal)
+    const installation = await installEnvironmentApplication(input, prepared)
+    throwIfAborted(input.signal)
+    if (!nativeOnly) await precompilePython(input, prepared.prefix)
+    if (!nativeOnly) input.onProgress?.({ phase: 'activation', message: 'capturing activation' })
+    const activation = nativeOnly
+      ? { set: {}, pathPrepend: [join(prepared.prefix, 'bin')] }
+      : await captureActivation(prepared.root, prepared.prefix, input.signal)
     const host = probeHostRequirements(input.spec.host, prepared.platform)
     input.onProgress?.({ phase: 'finalize', message: 'writing environment metadata' })
-    const version = await micromambaVersion(prepared.root, input.signal)
+    const version = nativeOnly ? undefined : await micromambaVersion(prepared.root, input.signal)
     const metadata: EnvMetadata = {
       envId: prepared.envId,
       name: input.spec.name,
@@ -480,7 +544,8 @@ async function runBuild(
       platform: prepared.platform,
       lockSha256: prepared.lockDigest,
       createdAt: new Date().toISOString(),
-      micromambaVersion: version,
+      ...(nativeOnly ? { runtimeEngine: 'native' as const } : { micromambaVersion: version }),
+      ...(installation ? { installation } : {}),
       activation,
       host: host.found,
       sourcePackages: cloneSourcePackages(input.spec.sourcePackages),

@@ -21,6 +21,8 @@ import {
 } from '../envs'
 import { deleteEnvironmentEntry } from '../envs/index-store'
 import { tryAcquireEnvironmentLock } from '../envs/lock'
+import { hasLiveEnvironmentLeases } from '../envs/leases'
+import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from '../envs/ownership'
 import { listInstalledPlugins } from '../plugins/loader'
 import { directorySize } from './size'
 
@@ -127,7 +129,8 @@ function envIdOf(
       name: descriptor.spec.name,
       platform: descriptor.platform,
       lockText: descriptor.lockText,
-      sourcePackages: descriptor.spec.sourcePackages
+      sourcePackages: descriptor.spec.sourcePackages,
+      installation: descriptor.spec.installation
     })
   }
 }
@@ -242,8 +245,13 @@ export function createManagedEnvironmentActions(
       if (!current || current.referrers.length > 0 || !REMOVABLE_STATES.has(current.status)) {
         throw new Error('环境状态已经变化，请刷新后重试')
       }
-      const bytesFreed = await sizeOf(current.prefix)
-      removeTree(current.prefix)
+      if (hasLiveEnvironmentLeases(dependencies.root, envId)) {
+        throw new Error('该环境仍被运行中的会话使用，暂时不能删除')
+      }
+      const prefix = ownedEnvironmentPrefix(dependencies.root, envId, current.prefix)
+      const bytesFreed = await sizeOf(prefix)
+      ownedRuntimeDirectory(dependencies.root, 'cache', envId)
+      removeTree(ownedEnvironmentPrefix(dependencies.root, envId, prefix))
       removeEnvironmentCache(dependencies.root, envId)
       deleteEnvironmentEntry(dependencies.root, envId)
       descriptors.delete(envId)

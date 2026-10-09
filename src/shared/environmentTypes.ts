@@ -137,7 +137,7 @@ export interface ManagedEnvironmentRemoveResult {
 export interface ManagedEnvironmentCleanResult {
   removed: string[]
   orphans: string[]
-  skipped: Array<{ envId: string; reason: 'building' | 'locked' }>
+  skipped: Array<{ envId: string; reason: 'building' | 'locked' | 'in-use' }>
   logsRemoved: number
   bytesFreed: number
 }

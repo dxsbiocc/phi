@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import semver from 'semver'
 
 import { describeEnvironment } from '../content/environment-refs'
+import type { EnvironmentLease } from '../envs/leases'
 import {
   addReferrer,
   collectGarbage,
@@ -45,14 +46,11 @@ import type {
   StagedPackage
 } from './installer-types'
 import { readPackageManifest, validatePackage, type PackageType } from './manifest'
-import {
-  mcpPackagesDir,
-  mcpVersionDir,
-  readMcpPackagesRegistry,
-  writeMcpPackagesRegistry
-} from './mcp-store'
+import { mcpVersionDir, readMcpPackagesRegistry, writeMcpPackagesRegistry } from './mcp-store'
 import { planInstall } from './planning'
 import { cleanupStalePackageStaging, stagePackage } from './staging'
+import { prepareStagedMcpApplication } from './mcp-installation'
+import { cleanupInactiveMcpVersions } from './mcp-version-cleanup'
 import { readSkillsRegistry, skillPackagesDir, skillVersionDir, writeSkillsRegistry } from './store'
 import {
   installStagedWrapperPackage,
@@ -69,6 +67,7 @@ export async function installPackages(
   const agentDir = options.agentDir ?? plan.agentDir ?? getPhiAgentDir()
   cleanupStalePackageStaging({ agentDir, now: options.now })
   const stages: StagedPackage[] = []
+  const installationLeases: EnvironmentLease[] = []
   const installedNow: Array<{ type: PackageType; id: string }> = []
   try {
     for (const entry of plan.packages) {
@@ -80,6 +79,11 @@ export async function installPackages(
           options.now
         )
       )
+    }
+    // Validate every managed MCP application before committing any dependency or root package.
+    for (const staged of stages) {
+      const lease = await prepareStagedMcpApplication(staged, { ...options, agentDir })
+      if (lease) installationLeases.push(lease)
     }
     for (let index = 0; index < stages.length;) {
       const staged = stages[index]
@@ -112,6 +116,7 @@ export async function installPackages(
     }
     throw error
   } finally {
+    for (const lease of installationLeases) lease.release()
     for (const staged of stages) rmSync(staged.dir, { recursive: true, force: true })
   }
 }
@@ -305,7 +310,8 @@ function skillEnvironment(
     name: descriptor.spec.name,
     platform: descriptor.platform,
     lockText: descriptor.lockText,
-    sourcePackages: descriptor.spec.sourcePackages
+    sourcePackages: descriptor.spec.sourcePackages,
+    installation: descriptor.spec.installation
   })
   return {
     envId,
@@ -326,6 +332,9 @@ function commitStagedMcpPackage(
   if (existsSync(target)) throw new Error(`MCP 软件包目标已存在: ${target}`)
   const registry = readMcpPackagesRegistry(options.agentDir)
   const previous = registry.packages[staged.entry.id]
+  if (previous && !semver.gt(staged.entry.version, previous.version)) {
+    throw new Error(`MCP 升级版本必须高于当前版本 ${previous.version}`)
+  }
   const previousDir = previous
     ? mcpVersionDir(staged.entry.id, previous.version, options.agentDir)
     : undefined
@@ -377,12 +386,7 @@ function commitStagedMcpPackage(
   if (previousEnvironment && previousEnvironment.envId !== nextEnvironment?.envId) {
     removeReferrer(runtimeRoot, previousEnvironment.envId, `mcp:${manifest.id}`)
   }
-  if (previous && previous.version !== staged.entry.version) {
-    rmSync(mcpVersionDir(staged.entry.id, previous.version, options.agentDir), {
-      recursive: true,
-      force: true
-    })
-  }
+  cleanupInactiveMcpVersions(options.agentDir, runtimeRoot, options)
   if (previousEnvironment && previousEnvironment.envId !== nextEnvironment?.envId) {
     ;(options.garbageCollect ?? collectGarbage)(runtimeRoot)
   }
@@ -404,11 +408,11 @@ function removeInstalledMcpPackage(
   delete packages[id]
   removeMcpPackageConfig(id, options.agentDir)
   writeMcpPackagesRegistry({ version: 1, packages }, options.agentDir)
-  rmSync(join(mcpPackagesDir(options.agentDir), id), { recursive: true, force: true })
   if (environment) {
     removeReferrer(runtimeRoot, environment.envId, `mcp:${id}`)
     ;(options.garbageCollect ?? collectGarbage)(runtimeRoot)
   }
+  cleanupInactiveMcpVersions(options.agentDir, runtimeRoot, options)
 }
 
 function addMcpEnvironmentReference(

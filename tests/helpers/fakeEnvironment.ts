@@ -46,7 +46,8 @@ export function envIdFor(descriptor: EnvironmentDescriptor): string {
     name: descriptor.spec.name,
     platform: descriptor.platform,
     lockText: descriptor.lockText,
-    sourcePackages: descriptor.spec.sourcePackages
+    sourcePackages: descriptor.spec.sourcePackages,
+    installation: descriptor.spec.installation
   })
 }
 

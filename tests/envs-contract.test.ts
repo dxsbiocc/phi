@@ -296,7 +296,7 @@ test('published schemas match the runtime constants', () => {
   ) as unknown
   assert.deepEqual(spec, environmentSpecSchema)
   assert.deepEqual(metadata, envMetadataSchema)
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.3.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.4.0')
 })
 
 test('env.json metadata matching the contract validates', () => {
@@ -374,7 +374,7 @@ test('skill scope envIds carry the skill name as owner (contract 1.1.0)', () => 
   assert.throws(() =>
     computeEnvId({ scope: 'skill', name: 'scanpy', platform: 'darwin-arm64', lockText })
   )
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.3.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.4.0')
 })
 
 test('mcp scope envIds carry the connector package id as owner (contract 1.3.0)', () => {

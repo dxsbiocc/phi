@@ -1,6 +1,6 @@
 # Connector contract
 
-contractVersion: 1.1.0
+contractVersion: 1.2.0
 
 A **connector** gives Phi an MCP server: a remote HTTP server (most catalog entries) or
 a local stdio server that runs in a managed environment. Connectors are distributed as
@@ -54,12 +54,19 @@ Unknown keys under `connector` are errors.
 - **stdio**: installing places the package under `~/.phi/packages/mcp/<id>/<version>/`
   and writes an `mcp.json` entry built by the managed stdio mechanism: the command is
   resolved inside the environment and started with exactly the execution contract's
-  variables, so host variables never reach the server. The environment is built on
-  first use with the usual prompt; until then the connector shows as "环境未构建". When
-  the environment's envId changes, the entry is regenerated.
+  variables, so host variables never reach the server. An environment declaring
+  `installation` is built and its MCP initialize/tools handshake verified before
+  the new package version is activated. Failure preserves the previous version
+  and enablement. Legacy environments without installation retain their existing
+  first-use preparation. When the environment's envId changes, the entry is regenerated.
 - Enablement (`mcp:<package id>`) controls whether the server's `mcp.json` entry is
   enabled. Defaults: catalog connectors the user added are enabled; nothing is added
   without the user's action.
+
+Setup operations persist an identity and last stage. Interrupted operations restore as
+failed with an explicit retry. Active stdio consumers lease their original environment;
+upgrades/uninstall do not delete their prefix, cache or old package source until leases
+are released. Cleanup validates owned runtime paths under the environment lock.
 
 ## 4. Catalog
 
@@ -78,6 +85,8 @@ additive only (for example allowing `secrets`); anything else needs a decision r
 and a deprecation window.
 
 ## Changes
+
+- **1.2.0** (2026-10-09): document pre-activation managed installation/probing, persistent setup recovery, and lease-protected cleanup with environment contract 1.4.0.
 
 - **1.1.0** (2026-10-08): clarify optional package-local images and registry sidecars
   using package contract 1.3.0. Additive; existing connectors remain valid.

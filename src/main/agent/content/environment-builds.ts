@@ -208,7 +208,8 @@ export function createEnvironmentBuilds({
         name: descriptor.spec.name,
         platform: descriptor.platform,
         lockText: descriptor.lockText,
-        sourcePackages: descriptor.spec.sourcePackages
+        sourcePackages: descriptor.spec.sourcePackages,
+        installation: descriptor.spec.installation
       })
       const existing = records.get(envId)
       if (existing?.record.state === 'building') return existing.promise

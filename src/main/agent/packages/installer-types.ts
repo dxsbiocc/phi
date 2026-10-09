@@ -3,6 +3,8 @@ import type { PluginEnvironmentBuilder, PluginNamespace } from '../plugins/loade
 import type { PackageDependency, PackageRequirements, PackageType } from './manifest'
 import type { RegistryIconAsset } from '../../../shared/resourceIconTypes'
 import type { RegistryManifestAsset } from './manifest-assets'
+import type { EnvironmentDescriptor } from '../content/environment-refs'
+import type { EnvHandle } from '../envs/execution'
 
 export type RegistryTrust = 'builtin' | 'official' | 'imported'
 export type RegistryTrustTier = RegistryTrust
@@ -96,6 +98,17 @@ export interface InstallerOptions {
   baseEnv?: NodeJS.ProcessEnv
   names?: PluginNamespace
   build?: PluginEnvironmentBuilder
+  buildMcpEnvironment?: (descriptor: EnvironmentDescriptor) => Promise<EnvHandle>
+  verifyMcpStdio?: (request: {
+    name: string
+    entry: Record<string, unknown>
+    environment: {
+      root: string
+      agentDir: string
+      environmentsDir?: string
+      platform?: PhiPlatform
+    }
+  }) => Promise<string[]>
   garbageCollect?: typeof collectGarbage
   now?: () => Date
 }

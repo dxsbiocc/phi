@@ -16,6 +16,7 @@ import Ajv from 'ajv'
 import { type EnvMetadata } from './contract'
 import { isReservedExecutionName } from './reserved-names'
 import { envMetadataSchema } from './schemas'
+import { ownedRuntimeDirectory } from './ownership'
 
 export const EXECUTION_CONTRACT_VERSION = '1.0.0'
 
@@ -408,7 +409,7 @@ export function environmentCacheDir(root: string, envId: string): string {
 
 /** Delete `<root>/cache/<envId>`. `collectGarbage` should call this when it removes an environment. */
 export function removeEnvironmentCache(root: string, envId: string): void {
-  rmSync(join(root, 'cache', envId), { recursive: true, force: true })
+  rmSync(ownedRuntimeDirectory(root, 'cache', envId), { recursive: true, force: true })
 }
 
 export function environmentVariables(
@@ -480,6 +481,17 @@ export function loadEnvironment(root: string, envId: string): EnvHandle {
   }
   if (metadata.status !== 'ready') {
     throw new Error(`environment ${envId} is not ready (status: ${metadata.status})`)
+  }
+  if (metadata.installation) {
+    const executable = metadata.installation.executable
+    if (
+      !isInsideDirectory(realpathSync(executable), realpathSync(prefix)) ||
+      !isExecutableFile(executable)
+    ) {
+      throw new Error(
+        `environment ${envId} application executable is invalid or outside its prefix`
+      )
+    }
   }
   return { envId, prefix, metadata }
 }
