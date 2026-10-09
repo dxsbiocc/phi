@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Packaged-app quit smoke test (macOS). Run after `bun run build:unpack`:
-//   bun run smoke:packaged-quit [--app <path/to/pi-desktop.app>]
+//   bun run smoke:packaged-quit [--app <path/to/Phi.app>]
 //
 // Copies the app to a temp dir outside the repo and launches it with an isolated
 // HOME and --user-data-dir, so real user data is untouched. It signals only the
-// PID it started: the packaged app shares bundle id com.electron.app with the dev
+// PID it started: the packaged app shares bundle id cn.phiscience.phi with the dev
 // Electron app, so quitting by bundle id could hit a running dev instance.
 // The app-quit case asks AppKit to terminate that PID (NSRunningApplication), which
 // goes through applicationShouldTerminate: like the Cmd+Q menu item, without
@@ -25,7 +25,7 @@ const IDLE_SAMPLES_REQUIRED = 3
 const EXIT_DEADLINE_MS = 3_000
 
 function parseArgs(argv) {
-  const args = { app: resolve('dist/mac-arm64/pi-desktop.app') }
+  const args = { app: resolve('dist/mac-arm64/Phi.app') }
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--app') args.app = resolve(argv[(i += 1)])
   }
@@ -95,10 +95,10 @@ async function runCase(appPath, label, triggerQuit) {
     const userData = join(root, 'ud')
     mkdirSync(home)
     mkdirSync(userData)
-    const appCopy = join(root, 'pi-desktop.app')
+    const appCopy = join(root, 'Phi.app')
     cpSync(appPath, appCopy, { recursive: true, verbatimSymlinks: true })
 
-    child = spawn(join(appCopy, 'Contents/MacOS/pi-desktop'), [`--user-data-dir=${userData}`], {
+    child = spawn(join(appCopy, 'Contents/MacOS/Phi'), [`--user-data-dir=${userData}`], {
       env: { ...process.env, HOME: home },
       stdio: 'ignore'
     })

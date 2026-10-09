@@ -21,7 +21,7 @@ copyFileSync(sourceIcon, targetIcon)
 const plistUpdates = [
   ['CFBundleDisplayName', 'Phi'],
   ['CFBundleName', 'Phi'],
-  ['CFBundleIdentifier', 'com.electron.app']
+  ['CFBundleIdentifier', 'cn.phiscience.phi']
 ]
 
 for (const [key, value] of plistUpdates) {

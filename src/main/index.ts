@@ -487,7 +487,8 @@ const APP_NAME = 'Phi'
 const APP_QUIT_CLEANUP_TIMEOUT_MS = 2_000
 // Office's share of the quit budget; the global cap must not grow for any one feature.
 const OFFICE_QUIT_DEADLINE_MS = 1_200
-const APP_ID = 'com.electron.app'
+const APP_ID = 'cn.phiscience.phi'
+// Compatibility boundary: Electron derives userData and macOS "Phi Safe Storage" from this name.
 const DEFAULT_WINDOW_WIDTH = 1280
 const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 860

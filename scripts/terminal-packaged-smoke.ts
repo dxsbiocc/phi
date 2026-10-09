@@ -30,8 +30,7 @@ async function waitFor(check: () => boolean, label: string): Promise<void> {
 
 function requiredAppPath(): string {
   const argument = process.argv[2]
-  if (!argument)
-    throw new Error('usage: bun run smoke:terminal-packaged -- /path/to/pi-desktop.app')
+  if (!argument) throw new Error('usage: bun run smoke:terminal-packaged -- /path/to/Phi.app')
   const appPath = realpathSync(resolve(argument))
   if (!appPath.endsWith('.app')) throw new Error(`not an app bundle: ${appPath}`)
   return appPath

@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: pi-desktop
+appId: cn.phiscience.phi
+productName: Phi
 directories:
   buildResources: build
 files:
@@ -133,7 +133,7 @@ asarUnpack:
   # Their pi-natives dependency is covered by node_modules/@oh-my-pi/** above.
   - out/main/terminal/**
 win:
-  executableName: pi-desktop
+  executableName: phi
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -152,10 +152,11 @@ mac:
   icon: build/icon.icns
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    NSAudioCaptureUsageDescription: null
+    NSCameraUsageDescription: null
+    NSMicrophoneUsageDescription: null
+    NSDocumentsFolderUsageDescription: Phi accesses documents and project files you choose to open.
+    NSDownloadsFolderUsageDescription: Phi saves exported and downloaded results where you choose.
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
@@ -167,7 +168,7 @@ linux:
     - AppImage
     - snap
     - deb
-  maintainer: electronjs.org
+  maintainer: Phi Science
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}

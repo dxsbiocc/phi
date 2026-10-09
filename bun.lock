@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pi-desktop",
+      "name": "phi",
       "dependencies": {
         "@codemirror/commands": "^6.11.0",
         "@codemirror/lang-javascript": "^6.2.5",

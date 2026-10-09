@@ -1,11 +1,11 @@
 {
-  "name": "pi-desktop",
-  "version": "1.0.1",
-  "description": "An Electron application with React and TypeScript",
+  "name": "phi",
+  "version": "0.1.0",
+  "description": "A local desktop workbench for scientific AI workflows",
   "type": "module",
   "main": "./out/main/index.mjs",
-  "author": "example.com",
-  "homepage": "https://electron-vite.org",
+  "author": "Phi Science",
+  "homepage": "https://phiscience.cn",
   "scripts": {
     "format": "prettier --write .",
     "check:architecture": "node scripts/check-frontend-boundaries.mjs",
