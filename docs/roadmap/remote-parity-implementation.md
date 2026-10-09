@@ -127,7 +127,7 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 - `runInEnvironment` 支持 host；服务器按需安装 `phi-base`；离线集群走"本机打包 lock + 离线包 → 上传共享盘"。
 - 解除 `skillTools`、`env_request`、bundled skills 的远程关闭；专家子智能体统一获得 host 提供的工具集（不再仅 Wrapper）。
 - **用受管环境替换远程 Nextflow 的 curl 安装器**（2026-10-09 用户要求）：`remote-nextflow-install.ts` 现在在服务器上执行 `curl https://get.nextflow.io` 并装到 `~/.local/bin`，它早于运行时基础，Java 另需预装、版本不锁定、需要服务器联网。目标是改为：从本机上传 linux micromamba，按 `resources/runtime/environments/phi-nextflow/environment.yml` 的锁在服务器上构建 `phi-nextflow` 环境（Nextflow 与 Java 同锁）；离线集群走本机打包的离线包。本机目前只打包 darwin-arm64 的 micromamba，需先补 linux-x86_64/aarch64 的获取与校验（`scripts/runtime/fetch-micromamba.mjs`、`resources/runtime/manifest.json`）。完成前保留 curl 安装器作为过渡，界面上仍由用户点击触发，不自动执行。
-- 前置：第 1 步完成；需单独确认远程环境存放位置与配额策略。
+- 前置：第 1 步完成；远程环境存放位置已定（见 §9），空间阈值待实现时确认。
 
 ### 第 3 步：远程终端
 
@@ -206,5 +206,12 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 - helper 首批只发 Linux（x86_64、aarch64），macOS 远端后续再议。
 - 能力档案按「主机别名 + 项目根」键控。
 
+已决定（2026-10-09，用户确认）——**远程受管环境的位置**：
+- 统一放在服务器的 `~/.phi` 下，运行时根目录默认 `~/.phi/runtime`，布局与本机 `~/.phi/runtime` 一致（`mambarc`、`pkgs/`、`envs/<envId>/`、`state/environments.json`、`logs/`）；与 helper 已在用的 `~/.phi/remote/<版本>/` 同属 `~/.phi`，二者互不嵌套。
+- **用户有特殊指定则按用户的**：主机或项目的远程连接上提供可覆盖的「运行时根目录」设置，优先级为 项目 > 主机 > 默认 `~/.phi/runtime`。解析后的有效根目录（服务器上的规范绝对路径）、所在文件系统类型、剩余空间、是否可执行与是否共享盘，都写进该主机的能力档案。
+- 对覆盖路径的约束：必须是绝对路径、归当前用户所有、不是符号链接逃逸、不可被他人写入；创建时权限 0700。
+- 事实依据（2026-10-09 只读探测）：GPU 机家目录为 ext4，1.6 TB，剩余 147 GB（已用 91%），无配额，inode 充足，该机的 conda 根目录在 `/data/<用户>/miniconda3` 下约 187 GB，即用户习惯把大文件放在 `/data`，是“用户指定位置”的典型场景；HPC 登录节点家目录为 NFS4（`/cluster/home`），18 TB，剩余 17 TB，无配额，inode 充足，工作区 `/cluster` 是另一个 NFS 导出（62 TB，已用 73%）。本机两个受管环境约 3.8 GB，包缓存约 1.4 GB。
+- 探测与提示（第 2 步实现项）：剩余空间不足时警告（提议 <15 GB 警告、<5 GB 拒绝构建，数值可配置，实现时再确认）；GPU 机这类磁盘已用很满的主机在档案摘要里提示；Slurm 主机必须确认计算节点能看到该根目录，验证方式是提交一个一分钟内结束的探针作业，**只在用户明确触发环境准备时执行，并先征得同意**，不在探测时擅自提交；包缓存与环境只在登录节点构建，计算节点只读使用。
+
 待决：
-- 远程受管环境的默认位置与配额（第 2 步前决定）。
+- 空间阈值的具体数值（上面提议值是否合适）；在第 2 步实现时确认。
