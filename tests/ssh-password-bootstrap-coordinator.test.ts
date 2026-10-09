@@ -62,6 +62,173 @@ test('credentials cannot run before the user confirms an untrusted host fingerpr
   assert.equal(credentials.passphrase, '')
 })
 
+test('cancelling host-key confirmation prevents a late confirmation from reviving the attempt', async () => {
+  let releaseConfirmation!: () => void
+  const confirmationGate = new Promise<void>((resolve) => {
+    releaseConfirmation = resolve
+  })
+  const coordinator = createSshBootstrapCoordinator({
+    createId: () => 'attempt-host-cancelled',
+    preflight: async () => ({
+      status: 'ready',
+      platform: 'darwin',
+      openSshVersion: '10.3',
+      agentState: 'ready'
+    }),
+    hostKeys: {
+      inspectTarget: async () => ({
+        status: 'confirmation-required',
+        confirmationId: 'host-confirmation-cancelled',
+        fingerprints: [{ algorithm: 'ssh-ed25519', sha256: 'SHA256:host-key' }]
+      }),
+      confirmHostKey: async () => {
+        await confirmationGate
+        return {
+          status: 'ready',
+          fingerprints: [{ algorithm: 'ssh-ed25519', sha256: 'SHA256:host-key' }]
+        }
+      }
+    },
+    authenticate: async () => assert.fail('cancelled attempt must not authenticate'),
+    generateKey: async () => assert.fail('cancelled attempt must not generate a key'),
+    installKey: async () => assert.fail('cancelled attempt must not install a key'),
+    loadKey: async () => assert.fail('cancelled attempt must not load a key'),
+    verifyKey: async () => assert.fail('cancelled attempt must not verify a key'),
+    saveHost: async () => assert.fail('cancelled attempt must not write config')
+  })
+  const inspected = await coordinator.inspectTarget(TARGET)
+  assert.equal(inspected.status, 'confirmation-required')
+  if (inspected.status !== 'confirmation-required') return
+
+  const confirming = coordinator.confirmHostKey(inspected.attemptId)
+  await new Promise((resolve) => setImmediate(resolve))
+  await coordinator.cancel(inspected.attemptId)
+  releaseConfirmation()
+
+  assert.deepEqual(await confirming, { status: 'rejected', errorCode: 'unexpected' })
+  assert.deepEqual(
+    await coordinator.verifyPassword(inspected.attemptId, { password: 'one-use-secret' }),
+    { status: 'failed', errorCode: 'unexpected', retryable: false }
+  )
+})
+
+test('a verified password session can be declined without generating a key or writing config', async () => {
+  const calls: string[] = []
+  const coordinator = createSshBootstrapCoordinator({
+    createId: () => 'attempt-choice',
+    preflight: async () => ({
+      status: 'ready',
+      platform: 'darwin',
+      openSshVersion: '10.3',
+      agentState: 'ready'
+    }),
+    hostKeys: {
+      inspectTarget: async () => ({ status: 'ready', fingerprints: [] }),
+      confirmHostKey: async () => assert.fail('not used')
+    },
+    authenticate: async (_target, password) => {
+      calls.push(`authenticate:${password}`)
+      return {
+        status: 'ready',
+        session: {
+          installPublicKey: async () => assert.fail('declining must not install a public key'),
+          close: async () => {
+            calls.push('close-password-session')
+          }
+        }
+      }
+    },
+    generateKey: async () => assert.fail('declining must not generate a key'),
+    installKey: async () => assert.fail('declining must not install a key'),
+    loadKey: async () => assert.fail('declining must not load a key'),
+    verifyKey: async () => assert.fail('declining must not verify a key'),
+    saveHost: async () => assert.fail('declining must not write SSH config')
+  })
+
+  const inspected = await coordinator.inspectTarget(TARGET)
+  assert.equal(inspected.status, 'ready')
+  if (inspected.status !== 'ready') return
+  const password = { password: 'one-use-secret' }
+  const verified = await coordinator.verifyPassword(inspected.attemptId, password)
+
+  assert.deepEqual(verified, {
+    status: 'ready',
+    attemptId: 'attempt-choice',
+    agentState: 'ready'
+  })
+  assert.equal(password.password, '')
+  assert.doesNotMatch(JSON.stringify(verified), /one-use-secret/)
+  await coordinator.cancel(inspected.attemptId)
+  assert.deepEqual(calls, ['authenticate:one-use-secret', 'close-password-session'])
+})
+
+test('protected-key setup reuses the verified session without receiving the password again', async () => {
+  const calls: string[] = []
+  const ids = ['attempt-split', 'operation-split']
+  const coordinator = createSshBootstrapCoordinator({
+    createId: () => ids.shift() ?? 'unexpected-id',
+    preflight: async () => ({
+      status: 'ready',
+      platform: 'darwin',
+      openSshVersion: '10.3',
+      agentState: 'ready'
+    }),
+    hostKeys: {
+      inspectTarget: async () => ({ status: 'ready', fingerprints: [] }),
+      confirmHostKey: async () => assert.fail('not used')
+    },
+    authenticate: async (_target, password) => {
+      calls.push(`authenticate:${password}`)
+      return {
+        status: 'ready',
+        session: {
+          installPublicKey: async () => {
+            calls.push('install-public-key')
+            return { status: 'ready' as const }
+          },
+          close: async () => {
+            calls.push('close-password-session')
+          }
+        }
+      }
+    },
+    generateKey: async (_alias, protection) => {
+      assert.equal('password' in protection, false)
+      calls.push(`generate:${protection.keyProtection}`)
+      return {
+        status: 'ready',
+        privateKeyPath: '/Users/private/.ssh/phi_lab-hpc_ed25519',
+        publicKey: 'ssh-ed25519 AAAA-new-key phi@test',
+        fingerprint: 'SHA256:new-key'
+      }
+    },
+    installKey: async () => assert.fail('the verified session must install the key'),
+    loadKey: async (_platform, _path, passphrase) => {
+      calls.push(`load:${passphrase}`)
+      return { status: 'ready' }
+    },
+    verifyKey: async () => ({ status: 'ready' }),
+    saveHost: async (input) => input.alias
+  })
+
+  const inspected = await coordinator.inspectTarget(TARGET)
+  assert.equal(inspected.status, 'ready')
+  if (inspected.status !== 'ready') return
+  await coordinator.verifyPassword(inspected.attemptId, { password: 'one-use-secret' })
+  const protection = { keyProtection: 'passphrase' as const, passphrase: 'key-secret' }
+  const prepared = await coordinator.completeWithKeyProtection(inspected.attemptId, protection)
+
+  assert.equal(prepared.status, 'config-preview')
+  assert.equal(protection.passphrase, '')
+  assert.deepEqual(calls, [
+    'authenticate:one-use-secret',
+    'generate:passphrase',
+    'install-public-key',
+    'close-password-session',
+    'load:key-secret'
+  ])
+})
+
 test('verified bootstrap returns a private-path-safe preview and writes config only after consent', async () => {
   const ids = ['attempt-1', 'operation-1']
   const saved: unknown[] = []

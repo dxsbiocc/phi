@@ -1,6 +1,8 @@
 import type {
   SshBootstrapAgentState,
   SshBootstrapCredentialRequest,
+  SshBootstrapKeyProtectionRequest,
+  SshBootstrapPasswordRequest,
   SshBootstrapPublicErrorCode,
   SshBootstrapRendererBridge,
   SshBootstrapTarget,
@@ -25,6 +27,11 @@ export interface SshBootstrapCredentialDraft {
   passphraseConfirmation: string
 }
 
+export interface SshBootstrapKeyProtectionDraft {
+  passphrase: string
+  passphraseConfirmation: string
+}
+
 export interface SshBootstrapTargetModel {
   phase: 'target'
   target: SshBootstrapTarget
@@ -38,6 +45,31 @@ export interface SshBootstrapHostKeyModel {
   busy: boolean
   error: string | null
   fingerprints: SshHostKeyFingerprint[]
+}
+
+export interface SshBootstrapPasswordModel {
+  phase: 'password'
+  target: SshBootstrapTarget
+  busy: boolean
+  error: string | null
+  agentState: SshBootstrapAgentState
+  password: string
+  validationMessage: string | null
+}
+
+export interface SshBootstrapPasswordChoiceModel {
+  phase: 'password-choice'
+  target: SshBootstrapTarget
+  busy: boolean
+  error: string | null
+  agentState: SshBootstrapAgentState
+}
+
+export interface SshBootstrapSkippedModel {
+  phase: 'skipped'
+  target: SshBootstrapTarget
+  busy: false
+  error: null
 }
 
 export interface SshBootstrapCredentialsModel {
@@ -84,6 +116,9 @@ export interface SshBootstrapResultModel {
 export type SshBootstrapUiModel =
   | SshBootstrapTargetModel
   | SshBootstrapHostKeyModel
+  | SshBootstrapPasswordModel
+  | SshBootstrapPasswordChoiceModel
+  | SshBootstrapSkippedModel
   | SshBootstrapCredentialsModel
   | SshBootstrapProgressModel
   | SshBootstrapConfigPreviewModel
@@ -93,6 +128,9 @@ export interface SshBootstrapUiActions {
   startInspection: () => void
   confirmHostKey: () => void
   setPassword: (value: string) => void
+  verifyPassword: () => void
+  configurePasswordless: () => void
+  skipPasswordless: () => void
   setPassphrase: (value: string) => void
   setPassphraseConfirmation: (value: string) => void
   setPasswordlessAcknowledged: (value: boolean) => void
@@ -102,7 +140,16 @@ export interface SshBootstrapUiActions {
   close: () => void
 }
 
-export type RemoteHostPasswordBootstrapClient = SshBootstrapRendererBridge
+export type RemoteHostPasswordBootstrapClient = Pick<
+  SshBootstrapRendererBridge,
+  | 'inspectTarget'
+  | 'confirmHostKey'
+  | 'verifyPassword'
+  | 'completeWithKeyProtection'
+  | 'saveConfig'
+  | 'declineConfig'
+  | 'cancel'
+>
 
 const PUBLIC_ERROR_MESSAGES: Record<SshBootstrapPublicErrorCode, string> = {
   proxy_unsupported: '此服务器通过 ProxyJump 或 ProxyCommand 连接，当前版本不支持引导。',
@@ -126,11 +173,41 @@ export function initialSshBootstrapUiModel(target: SshBootstrapTarget): SshBoots
   return { phase: 'target', target, busy: false, error: null }
 }
 
+export function passwordSshBootstrapUiModel(
+  target: SshBootstrapTarget,
+  agentState: SshBootstrapAgentState,
+  error: string | null = null
+): SshBootstrapPasswordModel {
+  return {
+    phase: 'password',
+    target,
+    busy: false,
+    error,
+    agentState,
+    password: '',
+    validationMessage: '请输入服务器密码'
+  }
+}
+
 export function credentialValidationMessage(
   draft: SshBootstrapCredentialDraft,
   options: { passwordlessAvailable?: boolean; passwordlessAcknowledged?: boolean } = {}
 ): string | null {
   if (!draft.password) return '请输入服务器密码'
+  if (options.passwordlessAvailable) {
+    return options.passwordlessAcknowledged
+      ? null
+      : '请先启动 ssh-agent 后重新检查，或明确选择无口令密钥'
+  }
+  if (!draft.passphrase) return '请输入私钥口令'
+  if (draft.passphrase !== draft.passphraseConfirmation) return '两次输入的私钥口令不一致'
+  return null
+}
+
+export function keyProtectionValidationMessage(
+  draft: Pick<SshBootstrapCredentialDraft, 'passphrase' | 'passphraseConfirmation'>,
+  options: { passwordlessAvailable?: boolean; passwordlessAcknowledged?: boolean } = {}
+): string | null {
   if (options.passwordlessAvailable) {
     return options.passwordlessAcknowledged
       ? null
@@ -156,7 +233,7 @@ export function credentialsSshBootstrapUiModel(
     credentials,
     passwordlessAvailable,
     passwordlessAcknowledged: false,
-    validationMessage: credentialValidationMessage(credentials, { passwordlessAvailable })
+    validationMessage: keyProtectionValidationMessage(credentials, { passwordlessAvailable })
   }
 }
 
@@ -177,5 +254,32 @@ export async function withEphemeralSshBootstrapCredentials<T>(
   } finally {
     credentials.password = ''
     if (credentials.keyProtection === 'passphrase') credentials.passphrase = ''
+  }
+}
+
+export async function withEphemeralSshBootstrapPassword<T>(
+  password: string,
+  consume: (input: SshBootstrapPasswordRequest) => Promise<T>
+): Promise<T> {
+  const input = { password }
+  try {
+    return await consume(input)
+  } finally {
+    input.password = ''
+  }
+}
+
+export async function withEphemeralSshBootstrapKeyProtection<T>(
+  draft: SshBootstrapKeyProtectionDraft,
+  passwordlessAcknowledged: boolean,
+  consume: (input: SshBootstrapKeyProtectionRequest) => Promise<T>
+): Promise<T> {
+  const input: SshBootstrapKeyProtectionRequest = passwordlessAcknowledged
+    ? { keyProtection: 'passwordless-explicit' }
+    : { keyProtection: 'passphrase', passphrase: draft.passphrase }
+  try {
+    return await consume(input)
+  } finally {
+    if (input.keyProtection === 'passphrase') input.passphrase = ''
   }
 }

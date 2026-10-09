@@ -1,6 +1,7 @@
 import {
   Alert,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Divider,
@@ -43,10 +44,12 @@ const STATUS_COLORS: Record<RemoteDoctorStatus, 'success' | 'warning' | 'error'>
 
 export function RemoteDoctorPanel({
   state,
-  targetKey
+  targetKey,
+  onOpenRemoteSettings
 }: {
   state: RemoteDoctorUiState
   targetKey: string
+  onOpenRemoteSettings?: () => void
 }): React.JSX.Element | null {
   if (state.phase === 'idle' || state.key !== targetKey) return null
   if (state.phase === 'running') {
@@ -58,7 +61,17 @@ export function RemoteDoctorPanel({
   }
   if (state.phase === 'failed') {
     return (
-      <Alert severity="error" sx={{ mt: 1.5 }}>
+      <Alert
+        severity="error"
+        sx={{ mt: 1.5 }}
+        action={
+          onOpenRemoteSettings ? (
+            <Button size="small" onClick={onOpenRemoteSettings}>
+              设置 → 远程
+            </Button>
+          ) : undefined
+        }
+      >
         {state.message}
       </Alert>
     )
@@ -86,6 +99,11 @@ export function RemoteDoctorPanel({
           检查时间：
           {Number.isNaN(checkedAt.getTime()) ? report.checkedAt : checkedAt.toLocaleString()}
         </Typography>
+        {!sshOk && onOpenRemoteSettings ? (
+          <Button size="small" onClick={onOpenRemoteSettings}>
+            设置 → 远程
+          </Button>
+        ) : null}
       </Stack>
       <Divider sx={{ my: 1 }} />
       {report.capabilityProfile && (

@@ -1,11 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
-  credentialValidationMessage,
   credentialsSshBootstrapUiModel,
   initialSshBootstrapUiModel,
+  keyProtectionValidationMessage,
+  passwordSshBootstrapUiModel,
   sshBootstrapErrorMessage,
-  withEphemeralSshBootstrapCredentials,
+  withEphemeralSshBootstrapKeyProtection,
+  withEphemeralSshBootstrapPassword,
   type RemoteHostPasswordBootstrapClient,
   type SshBootstrapCredentialDraft,
   type SshBootstrapFinalResult,
@@ -37,7 +39,7 @@ function credentialsWithPatch(
     error: null,
     credentials,
     passwordlessAcknowledged,
-    validationMessage: credentialValidationMessage(credentials, {
+    validationMessage: keyProtectionValidationMessage(credentials, {
       passwordlessAvailable: model.passwordlessAvailable,
       passwordlessAcknowledged
     })
@@ -78,13 +80,25 @@ export function useRemoteHostPasswordBootstrap({
     setModel(initialSshBootstrapUiModel(stableTarget))
   }, [cancelPending, stableTarget])
 
+  useEffect(
+    () => () => {
+      requestSequence.current += 1
+      cancelPending()
+    },
+    [cancelPending]
+  )
+
   const startInspection = useCallback(async () => {
     const requestId = ++requestSequence.current
     cancelPending()
     setModel({ ...initialSshBootstrapUiModel(stableTarget), busy: true })
     try {
       const result = await client.inspectTarget(stableTarget)
-      if (requestSequence.current !== requestId) return
+      if (requestSequence.current !== requestId) {
+        if (result.status !== 'rejected')
+          await client.cancel(result.attemptId).catch(() => undefined)
+        return
+      }
       if (result.status === 'rejected') {
         setModel({
           ...initialSshBootstrapUiModel(stableTarget),
@@ -103,7 +117,7 @@ export function useRemoteHostPasswordBootstrap({
         })
         return
       }
-      setModel(credentialsSshBootstrapUiModel(stableTarget, result.agentState))
+      setModel(passwordSshBootstrapUiModel(stableTarget, result.agentState))
     } catch {
       if (requestSequence.current === requestId) {
         setModel({
@@ -121,13 +135,17 @@ export function useRemoteHostPasswordBootstrap({
     setModel({ ...model, busy: true, error: null })
     try {
       const result = await client.confirmHostKey(currentAttemptId)
-      if (requestSequence.current !== requestId) return
+      if (requestSequence.current !== requestId) {
+        if (result.status !== 'rejected')
+          await client.cancel(result.attemptId).catch(() => undefined)
+        return
+      }
       if (result.status === 'rejected') {
         setModel({ ...model, busy: false, error: sshBootstrapErrorMessage(result.errorCode) })
         return
       }
       attemptId.current = result.attemptId
-      setModel(credentialsSshBootstrapUiModel(stableTarget, result.agentState))
+      setModel(passwordSshBootstrapUiModel(stableTarget, result.agentState))
     } catch {
       if (requestSequence.current === requestId) {
         setModel({ ...model, busy: false, error: sshBootstrapErrorMessage('unexpected') })
@@ -144,6 +162,94 @@ export function useRemoteHostPasswordBootstrap({
     []
   )
 
+  const setPassword = useCallback((password: string) => {
+    setModel((current) =>
+      current.phase === 'password'
+        ? {
+            ...current,
+            error: null,
+            password,
+            validationMessage: password ? null : '请输入服务器密码'
+          }
+        : current
+    )
+  }, [])
+
+  const verifyPassword = useCallback(async () => {
+    const currentAttemptId = attemptId.current
+    if (!currentAttemptId || model.phase !== 'password' || model.validationMessage) return
+    const requestId = ++requestSequence.current
+    const agentState = model.agentState
+    setModel({
+      phase: 'progress',
+      target: stableTarget,
+      busy: true,
+      error: null,
+      completedSteps: ['已确认服务器主机密钥'],
+      currentStep: '正在用密码测试连接…'
+    })
+    try {
+      const result = await withEphemeralSshBootstrapPassword(model.password, (input) =>
+        client.verifyPassword(currentAttemptId, input)
+      )
+      if (requestSequence.current !== requestId) {
+        if (result.status === 'ready') await client.cancel(result.attemptId).catch(() => undefined)
+        return
+      }
+      if (result.status === 'failed') {
+        const message = sshBootstrapErrorMessage(result.errorCode)
+        setModel(
+          result.retryable
+            ? passwordSshBootstrapUiModel(stableTarget, agentState, message)
+            : { ...initialSshBootstrapUiModel(stableTarget), error: message }
+        )
+        return
+      }
+      setModel({
+        phase: 'password-choice',
+        target: stableTarget,
+        busy: false,
+        error: null,
+        agentState: result.agentState
+      })
+    } catch {
+      if (requestSequence.current === requestId) {
+        setModel(
+          passwordSshBootstrapUiModel(
+            stableTarget,
+            agentState,
+            sshBootstrapErrorMessage('unexpected')
+          )
+        )
+      }
+    }
+  }, [client, model, stableTarget])
+
+  const configurePasswordless = useCallback(() => {
+    setModel((current) =>
+      current.phase === 'password-choice'
+        ? credentialsSshBootstrapUiModel(stableTarget, current.agentState)
+        : current
+    )
+  }, [stableTarget])
+
+  const skipPasswordless = useCallback(async () => {
+    const currentAttemptId = attemptId.current
+    if (!currentAttemptId || model.phase !== 'password-choice') return
+    const requestId = ++requestSequence.current
+    setModel({ ...model, busy: true, error: null })
+    try {
+      await client.cancel(currentAttemptId)
+      if (requestSequence.current !== requestId) return
+      attemptId.current = null
+      setModel({ phase: 'skipped', target: stableTarget, busy: false, error: null })
+    } catch {
+      if (requestSequence.current === requestId) {
+        setModel({ ...model, busy: false, error: sshBootstrapErrorMessage('unexpected') })
+      }
+    }
+  }, [client, model, stableTarget])
+
   const submitCredentials = useCallback(async () => {
     const currentAttemptId = attemptId.current
     if (!currentAttemptId || model.phase !== 'credentials' || model.validationMessage) return
@@ -153,16 +259,21 @@ export function useRemoteHostPasswordBootstrap({
       target: stableTarget,
       busy: true,
       error: null,
-      completedSteps: ['已确认服务器主机密钥'],
-      currentStep: '正在验证密码、生成并安装专用密钥…'
+      completedSteps: ['已确认服务器主机密钥', '已验证密码登录'],
+      currentStep: '正在生成并安装专用密钥…'
     })
     try {
-      const result = await withEphemeralSshBootstrapCredentials(
+      const result = await withEphemeralSshBootstrapKeyProtection(
         model.credentials,
         model.passwordlessAcknowledged,
-        (credentials) => client.completeWithCredentials(currentAttemptId, credentials)
+        (protection) => client.completeWithKeyProtection(currentAttemptId, protection)
       )
-      if (requestSequence.current !== requestId) return
+      if (requestSequence.current !== requestId) {
+        if (result.status === 'config-preview') {
+          await client.cancel(result.operationId).catch(() => undefined)
+        }
+        return
+      }
       if (result.status === 'failed') {
         const message = sshBootstrapErrorMessage(result.errorCode)
         if (!result.retryable) {
@@ -236,7 +347,10 @@ export function useRemoteHostPasswordBootstrap({
     () => ({
       startInspection: () => void startInspection(),
       confirmHostKey: () => void confirmHostKey(),
-      setPassword: (password) => patchCredentials({ password }),
+      setPassword,
+      verifyPassword: () => void verifyPassword(),
+      configurePasswordless,
+      skipPasswordless: () => void skipPasswordless(),
       setPassphrase: (passphrase) => patchCredentials({ passphrase }),
       setPassphraseConfirmation: (passphraseConfirmation) =>
         patchCredentials({ passphraseConfirmation }),
@@ -247,7 +361,18 @@ export function useRemoteHostPasswordBootstrap({
       declineConfig: () => void finishConfig(false),
       close
     }),
-    [close, confirmHostKey, finishConfig, patchCredentials, startInspection, submitCredentials]
+    [
+      close,
+      configurePasswordless,
+      confirmHostKey,
+      finishConfig,
+      patchCredentials,
+      setPassword,
+      skipPasswordless,
+      startInspection,
+      submitCredentials,
+      verifyPassword
+    ]
   )
 
   return { model, actions }

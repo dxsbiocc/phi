@@ -1,6 +1,7 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteBashRequest, RemoteBashResult } from './remote-workspace-bash'
+import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_BASH_DESCRIPTION =
   'Phi remote project bash: execute a bounded non-interactive Bash command on the selected SSH server with cwd fixed to the project root. A shell command can access paths outside that root. Use Wrapper for long-running Nextflow or Slurm jobs. PTY and async mode are unavailable.'
@@ -69,7 +70,7 @@ export function buildRemoteWorkspaceBashTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程命令未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程命令未完成') }
           ],
           isError: true
         }

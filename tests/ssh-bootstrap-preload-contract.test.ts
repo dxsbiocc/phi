@@ -18,12 +18,15 @@ test('SSH bootstrap uses one shared preload bridge without extending renderer ty
   assert.match(shared, /export interface SshBootstrapRendererBridge/)
   assert.match(shared, /inspectTarget\(/)
   assert.match(shared, /confirmHostKey\(/)
-  assert.match(shared, /completeWithCredentials\(/)
+  assert.match(shared, /verifyPassword\(/)
+  assert.match(shared, /completeWithKeyProtection\(/)
+  assert.doesNotMatch(shared, /completeWithCredentials\(/)
   assert.match(shared, /saveConfig\(/)
   assert.match(shared, /declineConfig\(/)
   assert.match(shared, /cancel\(/)
   assert.match(preload, /sshBootstrap: SshBootstrapRendererBridge/)
   assert.match(preload, /sshBootstrap: sshBootstrapBridge/)
+  assert.doesNotMatch(preload, /sshBootstrap:completeWithCredentials/)
   assert.match(ambient, /sshBootstrap: SshBootstrapRendererBridge/)
   assert.doesNotMatch(rendererTypes, /sshBootstrap/)
 })
@@ -69,7 +72,8 @@ test('preload SSH bootstrap bridge invokes only the staged renderer channels', a
       sshBootstrap: {
         inspectTarget: (input: unknown) => Promise<unknown>
         confirmHostKey: (attemptId: string) => Promise<unknown>
-        completeWithCredentials: (attemptId: string, input: unknown) => Promise<unknown>
+        verifyPassword: (attemptId: string, input: unknown) => Promise<unknown>
+        completeWithKeyProtection: (attemptId: string, input: unknown) => Promise<unknown>
         saveConfig: (operationId: string) => Promise<unknown>
         declineConfig: (operationId: string) => Promise<unknown>
         cancel: (id: string) => Promise<unknown>
@@ -82,14 +86,13 @@ test('preload SSH bootstrap bridge invokes only the staged renderer channels', a
     user: 'scientist',
     port: 22022
   }
-  const credentials = {
-    password: 'renderer-only-secret',
-    keyProtection: 'passphrase',
-    passphrase: 'renderer-only-passphrase'
-  }
   await bridge.inspectTarget(target)
   await bridge.confirmHostKey('attempt-1')
-  await bridge.completeWithCredentials('attempt-1', credentials)
+  await bridge.verifyPassword('attempt-1', { password: 'renderer-only-secret' })
+  await bridge.completeWithKeyProtection('attempt-1', {
+    keyProtection: 'passphrase',
+    passphrase: 'renderer-only-passphrase'
+  })
   await bridge.saveConfig('operation-1')
   await bridge.declineConfig('operation-2')
   await bridge.cancel('attempt-2')
@@ -98,8 +101,12 @@ test('preload SSH bootstrap bridge invokes only the staged renderer channels', a
     { channel: 'sshBootstrap:inspectTarget', args: [target] },
     { channel: 'sshBootstrap:confirmHostKey', args: ['attempt-1'] },
     {
-      channel: 'sshBootstrap:completeWithCredentials',
-      args: ['attempt-1', credentials]
+      channel: 'sshBootstrap:verifyPassword',
+      args: ['attempt-1', { password: 'renderer-only-secret' }]
+    },
+    {
+      channel: 'sshBootstrap:completeWithKeyProtection',
+      args: ['attempt-1', { keyProtection: 'passphrase', passphrase: 'renderer-only-passphrase' }]
     },
     { channel: 'sshBootstrap:saveConfig', args: ['operation-1'] },
     { channel: 'sshBootstrap:declineConfig', args: ['operation-2'] },

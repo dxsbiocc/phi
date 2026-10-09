@@ -52,9 +52,27 @@ export type SshBootstrapHostKeyConfirmation =
       errorCode: SshBootstrapPublicErrorCode
     }
 
-export type SshBootstrapCredentialRequest =
-  | { password: string; keyProtection: 'passphrase'; passphrase: string }
-  | { password: string; keyProtection: 'passwordless-explicit' }
+export interface SshBootstrapPasswordRequest {
+  password: string
+}
+
+export type SshBootstrapKeyProtectionRequest =
+  { keyProtection: 'passphrase'; passphrase: string } | { keyProtection: 'passwordless-explicit' }
+
+export type SshBootstrapCredentialRequest = SshBootstrapPasswordRequest &
+  SshBootstrapKeyProtectionRequest
+
+export type SshBootstrapPasswordVerification =
+  | {
+      status: 'ready'
+      attemptId: string
+      agentState: SshBootstrapAgentState
+    }
+  | {
+      status: 'failed'
+      errorCode: SshBootstrapPublicErrorCode
+      retryable: boolean
+    }
 
 export type SshBootstrapPreparation =
   | {
@@ -80,9 +98,13 @@ export interface SshBootstrapFinalResult {
 export interface SshBootstrapRendererBridge {
   inspectTarget(input: SshBootstrapTarget): Promise<SshBootstrapInspection>
   confirmHostKey(attemptId: string): Promise<SshBootstrapHostKeyConfirmation>
-  completeWithCredentials(
+  verifyPassword(
     attemptId: string,
-    input: SshBootstrapCredentialRequest
+    input: SshBootstrapPasswordRequest
+  ): Promise<SshBootstrapPasswordVerification>
+  completeWithKeyProtection(
+    attemptId: string,
+    input: SshBootstrapKeyProtectionRequest
   ): Promise<SshBootstrapPreparation>
   saveConfig(operationId: string): Promise<SshBootstrapFinalResult>
   declineConfig(operationId: string): Promise<SshBootstrapFinalResult>

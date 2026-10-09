@@ -4,6 +4,9 @@ import type {
   SshBootstrapFinalResult,
   SshBootstrapHostKeyConfirmation,
   SshBootstrapInspection,
+  SshBootstrapKeyProtectionRequest,
+  SshBootstrapPasswordRequest,
+  SshBootstrapPasswordVerification,
   SshBootstrapPreparation,
   SshBootstrapPublicErrorCode,
   SshBootstrapRendererBridge,
@@ -43,7 +46,7 @@ export interface SshBootstrapCoordinatorDependencies {
   ): Promise<PasswordAuthenticationResult>
   generateKey(
     alias: string,
-    credentials: SshBootstrapCredentialRequest
+    credentials: SshBootstrapKeyProtectionRequest
   ): Promise<GeneratedKey | { status: 'rejected'; errorCode: string }>
   installKey(target: SshBootstrapTarget, password: string, publicKey: string): Promise<StageResult>
   loadKey(
@@ -67,9 +70,11 @@ interface AttemptState {
   trusted: boolean
   editingExisting: boolean
   hostConfirmationId?: string
+  passwordSession?: AuthenticatedPasswordSession
   key?: GeneratedKey
   installed?: boolean
   busy?: boolean
+  operationToken?: object
 }
 
 interface ConfigOperation {
@@ -79,12 +84,21 @@ interface ConfigOperation {
   keyDisplayPath: string
 }
 
-export interface SshBootstrapCoordinator extends SshBootstrapRendererBridge {}
+export interface SshBootstrapCoordinator extends SshBootstrapRendererBridge {
+  completeWithCredentials(
+    attemptId: string,
+    input: SshBootstrapCredentialRequest
+  ): Promise<SshBootstrapPreparation>
+}
 
 const failed = (
   errorCode: SshBootstrapPublicErrorCode,
   retryable = false
-): SshBootstrapPreparation => ({ status: 'failed', errorCode, retryable })
+): Extract<SshBootstrapPreparation, { status: 'failed' }> => ({
+  status: 'failed',
+  errorCode,
+  retryable
+})
 
 function publicErrorCode(value: string): SshBootstrapPublicErrorCode {
   const known: ReadonlySet<string> = new Set([
@@ -114,6 +128,148 @@ export function createSshBootstrapCoordinator(
   const attempts = new Map<string, AttemptState>()
   const operations = new Map<string, ConfigOperation>()
 
+  const completeWithProtection = async (
+    attemptId: string,
+    protection: SshBootstrapKeyProtectionRequest,
+    password?: string
+  ): Promise<SshBootstrapPreparation> => {
+    let ownsLock = false
+    const operationToken = {}
+    try {
+      const found = attempts.get(attemptId)
+      if (!found?.trusted || found.busy) return failed('unexpected')
+      const attempt = { ...found, busy: true, operationToken }
+      attempts.set(attemptId, attempt)
+      const active = (): boolean => attempts.get(attemptId)?.operationToken === operationToken
+      ownsLock = true
+      if (
+        attempt.preflight.platform === 'linux' &&
+        attempt.preflight.agentState === 'missing-linux' &&
+        protection.keyProtection === 'passphrase'
+      ) {
+        return failed('linux_agent_missing', true)
+      }
+      if (
+        protection.keyProtection === 'passwordless-explicit' &&
+        !(
+          attempt.preflight.platform === 'linux' && attempt.preflight.agentState === 'missing-linux'
+        )
+      ) {
+        return failed('unexpected')
+      }
+
+      let current = attempt
+      let passwordSession = current.passwordSession
+      if (!current.installed && !passwordSession) {
+        if (password === undefined) return failed('unexpected')
+        const authenticated = await dependencies.authenticate(current.target, password, attemptId)
+        if (!active()) {
+          if (authenticated.status === 'ready') {
+            await authenticated.session?.close().catch(() => undefined)
+          }
+          return failed('unexpected')
+        }
+        if (authenticated.status === 'rejected') {
+          const code = publicErrorCode(authenticated.errorCode)
+          return failed(code, code === 'authentication_failed')
+        }
+        passwordSession = authenticated.session
+      }
+      let generated = current.key
+      try {
+        if (!generated) {
+          const result = await dependencies.generateKey(current.target.alias, protection)
+          if (!active()) return failed('unexpected')
+          if (result.status === 'rejected') return failed(publicErrorCode(result.errorCode))
+          generated = result
+          current = { ...current, key: generated }
+          attempts.set(attemptId, current)
+        }
+        if (!current.installed) {
+          const installed = passwordSession
+            ? await passwordSession.installPublicKey(generated.publicKey)
+            : password !== undefined
+              ? await dependencies.installKey(current.target, password, generated.publicKey)
+              : { status: 'rejected' as const, errorCode: 'unexpected' }
+          if (!active()) return failed('unexpected')
+          if (installed.status === 'rejected') {
+            return failed(publicErrorCode(installed.errorCode))
+          }
+          current = { ...current, installed: true }
+          attempts.set(attemptId, current)
+        }
+      } finally {
+        await passwordSession?.close().catch(() => undefined)
+        const saved = attempts.get(attemptId)
+        if (saved?.operationToken === operationToken && saved.passwordSession === passwordSession) {
+          attempts.set(attemptId, { ...saved, passwordSession: undefined })
+        }
+      }
+
+      const requireAgent = protection.keyProtection === 'passphrase'
+      if (requireAgent) {
+        const loaded = await dependencies.loadKey(
+          current.preflight.platform,
+          generated.privateKeyPath,
+          protection.passphrase
+        )
+        if (!active()) return failed('unexpected')
+        if (loaded.status === 'rejected') return failed(publicErrorCode(loaded.errorCode), true)
+      }
+      const verified = await dependencies.verifyKey(
+        current.target,
+        generated.privateKeyPath,
+        generated.fingerprint,
+        requireAgent
+      )
+      if (!active()) return failed('unexpected')
+      if (verified.status === 'rejected') {
+        return failed(publicErrorCode(verified.errorCode), verified.errorCode === 'key_not_loaded')
+      }
+
+      const displayPath = keyDisplayPath(generated.privateKeyPath)
+      if (!active()) return failed('unexpected')
+      const input: OpenSshHostInput = {
+        ...(current.editingExisting ? { originalAlias: current.target.alias } : {}),
+        alias: current.target.alias,
+        hostname: current.target.hostname,
+        user: current.target.user,
+        port: current.target.port,
+        identityFile: displayPath,
+        identitiesOnly: true,
+        ...(current.preflight.platform === 'darwin'
+          ? { addKeysToAgent: true, useKeychain: true }
+          : {})
+      }
+      const preview = updatedOpenSshConfig('', { ...input, originalAlias: undefined }, [])
+      const operationId = dependencies.createId()
+      attempts.delete(attemptId)
+      operations.set(operationId, {
+        input,
+        preview,
+        keyFingerprint: generated.fingerprint,
+        keyDisplayPath: displayPath
+      })
+      return {
+        status: 'config-preview',
+        operationId,
+        preview,
+        keyFingerprint: generated.fingerprint,
+        keyDisplayPath: displayPath
+      }
+    } catch {
+      return failed('unexpected')
+    } finally {
+      if (ownsLock) {
+        const current = attempts.get(attemptId)
+        if (current?.operationToken === operationToken && current.busy) {
+          attempts.set(attemptId, { ...current, busy: false, operationToken: undefined })
+        }
+      }
+      if (protection.keyProtection === 'passphrase') protection.passphrase = ''
+    }
+  }
+
   return {
     async inspectTarget(target): Promise<SshBootstrapInspection> {
       try {
@@ -141,131 +297,60 @@ export function createSshBootstrapCoordinator(
 
     async confirmHostKey(attemptId): Promise<SshBootstrapHostKeyConfirmation> {
       const attempt = attempts.get(attemptId)
-      if (!attempt?.hostConfirmationId || attempt.trusted) {
+      if (!attempt?.hostConfirmationId || attempt.trusted || attempt.busy) {
         return { status: 'rejected', errorCode: 'unexpected' }
       }
+      const pending = { ...attempt, busy: true }
+      attempts.set(attemptId, pending)
       const result = await dependencies.hostKeys.confirmHostKey(attempt.hostConfirmationId)
-      if (result.status === 'rejected') return result
-      attempts.set(attemptId, { ...attempt, trusted: true, hostConfirmationId: undefined })
+      if (attempts.get(attemptId) !== pending) {
+        return { status: 'rejected', errorCode: 'unexpected' }
+      }
+      if (result.status === 'rejected') {
+        attempts.delete(attemptId)
+        return result
+      }
+      attempts.set(attemptId, {
+        ...attempt,
+        trusted: true,
+        hostConfirmationId: undefined,
+        busy: false
+      })
       return { status: 'ready', attemptId, agentState: attempt.preflight.agentState }
     },
 
-    async completeWithCredentials(attemptId, credentials): Promise<SshBootstrapPreparation> {
+    async verifyPassword(
+      attemptId: string,
+      input: SshBootstrapPasswordRequest
+    ): Promise<SshBootstrapPasswordVerification> {
       let ownsLock = false
       try {
         const found = attempts.get(attemptId)
-        if (!found?.trusted || found.busy) return failed('unexpected')
-        const attempt = { ...found, busy: true }
-        attempts.set(attemptId, attempt)
+        if (!found?.trusted || found.busy || found.passwordSession) return failed('unexpected')
+        const pending = { ...found, busy: true }
+        attempts.set(attemptId, pending)
         ownsLock = true
-        if (
-          attempt.preflight.platform === 'linux' &&
-          attempt.preflight.agentState === 'missing-linux' &&
-          credentials.keyProtection === 'passphrase'
-        ) {
-          return failed('linux_agent_missing', true)
-        }
-        if (
-          credentials.keyProtection === 'passwordless-explicit' &&
-          !(
-            attempt.preflight.platform === 'linux' &&
-            attempt.preflight.agentState === 'missing-linux'
-          )
-        ) {
+        const authenticated = await dependencies.authenticate(
+          found.target,
+          input.password,
+          attemptId
+        )
+        if (attempts.get(attemptId) !== pending) {
+          if (authenticated.status === 'ready') {
+            await authenticated.session?.close().catch(() => undefined)
+          }
           return failed('unexpected')
         }
-
-        let current = attempt
-        let passwordSession: AuthenticatedPasswordSession | undefined
-        if (!current.installed) {
-          const authenticated = await dependencies.authenticate(
-            current.target,
-            credentials.password,
-            attemptId
-          )
-          if (authenticated.status === 'rejected') {
-            const code = publicErrorCode(authenticated.errorCode)
-            return failed(code, code === 'authentication_failed')
-          }
-          passwordSession = authenticated.session
+        if (authenticated.status === 'rejected') {
+          const code = publicErrorCode(authenticated.errorCode)
+          return failed(code, code === 'authentication_failed')
         }
-        let generated = current.key
-        try {
-          if (!generated) {
-            const result = await dependencies.generateKey(current.target.alias, credentials)
-            if (result.status === 'rejected') return failed(publicErrorCode(result.errorCode))
-            generated = result
-            current = { ...current, key: generated }
-            attempts.set(attemptId, current)
-          }
-          if (!current.installed) {
-            const installed = passwordSession
-              ? await passwordSession.installPublicKey(generated.publicKey)
-              : await dependencies.installKey(
-                  current.target,
-                  credentials.password,
-                  generated.publicKey
-                )
-            if (installed.status === 'rejected') {
-              return failed(publicErrorCode(installed.errorCode))
-            }
-            current = { ...current, installed: true }
-            attempts.set(attemptId, current)
-          }
-        } finally {
-          await passwordSession?.close().catch(() => undefined)
-        }
-
-        const requireAgent = credentials.keyProtection === 'passphrase'
-        if (requireAgent) {
-          const loaded = await dependencies.loadKey(
-            current.preflight.platform,
-            generated.privateKeyPath,
-            credentials.passphrase
-          )
-          if (loaded.status === 'rejected') return failed(publicErrorCode(loaded.errorCode), true)
-        }
-        const verified = await dependencies.verifyKey(
-          current.target,
-          generated.privateKeyPath,
-          generated.fingerprint,
-          requireAgent
-        )
-        if (verified.status === 'rejected') {
-          return failed(
-            publicErrorCode(verified.errorCode),
-            verified.errorCode === 'key_not_loaded'
-          )
-        }
-
-        const displayPath = keyDisplayPath(generated.privateKeyPath)
-        const input: OpenSshHostInput = {
-          ...(current.editingExisting ? { originalAlias: current.target.alias } : {}),
-          alias: current.target.alias,
-          hostname: current.target.hostname,
-          user: current.target.user,
-          port: current.target.port,
-          identityFile: displayPath,
-          identitiesOnly: true,
-          ...(current.preflight.platform === 'darwin'
-            ? { addKeysToAgent: true, useKeychain: true }
-            : {})
-        }
-        const preview = updatedOpenSshConfig('', { ...input, originalAlias: undefined }, [])
-        const operationId = dependencies.createId()
-        attempts.delete(attemptId)
-        operations.set(operationId, {
-          input,
-          preview,
-          keyFingerprint: generated.fingerprint,
-          keyDisplayPath: displayPath
-        })
+        if (!authenticated.session) return failed('unexpected')
+        attempts.set(attemptId, { ...found, passwordSession: authenticated.session })
         return {
-          status: 'config-preview',
-          operationId,
-          preview,
-          keyFingerprint: generated.fingerprint,
-          keyDisplayPath: displayPath
+          status: 'ready',
+          attemptId,
+          agentState: found.preflight.agentState
         }
       } catch {
         return failed('unexpected')
@@ -274,6 +359,22 @@ export function createSshBootstrapCoordinator(
           const current = attempts.get(attemptId)
           if (current?.busy) attempts.set(attemptId, { ...current, busy: false })
         }
+        input.password = ''
+      }
+    },
+
+    async completeWithKeyProtection(attemptId, protection): Promise<SshBootstrapPreparation> {
+      return completeWithProtection(attemptId, protection)
+    },
+
+    async completeWithCredentials(attemptId, credentials): Promise<SshBootstrapPreparation> {
+      const protection: SshBootstrapKeyProtectionRequest =
+        credentials.keyProtection === 'passphrase'
+          ? { keyProtection: 'passphrase', passphrase: credentials.passphrase }
+          : { keyProtection: 'passwordless-explicit' }
+      try {
+        return await completeWithProtection(attemptId, protection, credentials.password)
+      } finally {
         credentials.password = ''
         if (credentials.keyProtection === 'passphrase') credentials.passphrase = ''
       }
@@ -304,8 +405,15 @@ export function createSshBootstrapCoordinator(
     },
 
     async cancel(id): Promise<void> {
+      const attempt = attempts.get(id)
       attempts.delete(id)
       operations.delete(id)
+      if (attempt?.hostConfirmationId) {
+        await dependencies.hostKeys
+          .cancelHostKeyConfirmation?.(attempt.hostConfirmationId)
+          .catch(() => undefined)
+      }
+      await attempt?.passwordSession?.close().catch(() => undefined)
     }
   }
 }

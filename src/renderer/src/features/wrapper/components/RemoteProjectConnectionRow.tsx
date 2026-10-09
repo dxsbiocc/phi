@@ -24,7 +24,8 @@ export function RemoteProjectConnectionRow({
   doctorState,
   onTest,
   onEdit,
-  onDelete
+  onDelete,
+  onOpenRemoteSettings
 }: {
   projectId: string
   connection: ProjectRemoteConnection
@@ -36,6 +37,7 @@ export function RemoteProjectConnectionRow({
   onTest: (target: RemoteDoctorTarget) => void
   onEdit: () => void
   onDelete: () => void
+  onOpenRemoteSettings?: () => void
 }): React.JSX.Element {
   const target = host
     ? remoteConnectionDoctorTarget(projectId, connection, host.hostAlias, remotePath)
@@ -86,6 +88,11 @@ export function RemoteProjectConnectionRow({
             </Button>
           </span>
         </Tooltip>
+        {!host && onOpenRemoteSettings ? (
+          <Button size="small" onClick={onOpenRemoteSettings}>
+            设置 → 远程
+          </Button>
+        ) : null}
         <Tooltip title="编辑">
           <span>
             <IconButton
@@ -121,7 +128,13 @@ export function RemoteProjectConnectionRow({
           {connection.inputPathMapping.remoteRoot}
         </Typography>
       )}
-      {target && <RemoteDoctorPanel state={doctorState} targetKey={targetKey} />}
+      {target && (
+        <RemoteDoctorPanel
+          state={doctorState}
+          targetKey={targetKey}
+          onOpenRemoteSettings={onOpenRemoteSettings}
+        />
+      )}
     </Box>
   )
 }

@@ -150,8 +150,11 @@ test(
       assert.equal(inspected.status, 'confirmation-required')
       if (inspected.status !== 'confirmation-required') return
       assert.equal((await coordinator.confirmHostKey(inspected.attemptId)).status, 'ready')
-      const prepared = await coordinator.completeWithCredentials(inspected.attemptId, {
-        password,
+      assert.equal(
+        (await coordinator.verifyPassword(inspected.attemptId, { password })).status,
+        'ready'
+      )
+      const prepared = await coordinator.completeWithKeyProtection(inspected.attemptId, {
         keyProtection: 'passphrase',
         passphrase: randomBytes(24).toString('hex')
       })

@@ -6,6 +6,7 @@ import type {
   RemoteGrepRequest,
   RemoteGrepResult
 } from './remote-workspace-search'
+import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_GLOB_DESCRIPTION =
   'Phi remote project glob: find files on the selected SSH server within the project root. Pass path, hidden, gitignore, and limit as in the local glob tool. Raw ssh:// URLs are not accepted.'
@@ -52,7 +53,7 @@ export function buildRemoteWorkspaceGlobTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程 glob 未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程 glob 未完成') }
           ],
           isError: true
         }
@@ -104,7 +105,7 @@ export function buildRemoteWorkspaceGrepTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程 grep 未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程 grep 未完成') }
           ],
           isError: true
         }

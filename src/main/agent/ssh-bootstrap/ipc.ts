@@ -1,7 +1,4 @@
-import type {
-  SshBootstrapCredentialRequest,
-  SshBootstrapTarget
-} from '../../../shared/sshBootstrapTypes'
+import type { SshBootstrapTarget } from '../../../shared/sshBootstrapTypes'
 import type { SshBootstrapCoordinator } from './coordinator'
 import { validateSshBootstrapTarget } from './preflight'
 
@@ -77,13 +74,22 @@ function parsedTarget(value: unknown): SshBootstrapTarget | null {
   }
 }
 
-function parsedCredentials(value: unknown): SshBootstrapCredentialRequest | null {
-  if (!isRecord(value) || !validSecret(value.password)) return null
+function parsedPassword(value: unknown): { password: string } | null {
+  return isRecord(value) && validSecret(value.password) ? { password: value.password } : null
+}
+
+function parsedKeyProtection(
+  value: unknown
+):
+  | { keyProtection: 'passphrase'; passphrase: string }
+  | { keyProtection: 'passwordless-explicit' }
+  | null {
+  if (!isRecord(value)) return null
   if (value.keyProtection === 'passwordless-explicit') {
-    return { password: value.password, keyProtection: 'passwordless-explicit' }
+    return { keyProtection: 'passwordless-explicit' }
   }
   if (value.keyProtection === 'passphrase' && validSecret(value.passphrase)) {
-    return { password: value.password, keyProtection: 'passphrase', passphrase: value.passphrase }
+    return { keyProtection: 'passphrase', passphrase: value.passphrase }
   }
   return null
 }
@@ -120,23 +126,35 @@ export function registerSshBootstrapIpc(
       return { status: 'rejected', errorCode: 'unexpected' }
     }
   })
-  ipcMain.handle('sshBootstrap:completeWithCredentials', async (event, ...args) => {
+  ipcMain.handle('sshBootstrap:verifyPassword', async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
-    const attemptId = args[0] as string
     const rawInput = args[1]
-    const input = parsedCredentials(rawInput)
+    const input = parsedPassword(rawInput)
     try {
-      if (!validId(attemptId) || !input) {
+      if (!validId(args[0]) || !input) {
         return { status: 'failed', errorCode: 'unexpected', retryable: false }
       }
-      return await coordinator.completeWithCredentials(attemptId, input)
+      return await coordinator.verifyPassword(args[0], input)
     } catch {
       return { status: 'failed', errorCode: 'unexpected', retryable: false }
     } finally {
-      if (input) {
-        input.password = ''
-        if (input.keyProtection === 'passphrase') input.passphrase = ''
+      if (input) input.password = ''
+      clearCredentialValue(rawInput)
+    }
+  })
+  ipcMain.handle('sshBootstrap:completeWithKeyProtection', async (event, ...args) => {
+    assertTrustedRenderer(event, getTrustedRenderer)
+    const rawInput = args[1]
+    const input = parsedKeyProtection(rawInput)
+    try {
+      if (!validId(args[0]) || !input) {
+        return { status: 'failed', errorCode: 'unexpected', retryable: false }
       }
+      return await coordinator.completeWithKeyProtection(args[0], input)
+    } catch {
+      return { status: 'failed', errorCode: 'unexpected', retryable: false }
+    } finally {
+      if (input?.keyProtection === 'passphrase') input.passphrase = ''
       clearCredentialValue(rawInput)
     }
   })

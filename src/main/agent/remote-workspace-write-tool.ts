@@ -1,6 +1,7 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
+import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_WRITE_DESCRIPTION =
   'Phi remote project write: create a UTF-8 file, or replace an existing file that this conversation already read and that has not changed. Pass path and content. Existing directories and special files are refused.'
@@ -51,7 +52,7 @@ export function buildRemoteWorkspaceWriteTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程新建文件未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程新建文件未完成') }
           ],
           isError: true
         }

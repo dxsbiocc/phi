@@ -9,15 +9,28 @@ import { shouldRetryRemoteReads } from '../src/renderer/src/features/project/lib
 import { applyRemoteProjectConnectionChange } from '../src/renderer/src/useProjects'
 import type { Project } from '../src/renderer/src/types'
 
-function markup(phase: 'offline' | 'identity_failed' | 'connecting' | 'reachable'): string {
+function markup(
+  phase:
+    | 'offline'
+    | 'identity_failed'
+    | 'authentication_failed'
+    | 'configuration_failed'
+    | 'connecting'
+    | 'reachable',
+  message = '连接状态消息',
+  suggestion = '处理建议',
+  compact = false
+): string {
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(RemoteConnectionNotice, {
         hostAlias: 'cluster',
-        connection: { phase, message: '连接状态消息', suggestion: '处理建议' },
-        onRetry: () => undefined
+        connection: { phase, message, suggestion },
+        onRetry: () => undefined,
+        onOpenRemoteSettings: () => undefined,
+        compact
       })
     )
   )
@@ -29,6 +42,18 @@ test('remote connection notice gives recovery guidance without hiding saved work
   assert.match(markup('offline'), /先在服务器核对/)
   assert.match(markup('identity_failed'), /处理建议/)
   assert.match(markup('identity_failed'), /重新连接/)
+  assert.match(markup('identity_failed'), /设置 → 远程/)
+  assert.match(markup('authentication_failed'), /设置 → 远程/)
+  assert.match(markup('configuration_failed'), /设置 → 远程/)
+  assert.match(
+    markup(
+      'authentication_failed',
+      'SSH 认证失败后处于冷却期，剩余约 8 分钟',
+      '在设置里点测试连接可立即重试；不要反复连接。',
+      true
+    ),
+    /在设置里点测试连接可立即重试/
+  )
   assert.match(markup('connecting'), /disabled/)
   assert.equal(markup('reachable'), '')
 })

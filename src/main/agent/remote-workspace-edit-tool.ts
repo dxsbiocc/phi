@@ -1,6 +1,7 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
+import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_EDIT_DESCRIPTION =
   'Phi remote project edit (OMP replace mode): change an existing UTF-8 file on the selected SSH server. Read the file first, then pass path, old_string, new_string, and optional replace_all. A changed or unread file is refused.'
@@ -80,7 +81,7 @@ export function buildRemoteWorkspaceEditTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程编辑未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程编辑未完成') }
           ],
           isError: true
         }

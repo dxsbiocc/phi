@@ -255,7 +255,11 @@ function EnvironmentSection({ model, actions }: DialogPartProps): React.JSX.Elem
           只检查目录和命令；不会安装或修改服务器。
         </Typography>
       </Stack>
-      <RemoteDoctorPanel state={model.environmentState} targetKey={model.environmentKey} />
+      <RemoteDoctorPanel
+        state={model.environmentState}
+        targetKey={model.environmentKey}
+        onOpenRemoteSettings={actions.openRemoteSettings}
+      />
       {model.environmentReport && (
         <RemoteDependencyActions
           report={model.environmentReport}

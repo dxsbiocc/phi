@@ -1123,8 +1123,10 @@ const officeBridge: OfficeRendererBridge = {
 const sshBootstrapBridge: SshBootstrapRendererBridge = {
   inspectTarget: (input) => ipcRenderer.invoke('sshBootstrap:inspectTarget', input),
   confirmHostKey: (attemptId) => ipcRenderer.invoke('sshBootstrap:confirmHostKey', attemptId),
-  completeWithCredentials: (attemptId, input) =>
-    ipcRenderer.invoke('sshBootstrap:completeWithCredentials', attemptId, input),
+  verifyPassword: (attemptId, input) =>
+    ipcRenderer.invoke('sshBootstrap:verifyPassword', attemptId, input),
+  completeWithKeyProtection: (attemptId, input) =>
+    ipcRenderer.invoke('sshBootstrap:completeWithKeyProtection', attemptId, input),
   saveConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:saveConfig', operationId),
   declineConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:declineConfig', operationId),
   cancel: (id) => ipcRenderer.invoke('sshBootstrap:cancel', id)

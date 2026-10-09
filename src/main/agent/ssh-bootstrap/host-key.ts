@@ -36,6 +36,7 @@ export type SshHostKeyConfirmation =
 export interface SshHostKeyTrustService {
   inspectTarget(target: SshBootstrapTarget): Promise<SshHostKeyInspection>
   confirmHostKey(confirmationId: string): Promise<SshHostKeyConfirmation>
+  cancelHostKeyConfirmation?(confirmationId: string): Promise<void>
 }
 
 interface SshHostKeyTrustDependencies {
@@ -203,6 +204,9 @@ export function createSshHostKeyTrustService(
       } catch {
         return { status: 'rejected', errorCode: 'unexpected' }
       }
+    },
+    async cancelHostKeyConfirmation(confirmationId) {
+      pending.delete(confirmationId)
     }
   }
 }

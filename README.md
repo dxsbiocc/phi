@@ -118,9 +118,9 @@ blank optional fields keep OpenSSH defaults. Phi stores the key **path**, not th
 itself. On macOS and Linux, **用密码设置免密登录** can use a server password once
 after explicit host-fingerprint confirmation, install a dedicated key, verify key
 login, and preview the `Host` block before writing it. Phi does not save that password
-or the private-key passphrase; jump hosts, MFA/OTP, and Windows bootstrap are not
-supported. Existing non-interactive key or `ssh-agent` authentication remains
-available. Then create a
+or the private-key passphrase; later connections always use the configured key.
+Jump hosts, MFA/OTP, and Windows bootstrap are not supported. Existing non-interactive
+key or `ssh-agent` authentication remains available. Then create a
 project with **Remote server** and an absolute, readable and writable directory
 on that server. Testing a project connection checks its directory and reports
 missing server tools. A remote project always runs its Wrappers on its bound

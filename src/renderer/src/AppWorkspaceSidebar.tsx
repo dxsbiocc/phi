@@ -52,6 +52,7 @@ export type AppWorkspaceSidebarProps = {
   remoteHostAlias?: string
   remoteConnection?: RemoteProjectConnectionState
   onRetryRemoteConnection: () => void
+  onOpenRemoteSettings?: () => void
   activeWorkspacePath: string | null
   workspaceFileTreeRevision: number
   onOpenWorkspaceFile: (path: string) => void
@@ -157,6 +158,7 @@ function AppWorkspaceSidebarImpl({
   remoteHostAlias,
   remoteConnection,
   onRetryRemoteConnection,
+  onOpenRemoteSettings,
   activeWorkspacePath,
   workspaceFileTreeRevision,
   onOpenWorkspaceFile,
@@ -341,6 +343,7 @@ function AppWorkspaceSidebarImpl({
             hostAlias={remoteHostAlias}
             connection={remoteConnection}
             onRetry={onRetryRemoteConnection}
+            onOpenRemoteSettings={onOpenRemoteSettings}
             compact
           />
         ) : null}

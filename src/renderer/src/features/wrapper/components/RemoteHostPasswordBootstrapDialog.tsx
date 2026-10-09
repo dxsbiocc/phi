@@ -80,8 +80,12 @@ export function RemoteHostPasswordBootstrapDialogView({
   actions: SshBootstrapUiActions
 }): React.JSX.Element {
   const confirmingHostKey = model.phase === 'host-key-confirmation'
+  const enteringPassword = model.phase === 'password'
+  const choosingPasswordless = model.phase === 'password-choice'
+  const skippedPasswordless = model.phase === 'skipped'
   const enteringCredentials = model.phase === 'credentials'
   const progressing = model.phase === 'progress'
+  const testingPassword = progressing && model.currentStep === '正在用密码测试连接…'
   const previewingConfig = model.phase === 'config-preview'
   const showingResult = model.phase === 'result'
   return (
@@ -89,15 +93,23 @@ export function RemoteHostPasswordBootstrapDialogView({
       <DialogTitle>
         {confirmingHostKey
           ? '确认服务器主机密钥'
-          : enteringCredentials
-            ? '输入一次服务器密码'
-            : progressing
-              ? '正在设置免密登录'
-              : previewingConfig
-                ? '确认写入 SSH 配置'
-                : showingResult
-                  ? '免密登录已就绪'
-                  : '设置免密登录'}
+          : choosingPasswordless
+            ? '密码连接成功'
+            : skippedPasswordless
+              ? '本次连接已结束'
+              : enteringPassword
+                ? '用密码测试连接'
+                : enteringCredentials
+                  ? '配置免密登录'
+                  : testingPassword
+                    ? '正在测试密码连接'
+                    : progressing
+                      ? '正在设置免密登录'
+                      : previewingConfig
+                        ? '确认写入 SSH 配置'
+                        : showingResult
+                          ? '免密登录已就绪'
+                          : '设置免密登录'}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.75 }}>
@@ -124,17 +136,33 @@ export function RemoteHostPasswordBootstrapDialogView({
                 请通过可信渠道向服务器管理员核对。仅在与管理员提供的指纹一致时确认。
               </Typography>
             </>
-          ) : enteringCredentials ? (
+          ) : choosingPasswordless ? (
+            <>
+              <Alert severity="success">密码试连成功，密码已从本次请求中丢弃。</Alert>
+              <Typography variant="body2">
+                推荐现在配置免密登录。若暂不配置，之后需要密码时请重新添加，或改用免密登录。
+              </Typography>
+            </>
+          ) : skippedPasswordless ? (
+            <>
+              <Alert severity="info">已丢弃密码，未保存任何凭据，也未生成或写入 SSH 配置。</Alert>
+              <Typography variant="body2">之后需要密码时请重新添加，或改用免密登录。</Typography>
+            </>
+          ) : enteringPassword ? (
             <>
               <TextField
                 label="服务器密码"
                 type="password"
-                value={model.credentials.password}
+                value={model.password}
                 onChange={(event) => actions.setPassword(event.target.value)}
                 autoComplete="off"
                 autoFocus
                 fullWidth
               />
+              <Alert severity="info">密码只用于本次试连，Phi 不会保存密码。</Alert>
+            </>
+          ) : enteringCredentials ? (
+            <>
               {!model.passwordlessAcknowledged && (
                 <>
                   <TextField
@@ -187,7 +215,7 @@ export function RemoteHostPasswordBootstrapDialogView({
                   </Stack>
                 </Alert>
               )}
-              <Alert severity="info">不会保存密码或私钥口令，提交后会立即从界面状态清除。</Alert>
+              <Alert severity="info">不会保存私钥口令，提交后会立即从界面状态清除。</Alert>
             </>
           ) : progressing ? (
             <>
@@ -269,10 +297,23 @@ export function RemoteHostPasswordBootstrapDialogView({
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        {showingResult ? (
+        {showingResult || skippedPasswordless ? (
           <Button variant="contained" onClick={actions.close}>
             完成
           </Button>
+        ) : choosingPasswordless ? (
+          <>
+            <Button onClick={actions.skipPasswordless} disabled={model.busy}>
+              暂不配置
+            </Button>
+            <Button
+              variant="contained"
+              onClick={actions.configurePasswordless}
+              disabled={model.busy}
+            >
+              配置免密登录（默认、推荐）
+            </Button>
+          </>
         ) : previewingConfig ? (
           <>
             <Button onClick={actions.declineConfig} disabled={model.busy}>
@@ -292,23 +333,32 @@ export function RemoteHostPasswordBootstrapDialogView({
               onClick={
                 confirmingHostKey
                   ? actions.confirmHostKey
-                  : enteringCredentials
-                    ? actions.submitCredentials
-                    : actions.startInspection
+                  : enteringPassword
+                    ? actions.verifyPassword
+                    : enteringCredentials
+                      ? actions.submitCredentials
+                      : actions.startInspection
               }
-              disabled={model.busy || (enteringCredentials && Boolean(model.validationMessage))}
+              disabled={
+                model.busy ||
+                ((enteringPassword || enteringCredentials) && Boolean(model.validationMessage))
+              }
             >
               {model.busy
                 ? confirmingHostKey
                   ? '写入中…'
-                  : enteringCredentials
-                    ? '引导中…'
-                    : '检查中…'
+                  : enteringPassword
+                    ? '测试中…'
+                    : enteringCredentials
+                      ? '引导中…'
+                      : '检查中…'
                 : confirmingHostKey
                   ? '指纹一致，继续'
-                  : enteringCredentials
-                    ? '开始引导'
-                    : '开始安全检查'}
+                  : enteringPassword
+                    ? '测试连接'
+                    : enteringCredentials
+                      ? '开始引导'
+                      : '开始安全检查'}
             </Button>
           </>
         ) : null}

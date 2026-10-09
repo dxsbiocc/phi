@@ -3993,6 +3993,7 @@ function App(): React.JSX.Element {
             hostAlias={activeProject?.remoteHostAlias}
             connection={activeRemoteConnection}
             onRetry={onRetryRemoteConnection}
+            onOpenRemoteSettings={() => openSettings('remote')}
           />
         ) : null}
         <Suspense
@@ -4321,6 +4322,7 @@ function App(): React.JSX.Element {
       remoteHostAlias: activeProject?.remoteHostAlias,
       remoteConnection: activeRemoteConnection,
       onRetryRemoteConnection: onRetryRemoteConnection,
+      onOpenRemoteSettings: () => openSettings('remote'),
       activeWorkspacePath: activeWorkspaceSidePanelPath,
       workspaceFileTreeRevision: workspaceSidePanelTreeRevision,
       onOpenWorkspaceFile: onOpenWorkspaceFileFromSidebar,
@@ -4398,6 +4400,7 @@ function App(): React.JSX.Element {
       activeProject?.remoteHostAlias,
       activeRemoteConnection,
       onRetryRemoteConnection,
+      openSettings,
       activeWorkspaceSidePanelPath,
       workspaceSidePanelTreeRevision,
       onOpenWorkspaceFileFromSidebar,

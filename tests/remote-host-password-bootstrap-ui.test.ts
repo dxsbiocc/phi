@@ -11,6 +11,8 @@ import {
 } from '../src/renderer/src/features/wrapper/components/RemoteHostPasswordBootstrapDialog'
 import {
   credentialValidationMessage,
+  withEphemeralSshBootstrapKeyProtection,
+  withEphemeralSshBootstrapPassword,
   withEphemeralSshBootstrapCredentials,
   type SshBootstrapCredentialRequest
 } from '../src/renderer/src/features/wrapper/lib/sshBootstrapUi'
@@ -26,6 +28,9 @@ const NOOP_ACTIONS = {
   startInspection: () => undefined,
   confirmHostKey: () => undefined,
   setPassword: () => undefined,
+  verifyPassword: () => undefined,
+  configurePasswordless: () => undefined,
+  skipPasswordless: () => undefined,
   setPassphrase: () => undefined,
   setPassphraseConfirmation: () => undefined,
   setPasswordlessAcknowledged: () => undefined,
@@ -34,6 +39,44 @@ const NOOP_ACTIONS = {
   declineConfig: () => undefined,
   close: () => undefined
 }
+
+test('successful password verification offers only recommended key setup or no setup', () => {
+  const markup = render(
+    createElement(RemoteHostPasswordBootstrapDialogView, {
+      open: true,
+      model: {
+        phase: 'password-choice',
+        target: TARGET,
+        busy: false,
+        error: null,
+        agentState: 'ready'
+      },
+      actions: NOOP_ACTIONS
+    })
+  )
+
+  assert.match(markup, /密码连接成功/)
+  assert.match(markup, /配置免密登录（默认、推荐）/)
+  assert.match(markup, /暂不配置/)
+  assert.match(markup, /之后需要密码时请重新添加，或改用免密登录/)
+  assert.doesNotMatch(markup, /服务器密码|私钥口令|保存密码|记住密码|钥匙串密码/)
+})
+
+test('declining key setup confirms that the one-use password was discarded', () => {
+  const markup = render(
+    createElement(RemoteHostPasswordBootstrapDialogView, {
+      open: true,
+      model: { phase: 'skipped', target: TARGET, busy: false, error: null },
+      actions: NOOP_ACTIONS
+    })
+  )
+
+  assert.match(markup, /已丢弃密码/)
+  assert.match(markup, /未保存任何凭据/)
+  assert.match(markup, /未生成或写入 SSH 配置/)
+  assert.match(markup, /之后需要密码时请重新添加，或改用免密登录/)
+  assert.doesNotMatch(markup, /保存密码|记住密码|钥匙串密码/)
+})
 
 function render(element: React.ReactElement): string {
   return renderToStaticMarkup(
@@ -79,7 +122,7 @@ test('password bootstrap requires a password and a matching non-empty key passph
 })
 
 test('credential requests are blanked immediately after the one bootstrap call settles', async () => {
-  let captured: SshBootstrapCredentialRequest | null = null
+  const capture: { value: SshBootstrapCredentialRequest | null } = { value: null }
   const result = await withEphemeralSshBootstrapCredentials(
     {
       password: 'one-use-password',
@@ -88,7 +131,7 @@ test('credential requests are blanked immediately after the one bootstrap call s
     },
     false,
     async (credentials) => {
-      captured = credentials
+      capture.value = credentials
       assert.deepEqual(credentials, {
         password: 'one-use-password',
         keyProtection: 'passphrase',
@@ -99,9 +142,45 @@ test('credential requests are blanked immediately after the one bootstrap call s
   )
 
   assert.equal(result, 'complete')
+  const captured = capture.value
+  assert.ok(captured)
   assert.equal(captured?.password, '')
   assert.equal(captured?.keyProtection, 'passphrase')
   assert.equal(captured?.passphrase, '')
+})
+
+test('split requests erase the password before the key-protection step', async () => {
+  const capture: {
+    password: { password: string } | null
+    protection:
+      | { keyProtection: 'passphrase'; passphrase: string }
+      | { keyProtection: 'passwordless-explicit' }
+      | null
+  } = { password: null, protection: null }
+
+  await withEphemeralSshBootstrapPassword('one-use-password', async (input) => {
+    capture.password = input
+    return 'verified'
+  })
+  await withEphemeralSshBootstrapKeyProtection(
+    { passphrase: 'one-use-passphrase', passphraseConfirmation: 'one-use-passphrase' },
+    false,
+    async (input) => {
+      capture.protection = input
+      assert.equal('password' in input, false)
+      return 'configured'
+    }
+  )
+
+  const passwordRequest = capture.password
+  const protectionRequest = capture.protection
+  assert.ok(passwordRequest)
+  assert.ok(protectionRequest)
+  assert.equal(passwordRequest.password, '')
+  assert.equal(protectionRequest.keyProtection, 'passphrase')
+  if (protectionRequest?.keyProtection === 'passphrase') {
+    assert.equal(protectionRequest.passphrase, '')
+  }
 })
 
 test('password bootstrap starts with public target information and an explicit user action', () => {
@@ -128,7 +207,9 @@ test('opening the password bootstrap dialog never starts credential work without
       return { status: 'rejected', errorCode: 'unexpected' } as const
     },
     confirmHostKey: async () => ({ status: 'rejected', errorCode: 'unexpected' }) as const,
-    completeWithCredentials: async () =>
+    verifyPassword: async () =>
+      ({ status: 'failed', errorCode: 'unexpected', retryable: false }) as const,
+    completeWithKeyProtection: async () =>
       ({
         status: 'failed',
         errorCode: 'unexpected',
@@ -206,7 +287,31 @@ test('host fingerprints require explicit confirmation before credentials are sho
   assert.doesNotMatch(markup, /服务器密码/)
 })
 
-test('credential step defaults to a protected key and blocks incomplete secrets', () => {
+test('password test step contains only the one-use server password', () => {
+  const markup = render(
+    createElement(RemoteHostPasswordBootstrapDialogView, {
+      open: true,
+      model: {
+        phase: 'password',
+        target: TARGET,
+        busy: false,
+        error: null,
+        agentState: 'ready',
+        password: '',
+        validationMessage: '请输入服务器密码'
+      },
+      actions: NOOP_ACTIONS
+    })
+  )
+
+  assert.match(markup, /用密码测试连接/)
+  assert.match(markup, /服务器密码/)
+  assert.match(markup, /密码只用于本次试连/)
+  assert.match(markup, /测试连接/)
+  assert.doesNotMatch(markup, /私钥口令|记住密码|钥匙串密码|保存到钥匙串/)
+})
+
+test('key setup step defaults to a protected key without retaining the server password', () => {
   const markup = render(
     createElement(RemoteHostPasswordBootstrapDialogView, {
       open: true,
@@ -224,13 +329,13 @@ test('credential step defaults to a protected key and blocks incomplete secrets'
     })
   )
 
-  assert.match(markup, /输入一次服务器密码/)
-  assert.match(markup, /服务器密码/)
+  assert.match(markup, /配置免密登录/)
   assert.match(markup, /私钥口令/)
   assert.match(markup, /确认私钥口令/)
-  assert.match(markup, /不会保存密码或私钥口令/)
+  assert.match(markup, /不会保存私钥口令/)
   assert.match(markup, /开始引导/)
   assert.match(markup, /disabled=""/)
+  assert.doesNotMatch(markup, /服务器密码|保存密码|记住密码|钥匙串密码/)
 })
 
 test('Linux without an agent offers an explicit risky choice instead of silently dropping the passphrase', () => {

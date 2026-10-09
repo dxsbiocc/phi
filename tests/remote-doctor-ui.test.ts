@@ -623,6 +623,27 @@ test('project connection test uses its own host, directory and HPC settings', ()
   assert.doesNotMatch(markup, /privateKeyPath|passphrase/)
 })
 
+test('a project connection with no host links directly to remote settings', () => {
+  const calls: string[] = []
+  const row = RemoteProjectConnectionRow({
+    projectId: 'project-1',
+    connection: { id: 'conn-1', label: 'Missing', hostProfileId: 'missing-host' },
+    host: undefined,
+    remotePath: '/cluster/project',
+    isDefault: false,
+    busy: false,
+    doctorState: { phase: 'idle' },
+    onTest: () => undefined,
+    onEdit: () => undefined,
+    onDelete: () => undefined,
+    onOpenRemoteSettings: () => calls.push('settings')
+  })
+
+  findAction(row, '设置 → 远程')()
+  assert.deepEqual(calls, ['settings'])
+  assert.match(render(row), /需重新配置 SSH 服务器/)
+})
+
 test('result panel identifies each failed setting and shows a checked time and retry guidance', () => {
   const key = remoteDoctorTargetKey(hostTarget)
   const markup = render(
@@ -645,6 +666,40 @@ test('result panel identifies each failed setting and shows a checked time and r
     ),
     ''
   )
+})
+
+test('doctor authentication and cooldown failures link back to remote settings', () => {
+  const key = remoteDoctorTargetKey(hostTarget)
+  const failedMarkup = render(
+    createElement(RemoteDoctorPanel, {
+      state: {
+        phase: 'failed',
+        key,
+        message: 'SSH 认证失败后处于冷却期；在设置里点测试连接可立即重试。'
+      },
+      targetKey: key,
+      onOpenRemoteSettings: () => undefined
+    })
+  )
+  const reportMarkup = render(
+    createElement(RemoteDoctorPanel, {
+      state: {
+        phase: 'done',
+        key,
+        report: {
+          ...report,
+          ok: false,
+          checks: [{ id: 'ssh', status: 'error', message: 'SSH 非交互认证失败' }]
+        }
+      },
+      targetKey: key,
+      onOpenRemoteSettings: () => undefined
+    })
+  )
+
+  assert.match(failedMarkup, /设置 → 远程/)
+  assert.match(failedMarkup, /测试连接可立即重试/)
+  assert.match(reportMarkup, /设置 → 远程/)
 })
 
 test('result panel summarizes the safe server capability profile without rendering unknown fields', () => {

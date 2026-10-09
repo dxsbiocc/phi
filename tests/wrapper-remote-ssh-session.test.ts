@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  SSH_OPTIONS,
   buildControlArgs,
   buildExecArgs,
   buildExistsCommand,
@@ -84,6 +85,70 @@ test('OpenSSH arguments enforce known hosts and reject option-shaped aliases', (
   }
   assert.equal(quoteSftpPath('a "quoted" path'), '"a \\"quoted\\" path"')
   assert.throws(() => quoteSftpPath('bad\npath'))
+})
+
+test('OpenSSH security options and every connection argv remain locked down', () => {
+  const controlPath = '/tmp/phi-ssh-test/master'
+  assert.deepEqual(SSH_OPTIONS, [
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'StrictHostKeyChecking=yes',
+    '-o',
+    'ForwardAgent=no',
+    '-o',
+    'ClearAllForwardings=yes',
+    '-o',
+    'ServerAliveInterval=10',
+    '-o',
+    'ServerAliveCountMax=3'
+  ])
+  assert.deepEqual(buildMasterArgs('lab-hpc', controlPath), [
+    '-T',
+    '-M',
+    '-N',
+    '-S',
+    controlPath,
+    '-o',
+    'ControlPersist=no',
+    '-o',
+    'ConnectTimeout=15',
+    ...SSH_OPTIONS,
+    'lab-hpc'
+  ])
+  assert.deepEqual(buildExecArgs('lab-hpc', controlPath, 'printf ok'), [
+    '-T',
+    '-S',
+    controlPath,
+    ...SSH_OPTIONS,
+    'lab-hpc',
+    'printf ok'
+  ])
+  assert.deepEqual(buildSftpArgs('lab-hpc', controlPath), [
+    '-q',
+    '-b',
+    '-',
+    '-o',
+    `ControlPath=${controlPath}`,
+    ...SSH_OPTIONS,
+    'lab-hpc'
+  ])
+  assert.deepEqual(buildControlArgs('lab-hpc', controlPath, 'check'), [
+    '-S',
+    controlPath,
+    '-O',
+    'check',
+    ...SSH_OPTIONS,
+    'lab-hpc'
+  ])
+  assert.deepEqual(buildControlArgs('lab-hpc', controlPath, 'exit'), [
+    '-S',
+    controlPath,
+    '-O',
+    'exit',
+    ...SSH_OPTIONS,
+    'lab-hpc'
+  ])
 })
 
 test('manual user, port and key apply to master, commands, control and SFTP', () => {

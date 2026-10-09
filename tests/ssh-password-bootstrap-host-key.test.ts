@@ -264,6 +264,14 @@ test('an untrusted scan exposes fingerprints and writes keys only after explicit
       ].join('\n')
     }
   ])
+
+  assert.equal((await service.inspectTarget(target)).status, 'confirmation-required')
+  await service.cancelHostKeyConfirmation?.('confirmation-1')
+  assert.deepEqual(await service.confirmHostKey('confirmation-1'), {
+    status: 'rejected',
+    errorCode: 'unexpected'
+  })
+  assert.equal(fileEvents.length, 2)
 })
 
 test('preflight and host-key inspection never weaken OpenSSH host verification', async () => {

@@ -100,7 +100,7 @@ process.once('exit', () => {
   for (const master of activeMasters) master.kill('SIGTERM')
 })
 
-const SSH_OPTIONS = [
+export const SSH_OPTIONS = [
   '-o',
   'BatchMode=yes',
   '-o',

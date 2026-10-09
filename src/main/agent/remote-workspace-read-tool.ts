@@ -1,6 +1,7 @@
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteWorkspaceReadResult } from './remote-workspace-read'
+import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_READ_DESCRIPTION =
   'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server. Pass a project-relative or project-absolute path; raw ssh:// URLs and inline selectors are not supported.'
@@ -38,7 +39,7 @@ export function buildRemoteWorkspaceReadTool(
       } catch (error) {
         return {
           content: [
-            { type: 'text', text: error instanceof Error ? error.message : '远程读取未完成' }
+            { type: 'text', text: remoteWorkspaceToolErrorMessage(error, '远程读取未完成') }
           ],
           isError: true
         }
