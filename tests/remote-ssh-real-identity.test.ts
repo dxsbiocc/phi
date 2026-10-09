@@ -141,14 +141,14 @@ test(
 
       writeFileSync(knownHosts, '')
       await assert.rejects(
-        () => connectRemoteSshSession({ host: 'phi-a01-test' }, runtime),
+        () => connectRemoteSshSession({ host: 'phi-a01-test', userInitiated: true }, runtime),
         (error: unknown) =>
           error instanceof RemoteSshConnectionError && error.code === 'host_key_unknown'
       )
 
       writeFileSync(knownHosts, `${knownHostPrefix}${readFileSync(`${changedKey}.pub`, 'utf-8')}`)
       await assert.rejects(
-        () => connectRemoteSshSession({ host: 'phi-a01-test' }, runtime),
+        () => connectRemoteSshSession({ host: 'phi-a01-test', userInitiated: true }, runtime),
         (error: unknown) =>
           error instanceof RemoteSshConnectionError && error.code === 'host_key_changed'
       )

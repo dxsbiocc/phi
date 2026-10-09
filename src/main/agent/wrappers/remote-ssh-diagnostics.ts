@@ -119,10 +119,12 @@ export function diagnoseSshConnectionFailure(input: unknown): SshConnectionDiagn
 
 export class RemoteSshConnectionError extends Error {
   readonly code: SshConnectionIssueCode
+  readonly diagnosis: Readonly<SshConnectionDiagnosis>
 
   constructor(diagnosis: SshConnectionDiagnosis) {
     super(`${diagnosis.message}。${diagnosis.suggestion}`)
     this.name = 'RemoteSshConnectionError'
     this.code = diagnosis.code
+    this.diagnosis = Object.freeze({ ...diagnosis })
   }
 }

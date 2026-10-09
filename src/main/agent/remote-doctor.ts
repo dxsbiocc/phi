@@ -32,6 +32,7 @@ const PROBE_TIMEOUT_MS = 30_000
 export interface RemoteDoctorDependencies {
   agentDir?: string
   connectImpl?: ConnectImpl
+  userInitiated?: boolean
   sftpAvailable?: () => boolean
   checkTimeoutMs?: number
   connectTimeoutMs?: number
@@ -172,14 +173,15 @@ export async function remoteDoctor(
       connect({
         ...remoteConnectionConfigForProfile(profile),
         readyTimeoutMs: connectTimeoutMs,
-        execTimeoutMs: Math.max(checkTimeoutMs, probeTimeoutMs + 1_000)
+        execTimeoutMs: Math.max(checkTimeoutMs, probeTimeoutMs + 1_000),
+        ...(dependencies.userInitiated ? { userInitiated: true } : {})
       }),
       connectTimeoutMs + 1_000
     )
   } catch (error) {
     const diagnosis =
       error instanceof RemoteSshConnectionError
-        ? sshConnectionDiagnosis(error.code)
+        ? error.diagnosis
         : error instanceof DoctorTimeoutError
           ? sshConnectionDiagnosis('timeout')
           : diagnoseSshConnectionFailure(error)

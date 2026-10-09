@@ -34,8 +34,10 @@ test('remote project creation verifies the workspace and leaves software checks 
   const calls: string[] = []
   const project = { id: 'remote-1' } as Project
   const created = await createCheckedRemoteProject(input, {
-    doctorImpl: async (hostProfileId, remoteRoot, options) => {
-      calls.push(`doctor:${hostProfileId}:${remoteRoot}:${options?.scope}`)
+    doctorImpl: async (hostProfileId, remoteRoot, options, dependencies) => {
+      calls.push(
+        `doctor:${hostProfileId}:${remoteRoot}:${options?.scope}:${dependencies.userInitiated === true}`
+      )
       return doctorReport([
         ...workspaceChecks,
         { id: 'nextflow', status: 'error', message: 'Nextflow not installed' }
@@ -48,7 +50,7 @@ test('remote project creation verifies the workspace and leaves software checks 
   })
   assert.equal(created, project)
   assert.deepEqual(calls, [
-    'doctor:host-1:/cluster/project:workspace',
+    'doctor:host-1:/cluster/project:workspace:true',
     'create:host-1:/cluster/project'
   ])
 })

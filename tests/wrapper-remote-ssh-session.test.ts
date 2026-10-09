@@ -20,6 +20,7 @@ import {
   validateHostAlias,
   type OpenSshRuntime
 } from '../src/main/agent/wrappers/remote-ssh-session'
+import { createRemoteSshAuthGate } from '../src/main/agent/wrappers/remote-ssh-auth-gate'
 import { RemoteSshConnectionError } from '../src/main/agent/wrappers/remote-ssh-diagnostics'
 
 function runInRealBash(command: string): { stdout: string; code: number } {
@@ -238,7 +239,7 @@ function fakeOpenSsh(
     if (binary === 'sftp') return spawn('/bin/cat', [], spawnOptions)
     throw new Error(`unexpected binary ${binary}`)
   }
-  return { runtime: { spawnImpl }, calls }
+  return { runtime: { spawnImpl, authGate: createRemoteSshAuthGate() }, calls }
 }
 
 test('OpenSSH session uses one private master and executes file operations through it', async () => {

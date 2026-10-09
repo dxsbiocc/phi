@@ -8553,7 +8553,9 @@ app.whenReady().then(async () => {
       if (remotePath !== undefined && typeof remotePath !== 'string') {
         throw new Error('远程目录路径无效')
       }
-      return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions)
+      return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions, {
+        userInitiated: true
+      })
     }
   )
   ipcMain.handle('remote:installNextflow', async (_, hostProfileId: unknown) => {
@@ -8608,7 +8610,7 @@ app.whenReady().then(async () => {
       throw new Error('远程重连请求必须包含会话和项目 ID')
     }
     const { sessionId, projectId } = request as { sessionId: string; projectId: string }
-    return remoteConnectionTracker.check(sessionId, projectId)
+    return remoteConnectionTracker.check(sessionId, projectId, { userInitiated: true })
   })
   ipcMain.handle(
     'projects:newSession',

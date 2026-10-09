@@ -17,10 +17,12 @@ function fixture(resolvePath?: () => Promise<unknown>): {
   tracker: RemoteProjectConnectionTracker
   updates: RemoteProjectConnectionState[]
   requests: Array<Record<string, unknown>>
+  userInitiatedConnections: boolean[]
   releasedProjects: string[]
 } {
   const updates: RemoteProjectConnectionState[] = []
   const requests: Array<Record<string, unknown>> = []
+  const userInitiatedConnections: boolean[] = []
   const releasedProjects: string[] = []
   const project = {
     id: 'project-a',
@@ -42,13 +44,14 @@ function fixture(resolvePath?: () => Promise<unknown>): {
     getManifest: (id) => (id === manifest.sessionId ? manifest : null),
     setState: (_id, state) => updates.push(state),
     releaseProjectHosts: (id) => releasedProjects.push(id),
-    resolvePath: async (input) => {
+    resolvePath: async (input, dependencies) => {
       requests.push(input as Record<string, unknown>)
+      userInitiatedConnections.push(dependencies?.userInitiated === true)
       await resolvePath?.()
       return { path: '/data/work' } as never
     }
   })
-  return { tracker, updates, requests, releasedProjects }
+  return { tracker, updates, requests, userInitiatedConnections, releasedProjects }
 }
 
 test('switch/retry probe uses the saved session and project, then reports ready', async () => {
@@ -64,6 +67,16 @@ test('switch/retry probe uses the saved session and project, then reports ready'
   ])
   await assert.rejects(f.tracker.check('other-session', 'project-a'), /会话归属无效/)
   assert.equal(f.updates.length, 2)
+})
+
+test('only a user-driven project retry marks its SSH connection as user initiated', async () => {
+  const automatic = fixture()
+  await automatic.tracker.check('session-a', 'project-a')
+  assert.deepEqual(automatic.userInitiatedConnections, [false])
+
+  const manual = fixture()
+  await manual.tracker.check('session-a', 'project-a', { userInitiated: true })
+  assert.deepEqual(manual.userInitiatedConnections, [true])
 })
 
 test('network, changed host key, authentication and project-root errors remain distinct', async () => {
@@ -164,4 +177,17 @@ test('only recognized SSH transport failures change the shared connection phase'
     classifyRemoteProjectConnectionError(new Error('SSH 连接已关闭；结果可能未知'))?.phase,
     'offline'
   )
+})
+
+test('project connection state preserves sanitized cooldown guidance', () => {
+  const state = classifyRemoteProjectConnectionError(
+    new RemoteSshConnectionError({
+      code: 'authentication_failed',
+      message: 'SSH 认证失败后处于冷却期，剩余约 8 分钟',
+      suggestion:
+        '在设置里点测试连接可立即重试；不要自行更换 -i、端口或 StrictHostKeyChecking 反复连接。'
+    })
+  )
+  assert.equal(state?.message, 'SSH 认证失败后处于冷却期，剩余约 8 分钟')
+  assert.match(state?.suggestion ?? '', /测试连接可立即重试/)
 })

@@ -2,7 +2,7 @@ import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
 import { resolveRemoteWorkspacePath } from './remote-workspace-boundary'
 import { findPhiSessionById, type PhiSessionManifest } from './session/session-store'
-import { RemoteSshConnectionError, sshConnectionDiagnosis } from './wrappers/remote-ssh-diagnostics'
+import { RemoteSshConnectionError } from './wrappers/remote-ssh-diagnostics'
 import { remoteWorkspaceHosts } from './workspace-host/remote-registry'
 
 function connectionState(
@@ -23,7 +23,7 @@ export function classifyRemoteProjectConnectionError(
   error: unknown
 ): RemoteProjectConnectionState | null {
   if (error instanceof RemoteSshConnectionError) {
-    const diagnosis = sshConnectionDiagnosis(error.code)
+    const diagnosis = error.diagnosis
     const phase =
       error.code === 'host_key_changed' ||
       error.code === 'host_key_unknown' ||
@@ -62,6 +62,10 @@ export interface RemoteProjectConnectionDependencies {
   releaseProjectHosts?: (projectId: string) => void
 }
 
+export interface RemoteProjectConnectionCheckOptions {
+  userInitiated?: boolean
+}
+
 export class RemoteProjectConnectionTracker {
   private readonly revisions = new Map<string, number>()
 
@@ -89,7 +93,11 @@ export class RemoteProjectConnectionTracker {
     setState(projectId, state)
   }
 
-  async check(sessionId: string, projectId: string): Promise<RemoteProjectConnectionState> {
+  async check(
+    sessionId: string,
+    projectId: string,
+    options: RemoteProjectConnectionCheckOptions = {}
+  ): Promise<RemoteProjectConnectionState> {
     const manifest = (this.dependencies.getManifest ?? findPhiSessionById)(sessionId)
     const project = (this.dependencies.getProject ?? getProject)(projectId)
     if (
@@ -104,12 +112,15 @@ export class RemoteProjectConnectionTracker {
     const revision = this.nextRevision(projectId)
     this.set(projectId, connectionState('connecting', '正在连接服务器'), revision)
     try {
-      await (this.dependencies.resolvePath ?? resolveRemoteWorkspacePath)({
-        sessionId,
-        projectId,
-        path: '.',
-        mode: 'existing'
-      })
+      await (this.dependencies.resolvePath ?? resolveRemoteWorkspacePath)(
+        {
+          sessionId,
+          projectId,
+          path: '.',
+          mode: 'existing'
+        },
+        options.userInitiated ? { userInitiated: true } : {}
+      )
       const ready = connectionState('reachable')
       this.set(projectId, ready, revision)
       return ready

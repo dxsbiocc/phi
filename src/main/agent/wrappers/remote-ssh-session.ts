@@ -5,6 +5,12 @@ import { isAbsolute, join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { setTimeout as delay } from 'node:timers/promises'
 
+import {
+  assertSshNotBlocked,
+  clearSshBlock,
+  recordSshFailure,
+  type RemoteSshAuthGate
+} from './remote-ssh-auth-gate'
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
 import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
 
@@ -16,6 +22,7 @@ export interface RemoteConnectionConfig {
   identityFile?: string
   readyTimeoutMs?: number
   execTimeoutMs?: number
+  userInitiated?: boolean
 }
 
 export interface RemoteExecResult {
@@ -74,6 +81,7 @@ type SpawnImpl = (
 export interface OpenSshRuntime {
   spawnImpl?: SpawnImpl
   tempRoot?: string
+  authGate?: RemoteSshAuthGate
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 15_000
@@ -254,10 +262,24 @@ export function buildControlArgs(
 
 function connectionFailureFromResult(
   stderr: string,
-  code: number | null
+  code: number | null,
+  authGate: RemoteSshAuthGate,
+  hostKey: string
 ): RemoteSshConnectionError | null {
   if (code !== 255) return null
-  return new RemoteSshConnectionError(diagnoseSshConnectionFailure(stderr))
+  const diagnosis = diagnoseSshConnectionFailure(stderr)
+  authGate.recordSshFailure(hostKey, diagnosis.code)
+  return new RemoteSshConnectionError(diagnosis)
+}
+
+function remoteSshAuthGateKey(host: string, config: RemoteConnectionConfig): string {
+  const effective = validateRemoteConnectionOverrides(config)
+  return JSON.stringify([
+    host,
+    effective.user ?? null,
+    effective.port ?? null,
+    effective.identityFile ?? null
+  ])
 }
 
 /** SFTP batch paths are quoted separately from the remote POSIX shell. */
@@ -457,6 +479,13 @@ export async function connectRemoteSshSession(
   runtime: OpenSshRuntime = {}
 ): Promise<RemoteSshSession> {
   const host = validateHostAlias(config.host)
+  const authGate: RemoteSshAuthGate = runtime.authGate ?? {
+    recordSshFailure,
+    assertSshNotBlocked,
+    clearSshBlock
+  }
+  const hostKey = remoteSshAuthGateKey(host, config)
+  if (!config.userInitiated) authGate.assertSshNotBlocked(hostKey)
   const spawnImpl: SpawnImpl =
     runtime.spawnImpl ?? ((binary, args, options) => spawn(binary, args, options))
   const dir = await mkdtemp(join(runtime.tempRoot ?? '/tmp', 'phi-ssh-'))
@@ -519,7 +548,7 @@ export async function connectRemoteSshSession(
       if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
       throw error
     }
-    const failure = connectionFailureFromResult(result.stderr, result.code)
+    const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
     if (failure) throw failure
     return result
   }
@@ -569,9 +598,11 @@ export async function connectRemoteSshSession(
       const diagnosis = diagnoseSshConnectionFailure(
         masterFailure ?? (masterError || (masterClosed ? '' : 'timed out'))
       )
+      authGate.recordSshFailure(hostKey, diagnosis.code)
       throw new RemoteSshConnectionError(diagnosis)
     }
 
+    authGate.clearSshBlock(hostKey)
     return {
       exec: call,
       async execWithInput(command, input) {
@@ -585,7 +616,7 @@ export async function connectRemoteSshSession(
           input,
           operations.signal
         )
-        const failure = connectionFailureFromResult(result.stderr, result.code)
+        const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
         if (failure) throw failure
         return result
       },
@@ -609,7 +640,7 @@ export async function connectRemoteSshSession(
           if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
           throw error
         }
-        const failure = connectionFailureFromResult(result.stderr, result.code)
+        const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
         if (failure) throw failure
         return result
       },
@@ -649,7 +680,7 @@ export async function connectRemoteSshSession(
           if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
           throw error
         }
-        const failure = connectionFailureFromResult(result.stderr, result.code)
+        const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
         if (failure) throw failure
         if (result.code !== 0) throw new Error(`远程上传文件失败: ${remotePath}`)
       },

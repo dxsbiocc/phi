@@ -26,7 +26,8 @@ export async function createCheckedRemoteProject(
   const report: RemoteDoctorReport = await (dependencies.doctorImpl ?? remoteDoctor)(
     input.hostProfileId,
     input.remoteRoot,
-    { scope: 'workspace' }
+    { scope: 'workspace' },
+    { userInitiated: true }
   )
   for (const id of REQUIRED_CHECKS) {
     const check = report.checks.find((item) => item.id === id)

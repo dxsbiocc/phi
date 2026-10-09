@@ -54,6 +54,7 @@ export function remoteBashApprovalScope(hostAlias: string, cwd: string): string 
 export interface RemoteWorkspaceBoundaryDependencies {
   agentDir?: string
   execTimeoutMs?: number
+  userInitiated?: boolean
   getManifest?: (sessionId: string) => PhiSessionManifest | null
   getProject?: (projectId: string) => Project | undefined
   getHostProfile?: (hostProfileId: string, agentDir: string) => RemoteHostProfile | undefined
@@ -320,7 +321,8 @@ export async function withAuthorizedRemoteWorkspacePath<T>(
     : await (dependencies.connectImpl ?? connectRemoteSshSession)({
         ...remoteConnectionConfigForProfile(profile),
         readyTimeoutMs: 10_000,
-        execTimeoutMs: dependencies.execTimeoutMs ?? 10_000
+        execTimeoutMs: dependencies.execTimeoutMs ?? 10_000,
+        ...(dependencies.userInitiated ? { userInitiated: true } : {})
       })
   try {
     dependencies.onConnected?.(session)
