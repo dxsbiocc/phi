@@ -5,6 +5,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 
 import { ProjectRow } from '../src/renderer/src/components/session-sidebar/ProjectRow'
+import { ProjectHoverCard } from '../src/renderer/src/components/session-sidebar/ProjectHoverCard'
+import {
+  projectHoverDetailRows,
+  projectRowMetaLabel
+} from '../src/renderer/src/components/session-sidebar/projectHoverDetails'
 import { projectLocationSummary, type Project } from '../src/renderer/src/lib/projectTypes'
 import {
   activeCwdBelongsToProject,
@@ -39,7 +44,7 @@ test('unreachable SSH project is identified by host and path, not a missing loca
   )
 })
 
-test('SSH project sidebar row offers a conversation while explaining tool limits', () => {
+test('SSH project sidebar row shows only its server identity above conversations', () => {
   let fetched = false
   const markup = renderToStaticMarkup(
     createElement(
@@ -64,10 +69,46 @@ test('SSH project sidebar row offers a conversation while explaining tool limits
     )
   )
   assert.match(markup, /lab-hpc/)
-  assert.match(markup, /服务器离线/)
-  assert.match(markup, /远程读取、搜索、命令和文件新建、修改已可用/)
-  assert.match(markup, /修改前需先读取/)
-  assert.match(markup, /新对话（远程文件与命令工具已可用）/)
-  assert.match(markup, /Git、Notebook 和项目级 Skills\/MCP 暂未支持/)
+  assert.doesNotMatch(markup, /\/cluster\/work/)
+  assert.doesNotMatch(markup, /服务器离线/)
+  assert.doesNotMatch(markup, /远程读取、搜索、命令和文件新建、修改已可用/)
+  assert.doesNotMatch(markup, /修改前需先读取/)
+  assert.match(markup, /新对话/)
+  assert.doesNotMatch(markup, /Git、Notebook 和项目级 Skills\/MCP 暂未支持/)
   assert.equal(fetched, false)
+})
+
+test('project hover details carry server, path, permission and conversation metadata', () => {
+  const details = projectHoverDetailRows(remote, true, 3)
+  assert.deepEqual(details, [
+    { label: '服务器', value: 'lab-hpc' },
+    { label: '位置', value: '/cluster/work' },
+    { label: '权限', value: '重要操作前询问' },
+    { label: '对话', value: '3 个' }
+  ])
+
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ProjectHoverCard, { project: remote, sessionsReady: true, sessionCount: 3 })
+    )
+  )
+  assert.match(markup, /远程项目/)
+  assert.match(markup, /lab-hpc/)
+  assert.match(markup, /\/cluster\/work/)
+  assert.match(markup, /3 个/)
+})
+
+test('project rows use one compact right-side server or Git label', () => {
+  assert.equal(projectRowMetaLabel(remote), 'lab-hpc')
+  assert.equal(
+    projectRowMetaLabel({
+      ...remote,
+      location: { kind: 'local', path: '/work/test', realPath: '/work/test' },
+      remoteHostAlias: undefined,
+      gitStatus: { branch: 'main', dirty: true }
+    }),
+    'main · 有改动'
+  )
 })

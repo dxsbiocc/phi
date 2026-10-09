@@ -1391,6 +1391,19 @@ function materialIconNameForDirectoryPath(path: string, expanded = false, root =
     : (MATERIAL_ICON_MANIFEST.folder ?? 'folder')
 }
 
+function materialIconNameForGenericDirectory(expanded = false, root = false): string {
+  if (root) {
+    return expanded
+      ? (MATERIAL_ICON_MANIFEST.rootFolderExpanded ??
+          MATERIAL_ICON_MANIFEST.folderExpanded ??
+          'folder-open')
+      : (MATERIAL_ICON_MANIFEST.rootFolder ?? MATERIAL_ICON_MANIFEST.folder ?? 'folder')
+  }
+  return expanded
+    ? (MATERIAL_ICON_MANIFEST.folderExpanded ?? 'folder-open')
+    : (MATERIAL_ICON_MANIFEST.folder ?? 'folder')
+}
+
 function materialFileIconMeta(kind: FileIconKind, iconName: string): FileIconMeta | null {
   const Icon = materialIconComponentForName(iconName)
   if (!Icon) return null
@@ -1425,6 +1438,13 @@ export function fileIconForPath(path: string): FileIconMeta {
 export function directoryIconForPath(path: string, expanded = false, root = false): FileIconMeta {
   return (
     materialFileIconMeta('directory', materialIconNameForDirectoryPath(path, expanded, root)) ??
+    FILE_TYPE_ICON_META.directory
+  )
+}
+
+export function genericDirectoryIcon(expanded = false, root = false): FileIconMeta {
+  return (
+    materialFileIconMeta('directory', materialIconNameForGenericDirectory(expanded, root)) ??
     FILE_TYPE_ICON_META.directory
   )
 }

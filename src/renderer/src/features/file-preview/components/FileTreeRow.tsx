@@ -1,6 +1,11 @@
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { PhiIcons, directoryIconForPath, fileIconForPath } from '../../../icons'
+import {
+  PhiIcons,
+  directoryIconForPath,
+  fileIconForPath,
+  genericDirectoryIcon
+} from '../../../icons'
 import type { FileTreeEntry } from '../../../types'
 
 const CollapseIcon = PhiIcons.action.expand
@@ -11,17 +16,21 @@ export function FileTreeRow({
   depth,
   isExpanded,
   isActive,
+  genericDirectoryIcons = false,
   onClick
 }: {
   entry: FileTreeEntry
   depth: number
   isExpanded: boolean
   isActive: boolean
+  genericDirectoryIcons?: boolean
   onClick: () => void
 }): React.JSX.Element {
   const isDirectory = entry.kind === 'directory'
   const entryIcon = isDirectory
-    ? directoryIconForPath(entry.path, isExpanded)
+    ? genericDirectoryIcons
+      ? genericDirectoryIcon(isExpanded)
+      : directoryIconForPath(entry.path, isExpanded)
     : fileIconForPath(entry.path)
   const EntryIcon = entryIcon.Icon
   const ChevronIcon = isExpanded ? CollapseIcon : ExpandIcon
@@ -31,6 +40,8 @@ export function FileTreeRow({
       component="button"
       type="button"
       data-phi-file-kind={entryIcon.kind}
+      data-phi-file-path={entry.path}
+      aria-current={isActive ? 'location' : undefined}
       title={entry.displayPath}
       onClick={onClick}
       sx={{

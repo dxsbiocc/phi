@@ -59,6 +59,7 @@ export function RemoteProjectFields({
       )}
       {hostProfileId ? (
         <RemoteDirectoryTree
+          key={hostProfileId}
           hostProfileId={hostProfileId}
           selectedPath={remoteRoot}
           onSelectPath={onRemoteRootChange}

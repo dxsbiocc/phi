@@ -12,7 +12,8 @@ import {
   FILE_TYPE_ICON_META,
   PhiIcons,
   directoryIconForPath,
-  fileIconForPath
+  fileIconForPath,
+  genericDirectoryIcon
 } from '../src/renderer/src/icons'
 
 function iconMarkupForPath(path: string): string {
@@ -82,6 +83,14 @@ function assertDirectoryMaterialIconForPath(
   assert.equal(meta.materialIconName, iconName)
   assertUsesMaterialIcon(markup, iconName)
 }
+
+test('generic directory icons never inherit file-like named-folder artwork', () => {
+  for (const expanded of [false, true]) {
+    const meta = genericDirectoryIcon(expanded)
+    assert.equal(meta.kind, 'directory')
+    assert.equal(meta.materialIconName, expanded ? 'folder-open' : 'folder')
+  }
+})
 
 test('fileIconForPath maps common files to representative icon kinds', () => {
   assert.equal(fileIconForPath('/workspace/src/App.tsx').kind, 'react')

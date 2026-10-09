@@ -331,6 +331,20 @@ test('hover preview project actions keep their menu above the flyout', () => {
   assert.match(deleteDialogsSource, /theme\.zIndex\.tooltip \+ 2/)
 })
 
+test('project action visibility does not stick to mouse focus and hover borders stay even', () => {
+  const projectRowSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/ProjectRow.tsx'),
+    'utf8'
+  )
+
+  assert.doesNotMatch(projectRowSource, /focus-within \.project-actions/)
+  assert.match(projectRowSource, /:has\(\.project-actions :focus-visible\)/)
+  assert.doesNotMatch(projectRowSource, /inset 3px 0 0/)
+  assert.match(projectRowSource, /className="project-row-meta"/)
+  assert.match(projectRowSource, /&:hover \.project-row-meta/)
+  assert.match(projectRowSource, /justifyContent: 'flex-end'/)
+})
+
 test('session running beacon slot stays centered in ordinary and indented gutters', () => {
   assert.equal(sessionRunningBeaconSlotWidth(false), 16)
   assert.equal(sessionRunningBeaconSlotWidth(true), 32)

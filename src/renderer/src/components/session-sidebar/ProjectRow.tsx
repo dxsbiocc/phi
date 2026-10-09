@@ -19,7 +19,9 @@ import {
   ROW_META_FONT_SIZE
 } from '../../lib/sessionSidebarShared'
 import type { Project, SessionRuntimeState, SessionSummary } from '../../types'
-import { projectLocationSummary } from '../../lib/projectTypes'
+import { loadProjectSessionsCached, shouldPrefetchProjectSessions } from './projectSessionLoading'
+import { ProjectHoverCard } from './ProjectHoverCard'
+import { projectRowMetaLabel } from './projectHoverDetails'
 import { SessionRow } from './SessionRow'
 
 const AddCommentIcon = PhiIcons.action.addSession
@@ -28,11 +30,6 @@ const FolderIcon = PhiIcons.entity.folder
 const ServerIcon = PhiIcons.settings.remoteExecution
 const MoreHorizIcon = PhiIcons.action.more
 const DeleteIcon = PhiIcons.action.delete
-
-function projectGitStatusLabel(project: Project): string | null {
-  if (!project.gitStatus) return null
-  return project.gitStatus.dirty ? `${project.gitStatus.branch} · 有改动` : project.gitStatus.branch
-}
 
 type ProjectRowProps = {
   project: Project
@@ -88,10 +85,10 @@ function ProjectRowImpl({
 }: ProjectRowProps): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const isRemote = project.location?.kind === 'ssh'
-  const gitStatusLabel = projectGitStatusLabel(project)
-  const remoteSummary = projectLocationSummary(project)
+  const rowMetaLabel = projectRowMetaLabel(project)
   const sourceSessions = searchSessions ?? sessions ?? []
   const sessionsReady = searchSessions !== undefined || sessions !== null
   const orderedSessions = orderSessionsForDisplay(
@@ -102,13 +99,18 @@ function ProjectRowImpl({
   )
 
   useEffect(() => {
-    if (!expanded || searchSessions !== undefined) return
+    if (!shouldPrefetchProjectSessions(expanded, searchSessions !== undefined)) return
     let cancelled = false
-    void onFetchSessions(project.workingDirectory, project.id).then((nextSessions) => {
-      if (!cancelled) {
-        setSessions(orderSessionsForDisplay(nextSessions))
+    void loadProjectSessionsCached(project.id, refreshKey, () =>
+      onFetchSessions(project.workingDirectory, project.id)
+    ).then(
+      (nextSessions) => {
+        if (!cancelled) setSessions(orderSessionsForDisplay(nextSessions))
+      },
+      () => {
+        if (!cancelled) setSessions([])
       }
-    })
+    )
     return () => {
       cancelled = true
     }
@@ -140,40 +142,111 @@ function ProjectRowImpl({
   }, [])
 
   useEffect(() => {
-    if (!compactHoverPreview || menuAnchor === null) return undefined
+    if (!compactHoverPreview || (menuAnchor === null && !hoverDetailsOpen)) return undefined
     onPreviewInteractionChange?.(true)
     return () => onPreviewInteractionChange?.(false)
-  }, [compactHoverPreview, menuAnchor, onPreviewInteractionChange])
+  }, [compactHoverPreview, hoverDetailsOpen, menuAnchor, onPreviewInteractionChange])
 
   return (
     <Box>
-      <ListItemButton
-        onClick={() => void handleToggle()}
-        sx={{
-          ...plainSidebarRowSx,
-          // Cancel the global MuiListItemButton left/right margin (theme.ts) so this
-          // top-level row's icon lines up flush with the "项目" header above it —
-          // only nested SessionRows (indent prop) are meant to sit further in.
-          marginLeft: 0,
-          marginRight: 0,
-          transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
-          // plainSidebarRowSx forces a transparent resting background, so the
-          // lift only reads once hover paints the surface.
-          '&:hover': {
-            backgroundColor: 'background.paper !important',
-            boxShadow: (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
+      <Tooltip
+        describeChild
+        open={hoverDetailsOpen && menuAnchor === null}
+        onOpen={() => setHoverDetailsOpen(true)}
+        onClose={() => setHoverDetailsOpen(false)}
+        placement="right"
+        enterDelay={450}
+        enterNextDelay={250}
+        disableTouchListener
+        title={
+          menuAnchor === null ? (
+            <ProjectHoverCard
+              project={project}
+              sessionsReady={sessionsReady}
+              sessionCount={orderedSessions.length}
+            />
+          ) : (
+            ''
+          )
+        }
+        slotProps={{
+          tooltip: {
+            sx: {
+              maxWidth: 'min(360px, calc(100vw - 32px))',
+              px: 1.5,
+              py: 1.25,
+              bgcolor: 'background.paper',
+              color: 'text.primary',
+              border: 1,
+              borderColor: 'divider',
+              boxShadow: (theme: Theme) => theme.customShadows?.dropdown ?? theme.shadows[4]
+            }
           },
-          '&:hover .project-actions': { opacity: 1 },
-          '&:hover .project-toggle-icon': { opacity: 1 }
+          popper: {
+            sx: compactHoverPreview
+              ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 2 }
+              : undefined
+          }
         }}
       >
-        {isRemote ? (
-          <ServerIcon fontSize="small" sx={{ mr: 1.5, flexShrink: 0, color: 'text.secondary' }} />
-        ) : (
-          <FolderIcon fontSize="small" sx={{ mr: 1.5, flexShrink: 0, color: 'text.secondary' }} />
-        )}
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Box sx={{ display: 'inline-flex', maxWidth: '100%', alignItems: 'center', gap: 0.75 }}>
+        <ListItemButton
+          data-phi-project-row="true"
+          aria-expanded={expanded}
+          onClick={() => {
+            setHoverDetailsOpen(false)
+            void handleToggle()
+          }}
+          sx={{
+            ...plainSidebarRowSx,
+            // Cancel the global MuiListItemButton left/right margin (theme.ts) so this
+            // top-level row's icon lines up flush with the "项目" header above it —
+            // only nested SessionRows (indent prop) are meant to sit further in.
+            marginLeft: 0,
+            marginRight: 0,
+            border: 1,
+            borderColor: 'transparent',
+            borderRadius: 1.25,
+            minHeight: 40,
+            px: 1,
+            py: 0.25,
+            transition:
+              'background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease',
+            // plainSidebarRowSx forces a transparent resting background, so the
+            // lift only reads once hover paints the surface.
+            '&:hover, &.Mui-focusVisible, &:has(.project-actions :focus-visible)': {
+              backgroundColor: (theme: Theme) =>
+                `${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.14 : 0.065)} !important`,
+              borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.32),
+              boxShadow: (theme: Theme) => theme.customShadows?.listItem ?? theme.shadows[2]
+            },
+            '&.Mui-focusVisible': {
+              outline: '2px solid',
+              outlineColor: 'primary.main',
+              outlineOffset: 1
+            },
+            '&:hover .project-actions, &:has(.project-actions :focus-visible) .project-actions': {
+              opacity: 1
+            },
+            '&:hover .project-row-meta, &:has(.project-actions :focus-visible) .project-row-meta': {
+              opacity: 0
+            },
+            '&:hover .project-toggle-icon, &.Mui-focusVisible .project-toggle-icon': { opacity: 1 }
+          }}
+        >
+          {isRemote ? (
+            <ServerIcon fontSize="small" sx={{ mr: 1, flexShrink: 0, color: 'text.secondary' }} />
+          ) : (
+            <FolderIcon fontSize="small" sx={{ mr: 1, flexShrink: 0, color: 'text.secondary' }} />
+          )}
+          <Box
+            sx={{
+              display: 'inline-flex',
+              minWidth: 0,
+              flex: 1,
+              alignItems: 'center',
+              gap: 0.5
+            }}
+          >
             <Typography component="span" noWrap sx={{ minWidth: 0, fontSize: ROW_LABEL_FONT_SIZE }}>
               {project.name}
             </Typography>
@@ -189,63 +262,85 @@ function ProjectRowImpl({
               }}
             />
           </Box>
-          {gitStatusLabel ? (
-            <Typography
-              component="div"
-              noWrap
-              sx={{
-                fontSize: ROW_META_FONT_SIZE,
-                color: project.gitStatus?.dirty ? 'warning.main' : 'text.secondary'
-              }}
-            >
-              {gitStatusLabel}
-            </Typography>
-          ) : null}
-          {remoteSummary && (
-            <Typography
-              component="div"
-              noWrap
-              sx={{ fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}
-            >
-              {remoteSummary}
-            </Typography>
-          )}
-        </Box>
-        <Stack
-          direction="row"
-          className="project-actions"
-          sx={{
-            opacity: 0,
-            flexShrink: 0,
-            transition: 'opacity 0.15s ease'
-          }}
-        >
-          <Tooltip title="更多">
-            <IconButton
-              size="small"
-              onClick={(event) => {
-                event.stopPropagation()
-                setMenuAnchor(event.currentTarget)
-              }}
-            >
-              <MoreHorizIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={isRemote ? '新对话（远程文件与命令工具已可用）' : '新对话'}>
-            <span>
-              <IconButton
-                size="small"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onStartChat()
+          <Box
+            sx={{
+              position: 'relative',
+              width: rowMetaLabel ? 104 : 68,
+              height: 32,
+              minWidth: 0,
+              flexShrink: 0
+            }}
+          >
+            {rowMetaLabel ? (
+              <Typography
+                component="span"
+                className="project-row-meta"
+                noWrap
+                title={rowMetaLabel}
+                sx={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  textAlign: 'right',
+                  minWidth: 0,
+                  fontSize: ROW_META_FONT_SIZE,
+                  color: project.gitStatus?.dirty ? 'warning.main' : 'text.secondary',
+                  transition: 'opacity 0.15s ease',
+                  opacity: menuAnchor ? 0 : 1
                 }}
               >
-                <AddCommentIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-        </Stack>
-      </ListItemButton>
+                {rowMetaLabel}
+              </Typography>
+            ) : null}
+            <Stack
+              direction="row"
+              className="project-actions"
+              spacing={0.25}
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                opacity: menuAnchor ? 1 : 0,
+                transition: 'opacity 0.15s ease'
+              }}
+            >
+              <Tooltip title="更多">
+                <IconButton
+                  size="small"
+                  aria-label="更多项目操作"
+                  sx={{ width: 32, height: 32, p: 0.5 }}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setHoverDetailsOpen(false)
+                    setMenuAnchor(event.currentTarget)
+                  }}
+                >
+                  <MoreHorizIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="新对话">
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label="新建项目对话"
+                    sx={{ width: 32, height: 32, p: 0.5 }}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setHoverDetailsOpen(false)
+                      onStartChat()
+                    }}
+                  >
+                    <AddCommentIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Stack>
+          </Box>
+        </ListItemButton>
+      </Tooltip>
 
       <Menu
         anchorEl={menuAnchor}
@@ -291,14 +386,13 @@ function ProjectRowImpl({
       </Menu>
 
       <Collapse in={expanded} unmountOnExit>
-        {isRemote && (
+        {!sessionsReady && (
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
           >
-            远程读取、搜索、命令和文件新建、修改已可用；修改前需先读取。Git、Notebook 和项目级
-            Skills/MCP 暂未支持。对话历史保存在 Phi 中。
+            正在读取对话…
           </Typography>
         )}
         {sessionsReady && orderedSessions.length > 0 && (

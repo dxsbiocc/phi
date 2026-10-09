@@ -8,7 +8,12 @@ import {
   type FileTreeVirtualItem,
   type FileTreeVirtualViewport
 } from '../../../lib/fileTreeVirtualization'
-import { fileTreeRevealPaths } from '../lib/fileTreeReveal'
+import {
+  fileTreeRevealScrollCorrection,
+  fileTreeRevealPaths,
+  shouldAutoRevealTreePath,
+  shouldRestoreRememberedTreeScroll
+} from '../lib/fileTreeReveal'
 import { FileTreeRootRow } from './FileTreeRootRow'
 import { FileTreeRow } from './FileTreeRow'
 import {
@@ -44,6 +49,7 @@ type ProjectFileTreeProps = {
   onSelectDirectory?: (path: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
   initialListing?: DirectoryListing
+  genericDirectoryIcons?: boolean
   revealPath?: string
   searchPlaceholder?: string
   stateKey?: string
@@ -159,6 +165,7 @@ export function ProjectFileTree({
   onSelectDirectory,
   onListDirectory,
   initialListing,
+  genericDirectoryIcons = false,
   revealPath,
   searchPlaceholder = '筛选文件...',
   stateKey,
@@ -360,9 +367,27 @@ export function ProjectFileTree({
     if (state) state.scrollTop = scrollContainer.scrollTop
   }, [scrollContainer, treeStateKey, updateVirtualViewport])
 
-  const lastAutoRevealRef = useRef('')
+  const revealLayoutKey = useMemo(
+    () => flatRows.map((row) => `${row.id}:${virtualRowHeights[row.id] ?? 32}`).join('\0'),
+    [flatRows, virtualRowHeights]
+  )
+  const lastAutoRevealRef = useRef({ target: '', layoutKey: '' })
   useEffect(() => {
-    if (!scrollContainer || !revealTarget || lastAutoRevealRef.current === revealTarget) return
+    if (!revealTarget) {
+      lastAutoRevealRef.current = { target: '', layoutKey: '' }
+      return
+    }
+    if (
+      !scrollContainer ||
+      !shouldAutoRevealTreePath(
+        revealTarget,
+        lastAutoRevealRef.current.target,
+        revealLayoutKey,
+        lastAutoRevealRef.current.layoutKey
+      )
+    ) {
+      return
+    }
     let nextScrollTop: number
     if (revealTarget === rootPath) {
       nextScrollTop = 0
@@ -379,16 +404,58 @@ export function ProjectFileTree({
         precedingHeight - Math.max(0, (scrollContainer.clientHeight - 32) / 2)
       )
     }
+    let correctionFrame: number | undefined
     const frame = window.requestAnimationFrame(() => {
       scrollContainer.scrollTop = nextScrollTop
       updateVirtualViewport(scrollContainer)
-      lastAutoRevealRef.current = revealTarget
+      let attempts = 0
+      const correctFromRenderedRow = (): void => {
+        const target = [
+          ...scrollContainer.querySelectorAll<HTMLElement>('[data-phi-file-path]')
+        ].find((element) => element.dataset.phiFilePath === revealTarget)
+        if (!target && attempts < 2) {
+          attempts += 1
+          correctionFrame = window.requestAnimationFrame(correctFromRenderedRow)
+          return
+        }
+        if (target) {
+          const containerRect = scrollContainer.getBoundingClientRect()
+          const targetRect = target.getBoundingClientRect()
+          const correction = fileTreeRevealScrollCorrection({
+            containerTop: containerRect.top,
+            containerHeight: containerRect.height,
+            targetTop: targetRect.top,
+            targetHeight: targetRect.height
+          })
+          if (Math.abs(correction) > 1) scrollContainer.scrollTop += correction
+          updateVirtualViewport(scrollContainer)
+        }
+        restoredScrollRef.current = true
+        lastAutoRevealRef.current = { target: revealTarget, layoutKey: revealLayoutKey }
+      }
+      correctionFrame = window.requestAnimationFrame(correctFromRenderedRow)
     })
-    return () => window.cancelAnimationFrame(frame)
-  }, [flatRows, revealTarget, rootPath, scrollContainer, updateVirtualViewport, virtualRowHeights])
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (correctionFrame !== undefined) window.cancelAnimationFrame(correctionFrame)
+    }
+  }, [
+    flatRows,
+    revealLayoutKey,
+    revealTarget,
+    rootPath,
+    scrollContainer,
+    updateVirtualViewport,
+    virtualRowHeights
+  ])
 
   useEffect(() => {
-    if (restoredScrollRef.current || !scrollContainer) return undefined
+    if (
+      !scrollContainer ||
+      !shouldRestoreRememberedTreeScroll(revealTarget, restoredScrollRef.current)
+    ) {
+      return undefined
+    }
     if (
       [...expandedPaths].some(
         (path) => !directories[path] || directories[path].status === 'loading'
@@ -402,7 +469,7 @@ export function ProjectFileTree({
       restoredScrollRef.current = true
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [directories, expandedPaths, scrollContainer, updateVirtualViewport])
+  }, [directories, expandedPaths, revealTarget, scrollContainer, updateVirtualViewport])
 
   useEffect(() => {
     if (!scrollContainer || typeof ResizeObserver === 'undefined') return undefined
@@ -434,6 +501,7 @@ export function ProjectFileTree({
               depth={depth}
               isExpanded={isExpanded}
               isActive={isActive}
+              genericDirectoryIcons={genericDirectoryIcons}
               onClick={() => {
                 if (isDirectory) {
                   onSelectDirectory?.(entry.path)
@@ -447,7 +515,14 @@ export function ProjectFileTree({
         }
       }
     },
-    [activePath, expandedPaths, onOpenFile, onSelectDirectory, toggleDirectory]
+    [
+      activePath,
+      expandedPaths,
+      genericDirectoryIcons,
+      onOpenFile,
+      onSelectDirectory,
+      toggleDirectory
+    ]
   )
 
   const rootState = directories[rootPath]

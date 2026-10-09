@@ -1,10 +1,13 @@
 import { Box, Stack, TextField } from '@mui/material'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { RemoteDirectoryListing } from '../../../../../shared/remoteDirectoryBrowser'
 import type { DirectoryListing } from '../../../types'
 import { ProjectFileTree } from '../../file-preview/components/ProjectFileTree'
-import { normalizeAbsoluteTreePath } from '../../file-preview/lib/fileTreeReveal'
+import {
+  normalizeAbsoluteTreePath,
+  resolveFuzzyTreePath
+} from '../../file-preview/lib/fileTreeReveal'
 
 const DIRECTORY_REVEAL_DELAY_MS = 400
 
@@ -37,24 +40,54 @@ export function RemoteDirectoryTree({
   const [locatedPath, setLocatedPath] = useState(
     () => normalizeAbsoluteTreePath(selectedPath) ?? ''
   )
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setLocatedPath(normalizeAbsoluteTreePath(selectedPath) ?? '')
-    }, DIRECTORY_REVEAL_DELAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [hostProfileId, selectedPath])
+  const listingRequestsRef = useRef(new Map<string, Promise<DirectoryListing>>())
+  const resolutionRef = useRef(0)
 
   const listDirectory = useCallback(
-    async (path: string): Promise<DirectoryListing> =>
-      directoryListing(
-        await window.api.listRemoteProjectDirectories({
+    (path: string): Promise<DirectoryListing> => {
+      const key = `${hostProfileId}\0${path}`
+      const existing = listingRequestsRef.current.get(key)
+      if (existing) return existing
+      const request = window.api
+        .listRemoteProjectDirectories({
           hostProfileId,
           path
         })
-      ),
+        .then(directoryListing)
+        .catch((error) => {
+          listingRequestsRef.current.delete(key)
+          throw error
+        })
+      listingRequestsRef.current.set(key, request)
+      return request
+    },
     [hostProfileId]
   )
+
+  useEffect(() => {
+    const resolution = ++resolutionRef.current
+    const timer = window.setTimeout(() => {
+      const normalized = normalizeAbsoluteTreePath(selectedPath)
+      if (!normalized) {
+        setLocatedPath('')
+        return
+      }
+      void resolveFuzzyTreePath(normalized, async (path) => {
+        const listing = await listDirectory(path)
+        return listing.entries.map((entry) => ({ name: entry.name, path: entry.path }))
+      })
+        .then((path) => {
+          if (resolution === resolutionRef.current) setLocatedPath(path)
+        })
+        .catch(() => {
+          // ProjectFileTree renders transport and permission failures at the exact directory row.
+        })
+    }, DIRECTORY_REVEAL_DELAY_MS)
+    return () => {
+      resolutionRef.current += 1
+      window.clearTimeout(timer)
+    }
+  }, [listDirectory, selectedPath])
 
   const inputPathIsInvalid = Boolean(selectedPath) && !normalizeAbsoluteTreePath(selectedPath)
 
@@ -88,6 +121,7 @@ export function RemoteDirectoryTree({
           key={hostProfileId}
           rootPath="/"
           activePath={locatedPath}
+          genericDirectoryIcons
           onOpenFile={() => undefined}
           onSelectDirectory={(path) => {
             setLocatedPath(path)
