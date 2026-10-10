@@ -27,7 +27,7 @@ export interface RuntimeSidebarProps {
   closingNotebookPath?: string | null
   onRefresh: () => void
   onStartJupyter: (cwd: string) => void
-  onStopJupyter: (cwd: string) => void
+  onStopJupyter: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => void
   onStopNotebookKernel: (notebookPath: string) => void
 }
 
@@ -78,7 +78,8 @@ function stateColor(state: JupyterServerState | AnalysisNotebookKernelState): st
       'starting_lease',
       'probing_through_tunnel',
       'stopping',
-      'cleaning'
+      'cleaning',
+      'reconciling'
     ].includes(state)
   ) {
     return '#E6B93F'
@@ -162,9 +163,11 @@ export function RuntimeSidebar({
       'starting_lease',
       'probing_through_tunnel',
       'stopping',
-      'cleaning'
+      'cleaning',
+      'reconciling'
     ].includes(server.state)
   )
+  const showAbandonCleanupAction = Boolean(server?.state === 'error' && server.canAbandonCleanup)
   const canStart = Boolean(projectCwd) && !showStopServerAction
   const canStop = Boolean(projectCwd) && showStopServerAction
 
@@ -319,6 +322,24 @@ export function RuntimeSidebar({
                 </span>
               </Tooltip>
             )}
+            {showAbandonCleanupAction ? (
+              <Tooltip title="放弃本地状态（服务器侧仍未确认）">
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label="放弃未确认的远程 Jupyter 本地状态"
+                    disabled={!projectCwd || actionBusy}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onStopJupyter(projectCwd, { abandonUnconfirmed: true })
+                    }}
+                    sx={{ color: 'error.main' }}
+                  >
+                    <StopIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
           </Stack>
         </ListItemButton>
 

@@ -302,6 +302,19 @@ list/open/save/start/status/execute/interrupt/close 并守住 local 行为；ren
 Jupyter 与假 SSH workspace，最终从服务器项目文件核对保存内容和执行输出，并断言本机 anchor
 未被读写。真实 Phi 点击、真实登录节点环境/隧道与窗口关闭重开仍按 R4-I5/I6 真机门禁保留。
 
+### R4-I8 断线恢复记录（2026-10-10）
+
+硬断线丢失 cleanup ack 后不再永久锁死当前应用：launcher 会在受管 Jupyter runtime 目录按随机
+lease id 原子记录专属 PID、PGID 与启动身份；下一次 start/stop 先用一条全新 SSH 连接精确
+对账。记录对应进程已消失或 PID 身份不符时只解除闸门，不终止无关进程；仍属该 lease 时执行
+同样的 TERM→KILL 并确认进程组消失。服务器暂时不可达仍 fail-closed，Runtime 状态区分
+`reconciling` 与连接失败，并允许用户显式放弃本地 runtime 状态，同时保留服务器侧未确认提示。
+
+确认后的启动继续生成新 token、随机端口与 runtime/session 身份，不接管旧 Jupyter、不删除旧
+session id、不自动重放 cell；桌面草稿保留，kernel 内存状态按既有文案标为丢失。自动化仅使用
+本机假 SSH/Jupyter，覆盖已清理、仍存活、PID 复用、连接失败/放弃、并发 start/stop 去重与
+活动句柄收敛；本步未联网、未连接真实服务器，真实 OpenSSH 断网复测仍属于真机门禁。
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`

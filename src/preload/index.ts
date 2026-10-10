@@ -573,6 +573,7 @@ type JupyterServerStatus = {
     | 'stopping'
     | 'disconnected'
     | 'cleaning'
+    | 'reconciling'
   runtimeKind?: 'local' | 'ssh'
   serverLabel?: string
   startedAt?: string
@@ -582,6 +583,8 @@ type JupyterServerStatus = {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   resources?: Record<string, unknown>
 }
 
@@ -936,7 +939,10 @@ type RendererAuthApi = {
   publishNotebookOutputFrame: (html: string) => Promise<string>
   releaseNotebookOutputFrame: (url: string) => Promise<void>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
-  stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  stopAnalysisJupyter: (
+    cwd: string,
+    options?: { abandonUnconfirmed?: boolean }
+  ) => Promise<JupyterServerStatus>
   getAnalysisNotebookSessionStatus: (
     cwd: string,
     path: string,
@@ -1523,8 +1529,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:releaseNotebookOutputFrame', url),
   startAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
     ipcRenderer.invoke('analysis:startJupyter', cwd),
-  stopAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
-    ipcRenderer.invoke('analysis:stopJupyter', cwd),
+  stopAnalysisJupyter: (
+    cwd: string,
+    options?: { abandonUnconfirmed?: boolean }
+  ): Promise<JupyterServerStatus> => ipcRenderer.invoke('analysis:stopJupyter', cwd, options),
   getAnalysisNotebookSessionStatus: (
     cwd: string,
     path: string,

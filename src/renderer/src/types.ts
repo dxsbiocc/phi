@@ -565,13 +565,11 @@ export interface AnalysisNotebookGeneratedCell {
   source: string
   language?: string
 }
-
 export interface AnalysisNotebookCodeGenerationResult {
   source: string
   language: string
   cells?: AnalysisNotebookGeneratedCell[]
 }
-
 export interface AnalysisNotebookCodeGenerationProgress {
   requestId: string
   path: string
@@ -580,14 +578,12 @@ export interface AnalysisNotebookCodeGenerationProgress {
   language: string
   cells: AnalysisNotebookGeneratedCell[]
 }
-
 export interface SaveAnalysisNotebookInput {
   path: string
   document: NotebookDocument
   expectedRevision?: string
   expectedHash?: string
 }
-
 export type AnalysisKernelLanguage = 'python' | 'r' | 'other'
 
 export interface AnalysisKernelSummary {
@@ -626,6 +622,7 @@ export type JupyterServerState =
   | 'stopping'
   | 'disconnected'
   | 'cleaning'
+  | 'reconciling'
 
 export interface JupyterServerStatus {
   projectCwd: string
@@ -639,6 +636,8 @@ export interface JupyterServerStatus {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   resources?: Record<string, unknown>
 }
 
@@ -881,7 +880,10 @@ export type RendererApi = AutoCompactionApi & {
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
-  stopAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
+  stopAnalysisJupyter: (
+    cwd: string,
+    options?: { abandonUnconfirmed?: boolean }
+  ) => Promise<JupyterServerStatus>
   getAnalysisNotebookSessionStatus: (
     cwd: string,
     path: string,

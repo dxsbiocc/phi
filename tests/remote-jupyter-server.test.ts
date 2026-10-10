@@ -62,6 +62,12 @@ test('remote launch and ssh argv bind loopback without embedding a token', () =>
   assert.match(script, /JUPYTER_RUNTIME_DIR='\/srv\/phi\/runtime\/jupyter\/runtime'/)
   assert.match(script, /trap 'terminate_tree; exit 73' HUP TERM INT/)
   assert.match(script, /trap 'terminate_tree' EXIT/)
+  assert.match(
+    script,
+    /\/srv\/phi\/runtime\/jupyter\/runtime\/phi-leases\/0123456789abcdef0123456789abcdef\.lease/
+  )
+  assert.match(script, /PHI_JUPYTER_LEASE_V1/)
+  assert.ok(script.indexOf('PHI_JUPYTER_LEASE_V1') < script.indexOf('__PHI_JUPYTER_STARTED_'))
   assert.match(script, /kill -TERM -"\$pid".*kill -TERM "\$pid".*kill -TERM -"\$pid"/s)
   assert.match(script, /kill -KILL -"\$pid".*kill -KILL "\$pid".*kill -KILL -"\$pid"/s)
   assert.ok(args.includes('ClearAllForwardings=no'))
@@ -115,9 +121,8 @@ test('token stays off argv, files, status, and logs; stop reaps the process grou
   assert.doesNotMatch(JSON.stringify(supervisor.status()), new RegExp(token))
   assert.ok(logs.every((line) => !line.includes(token)))
   assert.ok(logs.includes('split=<redacted>'))
-  for (const file of await readdir(fixture.root)) {
-    if (file === 'fake-jupyter' || file === 'fake-ssh') continue
-    assert.doesNotMatch(await readFile(join(fixture.root, file), 'utf8'), new RegExp(token))
+  for (const file of await filesUnder(fixture.root)) {
+    assert.doesNotMatch(await readFile(file, 'utf8'), new RegExp(token))
   }
 
   const pids = await readPids(fixture.pidPath)
@@ -204,8 +209,10 @@ test('losing the tunnel marks disconnected and unconditionally reaps remote jupy
   assert.ok(states.includes('cleaning'))
 })
 
-test('an unconfirmed hard disconnect blocks a second remote runtime', async () => {
+test('an unreachable reconciliation stays fail-closed until stop abandons local state', async () => {
   let ended = false
+  let reconciliationCalls = 0
+  const states: RemoteJupyterServerStatus[] = []
   let resolveClosed!: (result: { code: number | null; signal: string | null }) => void
   const closed = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
     resolveClosed = resolve
@@ -223,8 +230,113 @@ test('an unconfirmed hard disconnect blocks a second remote runtime', async () =
   }
   const supervisor = new RemoteJupyterServerSupervisor({
     connection: { host: 'fake-host' },
-    launch: { command: '/fake/jupyter' },
+    launch: { command: '/fake/jupyter', env: { JUPYTER_RUNTIME_DIR: '/runtime/jupyter' } },
     openLease: async () => lease,
+    reconcileLease: async () => {
+      reconciliationCalls += 1
+      throw new Error('ssh exit 255')
+    },
+    selectRemotePort: () => lease.remotePort,
+    readyProbe: async () => true,
+    onStateChange: (status) => states.push(status)
+  })
+
+  await supervisor.start()
+  ended = true
+  resolveClosed({ code: 255, signal: null })
+  await waitFor(() => supervisor.status().state === 'error')
+  await assert.rejects(
+    supervisor.start(),
+    /服务器暂时连不上，无法确认旧 Jupyter 已退出；网络恢复后再试/
+  )
+  assert.equal(reconciliationCalls, 1)
+  assert.ok(states.some((status) => status.state === 'reconciling'))
+  assert.equal(supervisor.status().cleanupUnconfirmed, true)
+  assert.equal(supervisor.status().canAbandonCleanup, true)
+
+  await supervisor.stop({ abandonUnconfirmed: true })
+  assert.equal(supervisor.status().state, 'stopped')
+  assert.match(supervisor.status().message ?? '', /服务器侧旧 Jupyter 退出未确认/)
+  assert.equal(supervisor.status().cleanupUnconfirmed, true)
+  assert.equal(supervisor.status().canAbandonCleanup, undefined)
+})
+
+test('a fresh ssh reconciliation confirms a cleaned lost lease before restart', async () => {
+  const fixture = await createFixture()
+  const states: RemoteJupyterServerStatus[] = []
+  const authorizations: string[] = []
+  const supervisor = trackedSupervisor({
+    connection: { host: 'fake-host' },
+    launch: {
+      command: fixture.jupyter,
+      args: ['server'],
+      env: { JUPYTER_RUNTIME_DIR: fixture.root }
+    },
+    spawnImpl: fixture.spawnImpl,
+    openLease: async (options) => {
+      const lease = await fixture.openLease(options)
+      return { ...lease, cleanupConfirmed: () => false }
+    },
+    selectRemotePort: sequencePorts(53000),
+    shutdownGraceMs: 80,
+    readyProbe: async (_url, authorization) => {
+      authorizations.push(authorization)
+      await waitForFile(fixture.pidPath)
+      return true
+    },
+    onStateChange: (status) => states.push(status)
+  })
+
+  const first = await supervisor.start()
+  const firstPort = new URL(first.baseUrl).port
+  const firstToken = first.authorizationHeader()
+  const firstPids = await readPids(fixture.pidPath)
+  fixture.leaseChildren.at(-1)?.kill('SIGHUP')
+  await waitFor(() => supervisor.status().state === 'error')
+  await waitFor(async () => (await Promise.all(firstPids.map(pidIsAlive))).every((alive) => !alive))
+
+  const restarted = await supervisor.start()
+  assert.notEqual(new URL(restarted.baseUrl).port, firstPort)
+  assert.notEqual(restarted.authorizationHeader(), firstToken)
+  assert.equal(new Set(authorizations).size, 2)
+  assert.ok(states.some((status) => status.state === 'reconciling'))
+  assert.ok(states.some((status) => status.message?.includes('已确认旧 Jupyter 已退出')))
+})
+
+test('concurrent start and stop share one reconciliation and stop prevents relaunch', async () => {
+  let ended = false
+  let openCalls = 0
+  let reconciliationCalls = 0
+  let resolveClosed!: (result: { code: number | null; signal: string | null }) => void
+  let resolveReconciliation!: () => void
+  const closed = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+    resolveClosed = resolve
+  })
+  const reconciliation = new Promise<void>((resolve) => {
+    resolveReconciliation = resolve
+  })
+  const lease: RemoteJupyterLease = {
+    localPort: 41010,
+    remotePort: 52010,
+    closed,
+    isClosed: () => ended,
+    started: () => true,
+    cleanupConfirmed: () => false,
+    localSpawnFailed: () => false,
+    forwardFailureConfirmed: () => false,
+    close: async () => undefined
+  }
+  const supervisor = new RemoteJupyterServerSupervisor({
+    connection: { host: 'fake-host' },
+    launch: { command: '/fake/jupyter', env: { JUPYTER_RUNTIME_DIR: '/runtime/jupyter' } },
+    openLease: async () => {
+      openCalls += 1
+      return lease
+    },
+    reconcileLease: async () => {
+      reconciliationCalls += 1
+      await reconciliation
+    },
     selectRemotePort: () => lease.remotePort,
     readyProbe: async () => true
   })
@@ -233,9 +345,64 @@ test('an unconfirmed hard disconnect blocks a second remote runtime', async () =
   ended = true
   resolveClosed({ code: 255, signal: null })
   await waitFor(() => supervisor.status().state === 'error')
-  await assert.rejects(supervisor.start(), /清理尚未确认/)
-  await supervisor.stop()
-  assert.equal(supervisor.status().state, 'error')
+  const restarting = supervisor.start()
+  await waitFor(() => supervisor.status().state === 'reconciling')
+  const stopping = supervisor.stop()
+  resolveReconciliation()
+
+  await assert.rejects(restarting, /已取消/)
+  await stopping
+  assert.equal(reconciliationCalls, 1)
+  assert.equal(openCalls, 1)
+  assert.equal(supervisor.status().state, 'stopped')
+})
+
+test('stop during disconnect cleanup shares the same cleanup barrier', async () => {
+  let ended = false
+  let confirmed = false
+  let closeCalls = 0
+  let resolveClosed!: (result: { code: number | null; signal: string | null }) => void
+  let resolveCleanup!: () => void
+  const closed = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+    resolveClosed = resolve
+  })
+  const cleanup = new Promise<void>((resolve) => {
+    resolveCleanup = resolve
+  })
+  const lease: RemoteJupyterLease = {
+    localPort: 41011,
+    remotePort: 52011,
+    closed,
+    isClosed: () => ended,
+    started: () => true,
+    cleanupConfirmed: () => confirmed,
+    localSpawnFailed: () => false,
+    forwardFailureConfirmed: () => false,
+    close: async () => {
+      closeCalls += 1
+      await cleanup
+    }
+  }
+  const supervisor = new RemoteJupyterServerSupervisor({
+    connection: { host: 'fake-host' },
+    launch: { command: '/fake/jupyter', env: { JUPYTER_RUNTIME_DIR: '/runtime/jupyter' } },
+    openLease: async () => lease,
+    selectRemotePort: () => lease.remotePort,
+    readyProbe: async () => true
+  })
+
+  await supervisor.start()
+  ended = true
+  resolveClosed({ code: 255, signal: null })
+  await waitFor(() => supervisor.status().state === 'cleaning')
+  const stopping = supervisor.stop()
+  await assert.rejects(supervisor.start(), /正在清理/)
+  confirmed = true
+  resolveCleanup()
+  await stopping
+
+  assert.equal(closeCalls, 1)
+  assert.equal(supervisor.status().state, 'stopped')
 })
 
 test('cancellation before setsid completes kills the verified launcher pid', async () => {
@@ -282,11 +449,14 @@ function assertReadyAndStoppedStates(states: string[]): void {
 
 interface RemoteJupyterFixture {
   root: string
+  jupyter: string
   sshArgsPath: string
   jupyterArgsPath: string
   pidPath: string
   leaseChildren: ChildProcessWithoutNullStreams[]
   sshCalls: string[][]
+  spawnImpl: ReturnType<typeof fakeSpawn>
+  openLease(options: OpenRemoteJupyterLeaseOptions): Promise<RemoteJupyterLease>
   supervisor(overrides: SupervisorOverrides): RemoteJupyterServerSupervisor
 }
 
@@ -320,15 +490,22 @@ async function createFixture(): Promise<RemoteJupyterFixture> {
     })
   return {
     root,
+    jupyter,
     sshArgsPath,
     jupyterArgsPath,
     pidPath,
     leaseChildren,
     sshCalls,
+    spawnImpl,
+    openLease,
     supervisor: (overrides: SupervisorOverrides) =>
       trackedSupervisor({
         connection: { host: 'fake-host' },
-        launch: { command: jupyter, args: ['server'] },
+        launch: {
+          command: jupyter,
+          args: ['server'],
+          env: { JUPYTER_RUNTIME_DIR: root }
+        },
         spawnImpl,
         openLease,
         selectRemotePort: sequencePorts(52000),
@@ -416,4 +593,15 @@ async function fileExists(path: string): Promise<boolean> {
     () => true,
     () => false
   )
+}
+
+async function filesUnder(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const path = join(directory, entry.name)
+      return entry.isDirectory() ? filesUnder(path) : Promise.resolve([path])
+    })
+  )
+  return nested.flat()
 }

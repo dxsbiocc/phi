@@ -35,6 +35,7 @@ interface RuntimeFixture {
   leaseChildren: ChildProcessWithoutNullStreams[]
   sshCalls: string[][]
   readyCalls: Array<{ url: string; authorization: string }>
+  loseCleanupAcknowledgement(): void
   supervisor(launch: RemoteJupyterLaunchCommand): RemoteJupyterServerSupervisor
   cleanup(): Promise<void>
 }
@@ -51,7 +52,8 @@ async function createFixture(): Promise<RuntimeFixture> {
   const env = {
     PHI_FAKE_JUPYTER_SSH_ARGS: join(root, 'ssh-args.log'),
     PHI_FAKE_JUPYTER_ARGS: join(root, 'jupyter-args.log'),
-    PHI_FAKE_JUPYTER_PIDS: join(root, 'jupyter-pids')
+    PHI_FAKE_JUPYTER_PIDS: join(root, 'jupyter-pids'),
+    PHI_FAKE_JUPYTER_RECONCILE_FAIL: ''
   }
   for (const [key, value] of Object.entries(env)) {
     savedEnvironment.set(key, process.env[key])
@@ -67,8 +69,9 @@ async function createFixture(): Promise<RuntimeFixture> {
   const leaseChildren: ChildProcessWithoutNullStreams[] = []
   const sshCalls: string[][] = []
   const readyCalls: Array<{ url: string; authorization: string }> = []
+  let loseCleanupAcknowledgement = false
   const spawnImpl: SshPortForwardSpawn = (_binary, args, options) => {
-    events.push('lease')
+    events.push(args.includes('-L') ? 'lease' : 'reconcile')
     sshCalls.push(args)
     const child = spawn(ssh, args, options)
     if (args.includes('-L')) leaseChildren.push(child)
@@ -84,19 +87,27 @@ async function createFixture(): Promise<RuntimeFixture> {
     leaseChildren,
     sshCalls,
     readyCalls,
+    loseCleanupAcknowledgement: () => {
+      loseCleanupAcknowledgement = true
+    },
     supervisor: (launch) =>
       new RemoteJupyterServerSupervisor({
         connection: { host: 'fake-host' },
         launch,
         spawnImpl,
-        openLease: (options: OpenRemoteJupyterLeaseOptions) =>
-          openRemoteJupyterLease({
+        openLease: async (options: OpenRemoteJupyterLeaseOptions) => {
+          const lease = await openRemoteJupyterLease({
             ...options,
             spawnImpl,
             allocateLocalPort: async () => ++localPort,
             waitUntilReady: async () => undefined,
             shutdownGraceMs: 80
-          }),
+          })
+          return {
+            ...lease,
+            cleanupConfirmed: () => (loseCleanupAcknowledgement ? false : lease.cleanupConfirmed())
+          }
+        },
         selectRemotePort: () => ++remotePort,
         shutdownGraceMs: 80,
         readyProbe: async (url, authorization) => {
@@ -125,7 +136,12 @@ function createBackend(fixture: RuntimeFixture): BackendHarness {
       fixture.events.push('prepare')
       return {
         kernels: diagnostics(),
-        launch: { command: fixture.jupyter, args: ['server'], cwd: fixture.root }
+        launch: {
+          command: fixture.jupyter,
+          args: ['server'],
+          cwd: fixture.root,
+          env: { JUPYTER_RUNTIME_DIR: fixture.root }
+        }
       }
     },
     select: (available, name) => {
@@ -206,7 +222,7 @@ test('remote backend coalesces concurrent starts and keeps a ready start idempot
   }
 })
 
-test('remote backend restarts after disconnect with a new runtime id, token, and local port', async () => {
+test('remote backend reconciles a lost cleanup ack before preparing a fresh runtime', async () => {
   const fixture = await createFixture()
   const harness = createBackend(fixture)
   try {
@@ -217,10 +233,12 @@ test('remote backend restarts after disconnect with a new runtime id, token, and
     const firstUrl = first.url
     const firstAuthorization = first.authorizationHeader?.()
 
+    fixture.loseCleanupAcknowledgement()
     fixture.leaseChildren.at(-1)?.kill('SIGHUP')
-    await waitFor(() => harness.backend.status(PROJECT).state === 'stopped')
+    await waitFor(() => harness.backend.status(PROJECT).state === 'error')
     assert.equal(harness.backend.connection(PROJECT), null)
 
+    const restartEvents = fixture.events.length
     await harness.backend.start(PROJECT)
     const second = harness.backend.connection(PROJECT)
     assert.ok(second)
@@ -228,7 +246,75 @@ test('remote backend restarts after disconnect with a new runtime id, token, and
     assert.notEqual(second.url, firstUrl)
     assert.notEqual(second.authorizationHeader?.(), firstAuthorization)
     assert.equal(harness.prepareCalls(), 2)
+    assert.deepEqual(fixture.events.slice(restartEvents, restartEvents + 2), [
+      'reconcile',
+      'prepare'
+    ])
   } finally {
+    await dispose(harness, fixture)
+  }
+})
+
+test('remote backend keeps unreachable cleanup closed until explicit stop abandons local state', async () => {
+  const fixture = await createFixture()
+  const harness = createBackend(fixture)
+  try {
+    await harness.backend.start(PROJECT)
+    fixture.loseCleanupAcknowledgement()
+    fixture.leaseChildren.at(-1)?.kill('SIGHUP')
+    await waitFor(() => harness.backend.status(PROJECT).state === 'error')
+    process.env.PHI_FAKE_JUPYTER_RECONCILE_FAIL = '1'
+
+    await assert.rejects(
+      harness.backend.start(PROJECT),
+      /服务器暂时连不上，无法确认旧 Jupyter 已退出；网络恢复后再试/
+    )
+    assert.equal(harness.prepareCalls(), 1)
+    assert.equal(harness.backend.status(PROJECT).cleanupUnconfirmed, true)
+    assert.equal(harness.backend.connection(PROJECT), null)
+
+    await harness.backend.stop(PROJECT, { abandonUnconfirmed: true })
+    assert.equal(harness.backend.status(PROJECT).state, 'stopped')
+    assert.match(harness.backend.status(PROJECT).message ?? '', /服务器侧旧 Jupyter 退出未确认/)
+    assert.equal(harness.backend.status(PROJECT).cleanupUnconfirmed, true)
+    assert.equal(harness.backend.kernels(PROJECT), null)
+
+    await harness.backend.releaseProject(PROJECT)
+    await assert.rejects(
+      harness.backend.start(PROJECT),
+      /服务器暂时连不上，无法确认旧 Jupyter 已退出；网络恢复后再试/
+    )
+    assert.equal(harness.prepareCalls(), 1)
+    delete process.env.PHI_FAKE_JUPYTER_RECONCILE_FAIL
+    await harness.backend.start(PROJECT)
+    assert.equal(harness.backend.status(PROJECT).state, 'ready')
+    assert.equal(harness.prepareCalls(), 2)
+  } finally {
+    delete process.env.PHI_FAKE_JUPYTER_RECONCILE_FAIL
+    await dispose(harness, fixture)
+  }
+})
+
+test('concurrent backend start and stop share one failed reconciliation', async () => {
+  const fixture = await createFixture()
+  const harness = createBackend(fixture)
+  try {
+    await harness.backend.start(PROJECT)
+    fixture.loseCleanupAcknowledgement()
+    fixture.leaseChildren.at(-1)?.kill('SIGHUP')
+    await waitFor(() => harness.backend.status(PROJECT).state === 'error')
+    process.env.PHI_FAKE_JUPYTER_RECONCILE_FAIL = '1'
+
+    const starting = harness.backend.start(PROJECT)
+    const rejected = assert.rejects(starting, /服务器暂时连不上/)
+    const stopping = harness.backend.stop(PROJECT, { abandonUnconfirmed: true })
+    await Promise.all([rejected, stopping])
+
+    assert.equal(fixture.sshCalls.filter((args) => !args.includes('-L')).length, 1)
+    assert.equal(harness.backend.status(PROJECT).state, 'stopped')
+    assert.equal(harness.backend.status(PROJECT).cleanupUnconfirmed, true)
+  } finally {
+    delete process.env.PHI_FAKE_JUPYTER_RECONCILE_FAIL
     await dispose(harness, fixture)
   }
 })

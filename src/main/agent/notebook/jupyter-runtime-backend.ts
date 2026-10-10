@@ -28,6 +28,8 @@ export interface JupyterRuntimeStatus {
   state: JupyterRuntimeState
   hasConnection: boolean
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   localPort?: number
   remotePort?: number
   resources?: RemoteJupyterResourceStatus
@@ -37,7 +39,7 @@ export interface JupyterRuntimeBackend {
   readonly kind: JupyterRuntimeKind
   status(projectCwd: string): JupyterRuntimeStatus
   start(projectCwd: string, signal?: AbortSignal): Promise<void>
-  stop(projectCwd: string): Promise<void>
+  stop(projectCwd: string, options?: { abandonUnconfirmed?: boolean }): Promise<void>
   connection(projectCwd: string): JupyterServerConnection | null
   claimKernel?(projectCwd: string, owner: string): void
   releaseKernel?(projectCwd: string, owner: string): void
@@ -118,7 +120,14 @@ export class LocalJupyterRuntimeBackend implements JupyterRuntimeBackend {
 type RemoteKernelAdapter = Pick<RemoteKernelspecAdapter, 'prepareRuntime' | 'select'>
 type RemoteSupervisor = Pick<
   RemoteJupyterServerSupervisor,
-  'status' | 'start' | 'stop' | 'claimKernel' | 'releaseKernel' | 'touchActivity' | 'cellTimeoutMs'
+  | 'status'
+  | 'start'
+  | 'stop'
+  | 'reconcile'
+  | 'claimKernel'
+  | 'releaseKernel'
+  | 'touchActivity'
+  | 'cellTimeoutMs'
 >
 
 export interface RemoteJupyterRuntimeBackendOptions {
@@ -150,6 +159,8 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
       state: active ? state : 'stopped',
       hasConnection: active && state === 'ready' && Boolean(this.currentConnection),
       ...(active && supervisorStatus?.message ? { message: supervisorStatus.message } : {}),
+      ...(active && supervisorStatus?.cleanupUnconfirmed ? { cleanupUnconfirmed: true } : {}),
+      ...(active && supervisorStatus?.canAbandonCleanup ? { canAbandonCleanup: true } : {}),
       ...(active && supervisorStatus?.localPort !== undefined
         ? { localPort: supervisorStatus.localPort }
         : {}),
@@ -176,6 +187,7 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
   }
 
   private async startRuntime(signal: AbortSignal): Promise<void> {
+    await this.supervisor?.reconcile()
     this.preparing = true
     try {
       const prepared = await this.options.kernelspecs.prepareRuntime({
@@ -197,13 +209,15 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
     }
   }
 
-  async stop(projectCwd: string): Promise<void> {
+  async stop(projectCwd: string, options: { abandonUnconfirmed?: boolean } = {}): Promise<void> {
     if (this.boundProject !== projectCwd) return
     this.startAbort?.abort()
     this.currentConnection = undefined
     this.currentKernels = undefined
+    const stopping = this.supervisor?.stop(options)
     await this.starting?.catch(() => undefined)
-    await this.supervisor?.stop()
+    if (stopping) await stopping
+    else await this.supervisor?.stop(options)
   }
 
   claimKernel(projectCwd: string, owner: string): void {
@@ -224,13 +238,19 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
 
   async releaseProject(projectCwd: string): Promise<void> {
     if (this.boundProject !== projectCwd) return
-    await this.stop(projectCwd)
-    if (this.supervisor?.status().state !== 'stopped') {
+    const statusBefore = this.supervisor?.status()
+    if (!(statusBefore?.state === 'stopped' && statusBefore.cleanupUnconfirmed)) {
+      await this.stop(projectCwd)
+    }
+    const status = this.supervisor?.status()
+    if (status?.state !== 'stopped') {
       throw new Error('远程 Jupyter 清理尚未确认，不能释放项目 runtime')
     }
     this.boundProject = undefined
-    this.supervisor = undefined
-    this.launchIdentity = undefined
+    if (!status.cleanupUnconfirmed) {
+      this.supervisor = undefined
+      this.launchIdentity = undefined
+    }
   }
 
   async disposeAll(): Promise<void> {

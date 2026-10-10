@@ -17,13 +17,26 @@ import {
 } from './remote-jupyter-lease'
 import {
   RemoteJupyterResourceGate,
-  buildRemoteJupyterResourceCleanupLines,
   buildRemoteJupyterResourceLaunchLines,
   parseRemoteJupyterResourceMarker,
   type RemoteJupyterResourceEvent,
   type RemoteJupyterResourcePolicyInput,
   type RemoteJupyterResourceStatus
 } from './remote-jupyter-resource-guard'
+import {
+  assertRemoteJupyterLaunchInput,
+  buildRemoteJupyterCleanupFunctionLines,
+  buildRemoteJupyterLeaseSetupLines,
+  buildRemoteJupyterLeaseWriteLines,
+  reconcileRemoteJupyterLease,
+  remoteJupyterLeaseEnvironment,
+  remoteJupyterLeaseIdentity,
+  remoteJupyterOwnedCommand,
+  remoteJupyterSecurityArgs,
+  RemoteJupyterReconciliationError,
+  type ReconcileRemoteJupyterLeaseOptions,
+  type RemoteJupyterLeaseIdentity
+} from './remote-jupyter-reconcile'
 
 export type RemoteJupyterServerState =
   | 'stopped'
@@ -35,6 +48,7 @@ export type RemoteJupyterServerState =
   | 'stopping'
   | 'disconnected'
   | 'cleaning'
+  | 'reconciling'
   | 'error'
 
 export interface RemoteJupyterServerStatus {
@@ -42,6 +56,8 @@ export interface RemoteJupyterServerStatus {
   localPort?: number
   remotePort?: number
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   resources: RemoteJupyterResourceStatus
 }
 
@@ -68,6 +84,7 @@ export interface RemoteJupyterSupervisorOptions {
   launch: RemoteJupyterLaunchCommand
   spawnImpl?: SshPortForwardSpawn
   openLease?: (options: OpenRemoteJupyterLeaseOptions) => Promise<RemoteJupyterLease>
+  reconcileLease?: (options: ReconcileRemoteJupyterLeaseOptions) => Promise<unknown>
   selectRemotePort?: () => number
   readyProbe?: RemoteJupyterReadyProbe
   maxStartAttempts?: number
@@ -95,34 +112,35 @@ export function buildRemoteJupyterLaunchScript(
   shutdownGraceMs = 500,
   resourcePolicy: RemoteJupyterResourcePolicyInput = {}
 ): string {
-  assertPort(remotePort)
-  if (!/^__PHI_JUPYTER_CLEANED_[a-f0-9]{32}__$/.test(cleanupMarker)) {
-    throw new Error('远程 Jupyter cleanup marker 无效')
-  }
-  if (!launch.command || /[\r\n\0]/.test(launch.command)) throw new Error('远程 Jupyter 命令无效')
-  const command = [launch.command, ...(launch.args ?? []), ...jupyterSecurityArgs(remotePort)]
+  assertRemoteJupyterLaunchInput(launch.command, remotePort, cleanupMarker)
+  const command = [launch.command, ...(launch.args ?? []), ...remoteJupyterSecurityArgs(remotePort)]
     .map(shellQuote)
     .join(' ')
   const environment = remoteJupyterEnvironment(launch.env)
   const graceSeconds = Math.max(0, shutdownGraceMs) / 1_000
   const startedMarker = cleanupMarker.replace('CLEANED', 'STARTED')
+  const leaseIdentity = remoteJupyterLeaseIdentity(launch.env?.JUPYTER_RUNTIME_DIR, cleanupMarker)
+  const leaseEnvironment = remoteJupyterLeaseEnvironment(leaseIdentity)
+  const ownedCommand = remoteJupyterOwnedCommand(command, leaseIdentity)
   return [
     launch.cwd ? `cd ${shellQuote(launch.cwd)} || exit 72` : ':',
     'exec 3<&0',
     'pid=',
     'resource_watcher=',
     'cleaned=0',
-    ...cleanupFunctionLines(cleanupMarker, graceSeconds),
+    ...buildRemoteJupyterLeaseSetupLines(leaseIdentity),
+    ...buildRemoteJupyterCleanupFunctionLines(cleanupMarker, graceSeconds, leaseIdentity),
     "trap 'terminate_tree; exit 73' HUP TERM INT",
     "trap 'terminate_tree' EXIT",
     'IFS= read -r PHI_JUPYTER_TOKEN <&3 || exit 70',
     'test "${#PHI_JUPYTER_TOKEN}" -ge 43 || exit 71',
     'lease_shell=$$',
     ...buildRemoteJupyterResourceLaunchLines(
-      command,
+      ownedCommand,
       resourcePolicy,
-      `${environment}JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" `
+      `${environment}${leaseEnvironment}JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" `
     ),
+    ...buildRemoteJupyterLeaseWriteLines(leaseIdentity),
     'unset PHI_JUPYTER_TOKEN',
     `printf '\\n%s\\n' ${shellQuote(startedMarker)}`,
     '( trap \'\' HUP; cat <&3 >/dev/null; kill -TERM "$lease_shell" 2>/dev/null || true ) &',
@@ -156,51 +174,21 @@ function remoteJupyterEnvironment(env: Record<string, string> | undefined): stri
     .join('')
 }
 
-function cleanupFunctionLines(cleanupMarker: string, graceSeconds: number): string[] {
-  return [
-    'terminate_tree() {',
-    '  [ "$cleaned" -eq 0 ] || return 0',
-    '  cleaned=1',
-    '  trap - EXIT',
-    "  trap '' HUP TERM INT",
-    ...buildRemoteJupyterResourceCleanupLines().map((line) => `  ${line}`),
-    '  if [ -n "$pid" ]; then',
-    '    kill -TERM -"$pid" 2>/dev/null || true; kill -TERM "$pid" 2>/dev/null || true; kill -TERM -"$pid" 2>/dev/null || true',
-    `    sleep ${graceSeconds}`,
-    '    kill -KILL -"$pid" 2>/dev/null || true; kill -KILL "$pid" 2>/dev/null || true; kill -KILL -"$pid" 2>/dev/null || true',
-    '    wait "$pid" 2>/dev/null || true',
-    '    attempt=0',
-    '    while { kill -0 -"$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null; } && [ "$attempt" -lt 20 ]; do sleep 0.05; attempt=$((attempt + 1)); done',
-    '    if kill -0 -"$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null; then return 1; fi',
-    '  fi',
-    `  printf '\\n%s\\n' ${shellQuote(cleanupMarker)}`,
-    '}'
-  ]
-}
-
-function jupyterSecurityArgs(port: number): string[] {
-  return [
-    '--no-browser',
-    '--ServerApp.ip=127.0.0.1',
-    `--ServerApp.port=${port}`,
-    '--ServerApp.port_retries=0',
-    '--ServerApp.open_browser=False',
-    '--ServerApp.allow_remote_access=False',
-    '--ServerApp.write_server_info_file=False',
-    '--ServerApp.write_browser_open_file=False'
-  ]
-}
-
 export class RemoteJupyterServerSupervisor {
   readonly options: RemoteJupyterSupervisorOptions
   #token?: string
   private currentStatus: Omit<RemoteJupyterServerStatus, 'resources'> = { state: 'stopped' }
   private readonly resourceGate: RemoteJupyterResourceGate
   private remoteLease?: RemoteJupyterLease
+  private remoteLeaseIdentity?: RemoteJupyterLeaseIdentity
+  private pendingReconciliation?: RemoteJupyterLeaseIdentity
   private generation = 0
   private restartBlocked = false
+  private reconciliationUnavailable = false
   private starting?: Promise<RemoteJupyterConnection>
   private stopping?: Promise<void>
+  private reconciling?: Promise<void>
+  private cleaning?: Promise<boolean>
   private lifecycleAbort?: AbortController
 
   constructor(options: RemoteJupyterSupervisorOptions) {
@@ -216,6 +204,8 @@ export class RemoteJupyterServerSupervisor {
     const resourceMessage = resourceEventMessage(resources.violation ?? resources.warning)
     return {
       ...this.currentStatus,
+      ...(this.restartBlocked ? { cleanupUnconfirmed: true } : {}),
+      ...(this.restartBlocked && this.reconciliationUnavailable ? { canAbandonCleanup: true } : {}),
       ...(!this.currentStatus.message && resourceMessage ? { message: resourceMessage } : {}),
       resources
     }
@@ -239,40 +229,75 @@ export class RemoteJupyterServerSupervisor {
   }
 
   start(signal?: AbortSignal): Promise<RemoteJupyterConnection> {
-    if (this.restartBlocked) {
-      return Promise.reject(new Error('旧远程 Jupyter lease 清理尚未确认，禁止重新启动'))
-    }
     if (this.currentStatus.state === 'ready') return Promise.resolve(this.connection())
     if (this.starting) return this.starting
-    if (this.stopping || !['stopped', 'error'].includes(this.currentStatus.state)) {
+    if (
+      this.stopping ||
+      (!this.restartBlocked && !['stopped', 'error'].includes(this.currentStatus.state))
+    ) {
       return Promise.reject(new Error('远程 Jupyter 正在清理，暂不能重新启动'))
     }
-    this.resourceGate.reset()
     this.lifecycleAbort = new AbortController()
     const combined = signal
       ? AbortSignal.any([signal, this.lifecycleAbort.signal])
       : this.lifecycleAbort.signal
-    this.starting = this.startLoop(combined).finally(() => {
+    this.starting = this.startAfterReconciliation(combined).finally(() => {
       this.starting = undefined
     })
     return this.starting
   }
 
-  stop(): Promise<void> {
+  stop(options: { abandonUnconfirmed?: boolean } = {}): Promise<void> {
     if (this.stopping) return this.stopping
+    const sharedReconciliation = this.reconciling
     this.lifecycleAbort?.abort()
-    this.stopping = this.finishStop().finally(() => {
+    this.stopping = this.finishStop(
+      sharedReconciliation,
+      options.abandonUnconfirmed === true
+    ).finally(() => {
       this.stopping = undefined
     })
     return this.stopping
   }
 
-  private async finishStop(): Promise<void> {
+  reconcile(): Promise<void> {
+    if (!this.restartBlocked) return Promise.resolve()
+    if (this.reconciling) return this.reconciling
+    this.reconciling = this.performReconciliation().finally(() => {
+      this.reconciling = undefined
+    })
+    return this.reconciling
+  }
+
+  private async startAfterReconciliation(signal: AbortSignal): Promise<RemoteJupyterConnection> {
+    await this.reconcile()
+    throwIfAborted(signal)
+    this.resourceGate.reset()
+    return this.startLoop(signal)
+  }
+
+  private async finishStop(shared: Promise<void> | undefined, abandon: boolean): Promise<void> {
     if (this.currentStatus.state === 'ready') this.transition('stopping')
     await this.starting?.catch(() => undefined)
+    if (this.restartBlocked) {
+      await this.finishPendingStop(shared, abandon)
+      return
+    }
     if (this.currentStatus.state === 'stopped') return
     if (this.currentStatus.state !== 'stopping') this.transition('stopping')
-    this.finishCleanupState(await this.cleanup())
+    this.finishCleanupState(await this.beginCleanup())
+    if (this.restartBlocked) await this.finishPendingStop(undefined, abandon)
+  }
+
+  private async finishPendingStop(
+    shared: Promise<void> | undefined,
+    abandon: boolean
+  ): Promise<void> {
+    try {
+      await (shared ?? this.reconcile())
+    } catch {
+      if (abandon) this.abandonUnconfirmedCleanup()
+    }
   }
 
   private async startLoop(signal: AbortSignal): Promise<RemoteJupyterConnection> {
@@ -288,7 +313,7 @@ export class RemoteJupyterServerSupervisor {
       } catch (error) {
         if (error instanceof RemoteJupyterCleanupUnconfirmedError) this.restartBlocked = true
         const sanitized = sanitizedRemoteJupyterError(error, this.#token)
-        const confirmed = await this.cleanup()
+        const confirmed = await this.beginCleanup()
         if (!confirmed) {
           const message = '旧远程 Jupyter lease 清理尚未确认，禁止重新启动'
           this.transition('error', message)
@@ -317,6 +342,10 @@ export class RemoteJupyterServerSupervisor {
     const token = this.#token
     if (!token) throw new Error('远程 Jupyter token 尚未生成')
     const cleanupMarker = `__PHI_JUPYTER_CLEANED_${randomBytes(16).toString('hex')}__`
+    this.remoteLeaseIdentity = remoteJupyterLeaseIdentity(
+      this.options.launch.env?.JUPYTER_RUNTIME_DIR,
+      cleanupMarker
+    )
     const launchScript = buildRemoteJupyterLaunchScript(
       this.options.launch,
       remotePort,
@@ -341,6 +370,8 @@ export class RemoteJupyterServerSupervisor {
     this.transition('ready', undefined, remotePort, this.remoteLease.localPort)
     this.resourceGate.touchActivity()
     this.restartBlocked = false
+    this.pendingReconciliation = undefined
+    this.reconciliationUnavailable = false
     const generation = ++this.generation
     this.watchForDisconnect(generation, this.remoteLease)
     return this.connection()
@@ -400,25 +431,49 @@ export class RemoteJupyterServerSupervisor {
     if (generation !== this.generation || this.currentStatus.state !== 'ready') return
     const lease = this.takeLease()
     this.transition('disconnected', '远程 Jupyter SSH lease 已断开')
-    this.finishCleanupState(await this.cleanup(lease))
+    this.finishCleanupState(await this.beginCleanup(lease))
   }
 
-  private takeLease(): RemoteJupyterLease | undefined {
+  private takeLease(): {
+    lease?: RemoteJupyterLease
+    identity?: RemoteJupyterLeaseIdentity
+  } {
     const lease = this.remoteLease
+    const identity = this.remoteLeaseIdentity
     this.remoteLease = undefined
+    this.remoteLeaseIdentity = undefined
     this.generation += 1
-    return lease
+    return { ...(lease ? { lease } : {}), ...(identity ? { identity } : {}) }
   }
 
-  private async cleanup(detachedLease?: RemoteJupyterLease): Promise<boolean> {
-    const lease = detachedLease ?? this.takeLease()
+  private async cleanup(detachedLease?: {
+    lease?: RemoteJupyterLease
+    identity?: RemoteJupyterLeaseIdentity
+  }): Promise<boolean> {
+    const owned = detachedLease ?? this.takeLease()
+    const lease = owned.lease
     this.transition('cleaning')
     await lease?.close().catch(() => undefined)
     const confirmed = lease ? lease.cleanupConfirmed() : !this.restartBlocked
-    if (!confirmed) this.restartBlocked = true
+    if (!confirmed) {
+      this.restartBlocked = true
+      this.pendingReconciliation ??= owned.identity
+    }
     this.#token = undefined
     this.resourceGate.dispose()
     return confirmed
+  }
+
+  private beginCleanup(detachedLease?: {
+    lease?: RemoteJupyterLease
+    identity?: RemoteJupyterLeaseIdentity
+  }): Promise<boolean> {
+    if (this.cleaning) return this.cleaning
+    const cleaning = this.cleanup(detachedLease).finally(() => {
+      if (this.cleaning === cleaning) this.cleaning = undefined
+    })
+    this.cleaning = cleaning
+    return cleaning
   }
 
   private finishCleanupState(confirmed: boolean): void {
@@ -427,6 +482,42 @@ export class RemoteJupyterServerSupervisor {
       return
     }
     this.transition('error', '旧远程 Jupyter lease 清理尚未确认，禁止重新启动')
+  }
+
+  private async performReconciliation(): Promise<void> {
+    const identity = this.pendingReconciliation
+    this.transition('reconciling', '正在通过新的 SSH 连接确认旧 Jupyter 是否已退出')
+    try {
+      if (!identity) throw new Error('缺少旧 lease 身份记录')
+      const reconcileLease = this.options.reconcileLease ?? reconcileRemoteJupyterLease
+      await reconcileLease({
+        connection: this.options.connection,
+        identity,
+        shutdownGraceMs: this.options.shutdownGraceMs,
+        spawnImpl: this.options.spawnImpl
+      })
+      this.pendingReconciliation = undefined
+      this.restartBlocked = false
+      this.reconciliationUnavailable = false
+      this.transition('stopped', '已确认旧 Jupyter 已退出，可以重新启动')
+    } catch (error) {
+      const unavailable =
+        !(error instanceof RemoteJupyterReconciliationError) || error.reason === 'unavailable'
+      this.reconciliationUnavailable = unavailable
+      const message = unavailable
+        ? '服务器暂时连不上，无法确认旧 Jupyter 已退出；网络恢复后再试。旧 lease 清理尚未确认。'
+        : '旧 Jupyter 的 lease 身份记录无法安全核验；清理尚未确认，已禁止重新启动。'
+      this.transition('error', message)
+      throw new Error(message, { cause: sanitizedRemoteJupyterError(error) })
+    }
+  }
+
+  private abandonUnconfirmedCleanup(): void {
+    if (!this.restartBlocked || !this.reconciliationUnavailable) return
+    this.reconciliationUnavailable = false
+    this.#token = undefined
+    this.resourceGate.dispose()
+    this.transition('stopped', '已放弃本地 runtime 状态；服务器侧旧 Jupyter 退出未确认')
   }
 
   private handleLeaseLog(line: string): void {

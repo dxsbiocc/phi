@@ -13,7 +13,11 @@ import { remoteJupyterResourceGuardActivity } from '../src/main/agent/notebook/r
 
 test('remote launcher applies resource limits, thread caps, monitoring, and watcher cleanup', () => {
   const script = buildRemoteJupyterLaunchScript(
-    { command: '/opt/phi/jupyter', args: ['server'] },
+    {
+      command: '/opt/phi/jupyter',
+      args: ['server'],
+      env: { JUPYTER_RUNTIME_DIR: '/runtime/jupyter' }
+    },
     52_001,
     '__PHI_JUPYTER_CLEANED_0123456789abcdef0123456789abcdef__'
   )
@@ -32,7 +36,7 @@ test('supervisor reports monitor fallback and enforces kernel, cell, and idle ga
   const statuses: string[] = []
   const supervisor = new RemoteJupyterServerSupervisor({
     connection: { host: 'fake-host' },
-    launch: { command: '/fake/jupyter' },
+    launch: { command: '/fake/jupyter', env: { JUPYTER_RUNTIME_DIR: '/runtime/jupyter' } },
     resourcePolicy: { maxKernels: 2, cellTimeoutMs: 123, idleTimeoutMs: 20 },
     openLease: harness.open,
     selectRemotePort: () => 52_002,

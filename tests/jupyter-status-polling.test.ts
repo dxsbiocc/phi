@@ -66,7 +66,8 @@ test('jupyterServerIsStarting treats local and remote startup phases as pollable
     'allocating_ports',
     'starting_lease',
     'probing_through_tunnel',
-    'cleaning'
+    'cleaning',
+    'reconciling'
   ] as const) {
     assert.equal(jupyterServerIsStarting(status(state)), true, state)
   }

@@ -532,6 +532,7 @@ type PreloadJupyterServerStatus = {
     | 'stopping'
     | 'disconnected'
     | 'cleaning'
+    | 'reconciling'
   runtimeKind?: 'local' | 'ssh'
   serverLabel?: string
   startedAt?: string
@@ -541,6 +542,8 @@ type PreloadJupyterServerStatus = {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   resources?: Record<string, unknown>
 }
 
@@ -1004,7 +1007,10 @@ declare global {
       publishNotebookOutputFrame: (html: string) => Promise<string>
       releaseNotebookOutputFrame: (url: string) => Promise<void>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
-      stopAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>
+      stopAnalysisJupyter: (
+        cwd: string,
+        options?: { abandonUnconfirmed?: boolean }
+      ) => Promise<PreloadJupyterServerStatus>
       getAnalysisNotebookSessionStatus: (
         cwd: string,
         path: string,

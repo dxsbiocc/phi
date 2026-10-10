@@ -8,6 +8,7 @@ import {
   waitForLoopbackListener,
   type SshPortForwardSpawn
 } from '../workspace-host/ssh-port-forward'
+import { remoteJupyterReconcileActivity } from './remote-jupyter-reconcile'
 
 interface MonitoredRemoteJupyterLease {
   closed: Promise<{ code: number | null; signal: string | null }>
@@ -66,7 +67,11 @@ process.once('exit', () => {
 })
 
 export function remoteJupyterLeaseActivity(): { children: number; timers: number } {
-  return { children: activeLeaseChildren.size, timers: activeLeaseTimers.size }
+  const reconciliation = remoteJupyterReconcileActivity()
+  return {
+    children: activeLeaseChildren.size + reconciliation.children,
+    timers: activeLeaseTimers.size + reconciliation.timers
+  }
 }
 
 export async function openRemoteJupyterLease(

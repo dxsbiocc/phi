@@ -9198,22 +9198,27 @@ app.whenReady().then(async () => {
       jupyterServerRegistry.start(workspace.workingDirectory)
     )
   })
-  ipcMain.handle('analysis:stopJupyter', async (_, cwd: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const remote = remoteNotebookBackendFor(workspace)
-    const sessions = analysisSessions(workspace)
-    await sessions.closeProject(workspace.workingDirectory)
-    if (remote) {
-      const status = await remote.controller.stop()
+  ipcMain.handle(
+    'analysis:stopJupyter',
+    async (_, cwd: string, options?: { abandonUnconfirmed?: boolean }) => {
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
+      }
+      const remote = remoteNotebookBackendFor(workspace)
+      const sessions = analysisSessions(workspace)
       await sessions.closeProject(workspace.workingDirectory)
-      return status
+      if (remote) {
+        const status = await remote.controller.stop({
+          abandonUnconfirmed: options?.abandonUnconfirmed === true
+        })
+        await sessions.closeProject(workspace.workingDirectory)
+        return status
+      }
+      notebookFileWatcher.unwatchProject(workspace.workingDirectory)
+      return jupyterServerRegistry.stop(workspace.workingDirectory)
     }
-    notebookFileWatcher.unwatchProject(workspace.workingDirectory)
-    return jupyterServerRegistry.stop(workspace.workingDirectory)
-  })
+  )
   ipcMain.handle(
     'analysis:notebookSessionStatus',
     async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {

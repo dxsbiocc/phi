@@ -161,6 +161,26 @@ test('remote environment preparation keeps the stop action available for cancell
   assert.doesNotMatch(markup, /aria-label="停止 Jupyter server"[^>]*disabled/)
 })
 
+test('unconfirmed remote cleanup offers both retry and explicit local abandon actions', () => {
+  const markup = renderRuntimeSidebar({
+    ...runtimeStatus,
+    server: {
+      projectCwd: '/canonical/project',
+      runtimeKind: 'ssh',
+      serverLabel: 'cluster-login',
+      state: 'error',
+      hasEndpoint: false,
+      cleanupUnconfirmed: true,
+      canAbandonCleanup: true,
+      message: '服务器暂时连不上，无法确认旧 Jupyter 已退出；网络恢复后再试。'
+    }
+  })
+
+  assert.match(markup, /网络恢复后再试/)
+  assert.match(markup, /aria-label="启动 Jupyter server"/)
+  assert.match(markup, /aria-label="放弃未确认的远程 Jupyter 本地状态"/)
+})
+
 test('runtime sidebar swaps server start and stop actions in one slot', () => {
   const stoppedMarkup = renderRuntimeSidebar({
     ...runtimeStatus,

@@ -15,7 +15,8 @@ export function jupyterServerIsStarting(status: JupyterServerStatus): boolean {
     'allocating_ports',
     'starting_lease',
     'probing_through_tunnel',
-    'cleaning'
+    'cleaning',
+    'reconciling'
   ].includes(status.state)
 }
 

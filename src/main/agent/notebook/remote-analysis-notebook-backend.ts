@@ -40,6 +40,8 @@ export type RemoteNotebookServerStatus = {
   port?: number
   remotePort?: number
   message?: string
+  cleanupUnconfirmed?: boolean
+  canAbandonCleanup?: boolean
   resources?: ReturnType<JupyterRuntimeBackend['status']>['resources']
 }
 
@@ -69,6 +71,8 @@ export class RemoteNotebookRuntimeController {
       ...(current.localPort === undefined ? {} : { port: current.localPort }),
       ...(current.remotePort === undefined ? {} : { remotePort: current.remotePort }),
       ...(message ? { message } : {}),
+      ...(current.cleanupUnconfirmed ? { cleanupUnconfirmed: true } : {}),
+      ...(current.canAbandonCleanup ? { canAbandonCleanup: true } : {}),
       ...(current.resources ? { resources: current.resources } : {})
     }
   }
@@ -91,9 +95,9 @@ export class RemoteNotebookRuntimeController {
     await this.starting
   }
 
-  async stop(): Promise<RemoteNotebookServerStatus> {
+  async stop(options: { abandonUnconfirmed?: boolean } = {}): Promise<RemoteNotebookServerStatus> {
     const pending = this.starting
-    await this.options.runtime.stop(this.options.projectCwd)
+    await this.options.runtime.stop(this.options.projectCwd, options)
     await pending
     this.lastError = undefined
     return this.status()
@@ -110,6 +114,7 @@ export class RemoteNotebookRuntimeController {
     if (state === 'preparing_environment') {
       return '正在登录节点准备远程 Notebook 环境；首次创建可能较慢，可停止以取消。'
     }
+    if (state === 'reconciling') return '正在通过新的 SSH 连接确认旧 Jupyter 是否已退出。'
     if (state === 'disconnected' || state === 'stopped') {
       return '远程 Jupyter 未连接；重新连接后 kernel 将重启，内存状态会丢失。'
     }

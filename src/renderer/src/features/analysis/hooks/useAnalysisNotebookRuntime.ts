@@ -569,12 +569,12 @@ export function useAnalysisNotebookRuntime({
   )
 
   const onStopAnalysisJupyter = useCallback(
-    async (cwd: string): Promise<void> => {
+    async (cwd: string, options: { abandonUnconfirmed?: boolean } = {}): Promise<void> => {
       const request = ++analysisJupyterRequestRef.current
       setIsStartingAnalysisJupyter(true)
       setAnalysisJupyterError(null)
       try {
-        const status = await rendererApi.stopAnalysisJupyter(cwd)
+        const status = await rendererApi.stopAnalysisJupyter(cwd, options)
         if (request !== analysisJupyterRequestRef.current || cwd !== getActiveCwd()) return
         setAnalysisJupyterStatus(status)
         setAnalysisJupyterRuntimeStatus((previous) =>

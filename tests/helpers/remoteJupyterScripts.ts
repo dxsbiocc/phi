@@ -1,16 +1,18 @@
 import { chmod, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export async function writeRemoteJupyterTestExecutables(
   ssh: string,
   jupyter: string
 ): Promise<void> {
+  const ps = join(dirname(ssh), 'ps')
   await writeFile(
     ssh,
     [
       '#!/bin/bash',
       'printf "%s\\n" "$@" >> "$PHI_FAKE_JUPYTER_SSH_ARGS"',
       'printf "%s\\n" "---" >> "$PHI_FAKE_JUPYTER_SSH_ARGS"',
+      '[[ -z "$PHI_FAKE_JUPYTER_RECONCILE_FAIL" || " $* " == *" -L "* ]] || exit 255',
       'command="${!#}"',
       'exec /bin/bash -c "$command"',
       ''
@@ -36,7 +38,23 @@ export async function writeRemoteJupyterTestExecutables(
       ''
     ].join('\n')
   )
-  await Promise.all([chmod(ssh, 0o755), chmod(jupyter, 0o755)])
+  await writeFile(
+    ps,
+    [
+      '#!/bin/bash',
+      'pid="${!#}"',
+      'kill -0 "$pid" 2>/dev/null || exit 1',
+      'case "$*" in',
+      '  *"pgid="*) printf " %s\\n" "$pid" ;;',
+      '  *"lstart="*) printf " Thu Jan  1 00:00:%02d 1970\\n" "$((pid % 60))" ;;',
+      '  *"command="*) printf "sh -c phi-jupyter-lease-%s\\n" "$PHI_RECONCILE_EXPECTED_LEASE" ;;',
+      '  *"rss="*) printf "1 1 00:00:00\\n" ;;',
+      '  *) exit 1 ;;',
+      'esac',
+      ''
+    ].join('\n')
+  )
+  await Promise.all([chmod(ssh, 0o755), chmod(jupyter, 0o755), chmod(ps, 0o755)])
 }
 
 export async function installBlockingRemoteJupyterSetsid(root: string): Promise<void> {
