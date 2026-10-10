@@ -40,6 +40,7 @@ export type SkillSidebarProps = {
   onSetEnabled?: (skill: SkillSummary, enabled: boolean) => void | Promise<void | boolean>
   busySkillId?: string | null
   onOpenCatalog?: () => void
+  notice?: string
 }
 
 type SkillSection = {
@@ -94,7 +95,8 @@ export function SkillSidebar({
   onSelectSkill,
   onSetEnabled,
   busySkillId,
-  onOpenCatalog
+  onOpenCatalog,
+  notice
 }: SkillSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
@@ -140,6 +142,7 @@ export function SkillSidebar({
       onQueryChange={setQuery}
       searchPlaceholder="搜索技能"
       summary={`${skills.length} 个技能 · ${enabledCount} 已启用`}
+      notice={notice}
       action={
         onOpenCatalog ? <DiscoverButton expanded={false} onClick={onOpenCatalog} /> : undefined
       }

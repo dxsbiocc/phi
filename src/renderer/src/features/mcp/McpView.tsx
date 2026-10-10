@@ -41,6 +41,7 @@ export type McpSidebarProps = {
   requestTrustedOverlay?: TrustedOverlayRequest
   cancelTrustedOverlay?: (key: string) => void
   onPreviewInteractionChange?: (active: boolean) => void
+  notice?: string
 }
 
 export type McpDetailProps = McpDetailPanelProps
@@ -142,7 +143,8 @@ export function McpSidebar({
   onRefreshServers,
   requestTrustedOverlay,
   cancelTrustedOverlay,
-  onPreviewInteractionChange
+  onPreviewInteractionChange,
+  notice
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -236,6 +238,7 @@ export function McpSidebar({
       onQueryChange={setQuery}
       searchPlaceholder="搜索连接器"
       summary={`${servers.length} 个连接器`}
+      notice={notice}
       action={
         onRefreshServers ? (
           <DiscoverButton expanded={catalogOpen || catalogPending} onClick={openCatalog} />

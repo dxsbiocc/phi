@@ -1,16 +1,9 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
-import {
-  GoArrowLeft,
-  GoArrowRight,
-  GoSearch,
-  GoSidebarCollapse,
-  GoSidebarExpand
-} from 'react-icons/go'
+import { GoSearch, GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
 
 /**
  * Sits to the right of the macOS traffic lights (MacWindowControls): a
- * sidebar toggle, session search, and browser-style back/forward buttons
- * over the app's own navigation history (see navigationHistory in App.tsx).
+ * sidebar toggle and session search.
  *
  * Like MacWindowControls, this does NOT position itself or declare its own
  * `-webkit-app-region` boundary -- App.tsx wraps both inside one shared
@@ -20,19 +13,11 @@ import {
 export default function WindowNavigationControls({
   isSidebarOpen,
   onToggleSidebar,
-  onOpenSessionSearch,
-  canGoBack,
-  canGoForward,
-  onGoBack,
-  onGoForward
+  onOpenSessionSearch
 }: {
   isSidebarOpen: boolean
   onToggleSidebar: () => void
   onOpenSessionSearch: () => void
-  canGoBack: boolean
-  canGoForward: boolean
-  onGoBack: () => void
-  onGoForward: () => void
 }): React.JSX.Element {
   const iconButtonSx = {
     width: 28,
@@ -74,32 +59,6 @@ export default function WindowNavigationControls({
         >
           <GoSearch size={19} />
         </IconButton>
-      </Tooltip>
-      <Tooltip title="后退">
-        <span>
-          <IconButton
-            size="small"
-            aria-label="后退"
-            disabled={!canGoBack}
-            onClick={onGoBack}
-            sx={iconButtonSx}
-          >
-            <GoArrowLeft size={20} />
-          </IconButton>
-        </span>
-      </Tooltip>
-      <Tooltip title="前进">
-        <span>
-          <IconButton
-            size="small"
-            aria-label="前进"
-            disabled={!canGoForward}
-            onClick={onGoForward}
-            sx={iconButtonSx}
-          >
-            <GoArrowRight size={20} />
-          </IconButton>
-        </span>
       </Tooltip>
     </Box>
   )

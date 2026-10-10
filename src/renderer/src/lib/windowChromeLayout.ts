@@ -8,7 +8,7 @@ const macWindowedChromeGap = 18
 const macWindowControlDiameter = 14
 const macWindowControlCount = 3
 const macWindowControlGap = 8
-const macWindowedTitlebarLeadingReserve = 220
+const macWindowedTitlebarLeadingReserve = 162
 const macWindowControlsWidth =
   macWindowControlDiameter * macWindowControlCount +
   macWindowControlGap * (macWindowControlCount - 1)

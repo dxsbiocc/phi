@@ -50,8 +50,8 @@ test('window chrome layout covers every platform, sidebar, and fullscreen combin
         showMacWindowControls: true,
         topLeftChromeInset: 14,
         topLeftChromeGap: 18,
-        titlebarLeadingReserve: 220,
-        mainColumnTitlebarInset: 172
+        titlebarLeadingReserve: 162,
+        mainColumnTitlebarInset: 114
       }
     },
     {
@@ -60,8 +60,8 @@ test('window chrome layout covers every platform, sidebar, and fullscreen combin
         showMacWindowControls: false,
         topLeftChromeInset: 14,
         topLeftChromeGap: 0,
-        titlebarLeadingReserve: 144,
-        mainColumnTitlebarInset: 96
+        titlebarLeadingReserve: 86,
+        mainColumnTitlebarInset: 38
       }
     },
     {
@@ -70,7 +70,7 @@ test('window chrome layout covers every platform, sidebar, and fullscreen combin
         showMacWindowControls: true,
         topLeftChromeInset: 14,
         topLeftChromeGap: 18,
-        titlebarLeadingReserve: 220,
+        titlebarLeadingReserve: 162,
         mainColumnTitlebarInset: 0
       }
     },
@@ -80,7 +80,7 @@ test('window chrome layout covers every platform, sidebar, and fullscreen combin
         showMacWindowControls: false,
         topLeftChromeInset: 14,
         topLeftChromeGap: 0,
-        titlebarLeadingReserve: 144,
+        titlebarLeadingReserve: 86,
         mainColumnTitlebarInset: 0
       }
     }

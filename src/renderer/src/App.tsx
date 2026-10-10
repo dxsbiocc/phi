@@ -139,13 +139,6 @@ import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { messagesForUserRetry } from './lib/chatRetry'
 import { getAppShortcutAction } from './lib/appShortcuts'
 import {
-  initialNavigationHistory,
-  navigationHistoryTargetIndex,
-  navigationRestorationSettled,
-  recordNavigationEntry,
-  type NavigationHistoryEntry
-} from './lib/navigationHistory'
-import {
   agentEventBelongsToActiveSession,
   agentEventMaterializesActiveFreshSession
 } from './lib/agentEventRouting'
@@ -732,39 +725,9 @@ function App(): React.JSX.Element {
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
 
-  // Back/forward navigation history: tracks top-level view switches and,
-  // within chat, which session was active, so "back" can return to an
-  // earlier screen by restoring already-loaded state instead of clicking
-  // through and re-rendering it from scratch. navigateToView must exist
-  // before useWorkspaceFileTabs below (which takes it as an option), so
-  // the recording half lives here; restoreNavigationEntry/goBack/goForward
-  // need onSelectSession and are declared further down, right after it.
-  // See lib/navigationHistory.ts for the (independently tested) reducer
-  // logic this wraps.
-  const [navigationHistory, setNavigationHistory] = useState(() =>
-    initialNavigationHistory({ view: 'chat', sessionPath: null })
-  )
-  const restoringNavigationEntryRef = useRef<NavigationHistoryEntry | null>(null)
-
   const navigateToView = useCallback((view: AppView): void => {
     setActiveViewState(view)
   }, [])
-
-  useEffect(() => {
-    const current: NavigationHistoryEntry = { view: activeView, sessionPath: activeSessionPath }
-    const restoringTo = restoringNavigationEntryRef.current
-    if (restoringTo) {
-      // Still catching up to a back/forward target -- e.g. the view
-      // changed synchronously but the session switch is an async IPC call
-      // that hasn't landed yet. Don't record it as a new navigation either
-      // way (it's a restoration, not a fresh one) until it's settled.
-      if (navigationRestorationSettled(restoringTo, current)) {
-        restoringNavigationEntryRef.current = null
-      }
-      return
-    }
-    setNavigationHistory((prev) => recordNavigationEntry(prev, current))
-  }, [activeView, activeSessionPath])
 
   const [workspaceSidebarMode, setWorkspaceSidebarMode] =
     useState<WorkspaceSidebarMode>('conversations')
@@ -1526,34 +1489,6 @@ function App(): React.JSX.Element {
       setIsSessionChanging
     ]
   )
-
-  const restoreNavigationEntry = useCallback(
-    (entry: NavigationHistoryEntry): void => {
-      const viewChanges = entry.view !== activeView
-      const sessionChanges = Boolean(entry.sessionPath) && entry.sessionPath !== activeSessionPath
-      if (!viewChanges && !sessionChanges) return
-      restoringNavigationEntryRef.current = entry
-      if (viewChanges) setActiveViewState(entry.view)
-      if (sessionChanges) void onSelectSession(entry.sessionPath as string)
-    },
-    [activeView, activeSessionPath, onSelectSession]
-  )
-
-  const goInHistory = useCallback(
-    (direction: 'back' | 'forward'): void => {
-      const targetIndex = navigationHistoryTargetIndex(navigationHistory, direction)
-      if (targetIndex === null) return
-      const target = navigationHistory.entries[targetIndex]
-      setNavigationHistory((prev) => ({ ...prev, index: targetIndex }))
-      restoreNavigationEntry(target)
-    },
-    [navigationHistory, restoreNavigationEntry]
-  )
-  const goBackInHistory = useCallback(() => goInHistory('back'), [goInHistory])
-  const goForwardInHistory = useCallback(() => goInHistory('forward'), [goInHistory])
-
-  const canGoBackInHistory = navigationHistoryTargetIndex(navigationHistory, 'back') !== null
-  const canGoForwardInHistory = navigationHistoryTargetIndex(navigationHistory, 'forward') !== null
 
   const onDeleteSession = useCallback(
     async (path: string): Promise<void> => {
@@ -4835,10 +4770,6 @@ function App(): React.JSX.Element {
               isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
               onOpenSessionSearch={() => setSessionSearchOpenWithBrowserGate(true)}
-              canGoBack={canGoBackInHistory}
-              canGoForward={canGoForwardInHistory}
-              onGoBack={goBackInHistory}
-              onGoForward={goForwardInHistory}
             />
           </Box>
         )}

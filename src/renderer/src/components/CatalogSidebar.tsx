@@ -13,6 +13,7 @@ export function CatalogSidebar({
   onQueryChange,
   searchPlaceholder,
   summary,
+  notice,
   action,
   children
 }: {
@@ -23,6 +24,7 @@ export function CatalogSidebar({
   onQueryChange: (query: string) => void
   searchPlaceholder: string
   summary: ReactNode
+  notice?: string
   action?: ReactNode
   children: ReactNode
 }): React.JSX.Element {
@@ -103,6 +105,16 @@ export function CatalogSidebar({
           {summary}
         </Typography>
       </Box>
+      {notice ? (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          data-phi-catalog-notice={resource}
+          sx={{ display: 'block', px: 1, py: 1, flexShrink: 0, lineHeight: 1.5 }}
+        >
+          {notice}
+        </Typography>
+      ) : null}
       {children}
     </Box>
   )

@@ -10,8 +10,6 @@ import WindowNavigationControls from '../src/renderer/src/components/WindowNavig
 function renderControls(
   overrides: {
     isSidebarOpen?: boolean
-    canGoBack?: boolean
-    canGoForward?: boolean
   } = {}
 ): string {
   return renderToStaticMarkup(
@@ -21,47 +19,21 @@ function renderControls(
       createElement(WindowNavigationControls, {
         isSidebarOpen: overrides.isSidebarOpen ?? true,
         onToggleSidebar: () => {},
-        onOpenSessionSearch: () => {},
-        canGoBack: overrides.canGoBack ?? false,
-        canGoForward: overrides.canGoForward ?? false,
-        onGoBack: () => {},
-        onGoForward: () => {}
+        onOpenSessionSearch: () => {}
       })
     )
   )
 }
 
-test('session search sits between the sidebar toggle and back button', () => {
+test('window controls contain the sidebar toggle and session search only', () => {
   const markup = renderControls()
 
   assert.match(markup, /data-phi-window-navigation-controls="true"/)
   assert.match(markup, /aria-label="收起侧边栏"/)
   assert.match(markup, /data-phi-window-sidebar-toggle-icon="collapse"/)
   assert.match(markup, /aria-label="查找会话"/)
-  assert.match(markup, /aria-label="后退"/)
-  assert.match(markup, /aria-label="前进"/)
   assert.ok(markup.indexOf('aria-label="收起侧边栏"') < markup.indexOf('aria-label="查找会话"'))
-  assert.ok(markup.indexOf('aria-label="查找会话"') < markup.indexOf('aria-label="后退"'))
-})
-
-test('back/forward buttons are disabled when there is nowhere to go', () => {
-  const markup = renderControls({ canGoBack: false, canGoForward: false })
-
-  const backButton = markup.match(/<button[^>]*aria-label="后退"[^>]*>/)?.[0] ?? ''
-  const forwardButton = markup.match(/<button[^>]*aria-label="前进"[^>]*>/)?.[0] ?? ''
-
-  assert.match(backButton, /\bdisabled=""/)
-  assert.match(forwardButton, /\bdisabled=""/)
-})
-
-test('back/forward buttons enable once there is history to move through', () => {
-  const markup = renderControls({ canGoBack: true, canGoForward: true })
-
-  const backButton = markup.match(/<button[^>]*aria-label="后退"[^>]*>/)?.[0] ?? ''
-  const forwardButton = markup.match(/<button[^>]*aria-label="前进"[^>]*>/)?.[0] ?? ''
-
-  assert.doesNotMatch(backButton, /\bdisabled\b/)
-  assert.doesNotMatch(forwardButton, /\bdisabled\b/)
+  assert.doesNotMatch(markup, /aria-label="后退"|aria-label="前进"/)
 })
 
 test('the sidebar toggle label flips between collapse/expand based on isSidebarOpen', () => {
@@ -83,15 +55,4 @@ test('the window sidebar toggle uses the shared collapse/expand sidebar icons', 
   assert.match(source, /GoSidebarCollapse/)
   assert.match(source, /GoSidebarExpand/)
   assert.doesNotMatch(source, /TbLayoutSidebar/)
-})
-
-test('the history navigation buttons use the shared arrow icons', () => {
-  const source = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/components/WindowNavigationControls.tsx'),
-    'utf8'
-  )
-
-  assert.match(source, /GoArrowLeft/)
-  assert.match(source, /GoArrowRight/)
-  assert.doesNotMatch(source, /TbChevron/)
 })

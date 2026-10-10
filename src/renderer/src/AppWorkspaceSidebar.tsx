@@ -393,63 +393,29 @@ function AppWorkspaceSidebarImpl({
         catalogOpen={isPhiPluginCatalogOpen}
       />
     ) : mode === 'skills' ? (
-      isRemoteProject ? (
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
-          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-            远程项目级 Skills 暂未接通；下方仅显示全局 Skills。
-          </Typography>
-          <SkillSidebar
-            visible={visible}
-            skills={skills}
-            isLoading={isLoadingSkills}
-            busySkillId={busySkillId}
-            onSetEnabled={onSetSkillEnabled}
-            activeSkillId={activeSkillId}
-            onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
-            onOpenCatalog={() => navigate(onOpenSkillCatalog)}
-          />
-        </Box>
-      ) : (
-        <SkillSidebar
-          visible={visible}
-          skills={skills}
-          isLoading={isLoadingSkills}
-          busySkillId={busySkillId}
-          onSetEnabled={onSetSkillEnabled}
-          activeSkillId={activeSkillId}
-          onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
-          onOpenCatalog={() => navigate(onOpenSkillCatalog)}
-        />
-      )
+      <SkillSidebar
+        visible={visible}
+        skills={skills}
+        isLoading={isLoadingSkills}
+        busySkillId={busySkillId}
+        onSetEnabled={onSetSkillEnabled}
+        activeSkillId={activeSkillId}
+        onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
+        onOpenCatalog={() => navigate(onOpenSkillCatalog)}
+        notice={isRemoteProject ? '远程项目级 Skills 暂未接通；当前仅显示全局 Skills。' : undefined}
+      />
     ) : mode === 'mcp' ? (
-      isRemoteProject ? (
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
-          <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-            远程项目级 MCP 暂未接通；下方仅显示全局配置。
-          </Typography>
-          <McpSidebar
-            visible={visible}
-            servers={mcpServers}
-            activeServerId={activeMcpServerId}
-            onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
-            onRefreshServers={onRefreshMcpServers}
-            requestTrustedOverlay={requestTrustedOverlay}
-            cancelTrustedOverlay={cancelTrustedOverlay}
-            onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
-          />
-        </Box>
-      ) : (
-        <McpSidebar
-          visible={visible}
-          servers={mcpServers}
-          activeServerId={activeMcpServerId}
-          onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
-          onRefreshServers={onRefreshMcpServers}
-          requestTrustedOverlay={requestTrustedOverlay}
-          cancelTrustedOverlay={cancelTrustedOverlay}
-          onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
-        />
-      )
+      <McpSidebar
+        visible={visible}
+        servers={mcpServers}
+        activeServerId={activeMcpServerId}
+        onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
+        onRefreshServers={onRefreshMcpServers}
+        requestTrustedOverlay={requestTrustedOverlay}
+        cancelTrustedOverlay={cancelTrustedOverlay}
+        onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
+        notice={isRemoteProject ? '远程项目级 MCP 暂未接通；当前仅显示全局配置。' : undefined}
+      />
     ) : mode === 'wrappers' ? (
       <WrapperSidebar
         visible={visible}
