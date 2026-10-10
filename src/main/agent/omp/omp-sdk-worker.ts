@@ -68,6 +68,16 @@ import { getRuntimeRoot } from '../envs/runtime'
 import { readMcpConfig } from '../mcp/package-config'
 import { readManagedMarker } from '../mcp/stdio-environment'
 import {
+  buildRemoteMcpGuardState,
+  buildRemoteMcpProfilePolicy,
+  loadRemoteApplicationMcp,
+  prepareRemoteMcpServerEntry,
+  remoteMcpLoadPlan,
+  type McpSnapshotLike,
+  type RemoteMcpGuardState,
+  type RemoteMcpProfilePolicy
+} from '../mcp/remote-mcp-policy'
+import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
   featuredApiKeyMcpConfig,
@@ -174,6 +184,11 @@ type RuntimeContext = {
   modelRegistry: ModelRegistry
 }
 
+type RemoteMcpAccess = {
+  localProjectAnchor: string
+  state?: RemoteMcpGuardState
+}
+
 type SessionEntry = {
   result: CreateAgentSessionResult
   agentDir: string
@@ -186,6 +201,7 @@ type SessionEntry = {
   mcpLeases?: Map<string, EnvironmentLease>
   ownedMcpManager?: MCPManager
   ownedStdioTransports?: Map<string, OwnedStdioTransportScope>
+  remoteMcpAccess?: RemoteMcpAccess
   disposing?: boolean
 }
 
@@ -942,9 +958,21 @@ function isScriptToolDescriptor(value: unknown): value is ScriptToolDescriptor {
   return value.approval === 'read' || value.approval === 'write'
 }
 
-async function loadSkillScriptTools(cwd: string): Promise<ScriptToolDescriptor[] | undefined> {
+async function loadSkillScriptTools(
+  cwd: string,
+  remote?: { runtimeSessionId: string; sessionId: string; projectId: string }
+): Promise<ScriptToolDescriptor[] | undefined> {
   try {
-    const result = await requestHost('skills.scriptTools', { cwd })
+    const result = await requestHost('skills.scriptTools', {
+      cwd,
+      ...(remote
+        ? {
+            runtimeSessionId: remote.runtimeSessionId,
+            remoteSessionId: remote.sessionId,
+            projectId: remote.projectId
+          }
+        : {})
+    })
     if (!isRecord(result) || !Array.isArray(result.tools)) {
       throw new Error('skills.scriptTools returned an unexpected result')
     }
@@ -1010,20 +1038,26 @@ function phiToolFunctions(
 
 async function bindSpecialistEnvironment(
   definition: PhiAgentDefinition,
-  deps: { sessionId: string; cwd: string; remoteRoot?: string }
+  deps: {
+    sessionId: string
+    cwd: string
+    remoteRoot?: string
+    remoteProject?: { sessionId: string; projectId: string }
+  }
 ): Promise<{ ref: string; variables: Record<string, string>; pluginId?: string } | undefined> {
   const ref = definition.environment
   if (!ref) return undefined
-  if (deps.remoteRoot) {
-    throw new Error(
-      '远程专家声明了受管环境，但服务器 environment binding 尚未完成验证；请在远程主机设置检查运行时根目录与 micromamba。该环境没有回退到本机执行。'
-    )
-  }
   const result = await requestHost('environments.bindSession', {
     runtimeSessionId: deps.sessionId,
     ref,
     agent: definition.name,
     cwd: deps.cwd,
+    ...(deps.remoteProject
+      ? {
+          remoteSessionId: deps.remoteProject.sessionId,
+          projectId: deps.remoteProject.projectId
+        }
+      : {}),
     ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
   })
   if (!isRecord(result)) throw new Error('environments.bindSession returned an unexpected result')
@@ -1062,6 +1096,8 @@ export function specialistToolCallFactories(
     enableToolApproval: boolean
     agentRunId?: string
     remoteRoot?: string
+    skillTools?: ScriptToolDescriptor[]
+    remoteMcpToolState?: () => RemoteMcpGuardState | undefined
     parent: () => CreateAgentSessionResult | undefined
   },
   binding?: { ref: string; variables: Record<string, string>; pluginId?: string }
@@ -1071,7 +1107,14 @@ export function specialistToolCallFactories(
   // so the approval card shows the command the model wrote; the binding's rewrite
   // is last, so it is the input that executes.
   return [
-    ...(deps.remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    ...(deps.remoteRoot
+      ? [
+          createRemoteProjectToolGuardExtension({
+            dynamicSkillToolNames: () => new Set((deps.skillTools ?? []).map((tool) => tool.name)),
+            remoteMcpToolState: deps.remoteMcpToolState
+          })
+        ]
+      : []),
     createRemoteUrlGuardExtension(),
     createPlanReviewToolGuardExtension(
       () => deps.parent()?.session.getPlanModeState()?.enabled === true
@@ -1094,8 +1137,11 @@ async function createPhiAgentSession(
     enableToolApproval: boolean
     agentRunId?: string
     remoteRoot?: string
+    remoteProject?: { sessionId: string; projectId: string }
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
+    remoteMcpTools?: () => CustomTool[]
+    remoteMcpToolState?: () => RemoteMcpGuardState | undefined
     remoteRead?: (path: string) => Promise<RemoteWorkspaceReadResult>
     skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
@@ -1119,6 +1165,12 @@ async function createPhiAgentSession(
         ...(holder.pluginId ? { pluginId: holder.pluginId } : {})
       }
     : sessionId
+  const remoteSkillHost = deps.remoteProject
+    ? {
+        ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+        remoteProject: deps.remoteProject
+      }
+    : skillHost
   const settings = await Settings.init({ cwd: sessionCwd, agentDir })
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
@@ -1153,7 +1205,9 @@ async function createPhiAgentSession(
     definition.name,
     deps.skillTools
       ? buildSkillRunTool(requestHost, {
-          ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+          ...(typeof remoteSkillHost === 'string'
+            ? { runtimeSessionId: remoteSkillHost }
+            : remoteSkillHost),
           allowedSkills: definition.skills
         })
       : undefined
@@ -1161,6 +1215,8 @@ async function createPhiAgentSession(
   for (const tool of deps.remoteTools?.() ?? []) {
     if (tool.name !== 'read' || !deps.remoteRead) availableTools.set(tool.name, tool)
   }
+  const remoteMcpTools = deps.remoteMcpTools?.() ?? []
+  for (const tool of remoteMcpTools) availableTools.set(tool.name, tool)
   if (deps.remoteRead) {
     availableTools.set(
       'read',
@@ -1174,19 +1230,23 @@ async function createPhiAgentSession(
       (tool) => definition.skills.includes(tool.skill) && tool.attachTo.includes(definition.name)
     ),
     requestHost,
-    skillHost
+    remoteSkillHost
   )
   for (const tool of attachedScriptTools) availableTools.set(tool.name, tool)
   if (holder) {
     const envRequest = buildEnvRequestTool(requestHost, {
       runtimeSessionId: sessionId,
       binding: holder,
-      agent: definition.name
+      agent: definition.name,
+      ...(deps.remoteProject ? { remoteProject: deps.remoteProject } : {})
     })
     availableTools.set(envRequest.name, envRequest)
   }
   const declaredTools = [...definition.tools]
   for (const tool of attachedScriptTools) {
+    if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
+  }
+  for (const tool of remoteMcpTools) {
     if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
   }
   if (holder && !declaredTools.includes('env_request')) declaredTools.push('env_request')
@@ -1239,7 +1299,9 @@ async function createPhiAgentSession(
     restrictToolNames: true,
     // Without this the restriction also drops our Phi tool functions.
     allowRestrictedCustomTools: true,
-    enableMCP: false,
+    // Restricted specialists cannot let the SDK discover tools itself; verified remote
+    // MCP tools are injected above from the parent manager under the same guard state.
+    enableMCP: Boolean(deps.remoteRoot),
     enableLsp: false,
     ...(deps.remoteRoot
       ? {
@@ -1273,7 +1335,8 @@ async function createPhiAgentSession(
 async function syncFeaturedApiKeysForSession(
   result: CreateAgentSessionResult,
   agentDir: string,
-  id?: string
+  id?: string,
+  remoteMcpAccess?: RemoteMcpAccess
 ): Promise<void> {
   const manager = result.mcpManager
   if (!manager) return
@@ -1294,7 +1357,25 @@ async function syncFeaturedApiKeysForSession(
       // A failed connector must not prevent the ordinary chat session from starting.
     }
   }
+  if (remoteMcpAccess) refreshRemoteMcpAccess(remoteMcpAccess, agentDir, manager.getTools())
   await result.session.refreshMCPTools(manager.getTools())
+}
+
+function refreshRemoteMcpAccess(
+  access: RemoteMcpAccess,
+  agentDir: string,
+  tools: ReturnType<MCPManager['getTools']>
+): RemoteMcpProfilePolicy {
+  access.state = undefined
+  const policy = buildRemoteMcpProfilePolicy(readMcpConfig(agentDir), {
+    agentDir,
+    localProjectAnchor: access.localProjectAnchor
+  })
+  access.state = buildRemoteMcpGuardState(policy, tools, {
+    agentDir,
+    localProjectAnchor: access.localProjectAnchor
+  })
+  return policy
 }
 
 type LiveMcpManager = {
@@ -1303,7 +1384,7 @@ type LiveMcpManager = {
     configs: Record<string, Record<string, unknown>>,
     sources: Record<string, unknown>
   ): Promise<unknown>
-  getTools(): unknown
+  getTools(): ReturnType<MCPManager['getTools']>
 }
 
 function liveMcpManager(result: CreateAgentSessionResult): LiveMcpManager | undefined {
@@ -1345,11 +1426,45 @@ function injectableServerConfig(
   }
 }
 
+async function disconnectSessionMcpServer(
+  session: SessionEntry,
+  name: string,
+  manager: LiveMcpManager
+): Promise<void> {
+  const transports = session.ownedStdioTransports?.get(name)
+  if (transports) transports.stopping = true
+  try {
+    await manager.disconnectServer(name)
+  } finally {
+    await transports?.drain()
+  }
+  session.mcpLeases?.get(name)?.release()
+  session.mcpLeases?.delete(name)
+  session.ownedStdioTransports?.delete(name)
+}
+
+function connectorConfigForSession(
+  session: SessionEntry,
+  entry: Record<string, unknown>,
+  manager: LiveMcpManager
+): { config?: Record<string, unknown>; reason?: string } {
+  const access = session.remoteMcpAccess
+  if (!access) return { config: injectableServerConfig(entry) }
+  refreshRemoteMcpAccess(access, session.agentDir, manager.getTools())
+  const decision = prepareRemoteMcpServerEntry(entry, {
+    agentDir: session.agentDir,
+    localProjectAnchor: access.localProjectAnchor
+  })
+  return decision.allowed
+    ? { config: injectableServerConfig(decision.entry) }
+    : { reason: decision.reason }
+}
+
 async function applyConnectorEnabledForSession(session: SessionEntry, name: string): Promise<void> {
   const { result, agentDir } = session
   if (session.disposing) return
   if (API_KEY_CONNECTOR_IDS.includes(name as (typeof API_KEY_CONNECTOR_IDS)[number])) {
-    await syncFeaturedApiKeysForSession(result, agentDir, name)
+    await syncFeaturedApiKeysForSession(result, agentDir, name, session.remoteMcpAccess)
     return
   }
   const manager = liveMcpManager(result)
@@ -1357,18 +1472,15 @@ async function applyConnectorEnabledForSession(session: SessionEntry, name: stri
   const entry = readMcpServerEntry(name, agentDir)
   const disabled = isMcpConnectorUserDisabled(name, agentDir) || entry?.enabled === false
   if (disabled) {
-    const transports = session.ownedStdioTransports?.get(name)
-    if (transports) transports.stopping = true
-    try {
-      await manager.disconnectServer(name)
-    } finally {
-      await transports?.drain()
-    }
-    session.mcpLeases?.get(name)?.release()
-    session.mcpLeases?.delete(name)
-    session.ownedStdioTransports?.delete(name)
+    await disconnectSessionMcpServer(session, name, manager)
   } else if (entry) {
-    const config = injectableServerConfig(entry)
+    const prepared = connectorConfigForSession(session, entry, manager)
+    if (prepared.reason) {
+      await disconnectSessionMcpServer(session, name, manager)
+      await result.session.refreshMCPTools(manager.getTools() as never)
+      throw new Error(`${name}：${prepared.reason}`)
+    }
+    const config = prepared.config
     if (config) {
       const marker = readManagedMarker(entry)
       if (!marker && entry.phiManaged !== undefined)
@@ -1411,6 +1523,9 @@ async function applyConnectorEnabledForSession(session: SessionEntry, name: stri
       }
     }
   }
+  if (session.remoteMcpAccess) {
+    refreshRemoteMcpAccess(session.remoteMcpAccess, agentDir, manager.getTools())
+  }
   await result.session.refreshMCPTools(manager.getTools() as never)
 }
 
@@ -1422,25 +1537,54 @@ async function applyConnectorEnabled(name: string): Promise<void> {
 
 async function leasedProfileMcpManager(
   agentDir: string,
-  cwd: string,
+  projectCwd: string,
   settings: Settings,
-  authStorage: AuthStorage
+  authStorage: AuthStorage,
+  remoteProjectAnchor?: string
 ): Promise<{
   manager: MCPManager
   leases: Map<string, EnvironmentLease>
   transports: Map<string, OwnedStdioTransportScope>
+  remotePolicy?: RemoteMcpProfilePolicy
 }> {
   const profile = readMcpConfig(agentDir)
-  const snapshot = await loadAllMCPConfigs(cwd, {
+  const plan = remoteMcpLoadPlan({
+    projectCwd,
+    agentDir,
     enableProjectConfig: settings.get('mcp.enableProjectConfig') ?? true,
+    remote: remoteProjectAnchor !== undefined
+  })
+  const discoveryOptions = {
     filterExa: true,
     extensionRoots: {
       explicit: [],
-      mode: 'merge',
+      mode: 'merge' as const,
       configured: settings.get('extensions') ?? [],
       configuredLevel: settings.extensionsSourceLevel()
     }
-  })
+  }
+  let snapshot: Awaited<ReturnType<typeof loadAllMCPConfigs>>
+  let remotePolicy: RemoteMcpProfilePolicy | undefined
+  if (plan.globalOnly && remoteProjectAnchor) {
+    const prepared = await loadRemoteApplicationMcp({
+      agentDir,
+      localProjectAnchor: remoteProjectAnchor,
+      profile,
+      options: discoveryOptions,
+      load: async (loadCwd, options) =>
+        (await loadAllMCPConfigs(
+          loadCwd,
+          options as Parameters<typeof loadAllMCPConfigs>[1]
+        )) as unknown as McpSnapshotLike
+    })
+    snapshot = prepared.snapshot as unknown as Awaited<ReturnType<typeof loadAllMCPConfigs>>
+    remotePolicy = prepared.policy
+  } else {
+    snapshot = await loadAllMCPConfigs(plan.cwd, {
+      ...discoveryOptions,
+      enableProjectConfig: plan.enableProjectConfig
+    })
+  }
   const leases = new Map<string, EnvironmentLease>()
   try {
     for (const [name, config] of Object.entries(snapshot.configs)) {
@@ -1473,11 +1617,11 @@ async function leasedProfileMcpManager(
         await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId: marker.envId })
       )
     }
-    const manager = new MCPManager(cwd, null, async () => snapshot)
+    const manager = new MCPManager(plan.cwd, null, async () => snapshot)
     const transports = trackOwnedStdioTransports(manager)
     manager.setAuthStorage(authStorage)
     if (settings.get('mcp.notifications')) manager.setNotificationsEnabled(true)
-    return { manager, leases, transports }
+    return { manager, leases, transports, ...(remotePolicy ? { remotePolicy } : {}) }
   } catch (error) {
     for (const lease of leases.values()) lease.release()
     throw error
@@ -1534,7 +1678,7 @@ async function syncFeaturedApiKeys(id?: string): Promise<void> {
   if (id && !API_KEY_CONNECTOR_IDS.includes(id as (typeof API_KEY_CONNECTOR_IDS)[number])) return
   await Promise.all(
     [...sessions.values()].map((entry) =>
-      syncFeaturedApiKeysForSession(entry.result, entry.agentDir, id)
+      syncFeaturedApiKeysForSession(entry.result, entry.agentDir, id, entry.remoteMcpAccess)
     )
   )
 }
@@ -1551,6 +1695,10 @@ async function createSession(params: unknown): Promise<unknown> {
     remoteLocation?.kind === 'ssh' &&
     typeof remoteLocation.remoteRoot === 'string' &&
     remoteLocation.remoteRoot.startsWith('/') &&
+    typeof remoteLocation.canonicalRoot === 'string' &&
+    remoteLocation.canonicalRoot.startsWith('/') &&
+    typeof remoteLocation.hostProfileId === 'string' &&
+    remoteLocation.hostProfileId.length > 0 &&
     typeof remoteRecord?.projectId === 'string' &&
     typeof remoteRecord.phiSessionId === 'string' &&
     remoteRecord.phiSessionId.length > 0
@@ -1576,11 +1724,25 @@ async function createSession(params: unknown): Promise<unknown> {
   if (remoteRoot && !remoteContextFiles) {
     throw new Error('Invalid remote project instruction context')
   }
+  const remoteProjectIdentity = remoteRoot
+    ? {
+        sessionId: stringValue(remoteRecord?.phiSessionId),
+        projectId: stringValue(remoteRecord?.projectId)
+      }
+    : undefined
+  const remoteRuntimeRecord = isRecord(record.remoteRuntimeRoot)
+    ? record.remoteRuntimeRoot
+    : undefined
+  const projectRuntimeOverride =
+    remoteRuntimeRecord?.source === 'project' && typeof remoteRuntimeRecord.configured === 'string'
+      ? remoteRuntimeRecord.configured
+      : undefined
   const remoteRuntime = remoteRoot
     ? resolveRemoteRuntimePromptContext(
         {
           hostProfileId: stringValue(remoteLocation?.hostProfileId),
-          canonicalRoot: stringValue(remoteLocation?.canonicalRoot)
+          canonicalRoot: stringValue(remoteLocation?.canonicalRoot),
+          ...(projectRuntimeOverride ? { projectOverride: projectRuntimeOverride } : {})
         },
         agentDir
       )
@@ -1592,7 +1754,7 @@ async function createSession(params: unknown): Promise<unknown> {
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
-  if (!remoteRoot && !noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
+  if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
   const personaMarkdown = stringValue(record.personaMarkdown).trim()
   const phiAgents = Array.isArray(record.phiAgents)
     ? record.phiAgents.filter(isPhiAgentDefinition)
@@ -1602,6 +1764,10 @@ async function createSession(params: unknown): Promise<unknown> {
   const agentRuns = new AgentRunRegistry()
   const parentRef: { current?: CreateAgentSessionResult } = {}
   const browserTextVault = new BrowserTextVault()
+  const remoteSkillToolNames = new Set<string>()
+  const remoteMcpAccess: RemoteMcpAccess | undefined = remoteRoot
+    ? { localProjectAnchor: cwd }
+    : undefined
   const extensionFactories = [
     createNextActionInstructionExtension(
       async () => (await requestHost('settings.nextActionSuggestionsEnabled', {})) === true
@@ -1609,7 +1775,14 @@ async function createSession(params: unknown): Promise<unknown> {
     createPlanReviewToolGuardExtension(
       () => parentRef.current?.session.getPlanModeState()?.enabled === true
     ),
-    ...(remoteRoot ? [createRemoteProjectToolGuardExtension()] : []),
+    ...(remoteRoot
+      ? [
+          createRemoteProjectToolGuardExtension({
+            dynamicSkillToolNames: () => remoteSkillToolNames,
+            remoteMcpToolState: () => remoteMcpAccess?.state
+          })
+        ]
+      : []),
     createRemoteUrlGuardExtension(),
     ...(record.projectBound && !remoteRoot ? [createProjectToolBoundaryExtension(cwd)] : []),
     ...(phiAgents.length > 0 ? [createSpecialistFallbackExtension(phiAgents, agentRuns)] : []),
@@ -1666,14 +1839,24 @@ async function createSession(params: unknown): Promise<unknown> {
   // named after the agent (for example `Wrapper`), and none of
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
-  // Local only. A failed listing is logged and registers nothing; it must not block the session.
-  const skillTools = remoteRoot ? undefined : await loadSkillScriptTools(cwd)
+  // A failed listing is logged and registers nothing; it must not block the session.
+  const skillTools = await loadSkillScriptTools(
+    cwd,
+    remoteProjectIdentity
+      ? {
+          runtimeSessionId: sessionId,
+          sessionId: remoteProjectIdentity.sessionId,
+          projectId: remoteProjectIdentity.projectId
+        }
+      : undefined
+  )
   const enabledMainSkillNames = new Set(
     resources?.getSkills().skills.map((skill) => skill.name) ?? []
   )
   const mainSkillTools = skillTools
     ? filterMainScriptTools(skillTools, enabledMainSkillNames)
     : undefined
+  for (const tool of mainSkillTools ?? []) remoteSkillToolNames.add(tool.name)
   const remoteWorkspaceRead = remoteRoot
     ? async (path: string): Promise<RemoteWorkspaceReadResult> =>
         (await requestHost('remoteWorkspace.read', {
@@ -1702,11 +1885,19 @@ async function createSession(params: unknown): Promise<unknown> {
             ...(remoteRoot
               ? {
                   remoteRoot,
+                  ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {}),
                   remoteContextFiles: remoteContextFiles ?? [],
                   remoteTools: () =>
                     customTools.filter((tool) =>
                       ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(tool.name)
                     ),
+                  remoteMcpTools: () => {
+                    const names = remoteMcpAccess?.state?.allowedToolNames
+                    return (parentRef.current?.mcpManager?.getTools() ?? []).filter((tool) =>
+                      names?.has(tool.name)
+                    )
+                  },
+                  remoteMcpToolState: () => remoteMcpAccess?.state,
                   ...(remoteWorkspaceRead ? { remoteRead: remoteWorkspaceRead } : {})
                 }
               : {}),
@@ -1897,24 +2088,24 @@ async function createSession(params: unknown): Promise<unknown> {
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),
     ...userInteractionCustomTools,
-    ...(!remoteRoot
-      ? [
-          buildEnvRequestTool(requestHost, {
-            runtimeSessionId: sessionId,
-            requireEnvironment: true
-          })
-        ]
-      : []),
+    buildEnvRequestTool(requestHost, {
+      runtimeSessionId: sessionId,
+      requireEnvironment: true,
+      ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {})
+    }),
     ...(mainSkillTools
       ? [
           buildSkillRunTool(requestHost, {
             runtimeSessionId: sessionId,
-            allowedSkills: [...enabledMainSkillNames]
+            allowedSkills: [...enabledMainSkillNames],
+            ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {})
           }),
           ...buildScriptTools(
             mainSkillTools.filter((tool) => tool.attachTo.includes('main')),
             requestHost,
-            sessionId
+            remoteProjectIdentity
+              ? { runtimeSessionId: sessionId, remoteProject: remoteProjectIdentity }
+              : sessionId
           )
         ]
       : []),
@@ -1923,14 +2114,25 @@ async function createSession(params: unknown): Promise<unknown> {
   ]
 
   const selectedModel = await modelBySelector(ctx, record.model)
-  const leasedMcp =
-    !remoteRoot && !noTools
-      ? await leasedProfileMcpManager(agentDir, settingsCwd, settings, ctx.authStorage)
-      : undefined
+  const leasedMcp = !noTools
+    ? await leasedProfileMcpManager(
+        agentDir,
+        cwd,
+        settings,
+        ctx.authStorage,
+        remoteRoot ? cwd : undefined
+      )
+    : undefined
   const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
   let created: CreateAgentSessionResult | undefined
   try {
     const mcpTools = leasedMcp ? (await leasedMcp.manager.discoverAndConnect()).tools : undefined
+    if (remoteMcpAccess && leasedMcp?.remotePolicy) {
+      remoteMcpAccess.state = buildRemoteMcpGuardState(leasedMcp.remotePolicy, mcpTools ?? [], {
+        agentDir,
+        localProjectAnchor: remoteMcpAccess.localProjectAnchor
+      })
+    }
     const result = await createLegacyAgentSession({
       agentId: `phi-main-${sessionId}`,
       agentDisplayName: 'Main',
@@ -1958,7 +2160,7 @@ async function createSession(params: unknown): Promise<unknown> {
       ...(customTools.length > 0 ? { customTools } : {}),
       ...(remoteRoot
         ? {
-            enableMCP: false,
+            enableMCP: true,
             enableLsp: false,
             disableExtensionDiscovery: true,
             includeWorkspaceTree: false,
@@ -1984,10 +2186,13 @@ async function createSession(params: unknown): Promise<unknown> {
     created = result
     if (leasedMcp) {
       await result.session.refreshMCPTools(mcpTools ?? [])
-      leasedMcp.manager.setOnToolsChanged((tools) => result.session.refreshMCPTools(tools))
+      leasedMcp.manager.setOnToolsChanged((tools) => {
+        if (remoteMcpAccess) refreshRemoteMcpAccess(remoteMcpAccess, agentDir, tools)
+        return result.session.refreshMCPTools(tools)
+      })
     }
 
-    if (!remoteRoot && !noTools) await syncFeaturedApiKeysForSession(result, agentDir)
+    if (!noTools) await syncFeaturedApiKeysForSession(result, agentDir, undefined, remoteMcpAccess)
 
     if (remoteRoot) {
       await initializeExtensions(result.session, {
@@ -2030,6 +2235,7 @@ async function createSession(params: unknown): Promise<unknown> {
       stopAgentRunNotices,
       browserTextVault,
       mcpLeases,
+      ...(remoteMcpAccess ? { remoteMcpAccess } : {}),
       ...(leasedMcp
         ? { ownedMcpManager: leasedMcp.manager, ownedStdioTransports: leasedMcp.transports }
         : {})

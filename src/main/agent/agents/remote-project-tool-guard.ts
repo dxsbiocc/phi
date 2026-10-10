@@ -10,6 +10,13 @@ import {
 } from '../remote-workspace-search-tools'
 import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../download/remote-project-download-tool'
 import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../deliverables/remote-present-tool'
+import { PHI_ENV_REQUEST_DESCRIPTION } from '../content/env-request-tool'
+import { PHI_SKILL_RUN_DESCRIPTION } from '../content/skill-tools'
+import {
+  REMOTE_MCP_UNVERIFIED_REASON,
+  remoteMcpToolCallReason,
+  type RemoteMcpGuardState
+} from '../mcp/remote-mcp-policy'
 
 export const REMOTE_TOOLS_PENDING_REASON = '远程项目的该工具暂不可用；该操作没有在本机执行。'
 
@@ -61,7 +68,9 @@ const SAFE_REMOTE_BUILTINS = new Set(['web_search'])
 
 const VERIFIED_REMOTE_TOOL_DESCRIPTIONS = new Map([
   ['download_file', PHI_REMOTE_DOWNLOAD_DESCRIPTION],
-  ['present_files', PHI_REMOTE_PRESENT_FILES_DESCRIPTION]
+  ['present_files', PHI_REMOTE_PRESENT_FILES_DESCRIPTION],
+  ['skill_run', PHI_SKILL_RUN_DESCRIPTION],
+  ['env_request', PHI_ENV_REQUEST_DESCRIPTION]
 ])
 
 /** Each verified same-name remote backend is released separately. */
@@ -74,7 +83,9 @@ export function remoteProjectToolDecision(
   remoteWriteRegistered = false,
   remoteEditRegistered = false,
   safePhiToolRegistered = false,
-  safeBuiltinRegistered = false
+  safeBuiltinRegistered = false,
+  verifiedRemoteRuntimeToolRegistered = false,
+  dynamicSkillToolRegistered = false
 ): { block: true; reason: string } | undefined {
   if (SAFE_REMOTE_BUILTINS.has(toolName) && safeBuiltinRegistered) return undefined
   if (toolName === 'read' && remoteReadRegistered) return undefined
@@ -84,11 +95,21 @@ export function remoteProjectToolDecision(
   if (toolName === 'write' && remoteWriteRegistered) return undefined
   if (toolName === 'edit' && remoteEditRegistered) return undefined
   if (
-    (SAFE_PHI_REMOTE_TOOLS.has(toolName) || VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName)) &&
+    (SAFE_PHI_REMOTE_TOOLS.has(toolName) ||
+      (VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) &&
+        toolName !== 'skill_run' &&
+        toolName !== 'env_request')) &&
     safePhiToolRegistered
   ) {
     return undefined
   }
+  if (
+    (toolName === 'skill_run' || toolName === 'env_request') &&
+    verifiedRemoteRuntimeToolRegistered
+  ) {
+    return undefined
+  }
+  if (dynamicSkillToolRegistered) return undefined
   return { block: true, reason: remoteToolBlockedReason(toolName) }
 }
 
@@ -104,10 +125,10 @@ function remoteToolBlockedReason(toolName: string): string {
     return `${toolName}：当前文献库绑定本机项目文献库；请先在远程项目中使用普通文件记录。${noFallback}`
   }
   if (toolName === 'skill_run' || toolName === 'env_request') {
-    return `${toolName}：服务器运行时后端尚未完成验证；请在远程主机设置检查运行时根目录与 micromamba。${noFallback}`
+    return `${toolName}：当前会话没有注册经过验证的服务器运行时后端；请在远程主机设置检查运行时根目录与 micromamba，或重新打开远程会话。${noFallback}`
   }
   if (toolName.startsWith('mcp__')) {
-    return `${toolName}：远程项目 MCP 配置与 stdio 执行尚未接入 WorkspaceHost；请改用 browser/web_search 或已验证的远程工具。${noFallback}`
+    return `${toolName}：${REMOTE_MCP_UNVERIFIED_REASON}服务器端 stdio WorkspaceHost 暂未支持。${noFallback}`
   }
   if (toolName === 'task') {
     return `${toolName}：SDK task 会继承本机 cwd，尚无安全的远程子会话后端；请使用 Wrapper 与 agent_* 管理工具。${noFallback}`
@@ -133,15 +154,34 @@ function remoteToolBlockedReason(toolName: string): string {
   return `${toolName}：${REMOTE_TOOLS_PENDING_REASON}`
 }
 
-export function createRemoteProjectToolGuardExtension(): ExtensionFactory {
+export function createRemoteProjectToolGuardExtension(
+  options: {
+    dynamicSkillToolNames?: () => ReadonlySet<string>
+    remoteMcpToolState?: () => RemoteMcpGuardState | undefined
+  } = {}
+): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
-      const registered = needsRegistration(event.toolName) ? pi.getAllTools() : []
+      const dynamicNames = options.dynamicSkillToolNames?.() ?? new Set<string>()
+      const registered = needsRegistration(event.toolName, dynamicNames) ? pi.getAllTools() : []
+      if (event.toolName.startsWith('mcp__')) {
+        const matches = registered.filter((tool) => tool.name === event.toolName)
+        const source = matches.length === 1 ? matches[0]?.sourceInfo.source : undefined
+        const reason = remoteMcpToolCallReason(
+          event.toolName,
+          event.input,
+          source,
+          options.remoteMcpToolState?.()
+        )
+        return reason ? { block: true, reason: `${event.toolName}：${reason}` } : undefined
+      }
       return remoteProjectToolDecision(
         event.toolName,
         ...workspaceRegistrationFlags(registered),
         verifiedCustomTool(event.toolName, registered),
-        verifiedBuiltinTool(event.toolName, registered)
+        verifiedBuiltinTool(event.toolName, registered),
+        verifiedRemoteRuntimeTool(event.toolName, registered),
+        verifiedDynamicSkillTool(event.toolName, registered, dynamicNames)
       )
     })
   }
@@ -162,12 +202,36 @@ function workspaceRegistrationFlags(
   ) as [boolean, boolean, boolean, boolean, boolean, boolean]
 }
 
-function needsRegistration(toolName: string): boolean {
+function needsRegistration(toolName: string, dynamicNames: ReadonlySet<string>): boolean {
   return (
     ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(toolName) ||
     SAFE_REMOTE_BUILTINS.has(toolName) ||
     SAFE_PHI_REMOTE_TOOLS.has(toolName) ||
-    VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName)
+    VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) ||
+    toolName.startsWith('mcp__') ||
+    dynamicNames.has(toolName)
+  )
+}
+
+function verifiedRemoteRuntimeTool(toolName: string, registered: readonly ToolInfo[]): boolean {
+  if (toolName !== 'skill_run' && toolName !== 'env_request') return false
+  const description = VERIFIED_REMOTE_TOOL_DESCRIPTIONS.get(toolName)
+  return registered.some(
+    (tool) =>
+      tool.name === toolName &&
+      tool.description === description &&
+      tool.sourceInfo.source === 'extension'
+  )
+}
+
+function verifiedDynamicSkillTool(
+  toolName: string,
+  registered: readonly ToolInfo[],
+  dynamicNames: ReadonlySet<string>
+): boolean {
+  return (
+    dynamicNames.has(toolName) &&
+    registered.some((tool) => tool.name === toolName && tool.sourceInfo.source === 'extension')
   )
 }
 

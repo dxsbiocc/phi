@@ -2787,6 +2787,7 @@ async function harness(
         ...(runtimeRoot ? { runtimeRoot } : {})
       }),
       clearRemoteRuntimeRootSetting: (): void => {},
+      clearRemoteMicromambaMirrorSetting: (): void => {},
       updateProjectRemoteConnectionRuntimeAware: (id: string) => ({
         id,
         name: 'Project',
@@ -2843,6 +2844,51 @@ async function harness(
           }
         })
       }
+    },
+    './agent/remote-micromamba-artifact': {
+      remoteMicromambaManifestVersion: () => '2.9.0-0'
+    },
+    './agent/remote-runtime-root-store': {
+      readHostRuntimeRoot: () => undefined
+    },
+    './agent/remote-runtime-root': {
+      resolveRemoteRuntimeRoot: (input: { projectOverride?: string; hostOverride?: string }) => ({
+        source: input.projectOverride ? 'project' : input.hostOverride ? 'host' : 'default',
+        configured: input.projectOverride ?? input.hostOverride ?? '~/.phi/runtime'
+      })
+    },
+    './agent/remote-runtime/controller': {
+      RemoteRuntimeController: class {
+        readonly environments = { cancel: (): void => {} }
+        readonly skills = { cancel: (): void => {} }
+        owns(): boolean {
+          return false
+        }
+        scriptTools(): never {
+          throw new Error('remote runtime is mocked')
+        }
+        runSkill(): never {
+          throw new Error('remote runtime is mocked')
+        }
+        runScriptTool(): never {
+          throw new Error('remote runtime is mocked')
+        }
+        requestEnvironment(): never {
+          throw new Error('remote runtime is mocked')
+        }
+        bindEnvironment(): never {
+          throw new Error('remote runtime is mocked')
+        }
+        approvalFor(): undefined {
+          return undefined
+        }
+      }
+    },
+    './agent/remote-runtime/base-environment': {
+      resolveRemoteBaseEnvironment: async () => ({ packages: [], channels: ['conda-forge'] })
+    },
+    './agent/remote-runtime/project-runtime-root': {
+      resolveProjectRuntimeRoot: () => ({ source: 'default', configured: '~/.phi/runtime' })
     },
     './agent/remote-doctor': {
       remoteDoctor: async (hostProfileId: string, remotePath?: string, options?: unknown) => {
@@ -3169,7 +3215,8 @@ async function harness(
       }
     },
     './agent/deliverables/present-files': {
-      validatePresentedFiles: (_cwd: string, value: unknown) => {
+      validatePresentedFiles: (cwd: string, value: unknown) => {
+        if (cwd.includes('remote-project-anchors')) throw new Error('local fallback rejected')
         if (!Array.isArray(value)) throw new Error('Invalid delivery files')
         return value
       },

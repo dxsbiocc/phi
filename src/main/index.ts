@@ -188,6 +188,13 @@ import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
 import { registerRemoteMicromambaIpc } from './agent/remote-micromamba-ipc'
+import { remoteMicromambaManifestVersion } from './agent/remote-micromamba-artifact'
+import { readHostRuntimeRoot } from './agent/remote-runtime-root-store'
+import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
+import { RemoteRuntimeController } from './agent/remote-runtime/controller'
+import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
+import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
+import type { RemoteRuntimeTarget } from './agent/remote-runtime/workspace'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
 import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
@@ -1834,6 +1841,56 @@ const skillHost = createSkillHost({
   presentArtifacts: (request) => presentScriptArtifacts(request)
 })
 
+function projectRemoteRuntimeRoot(project: Project): ReturnType<typeof resolveRemoteRuntimeRoot> {
+  const hostOverride =
+    project.location.kind === 'ssh'
+      ? readHostRuntimeRoot(project.location.hostProfileId, AGENT_DIR)
+      : undefined
+  return resolveProjectRuntimeRoot(project, hostOverride)
+}
+
+function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undefined {
+  if (!isRecord(params)) return undefined
+  const runtimeSessionId = optionalStringField(params, 'runtimeSessionId')
+  const sessionId = optionalStringField(params, 'remoteSessionId')
+  const projectId = optionalStringField(params, 'projectId')
+  if (!runtimeSessionId || !sessionId || !projectId) return undefined
+  const project = getProject(projectId)
+  if (!project || project.location.kind !== 'ssh') return undefined
+  const root = projectRemoteRuntimeRoot(project)
+  return { runtimeSessionId, sessionId, projectId, configuredRoot: root.configured }
+}
+
+const remoteRuntimeController = new RemoteRuntimeController({
+  micromambaVersion: remoteMicromambaManifestVersion(),
+  resolveTarget: directRemoteRuntimeTarget,
+  confirmEnvironment: (request) => confirmEnvironmentRequest(request),
+  resolveBaseEnvironment: (ref, pluginId) => resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
+  listSkills: async () => {
+    const plugins = new Map(
+      loadedPlugins({ agentDir: AGENT_DIR }).map((plugin) => [plugin.id, plugin])
+    )
+    return (await listGlobalSkills())
+      .filter((skill) => skill.enabled)
+      .map((skill) => {
+        const plugin = skill.sourceId ? plugins.get(skill.sourceId) : undefined
+        return {
+          name: skill.name,
+          filePath: skill.filePath,
+          dir: dirname(skill.filePath),
+          insidePlugin: skill.sourceCategory === 'plugin',
+          ...(plugin ? { pluginId: plugin.id, toolPrefix: plugin.toolPrefix } : {}),
+          ...(skill.sourceId === 'office'
+            ? {
+                remoteUnsupportedReason:
+                  '该 Skill 绑定本机 Office 应用或文档句柄；请先下载到本机 Office 工作流，或在服务器用 bash/skill_run 生成普通文件后用 present_files 交付。没有回退到本机执行。'
+              }
+            : {})
+        }
+      })
+  }
+})
+
 function phiPluginListItems(): PhiPluginListItem[] {
   const enablement = getEnablementSnapshot({ agentDir: AGENT_DIR })
   return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) =>
@@ -1922,22 +1979,46 @@ async function installedPluginNamespace(projectDir?: string): Promise<PluginName
     toolPrefixes
   }
 }
-getOmpBridge().registerHostHandler('skills.scriptTools', (params) => skillHost.scriptTools(params))
-getOmpBridge().registerHostHandler('skills.run', (params) => skillHost.run(params))
-getOmpBridge().registerHostHandler('skills.scriptTool', (params) => skillHost.scriptTool(params))
-getOmpBridge().registerHostHandler('skills.cancel', (params) => skillHost.cancel(params))
+getOmpBridge().registerHostHandler('skills.scriptTools', (params) =>
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.scriptTools(params)
+    : skillHost.scriptTools(params)
+)
+getOmpBridge().registerHostHandler('skills.run', (params) =>
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.runSkill(params)
+    : skillHost.run(params)
+)
+getOmpBridge().registerHostHandler('skills.scriptTool', (params) =>
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.runScriptTool(params)
+    : skillHost.scriptTool(params)
+)
+getOmpBridge().registerHostHandler('skills.cancel', (params) => {
+  if (remoteRuntimeController.owns(params)) return remoteRuntimeController.skills.cancel(params)
+  return skillHost.cancel(params)
+})
 getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
-  bindAgentSession(params, {
-    builds: environmentBuilds,
-    confirmBuild: (request) => confirmEnvironmentBuild(request)
-  })
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.bindEnvironment(params)
+    : bindAgentSession(params, {
+        builds: environmentBuilds,
+        confirmBuild: (request) => confirmEnvironmentBuild(request)
+      })
 )
 getOmpBridge().registerHostHandler('environments.request', (params) =>
-  requestProjectEnvironment(params, {
-    root: getRuntimeRoot(),
-    builds: environmentBuilds,
-    confirm: (request) => confirmEnvironmentRequest(request)
-  })
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.requestEnvironment(params)
+    : requestProjectEnvironment(params, {
+        root: getRuntimeRoot(),
+        builds: environmentBuilds,
+        confirm: (request) => confirmEnvironmentRequest(request)
+      })
+)
+getOmpBridge().registerHostHandler('environments.cancel', (params) =>
+  remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.environments.cancel(params)
+    : undefined
 )
 getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
 getOmpBridge().registerHostHandler(
@@ -7200,7 +7281,10 @@ async function getAgentSession(
               createApprovalExtension({
                 signal: sessionAbortController.signal,
                 classifyTool: (toolName, input) =>
-                  officeToolApproval(toolName) ?? skillHost.approvalFor(toolName, input),
+                  officeToolApproval(toolName) ??
+                  (remoteProject
+                    ? remoteRuntimeController.approvalFor(toolName, input)
+                    : skillHost.approvalFor(toolName, input)),
                 prepareClassifiedToolApproval: (toolName, input, _context, event) =>
                   prepareOfficeToolApproval(sessionKey, toolName, input, event),
                 ...(remoteProject
@@ -7417,6 +7501,7 @@ async function getAgentSession(
         projectBound: Boolean(project),
         ...(remoteProject
           ? {
+              ...(project ? { remoteRuntimeRoot: projectRemoteRuntimeRoot(project) } : {}),
               remoteProject: {
                 ...remoteProject,
                 phiSessionId: sessionManifest?.sessionId ?? '',

@@ -40,23 +40,139 @@
 
 分类口径：A 类不读取或解析项目文件系统，可在远程项目直接使用；B 类必须由已验证的 `WorkspaceHost` 或远程运行时后端执行；C 类绑定本机文件、进程或应用句柄，远程项目继续拒绝。所有放行都按“工具名 + 已注册后端来源”逐项验证，未知工具、同名 builtin、动态扩展和 `mcp__*` 不因前缀而自动放行；远程失败也不得回退到本机项目锚点。
 
-| 类别 | 实际注册面 | R2.5 结论 |
-| --- | --- | --- |
-| A | `browser`、`web_search`、`ask_user_question`、`palette_suggest` | 浏览器、搜索、Phi 问答 UI 与调色板不使用项目 cwd，逐项放行。`browser` 仍沿用远程会话当前的输入动作限制。SDK 没有独立 `web_fetch`：网页抓取原本是 builtin `read(URL)` 分支，而远程项目的 `read` 已被服务器文件读取覆盖；本次以 `browser`/`web_search` 为可用替代，不把 URL 交给本机项目 `read`。 |
-| A | 动态 Phi agent 名（远程当前只有 `Wrapper`）、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 只在对应 Phi custom tool 已实际注册时放行。Wrapper 运行已有远程 job 后端；管理工具只操作本会话的 run registry，不解析本机项目路径。builtin `task` 不在此列。 |
-| B（后续） | 条件 builtin `checkpoint`、`rewind`、`todo`、`goal`、`think`、`yield`、`ask`、`hub`；SDK 条件工具 `generate_image`、`tts` | 这些 SDK 工具不是本轮的 Phi 子智能体管理面；其中 checkpoint/todo/hub 可能读取 cwd、写会话文件或管理本机进程，图像/语音工具还需确认远程输出与交付路径。逐项证明不触碰本机项目锚点前继续 fail-closed。 |
-| B（已有） | `read`、`bash`、`glob`、`grep`、`write`、`edit` | 保持现有同名远程实现与 description/source 验签；任何 builtin 同名实现都拒绝。 |
-| B（R2.5 部分完成） | `skill_run`、动态 `<toolPrefix>_<name>` 脚本工具；Skills 列出/读取（资源能力，不是独立工具名） | 远程目录现只列出/读取全局 Skills，忽略本机 anchor 中伪造的项目资源；remote specialist 不再无条件清空其声明的全局 Skill。脚本执行仍需把经过校验的 Skill 资源按需放入服务器运行时根目录的内容寻址目录，再用服务器环境运行；完整 remote runtime service 落地前 `skill_run`/动态脚本工具继续明确拒绝，禁止调用本机 `runSkillScript`。项目级 Skill 留待远程资源信任机制。 |
-| B（R2.5 待后端） | `env_request` | 目标是仅使用 R2.2 配置的服务器运行时根和已安装、可运行的 micromamba 创建/复用环境；未安装、版本/平台不可用或服务器离线时返回明确指引，不自动安装、不转到本机求解或构建。现有 `environments.request` 会写本机 project/runtime，不能复用；独立 remote runtime service 完成前继续拒绝。 |
-| B（R2.5） | `download_file` | URL 与目标先校验，随后由服务器直接下载到远程项目目录。服务器缺少下载器或无法联网时明确报错；旧的 `remoteProject: true` 无后端路径继续拒绝且保持零本机 fetch/写入。 |
-| B（R2.5） | `present_files` | 用远程 host 校验项目内普通文件，记录 `ssh://` 引用；打开时复用已有远程预览/下载链，不把文件复制到本机 anchor。 |
-| B（后续） | `notebook.list`、`notebook.read`、`notebook.insert_cell`、`notebook.update_cell`、`notebook.delete_cell`、`notebook.run_cell`、`notebook.save`；`lib.save`、`lib.update`、`lib.remove`、`lib.list`、`lib.find`、`lib.audit` | 当前实现把 SDK cwd 交给本机 Notebook/Jupyter 或项目 literature store，不能放行。待各自接入 WorkspaceHost/远程 Jupyter 或明确的远程 library store；当前替代是远程 `read`/`write`/`bash`。 |
-| B（后续） | builtin `ast_grep`、`ast_edit`、`debug`、`eval`、`github`、`lsp`、`security_scan`、`task` | 都会读取 cwd、启动本机进程或创建继承本机 cwd/工具的子会话；逐个拥有远程后端前继续拒绝。`task` 的替代是已验证的 Phi agent/Wrapper 委派。 |
-| B（仅设计） | 动态 `mcp__<server>_<tool>`、全局/项目 MCP 配置 | 本次不实现。项目配置以后必须由 WorkspaceHost 从远程项目根读取并经过信任门禁；HTTP transport 可留在本机，但每个工具仍需后端 provenance；stdio 必须在服务器运行时执行。配置读取、stdio 启动、工具参数中的路径都不得读取本机 anchor 或静默回退。远程 `enableMCP` 继续为 `false`。 |
-| C | `office_read`、`office_apply`、`office_deliver`，以及安装 Skill 可能声明的本机 Office 脚本工具 | 当前 Office 后端绑定本机已打开文档、草稿与应用进程句柄。远程调用必须说明该原因，并建议先把文件下载到本机 Office 工作流，或在服务器用 `skill_run`/`bash` 生成普通文件后用 `present_files` 交付。不得注册本机 Office 后端作为远程后备。 |
-| C | `memory_edit`、`retain`、`recall`、`reflect`、`learn`、`manage_skill`，以及未声明 host-aware 的 extension/plugin tool | 这些条件工具绑定本机全局存储或内容写入；R2.5 不扩大权限，继续以具体原因拒绝。未来只有在明确区分全局状态与项目路径并补齐远程测试后才可改类。 |
+| 类别        | 实际注册面                                                                                                                                                                                                                             | R2.5 结论                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A           | `browser`、`web_search`、`ask_user_question`、`palette_suggest`                                                                                                                                                                        | 浏览器、搜索、Phi 问答 UI 与调色板不使用项目 cwd，逐项放行。`browser` 仍沿用远程会话当前的输入动作限制。SDK 没有独立 `web_fetch`：网页抓取原本是 builtin `read(URL)` 分支，而远程项目的 `read` 已被服务器文件读取覆盖；本次以 `browser`/`web_search` 为可用替代，不把 URL 交给本机项目 `read`。                                                                                |
+| A           | 动态 Phi agent 名（远程当前只有 `Wrapper`）、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 只在对应 Phi custom tool 已实际注册时放行。Wrapper 运行已有远程 job 后端；管理工具只操作本会话的 run registry，不解析本机项目路径。builtin `task` 不在此列。                                                                                                                                                                                                                   |
+| B（后续）   | 条件 builtin `checkpoint`、`rewind`、`todo`、`goal`、`think`、`yield`、`ask`、`hub`；SDK 条件工具 `generate_image`、`tts`                                                                                                              | 这些 SDK 工具不是本轮的 Phi 子智能体管理面；其中 checkpoint/todo/hub 可能读取 cwd、写会话文件或管理本机进程，图像/语音工具还需确认远程输出与交付路径。逐项证明不触碰本机项目锚点前继续 fail-closed。                                                                                                                                                                           |
+| B（已有）   | `read`、`bash`、`glob`、`grep`、`write`、`edit`                                                                                                                                                                                        | 保持现有同名远程实现与 description/source 验签；任何 builtin 同名实现都拒绝。                                                                                                                                                                                                                                                                                                  |
+| B（R2.5b）  | `skill_run`、动态 `<toolPrefix>_<name>` 脚本工具；Skills 列出/读取（资源能力，不是独立工具名）                                                                                                                                         | 远程目录只列出/读取已启用的全局 Skills，忽略本机 anchor 中伪造的项目资源。经过校验的完整 Skill 目录按内容哈希上传到服务器运行时根 `skills/<hash>/`，已完成的相同哈希直接复用；脚本以远程项目目录为 cwd，经 `WorkspaceHost.exec` 在登录节点运行，并可用 `micromamba run -p <remote-env>`。guard 只放行远程服务实际声明且注册的动态工具名。项目级 Skill 仍留待远程资源信任机制。 |
+| B（R2.5b）  | `env_request`                                                                                                                                                                                                                          | 保留原参数、结果与对话确认流程；远程分支只用 R2.2 配置的服务器运行时根和其中已安装的 micromamba，在 `envs/<内容哈希>/` 创建或复用环境。创建有超时、输出上限和取消，缺少 micromamba 时指向远程主机设置的安装按钮，conda 源不可达时提示配置镜像或先在可联网机器构建；不自动安装、不调用本机 solver/build、不写本机项目 anchor。                                                  |
+| B（R2.5）   | `download_file`                                                                                                                                                                                                                        | URL 与目标先校验，随后由服务器直接下载到远程项目目录。服务器缺少下载器或无法联网时明确报错；旧的 `remoteProject: true` 无后端路径继续拒绝且保持零本机 fetch/写入。                                                                                                                                                                                                             |
+| B（R2.5）   | `present_files`                                                                                                                                                                                                                        | 用远程 host 校验项目内普通文件，记录 `ssh://` 引用；打开时复用已有远程预览/下载链，不把文件复制到本机 anchor。                                                                                                                                                                                                                                                                 |
+| B（后续）   | `notebook.list`、`notebook.read`、`notebook.insert_cell`、`notebook.update_cell`、`notebook.delete_cell`、`notebook.run_cell`、`notebook.save`；`lib.save`、`lib.update`、`lib.remove`、`lib.list`、`lib.find`、`lib.audit`            | 当前实现把 SDK cwd 交给本机 Notebook/Jupyter 或项目 literature store，不能放行。待各自接入 WorkspaceHost/远程 Jupyter 或明确的远程 library store；当前替代是远程 `read`/`write`/`bash`。                                                                                                                                                                                       |
+| B（后续）   | builtin `ast_grep`、`ast_edit`、`debug`、`eval`、`github`、`lsp`、`security_scan`、`task`                                                                                                                                              | 都会读取 cwd、启动本机进程或创建继承本机 cwd/工具的子会话；逐个拥有远程后端前继续拒绝。`task` 的替代是已验证的 Phi agent/Wrapper 委派。                                                                                                                                                                                                                                        |
+| B（R2.6）   | 动态 `mcp__<server>_<tool>`、全局/项目 MCP 配置                                                                                                                                                                                        | 放行精确来自应用级 `agentDir/mcp.json` 的 HTTPS MCP，以及配置未引用本机项目路径、只调用外部 API 的桌面端 stdio MCP；工具名还必须同时出现在当前 `MCPManager` 工具集且注册来源为 `sourceInfo.source === "mcp"`。项目级 MCP、未知来源/同名 builtin、依赖本机项目文件的 stdio 继续拒绝；后者提示需在服务器运行且暂未支持，不读取或回退本机 anchor。                                                |
+| C           | `office_read`、`office_apply`、`office_deliver`，以及安装 Skill 可能声明的本机 Office 脚本工具                                                                                                                                         | 当前 Office 后端绑定本机已打开文档、草稿与应用进程句柄。远程调用必须说明该原因，并建议先把文件下载到本机 Office 工作流，或在服务器用 `skill_run`/`bash` 生成普通文件后用 `present_files` 交付。不得注册本机 Office 后端作为远程后备。                                                                                                                                          |
+| C           | `memory_edit`、`retain`、`recall`、`reflect`、`learn`、`manage_skill`，以及未声明 host-aware 的 extension/plugin tool                                                                                                                  | 这些条件工具绑定本机全局存储或内容写入；R2.5 不扩大权限，继续以具体原因拒绝。未来只有在明确区分全局状态与项目路径并补齐远程测试后才可改类。                                                                                                                                                                                                                                    |
 
 主 agent 的完整 builtin 注册候选还包括 `read`、`bash`、`edit`、`glob`、`grep`、`write` 及上表列出的条件工具；`search`/`find` 只是 `grep`/`glob` 的兼容别名。Phi custom tools 还包括上述交付、下载、Notebook、library、Skill、环境、Office、浏览器、用户交互和动态 agent 工具。远程关闭 extension discovery、LSP 与 MCP，因此未实际进入远程工具表的候选仍记录在此，但不会因分类而被隐式注册。
+
+## R2.5b 远程 Skill 与环境执行
+
+R2.5b 把 R2.5 已展示但仍拒绝的 Skill/环境能力接到登录节点运行时，范围不含 Slurm、Wrapper 运行策略、计算节点环境或 MCP：
+
+- `env_request` 的远程 handler 从 Phi 会话归属解析 SSH 项目和运行时根；项目覆盖优先于主机覆盖，最后使用默认值。环境目录和别名元数据只写服务器运行时根，内容哈希相同且完成标记有效时复用。
+- micromamba 必须已由设置页安装并可执行；运行命令固定使用 `--override-channels -c conda-forge --yes`，不追加基础环境声明的其他 channel，设置 `MAMBA_ROOT_PREFIX` 到远程运行时根，并把 AbortSignal、超时和输出上限交给 `WorkspaceHost.exec`。网络/软件源错误返回中文恢复建议，绝不转到本机。含 pip 或额外源码包的基础环境在远程安装器实现对应阶段前明确拒绝并给出预构建迁移方案，不静默删减规格；尚未建立服务器 alias 的 `project:` 环境不会读取本机 anchor，未绑定所属插件的 `plugin:` 环境也不会猜测来源，两者分别提示改用 `phi:`/预构建迁移或对应插件专家会话。
+- 全局 Skill 的普通文件、二进制资源与依赖一起哈希（含执行位）；纯 SSH 路径对二进制/大文件分块上传，复用时逐文件复核精确文件集、内容、长度与脚本可执行性。上传与远端 bundle 目标都拒绝符号链接和路径穿越，目录为 0700、脚本为 0755，完成标记最后写入。`skill_run` 和动态脚本都从服务器 bundle 取脚本，在远程项目 cwd 执行；`input-path`/`project-path` 只解析到远程项目，现有或悬空的越界符号链接会拒绝。声明 `./environment.yml` 的 Skill 在远程环境打包落地前明确拒绝，并提示改用 `phi:` 或预构建迁移，不回退本机。
+- `skill_run`、`env_request` 只有在精确描述签名的 Phi custom backend 实际注册时才放行；动态脚本还必须出现在该会话从远程 Skill 服务取得的工具名集合中。未知工具、builtin 同名工具、未声明 extension、项目级 Skill 和本机 Office/GUI 路径继续拒绝。
+- 服务级测试通过现有本机 bash 假 SSH 夹具覆盖环境创建/复用、缺失 micromamba、conda 不可达、上传幂等、执行、取消、输出截断、路径穿越、远程路径解析以及零本机 anchor 回退；worker 编排仍由 Node 可导入的小模块测试，避免测试直接导入 Bun worker。
+
+## R2.6 远程 MCP
+
+- SDK 把 MCP 工具规范化为 `mcp__<清洗后的 server>_<清洗后的 tool>`（超长名称会截断并附稳定哈希）。`AgentSession.getAllToolInfos()` 对当前 MCP 工具给出 `sourceInfo.source === "mcp"`，但 `sourceInfo.path` 只是 `<mcp:工具名>` 形式的合成标识，不包含配置文件路径；所以远程 guard 不能只信前缀或 `sourceInfo`，还必须把工具名与当前 `MCPManager.getTools()` 中、由应用级配置实际连接得到的 `mcpServerName` 逐项交叉验证。同名 builtin 的 source 仍是 `builtin`，未知或未在白名单中的名称继续拒绝。
+- 远程主会话和专家会话的 SDK `cwd` 都固定为本机 `agentDir`，远程项目路径只进入系统提示与 `WorkspaceHost` 身份；本机 remote-project anchor 不是会话 cwd。远程 MCP 加载也固定从 `agentDir` 发起并传 `enableProjectConfig: false`，随后按 source path 精确过滤为 `agentDir/mcp.json`。因此项目 anchor 下的 `.mcp.json`、`.phi/mcp.json`、`.omp/mcp.json`、`.pi/mcp.json` 或其他项目级来源不会进入远程 `MCPManager`；本地项目仍保持按项目 cwd 与设置读取项目级 MCP 的既有行为。
+- HTTPS HTTP/SSE MCP 继续在桌面端连接。stdio 也继续在桌面端启动，但仅限不依赖项目文件、用途为调用外部 API 的连接器：缺省 `cwd` 显式收敛到 `agentDir`；若 `cwd` 落在本机项目 anchor、配置的 `command`/`args`/`env`/受管环境元数据引用该 anchor，或任一执行字段使用项目路径占位符，则拒绝并提示“该 MCP 依赖项目文件，需要在服务器运行，暂未支持”，绝不把 cwd 回退到本机项目 anchor。服务器端 stdio 的上传、安装与进程生命周期不在 R2.6 范围内。
+- MCP 工具参数由服务器自定义 JSON Schema，完全可能包含路径。R2.6 不把本机路径翻译成服务器路径；调用参数若显式包含本机项目 anchor，同样在 guard 阶段拒绝，并建议改用远程 `read`/`bash`/`skill_run`，或等待服务器端 stdio MCP。相对路径和远程绝对路径不会被擅自解释为本机项目路径。
+
+## R4 远程 Notebook/Jupyter 设计
+
+本节只设计第 4 步的 Notebook/Jupyter 对齐，不改变 R2.5 对 `lib.*` 的结论：文献库仍需独立的远程 store 设计。目标是让本地与 SSH 项目共用 Notebook 文档模型、`analysis.*` IPC、Jupyter session/execution 客户端和七个 `notebook.*` 工具；差异只收敛在“项目文件由哪个 `WorkspaceHost` 读写”和“Jupyter/内核在哪个环境启动”。本阶段不连接真实服务器，也不实现 Slurm 计算节点内核。
+
+### R4.1 已核实的本地完整链路
+
+1. **Jupyter Server 的启动与连接**：`src/main/index.ts` 创建单例 `JupyterServerRegistry`，注入本地 `environmentBuilds` 和用户显式配置的 Jupyter 路径；`ensureJupyterServerReady`、`analysis:startJupyter` 与首次执行 cell 都会触发它。`src/main/agent/notebook/managed-jupyter-server.ts` 优先使用用户显式选中的 host Jupyter，否则解析本地受管环境 `phi:jupyter@1`，只会复用已就绪环境或加入正在进行的 build；当前 `src/main/index.ts` 没有给它 `runtimeSessionId`/确认回调，因此不会在这个入口静默新建环境。它把 Jupyter 的 data/config/runtime/kernels 目录收敛到本机 Phi runtime root，并限制 kernelspec 搜索到 Phi 自己的目录。
+2. **监听地址、端口与 token**：`src/main/agent/notebook/analysis-jupyter-server.ts` 当前不是随机端口，而是整个应用固定的 `127.0.0.1:28888`，`port_retries=0`、`allow_remote_access=False`。它显式传入空的 `ServerApp.token` 和 `ServerApp.password`，所以本地实现**不生成也不保存 token**；`JupyterServerConnection.token` 只是兼容可选 token 的数据结构。注册表从进程输出提取 endpoint，或轮询 `http://127.0.0.1:<port>/`；固定端口被旧 Jupyter 占用时还会用 `/api/status` 识别并接管。进程被 `unref()`，普通停止和应用退出时只向记录的子进程发送 `SIGTERM`。
+3. **内核发现、选择与创建**：`src/main/agent/environment/index.ts` 的 `detectConfiguredAnalysisKernels` 调用 `src/main/agent/notebook/analysis-kernels.ts`。`src/main/agent/notebook/managed-kernels.ts` 声明本地受管 `phi-python -> phi:python@1` 与 `phi-r -> phi:r@1`，只为已经 ready 的环境写 kernelspec；未构建环境仍显示为 `not-built`，但不会写出可启动 spec。用户环境来自显式配置/检测到的 host Jupyter kernelspec；有效 spec 在列举时被复制为 `host-<name>` 并用 host PATH 包装，但只有 notebook metadata 精确指定该名字时才会选中。`src/main/agent/notebook/analysis-jupyter-sessions.ts` 其余情况再按 display name、语言、首选 `phi-python`、首个非 host kernel 回退；当前 `src/main/index.ts` 构造 session registry 时没有注入 `prepareKernel`，所以未构建内核环境由环境面板/其他环境入口先准备，不在连接 session 时自动构建。
+4. **`.ipynb` 的读取、草稿与保存**：`src/main/agent/notebook/analysis-notebooks.ts` 直接用本机 `node:fs` 在真实项目根递归发现 `.ipynb`（默认深度 8、最多访问 2,000 项、最多返回 200 个，并跳过缓存、工作目录等）；`src/main/agent/notebook/analysis-notebook-files.ts` 用 `realpathSync` 做项目内包含检查，用 `readFileSync` + `parseNotebook` 打开，用 `serializeNotebook` + `writeFileSync` 保存。保存前用 `savedRevision` 做乐观冲突检查，但写入本身不是 host 抽象也不是原子写。`src/main/agent/notebook/notebook-tool-executor.ts` 把打开后的文档和 `savedRevision` 保存在主进程内存；insert/update/delete/run 只更新这份草稿，只有 `notebook.save` 才写回磁盘。`src/main/agent/notebook/analysis-notebook-watch.ts` 用本机 `fs.watch` 监听外部变化。
+5. **session、执行与结果回流**：`src/main/agent/notebook/analysis-jupyter-sessions.ts` 先 GET `/` 获取 XSRF cookie，再 POST `/api/sessions` 创建 notebook session；token 若存在则放在 HTTP `Authorization`。`src/main/agent/notebook/analysis-jupyter-execution.ts` 连接 `/api/kernels/<id>/channels` WebSocket，token 若存在只放在连接 URL 内存中，发送 `execute_request`，最多等待 30 分钟并以同时收到 `execute_reply` 和 `status: idle` 为完成条件；stream、display、execute_result、error 被规范化为 `NotebookOutput`。renderer 的 `analysis:executeNotebookCell` 在 `src/main/index.ts` 中把 execution count、outputs、时长写回草稿并通过 IPC 返回；renderer/agent 的草稿同步都经 `analysis:notebookDraftChanged` 广播到 UI。agent 的 `notebook.run_cell` 复用同一个 session registry 和 executor，不另起执行链。
+6. **关闭、打断与清理**：关闭或删除 notebook 时，`src/main/index.ts` 先调用 `closeSession`；`src/main/agent/notebook/analysis-jupyter-sessions.ts` DELETE `/api/sessions/<id>` 后移除内存记录，interrupt 则 POST kernel interrupt。`analysis:stopJupyter` 先关闭项目全部 session、停止 watcher，再让 registry `SIGTERM` Jupyter；主窗口退出时 `cleanupMainWindowRuntime` 释放 watcher 并 `disposeAll()`。当前本地路径没有进程组升级清理，且异常退出后的固定端口 Jupyter 可能被下一次启动接管；远程实现不得复制这种“可接管孤儿”的语义。
+
+七个 agent 工具对本机资源的实际依赖如下；这些依赖解释了 R2.5 为什么必须继续 fail-closed，直到 R4 后端注册完成：
+
+| 工具 | 当前本机依赖（代码依据） | R4 后替换点 |
+| --- | --- | --- |
+| `notebook.list` | `analysis-notebooks.ts` 的本机 `readdirSync/statSync/realpathSync` | `WorkspaceHost.fs.glob/list/stat`，沿用深度、数量与忽略目录上限 |
+| `notebook.read` | `analysis-notebook-files.ts` 读取本机绝对路径；executor 以内存 map 缓存草稿 | host 内项目路径 + `readRange`，草稿仍留桌面内存 |
+| `notebook.insert_cell` / `update_cell` / `delete_cell` | 必须先从本机文件建 state；之后只改主进程内存并发 draft event | 文档变更逻辑不变，只替换 state 初次装载的文件后端 |
+| `notebook.run_cell` | 本机 kernel 探测、Jupyter 子进程、HTTP/WebSocket localhost 连接 | 服务器登录节点的 Jupyter/内核 + 桌面本机 SSH tunnel endpoint |
+| `notebook.save` | `writeFileSync` 写本机 `.ipynb`，以 document revision 防冲突 | `WorkspaceHost.fs.writeAtomic(expectedHash)`；revision 与远程文件 hash 双重防覆盖 |
+
+### R4.2 远程总体方案
+
+**共享上层、替换两个后端。** 抽出 `NotebookWorkspace`（list/open/create/save/delete/watch）与 `JupyterRuntimeBackend`（status/start/stop/connection）两个窄接口；本地 adapter 包装现有 `node:fs`/`JupyterServerRegistry`，SSH adapter 使用 `RemoteRuntimeWorkspace.projectHost`/`runtimeHost` 和远程 Jupyter lease。`AnalysisNotebookSessionRegistry`、`AnalysisNotebookExecutor`、Notebook document 变更函数、现有 IPC payload 与工具 schema 保持共享，避免形成第二套“remote notebook”。远程失败绝不读取或写入本机 remote-project anchor。
+
+**文件后端。** `.ipynb` 的发现、打开、创建、删除、保存全部经 `WorkspaceHost.fs`，路径始终相对服务器 canonical project root 并复用 host 的 realpath/符号链接边界。读取以有上限的 `readRange` 循环完成，解析和草稿仍在桌面主进程内存；保存使用 `writeAtomic(expectedHash)`，磁盘 revision 与打开时内容 hash 任一不匹配都要求重新载入，不做最后写入获胜。远端 `watch` 不可用时，只在 notebook 页面打开期间对已打开文件做低频、可取消轮询；为保持列表的 `modifiedAt` 与避免每次全量下载，R4 需要让 host stat/list 暴露受契约测试约束的 mtime，NFS 时间粒度不足时仍以内容 hash 为最终冲突依据。
+
+**环境与 kernelspec（依赖 R2.5b）**。R4 不直接拼 micromamba 命令，也不另建环境索引；它按 R2.5b 文档定义的远程环境服务接口解析、创建、复用和取消环境。首次准备的默认远程 Jupyter 环境必须由 R2.2 安装的 micromamba 建在 `<runtime-root>/envs/<内容哈希>/`，至少包含 Python、`jupyter_server`、`jupyter_client`、`ipykernel`；同一完成标记有效时复用。默认 `phi-python` 可直接指向这个环境。其他受管/用户选择的服务器环境必须显式解析为远端 prefix：Python kernel 要有 `ipykernel`，R kernel 要有 `r-irkernel`；缺依赖时通过同一远程环境服务创建派生环境并走既有确认/取消流程，不原地污染用户环境，不使用桌面端 Python/R。kernelspec 只写 `<runtime-root>/jupyter/kernels/`，argv 指向服务器 prefix。host/unmanaged kernel 只有在用户明确选择了服务器上的环境或精确 kernelspec 时才登记，绝不从桌面复制 host spec。当前 R2.5b 对带额外源码包的基础环境会拒绝，因此 `phi-r` 完整环境若仍受此限制，R4 必须先提供一个可由 conda 包完整构建的精简 R notebook 环境，或等待 R2.5b 补齐该能力；不能把 R 支持标为完成却退回服务器系统 R。
+
+服务器无法访问 conda 源时，环境服务必须原样收敛为可操作的失败：说明“无法安装含 Jupyter + ipykernel 的远程 Notebook 环境”，引导用户配置服务器管理员提供的 conda 镜像，或在可联网机器预构建后迁移到该 runtime root；不得改在本机创建、不得无限重试，也不得启动缺包的半成品环境。
+
+**Jupyter 进程与 SSH tunnel。** Jupyter Server 和所有 kernel 都运行在服务器登录节点，cwd 为服务器项目目录；Jupyter 仅绑定服务器 `127.0.0.1` 的随机高位端口，`port_retries=0`。桌面先向操作系统申请随机本机 loopback 端口，再启动系统 OpenSSH：`ssh -L 127.0.0.1:<local>:127.0.0.1:<remote>`，加 `ExitOnForwardFailure=yes` 并沿用已验证的 host profile、主机密钥、BatchMode、identity 与 keepalive 规则。当前 `src/main/agent/workspace-host/ssh-host.ts` 明确把 `forwardPort` 标成未实现，helper 协议也没有该方法，所以本阶段由独立的系统 SSH tunnel/lease 实现，**不走 helper、不因 helper 可用而换路径**。
+
+为保证无孤儿，tunnel 与远端 supervisor 采用同一条长连接 lease：远端固定 launcher 以前台 shell 持有一个独立 Jupyter 进程组，安装 `EXIT/HUP/TERM` trap，依次 TERM、限时等待、KILL 整组；桌面关闭该 SSH 子进程就同时关闭 `-L` tunnel。正常 session/project 释放、手动 stop、连接失败、应用退出都必须等待这条清理链收敛。突然断网时，本机 keepalive 使 SSH 失败，服务器侧 sshd 会关闭会话并触发 trap；重连前必须确认旧 lease 已退出，不能靠固定端口“接管”旧 Jupyter。若无法确认清理，阻止第二个 runtime 并提示用户，而不是冒险并存。
+
+**token 与运行时文件。** 每次 lease 用桌面 `crypto.randomBytes` 生成至少 256 bit token，只保存在主进程 runtime record 和远端进程环境内；通过 SSH stdin/敏感环境通道传递，不出现在本机或远端 argv、状态对象、错误、telemetry、Jupyter banner、测试快照或任何文件。Jupyter 必须关闭包含 token 的 server-info/redirect 文件写入；该选项在打包的 Jupyter 版本上要有自动化断言。HTTP 使用 `Authorization: token ...`，WebSocket URL 仅在内存中短暂构造且日志 sanitizer 必须同时遮蔽精确 token 与 `token=` 参数。远端 Jupyter data/config/runtime 目录可以写 `<runtime-root>/jupyter/`，kernel connection file 也可存在，但其中不得出现 Server token。端口、PID、非敏感 lease id 可以记在内存状态；不持久化 token。
+
+**资源边界。** 登录节点只允许交互式、轻量 notebook：每项目只启动一个 Jupyter Server，kernel 数量、单 cell 时限、进程组 RSS/CPU 与线程数均设可配置上限；默认给 BLAS/OpenMP 类变量保守线程数，并以 `nice` 降低优先级。服务器有 `prlimit`/等价能力时在进程组启动前施加硬限制；没有时由 supervisor 周期采样进程组总 RSS/CPU，越限先 interrupt、再 TERM/KILL，并在 UI 说明站点限制。能力探测无法可靠执行上限且管理员策略要求硬限制时，Notebook 标为不可用，不能无上限运行。环境创建也沿用 R2.5b 的超时、输出上限和 AbortSignal。
+
+### R4.3 生命周期、断线重连、取消与冲突语义
+
+```text
+stopped
+  -> preparing_environment
+  -> allocating_ports
+  -> starting_lease
+  -> probing_through_tunnel
+  -> ready
+
+ready -> stopping -> stopped
+任一启动态 -> cleaning -> stopped | error
+ready -- SSH/tunnel lost --> disconnected -> cleaning -> stopped
+stopped -- 仍有打开的 notebook 且远程连接恢复 --> preparing_environment（新 token、新端口、新 kernel）
+```
+
+- `preparing_environment` 可安全重试并按内容哈希复用；取消时把 AbortSignal 交给 R2.5b 服务。后续各启动态取消都关闭本机 SSH 子进程并等待远端进程组退出；清理操作幂等，TERM 超时后 KILL，最终同时断言 tunnel 已关、Jupyter PID/进程组不存在、session registry 已清空。
+- `ready` 只在带 token 的 `/api/status` 通过**本机 tunnel endpoint**后成立；禁止直接访问服务器端口。服务器随机端口冲突时杀掉当次 lease 后换端口重试；本机端口占用或 OpenSSH `ExitOnForwardFailure` 时关闭失败 tunnel、重新向 OS 取端口，重试次数有限且不改变远端监听范围。
+- 关闭单个 notebook 先 DELETE 对应 Jupyter session/kernel；关闭最后一个 notebook 是否立即停 server 由下文待决的 idle policy 决定。关闭 Phi 远程会话、释放项目、SSH 断线或应用退出则无条件停止整个 Jupyter 进程组并关闭 tunnel，不等待 idle timeout。
+- 执行中的用户取消先 POST kernel interrupt；在宽限期内没有回到 idle，就 DELETE 该 session；仍无法确认时终止整个 lease。取消后的 cell 保留取消前草稿，不伪造 outputs，也不自动保存。
+- 断线中的执行结果标成 `unknown/disconnected`，**绝不自动重放 cell**，避免重复写文件、提交作业或产生外部副作用。连接恢复后创建全新 Jupyter/runtime session；桌面内存草稿保留，已保存内容从远端文件重读，旧 kernel 变量状态明确丢失并在 UI 标出“kernel 已重启”。空闲时可以按策略自动重连；执行中断后的重新执行必须由用户触发。
+- 本机固定端口的“发现旧 Jupyter 后接管”只属于当前 local backend；remote backend 每次使用新 token、双端随机端口和受 lease 所有权约束的 PID/进程组，不接管未知进程。
+
+### R4.4 与 Slurm 的关系
+
+本阶段**只覆盖登录节点**，不提交 Slurm 作业，也不把 kernel 偷渡到计算节点。这样可以先验证文件、环境、tunnel、session、输出和清理闭环；同时 UI 必须写明“当前 kernel 在登录节点”，资源上限默认按登录节点策略执行。若站点禁止登录节点运行 Jupyter/内核，R4 本阶段应直接标为不可用，而不是绕开策略。
+
+计算节点 kernel 后续仍有必要：大内存/GPU/长计算应在调度资源内运行。扩展方向是在共享 runtime root 写非敏感 connection metadata，由一个受管 kernelspec launcher 提交 `sbatch`/`srun`，记录 job id，等待分配节点后让登录节点 Jupyter 连接到计算节点 kernel；必须先探测登录节点与计算节点间的 ZMQ 端口可达性、共享目录、作业最长时间及站点防火墙。另一可选方案是把整套 Jupyter Server 放进 Slurm 作业，再经登录节点跳转 tunnel。无论采用哪种，都需要取消时 `scancel`、断线租约/超时清理、作业重连身份和五个 kernel channel 的安全转发；这些均不在 R4 实现范围，不能复用本阶段的单 HTTP `-L` 就宣称支持。
+
+### R4.5 实施拆分与验收
+
+按下列顺序做小步提交；每步只在实现阶段改对应范围。本机自动化统一用现有 bash/local-shell 夹具冒充 SSH，并把可执行的假 `jupyter`/假 kernel 放进临时 remote env；假脚本必须能记录**已脱敏** argv、模拟 REST/WebSocket、端口占用、长运行、SIGTERM/SIGKILL 与断线，测试不得连接外网或真实服务器。
+
+| 顺序 | 范围与涉及文件 | 本机测试与验收 | 必须真机验证 |
+| --- | --- | --- | --- |
+| R4-I1 host-aware 文件层 | 抽出 `src/main/agent/notebook/analysis-notebooks.ts`、`analysis-notebook-files.ts`、`analysis-notebook-watch.ts` 的 `NotebookWorkspace`；让 `notebook-tool-executor.ts` 注入它；必要时扩展 `workspace-host/types.ts` 的 mtime 契约 | 同一套 list/open/create/save/delete/越界 symlink/冲突/大文件上限测试参数化跑 LocalHost 与假 SshHost；断言远程模式零本机 anchor 读写，atomic hash 冲突不会覆盖 | NFS 上 mtime/hash 冲突与原子 rename 语义 |
+| R4-I2 **依赖 R2.5b：环境与 kernelspec** | 通过 R2.5b 公共环境服务准备 `<runtime-root>/envs/` 下的 Jupyter + ipykernel 环境；涉及 `src/main/agent/remote-runtime/controller.ts`/环境服务的公开调用面、`resources/runtime/environments/phi-jupyter/environment.yml` 或等价远程声明，以及新的 remote kernelspec adapter；以 R2.5b 最终文档接口为准，不复制其内部实现 | 假 micromamba 覆盖首次创建、内容哈希复用、缺失 binary、取消、输出截断、源不可达、Python/user/R kernelspec；断言 prefix/argv 全在服务器路径且没有本机 solver/build | 在线源、站点镜像、完全离线三种路径；Python kernel；R kernel 若本阶段宣称支持则必须实测 |
+| R4-I3 系统 SSH lease/tunnel | 新增 notebook 专用 OpenSSH `-L`/supervisor（建议放 `workspace-host/ssh-port-forward.ts` 与 `notebook/remote-jupyter-server.ts`）；让 `remote-workspace-boundary.ts` 提供经授权的 connection config；`ssh-host.ts` 的 helper 仍不承担 forward | fake ssh 检查 `127.0.0.1` 双端绑定、随机端口、`ExitOnForwardFailure`、host profile 参数、token 不在 argv/log/file；fake jupyter 覆盖 ready、冲突重试、启动取消、断线与 TERM->KILL，结束后进程组和 tunnel 均为 0 | 真实 OpenSSH 配置/identity/ControlMaster 组合、真实 `-L`、拔网/杀客户端/退出 Phi 后服务器无残留 |
+| R4-I4 共享 runtime/session/execution | 引入窄 `JupyterRuntimeBackend`，让 `analysis-jupyter-sessions.ts`、`analysis-jupyter-execution.ts` 同时使用 local/SSH connection；remote 禁止固定端口接管 | 复用现有 Jupyter session/execution 测试；假 HTTP/WebSocket 验证 token、XSRF、execute_reply+idle、错误输出、30 分钟超时的可配置替身、interrupt/delete/escalation、断线不重放 | 打包 Jupyter 版本的 REST/WebSocket、token/server-info 行为与大输出回流 |
+| R4-I5 IPC 与 UI 路由 | `src/main/index.ts` 按 project location 解析两个 backend；`src/preload/index.ts`、`src/preload/index.d.ts`、renderer analysis/runtime hooks 保持现有 `analysis.*` 形状，只增加必要的 remote 状态/错误文案 | main integration + renderer tests覆盖远程 list/open/save/start/status/execute/interrupt/close；断言所有返回 path 是服务器语义且 UI 显示登录节点、重连和 kernel 重启 | 真实 Phi 逐项点击与窗口关闭/重开 |
+| R4-I6 工具放行 | 远程 worker 注册同一组 `buildNotebookCustomTools`，host handler 路由到远程 workspace/runtime；更新 `remote-project-tool-guard.ts` 只放行精确注册且描述匹配的七个 `notebook.*`；`lib.*` 继续拒绝 | 七工具端到端：list/read/insert/update/delete/run/save；审批级别不变；未知/同名 builtin/缺后端继续 fail-closed；无本机 anchor 回退 | 在远程对话中执行一轮读取、插入、运行、保存并从服务器核对文件 |
+| R4-I7 资源与恢复门禁 | supervisor 加 kernel 数、线程、RSS/CPU、idle、cell timeout 和最终清理；接入远程 session/project/app lifecycle | 假 `ps`/`prlimit` 覆盖越限、无法限额、idle、并发 kernel、断线恢复、旧 lease 未清理时拒绝二次启动；活动句柄测试无 timer/child 泄漏 | 登录节点实际限制工具与管理员策略；长 cell 取消；30 秒级断网；进程/端口清零且未提交 Slurm 作业 |
+
+完成门禁：现有 local Notebook 测试不得改语义；新增 remote 契约与 main integration 全过；`bun run typecheck`、`bun run lint`、`bun run check:architecture` 通过。真机记录必须脱敏，只写版本、状态、耗时和“进程/端口是否清零”，不写主机名、用户名、token、私有路径或环境变量。
+
+### R4.6 风险与待用户决定
+
+**已识别风险**：OpenSSH 通用选项当前含 `ClearAllForwardings=yes`，专用 tunnel builder 必须用测试证明显式 `-L` 没有被清掉；不同 Jupyter Server 版本对 token 环境变量、server-info 文件和 banner 的行为可能不同，必须锁定版本并测试；NFS mtime/rename/锁语义可能导致外部编辑冲突；登录节点缺 `prlimit` 时只能由 supervisor 监控；R2.5b 尚未支持的源码包会阻塞完整 R kernel；硬断网期间清理只能依赖 sshd/keepalive lease，恢复连接前必须对账；大型富输出会占用 WebSocket、主进程内存和 `.ipynb`，需要沿用/补充单消息与单 notebook 上限。
+
+待用户决定：
+
+- 是否默认允许 Jupyter 在登录节点长期运行；建议默认只允许交互会话，关闭远程 Phi session 即停，并在最后一个 notebook 关闭后进入短 idle grace。
+- idle timeout、单 cell timeout、最大并发 kernel、线程数、进程组 RSS/CPU 的默认值，以及站点级覆盖入口。
+- 空闲断线后是否自动重建 Jupyter/kernel；建议空闲时有限自动重连，执行中断时只恢复连接、不自动重放 cell。
+- 是否允许登记任意服务器 user/host kernel，还是 beta 首批只允许 R2.5b 管理的环境；建议首批只允许受管环境 + 用户显式选择且通过依赖检查的 prefix。
+- `phi-r` 是在 R4 首批通过精简 conda-only 环境交付，还是等 R2.5b 支持额外源码包后再宣称与本地 R kernel 对齐。
+- 关闭最后一个 notebook 是立即停 server，还是保留短暂复用窗口；无论选择哪种，远程会话/项目释放、SSH 断线和应用退出都必须立即清理。
 
 ## 3. 核心设计决定
 

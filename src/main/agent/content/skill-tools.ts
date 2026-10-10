@@ -43,6 +43,9 @@ const SKILL_RUN_PARAMETERS = {
   }
 } as const
 
+export const PHI_SKILL_RUN_DESCRIPTION =
+  "Run one program from an installed skill's scripts/ directory inside that skill's environment. The interpreter is chosen from the script extension. args are passed after the script path. cwd is a project-relative working directory."
+
 const STRICT_FORBIDDEN = new Set([
   'format',
   'pattern',
@@ -78,6 +81,8 @@ export interface SkillToolHostOptions {
    * over `sessionEnvironment`.
    */
   environmentBinding?: { ref: string }
+  /** Verified remote identity forwarded only to the remote runtime controller. */
+  remoteProject?: { sessionId: string; projectId: string }
 }
 
 export function buildSkillRunTool(
@@ -88,8 +93,7 @@ export function buildSkillRunTool(
   return {
     name: 'skill_run',
     label: 'Run Skill Script',
-    description:
-      "Run one program from an installed skill's scripts/ directory inside that skill's environment. The interpreter is chosen from the script extension. args are passed after the script path. cwd is a project-relative working directory.",
+    description: PHI_SKILL_RUN_DESCRIPTION,
     approval: 'exec',
     parameters: SKILL_RUN_PARAMETERS,
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
@@ -166,6 +170,10 @@ async function runSkillTool(
   const sessionEnvironment = liveSessionEnvironment(options)
   if (sessionEnvironment) body.sessionEnvironment = sessionEnvironment
   if (options.pluginId) body.pluginId = options.pluginId
+  if (options.remoteProject) {
+    body.remoteSessionId = options.remoteProject.sessionId
+    body.projectId = options.remoteProject.projectId
+  }
 
   try {
     const result = await callHost(request, 'skills.run', body, signal)
@@ -212,6 +220,12 @@ async function runScriptToolCall(
           ? { sessionEnvironment: liveSessionEnvironment(options) }
           : {}),
         ...(options.pluginId ? { pluginId: options.pluginId } : {}),
+        ...(options.remoteProject
+          ? {
+              remoteSessionId: options.remoteProject.sessionId,
+              projectId: options.remoteProject.projectId
+            }
+          : {}),
         ...(toolCallId ? { toolCallId } : {})
       },
       signal
@@ -244,7 +258,16 @@ async function callHost(
   const requestId = params.requestId
   const cancel = (): void => {
     if (typeof requestId !== 'string') return
-    void request('skills.cancel', { requestId }).catch(() => undefined)
+    void request('skills.cancel', {
+      requestId,
+      ...(typeof params.runtimeSessionId === 'string'
+        ? { runtimeSessionId: params.runtimeSessionId }
+        : {}),
+      ...(typeof params.remoteSessionId === 'string'
+        ? { remoteSessionId: params.remoteSessionId }
+        : {}),
+      ...(typeof params.projectId === 'string' ? { projectId: params.projectId } : {})
+    }).catch(() => undefined)
   }
   if (signal?.aborted) cancel()
   else signal?.addEventListener('abort', cancel, { once: true })

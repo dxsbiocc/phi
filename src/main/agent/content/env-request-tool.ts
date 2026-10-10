@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { SkillHostRequest } from './skill-tools'
@@ -17,6 +19,8 @@ export interface EnvRequestToolOptions {
   agent?: string
   /** Main agent: the model must pass `environment`. Omitted approval would be treated as exec. */
   requireEnvironment?: boolean
+  /** Verified remote identity. Enables cancellable remote routing without changing the public schema. */
+  remoteProject?: { sessionId: string; projectId: string }
 }
 
 type ToolResult = {
@@ -43,6 +47,9 @@ const PROPERTIES = {
   }
 } as const
 
+export const PHI_ENV_REQUEST_DESCRIPTION =
+  'Ask the user to add conda packages to an environment in this project. On confirmation Phi solves a project environment, installs it, and (in a bound session) switches the session to it. Does not modify the original environment.'
+
 export function buildEnvRequestTool(
   request: SkillHostRequest,
   options: EnvRequestToolOptions
@@ -53,8 +60,7 @@ export function buildEnvRequestTool(
   return {
     name: 'env_request',
     label: 'Request Environment Packages',
-    description:
-      'Ask the user to add conda packages to an environment in this project. On confirmation Phi solves a project environment, installs it, and (in a bound session) switches the session to it. Does not modify the original environment.',
+    description: PHI_ENV_REQUEST_DESCRIPTION,
     // The in-chat \u6dfb\u52a0/\u53d6\u6d88 question is the confirmation. `read` keeps this off the exec approval path; omitting approval is treated as exec.
     approval: 'read',
     parameters: {
@@ -88,14 +94,25 @@ async function runEnvRequest(
   }
 
   try {
-    const result = await request('environments.request', {
+    const requestId = options.remoteProject ? randomUUID() : undefined
+    const body = {
       runtimeSessionId: options.runtimeSessionId,
       cwd,
       packages: input.packages,
       reason: input.reason,
       environment,
+      ...(requestId ? { requestId } : {}),
+      ...(options.remoteProject
+        ? {
+            remoteSessionId: options.remoteProject.sessionId,
+            projectId: options.remoteProject.projectId
+          }
+        : {}),
       ...(options.binding?.pluginId ? { pluginId: options.binding.pluginId } : {})
-    })
+    }
+    const result = requestId
+      ? await callCancellable(request, 'environments.request', body, requestId, signal)
+      : await request('environments.request', body)
     if (isDeclined(result)) {
       return {
         content: [{ type: 'text', text: '\u7528\u6237\u53d6\u6d88\u4e86\u6dfb\u52a0' }],
@@ -137,6 +154,12 @@ async function rebind(
     ref,
     agent: options.agent,
     cwd,
+    ...(options.remoteProject
+      ? {
+          remoteSessionId: options.remoteProject.sessionId,
+          projectId: options.remoteProject.projectId
+        }
+      : {}),
     ...(binding.pluginId ? { pluginId: binding.pluginId } : {})
   })
   if (!isRecord(bound)) return errorResult('environments.bindSession returned an unexpected result')
@@ -152,6 +175,34 @@ async function rebind(
   binding.ref = bound.ref
   binding.variables = variables
   return undefined
+}
+
+async function callCancellable(
+  request: SkillHostRequest,
+  method: string,
+  body: Record<string, unknown>,
+  requestId: string,
+  signal?: AbortSignal
+): Promise<unknown> {
+  const cancel = (): void => {
+    void request('environments.cancel', {
+      requestId,
+      ...(typeof body.runtimeSessionId === 'string'
+        ? { runtimeSessionId: body.runtimeSessionId }
+        : {}),
+      ...(typeof body.remoteSessionId === 'string'
+        ? { remoteSessionId: body.remoteSessionId }
+        : {}),
+      ...(typeof body.projectId === 'string' ? { projectId: body.projectId } : {})
+    }).catch(() => undefined)
+  }
+  if (signal?.aborted) cancel()
+  else signal?.addEventListener('abort', cancel, { once: true })
+  try {
+    return await request(method, body)
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
 }
 
 function explicitEnvironment(value: unknown): string | undefined {
