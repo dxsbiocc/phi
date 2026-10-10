@@ -200,9 +200,10 @@ test('all distributed connector manifests are valid and preserve the featured ca
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort()
-  for (const required of [...featuredMcpConnectors.map(([id]) => id), 'biomcp']) {
+  for (const required of featuredMcpConnectors.map(([id]) => id)) {
     assert.ok(ids.includes(required), `connector ${required} must be distributed`)
   }
+  assert.ok(!ids.includes('biomcp'), 'BioMCP must not be distributed in the built-in catalog')
 
   const manifests = new Map<string, McpPackageManifest>()
   for (const id of ids) {
@@ -256,13 +257,4 @@ test('all distributed connector manifests are valid and preserve the featured ca
       id
     )
   }
-})
-
-test('BioMCP is distributed as a stdio connector with its package-relative launcher', () => {
-  const manifest = readPackageManifest(join(connectorsRoot, 'biomcp')) as McpPackageManifest
-  assert.equal(manifest.connector.transport, 'stdio')
-  if (manifest.connector.transport !== 'stdio') return
-  assert.equal(manifest.connector.environment, 'phi:python@1')
-  assert.equal(manifest.connector.command, 'python')
-  assert.deepEqual(manifest.connector.args, ['${package}/server.py'])
 })
