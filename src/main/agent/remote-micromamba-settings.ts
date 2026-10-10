@@ -3,15 +3,17 @@ import type {
   RemoteMicromambaDownloadCapability,
   RemoteRuntimeRootWarningCode
 } from '../../shared/remoteRuntimeRootTypes'
-import type {
-  RemoteMicromambaArtifact,
-  RemoteMicromambaPlatform,
-  RemoteMicromambaResult
+import {
+  normalizeRemoteMicromambaMirrorPrefix,
+  type RemoteMicromambaArtifact,
+  type RemoteMicromambaPlatform,
+  type RemoteMicromambaResult
 } from '../../shared/remoteMicromambaTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import {
   describeRemoteMicromambaArtifact,
   getRemoteMicromambaArtifact,
+  remoteMicromambaSourceUrls,
   type RemoteMicromambaArtifactPlan
 } from './remote-micromamba-artifact'
 import { getPhiAgentDir } from './runtime-paths'
@@ -40,6 +42,7 @@ export interface RemoteMicromambaSettingsProgress {
 
 export interface RemoteMicromambaSettingsRequest {
   runtimeRoot: string
+  downloadMirrorPrefix?: string
   confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
   signal?: AbortSignal
   onProgress?: (progress: RemoteMicromambaSettingsProgress) => void
@@ -147,7 +150,7 @@ async function obtainArtifact(
 
 function installationInput(
   request: RemoteMicromambaSettingsRequest,
-  artifact: RemoteMicromambaArtifact & { url?: string },
+  artifact: RemoteMicromambaArtifact & { url?: string; urls?: readonly string[] },
   obtainLocalArtifact?: () => Promise<RemoteMicromambaArtifact>
 ): Parameters<typeof ensureRemoteMicromamba>[1] {
   return {
@@ -173,11 +176,17 @@ function installationInput(
 
 function describedArtifact(
   platform: Platform,
+  request: RemoteMicromambaSettingsRequest,
   dependencies: RemoteMicromambaSettingsDependencies
-): RemoteMicromambaArtifactPlan {
-  return (dependencies.describeArtifact ?? describeRemoteMicromambaArtifact)(platform, {
+): RemoteMicromambaArtifactPlan & { urls: readonly string[] } {
+  const artifact = (dependencies.describeArtifact ?? describeRemoteMicromambaArtifact)(platform, {
     agentDir: dependencies.agentDir
   })
+  const userMirrorPrefix = normalizeRemoteMicromambaMirrorPrefix(request.downloadMirrorPrefix ?? '')
+  return {
+    ...artifact,
+    urls: remoteMicromambaSourceUrls(artifact, userMirrorPrefix)
+  }
 }
 
 async function legacyInstallation(
@@ -205,7 +214,7 @@ async function runInstallation(
     if (dependencies.getArtifact && !dependencies.describeArtifact) {
       return await legacyInstallation(session, platform, request, dependencies)
     }
-    const artifact = describedArtifact(platform, dependencies)
+    const artifact = describedArtifact(platform, request, dependencies)
     const getArtifact = dependencies.getArtifact ?? getRemoteMicromambaArtifact
     request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
     return await (dependencies.ensure ?? ensureRemoteMicromamba)(

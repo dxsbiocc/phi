@@ -52,7 +52,7 @@ afterEach(() => {
 })
 
 describe('remote micromamba download capability profile', () => {
-  it('persists only the redacted connectivity state and selected tool', () => {
+  it('persists only the redacted source host, connectivity state, and selected tool', () => {
     const agentDir = temporaryDirectory()
     const hostAlias = 'private-user@cluster.example.edu'
     const profile = parseHostCapabilityProbe(`
@@ -74,7 +74,7 @@ __PHI_CAPABILITY_PROBE_V1_END__
     assert.equal(
       updateLatestCapabilityProfileMicromambaDownloadForHost(
         hostAlias,
-        { status: 'reachable', tool: 'curl' },
+        { status: 'reachable', tool: 'curl', host: 'gh-proxy.com' },
         agentDir
       ),
       true
@@ -82,9 +82,10 @@ __PHI_CAPABILITY_PROBE_V1_END__
     assert.deepEqual(
       readLatestCapabilityProfileForHost(hostAlias, { agentDir })?.runtimeRoot?.micromamba
         ?.download,
-      { status: 'reachable', tool: 'curl' }
+      { status: 'reachable', tool: 'curl', host: 'gh-proxy.com' }
     )
     const persisted = readFileSync(capabilityProfileStorePath(agentDir), 'utf8')
+    assert.match(persisted, /gh-proxy\.com/)
     assert.doesNotMatch(persisted, /private-user|cluster\.example\.edu|\/srv\/|\/data\//)
   })
 })

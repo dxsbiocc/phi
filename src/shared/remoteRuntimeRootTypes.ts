@@ -60,7 +60,7 @@ export type RemoteMicromambaProfileStatus =
 export type RemoteMicromambaDownloadTool = 'curl' | 'wget'
 
 export type RemoteMicromambaDownloadCapability =
-  | { status: 'reachable'; tool: RemoteMicromambaDownloadTool }
+  | { status: 'reachable'; tool: RemoteMicromambaDownloadTool; host: string }
   | { status: 'unreachable' | 'no-tool' }
 
 export type RemoteMicromambaCapabilityProfile = (

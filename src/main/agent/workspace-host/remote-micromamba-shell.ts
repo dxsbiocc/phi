@@ -14,6 +14,20 @@ const PLATFORM_MARKER = '__PHI_MICROMAMBA_PLATFORM__='
 const STATUS_MARKER = '__PHI_MICROMAMBA_STATUS__='
 const ROOT_MARKER = '__PHI_MICROMAMBA_ROOT__='
 const RELEASE_MARKER = '__PHI_MICROMAMBA_RELEASE__='
+const PROBE_BYTES = 256 * 1024
+const MINIMUM_BYTES_PER_SECOND = 50 * 1024
+
+function watchdogLines(command: string, timeoutSeconds: number | string): string[] {
+  return [
+    `${command} &`,
+    'phi_pid=$!',
+    `(trap 'kill "$phi_sleep" 2>/dev/null; exit 0' TERM INT; sleep ${timeoutSeconds} & phi_sleep=$!; wait "$phi_sleep"; kill "$phi_pid" 2>/dev/null) >/dev/null 2>&1 &`,
+    'phi_watchdog=$!',
+    'if wait "$phi_pid"; then phi_status=0; else phi_status=$?; fi',
+    'kill "$phi_watchdog" 2>/dev/null || :',
+    'wait "$phi_watchdog" 2>/dev/null || :'
+  ]
+}
 
 export interface ParsedRemoteHash {
   hash?: string
@@ -103,16 +117,33 @@ export function buildNetworkProbeScript(url: string): string {
     'set +e',
     `phi_url=${shellQuote(url)}`,
     'phi_has_tool=0',
+    'phi_started=$(date +%s)',
     'if command -v curl >/dev/null 2>&1; then',
     '  phi_has_tool=1',
-    '  if curl -fsSIL --connect-timeout 8 --max-time 8 -- "$phi_url" >/dev/null 2>&1; then',
+    `  phi_stats=$(curl -fsSL --range 0-${PROBE_BYTES - 1} --connect-timeout 4 --max-time 8 --speed-limit ${MINIMUM_BYTES_PER_SECOND} --speed-time 5 -o /dev/null -w '%{size_download} %{speed_download}' -- "$phi_url" 2>/dev/null)`,
+    '  phi_status=$?',
+    '  phi_size=${phi_stats%% *}; phi_speed=${phi_stats#* }',
+    '  phi_size=${phi_size%%.*}; phi_speed=${phi_speed%%.*}',
+    `  if [ "$phi_status" -eq 0 ] && [ "\${phi_size:-0}" -ge ${PROBE_BYTES} ] 2>/dev/null && [ "\${phi_speed:-0}" -ge ${MINIMUM_BYTES_PER_SECOND} ] 2>/dev/null; then`,
     `    printf '%s\\n' '${NETWORK_MARKER}reachable:curl'`,
     '    exit 0',
     '  fi',
     'fi',
-    'if command -v wget >/dev/null 2>&1; then',
+    'phi_elapsed=$(($(date +%s) - phi_started))',
+    'phi_remaining=$((8 - phi_elapsed))',
+    'if [ "$phi_remaining" -gt 0 ] && command -v wget >/dev/null 2>&1; then',
     '  phi_has_tool=1',
-    '  if wget -q --spider -T 8 --tries=1 -- "$phi_url" >/dev/null 2>&1; then',
+    '  phi_probe=${TMPDIR:-/tmp}/phi-micromamba-probe-$$',
+    '  phi_wget_started=$(date +%s)',
+    ...watchdogLines(
+      `wget -q --header='Range: bytes=0-${PROBE_BYTES - 1}' --timeout=8 --read-timeout=8 --tries=1 -O "$phi_probe" -- "$phi_url" >/dev/null 2>&1`,
+      '$phi_remaining'
+    ).map((line) => `  ${line}`),
+    '  phi_wget_finished=$(date +%s)',
+    '  phi_size=$(wc -c < "$phi_probe" 2>/dev/null); rm -f "$phi_probe"',
+    '  phi_wget_elapsed=$((phi_wget_finished - phi_wget_started)); [ "$phi_wget_elapsed" -gt 0 ] || phi_wget_elapsed=1',
+    '  phi_speed=$((${phi_size:-0} / phi_wget_elapsed))',
+    `  if [ "$phi_status" -eq 0 ] && [ "\${phi_size:-0}" -ge ${PROBE_BYTES} ] 2>/dev/null && [ "$phi_speed" -ge ${MINIMUM_BYTES_PER_SECOND} ]; then`,
     `    printf '%s\\n' '${NETWORK_MARKER}reachable:wget'`,
     '    exit 0',
     '  fi',
@@ -122,31 +153,49 @@ export function buildNetworkProbeScript(url: string): string {
   ].join('\n')
 }
 
-export function parseNetworkProbe(stdout: string): RemoteMicromambaDownloadCapability {
+export function parseNetworkProbe(
+  stdout: string,
+  host: string
+): RemoteMicromambaDownloadCapability {
   const value = stdout
     .split(/\r?\n/)
     .find((line) => line.startsWith(NETWORK_MARKER))
     ?.slice(NETWORK_MARKER.length)
-  if (value === 'reachable:curl') return { status: 'reachable', tool: 'curl' }
-  if (value === 'reachable:wget') return { status: 'reachable', tool: 'wget' }
+  if (value === 'reachable:curl') {
+    const capability = { status: 'reachable' as const, tool: 'curl' as const, host }
+    return capability
+  }
+  if (value === 'reachable:wget') {
+    const capability = { status: 'reachable' as const, tool: 'wget' as const, host }
+    return capability
+  }
   return { status: value === 'no-tool' ? 'no-tool' : 'unreachable' }
 }
 
 export function buildDownloadScript(
   url: string,
   stagingPath: string,
-  tool: RemoteMicromambaDownloadTool
+  tool: RemoteMicromambaDownloadTool,
+  timeoutSeconds = 600
 ): string {
-  const command =
+  const commands =
     tool === 'curl'
-      ? 'curl -fL --connect-timeout 8 --max-time 300 -o "$phi_staging" -- "$phi_url"'
-      : 'wget -q --timeout=8 --tries=2 -O "$phi_staging" -- "$phi_url"'
+      ? [
+          `curl -fL --connect-timeout 8 --max-time ${timeoutSeconds} --speed-limit ${MINIMUM_BYTES_PER_SECOND} --speed-time 20 -o "$phi_staging" -- "$phi_url"`
+        ]
+      : [
+          ...watchdogLines(
+            'wget -q --timeout=8 --read-timeout=20 --tries=2 -O "$phi_staging" -- "$phi_url"',
+            timeoutSeconds
+          ),
+          '[ "$phi_status" -eq 0 ]'
+        ]
   return [
     'set -eu',
     `phi_url=${shellQuote(url)}`,
     `phi_staging=${shellQuote(stagingPath)}`,
     'umask 077',
-    command
+    ...commands
   ].join('\n')
 }
 

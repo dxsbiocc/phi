@@ -162,6 +162,7 @@ type PreloadRemoteHostProfile = {
   identityFile?: string
   source?: 'ssh-config'
   runtimeRoot?: string
+  downloadMirrorPrefix?: string
 }
 type PreloadOpenSshHost = {
   alias: string
@@ -468,12 +469,13 @@ type PreloadRemoteMicromambaRequest = {
   requestId: string
   hostProfileId: string
   runtimeRoot: string
+  downloadMirrorPrefix?: string
   confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
 }
 
 type PreloadRemoteMicromambaProgress = {
   requestId: string
-  stage: 'probe' | 'download' | 'install'
+  stage: 'probe' | 'download' | 'direct-download' | 'desktop-relay' | 'install'
   message: string
   transferredBytes?: number
   totalBytes?: number
@@ -890,6 +892,10 @@ declare global {
       saveRemoteRuntimeRoot: (
         hostProfileId: string,
         runtimeRoot?: string
+      ) => Promise<PreloadRemoteHostProfile>
+      saveRemoteMicromambaMirror: (
+        hostProfileId: string,
+        downloadMirrorPrefix?: string
       ) => Promise<PreloadRemoteHostProfile>
       remoteMicromamba: (request: PreloadRemoteMicromambaRequest) => Promise<RemoteMicromambaResult>
       onRemoteMicromambaProgress: (

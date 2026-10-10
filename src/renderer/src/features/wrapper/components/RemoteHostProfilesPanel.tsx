@@ -82,7 +82,8 @@ export function RemoteHostProfilesPanel({
   onRuntimeRootSave,
   onRuntimeRootCheck,
   micromambaStates,
-  onMicromambaInstall
+  onMicromambaInstall,
+  onMicromambaMirrorSave
 }: {
   hosts: RemoteHostProfile[]
   openSshHosts: OpenSshHost[]
@@ -108,8 +109,10 @@ export function RemoteHostProfilesPanel({
   onMicromambaInstall?: (
     host: RemoteHostProfile,
     runtimeRoot: string,
-    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[],
+    downloadMirrorPrefix?: string
   ) => void
+  onMicromambaMirrorSave?: (host: RemoteHostProfile, downloadMirrorPrefix?: string) => void
 }): React.JSX.Element {
   const rows = hostRows(hosts, openSshHosts)
   return (
@@ -290,7 +293,7 @@ export function RemoteHostProfilesPanel({
                   {onRuntimeRootSave && onRuntimeRootCheck && (
                     <Box sx={{ mt: 1.5 }}>
                       <RemoteHostRuntimeRootEditor
-                        key={`${host.id}:${host.runtimeRoot ?? ''}`}
+                        key={`${host.id}:${host.runtimeRoot ?? ''}:${host.downloadMirrorPrefix ?? ''}`}
                         host={host}
                         doctorState={hostDoctorStates[host.id] ?? { phase: 'idle' }}
                         busy={busy || checking}
@@ -298,6 +301,7 @@ export function RemoteHostProfilesPanel({
                         onCheck={onRuntimeRootCheck}
                         micromambaState={micromambaStates?.[host.id]}
                         onMicromambaInstall={onMicromambaInstall}
+                        onMicromambaMirrorSave={onMicromambaMirrorSave}
                       />
                     </Box>
                   )}

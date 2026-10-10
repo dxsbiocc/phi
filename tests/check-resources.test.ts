@@ -1,7 +1,67 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { misplacedPhiResourcePaths, offendingResourcePaths } from '../scripts/check-resources.mjs'
+import {
+  misplacedPhiResourcePaths,
+  offendingResourcePaths,
+  runtimeMirrorPrefixErrors
+} from '../scripts/check-resources.mjs'
+
+test('runtime manifest assigns ordered mirrors to every micromamba platform', () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL('../resources/runtime/manifest.json', import.meta.url), 'utf8')
+  ) as {
+    micromamba: {
+      platforms: Record<string, { url: string; mirrorPrefixes?: string[] }>
+    }
+  }
+  for (const release of Object.values(manifest.micromamba.platforms)) {
+    assert.equal(new URL(release.url).hostname, 'github.com')
+    assert.deepEqual(release.mirrorPrefixes, ['https://gh-proxy.com/', 'https://ghfast.top/'])
+  }
+})
+
+test('runtime mirror prefixes accept optional ordered HTTPS prefix lists', () => {
+  assert.deepEqual(
+    runtimeMirrorPrefixErrors({
+      micromamba: {
+        platforms: {
+          'linux-x64': {
+            mirrorPrefixes: ['https://gh-proxy.com/', 'https://ghfast.top/']
+          },
+          'linux-arm64': {}
+        }
+      }
+    }),
+    []
+  )
+})
+
+test('runtime mirror prefixes reject unsafe or non-prefix values', () => {
+  assert.deepEqual(
+    runtimeMirrorPrefixErrors({
+      micromamba: {
+        platforms: {
+          'linux-x64': {
+            mirrorPrefixes: [
+              'http://mirror.test/',
+              'https://user:secret@mirror.test/',
+              'https://mirror.test/no-trailing-slash'
+            ]
+          },
+          'linux-arm64': { mirrorPrefixes: 'https://mirror.test/' }
+        }
+      }
+    }),
+    [
+      'micromamba.platforms.linux-x64.mirrorPrefixes[0] must be an HTTPS URL without userinfo and ending in /',
+      'micromamba.platforms.linux-x64.mirrorPrefixes[1] must be an HTTPS URL without userinfo and ending in /',
+      'micromamba.platforms.linux-x64.mirrorPrefixes[2] must be an HTTPS URL without userinfo and ending in /',
+      'micromamba.platforms.linux-arm64.mirrorPrefixes must be a string array'
+    ]
+  )
+})
 
 test('Phi resources retain core assets and the private Office plugin', () => {
   assert.deepEqual(

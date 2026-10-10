@@ -19,12 +19,18 @@ const nodeRequire = createRequire(import.meta.url)
 
 export interface RemoteMicromambaArtifactPlan extends RemoteMicromambaArtifact {
   url: string
+  mirrorPrefixes?: readonly string[]
 }
 
 interface RemoteMicromambaManifest {
   micromamba: {
     version: string
-    platforms: Readonly<Record<string, { url: string; sha256: string; size: number }>>
+    platforms: Readonly<
+      Record<
+        string,
+        { url: string; sha256: string; size: number; mirrorPrefixes?: readonly string[] }
+      >
+    >
   }
 }
 
@@ -138,6 +144,30 @@ function readManifest(path: string): RemoteMicromambaManifest {
   return value
 }
 
+function isValidMirrorPrefix(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !url.username && !url.password && value.endsWith('/')
+  } catch {
+    return false
+  }
+}
+
+function validMirrorPrefixes(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.every((prefix) => typeof prefix === 'string' && isValidMirrorPrefix(prefix))
+  )
+}
+
+export function remoteMicromambaSourceUrls(
+  plan: Pick<RemoteMicromambaArtifactPlan, 'url' | 'mirrorPrefixes'>,
+  userMirrorPrefix?: string
+): readonly string[] {
+  const prefixes = [...(userMirrorPrefix ? [userMirrorPrefix] : []), ...(plan.mirrorPrefixes ?? [])]
+  return [plan.url, ...prefixes.map((prefix) => `${prefix}${plan.url}`)]
+}
+
 export function remoteMicromambaManifestVersion(
   options: DescribeRemoteMicromambaOptions = {}
 ): string {
@@ -160,7 +190,8 @@ export function describeRemoteMicromambaArtifact(
     !/^https:\/\//.test(release.url) ||
     !/^[a-f0-9]{64}$/.test(release.sha256) ||
     !Number.isSafeInteger(release.size) ||
-    release.size < 1
+    release.size < 1 ||
+    (release.mirrorPrefixes !== undefined && !validMirrorPrefixes(release.mirrorPrefixes))
   ) {
     throw new Error(`micromamba 清单缺少有效的 ${target} 条目`)
   }
@@ -178,7 +209,8 @@ export function describeRemoteMicromambaArtifact(
     ),
     sha256: release.sha256,
     size: release.size,
-    url: release.url
+    url: release.url,
+    ...(release.mirrorPrefixes ? { mirrorPrefixes: [...release.mirrorPrefixes] } : {})
   }
 }
 

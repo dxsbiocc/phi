@@ -277,6 +277,7 @@ type RemoteHostProfile = {
   identityFile?: string
   source?: 'ssh-config'
   runtimeRoot?: string
+  downloadMirrorPrefix?: string
 }
 type OpenSshHost = {
   alias: string
@@ -686,12 +687,13 @@ type RemoteMicromambaRequest = {
   requestId: string
   hostProfileId: string
   runtimeRoot: string
+  downloadMirrorPrefix?: string
   confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
 }
 
 type RemoteMicromambaProgress = {
   requestId: string
-  stage: 'probe' | 'download' | 'install'
+  stage: 'probe' | 'download' | 'direct-download' | 'desktop-relay' | 'install'
   message: string
   transferredBytes?: number
   totalBytes?: number
@@ -846,6 +848,10 @@ type RendererAuthApi = {
   }) => Promise<RemoteHostProfile>
   deleteRemoteHost: (id: string) => Promise<void>
   saveRemoteRuntimeRoot: (hostProfileId: string, runtimeRoot?: string) => Promise<RemoteHostProfile>
+  saveRemoteMicromambaMirror: (
+    hostProfileId: string,
+    downloadMirrorPrefix?: string
+  ) => Promise<RemoteHostProfile>
   remoteMicromamba: (request: RemoteMicromambaRequest) => Promise<RemoteMicromambaResult>
   onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void) => Unsubscribe
   remoteDoctor: (
@@ -1393,6 +1399,11 @@ const api: RendererAuthApi = {
     runtimeRoot?: string
   ): Promise<RemoteHostProfile> =>
     ipcRenderer.invoke('remote:saveRuntimeRoot', hostProfileId, runtimeRoot),
+  saveRemoteMicromambaMirror: (
+    hostProfileId: string,
+    downloadMirrorPrefix?: string
+  ): Promise<RemoteHostProfile> =>
+    ipcRenderer.invoke('remote:saveMicromambaMirror', hostProfileId, downloadMirrorPrefix),
   remoteMicromamba: (request: RemoteMicromambaRequest): Promise<RemoteMicromambaResult> =>
     ipcRenderer.invoke('remote:micromamba', request),
   onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void): Unsubscribe => {

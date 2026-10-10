@@ -94,9 +94,10 @@ function checkedArtifact(
   if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(artifact.version)) return 'invalid-artifact'
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256) || artifact.size < 1) return 'invalid-artifact'
   if (!['linux-x64', 'linux-arm64'].includes(artifact.platform)) return 'unsupported-platform'
-  if (artifact.url) {
+  const urls = [...(artifact.url ? [artifact.url] : []), ...(artifact.urls ?? [])]
+  for (const candidate of urls) {
     try {
-      const url = new URL(artifact.url)
+      const url = new URL(candidate)
       if (url.protocol !== 'https:' || url.username || url.password) return 'invalid-artifact'
     } catch {
       return 'invalid-artifact'

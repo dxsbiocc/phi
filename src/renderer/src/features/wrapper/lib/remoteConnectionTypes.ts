@@ -18,6 +18,7 @@ export interface RemoteHostProfile {
   port?: number
   identityFile?: string
   runtimeRoot?: string
+  downloadMirrorPrefix?: string
   source?: 'ssh-config'
 }
 

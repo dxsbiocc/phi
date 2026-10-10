@@ -48,7 +48,7 @@ function dependencies(state: PolicyState): RemoteMicromambaSettingsDependencies 
         durationMs: 25,
         warningCodes: [],
         message: 'micromamba 已安装并验证。',
-        networkProbe: { status: 'reachable', tool: 'curl' },
+        networkProbe: { status: 'reachable', tool: 'curl', host: 'github.com' },
         transferMethod: 'remote-direct'
       }
     },
@@ -71,5 +71,9 @@ it('does not eagerly download the desktop artifact before ensure chooses a strat
   assert.match(state.ensureInput?.artifact.url ?? '', /^https:\/\//)
   assert.equal(typeof state.ensureInput?.obtainLocalArtifact, 'function')
   assert.equal(state.desktopDownloads, 0)
-  assert.deepEqual(state.downloadProfile, { status: 'reachable', tool: 'curl' })
+  assert.deepEqual(state.downloadProfile, {
+    status: 'reachable',
+    tool: 'curl',
+    host: 'github.com'
+  })
 })

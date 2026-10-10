@@ -16,7 +16,8 @@ import test from 'node:test'
 import {
   describeRemoteMicromambaArtifact,
   getRemoteMicromambaArtifact,
-  REMOTE_MICROMAMBA_TARGETS
+  REMOTE_MICROMAMBA_TARGETS,
+  remoteMicromambaSourceUrls
 } from '../src/main/agent/remote-micromamba-artifact'
 import { MICROMAMBA_PLATFORM_IDS } from '../scripts/runtime/fetch-micromamba.mjs'
 
@@ -78,7 +79,10 @@ test('remote capability platforms map to dedicated manifest targets without expa
   const agentDir = '/tmp/phi-agent'
   const manifest = JSON.parse(readFileSync('resources/runtime/manifest.json', 'utf8')) as {
     micromamba: {
-      platforms: Record<string, { url: string; sha256: string; size?: number }>
+      platforms: Record<
+        string,
+        { url: string; sha256: string; size?: number; mirrorPrefixes?: string[] }
+      >
     }
   }
 
@@ -95,7 +99,8 @@ test('remote capability platforms map to dedicated manifest targets without expa
     localPath: join(agentDir, 'cache', 'remote-micromamba', '2.9.0-0', 'linux-x64', 'micromamba'),
     sha256: '366cd9cd8be14df1ab8ed50352a82111082a36686b2d389fdb79a92c3fafb3e3',
     size: 18_292_808,
-    url: 'https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64'
+    url: 'https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-linux-64',
+    mirrorPrefixes: ['https://gh-proxy.com/', 'https://ghfast.top/']
   })
 
   const arm64 = describeRemoteMicromambaArtifact(
@@ -111,13 +116,31 @@ test('remote capability platforms map to dedicated manifest targets without expa
   assert.deepEqual(manifest.micromamba.platforms['linux-x64'], {
     url: x64.url,
     sha256: x64.sha256,
-    size: x64.size
+    size: x64.size,
+    mirrorPrefixes: x64.mirrorPrefixes
   })
   assert.deepEqual(manifest.micromamba.platforms['linux-arm64'], {
     url: arm64.url,
     sha256: '9f93b974adcb4d166996af969b6cd371287d1a3e52733704727884d9b74cb7a7',
-    size: arm64.size
+    size: arm64.size,
+    mirrorPrefixes: arm64.mirrorPrefixes
   })
+})
+
+test('remote source URLs keep primary first and put a user mirror before manifest mirrors', () => {
+  const url = 'https://github.com/mamba-org/micromamba/releases/download/v1/micromamba'
+  assert.deepEqual(
+    remoteMicromambaSourceUrls(
+      { url, mirrorPrefixes: ['https://manifest-one.example/', 'https://manifest-two.example/'] },
+      'https://user.example/'
+    ),
+    [
+      url,
+      `https://user.example/${url}`,
+      `https://manifest-one.example/${url}`,
+      `https://manifest-two.example/${url}`
+    ]
+  )
 })
 
 test('a verified cached artifact is reused without downloading', async () => {

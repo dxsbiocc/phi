@@ -24,8 +24,10 @@ interface RemoteHostRuntimeRootEditorProps {
   onMicromambaInstall?: (
     host: RemoteHostProfile,
     runtimeRoot: string,
-    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[],
+    downloadMirrorPrefix?: string
   ) => void
+  onMicromambaMirrorSave?: (host: RemoteHostProfile, downloadMirrorPrefix?: string) => void
 }
 
 function RuntimeRootEditorControl(props: {
@@ -67,9 +69,12 @@ function MicromambaEditor(props: {
   doctorState: RemoteDoctorUiState
   targetKey: string
   runtimeRoot: string
+  downloadMirrorPrefix: string
   state?: RemoteMicromambaUiState
   disabled: boolean
+  onMirrorChange: (value: string) => void
   onInstall?: RemoteHostRuntimeRootEditorProps['onMicromambaInstall']
+  onMirrorSave?: RemoteHostRuntimeRootEditorProps['onMicromambaMirrorSave']
 }): React.JSX.Element | null {
   if (!props.onInstall) return null
   const capabilityProfile =
@@ -80,9 +85,14 @@ function MicromambaEditor(props: {
     <RemoteMicromambaControl
       capabilityProfile={capabilityProfile}
       runtimeRoot={props.runtimeRoot}
+      downloadMirrorPrefix={props.downloadMirrorPrefix}
       state={props.state ?? { phase: 'idle' }}
       disabled={props.disabled}
-      onInstall={(warnings) => props.onInstall?.(props.host, props.runtimeRoot, warnings)}
+      onDownloadMirrorPrefixChange={props.onMirrorChange}
+      onDownloadMirrorPrefixSave={(prefix) => props.onMirrorSave?.(props.host, prefix)}
+      onInstall={(warnings, prefix) =>
+        props.onInstall?.(props.host, props.runtimeRoot, warnings, prefix)
+      }
     />
   )
 }
@@ -91,6 +101,9 @@ export function RemoteHostRuntimeRootEditor(
   props: RemoteHostRuntimeRootEditorProps
 ): React.JSX.Element {
   const [value, setValue] = useState(props.host.runtimeRoot ?? '')
+  const [downloadMirrorPrefix, setDownloadMirrorPrefix] = useState(
+    props.host.downloadMirrorPrefix ?? ''
+  )
   const normalized = normalizeRemoteRuntimeRootValue(value)
   const valueError = remoteRuntimeRootValueError(value)
   const targetKey = useMemo(
@@ -121,9 +134,12 @@ export function RemoteHostRuntimeRootEditor(
         doctorState={props.doctorState}
         targetKey={targetKey}
         runtimeRoot={normalized ?? props.host.runtimeRoot ?? '~/.phi/runtime'}
+        downloadMirrorPrefix={downloadMirrorPrefix}
         state={props.micromambaState}
         disabled={props.busy || Boolean(valueError)}
+        onMirrorChange={setDownloadMirrorPrefix}
         onInstall={props.onMicromambaInstall}
+        onMirrorSave={props.onMicromambaMirrorSave}
       />
     </>
   )

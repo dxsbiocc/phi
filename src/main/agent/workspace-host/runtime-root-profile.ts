@@ -21,15 +21,17 @@ const MICROMAMBA_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/
 
 function normalizedDownload(value: unknown): RemoteMicromambaDownloadCapability | undefined {
   if (typeof value !== 'object' || value === null) return undefined
-  const candidate = value as { status?: unknown; tool?: unknown }
+  const candidate = value as { status?: unknown; tool?: unknown; host?: unknown }
   if (candidate.status === 'unreachable' || candidate.status === 'no-tool') {
     return { status: candidate.status }
   }
   if (
     candidate.status === 'reachable' &&
-    (candidate.tool === 'curl' || candidate.tool === 'wget')
+    (candidate.tool === 'curl' || candidate.tool === 'wget') &&
+    typeof candidate.host === 'string' &&
+    /^[a-z0-9.[\]:-]+$/i.test(candidate.host)
   ) {
-    return { status: 'reachable', tool: candidate.tool }
+    return { status: 'reachable', tool: candidate.tool, host: candidate.host.toLowerCase() }
   }
   return undefined
 }

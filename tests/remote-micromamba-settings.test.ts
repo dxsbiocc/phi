@@ -90,6 +90,42 @@ describe('remote micromamba settings operation', () => {
     )
   })
 
+  it('puts the validated user mirror before manifest mirrors in the remote artifact plan', async () => {
+    let urls: readonly string[] | undefined
+    const result = await installRemoteMicromambaForHost(
+      'host-1',
+      {
+        runtimeRoot: '/data/runtime',
+        downloadMirrorPrefix: ' https://user-mirror.example/ '
+      },
+      {
+        getHostProfile: () => ({ id: 'host-1', label: 'Cluster', hostAlias: 'cluster' }),
+        connect: async () => ({ close: async () => undefined }) as never,
+        probePlatform: async () => ({
+          os: 'linux',
+          arch: 'x86_64',
+          libc: { name: 'glibc' as const }
+        }),
+        describeArtifact: () => ({
+          ...artifact,
+          url: 'https://github.com/example/micromamba',
+          mirrorPrefixes: ['https://manifest-mirror.example/']
+        }),
+        ensure: async (_session, input) => {
+          urls = input.artifact.urls
+          return installedResult()
+        }
+      }
+    )
+
+    assert.equal(result.status, 'installed')
+    assert.deepEqual(urls, [
+      'https://github.com/example/micromamba',
+      'https://user-mirror.example/https://github.com/example/micromamba',
+      'https://manifest-mirror.example/https://github.com/example/micromamba'
+    ])
+  })
+
   it('returns an unsupported result without attempting upload', async () => {
     let ensured = false
     const result = await installRemoteMicromambaForHost(

@@ -5,6 +5,28 @@ import type {
 
 export type RemoteMicromambaPlatform = 'linux-x64' | 'linux-arm64'
 
+export function remoteMicromambaMirrorPrefixError(value: string): string | null {
+  const prefix = value.trim()
+  if (!prefix) return null
+  let url: URL
+  try {
+    url = new URL(prefix)
+  } catch {
+    return '下载镜像前缀必须是有效的 HTTPS 地址'
+  }
+  if (url.protocol !== 'https:') return '下载镜像前缀必须使用 https://'
+  if (url.username || url.password) return '下载镜像前缀不能包含用户名或密码'
+  if (!prefix.endsWith('/')) return '下载镜像前缀必须以 / 结尾'
+  return null
+}
+
+export function normalizeRemoteMicromambaMirrorPrefix(value: string): string | undefined {
+  const prefix = value.trim()
+  const error = remoteMicromambaMirrorPrefixError(prefix)
+  if (error) throw new Error(error)
+  return prefix || undefined
+}
+
 export interface RemoteMicromambaArtifact {
   version: string
   platform: RemoteMicromambaPlatform
@@ -16,6 +38,7 @@ export interface RemoteMicromambaArtifact {
 export interface RemoteMicromambaInstallRequest {
   runtimeRoot: string
   confirmedWarnings: readonly RemoteRuntimeRootWarningCode[]
+  downloadMirrorPrefix?: string
   requestId?: string
 }
 

@@ -7,7 +7,9 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  buildDownloadScript,
   buildHashScript,
+  buildNetworkProbeScript,
   parseRemoteHash
 } from '../src/main/agent/workspace-host/remote-micromamba-shell'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
@@ -51,4 +53,27 @@ test('falls back when sha256sum exists but cannot hash the uploaded file', async
     await session.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('builds bounded ranged speed probes for curl and wget', () => {
+  const script = buildNetworkProbeScript('https://github.com/release')
+
+  assert.match(script, /--range 0-262143/)
+  assert.match(script, /--max-time 8 --speed-limit 51200 --speed-time 5/)
+  assert.match(script, /Range: bytes=0-262143/)
+  assert.match(script, /--read-timeout=8/)
+  assert.match(script, /phi_remaining=\$\(\(8 - phi_elapsed\)\)/)
+  assert.match(
+    script,
+    /sleep \$phi_remaining & phi_sleep=\$!; wait "\$phi_sleep"; kill "\$phi_pid"/
+  )
+})
+
+test('builds low-speed and overall limits for direct downloads', () => {
+  const curl = buildDownloadScript('https://github.com/release', '/tmp/staging', 'curl', 321)
+  const wget = buildDownloadScript('https://github.com/release', '/tmp/staging', 'wget', 321)
+
+  assert.match(curl, /--max-time 321 --speed-limit 51200 --speed-time 20/)
+  assert.match(wget, /--read-timeout=20/)
+  assert.match(wget, /sleep 321 & phi_sleep=\$!; wait "\$phi_sleep"; kill "\$phi_pid"/)
 })

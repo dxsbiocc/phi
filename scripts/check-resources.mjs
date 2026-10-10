@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -71,6 +71,48 @@ export function misplacedPhiResourcePaths(paths) {
   })
 }
 
+function isObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isValidMirrorPrefix(value) {
+  if (typeof value !== 'string' || !value.startsWith('https://') || !value.endsWith('/')) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.username === '' && url.password === ''
+  } catch {
+    return false
+  }
+}
+
+export function runtimeMirrorPrefixErrors(manifest) {
+  if (!isObject(manifest)) return []
+  const errors = []
+  for (const [runtimeName, runtime] of Object.entries(manifest)) {
+    if (!isObject(runtime) || !isObject(runtime.platforms)) continue
+    for (const [platformName, platform] of Object.entries(runtime.platforms)) {
+      if (!isObject(platform) || !Object.hasOwn(platform, 'mirrorPrefixes')) continue
+      const path = `${runtimeName}.platforms.${platformName}.mirrorPrefixes`
+      if (!Array.isArray(platform.mirrorPrefixes)) {
+        errors.push(`${path} must be a string array`)
+        continue
+      }
+      platform.mirrorPrefixes.forEach((prefix, index) => {
+        if (!isValidMirrorPrefix(prefix)) {
+          errors.push(`${path}[${index}] must be an HTTPS URL without userinfo and ending in /`)
+        }
+      })
+    }
+  }
+  return errors
+}
+
+function readRuntimeManifest() {
+  return JSON.parse(readFileSync(path.join(repoRoot, 'resources/runtime/manifest.json'), 'utf8'))
+}
+
 function listPhiResourceEntries() {
   const roots = readdirSync(path.join(repoRoot, 'resources'), { withFileTypes: true })
   return roots.flatMap((entry) => {
@@ -116,6 +158,12 @@ function listUntrackedResourcePaths() {
 }
 
 function main() {
+  const mirrorErrors = runtimeMirrorPrefixErrors(readRuntimeManifest())
+  if (mirrorErrors.length > 0) {
+    console.error('Invalid runtime mirror prefixes:')
+    for (const error of mirrorErrors) console.error(`- ${error}`)
+    process.exit(1)
+  }
   const misplaced = misplacedPhiResourcePaths(listPhiResourceEntries())
   if (misplaced.length > 0) {
     console.error('Content sources outside Phi core resources (maintain them in phi-packages):')

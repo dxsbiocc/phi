@@ -29,7 +29,8 @@ async function runInstall(
   setStates: Dispatch<SetStateAction<StateMap>>,
   host: RemoteHostProfile,
   runtimeRoot: string,
-  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[],
+  downloadMirrorPrefix?: string
 ): Promise<void> {
   const requestId = crypto.randomUUID()
   requests.set(requestId, host.id)
@@ -45,6 +46,7 @@ async function runInstall(
       requestId,
       hostProfileId: host.id,
       runtimeRoot,
+      downloadMirrorPrefix,
       confirmedWarnings
     })
     setStates((previous) => ({ ...previous, [host.id]: { phase: 'done', result } }))
@@ -63,7 +65,8 @@ export function useRemoteMicromambaSettings(doctorController: DoctorController):
   installMicromamba: (
     host: RemoteHostProfile,
     runtimeRoot: string,
-    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[],
+    downloadMirrorPrefix?: string
   ) => Promise<void>
 } {
   const [micromambaStates, setMicromambaStates] = useState<StateMap>({})
@@ -83,7 +86,15 @@ export function useRemoteMicromambaSettings(doctorController: DoctorController):
 
   return {
     micromambaStates,
-    installMicromamba: (host, root, warnings) =>
-      runInstall(doctorController, requests.current, setMicromambaStates, host, root, warnings)
+    installMicromamba: (host, root, warnings, mirror) =>
+      runInstall(
+        doctorController,
+        requests.current,
+        setMicromambaStates,
+        host,
+        root,
+        warnings,
+        mirror
+      )
   }
 }

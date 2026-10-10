@@ -174,6 +174,23 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     }
   }
 
+  async function saveMicromambaMirror(
+    host: RemoteHostProfile,
+    downloadMirrorPrefix?: string
+  ): Promise<void> {
+    setHostBusy(true)
+    setHostError(null)
+    try {
+      const profile = await window.api.saveRemoteMicromambaMirror(host.id, downloadMirrorPrefix)
+      setHosts((previous) => [...previous.filter((item) => item.id !== profile.id), profile])
+      doctorController.invalidate(host.id)
+    } catch (error) {
+      setHostError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setHostBusy(false)
+    }
+  }
+
   function openEditHost(host: RemoteHostProfile): void {
     const configured = openSshHosts.find((item) => item.alias === host.hostAlias)
     setHostDraft({
@@ -256,9 +273,10 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
           )
         }
         micromambaStates={micromambaStates}
-        onMicromambaInstall={(host, runtimeRoot, confirmedWarnings) =>
-          void installMicromamba(host, runtimeRoot, confirmedWarnings)
+        onMicromambaInstall={(host, runtimeRoot, confirmedWarnings, downloadMirrorPrefix) =>
+          void installMicromamba(host, runtimeRoot, confirmedWarnings, downloadMirrorPrefix)
         }
+        onMicromambaMirrorSave={(host, prefix) => void saveMicromambaMirror(host, prefix)}
       />
       {bootstrapTarget && (
         <RemoteHostPasswordBootstrapDialog

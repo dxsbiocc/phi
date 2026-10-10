@@ -16,7 +16,7 @@ it('shows the probed capability and selected transfer method', () => {
         ...CAPABILITY_PROFILE.runtimeRoot!,
         micromamba: {
           status: 'not-installed',
-          download: { status: 'reachable', tool: 'curl' }
+          download: { status: 'reachable', tool: 'curl', host: 'gh-proxy.com' }
         }
       }
     },
@@ -39,6 +39,6 @@ it('shows the probed capability and selected transfer method', () => {
     createElement(ThemeProvider, { theme: createTheme() }, control)
   )
 
-  assert.match(markup, /上次探测可直连（curl）/)
+  assert.match(markup, /上次测速可用源：gh-proxy.com（curl）/)
   assert.match(markup, /安装方式：服务器直连下载/)
 })

@@ -2774,6 +2774,12 @@ async function harness(
         { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
       ],
       remoteHostProfileWithRuntimeRoot: (profile: unknown): unknown => profile,
+      saveRemoteMicromambaMirrorSetting: (id: string, downloadMirrorPrefix?: string) => ({
+        id,
+        label: 'Cluster',
+        hostAlias: 'cluster-one',
+        ...(downloadMirrorPrefix ? { downloadMirrorPrefix } : {})
+      }),
       saveRemoteRuntimeRootSetting: (id: string, runtimeRoot?: string) => ({
         id,
         label: 'Cluster',
@@ -5391,6 +5397,17 @@ test('main IPC: saves and clears a host runtime-root override without credential
   })
   await assert.rejects(app.invoke('remote:saveRuntimeRoot', '', '/data/runtime'), /档案 ID 无效/)
   await assert.rejects(app.invoke('remote:saveRuntimeRoot', 'host-1', 42), /根目录无效/)
+
+  assert.deepEqual(
+    await app.invoke('remote:saveMicromambaMirror', 'host-1', 'https://mirror.example/'),
+    {
+      id: 'host-1',
+      label: 'Cluster',
+      hostAlias: 'cluster-one',
+      downloadMirrorPrefix: 'https://mirror.example/'
+    }
+  )
+  await assert.rejects(app.invoke('remote:saveMicromambaMirror', 'host-1', 42), /镜像前缀无效/)
 })
 
 test('main IPC: installs remote micromamba only for an explicit validated request', async () => {

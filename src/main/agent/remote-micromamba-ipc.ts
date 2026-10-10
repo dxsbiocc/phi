@@ -1,6 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import type { RemoteRuntimeRootWarningCode } from '../../shared/remoteRuntimeRootTypes'
+import { normalizeRemoteMicromambaMirrorPrefix } from '../../shared/remoteMicromambaTypes'
 import { installRemoteMicromambaForHost } from './remote-micromamba-settings'
 
 const WARNING_CODES = new Set<RemoteRuntimeRootWarningCode>([
@@ -17,6 +18,7 @@ interface RemoteMicromambaIpcRequest {
   requestId: string
   hostProfileId: string
   runtimeRoot: string
+  downloadMirrorPrefix?: string
   confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
 }
 
@@ -48,10 +50,17 @@ function parseRequest(value: unknown): RemoteMicromambaIpcRequest {
   ) {
     throw new Error('micromamba 警告确认值无效')
   }
+  if (input.downloadMirrorPrefix !== undefined && typeof input.downloadMirrorPrefix !== 'string') {
+    throw new Error('下载镜像前缀无效')
+  }
+  const downloadMirrorPrefix = normalizeRemoteMicromambaMirrorPrefix(
+    (input.downloadMirrorPrefix as string | undefined) ?? ''
+  )
   return {
     requestId: input.requestId,
     hostProfileId: input.hostProfileId,
     runtimeRoot: input.runtimeRoot,
+    ...(downloadMirrorPrefix ? { downloadMirrorPrefix } : {}),
     ...(warnings ? { confirmedWarnings: warnings as RemoteRuntimeRootWarningCode[] } : {})
   }
 }
@@ -76,6 +85,7 @@ export function registerRemoteMicromambaIpc(
     const request = parseRequest(value)
     return install(request.hostProfileId, {
       runtimeRoot: request.runtimeRoot,
+      downloadMirrorPrefix: request.downloadMirrorPrefix,
       confirmedWarnings: request.confirmedWarnings,
       onProgress: (progress) => sendProgress(event, request.requestId, progress)
     })

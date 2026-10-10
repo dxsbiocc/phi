@@ -12,9 +12,11 @@ import {
 } from '../src/main/agent/projects'
 import {
   listRemoteHostsWithRuntimeRoots,
+  saveRemoteMicromambaMirrorSetting,
   saveRemoteRuntimeRootSetting,
   updateProjectRemoteConnectionRuntimeAware
 } from '../src/main/agent/remote-runtime-root-settings'
+import { readHostRemoteMicromambaMirrorPrefix } from '../src/main/agent/remote-micromamba-mirror-store'
 import { readHostRuntimeRoot } from '../src/main/agent/remote-runtime-root-store'
 import {
   readCapabilityProfile,
@@ -46,6 +48,42 @@ test('saving a host runtime root invalidates cached project profiles without tou
     )
     assert.equal(readCapabilityProfile(key, { agentDir }), undefined)
     assert.equal(updated.hostAlias, 'gpu')
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('saving a host download mirror validates and returns the per-host prefix', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-micromamba-mirror-setting-'))
+  try {
+    const host = saveRemoteHostProfile({ label: 'GPU', hostAlias: 'gpu' }, agentDir)
+    const updated = saveRemoteMicromambaMirrorSetting(
+      host.id,
+      '  https://mirror.example/proxy/  ',
+      agentDir,
+      '/missing/ssh-config'
+    )
+
+    assert.equal(updated.downloadMirrorPrefix, 'https://mirror.example/proxy/')
+    assert.equal(
+      listRemoteHostsWithRuntimeRoots(agentDir, '/missing/ssh-config')[0].downloadMirrorPrefix,
+      updated.downloadMirrorPrefix
+    )
+    assert.equal(
+      readHostRemoteMicromambaMirrorPrefix(host.id, agentDir),
+      'https://mirror.example/proxy/'
+    )
+    assert.throws(
+      () => saveRemoteMicromambaMirrorSetting(host.id, 'http://mirror.example/', agentDir),
+      /必须使用 https:\/\//
+    )
+    assert.throws(
+      () => saveRemoteMicromambaMirrorSetting(host.id, 'https://mirror.example/path', agentDir),
+      /必须以 \/ 结尾/
+    )
+    const cleared = saveRemoteMicromambaMirrorSetting(host.id, undefined, agentDir)
+    assert.equal(cleared.downloadMirrorPrefix, undefined)
+    assert.equal(readHostRemoteMicromambaMirrorPrefix(host.id, agentDir), undefined)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }

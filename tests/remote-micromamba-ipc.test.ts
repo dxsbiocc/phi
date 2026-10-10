@@ -47,11 +47,16 @@ describe('remote micromamba IPC', () => {
       requestId: 'request-1',
       hostProfileId: 'host-1',
       runtimeRoot: '/data/runtime',
+      downloadMirrorPrefix: ' https://mirror.example/ ',
       confirmedWarnings: ['noexec']
     })
 
     assert.deepEqual(result, expected)
     assert.equal(calls[0]?.[0], 'host-1')
+    assert.equal(
+      (calls[0]?.[1] as { downloadMirrorPrefix?: string }).downloadMirrorPrefix,
+      'https://mirror.example/'
+    )
     assert.deepEqual(sent, [
       {
         channel: 'remote:micromambaProgress',
@@ -84,6 +89,15 @@ describe('remote micromamba IPC', () => {
         confirmedWarnings: ['invented-warning']
       }),
       /确认值无效/
+    )
+    await assert.rejects(
+      handler(event as never, {
+        requestId: 'request-1',
+        hostProfileId: 'host-1',
+        runtimeRoot: '/data/runtime',
+        downloadMirrorPrefix: 'https://user@example.com/'
+      }),
+      /不能包含用户名或密码/
     )
     assert.equal(calls, 0)
   })

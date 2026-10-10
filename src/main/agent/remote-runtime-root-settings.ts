@@ -5,6 +5,10 @@ import {
   listAvailableRemoteHostProfiles,
   type RemoteHostProfile
 } from './remote-hosts'
+import {
+  readHostRemoteMicromambaMirrorPrefix,
+  saveHostRemoteMicromambaMirrorPrefix
+} from './remote-micromamba-mirror-store'
 import { readHostRuntimeRoot, saveHostRuntimeRoot } from './remote-runtime-root-store'
 import { getPhiAgentDir } from './runtime-paths'
 import {
@@ -14,6 +18,7 @@ import {
 
 export interface RemoteHostProfileWithRuntimeRoot extends RemoteHostProfile {
   runtimeRoot?: string
+  downloadMirrorPrefix?: string
 }
 
 export function remoteHostProfileWithRuntimeRoot(
@@ -21,7 +26,12 @@ export function remoteHostProfileWithRuntimeRoot(
   agentDir = getPhiAgentDir()
 ): RemoteHostProfileWithRuntimeRoot {
   const runtimeRoot = readHostRuntimeRoot(profile.id, agentDir)
-  return { ...profile, ...(runtimeRoot ? { runtimeRoot } : {}) }
+  const downloadMirrorPrefix = readHostRemoteMicromambaMirrorPrefix(profile.id, agentDir)
+  return {
+    ...profile,
+    ...(runtimeRoot ? { runtimeRoot } : {}),
+    ...(downloadMirrorPrefix ? { downloadMirrorPrefix } : {})
+  }
 }
 
 export function listRemoteHostsWithRuntimeRoots(
@@ -48,6 +58,21 @@ export function saveRemoteRuntimeRootSetting(
   return remoteHostProfileWithRuntimeRoot(profile, agentDir)
 }
 
+export function saveRemoteMicromambaMirrorSetting(
+  hostProfileId: string,
+  downloadMirrorPrefix: string | null | undefined,
+  agentDir = getPhiAgentDir(),
+  sshConfigPath?: string
+): RemoteHostProfileWithRuntimeRoot {
+  const profile = getRemoteHostProfile(hostProfileId, agentDir, sshConfigPath)
+  if (!profile) throw new Error('SSH 服务器档案不存在')
+  const previous = readHostRemoteMicromambaMirrorPrefix(hostProfileId, agentDir)
+  saveHostRemoteMicromambaMirrorPrefix(hostProfileId, downloadMirrorPrefix, agentDir)
+  const current = readHostRemoteMicromambaMirrorPrefix(hostProfileId, agentDir)
+  if (previous !== current) invalidateCapabilityProfilesForHost(profile.hostAlias, agentDir)
+  return remoteHostProfileWithRuntimeRoot(profile, agentDir)
+}
+
 export function clearRemoteRuntimeRootSetting(
   hostProfileId: string,
   agentDir = getPhiAgentDir()
@@ -56,6 +81,17 @@ export function clearRemoteRuntimeRootSetting(
   const previous = readHostRuntimeRoot(hostProfileId, agentDir)
   if (!profile || previous === undefined) return
   saveHostRuntimeRoot(hostProfileId, undefined, agentDir)
+  invalidateCapabilityProfilesForHost(profile.hostAlias, agentDir)
+}
+
+export function clearRemoteMicromambaMirrorSetting(
+  hostProfileId: string,
+  agentDir = getPhiAgentDir()
+): void {
+  const profile = getRemoteHostProfile(hostProfileId, agentDir)
+  const previous = readHostRemoteMicromambaMirrorPrefix(hostProfileId, agentDir)
+  if (!profile || previous === undefined) return
+  saveHostRemoteMicromambaMirrorPrefix(hostProfileId, undefined, agentDir)
   invalidateCapabilityProfilesForHost(profile.hostAlias, agentDir)
 }
 

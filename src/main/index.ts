@@ -175,9 +175,11 @@ import {
   saveRemoteHostProfile
 } from './agent/remote-hosts'
 import {
+  clearRemoteMicromambaMirrorSetting,
   clearRemoteRuntimeRootSetting,
   listRemoteHostsWithRuntimeRoots,
   remoteHostProfileWithRuntimeRoot,
+  saveRemoteMicromambaMirrorSetting,
   saveRemoteRuntimeRootSetting,
   updateProjectRemoteConnectionRuntimeAware
 } from './agent/remote-runtime-root-settings'
@@ -8614,6 +8616,7 @@ app.whenReady().then(async () => {
     ) {
       throw new Error('该服务器仍被项目使用，请先移除项目中的远程连接')
     }
+    clearRemoteMicromambaMirrorSetting(id)
     clearRemoteRuntimeRootSetting(id)
     deleteRemoteHostProfile(id)
   })
@@ -8627,6 +8630,22 @@ app.whenReady().then(async () => {
         throw new Error('远程运行时根目录无效')
       }
       return saveRemoteRuntimeRootSetting(hostProfileId, runtimeRoot)
+    }
+  )
+  ipcMain.handle(
+    'remote:saveMicromambaMirror',
+    async (_, hostProfileId: unknown, downloadMirrorPrefix: unknown) => {
+      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
+        throw new Error('SSH 服务器档案 ID 无效')
+      }
+      if (
+        downloadMirrorPrefix !== undefined &&
+        downloadMirrorPrefix !== null &&
+        typeof downloadMirrorPrefix !== 'string'
+      ) {
+        throw new Error('下载镜像前缀无效')
+      }
+      return saveRemoteMicromambaMirrorSetting(hostProfileId, downloadMirrorPrefix)
     }
   )
   ipcMain.handle(

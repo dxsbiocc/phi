@@ -1,11 +1,15 @@
-import { Alert, Button, LinearProgress, Stack, Typography } from '@mui/material'
+import { Alert, Button, LinearProgress, Stack, TextField, Typography } from '@mui/material'
 
 import type { RemoteHostCapabilityProfile } from '../../../../../shared/remoteDoctorTypes'
 import type {
   RemoteMicromambaCapabilityProfile,
   RemoteRuntimeRootWarningCode
 } from '../../../../../shared/remoteRuntimeRootTypes'
-import type { RemoteMicromambaResult } from '../../../../../shared/remoteMicromambaTypes'
+import {
+  normalizeRemoteMicromambaMirrorPrefix,
+  remoteMicromambaMirrorPrefixError,
+  type RemoteMicromambaResult
+} from '../../../../../shared/remoteMicromambaTypes'
 
 const MICROMAMBA_VERSION = '2.9.0-0'
 const REMOTE_ARTIFACT_SIZES: Readonly<Record<string, number>> = {
@@ -31,9 +35,15 @@ export type RemoteMicromambaUiState =
 export interface RemoteMicromambaControlProps {
   capabilityProfile?: RemoteHostCapabilityProfile
   runtimeRoot: string
+  downloadMirrorPrefix?: string
   state: RemoteMicromambaUiState
   disabled?: boolean
-  onInstall: (confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]) => void
+  onDownloadMirrorPrefixChange?: (downloadMirrorPrefix: string) => void
+  onDownloadMirrorPrefixSave?: (downloadMirrorPrefix?: string) => void
+  onInstall: (
+    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[],
+    downloadMirrorPrefix?: string
+  ) => void
 }
 
 function formatBytes(bytes: number | undefined): string {
@@ -116,19 +126,70 @@ function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Eleme
 
 function downloadCapability(profile: RemoteHostCapabilityProfile | undefined): string {
   const capability = profile?.runtimeRoot?.micromamba?.download
-  if (capability?.status === 'reachable') return `上次探测可直连（${capability.tool}）`
+  if (capability?.status === 'reachable') {
+    return `上次测速可用源：${sanitizedSourceHost(capability.host)}（${capability.tool}）`
+  }
   if (capability?.status === 'unreachable') return '上次探测不可达，将使用本机中转'
   if (capability?.status === 'no-tool') return '服务器无 curl/wget，将使用本机中转'
-  return '安装时自动探测直连能力'
+  return '安装时自动测速直连来源'
+}
+
+function sanitizedSourceHost(value: string): string {
+  try {
+    const host = new URL(value.includes('://') ? value : `https://${value}`).hostname
+    return host || '未知来源'
+  } catch {
+    return '未知来源'
+  }
+}
+
+function MirrorPrefixEditor(props: {
+  value: string
+  error: string | null
+  disabled: boolean
+  onChange: (value: string) => void
+  onSave?: (value?: string) => void
+}): React.JSX.Element {
+  return (
+    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: 'flex-start' }}>
+      <TextField
+        size="small"
+        fullWidth
+        label="下载镜像前缀（可选）"
+        placeholder="https://mirror.example/"
+        value={props.value}
+        error={Boolean(props.error)}
+        helperText={props.error ?? '必须使用 HTTPS，不含用户名或密码，并以 / 结尾'}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
+      {props.onSave && (
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={props.disabled || Boolean(props.error)}
+          onClick={() => props.onSave?.(normalizeRemoteMicromambaMirrorPrefix(props.value))}
+          sx={{ flexShrink: 0, mt: { sm: 0.5 } }}
+        >
+          保存镜像
+        </Button>
+      )}
+    </Stack>
+  )
 }
 
 export function RemoteMicromambaControl({
   capabilityProfile,
   runtimeRoot,
+  downloadMirrorPrefix,
   state,
   disabled,
+  onDownloadMirrorPrefixChange,
+  onDownloadMirrorPrefixSave,
   onInstall
 }: RemoteMicromambaControlProps): React.JSX.Element {
+  const mirrorValue = downloadMirrorPrefix ?? ''
+  const mirrorError = remoteMicromambaMirrorPrefixError(mirrorValue)
   const size = REMOTE_ARTIFACT_SIZES[capabilityProfile?.platform.arch ?? '']
   const needsConfirmation =
     state.phase === 'done' && state.result.status === 'needs-confirmation'
@@ -146,12 +207,21 @@ export function RemoteMicromambaControl({
       <Button
         size="small"
         variant="outlined"
-        disabled={disabled || state.phase === 'running'}
-        onClick={() => onInstall(needsConfirmation)}
+        disabled={disabled || state.phase === 'running' || Boolean(mirrorError)}
+        onClick={() =>
+          onInstall(needsConfirmation, normalizeRemoteMicromambaMirrorPrefix(mirrorValue))
+        }
         sx={{ alignSelf: 'flex-start' }}
       >
         {needsConfirmation ? '仍然使用' : '安装/更新 micromamba'}
       </Button>
+      <MirrorPrefixEditor
+        value={mirrorValue}
+        error={mirrorError}
+        disabled={Boolean(disabled) || state.phase === 'running'}
+        onChange={onDownloadMirrorPrefixChange ?? (() => undefined)}
+        onSave={onDownloadMirrorPrefixSave}
+      />
       {state.phase === 'running' && <Progress progress={state.progress} />}
       {state.phase === 'done' && <Result result={state.result} />}
     </Stack>

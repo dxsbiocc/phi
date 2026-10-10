@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, it } from 'node:test'
@@ -16,7 +16,10 @@ import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRo
 import { createLocalShellSession, type LocalShellSession } from './helpers/localShellSession'
 
 const temporaryDirectories: string[] = []
-const RELEASE_URL = 'https://micro.mamba.pm/api/micromamba/linux-64/2.9.0-0'
+const PRIMARY_URL = 'https://github.com/mamba-org/micromamba-releases/download/2.9.0/micromamba'
+const USER_URL = `https://user-mirror.example/${PRIMARY_URL}`
+const MIRROR_URL = `https://gh-proxy.com/${PRIMARY_URL}`
+const SECOND_MIRROR_URL = `https://ghfast.top/${PRIMARY_URL}`
 
 async function temporaryDirectory(label: string): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), label))
@@ -51,47 +54,75 @@ function localSession(bin: string, probeOverride?: string): LocalShellSession {
   return session
 }
 
-interface FakeDownloaderOptions {
-  probeSucceeds: boolean
-  downloadSucceeds: boolean
-  source: string
-  log: string
+type ProbeResult = 'usable' | 'low' | 'timeout'
+
+interface FakeRoute {
+  host: string
+  probe: ProbeResult
+  source?: string
+}
+
+function routeCases(routes: readonly FakeRoute[]): string {
+  return routes
+    .map(
+      ({ host, probe, source }) =>
+        `  https://${host}/*) phi_probe_result=${probe}; phi_source='${source ?? ''}' ;;`
+    )
+    .join('\n')
 }
 
 async function fakeDownloader(
   bin: string,
   name: 'curl' | 'wget',
-  options: FakeDownloaderOptions
+  routes: readonly FakeRoute[],
+  log: string
 ): Promise<void> {
-  const path = join(bin, name)
-  const probeExit = options.probeSucceeds ? 0 : 28
-  const downloadExit = options.downloadSucceeds ? 0 : 23
   const script = `#!/bin/sh
-printf '%s\n' "$*" >> '${options.log}'
 phi_probe=0
 phi_dest=
+phi_url=
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -I|--head|--spider|-fsSIL) phi_probe=1 ;;
-    -o|--output|-O) shift; phi_dest=$1 ;;
+    --range|--header=*) phi_probe=1 ;;
+    -o|-O) shift; phi_dest=$1 ;;
+    https://*) phi_url=$1 ;;
   esac
   shift
 done
-[ "$phi_probe" = 0 ] || exit ${probeExit}
-[ ${downloadExit} = 0 ] || exit ${downloadExit}
-cp '${options.source}' "$phi_dest"
+printf '%s %s\n' "$phi_url" "$phi_probe" >> '${log}'
+phi_probe_result=timeout
+phi_source=
+case "$phi_url" in
+${routeCases(routes)}
+esac
+if [ "$phi_probe" = 1 ]; then
+  [ "$phi_probe_result" = timeout ] && exit 28
+  if [ '${name}' = curl ]; then
+    [ "$phi_probe_result" = usable ] && printf '262144 102400' || printf '262144 40960'
+  elif [ "$phi_probe_result" = usable ]; then
+    dd if=/dev/zero of="$phi_dest" bs=262144 count=1 2>/dev/null
+  else
+    dd if=/dev/zero of="$phi_dest" bs=40960 count=1 2>/dev/null
+  fi
+  exit 0
+fi
+[ -n "$phi_source" ] || exit 23
+cp "$phi_source" "$phi_dest"
 `
+  const path = join(bin, name)
   await writeFile(path, script)
   await chmod(path, 0o755)
 }
 
 async function artifactFixture(): Promise<{
-  plan: RemoteMicromambaArtifact & { url: string }
+  plan: RemoteMicromambaArtifact & { url: string; urls: readonly string[] }
   relay: RemoteMicromambaArtifact
   remoteSource: string
+  badSource: string
 }> {
   const dir = await temporaryDirectory('phi-remote-direct-artifact-')
   const remoteSource = join(dir, 'remote-micromamba')
+  const badSource = join(dir, 'bad-micromamba')
   const relayPath = join(dir, 'relay-micromamba')
   const content = [
     '#!/bin/sh',
@@ -100,10 +131,12 @@ async function artifactFixture(): Promise<{
     'exit 2',
     ''
   ].join('\n')
-  await writeFile(remoteSource, content)
-  await writeFile(relayPath, content)
-  await chmod(remoteSource, 0o755)
-  await chmod(relayPath, 0o755)
+  await Promise.all([
+    writeFile(remoteSource, content),
+    writeFile(relayPath, content),
+    writeFile(badSource, 'proxy error page')
+  ])
+  await Promise.all([chmod(remoteSource, 0o755), chmod(relayPath, 0o755)])
   const metadata = {
     version: '2.9.0-0',
     platform: 'linux-x64' as const,
@@ -111,9 +144,15 @@ async function artifactFixture(): Promise<{
     size: Buffer.byteLength(content)
   }
   return {
-    plan: { ...metadata, localPath: join(dir, 'desktop-cache-missing'), url: RELEASE_URL },
+    plan: {
+      ...metadata,
+      localPath: join(dir, 'desktop-cache-missing'),
+      url: PRIMARY_URL,
+      urls: [PRIMARY_URL]
+    },
     relay: { ...metadata, localPath: relayPath },
-    remoteSource
+    remoteSource,
+    badSource
   }
 }
 
@@ -144,19 +183,42 @@ function checkedRoot(root: string): RemoteRuntimeRootCheckResult {
 async function runInstall(input: {
   session: LocalShellSession
   root: string
-  artifact: RemoteMicromambaArtifact & { url: string }
-  obtainLocalArtifact: () => Promise<RemoteMicromambaArtifact>
+  artifact: RemoteMicromambaArtifact & { url: string; urls: readonly string[] }
+  relay: RemoteMicromambaArtifact
   messages?: string[]
 }): Promise<RemoteMicromambaResult> {
   return ensureRemoteMicromamba(input.session, {
     runtimeRoot: input.root,
     confirmedWarnings: [],
     artifact: input.artifact,
-    obtainLocalArtifact: input.obtainLocalArtifact,
+    obtainLocalArtifact: async () => input.relay,
     checkRuntimeRoot: async () => checkedRoot(input.root),
     randomId: () => 'fixture',
     onProgress: ({ message }) => input.messages?.push(message)
   })
+}
+
+async function installFixture(input: {
+  urls: readonly string[]
+  curl: readonly FakeRoute[]
+  wget?: readonly FakeRoute[]
+  messages?: string[]
+}): Promise<{ result: RemoteMicromambaResult; session: LocalShellSession; log: string }> {
+  const fixture = await artifactFixture()
+  const root = join(await temporaryDirectory('phi-remote-direct-root-'), 'runtime')
+  const bin = await temporaryDirectory('phi-remote-direct-bin-')
+  const log = join(bin, 'downloads.log')
+  await fakeDownloader(bin, 'curl', input.curl, log)
+  await fakeDownloader(bin, 'wget', input.wget ?? [], log)
+  const session = localSession(bin)
+  const result = await runInstall({
+    session,
+    root,
+    artifact: { ...fixture.plan, urls: input.urls },
+    relay: fixture.relay,
+    messages: input.messages
+  })
+  return { result, session, log }
 }
 
 afterEach(async () => {
@@ -165,132 +227,94 @@ afterEach(async () => {
   )
 })
 
-it('uses reachable curl directly without obtaining a desktop artifact', async () => {
+it('tries a mirror with wget when the primary speed probe times out', async () => {
   const fixture = await artifactFixture()
-  const root = join(await temporaryDirectory('phi-remote-direct-root-'), 'runtime')
-  const bin = await temporaryDirectory('phi-remote-direct-bin-')
-  const log = join(bin, 'curl.log')
-  await fakeDownloader(bin, 'curl', {
-    probeSucceeds: true,
-    downloadSucceeds: true,
-    source: fixture.remoteSource,
-    log
-  })
-  const session = localSession(bin)
-  let desktopDownloads = 0
-
-  const result = await runInstall({
-    session,
-    root,
-    artifact: fixture.plan,
-    obtainLocalArtifact: async () => {
-      desktopDownloads += 1
-      return fixture.relay
-    }
+  const { result, session } = await installFixture({
+    urls: [PRIMARY_URL, MIRROR_URL],
+    curl: [],
+    wget: [
+      { host: 'github.com', probe: 'timeout' },
+      { host: 'gh-proxy.com', probe: 'usable', source: fixture.remoteSource }
+    ]
   })
 
   assert.equal(result.status, 'installed')
   assert.equal(result.transferMethod, 'remote-direct')
-  assert.deepEqual(result.networkProbe, { status: 'reachable', tool: 'curl' })
-  assert.equal(desktopDownloads, 0)
+  assert.deepEqual(result.networkProbe, { status: 'reachable', tool: 'wget', host: 'gh-proxy.com' })
   assert.equal(session.uploads.length, 0)
 })
 
-it('returns remote-hash-mismatch for a reachable wget download with bad content', async () => {
+it('discards a mirror error page and downloads from the next source', async () => {
   const fixture = await artifactFixture()
-  const root = join(await temporaryDirectory('phi-remote-hash-root-'), 'runtime')
-  const bin = await temporaryDirectory('phi-remote-hash-bin-')
-  const log = join(bin, 'download.log')
-  const badSource = join(bin, 'bad-artifact')
-  const validContent = await readFile(fixture.remoteSource, 'utf8')
-  await writeFile(badSource, validContent.replace('2.9.0', '2.9.1'))
-  await fakeDownloader(bin, 'curl', {
-    probeSucceeds: false,
-    downloadSucceeds: false,
-    source: badSource,
-    log
-  })
-  await fakeDownloader(bin, 'wget', {
-    probeSucceeds: true,
-    downloadSucceeds: true,
-    source: badSource,
-    log
-  })
-  const session = localSession(bin)
-
-  const result = await runInstall({
-    session,
-    root,
-    artifact: fixture.plan,
-    obtainLocalArtifact: async () => fixture.relay
+  const { result, session } = await installFixture({
+    urls: [MIRROR_URL, SECOND_MIRROR_URL],
+    curl: [
+      { host: 'gh-proxy.com', probe: 'usable', source: fixture.badSource },
+      { host: 'ghfast.top', probe: 'usable', source: fixture.remoteSource }
+    ]
   })
 
-  assert.equal(result.status, 'failed')
-  assert.equal(result.errorCode, 'remote-hash-mismatch')
-  assert.deepEqual(result.networkProbe, { status: 'reachable', tool: 'wget' })
+  assert.equal(result.status, 'installed')
+  assert.deepEqual(result.networkProbe, { status: 'reachable', tool: 'curl', host: 'ghfast.top' })
   assert.equal(session.uploads.length, 0)
-  assert.match(await readFile(log, 'utf8'), /--spider -T 8 --tries=1/)
-  await assert.rejects(access(join(root, 'bin', 'micromamba-2.9.0-0.download-fixture')))
 })
 
-it('falls back to desktop relay when a reachable direct download fails', async () => {
-  const fixture = await artifactFixture()
-  const root = join(await temporaryDirectory('phi-remote-fallback-root-'), 'runtime')
-  const bin = await temporaryDirectory('phi-remote-fallback-bin-')
-  const log = join(bin, 'curl.log')
-  await fakeDownloader(bin, 'curl', {
-    probeSucceeds: true,
-    downloadSucceeds: false,
-    source: fixture.remoteSource,
-    log
-  })
-  const session = localSession(bin)
+it('falls back to relay only after all sources fail and reports host-only results', async () => {
   const messages: string[] = []
-  let desktopDownloads = 0
-
-  const result = await runInstall({
-    session,
-    root,
-    artifact: fixture.plan,
-    messages,
-    obtainLocalArtifact: async () => {
-      desktopDownloads += 1
-      return fixture.relay
-    }
+  const { result, session } = await installFixture({
+    urls: [PRIMARY_URL, MIRROR_URL],
+    curl: [
+      { host: 'github.com', probe: 'usable' },
+      { host: 'gh-proxy.com', probe: 'timeout' }
+    ],
+    messages
   })
 
   assert.equal(result.status, 'installed')
   assert.equal(result.transferMethod, 'desktop-relay')
-  assert.equal(desktopDownloads, 1)
-  assert.equal(session.uploads.length, 1)
-  assert.ok(messages.some((message) => /直连下载失败.*本机中转/.test(message)))
-})
-
-it('uses desktop relay when curl and wget cannot reach the release URL', async () => {
-  const fixture = await artifactFixture()
-  const root = join(await temporaryDirectory('phi-remote-unreachable-root-'), 'runtime')
-  const bin = await temporaryDirectory('phi-remote-unreachable-bin-')
-  const log = join(bin, 'download.log')
-  for (const name of ['curl', 'wget'] as const) {
-    await fakeDownloader(bin, name, {
-      probeSucceeds: false,
-      downloadSucceeds: false,
-      source: fixture.remoteSource,
-      log
-    })
-  }
-  const session = localSession(bin)
-
-  const result = await runInstall({
-    session,
-    root,
-    artifact: fixture.plan,
-    obtainLocalArtifact: async () => fixture.relay
-  })
-
-  assert.equal(result.transferMethod, 'desktop-relay')
   assert.deepEqual(result.networkProbe, { status: 'unreachable' })
   assert.equal(session.uploads.length, 1)
+  assert.ok(
+    messages.some((message) => /github\.com：下载失败.*gh-proxy\.com：不可用/.test(message))
+  )
+  assert.ok(
+    messages.every((message) => !message.includes('mamba-org') && !message.includes('https://'))
+  )
+})
+
+it('tries the user mirror before manifest mirrors', async () => {
+  const fixture = await artifactFixture()
+  const { result, log } = await installFixture({
+    urls: [PRIMARY_URL, USER_URL, MIRROR_URL],
+    curl: [
+      { host: 'github.com', probe: 'timeout' },
+      { host: 'user-mirror.example', probe: 'usable', source: fixture.remoteSource },
+      { host: 'gh-proxy.com', probe: 'usable', source: fixture.remoteSource }
+    ]
+  })
+
+  assert.equal(result.transferMethod, 'remote-direct')
+  assert.deepEqual(result.networkProbe, {
+    status: 'reachable',
+    tool: 'curl',
+    host: 'user-mirror.example'
+  })
+  const calls = await readFile(log, 'utf8')
+  assert.ok(calls.includes(USER_URL))
+  assert.ok(!calls.includes(MIRROR_URL))
+})
+
+it('rejects a source below 50 KiB/s and uses the next source', async () => {
+  const fixture = await artifactFixture()
+  const { result } = await installFixture({
+    urls: [PRIMARY_URL, MIRROR_URL],
+    curl: [
+      { host: 'github.com', probe: 'low', source: fixture.remoteSource },
+      { host: 'gh-proxy.com', probe: 'usable', source: fixture.remoteSource }
+    ]
+  })
+
+  assert.deepEqual(result.networkProbe, { status: 'reachable', tool: 'curl', host: 'gh-proxy.com' })
 })
 
 it('uses desktop relay when the server has no curl or wget', async () => {
@@ -303,7 +327,7 @@ it('uses desktop relay when the server has no curl or wget', async () => {
     session,
     root,
     artifact: fixture.plan,
-    obtainLocalArtifact: async () => fixture.relay
+    relay: fixture.relay
   })
 
   assert.equal(result.transferMethod, 'desktop-relay')
@@ -311,26 +335,23 @@ it('uses desktop relay when the server has no curl or wget', async () => {
   assert.equal(session.uploads.length, 1)
 })
 
-it('reuses an installed binary without probing or transferring again', async () => {
+it('reuses an installed binary without another speed probe or transfer', async () => {
   const fixture = await artifactFixture()
   const root = join(await temporaryDirectory('phi-remote-idempotent-root-'), 'runtime')
   const bin = await temporaryDirectory('phi-remote-idempotent-bin-')
-  const log = join(bin, 'curl.log')
-  await fakeDownloader(bin, 'curl', {
-    probeSucceeds: true,
-    downloadSucceeds: true,
-    source: fixture.remoteSource,
-    log
-  })
+  const log = join(bin, 'downloads.log')
+  const routes = [{ host: 'github.com', probe: 'usable' as const, source: fixture.remoteSource }]
+  await fakeDownloader(bin, 'curl', routes, log)
+  await fakeDownloader(bin, 'wget', [], log)
   const session = localSession(bin)
-  const obtainLocalArtifact = async (): Promise<RemoteMicromambaArtifact> => fixture.relay
-  const first = await runInstall({ session, root, artifact: fixture.plan, obtainLocalArtifact })
-  const callsAfterFirst = (await readFile(log, 'utf8')).trim().split('\n').length
-  const second = await runInstall({ session, root, artifact: fixture.plan, obtainLocalArtifact })
+  const input = { session, root, artifact: fixture.plan, relay: fixture.relay }
+  const first = await runInstall(input)
+  const callsAfterFirst = await readFile(log, 'utf8')
+  const second = await runInstall(input)
 
   assert.equal(first.status, 'installed')
   assert.equal(second.status, 'already-installed')
   assert.equal(second.transferMethod, 'existing')
-  assert.equal((await readFile(log, 'utf8')).trim().split('\n').length, callsAfterFirst)
+  assert.equal(await readFile(log, 'utf8'), callsAfterFirst)
   assert.equal(session.uploads.length, 0)
 })

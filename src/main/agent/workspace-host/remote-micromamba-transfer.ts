@@ -24,7 +24,10 @@ import {
   parseRemoteHash
 } from './remote-micromamba-shell'
 
-export type RemoteMicromambaArtifactPlan = RemoteMicromambaArtifact & { url?: string }
+export type RemoteMicromambaArtifactPlan = RemoteMicromambaArtifact & {
+  url?: string
+  urls?: readonly string[]
+}
 
 export interface RemoteMicromambaTransferResult {
   networkProbe?: RemoteMicromambaDownloadCapability
@@ -52,10 +55,40 @@ interface TransferOptions {
   randomId?: () => string
 }
 
-class DirectDownloadFailure extends Error {}
+type DirectSourceOutcome = '下载失败' | '校验失败'
+
+class DirectDownloadFailure extends Error {
+  constructor(readonly outcome: DirectSourceOutcome) {
+    super(outcome)
+  }
+}
+
+interface SourceResult {
+  host: string
+  outcome: '不可用' | '缺少工具' | DirectSourceOutcome
+}
 
 const UPLOAD_TIMEOUT_MS = 120_000
-const DIRECT_DOWNLOAD_TIMEOUT_MS = 310_000
+const MINIMUM_BYTES_PER_SECOND = 50 * 1024
+const MAX_DOWNLOAD_TIMEOUT_MS = 600_000
+
+function downloadTimeoutMs(size: number): number {
+  const atMinimumSpeed = Math.ceil((size / MINIMUM_BYTES_PER_SECOND) * 1_000)
+  return Math.min(MAX_DOWNLOAD_TIMEOUT_MS, Math.max(60_000, atMinimumSpeed + 30_000))
+}
+
+function sourceHost(url: string): string {
+  return new URL(url).hostname.toLowerCase()
+}
+
+function candidateUrls(artifact: RemoteMicromambaArtifactPlan): readonly string[] {
+  const urls = artifact.urls ?? (artifact.url ? [artifact.url] : [])
+  return [...new Set(urls)]
+}
+
+function sourceResultSummary(results: readonly SourceResult[]): string {
+  return results.map(({ host, outcome }) => `${host}：${outcome}`).join('；')
+}
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -105,12 +138,14 @@ async function probeRemoteNetwork(
   options: TransferOptions,
   url: string
 ): Promise<RemoteMicromambaDownloadCapability> {
-  options.onProgress({ stage: 'probing-network', message: '正在探测服务器直连下载能力…' })
+  const host = sourceHost(url)
+  options.onProgress({ stage: 'probing-network', message: `正在测速下载源 ${host}…` })
   assertNotAborted(options.signal)
   try {
     const result = await runRemoteMicromambaScript(options.session, buildNetworkProbeScript(url))
-    return parseNetworkProbe(result.stdout)
+    return parseNetworkProbe(result.stdout, host)
   } catch {
+    assertNotAborted(options.signal)
     return { status: 'unreachable' }
   }
 }
@@ -123,7 +158,7 @@ async function runDirectDownload(
     return runRemoteMicromambaScript(options.session, script)
   }
   return options.session.execBounded(`sh -c ${shellQuote(script)}`, {
-    timeoutMs: DIRECT_DOWNLOAD_TIMEOUT_MS,
+    timeoutMs: downloadTimeoutMs(options.artifact.size),
     maxOutputBytes: 64 * 1024,
     signal: options.signal
   })
@@ -134,32 +169,31 @@ async function downloadDirectly(
   capability: Extract<RemoteMicromambaDownloadCapability, { status: 'reachable' }>,
   url: string
 ): Promise<void> {
+  const host = sourceHost(url)
   const stagingPath = `${options.installPath}.download-${(options.randomId ?? randomUUID)()}`
   try {
     options.onProgress({
       stage: 'remote-downloading',
-      message: `正在由服务器使用 ${capability.tool} 直连下载 micromamba…`
+      message: `正在由服务器从 ${host} 下载 micromamba…`
     })
     assertNotAborted(options.signal)
     try {
+      const timeoutMs = downloadTimeoutMs(options.artifact.size)
       const downloaded = await runDirectDownload(
         options,
-        buildDownloadScript(url, stagingPath, capability.tool)
+        buildDownloadScript(url, stagingPath, capability.tool, Math.ceil(timeoutMs / 1_000))
       )
-      if (downloaded.code !== 0) throw new DirectDownloadFailure()
+      if (downloaded.code !== 0) throw new DirectDownloadFailure('下载失败')
     } catch {
       assertNotAborted(options.signal)
-      throw new DirectDownloadFailure()
+      throw new DirectDownloadFailure('下载失败')
     }
     assertNotAborted(options.signal)
-    options.onProgress({ stage: 'verifying-upload', message: '正在校验直连下载文件…' })
+    options.onProgress({ stage: 'verifying-upload', message: `正在校验 ${host} 下载的文件…` })
     const hash = await readRemoteMicromambaHash(options.session, stagingPath)
     const size = await readRemoteFileSize(options.session, stagingPath)
     if (hash !== options.artifact.sha256 || size !== options.artifact.size) {
-      throw new RemoteMicromambaTransferFailure(
-        'remote-hash-mismatch',
-        '服务器直连下载文件的 SHA-256 或大小不匹配。'
-      )
+      throw new DirectDownloadFailure('校验失败')
     }
     await activateStaging(options, stagingPath)
   } catch (error) {
@@ -284,29 +318,61 @@ async function relayFromDesktop(
   }
 }
 
+function terminalDirectFailure(
+  error: unknown,
+  capability: RemoteMicromambaDownloadCapability
+): RemoteMicromambaTransferFailure {
+  const failure =
+    error instanceof RemoteMicromambaTransferFailure
+      ? error
+      : new RemoteMicromambaTransferFailure('upload-failed', '服务器直连下载失败。')
+  return new RemoteMicromambaTransferFailure(
+    failure.code,
+    failure.message,
+    capability,
+    'remote-direct'
+  )
+}
+
+function exhaustedCapability(
+  missingTool: boolean,
+  toolDetected: boolean
+): RemoteMicromambaDownloadCapability {
+  return { status: missingTool && !toolDetected ? 'no-tool' : 'unreachable' }
+}
+
 export async function transferRemoteMicromamba(
   options: TransferOptions
 ): Promise<RemoteMicromambaTransferResult> {
-  const url = options.artifact.url
-  if (!url) return relayFromDesktop(options)
-  const capability = await probeRemoteNetwork(options, url)
-  if (capability.status !== 'reachable') return relayFromDesktop(options, capability)
-  try {
-    await downloadDirectly(options, capability, url)
-    return { networkProbe: capability, transferMethod: 'remote-direct' }
-  } catch (error) {
-    if (error instanceof DirectDownloadFailure) {
-      return relayFromDesktop(options, capability, '直连下载失败，正在改用本机中转…')
+  const urls = candidateUrls(options.artifact)
+  if (urls.length === 0) return relayFromDesktop(options)
+  const results: SourceResult[] = []
+  let missingTool = false
+  let toolDetected = false
+  for (const url of urls) {
+    const host = sourceHost(url)
+    const capability = await probeRemoteNetwork(options, url)
+    toolDetected ||= capability.status !== 'no-tool'
+    if (capability.status !== 'reachable') {
+      missingTool ||= capability.status === 'no-tool'
+      results.push({ host, outcome: capability.status === 'no-tool' ? '缺少工具' : '不可用' })
+      if (capability.status === 'no-tool') break
+      continue
     }
-    const failure =
-      error instanceof RemoteMicromambaTransferFailure
-        ? error
-        : new RemoteMicromambaTransferFailure('upload-failed', '服务器直连下载失败。')
-    throw new RemoteMicromambaTransferFailure(
-      failure.code,
-      failure.message,
-      capability,
-      'remote-direct'
-    )
+    options.onProgress({ stage: 'probing-network', message: `下载源 ${host} 可用。` })
+    try {
+      await downloadDirectly(options, capability, url)
+      return { networkProbe: capability, transferMethod: 'remote-direct' }
+    } catch (error) {
+      if (!(error instanceof DirectDownloadFailure)) throw terminalDirectFailure(error, capability)
+      results.push({ host, outcome: error.outcome })
+      options.onProgress({
+        stage: 'probing-network',
+        message: `${host} ${error.outcome}，尝试下一下载源…`
+      })
+    }
   }
+  const capability = exhaustedCapability(missingTool, toolDetected)
+  const summary = sourceResultSummary(results)
+  return relayFromDesktop(options, capability, `下载源结果：${summary}。正在使用本机中转…`)
 }

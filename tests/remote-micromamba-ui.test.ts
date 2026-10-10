@@ -80,6 +80,19 @@ describe('remote micromamba settings UI', () => {
     assert.match(markup, /progressbar/)
   })
 
+  it('shows Chinese validation for an unsafe mirror prefix without exposing credentials', () => {
+    const markup = render({
+      capabilityProfile: CAPABILITY_PROFILE,
+      runtimeRoot: '~/.phi/runtime',
+      downloadMirrorPrefix: 'https://researcher:secret@mirror.example/path/',
+      state: { phase: 'idle' },
+      onInstall: () => undefined
+    })
+
+    assert.match(markup, /下载镜像前缀不能包含用户名或密码/)
+    assert.match(markup, /下载镜像前缀（可选）/)
+  })
+
   it('shows the newly installed status even before a capability profile exists', () => {
     const markup = render({
       runtimeRoot: '~/.phi/runtime',
