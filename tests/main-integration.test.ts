@@ -2838,7 +2838,7 @@ async function harness(
             version: '2.9.0-0',
             platform: 'linux-x64',
             durationMs: 25,
-            installPath: '/data/runtime/bin/micromamba-2.9.0-0',
+            installPath: '/data/runtime/bin/micromamba-2.9.0-0/micromamba',
             warningCodes: ['noexec'],
             message: 'micromamba 已安装并验证。'
           }
@@ -5472,7 +5472,7 @@ test('main IPC: installs remote micromamba only for an explicit validated reques
       version: '2.9.0-0',
       platform: 'linux-x64',
       durationMs: 25,
-      installPath: '/data/runtime/bin/micromamba-2.9.0-0',
+      installPath: '/data/runtime/bin/micromamba-2.9.0-0/micromamba',
       warningCodes: ['noexec'],
       message: 'micromamba 已安装并验证。'
     }

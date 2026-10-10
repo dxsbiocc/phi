@@ -23,10 +23,15 @@ test('remote prompt reports a safe runtime root label and installed micromamba',
   const rendered = prompt({
     rootLabel: '~/.phi/runtime',
     source: 'default',
-    micromambaStatus: 'installed'
+    micromambaStatus: 'installed',
+    micromambaPathLabel: '~/.phi/runtime/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.match(rendered, /~\/.phi\/runtime/)
   assert.match(rendered, /micromamba is installed and runnable/i)
+  assert.match(rendered, /~\/\.phi\/runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
+  assert.match(rendered, /content-addressed skill resources/i)
+  assert.match(rendered, /SSH login host/i)
+  assert.match(rendered, /Never substitute a local environment/i)
   assert.doesNotMatch(rendered, /local\/private\/anchor/)
 })
 
@@ -34,18 +39,20 @@ test('remote prompt redacts absolute runtime paths and gives setup guidance with
   const rendered = prompt({
     rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
     source: 'host',
-    micromambaStatus: 'not-installed'
+    micromambaStatus: 'not-installed',
+    micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.match(rendered, /\$PHI_REMOTE_RUNTIME_ROOT/)
   assert.match(rendered, /remote host settings/i)
   assert.match(rendered, /will not install it automatically/i)
+  assert.match(rendered, /\$PHI_REMOTE_RUNTIME_ROOT\/bin\/micromamba-2\.9\.0-0\/micromamba/)
   assert.doesNotMatch(rendered, /alice|cluster-a|\/home\//i)
 })
 
 test('remote prompt distinguishes outdated, unusable and unchecked micromamba', () => {
   for (const [status, expected] of [
     ['outdated', /outdated/i],
-    ['unusable', /not runnable/i],
+    ['unusable', /not usable by micromamba run/i],
     ['unchecked', /has not been verified/i]
   ] as const) {
     assert.match(
@@ -57,6 +64,14 @@ test('remote prompt distinguishes outdated, unusable and unchecked micromamba', 
       expected
     )
   }
+  assert.match(
+    prompt({
+      rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
+      source: 'project',
+      micromambaStatus: 'unusable'
+    }),
+    /micromamba run.*legacy file layouts.*reinstall/i
+  )
 })
 
 test('runtime context reads only host metadata and redacts absolute configured roots', () => {
@@ -71,13 +86,38 @@ test('runtime context reads only host metadata and redacts absolute configured r
         assert.equal(projectRoot, '/cluster/project')
         assert.equal(agentDir, '/local/agent')
         return 'installed'
-      }
+      },
+      readMicromambaVersion: () => '2.9.0-0'
     }
   )
   assert.deepEqual(context, {
     rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
     source: 'host',
-    micromambaStatus: 'installed'
+    micromambaStatus: 'installed',
+    micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.equal(remoteRuntimeRootLabel('~/.phi/custom'), '~/.phi/custom')
+})
+
+test('runtime prompt context uses the same project runtime-root override as execution', () => {
+  const context = resolveRemoteRuntimePromptContext(
+    {
+      hostProfileId: 'profile-1',
+      canonicalRoot: '/cluster/project',
+      projectOverride: '/project/runtime'
+    },
+    '/local/agent',
+    {
+      getHostProfile: () => ({ id: 'profile-1', label: 'Secret', hostAlias: 'cluster-secret' }),
+      readHostRoot: () => '/host/runtime',
+      readMicromambaStatus: () => 'installed',
+      readMicromambaVersion: () => '2.9.0-0'
+    }
+  )
+  assert.deepEqual(context, {
+    rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
+    source: 'project',
+    micromambaStatus: 'installed',
+    micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
+  })
 })

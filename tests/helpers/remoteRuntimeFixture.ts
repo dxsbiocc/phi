@@ -136,17 +136,27 @@ export function installFakeMicromamba(
   version = 'test',
   mode: 'ok' | 'offline' = 'ok'
 ): string {
-  const binDir = join(fixture.runtimeRoot, 'bin')
-  mkdirSync(binDir, { recursive: true })
-  const path = join(binDir, `micromamba-${version}`)
+  const versionDir = join(fixture.runtimeRoot, 'bin', `micromamba-${version}`)
+  mkdirSync(versionDir, { recursive: true, mode: 0o755 })
+  chmodSync(versionDir, 0o755)
+  const path = join(versionDir, 'micromamba')
+  const executableCheck = `phi_executable=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf '%s\\n' "$0")
+if [ "$(basename "$phi_executable")" != micromamba ]; then
+  printf 'Error unknown MAMBA_EXE: "%s", filename must be mamba or micromamba\\n' "$phi_executable" >&2
+  exit 1
+fi
+`
   const source =
     mode === 'offline'
-      ? '#!/bin/sh\necho "Could not resolve host: conda.anaconda.org" >&2\nexit 7\n'
+      ? `#!/bin/sh
+${executableCheck}echo "Could not resolve host: conda.anaconda.org" >&2
+exit 7
+`
       : `#!/bin/sh
 set -eu
-command_name=$1
+${executableCheck}command_name=$1
 shift
-phi_root=$(CDPATH= cd -P -- "$(dirname "$0")/.." && pwd -P)
+phi_root=\${MAMBA_ROOT_PREFIX:?}
 printf '%s|root=%s\\n' "$command_name $*" "\${MAMBA_ROOT_PREFIX:-}" >> "$phi_root/micromamba-calls.log"
 if [ "$command_name" = create ]; then
   prefix=

@@ -6,6 +6,7 @@ import {
   type EnvironmentRequestConfirm,
   type EnvRequestResult
 } from '../content/env-request'
+import { remoteMicromambaPath } from '../../../shared/remoteMicromambaTypes'
 import type { CommandResult } from '../workspace-host/types'
 import type {
   OpenRemoteRuntimeWorkspace,
@@ -128,7 +129,7 @@ export class RemoteEnvironmentService {
   }
 
   micromambaPath(workspace: RemoteRuntimeWorkspace): string {
-    return posix.join(workspace.runtimeRoot, 'bin', `micromamba-${this.options.micromambaVersion}`)
+    return remoteMicromambaPath(workspace.runtimeRoot, this.options.micromambaVersion)
   }
 
   private async confirm(input: ValidRemoteEnvironmentRequest): Promise<boolean> {

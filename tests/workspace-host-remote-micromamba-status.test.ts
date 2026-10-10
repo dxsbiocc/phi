@@ -41,10 +41,11 @@ function localSession(cwd?: string): LocalShellSession {
 async function writeMicromamba(
   root: string,
   release: string,
-  options: { runnable?: boolean; platform?: string } = {}
+  options: { runnable?: boolean; platform?: string; legacyLayout?: boolean } = {}
 ): Promise<string> {
-  const path = join(root, 'bin', `micromamba-${release}`)
-  await mkdir(join(root, 'bin'), { recursive: true })
+  const releasePath = join(root, 'bin', `micromamba-${release}`)
+  const path = options.legacyLayout ? releasePath : join(releasePath, 'micromamba')
+  await mkdir(options.legacyLayout ? join(root, 'bin') : releasePath, { recursive: true })
   const binaryVersion = release.replace(/-\d+$/, '')
   const content =
     options.runnable === false
@@ -53,6 +54,7 @@ async function writeMicromamba(
           '#!/bin/sh',
           `if [ "$1" = "--version" ]; then echo '${binaryVersion}'; exit 0; fi`,
           `if [ "$1" = "--rc-file" ]; then echo 'platform : ${options.platform ?? 'linux-64'}'; exit 0; fi`,
+          'if [ "$1" = "run" ]; then shift 3; exec "$@"; fi',
           'exit 2',
           ''
         ].join('\n')
@@ -142,6 +144,31 @@ test('reports the expected release as unusable when isolated verification fails'
     assert.equal(result.status, 'unusable')
     assert.equal(result.runnable, false)
     assert.equal(result.errorCode, 'verification-failed')
+  } finally {
+    await session.close()
+  }
+})
+
+test('reports an R2.2 legacy file layout as needing migration without executing it', async () => {
+  const root = join(await temporaryDirectory(), 'runtime')
+  const sentinel = join(root, 'legacy-was-executed')
+  const path = await writeMicromamba(root, '2.9.0-0', { legacyLayout: true })
+  await writeFile(path, `#!/bin/sh\ntouch '${sentinel}'\nexit 0\n`)
+  const session = localSession()
+
+  try {
+    const result = await getRemoteMicromambaStatus(session, root, {
+      expectedVersion: '2.9.0-0',
+      platform: 'linux-x64'
+    })
+
+    assert.equal(result.status, 'unusable')
+    assert.equal(result.runnable, false)
+    assert.equal(result.versionMatches, true)
+    assert.equal(result.errorCode, 'legacy-layout')
+    assert.deepEqual(result.installedVersions, ['2.9.0-0'])
+    assert.match(result.message, /旧安装布局.*重新安装/u)
+    await assert.rejects(access(sentinel))
   } finally {
     await session.close()
   }

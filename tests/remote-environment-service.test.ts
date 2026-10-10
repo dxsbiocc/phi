@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
@@ -63,6 +64,29 @@ test('remote env_request creates and then reuses a content-addressed environment
     assert.doesNotMatch(calls[0] ?? '', /-c bioconda/u)
     assert.match(calls[0] ?? '', new RegExp(`root=${escapeRegExp(fixture.runtimeRoot)}$`))
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('fake micromamba rejects a resolved executable basename from the legacy layout', () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    const binary = installFakeMicromamba(fixture)
+    const legacyPath = join(fixture.runtimeRoot, 'bin', 'micromamba-legacy-test')
+    copyFileSync(binary, legacyPath)
+    chmodSync(legacyPath, 0o755)
+
+    const result = spawnSync(legacyPath, ['run'], {
+      encoding: 'utf8',
+      env: { ...process.env, MAMBA_ROOT_PREFIX: fixture.runtimeRoot }
+    })
+
+    assert.equal(result.status, 1)
+    assert.equal(
+      result.stderr,
+      `Error unknown MAMBA_EXE: "${legacyPath}", filename must be mamba or micromamba\n`
+    )
   } finally {
     fixture.cleanup()
   }
@@ -144,7 +168,10 @@ test('remote env_request reports a missing micromamba without installing or fall
     assert.match(result.error, /设置.+安装 micromamba/u)
     assert.match(result.error, /没有.+本机/u)
     assert.equal(readFileSync(join(fixture.localAnchor, 'sentinel.txt'), 'utf8'), 'untouched')
-    assert.equal(existsSync(join(fixture.runtimeRoot, 'bin', 'micromamba-test')), false)
+    assert.equal(
+      existsSync(join(fixture.runtimeRoot, 'bin', 'micromamba-test', 'micromamba')),
+      false
+    )
   } finally {
     fixture.cleanup()
   }

@@ -126,8 +126,14 @@ async function artifactFixture(): Promise<{
   const relayPath = join(dir, 'relay-micromamba')
   const content = [
     '#!/bin/sh',
+    'phi_executable=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf \'%s\\n\' "$0")',
+    'if [ "$(basename "$phi_executable")" != micromamba ]; then',
+    '  printf \'Error unknown MAMBA_EXE: "%s", filename must be mamba or micromamba\\n\' "$phi_executable" >&2',
+    '  exit 1',
+    'fi',
     'if [ "$1" = "--version" ]; then echo 2.9.0; exit 0; fi',
-    'if [ "$1" = "--rc-file" ]; then echo "platform : linux-64"; exit 0; fi',
+    'if [ "$1" = "--rc-file" ] && [ "$3" = "info" ]; then echo "platform : linux-64"; exit 0; fi',
+    'if [ "$1" = "--rc-file" ] && [ "$3" = "run" ]; then shift 5; exec "$@"; fi',
     'exit 2',
     ''
   ].join('\n')

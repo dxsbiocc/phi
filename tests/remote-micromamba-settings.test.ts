@@ -18,7 +18,7 @@ function installedResult(): RemoteMicromambaResult {
     version: artifact.version,
     platform: artifact.platform,
     durationMs: 25,
-    installPath: '/data/runtime/bin/micromamba-2.9.0-0',
+    installPath: '/data/runtime/bin/micromamba-2.9.0-0/micromamba',
     warningCodes: [] as const,
     message: 'micromamba 已安装并验证。'
   }
@@ -88,6 +88,37 @@ describe('remote micromamba settings operation', () => {
       ),
       /SSH 服务器档案不存在/
     )
+  })
+
+  it('persists a micromamba run verification failure as unusable', async () => {
+    let savedStatus = ''
+    const failed = {
+      ...installedResult(),
+      status: 'failed' as const,
+      errorCode: 'run-verification-failed' as const,
+      message: 'micromamba run 激活验证失败。'
+    }
+    const result = await installRemoteMicromambaForHost(
+      'host-1',
+      { runtimeRoot: '/data/runtime' },
+      {
+        getHostProfile: () => ({ id: 'host-1', label: 'Cluster', hostAlias: 'cluster' }),
+        connect: async () => ({ close: async () => undefined }) as never,
+        probePlatform: async () => ({
+          os: 'linux',
+          arch: 'x86_64',
+          libc: { name: 'glibc' as const }
+        }),
+        getArtifact: async () => artifact,
+        ensure: async () => failed,
+        updateLatestProfile: (_alias, status) => {
+          savedStatus = `${status.status}:${'version' in status ? status.version : ''}`
+        }
+      }
+    )
+
+    assert.deepEqual(result, failed)
+    assert.equal(savedStatus, 'unusable:2.9.0-0')
   })
 
   it('puts the validated user mirror before manifest mirrors in the remote artifact plan', async () => {

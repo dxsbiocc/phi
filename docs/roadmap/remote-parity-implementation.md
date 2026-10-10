@@ -63,7 +63,7 @@
 R2.5b 把 R2.5 已展示但仍拒绝的 Skill/环境能力接到登录节点运行时，范围不含 Slurm、Wrapper 运行策略、计算节点环境或 MCP：
 
 - `env_request` 的远程 handler 从 Phi 会话归属解析 SSH 项目和运行时根；项目覆盖优先于主机覆盖，最后使用默认值。环境目录和别名元数据只写服务器运行时根，内容哈希相同且完成标记有效时复用。
-- micromamba 必须已由设置页安装并可执行；运行命令固定使用 `--override-channels -c conda-forge --yes`，不追加基础环境声明的其他 channel，设置 `MAMBA_ROOT_PREFIX` 到远程运行时根，并把 AbortSignal、超时和输出上限交给 `WorkspaceHost.exec`。网络/软件源错误返回中文恢复建议，绝不转到本机。含 pip 或额外源码包的基础环境在远程安装器实现对应阶段前明确拒绝并给出预构建迁移方案，不静默删减规格；尚未建立服务器 alias 的 `project:` 环境不会读取本机 anchor，未绑定所属插件的 `plugin:` 环境也不会猜测来源，两者分别提示改用 `phi:`/预构建迁移或对应插件专家会话。
+- micromamba 必须已由设置页安装到 `<runtime-root>/bin/micromamba-<version>/micromamba` 并通过 `micromamba run` 激活验证；运行命令固定使用 `--override-channels -c conda-forge --yes`，不追加基础环境声明的其他 channel，设置 `MAMBA_ROOT_PREFIX` 到远程运行时根，并把 AbortSignal、超时和输出上限交给 `WorkspaceHost.exec`。网络/软件源错误返回中文恢复建议，绝不转到本机。含 pip 或额外源码包的基础环境在远程安装器实现对应阶段前明确拒绝并给出预构建迁移方案，不静默删减规格；尚未建立服务器 alias 的 `project:` 环境不会读取本机 anchor，未绑定所属插件的 `plugin:` 环境也不会猜测来源，两者分别提示改用 `phi:`/预构建迁移或对应插件专家会话。
 - 全局 Skill 的普通文件、二进制资源与依赖一起哈希（含执行位）；纯 SSH 路径对二进制/大文件分块上传，复用时逐文件复核精确文件集、内容、长度与脚本可执行性。上传与远端 bundle 目标都拒绝符号链接和路径穿越，目录为 0700、脚本为 0755，完成标记最后写入。`skill_run` 和动态脚本都从服务器 bundle 取脚本，在远程项目 cwd 执行；`input-path`/`project-path` 只解析到远程项目，现有或悬空的越界符号链接会拒绝。声明 `./environment.yml` 的 Skill 在远程环境打包落地前明确拒绝，并提示改用 `phi:` 或预构建迁移，不回退本机。
 - `skill_run`、`env_request` 只有在精确描述签名的 Phi custom backend 实际注册时才放行；动态脚本还必须出现在该会话从远程 Skill 服务取得的工具名集合中。未知工具、builtin 同名工具、未声明 extension、项目级 Skill 和本机 Office/GUI 路径继续拒绝。
 - 服务级测试通过现有本机 bash 假 SSH 夹具覆盖环境创建/复用、缺失 micromamba、conda 不可达、上传幂等、执行、取消、输出截断、路径穿越、远程路径解析以及零本机 anchor 回退；worker 编排仍由 Node 可导入的小模块测试，避免测试直接导入 Bun worker。

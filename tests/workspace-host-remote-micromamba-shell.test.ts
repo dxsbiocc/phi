@@ -10,6 +10,8 @@ import {
   buildDownloadScript,
   buildHashScript,
   buildNetworkProbeScript,
+  buildVerificationScript,
+  parseVerification,
   parseRemoteHash
 } from '../src/main/agent/workspace-host/remote-micromamba-shell'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
@@ -76,4 +78,32 @@ test('builds low-speed and overall limits for direct downloads', () => {
   assert.match(curl, /--max-time 321 --speed-limit 51200 --speed-time 20/)
   assert.match(wget, /--read-timeout=20/)
   assert.match(wget, /sleep 321 & phi_sleep=\$!; wait "\$phi_sleep"; kill "\$phi_pid"/)
+})
+
+test('verification exercises micromamba run against an offline temporary prefix', () => {
+  const script = buildVerificationScript('/runtime/bin/micromamba-2.9.0-0/micromamba', '/runtime')
+
+  assert.match(script, /mktemp -d/)
+  assert.match(script, /conda-meta\/history/)
+  assert.match(script, /--rc-file \/dev\/null run -p "\$phi_prefix" \/bin\/sh -c/)
+  assert.match(script, /env -i HOME=/)
+  assert.match(script, /__PHI_MICROMAMBA_RUN__/)
+})
+
+test('verification parsing distinguishes an activation run failure', () => {
+  const parsed = parseVerification(
+    [
+      '__PHI_MICROMAMBA_VERSION__=2.9.0',
+      '__PHI_MICROMAMBA_PLATFORM__=linux-64',
+      '__PHI_MICROMAMBA_RUN__=17'
+    ].join('\n'),
+    1
+  )
+
+  assert.deepEqual(parsed, {
+    version: '2.9.0',
+    platform: 'linux-64',
+    runSuccessful: false,
+    runnable: false
+  })
 })

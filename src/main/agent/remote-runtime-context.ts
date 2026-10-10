@@ -1,10 +1,12 @@
 import type { RemoteRuntimePromptContext } from './main-system-prompt'
+import { currentRemoteMicromambaVersion } from './workspace-host/remote-micromamba-profile'
+import { remoteMicromambaPath } from '../../shared/remoteMicromambaTypes'
 import { getRemoteHostProfile, type RemoteHostProfile } from './remote-hosts'
 import { resolveRemoteRuntimeRoot } from './remote-runtime-root'
 import { readHostRuntimeRoot } from './remote-runtime-root-store'
 import { readCapabilityProfile } from './workspace-host/capability-profile-store'
 
-type RemoteLocation = { hostProfileId: string; canonicalRoot: string }
+type RemoteLocation = { hostProfileId: string; canonicalRoot: string; projectOverride?: string }
 
 type Dependencies = {
   getHostProfile?: (id: string, agentDir: string) => RemoteHostProfile | undefined
@@ -14,6 +16,7 @@ type Dependencies = {
     projectRoot: string,
     agentDir: string
   ) => RemoteRuntimePromptContext['micromambaStatus']
+  readMicromambaVersion?: () => string | undefined
 }
 
 export function resolveRemoteRuntimePromptContext(
@@ -29,7 +32,10 @@ export function resolveRemoteRuntimePromptContext(
     location.hostProfileId,
     agentDir
   )
-  const root = resolveRemoteRuntimeRoot({ hostOverride })
+  const root = resolveRemoteRuntimeRoot({
+    ...(location.projectOverride ? { projectOverride: location.projectOverride } : {}),
+    hostOverride
+  })
   const micromambaStatus = profile
     ? (dependencies.readMicromambaStatus ?? cachedMicromambaStatus)(
         profile.hostAlias,
@@ -37,10 +43,15 @@ export function resolveRemoteRuntimePromptContext(
         agentDir
       )
     : 'unchecked'
+  const rootLabel = remoteRuntimeRootLabel(root.configured)
+  const micromambaVersion = (dependencies.readMicromambaVersion ?? currentRemoteMicromambaVersion)()
   return {
-    rootLabel: remoteRuntimeRootLabel(root.configured),
+    rootLabel,
     source: root.source,
-    micromambaStatus
+    micromambaStatus,
+    ...(micromambaVersion
+      ? { micromambaPathLabel: remoteMicromambaPath(rootLabel, micromambaVersion) }
+      : {})
   }
 }
 

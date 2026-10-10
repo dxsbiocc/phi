@@ -119,7 +119,10 @@ function profileStatus(
   if (result.status === 'installed' || result.status === 'already-installed') {
     return { status: 'installed', version: result.version }
   }
-  if (result.status === 'failed' && result.errorCode === 'verification-failed') {
+  if (
+    result.status === 'failed' &&
+    (result.errorCode === 'verification-failed' || result.errorCode === 'run-verification-failed')
+  ) {
     return { status: 'unusable', version: result.version }
   }
   return undefined

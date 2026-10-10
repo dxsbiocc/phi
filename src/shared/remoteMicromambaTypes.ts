@@ -5,6 +5,16 @@ import type {
 
 export type RemoteMicromambaPlatform = 'linux-x64' | 'linux-arm64'
 
+const REMOTE_MICROMAMBA_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/
+
+export function remoteMicromambaPath(runtimeRoot: string, version: string): string {
+  if (!REMOTE_MICROMAMBA_VERSION_PATTERN.test(version)) {
+    throw new Error('invalid remote micromamba version')
+  }
+  const root = runtimeRoot.replace(/\/+$/, '')
+  return `${root}/bin/micromamba-${version}/micromamba`
+}
+
 export function remoteMicromambaMirrorPrefixError(value: string): string | null {
   const prefix = value.trim()
   if (!prefix) return null
@@ -56,6 +66,8 @@ export type RemoteMicromambaErrorCode =
   | 'remote-hash-mismatch'
   | 'activation-failed'
   | 'verification-failed'
+  | 'run-verification-failed'
+  | 'legacy-layout'
   | 'aborted'
   | 'status-check-failed'
 
@@ -86,6 +98,7 @@ export interface RemoteMicromambaVerification {
   platform: string | null
   versionMatches: boolean
   platformMatches: boolean
+  runSuccessful: boolean
   runnable: boolean
 }
 

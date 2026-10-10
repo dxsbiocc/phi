@@ -1,12 +1,13 @@
 import { posix } from 'node:path'
 
-import type {
-  RemoteMicromambaArtifact,
-  RemoteMicromambaErrorCode,
-  RemoteMicromambaInstallRequest,
-  RemoteMicromambaProgress,
-  RemoteMicromambaResult,
-  RemoteMicromambaVerification
+import {
+  remoteMicromambaPath,
+  type RemoteMicromambaArtifact,
+  type RemoteMicromambaErrorCode,
+  type RemoteMicromambaInstallRequest,
+  type RemoteMicromambaProgress,
+  type RemoteMicromambaResult,
+  type RemoteMicromambaVerification
 } from '../../../shared/remoteMicromambaTypes'
 import type {
   RemoteRuntimeRootCheckResult,
@@ -128,7 +129,7 @@ async function prepareDirectories(context: OperationContext): Promise<void> {
   assertNotAborted(context.options.signal)
   const result = await runRemoteMicromambaScript(
     context.session,
-    buildPrepareRuntimeScript(context.root)
+    buildPrepareRuntimeScript(context.root, posix.dirname(context.installPath))
   )
   if (result.code !== 0) {
     throw new InstallFailure(
@@ -151,6 +152,7 @@ async function verifyInstalled(context: OperationContext): Promise<RemoteMicroma
       parsed.version === remoteMicromambaBinaryVersion(context.options.artifact.version),
     platformMatches:
       parsed.platform === expectedRemoteMicromambaInfoPlatform(context.options.artifact.platform),
+    runSuccessful: parsed.runSuccessful,
     runnable: parsed.runnable
   }
 }
@@ -184,9 +186,13 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
   emit(context.options, { stage: 'verifying-installation', message: '正在验证远端 micromamba…' })
   const verification = await verifyInstalled(context)
   if (!verification.runnable || !verification.versionMatches || !verification.platformMatches) {
+    const runFailed =
+      verification.versionMatches && verification.platformMatches && !verification.runSuccessful
     throw new InstallFailure(
-      'verification-failed',
-      'micromamba 已传输，但运行或平台验证失败。',
+      runFailed ? 'run-verification-failed' : 'verification-failed',
+      runFailed
+        ? 'micromamba 已传输，但 micromamba run 激活验证失败。'
+        : 'micromamba 已传输，但版本或平台验证失败。',
       verification,
       transfer
     )
@@ -235,7 +241,7 @@ function checkFailureResult(
     return {
       ...common,
       status: 'needs-confirmation',
-      installPath: posix.join(check.expandedPath, 'bin', `micromamba-${options.artifact.version}`),
+      installPath: remoteMicromambaPath(check.expandedPath, options.artifact.version),
       message: hasNoexec
         ? '该位置为 noexec，micromamba 将无法运行；建议更换可执行位置。确认“仍然使用”后仍可尝试安装并如实验证。'
         : '运行时根目录存在需要确认的风险，确认“仍然使用”后才能安装。'
@@ -270,7 +276,7 @@ export async function ensureRemoteMicromamba(
   if (stopped) return stopped
   const root = check.expandedPath as string
   const warningCodes = check.warnings.map(({ code }) => code)
-  const installPath = posix.join(root, 'bin', `micromamba-${options.artifact.version}`)
+  const installPath = remoteMicromambaPath(root, options.artifact.version)
   try {
     return await installOrReuse({ session, options, startedAt, root, installPath, warningCodes })
   } catch (error) {

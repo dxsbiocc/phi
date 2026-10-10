@@ -11,9 +11,11 @@ const NETWORK_MARKER = '__PHI_MICROMAMBA_NETWORK__='
 const SIZE_MARKER = '__PHI_MICROMAMBA_SIZE__='
 const VERSION_MARKER = '__PHI_MICROMAMBA_VERSION__='
 const PLATFORM_MARKER = '__PHI_MICROMAMBA_PLATFORM__='
+const RUN_MARKER = '__PHI_MICROMAMBA_RUN__='
 const STATUS_MARKER = '__PHI_MICROMAMBA_STATUS__='
 const ROOT_MARKER = '__PHI_MICROMAMBA_ROOT__='
 const RELEASE_MARKER = '__PHI_MICROMAMBA_RELEASE__='
+const LEGACY_RELEASE_MARKER = '__PHI_MICROMAMBA_LEGACY_RELEASE__='
 const PROBE_BYTES = 256 * 1024
 const MINIMUM_BYTES_PER_SECOND = 50 * 1024
 
@@ -37,6 +39,7 @@ export interface ParsedRemoteHash {
 export interface ParsedMicromambaVerification {
   version: string | null
   platform: string | null
+  runSuccessful: boolean
   runnable: boolean
 }
 
@@ -44,13 +47,15 @@ export interface ParsedMicromambaStatusScan {
   state: 'ok' | 'missing' | 'failed'
   root?: string
   versions: readonly string[]
+  legacyVersions: readonly string[]
 }
 
-export function buildPrepareRuntimeScript(root: string): string {
+export function buildPrepareRuntimeScript(root: string, releaseDirectory: string): string {
   return [
     'set -eu',
     `phi_root=${shellQuote(root)}`,
     'phi_bin=$phi_root/bin',
+    `phi_release=${shellQuote(releaseDirectory)}`,
     'if [ -e "$phi_root" ] || [ -L "$phi_root" ]; then',
     '  [ -d "$phi_root" ] || exit 20',
     'else',
@@ -62,7 +67,26 @@ export function buildPrepareRuntimeScript(root: string): string {
     'else',
     '  (umask 077; mkdir "$phi_bin") || exit 23',
     '  chmod 700 "$phi_bin" || exit 23',
-    'fi'
+    'fi',
+    'if [ -L "$phi_release" ] || { [ -e "$phi_release" ] && [ ! -d "$phi_release" ]; }; then',
+    '  phi_migration="${phi_release}.migration-$$"',
+    '  (umask 022; mkdir "$phi_migration") || exit 24',
+    '  chmod 755 "$phi_migration" || exit 24',
+    '  if ! mv "$phi_release" "$phi_migration/micromamba.legacy"; then',
+    '    rmdir "$phi_migration" 2>/dev/null || :',
+    '    exit 24',
+    '  fi',
+    '  if ! mv "$phi_migration" "$phi_release"; then',
+    '    mv "$phi_migration/micromamba.legacy" "$phi_release" 2>/dev/null || :',
+    '    rmdir "$phi_migration" 2>/dev/null || :',
+    '    exit 24',
+    '  fi',
+    'elif [ -e "$phi_release" ]; then',
+    '  [ -d "$phi_release" ] || exit 24',
+    'else',
+    '  (umask 022; mkdir "$phi_release") || exit 24',
+    'fi',
+    'chmod 755 "$phi_release" || exit 24'
   ].join('\n')
 }
 
@@ -243,13 +267,24 @@ export function buildVerificationScript(path: string, root: string): string {
     'phi_info=$(env -i HOME="$phi_home" MAMBA_ROOT_PREFIX="$phi_root" CONDARC= MAMBARC= "$phi_binary" --rc-file /dev/null info 2>/dev/null)',
     'phi_info_status=$?',
     'phi_platform=$(printf \x27%s\\n\x27 "$phi_info" | sed -n \x27s/^[[:space:]]*platform[[:space:]]*:[[:space:]]*//p\x27 | head -n 1)',
+    'phi_run_status=1',
+    'phi_prefix=$(mktemp -d "${TMPDIR:-/tmp}/phi-micromamba-run.XXXXXX" 2>/dev/null)',
+    'if [ -n "$phi_prefix" ]; then',
+    '  mkdir -p "$phi_prefix/conda-meta" && : > "$phi_prefix/conda-meta/history"',
+    '  if [ "$?" -eq 0 ]; then',
+    '    env -i HOME="$phi_home" MAMBA_ROOT_PREFIX="$phi_root" CONDARC= MAMBARC= "$phi_binary" --rc-file /dev/null run -p "$phi_prefix" /bin/sh -c \x27:\x27 >/dev/null 2>&1',
+    '    phi_run_status=$?',
+    '  fi',
+    '  rm -rf "$phi_prefix"',
+    'fi',
     'if [ "$phi_version_status" -eq 0 ]; then',
     `  printf '%s%s\\n' '${VERSION_MARKER}' "$(printf %s "$phi_version" | head -n 1)"`,
     'fi',
     'if [ "$phi_info_status" -eq 0 ] && [ -n "$phi_platform" ]; then',
     `  printf '%s%s\\n' '${PLATFORM_MARKER}' "$phi_platform"`,
     'fi',
-    '[ "$phi_version_status" -eq 0 ] && [ "$phi_info_status" -eq 0 ]'
+    `printf '%s%s\\n' '${RUN_MARKER}' "$phi_run_status"`,
+    '[ "$phi_version_status" -eq 0 ] && [ "$phi_info_status" -eq 0 ] && [ "$phi_run_status" -eq 0 ]'
   ].join('\n')
 }
 
@@ -264,7 +299,13 @@ export function parseVerification(
   const platform = lines
     .find((line) => line.startsWith(PLATFORM_MARKER))
     ?.slice(PLATFORM_MARKER.length)
-  return { version: version || null, platform: platform || null, runnable: exitCode === 0 }
+  const runStatus = lines.find((line) => line.startsWith(RUN_MARKER))?.slice(RUN_MARKER.length)
+  return {
+    version: version || null,
+    platform: platform || null,
+    runSuccessful: runStatus === '0',
+    runnable: exitCode === 0
+  }
 }
 
 export function buildStatusScanScript(configuredRoot: string): string {
@@ -292,10 +333,13 @@ export function buildStatusScanScript(configuredRoot: string): string {
     `printf '%s\\n' '${STATUS_MARKER}ok'`,
     `printf '%s%s\\n' '${ROOT_MARKER}' "$phi_root"`,
     'if [ -d "$phi_root/bin" ]; then',
-    '  for phi_file in "$phi_root"/bin/micromamba-*; do',
-    '    [ -f "$phi_file" ] || continue',
-    '    phi_release=${phi_file##*/micromamba-}',
-    `    printf '%s%s\\n' '${RELEASE_MARKER}' "$phi_release"`,
+    '  for phi_entry in "$phi_root"/bin/micromamba-*; do',
+    '    phi_release=${phi_entry##*/micromamba-}',
+    '    if [ -d "$phi_entry" ] && [ -f "$phi_entry/micromamba" ]; then',
+    `      printf '%s%s\\n' '${RELEASE_MARKER}' "$phi_release"`,
+    '    elif [ -f "$phi_entry" ] || { [ -d "$phi_entry" ] && [ -f "$phi_entry/micromamba.legacy" ]; }; then',
+    `      printf '%s%s\\n' '${LEGACY_RELEASE_MARKER}' "$phi_release"`,
+    '    fi',
     '  done',
     'fi'
   ].join('\n')
@@ -312,5 +356,14 @@ export function parseStatusScan(stdout: string): ParsedMicromambaStatusScan {
     .filter((line) => line.startsWith(RELEASE_MARKER))
     .map((line) => line.slice(RELEASE_MARKER.length))
     .filter((version) => /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(version))
-  return { state, root, versions: [...new Set(versions)].sort() }
+  const legacyVersions = lines
+    .filter((line) => line.startsWith(LEGACY_RELEASE_MARKER))
+    .map((line) => line.slice(LEGACY_RELEASE_MARKER.length))
+    .filter((version) => /^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(version))
+  return {
+    state,
+    root,
+    versions: [...new Set(versions)].sort(),
+    legacyVersions: [...new Set(legacyVersions)].sort()
+  }
 }

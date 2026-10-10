@@ -52,9 +52,10 @@ describe('remote micromamba settings UI', () => {
       onInstall: () => undefined
     })
 
-    assert.match(markup, /micromamba：版本过期（2\.8\.0）/)
+    assert.match(markup, />micromamba</)
+    assert.match(markup, /版本过期（2\.8\.0）/)
     assert.match(markup, /17\.4 MiB/)
-    assert.match(markup, /\/data\/lab runtime\/bin\/micromamba-2\.9\.0-0/)
+    assert.match(markup, /\/data\/lab runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
     assert.match(markup, /安装\/更新 micromamba/)
   })
 
@@ -103,7 +104,7 @@ describe('remote micromamba settings UI', () => {
           version: '2.9.0-0',
           platform: 'linux-arm64',
           durationMs: 20,
-          installPath: '/srv/runtime/bin/micromamba-2.9.0-0',
+          installPath: '/srv/runtime/bin/micromamba-2.9.0-0/micromamba',
           warningCodes: [],
           message: '远端 micromamba 安装并验证成功。'
         }
@@ -111,7 +112,8 @@ describe('remote micromamba settings UI', () => {
       onInstall: () => undefined
     })
 
-    assert.match(markup, /micromamba：已安装（2\.9\.0-0）/)
+    assert.match(markup, />micromamba</)
+    assert.match(markup, /已安装（2\.9\.0-0）/)
   })
 
   it('shows a friendly failure reason and suggestion', () => {
@@ -135,6 +137,28 @@ describe('remote micromamba settings UI', () => {
 
     assert.match(markup, /服务器端文件校验失败/)
     assert.match(markup, /检查剩余空间后重试/)
+  })
+
+  it('shows run activation verification failures as unusable', () => {
+    const markup = render({
+      runtimeRoot: '~/.phi/runtime',
+      state: {
+        phase: 'done',
+        result: {
+          status: 'failed',
+          version: '2.9.0-0',
+          platform: 'linux-x64',
+          durationMs: 42,
+          warningCodes: [],
+          errorCode: 'run-verification-failed',
+          message: 'micromamba run 激活验证失败。'
+        }
+      },
+      onInstall: () => undefined
+    })
+
+    assert.match(markup, /不可运行（2\.9\.0-0）/)
+    assert.match(markup, /micromamba run 激活验证失败/)
   })
 
   it('uses the existing warning confirmation wording before retrying writes', () => {
@@ -216,12 +240,13 @@ describe('remote micromamba settings UI', () => {
           onTest: () => undefined,
           onRuntimeRootSave: () => undefined,
           onRuntimeRootCheck: () => undefined,
-          onMicromambaInstall: () => undefined
+          onMicromambaInstall: () => undefined,
+          initialSelectedHostAlias: HOST.hostAlias
         })
       )
     )
 
     assert.match(markup, /安装\/更新 micromamba/)
-    assert.match(markup, /\/data\/runtime\/bin\/micromamba-2\.9\.0-0/)
+    assert.match(markup, /\/data\/runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
   })
 })

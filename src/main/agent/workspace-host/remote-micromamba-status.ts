@@ -1,8 +1,8 @@
-import { posix } from 'node:path'
-
-import type {
-  RemoteMicromambaPlatform,
-  RemoteMicromambaStatusResult
+import {
+  remoteMicromambaPath,
+  type RemoteMicromambaErrorCode,
+  type RemoteMicromambaPlatform,
+  type RemoteMicromambaStatusResult
 } from '../../../shared/remoteMicromambaTypes'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import {
@@ -75,19 +75,43 @@ function notInstalledStatus(
   }
 }
 
+function legacyLayoutStatus(
+  base: StatusBase,
+  expectedVersion: string | undefined,
+  legacyVersions: readonly string[]
+): RemoteMicromambaStatusResult {
+  return {
+    ...base,
+    status: 'unusable',
+    versionMatches: expectedVersion ? legacyVersions.includes(expectedVersion) : null,
+    runnable: false,
+    errorCode: 'legacy-layout',
+    message: '检测到 R2.2 旧安装布局，不能用于 micromamba run；请重新安装以完成迁移。'
+  }
+}
+
 async function verifyStatusTarget(
   session: RemoteSshSession,
   root: string,
   release: string,
   platform: RemoteMicromambaPlatform | undefined
-): Promise<{ runnable: boolean; versionMatches: boolean }> {
-  const path = posix.join(root, 'bin', `micromamba-${release}`)
+): Promise<{
+  runnable: boolean
+  versionMatches: boolean
+  errorCode: RemoteMicromambaErrorCode
+}> {
+  const path = remoteMicromambaPath(root, release)
   const result = await runRemoteMicromambaScript(session, buildVerificationScript(path, root))
   const parsed = parseVerification(result.stdout, result.code)
   const versionMatches = parsed.version === remoteMicromambaBinaryVersion(release)
   const platformMatches =
     !platform || parsed.platform === expectedRemoteMicromambaInfoPlatform(platform)
-  return { runnable: parsed.runnable && versionMatches && platformMatches, versionMatches }
+  const runFailed = versionMatches && platformMatches && !parsed.runSuccessful
+  return {
+    runnable: parsed.runnable && versionMatches && platformMatches,
+    versionMatches,
+    errorCode: runFailed ? 'run-verification-failed' : 'verification-failed'
+  }
 }
 
 async function statusFromScan(
@@ -98,11 +122,19 @@ async function statusFromScan(
 ): Promise<RemoteMicromambaStatusResult> {
   const scanResult = await runRemoteMicromambaScript(session, buildStatusScanScript(root))
   const scan = parseStatusScan(scanResult.stdout)
-  const base = statusBase(options, startedAt, scan.versions)
+  const installedVersions = [...new Set([...scan.versions, ...scan.legacyVersions])].sort()
+  const base = statusBase(options, startedAt, installedVersions)
   if (scan.state === 'missing') return notInstalledStatus(base, Boolean(options.expectedVersion))
   if (scan.state !== 'ok' || !scan.root) throw new Error('status scan failed')
-  if (scan.versions.length === 0) return notInstalledStatus(base, Boolean(options.expectedVersion))
+  if (scan.versions.length === 0) {
+    return scan.legacyVersions.length > 0
+      ? legacyLayoutStatus(base, options.expectedVersion, scan.legacyVersions)
+      : notInstalledStatus(base, Boolean(options.expectedVersion))
+  }
   if (options.expectedVersion && !scan.versions.includes(options.expectedVersion)) {
+    if (scan.legacyVersions.includes(options.expectedVersion)) {
+      return legacyLayoutStatus(base, options.expectedVersion, scan.legacyVersions)
+    }
     return {
       ...base,
       status: 'outdated',
@@ -119,7 +151,7 @@ async function statusFromScan(
       status: 'unusable',
       versionMatches: options.expectedVersion ? verification.versionMatches : null,
       runnable: false,
-      errorCode: 'verification-failed',
+      errorCode: verification.errorCode,
       message: '远端 micromamba 已安装但无法通过运行验证。'
     }
   }

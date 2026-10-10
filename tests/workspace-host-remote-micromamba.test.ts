@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { access, chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
@@ -61,6 +71,7 @@ interface FakeArtifactOptions {
   reportedPlatform?: string
   versionFails?: boolean
   infoFails?: boolean
+  runFails?: boolean
 }
 
 async function fakeArtifact(
@@ -71,8 +82,14 @@ async function fakeArtifact(
   const localPath = join(directory, 'micromamba')
   const content = [
     '#!/bin/sh',
+    'phi_executable=$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || printf \'%s\\n\' "$0")',
+    'if [ "$(basename "$phi_executable")" != micromamba ]; then',
+    '  printf \'Error unknown MAMBA_EXE: "%s", filename must be mamba or micromamba\\n\' "$phi_executable" >&2',
+    '  exit 1',
+    'fi',
     `if [ "$1" = "--version" ]; then ${options.versionFails ? 'exit 9' : `printf '%s\\n' '${options.reportedVersion ?? version.replace(/-\d+$/, '')}'; exit 0`}; fi`,
     `if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "info" ]; then ${options.infoFails ? 'exit 9' : `printf '%s\\n' 'platform : ${options.reportedPlatform ?? 'linux-64'}'; exit 0`}; fi`,
+    `if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "run" ]; then ${options.runFails ? 'exit 17' : 'shift 5; exec "$@"'}; fi`,
     'exit 2',
     ''
   ].join('\n')
@@ -151,14 +168,17 @@ test('installs and verifies micromamba in a checked remote runtime root', async 
       onProgress: ({ stage }) => phases.push(stage)
     })
 
-    const installedPath = join(await realpath(parent), 'runtime', 'bin', 'micromamba-2.9.0-0')
+    const versionDir = join(await realpath(parent), 'runtime', 'bin', 'micromamba-2.9.0-0')
+    const installedPath = join(versionDir, 'micromamba')
     assert.equal(result.status, 'installed', JSON.stringify(result))
     assert.equal(result.installPath, installedPath)
     assert.equal(result.verification?.versionMatches, true)
     assert.equal(result.verification?.version, '2.9.0')
     assert.equal(result.verification?.platformMatches, true)
+    assert.equal(result.verification?.runSuccessful, true)
     assert.equal(session.uploads.length, 1)
     assert.equal(await readFile(installedPath, 'utf8'), await readFile(artifact.localPath, 'utf8'))
+    assert.equal((await stat(versionDir)).mode & 0o777, 0o755)
     assert.equal((await stat(installedPath)).mode & 0o777, 0o755)
     assert.ok(phases.includes('uploading'))
     assert.ok(phases.includes('verifying-installation'))
@@ -193,8 +213,8 @@ test('keeps previously installed release versions when activating an update', as
   try {
     assert.equal((await installWithCheckedRoot(session, root, first)).status, 'installed')
     assert.equal((await installWithCheckedRoot(session, root, second)).status, 'installed')
-    await access(join(root, 'bin', 'micromamba-2.9.0-0'))
-    await access(join(root, 'bin', 'micromamba-2.10.0-0'))
+    await access(join(root, 'bin', 'micromamba-2.9.0-0', 'micromamba'))
+    await access(join(root, 'bin', 'micromamba-2.10.0-0', 'micromamba'))
     assert.equal(session.uploads.length, 2)
   } finally {
     await session.close()
@@ -215,7 +235,7 @@ test('rejects a remote hash mismatch after one retry and cleans staging files', 
     for (const { remotePath } of session.uploads) {
       await assert.rejects(access(remotePath))
     }
-    await assert.rejects(access(join(root, 'bin', `micromamba-${artifact.version}`)))
+    await assert.rejects(access(join(root, 'bin', `micromamba-${artifact.version}`, 'micromamba')))
   } finally {
     await session.close()
   }
@@ -311,7 +331,7 @@ test('safely installs into a path containing spaces, quotes, and command substit
     })
 
     assert.equal(result.status, 'installed', JSON.stringify(result))
-    await access(join(root, 'bin', `micromamba-${artifact.version}`))
+    await access(join(root, 'bin', `micromamba-${artifact.version}`, 'micromamba'))
     await assert.rejects(access(join(parent, 'PWNED')))
   } finally {
     await session.close()
@@ -330,7 +350,7 @@ test('reports a post-install platform verification failure without hiding the in
     assert.equal(result.errorCode, 'verification-failed')
     assert.equal(result.verification?.runnable, true)
     assert.equal(result.verification?.platformMatches, false)
-    await access(join(root, 'bin', `micromamba-${artifact.version}`))
+    await access(join(root, 'bin', `micromamba-${artifact.version}`, 'micromamba'))
   } finally {
     await session.close()
   }
@@ -357,6 +377,51 @@ test('continues after confirmed noexec and reports the actual execution failure'
     assert.deepEqual(result.warningCodes, ['noexec'])
     assert.equal(result.verification?.runnable, false)
     assert.equal(session.uploads.length, 1)
+  } finally {
+    await session.close()
+  }
+})
+
+test('reports a dedicated error when run activation verification fails', async () => {
+  const root = join(await temporaryDirectory('phi-remote-micromamba-run-verify-'), 'runtime')
+  const artifact = await fakeArtifact('2.9.0-0', { runFails: true })
+  const session = localSession()
+
+  try {
+    const result = await installWithCheckedRoot(session, root, artifact)
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'run-verification-failed')
+    assert.equal(result.verification?.versionMatches, true)
+    assert.equal(result.verification?.platformMatches, true)
+    assert.equal(result.verification?.runSuccessful, false)
+    await access(join(root, 'bin', `micromamba-${artifact.version}`, 'micromamba'))
+  } finally {
+    await session.close()
+  }
+})
+
+test('migrates an R2.2 file layout while preserving the legacy binary', async () => {
+  const root = join(await temporaryDirectory('phi-remote-micromamba-legacy-'), 'runtime')
+  const artifact = await fakeArtifact()
+  const releasePath = join(root, 'bin', `micromamba-${artifact.version}`)
+  const legacyContents = '#!/bin/sh\nprintf legacy\n'
+  await mkdir(join(root, 'bin'), { recursive: true })
+  await writeFile(releasePath, legacyContents)
+  await chmod(releasePath, 0o755)
+  const session = localSession()
+
+  try {
+    const result = await installWithCheckedRoot(session, root, artifact)
+
+    assert.equal(result.status, 'installed', JSON.stringify(result))
+    assert.equal(result.installPath, join(releasePath, 'micromamba'))
+    assert.equal(session.uploads.length, 1)
+    assert.equal(await readFile(join(releasePath, 'micromamba.legacy'), 'utf8'), legacyContents)
+    assert.equal(
+      await readFile(join(releasePath, 'micromamba'), 'utf8'),
+      await readFile(artifact.localPath, 'utf8')
+    )
   } finally {
     await session.close()
   }

@@ -153,7 +153,7 @@ test('persists only redacted micromamba capability fields', () => {
   const key = { hostAlias: 'private-cluster', projectRoot: '/work/private-project' }
   const taintedRuntimeRoot = {
     ...runtimeRoot,
-    installationPath: '/home/private-user/.phi/runtime/bin/micromamba-2.9.0',
+    installationPath: '/home/private-user/.phi/runtime/bin/micromamba-2.9.0/micromamba',
     username: 'private-user',
     hostname: 'private-cluster.example',
     micromamba: {

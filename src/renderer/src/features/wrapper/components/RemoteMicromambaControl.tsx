@@ -1,4 +1,16 @@
-import { Alert, Button, LinearProgress, Stack, TextField, Typography } from '@mui/material'
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
+  Button,
+  Chip,
+  LinearProgress,
+  Stack,
+  TextField,
+  Typography
+} from '@mui/material'
+import { GoChevronDown } from 'react-icons/go'
 
 import type { RemoteHostCapabilityProfile } from '../../../../../shared/remoteDoctorTypes'
 import type {
@@ -7,6 +19,7 @@ import type {
 } from '../../../../../shared/remoteRuntimeRootTypes'
 import {
   normalizeRemoteMicromambaMirrorPrefix,
+  remoteMicromambaPath,
   remoteMicromambaMirrorPrefixError,
   type RemoteMicromambaResult
 } from '../../../../../shared/remoteMicromambaTypes'
@@ -60,7 +73,11 @@ function micromambaStatus(
   ) {
     return { status: 'installed', version: state.result.version }
   }
-  if (state.phase === 'done' && state.result.errorCode === 'verification-failed') {
+  if (
+    state.phase === 'done' &&
+    (state.result.errorCode === 'verification-failed' ||
+      state.result.errorCode === 'run-verification-failed')
+  ) {
     return { status: 'unusable', version: state.result.version }
   }
   return profile?.runtimeRoot?.micromamba ?? { status: 'unchecked' }
@@ -78,8 +95,13 @@ function statusLabel(status: RemoteMicromambaCapabilityProfile): string {
   return labels[status.status]
 }
 
-function targetPath(root: string): string {
-  return `${root.replace(/\/+$/, '')}/bin/micromamba-${MICROMAMBA_VERSION}`
+function statusColor(
+  status: RemoteMicromambaCapabilityProfile
+): 'default' | 'success' | 'warning' | 'error' {
+  if (status.status === 'installed') return 'success'
+  if (status.status === 'outdated' || status.status === 'not-installed') return 'warning'
+  if (status.status === 'unusable') return 'error'
+  return 'default'
 }
 
 function progressPercent(progress: RemoteMicromambaProgressView | undefined): number | undefined {
@@ -191,17 +213,32 @@ export function RemoteMicromambaControl({
   const mirrorValue = downloadMirrorPrefix ?? ''
   const mirrorError = remoteMicromambaMirrorPrefixError(mirrorValue)
   const size = REMOTE_ARTIFACT_SIZES[capabilityProfile?.platform.arch ?? '']
+  const status = micromambaStatus(capabilityProfile, state)
   const needsConfirmation =
     state.phase === 'done' && state.result.status === 'needs-confirmation'
       ? state.result.warningCodes
       : undefined
   return (
-    <Stack spacing={0.75}>
-      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        micromamba：{statusLabel(micromambaStatus(capabilityProfile, state))}
-      </Typography>
+    <Stack spacing={1.25}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
+        <Stack spacing={0.25} sx={{ flex: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>
+            micromamba
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            为远程环境提供隔离的包管理能力。
+          </Typography>
+        </Stack>
+        <Chip
+          size="small"
+          variant="outlined"
+          color={statusColor(status)}
+          label={statusLabel(status)}
+        />
+      </Stack>
       <Typography variant="caption" color="text.secondary">
-        可联网时由服务器直连下载 {formatBytes(size)}，否则经本机中转至 {targetPath(runtimeRoot)}；
+        可联网时由服务器直连下载 {formatBytes(size)}，否则经本机中转至{' '}
+        {remoteMicromambaPath(runtimeRoot, MICROMAMBA_VERSION)}；
         {downloadCapability(capabilityProfile)}。
       </Typography>
       <Button
@@ -211,17 +248,46 @@ export function RemoteMicromambaControl({
         onClick={() =>
           onInstall(needsConfirmation, normalizeRemoteMicromambaMirrorPrefix(mirrorValue))
         }
-        sx={{ alignSelf: 'flex-start' }}
+        sx={{ alignSelf: 'flex-start', minHeight: 44 }}
       >
         {needsConfirmation ? '仍然使用' : '安装/更新 micromamba'}
       </Button>
-      <MirrorPrefixEditor
-        value={mirrorValue}
-        error={mirrorError}
-        disabled={Boolean(disabled) || state.phase === 'running'}
-        onChange={onDownloadMirrorPrefixChange ?? (() => undefined)}
-        onSave={onDownloadMirrorPrefixSave}
-      />
+      <Accordion
+        disableGutters
+        elevation={0}
+        sx={{
+          bgcolor: 'transparent',
+          backgroundImage: 'none',
+          border: 0,
+          boxShadow: 'none',
+          '&::before': { display: 'none' },
+          '&.Mui-expanded': { m: 0 }
+        }}
+      >
+        <AccordionSummary
+          expandIcon={<GoChevronDown aria-hidden="true" />}
+          sx={{
+            px: 0,
+            minHeight: 44,
+            '&.Mui-expanded': { minHeight: 44 },
+            '& .MuiAccordionSummary-content': { my: 0.5 },
+            '& .MuiAccordionSummary-content.Mui-expanded': { my: 0.5 }
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 650 }}>
+            高级下载设置
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails sx={{ px: 0, pt: 0.5 }}>
+          <MirrorPrefixEditor
+            value={mirrorValue}
+            error={mirrorError}
+            disabled={Boolean(disabled) || state.phase === 'running'}
+            onChange={onDownloadMirrorPrefixChange ?? (() => undefined)}
+            onSave={onDownloadMirrorPrefixSave}
+          />
+        </AccordionDetails>
+      </Accordion>
       {state.phase === 'running' && <Progress progress={state.progress} />}
       {state.phase === 'done' && <Result result={state.result} />}
     </Stack>

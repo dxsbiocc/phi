@@ -18,6 +18,7 @@ export type RemoteRuntimePromptContext = {
   rootLabel: '~/.phi/runtime' | '$PHI_REMOTE_RUNTIME_ROOT' | `~/${string}`
   source: 'default' | 'host' | 'project'
   micromambaStatus: 'installed' | 'not-installed' | 'outdated' | 'unusable' | 'unchecked'
+  micromambaPathLabel?: string
 }
 
 type PersonaContextFiles = {
@@ -88,9 +89,15 @@ function remoteRuntimePrompt(runtime: RemoteRuntimePromptContext): string {
     outdated:
       'micromamba is outdated. Ask the user to update it in remote host settings; do not replace it automatically.',
     unusable:
-      'micromamba is installed but not runnable. Ask the user to repair it in remote host settings.',
+      'micromamba is not usable by micromamba run, including legacy file layouts. Ask the user to reinstall it in remote host settings to migrate or repair it.',
     unchecked:
       'micromamba has not been verified. Treat remote environment tools as unavailable until the user checks remote host settings.'
   }[runtime.micromambaStatus]
-  return `Remote runtime root (${runtime.source}): ${runtime.rootLabel}; ${status}`
+  const executable = runtime.micromambaPathLabel
+    ? ` micromamba executable: ${runtime.micromambaPathLabel};`
+    : ''
+  return (
+    `Remote runtime root (${runtime.source}): ${runtime.rootLabel};${executable} ${status} ` +
+    'When available, env_request creates or reuses environments only under that server runtime root, and skill_run plus declared skill script tools upload content-addressed skill resources and execute them on the SSH login host. Their project cwd and project path arguments refer to the remote project. Never substitute a local environment, local project path, GUI handle, or local process when remote routing is unavailable.'
+  )
 }
