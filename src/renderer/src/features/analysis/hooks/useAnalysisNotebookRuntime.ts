@@ -28,6 +28,7 @@ import {
   jupyterServerIsReady,
   missingJupyterRuntimeHandler,
   notebookEnvironmentErrorMessage,
+  remoteJupyterRequiresExplicitStart,
   removeAnalysisNotebookFileCacheEntry,
   requireRendererApiMethod,
   waitForRendererDelay
@@ -292,7 +293,8 @@ export function useAnalysisNotebookRuntime({
         const saved = await rendererApi.saveAnalysisNotebook(cwd, {
           path: file.path,
           document,
-          expectedRevision: file.savedRevision
+          expectedRevision: file.savedRevision,
+          ...(file.contentHash ? { expectedHash: file.contentHash } : {})
         })
         setActiveAnalysisNotebook(saved)
         void refreshAnalysisNotebookSessionStatus(saved)
@@ -553,6 +555,7 @@ export function useAnalysisNotebookRuntime({
         setAnalysisJupyterRuntimeStatus((previous) =>
           previous ? { ...previous, server: status } : previous
         )
+        if (status.state === 'ready' && status.hasEndpoint) await refreshAnalysisKernels()
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
         setAnalysisJupyterError(notebookEnvironmentErrorMessage(error, '无法启动 Jupyter Server'))
@@ -562,7 +565,7 @@ export function useAnalysisNotebookRuntime({
         }
       }
     },
-    [getActiveCwd, rendererApi]
+    [getActiveCwd, refreshAnalysisKernels, rendererApi]
   )
 
   const onStopAnalysisJupyter = useCallback(
@@ -582,6 +585,7 @@ export function useAnalysisNotebookRuntime({
               }
             : previous
         )
+        if (status.runtimeKind === 'ssh') setAnalysisKernelDiagnostics(null)
         setAnalysisNotebookSessionStatus(null)
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
@@ -623,6 +627,9 @@ export function useAnalysisNotebookRuntime({
       try {
         let jupyterStatus = analysisJupyterStatus
         if (!jupyterServerIsReady(jupyterStatus)) {
+          if (remoteJupyterRequiresExplicitStart(jupyterStatus)) {
+            throw new Error('请先在 Runtime 面板显式启动远程 Jupyter，再连接 notebook kernel。')
+          }
           setIsStartingAnalysisJupyter(true)
           setAnalysisJupyterError(null)
           jupyterStatus = await rendererApi.startAnalysisJupyter(cwd)
@@ -888,8 +895,11 @@ export function useAnalysisNotebookRuntime({
   const resetAnalysisJupyterRuntimeForCwdChange = useCallback((): void => {
     analysisJupyterRuntimeRequestRef.current += 1
     analysisNotebookFileCacheRef.current = new Map()
+    setAnalysisKernelDiagnostics(null)
+    setAnalysisJupyterStatus(null)
     setAnalysisJupyterRuntimeStatus(null)
     setAnalysisJupyterRuntimeError(null)
+    setAnalysisNotebookSessionStatus(null)
   }, [])
 
   const closeActiveNotebook = useCallback((): void => {
@@ -903,7 +913,12 @@ export function useAnalysisNotebookRuntime({
   const handleNotebookDraftChanged = useCallback(
     (change: AnalysisNotebookDraftChange): void => {
       if (change.source === 'renderer') return
-      if (change.projectCwd !== getActiveCwd()) return
+      if (
+        change.projectCwd !== getActiveCwd() &&
+        change.projectCwd !== analysisNotebookRegistry?.projectCwd
+      ) {
+        return
+      }
 
       const current = activeAnalysisNotebookRef.current
       if (!current) return
@@ -914,7 +929,8 @@ export function useAnalysisNotebookRuntime({
         path: change.path,
         relativePath: change.relativePath,
         document: change.document,
-        savedRevision: change.savedRevision
+        savedRevision: change.savedRevision,
+        contentHash: change.contentHash ?? current.contentHash
       }
       analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
         analysisNotebookFileCacheRef.current,
@@ -934,12 +950,22 @@ export function useAnalysisNotebookRuntime({
       void refreshAnalysisNotebookSessionStatus(next)
       void refreshAnalysisNotebooks()
     },
-    [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks]
+    [
+      analysisNotebookRegistry?.projectCwd,
+      getActiveCwd,
+      refreshAnalysisNotebookSessionStatus,
+      refreshAnalysisNotebooks
+    ]
   )
 
   const handleNotebookFileChanged = useCallback(
     (change: AnalysisNotebookFileChange): void => {
-      if (change.projectCwd !== getActiveCwd()) return
+      if (
+        change.projectCwd !== getActiveCwd() &&
+        change.projectCwd !== analysisNotebookRegistry?.projectCwd
+      ) {
+        return
+      }
 
       void refreshAnalysisNotebooks()
 
@@ -978,7 +1004,12 @@ export function useAnalysisNotebookRuntime({
 
       setAnalysisNotebookContentError(`Notebook 已变化，但无法重新读取: ${change.message}`)
     },
-    [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks]
+    [
+      analysisNotebookRegistry?.projectCwd,
+      getActiveCwd,
+      refreshAnalysisNotebookSessionStatus,
+      refreshAnalysisNotebooks
+    ]
   )
 
   return {

@@ -4,7 +4,7 @@ import SessionSidebar from './components/SessionSidebar'
 import { McpSidebar } from './features/mcp/McpView'
 import { PhiPluginSidebar } from './features/phi-plugin/PhiPluginsView'
 import type { PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
-import { RemoteRuntimeUnavailableSidebar, RuntimeSidebar } from './features/runtime/RuntimeView'
+import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
@@ -370,21 +370,17 @@ function AppWorkspaceSidebarImpl({
         </Box>
       </Box>
     ) : mode === 'runtime' ? (
-      isRemoteProject ? (
-        <RemoteRuntimeUnavailableSidebar />
-      ) : (
-        <RuntimeSidebar
-          projectCwd={runtimeProjectCwd}
-          runtimeStatus={runtimeStatus}
-          isLoading={isRuntimeLoading}
-          onOpenNotebook={(path) => navigate(() => onOpenRuntimeNotebook(path))}
-          closingNotebookPath={runtimeClosingNotebookPath}
-          onRefresh={onRefreshRuntime}
-          onStartJupyter={onStartRuntime}
-          onStopJupyter={onStopRuntime}
-          onStopNotebookKernel={onStopRuntimeNotebookKernel}
-        />
-      )
+      <RuntimeSidebar
+        projectCwd={runtimeProjectCwd}
+        runtimeStatus={runtimeStatus}
+        isLoading={isRuntimeLoading}
+        onOpenNotebook={(path) => navigate(() => onOpenRuntimeNotebook(path))}
+        closingNotebookPath={runtimeClosingNotebookPath}
+        onRefresh={onRefreshRuntime}
+        onStartJupyter={onStartRuntime}
+        onStopJupyter={onStopRuntime}
+        onStopNotebookKernel={onStopRuntimeNotebookKernel}
+      />
     ) : mode === 'plugins' ? (
       <PhiPluginSidebar
         plugins={phiPlugins}

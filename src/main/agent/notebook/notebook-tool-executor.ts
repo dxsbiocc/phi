@@ -40,6 +40,7 @@ export type NotebookDraftChange = {
   relativePath: string
   document: NotebookDocument
   savedRevision: string
+  contentHash?: string
   changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
   changedCellId?: string
   focusCellId?: string
@@ -59,6 +60,7 @@ type NotebookToolResult = {
 type ConstructorOptions = {
   resolveWorkspaceByCwd: (cwd: string) => NotebookWorkspaceRef | null | undefined
   resolveNotebookWorkspaceByCwd?: (cwd: string) => NotebookWorkspace | null | undefined
+  resolveKernelsByCwd?: (cwd: string) => ReturnType<typeof detectConfiguredAnalysisKernels>
   ensureJupyterServerReady: (projectCwd: string) => Promise<void>
   notebookSessionRegistry: AnalysisNotebookSessionRegistry
   notebookExecutor: AnalysisNotebookExecutor
@@ -175,6 +177,7 @@ function notebookCellMetadataWithExecutionDuration(
 export class AnalysisNotebookToolExecutor {
   private readonly resolveWorkspaceByCwd: ConstructorOptions['resolveWorkspaceByCwd']
   private readonly resolveNotebookWorkspaceByCwd?: ConstructorOptions['resolveNotebookWorkspaceByCwd']
+  private readonly resolveKernelsByCwd: NonNullable<ConstructorOptions['resolveKernelsByCwd']>
   private readonly ensureJupyterServerReady: ConstructorOptions['ensureJupyterServerReady']
   private readonly notebookSessionRegistry: AnalysisNotebookSessionRegistry
   private readonly notebookExecutor: AnalysisNotebookExecutor
@@ -186,6 +189,7 @@ export class AnalysisNotebookToolExecutor {
   constructor(options: ConstructorOptions) {
     this.resolveWorkspaceByCwd = options.resolveWorkspaceByCwd
     this.resolveNotebookWorkspaceByCwd = options.resolveNotebookWorkspaceByCwd
+    this.resolveKernelsByCwd = options.resolveKernelsByCwd ?? detectConfiguredAnalysisKernels
     this.ensureJupyterServerReady = options.ensureJupyterServerReady
     this.notebookSessionRegistry = options.notebookSessionRegistry
     this.notebookExecutor = options.notebookExecutor
@@ -218,12 +222,20 @@ export class AnalysisNotebookToolExecutor {
   syncDraft(input: {
     cwd: string
     path: string
+    file?: AnalysisNotebookFile
     document: NotebookDocument
     savedRevision?: string
+    refreshFileBasis?: boolean
     source?: NotebookDraftChangeSource
   }): NotebookDraftChange {
     const project = this.workspaceForCwd(input.cwd)
-    const state = this.localStateForSync(project, input.path)
+    const existing = this.existingStateFor(project, input.path)
+    const state =
+      existing ??
+      (input.file
+        ? this.storeState(project, input.path, input.file)
+        : this.localStateForSync(project, input.path))
+    if (input.file && input.refreshFileBasis) state.file = input.file
     state.document = input.document
     if (input.savedRevision) state.savedRevision = input.savedRevision
     return this.emitDraftChanged(project, state, input.source ?? 'renderer', {
@@ -478,7 +490,7 @@ export class AnalysisNotebookToolExecutor {
     project: NotebookWorkspaceRef,
     state: NotebookWorkspaceState
   ): Promise<{ sessionStatus: NotebookSessionStatus; target: NotebookExecutionTarget }> {
-    const kernels = detectConfiguredAnalysisKernels()
+    const kernels = this.resolveKernelsByCwd(project.workingDirectory)
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
       notebookPath: state.file.path,
@@ -611,6 +623,7 @@ export class AnalysisNotebookToolExecutor {
       relativePath: state.file.relativePath,
       document: state.document,
       savedRevision: state.savedRevision,
+      ...(state.file.contentHash ? { contentHash: state.file.contentHash } : {}),
       ...metadata
     }
     this.onDraftChanged?.(change)

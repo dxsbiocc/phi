@@ -117,7 +117,7 @@ import {
   WEB_SEARCH_PROVIDER_DETAILS,
   webSearchSettingsFromValues
 } from '../web-search-settings'
-import { buildNotebookCustomTools } from '../notebook/notebook-tools'
+import { buildNotebookCustomTools, NOTEBOOK_TOOL_NAMES } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { buildBrowserTool } from '../browser/browser-tool'
@@ -1850,7 +1850,15 @@ async function createSession(params: unknown): Promise<unknown> {
                   remoteContextFiles: remoteContextFiles ?? [],
                   remoteTools: () =>
                     customTools.filter((tool) =>
-                      ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(tool.name)
+                      [
+                        'read',
+                        'bash',
+                        'glob',
+                        'grep',
+                        'write',
+                        'edit',
+                        ...NOTEBOOK_TOOL_NAMES
+                      ].includes(tool.name)
                     ),
                   remoteMcpTools: () => {
                     const names = remoteMcpAccess?.state?.allowedToolNames
@@ -1901,8 +1909,17 @@ async function createSession(params: unknown): Promise<unknown> {
       }).catch(() => undefined)
     }
   })
-  const notebookCustomTools = buildNotebookCustomTools(async (request) =>
-    requestHost('notebookTool.execute', request)
+  const notebookCustomTools = buildNotebookCustomTools(
+    async (request) => requestHost('notebookTool.execute', request),
+    remoteProjectIdentity
+      ? {
+          remoteProject: {
+            runtimeSessionId: sessionId,
+            sessionId: remoteProjectIdentity.sessionId,
+            projectId: remoteProjectIdentity.projectId
+          }
+        }
+      : {}
   )
   const libraryCustomTools = buildLibraryCustomTools()
   const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>

@@ -1590,9 +1590,22 @@ function App(): React.JSX.Element {
     [setWorkspaceFileTabs]
   )
 
+  const blockNotebookWorkspaceOpen = useCallback(
+    (path: string): boolean => {
+      if (useSessionStore.getState().activeProjectLocation?.kind !== 'ssh') {
+        return blockRemoteLocalFileAction()
+      }
+      const scope = getActiveRemoteProject()
+      if (scope && remotePathInsideRoot(path, scope.canonicalRoot)) return false
+      showSnackbarError(new Error('远程 notebook 不属于当前项目'), '无法打开 notebook')
+      return true
+    },
+    [blockRemoteLocalFileAction, getActiveRemoteProject, showSnackbarError]
+  )
+
   const onOpenNotebookWorkspaceFile = useCallback(
     (path: string): void => {
-      if (blockRemoteLocalFileAction()) return
+      if (blockNotebookWorkspaceOpen(path)) return
       applyFileOpenConversationLayout()
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
@@ -1656,7 +1669,7 @@ function App(): React.JSX.Element {
     },
     [
       applyFileOpenConversationLayout,
-      blockRemoteLocalFileAction,
+      blockNotebookWorkspaceOpen,
       activateCachedAnalysisNotebook,
       filePreviewRequestRef,
       onOpenAnalysisNotebook,
@@ -2561,6 +2574,27 @@ function App(): React.JSX.Element {
     ]
   )
 
+  const openRemoteNotebookPath = useCallback(
+    (path: string): boolean => {
+      if (!isNotebookFilePath(path)) return false
+      const scope = getActiveRemoteProject()
+      const serverPath = scope
+        ? path.startsWith('ssh://')
+          ? remotePathWithinProjectUri(path, scope.hostAlias, scope.canonicalRoot)
+          : remotePathInsideRoot(path, scope.canonicalRoot)
+            ? path
+            : null
+        : null
+      if (!serverPath) {
+        showSnackbarError(new Error('远程 notebook 不属于当前项目'), '无法打开 notebook')
+        return true
+      }
+      onOpenNotebookWorkspaceFile(serverPath)
+      return true
+    },
+    [getActiveRemoteProject, onOpenNotebookWorkspaceFile, showSnackbarError]
+  )
+
   const openActiveWrapperResultPath = useCallback(
     (path: string, kind: LocalPathKind): boolean => {
       if (
@@ -2626,6 +2660,7 @@ function App(): React.JSX.Element {
     (path: string): void => {
       applyFileOpenConversationLayout()
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        if (openRemoteNotebookPath(path)) return
         openRemoteWorkspacePath(path, 'file')
         return
       }
@@ -2643,6 +2678,7 @@ function App(): React.JSX.Element {
       blockRemoteLocalFileAction,
       getActiveCwd,
       onOpenNotebookWorkspaceFile,
+      openRemoteNotebookPath,
       openRemoteWorkspacePath,
       previewFilePath
     ]
@@ -2652,6 +2688,7 @@ function App(): React.JSX.Element {
     (path: string): void => {
       if (openActiveWrapperResultPath(path, 'file')) return
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        if (openRemoteNotebookPath(path)) return
         openRemoteWorkspacePath(path, 'file')
         return
       }
@@ -2666,6 +2703,7 @@ function App(): React.JSX.Element {
       blockRemoteLocalFileAction,
       onOpenNotebookWorkspaceFile,
       openActiveWrapperResultPath,
+      openRemoteNotebookPath,
       openRemoteWorkspacePath,
       previewFilePathInWorkspaceTab
     ]
@@ -2675,6 +2713,7 @@ function App(): React.JSX.Element {
     (path: string, pathKind: LocalPathKind): void => {
       if (openActiveWrapperResultPath(path, pathKind)) return
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        if (pathKind === 'file' && openRemoteNotebookPath(path)) return
         openRemoteWorkspacePath(path, pathKind)
         return
       }
@@ -2693,6 +2732,7 @@ function App(): React.JSX.Element {
       blockRemoteLocalFileAction,
       onOpenNotebookWorkspaceFile,
       openActiveWrapperResultPath,
+      openRemoteNotebookPath,
       openRemoteWorkspacePath,
       previewDirectoryPathInWorkspaceTab,
       previewFilePathInWorkspaceTab
@@ -2703,6 +2743,7 @@ function App(): React.JSX.Element {
     (path: string, kind: LocalPathKind = 'file'): void => {
       if (openActiveWrapperResultPath(path, kind)) return
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        if (kind === 'file' && openRemoteNotebookPath(path)) return
         openRemoteWorkspacePath(path, kind)
         return
       }
@@ -2718,6 +2759,7 @@ function App(): React.JSX.Element {
       onOpenNotebookWorkspaceFile,
       openActiveWrapperResultPath,
       openPathWithSystemDefault,
+      openRemoteNotebookPath,
       openRemoteWorkspacePath
     ]
   )
@@ -4192,93 +4234,86 @@ function App(): React.JSX.Element {
     />
   )
 
-  const activeAnalysisView =
-    activeProjectLocation?.kind === 'ssh' ? (
-      <Box sx={{ p: 3 }}>
-        <Typography variant="body2" color="text.secondary">
-          远程项目的 Notebook/Jupyter 暂不可用；不会打开本机会话目录。
-        </Typography>
-      </Box>
-    ) : (
-      <Suspense
-        fallback={
-          <Box
-            role="status"
-            aria-live="polite"
-            sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Typography variant="body2" color="text.secondary">
-              正在加载分析工作区…
-            </Typography>
-          </Box>
-        }
-      >
-        <AnalysisView
-          hideLeftRail
-          notebookRegistry={analysisNotebookRegistry}
-          notebookFile={activeAnalysisNotebook}
-          workspaceFileTabs={workspaceFileTabs}
-          activeWorkspaceFilePath={activeWorkspaceFilePath}
-          onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
-          onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
-          isLoadingNotebooks={isLoadingAnalysisNotebooks}
-          isOpeningNotebook={isOpeningAnalysisNotebook}
-          notebookError={analysisNotebookError}
-          notebookContentError={analysisNotebookContentError}
-          kernelDiagnostics={analysisKernelDiagnostics}
-          isLoadingKernels={isLoadingAnalysisKernels}
-          kernelError={analysisKernelError}
-          notebookSessionStatus={analysisNotebookSessionStatus}
-          isStartingNotebookSession={isStartingAnalysisNotebookSession}
-          notebookSessionError={analysisNotebookSessionError}
-          executingNotebookCellId={executingAnalysisCellId}
-          notebookCellExecutionError={analysisCellExecutionError}
-          agentFocus={analysisAgentFocus}
-          onRefreshNotebooks={() => {
-            void refreshAnalysisNotebooks()
-          }}
-          onStartNotebookSession={(file, document) => {
-            return onStartAnalysisNotebookSession(file, document)
-          }}
-          onSyncNotebookDraft={(file, document) => {
-            void onSyncAnalysisNotebookDraft(file, document)
-          }}
-          onNotebookDirtyChange={onNotebookDirtyChange}
-          onStopNotebookSession={(file) => {
-            return onStopAnalysisNotebookSession(file)
-          }}
-          onRunNotebookCell={(file, document, cellId) => {
-            void onRunAnalysisNotebookCell(file, document, cellId)
-          }}
-          onStopNotebookCell={(file, cellId) => {
-            void onStopAnalysisNotebookCell(file, cellId)
-          }}
-          onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
-          onFormatNotebookCell={onFormatAnalysisNotebookCell}
-          onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
-          onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
-          notebookAiModelOptions={availableModels}
-          notebookAiDefaultModel={notebookAiDefaultModel}
-          onPickNotebookContextFiles={onPickInputFiles}
-          onInitializeProjectAnalysis={(cwd) => {
-            void onInitializeProjectAnalysis(cwd)
-          }}
-          onOpenNotebook={(path) => {
-            onOpenNotebookWorkspaceFile(path)
-          }}
-          onCloseNotebook={() => {
-            closeActiveNotebook()
-            navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
-          }}
-          onSaveNotebook={(file, document) => {
-            void onSaveAnalysisNotebook(file, document)
-          }}
-          onCreateNotebook={(cwd) => {
-            void onCreateAnalysisNotebook(cwd)
-          }}
-        />
-      </Suspense>
-    )
+  const activeAnalysisView = (
+    <Suspense
+      fallback={
+        <Box
+          role="status"
+          aria-live="polite"
+          sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Typography variant="body2" color="text.secondary">
+            正在加载分析工作区…
+          </Typography>
+        </Box>
+      }
+    >
+      <AnalysisView
+        hideLeftRail
+        notebookRegistry={analysisNotebookRegistry}
+        notebookFile={activeAnalysisNotebook}
+        workspaceFileTabs={workspaceFileTabs}
+        activeWorkspaceFilePath={activeWorkspaceFilePath}
+        onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
+        onCloseWorkspaceFileTab={onCloseWorkspaceFileTab}
+        isLoadingNotebooks={isLoadingAnalysisNotebooks}
+        isOpeningNotebook={isOpeningAnalysisNotebook}
+        notebookError={analysisNotebookError}
+        notebookContentError={analysisNotebookContentError}
+        kernelDiagnostics={analysisKernelDiagnostics}
+        isLoadingKernels={isLoadingAnalysisKernels}
+        kernelError={analysisKernelError}
+        notebookSessionStatus={analysisNotebookSessionStatus}
+        isStartingNotebookSession={isStartingAnalysisNotebookSession}
+        notebookSessionError={analysisNotebookSessionError}
+        executingNotebookCellId={executingAnalysisCellId}
+        notebookCellExecutionError={analysisCellExecutionError}
+        agentFocus={analysisAgentFocus}
+        onRefreshNotebooks={() => {
+          void refreshAnalysisNotebooks()
+        }}
+        onStartNotebookSession={(file, document) => {
+          return onStartAnalysisNotebookSession(file, document)
+        }}
+        onSyncNotebookDraft={(file, document) => {
+          void onSyncAnalysisNotebookDraft(file, document)
+        }}
+        onNotebookDirtyChange={onNotebookDirtyChange}
+        onStopNotebookSession={(file) => {
+          return onStopAnalysisNotebookSession(file)
+        }}
+        onRunNotebookCell={(file, document, cellId) => {
+          void onRunAnalysisNotebookCell(file, document, cellId)
+        }}
+        onStopNotebookCell={(file, cellId) => {
+          void onStopAnalysisNotebookCell(file, cellId)
+        }}
+        onCompleteNotebookCell={onCompleteAnalysisNotebookCell}
+        onFormatNotebookCell={onFormatAnalysisNotebookCell}
+        onGenerateNotebookCode={onGenerateAnalysisNotebookCode}
+        onNotebookCodeGenerationProgress={rendererApi.onAnalysisNotebookCodeGenerationProgress}
+        notebookAiModelOptions={availableModels}
+        notebookAiDefaultModel={notebookAiDefaultModel}
+        onPickNotebookContextFiles={onPickInputFiles}
+        onInitializeProjectAnalysis={(cwd) => {
+          void onInitializeProjectAnalysis(cwd)
+        }}
+        onOpenNotebook={(path) => {
+          onOpenNotebookWorkspaceFile(path)
+        }}
+        onCloseNotebook={() => {
+          closeActiveNotebook()
+          navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
+        }}
+        onSaveNotebook={(file, document) => {
+          void onSaveAnalysisNotebook(file, document)
+        }}
+        onCreateNotebook={(cwd) => {
+          void onCreateAnalysisNotebook(cwd)
+        }}
+      />
+    </Suspense>
+  )
 
   const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (
     activeWorkspaceTab.kind === 'notebook' ? (

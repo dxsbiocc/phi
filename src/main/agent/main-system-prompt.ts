@@ -77,6 +77,7 @@ export function buildPhiRemoteProjectSystemPrompt(
     `This conversation belongs to an SSH project at ${JSON.stringify(remoteRoot)}. ` +
       'The read tool reads UTF-8 files and lists directories on that server. The bash tool runs bounded commands there with cwd pinned to the project root; shell commands can still access paths outside that root. ' +
       'The glob and grep tools search files on the selected server with bounded results. The write tool creates files or updates files previously read in this conversation. The edit tool uses OMP replace arguments (path, old_string, new_string, replace_all) and also requires a prior read. Changes are refused if the remote content changed since that read. Delegate Wrapper runs and run control to the bundled Wrapper specialist; they use this project server by default. Other edit formats remain temporarily unavailable. ' +
+      'The notebook.list, notebook.read, notebook.insert_cell, notebook.update_cell, notebook.delete_cell, notebook.run_cell, and notebook.save tools operate server-side notebooks. Jupyter and kernels run on the SSH login host through Phi-managed routing only after the user explicitly starts the remote Notebook runtime; never guess a port or token and never use the local project anchor or local Jupyter as fallback. ' +
       'Never treat Phi session storage as project files or fall back to local execution.',
     ...(options.runtime ? [remoteRuntimePrompt(options.runtime)] : [])
   ]

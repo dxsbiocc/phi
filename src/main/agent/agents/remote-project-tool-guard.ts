@@ -12,6 +12,7 @@ import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../download/remote-project-down
 import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../deliverables/remote-present-tool'
 import { PHI_ENV_REQUEST_DESCRIPTION } from '../content/env-request-tool'
 import { PHI_SKILL_RUN_DESCRIPTION } from '../content/skill-tools'
+import { NOTEBOOK_TOOL_DESCRIPTIONS } from '../notebook/notebook-tools'
 import {
   REMOTE_MCP_UNVERIFIED_REASON,
   remoteMcpToolCallReason,
@@ -85,7 +86,8 @@ export function remoteProjectToolDecision(
   safePhiToolRegistered = false,
   safeBuiltinRegistered = false,
   verifiedRemoteRuntimeToolRegistered = false,
-  dynamicSkillToolRegistered = false
+  dynamicSkillToolRegistered = false,
+  verifiedRemoteNotebookToolRegistered = false
 ): { block: true; reason: string } | undefined {
   if (SAFE_REMOTE_BUILTINS.has(toolName) && safeBuiltinRegistered) return undefined
   if (toolName === 'read' && remoteReadRegistered) return undefined
@@ -109,6 +111,12 @@ export function remoteProjectToolDecision(
   ) {
     return undefined
   }
+  if (toolName.startsWith('notebook.')) {
+    if (NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName) && verifiedRemoteNotebookToolRegistered) {
+      return undefined
+    }
+    return { block: true, reason: remoteToolBlockedReason(toolName) }
+  }
   if (dynamicSkillToolRegistered) return undefined
   return { block: true, reason: remoteToolBlockedReason(toolName) }
 }
@@ -119,7 +127,7 @@ function remoteToolBlockedReason(toolName: string): string {
     return `${toolName}：该工具绑定本机 Office 文档与应用进程，远程项目没有对应句柄；请先下载到本机 Office 工作流，或在服务器生成普通文件后用 present_files 交付。${noFallback}`
   }
   if (toolName.startsWith('notebook.')) {
-    return `${toolName}：当前 Notebook 后端绑定本机 Jupyter；请改用远程 bash/read/write 处理 .ipynb。${noFallback}`
+    return `${toolName}：当前会话未注册经过验证的远程 Notebook/Jupyter 后端；不会使用本机 Jupyter。${noFallback}`
   }
   if (toolName.startsWith('lib.')) {
     return `${toolName}：当前文献库绑定本机项目文献库；请先在远程项目中使用普通文件记录。${noFallback}`
@@ -181,7 +189,8 @@ export function createRemoteProjectToolGuardExtension(
         verifiedCustomTool(event.toolName, registered),
         verifiedBuiltinTool(event.toolName, registered),
         verifiedRemoteRuntimeTool(event.toolName, registered),
-        verifiedDynamicSkillTool(event.toolName, registered, dynamicNames)
+        verifiedDynamicSkillTool(event.toolName, registered, dynamicNames),
+        verifiedNotebookTool(event.toolName, registered)
       )
     })
   }
@@ -208,8 +217,20 @@ function needsRegistration(toolName: string, dynamicNames: ReadonlySet<string>):
     SAFE_REMOTE_BUILTINS.has(toolName) ||
     SAFE_PHI_REMOTE_TOOLS.has(toolName) ||
     VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) ||
+    NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName) ||
     toolName.startsWith('mcp__') ||
     dynamicNames.has(toolName)
+  )
+}
+
+function verifiedNotebookTool(toolName: string, registered: readonly ToolInfo[]): boolean {
+  const expected = NOTEBOOK_TOOL_DESCRIPTIONS.get(toolName)
+  if (!expected) return false
+  const matches = registered.filter((tool) => tool.name === toolName)
+  return (
+    matches.length === 1 &&
+    matches[0]?.description === expected &&
+    matches[0]?.sourceInfo.source === 'extension'
   )
 }
 

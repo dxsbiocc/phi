@@ -491,6 +491,7 @@ type AnalysisNotebookFile = {
   bytes: number
   modifiedAt: string
   savedRevision: string
+  contentHash?: string
   document: Record<string, unknown>
 }
 
@@ -501,6 +502,7 @@ type AnalysisNotebookDraftChange = {
   relativePath: string
   document: Record<string, unknown>
   savedRevision: string
+  contentHash?: string
   changeKind?: 'synced' | 'inserted' | 'updated' | 'deleted' | 'executed' | 'saved'
   changedCellId?: string
   focusCellId?: string
@@ -532,6 +534,7 @@ type SaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
   expectedRevision?: string
+  expectedHash?: string
 }
 
 type AnalysisKernelDiagnostics = {
@@ -557,13 +560,29 @@ type AnalysisKernelDiagnostics = {
 
 type JupyterServerStatus = {
   projectCwd: string
-  state: 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
+  state:
+    | 'stopped'
+    | 'starting'
+    | 'ready'
+    | 'error'
+    | 'exited'
+    | 'preparing_environment'
+    | 'allocating_ports'
+    | 'starting_lease'
+    | 'probing_through_tunnel'
+    | 'stopping'
+    | 'disconnected'
+    | 'cleaning'
+  runtimeKind?: 'local' | 'ssh'
+  serverLabel?: string
   startedAt?: string
   exitedAt?: string
   pid?: number
   port?: number
+  remotePort?: number
   hasEndpoint: boolean
   message?: string
+  resources?: Record<string, unknown>
 }
 
 type AnalysisNotebookSessionStatus = {

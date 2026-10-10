@@ -468,6 +468,27 @@ test('analysis notebook selection can open notebooks missing from controlled wor
   assert.match(appSource, /onOpenNotebookWorkspaceFile\(path\)/)
 })
 
+test('remote notebook routes use server paths instead of the local session anchor', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const runtimeSource = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/hooks/useAnalysisNotebookRuntime.ts'
+    ),
+    'utf8'
+  )
+
+  assert.match(appSource, /const openRemoteNotebookPath = useCallback/)
+  assert.match(
+    appSource,
+    /remotePathWithinProjectUri\(path, scope\.hostAlias, scope\.canonicalRoot\)/
+  )
+  assert.match(appSource, /remotePathInsideRoot\(path, scope\.canonicalRoot\)/)
+  assert.doesNotMatch(appSource, /远程项目的 Notebook\/Jupyter 暂不可用/)
+  assert.match(runtimeSource, /expectedHash: file\.contentHash/)
+  assert.match(runtimeSource, /change\.projectCwd !== analysisNotebookRegistry\?\.projectCwd/)
+})
+
 test('analysis notebook runtime lets the active workspace open notebooks', () => {
   const runtimeSource = readFileSync(
     resolve(

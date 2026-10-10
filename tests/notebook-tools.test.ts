@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   buildNotebookCustomTools,
+  NOTEBOOK_TOOL_DESCRIPTIONS,
+  NOTEBOOK_TOOL_NAMES,
   type NotebookToolRequest
 } from '../src/main/agent/notebook/notebook-tools'
 
@@ -15,15 +17,15 @@ test('buildNotebookCustomTools exposes live notebook operations', () => {
 
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    [
-      'notebook.list',
-      'notebook.read',
-      'notebook.insert_cell',
-      'notebook.update_cell',
-      'notebook.delete_cell',
-      'notebook.run_cell',
-      'notebook.save'
-    ]
+    [...NOTEBOOK_TOOL_NAMES]
+  )
+  assert.deepEqual(
+    tools.map((tool) => tool.description),
+    NOTEBOOK_TOOL_NAMES.map((name) => NOTEBOOK_TOOL_DESCRIPTIONS.get(name))
+  )
+  assert.deepEqual(
+    tools.map((tool) => tool.approval),
+    ['read', 'read', 'write', 'write', 'write', 'write', 'write']
   )
 })
 
@@ -78,4 +80,43 @@ test('notebook tools return tool errors instead of throwing host failures', asyn
 
   assert.equal(result.isError, true)
   assert.equal(result.content[0]?.text, 'host failed')
+})
+
+test('remote notebook tools attach trusted routing identity outside model params', async () => {
+  const calls: NotebookToolRequest[] = []
+  const tools = buildNotebookCustomTools(
+    async (request) => {
+      calls.push(request)
+      return { summary: 'ok' }
+    },
+    {
+      remoteProject: {
+        runtimeSessionId: 'runtime-1',
+        sessionId: 'phi-session-1',
+        projectId: 'project-1'
+      }
+    }
+  )
+  const tool = tools.find((candidate) => candidate.name === 'notebook.read')
+  assert.ok(tool)
+
+  await tool.execute(
+    'call-1',
+    { path: 'analysis.ipynb', remoteProject: { projectId: 'forged' } },
+    undefined,
+    fakeCtx('/local/private/remote-project-anchor') as never
+  )
+
+  assert.deepEqual(calls, [
+    {
+      action: 'read',
+      cwd: '/local/private/remote-project-anchor',
+      params: { path: 'analysis.ipynb', remoteProject: { projectId: 'forged' } },
+      remoteProject: {
+        runtimeSessionId: 'runtime-1',
+        sessionId: 'phi-session-1',
+        projectId: 'project-1'
+      }
+    }
+  ])
 })

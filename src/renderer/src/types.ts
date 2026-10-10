@@ -487,6 +487,7 @@ export interface AnalysisNotebookFile {
   bytes: number
   modifiedAt: string
   savedRevision: string
+  contentHash?: string
   document: NotebookDocument
 }
 
@@ -500,6 +501,7 @@ export interface AnalysisNotebookDraftChange {
   relativePath: string
   document: NotebookDocument
   savedRevision: string
+  contentHash?: string
   changeKind?: AnalysisNotebookDraftChangeKind
   changedCellId?: string
   focusCellId?: string
@@ -583,6 +585,7 @@ export interface SaveAnalysisNotebookInput {
   path: string
   document: NotebookDocument
   expectedRevision?: string
+  expectedHash?: string
 }
 
 export type AnalysisKernelLanguage = 'python' | 'r' | 'other'
@@ -610,17 +613,33 @@ export interface AnalysisKernelDiagnostics {
   messages: string[]
 }
 
-export type JupyterServerState = 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
+export type JupyterServerState =
+  | 'stopped'
+  | 'starting'
+  | 'ready'
+  | 'error'
+  | 'exited'
+  | 'preparing_environment'
+  | 'allocating_ports'
+  | 'starting_lease'
+  | 'probing_through_tunnel'
+  | 'stopping'
+  | 'disconnected'
+  | 'cleaning'
 
 export interface JupyterServerStatus {
   projectCwd: string
   state: JupyterServerState
+  runtimeKind?: 'local' | 'ssh'
+  serverLabel?: string
   startedAt?: string
   exitedAt?: string
   pid?: number
   port?: number
+  remotePort?: number
   hasEndpoint: boolean
   message?: string
+  resources?: Record<string, unknown>
 }
 
 export type AnalysisNotebookKernelState =

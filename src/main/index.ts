@@ -197,7 +197,10 @@ import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
 import { RemoteRuntimeController } from './agent/remote-runtime/controller'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
 import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
-import type { RemoteRuntimeTarget } from './agent/remote-runtime/workspace'
+import {
+  openRemoteRuntimeWorkspace,
+  type RemoteRuntimeTarget
+} from './agent/remote-runtime/workspace'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
 import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
@@ -208,7 +211,9 @@ import { createCheckedRemoteProject } from './agent/remote-project-create'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
 import {
   remoteBashApprovalScope,
+  resolveAuthorizedRemoteConnectionConfig,
   resolveRemoteBashContext,
+  resolveRemoteWorkspaceHostBinding,
   resolveRemoteWorkspacePath
 } from './agent/remote-workspace-boundary'
 import { readRemoteWorkspacePath } from './agent/remote-workspace-read'
@@ -452,6 +457,12 @@ import {
   parseGeneratedNotebookCompletionSnapshot
 } from './agent/notebook/notebook-code-generation'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
+import {
+  createRemoteAnalysisNotebookBackend,
+  remoteNotebookFileChange,
+  type RemoteAnalysisNotebookBackend
+} from './agent/notebook/remote-analysis-notebook-backend'
+import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import { getOmpBridge } from './agent/omp/omp-bridge'
 import {
   validateOfficePresentedFile,
@@ -1207,6 +1218,22 @@ type AnalysisWorkspaceContext = {
   workingDirectory: string
   name: string
   project: Project | null
+  remoteSessionId?: string
+}
+
+function currentRemoteAnalysisProject(
+  targetCwd: string
+): { project: Project; sessionId: string } | null {
+  const manifest = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
+  const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
+  if (!manifest || !project || project.location.kind !== 'ssh') return null
+  const accepted = new Set([
+    manifest.cwd,
+    project.workingDirectory,
+    project.location.remoteRoot,
+    project.location.canonicalRoot
+  ])
+  return accepted.has(targetCwd) ? { project, sessionId: manifest.sessionId } : null
 }
 
 function realDirectoryPath(
@@ -1226,6 +1253,15 @@ function realDirectoryPath(
 
 function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext | null {
   const targetCwd = cwd ?? currentCwd
+  const remote = currentRemoteAnalysisProject(targetCwd)
+  if (remote && remote.project.location.kind === 'ssh') {
+    return {
+      workingDirectory: remote.project.location.canonicalRoot,
+      name: remote.project.name,
+      project: remote.project,
+      remoteSessionId: remote.sessionId
+    }
+  }
   if (isRemoteProjectAnchorPath(targetCwd, AGENT_DIR)) return null
   const project = getProjectByCwd(targetCwd)
   if (project) {
@@ -1258,6 +1294,19 @@ function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext |
     name: basename(targetRealPath) || 'workspace',
     project: null
   }
+}
+
+function isRemoteAnalysisCwd(cwd: string): boolean {
+  if (isRemoteProjectAnchorPath(cwd, AGENT_DIR)) return true
+  if (currentRemoteAnalysisProject(cwd)) return true
+  const localProject = getProjectByCwd(cwd)
+  if (localProject && localProject.location?.kind !== 'ssh') return false
+  return listProjects().some((project) => {
+    if (project.location.kind !== 'ssh') return false
+    return [project.workingDirectory, project.location.remoteRoot, project.location.canonicalRoot]
+      .filter((root): root is string => typeof root === 'string' && root.length > 0)
+      .some((root) => isPathInsideRoot(root, cwd))
+  })
 }
 
 let freshSessionCounter = 0
@@ -1833,8 +1882,15 @@ const notebookToolExecutor = new AnalysisNotebookToolExecutor({
 const notebookFileWatcher = new AnalysisNotebookFileWatcher({
   onChange: notifyAnalysisNotebookFileChanged
 })
+const remoteNotebookBackends = new Map<string, RemoteAnalysisNotebookBackend>()
+const remoteNotebookSessionIds = new Map<string, string>()
+const notebookToolHostRouter = new NotebookToolHostRouter({
+  local: (request) => notebookToolExecutor.execute(request),
+  isRemoteCwd: isRemoteAnalysisCwd,
+  resolveRemote: resolveRemoteNotebookToolBackend
+})
 getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
-  notebookToolExecutor.execute(params as Parameters<typeof notebookToolExecutor.execute>[0])
+  notebookToolHostRouter.execute(params as Parameters<typeof notebookToolHostRouter.execute>[0])
 )
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
@@ -1852,6 +1908,101 @@ function projectRemoteRuntimeRoot(project: Project): ReturnType<typeof resolveRe
       ? readHostRuntimeRoot(project.location.hostProfileId, AGENT_DIR)
       : undefined
   return resolveProjectRuntimeRoot(project, hostOverride)
+}
+
+function remoteNotebookTarget(project: Project, sessionId: string): RemoteRuntimeTarget {
+  if (project.location.kind !== 'ssh') throw new Error('远程 Notebook 项目位置无效')
+  const root = projectRemoteRuntimeRoot(project)
+  const micromambaPath = readHostRemoteEnvironmentPaths(
+    project.location.hostProfileId,
+    AGENT_DIR
+  ).micromamba
+  return {
+    runtimeSessionId: `notebook:${project.id}`,
+    sessionId,
+    projectId: project.id,
+    configuredRoot: root.configured,
+    ...(micromambaPath ? { micromambaPath } : {})
+  }
+}
+
+function createRemoteNotebookBackend(
+  project: Project,
+  sessionId: string
+): RemoteAnalysisNotebookBackend {
+  const target = remoteNotebookTarget(project, sessionId)
+  const binding = resolveRemoteWorkspaceHostBinding({ sessionId, projectId: project.id })
+  const authorized = resolveAuthorizedRemoteConnectionConfig({ sessionId, projectId: project.id })
+  return createRemoteAnalysisNotebookBackend({
+    projectCwd: binding.canonicalRoot,
+    projectName: project.name,
+    serverLabel: authorized.hostAlias,
+    runtimeSessionId: target.runtimeSessionId,
+    micromambaVersion: remoteMicromambaManifestVersion(),
+    projectHostConfig: binding.config,
+    openWorkspace: (runtimeSessionId, signal) => {
+      if (runtimeSessionId !== target.runtimeSessionId) {
+        throw new Error('远程 Notebook runtime 身份无效；没有回退到本机执行。')
+      }
+      const activeSessionId = remoteNotebookSessionIds.get(project.id)
+      if (!activeSessionId) {
+        throw new Error('远程 Notebook 会话已释放；没有回退到本机执行。')
+      }
+      return openRemoteRuntimeWorkspace(remoteNotebookTarget(project, activeSessionId), signal)
+    },
+    connection: authorized.connection,
+    confirmEnvironment: async () => true,
+    resolveBaseEnvironment: (ref, pluginId) =>
+      resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
+    notebookExecutor,
+    onDraftChanged: notifyAnalysisNotebookDraftChanged
+  })
+}
+
+function remoteNotebookBackend(project: Project, sessionId: string): RemoteAnalysisNotebookBackend {
+  remoteNotebookSessionIds.set(project.id, sessionId)
+  const existing = remoteNotebookBackends.get(project.id)
+  if (existing) return existing
+  const backend = createRemoteNotebookBackend(project, sessionId)
+  remoteNotebookBackends.set(project.id, backend)
+  return backend
+}
+
+async function resolveRemoteNotebookToolBackend(identity: {
+  runtimeSessionId: string
+  sessionId: string
+  projectId: string
+}): Promise<{
+  projectCwd: string
+  execute: RemoteAnalysisNotebookBackend['tools']['execute']
+} | null> {
+  const manifest = findPhiSessionById(identity.sessionId)
+  const project = getProject(identity.projectId)
+  const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
+  if (
+    !manifest ||
+    !project ||
+    !origin ||
+    project.location.kind !== 'ssh' ||
+    manifest.projectId !== project.id ||
+    getPhiSessionIdForKey(origin.sessionKey) !== manifest.sessionId ||
+    resolve(origin.cwd) !== resolve(manifest.cwd) ||
+    resolve(manifest.cwd) !== resolve(remoteProjectAnchorPath(project.id, AGENT_DIR))
+  ) {
+    return null
+  }
+  const backend = remoteNotebookBackend(project, manifest.sessionId)
+  return { projectCwd: backend.projectCwd, execute: (request) => backend.tools.execute(request) }
+}
+
+function remoteNotebookBackendFor(
+  workspace: AnalysisWorkspaceContext
+): RemoteAnalysisNotebookBackend | null {
+  if (workspace.project?.location?.kind !== 'ssh') return null
+  if (!workspace.remoteSessionId) {
+    throw new Error('远程 Notebook 会话身份缺失；没有回退到本机执行。')
+  }
+  return remoteNotebookBackend(workspace.project, workspace.remoteSessionId)
 }
 
 function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undefined {
@@ -3130,6 +3281,110 @@ function emptyAnalysisRuntimeStatus(
       sessions: []
     }
   }
+}
+
+function analysisSessions(workspace: AnalysisWorkspaceContext): AnalysisNotebookSessionRegistry {
+  return remoteNotebookBackendFor(workspace)?.sessions ?? notebookSessionRegistry
+}
+
+function analysisTools(workspace: AnalysisWorkspaceContext): AnalysisNotebookToolExecutor {
+  return remoteNotebookBackendFor(workspace)?.tools ?? notebookToolExecutor
+}
+
+function analysisKernels(
+  workspace: AnalysisWorkspaceContext
+): ReturnType<typeof detectConfiguredAnalysisKernels> {
+  return remoteNotebookBackendFor(workspace)?.kernels() ?? detectConfiguredAnalysisKernels()
+}
+
+async function analysisOpenFile(
+  workspace: AnalysisWorkspaceContext,
+  notebookPath: string,
+  watch = false
+): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['workspace']['open']>>> {
+  const remote = remoteNotebookBackendFor(workspace)
+  if (!remote) {
+    return watch
+      ? notebookFileWatcher.watch(workspace.workingDirectory, notebookPath)
+      : openProjectNotebook(workspace.workingDirectory, notebookPath)
+  }
+  return remote.open(
+    notebookPath,
+    watch
+      ? (event) =>
+          notifyAnalysisNotebookFileChanged(remoteNotebookFileChange(remote.projectCwd, event))
+      : undefined
+  )
+}
+
+function syncAnalysisDraft(
+  workspace: AnalysisWorkspaceContext,
+  file: Awaited<ReturnType<typeof analysisOpenFile>>,
+  document: NotebookDocument = file.document,
+  savedRevision: string = file.savedRevision,
+  refreshFileBasis = false
+): ReturnType<AnalysisNotebookToolExecutor['syncDraft']> {
+  return analysisTools(workspace).syncDraft({
+    cwd: workspace.workingDirectory,
+    path: file.path,
+    file,
+    document,
+    savedRevision,
+    refreshFileBasis,
+    source: 'renderer'
+  })
+}
+
+async function analysisSaveFile(
+  workspace: AnalysisWorkspaceContext,
+  input: SaveProjectNotebookInput
+): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['save']>>> {
+  const remote = remoteNotebookBackendFor(workspace)
+  const file = remote
+    ? await remote.save(input)
+    : saveProjectNotebook(workspace.workingDirectory, input)
+  if (!remote) notebookFileWatcher.noteLocalWrite(workspace.workingDirectory, file)
+  return file
+}
+
+async function analysisCreateFile(
+  workspace: AnalysisWorkspaceContext,
+  relativePath?: string
+): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['workspace']['create']>>> {
+  const remote = remoteNotebookBackendFor(workspace)
+  if (!remote) {
+    const file = createProjectNotebook(workspace.workingDirectory, relativePath)
+    notebookFileWatcher.watchFile(workspace.workingDirectory, file)
+    return file
+  }
+  const created = await remote.workspace.create(relativePath)
+  return remote.open(created.path, (event) =>
+    notifyAnalysisNotebookFileChanged(remoteNotebookFileChange(remote.projectCwd, event))
+  )
+}
+
+async function analysisCloseFile(
+  workspace: AnalysisWorkspaceContext,
+  notebookPath: string
+): Promise<{ path: string }> {
+  const remote = remoteNotebookBackendFor(workspace)
+  if (remote) return remote.close(notebookPath)
+  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+  await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
+  notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
+  return closeProjectNotebook(workspace.workingDirectory, notebookPath)
+}
+
+async function analysisDeleteFile(
+  workspace: AnalysisWorkspaceContext,
+  notebookPath: string
+): Promise<{ path: string; relativePath: string }> {
+  const remote = remoteNotebookBackendFor(workspace)
+  if (remote) return remote.delete(notebookPath)
+  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+  await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
+  notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
+  return deleteProjectNotebook(workspace.workingDirectory, notebookPath)
 }
 
 function notebookDocumentLanguage(document: NotebookDocument): string {
@@ -5436,12 +5691,16 @@ async function notebookAiReferencesWithKernelIntrospection(input: {
   prompt: string
   language: string
   references?: AnalysisNotebookContextReference[]
+  sessions?: AnalysisNotebookSessionRegistry
 }): Promise<AnalysisNotebookContextReference[] | undefined> {
   const references = [...(input.references ?? [])]
   if (!notebookLanguageSupportsKernelIntrospection(input.language)) return references
   const variableNames = notebookAiVariableNamesFromInput(input.prompt, references)
   if (variableNames.length === 0) return references
-  const target = notebookSessionRegistry.executionTarget(input.projectCwd, input.notebookPath)
+  const target = (input.sessions ?? notebookSessionRegistry).executionTarget(
+    input.projectCwd,
+    input.notebookPath
+  )
   if (!target) return references
 
   try {
@@ -5530,7 +5789,8 @@ async function generateAnalysisNotebookCode(
   if (!workspace) {
     throw new Error('请选择一个已添加的项目或当前 workspace')
   }
-  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+  const remote = remoteNotebookBackendFor(workspace)
+  const file = await analysisOpenFile(workspace, notebookPath)
   const runtime = await getAuthManager().getRuntime()
   const modelSelection = input.model ?? workspace.project?.defaultModel ?? selectedModel
   const resolvedModel = modelSelection
@@ -5549,14 +5809,16 @@ async function generateAnalysisNotebookCode(
     notebookPath: file.path,
     prompt,
     language,
-    references: input.references
+    references: input.references,
+    sessions: analysisSessions(workspace)
   })
+  const sessionCwd = remote ? AGENT_DIR : workspace.workingDirectory
   const sessionOptions = {
     modelRuntime: runtime,
-    cwd: workspace.workingDirectory,
+    cwd: sessionCwd,
     noTools: 'all' as const,
     thinkingLevel: workspace.project?.defaultThinkingLevel ?? selectedThinkingLevel,
-    sessionManager: createInMemoryRuntimeSessionManager(workspace.workingDirectory),
+    sessionManager: createInMemoryRuntimeSessionManager(sessionCwd),
     ...(resolvedModel ? { model: resolvedModel.model } : {})
   }
   let eventAssistantText = ''
@@ -5724,6 +5986,7 @@ function notifyAnalysisNotebookDraftChanged(change: {
   relativePath: string
   document: NotebookDocument
   savedRevision: string
+  contentHash?: string
   changeKind?: string
   changedCellId?: string
   focusCellId?: string
@@ -7007,6 +7270,21 @@ function safeCleanupStep(event: string, run: () => void | Promise<void>): Promis
   }
 }
 
+async function disposeRemoteNotebookBackends(): Promise<void> {
+  const backends = [...remoteNotebookBackends.values()]
+  remoteNotebookBackends.clear()
+  remoteNotebookSessionIds.clear()
+  await Promise.all(backends.map((backend) => backend.dispose()))
+}
+
+async function disposeRemoteNotebookBackend(projectId: string): Promise<void> {
+  const backend = remoteNotebookBackends.get(projectId)
+  if (!backend) return
+  await backend.dispose()
+  remoteNotebookBackends.delete(projectId)
+  remoteNotebookSessionIds.delete(projectId)
+}
+
 function cleanupMainWindowRuntime(): Promise<void> {
   if (mainWindowCleanupPromise) return mainWindowCleanupPromise
   mainWindowCleanupStarted = true
@@ -7031,6 +7309,7 @@ function cleanupMainWindowRuntime(): Promise<void> {
       ),
       safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
       safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
+      safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
       safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
       safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
     ])
@@ -8431,6 +8710,12 @@ app.whenReady().then(async () => {
         throw error
       })
     }
+    if (
+      manifest?.projectId &&
+      remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
+    ) {
+      await disposeRemoteNotebookBackend(manifest.projectId)
+    }
     // Session-private drafts and their registries are deleted here; Save As copies are project
     // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
     deleteSession(path)
@@ -8499,6 +8784,7 @@ app.whenReady().then(async () => {
     await terminalManager?.closeWorkspace(`project:${id}`).catch(() => {
       writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
     })
+    await disposeRemoteNotebookBackend(id)
     deleteProject(id)
   })
   ipcMain.handle(
@@ -8778,7 +9064,10 @@ app.whenReady().then(async () => {
     if (!workspace) {
       return emptyNotebookRegistry('选择一个项目或当前 workspace 后显示 notebooks')
     }
-    const registry = listProjectNotebooks(workspace.workingDirectory)
+    const remote = remoteNotebookBackendFor(workspace)
+    const registry = remote
+      ? await remote.workspace.list()
+      : listProjectNotebooks(workspace.workingDirectory)
     return {
       projectCwd: workspace.workingDirectory,
       projectName: workspace.name,
@@ -8790,22 +9079,19 @@ app.whenReady().then(async () => {
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    return initializeProjectAnalysis(workspace.workingDirectory)
+    return (
+      remoteNotebookBackendFor(workspace)?.initializeProject() ??
+      initializeProjectAnalysis(workspace.workingDirectory)
+    )
   })
   ipcMain.handle('analysis:openNotebook', async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    const file = notebookFileWatcher.watch(workspace.workingDirectory, notebookPath)
+    const file = await analysisOpenFile(workspace, notebookPath, true)
     activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-    notebookToolExecutor.syncDraft({
-      cwd: workspace.workingDirectory,
-      path: file.path,
-      document: file.document,
-      savedRevision: file.savedRevision,
-      source: 'renderer'
-    })
+    syncAnalysisDraft(workspace, file, file.document, file.savedRevision, true)
     return file
   })
   ipcMain.handle(
@@ -8815,16 +9101,9 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = saveProjectNotebook(workspace.workingDirectory, input)
-      notebookFileWatcher.noteLocalWrite(workspace.workingDirectory, file)
+      const file = await analysisSaveFile(workspace, input)
       activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-      notebookToolExecutor.syncDraft({
-        cwd: workspace.workingDirectory,
-        path: file.path,
-        document: file.document,
-        savedRevision: file.savedRevision,
-        source: 'renderer'
-      })
+      syncAnalysisDraft(workspace, file, file.document, file.savedRevision, true)
       return file
     }
   )
@@ -8841,15 +9120,9 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
+      const file = await analysisOpenFile(workspace, notebookPath)
       activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-      return notebookToolExecutor.syncDraft({
-        cwd: workspace.workingDirectory,
-        path: file.path,
-        document,
-        savedRevision,
-        source: 'renderer'
-      })
+      return syncAnalysisDraft(workspace, file, document, savedRevision ?? file.savedRevision)
     }
   )
   ipcMain.handle('analysis:createNotebook', async (_, cwd: string, relativePath?: string) => {
@@ -8857,8 +9130,7 @@ app.whenReady().then(async () => {
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    const file = createProjectNotebook(workspace.workingDirectory, relativePath)
-    notebookFileWatcher.watchFile(workspace.workingDirectory, file)
+    const file = await analysisCreateFile(workspace, relativePath)
     activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
     return file
   })
@@ -8867,33 +9139,29 @@ app.whenReady().then(async () => {
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-    await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
-    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === file.path) {
+    const closed = await analysisCloseFile(workspace, notebookPath)
+    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === closed.path) {
       activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
     }
-    notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
-    return closeProjectNotebook(workspace.workingDirectory, notebookPath)
+    return closed
   })
   ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-    await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
-    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === file.path) {
+    const deleted = await analysisDeleteFile(workspace, notebookPath)
+    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === deleted.path) {
       activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
     }
-    notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
-    return deleteProjectNotebook(workspace.workingDirectory, notebookPath)
+    return deleted
   })
   ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
-    if (cwd) {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        return detectConfiguredAnalysisKernels()
-      }
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (workspace) return analysisKernels(workspace)
+    const targetCwd = cwd ?? currentCwd
+    if (isRemoteAnalysisCwd(targetCwd)) {
+      throw new Error('远程 Notebook 会话或后端不可用；没有探测或回退到本机 Jupyter kernel。')
     }
     return detectConfiguredAnalysisKernels()
   })
@@ -8902,16 +9170,22 @@ app.whenReady().then(async () => {
     if (!workspace) {
       return stoppedJupyterStatus(cwd, '请选择一个已添加的项目或当前 workspace')
     }
-    return jupyterServerRegistry.status(workspace.workingDirectory)
+    return (
+      remoteNotebookBackendFor(workspace)?.controller.status() ??
+      jupyterServerRegistry.status(workspace.workingDirectory)
+    )
   })
   ipcMain.handle('analysis:jupyterRuntimeStatus', async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       return emptyAnalysisRuntimeStatus(cwd, '请选择一个已添加的项目或当前 workspace')
     }
+    const remote = remoteNotebookBackendFor(workspace)
+    const sessions = analysisSessions(workspace)
     return {
-      server: jupyterServerRegistry.status(workspace.workingDirectory),
-      notebooks: notebookSessionRegistry.projectSummary(workspace.workingDirectory)
+      server:
+        remote?.controller.status() ?? jupyterServerRegistry.status(workspace.workingDirectory),
+      notebooks: sessions.projectSummary(workspace.workingDirectory)
     }
   })
   ipcMain.handle('analysis:startJupyter', async (_, cwd: string) => {
@@ -8919,14 +9193,24 @@ app.whenReady().then(async () => {
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    return jupyterServerRegistry.start(workspace.workingDirectory)
+    return (
+      remoteNotebookBackendFor(workspace)?.controller.start() ??
+      jupyterServerRegistry.start(workspace.workingDirectory)
+    )
   })
   ipcMain.handle('analysis:stopJupyter', async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    await notebookSessionRegistry.closeProject(workspace.workingDirectory)
+    const remote = remoteNotebookBackendFor(workspace)
+    const sessions = analysisSessions(workspace)
+    await sessions.closeProject(workspace.workingDirectory)
+    if (remote) {
+      const status = await remote.controller.stop()
+      await sessions.closeProject(workspace.workingDirectory)
+      return status
+    }
     notebookFileWatcher.unwatchProject(workspace.workingDirectory)
     return jupyterServerRegistry.stop(workspace.workingDirectory)
   })
@@ -8937,12 +9221,12 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-      return notebookSessionRegistry.status({
+      const file = await analysisOpenFile(workspace, notebookPath)
+      return analysisSessions(workspace).status({
         projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
-        kernels: detectConfiguredAnalysisKernels()
+        kernels: analysisKernels(workspace)
       })
     }
   )
@@ -8953,12 +9237,12 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-      return notebookSessionRegistry.ensureSession({
+      const file = await analysisOpenFile(workspace, notebookPath)
+      return analysisSessions(workspace).ensureSession({
         projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
-        kernels: detectConfiguredAnalysisKernels()
+        kernels: analysisKernels(workspace)
       })
     }
   )
@@ -8967,8 +9251,8 @@ app.whenReady().then(async () => {
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
     }
-    const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-    return notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
+    const file = await analysisOpenFile(workspace, notebookPath)
+    return analysisSessions(workspace).closeSession(workspace.workingDirectory, file.path)
   })
   ipcMain.handle(
     'analysis:interruptNotebookExecution',
@@ -8977,8 +9261,8 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-      return notebookSessionRegistry.interruptSession(workspace.workingDirectory, file.path)
+      const file = await analysisOpenFile(workspace, notebookPath)
+      return analysisSessions(workspace).interruptSession(workspace.workingDirectory, file.path)
     }
   )
   ipcMain.handle(
@@ -8998,7 +9282,8 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, input.path)
+      const remote = remoteNotebookBackendFor(workspace)
+      const file = await analysisOpenFile(workspace, input.path)
       const cell = input.document.cells.find((item) => item.id === input.cellId)
       const cursorPosition = Number.isFinite(input.cursorPosition)
         ? Math.max(0, Math.min(input.cursorPosition, input.source.length))
@@ -9007,14 +9292,18 @@ app.whenReady().then(async () => {
         return emptyNotebookCompletionResult(cursorPosition, 'Notebook cell is not a code cell')
       }
 
-      const staticCompletion = isPythonNotebookDocument(input.document)
-        ? completeNotebookPythonStaticCompletion({
-            projectCwd: workspace.workingDirectory,
-            source: input.source,
-            cursorPosition
-          })
-        : null
-      const target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
+      const staticCompletion =
+        !remote && isPythonNotebookDocument(input.document)
+          ? completeNotebookPythonStaticCompletion({
+              projectCwd: workspace.workingDirectory,
+              source: input.source,
+              cursorPosition
+            })
+          : null
+      const target = analysisSessions(workspace).executionTarget(
+        workspace.workingDirectory,
+        file.path
+      )
       if (!target) {
         return (
           staticCompletion ??
@@ -9056,7 +9345,7 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      openProjectNotebook(workspace.workingDirectory, input.path)
+      await analysisOpenFile(workspace, input.path)
       const cell = input.document.cells.find((item) => item.id === input.cellId)
       if (!cell || cell.cellType !== 'code') {
         return {
@@ -9065,6 +9354,12 @@ app.whenReady().then(async () => {
           formatter: 'none' as const,
           message: 'Notebook cell is not a code cell'
         }
+      }
+
+      if (remoteNotebookBackendFor(workspace)) {
+        throw new Error(
+          '远程 Notebook 暂不支持桌面端本机 formatter；请在登录节点环境中格式化。没有回退到本机执行。'
+        )
       }
 
       return formatNotebookCellSource({
@@ -9095,24 +9390,27 @@ app.whenReady().then(async () => {
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-      const kernels = detectConfiguredAnalysisKernels()
-      let sessionStatus = await notebookSessionRegistry.ensureSession({
+      const remote = remoteNotebookBackendFor(workspace)
+      const file = await analysisOpenFile(workspace, notebookPath)
+      const kernels = analysisKernels(workspace)
+      const sessions = analysisSessions(workspace)
+      let sessionStatus = await sessions.ensureSession({
         projectCwd: workspace.workingDirectory,
         notebookPath: file.path,
         document,
         kernels
       })
-      let target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
+      let target = sessions.executionTarget(workspace.workingDirectory, file.path)
       if (!target) {
-        await ensureJupyterServerReady(workspace.workingDirectory)
-        sessionStatus = await notebookSessionRegistry.ensureSession({
+        if (remote) remote.controller.requireReady()
+        else await ensureJupyterServerReady(workspace.workingDirectory)
+        sessionStatus = await sessions.ensureSession({
           projectCwd: workspace.workingDirectory,
           notebookPath: file.path,
           document,
           kernels
         })
-        target = notebookSessionRegistry.executionTarget(workspace.workingDirectory, file.path)
+        target = sessions.executionTarget(workspace.workingDirectory, file.path)
       }
       if (!target) {
         throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
@@ -9123,7 +9421,7 @@ app.whenReady().then(async () => {
         throw new Error(`Notebook cell not found: ${cellId}`)
       }
 
-      notebookSessionRegistry.updateSessionState(
+      sessions.updateSessionState(
         workspace.workingDirectory,
         file.path,
         'busy',
@@ -9141,14 +9439,9 @@ app.whenReady().then(async () => {
           outputs: execution.outputs,
           metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
         })
-        notebookToolExecutor.syncDraft({
-          cwd: workspace.workingDirectory,
-          path: file.path,
-          document: nextDocument,
-          source: 'renderer'
-        })
+        syncAnalysisDraft(workspace, file, nextDocument)
         const nextSessionStatus =
-          notebookSessionRegistry.updateSessionState(
+          sessions.updateSessionState(
             workspace.workingDirectory,
             file.path,
             execution.state === 'error' ? 'error' : 'idle',
@@ -9160,7 +9453,7 @@ app.whenReady().then(async () => {
           sessionStatus: nextSessionStatus
         }
       } catch (error) {
-        notebookSessionRegistry.updateSessionState(
+        sessions.updateSessionState(
           workspace.workingDirectory,
           file.path,
           'error',

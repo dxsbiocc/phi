@@ -5,10 +5,18 @@ export type JupyterStatusReader = (cwd: string) => Promise<JupyterServerStatus>
 export type JupyterStatusListener = (status: JupyterServerStatus) => void
 
 export const JUPYTER_STARTUP_POLL_ATTEMPTS = 40
+export const REMOTE_JUPYTER_STARTUP_POLL_ATTEMPTS = 2_400
 export const JUPYTER_STARTUP_POLL_INTERVAL_MS = 250
 
 export function jupyterServerIsStarting(status: JupyterServerStatus): boolean {
-  return status.state === 'starting'
+  return [
+    'starting',
+    'preparing_environment',
+    'allocating_ports',
+    'starting_lease',
+    'probing_through_tunnel',
+    'cleaning'
+  ].includes(status.state)
 }
 
 export async function pollJupyterServerStartupStatus(input: {
@@ -22,7 +30,11 @@ export async function pollJupyterServerStartupStatus(input: {
   intervalMs?: number
 }): Promise<JupyterServerStatus> {
   let status = input.initialStatus
-  const attempts = input.attempts ?? JUPYTER_STARTUP_POLL_ATTEMPTS
+  const attempts =
+    input.attempts ??
+    (input.initialStatus.runtimeKind === 'ssh'
+      ? REMOTE_JUPYTER_STARTUP_POLL_ATTEMPTS
+      : JUPYTER_STARTUP_POLL_ATTEMPTS)
   const intervalMs = input.intervalMs ?? JUPYTER_STARTUP_POLL_INTERVAL_MS
 
   for (let attempt = 0; attempt < attempts && jupyterServerIsStarting(status); attempt += 1) {

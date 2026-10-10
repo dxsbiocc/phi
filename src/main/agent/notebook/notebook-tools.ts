@@ -3,13 +3,70 @@ import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
 export type NotebookToolAction =
   'list' | 'read' | 'insert_cell' | 'update_cell' | 'delete_cell' | 'run_cell' | 'save'
 
+export const NOTEBOOK_TOOL_NAMES = [
+  'notebook.list',
+  'notebook.read',
+  'notebook.insert_cell',
+  'notebook.update_cell',
+  'notebook.delete_cell',
+  'notebook.run_cell',
+  'notebook.save'
+] as const
+
+export type NotebookToolName = (typeof NOTEBOOK_TOOL_NAMES)[number]
+
+export const NOTEBOOK_TOOL_DESCRIPTIONS: ReadonlyMap<string, string> = new Map<
+  NotebookToolName,
+  string
+>([
+  [
+    'notebook.list',
+    'List .ipynb notebooks in the current project or ordinary workspace. Use this before opening or modifying a notebook when the path is unknown.'
+  ],
+  [
+    'notebook.read',
+    'Read the current in-memory notebook draft for a workspace notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.'
+  ],
+  [
+    'notebook.insert_cell',
+    'Insert a code, markdown, or raw cell into the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+  ],
+  [
+    'notebook.update_cell',
+    'Replace the source and optionally type of an existing cell in the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+  ],
+  [
+    'notebook.delete_cell',
+    'Delete a cell from the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+  ],
+  [
+    'notebook.run_cell',
+    'Run one code cell through the Phi app-managed Jupyter server for the current project or ordinary workspace and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct workspace server.'
+  ],
+  [
+    'notebook.save',
+    'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the workspace.'
+  ]
+])
+
+export type NotebookRemoteProjectIdentity = {
+  runtimeSessionId: string
+  sessionId: string
+  projectId: string
+}
+
 export type NotebookToolRequest = {
   action: NotebookToolAction
   cwd: string
   params: Record<string, unknown>
+  remoteProject?: NotebookRemoteProjectIdentity
 }
 
 export type NotebookToolHostExecutor = (request: NotebookToolRequest) => Promise<unknown>
+
+export type NotebookToolBuildOptions = {
+  remoteProject?: NotebookRemoteProjectIdentity
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -32,7 +89,8 @@ function resultDetails(result: unknown): Record<string, unknown> {
 function buildNotebookTool(
   action: NotebookToolAction,
   definition: Omit<CustomTool, 'execute'>,
-  executeHost: NotebookToolHostExecutor
+  executeHost: NotebookToolHostExecutor,
+  options: NotebookToolBuildOptions
 ): CustomTool {
   return {
     ...definition,
@@ -41,7 +99,8 @@ function buildNotebookTool(
         const result = await executeHost({
           action,
           cwd: ctx.sessionManager.getCwd(),
-          params: recordValue(params)
+          params: recordValue(params),
+          ...(options.remoteProject ? { remoteProject: options.remoteProject } : {})
         })
         return {
           content: [{ type: 'text', text: resultText(result) }],
@@ -57,30 +116,32 @@ function buildNotebookTool(
   }
 }
 
-export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor): CustomTool[] {
+export function buildNotebookCustomTools(
+  executeHost: NotebookToolHostExecutor,
+  options: NotebookToolBuildOptions = {}
+): CustomTool[] {
   return [
     buildNotebookTool(
       'list',
       {
         name: 'notebook.list',
         label: 'List Notebooks',
-        description:
-          'List .ipynb notebooks in the current project or ordinary workspace. Use this before opening or modifying a notebook when the path is unknown.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.list')!,
         parameters: {
           type: 'object',
           properties: {}
         },
         approval: 'read'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'read',
       {
         name: 'notebook.read',
         label: 'Read Notebook',
-        description:
-          'Read the current in-memory notebook draft for a workspace notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.read')!,
         parameters: {
           type: 'object',
           required: ['path'],
@@ -97,15 +158,15 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'read'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'insert_cell',
       {
         name: 'notebook.insert_cell',
         label: 'Insert Notebook Cell',
-        description:
-          'Insert a code, markdown, or raw cell into the live in-memory notebook draft. This does not save to disk until notebook.save is called.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.insert_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'source'],
@@ -134,15 +195,15 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'write'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'update_cell',
       {
         name: 'notebook.update_cell',
         label: 'Update Notebook Cell',
-        description:
-          'Replace the source and optionally type of an existing cell in the live in-memory notebook draft. This does not save to disk until notebook.save is called.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.update_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId', 'source'],
@@ -163,15 +224,15 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'write'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'delete_cell',
       {
         name: 'notebook.delete_cell',
         label: 'Delete Notebook Cell',
-        description:
-          'Delete a cell from the live in-memory notebook draft. This does not save to disk until notebook.save is called.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.delete_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId'],
@@ -186,15 +247,15 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'write'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'run_cell',
       {
         name: 'notebook.run_cell',
         label: 'Run Notebook Cell',
-        description:
-          'Run one code cell through the Phi app-managed Jupyter server for the current project or ordinary workspace and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct workspace server.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.run_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId'],
@@ -209,15 +270,15 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'write'
       },
-      executeHost
+      executeHost,
+      options
     ),
     buildNotebookTool(
       'save',
       {
         name: 'notebook.save',
         label: 'Save Notebook',
-        description:
-          'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the workspace.',
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.save')!,
         parameters: {
           type: 'object',
           required: ['path'],
@@ -227,7 +288,8 @@ export function buildNotebookCustomTools(executeHost: NotebookToolHostExecutor):
         },
         approval: 'write'
       },
-      executeHost
+      executeHost,
+      options
     )
   ]
 }

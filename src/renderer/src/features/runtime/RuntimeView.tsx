@@ -68,7 +68,21 @@ const runtimeSidebarHoverActionSx = {
 
 function stateColor(state: JupyterServerState | AnalysisNotebookKernelState): string {
   if (state === 'ready' || state === 'idle') return '#35BFA5'
-  if (state === 'busy' || state === 'starting' || state === 'restarting') return '#E6B93F'
+  if (
+    [
+      'busy',
+      'starting',
+      'restarting',
+      'preparing_environment',
+      'allocating_ports',
+      'starting_lease',
+      'probing_through_tunnel',
+      'stopping',
+      'cleaning'
+    ].includes(state)
+  ) {
+    return '#E6B93F'
+  }
   if (state === 'error' || state === 'missing' || state === 'exited') return '#F26D5B'
   return '#8A98A8'
 }
@@ -108,6 +122,10 @@ function RuntimeKernelIcon({
 }
 
 function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null): string {
+  if (status?.runtimeKind === 'ssh') {
+    const server = status.serverLabel || 'SSH 服务器'
+    return status.message ? `${server} · 登录节点 · ${status.message}` : `${server} · 登录节点`
+  }
   const parts = [
     status?.pid ? `PID ${status.pid}` : null,
     status?.port ? `Port ${status.port}` : null
@@ -116,21 +134,6 @@ function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null):
   if (parts.length > 0) return parts.join(' · ')
   if (status?.hasEndpoint) return 'Endpoint ready'
   return 'No endpoint'
-}
-
-export function RemoteRuntimeUnavailableSidebar(): React.JSX.Element {
-  return (
-    <Box className="app-sidebar-surface" sx={runtimeSidebarSurfaceSx}>
-      <Typography
-        data-phi-runtime-unavailable-notice="remote"
-        variant="body2"
-        color="text.secondary"
-        sx={{ p: 2 }}
-      >
-        远程项目的 Notebook/Jupyter 暂不可用。
-      </Typography>
-    </Box>
-  )
 }
 
 export function RuntimeSidebar({
@@ -149,7 +152,19 @@ export function RuntimeSidebar({
   const notebookSessions = (notebooks?.sessions ?? []).filter(isListedNotebookKernel)
   const runningKernelCount = notebookSessions.length
   const actionBusy = isLoading
-  const showStopServerAction = server?.state === 'ready' || server?.state === 'starting'
+  const showStopServerAction = Boolean(
+    server &&
+    [
+      'ready',
+      'starting',
+      'preparing_environment',
+      'allocating_ports',
+      'starting_lease',
+      'probing_through_tunnel',
+      'stopping',
+      'cleaning'
+    ].includes(server.state)
+  )
   const canStart = Boolean(projectCwd) && !showStopServerAction
   const canStop = Boolean(projectCwd) && showStopServerAction
 
@@ -271,7 +286,7 @@ export function RuntimeSidebar({
                   <IconButton
                     size="small"
                     aria-label="停止 Jupyter server"
-                    disabled={!canStop || actionBusy}
+                    disabled={!canStop || (actionBusy && server?.runtimeKind !== 'ssh')}
                     onClick={(event) => {
                       event.stopPropagation()
                       onStopJupyter(projectCwd)

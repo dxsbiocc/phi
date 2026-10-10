@@ -59,8 +59,17 @@ test('jupyter startup polling stops when the caller becomes stale', async () => 
   assert.equal(readCount, 0)
 })
 
-test('jupyterServerIsStarting only treats starting as pollable', () => {
-  assert.equal(jupyterServerIsStarting(status('starting')), true)
+test('jupyterServerIsStarting treats local and remote startup phases as pollable', () => {
+  for (const state of [
+    'starting',
+    'preparing_environment',
+    'allocating_ports',
+    'starting_lease',
+    'probing_through_tunnel',
+    'cleaning'
+  ] as const) {
+    assert.equal(jupyterServerIsStarting(status(state)), true, state)
+  }
   assert.equal(jupyterServerIsStarting(status('ready', true)), false)
   assert.equal(jupyterServerIsStarting(status('error')), false)
 })

@@ -9,6 +9,10 @@ import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../src/main/agent/download/remo
 import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../src/main/agent/deliverables/remote-present-tool'
 import { PHI_ENV_REQUEST_DESCRIPTION } from '../src/main/agent/content/env-request-tool'
 import { PHI_SKILL_RUN_DESCRIPTION } from '../src/main/agent/content/skill-tools'
+import {
+  NOTEBOOK_TOOL_DESCRIPTIONS,
+  NOTEBOOK_TOOL_NAMES
+} from '../src/main/agent/notebook/notebook-tools'
 
 type ToolInfo = { name: string; description: string; sourceInfo: { source: string } }
 
@@ -187,6 +191,55 @@ test('remote guard requires an exact verified backend for file-backed B tools', 
   )
   assert.equal(
     ((await impostors({ toolName: 'present_files' })) as { block?: boolean }).block,
+    true
+  )
+})
+
+test('remote guard releases only the seven exactly registered notebook backends', async () => {
+  const registrations = NOTEBOOK_TOOL_NAMES.map((name) => ({
+    name,
+    description: NOTEBOOK_TOOL_DESCRIPTIONS.get(name)!,
+    sourceInfo: { source: 'extension' }
+  }))
+  const verified = guard(registrations)
+  for (const name of NOTEBOOK_TOOL_NAMES) {
+    assert.equal(await verified({ toolName: name }), undefined, name)
+  }
+
+  for (const name of NOTEBOOK_TOOL_NAMES) {
+    const expected = NOTEBOOK_TOOL_DESCRIPTIONS.get(name)!
+    for (const tools of [
+      registrations.filter((tool) => tool.name !== name),
+      registrations.map((tool) =>
+        tool.name === name ? { ...tool, description: `${expected} changed` } : tool
+      ),
+      registrations.map((tool) =>
+        tool.name === name ? { ...tool, sourceInfo: { source: 'builtin' } } : tool
+      ),
+      [...registrations, { name, description: expected, sourceInfo: { source: 'builtin' } }]
+    ]) {
+      const decision = await guard(tools)({ toolName: name })
+      assert.equal((decision as { block?: boolean }).block, true, name)
+    }
+  }
+
+  for (const name of ['notebook.unknown', 'lib.save', 'lib.list']) {
+    const decision = await verified({ toolName: name })
+    assert.equal((decision as { block?: boolean }).block, true, name)
+  }
+
+  const dynamicImpostor = guard(
+    [
+      {
+        name: 'notebook.run_cell',
+        description: 'Skill-defined notebook impostor',
+        sourceInfo: { source: 'extension' }
+      }
+    ],
+    new Set(['notebook.run_cell'])
+  )
+  assert.equal(
+    ((await dynamicImpostor({ toolName: 'notebook.run_cell' })) as { block?: boolean }).block,
     true
   )
 })

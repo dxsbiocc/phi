@@ -414,6 +414,7 @@ type HarnessResult = {
   acknowledgedSessions: Array<{ file: string; cwd: string }>
   jupyterServerCalls: Array<{ action: string; cwd: string }>
   notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }>
+  remoteNotebookCalls: Array<{ action: string; path?: string }>
   notebookExecutionCalls: Array<{
     cellId: string
     source: string
@@ -577,6 +578,46 @@ async function harness(
   const acknowledgedSessions: Array<{ file: string; cwd: string }> = []
   const jupyterServerCalls: Array<{ action: string; cwd: string }> = []
   const notebookSessionCalls: Array<{ action: string; cwd: string; path?: string }> = []
+  const remoteNotebookCalls: Array<{ action: string; path?: string }> = []
+  let remoteNotebookState = 'stopped'
+  const remoteNotebookDocument = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'Remote Python', language: 'python', name: 'phi-python' }
+    },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'print("ran")'
+      }
+    ]
+  })
+  const remoteNotebookFile = (
+    path = '/canonical/project/notebooks/remote.ipynb'
+  ): {
+    path: string
+    relativePath: string
+    name: string
+    bytes: number
+    modifiedAt: string
+    savedRevision: string
+    contentHash: string
+    document: notebookDocument.NotebookDocument
+  } => ({
+    path,
+    relativePath: path.replace('/canonical/project/', ''),
+    name: path.split('/').at(-1) ?? 'remote.ipynb',
+    bytes: 256,
+    modifiedAt: '2026-10-10T00:00:00.000Z',
+    savedRevision: remoteNotebookDocument.revision,
+    contentHash: 'remote-content-hash',
+    document: remoteNotebookDocument
+  })
   const notebookExecutionCalls: Array<{
     cellId: string
     source: string
@@ -1733,6 +1774,7 @@ async function harness(
     },
     './agent/projects': {
       subscribeRemoteProjectConnection: (): (() => void) => noop,
+      deleteProject: (): void => undefined,
       getProject: (id: string) => {
         if (id === 'remote-project-1') {
           return {
@@ -1789,6 +1831,16 @@ async function harness(
             phase: remoteProjectPhase,
             message: remoteProjectPhase === 'offline' ? '服务器离线' : undefined
           }
+        },
+        {
+          id: 'remote-collision',
+          location: {
+            kind: 'ssh',
+            hostProfileId: 'host-1',
+            remoteRoot: '/projects/research',
+            canonicalRoot: '/projects/research'
+          },
+          workingDirectory: '/projects/research'
         }
       ],
       updateProjectDefaults: (id: string, defaults: Record<string, unknown>) => {
@@ -2057,8 +2109,8 @@ async function harness(
     },
     './agent/notebook/notebook-tool-executor': {
       AnalysisNotebookToolExecutor: class TestAnalysisNotebookToolExecutor {
-        execute(): never {
-          throw new Error('notebookTool.execute is not exercised in main-integration.test.ts')
+        execute(request: Record<string, unknown>): Record<string, unknown> {
+          return { kind: 'local_notebook_tool', cwd: request.cwd }
         }
         syncDraft(input: {
           cwd: string
@@ -2077,6 +2129,169 @@ async function harness(
           }
         }
       }
+    },
+    './agent/notebook/notebook-tool-host-router': {
+      NotebookToolHostRouter: class {
+        constructor(
+          private readonly options: {
+            local: (request: unknown) => Promise<unknown>
+            isRemoteCwd: (cwd: string) => boolean
+            resolveRemote: (identity: unknown) => Promise<{
+              projectCwd: string
+              execute: (request: unknown) => Promise<unknown>
+            } | null>
+          }
+        ) {}
+        async execute(request: Record<string, unknown>): Promise<unknown> {
+          if (request.remoteProject) {
+            const remote = await this.options.resolveRemote(request.remoteProject)
+            if (!remote) throw new Error('远程 Notebook 后端不可用')
+            return remote.execute({ ...request, cwd: remote.projectCwd })
+          }
+          if (this.options.isRemoteCwd(String(request.cwd ?? ''))) {
+            throw new Error('远程 Notebook 请求缺少经过验证的远程 Notebook 后端')
+          }
+          return this.options.local(request)
+        }
+      }
+    },
+    './agent/notebook/remote-analysis-notebook-backend': {
+      createRemoteAnalysisNotebookBackend: () => {
+        const sessions = new TestAnalysisNotebookSessionRegistry()
+        const pathFor = (path: string): string =>
+          path.startsWith('/') ? path : `/canonical/project/${path}`
+        const status = (
+          state = remoteNotebookState
+        ): {
+          projectCwd: string
+          runtimeKind: 'ssh'
+          serverLabel: string
+          state: string
+          hasEndpoint: boolean
+          message: string | undefined
+        } => ({
+          projectCwd: '/canonical/project',
+          runtimeKind: 'ssh',
+          serverLabel: 'cluster-one',
+          state,
+          hasEndpoint: state === 'ready',
+          message:
+            state === 'stopped'
+              ? '远程 Jupyter 未连接；重新连接后 kernel 将重启，内存状态会丢失。'
+              : undefined
+        })
+        const workspace = {
+          list: async () => {
+            remoteNotebookCalls.push({ action: 'list' })
+            return {
+              notebooks: [
+                {
+                  path: '/canonical/project/notebooks/remote.ipynb',
+                  relativePath: 'notebooks/remote.ipynb',
+                  name: 'remote.ipynb',
+                  directory: 'notebooks',
+                  bytes: 256,
+                  modifiedAt: '2026-10-10T00:00:00.000Z'
+                }
+              ],
+              truncated: false,
+              initialized: true
+            }
+          },
+          open: async (path: string) => {
+            const resolved = pathFor(path)
+            remoteNotebookCalls.push({ action: 'open', path: resolved })
+            return remoteNotebookFile(resolved)
+          },
+          create: async (relativePath = 'notebooks/Untitled.ipynb') => {
+            const path = pathFor(relativePath)
+            remoteNotebookCalls.push({ action: 'create', path })
+            return remoteNotebookFile(path)
+          },
+          save: async (input: { path: string; document: notebookDocument.NotebookDocument }) => {
+            const path = pathFor(input.path)
+            remoteNotebookCalls.push({ action: 'save', path })
+            return { ...remoteNotebookFile(path), document: input.document }
+          }
+        }
+        const tools = {
+          execute: async (request: Record<string, unknown>) => {
+            remoteNotebookCalls.push({ action: `tool:${String(request.action)}` })
+            return { summary: 'remote notebook tool ok', cwd: request.cwd }
+          },
+          syncDraft: (input: Record<string, unknown>) => ({
+            source: input.source ?? 'renderer',
+            projectCwd: '/canonical/project',
+            path: input.path,
+            relativePath: String(input.path).replace('/canonical/project/', ''),
+            document: input.document,
+            savedRevision: input.savedRevision ?? 'synced'
+          })
+        }
+        return {
+          projectCwd: '/canonical/project',
+          projectName: 'Remote project',
+          workspace,
+          sessions,
+          tools,
+          controller: {
+            status: () => status(),
+            start: () => {
+              remoteNotebookCalls.push({ action: 'start' })
+              remoteNotebookState = 'ready'
+              return status('preparing_environment')
+            },
+            stop: async () => {
+              remoteNotebookCalls.push({ action: 'stop' })
+              remoteNotebookState = 'stopped'
+              return status()
+            },
+            requireReady: () => {
+              if (remoteNotebookState !== 'ready') throw new Error('远程 Jupyter 尚未就绪')
+            }
+          },
+          kernels: () => ({
+            jupyterServer: { available: true, command: 'jupyter', version: 'remote' },
+            kernels: [
+              {
+                name: 'phi-python',
+                displayName: 'Remote Python',
+                language: 'python',
+                rawLanguage: 'python'
+              }
+            ],
+            preferredKernelName: 'phi-python',
+            hasPythonKernel: true,
+            hasRKernel: false,
+            messages: []
+          }),
+          initializeProject: async () => ({
+            notebooksDir: '/canonical/project/notebooks',
+            outputsDir: '/canonical/project/outputs'
+          }),
+          open: async (path: string) => workspace.open(path),
+          save: async (input: { path: string; document: notebookDocument.NotebookDocument }) =>
+            workspace.save(input),
+          close: async (path: string) => {
+            const resolved = pathFor(path)
+            remoteNotebookCalls.push({ action: 'close', path: resolved })
+            await sessions.closeSession('/canonical/project', resolved)
+            return { path: resolved }
+          },
+          delete: async (path: string) => {
+            const resolved = pathFor(path)
+            remoteNotebookCalls.push({ action: 'delete', path: resolved })
+            return { path: resolved, relativePath: resolved.replace('/canonical/project/', '') }
+          },
+          dispose: async () => {
+            remoteNotebookCalls.push({ action: 'dispose' })
+          }
+        }
+      },
+      remoteNotebookFileChange: (projectCwd: string, event: Record<string, unknown>) => ({
+        ...event,
+        projectCwd
+      })
     },
     './agent/omp/omp-bridge': {
       getOmpBridge: (): {
@@ -2971,7 +3186,29 @@ async function harness(
         cwd: '/canonical/project',
         hostAlias: 'cluster-one',
         approvalScope: 'SSH cluster-one · cwd /canonical/project；Shell 命令可访问项目目录之外'
+      }),
+      resolveRemoteWorkspaceHostBinding: (request: Record<string, unknown>) => ({
+        ...request,
+        hostAlias: 'cluster-one',
+        remoteRoot: '/cluster/project',
+        canonicalRoot: '/canonical/project',
+        cacheKey: 'remote-project-1',
+        config: {
+          remoteRoot: '/cluster/project',
+          canonicalRoot: '/canonical/project',
+          connect: async () => ({})
+        }
+      }),
+      resolveAuthorizedRemoteConnectionConfig: (request: Record<string, unknown>) => ({
+        ...request,
+        hostAlias: 'cluster-one',
+        connection: { hostAlias: 'cluster-one' }
       })
+    },
+    './agent/remote-runtime/workspace': {
+      openRemoteRuntimeWorkspace: async (): Promise<never> => {
+        throw new Error('main integration uses the remote notebook backend mock')
+      }
     },
     './agent/remote-workspace-read': {
       readRemoteWorkspacePath: async (request: Record<string, unknown>) => ({
@@ -3595,6 +3832,7 @@ async function harness(
     acknowledgedSessions,
     jupyterServerCalls,
     notebookSessionCalls,
+    remoteNotebookCalls,
     notebookExecutionCalls,
     notebookFormatCalls,
     managedEnvironmentBuildCalls,
@@ -5637,8 +5875,18 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
     { filePath: '/isolated/skills/global/SKILL.md', content: '# global skill\n' }
   )
   await assert.rejects(app.invoke('files:pickInput'), /不会打开本机会话目录/)
-  await assert.rejects(app.invoke('analysis:initializeProject', current.cwd), /请选择/)
-  await assert.rejects(app.invoke('analysis:startJupyter', current.cwd), /请选择/)
+  assert.deepEqual(await app.invoke('analysis:initializeProject', current.cwd), {
+    notebooksDir: '/canonical/project/notebooks',
+    outputsDir: '/canonical/project/outputs'
+  })
+  assert.deepEqual(await app.invoke('analysis:startJupyter', current.cwd), {
+    projectCwd: '/canonical/project',
+    runtimeKind: 'ssh',
+    serverLabel: 'cluster-one',
+    state: 'preparing_environment',
+    hasEndpoint: false,
+    message: undefined
+  })
   assert.deepEqual(app.jupyterServerCalls, [])
   assert.deepEqual(app.notebookSessionCalls, [])
   await assert.rejects(
@@ -7802,6 +8050,10 @@ test('main IPC: analysis kernel diagnostics tolerate a missing project cwd', asy
   assert.equal(missingProjectDiagnostics.jupyterServer.available, true)
   assert.equal(missingProjectDiagnostics.jupyterServer.version, '2.14.0')
   assert.equal(missingProjectDiagnostics.hasPythonKernel, true)
+  await assert.rejects(
+    app.invoke('analysis:listKernels', '/canonical/project'),
+    /没有探测或回退到本机 Jupyter/
+  )
 })
 
 test('main IPC: analysis Jupyter server lifecycle uses the selected project', async () => {
@@ -8111,6 +8363,169 @@ test('main IPC: analysis notebook execution can be interrupted', async () => {
     cwd: '/projects/research',
     path: '/projects/research/notebooks/demo.ipynb'
   })
+})
+
+test('main IPC: remote analysis routes files and Jupyter only through the SSH backend', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+
+  const registry = (await app.invoke('analysis:listNotebooks', current.cwd)) as {
+    projectCwd: string
+    notebooks: Array<{ path: string }>
+  }
+  const opened = (await app.invoke(
+    'analysis:openNotebook',
+    current.cwd,
+    'notebooks/remote.ipynb'
+  )) as {
+    path: string
+    contentHash: string
+    document: notebookDocument.NotebookDocument
+  }
+  const saved = (await app.invoke('analysis:saveNotebook', current.cwd, {
+    path: opened.path,
+    document: opened.document,
+    expectedRevision: opened.document.revision,
+    expectedHash: opened.contentHash
+  })) as { path: string }
+  const starting = (await app.invoke('analysis:startJupyter', current.cwd)) as {
+    state: string
+    runtimeKind: string
+    serverLabel: string
+  }
+  const status = (await app.invoke('analysis:jupyterStatus', current.cwd)) as {
+    projectCwd: string
+    state: string
+    runtimeKind: string
+    serverLabel: string
+  }
+  const executed = (await app.invoke(
+    'analysis:executeNotebookCell',
+    current.cwd,
+    opened.path,
+    opened.document,
+    'cell-1'
+  )) as { executionCount: number }
+  const interrupted = (await app.invoke(
+    'analysis:interruptNotebookExecution',
+    current.cwd,
+    opened.path
+  )) as { state: string }
+  const closedSession = (await app.invoke(
+    'analysis:closeNotebookSession',
+    current.cwd,
+    opened.path
+  )) as { state: string }
+  const closed = (await app.invoke('analysis:closeNotebook', current.cwd, opened.path)) as {
+    path: string
+  }
+  const stopped = (await app.invoke('analysis:stopJupyter', current.cwd)) as { state: string }
+
+  assert.equal(registry.projectCwd, '/canonical/project')
+  assert.deepEqual(
+    registry.notebooks.map((item) => item.path),
+    ['/canonical/project/notebooks/remote.ipynb']
+  )
+  assert.equal(opened.path, '/canonical/project/notebooks/remote.ipynb')
+  assert.equal(saved.path, '/canonical/project/notebooks/remote.ipynb')
+  assert.deepEqual(starting, {
+    projectCwd: '/canonical/project',
+    runtimeKind: 'ssh',
+    serverLabel: 'cluster-one',
+    state: 'preparing_environment',
+    hasEndpoint: false,
+    message: undefined
+  })
+  assert.equal(status.state, 'ready')
+  assert.equal(status.runtimeKind, 'ssh')
+  assert.equal(status.serverLabel, 'cluster-one')
+  assert.equal(executed.executionCount, 2)
+  assert.equal(interrupted.state, 'idle')
+  assert.equal(closedSession.state, 'disconnected')
+  assert.equal(closed.path, '/canonical/project/notebooks/remote.ipynb')
+  assert.equal(stopped.state, 'stopped')
+  assert.equal(
+    app.notebookSessionCalls.filter(
+      (call) => call.action === 'closeProject' && call.cwd === '/canonical/project'
+    ).length,
+    2
+  )
+  assert.deepEqual(app.jupyterServerCalls, [])
+  assert.equal(
+    app.remoteNotebookCalls.some((call) => call.path?.includes('remote-project-anchors')),
+    false
+  )
+})
+
+test('main host: remote notebook tools reject unowned runtime identities without local fallback', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+    cwd: string
+  }
+  const execute = app.hostHandlers.get('notebookTool.execute')
+  assert.ok(execute)
+
+  await assert.rejects(
+    execute({
+      action: 'list',
+      cwd: current.cwd,
+      params: {},
+      remoteProject: {
+        runtimeSessionId: 'forged-runtime',
+        sessionId: current.phiSessionId,
+        projectId: 'remote-project-1'
+      }
+    }),
+    /远程 Notebook 后端不可用/
+  )
+  assert.deepEqual(app.remoteNotebookCalls, [])
+  assert.deepEqual(app.jupyterServerCalls, [])
+})
+
+test('main host: a local project wins over a colliding saved remote path', async () => {
+  const app = await harness()
+  const execute = app.hostHandlers.get('notebookTool.execute')
+  assert.ok(execute)
+
+  assert.deepEqual(await execute({ action: 'list', cwd: '/projects/research', params: {} }), {
+    kind: 'local_notebook_tool',
+    cwd: '/projects/research'
+  })
+  assert.deepEqual(app.remoteNotebookCalls, [])
+})
+
+test('main IPC: deleting a remote project disposes its Notebook backend first', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+  await app.invoke('analysis:startJupyter', current.cwd)
+
+  await app.invoke('projects:delete', 'remote-project-1')
+
+  assert.deepEqual(
+    app.remoteNotebookCalls.filter((call) => call.action === 'dispose'),
+    [{ action: 'dispose' }]
+  )
+})
+
+test('main IPC: deleting the bound remote session disposes its Notebook backend', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    cwd: string
+  }
+  await app.invoke('analysis:startJupyter', current.cwd)
+
+  await app.invoke('sessions:delete', current.path)
+
+  assert.deepEqual(
+    app.remoteNotebookCalls.filter((call) => call.action === 'dispose'),
+    [{ action: 'dispose' }]
+  )
 })
 
 test('main IPC: notebook AI generation uses assistant event text when session history is empty', async () => {

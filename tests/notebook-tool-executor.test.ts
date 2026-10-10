@@ -8,6 +8,7 @@ import { AnalysisNotebookSessionRegistry } from '../src/main/agent/notebook/anal
 import { AnalysisNotebookExecutor } from '../src/main/agent/notebook/analysis-jupyter-execution'
 import { openProjectNotebook } from '../src/main/agent/notebook/analysis-notebook-files'
 import { AnalysisNotebookToolExecutor } from '../src/main/agent/notebook/notebook-tool-executor'
+import { createLocalNotebookWorkspace } from '../src/main/agent/notebook/notebook-workspace'
 import { updateNotebookCell } from '../src/shared/notebookDocument'
 
 function withProjectDir<T>(callback: (root: string) => T | Promise<T>): Promise<T> {
@@ -301,5 +302,109 @@ test('notebook tool executor syncs renderer drafts into the live agent workspace
     const cells = draft.cells as Array<{ source: string }>
     assert.equal(cells[0]?.source, 'x = 99')
     assert.match(readFileSync(notebookPath, 'utf-8'), /x = 1/)
+  })
+})
+
+test('renderer draft sync does not adopt a changed disk hash as the agent save basis', async () => {
+  await withProjectDir(async (root) => {
+    mkdirSync(join(root, 'notebooks'))
+    const notebookPath = join(root, 'notebooks', 'analysis.ipynb')
+    writeNotebook(notebookPath)
+    const workspace = createLocalNotebookWorkspace(root)
+    const original = await workspace.open('notebooks/analysis.ipynb')
+    const executor = new AnalysisNotebookToolExecutor({
+      resolveWorkspaceByCwd: () => ({ workingDirectory: root }),
+      resolveNotebookWorkspaceByCwd: () => workspace,
+      ensureJupyterServerReady: async () => undefined,
+      notebookSessionRegistry: new AnalysisNotebookSessionRegistry({ getConnection: () => null }),
+      notebookExecutor: new AnalysisNotebookExecutor()
+    })
+    await executor.execute({
+      action: 'read',
+      cwd: root,
+      params: { path: 'notebooks/analysis.ipynb' }
+    })
+
+    writeFileSync(notebookPath, JSON.stringify(JSON.parse(readFileSync(notebookPath, 'utf8'))))
+    const externallyReformatted = await workspace.open('notebooks/analysis.ipynb')
+    assert.equal(externallyReformatted.savedRevision, original.savedRevision)
+    assert.notEqual(externallyReformatted.contentHash, original.contentHash)
+    executor.syncDraft({
+      cwd: root,
+      path: original.path,
+      file: externallyReformatted,
+      document: original.document,
+      savedRevision: original.savedRevision,
+      source: 'renderer'
+    })
+
+    await assert.rejects(
+      executor.execute({
+        action: 'save',
+        cwd: root,
+        params: { path: original.path }
+      }),
+      /磁盘上变化/
+    )
+  })
+})
+
+test('notebook tool executor resolves kernels from the routed backend', async () => {
+  await withProjectDir(async (root) => {
+    mkdirSync(join(root, 'notebooks'))
+    writeNotebook(join(root, 'notebooks', 'analysis.ipynb'))
+    const routedKernels = {
+      jupyterServer: { available: true, command: 'jupyter' as const, version: 'remote' },
+      kernels: [
+        {
+          name: 'phi-python',
+          displayName: 'Remote Python',
+          language: 'python' as const,
+          rawLanguage: 'python'
+        }
+      ],
+      preferredKernelName: 'phi-python',
+      hasPythonKernel: true,
+      hasRKernel: false,
+      messages: []
+    }
+    let selectedKernel = ''
+    const sessions = {
+      ensureSession: async (input: { kernels: typeof routedKernels }) => {
+        selectedKernel = input.kernels.preferredKernelName ?? ''
+        return { state: 'idle', kernelDisplayName: 'Remote Python' }
+      },
+      executionTarget: () => ({
+        connection: { url: 'http://127.0.0.1:30000/', runtimeId: 'remote-runtime' },
+        sessionId: 'session-1',
+        kernelId: 'kernel-1',
+        kernelName: 'phi-python'
+      }),
+      updateSessionState: () => ({ state: 'idle', kernelDisplayName: 'Remote Python' })
+    }
+    const executor = new AnalysisNotebookToolExecutor({
+      resolveWorkspaceByCwd: () => ({ workingDirectory: root }),
+      resolveKernelsByCwd: () => routedKernels,
+      ensureJupyterServerReady: async () => undefined,
+      notebookSessionRegistry: sessions as never,
+      notebookExecutor: {
+        executeCell: async () => ({
+          cellId: 'cell-1',
+          executionCount: 1,
+          outputs: [],
+          state: 'idle',
+          startedAt: '2026-10-10T00:00:00.000Z',
+          completedAt: '2026-10-10T00:00:01.000Z'
+        })
+      } as never
+    })
+
+    await executor.execute({
+      action: 'run_cell',
+      cwd: root,
+      params: { path: 'notebooks/analysis.ipynb', cellId: 'cell-1' }
+    })
+
+    assert.equal(selectedKernel, 'phi-python')
   })
 })

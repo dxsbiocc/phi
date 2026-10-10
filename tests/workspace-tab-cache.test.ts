@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   cacheAnalysisNotebookFile,
   notebookEnvironmentErrorMessage,
+  remoteJupyterRequiresExplicitStart,
   removeAnalysisNotebookFileCacheEntry
 } from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import {
@@ -214,5 +215,34 @@ test('notebook environment errors point to the managed environment settings sect
       '运行失败'
     ),
     'environment phi:python@1 is not ready; the user must build it first 请前往“设置 → 环境”的“托管环境”构建后重试。'
+  )
+})
+
+test('remote notebook kernels require an explicit runtime start', () => {
+  assert.equal(
+    remoteJupyterRequiresExplicitStart({
+      projectCwd: '/server/project',
+      runtimeKind: 'ssh',
+      state: 'stopped',
+      hasEndpoint: false
+    }),
+    true
+  )
+  assert.equal(
+    remoteJupyterRequiresExplicitStart({
+      projectCwd: '/server/project',
+      runtimeKind: 'ssh',
+      state: 'ready',
+      hasEndpoint: true
+    }),
+    false
+  )
+  assert.equal(
+    remoteJupyterRequiresExplicitStart({
+      projectCwd: '/local/project',
+      state: 'stopped',
+      hasEndpoint: false
+    }),
+    false
   )
 })

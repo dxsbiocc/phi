@@ -50,7 +50,8 @@
 | B（R2.5b）  | `env_request`                                                                                                                                                                                                                          | 保留原参数、结果与对话确认流程；远程分支只用 R2.2 配置的服务器运行时根和其中已安装的 micromamba，在 `envs/<内容哈希>/` 创建或复用环境。创建有超时、输出上限和取消，缺少 micromamba 时指向远程主机设置的安装按钮，conda 源不可达时提示配置镜像或先在可联网机器构建；不自动安装、不调用本机 solver/build、不写本机项目 anchor。                                                  |
 | B（R2.5）   | `download_file`                                                                                                                                                                                                                        | URL 与目标先校验，随后由服务器直接下载到远程项目目录。服务器缺少下载器或无法联网时明确报错；旧的 `remoteProject: true` 无后端路径继续拒绝且保持零本机 fetch/写入。                                                                                                                                                                                                             |
 | B（R2.5）   | `present_files`                                                                                                                                                                                                                        | 用远程 host 校验项目内普通文件，记录 `ssh://` 引用；打开时复用已有远程预览/下载链，不把文件复制到本机 anchor。                                                                                                                                                                                                                                                                 |
-| B（后续）   | `notebook.list`、`notebook.read`、`notebook.insert_cell`、`notebook.update_cell`、`notebook.delete_cell`、`notebook.run_cell`、`notebook.save`；`lib.save`、`lib.update`、`lib.remove`、`lib.list`、`lib.find`、`lib.audit`            | 当前实现把 SDK cwd 交给本机 Notebook/Jupyter 或项目 literature store，不能放行。待各自接入 WorkspaceHost/远程 Jupyter 或明确的远程 library store；当前替代是远程 `read`/`write`/`bash`。                                                                                                                                                                                       |
+| B（R4-I6） | `notebook.list`、`notebook.read`、`notebook.insert_cell`、`notebook.update_cell`、`notebook.delete_cell`、`notebook.run_cell`、`notebook.save`                                                                                 | 七个工具只在当前远程会话中存在唯一同名 `extension` 注册、且 description 与 canonical 签名逐字匹配时放行；host handler 用可信 session/project 身份路由到服务器 `NotebookWorkspace` 与登录节点 Jupyter runtime。缺身份、缺后端、未知/同名 builtin、重复注册或远程失败均拒绝，不读取本机 anchor、不回退本机 Jupyter。                                                                                  |
+| B（后续）   | `lib.save`、`lib.update`、`lib.remove`、`lib.list`、`lib.find`、`lib.audit`                                                                                                                                                  | 项目 literature store 仍绑定本机项目路径；远程 store 尚未设计，继续 fail-closed。当前替代是在远程项目中用普通文件记录，并使用远程 `read`/`write`/`bash`。                                                                                                                                                                                                                         |
 | B（后续）   | builtin `ast_grep`、`ast_edit`、`debug`、`eval`、`github`、`lsp`、`security_scan`、`task`                                                                                                                                              | 都会读取 cwd、启动本机进程或创建继承本机 cwd/工具的子会话；逐个拥有远程后端前继续拒绝。`task` 的替代是已验证的 Phi agent/Wrapper 委派。                                                                                                                                                                                                                                        |
 | B（R2.6）   | 动态 `mcp__<server>_<tool>`、全局/项目 MCP 配置                                                                                                                                                                                        | 放行精确来自应用级 `agentDir/mcp.json` 的 HTTPS MCP，以及配置未引用本机项目路径、只调用外部 API 的桌面端 stdio MCP；工具名还必须同时出现在当前 `MCPManager` 工具集且注册来源为 `sourceInfo.source === "mcp"`。项目级 MCP、未知来源/同名 builtin、依赖本机项目文件的 stdio 继续拒绝；后者提示需在服务器运行且暂未支持，不读取或回退本机 anchor。                                                |
 | C           | `office_read`、`office_apply`、`office_deliver`，以及安装 Skill 可能声明的本机 Office 脚本工具                                                                                                                                         | 当前 Office 后端绑定本机已打开文档、草稿与应用进程句柄。远程调用必须说明该原因，并建议先把文件下载到本机 Office 工作流，或在服务器用 `skill_run`/`bash` 生成普通文件后用 `present_files` 交付。不得注册本机 Office 后端作为远程后备。                                                                                                                                          |
@@ -269,6 +270,37 @@ Notebook 语义不变；remote backend 另暴露可供 R4-I5 调用的资源状�
 | 单 cell timeout | 30 分钟（沿用现有执行默认值） |
 | 资源监控间隔 | 5 秒 |
 | 站点必须具备硬限额 | 否；默认允许明确提示后降级为监控 |
+
+### R4-I5/I6 完成记录（2026-10-10）
+
+`analysis.*` 现按项目 location 解析文件与 Jupyter 两个后端：local 路径继续使用原本的同步文件
+函数、watcher 和 `JupyterServerRegistry`；SSH 项目将本机会话 anchor、服务器 remote root 与
+canonical root 收敛到同一远程 context，文件的 list/open/create/save/delete/watch 全部经
+`NotebookWorkspace`，session/execution/interrupt/close 全部经该项目的
+`RemoteJupyterRuntimeBackend`。返回的 notebook 与 runtime `projectCwd`/path 均为服务器
+canonical 语义；Runtime UI 显示服务器标识与“登录节点”，并显示断线后重新连接、kernel
+重启和内存状态丢失提示，不展示本机 anchor。远程静态补全与桌面 formatter 尚无服务器后端，
+因此不会读取服务器路径对应的本机文件或启动本机 formatter。
+
+远程环境只由用户在 Runtime 面板显式启动：backend 立即返回
+`preparing_environment` 等阶段供 UI 轮询，启动阶段的停止动作会把取消传入 R2.5b 环境服务；
+打开项目、列举/打开 notebook 和读取状态都不会创建环境。缺 micromamba 与 conda 源不可达
+继续使用 `env_request` 的中文恢复提示（含“设置 → 远程主机”的“安装 micromamba”按钮指引、
+镜像或预构建迁移建议），且不启动本机 Jupyter。首次环境完成后复用内容哈希环境与服务器
+kernelspec；renderer 保存同时透传远程内容 hash，保留双重冲突保护。
+
+远程主 worker 与 specialist 使用同一组 `buildNotebookCustomTools`；worker 在模型参数之外附加
+可信 runtime/session/project 身份，host router 对远程 anchor、身份不匹配和缺后端全部
+fail-closed。guard 只放行唯一同名、来源为 `extension`、description 精确匹配的七个
+`notebook.*`，审批仍为 list/read=`read`、其余五项=`write`；未知 notebook、同名 builtin、
+重复注册和全部 `lib.*` 继续拒绝。远程系统提示仅说明服务器 notebook、登录节点 Jupyter、
+显式启动与零本机回退，不包含 token、用户名或本机 anchor。
+
+自动化未联网、未连接真实服务器：main integration 覆盖远程
+list/open/save/start/status/execute/interrupt/close 并守住 local 行为；renderer 覆盖登录节点、
+启动取消和重连/kernel 重启文案；七工具端到端使用本机假 micromamba、假 OpenSSH `-L`、假
+Jupyter 与假 SSH workspace，最终从服务器项目文件核对保存内容和执行输出，并断言本机 anchor
+未被读写。真实 Phi 点击、真实登录节点环境/隧道与窗口关闭重开仍按 R4-I5/I6 真机门禁保留。
 
 ## 3. 核心设计决定
 

@@ -5,10 +5,7 @@ import test from 'node:test'
 import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import {
-  RemoteRuntimeUnavailableSidebar,
-  RuntimeSidebar
-} from '../src/renderer/src/features/runtime/RuntimeView'
+import { RuntimeSidebar } from '../src/renderer/src/features/runtime/RuntimeView'
 import type { AnalysisJupyterRuntimeStatus } from '../src/renderer/src/types'
 
 const runtimeStatus: AnalysisJupyterRuntimeStatus = {
@@ -123,19 +120,45 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   assert.doesNotMatch(markup, />运行时</)
 })
 
-test('remote runtime notice stays inside the padded sidebar without local Jupyter actions', () => {
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme: createTheme() },
-      createElement(RemoteRuntimeUnavailableSidebar)
-    )
+test('remote runtime shows the login server and recovery guidance without local PID or port', () => {
+  const markup = renderRuntimeSidebar({
+    ...runtimeStatus,
+    server: {
+      projectCwd: '/canonical/project',
+      runtimeKind: 'ssh',
+      serverLabel: 'cluster-login',
+      state: 'disconnected',
+      hasEndpoint: false,
+      message: '连接已断开；重新连接后 kernel 将重启，内存状态会丢失。'
+    }
+  })
+
+  assert.match(markup, /cluster-login/)
+  assert.match(markup, /登录节点/)
+  assert.match(markup, /连接已断开/)
+  assert.match(markup, /kernel 将重启/)
+  assert.doesNotMatch(markup, /PID 2026|Port 31888/)
+  assert.match(markup, /aria-label="启动 Jupyter server"/)
+})
+
+test('remote environment preparation keeps the stop action available for cancellation', () => {
+  const markup = renderRuntimeSidebar(
+    {
+      ...runtimeStatus,
+      server: {
+        projectCwd: '/canonical/project',
+        runtimeKind: 'ssh',
+        serverLabel: 'cluster-login',
+        state: 'preparing_environment',
+        hasEndpoint: false,
+        message: '正在准备；可停止以取消。'
+      }
+    },
+    { isLoading: true }
   )
 
-  assert.match(markup, /class="[^"]*app-sidebar-surface/)
-  assert.match(markup, /data-phi-runtime-unavailable-notice="remote"/)
-  assert.match(markup, /远程项目的 Notebook\/Jupyter 暂不可用/)
-  assert.doesNotMatch(markup, /Jupyter Server|Notebook Kernels|启动 Jupyter server/)
+  assert.match(markup, /aria-label="停止 Jupyter server"/)
+  assert.doesNotMatch(markup, /aria-label="停止 Jupyter server"[^>]*disabled/)
 })
 
 test('runtime sidebar swaps server start and stop actions in one slot', () => {

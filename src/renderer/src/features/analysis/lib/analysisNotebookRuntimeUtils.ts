@@ -56,6 +56,12 @@ export function jupyterServerIsReady(status: JupyterServerStatus | null | undefi
   return status?.state === 'ready' && status.hasEndpoint
 }
 
+export function remoteJupyterRequiresExplicitStart(
+  status: JupyterServerStatus | null | undefined
+): boolean {
+  return status?.runtimeKind === 'ssh' && !jupyterServerIsReady(status)
+}
+
 export function missingJupyterRuntimeHandler(error: unknown): boolean {
   const message = readableErrorMessage(error, '')
   return (

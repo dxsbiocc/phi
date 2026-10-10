@@ -389,6 +389,24 @@ test('notebook tool executor uses an injected host workspace without local ancho
       params: { path: 'notebooks/analysis.ipynb' }
     })
     assert.equal(opened.path, resolve(workspace.projectCwd, 'notebooks/analysis.ipynb'))
+    const file = await workspace.open('notebooks/analysis.ipynb')
+    const syncExecutor = new AnalysisNotebookToolExecutor({
+      resolveWorkspaceByCwd: () => ({ workingDirectory: workspace.projectCwd }),
+      resolveNotebookWorkspaceByCwd: () => workspace,
+      ensureJupyterServerReady: async () => undefined,
+      notebookSessionRegistry: new AnalysisNotebookSessionRegistry({ getConnection: () => null }),
+      notebookExecutor: new AnalysisNotebookExecutor()
+    })
+    assert.doesNotThrow(() =>
+      syncExecutor.syncDraft({
+        cwd: workspace.projectCwd,
+        path: file.path,
+        file,
+        document: file.document,
+        savedRevision: file.savedRevision,
+        source: 'renderer'
+      })
+    )
     await assert.rejects(access(workspace.projectCwd))
   })
 })
