@@ -5,6 +5,7 @@ import {
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
 import { SshHost } from '../workspace-host/ssh-host'
+import { createRemoteRuntimeInputExec } from './input-exec'
 import type { RemoteRuntimeWorkspace } from './types'
 
 export interface RemoteRuntimeTarget {
@@ -41,6 +42,7 @@ export async function openRemoteRuntimeWorkspace(
       runtimeHost,
       projectRoot: binding.canonicalRoot,
       runtimeRoot,
+      execWithInput: createRemoteRuntimeInputExec(binding.config.connect),
       close: async () => {
         await Promise.all([projectHost.close(), runtimeHost.close()])
       }

@@ -11,11 +11,7 @@ test('remote skill bundle rejects a symlink destination without deleting its tar
   const fixture = createRemoteRuntimeFixture()
   try {
     const skill = writeTestSkill(fixture)
-    const bundle = await prepareRemoteSkillBundle(
-      skill.dir,
-      fixture.runtimeRoot,
-      fixture.workspace.runtimeHost
-    )
+    const bundle = await prepareRemoteSkillBundle(skill.dir, fixture.workspace)
     const envs = join(fixture.runtimeRoot, 'envs')
     const sentinel = join(envs, 'sentinel.txt')
     mkdirSync(envs, { recursive: true })
@@ -24,10 +20,7 @@ test('remote skill bundle rejects a symlink destination without deleting its tar
     rmSync(destination, { recursive: true, force: true })
     symlinkSync(envs, destination, 'dir')
 
-    await assert.rejects(
-      prepareRemoteSkillBundle(skill.dir, fixture.runtimeRoot, fixture.workspace.runtimeHost),
-      /符号链接/u
-    )
+    await assert.rejects(prepareRemoteSkillBundle(skill.dir, fixture.workspace), /符号链接/u)
     assert.equal(existsSync(sentinel), true)
   } finally {
     fixture.cleanup()
@@ -37,8 +30,7 @@ test('remote skill bundle rejects a symlink destination without deleting its tar
 test('remote skill bundle cancellation interrupts a queued publication', async () => {
   const fixture = createRemoteRuntimeFixture()
   const skill = writeTestSkill(fixture)
-  const host = fixture.workspace.runtimeHost
-  const originalRun = host.exec.run
+  const originalRun = fixture.workspace.execWithInput
   let releaseFirst = (): void => undefined
   let markEntered = (): void => undefined
   const firstGate = new Promise<void>((resolve) => {
@@ -48,17 +40,17 @@ test('remote skill bundle cancellation interrupts a queued publication', async (
     markEntered = resolve
   })
   let destinationChecks = 0
-  host.exec.run = async (...args) => {
-    if (args[0].includes('phi-skill-destination') && destinationChecks++ === 0) {
+  fixture.workspace.execWithInput = async (...args) => {
+    if (args[0].includes('phi_repair') && destinationChecks++ === 0) {
       markEntered()
       await firstGate
     }
     return originalRun(...args)
   }
-  const first = prepareRemoteSkillBundle(skill.dir, fixture.runtimeRoot, host)
+  const first = prepareRemoteSkillBundle(skill.dir, fixture.workspace)
   await entered
   const controller = new AbortController()
-  const second = prepareRemoteSkillBundle(skill.dir, fixture.runtimeRoot, host, controller.signal)
+  const second = prepareRemoteSkillBundle(skill.dir, fixture.workspace, controller.signal)
   controller.abort()
   try {
     await assert.rejects(
@@ -81,19 +73,11 @@ test('remote skill bundle repairs an extra file before reuse', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
     const skill = writeTestSkill(fixture)
-    const first = await prepareRemoteSkillBundle(
-      skill.dir,
-      fixture.runtimeRoot,
-      fixture.workspace.runtimeHost
-    )
+    const first = await prepareRemoteSkillBundle(skill.dir, fixture.workspace)
     const extra = join(fixture.runtimeRoot, first.relativeDir, 'scripts', '.injected.txt')
     writeFileSync(extra, 'unexpected')
 
-    const reused = await prepareRemoteSkillBundle(
-      skill.dir,
-      fixture.runtimeRoot,
-      fixture.workspace.runtimeHost
-    )
+    const reused = await prepareRemoteSkillBundle(skill.dir, fixture.workspace)
 
     assert.equal(reused.hash, first.hash)
     assert.equal(existsSync(extra), false)

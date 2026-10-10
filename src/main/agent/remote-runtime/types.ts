@@ -1,6 +1,19 @@
-import type { WorkspaceHost } from '../workspace-host/types'
+import type { CommandResult, WorkspaceHost } from '../workspace-host/types'
+
+export interface RemoteRuntimeInputOptions {
+  signal?: AbortSignal
+  timeoutMs: number
+  maxOutputBytes: number
+}
+
+export type RemoteRuntimeInputExec = (
+  script: string,
+  options: RemoteRuntimeInputOptions
+) => Promise<CommandResult>
 
 export interface RemoteRuntimeWorkspace {
+  /** One direct SSH command whose script body is streamed over stdin. */
+  execWithInput: RemoteRuntimeInputExec
   projectHost: WorkspaceHost
   runtimeHost: WorkspaceHost
   /** Canonical absolute POSIX project directory on the server. */

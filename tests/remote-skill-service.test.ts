@@ -20,6 +20,7 @@ import {
   installFakeMicromamba,
   writeTestSkill
 } from './helpers/remoteRuntimeFixture'
+import { countWorkspaceHostOperations } from './helpers/countingWorkspaceHost'
 
 interface ServiceSetup {
   fixture: ReturnType<typeof createRemoteRuntimeFixture>
@@ -28,6 +29,14 @@ interface ServiceSetup {
   environment: { ref: string; envId: string; name: string; added: string[] }
   skillService: RemoteSkillService
 }
+
+const SKILL_HOST_OPERATION_BASELINE = {
+  firstUpload: 25,
+  reuse: 24,
+  dynamicScript: 20
+} as const
+
+const SKILL_HOST_OPERATION_LIMIT = 8
 
 async function services(
   options: { sleeper?: boolean; noisy?: boolean; maxOutputBytes?: number } = {}
@@ -71,19 +80,75 @@ function runRequest(overrides: Record<string, unknown> = {}): Record<string, unk
   }
 }
 
+test('remote skill paths report WorkspaceHost operation baselines', async (t) => {
+  const setup = await services()
+  mkdirSync(join(setup.skill.dir, 'assets'))
+  writeFileSync(join(setup.skill.dir, 'assets', 'binary.bin'), Buffer.from([0, 255, 1, 2]))
+  const counter = countWorkspaceHostOperations(setup.fixture.workspace)
+  try {
+    const first = await setup.skillService.run(runRequest({ requestId: 'count-first' }))
+    assert.equal(first.exitCode, 0)
+    const firstUpload = counter.snapshot()
+    counter.reset()
+
+    const reused = await setup.skillService.run(runRequest({ requestId: 'count-reuse' }))
+    assert.equal(reused.exitCode, 0)
+    const reuse = counter.snapshot()
+    counter.reset()
+
+    await setup.skillService.scriptTools({ runtimeSessionId: 'runtime-1' })
+    const dynamic = await setup.skillService.scriptTool({
+      requestId: 'count-dynamic',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'count' }
+    })
+    assert.equal(dynamic.ok, true)
+    const dynamicScript = counter.snapshot()
+
+    assertHostOperationLimit(
+      'skill first upload',
+      firstUpload,
+      SKILL_HOST_OPERATION_BASELINE.firstUpload
+    )
+    assertHostOperationLimit('skill reuse', reuse, SKILL_HOST_OPERATION_BASELINE.reuse)
+    assertHostOperationLimit(
+      'dynamic script',
+      dynamicScript,
+      SKILL_HOST_OPERATION_BASELINE.dynamicScript
+    )
+    t.diagnostic(`skill first upload host operations: ${JSON.stringify(firstUpload)}`)
+    t.diagnostic(`skill reuse host operations: ${JSON.stringify(reuse)}`)
+    t.diagnostic(`dynamic script host operations: ${JSON.stringify(dynamicScript)}`)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+function assertHostOperationLimit(
+  label: string,
+  actual: { total: number },
+  baseline: number
+): void {
+  assert.ok(
+    actual.total <= SKILL_HOST_OPERATION_LIMIT,
+    `${label}: ${actual.total} host operations exceeds ${SKILL_HOST_OPERATION_LIMIT} (baseline ${baseline})`
+  )
+}
+
 test('remote skill_run uploads one content-addressed bundle and reuses it', async () => {
   const setup = await services()
   try {
     mkdirSync(join(setup.skill.dir, 'assets'))
     writeFileSync(join(setup.skill.dir, 'assets', 'binary.bin'), Buffer.from([0, 255, 1, 2]))
-    let writes = 0
-    const original = setup.fixture.workspace.runtimeHost.fs.writeAtomic
-    setup.fixture.workspace.runtimeHost.fs.writeAtomic = async (...args) => {
-      writes += 1
+    let publications = 0
+    const original = setup.fixture.workspace.execWithInput
+    setup.fixture.workspace.execWithInput = async (...args) => {
+      if (args[0].includes('phi_decode()')) publications += 1
       return original(...args)
     }
     const first = await setup.skillService.run(runRequest())
-    const writesAfterFirst = writes
+    const publicationsAfterFirst = publications
     const second = await setup.skillService.run(runRequest({ requestId: 'skill-request-2' }))
     assert.equal(first.exitCode, 0)
     assert.match(
@@ -91,14 +156,14 @@ test('remote skill_run uploads one content-addressed bundle and reuses it', asyn
       new RegExp(`^${escapeRegExp(setup.fixture.projectRoot)}\\|hello\\|dependency$`)
     )
     assert.equal(second.exitCode, 0)
-    assert.ok(writesAfterFirst > 0)
-    assert.equal(writes, writesAfterFirst)
+    assert.ok(publicationsAfterFirst > 0)
+    assert.equal(publications, publicationsAfterFirst)
     const bundle = assertedBundle(setup.fixture.runtimeRoot)
     assert.deepEqual(
       readFileSync(join(setup.fixture.runtimeRoot, 'skills', bundle, 'assets', 'binary.bin')),
       Buffer.from([0, 255, 1, 2])
     )
-    await assertRepairsBundle(setup, bundle, () => writes)
+    await assertRepairsBundle(setup, bundle, () => publications)
     assert.equal(
       setup.fixture.sessions.some((session) =>
         session.commands.join('\n').includes(setup.fixture.localAnchor)
@@ -351,15 +416,15 @@ function assertedBundle(runtimeRoot: string): string {
 async function assertRepairsBundle(
   setup: ServiceSetup,
   bundle: string,
-  writes: () => number
+  publications: () => number
 ): Promise<void> {
   await setup.fixture.workspace.runtimeHost.fs.remove(
     join('skills', bundle, 'scripts', 'data', 'value.txt')
   )
-  const beforeRepair = writes()
+  const beforeRepair = publications()
   const repaired = await setup.skillService.run(runRequest({ requestId: 'skill-request-repair' }))
   assert.equal(repaired.exitCode, 0)
-  assert.ok(writes() > beforeRepair)
+  assert.ok(publications() > beforeRepair)
   writeFileSync(
     join(setup.fixture.runtimeRoot, 'skills', bundle, 'scripts', 'data', 'value.txt'),
     'XXXXXXXXXX'

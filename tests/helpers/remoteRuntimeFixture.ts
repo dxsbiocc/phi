@@ -1,11 +1,24 @@
 import { spawn } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
-import type { RemoteExecResult } from '../../src/main/agent/wrappers/remote-ssh-session'
+import type {
+  RemoteExecBoundedOptions,
+  RemoteExecBoundedResult,
+  RemoteExecResult
+} from '../../src/main/agent/wrappers/remote-ssh-session'
 import { SshHost } from '../../src/main/agent/workspace-host/ssh-host'
 import type { RemoteRuntimeWorkspace } from '../../src/main/agent/remote-runtime/types'
+import { createRemoteRuntimeInputExec } from '../../src/main/agent/remote-runtime/input-exec'
 import {
   createLocalShellSession,
   installSetsidShim,
@@ -19,6 +32,7 @@ export interface RemoteRuntimeFixture {
   localAnchor: string
   workspace: RemoteRuntimeWorkspace
   sessions: LocalShellSession[]
+  connect(): Promise<LocalShellSession>
   cleanup(): void
 }
 
@@ -73,11 +87,19 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   const shimDir = join(root, 'setsid-shim')
   mkdirSync(shimDir)
   const restoreSetsid = installSetsidShim(shimDir)
+  const connect = async (): Promise<LocalShellSession> => {
+    const session = createLocalShellSession(runtimeRoot)
+    session.execWithInput = (command, input) => execWithInput(session, command, input)
+    session.execBounded = (command, options) => execBounded(session, command, options)
+    sessions.push(session)
+    return session
+  }
   const workspace: RemoteRuntimeWorkspace = {
     projectHost: sshHost(projectRoot, sessions),
-    runtimeHost: sshHost(runtimeRoot, sessions),
+    runtimeHost: new SshHost({ remoteRoot: runtimeRoot, canonicalRoot: runtimeRoot, connect }),
     projectRoot,
-    runtimeRoot
+    runtimeRoot,
+    execWithInput: createRemoteRuntimeInputExec(connect)
   }
   return {
     root,
@@ -86,6 +108,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     localAnchor,
     workspace,
     sessions,
+    connect,
     cleanup: () => {
       restoreSetsid()
       rmSync(root, { recursive: true, force: true })
@@ -100,9 +123,58 @@ function sshHost(root: string, sessions: LocalShellSession[]): SshHost {
     connect: async () => {
       const session = createLocalShellSession(root)
       session.execWithInput = (command, input) => execWithInput(session, command, input)
+      session.execBounded = (command, options) => execBounded(session, command, options)
       sessions.push(session)
       return session
     }
+  })
+}
+
+function execBounded(
+  session: LocalShellSession,
+  command: string,
+  options: RemoteExecBoundedOptions
+): Promise<RemoteExecBoundedResult> {
+  session.commands.push(command)
+  return new Promise((resolve, reject) => {
+    const child = spawn('bash', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+    let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+    let stdoutTruncated = false
+    let stderrTruncated = false
+    const append = (current: Buffer, chunk: Buffer): [Buffer, boolean] => {
+      const available = Math.max(0, options.maxOutputBytes - current.length)
+      return [Buffer.concat([current, chunk.subarray(0, available)]), chunk.length > available]
+    }
+    child.stdout.on('data', (chunk: Buffer) => {
+      const next = append(stdout, chunk)
+      stdout = next[0]
+      stdoutTruncated ||= next[1]
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      const next = append(stderr, chunk)
+      stderr = next[0]
+      stderrTruncated ||= next[1]
+    })
+    const stop = (): void => {
+      child.kill('SIGTERM')
+    }
+    const timer = setTimeout(stop, options.timeoutMs)
+    timer.unref()
+    options.signal?.addEventListener('abort', stop, { once: true })
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      clearTimeout(timer)
+      options.signal?.removeEventListener('abort', stop)
+      resolve({
+        stdout: stdout.toString('utf8'),
+        stderr: stderr.toString('utf8'),
+        stdoutTruncated,
+        stderrTruncated,
+        code,
+        signal
+      })
+    })
   })
 }
 
@@ -146,15 +218,31 @@ if [ "$(basename "$phi_executable")" != micromamba ]; then
   exit 1
 fi
 `
+  const systemRipgrep = (process.env.PATH ?? '')
+    .split(delimiter)
+    .map((dir) => join(dir, 'rg'))
+    .find((candidate) => existsSync(candidate))
+  const runSystemRipgrep = systemRipgrep
+    ? `exec '${systemRipgrep.replaceAll("'", `'\\''`)}' "$@"`
+    : 'exit 0'
+  const fakeRipgrep = `#!/bin/sh
+if [ "\${1:-}" = --version ]; then
+  printf 'ripgrep 14.1.1\\n'
+  exit 0
+fi
+${runSystemRipgrep}
+`
   const source =
     mode === 'offline'
       ? `#!/bin/sh
-${executableCheck}echo "Could not resolve host: conda.anaconda.org" >&2
+${executableCheck}if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
+echo "Could not resolve host: conda.anaconda.org" >&2
 exit 7
 `
       : `#!/bin/sh
 set -eu
-${executableCheck}command_name=$1
+${executableCheck}if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
+command_name=$1
 shift
 phi_root=\${MAMBA_ROOT_PREFIX:?}
 printf '%s|root=%s\\n' "$command_name $*" "\${MAMBA_ROOT_PREFIX:-}" >> "$phi_root/micromamba-calls.log"
@@ -166,6 +254,9 @@ if [ "$command_name" = create ]; then
   done
   mkdir -p "$prefix/conda-meta" "$prefix/bin"
   : > "$prefix/conda-meta/history"
+  cat > "$prefix/bin/rg" <<'PHI_FAKE_RG'
+${fakeRipgrep}PHI_FAKE_RG
+  chmod 755 "$prefix/bin/rg"
   exit 0
 fi
 if [ "$command_name" = run ]; then

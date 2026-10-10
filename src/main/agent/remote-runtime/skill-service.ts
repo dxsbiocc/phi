@@ -85,12 +85,7 @@ export class RemoteSkillService {
     try {
       const skill = await this.resolveSkill(input.skill, input.allowedSkills)
       workspace = await this.options.openWorkspace(input.runtimeSessionId, controller.signal)
-      const bundle = await prepareRemoteSkillBundle(
-        skill.dir,
-        workspace.runtimeRoot,
-        workspace.runtimeHost,
-        controller.signal
-      )
+      const bundle = await prepareRemoteSkillBundle(skill.dir, workspace, controller.signal)
       const script = checkedScript(bundle, input.script)
       const cwd = await projectCwd(workspace, input.runCwd)
       const selected = await this.environmentFor(workspace, skill, input.sessionEnvironment)
@@ -236,12 +231,7 @@ export class RemoteSkillService {
     input: RemoteScriptToolRequest,
     signal: AbortSignal
   ): Promise<ScriptToolResult> {
-    const bundle = await prepareRemoteSkillBundle(
-      remembered.skill.dir,
-      workspace.runtimeRoot,
-      workspace.runtimeHost,
-      signal
-    )
+    const bundle = await prepareRemoteSkillBundle(remembered.skill.dir, workspace, signal)
     const selected = await this.environmentFor(
       workspace,
       remembered.skill,

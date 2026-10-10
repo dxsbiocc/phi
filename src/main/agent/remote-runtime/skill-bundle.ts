@@ -1,21 +1,19 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join, posix, relative, sep } from 'node:path'
 
-import type { WorkspaceHost } from '../workspace-host/types'
 import { untilAbort } from './abort-wait'
-import { assertSafeBundleDestination, removeRemoteSkillBundle } from './skill-bundle-destination'
+import { publishRemoteSkillBundle, validateRemoteSkillBundle } from './skill-bundle-transport'
+import type { RemoteRuntimeWorkspace } from './types'
 
 const MAX_FILES = 2_000
 const MAX_BYTES = 64 * 1024 * 1024
-const DIRECT_TEXT_BYTES = 1024 * 1024
-const UPLOAD_CHUNK_BYTES = 48 * 1024
-const MARKER = '.phi-skill-bundle'
 const bundleLocks = new Map<string, Promise<void>>()
 
-interface BundleFile {
+export interface RemoteSkillBundleFile {
   relativePath: string
   content: Buffer
+  contentHash: string
   executable: boolean
 }
 
@@ -28,8 +26,7 @@ export interface RemoteSkillBundle {
 
 export async function prepareRemoteSkillBundle(
   skillDir: string,
-  runtimeRoot: string,
-  host: WorkspaceHost,
+  workspace: RemoteRuntimeWorkspace,
   signal?: AbortSignal
 ): Promise<RemoteSkillBundle> {
   const files = collectFiles(skillDir)
@@ -38,19 +35,22 @@ export async function prepareRemoteSkillBundle(
   const bundle = {
     hash,
     relativeDir,
-    absoluteDir: posix.join(runtimeRoot, relativeDir),
+    absoluteDir: posix.join(workspace.runtimeRoot, relativeDir),
     files: new Set(files.map((file) => file.relativePath))
   }
-  return withBundleLock(`${runtimeRoot}\0${hash}`, signal, async () => {
-    await assertSafeBundleDestination(host, bundle, signal)
-    if (await reusable(host, bundle, files, signal)) return bundle
-    await replaceBundle(host, bundle, files, signal)
+  return withBundleLock(`${workspace.runtimeRoot}\0${hash}`, signal, async () => {
+    const validation = await validateRemoteSkillBundle(workspace, bundle, files, signal)
+    if (validation.status === 'unsafe') {
+      throw new Error('远程 Skill bundle 目标包含不安全的符号链接')
+    }
+    if (validation.status === 'reusable') return bundle
+    await publishRemoteSkillBundle(workspace, bundle, files, signal)
     return bundle
   })
 }
 
-function collectFiles(root: string): BundleFile[] {
-  const files: BundleFile[] = []
+function collectFiles(root: string): RemoteSkillBundleFile[] {
+  const files: RemoteSkillBundleFile[] = []
   let bytes = 0
   const walk = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -70,6 +70,7 @@ function collectFiles(root: string): BundleFile[] {
       files.push({
         relativePath,
         content,
+        contentHash: createHash('sha256').update(content).digest('hex'),
         executable: relativePath.startsWith('scripts/') || Boolean(lstatSync(path).mode & 0o111)
       })
     }
@@ -92,7 +93,7 @@ function remoteRelative(root: string, path: string): string {
   return parts.join('/')
 }
 
-function bundleHash(files: readonly BundleFile[]): string {
+function bundleHash(files: readonly RemoteSkillBundleFile[]): string {
   const hash = createHash('sha256')
   for (const file of files) {
     hash.update(file.relativePath).update('\0')
@@ -101,266 +102,6 @@ function bundleHash(files: readonly BundleFile[]): string {
     hash.update(file.content)
   }
   return hash.digest('hex')
-}
-
-async function reusable(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  files: readonly BundleFile[],
-  signal?: AbortSignal
-): Promise<boolean> {
-  try {
-    const result = await host.fs.readRange(posix.join(bundle.relativeDir, MARKER), {
-      offset: 0,
-      length: 65
-    })
-    if (!result.eof || Buffer.from(result.content).toString('utf8').trim() !== bundle.hash) {
-      return false
-    }
-    if (!(await exactFileSet(host, bundle, files))) return false
-    for (const file of files) {
-      signal?.throwIfAborted()
-      if (!(await fileMatches(host, bundle, file))) return false
-    }
-    return permissionsReady(host, bundle, files, signal)
-  } catch {
-    return false
-  }
-}
-
-async function exactFileSet(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  files: readonly BundleFile[]
-): Promise<boolean> {
-  const actual = await listBundleEntries(host, bundle.relativeDir)
-  const expected = new Set([
-    MARKER,
-    ...files.map((file) => file.relativePath),
-    ...nestedDirectories(files).map((directory) => `${directory}/`)
-  ])
-  return actual.length === expected.size && actual.every((path) => expected.has(path))
-}
-
-async function listBundleEntries(
-  host: WorkspaceHost,
-  directory: string,
-  prefix = ''
-): Promise<string[]> {
-  const paths: string[] = []
-  let cursor: string | undefined
-  do {
-    const page = await host.fs.list(directory, { limit: 1000, ...(cursor ? { cursor } : {}) })
-    for (const entry of page.entries) {
-      const path = prefix ? posix.join(prefix, entry.name) : entry.name
-      if (entry.kind === 'directory') {
-        paths.push(`${path}/`)
-        paths.push(...(await listBundleEntries(host, posix.join(directory, entry.name), path)))
-      } else paths.push(path)
-    }
-    cursor = page.nextCursor
-  } while (cursor)
-  return paths
-}
-
-async function fileMatches(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  file: BundleFile
-): Promise<boolean> {
-  const path = posix.join(bundle.relativeDir, file.relativePath)
-  const stat = await host.fs.stat(path)
-  if (stat.kind !== 'file' || stat.size !== file.content.length) return false
-  const content = await host.fs.readRange(path, { offset: 0, length: file.content.length })
-  return content.eof && Buffer.from(content.content).equals(file.content)
-}
-
-async function replaceBundle(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  files: readonly BundleFile[],
-  signal?: AbortSignal
-): Promise<void> {
-  signal?.throwIfAborted()
-  await assertSafeBundleDestination(host, bundle, signal)
-  if (await exists(host, bundle.relativeDir)) {
-    await removeRemoteSkillBundle(host, bundle, signal)
-  }
-  await assertSafeBundleDestination(host, bundle, signal)
-  await host.fs.mkdirp(bundle.relativeDir)
-  const directories = nestedDirectories(files)
-  for (const directory of directories) {
-    signal?.throwIfAborted()
-    await host.fs.mkdirp(posix.join(bundle.relativeDir, directory))
-  }
-  for (const file of files) {
-    signal?.throwIfAborted()
-    await writeBundleFile(host, bundle, file, signal)
-  }
-  await applyPermissions(host, bundle, directories, files, signal)
-  signal?.throwIfAborted()
-  await host.fs.writeAtomic(posix.join(bundle.relativeDir, MARKER), `${bundle.hash}\n`)
-}
-
-function nestedDirectories(files: readonly BundleFile[]): string[] {
-  const directories = new Set<string>()
-  for (const file of files) {
-    let current = posix.dirname(file.relativePath)
-    while (current !== '.') {
-      directories.add(current)
-      current = posix.dirname(current)
-    }
-  }
-  return [...directories].sort((left, right) => left.split('/').length - right.split('/').length)
-}
-
-async function writeBundleFile(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  file: BundleFile,
-  signal?: AbortSignal
-): Promise<void> {
-  const relativePath = posix.join(bundle.relativeDir, file.relativePath)
-  if (file.content.length <= DIRECT_TEXT_BYTES && isUtf8(file.content)) {
-    await host.fs.writeAtomic(relativePath, file.content)
-    return
-  }
-  await uploadBinary(host, posix.join(bundle.absoluteDir, file.relativePath), file.content, signal)
-}
-
-async function uploadBinary(
-  host: WorkspaceHost,
-  target: string,
-  content: Buffer,
-  signal?: AbortSignal
-): Promise<void> {
-  const temporary = `${target}.phi-upload-${randomUUID()}`
-  await runUploadCommand(host, ['sh', '-c', 'umask 077; : > "$1"', 'phi-upload', temporary], signal)
-  try {
-    for (let offset = 0; offset < content.length; offset += UPLOAD_CHUNK_BYTES) {
-      signal?.throwIfAborted()
-      const encoded = content.subarray(offset, offset + UPLOAD_CHUNK_BYTES).toString('base64')
-      await runUploadCommand(host, binaryAppendCommand(temporary, encoded), signal)
-    }
-    await runUploadCommand(host, ['mv', '-f', temporary, target], signal)
-  } catch (error) {
-    await runUploadCommand(host, ['rm', '-f', temporary], undefined).catch(() => undefined)
-    throw error
-  }
-}
-
-function binaryAppendCommand(path: string, encoded: string): [string, ...string[]] {
-  const script = [
-    'set -eu',
-    'phi_chunk=$1.chunk',
-    'if command -v base64 >/dev/null 2>&1; then',
-    '  if ! printf %s "$2" | base64 -d > "$phi_chunk" 2>/dev/null; then',
-    '    printf %s "$2" | base64 -D > "$phi_chunk"',
-    '  fi',
-    'elif command -v openssl >/dev/null 2>&1; then',
-    '  printf %s "$2" | openssl base64 -d -A > "$phi_chunk"',
-    'else exit 43; fi',
-    'cat "$phi_chunk" >> "$1"',
-    'rm -f "$phi_chunk"'
-  ].join('\n')
-  return ['sh', '-c', script, 'phi-upload', path, encoded]
-}
-
-async function runUploadCommand(
-  host: WorkspaceHost,
-  command: [string, ...string[]],
-  signal?: AbortSignal
-): Promise<void> {
-  const result = await host.exec.run(command, {
-    cwd: '.',
-    signal,
-    timeoutMs: 30_000,
-    maxOutputBytes: 16 * 1024
-  })
-  if (result.code !== 0) throw new Error(`远程 Skill 二进制资源上传失败：${result.stderr.trim()}`)
-}
-
-async function applyPermissions(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  directories: readonly string[],
-  files: readonly BundleFile[],
-  signal?: AbortSignal
-): Promise<void> {
-  const directoryPaths = [
-    bundle.absoluteDir,
-    ...directories.map((path) => posix.join(bundle.absoluteDir, path))
-  ]
-  await chmod(host, '700', directoryPaths, signal)
-  const scripts = files
-    .filter((file) => file.executable)
-    .map((file) => posix.join(bundle.absoluteDir, file.relativePath))
-  await chmod(host, '755', scripts, signal)
-}
-
-async function chmod(
-  host: WorkspaceHost,
-  mode: string,
-  paths: readonly string[],
-  signal?: AbortSignal
-): Promise<void> {
-  if (paths.length === 0) return
-  const result = await host.exec.run(['chmod', mode, ...paths], {
-    cwd: '.',
-    signal,
-    timeoutMs: 10_000,
-    maxOutputBytes: 16 * 1024
-  })
-  if (result.code !== 0) throw new Error(`无法设置远程 Skill 权限：${result.stderr.trim()}`)
-}
-
-async function permissionsReady(
-  host: WorkspaceHost,
-  bundle: RemoteSkillBundle,
-  files: readonly BundleFile[],
-  signal?: AbortSignal
-): Promise<boolean> {
-  const directories = [
-    bundle.absoluteDir,
-    ...nestedDirectories(files).map((path) => posix.join(bundle.absoluteDir, path))
-  ]
-  const scripts = files
-    .filter((file) => file.executable)
-    .map((file) => posix.join(bundle.absoluteDir, file.relativePath))
-  const script = [
-    'phi_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }',
-    'while [ "$1" != -- ]; do [ "$(phi_mode "$1")" = 700 ] || exit 1; shift; done',
-    'shift',
-    'for phi_path do [ "$(phi_mode "$phi_path")" = 755 ] || exit 1; done'
-  ].join('\n')
-  const result = await host.exec.run(
-    ['sh', '-c', script, 'phi-check', ...directories, '--', ...scripts],
-    {
-      cwd: '.',
-      signal,
-      timeoutMs: 10_000,
-      maxOutputBytes: 16 * 1024
-    }
-  )
-  return result.code === 0
-}
-
-function isUtf8(content: Buffer): boolean {
-  try {
-    new TextDecoder('utf-8', { fatal: true }).decode(content)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function exists(host: WorkspaceHost, path: string): Promise<boolean> {
-  try {
-    await host.fs.stat(path)
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function withBundleLock<T>(

@@ -18,6 +18,12 @@ import {
   validRemoteEnvironmentRequest,
   type ValidRemoteEnvironmentRequest
 } from './environment-request-validation'
+import {
+  ensureEnvironmentAliases,
+  probeEnvironmentAlias,
+  probeEnvironmentMarker,
+  publishEnvironmentMarker
+} from './environment-transport'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
@@ -100,24 +106,8 @@ export class RemoteEnvironmentService {
     ref: string,
     workspace: RemoteRuntimeWorkspace
   ): Promise<RemoteEnvironmentHandle | undefined> {
-    const alias = await readJson<EnvironmentRecord>(
-      workspace,
-      aliasPath(workspace.projectRoot, ref)
-    )
-    if (!alias || !safeId(alias.envId) || alias.ref !== ref || typeof alias.name !== 'string') {
-      return undefined
-    }
-    const marker = await readJson<EnvironmentRecord>(workspace, markerPath(alias.envId))
-    if (
-      marker?.envId !== alias.envId ||
-      !sameStringArray(marker.packages, alias.packages) ||
-      !sameStringArray(marker.channels, alias.channels)
-    ) {
-      return undefined
-    }
-    if (!(await isFile(workspace, posix.join('envs', alias.envId, 'conda-meta', 'history')))) {
-      return undefined
-    }
+    const alias = await this.storedEnvironment(ref, workspace)
+    if (!alias) return undefined
     return {
       ref: alias.ref,
       envId: alias.envId,
@@ -126,6 +116,26 @@ export class RemoteEnvironmentService {
       packages: [...alias.packages],
       channels: [...alias.channels]
     }
+  }
+
+  private async storedEnvironment(
+    ref: string,
+    workspace: RemoteRuntimeWorkspace,
+    signal?: AbortSignal
+  ): Promise<EnvironmentRecord | undefined> {
+    const state = await probeEnvironmentAlias(
+      workspace,
+      aliasPath(workspace.projectRoot, ref),
+      signal
+    )
+    if (!state) return undefined
+    const alias = parsedRecord(state.alias)
+    const marker = parsedRecord(state.marker)
+    if (!alias || !marker || !safeId(alias.envId) || alias.ref !== ref) return undefined
+    if (typeof alias.name !== 'string' || marker.envId !== alias.envId) return undefined
+    if (!sameStringArray(marker.packages, alias.packages)) return undefined
+    if (!sameStringArray(marker.channels, alias.channels)) return undefined
+    return alias
   }
 
   micromambaPath(workspace: RemoteRuntimeWorkspace): string {
@@ -160,13 +170,14 @@ export class RemoteEnvironmentService {
     input: ValidRemoteEnvironmentRequest,
     signal: AbortSignal
   ): Promise<EnvRequestResult> {
-    const previous = await this.resolveInWorkspace(input.environment, workspace)
+    const previous = await this.storedEnvironment(input.environment, workspace, signal)
     const base = previous ?? (await this.baseEnvironment(input))
     const packages = uniquePackages([...base.packages, ...input.packages])
     const channels = ['conda-forge']
     const record = environmentRecord(workspace, input, packages, channels)
     await this.withLock(`${workspace.runtimeRoot}\0${record.envId}`, signal, async () => {
-      if (!(await this.environmentReady(workspace, record))) {
+      const previousReady = previous?.envId === record.envId
+      if (!previousReady && !(await this.environmentReady(workspace, record, signal))) {
         await this.createEnvironment(workspace, record, signal)
       }
     })
@@ -188,14 +199,16 @@ export class RemoteEnvironmentService {
 
   private async environmentReady(
     workspace: RemoteRuntimeWorkspace,
-    record: EnvironmentRecord
+    record: EnvironmentRecord,
+    signal: AbortSignal
   ): Promise<boolean> {
-    const stored = await readJson<EnvironmentRecord>(workspace, markerPath(record.envId))
+    const stored = parsedRecord(
+      (await probeEnvironmentMarker(workspace, record.envId, signal)) ?? ''
+    )
     return (
       stored?.envId === record.envId &&
       sameStringArray(stored.packages, record.packages) &&
-      sameStringArray(stored.channels, record.channels) &&
-      (await isFile(workspace, posix.join('envs', record.envId, 'conda-meta', 'history')))
+      sameStringArray(stored.channels, record.channels)
     )
   }
 
@@ -229,7 +242,7 @@ export class RemoteEnvironmentService {
     )
     throwForCreateFailure(result)
     signal.throwIfAborted()
-    await workspace.runtimeHost.fs.writeAtomic(markerPath(record.envId), json(record))
+    await publishEnvironmentMarker(workspace, record.envId, json(record), signal)
   }
 
   private async writeAliases(
@@ -238,12 +251,13 @@ export class RemoteEnvironmentService {
     record: EnvironmentRecord,
     signal: AbortSignal
   ): Promise<void> {
+    const aliases: Record<string, string> = {}
     for (const ref of new Set([baseRef, record.ref])) {
       signal.throwIfAborted()
       const value = { ...record, ref }
-      await workspace.runtimeHost.fs.mkdirp(posix.dirname(aliasPath(workspace.projectRoot, ref)))
-      await workspace.runtimeHost.fs.writeAtomic(aliasPath(workspace.projectRoot, ref), json(value))
+      aliases[aliasPath(workspace.projectRoot, ref)] = json(value)
     }
+    await ensureEnvironmentAliases(workspace, aliases, signal)
   }
 
   private async withLock<T>(
@@ -317,10 +331,6 @@ function aliasPath(projectRoot: string, ref: string): string {
   return posix.join('envs', 'aliases', digest(projectRoot), `${digest(ref)}.json`)
 }
 
-function markerPath(envId: string): string {
-  return posix.join('envs', envId, '.phi-remote-env.json')
-}
-
 async function isFile(workspace: RemoteRuntimeWorkspace, path: string): Promise<boolean> {
   try {
     return (await workspace.runtimeHost.fs.stat(path)).kind === 'file'
@@ -329,14 +339,9 @@ async function isFile(workspace: RemoteRuntimeWorkspace, path: string): Promise<
   }
 }
 
-async function readJson<T>(
-  workspace: RemoteRuntimeWorkspace,
-  path: string
-): Promise<T | undefined> {
+function parsedRecord(value: string): EnvironmentRecord | undefined {
   try {
-    const value = await workspace.runtimeHost.fs.readRange(path, { offset: 0, length: 64 * 1024 })
-    if (!value.eof) return undefined
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(value.content)) as T
+    return JSON.parse(value) as EnvironmentRecord
   } catch {
     return undefined
   }

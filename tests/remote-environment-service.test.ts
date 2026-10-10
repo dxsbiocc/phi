@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
+import { countWorkspaceHostOperations } from './helpers/countingWorkspaceHost'
 import { createRemoteRuntimeFixture, installFakeMicromamba } from './helpers/remoteRuntimeFixture'
+
+const ENVIRONMENT_HOST_OPERATION_BASELINE = { create: 9, reuse: 9 } as const
+const ENVIRONMENT_HOST_OPERATION_LIMIT = 8
 
 function request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -17,6 +27,56 @@ function request(overrides: Record<string, unknown> = {}): Record<string, unknow
     environment: 'phi:python@1',
     ...overrides
   }
+}
+
+test('remote env_request paths report WorkspaceHost operation baselines', async (t) => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const options = {
+      micromambaVersion: 'test',
+      openWorkspace: async () => fixture.workspace,
+      confirm: async () => true,
+      resolveBasePackages: async () => ['python=3.12']
+    }
+    const counter = countWorkspaceHostOperations(fixture.workspace)
+    const first = await new RemoteEnvironmentService(options).request(request())
+    assert.ok('envId' in first)
+    const create = counter.snapshot()
+    counter.reset()
+
+    const second = await new RemoteEnvironmentService(options).request(
+      request({ requestId: 'environment-count-reuse' })
+    )
+    assert.deepEqual(second, first)
+    const reuse = counter.snapshot()
+
+    t.diagnostic(`environment create host operations: ${JSON.stringify(create)}`)
+    t.diagnostic(`environment reuse host operations: ${JSON.stringify(reuse)}`)
+    assertEnvironmentHostOperationLimit(
+      'environment create',
+      create.total,
+      ENVIRONMENT_HOST_OPERATION_BASELINE.create
+    )
+    assertEnvironmentHostOperationLimit(
+      'environment reuse',
+      reuse.total,
+      ENVIRONMENT_HOST_OPERATION_BASELINE.reuse
+    )
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+function assertEnvironmentHostOperationLimit(
+  label: string,
+  actual: number,
+  baseline: number
+): void {
+  assert.ok(
+    actual <= ENVIRONMENT_HOST_OPERATION_LIMIT,
+    `${label}: ${actual} host operations exceeds ${ENVIRONMENT_HOST_OPERATION_LIMIT} (baseline ${baseline})`
+  )
 }
 
 test('remote env_request creates and then reuses a content-addressed environment', async () => {
