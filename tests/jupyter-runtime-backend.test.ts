@@ -285,6 +285,42 @@ test('closing the last notebook session does not stop a ready remote backend', a
   }
 })
 
+test('project release unconditionally closes the remote lease before unbinding', async () => {
+  const fixture = await createFixture()
+  const harness = createBackend(fixture)
+  try {
+    await harness.backend.start(PROJECT)
+    const lease = fixture.leaseChildren.at(-1)
+    assert.ok(lease)
+
+    await harness.backend.releaseProject(PROJECT)
+
+    await waitFor(() => lease.exitCode !== null || lease.signalCode !== null)
+    assert.equal(harness.backend.status(PROJECT).state, 'stopped')
+    assert.equal(harness.backend.connection(PROJECT), null)
+  } finally {
+    await dispose(harness, fixture)
+  }
+})
+
+test('app disposal closes every remote runtime child and tunnel handle', async () => {
+  const fixture = await createFixture()
+  const harness = createBackend(fixture)
+  try {
+    await harness.backend.start(PROJECT)
+    const lease = fixture.leaseChildren.at(-1)
+    assert.ok(lease)
+
+    await harness.backend.disposeAll()
+
+    await waitFor(() => lease.exitCode !== null || lease.signalCode !== null)
+    assert.equal(harness.backend.status(PROJECT).state, 'stopped')
+    assert.equal(harness.backend.connection(PROJECT), null)
+  } finally {
+    await dispose(harness, fixture)
+  }
+})
+
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs = 20_000

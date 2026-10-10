@@ -240,6 +240,36 @@ interrupt/delete、错误输出、超时替身、断线不重放、换代新 tok
 也未联网或连接真实服务器；打包 Jupyter 的 REST/WebSocket、server-info 与大输出回流仍保留为
 真机门禁。
 
+### R4-I7 完成记录（2026-10-10）
+
+远程 Jupyter launcher 现按 `prlimit`、`ulimit`、只读 `ps` 进程组监控的顺序施加或核对资源
+边界；硬限额不可用或被管理员策略拒绝时会在状态中明确标为降级并继续低频监控，不再静默无限
+制。站点配置要求硬限额时，探测失败会在启动 Jupyter 前标为不可用。监控汇总进程组 RSS、CPU
+时间与线程数，越限或监控本身不可用均 fail-closed，先 TERM 后由既有 lease 最终 KILL 整组；
+BLAS/OpenMP 线程环境也随 lease 注入。资源 watcher、sleep、idle timer、Jupyter 进程组与 SSH
+tunnel 共用最终清理链。
+
+session registry 只在 remote backend 提供资源接口时执行 kernel claim/release/activity，local
+Notebook 语义不变；remote backend 另暴露可供 R4-I5 调用的资源状态、cell timeout、
+`releaseProject` 与 `disposeAll`。最后一个 notebook 关闭后进入 idle 计时，远程 session 关闭、
+项目释放、SSH 断线和应用退出均可直接走 `stop`，不等待 idle。R4-I3 的旧 lease 清理未确认即
+拒绝二次启动保持不变。自动化只使用本机假 `ssh`/`jupyter`/`prlimit`/`ps`，未联网、未连接
+真实服务器；登录节点工具、管理员策略与断网清零仍保留为真机门禁。
+
+以下均为**待用户确认的默认值**，可由站点/调用方覆盖：
+
+| 项目 | 默认值 |
+| --- | --- |
+| 单项目 Jupyter 服务 RSS | 4 GiB（硬限额用 address-space 近似，监控核对实际 RSS） |
+| 同时 kernel 数 | 2 |
+| BLAS/OpenMP 线程数 | 2 |
+| 进程组总线程数 | 16 |
+| 进程组 CPU 时间 | 30 分钟 |
+| idle timeout | 30 分钟 |
+| 单 cell timeout | 30 分钟（沿用现有执行默认值） |
+| 资源监控间隔 | 5 秒 |
+| 站点必须具备硬限额 | 否；默认允许明确提示后降级为监控 |
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`

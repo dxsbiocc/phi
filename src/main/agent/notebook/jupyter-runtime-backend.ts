@@ -16,6 +16,7 @@ import {
   type RemoteJupyterServerSupervisor,
   type RemoteJupyterServerStatus
 } from './remote-jupyter-server'
+import type { RemoteJupyterResourceStatus } from './remote-jupyter-resource-guard'
 
 export type JupyterRuntimeKind = 'local' | 'ssh'
 export type JupyterRuntimeState =
@@ -29,6 +30,7 @@ export interface JupyterRuntimeStatus {
   message?: string
   localPort?: number
   remotePort?: number
+  resources?: RemoteJupyterResourceStatus
 }
 
 export interface JupyterRuntimeBackend {
@@ -37,6 +39,12 @@ export interface JupyterRuntimeBackend {
   start(projectCwd: string, signal?: AbortSignal): Promise<void>
   stop(projectCwd: string): Promise<void>
   connection(projectCwd: string): JupyterServerConnection | null
+  claimKernel?(projectCwd: string, owner: string): void
+  releaseKernel?(projectCwd: string, owner: string): void
+  touchActivity?(projectCwd: string): void
+  cellTimeoutMs?(projectCwd: string): number | undefined
+  releaseProject?(projectCwd: string): Promise<void>
+  disposeAll?(): Promise<void> | void
 }
 
 export function jupyterAuthorizationHeader(
@@ -108,7 +116,10 @@ export class LocalJupyterRuntimeBackend implements JupyterRuntimeBackend {
 }
 
 type RemoteKernelAdapter = Pick<RemoteKernelspecAdapter, 'prepareRuntime' | 'select'>
-type RemoteSupervisor = Pick<RemoteJupyterServerSupervisor, 'status' | 'start' | 'stop'>
+type RemoteSupervisor = Pick<
+  RemoteJupyterServerSupervisor,
+  'status' | 'start' | 'stop' | 'claimKernel' | 'releaseKernel' | 'touchActivity' | 'cellTimeoutMs'
+>
 
 export interface RemoteJupyterRuntimeBackendOptions {
   kernelspecs: RemoteKernelAdapter
@@ -130,17 +141,22 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
   constructor(private readonly options: RemoteJupyterRuntimeBackendOptions) {}
 
   status(projectCwd: string): JupyterRuntimeStatus {
-    const status = this.supervisor?.status() ?? { state: 'stopped' as const }
-    const state = this.preparing ? 'preparing_environment' : status.state
+    const supervisorStatus = this.supervisor?.status()
+    const state = this.preparing ? 'preparing_environment' : (supervisorStatus?.state ?? 'stopped')
     const active = this.boundProject === projectCwd
     return {
       kind: this.kind,
       projectCwd,
       state: active ? state : 'stopped',
       hasConnection: active && state === 'ready' && Boolean(this.currentConnection),
-      ...(active && status.message ? { message: status.message } : {}),
-      ...(active && status.localPort !== undefined ? { localPort: status.localPort } : {}),
-      ...(active && status.remotePort !== undefined ? { remotePort: status.remotePort } : {})
+      ...(active && supervisorStatus?.message ? { message: supervisorStatus.message } : {}),
+      ...(active && supervisorStatus?.localPort !== undefined
+        ? { localPort: supervisorStatus.localPort }
+        : {}),
+      ...(active && supervisorStatus?.remotePort !== undefined
+        ? { remotePort: supervisorStatus.remotePort }
+        : {}),
+      ...(active && supervisorStatus ? { resources: supervisorStatus.resources } : {})
     }
   }
 
@@ -190,6 +206,37 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
     await this.supervisor?.stop()
   }
 
+  claimKernel(projectCwd: string, owner: string): void {
+    this.requireActiveProject(projectCwd).claimKernel(owner)
+  }
+
+  releaseKernel(projectCwd: string, owner: string): void {
+    if (this.boundProject === projectCwd) this.supervisor?.releaseKernel(owner)
+  }
+
+  touchActivity(projectCwd: string): void {
+    if (this.boundProject === projectCwd) this.supervisor?.touchActivity()
+  }
+
+  cellTimeoutMs(projectCwd: string): number | undefined {
+    return this.boundProject === projectCwd ? this.supervisor?.cellTimeoutMs() : undefined
+  }
+
+  async releaseProject(projectCwd: string): Promise<void> {
+    if (this.boundProject !== projectCwd) return
+    await this.stop(projectCwd)
+    if (this.supervisor?.status().state !== 'stopped') {
+      throw new Error('远程 Jupyter 清理尚未确认，不能释放项目 runtime')
+    }
+    this.boundProject = undefined
+    this.supervisor = undefined
+    this.launchIdentity = undefined
+  }
+
+  async disposeAll(): Promise<void> {
+    if (this.boundProject) await this.stop(this.boundProject)
+  }
+
   connection(projectCwd: string): JupyterServerConnection | null {
     if (this.boundProject !== projectCwd) return null
     if (this.supervisor?.status().state !== 'ready') return null
@@ -215,6 +262,13 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
 
   private isReady(): boolean {
     return this.supervisor?.status().state === 'ready' && Boolean(this.currentConnection)
+  }
+
+  private requireActiveProject(projectCwd: string): RemoteSupervisor {
+    if (this.boundProject !== projectCwd || !this.supervisor) {
+      throw new Error('远程 Jupyter runtime 未绑定当前项目')
+    }
+    return this.supervisor
   }
 
   private supervisorFor(prepared: PreparedRemoteJupyterRuntime): RemoteSupervisor {

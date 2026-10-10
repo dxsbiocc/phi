@@ -17,6 +17,7 @@ import {
   type OpenRemoteJupyterLeaseOptions,
   type RemoteJupyterLease
 } from '../src/main/agent/notebook/remote-jupyter-lease'
+import { remoteJupyterResourceGuardActivity } from '../src/main/agent/notebook/remote-jupyter-resource-guard'
 import {
   installBlockingRemoteJupyterSetsid,
   installRemoteJupyterSetsid,
@@ -125,7 +126,8 @@ test('token stays off argv, files, status, and logs; stop reaps the process grou
   assertReadyAndStoppedStates(states)
   await waitFor(() => {
     const activity = remoteJupyterLeaseActivity()
-    return activity.children === 0 && activity.timers === 0
+    const resources = remoteJupyterResourceGuardActivity()
+    return activity.children === 0 && activity.timers === 0 && resources.timers === 0
   })
 })
 

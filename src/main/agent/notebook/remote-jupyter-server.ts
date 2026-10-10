@@ -15,6 +15,15 @@ import {
   type OpenRemoteJupyterLeaseOptions,
   type RemoteJupyterLease
 } from './remote-jupyter-lease'
+import {
+  RemoteJupyterResourceGate,
+  buildRemoteJupyterResourceCleanupLines,
+  buildRemoteJupyterResourceLaunchLines,
+  parseRemoteJupyterResourceMarker,
+  type RemoteJupyterResourceEvent,
+  type RemoteJupyterResourcePolicyInput,
+  type RemoteJupyterResourceStatus
+} from './remote-jupyter-resource-guard'
 
 export type RemoteJupyterServerState =
   | 'stopped'
@@ -33,6 +42,7 @@ export interface RemoteJupyterServerStatus {
   localPort?: number
   remotePort?: number
   message?: string
+  resources: RemoteJupyterResourceStatus
 }
 
 export interface RemoteJupyterLaunchCommand {
@@ -64,6 +74,7 @@ export interface RemoteJupyterSupervisorOptions {
   startupTimeoutMs?: number
   probeIntervalMs?: number
   shutdownGraceMs?: number
+  resourcePolicy?: RemoteJupyterResourcePolicyInput
   onLog?: (line: string) => void
   onStateChange?: (status: RemoteJupyterServerStatus) => void
 }
@@ -81,7 +92,8 @@ export function buildRemoteJupyterLaunchScript(
   launch: RemoteJupyterLaunchCommand,
   remotePort: number,
   cleanupMarker: string,
-  shutdownGraceMs = 500
+  shutdownGraceMs = 500,
+  resourcePolicy: RemoteJupyterResourcePolicyInput = {}
 ): string {
   assertPort(remotePort)
   if (!/^__PHI_JUPYTER_CLEANED_[a-f0-9]{32}__$/.test(cleanupMarker)) {
@@ -98,17 +110,21 @@ export function buildRemoteJupyterLaunchScript(
     launch.cwd ? `cd ${shellQuote(launch.cwd)} || exit 72` : ':',
     'exec 3<&0',
     'pid=',
+    'resource_watcher=',
     'cleaned=0',
     ...cleanupFunctionLines(cleanupMarker, graceSeconds),
     "trap 'terminate_tree; exit 73' HUP TERM INT",
     "trap 'terminate_tree' EXIT",
     'IFS= read -r PHI_JUPYTER_TOKEN <&3 || exit 70',
     'test "${#PHI_JUPYTER_TOKEN}" -ge 43 || exit 71',
-    `${environment}JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" setsid ${command} &`,
-    'pid=$!',
+    'lease_shell=$$',
+    ...buildRemoteJupyterResourceLaunchLines(
+      command,
+      resourcePolicy,
+      `${environment}JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" `
+    ),
     'unset PHI_JUPYTER_TOKEN',
     `printf '\\n%s\\n' ${shellQuote(startedMarker)}`,
-    'lease_shell=$$',
     '( trap \'\' HUP; cat <&3 >/dev/null; kill -TERM "$lease_shell" 2>/dev/null || true ) &',
     'watcher=$!',
     'wait "$pid"',
@@ -147,6 +163,7 @@ function cleanupFunctionLines(cleanupMarker: string, graceSeconds: number): stri
     '  cleaned=1',
     '  trap - EXIT',
     "  trap '' HUP TERM INT",
+    ...buildRemoteJupyterResourceCleanupLines().map((line) => `  ${line}`),
     '  if [ -n "$pid" ]; then',
     '    kill -TERM -"$pid" 2>/dev/null || true; kill -TERM "$pid" 2>/dev/null || true; kill -TERM -"$pid" 2>/dev/null || true',
     `    sleep ${graceSeconds}`,
@@ -177,7 +194,8 @@ function jupyterSecurityArgs(port: number): string[] {
 export class RemoteJupyterServerSupervisor {
   readonly options: RemoteJupyterSupervisorOptions
   #token?: string
-  private currentStatus: RemoteJupyterServerStatus = { state: 'stopped' }
+  private currentStatus: Omit<RemoteJupyterServerStatus, 'resources'> = { state: 'stopped' }
+  private readonly resourceGate: RemoteJupyterResourceGate
   private remoteLease?: RemoteJupyterLease
   private generation = 0
   private restartBlocked = false
@@ -187,10 +205,37 @@ export class RemoteJupyterServerSupervisor {
 
   constructor(options: RemoteJupyterSupervisorOptions) {
     this.options = options
+    this.resourceGate = new RemoteJupyterResourceGate(options.resourcePolicy, {
+      onIdle: () => this.stop(),
+      onError: (error) => this.options.onLog?.(sanitizedRemoteJupyterError(error).message)
+    })
   }
 
   status(): RemoteJupyterServerStatus {
-    return { ...this.currentStatus }
+    const resources = this.resourceGate.resourceStatus()
+    const resourceMessage = resourceEventMessage(resources.violation ?? resources.warning)
+    return {
+      ...this.currentStatus,
+      ...(!this.currentStatus.message && resourceMessage ? { message: resourceMessage } : {}),
+      resources
+    }
+  }
+
+  claimKernel(owner: string): void {
+    this.requireReady()
+    this.resourceGate.claimKernel(owner)
+  }
+
+  releaseKernel(owner: string): void {
+    this.resourceGate.releaseKernel(owner)
+  }
+
+  touchActivity(): void {
+    if (this.currentStatus.state === 'ready') this.resourceGate.touchActivity()
+  }
+
+  cellTimeoutMs(): number {
+    return this.resourceGate.cellTimeoutMs()
   }
 
   start(signal?: AbortSignal): Promise<RemoteJupyterConnection> {
@@ -202,6 +247,7 @@ export class RemoteJupyterServerSupervisor {
     if (this.stopping || !['stopped', 'error'].includes(this.currentStatus.state)) {
       return Promise.reject(new Error('远程 Jupyter 正在清理，暂不能重新启动'))
     }
+    this.resourceGate.reset()
     this.lifecycleAbort = new AbortController()
     const combined = signal
       ? AbortSignal.any([signal, this.lifecycleAbort.signal])
@@ -275,7 +321,8 @@ export class RemoteJupyterServerSupervisor {
       this.options.launch,
       remotePort,
       cleanupMarker,
-      this.options.shutdownGraceMs
+      this.options.shutdownGraceMs,
+      this.options.resourcePolicy
     )
     const openLease = this.options.openLease ?? openRemoteJupyterLease
     this.remoteLease = await openLease({
@@ -287,11 +334,12 @@ export class RemoteJupyterServerSupervisor {
       signal,
       spawnImpl: this.options.spawnImpl,
       shutdownGraceMs: this.options.shutdownGraceMs,
-      onLog: this.options.onLog
+      onLog: (line) => this.handleLeaseLog(line)
     })
     this.transition('probing_through_tunnel', undefined, remotePort, this.remoteLease.localPort)
     await this.probeUntilReady(this.remoteLease.localPort, signal)
     this.transition('ready', undefined, remotePort, this.remoteLease.localPort)
+    this.resourceGate.touchActivity()
     this.restartBlocked = false
     const generation = ++this.generation
     this.watchForDisconnect(generation, this.remoteLease)
@@ -369,6 +417,7 @@ export class RemoteJupyterServerSupervisor {
     const confirmed = lease ? lease.cleanupConfirmed() : !this.restartBlocked
     if (!confirmed) this.restartBlocked = true
     this.#token = undefined
+    this.resourceGate.dispose()
     return confirmed
   }
 
@@ -378,6 +427,25 @@ export class RemoteJupyterServerSupervisor {
       return
     }
     this.transition('error', '旧远程 Jupyter lease 清理尚未确认，禁止重新启动')
+  }
+
+  private handleLeaseLog(line: string): void {
+    const event = parseRemoteJupyterResourceMarker(line)
+    if (event) {
+      this.resourceGate.reportResourceEvent(event)
+      const message = resourceEventMessage(event)
+      if (message) {
+        this.currentStatus = { ...this.currentStatus, message }
+        this.notifyStatus()
+      }
+    }
+    this.options.onLog?.(line)
+  }
+
+  private requireReady(): void {
+    if (this.currentStatus.state !== 'ready') {
+      throw new Error('远程 Jupyter 尚未就绪，不能启动 kernel')
+    }
   }
 
   private transition(
@@ -392,12 +460,29 @@ export class RemoteJupyterServerSupervisor {
       ...(localPort === undefined ? {} : { localPort }),
       ...(message ? { message: sanitizeRemoteJupyterText(message, this.#token) } : {})
     }
+    this.notifyStatus()
+  }
+
+  private notifyStatus(): void {
     try {
       this.options.onStateChange?.(this.status())
     } catch {
       // Lifecycle cleanup must not be interruptible by an observer.
     }
   }
+}
+
+function resourceEventMessage(event?: RemoteJupyterResourceEvent): string | undefined {
+  if (!event) return undefined
+  if (event.type === 'warning' && event.code === 'hard_limit_unavailable') {
+    return '服务器无法施加 Jupyter 硬资源限额，已降级为 supervisor 监控'
+  }
+  if (event.type === 'warning') return '服务器资源监控不可用，Jupyter 将安全停止'
+  if (event.type !== 'violation') return undefined
+  if (event.code === 'hard_limit_required') return '站点要求硬资源限额，但服务器无法施加'
+  if (event.code === 'monitor_unavailable') return '服务器资源监控不可用，Jupyter 正在停止'
+  const label = event.code === 'rss' ? 'RSS' : event.code === 'cpu' ? 'CPU' : '线程数'
+  return `远程 Jupyter ${label} 超过上限，正在停止`
 }
 
 function positiveInteger(value: number): number {

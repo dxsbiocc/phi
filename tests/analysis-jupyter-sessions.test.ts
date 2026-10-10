@@ -3,6 +3,7 @@ import test from 'node:test'
 import { parseNotebook, type NotebookDocument } from '../src/shared/notebookDocument'
 import {
   AnalysisNotebookSessionRegistry,
+  type EnsureNotebookSessionInput,
   type JupyterServerConnection,
   type JupyterSessionClient,
   type JupyterSessionCreateRequest,
@@ -402,4 +403,69 @@ test('AnalysisNotebookSessionRegistry redacts remote tokens from public errors',
   assert.equal(status.state, 'error')
   assert.doesNotMatch(status.message ?? '', new RegExp(token))
   assert.match(status.message ?? '', /<redacted>/u)
+})
+
+test('remote runtime resource lifecycle gates concurrent kernels and releases closed sessions', async () => {
+  const client = new FakeJupyterSessionClient()
+  const claimed = new Set<string>()
+  const released: string[] = []
+  let activities = 0
+  const runtimeBackend = {
+    connection: () => ({ url: 'http://127.0.0.1:41001/', runtimeId: 'remote-runtime-1' }),
+    claimKernel: (_projectCwd: string, owner: string) => {
+      if (!claimed.has(owner) && claimed.size >= 2) {
+        throw new Error('远程 Notebook 同时最多运行 2 个 kernel')
+      }
+      claimed.add(owner)
+    },
+    releaseKernel: (_projectCwd: string, owner: string) => {
+      claimed.delete(owner)
+      released.push(owner)
+    },
+    touchActivity: () => {
+      activities += 1
+    }
+  }
+  const registry = new AnalysisNotebookSessionRegistry({ client, runtimeBackend })
+  const makeInput = (name: string): EnsureNotebookSessionInput => ({
+    projectCwd: '/project',
+    notebookPath: `/project/${name}.ipynb`,
+    document: notebook({}),
+    kernels: kernels()
+  })
+
+  assert.equal((await registry.ensureSession(makeInput('one'))).state, 'idle')
+  client.nextSession = { ...client.nextSession, id: 'session-2', kernelId: 'kernel-2' }
+  assert.equal((await registry.ensureSession(makeInput('two'))).state, 'idle')
+  const rejected = await registry.ensureSession(makeInput('three'))
+
+  assert.equal(rejected.state, 'error')
+  assert.match(rejected.message ?? '', /最多运行 2 个 kernel/u)
+  assert.equal(client.created.length, 2)
+  assert.equal(claimed.size, 2)
+
+  registry.updateSessionState('/project', '/project/one.ipynb', 'error')
+  const deleteSession = client.deleteSession.bind(client)
+  client.deleteSession = async () => {
+    throw new Error('delete denied')
+  }
+  const cleanupBlocked = await registry.ensureSession(makeInput('one'))
+  assert.equal(cleanupBlocked.state, 'error')
+  assert.equal(client.created.length, 2)
+  assert.equal(claimed.size, 2)
+  client.deleteSession = deleteSession
+
+  await registry.closeSession('/project', '/project/one.ipynb')
+  assert.deepEqual(released, ['/project\0/project/one.ipynb'])
+  assert.equal(claimed.size, 1)
+
+  client.nextSession = { ...client.nextSession, id: 'session-3', kernelId: 'kernel-3' }
+  const concurrent = await Promise.all([
+    registry.ensureSession(makeInput('four')),
+    registry.ensureSession(makeInput('four'))
+  ])
+  assert.equal(client.created.length, 3)
+  assert.equal(concurrent[0].sessionId, concurrent[1].sessionId)
+  assert.equal(claimed.size, 2)
+  assert.ok(activities >= 3)
 })

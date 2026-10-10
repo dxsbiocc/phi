@@ -366,14 +366,22 @@ export class FetchJupyterSessionClient implements JupyterSessionClient {
 
 export class AnalysisNotebookSessionRegistry {
   private readonly records = new Map<string, SessionRecord>()
+  private readonly pendingEnsures = new Map<string, Promise<AnalysisNotebookSessionStatus>>()
   private readonly getConnection: (projectCwd: string) => JupyterServerConnection | null
   private readonly client: JupyterSessionClient
   private readonly now: () => Date
   private readonly prepareKernel?: PrepareNotebookKernel
+  private readonly runtimeBackend?: Pick<
+    JupyterRuntimeBackend,
+    'claimKernel' | 'releaseKernel' | 'touchActivity'
+  >
 
   constructor(options: {
     getConnection?: (projectCwd: string) => JupyterServerConnection | null
-    runtimeBackend?: Pick<JupyterRuntimeBackend, 'connection'>
+    runtimeBackend?: Pick<
+      JupyterRuntimeBackend,
+      'connection' | 'claimKernel' | 'releaseKernel' | 'touchActivity'
+    >
     client?: JupyterSessionClient
     now?: () => Date
     prepareKernel?: PrepareNotebookKernel
@@ -384,6 +392,7 @@ export class AnalysisNotebookSessionRegistry {
     this.getConnection = getConnection
     this.client = options.client ?? new FetchJupyterSessionClient()
     this.now = options.now ?? (() => new Date())
+    this.runtimeBackend = options.runtimeBackend
     if (options.prepareKernel) this.prepareKernel = options.prepareKernel
   }
 
@@ -394,7 +403,7 @@ export class AnalysisNotebookSessionRegistry {
     if (existing && connection && this.matchesRuntime(existing, connection)) {
       return publicStatus(existing)
     }
-    if (existing) this.records.delete(key)
+    if (existing) this.removeRecord(key, existing)
     const kernel = selectNotebookKernel(input.document, input.kernels)
     if (!kernel) return this.missingStatus(input)
     if (kernel.status === 'not-built') {
@@ -421,81 +430,62 @@ export class AnalysisNotebookSessionRegistry {
   }
 
   async ensureSession(input: EnsureNotebookSessionInput): Promise<AnalysisNotebookSessionStatus> {
+    const key = this.key(input.projectCwd, input.notebookPath)
+    const pending = this.pendingEnsures.get(key)
+    if (pending) return pending
+    const operation = this.ensureSessionOnce(input, key).finally(() => {
+      if (this.pendingEnsures.get(key) === operation) this.pendingEnsures.delete(key)
+    })
+    this.pendingEnsures.set(key, operation)
+    return operation
+  }
+
+  private async ensureSessionOnce(
+    input: EnsureNotebookSessionInput,
+    key: string
+  ): Promise<AnalysisNotebookSessionStatus> {
     const kernel = selectNotebookKernel(input.document, input.kernels)
     if (!kernel) return this.missingStatus(input)
-
-    const key = this.key(input.projectCwd, input.notebookPath)
     const existing = this.records.get(key)
     const connection = this.getConnection(input.projectCwd)
-    const sameRuntime = existing && connection && this.matchesRuntime(existing, connection)
-    if (sameRuntime && existing.kernelName === kernel.name && this.isHealthy(existing.state)) {
+    const sameRuntime = Boolean(existing && connection && this.matchesRuntime(existing, connection))
+    if (
+      existing &&
+      sameRuntime &&
+      existing.kernelName === kernel.name &&
+      this.isHealthy(existing.state)
+    ) {
       return publicStatus(existing)
     }
+    const unavailable = await this.prepareSelectedKernel(input, kernel)
+    if (unavailable) return unavailable
+    if (!connection) return this.disconnectedStatus(input, kernel)
+    return this.replaceSession(input, kernel, key, existing, connection, sameRuntime)
+  }
 
-    if (kernel.status === 'not-built') {
-      if (!this.prepareKernel) return this.notBuiltStatus(input, kernel, notBuiltMessage(kernel))
-      try {
-        const prepared = await this.prepareKernel(kernel, input)
-        if (!prepared.ready) return this.notBuiltStatus(input, kernel, prepared.message)
-      } catch (error) {
-        return this.notBuiltStatus(input, kernel, errorMessage(error))
-      }
-    }
-
-    if (!connection) {
-      return {
-        projectCwd: input.projectCwd,
-        notebookPath: input.notebookPath,
-        kernelName: kernel.name,
-        kernelDisplayName: kernel.displayName,
-        state: 'disconnected',
-        message: 'Jupyter Server 尚未就绪'
-      }
-    }
-
+  private async replaceSession(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary,
+    key: string,
+    existing: SessionRecord | undefined,
+    connection: JupyterServerConnection,
+    sameRuntime: boolean
+  ): Promise<AnalysisNotebookSessionStatus> {
+    let claimed = false
     try {
-      if (existing && sameRuntime) {
-        try {
-          await this.client.deleteSession(connection, existing.sessionId)
-        } catch {
-          // The previous session may already be gone (server restarted, kernel died).
-          // Don't let cleanup of a stale session block creating a fresh one.
-        }
-      }
-      if (existing) this.records.delete(key)
-      const created = await this.client.createSession(connection, {
-        projectCwd: input.projectCwd,
-        notebookPath: input.notebookPath,
-        notebookRelativePath: notebookRelativePath(input.projectCwd, input.notebookPath),
-        notebookName: basename(input.notebookPath),
-        kernelName: kernel.name
-      })
-      const timestamp = this.now().toISOString()
-      const record: SessionRecord = {
-        projectCwd: input.projectCwd,
-        notebookPath: input.notebookPath,
-        kernelName: created.kernelName,
-        kernelDisplayName: kernel.displayName,
-        sessionId: created.id,
-        kernelId: created.kernelId,
-        runtimeId: jupyterConnectionIdentity(connection),
-        state: sessionState(created.executionState),
-        startedAt: timestamp,
-        updatedAt: timestamp,
-        message: 'Notebook kernel 已连接'
-      }
+      await this.deleteExistingSession(existing, connection, sameRuntime)
+      if (existing) this.removeRecord(key, existing)
+      this.runtimeBackend?.claimKernel?.(input.projectCwd, key)
+      claimed = true
+      const record = await this.createSessionRecord(input, kernel, connection)
       this.records.set(key, record)
+      this.runtimeBackend?.touchActivity?.(input.projectCwd)
       return publicStatus(record)
     } catch (error) {
-      return {
-        projectCwd: input.projectCwd,
-        notebookPath: input.notebookPath,
-        kernelName: kernel.name,
-        kernelDisplayName: kernel.displayName,
-        state: 'error',
-        message: sanitizeJupyterConnectionError(error, connection),
-        updatedAt: this.now().toISOString()
+      if (claimed && !this.records.has(key)) {
+        this.runtimeBackend?.releaseKernel?.(input.projectCwd, key)
       }
+      return this.sessionErrorStatus(input, kernel, connection, error)
     }
   }
 
@@ -528,7 +518,8 @@ export class AnalysisNotebookSessionRegistry {
       }
     }
 
-    this.records.delete(key)
+    this.removeRecord(key, existing)
+    this.runtimeBackend?.touchActivity?.(projectCwd)
     return {
       projectCwd,
       notebookPath,
@@ -557,7 +548,7 @@ export class AnalysisNotebookSessionRegistry {
 
     const connection = this.getConnection(projectCwd)
     if (!connection || !this.matchesRuntime(existing, connection)) {
-      this.records.delete(key)
+      this.removeRecord(key, existing)
       existing.state = 'disconnected'
       existing.message = 'Jupyter Server 尚未就绪'
       existing.updatedAt = this.now().toISOString()
@@ -566,6 +557,7 @@ export class AnalysisNotebookSessionRegistry {
 
     try {
       await this.client.interruptKernel(connection, existing.kernelId)
+      this.runtimeBackend?.touchActivity?.(projectCwd)
       existing.state = 'idle'
       existing.message = 'Notebook kernel 停止请求已发送'
       existing.updatedAt = this.now().toISOString()
@@ -586,7 +578,7 @@ export class AnalysisNotebookSessionRegistry {
     const connection = this.getConnection(projectCwd)
     if (!record || !connection) return null
     if (!this.matchesRuntime(record, connection)) {
-      this.records.delete(this.key(projectCwd, notebookPath))
+      this.removeRecord(this.key(projectCwd, notebookPath), record)
       return null
     }
     return {
@@ -608,6 +600,7 @@ export class AnalysisNotebookSessionRegistry {
     record.state = state
     record.message = message
     record.updatedAt = this.now().toISOString()
+    this.runtimeBackend?.touchActivity?.(projectCwd)
     return publicStatus(record)
   }
 
@@ -625,6 +618,93 @@ export class AnalysisNotebookSessionRegistry {
   async closeProject(projectCwd: string): Promise<void> {
     const entries = [...this.records.values()].filter((record) => record.projectCwd === projectCwd)
     await Promise.all(entries.map((record) => this.closeSession(projectCwd, record.notebookPath)))
+  }
+
+  private async prepareSelectedKernel(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary
+  ): Promise<AnalysisNotebookSessionStatus | undefined> {
+    if (kernel.status !== 'not-built') return undefined
+    if (!this.prepareKernel) return this.notBuiltStatus(input, kernel, notBuiltMessage(kernel))
+    try {
+      const prepared = await this.prepareKernel(kernel, input)
+      return prepared.ready ? undefined : this.notBuiltStatus(input, kernel, prepared.message)
+    } catch (error) {
+      return this.notBuiltStatus(input, kernel, errorMessage(error))
+    }
+  }
+
+  private disconnectedStatus(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary
+  ): AnalysisNotebookSessionStatus {
+    return {
+      projectCwd: input.projectCwd,
+      notebookPath: input.notebookPath,
+      kernelName: kernel.name,
+      kernelDisplayName: kernel.displayName,
+      state: 'disconnected',
+      message: 'Jupyter Server 尚未就绪'
+    }
+  }
+
+  private async deleteExistingSession(
+    existing: SessionRecord | undefined,
+    connection: JupyterServerConnection,
+    sameRuntime: boolean
+  ): Promise<void> {
+    if (!existing || !sameRuntime) return
+    try {
+      await this.client.deleteSession(connection, existing.sessionId)
+    } catch (error) {
+      if (this.runtimeBackend?.claimKernel) throw error
+      // The old session may already be gone; stale cleanup must not block recreation.
+    }
+  }
+
+  private async createSessionRecord(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary,
+    connection: JupyterServerConnection
+  ): Promise<SessionRecord> {
+    const created = await this.client.createSession(connection, {
+      projectCwd: input.projectCwd,
+      notebookPath: input.notebookPath,
+      notebookRelativePath: notebookRelativePath(input.projectCwd, input.notebookPath),
+      notebookName: basename(input.notebookPath),
+      kernelName: kernel.name
+    })
+    const timestamp = this.now().toISOString()
+    return {
+      projectCwd: input.projectCwd,
+      notebookPath: input.notebookPath,
+      kernelName: created.kernelName,
+      kernelDisplayName: kernel.displayName,
+      sessionId: created.id,
+      kernelId: created.kernelId,
+      runtimeId: jupyterConnectionIdentity(connection),
+      state: sessionState(created.executionState),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      message: 'Notebook kernel 已连接'
+    }
+  }
+
+  private sessionErrorStatus(
+    input: EnsureNotebookSessionInput,
+    kernel: AnalysisKernelSummary,
+    connection: JupyterServerConnection,
+    error: unknown
+  ): AnalysisNotebookSessionStatus {
+    return {
+      projectCwd: input.projectCwd,
+      notebookPath: input.notebookPath,
+      kernelName: kernel.name,
+      kernelDisplayName: kernel.displayName,
+      state: 'error',
+      message: sanitizeJupyterConnectionError(error, connection),
+      updatedAt: this.now().toISOString()
+    }
   }
 
   private isHealthy(state: AnalysisNotebookKernelState): boolean {
@@ -661,5 +741,10 @@ export class AnalysisNotebookSessionRegistry {
 
   private key(projectCwd: string, notebookPath: string): string {
     return `${projectCwd}\0${notebookPath}`
+  }
+
+  private removeRecord(key: string, record: SessionRecord): void {
+    this.records.delete(key)
+    this.runtimeBackend?.releaseKernel?.(record.projectCwd, key)
   }
 }
