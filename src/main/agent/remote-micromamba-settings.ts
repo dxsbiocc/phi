@@ -1,5 +1,6 @@
 import type {
   RemoteMicromambaCapabilityProfile,
+  RemoteMicromambaDownloadCapability,
   RemoteRuntimeRootWarningCode
 } from '../../shared/remoteRuntimeRootTypes'
 import type {
@@ -8,9 +9,16 @@ import type {
   RemoteMicromambaResult
 } from '../../shared/remoteMicromambaTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
-import { getRemoteMicromambaArtifact } from './remote-micromamba-artifact'
+import {
+  describeRemoteMicromambaArtifact,
+  getRemoteMicromambaArtifact,
+  type RemoteMicromambaArtifactPlan
+} from './remote-micromamba-artifact'
 import { getPhiAgentDir } from './runtime-paths'
-import { updateLatestCapabilityProfileMicromambaForHost } from './workspace-host/capability-profile-store'
+import {
+  updateLatestCapabilityProfileMicromambaDownloadForHost,
+  updateLatestCapabilityProfileMicromambaForHost
+} from './workspace-host/capability-profile-store'
 import { probeHostCapabilities } from './workspace-host/probe'
 import { ensureRemoteMicromamba } from './workspace-host/remote-micromamba'
 import type { HostCapabilityProfile } from './workspace-host/types'
@@ -20,7 +28,8 @@ import { connectRemoteSshSession, type RemoteSshSession } from './wrappers/remot
 const REMOTE_OPERATION_TIMEOUT_MS = 5 * 60_000
 const CURRENT_MICROMAMBA_VERSION = '2.9.0-0'
 
-export type RemoteMicromambaSettingsStage = 'probe' | 'download' | 'install'
+export type RemoteMicromambaSettingsStage =
+  'probe' | 'download' | 'direct-download' | 'desktop-relay' | 'install'
 
 export interface RemoteMicromambaSettingsProgress {
   stage: RemoteMicromambaSettingsStage
@@ -44,6 +53,7 @@ export interface RemoteMicromambaSettingsDependencies {
   getHostProfile?: (id: string, agentDir?: string) => HostProfile | undefined
   connect?: ConnectImpl
   probePlatform?: (session: RemoteSshSession) => Promise<Platform>
+  describeArtifact?: typeof describeRemoteMicromambaArtifact
   getArtifact?: (
     platform: Platform,
     options?: Parameters<typeof getRemoteMicromambaArtifact>[1]
@@ -52,6 +62,11 @@ export interface RemoteMicromambaSettingsDependencies {
   updateLatestProfile?: (
     hostAlias: string,
     status: RemoteMicromambaCapabilityProfile,
+    agentDir?: string
+  ) => boolean | void
+  updateLatestDownloadProfile?: (
+    hostAlias: string,
+    download: RemoteMicromambaDownloadCapability,
     agentDir?: string
   ) => boolean | void
 }
@@ -114,15 +129,16 @@ async function defaultProbePlatform(session: RemoteSshSession): Promise<Platform
 async function obtainArtifact(
   platform: Platform,
   request: RemoteMicromambaSettingsRequest,
-  getArtifact: NonNullable<RemoteMicromambaSettingsDependencies['getArtifact']>
+  getArtifact: NonNullable<RemoteMicromambaSettingsDependencies['getArtifact']>,
+  stage: 'download' | 'desktop-relay' = 'download'
 ): Promise<RemoteMicromambaArtifact> {
-  request.onProgress?.({ stage: 'download', message: '正在准备桌面端 micromamba 文件…' })
+  request.onProgress?.({ stage, message: '正在准备本机中转的 micromamba 文件…' })
   return getArtifact(platform, {
     signal: request.signal,
     onProgress: ({ downloadedBytes, totalBytes }) =>
       request.onProgress?.({
-        stage: 'download',
-        message: '正在下载 micromamba…',
+        stage,
+        message: '正在通过桌面端下载 micromamba 以进行本机中转…',
         transferredBytes: downloadedBytes,
         totalBytes
       })
@@ -131,21 +147,51 @@ async function obtainArtifact(
 
 function installationInput(
   request: RemoteMicromambaSettingsRequest,
-  artifact: RemoteMicromambaArtifact
+  artifact: RemoteMicromambaArtifact & { url?: string },
+  obtainLocalArtifact?: () => Promise<RemoteMicromambaArtifact>
 ): Parameters<typeof ensureRemoteMicromamba>[1] {
   return {
     runtimeRoot: request.runtimeRoot,
     confirmedWarnings: request.confirmedWarnings ?? [],
     artifact,
+    obtainLocalArtifact,
     signal: request.signal,
     onProgress: (progress) =>
       request.onProgress?.({
-        stage: 'install',
+        stage:
+          progress.stage === 'remote-downloading'
+            ? 'direct-download'
+            : progress.stage === 'desktop-relay' || progress.stage === 'uploading'
+              ? 'desktop-relay'
+              : 'install',
         message: progress.message,
         transferredBytes: progress.transferredBytes,
         totalBytes: progress.totalBytes
       })
   }
+}
+
+function describedArtifact(
+  platform: Platform,
+  dependencies: RemoteMicromambaSettingsDependencies
+): RemoteMicromambaArtifactPlan {
+  return (dependencies.describeArtifact ?? describeRemoteMicromambaArtifact)(platform, {
+    agentDir: dependencies.agentDir
+  })
+}
+
+async function legacyInstallation(
+  session: RemoteSshSession,
+  platform: Platform,
+  request: RemoteMicromambaSettingsRequest,
+  dependencies: RemoteMicromambaSettingsDependencies
+): Promise<RemoteMicromambaResult> {
+  const artifact = await obtainArtifact(platform, request, dependencies.getArtifact!)
+  request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
+  return (dependencies.ensure ?? ensureRemoteMicromamba)(
+    session,
+    installationInput(request, artifact)
+  )
 }
 
 async function runInstallation(
@@ -156,21 +202,45 @@ async function runInstallation(
   startedAt: number
 ): Promise<RemoteMicromambaResult> {
   try {
-    const artifact = await obtainArtifact(
-      platform,
-      request,
-      dependencies.getArtifact ?? getRemoteMicromambaArtifact
-    )
+    if (dependencies.getArtifact && !dependencies.describeArtifact) {
+      return await legacyInstallation(session, platform, request, dependencies)
+    }
+    const artifact = describedArtifact(platform, dependencies)
+    const getArtifact = dependencies.getArtifact ?? getRemoteMicromambaArtifact
     request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
     return await (dependencies.ensure ?? ensureRemoteMicromamba)(
       session,
-      installationInput(request, artifact)
+      installationInput(request, artifact, () =>
+        obtainArtifact(platform, request, getArtifact, 'desktop-relay')
+      )
     )
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('不支持')) {
       return unsupportedResult(platform, error, startedAt)
     }
     return failedResult(platform, startedAt, request.signal?.aborted === true)
+  }
+}
+
+function persistCapabilityResult(
+  hostAlias: string,
+  result: RemoteMicromambaResult,
+  agentDir: string,
+  dependencies: RemoteMicromambaSettingsDependencies
+): void {
+  const status = profileStatus(result)
+  if (status) {
+    ;(dependencies.updateLatestProfile ?? updateLatestCapabilityProfileMicromambaForHost)(
+      hostAlias,
+      status,
+      agentDir
+    )
+  }
+  if (result.networkProbe) {
+    ;(
+      dependencies.updateLatestDownloadProfile ??
+      updateLatestCapabilityProfileMicromambaDownloadForHost
+    )(hostAlias, result.networkProbe, agentDir)
   }
 }
 
@@ -193,14 +263,7 @@ export async function installRemoteMicromambaForHost(
     request.onProgress?.({ stage: 'probe', message: '正在检测服务器平台…' })
     const platform = await (dependencies.probePlatform ?? defaultProbePlatform)(session)
     const result = await runInstallation(session, platform, request, dependencies, startedAt)
-    const status = profileStatus(result)
-    if (status) {
-      ;(dependencies.updateLatestProfile ?? updateLatestCapabilityProfileMicromambaForHost)(
-        profile.hostAlias,
-        status,
-        agentDir
-      )
-    }
+    persistCapabilityResult(profile.hostAlias, result, agentDir, dependencies)
     return result
   } finally {
     await session.close().catch(() => undefined)

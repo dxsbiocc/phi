@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 
 import type {
@@ -21,14 +20,17 @@ import {
   runRemoteMicromambaScript
 } from './remote-micromamba-common'
 import {
-  buildActivateScript,
-  buildCleanupScript,
-  buildHashScript,
   buildPrepareRuntimeScript,
   buildVerificationScript,
-  parseRemoteHash,
   parseVerification
 } from './remote-micromamba-shell'
+import {
+  readRemoteMicromambaHash,
+  RemoteMicromambaTransferFailure,
+  transferRemoteMicromamba,
+  type RemoteMicromambaArtifactPlan,
+  type RemoteMicromambaTransferResult
+} from './remote-micromamba-transfer'
 
 export type {
   RemoteMicromambaArtifact,
@@ -49,7 +51,8 @@ type CheckRuntimeRoot = (
 ) => Promise<RemoteRuntimeRootCheckResult>
 
 export interface EnsureRemoteMicromambaOptions extends RemoteMicromambaInstallRequest {
-  artifact: RemoteMicromambaArtifact
+  artifact: RemoteMicromambaArtifactPlan
+  obtainLocalArtifact?: () => Promise<RemoteMicromambaArtifact>
   onProgress?: (progress: RemoteMicromambaProgress) => void
   signal?: AbortSignal
   checkRuntimeRoot?: CheckRuntimeRoot
@@ -70,13 +73,12 @@ class InstallFailure extends Error {
   constructor(
     readonly code: RemoteMicromambaErrorCode,
     message: string,
-    readonly verification?: RemoteMicromambaResult['verification']
+    readonly verification?: RemoteMicromambaResult['verification'],
+    readonly transfer?: RemoteMicromambaTransferResult
   ) {
     super(message)
   }
 }
-
-const UPLOAD_TIMEOUT_MS = 120_000
 
 function emit(options: EnsureRemoteMicromambaOptions, progress: RemoteMicromambaProgress): void {
   options.onProgress?.({ ...progress, requestId: options.requestId })
@@ -87,11 +89,19 @@ function duration(options: EnsureRemoteMicromambaOptions, startedAt: number): nu
 }
 
 function checkedArtifact(
-  artifact: RemoteMicromambaArtifact
+  artifact: RemoteMicromambaArtifactPlan
 ): RemoteMicromambaErrorCode | undefined {
   if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(artifact.version)) return 'invalid-artifact'
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256) || artifact.size < 1) return 'invalid-artifact'
   if (!['linux-x64', 'linux-arm64'].includes(artifact.platform)) return 'unsupported-platform'
+  if (artifact.url) {
+    try {
+      const url = new URL(artifact.url)
+      if (url.protocol !== 'https:' || url.username || url.password) return 'invalid-artifact'
+    } catch {
+      return 'invalid-artifact'
+    }
+  }
   return undefined
 }
 
@@ -127,18 +137,6 @@ async function prepareDirectories(context: OperationContext): Promise<void> {
   }
 }
 
-async function remoteHash(session: RemoteSshSession, path: string): Promise<string | undefined> {
-  const result = await runRemoteMicromambaScript(session, buildHashScript(path))
-  const parsed = parseRemoteHash(result.stdout)
-  if (parsed.error === 'missing-tool') {
-    throw new InstallFailure(
-      'hash-tool-unavailable',
-      '服务器缺少 sha256sum、shasum、openssl 或 Perl Digest::SHA，无法校验上传文件。'
-    )
-  }
-  return parsed.hash
-}
-
 async function verifyInstalled(context: OperationContext): Promise<RemoteMicromambaVerification> {
   const result = await runRemoteMicromambaScript(
     context.session,
@@ -156,74 +154,10 @@ async function verifyInstalled(context: OperationContext): Promise<RemoteMicroma
   }
 }
 
-async function cleanupStaging(session: RemoteSshSession, stagingPath: string): Promise<void> {
-  await runRemoteMicromambaScript(session, buildCleanupScript(stagingPath)).catch(() => undefined)
-}
-
-async function uploadAttempt(context: OperationContext, attempt: number): Promise<void> {
-  const suffix = (context.options.randomId ?? randomUUID)()
-  const stagingPath = `${context.installPath}.upload-${suffix}`
-  try {
-    emit(context.options, {
-      stage: 'uploading',
-      message: '正在上传 micromamba…',
-      attempt,
-      transferredBytes: 0,
-      totalBytes: context.options.artifact.size
-    })
-    assertNotAborted(context.options.signal)
-    await context.session.uploadFile(context.options.artifact.localPath, stagingPath, {
-      timeoutMs: UPLOAD_TIMEOUT_MS
-    })
-    emit(context.options, {
-      stage: 'uploading',
-      message: 'micromamba 上传完成。',
-      attempt,
-      transferredBytes: context.options.artifact.size,
-      totalBytes: context.options.artifact.size
-    })
-    assertNotAborted(context.options.signal)
-    emit(context.options, { stage: 'verifying-upload', message: '正在校验上传文件…', attempt })
-    const hash = await remoteHash(context.session, stagingPath)
-    if (hash !== context.options.artifact.sha256) {
-      throw new InstallFailure('remote-hash-mismatch', '上传文件的 SHA-256 不匹配。')
-    }
-    emit(context.options, { stage: 'activating', message: '正在原子激活新版本…', attempt })
-    const activated = await runRemoteMicromambaScript(
-      context.session,
-      buildActivateScript(stagingPath, context.installPath)
-    )
-    if (activated.code !== 0) {
-      throw new InstallFailure('activation-failed', '无法激活远端 micromamba。')
-    }
-  } catch (error) {
-    await cleanupStaging(context.session, stagingPath)
-    if (error instanceof InstallFailure) throw error
-    throw new InstallFailure('upload-failed', '上传 micromamba 失败。')
-  }
-}
-
-async function uploadWithRetry(context: OperationContext): Promise<void> {
-  let failure: InstallFailure | undefined
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      await uploadAttempt(context, attempt)
-      return
-    } catch (error) {
-      failure =
-        error instanceof InstallFailure
-          ? error
-          : new InstallFailure('upload-failed', '上传 micromamba 失败。')
-      if (failure.code === 'aborted' || failure.code === 'hash-tool-unavailable') throw failure
-    }
-  }
-  throw failure ?? new InstallFailure('upload-failed', '上传 micromamba 失败。')
-}
-
 async function installOrReuse(context: OperationContext): Promise<RemoteMicromambaResult> {
   await prepareDirectories(context)
   emit(context.options, { stage: 'checking-existing', message: '正在检查已安装版本…' })
-  const existingHash = await remoteHash(context.session, context.installPath)
+  const existingHash = await readRemoteMicromambaHash(context.session, context.installPath)
   if (existingHash === context.options.artifact.sha256) {
     const verification = await verifyInstalled(context)
     if (verification.runnable && verification.versionMatches && verification.platformMatches) {
@@ -232,18 +166,28 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
         status: 'already-installed',
         installPath: context.installPath,
         message: '远端 micromamba 已是所需版本。',
-        verification
+        verification,
+        transferMethod: 'existing'
       }
     }
   }
-  await uploadWithRetry(context)
+  const transfer = await transferRemoteMicromamba({
+    session: context.session,
+    artifact: context.options.artifact,
+    installPath: context.installPath,
+    obtainLocalArtifact: context.options.obtainLocalArtifact,
+    onProgress: (progress) => emit(context.options, progress),
+    signal: context.options.signal,
+    randomId: context.options.randomId
+  })
   emit(context.options, { stage: 'verifying-installation', message: '正在验证远端 micromamba…' })
   const verification = await verifyInstalled(context)
   if (!verification.runnable || !verification.versionMatches || !verification.platformMatches) {
     throw new InstallFailure(
       'verification-failed',
-      'micromamba 已上传，但运行或平台验证失败。',
-      verification
+      'micromamba 已传输，但运行或平台验证失败。',
+      verification,
+      transfer
     )
   }
   emit(context.options, { stage: 'complete', message: '远端 micromamba 安装完成。' })
@@ -252,7 +196,8 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
     status: 'installed',
     installPath: context.installPath,
     message: '远端 micromamba 安装并验证成功。',
-    verification
+    verification,
+    ...transfer
   }
 }
 
@@ -328,17 +273,26 @@ export async function ensureRemoteMicromamba(
   try {
     return await installOrReuse({ session, options, startedAt, root, installPath, warningCodes })
   } catch (error) {
-    const failure =
-      error instanceof InstallFailure
-        ? error
-        : new InstallFailure('upload-failed', '安装远端 micromamba 失败。')
+    const failure = normalizeInstallFailure(error)
+    const transfer =
+      failure instanceof InstallFailure
+        ? failure.transfer
+        : { networkProbe: failure.networkProbe, transferMethod: failure.transferMethod }
     return {
       ...baseResult(options, startedAt, warningCodes),
       status: 'failed',
       installPath,
       errorCode: failure.code,
       message: failure.message,
-      verification: failure.verification
+      verification: failure instanceof InstallFailure ? failure.verification : undefined,
+      ...transfer
     }
   }
+}
+
+function normalizeInstallFailure(error: unknown): InstallFailure | RemoteMicromambaTransferFailure {
+  if (error instanceof InstallFailure || error instanceof RemoteMicromambaTransferFailure) {
+    return error
+  }
+  return new InstallFailure('upload-failed', '安装远端 micromamba 失败。')
 }

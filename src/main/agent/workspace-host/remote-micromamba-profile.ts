@@ -30,6 +30,14 @@ function installedVersion(
   return status.status === 'installed' ? expectedVersion : status.installedVersions.at(-1)
 }
 
+function preserveDownloadCapability(
+  current: RemoteMicromambaCapabilityProfile | undefined,
+  previous: RemoteMicromambaCapabilityProfile | undefined
+): RemoteMicromambaCapabilityProfile | undefined {
+  if (!current || current.download || !previous?.download) return current
+  return { ...current, download: previous.download }
+}
+
 async function defaultMicromambaProfile(
   session: RemoteSshSession,
   runtimeRoot: string,
@@ -67,7 +75,7 @@ export async function runtimeRootProfileWithMicromamba(input: {
   previous?: RemoteMicromambaCapabilityProfile
   resolve?: MicromambaProfileResolver
 }): Promise<RemoteRuntimeRootCapabilityProfile> {
-  const micromamba =
+  const resolved =
     input.check.status !== 'checked' || input.check.hardErrors.length > 0
       ? input.previous
       : await (input.resolve ?? defaultMicromambaProfile)(
@@ -75,6 +83,7 @@ export async function runtimeRootProfileWithMicromamba(input: {
           input.configuredRoot,
           input.platform
         )
+  const micromamba = preserveDownloadCapability(resolved, input.previous)
   return runtimeRootCapabilityProfile(
     input.source,
     input.check,

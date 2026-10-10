@@ -11,7 +11,10 @@ import {
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
-import type { RemoteMicromambaCapabilityProfile } from '../../../shared/remoteRuntimeRootTypes'
+import type {
+  RemoteMicromambaCapabilityProfile,
+  RemoteMicromambaDownloadCapability
+} from '../../../shared/remoteRuntimeRootTypes'
 import {
   probeHostCapabilities,
   type HostCapabilityProbeOptions,
@@ -261,11 +264,14 @@ function storeWithMicromambaStatus(
 ): CapabilityProfileStore | undefined {
   const profile = store.entries[cacheKey]
   if (!profile?.runtimeRoot) return undefined
+  const previousDownload = profile.runtimeRoot.micromamba?.download
+  const nextStatus: RemoteMicromambaCapabilityProfile =
+    status.download || !previousDownload ? status : { ...status, download: previousDownload }
   return {
     ...store,
     entries: {
       ...store.entries,
-      [cacheKey]: withRemoteMicromambaCapabilityProfile(profile, status)
+      [cacheKey]: withRemoteMicromambaCapabilityProfile(profile, nextStatus)
     }
   }
 }
@@ -279,6 +285,23 @@ export function updateLatestCapabilityProfileMicromambaForHost(
   const cacheKey = store.latestByHost[capabilityProfileHostKey(hostAlias)]
   if (!cacheKey) return false
   const updated = storeWithMicromambaStatus(store, cacheKey, status)
+  if (!updated) return false
+  writeStore(agentDir, updated)
+  return true
+}
+
+export function updateLatestCapabilityProfileMicromambaDownloadForHost(
+  hostAlias: string,
+  download: RemoteMicromambaDownloadCapability,
+  agentDir = getPhiAgentDir()
+): boolean {
+  const store = readStore(agentDir)
+  const cacheKey = store.latestByHost[capabilityProfileHostKey(hostAlias)]
+  const profile = cacheKey ? store.entries[cacheKey] : undefined
+  if (!cacheKey || !profile?.runtimeRoot) return false
+  const previous = profile.runtimeRoot.micromamba ?? { status: 'unchecked' as const }
+  const micromamba: RemoteMicromambaCapabilityProfile = { ...previous, download }
+  const updated = storeWithMicromambaStatus(store, cacheKey, micromamba)
   if (!updated) return false
   writeStore(agentDir, updated)
   return true

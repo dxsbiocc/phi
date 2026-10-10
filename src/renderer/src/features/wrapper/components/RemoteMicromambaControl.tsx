@@ -91,6 +91,13 @@ function Progress({ progress }: { progress?: RemoteMicromambaProgressView }): Re
   )
 }
 
+function transferLabel(result: RemoteMicromambaResult): string | undefined {
+  if (result.transferMethod === 'remote-direct') return '服务器直连下载'
+  if (result.transferMethod === 'desktop-relay') return '本机中转'
+  if (result.transferMethod === 'existing') return '复用已安装版本'
+  return undefined
+}
+
 function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Element {
   const severity =
     result.status === 'failed' || result.status === 'unsupported'
@@ -98,7 +105,21 @@ function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Eleme
       : result.status === 'needs-confirmation'
         ? 'warning'
         : 'success'
-  return <Alert severity={severity}>{result.message}</Alert>
+  const method = transferLabel(result)
+  return (
+    <Alert severity={severity}>
+      {result.message}
+      {method ? ` 安装方式：${method}。` : ''}
+    </Alert>
+  )
+}
+
+function downloadCapability(profile: RemoteHostCapabilityProfile | undefined): string {
+  const capability = profile?.runtimeRoot?.micromamba?.download
+  if (capability?.status === 'reachable') return `上次探测可直连（${capability.tool}）`
+  if (capability?.status === 'unreachable') return '上次探测不可达，将使用本机中转'
+  if (capability?.status === 'no-tool') return '服务器无 curl/wget，将使用本机中转'
+  return '安装时自动探测直连能力'
 }
 
 export function RemoteMicromambaControl({
@@ -119,7 +140,8 @@ export function RemoteMicromambaControl({
         micromamba：{statusLabel(micromambaStatus(capabilityProfile, state))}
       </Typography>
       <Typography variant="caption" color="text.secondary">
-        将从桌面端上传 {formatBytes(size)} 至 {targetPath(runtimeRoot)}；服务器不会联网下载。
+        可联网时由服务器直连下载 {formatBytes(size)}，否则经本机中转至 {targetPath(runtimeRoot)}；
+        {downloadCapability(capabilityProfile)}。
       </Typography>
       <Button
         size="small"

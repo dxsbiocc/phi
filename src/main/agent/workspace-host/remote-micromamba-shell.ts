@@ -1,7 +1,14 @@
 import { shellQuote } from '../wrappers/remote-ssh-session'
 
+import type {
+  RemoteMicromambaDownloadCapability,
+  RemoteMicromambaDownloadTool
+} from '../../../shared/remoteRuntimeRootTypes'
+
 const HASH_MARKER = '__PHI_MICROMAMBA_HASH__='
 const HASH_ERROR_MARKER = '__PHI_MICROMAMBA_HASH_ERROR__='
+const NETWORK_MARKER = '__PHI_MICROMAMBA_NETWORK__='
+const SIZE_MARKER = '__PHI_MICROMAMBA_SIZE__='
 const VERSION_MARKER = '__PHI_MICROMAMBA_VERSION__='
 const PLATFORM_MARKER = '__PHI_MICROMAMBA_PLATFORM__='
 const STATUS_MARKER = '__PHI_MICROMAMBA_STATUS__='
@@ -89,6 +96,77 @@ export function parseRemoteHash(stdout: string): ParsedRemoteHash {
     .find((line) => line.startsWith(HASH_ERROR_MARKER))
     ?.slice(HASH_ERROR_MARKER.length)
   return { error: error === 'missing-tool' ? 'missing-tool' : 'failed' }
+}
+
+export function buildNetworkProbeScript(url: string): string {
+  return [
+    'set +e',
+    `phi_url=${shellQuote(url)}`,
+    'phi_has_tool=0',
+    'if command -v curl >/dev/null 2>&1; then',
+    '  phi_has_tool=1',
+    '  if curl -fsSIL --connect-timeout 8 --max-time 8 -- "$phi_url" >/dev/null 2>&1; then',
+    `    printf '%s\\n' '${NETWORK_MARKER}reachable:curl'`,
+    '    exit 0',
+    '  fi',
+    'fi',
+    'if command -v wget >/dev/null 2>&1; then',
+    '  phi_has_tool=1',
+    '  if wget -q --spider -T 8 --tries=1 -- "$phi_url" >/dev/null 2>&1; then',
+    `    printf '%s\\n' '${NETWORK_MARKER}reachable:wget'`,
+    '    exit 0',
+    '  fi',
+    'fi',
+    `if [ "$phi_has_tool" = 0 ]; then printf '%s\\n' '${NETWORK_MARKER}no-tool';`,
+    `else printf '%s\\n' '${NETWORK_MARKER}unreachable'; fi`
+  ].join('\n')
+}
+
+export function parseNetworkProbe(stdout: string): RemoteMicromambaDownloadCapability {
+  const value = stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith(NETWORK_MARKER))
+    ?.slice(NETWORK_MARKER.length)
+  if (value === 'reachable:curl') return { status: 'reachable', tool: 'curl' }
+  if (value === 'reachable:wget') return { status: 'reachable', tool: 'wget' }
+  return { status: value === 'no-tool' ? 'no-tool' : 'unreachable' }
+}
+
+export function buildDownloadScript(
+  url: string,
+  stagingPath: string,
+  tool: RemoteMicromambaDownloadTool
+): string {
+  const command =
+    tool === 'curl'
+      ? 'curl -fL --connect-timeout 8 --max-time 300 -o "$phi_staging" -- "$phi_url"'
+      : 'wget -q --timeout=8 --tries=2 -O "$phi_staging" -- "$phi_url"'
+  return [
+    'set -eu',
+    `phi_url=${shellQuote(url)}`,
+    `phi_staging=${shellQuote(stagingPath)}`,
+    'umask 077',
+    command
+  ].join('\n')
+}
+
+export function buildFileSizeScript(path: string): string {
+  return [
+    'set +e',
+    `phi_file=${shellQuote(path)}`,
+    'phi_size=$(wc -c < "$phi_file" 2>/dev/null) || exit 1',
+    `printf '%s%s\\n' '${SIZE_MARKER}' "$(printf %s "$phi_size" | tr -d '[:space:]')"`
+  ].join('\n')
+}
+
+export function parseRemoteFileSize(stdout: string): number | undefined {
+  const value = stdout
+    .split(/\r?\n/)
+    .find((line) => line.startsWith(SIZE_MARKER))
+    ?.slice(SIZE_MARKER.length)
+  if (!value || !/^[0-9]+$/.test(value)) return undefined
+  const size = Number(value)
+  return Number.isSafeInteger(size) ? size : undefined
 }
 
 export function buildActivateScript(stagingPath: string, finalPath: string): string {

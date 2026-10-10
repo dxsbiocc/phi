@@ -1,4 +1,7 @@
-import type { RemoteRuntimeRootWarningCode } from './remoteRuntimeRootTypes'
+import type {
+  RemoteMicromambaDownloadCapability,
+  RemoteRuntimeRootWarningCode
+} from './remoteRuntimeRootTypes'
 
 export type RemoteMicromambaPlatform = 'linux-x64' | 'linux-arm64'
 
@@ -37,6 +40,9 @@ export type RemoteMicromambaProgressPhase =
   | 'checking-runtime-root'
   | 'preparing-directory'
   | 'checking-existing'
+  | 'probing-network'
+  | 'remote-downloading'
+  | 'desktop-relay'
   | 'uploading'
   | 'verifying-upload'
   | 'activating'
@@ -70,6 +76,8 @@ export interface RemoteMicromambaResult {
   errorCode?: RemoteMicromambaErrorCode
   message: string
   verification?: RemoteMicromambaVerification
+  networkProbe?: RemoteMicromambaDownloadCapability
+  transferMethod?: 'remote-direct' | 'desktop-relay' | 'existing'
 }
 
 export type RemoteMicromambaStatusState =

@@ -57,9 +57,16 @@ export type RemoteRuntimeRootProfileCheckState = 'ok' | 'warning' | 'error' | 'u
 export type RemoteMicromambaProfileStatus =
   'unchecked' | 'not-installed' | 'installed' | 'outdated' | 'unusable'
 
-export type RemoteMicromambaCapabilityProfile =
+export type RemoteMicromambaDownloadTool = 'curl' | 'wget'
+
+export type RemoteMicromambaDownloadCapability =
+  | { status: 'reachable'; tool: RemoteMicromambaDownloadTool }
+  | { status: 'unreachable' | 'no-tool' }
+
+export type RemoteMicromambaCapabilityProfile = (
   | { status: 'unchecked' | 'not-installed' }
   | { status: 'installed' | 'outdated' | 'unusable'; version: string }
+) & { download?: RemoteMicromambaDownloadCapability }
 
 export interface RemoteRuntimeRootCapabilityProfile {
   source: RemoteRuntimeRootSource

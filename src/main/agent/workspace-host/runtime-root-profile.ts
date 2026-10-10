@@ -1,5 +1,6 @@
 import type {
   RemoteMicromambaCapabilityProfile,
+  RemoteMicromambaDownloadCapability,
   RemoteMicromambaProfileStatus,
   RemoteRuntimeRootCapabilityProfile,
   RemoteRuntimeRootCheckResult,
@@ -17,6 +18,21 @@ const MICROMAMBA_PROFILE_STATUSES = new Set([
   'unusable'
 ])
 const MICROMAMBA_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/
+
+function normalizedDownload(value: unknown): RemoteMicromambaDownloadCapability | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const candidate = value as { status?: unknown; tool?: unknown }
+  if (candidate.status === 'unreachable' || candidate.status === 'no-tool') {
+    return { status: candidate.status }
+  }
+  if (
+    candidate.status === 'reachable' &&
+    (candidate.tool === 'curl' || candidate.tool === 'wget')
+  ) {
+    return { status: 'reachable', tool: candidate.tool }
+  }
+  return undefined
+}
 
 function isMicromambaProfileStatus(value: unknown): value is RemoteMicromambaProfileStatus {
   return typeof value === 'string' && MICROMAMBA_PROFILE_STATUSES.has(value)
@@ -45,10 +61,11 @@ export function normalizeRemoteMicromambaCapabilityProfile(
   value: unknown
 ): RemoteMicromambaCapabilityProfile {
   if (typeof value !== 'object' || value === null) return { status: 'unchecked' }
-  const candidate = value as { status?: unknown; version?: unknown }
+  const candidate = value as { status?: unknown; version?: unknown; download?: unknown }
   if (!isMicromambaProfileStatus(candidate.status)) return { status: 'unchecked' }
+  const download = normalizedDownload(candidate.download)
   if (candidate.status === 'unchecked' || candidate.status === 'not-installed') {
-    return { status: candidate.status }
+    return { status: candidate.status, ...(download ? { download } : {}) }
   }
   if (
     typeof candidate.version !== 'string' ||
@@ -56,7 +73,7 @@ export function normalizeRemoteMicromambaCapabilityProfile(
   ) {
     return { status: 'unchecked' }
   }
-  return { status: candidate.status, version: candidate.version }
+  return { status: candidate.status, version: candidate.version, ...(download ? { download } : {}) }
 }
 
 export function withRemoteMicromambaCapabilityProfile<T extends HostCapabilityProfile>(
@@ -98,7 +115,8 @@ export function withExpectedRemoteMicromambaVersion<T extends HostCapabilityProf
   }
   return withRemoteMicromambaCapabilityProfile(profile, {
     status: micromamba.version === expectedVersion ? 'installed' : 'outdated',
-    version: micromamba.version
+    version: micromamba.version,
+    ...(micromamba.download ? { download: micromamba.download } : {})
   })
 }
 
