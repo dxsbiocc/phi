@@ -206,6 +206,7 @@ import {
 } from './agent/remote-workspace-file-ui'
 import { remoteGlob, remoteGrep } from './agent/remote-workspace-search'
 import { RemoteWorkspaceBashManager, type RemoteBashRequest } from './agent/remote-workspace-bash'
+import { RemoteProjectDownloadManager } from './agent/download/remote-project-download'
 import type { RemoteWriteRequest } from './agent/remote-workspace-write'
 import {
   RemoteWorkspaceMutationManager,
@@ -442,6 +443,7 @@ import {
   validateOfficePresentedFile,
   validatePresentedFiles
 } from './agent/deliverables/present-files'
+import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
 import {
   isStaleSessionError,
@@ -2187,6 +2189,9 @@ const remoteMutationManager = new RemoteWorkspaceMutationManager({
   beforeEdit: requireRemoteEditApproval,
   connectHost: connectRemoteWorkspaceHost
 })
+const remoteProjectDownloadManager = new RemoteProjectDownloadManager({
+  connectHost: connectRemoteWorkspaceHost
+})
 getOmpBridge().registerHostHandler('remoteWorkspace.write', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteMutationManager.write(params)
@@ -2210,6 +2215,14 @@ getOmpBridge().registerHostHandler('remoteWorkspace.bash', (params) =>
 )
 getOmpBridge().registerHostHandler('remoteWorkspace.cancelBash', (params) =>
   remoteBashManager.cancel(params)
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.download', (params) =>
+  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteProjectDownloadManager.run(params)
+  )
+)
+getOmpBridge().registerHostHandler('remoteWorkspace.cancelDownload', (params) =>
+  remoteProjectDownloadManager.cancel(params)
 )
 
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
@@ -2661,7 +2674,11 @@ function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): Prompt
 function presentableRun(
   runtimeSessionId: string | undefined,
   toolCallId: string | undefined
-): { run: PromptRun; toolCallId: string } {
+): {
+  run: PromptRun
+  toolCallId: string
+  remote?: { sessionId: string; projectId: string }
+} {
   if (!runtimeSessionId || !toolCallId || toolCallId.length > 200) {
     throw new Error('Invalid file delivery request')
   }
@@ -2669,8 +2686,28 @@ function presentableRun(
   if (!run || run.cancelled) throw new Error('No active conversation for file delivery')
   const manifest = findPhiSessionById(run.phiSessionId)
   const project = run.projectId ? getProject(run.projectId) : undefined
-  if (manifest?.projectLocation?.kind === 'ssh' || project?.location.kind === 'ssh') {
-    throw new Error('Remote project file delivery is not available')
+  const remoteAnchor = isRemoteProjectAnchorPath(run.cwd, AGENT_DIR)
+  if (
+    remoteAnchor ||
+    manifest?.projectLocation?.kind === 'ssh' ||
+    project?.location.kind === 'ssh'
+  ) {
+    if (
+      !run.projectId ||
+      manifest?.projectId !== run.projectId ||
+      manifest.projectLocation?.kind !== 'ssh' ||
+      project?.location.kind !== 'ssh' ||
+      manifest.projectLocation.hostProfileId !== project.location.hostProfileId ||
+      manifest.projectLocation.remoteRoot !== project.location.remoteRoot ||
+      manifest.projectLocation.canonicalRoot !== project.location.canonicalRoot
+    ) {
+      throw new Error('Remote project identity is unavailable for file delivery')
+    }
+    return {
+      run,
+      toolCallId,
+      remote: { sessionId: run.phiSessionId, projectId: run.projectId }
+    }
   }
   return { run, toolCallId }
 }
@@ -2688,14 +2725,16 @@ function recordPresentedFiles(run: PromptRun, toolCallId: string, files: Present
   }
 }
 
-function handlePresentFilesRequest(params: unknown): {
-  files: ReturnType<typeof validatePresentedFiles>
-} {
+async function handlePresentFilesRequest(params: unknown): Promise<{ files: PresentedFile[] }> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
   const toolCallId = optionalStringField(record, 'toolCallId')
-  const { run, toolCallId: callId } = presentableRun(runtimeSessionId, toolCallId)
-  const files = validatePresentedFiles(run.cwd, record.files)
+  const { run, toolCallId: callId, remote } = presentableRun(runtimeSessionId, toolCallId)
+  const files = remote
+    ? await validateRemotePresentedFiles(remote, record.files, {
+        connectHost: connectRemoteWorkspaceHost
+      })
+    : validatePresentedFiles(run.cwd, record.files)
   recordPresentedFiles(run, callId, files)
   return { files }
 }

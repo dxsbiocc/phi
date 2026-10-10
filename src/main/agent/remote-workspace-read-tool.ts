@@ -4,10 +4,15 @@ import type { RemoteWorkspaceReadResult } from './remote-workspace-read'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_READ_DESCRIPTION =
-  'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server. Pass a project-relative or project-absolute path; raw ssh:// URLs and inline selectors are not supported.'
+  'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server, or read an enabled global Skill through skill://. Project paths run on the server; Skill resources are restricted to the loaded Skill root. Raw ssh:// URLs and inline selectors are not supported.'
+
+type RemoteReadOptions = {
+  readResource?: (path: string) => RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
+}
 
 export function buildRemoteWorkspaceReadTool(
-  read: (path: string) => Promise<RemoteWorkspaceReadResult>
+  read: (path: string) => Promise<RemoteWorkspaceReadResult>,
+  options: RemoteReadOptions = {}
 ): CustomTool {
   return {
     name: 'read',
@@ -26,7 +31,9 @@ export function buildRemoteWorkspaceReadTool(
       try {
         const input = params as Record<string, unknown>
         if (typeof input.path !== 'string' || !input.path) throw new Error('请提供远程项目内路径')
-        const result = await read(input.path)
+        const result = input.path.startsWith('skill://')
+          ? await readResource(input.path, options)
+          : await read(input.path)
         return {
           content: [{ type: 'text', text: result.content }],
           details: {
@@ -46,4 +53,14 @@ export function buildRemoteWorkspaceReadTool(
       }
     }
   }
+}
+
+function readResource(
+  path: string,
+  options: RemoteReadOptions
+): Promise<RemoteWorkspaceReadResult> {
+  if (!options.readResource) {
+    return Promise.reject(new Error('远程会话没有加载该 Skill 资源'))
+  }
+  return Promise.resolve(options.readResource(path))
 }

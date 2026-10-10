@@ -43,8 +43,14 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
+import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
+import {
+  buildRemoteProjectDownloadTool,
+  type RemoteDownloadBackend
+} from '../download/remote-project-download-tool'
+import { buildRemotePresentFilesTool } from '../deliverables/remote-present-tool'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../plan/plan-review-mode'
 import { planModeToolDecision } from '../plan/plan-tool-policy'
 import type { PresentedFile } from '../../../shared/presentedFileTypes'
@@ -137,9 +143,11 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../main-system-prompt'
+import { resolveRemoteRuntimePromptContext } from '../remote-runtime-context'
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
+import { readRemoteSkillResource } from '../content/remote-skill-resource'
 import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
 import {
   filterEnabledMainSkills,
@@ -1007,7 +1015,9 @@ async function bindSpecialistEnvironment(
   const ref = definition.environment
   if (!ref) return undefined
   if (deps.remoteRoot) {
-    throw new Error('environment binding is not supported for remote projects yet')
+    throw new Error(
+      '远程专家声明了受管环境，但服务器 environment binding 尚未完成验证；请在远程主机设置检查运行时根目录与 micromamba。该环境没有回退到本机执行。'
+    )
   }
   const result = await requestHost('environments.bindSession', {
     runtimeSessionId: deps.sessionId,
@@ -1086,6 +1096,7 @@ async function createPhiAgentSession(
     remoteRoot?: string
     remoteContextFiles?: Array<{ path: string; content: string }>
     remoteTools?: () => CustomTool[]
+    remoteRead?: (path: string) => Promise<RemoteWorkspaceReadResult>
     skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
   }
@@ -1119,7 +1130,6 @@ async function createPhiAgentSession(
             ...(deps.remoteRoot
               ? {
                   noExtensions: true,
-                  noSkills: true,
                   noPromptTemplates: true,
                   noThemes: true,
                   noContextFiles: true,
@@ -1132,6 +1142,9 @@ async function createPhiAgentSession(
         })
       : undefined
   if (loader) await loader.reload()
+  const skills = loader
+    ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
+    : undefined
 
   const availableTools = phiToolFunctions(
     sessionId,
@@ -1145,7 +1158,17 @@ async function createPhiAgentSession(
         })
       : undefined
   )
-  for (const tool of deps.remoteTools?.() ?? []) availableTools.set(tool.name, tool)
+  for (const tool of deps.remoteTools?.() ?? []) {
+    if (tool.name !== 'read' || !deps.remoteRead) availableTools.set(tool.name, tool)
+  }
+  if (deps.remoteRead) {
+    availableTools.set(
+      'read',
+      buildRemoteWorkspaceReadTool(deps.remoteRead, {
+        readResource: (path) => readRemoteSkillResource(path, skills ?? [])
+      })
+    )
+  }
   const attachedScriptTools = buildScriptTools(
     (deps.skillTools ?? []).filter(
       (tool) => definition.skills.includes(tool.skill) && tool.attachTo.includes(definition.name)
@@ -1197,12 +1220,6 @@ async function createPhiAgentSession(
   const thinkingLevel = definition.thinkingLevel
     ? (definition.thinkingLevel as ConfiguredThinkingLevel)
     : parentSession?.thinkingLevel
-  const skills = deps.remoteRoot
-    ? []
-    : loader
-      ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
-      : undefined
-
   const result = await createLegacyAgentSession({
     agentId: `phi-agent-${sessionId}-${randomUUID()}`,
     agentDisplayName: definition.name,
@@ -1559,6 +1576,15 @@ async function createSession(params: unknown): Promise<unknown> {
   if (remoteRoot && !remoteContextFiles) {
     throw new Error('Invalid remote project instruction context')
   }
+  const remoteRuntime = remoteRoot
+    ? resolveRemoteRuntimePromptContext(
+        {
+          hostProfileId: stringValue(remoteLocation?.hostProfileId),
+          canonicalRoot: stringValue(remoteLocation?.canonicalRoot)
+        },
+        agentDir
+      )
+    : undefined
   const ctx = await getContext(agentDir)
   const settingsCwd = remoteRoot ? agentDir : cwd
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
@@ -1605,10 +1631,10 @@ async function createSession(params: unknown): Promise<unknown> {
           skillsOverride: (base) => {
             const resolved = contentResourceOptions.skillsOverride?.(base) ?? base
             sessionSkillNames ??= new Set(
-              filterEnabledMainSkills(resolved.skills, {
-                projectDir: cwd,
-                agentDir
-              }).map((skill) => skill.name)
+              filterEnabledMainSkills(
+                resolved.skills,
+                mainSkillEnablementOptions(cwd, agentDir, remoteRoot ?? undefined)
+              ).map((skill) => skill.name)
             )
             return {
               ...resolved,
@@ -1648,6 +1674,14 @@ async function createSession(params: unknown): Promise<unknown> {
   const mainSkillTools = skillTools
     ? filterMainScriptTools(skillTools, enabledMainSkillNames)
     : undefined
+  const remoteWorkspaceRead = remoteRoot
+    ? async (path: string): Promise<RemoteWorkspaceReadResult> =>
+        (await requestHost('remoteWorkspace.read', {
+          sessionId: remoteRecord?.phiSessionId,
+          projectId: remoteRecord?.projectId,
+          path
+        })) as RemoteWorkspaceReadResult
+    : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
     buildAgentTool(
@@ -1672,7 +1706,8 @@ async function createSession(params: unknown): Promise<unknown> {
                   remoteTools: () =>
                     customTools.filter((tool) =>
                       ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(tool.name)
-                    )
+                    ),
+                  ...(remoteWorkspaceRead ? { remoteRead: remoteWorkspaceRead } : {})
                 }
               : {}),
             ...(skillTools ? { skillTools } : {}),
@@ -1727,8 +1762,7 @@ async function createSession(params: unknown): Promise<unknown> {
     {
       cancelHost: (identity) => requestHost('browser.cancel', identity),
       takeText: (toolCallId, placeholder) => browserTextVault.take(toolCallId, placeholder),
-      allowTypeText: () =>
-        !remoteRoot && parentRef.current?.session.getPlanModeState()?.enabled !== true
+      allowTypeText: () => parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
   const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
@@ -1787,14 +1821,9 @@ async function createSession(params: unknown): Promise<unknown> {
           signal?.removeEventListener('abort', cancel)
         }
       }),
-      buildRemoteWorkspaceReadTool(
-        async (path) =>
-          (await requestHost('remoteWorkspace.read', {
-            sessionId: remoteRecord?.phiSessionId,
-            projectId: remoteRecord?.projectId,
-            path
-          })) as RemoteWorkspaceReadResult
-      ),
+      buildRemoteWorkspaceReadTool(remoteWorkspaceRead!, {
+        readResource: (path) => readRemoteSkillResource(path, resources?.getSkills().skills ?? [])
+      }),
       buildRemoteWorkspaceGlobTool(
         async (input) =>
           (await requestHost('remoteWorkspace.glob', {
@@ -1841,16 +1870,29 @@ async function createSession(params: unknown): Promise<unknown> {
     ...remoteWorkspaceCustomTools,
     ...agentCustomTools,
     ...agentRunTools,
-    ...(!remoteRoot
+    ...(remoteRoot
       ? [
-          buildPresentFilesTool(
+          buildRemotePresentFilesTool(
             sessionId,
             (request) =>
               requestHost('deliverables.present', request) as Promise<{ files: PresentedFile[] }>
           )
         ]
-      : []),
-    buildProjectDownloadTool(cwd, agentDir, { remoteProject: Boolean(remoteRoot) }),
+      : [
+          buildPresentFilesTool(
+            sessionId,
+            (request) =>
+              requestHost('deliverables.present', request) as Promise<{ files: PresentedFile[] }>
+          )
+        ]),
+    remoteRoot
+      ? buildRemoteProjectDownloadTool(
+          remoteDownloadBackend({
+            sessionId: stringValue(remoteRecord?.phiSessionId),
+            projectId: stringValue(remoteRecord?.projectId)
+          })
+        )
+      : buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),
@@ -1905,7 +1947,8 @@ async function createSession(params: unknown): Promise<unknown> {
       systemPrompt: (defaultPrompt) =>
         remoteRoot
           ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
-              ...(personaMarkdown ? { personaMarkdown } : {})
+              ...(personaMarkdown ? { personaMarkdown } : {}),
+              ...(remoteRuntime ? { runtime: remoteRuntime } : {})
             })
           : buildPhiMainSystemPrompt(defaultPrompt, {
               ...(personaMarkdown ? { personaMarkdown } : {})
@@ -2005,6 +2048,32 @@ async function createSession(params: unknown): Promise<unknown> {
       for (const lease of mcpLeases.values()) lease.release()
     }
     throw error
+  }
+}
+
+function remoteDownloadBackend(identity: {
+  sessionId: string
+  projectId: string
+}): RemoteDownloadBackend {
+  return async (request, signal) => {
+    signal?.throwIfAborted()
+    const requestId = randomUUID()
+    const cancel = (): void => {
+      void requestHost('remoteWorkspace.cancelDownload', { ...identity, requestId }).catch(
+        () => undefined
+      )
+    }
+    if (signal?.aborted) cancel()
+    else signal?.addEventListener('abort', cancel, { once: true })
+    try {
+      return (await requestHost('remoteWorkspace.download', {
+        ...identity,
+        ...request,
+        requestId
+      })) as Awaited<ReturnType<RemoteDownloadBackend>>
+    } finally {
+      signal?.removeEventListener('abort', cancel)
+    }
   }
 }
 

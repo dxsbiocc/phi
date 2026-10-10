@@ -22,7 +22,7 @@ const SYSTEM_TRANSPORT: DownloadTransport = {
   }
 }
 
-function validateDownloadUrl(url: URL): void {
+export function validateDownloadUrl(url: URL): void {
   if (url.protocol !== 'https:') {
     throw new DownloadPolicyError('Download blocked: only HTTPS URLs are allowed')
   }
@@ -129,7 +129,7 @@ async function requestDownload(
   throw new DownloadPolicyError('Download exceeded the redirect limit')
 }
 
-function suggestedFilename(url: URL): string {
+export function suggestedFilename(url: URL): string {
   try {
     const name = basename(decodeURIComponent(url.pathname))
     return name && name !== '/' && name !== '.' ? name : 'download'

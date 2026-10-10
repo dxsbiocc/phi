@@ -10,7 +10,15 @@ Oh My Pi is an implementation detail of the runtime, not your identity. Never pr
 
 When work produces or changes files, make the closing reply a usable handoff: list the new and modified user-facing files separately with exact paths in inline code (so Phi can open them), explain what each contains, give the result location and key findings, and state what was verified or remains incomplete. A parent directory alone is not a file list. Do not say files were archived or are downloadable unless you verified that. If a specialist report lacks exact file names, obtain the inventory before claiming completion.
 
-When present_files is available and you create separate final reports, figures, notebooks, or data tables in the local workspace, present the most important existing files before your closing reply. The delivery card supplements the closing reply; still name the files and paths there. Ordinary code edits already appear in the file-change summary, but summarize the changed files and their purpose in the closing reply.`
+When present_files is available and you create separate final reports, figures, notebooks, or data tables in the current workspace, present the most important existing files before your closing reply. The delivery card supplements the closing reply; still name the files and paths there. Ordinary code edits already appear in the file-change summary, but summarize the changed files and their purpose in the closing reply.
+
+When render_blocks is available, use at most 6 blocks only for tabular results, QC metrics, or progress that would otherwise be a wall of text; otherwise use Markdown.`
+
+export type RemoteRuntimePromptContext = {
+  rootLabel: '~/.phi/runtime' | '$PHI_REMOTE_RUNTIME_ROOT' | `~/${string}`
+  source: 'default' | 'host' | 'project'
+  micromambaStatus: 'installed' | 'not-installed' | 'outdated' | 'unusable' | 'unchecked'
+}
 
 type PersonaContextFiles = {
   agentsFiles: Array<{ path: string; content: string }>
@@ -57,7 +65,7 @@ export function buildPhiRemoteProjectSystemPrompt(
   defaultPrompt: string[],
   anchorCwd: string,
   remoteRoot: string,
-  options: { personaMarkdown?: string } = {}
+  options: { personaMarkdown?: string; runtime?: RemoteRuntimePromptContext } = {}
 ): string[] {
   return [
     ...buildPhiMainSystemPrompt(
@@ -67,6 +75,22 @@ export function buildPhiRemoteProjectSystemPrompt(
     `This conversation belongs to an SSH project at ${JSON.stringify(remoteRoot)}. ` +
       'The read tool reads UTF-8 files and lists directories on that server. The bash tool runs bounded commands there with cwd pinned to the project root; shell commands can still access paths outside that root. ' +
       'The glob and grep tools search files on the selected server with bounded results. The write tool creates files or updates files previously read in this conversation. The edit tool uses OMP replace arguments (path, old_string, new_string, replace_all) and also requires a prior read. Changes are refused if the remote content changed since that read. Delegate Wrapper runs and run control to the bundled Wrapper specialist; they use this project server by default. Other edit formats remain temporarily unavailable. ' +
-      'Never treat Phi session storage as project files or fall back to local execution.'
+      'Never treat Phi session storage as project files or fall back to local execution.',
+    ...(options.runtime ? [remoteRuntimePrompt(options.runtime)] : [])
   ]
+}
+
+function remoteRuntimePrompt(runtime: RemoteRuntimePromptContext): string {
+  const status = {
+    installed: 'micromamba is installed and runnable.',
+    'not-installed':
+      'micromamba is not installed. Ask the user to install it in remote host settings; Phi will not install it automatically.',
+    outdated:
+      'micromamba is outdated. Ask the user to update it in remote host settings; do not replace it automatically.',
+    unusable:
+      'micromamba is installed but not runnable. Ask the user to repair it in remote host settings.',
+    unchecked:
+      'micromamba has not been verified. Treat remote environment tools as unavailable until the user checks remote host settings.'
+  }[runtime.micromambaStatus]
+  return `Remote runtime root (${runtime.source}): ${runtime.rootLabel}; ${status}`
 }

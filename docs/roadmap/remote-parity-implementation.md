@@ -36,6 +36,28 @@
 
 待核实（第 1 步内顺带确认）：`buildProjectDownloadTool(cwd, agentDir)` 在远程项目下仍使用本地锚点目录。
 
+## R2.5 远程工具分类
+
+分类口径：A 类不读取或解析项目文件系统，可在远程项目直接使用；B 类必须由已验证的 `WorkspaceHost` 或远程运行时后端执行；C 类绑定本机文件、进程或应用句柄，远程项目继续拒绝。所有放行都按“工具名 + 已注册后端来源”逐项验证，未知工具、同名 builtin、动态扩展和 `mcp__*` 不因前缀而自动放行；远程失败也不得回退到本机项目锚点。
+
+| 类别 | 实际注册面 | R2.5 结论 |
+| --- | --- | --- |
+| A | `browser`、`web_search`、`ask_user_question`、`palette_suggest` | 浏览器、搜索、Phi 问答 UI 与调色板不使用项目 cwd，逐项放行。`browser` 仍沿用远程会话当前的输入动作限制。SDK 没有独立 `web_fetch`：网页抓取原本是 builtin `read(URL)` 分支，而远程项目的 `read` 已被服务器文件读取覆盖；本次以 `browser`/`web_search` 为可用替代，不把 URL 交给本机项目 `read`。 |
+| A | 动态 Phi agent 名（远程当前只有 `Wrapper`）、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 只在对应 Phi custom tool 已实际注册时放行。Wrapper 运行已有远程 job 后端；管理工具只操作本会话的 run registry，不解析本机项目路径。builtin `task` 不在此列。 |
+| B（后续） | 条件 builtin `checkpoint`、`rewind`、`todo`、`goal`、`think`、`yield`、`ask`、`hub`；SDK 条件工具 `generate_image`、`tts` | 这些 SDK 工具不是本轮的 Phi 子智能体管理面；其中 checkpoint/todo/hub 可能读取 cwd、写会话文件或管理本机进程，图像/语音工具还需确认远程输出与交付路径。逐项证明不触碰本机项目锚点前继续 fail-closed。 |
+| B（已有） | `read`、`bash`、`glob`、`grep`、`write`、`edit` | 保持现有同名远程实现与 description/source 验签；任何 builtin 同名实现都拒绝。 |
+| B（R2.5 部分完成） | `skill_run`、动态 `<toolPrefix>_<name>` 脚本工具；Skills 列出/读取（资源能力，不是独立工具名） | 远程目录现只列出/读取全局 Skills，忽略本机 anchor 中伪造的项目资源；remote specialist 不再无条件清空其声明的全局 Skill。脚本执行仍需把经过校验的 Skill 资源按需放入服务器运行时根目录的内容寻址目录，再用服务器环境运行；完整 remote runtime service 落地前 `skill_run`/动态脚本工具继续明确拒绝，禁止调用本机 `runSkillScript`。项目级 Skill 留待远程资源信任机制。 |
+| B（R2.5 待后端） | `env_request` | 目标是仅使用 R2.2 配置的服务器运行时根和已安装、可运行的 micromamba 创建/复用环境；未安装、版本/平台不可用或服务器离线时返回明确指引，不自动安装、不转到本机求解或构建。现有 `environments.request` 会写本机 project/runtime，不能复用；独立 remote runtime service 完成前继续拒绝。 |
+| B（R2.5） | `download_file` | URL 与目标先校验，随后由服务器直接下载到远程项目目录。服务器缺少下载器或无法联网时明确报错；旧的 `remoteProject: true` 无后端路径继续拒绝且保持零本机 fetch/写入。 |
+| B（R2.5） | `present_files` | 用远程 host 校验项目内普通文件，记录 `ssh://` 引用；打开时复用已有远程预览/下载链，不把文件复制到本机 anchor。 |
+| B（后续） | `notebook.list`、`notebook.read`、`notebook.insert_cell`、`notebook.update_cell`、`notebook.delete_cell`、`notebook.run_cell`、`notebook.save`；`lib.save`、`lib.update`、`lib.remove`、`lib.list`、`lib.find`、`lib.audit` | 当前实现把 SDK cwd 交给本机 Notebook/Jupyter 或项目 literature store，不能放行。待各自接入 WorkspaceHost/远程 Jupyter 或明确的远程 library store；当前替代是远程 `read`/`write`/`bash`。 |
+| B（后续） | builtin `ast_grep`、`ast_edit`、`debug`、`eval`、`github`、`lsp`、`security_scan`、`task` | 都会读取 cwd、启动本机进程或创建继承本机 cwd/工具的子会话；逐个拥有远程后端前继续拒绝。`task` 的替代是已验证的 Phi agent/Wrapper 委派。 |
+| B（仅设计） | 动态 `mcp__<server>_<tool>`、全局/项目 MCP 配置 | 本次不实现。项目配置以后必须由 WorkspaceHost 从远程项目根读取并经过信任门禁；HTTP transport 可留在本机，但每个工具仍需后端 provenance；stdio 必须在服务器运行时执行。配置读取、stdio 启动、工具参数中的路径都不得读取本机 anchor 或静默回退。远程 `enableMCP` 继续为 `false`。 |
+| C | `office_read`、`office_apply`、`office_deliver`，以及安装 Skill 可能声明的本机 Office 脚本工具 | 当前 Office 后端绑定本机已打开文档、草稿与应用进程句柄。远程调用必须说明该原因，并建议先把文件下载到本机 Office 工作流，或在服务器用 `skill_run`/`bash` 生成普通文件后用 `present_files` 交付。不得注册本机 Office 后端作为远程后备。 |
+| C | `memory_edit`、`retain`、`recall`、`reflect`、`learn`、`manage_skill`，以及未声明 host-aware 的 extension/plugin tool | 这些条件工具绑定本机全局存储或内容写入；R2.5 不扩大权限，继续以具体原因拒绝。未来只有在明确区分全局状态与项目路径并补齐远程测试后才可改类。 |
+
+主 agent 的完整 builtin 注册候选还包括 `read`、`bash`、`edit`、`glob`、`grep`、`write` 及上表列出的条件工具；`search`/`find` 只是 `grep`/`glob` 的兼容别名。Phi custom tools 还包括上述交付、下载、Notebook、library、Skill、环境、Office、浏览器、用户交互和动态 agent 工具。远程关闭 extension discovery、LSP 与 MCP，因此未实际进入远程工具表的候选仍记录在此，但不会因分类而被隐式注册。
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`

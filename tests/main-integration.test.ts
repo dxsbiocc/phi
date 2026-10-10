@@ -3009,6 +3009,20 @@ async function harness(
         }
       }
     },
+    './agent/download/remote-project-download': {
+      RemoteProjectDownloadManager: class {
+        async run(): Promise<unknown> {
+          return {
+            path: 'ssh://cluster-one/canonical/project/download.bin',
+            displayPath: 'download.bin',
+            bytes: 8
+          }
+        }
+        cancel(): void {
+          return undefined
+        }
+      }
+    },
     './agent/remote-workspace-write': {
       RemoteWorkspaceWriteManager: class {
         constructor(
@@ -3160,6 +3174,23 @@ async function harness(
         office: value
       })
     },
+    './agent/deliverables/remote-present-files': {
+      validateRemotePresentedFiles: async (identity: unknown, value: unknown) => {
+        if (
+          JSON.stringify(identity) !==
+          JSON.stringify({ sessionId: 'phi-1', projectId: 'remote-project-1' })
+        ) {
+          throw new Error('Invalid remote delivery identity')
+        }
+        if (!Array.isArray(value)) throw new Error('Invalid remote delivery files')
+        return value.map((item) => ({
+          ...(item as Record<string, unknown>),
+          path: 'ssh://cluster-one/canonical/project/report.pdf',
+          displayPath: 'report.pdf',
+          bytes: 123
+        }))
+      }
+    },
     './agent/session/workspace-changes': {
       beginWorkspaceChangeCapture: async (): Promise<object | null> =>
         workspaceChangeSummary ? {} : null,
@@ -3198,6 +3229,7 @@ async function harness(
       })
     },
     './agent/session/session-store': {
+      toolResultDetailsForSession: (): undefined => undefined,
       appendSessionEvent: (sessionId: string, event: Record<string, unknown>) => {
         appendedSessionEvents.push({ sessionId, event })
         return { sessionId, eventId: `event-${appendedSessionEvents.length}`, ...event }
@@ -10726,6 +10758,33 @@ test('main host records final file delivery only for an active conversation', as
     async () => present({ runtimeSessionId: 'unknown', toolCallId: 'present-2', files }),
     /No active conversation/
   )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
+test('main host validates remote delivery on the server without local anchor fallback', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const prompt = app.invoke('agent:prompt', 'create remote report')
+  await tick()
+  const present = app.hostHandlers.get('deliverables.present')
+  assert.ok(present)
+  const result = await present({
+    runtimeSessionId: session.runtimeSessionId,
+    toolCallId: 'remote-present-1',
+    files: [{ path: 'report.pdf' }]
+  })
+  assert.deepEqual(result, {
+    files: [
+      {
+        path: 'ssh://cluster-one/canonical/project/report.pdf',
+        displayPath: 'report.pdf',
+        bytes: 123
+      }
+    ]
+  })
   await app.invoke('agent:stop')
   await prompt
 })
