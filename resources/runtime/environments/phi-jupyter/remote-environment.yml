@@ -1,0 +1,10 @@
+name: phi-jupyter
+description: 远程 Notebook 在登录节点共用的 Jupyter Server 与 Python kernel 环境。
+channels:
+  - conda-forge
+dependencies:
+  # Keep direct versions aligned with the Linux managed Jupyter/Python locks.
+  - python=3.12
+  - jupyter_server=2.21.1
+  - jupyter_client=8.10.0
+  - ipykernel=7.4.0

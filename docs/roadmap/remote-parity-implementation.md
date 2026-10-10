@@ -199,6 +199,23 @@ tunnel 失败和服务器端口冲突均有限重试。自动化只使用本机 
 IPC/UI、远程环境服务或任何 `notebook.*` 工具放行，也未连接真实服务器；真机 OpenSSH、
 ControlMaster、拔网与应用退出验证仍按 R4-I3 真机门禁保留。
 
+### R4-I2 完成记录（2026-10-10）
+
+已增加远程 `phi-jupyter` 固定声明（Python 3.12、`jupyter_server` 2.21.1、
+`jupyter_client` 8.10.0、`ipykernel` 7.4.0）和独立 remote kernelspec adapter。adapter
+只调用 R2.5b `RemoteEnvironmentService.request/bindSession` 创建、复用并绑定
+`<runtime-root>/envs/<内容哈希>/`，不复制环境服务实现、不自行拼 micromamba 命令；随后只在
+服务器 `<runtime-root>/jupyter/kernels/` 写绝对服务器 argv，并按现有
+`AnalysisKernelDiagnostics` 形状列出/选择默认 `phi-python`。adapter 不把服务器 prefix 写入
+日志，返回 UI 的诊断也不包含 prefix；缺 micromamba、conda 源不可达和创建失败继续携带
+`env_request` 的中文恢复建议且不回退本机。首批只默认允许受管 kernel；
+`allowUserPrefixes` 开关默认关闭并清理旧 `host-*` spec，显式开启后也必须先在服务器用所选
+prefix 的 Python 通过 `ipykernel` 导入检查，才登记为只能精确选择的 unmanaged kernel。自动化
+仅使用本机假 SSH/micromamba，覆盖首次创建、内容哈希复用、三类失败提示、
+kernelspec 列出/选择、服务器路径约束、用户 prefix 默认拒绝及依赖门禁。本步未声明 R kernel，
+未接 IPC/UI、未放行任何远程 `notebook.*` 工具，也未连接真实服务器；在线源、站点镜像和完全
+离线迁移仍按 R4-I2 真机门禁保留。
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`
