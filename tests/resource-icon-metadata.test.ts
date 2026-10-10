@@ -16,7 +16,7 @@ mkdirSync(agentDir)
 mkdirSync(project)
 process.env.PI_CODING_AGENT_DIR = agentDir
 
-const { listSkills, listMcpServers } = await import('../src/main/agent/resources')
+const { listSkills, listMcpServers, listPromptAgents } = await import('../src/main/agent/resources')
 const { buildPhiPluginListItem } = await import('../src/main/agent/plugins/details')
 const { installPlugin } = await import('../src/main/agent/plugins/loader')
 const { listConnectorCatalog, installCatalogConnector } =
@@ -48,6 +48,14 @@ test('skill metadata includes own-folder icons for project and installed skills'
     )
     writeFileSync(join(dir, 'icon.svg'), ICON)
   }
+  for (const name of ['fallback-skill', 'second-fallback-skill']) {
+    const fallback = join(project, '.phi', 'skills', name)
+    mkdirSync(fallback, { recursive: true })
+    writeFileSync(
+      join(fallback, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: Curated fallback fixture.\n---\n# Fallback fixture\n`
+    )
+  }
   writeSkillsRegistry(
     {
       version: 1,
@@ -62,6 +70,37 @@ test('skill metadata includes own-folder icons for project and installed skills'
     assert.ok(skill.icon, name)
     assert.ok(readResourceIcon(skill.icon.key), name)
   }
+  const fallbackSkill = skills.find((entry) => entry.name === 'fallback-skill')
+  const secondFallbackSkill = skills.find((entry) => entry.name === 'second-fallback-skill')
+  assert.ok(fallbackSkill?.icon)
+  assert.ok(secondFallbackSkill?.icon)
+  assert.ok(readResourceIcon(fallbackSkill.icon.key))
+  assert.notDeepEqual(secondFallbackSkill.icon, fallbackSkill.icon)
+})
+
+test('Phi agents prefer named sidecars and otherwise receive stable curated icons', async () => {
+  const agentsDir = join(project, '.phi', 'agents')
+  mkdirSync(agentsDir, { recursive: true })
+  const custom = join(agentsDir, 'Custom.md')
+  writeFileSync(
+    custom,
+    '---\nname: Custom\ndescription: Agent icon fixture.\ntools: [read]\nskills: []\n---\nCustom agent.\n'
+  )
+  writeFileSync(join(agentsDir, 'Custom.icon.svg'), ICON)
+
+  const first = await listPromptAgents(project)
+  const customAgent = first.find((entry) => entry.name === 'Custom')
+  assert.ok(customAgent?.icon)
+  assert.equal(
+    readResourceIcon(customAgent.icon.key),
+    `data:image/svg+xml;base64,${Buffer.from(ICON).toString('base64')}`
+  )
+  const wrapper = first.find((entry) => entry.name === 'Wrapper')
+  assert.ok(wrapper?.icon)
+  assert.ok(readResourceIcon(wrapper.icon.key))
+
+  const secondWrapper = (await listPromptAgents(project)).find((entry) => entry.name === 'Wrapper')
+  assert.deepEqual(secondWrapper?.icon, wrapper.icon)
 })
 
 test('installed Phi plugins expose root icons and plugin skills inherit the root fallback', async () => {

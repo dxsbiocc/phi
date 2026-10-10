@@ -35,6 +35,8 @@ import type {
   WorkspaceDiffReference
 } from '../../shared/workspaceChangeTypes'
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
+import type { PromptAgentSummary } from '../../shared/promptAgentTypes'
+export type { PromptAgentSummary } from '../../shared/promptAgentTypes'
 import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type {
@@ -344,14 +346,6 @@ export interface PluginCatalogItem {
   npmUrl: string
   installed: boolean
   installedPath?: string
-}
-
-export interface PromptAgentSummary {
-  id: string
-  name: string
-  description: string
-  source: string
-  trigger: string
 }
 
 export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'

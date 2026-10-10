@@ -6,7 +6,7 @@ import { observeResourceIconVisibility, resourceIconCache } from '../lib/resourc
 
 export type ResourceIconProps = {
   icon?: ResourceIconRef
-  kind: 'mcp' | 'plugin' | 'skill' | 'wrapper'
+  kind: 'agent' | 'mcp' | 'plugin' | 'skill' | 'wrapper'
   size?: number
   fallbackSize?: number
   sx?: SxProps<Theme>

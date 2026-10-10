@@ -9,14 +9,15 @@ import {
   realpathSync,
   type Stats
 } from 'node:fs'
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   RESOURCE_ICON_MAX_BYTES,
   type RegistryIconAsset,
   type ResourceIconRef
 } from '../../shared/resourceIconTypes'
 
-const ICON_NAMES = ['icon.svg', 'icon.png', 'icon.webp', 'icon.jpg', 'icon.jpeg']
+const ICON_EXTENSIONS = ['svg', 'png', 'webp', 'jpg', 'jpeg'] as const
+const ICON_NAMES = ICON_EXTENSIONS.map((extension) => `icon.${extension}`)
 const MAX_REGISTRATIONS = 2048
 const MAX_CACHED_ICONS = 128
 const MAX_CACHE_BYTES = 8 * 1024 * 1024
@@ -130,6 +131,23 @@ export function findResourceIcon(
       } catch {
         // Optional presentation metadata never blocks resource discovery.
       }
+    }
+  }
+  return undefined
+}
+
+/** Register a sibling such as `Wrapper.icon.webp` for resources sharing one directory. */
+export function findResourceIconSidecar(resourceFile: string): ResourceIconRef | undefined {
+  const root = dirname(resourceFile)
+  const stem = basename(resourceFile, extname(resourceFile))
+  if (!stem) return undefined
+  for (const extension of ICON_EXTENSIONS) {
+    const path = `${stem}.icon.${extension}`
+    try {
+      const candidate = safeFile(root, path)
+      if (candidate) return register({ root: resolve(root), canonicalRoot: candidate.root, path })
+    } catch {
+      // Optional presentation metadata never blocks resource discovery.
     }
   }
   return undefined

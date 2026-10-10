@@ -1,8 +1,10 @@
 import { Box, ListItemButton, ListItemIcon, ListItemText, Paper, Typography } from '@mui/material'
-import { PhiIcons } from '../../icons'
+import type { ResourceIconRef } from '../../../../shared/resourceIconTypes'
 import type { InputInvocationReferenceKind } from '../../lib/inputReferences'
+import { ResourceIcon } from '../ResourceIcon'
 
 export type InputInvocationReferenceCandidate = {
+  icon?: ResourceIconRef
   kind: InputInvocationReferenceKind
   name: string
   description: string
@@ -22,9 +24,6 @@ type InputInvocationReferenceMenuProps = {
   onHighlight: (index: number) => void
   onSelect: (candidate: InputInvocationReferenceCandidate) => void
 }
-
-const AgentIcon = PhiIcons.entity.agent
-const SkillIcon = PhiIcons.entity.skill
 
 function menuTitle(state: InputInvocationReferenceMenuState): string {
   const label = state.kind === 'skill' ? 'Skill' : '智能体'
@@ -46,8 +45,6 @@ function InputInvocationReferenceRow({
   onHighlight: () => void
   onSelect: () => void
 }): React.JSX.Element {
-  const Icon = candidate.kind === 'skill' ? SkillIcon : AgentIcon
-
   return (
     <ListItemButton
       dense
@@ -71,7 +68,7 @@ function InputInvocationReferenceRow({
       }}
     >
       <ListItemIcon sx={{ minWidth: 30, color: 'primary.main' }}>
-        <Icon fontSize="small" />
+        <ResourceIcon icon={candidate.icon} kind={candidate.kind} size={24} fallbackSize={18} />
       </ListItemIcon>
       <ListItemText
         primary={candidate.name}

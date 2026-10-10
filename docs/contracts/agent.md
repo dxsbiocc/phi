@@ -17,6 +17,13 @@ The file name without `.md` equals `name`. Phi scans its own agent directories
 (bundled `resources/agents/`, and plugin `agents/` directories from step 6); files
 from other tools' agent directories are read in **compatibility mode** (§ 6).
 
+An agent may provide optional presentation artwork beside the definition as
+`<name>.icon.svg`, `<name>.icon.png`, `<name>.icon.webp`, `<name>.icon.jpg`, or
+`<name>.icon.jpeg` (for example `Wrapper.md` and `Wrapper.icon.webp`). The image is
+decorative metadata, is bounded and validated by Phi's resource-icon reader, and
+does not change the agent contract or execution behavior. When it is absent, Phi
+uses a stable application-owned fallback rather than modifying the definition.
+
 ## 2. Fields
 
 Field names follow omp where omp has the field, and camelCase everywhere

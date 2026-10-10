@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026-10-10.1",
+  "sourceUrl": "https://github.com/s1dashu/ip-as-logo-skill",
+  "websiteUrl": "https://ipaslogo.com/",
+  "commercialUse": {
+    "statement": "The source website describes these images as free mascot logos and states that they are free for commercial use.",
+    "sourceUrl": "https://ipaslogo.com/"
+  },
+  "entries": [
+    {
+      "id": "gentle-fox",
+      "name": "Gentle Fox",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/gentle-fox.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/090b6068c5f1c289-gentle-fox.webp",
+      "sha256": "e6115a3e2c09e965ae22fe3492fa23420eaf66f9b8928f9c203727a1c4040c54",
+      "size": 6886
+    },
+    {
+      "id": "classic-red-panda",
+      "name": "Classic Red Panda",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/classic-red-panda.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/80959289943a5bc6-classic-red-panda.webp",
+      "sha256": "8833023458c4f48451d2db29e49615ff11a9d6f11986b14f1613bca59f3e185f",
+      "size": 8408
+    },
+    {
+      "id": "raccoon",
+      "name": "Raccoon",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/raccoon.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/39cb25f161f59e8c-raccoon-6.webp",
+      "sha256": "5d86320da546a2ee4ee39f02363ef881f69bc258024d58f12609fa04a06ca752",
+      "size": 9066
+    },
+    {
+      "id": "baby-seal",
+      "name": "Baby Seal",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/baby-seal.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/f096d415ae53e8eb-baby-seal.webp",
+      "sha256": "3db637d63e6e8459526387bdf5df27421278ed0396d1587f7c3c441ad5ec3793",
+      "size": 6922
+    },
+    {
+      "id": "otter-wide-ears",
+      "name": "Otter Wide Ears Left",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/otter-wide-ears.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/7312d1fc16678d11-otter-wide-ears-left.webp",
+      "sha256": "ed15d7f18d89601b6878cbfff2db8d9399f521d0526e8091536a60354166f9cc",
+      "size": 5436
+    },
+    {
+      "id": "thunderbird-chick",
+      "name": "Thunderbird Chick",
+      "category": "animals",
+      "kinds": ["agent"],
+      "path": "agent/thunderbird-chick.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/6a8a1b955ae4df28-thunderbird-chick-2.webp",
+      "sha256": "6915f7da5693931bd9cee1db0f7dcf0af98e4c7cc01986cf5ae49d4ac73259ca",
+      "size": 7832
+    },
+    {
+      "id": "dream-post-robot",
+      "name": "Dream Post Robot",
+      "category": "objects",
+      "kinds": ["agent"],
+      "path": "agent/dream-post-robot.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/11fd58346963f5cf-dream-post-robot.webp",
+      "sha256": "6fd252a32bc228a1f158ad244fe32f3401fe21b978629224625686268c32eb4d",
+      "size": 6174
+    },
+    {
+      "id": "cloud-weaver-robot",
+      "name": "Cloud Weaver Robot",
+      "category": "nature",
+      "kinds": ["agent"],
+      "path": "agent/cloud-weaver-robot.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/ec3990a6cc444991-cloud-weaver-robot.webp",
+      "sha256": "23657497e117f873e14b1ffbd1af67d1d46fff8370dcedc9f188d7699254f301",
+      "size": 8502
+    },
+    {
+      "id": "barometer",
+      "name": "Barometer",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/barometer.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/f82e772ae0dc7977-barometer.webp",
+      "sha256": "1e9351d31da5806d2e6e4d9e5d2f1e2d12a5c5f5f0f062a255854240e7312686",
+      "size": 10624
+    },
+    {
+      "id": "petri-dish",
+      "name": "Petri Dish",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/petri-dish.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/9d61cb73c76214ef-petri-dish.webp",
+      "sha256": "be62a85cc2a4f826101fec7e60f1b8d84d3350657d1be24acbd07e5777dff748",
+      "size": 6032
+    },
+    {
+      "id": "hammer",
+      "name": "Hammer",
+      "category": "objects",
+      "kinds": ["skill"],
+      "path": "skill/hammer.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/3f29c0f50d32909e-hammer-3.webp",
+      "sha256": "84baecaa71b0da5988e8c1aa33442841f31d3f7c7eee651cc92af3698f2d01d1",
+      "size": 5792
+    },
+    {
+      "id": "book-spirit",
+      "name": "Book Spirit",
+      "category": "objects",
+      "kinds": ["skill"],
+      "path": "skill/book-spirit.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/d5d8d72aec39d995-book-spirit.webp",
+      "sha256": "62f04c09dc9aac1e332407b93997bea856aac5a96924eab432ed76984b77286b",
+      "size": 8170
+    },
+    {
+      "id": "measuring-cup",
+      "name": "Measuring Cup",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/measuring-cup.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/015e0d004eed587c-measuring-cup.webp",
+      "sha256": "e4c14ac7cc4f29f52af5a570dca9ec835281ac077c3dff18f5fb9c86764c40df",
+      "size": 5684
+    },
+    {
+      "id": "printing-brayer",
+      "name": "Printing Brayer",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/printing-brayer.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/e528db91b14a5dd4-printing-brayer.webp",
+      "sha256": "cc020e6295ff4f1c1d798d9db508a680adc1768b555a7669572c6b4d53ee4ee9",
+      "size": 6046
+    },
+    {
+      "id": "sewing-machine",
+      "name": "Sewing Machine",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/sewing-machine.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/944fc6e13575a565-sewing-machine-3.webp",
+      "sha256": "90125803bc0d5062338494280132ea2cb9d740f3162f592b4e2400b5777ba90b",
+      "size": 7832
+    },
+    {
+      "id": "spellbook-router",
+      "name": "Spellbook Router",
+      "category": "other",
+      "kinds": ["skill"],
+      "path": "skill/spellbook-router.webp",
+      "sourceUrl": "https://cdn.ipaslogo.com/display-512/0d4d5f2e3c98f20d-spellbook-router.webp",
+      "sha256": "beadde2d182219873cb7d1d1c99a02c76fa1de5c7979be22ac5ed59b9fb5cab1",
+      "size": 12446
+    }
+  ]
+}

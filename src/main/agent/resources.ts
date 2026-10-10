@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, type Dirent } from 'node
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
+import type { PromptAgentSummary } from '../../shared/promptAgentTypes'
 import { WORKSPACE_DIR } from './session/sessions'
 import {
   createRuntimeResourceLoader,
@@ -14,7 +15,8 @@ import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } fro
 import { discoverPhiAgents } from './agents/discovery'
 import { getEnablementSnapshot, isCoreSkill, setEnabled, skillEnablementSource } from './enablement'
 import { parseSkillFile } from './content/skill'
-import { findResourceIcon } from './resource-icons'
+import { resolveCuratedResourceIcon } from './curated-icons'
+import { findResourceIcon, findResourceIconSidecar } from './resource-icons'
 import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { listActiveMcpPackages } from './packages/mcp-store'
 import { listInstalledPlugins } from './plugins/loader'
@@ -22,6 +24,7 @@ import { listInstalledPlugins } from './plugins/loader'
 const AGENT_DIR = getPhiAgentDir()
 
 export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
+export type { PromptAgentSummary } from '../../shared/promptAgentTypes'
 
 export interface McpServerSummary {
   icon?: ResourceIconRef
@@ -42,14 +45,6 @@ export interface McpServerSummary {
   enabled?: boolean
   userDisabled?: boolean
   status: 'configured'
-}
-
-export interface PromptAgentSummary {
-  id: string
-  name: string
-  description: string
-  source: string
-  trigger: string
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -181,10 +176,15 @@ function toSkillSummary(
   const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
   const enabled = core ? true : (projectOverride ?? globalEnabled)
   const metadata = skillMetadata(skill.filePath)
-  const icon = findResourceIcon(
-    dirname(skill.filePath),
-    sourceCategory === 'plugin' && pluginDirectory ? [pluginDirectory] : []
-  )
+  const icon =
+    findResourceIcon(
+      dirname(skill.filePath),
+      sourceCategory === 'plugin' && pluginDirectory ? [pluginDirectory] : []
+    ) ??
+    resolveCuratedResourceIcon(
+      'skill',
+      `${sourceCategory}:${skill.sourceInfo.origin ?? skill.sourceInfo.source}:${skill.name}`
+    )
 
   return {
     id: skill.filePath,
@@ -396,7 +396,9 @@ function phiAgentToPromptAgentSummary(agent: {
   description: string
   filePath: string
 }): PromptAgentSummary {
+  const icon = findResourceIconSidecar(agent.filePath)
   return {
+    ...(icon ? { icon } : {}),
     id: agent.filePath,
     name: agent.name,
     description: agent.description,
@@ -523,7 +525,8 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
   const addAgent = (agent: PromptAgentSummary): void => {
     if (seen.has(agent.name)) return
     seen.add(agent.name)
-    agents.push(agent)
+    const icon = agent.icon ?? resolveCuratedResourceIcon('agent', `${agent.source}:${agent.name}`)
+    agents.push(icon ? { ...agent, icon } : agent)
   }
 
   for (const prompt of promptListFromResource(loader.getPrompts())) {

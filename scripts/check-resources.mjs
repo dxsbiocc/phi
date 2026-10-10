@@ -50,6 +50,7 @@ const PHI_RESOURCE_FILES = new Set(['resources/README.md', 'resources/icon.png']
 const PHI_RESOURCE_PARENTS = new Set(['resources/skills', 'resources/plugins'])
 const PHI_RESOURCE_ROOTS = [
   'resources/agents',
+  'resources/icons',
   'resources/office',
   'resources/palettes',
   'resources/remote-helper',

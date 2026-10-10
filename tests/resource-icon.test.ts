@@ -137,7 +137,7 @@ test('webviews without visibility observers still load resource icons', () => {
 })
 
 test('resource rendering starts with each generic kind and resolves decorative images from keys', async () => {
-  for (const kind of ['mcp', 'plugin', 'skill', 'wrapper'] as const) {
+  for (const kind of ['agent', 'mcp', 'plugin', 'skill', 'wrapper'] as const) {
     const markup = renderToStaticMarkup(createElement(ResourceIcon, { kind, size: 32 }))
     assert.match(markup, new RegExp(`data-phi-resource-icon="${kind}"`))
     assert.match(markup, /aria-hidden="true"/)

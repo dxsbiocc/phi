@@ -46,6 +46,7 @@ import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
 import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
+import type { PromptAgentSummary } from '../shared/promptAgentTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -339,14 +340,6 @@ type PluginCatalogItem = {
   npmUrl: string
   installed: boolean
   installedPath?: string
-}
-
-type PromptAgentSummary = {
-  id: string
-  name: string
-  description: string
-  source: string
-  trigger: string
 }
 
 type McpServerSummary = {

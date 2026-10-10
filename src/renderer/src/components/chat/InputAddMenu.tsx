@@ -9,6 +9,7 @@ import {
   Typography
 } from '@mui/material'
 import { useCallback, useMemo, type ReactNode, type Ref } from 'react'
+import { ResourceIcon } from '../ResourceIcon'
 import { PhiIcons } from '../../icons'
 import {
   formatInputFileReferences,
@@ -20,10 +21,8 @@ import type { PluginCatalogItem, PromptAgentSummary, SkillSummary } from '../../
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const AddIcon = PhiIcons.action.add
-const InputAgentIcon = PhiIcons.entity.agent
 const InputFileIcon = PhiIcons.tool.read
 const InputPluginIcon = PhiIcons.entity.plugin
-const InputSkillIcon = PhiIcons.entity.skill
 
 function InputAddGroup({
   title,
@@ -188,7 +187,7 @@ export function InputAddPanel({
           promptAgents.map((agent) => (
             <InputAddMenuRow
               key={agent.id}
-              icon={<InputAgentIcon fontSize="small" />}
+              icon={<ResourceIcon icon={agent.icon} kind="agent" size={24} fallbackSize={18} />}
               primary={agent.name}
               onClick={() => insertReference(formatPromptAgentReference(agent))}
             />
@@ -203,7 +202,7 @@ export function InputAddPanel({
           enabledSkills.map((skill) => (
             <InputAddMenuRow
               key={skill.id}
-              icon={<InputSkillIcon fontSize="small" />}
+              icon={<ResourceIcon icon={skill.icon} kind="skill" size={24} fallbackSize={18} />}
               primary={skill.name}
               onClick={() => insertReference(formatSkillPromptReference(skill))}
             />

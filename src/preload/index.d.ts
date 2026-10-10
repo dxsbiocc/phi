@@ -227,14 +227,6 @@ type PreloadPluginCatalogItem = {
   installedPath?: string
 }
 
-type PreloadPromptAgentSummary = {
-  id: string
-  name: string
-  description: string
-  source: string
-  trigger: string
-}
-
 type PreloadMcpServerSummary = {
   id: string
   name: string

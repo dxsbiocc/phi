@@ -78,6 +78,7 @@ export function useInputInvocationReferenceMenu({
             .filter((skill) => !skill.disabled && candidateMatches(skill.name, visibleQuery.query))
             .map((skill): InputInvocationReferenceCandidate => {
               return {
+                ...(skill.icon ? { icon: skill.icon } : {}),
                 kind: 'skill',
                 name: skill.name,
                 description: skill.description,
@@ -88,6 +89,7 @@ export function useInputInvocationReferenceMenu({
             .filter((agent) => candidateMatches(agent.name, visibleQuery.query))
             .map((agent): InputInvocationReferenceCandidate => {
               return {
+                ...(agent.icon ? { icon: agent.icon } : {}),
                 kind: 'agent',
                 name: agent.name,
                 description: agent.description,

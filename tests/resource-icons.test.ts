@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   findResourceIcon,
+  findResourceIconSidecar,
   readResourceIcon,
   registerResourceIconAsset
 } from '../src/main/agent/resource-icons'
@@ -90,6 +91,26 @@ test('filename priority, explicit fallback roots, and absent icons are determini
     for (const value of [undefined, null, {}, { key: preferred.key }, 1, '', 'a'.repeat(64)]) {
       assert.equal(readResourceIcon(value), null)
     }
+  })
+})
+
+test('named resource sidecars keep agents in one directory from sharing an icon', () => {
+  fixture((root) => {
+    const alpha = join(root, 'Alpha.md')
+    const beta = join(root, 'Beta.md')
+    writeFileSync(alpha, '# Alpha\n')
+    writeFileSync(beta, '# Beta\n')
+    writeFileSync(join(root, 'Alpha.icon.webp'), WEBP)
+    writeFileSync(join(root, 'Beta.icon.png'), PNG)
+
+    const alphaIcon = findResourceIconSidecar(alpha)
+    const betaIcon = findResourceIconSidecar(beta)
+    assert.ok(alphaIcon)
+    assert.ok(betaIcon)
+    assert.notDeepEqual(alphaIcon, betaIcon)
+    assert.match(readResourceIcon(alphaIcon.key) ?? '', /^data:image\/webp;/)
+    assert.match(readResourceIcon(betaIcon.key) ?? '', /^data:image\/png;/)
+    assert.equal(findResourceIconSidecar(join(root, 'Missing.md')), undefined)
   })
 })
 

@@ -8,6 +8,8 @@ test('Phi resources retain core assets and the private Office plugin', () => {
     misplacedPhiResourcePaths([
       'resources/README.md',
       'resources/icon.png',
+      'resources/icons/catalog.json',
+      'resources/icons/agent/gentle-fox.webp',
       'resources/agents/Wrapper.md',
       'resources/runtime/manifest.json',
       'resources/runtime/micromamba/darwin-arm64/micromamba',
@@ -109,4 +111,15 @@ test('resource check rejects Nextflow leftovers and other untracked files', () =
     'resources/wrappers/notes.txt'
   ]
   assert.deepEqual(offendingResourcePaths(untracked), untracked)
+})
+
+test('resource check requires curated icon files to be tracked', () => {
+  const paths = [
+    'resources/icons/catalog.json',
+    'resources/icons/NOTICE.md',
+    'resources/icons/agent/gentle-fox.webp',
+    'resources\\icons\\skill\\petri-dish.webp',
+    'resources/icons/private-key.pem'
+  ]
+  assert.deepEqual(offendingResourcePaths(paths), paths)
 })

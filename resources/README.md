@@ -4,15 +4,16 @@ This directory contains application-owned assets, not the installable content
 catalog. Distributable connectors, standalone skills, visualization, and wrappers
 are maintained in [phi-packages](https://github.com/dxsbiocc/phi-packages).
 
-| Path | Ownership |
-| --- | --- |
-| `icon.png` | Application icon |
-| `agents/` | Core Wrapper agent |
-| `skills/create-wrapper/` | Core wrapper-authoring skill |
-| `palettes/` | Application palette definitions |
-| `runtime/` | Managed runtime manifests, environments, and locks |
-| `office/` | OfficeCLI runtime manifest and fetched platform binary |
-| `plugins/office/` | Retained private Office plugin; some components restrict redistribution |
+| Path                     | Ownership                                                               |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `icon.png`               | Application icon                                                        |
+| `icons/`                 | Versioned, application-owned fallback icons for agents and skills       |
+| `agents/`                | Core Wrapper agent                                                      |
+| `skills/create-wrapper/` | Core wrapper-authoring skill                                            |
+| `palettes/`              | Application palette definitions                                         |
+| `runtime/`               | Managed runtime manifests, environments, and locks                      |
+| `office/`                | OfficeCLI runtime manifest and fetched platform binary                  |
+| `plugins/office/`        | Retained private Office plugin; some components restrict redistribution |
 
 `agents/` currently contains only `Wrapper.md`. Phi directly loads this core
 definition for local delegation and its restricted SSH-project toolbox. Moving
@@ -20,6 +21,11 @@ it into an optional package requires updating that loading contract first.
 Domain agents belong in a plugin's `agents/` directory in phi-packages (for
 example `plugins/visualization/agents/Visualization.md`) and install with that
 plugin. The package contract currently has no standalone `agent` package type.
+
+`icons/` is presentation infrastructure rather than installable domain content.
+Its small offline catalog provides deterministic fallbacks only when an agent or
+skill has no explicit icon. Source, commercial-use attribution, and integrity
+metadata are retained alongside the 512 px WebP thumbnails.
 
 `office/` and `plugins/office/` serve different purposes. The former is a core
 runtime, while the latter is private source and is excluded from desktop packages.

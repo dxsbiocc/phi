@@ -18,6 +18,9 @@ test('desktop packaging keeps the executable and engine while excluding installa
     'out/renderer/index.html',
     'resources/runtime/manifest.json',
     'resources/palettes/default.yaml',
+    'resources/icons/catalog.json',
+    'resources/icons/agent/gentle-fox.webp',
+    'resources/icons/skill/petri-dish.webp',
     'resources/agents/Wrapper.md',
     'resources/skills/create-wrapper/SKILL.md',
     'resources/skills/create-wrapper/references/guide.md'
