@@ -54,12 +54,20 @@ export interface ResolvedRemoteRuntimeRoot {
 
 export type RemoteRuntimeRootProfileCheckState = 'ok' | 'warning' | 'error' | 'unknown'
 
+export type RemoteMicromambaProfileStatus =
+  'unchecked' | 'not-installed' | 'installed' | 'outdated' | 'unusable'
+
+export type RemoteMicromambaCapabilityProfile =
+  | { status: 'unchecked' | 'not-installed' }
+  | { status: 'installed' | 'outdated' | 'unusable'; version: string }
+
 export interface RemoteRuntimeRootCapabilityProfile {
   source: RemoteRuntimeRootSource
   checkedAt: string
   status: RemoteRuntimeRootCheckStatus
   hasHardError: boolean
   warningCodes: readonly RemoteRuntimeRootWarningCode[]
+  micromamba?: RemoteMicromambaCapabilityProfile
   checks: {
     pathResolution: RemoteRuntimeRootProfileCheckState
     creation: RemoteRuntimeRootProfileCheckState

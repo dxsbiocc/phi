@@ -26,6 +26,9 @@ import type {
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
+import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
+import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
+import type { PromptAgentSummary as PreloadPromptAgentSummary } from '../shared/promptAgentTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -469,6 +472,21 @@ type PreloadAnalysisNotebookCodeGenerationProgress = {
   cells: PreloadAnalysisNotebookGeneratedCell[]
 }
 
+type PreloadRemoteMicromambaRequest = {
+  requestId: string
+  hostProfileId: string
+  runtimeRoot: string
+  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+}
+
+type PreloadRemoteMicromambaProgress = {
+  requestId: string
+  stage: 'probe' | 'download' | 'install'
+  message: string
+  transferredBytes?: number
+  totalBytes?: number
+}
+
 type PreloadSaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
@@ -881,6 +899,10 @@ declare global {
         hostProfileId: string,
         runtimeRoot?: string
       ) => Promise<PreloadRemoteHostProfile>
+      remoteMicromamba: (request: PreloadRemoteMicromambaRequest) => Promise<RemoteMicromambaResult>
+      onRemoteMicromambaProgress: (
+        cb: (progress: PreloadRemoteMicromambaProgress) => void
+      ) => () => void
       remoteDoctor: (
         hostProfileId: string,
         remotePath?: string,

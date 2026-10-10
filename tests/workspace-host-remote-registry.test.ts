@@ -218,12 +218,31 @@ __PHI_CAPABILITY_PROBE_V1_END__
           reason: 'helper unavailable',
           version: '0.2.0',
           affectedCapabilities: ['fs', 'exec', 'background']
+        },
+        runtimeRoot: {
+          source: 'host',
+          checkedAt: '2026-10-10T00:00:00.000Z',
+          status: 'checked',
+          hasHardError: false,
+          warningCodes: [],
+          micromamba: { status: 'installed', version: '2.8.0-0' },
+          checks: {
+            pathResolution: 'ok',
+            creation: 'ok',
+            ownership: 'ok',
+            permissions: 'ok',
+            filesystem: 'ok',
+            space: 'ok',
+            executable: 'ok',
+            sharedFilesystem: 'ok'
+          }
         }
       },
       agentDir
     )
     const registry = new RemoteWorkspaceHostRegistry({
       agentDir,
+      expectedMicromambaVersion: '2.9.0-0',
       helperResourceRoot: resourceRoot,
       resolveBinding: (request) => ({
         sessionId: request.sessionId,
@@ -254,6 +273,10 @@ __PHI_CAPABILITY_PROBE_V1_END__
 
     assert.equal(captured?.helper, undefined)
     assert.equal(captured?.capabilityProfile?.helperStatus?.state, 'degraded')
+    assert.deepEqual(captured?.capabilityProfile?.runtimeRoot?.micromamba, {
+      status: 'outdated',
+      version: '2.8.0-0'
+    })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

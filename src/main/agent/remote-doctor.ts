@@ -5,23 +5,24 @@ import type {
   RemoteDoctorReport,
   RemoteDoctorStatus
 } from '../../shared/remoteDoctorTypes'
-import type {
-  RemoteRuntimeRootCheckResult,
-  ResolvedRemoteRuntimeRoot
-} from '../../shared/remoteRuntimeRootTypes'
+import type { RemoteRuntimeRootCheckResult } from '../../shared/remoteRuntimeRootTypes'
+import { selectedRemoteDoctorRuntimeRoot } from './remote-doctor-runtime-root'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import { readHostRuntimeRoot } from './remote-runtime-root-store'
-import { DEFAULT_REMOTE_RUNTIME_ROOT, resolveRemoteRuntimeRoot } from './remote-runtime-root'
 import { getPhiAgentDir } from './runtime-paths'
 import {
   getCapabilityProfile,
-  readLatestCapabilityProfileForHost,
   saveCapabilityProfile
 } from './workspace-host/capability-profile-store'
 import { capabilityToolchainChecks } from './workspace-host/capability-toolchain-checks'
 import { reconcileRemoteHelperProfile } from './workspace-host/helper-installer'
+import {
+  connectionProfileWithMicromamba,
+  currentRemoteMicromambaVersion,
+  runtimeRootProfileWithMicromamba,
+  type MicromambaProfileResolver
+} from './workspace-host/remote-micromamba-profile'
 import { checkRemoteRuntimeRoot } from './workspace-host/runtime-root-check'
-import { runtimeRootCapabilityProfile } from './workspace-host/runtime-root-profile'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import {
   diagnoseSshConnectionFailure,
@@ -47,6 +48,7 @@ export interface RemoteDoctorDependencies {
   connectTimeoutMs?: number
   probeTimeoutMs?: number
   runtimeRootTimeoutMs?: number
+  micromambaProfile?: MicromambaProfileResolver
   now?: () => Date
   /** Tool checks are repeated after saved setup at launch; Doctor never executes setup lines. */
   deferToolChecksToLaunch?: boolean
@@ -106,25 +108,6 @@ function normalizedOptions(input: unknown): RemoteDoctorOptions {
           }
         }
       : {})
-  }
-}
-
-function selectedRuntimeRoot(
-  options: RemoteDoctorOptions,
-  hostOverride: string | undefined
-): ResolvedRemoteRuntimeRoot {
-  const override = options.runtimeRootOverride
-  const input =
-    override?.source === 'project'
-      ? { projectOverride: override.configured, hostOverride }
-      : { hostOverride: override?.source === 'host' ? override.configured : hostOverride }
-  try {
-    return resolveRemoteRuntimeRoot(input)
-  } catch {
-    return {
-      source: override?.source ?? 'default',
-      configured: override?.configured ?? DEFAULT_REMOTE_RUNTIME_ROOT
-    }
   }
 }
 
@@ -242,7 +225,7 @@ export async function remoteDoctor(
 
   checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
   try {
-    const rootResolution = selectedRuntimeRoot(
+    const rootResolution = selectedRemoteDoctorRuntimeRoot(
       selected,
       readHostRuntimeRoot(hostProfileId, agentDir)
     )
@@ -251,21 +234,16 @@ export async function remoteDoctor(
       now
     })
     if (selected.scope === 'connection') {
-      const latest = readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
-      const withRuntimeRoot =
-        latest && rootResolution && runtimeRootCheck
-          ? {
-              ...latest,
-              runtimeRoot: runtimeRootCapabilityProfile(rootResolution.source, runtimeRootCheck)
-            }
-          : latest
-      return report(
-        hostProfileId,
-        checks,
-        now,
-        withRuntimeRoot ? reconcileRemoteHelperProfile(withRuntimeRoot) : undefined,
-        runtimeRootCheck
-      )
+      const withRuntimeRoot = await connectionProfileWithMicromamba({
+        session,
+        hostAlias: profile.hostAlias,
+        configuredRoot: rootResolution.configured,
+        source: rootResolution.source,
+        check: runtimeRootCheck,
+        agentDir,
+        resolve: dependencies.micromambaProfile
+      })
+      return report(hostProfileId, checks, now, withRuntimeRoot, runtimeRootCheck)
     }
     checks.push(
       (dependencies.sftpAvailable ?? systemSftpAvailable)()
@@ -343,6 +321,7 @@ export async function remoteDoctor(
             {
               agentDir,
               refresh: selected.refreshCapabilities,
+              expectedMicromambaVersion: currentRemoteMicromambaVersion(),
               timeoutMs: probeTimeoutMs,
               now
             }
@@ -352,7 +331,15 @@ export async function remoteDoctor(
       detectedProfile && rootResolution && runtimeRootCheck
         ? {
             ...detectedProfile,
-            runtimeRoot: runtimeRootCapabilityProfile(rootResolution.source, runtimeRootCheck)
+            runtimeRoot: await runtimeRootProfileWithMicromamba({
+              session,
+              configuredRoot: rootResolution.configured,
+              source: rootResolution.source,
+              platform: detectedProfile.platform,
+              check: runtimeRootCheck,
+              previous: detectedProfile.runtimeRoot?.micromamba,
+              resolve: dependencies.micromambaProfile
+            })
           }
         : detectedProfile
     if (detectedWithRuntimeRoot && profileKey) {

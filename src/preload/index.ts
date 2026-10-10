@@ -44,6 +44,8 @@ import type {
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
+import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
+import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -687,6 +689,21 @@ type AnalysisNotebookCodeGenerationProgress = {
   cells: AnalysisNotebookGeneratedCell[]
 }
 
+type RemoteMicromambaRequest = {
+  requestId: string
+  hostProfileId: string
+  runtimeRoot: string
+  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+}
+
+type RemoteMicromambaProgress = {
+  requestId: string
+  stage: 'probe' | 'download' | 'install'
+  message: string
+  transferredBytes?: number
+  totalBytes?: number
+}
+
 type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
@@ -836,6 +853,8 @@ type RendererAuthApi = {
   }) => Promise<RemoteHostProfile>
   deleteRemoteHost: (id: string) => Promise<void>
   saveRemoteRuntimeRoot: (hostProfileId: string, runtimeRoot?: string) => Promise<RemoteHostProfile>
+  remoteMicromamba: (request: RemoteMicromambaRequest) => Promise<RemoteMicromambaResult>
+  onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void) => Unsubscribe
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,
@@ -1381,6 +1400,13 @@ const api: RendererAuthApi = {
     runtimeRoot?: string
   ): Promise<RemoteHostProfile> =>
     ipcRenderer.invoke('remote:saveRuntimeRoot', hostProfileId, runtimeRoot),
+  remoteMicromamba: (request: RemoteMicromambaRequest): Promise<RemoteMicromambaResult> =>
+    ipcRenderer.invoke('remote:micromamba', request),
+  onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void): Unsubscribe => {
+    const handler = (_: unknown, progress: RemoteMicromambaProgress): void => cb(progress)
+    ipcRenderer.on('remote:micromambaProgress', handler)
+    return () => ipcRenderer.removeListener('remote:micromambaProgress', handler)
+  },
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,

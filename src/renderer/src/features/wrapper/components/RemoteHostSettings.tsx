@@ -11,6 +11,7 @@ import {
   remoteHostDoctorTarget,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
+import { useRemoteMicromambaSettings } from '../hooks/useRemoteMicromambaSettings'
 import { RemoteHostProfilesPanel, type RemoteHostDraft } from './RemoteHostProfilesPanel'
 import { RemoteHostPasswordBootstrapDialog } from './RemoteHostPasswordBootstrapDialog'
 
@@ -54,6 +55,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       ),
     []
   )
+  const { micromambaStates, installMicromamba } = useRemoteMicromambaSettings(doctorController)
 
   useEffect(() => (): void => doctorController.dispose(), [doctorController])
 
@@ -252,6 +254,10 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
           void doctorController.check(
             remoteHostDoctorTarget(host.id, host.hostAlias, runtimeRoot ?? '')
           )
+        }
+        micromambaStates={micromambaStates}
+        onMicromambaInstall={(host, runtimeRoot, confirmedWarnings) =>
+          void installMicromamba(host, runtimeRoot, confirmedWarnings)
         }
       />
       {bootstrapTarget && (

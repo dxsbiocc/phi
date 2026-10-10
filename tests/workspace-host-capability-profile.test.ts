@@ -104,6 +104,7 @@ describe('workspace host capability profile cache', () => {
 
     const saved = readCapabilityProfile(key, { agentDir })
     assert.equal(saved?.runtimeRoot?.source, 'project')
+    assert.deepEqual(saved?.runtimeRoot?.micromamba, { status: 'unchecked' })
     assert.deepEqual(saved?.runtimeRoot?.warningCodes, ['shared-filesystem-info'])
     assert.equal(saved?.runtimeRoot?.checks.ownership, 'warning')
     const persisted = readFileSync(capabilityProfileStorePath(agentDir), 'utf8')

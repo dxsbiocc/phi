@@ -11,7 +11,8 @@ import { DEFAULT_REMOTE_RUNTIME_ROOT } from '../src/main/agent/remote-runtime-ro
 import { saveHostRuntimeRoot } from '../src/main/agent/remote-runtime-root-store'
 import {
   capabilityProfileStorePath,
-  readCapabilityProfile
+  readCapabilityProfile,
+  updateLatestCapabilityProfileMicromambaForHost
 } from '../src/main/agent/workspace-host/capability-profile-store'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
@@ -49,6 +50,10 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
         agentDir,
         sftpAvailable: () => true,
         connectImpl: async () => session,
+        micromambaProfile: async (_session, configuredRoot) => {
+          assert.equal(configuredRoot, runtimeRoot)
+          return { status: 'not-installed' }
+        },
         now: () => new Date('2026-10-09T05:00:00.000Z')
       }
     )
@@ -57,6 +62,9 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
     assert.equal(report.runtimeRootCheck?.exists, false)
     assert.equal(report.capabilityProfile?.runtimeRoot?.source, 'project')
     assert.equal(report.capabilityProfile?.runtimeRoot?.hasHardError, false)
+    assert.deepEqual(report.capabilityProfile?.runtimeRoot?.micromamba, {
+      status: 'not-installed'
+    })
     assert.equal(
       readCapabilityProfile({ hostAlias: host.hostAlias, projectRoot: root }, { agentDir })
         ?.runtimeRoot?.source,
@@ -68,6 +76,36 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
       new RegExp(realpathSync(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     )
     assert.doesNotMatch(persisted, /local-shell/)
+
+    const statuses = [
+      { status: 'installed' as const, version: '2.9.0-0' },
+      { status: 'outdated' as const, version: '2.8.0' }
+    ]
+    for (const status of statuses) {
+      updateLatestCapabilityProfileMicromambaForHost(host.hostAlias, status, agentDir)
+      const followupSession = createLocalShellSession()
+      followupSession.execWithInput = (command, input) => executeWithInput(command, input)
+      const followup = await remoteDoctor(
+        host.id,
+        root,
+        {
+          scope: 'workspace',
+          runtimeRootOverride: { source: 'project', configured: runtimeRoot }
+        },
+        {
+          agentDir,
+          sftpAvailable: () => true,
+          connectImpl: async () => followupSession,
+          now: () => new Date('2026-10-09T05:05:00.000Z')
+        }
+      )
+      assert.deepEqual(followup.capabilityProfile?.runtimeRoot?.micromamba, status)
+      assert.deepEqual(
+        readCapabilityProfile({ hostAlias: host.hostAlias, projectRoot: root }, { agentDir })
+          ?.runtimeRoot?.micromamba,
+        status
+      )
+    }
   } finally {
     await session.close()
     rmSync(root, { recursive: true, force: true })

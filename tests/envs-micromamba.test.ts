@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { getMicromambaPath, micromambaCandidates } from '../src/main/agent/envs/paths'
 import { findPlatform } from '../src/main/agent/envs/platform'
+import { REMOTE_MICROMAMBA_TARGETS } from '../src/main/agent/remote-micromamba-artifact'
 import {
   MICROMAMBA_PLATFORM_IDS,
   fileSha256,
@@ -18,10 +19,11 @@ const repoRoot = process.cwd()
 const condaSubdirByPlatform: Record<string, string> = {
   'darwin-arm64': 'osx-arm64',
   'darwin-x64': 'osx-64',
-  'linux-x64': 'linux-64'
+  'linux-x64': 'linux-64',
+  'linux-arm64': 'linux-aarch64'
 }
 
-test('micromamba manifest lists the three bundled platforms', () => {
+test('micromamba manifest lists bundled and on-demand remote platforms', () => {
   const manifest = JSON.parse(
     readFileSync(join(repoRoot, 'resources', 'runtime', 'manifest.json'), 'utf8')
   ) as {
@@ -32,12 +34,12 @@ test('micromamba manifest lists the three bundled platforms', () => {
   }
 
   assert.equal(manifest.micromamba.version, '2.9.0-0')
-  assert.deepEqual(
-    Object.keys(manifest.micromamba.platforms).sort(),
-    [...MICROMAMBA_PLATFORM_IDS].sort()
-  )
+  const manifestPlatformIds = [
+    ...new Set([...MICROMAMBA_PLATFORM_IDS, ...REMOTE_MICROMAMBA_TARGETS])
+  ]
+  assert.deepEqual(Object.keys(manifest.micromamba.platforms).sort(), manifestPlatformIds.sort())
 
-  for (const platformId of MICROMAMBA_PLATFORM_IDS) {
+  for (const platformId of manifestPlatformIds) {
     const release = lookupMicromambaPlatform(manifest, platformId)
     const subdir = condaSubdirByPlatform[platformId]
     assert.ok(release)

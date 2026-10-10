@@ -22,6 +22,8 @@ import {
 import { RemoteDoctorPanel } from './RemoteDoctorPanel'
 import { RemoteHostDialog, type RemoteHostDraft } from './RemoteHostDialog'
 import { RemoteHostRuntimeRootEditor } from './RemoteHostRuntimeRootEditor'
+import type { RemoteMicromambaUiState } from './RemoteMicromambaControl'
+import type { RemoteRuntimeRootWarningCode } from '../../../../../shared/remoteRuntimeRootTypes'
 
 export type { RemoteHostDraft } from './RemoteHostDialog'
 
@@ -78,7 +80,9 @@ export function RemoteHostProfilesPanel({
   onDelete,
   onTest,
   onRuntimeRootSave,
-  onRuntimeRootCheck
+  onRuntimeRootCheck,
+  micromambaStates,
+  onMicromambaInstall
 }: {
   hosts: RemoteHostProfile[]
   openSshHosts: OpenSshHost[]
@@ -100,6 +104,12 @@ export function RemoteHostProfilesPanel({
   onTest: (host: RemoteHostProfile) => void
   onRuntimeRootSave?: (host: RemoteHostProfile, runtimeRoot?: string) => void
   onRuntimeRootCheck?: (host: RemoteHostProfile, runtimeRoot?: string) => void
+  micromambaStates?: Record<string, RemoteMicromambaUiState>
+  onMicromambaInstall?: (
+    host: RemoteHostProfile,
+    runtimeRoot: string,
+    confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+  ) => void
 }): React.JSX.Element {
   const rows = hostRows(hosts, openSshHosts)
   return (
@@ -286,6 +296,8 @@ export function RemoteHostProfilesPanel({
                         busy={busy || checking}
                         onSave={onRuntimeRootSave}
                         onCheck={onRuntimeRootCheck}
+                        micromambaState={micromambaStates?.[host.id]}
+                        onMicromambaInstall={onMicromambaInstall}
                       />
                     </Box>
                   )}

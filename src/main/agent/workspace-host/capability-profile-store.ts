@@ -11,12 +11,17 @@ import {
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import type { RemoteMicromambaCapabilityProfile } from '../../../shared/remoteRuntimeRootTypes'
 import {
   probeHostCapabilities,
   type HostCapabilityProbeOptions,
   type HostCapabilityProbeSession
 } from './probe'
 import type { ProbedHostCapabilityProfile } from './probe-parse'
+import {
+  withExpectedRemoteMicromambaVersion,
+  withRemoteMicromambaCapabilityProfile
+} from './runtime-root-profile'
 import { HOST_CAPABILITY_PROFILE_VERSION } from './types'
 
 const STORE_FILE = 'ssh-host-capabilities.json'
@@ -38,6 +43,7 @@ export interface CapabilityProfileKey {
 export interface CapabilityProfileReadOptions {
   agentDir?: string
   expectedHelperVersion?: string
+  expectedMicromambaVersion?: string
   expectedProfileVersion?: number
 }
 
@@ -76,6 +82,15 @@ function isProfile(value: unknown): value is ProbedHostCapabilityProfile {
   )
 }
 
+function normalizeProfile(value: unknown): ProbedHostCapabilityProfile | undefined {
+  if (!isProfile(value)) return undefined
+  try {
+    return withRemoteMicromambaCapabilityProfile(value, value.runtimeRoot?.micromamba)
+  } catch {
+    return undefined
+  }
+}
+
 function readStore(agentDir: string): CapabilityProfileStore {
   const path = capabilityProfileStorePath(agentDir)
   if (!existsSync(path)) return emptyStore()
@@ -87,9 +102,10 @@ function readStore(agentDir: string): CapabilityProfileStore {
       return emptyStore()
     }
     const entries = Object.fromEntries(
-      Object.entries(store.entries).filter(
-        (entry): entry is [string, ProbedHostCapabilityProfile] => isProfile(entry[1])
-      )
+      Object.entries(store.entries).flatMap(([key, value]) => {
+        const profile = normalizeProfile(value)
+        return profile ? [[key, profile]] : []
+      })
     )
     const latestByHost =
       typeof store.latestByHost === 'object' && store.latestByHost
@@ -177,7 +193,9 @@ export function readCapabilityProfile(
   ) {
     return undefined
   }
-  return profile
+  return options.expectedMicromambaVersion
+    ? withExpectedRemoteMicromambaVersion(profile, options.expectedMicromambaVersion)
+    : profile
 }
 
 export function readLatestCapabilityProfileForHost(
@@ -197,7 +215,9 @@ export function readLatestCapabilityProfileForHost(
   ) {
     return undefined
   }
-  return profile
+  return options.expectedMicromambaVersion
+    ? withExpectedRemoteMicromambaVersion(profile, options.expectedMicromambaVersion)
+    : profile
 }
 
 export function saveCapabilityProfile(
@@ -213,6 +233,7 @@ export function saveCapabilityProfile(
     return
   }
   const store = readStore(agentDir)
+  const normalized = withRemoteMicromambaCapabilityProfile(profile, profile.runtimeRoot?.micromamba)
   const cacheKey = capabilityProfileCacheKey(key)
   const hostKey = capabilityProfileHostKey(key.hostAlias)
   const hostCacheKeys = [...new Set([...(store.cacheKeysByHost[hostKey] ?? []), cacheKey])]
@@ -220,7 +241,7 @@ export function saveCapabilityProfile(
     ...store,
     entries: {
       ...store.entries,
-      [cacheKey]: { ...profile, profileVersion: HOST_CAPABILITY_PROFILE_VERSION }
+      [cacheKey]: { ...normalized, profileVersion: HOST_CAPABILITY_PROFILE_VERSION }
     },
     latestByHost: {
       ...store.latestByHost,
@@ -231,6 +252,36 @@ export function saveCapabilityProfile(
       [hostKey]: hostCacheKeys
     }
   })
+}
+
+function storeWithMicromambaStatus(
+  store: CapabilityProfileStore,
+  cacheKey: string,
+  status: RemoteMicromambaCapabilityProfile
+): CapabilityProfileStore | undefined {
+  const profile = store.entries[cacheKey]
+  if (!profile?.runtimeRoot) return undefined
+  return {
+    ...store,
+    entries: {
+      ...store.entries,
+      [cacheKey]: withRemoteMicromambaCapabilityProfile(profile, status)
+    }
+  }
+}
+
+export function updateLatestCapabilityProfileMicromambaForHost(
+  hostAlias: string,
+  status: RemoteMicromambaCapabilityProfile,
+  agentDir = getPhiAgentDir()
+): boolean {
+  const store = readStore(agentDir)
+  const cacheKey = store.latestByHost[capabilityProfileHostKey(hostAlias)]
+  if (!cacheKey) return false
+  const updated = storeWithMicromambaStatus(store, cacheKey, status)
+  if (!updated) return false
+  writeStore(agentDir, updated)
+  return true
 }
 
 function withoutEntry(

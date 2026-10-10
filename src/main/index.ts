@@ -185,6 +185,7 @@ import { listOpenSshHosts } from './agent/ssh-config-discovery'
 import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
+import { registerRemoteMicromambaIpc } from './agent/remote-micromamba-ipc'
 import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
 import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
@@ -7766,6 +7767,7 @@ app.whenReady().then(async () => {
     () => mainWindow?.webContents ?? null,
     createDefaultSshBootstrapCoordinator()
   )
+  registerRemoteMicromambaIpc(ipcMain)
   registerOfficeIpc()
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()

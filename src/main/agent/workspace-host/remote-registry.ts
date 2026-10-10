@@ -2,6 +2,7 @@ import {
   resolveRemoteWorkspaceHostBinding,
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
+import { remoteMicromambaManifestVersion } from '../remote-micromamba-artifact'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { readCapabilityProfile } from './capability-profile-store'
 import { reconcileRemoteHelperProfile } from './helper-installer'
@@ -23,6 +24,18 @@ interface RemoteWorkspaceHostRegistryDependencies {
   agentDir?: string
   helperResourceRoot?: string
   helperDevelopmentRoot?: string
+  expectedMicromambaVersion?: string
+}
+
+function expectedMicromambaVersion(
+  dependencies: RemoteWorkspaceHostRegistryDependencies
+): string | undefined {
+  if (dependencies.expectedMicromambaVersion) return dependencies.expectedMicromambaVersion
+  try {
+    return remoteMicromambaManifestVersion()
+  } catch {
+    return undefined
+  }
 }
 
 interface HostEntry {
@@ -49,7 +62,10 @@ function sshHostConfig(
   dependencies: RemoteWorkspaceHostRegistryDependencies
 ): SshHostConfig {
   const profileKey = { hostAlias: binding.hostAlias, projectRoot: binding.remoteRoot }
-  const cached = readCapabilityProfile(profileKey, { agentDir: dependencies.agentDir })
+  const cached = readCapabilityProfile(profileKey, {
+    agentDir: dependencies.agentDir,
+    expectedMicromambaVersion: expectedMicromambaVersion(dependencies)
+  })
   const profile = cached
     ? reconcileRemoteHelperProfile(cached, {
         profileKey,

@@ -2810,6 +2810,34 @@ async function harness(
     './agent/ssh-bootstrap/ipc': {
       registerSshBootstrapIpc: (): void => {}
     },
+    './agent/remote-micromamba-ipc': {
+      registerRemoteMicromambaIpc: (main: {
+        handle: (channel: string, handler: Handler) => void
+      }): void => {
+        main.handle('remote:micromamba', async (event, value: unknown) => {
+          const sender = (event as { sender: { send: (channel: string, data: unknown) => void } })
+            .sender
+          const input = value as Record<string, unknown>
+          if (!input || typeof input.requestId !== 'string' || !input.requestId) {
+            throw new Error('micromamba 安装请求无效')
+          }
+          sender.send('remote:micromambaProgress', {
+            requestId: input.requestId,
+            stage: 'install',
+            message: '正在安装…'
+          })
+          return {
+            status: 'installed',
+            version: '2.9.0-0',
+            platform: 'linux-x64',
+            durationMs: 25,
+            installPath: '/data/runtime/bin/micromamba-2.9.0-0',
+            warningCodes: ['noexec'],
+            message: 'micromamba 已安装并验证。'
+          }
+        })
+      }
+    },
     './agent/remote-doctor': {
       remoteDoctor: async (hostProfileId: string, remotePath?: string, options?: unknown) => {
         remoteDoctorCalls.push({ hostProfileId, remotePath, options })
@@ -5331,6 +5359,44 @@ test('main IPC: saves and clears a host runtime-root override without credential
   })
   await assert.rejects(app.invoke('remote:saveRuntimeRoot', '', '/data/runtime'), /档案 ID 无效/)
   await assert.rejects(app.invoke('remote:saveRuntimeRoot', 'host-1', 42), /根目录无效/)
+})
+
+test('main IPC: installs remote micromamba only for an explicit validated request', async () => {
+  const app = await harness()
+
+  assert.deepEqual(
+    await app.invoke('remote:micromamba', {
+      requestId: 'micromamba-request-1',
+      hostProfileId: 'host-1',
+      runtimeRoot: '/data/runtime',
+      confirmedWarnings: ['noexec']
+    }),
+    {
+      status: 'installed',
+      version: '2.9.0-0',
+      platform: 'linux-x64',
+      durationMs: 25,
+      installPath: '/data/runtime/bin/micromamba-2.9.0-0',
+      warningCodes: ['noexec'],
+      message: 'micromamba 已安装并验证。'
+    }
+  )
+  assert.equal(
+    app.events.some(
+      (event) =>
+        event.channel === 'remote:micromambaProgress' &&
+        (event.data as { requestId?: string }).requestId === 'micromamba-request-1'
+    ),
+    true
+  )
+  await assert.rejects(
+    app.invoke('remote:micromamba', {
+      requestId: '',
+      hostProfileId: 'host-1',
+      runtimeRoot: '/data/runtime'
+    }),
+    /请求无效/
+  )
 })
 
 test('main IPC lists remote project directories before a project exists', async () => {
