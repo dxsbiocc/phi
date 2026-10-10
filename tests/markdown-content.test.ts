@@ -522,6 +522,62 @@ test('markdown leaves bare file-like words and dotted data fields as text', () =
   assert.match(markup, /README\.md/)
 })
 
+test('markdown does not link local paths before filesystem existence is confirmed', () => {
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        statLocalPaths: async () => []
+      }
+    }
+  })
+
+  try {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(MarkdownContent, {
+          text: 'Missing ./missing.pdf, `./also-missing.png`, and [report](./absent.pdf).',
+          cwd: '/Users/example/project'
+        })
+      )
+    )
+
+    assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+    assert.match(markup, /missing\.pdf/)
+    assert.match(markup, /also-missing\.png/)
+    assert.match(markup, /report/)
+  } finally {
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, 'window', originalWindowDescriptor)
+    } else {
+      Reflect.deleteProperty(globalThis, 'window')
+    }
+  }
+})
+
+test('markdown leaves glob file patterns as plain text', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, {
+        text: 'Patterns: ./*.pdf, ./xxx.{png,pdf}, `./*.csv`, [images](./*.png), and ![plots](./*.svg).',
+        cwd: '/Users/example/project'
+      })
+    )
+  )
+
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-link"/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-preview"/)
+  assert.doesNotMatch(markup, /href="\.\/\*\.png"/)
+  assert.doesNotMatch(markup, /<img[^>]+src="\.\/\*\.svg"/)
+  assert.match(markup, /\*\.pdf/)
+  assert.match(markup, /xxx\.\{png,pdf\}/)
+})
+
 test('markdown inline code requires explicit paths for file preview links', () => {
   const markup = renderToStaticMarkup(
     createElement(

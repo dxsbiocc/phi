@@ -7,6 +7,7 @@ const TRAILING_PUNCTUATION = /[.,;:!?，。；：！？]+$/
 const ABSOLUTE_PATH_BOUNDARY = /[\s([{]/
 const RELATIVE_PATH_BOUNDARY = /[\s([{"'`]/
 const RELATIVE_FILE_LEAF_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z][A-Za-z0-9_-]{0,15}$/
+const LOCAL_PATH_PATTERN_SYNTAX = /[*?{}[\]]/
 
 function trimTrailingPunctuation(path: string): { path: string; suffix: string } {
   const match = TRAILING_PUNCTUATION.exec(path)
@@ -38,6 +39,7 @@ function normalizePath(path: string): string {
 }
 
 export function resolveLocalPath(path: string, cwd: string): string | null {
+  if (LOCAL_PATH_PATTERN_SYNTAX.test(path)) return null
   if (path.startsWith('/')) return normalizePath(path)
   if (!cwd) return null
   if (path.startsWith('./') || path.startsWith('../')) {

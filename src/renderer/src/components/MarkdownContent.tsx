@@ -31,6 +31,7 @@ import {
   collectBareFileReferencePaths,
   inlineCodeBareFilePath,
   inlineCodeFilePath,
+  isLocalPathHref,
   localHrefToPath,
   localPathKindForReference,
   matchedBareFileReference,
@@ -51,7 +52,7 @@ import {
 } from './markdown/MarkdownColorToken'
 import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
-import { useLocalPathKinds } from '../lib/markdownLocalPathPreview'
+import { canStatLocalPaths, useLocalPathKinds } from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
@@ -168,12 +169,13 @@ function renderableLocalPathKind(
         : 'file'
       : null
   }
+  const confirmedKind = localPathKinds.get(absolutePath)
+  if (confirmedKind) return confirmedKind
+  if (canStatLocalPaths()) return null
   if (isPathInsideDirectory(absolutePath, cwd)) {
     return localPathKindForReference(text, absolutePath, cwd, true)
   }
-  return (
-    localPathKinds.get(absolutePath) ?? localPathKindForReference(text, absolutePath, cwd, false)
-  )
+  return localPathKindForReference(text, absolutePath, cwd, false)
 }
 
 function syntaxLanguageForMarkdownCode(language: string | null): SyntaxLanguage {
@@ -389,6 +391,7 @@ function MarkdownImage({
 
   if (!localPath) {
     if (!src) return null
+    if (isLocalPathHref(src)) return <InlineCodeShell>{alt || src}</InlineCodeShell>
     return (
       <Box
         component="img"
@@ -798,6 +801,13 @@ function MarkdownContentImpl({
               />
             )
           }
+          return (
+            <>
+              {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+            </>
+          )
+        }
+        if (isLocalPathHref(href)) {
           return (
             <>
               {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}

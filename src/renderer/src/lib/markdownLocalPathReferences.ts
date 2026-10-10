@@ -33,7 +33,7 @@ export function localPathLabel(text: string, absolutePath: string): string {
   return trimmed
 }
 
-export function localHrefToPath(href: string | undefined, cwd: string): string | null {
+function decodedLocalHrefCandidate(href: string | undefined): string | null {
   if (!href) return null
 
   const withoutHash = href.split('#')[0]
@@ -45,8 +45,25 @@ export function localHrefToPath(href: string | undefined, cwd: string): string |
   }
 
   const lineMatch = /^(.*):\d+$/.exec(decoded)
-  const candidate = lineMatch?.[1] ?? decoded
-  return resolveLocalPath(candidate, cwd)
+  return lineMatch?.[1] ?? decoded
+}
+
+export function localHrefToPath(href: string | undefined, cwd: string): string | null {
+  const candidate = decodedLocalHrefCandidate(href)
+  if (!candidate) return null
+  return resolveLocalPath(candidate, cwd) ?? bareFileReferencePath(candidate, cwd)
+}
+
+export function isLocalPathHref(href: string | undefined): boolean {
+  const candidate = decodedLocalHrefCandidate(href)
+  if (!candidate || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(candidate)) return false
+  return (
+    candidate.startsWith('/') ||
+    candidate.startsWith('./') ||
+    candidate.startsWith('../') ||
+    candidate.includes('/') ||
+    isBareFileReference(candidate)
+  )
 }
 
 export function stripLineReference(path: string): string {

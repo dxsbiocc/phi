@@ -41,3 +41,11 @@ test('local path tokens recognize file-like relative paths but ignore ordinary w
     { kind: 'text', text: 'Open docs/setup guide' }
   ])
 })
+
+test('local path tokens ignore glob patterns', () => {
+  const text = 'Open ./*.pdf and ./xxx.{png,pdf}'
+
+  assert.deepEqual(tokenizeLocalPaths(text, '/Users/example/project'), [{ kind: 'text', text }])
+  assert.equal(resolveLocalPath('./*.pdf', '/Users/example/project'), null)
+  assert.equal(resolveLocalPath('./xxx.{png,pdf}', '/Users/example/project'), null)
+})

@@ -90,6 +90,10 @@ function localPathStatApi(): {
     : null
 }
 
+export function canStatLocalPaths(): boolean {
+  return localPathStatApi() !== null
+}
+
 function localPathStatCacheKey(cwd: string, path: string): string {
   return `${cwd}\0${path}`
 }

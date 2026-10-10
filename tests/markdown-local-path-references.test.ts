@@ -47,3 +47,10 @@ test('markdown local path references resolve link and inline code paths', () => 
     'directory'
   )
 })
+
+test('markdown local path references reject glob patterns', () => {
+  assert.equal(inlineCodeFilePath('./*.pdf', cwd), null)
+  assert.equal(inlineCodeFilePath('./xxx.{png,pdf}', cwd), null)
+  assert.equal(localHrefToPath('./*.pdf', cwd), null)
+  assert.equal(localHrefToPath('./xxx.{png,pdf}', cwd), null)
+})
