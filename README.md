@@ -226,3 +226,8 @@ bun run build:linux
 The packaging configuration still contains development identifiers and a placeholder
 update URL. Production signing, macOS notarization, and update hosting must be
 configured for the intended publisher before distributing a release.
+
+## License
+
+Phi is released under the [MIT License](LICENSE). Third-party code notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

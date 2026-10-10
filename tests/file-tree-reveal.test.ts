@@ -11,19 +11,19 @@ import {
 } from '../src/renderer/src/features/file-preview/lib/fileTreeReveal'
 
 test('remote directory input normalizes to an absolute tree path', () => {
-  assert.equal(normalizeAbsoluteTreePath('/data2//dengxsh/'), '/data2/dengxsh')
-  assert.equal(normalizeAbsoluteTreePath('/data2/shared/../dengxsh'), '/data2/dengxsh')
+  assert.equal(normalizeAbsoluteTreePath('/data2//dana/'), '/data2/dana')
+  assert.equal(normalizeAbsoluteTreePath('/data2/shared/../dana'), '/data2/dana')
   assert.equal(normalizeAbsoluteTreePath('/'), '/')
-  assert.equal(normalizeAbsoluteTreePath('data2/dengxsh'), null)
+  assert.equal(normalizeAbsoluteTreePath('data2/dana'), null)
   assert.equal(normalizeAbsoluteTreePath('/../../outside'), null)
 })
 
 test('remote directory input expands every ancestor needed to reveal the selected row', () => {
-  assert.deepEqual(fileTreeRevealPaths('/', '/data2/dengxsh'), ['/', '/data2', '/data2/dengxsh'])
-  assert.deepEqual(fileTreeRevealPaths('/data2', '/data2/dengxsh/project'), [
+  assert.deepEqual(fileTreeRevealPaths('/', '/data2/dana'), ['/', '/data2', '/data2/dana'])
+  assert.deepEqual(fileTreeRevealPaths('/data2', '/data2/dana/project'), [
     '/data2',
-    '/data2/dengxsh',
-    '/data2/dengxsh/project'
+    '/data2/dana',
+    '/data2/dana/project'
   ])
   assert.deepEqual(fileTreeRevealPaths('/data2', '/data20/project'), [])
 })
@@ -69,7 +69,7 @@ test('partial remote paths fuzzy-match existing folders without probing a missin
     [
       '/data',
       [
-        { name: 'dengxsh', path: '/data/dengxsh' },
+        { name: 'dana', path: '/data/dana' },
         { name: 'dhr', path: '/data/dhr' },
         { name: 'shared', path: '/data/shared' }
       ]
@@ -81,7 +81,7 @@ test('partial remote paths fuzzy-match existing folders without probing a missin
     return entries.get(path) ?? []
   })
 
-  assert.equal(matched, '/data/dengxsh')
+  assert.equal(matched, '/data/dana')
   assert.deepEqual(calls, ['/', '/data'])
   assert.equal(calls.includes('/data/d'), false)
 })
@@ -95,11 +95,11 @@ test('fuzzy path matching supports contains and subsequence matches without inva
         { name: 'shared', path: '/shared' }
       ]
     ],
-    ['/research-data', [{ name: 'dengxsh', path: '/research-data/dengxsh' }]]
+    ['/research-data', [{ name: 'dana', path: '/research-data/dana' }]]
   ])
   const list = async (path: string): Promise<readonly { name: string; path: string }[]> =>
     entries.get(path) ?? []
 
-  assert.equal(await resolveFuzzyTreePath('/data/dgx', list), '/research-data/dengxsh')
+  assert.equal(await resolveFuzzyTreePath('/data/dna', list), '/research-data/dana')
   assert.equal(await resolveFuzzyTreePath('/missing', list), '/')
 })

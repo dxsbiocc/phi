@@ -218,7 +218,7 @@ test('contextReferenceForFilePath builds a data_source reference from an absolut
 })
 
 test('contextReferenceForFilePath handles Windows-style paths too', () => {
-  const reference = contextReferenceForFilePath('C:\\Users\\dengxsh\\demo\\data.csv')
+  const reference = contextReferenceForFilePath('C:\\Users\\example\\demo\\data.csv')
 
   assert.equal(reference.name, 'data.csv')
 })

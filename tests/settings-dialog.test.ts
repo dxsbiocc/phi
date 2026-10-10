@@ -245,5 +245,5 @@ test('settings dialog renders project permission controls without hiding default
   assert.match(markup, /默认模型/)
   assert.match(markup, /思考等级/)
   assert.match(markup, /放宽项目工具限制/)
-  assert.match(markup, /\/Users\/dengxsh\/Downloads\/Work\/App\/Phi/)
+  assert.match(markup, /\/Users\/example\/Downloads\/Work\/App\/Phi/)
 })
