@@ -129,10 +129,79 @@ export function applyRemoteReplace(
   return updated
 }
 
+const REMOTE_REPLACE_FILE_PERL = [
+  'use strict; use warnings;',
+  'use File::Temp qw(tempdir);',
+  'use Fcntl qw(O_WRONLY O_CREAT O_EXCL O_RDONLY O_NOFOLLOW S_IFMT S_IFREG);',
+  'use Digest::SHA qw(sha256_hex);',
+  'my ($leaf, $expectedHash, $expectedBytes) = @ARGV;',
+  'my $dir = tempdir(".phi-edit-XXXXXXXX", DIR => ".", CLEANUP => 0);',
+  'my $stage = "$dir/payload";',
+  'END { unlink $stage if defined $stage && -e $stage; rmdir $dir if defined $dir && -d $dir; }',
+  'sysopen(my $out, $stage, O_WRONLY | O_CREAT | O_EXCL, 0600) or exit 78;',
+  'binmode(STDIN); binmode($out);',
+  'my $received = 0;',
+  'while (1) {',
+  '  my $count = sysread(STDIN, my $chunk, 65536);',
+  '  defined($count) or exit 77;',
+  '  last if $count == 0;',
+  '  $received += $count;',
+  '  $received <= $expectedBytes or exit 77;',
+  '  my $offset = 0;',
+  '  while ($offset < $count) {',
+  '    my $written = syswrite($out, $chunk, $count - $offset, $offset);',
+  '    defined($written) && $written > 0 or exit 78;',
+  '    $offset += $written;',
+  '  }',
+  '}',
+  '$received == $expectedBytes or exit 77;',
+  'close($out) or exit 78;',
+  'sysopen(my $old, $leaf, O_RDONLY | O_NOFOLLOW) or exit 73;',
+  'binmode($old);',
+  'my @before = stat($old);',
+  '@before && (($before[2] & S_IFMT) == S_IFREG) or exit 74;',
+  `my $oldBytes = ""; while (length($oldBytes) <= ${REMOTE_WRITE_MAX_BYTES}) {`,
+  '  my $count = sysread($old, my $chunk, 65536);',
+  '  defined($count) or exit 73;',
+  '  last if $count == 0;',
+  '  $oldBytes .= $chunk;',
+  '}',
+  `length($oldBytes) <= ${REMOTE_WRITE_MAX_BYTES} or exit 75;`,
+  'sha256_hex($oldBytes) eq $expectedHash or exit 76;',
+  'my @name = lstat($leaf);',
+  '@name && (($name[2] & S_IFMT) == S_IFREG) or exit 73;',
+  '-w $leaf or exit 82;',
+  '$name[0] == $before[0] && $name[1] == $before[1] && $name[7] == $before[7] &&',
+  '$name[9] == $before[9] && $name[10] == $before[10] or exit 76;',
+  'chmod($before[2] & 0777, $stage) or exit 78;',
+  'close($old) or exit 73;',
+  'sysopen(my $latest, $leaf, O_RDONLY | O_NOFOLLOW) or exit 73;',
+  'binmode($latest);',
+  'my @latestBefore = stat($latest);',
+  '@latestBefore && (($latestBefore[2] & S_IFMT) == S_IFREG) or exit 74;',
+  `my $latestBytes = ""; while (length($latestBytes) <= ${REMOTE_WRITE_MAX_BYTES}) {`,
+  '  my $count = sysread($latest, my $chunk, 65536);',
+  '  defined($count) or exit 73;',
+  '  last if $count == 0;',
+  '  $latestBytes .= $chunk;',
+  '}',
+  `length($latestBytes) <= ${REMOTE_WRITE_MAX_BYTES} or exit 75;`,
+  'sha256_hex($latestBytes) eq $expectedHash or exit 76;',
+  'my @latestName = lstat($leaf);',
+  '@latestName && (($latestName[2] & S_IFMT) == S_IFREG) or exit 73;',
+  '$latestName[0] == $latestBefore[0] && $latestName[1] == $latestBefore[1] &&',
+  '$latestName[7] == $latestBefore[7] && $latestName[9] == $latestBefore[9] &&',
+  '$latestName[10] == $latestBefore[10] or exit 76;',
+  'close($latest) or exit 73;',
+  'rename($stage, $leaf) or exit 79;',
+  'rmdir($dir) or exit 80;',
+  'undef $stage; undef $dir;'
+].join('\n')
+
 /**
  * OMP's staged stdin and DSH's stale-version rule, adapted to a checked SHA-256
- * followed by same-filesystem rename. An uncooperative writer can still race
- * the final check and rename; there is no remote helper or file lock contract.
+ * followed by same-filesystem rename. The hash is checked after staging and
+ * again immediately before rename to minimize races with uncooperative writers.
  */
 export function buildRemoteReplaceFileCommand(
   path: string,
@@ -142,56 +211,6 @@ export function buildRemoteReplaceFileCommand(
 ): string {
   const leaf = posix.basename(path)
   const parent = posix.dirname(path)
-  const perl = [
-    'use strict; use warnings;',
-    'use File::Temp qw(tempdir);',
-    'use Fcntl qw(O_WRONLY O_CREAT O_EXCL O_RDONLY O_NOFOLLOW S_IFMT S_IFREG);',
-    'use Digest::SHA qw(sha256_hex);',
-    'my ($leaf, $expectedHash, $expectedBytes) = @ARGV;',
-    'my $dir = tempdir(".phi-edit-XXXXXXXX", DIR => ".", CLEANUP => 0);',
-    'my $stage = "$dir/payload";',
-    'END { unlink $stage if defined $stage && -e $stage; rmdir $dir if defined $dir && -d $dir; }',
-    'sysopen(my $out, $stage, O_WRONLY | O_CREAT | O_EXCL, 0600) or exit 78;',
-    'binmode(STDIN); binmode($out);',
-    'my $received = 0;',
-    'while (1) {',
-    '  my $count = sysread(STDIN, my $chunk, 65536);',
-    '  defined($count) or exit 77;',
-    '  last if $count == 0;',
-    '  $received += $count;',
-    '  $received <= $expectedBytes or exit 77;',
-    '  my $offset = 0;',
-    '  while ($offset < $count) {',
-    '    my $written = syswrite($out, $chunk, $count - $offset, $offset);',
-    '    defined($written) && $written > 0 or exit 78;',
-    '    $offset += $written;',
-    '  }',
-    '}',
-    '$received == $expectedBytes or exit 77;',
-    'close($out) or exit 78;',
-    'sysopen(my $old, $leaf, O_RDONLY | O_NOFOLLOW) or exit 73;',
-    'binmode($old);',
-    'my @before = stat($old);',
-    '@before && (($before[2] & S_IFMT) == S_IFREG) or exit 74;',
-    `my $oldBytes = ""; while (length($oldBytes) <= ${REMOTE_WRITE_MAX_BYTES}) {`,
-    '  my $count = sysread($old, my $chunk, 65536);',
-    '  defined($count) or exit 73;',
-    '  last if $count == 0;',
-    '  $oldBytes .= $chunk;',
-    '}',
-    `length($oldBytes) <= ${REMOTE_WRITE_MAX_BYTES} or exit 75;`,
-    'sha256_hex($oldBytes) eq $expectedHash or exit 76;',
-    'my @name = lstat($leaf);',
-    '@name && (($name[2] & S_IFMT) == S_IFREG) or exit 73;',
-    '-w $leaf or exit 82;',
-    '$name[0] == $before[0] && $name[1] == $before[1] && $name[7] == $before[7] &&',
-    '$name[9] == $before[9] && $name[10] == $before[10] or exit 76;',
-    'chmod($before[2] & 0777, $stage) or exit 78;',
-    'close($old) or exit 73;',
-    'rename($stage, $leaf) or exit 79;',
-    'rmdir($dir) or exit 80;',
-    'undef $stage; undef $dir;'
-  ].join('\n')
   const script = [
     'set -eu',
     `cd -P -- ${shellQuote(parent)} || exit 72`,
@@ -200,7 +219,7 @@ export function buildRemoteReplaceFileCommand(
     '  case "$PWD" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
     'fi',
     'command -v perl >/dev/null 2>&1 || exit 81',
-    `perl -e ${shellQuote(perl)} -- ${shellQuote(leaf)} ${shellQuote(expectedHash)} ${expectedBytes}`
+    `perl -e ${shellQuote(REMOTE_REPLACE_FILE_PERL)} -- ${shellQuote(leaf)} ${shellQuote(expectedHash)} ${expectedBytes}`
   ].join('\n')
   return `bash -c ${shellQuote(script)}`
 }

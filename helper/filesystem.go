@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -8,6 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 	"unicode/utf16"
 )
 
@@ -18,8 +24,9 @@ type fileSystem struct {
 const maxReadRangeBytes = 8*1024*1024 + 1
 
 type statResult struct {
-	Kind string `json:"kind"`
-	Size int64  `json:"size"`
+	Kind       string `json:"kind"`
+	Size       int64  `json:"size"`
+	ModifiedAt string `json:"modifiedAt,omitempty"`
 }
 
 type readRangeResult struct {
@@ -64,7 +71,7 @@ func entryKind(info os.FileInfo) string {
 	return "other"
 }
 
-func (fs *fileSystem) stat(path string) (statResult, error) {
+func (fs *fileSystem) stat(path string, includeModifiedAt bool) (statResult, error) {
 	target, err := fs.guard.existing(path)
 	if err != nil {
 		return statResult{}, err
@@ -73,7 +80,11 @@ func (fs *fileSystem) stat(path string) (statResult, error) {
 	if err != nil {
 		return statResult{}, err
 	}
-	return statResult{Kind: entryKind(info), Size: info.Size()}, nil
+	result := statResult{Kind: entryKind(info), Size: info.Size()}
+	if includeModifiedAt {
+		result.ModifiedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+	}
+	return result, nil
 }
 
 func (fs *fileSystem) readRange(path string, offset int64, length int) (readRangeResult, error) {
@@ -110,19 +121,165 @@ func hashBytes(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+const casLockTimeout = 30 * time.Second
+const casLockStale = 120 * time.Second
+
+func processExists(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil || (!errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH))
+}
+
+func removeStaleLock(lockPath string, info os.FileInfo) (bool, error) {
+	ownerPath := filepath.Join(lockPath, "owner")
+	owner, _ := os.ReadFile(ownerPath)
+	parts := strings.SplitN(string(bytes.TrimSpace(owner)), ":", 2)
+	pid, parseErr := strconv.Atoi(parts[0])
+	validPID := len(parts) == 2 && parts[1] != "" && parseErr == nil && pid > 0
+	if validPID && processExists(pid) {
+		return false, nil
+	}
+	if !validPID && time.Since(info.ModTime()) <= casLockStale {
+		return false, nil
+	}
+	if len(owner) > 0 {
+		current, err := os.ReadFile(ownerPath)
+		if err != nil || !bytes.Equal(current, owner) {
+			return false, nil
+		}
+		if err := os.Remove(ownerPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+	if err := os.Remove(lockPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, errors.New("workspace atomic write lock could not be recovered")
+	}
+	return true, nil
+}
+
+func newLockOwnerValue() (string, error) {
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return "", err
+	}
+	return strconv.Itoa(os.Getpid()) + ":" + hex.EncodeToString(token) + "\n", nil
+}
+
+func writeLockOwner(lockPath, ownerValue string) error {
+	owner, err := os.OpenFile(
+		filepath.Join(lockPath, "owner"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600,
+	)
+	if err != nil {
+		return err
+	}
+	if _, err = owner.WriteString(ownerValue); err != nil {
+		owner.Close()
+		return err
+	}
+	return owner.Close()
+}
+
+func releaseOwnedLock(lockPath, ownerValue string) {
+	ownerPath := filepath.Join(lockPath, "owner")
+	current, err := os.ReadFile(ownerPath)
+	if err != nil || string(current) != ownerValue {
+		return
+	}
+	if err := os.Remove(ownerPath); err != nil {
+		return
+	}
+	_ = os.Remove(lockPath)
+}
+
+func acquireWriteLock(target string) (func(), error) {
+	lockName := ".phi-cas-" + hashBytes([]byte(target))[:32] + ".lock"
+	lockPath := filepath.Join(filepath.Dir(target), lockName)
+	deadline := time.Now().Add(casLockTimeout)
+	for {
+		if err := os.Mkdir(lockPath, 0o700); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		info, err := os.Lstat(lockPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, errors.New("workspace atomic write lock is not a directory")
+		}
+		removed, err := removeStaleLock(lockPath, info)
+		if err != nil {
+			return nil, err
+		}
+		if removed {
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.New("workspace atomic write lock timed out")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	ownerValue, err := newLockOwnerValue()
+	if err != nil {
+		_ = os.Remove(lockPath)
+		return nil, err
+	}
+	if err := writeLockOwner(lockPath, ownerValue); err != nil {
+		releaseOwnedLock(lockPath, ownerValue)
+		_ = os.Remove(lockPath)
+		return nil, err
+	}
+	return func() {
+		releaseOwnedLock(lockPath, ownerValue)
+	}, nil
+}
+
+func assertExpectedHash(target string, expectedHash *string) error {
+	if expectedHash == nil {
+		return nil
+	}
+	current, err := os.ReadFile(target)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err != nil || hashBytes(current) != *expectedHash {
+		return newDomainError("HASH_MISMATCH", "file does not match the expected hash")
+	}
+	return nil
+}
+
 func (fs *fileSystem) writeAtomic(path string, content []byte, expectedHash *string) (writeResult, error) {
 	target, err := fs.guard.writable(path)
 	if err != nil {
 		return writeResult{}, err
 	}
-	if expectedHash != nil {
-		current, readErr := os.ReadFile(target)
-		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			return writeResult{}, readErr
-		}
-		if readErr != nil || hashBytes(current) != *expectedHash {
-			return writeResult{}, newDomainError("HASH_MISMATCH", "file does not match the expected hash")
-		}
+	release, err := acquireWriteLock(target)
+	if err != nil {
+		return writeResult{}, err
+	}
+	defer release()
+	lockedTarget, err := fs.guard.writable(path)
+	if err != nil {
+		return writeResult{}, err
+	}
+	if lockedTarget != target {
+		return writeResult{}, outsideRoot()
+	}
+	if err := assertExpectedHash(target, expectedHash); err != nil {
+		return writeResult{}, err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".phi-write-*")
 	if err != nil {
@@ -131,6 +288,9 @@ func (fs *fileSystem) writeAtomic(path string, content []byte, expectedHash *str
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := writeAndSync(temporary, content); err != nil {
+		return writeResult{}, err
+	}
+	if err := assertExpectedHash(target, expectedHash); err != nil {
 		return writeResult{}, err
 	}
 	if err := os.Rename(temporaryPath, target); err != nil {

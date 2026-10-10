@@ -10,12 +10,8 @@ import {
 import { detectConfiguredAnalysisKernels } from '../environment/index'
 import { AnalysisNotebookExecutor } from './analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
-import { listProjectNotebooks } from './analysis-notebooks'
-import {
-  openProjectNotebook,
-  saveProjectNotebook,
-  type AnalysisNotebookFile
-} from './analysis-notebook-files'
+import { openProjectNotebook, type AnalysisNotebookFile } from './analysis-notebook-files'
+import { createLocalNotebookWorkspace, type NotebookWorkspace } from './notebook-workspace'
 import type { NotebookToolRequest } from './notebook-tools'
 
 type NotebookWorkspaceRef = {
@@ -28,6 +24,12 @@ type NotebookWorkspaceState = {
   document: NotebookDocument
   savedRevision: string
 }
+
+type NotebookExecution = Awaited<ReturnType<AnalysisNotebookExecutor['executeCell']>>
+type NotebookExecutionTarget = NonNullable<
+  ReturnType<AnalysisNotebookSessionRegistry['executionTarget']>
+>
+type NotebookSessionStatus = Awaited<ReturnType<AnalysisNotebookSessionRegistry['ensureSession']>>
 
 export type NotebookDraftChangeSource = 'agent' | 'renderer'
 
@@ -56,6 +58,7 @@ type NotebookToolResult = {
 
 type ConstructorOptions = {
   resolveWorkspaceByCwd: (cwd: string) => NotebookWorkspaceRef | null | undefined
+  resolveNotebookWorkspaceByCwd?: (cwd: string) => NotebookWorkspace | null | undefined
   ensureJupyterServerReady: (projectCwd: string) => Promise<void>
   notebookSessionRegistry: AnalysisNotebookSessionRegistry
   notebookExecutor: AnalysisNotebookExecutor
@@ -171,15 +174,18 @@ function notebookCellMetadataWithExecutionDuration(
 
 export class AnalysisNotebookToolExecutor {
   private readonly resolveWorkspaceByCwd: ConstructorOptions['resolveWorkspaceByCwd']
+  private readonly resolveNotebookWorkspaceByCwd?: ConstructorOptions['resolveNotebookWorkspaceByCwd']
   private readonly ensureJupyterServerReady: ConstructorOptions['ensureJupyterServerReady']
   private readonly notebookSessionRegistry: AnalysisNotebookSessionRegistry
   private readonly notebookExecutor: AnalysisNotebookExecutor
   private readonly onDraftChanged?: ConstructorOptions['onDraftChanged']
   private readonly states = new Map<string, NotebookWorkspaceState>()
   private readonly aliases = new Map<string, string>()
+  private readonly localWorkspaces = new Map<string, NotebookWorkspace>()
 
   constructor(options: ConstructorOptions) {
     this.resolveWorkspaceByCwd = options.resolveWorkspaceByCwd
+    this.resolveNotebookWorkspaceByCwd = options.resolveNotebookWorkspaceByCwd
     this.ensureJupyterServerReady = options.ensureJupyterServerReady
     this.notebookSessionRegistry = options.notebookSessionRegistry
     this.notebookExecutor = options.notebookExecutor
@@ -217,7 +223,7 @@ export class AnalysisNotebookToolExecutor {
     source?: NotebookDraftChangeSource
   }): NotebookDraftChange {
     const project = this.workspaceForCwd(input.cwd)
-    const state = this.stateFor(project, input.path)
+    const state = this.localStateForSync(project, input.path)
     state.document = input.document
     if (input.savedRevision) state.savedRevision = input.savedRevision
     return this.emitDraftChanged(project, state, input.source ?? 'renderer', {
@@ -239,35 +245,73 @@ export class AnalysisNotebookToolExecutor {
     return `${projectCwd}\0${notebookPath}`
   }
 
-  private stateFor(project: NotebookWorkspaceRef, notebookPath: string): NotebookWorkspaceState {
+  private existingStateFor(
+    project: NotebookWorkspaceRef,
+    notebookPath: string
+  ): NotebookWorkspaceState | undefined {
     const alias = this.aliases.get(this.aliasKey(project.workingDirectory, notebookPath))
     if (alias) {
       const existing = this.states.get(alias)
       if (existing) return existing
     }
+    return undefined
+  }
 
-    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+  private storeState(
+    project: NotebookWorkspaceRef,
+    notebookPath: string,
+    file: AnalysisNotebookFile
+  ): NotebookWorkspaceState {
     const key = this.stateKey(project.workingDirectory, file.path)
     const existing = this.states.get(key)
     if (existing) {
       this.aliases.set(this.aliasKey(project.workingDirectory, notebookPath), key)
       return existing
     }
-
-    const state: NotebookWorkspaceState = {
-      file,
-      document: file.document,
-      savedRevision: file.savedRevision
-    }
+    const state = { file, document: file.document, savedRevision: file.savedRevision }
     this.states.set(key, state)
-    this.aliases.set(this.aliasKey(project.workingDirectory, notebookPath), key)
-    this.aliases.set(this.aliasKey(project.workingDirectory, file.path), key)
-    this.aliases.set(this.aliasKey(project.workingDirectory, file.relativePath), key)
+    for (const alias of [notebookPath, file.path, file.relativePath]) {
+      this.aliases.set(this.aliasKey(project.workingDirectory, alias), key)
+    }
     return state
   }
 
-  private list(project: NotebookWorkspaceRef): NotebookToolResult {
-    const registry = listProjectNotebooks(project.workingDirectory)
+  private async stateFor(
+    project: NotebookWorkspaceRef,
+    notebookPath: string
+  ): Promise<NotebookWorkspaceState> {
+    const existing = this.existingStateFor(project, notebookPath)
+    if (existing) return existing
+    const file = await this.notebookWorkspace(project).open(notebookPath)
+    return this.storeState(project, notebookPath, file)
+  }
+
+  private localStateForSync(
+    project: NotebookWorkspaceRef,
+    notebookPath: string
+  ): NotebookWorkspaceState {
+    const existing = this.existingStateFor(project, notebookPath)
+    if (existing) return existing
+    if (this.resolveNotebookWorkspaceByCwd?.(project.workingDirectory)) {
+      throw new Error('请先打开 notebook 后再同步草稿')
+    }
+    const file = openProjectNotebook(project.workingDirectory, notebookPath)
+    return this.storeState(project, notebookPath, file)
+  }
+
+  private notebookWorkspace(project: NotebookWorkspaceRef): NotebookWorkspace {
+    const injected = this.resolveNotebookWorkspaceByCwd?.(project.workingDirectory)
+    if (injected) return injected
+    let workspace = this.localWorkspaces.get(project.workingDirectory)
+    if (!workspace) {
+      workspace = createLocalNotebookWorkspace(project.workingDirectory)
+      this.localWorkspaces.set(project.workingDirectory, workspace)
+    }
+    return workspace
+  }
+
+  private async list(project: NotebookWorkspaceRef): Promise<NotebookToolResult> {
+    const registry = await this.notebookWorkspace(project).list()
     return {
       kind: 'notebook_list',
       summary:
@@ -285,8 +329,11 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private read(project: NotebookWorkspaceRef, params: Record<string, unknown>): NotebookToolResult {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
+  private async read(
+    project: NotebookWorkspaceRef,
+    params: Record<string, unknown>
+  ): Promise<NotebookToolResult> {
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const includeOutputs = optionalBoolean(params.includeOutputs, true)
     return {
       kind: 'notebook_document',
@@ -299,11 +346,11 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private insertCell(
+  private async insertCell(
     project: NotebookWorkspaceRef,
     params: Record<string, unknown>
-  ): NotebookToolResult {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
+  ): Promise<NotebookToolResult> {
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const beforeCellId = optionalString(params.beforeCellId)
     const afterCellId = optionalString(params.afterCellId)
     const cellNumber = optionalCellNumber(params.cellNumber)
@@ -342,11 +389,11 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private updateCell(
+  private async updateCell(
     project: NotebookWorkspaceRef,
     params: Record<string, unknown>
-  ): NotebookToolResult {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
+  ): Promise<NotebookToolResult> {
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
     const patch: Parameters<typeof updateNotebookCell>[2] = {
       source: stringValue(params.source, 'source')
@@ -373,11 +420,11 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
-  private deleteCell(
+  private async deleteCell(
     project: NotebookWorkspaceRef,
     params: Record<string, unknown>
-  ): NotebookToolResult {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
+  ): Promise<NotebookToolResult> {
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
     const cellIndex = state.document.cells.findIndex((item) => item.id === cellId)
     if (cellIndex < 0) throw new Error(`Notebook cell not found: ${cellId}`)
@@ -401,12 +448,36 @@ export class AnalysisNotebookToolExecutor {
     project: NotebookWorkspaceRef,
     params: Record<string, unknown>
   ): Promise<NotebookToolResult> {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
     const cell = state.document.cells.find((item) => item.id === cellId)
     if (!cell) throw new Error(`Notebook cell not found: ${cellId}`)
     if (cell.cellType !== 'code') throw new Error('只能运行 code cell')
 
+    const { sessionStatus, target } = await this.resolveExecutionTarget(project, state)
+    this.notebookSessionRegistry.updateSessionState(
+      project.workingDirectory,
+      state.file.path,
+      'busy',
+      'Notebook kernel 正在执行'
+    )
+    try {
+      return await this.executeCodeCell(project, state, cellId, cell, target, sessionStatus)
+    } catch (error) {
+      this.notebookSessionRegistry.updateSessionState(
+        project.workingDirectory,
+        state.file.path,
+        'error',
+        error instanceof Error ? error.message : String(error)
+      )
+      throw error
+    }
+  }
+
+  private async resolveExecutionTarget(
+    project: NotebookWorkspaceRef,
+    state: NotebookWorkspaceState
+  ): Promise<{ sessionStatus: NotebookSessionStatus; target: NotebookExecutionTarget }> {
     const kernels = detectConfiguredAnalysisKernels()
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
@@ -432,81 +503,86 @@ export class AnalysisNotebookToolExecutor {
       )
     }
     if (!target) throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
+    return { sessionStatus, target }
+  }
 
-    this.notebookSessionRegistry.updateSessionState(
-      project.workingDirectory,
-      state.file.path,
-      'busy',
-      'Notebook kernel 正在执行'
-    )
+  private async executeCodeCell(
+    project: NotebookWorkspaceRef,
+    state: NotebookWorkspaceState,
+    cellId: string,
+    cell: NotebookCell,
+    target: NotebookExecutionTarget,
+    sessionStatus: NotebookSessionStatus
+  ): Promise<NotebookToolResult> {
+    const execution = await this.notebookExecutor.executeCell({
+      connection: target.connection,
+      sessionId: target.sessionId,
+      kernelId: target.kernelId,
+      cell
+    })
+    state.document = updateNotebookCell(state.document, cellId, {
+      executionCount: execution.executionCount,
+      outputs: execution.outputs,
+      metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
+    })
+    this.emitDraftChanged(project, state, 'agent', {
+      changeKind: 'executed',
+      changedCellId: cellId,
+      focusCellId: cellId
+    })
+    return this.executedCellResult(project, state, cellId, cell, execution, sessionStatus)
+  }
 
-    try {
-      const execution = await this.notebookExecutor.executeCell({
-        connection: target.connection,
-        sessionId: target.sessionId,
-        kernelId: target.kernelId,
-        cell
-      })
-      state.document = updateNotebookCell(state.document, cellId, {
-        executionCount: execution.executionCount,
-        outputs: execution.outputs,
-        metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
-      })
-      this.emitDraftChanged(project, state, 'agent', {
-        changeKind: 'executed',
-        changedCellId: cellId,
-        focusCellId: cellId
-      })
-      const nextStatus =
-        this.notebookSessionRegistry.updateSessionState(
-          project.workingDirectory,
-          state.file.path,
-          execution.state === 'error' ? 'error' : 'idle',
-          execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
-        ) ?? sessionStatus
-      const updatedCell = state.document.cells.find((item) => item.id === cellId) ?? cell
-      const updatedCellIndex = state.document.cells.indexOf(updatedCell)
-      return {
-        kind: 'notebook_cell_executed',
-        summary: `已运行 ${state.file.relativePath} 的 ${
-          updatedCellIndex >= 0 ? cellLabel(updatedCellIndex) : `cell: ${cellId}`
-        }，状态 ${execution.state}。`,
-        path: state.file.path,
-        relativePath: state.file.relativePath,
-        revision: state.document.revision,
-        cellId,
-        ...(updatedCellIndex >= 0
-          ? {
-              cellNumber: cellNumberForIndex(updatedCellIndex),
-              cell: summarizeCell(updatedCell, updatedCellIndex, false)
-            }
-          : {}),
-        execution: {
-          state: execution.state,
-          executionCount: execution.executionCount,
-          startedAt: execution.startedAt,
-          completedAt: execution.completedAt,
-          outputs: outputSummary(updatedCell)
-        },
-        sessionStatus: nextStatus
-      }
-    } catch (error) {
+  private executedCellResult(
+    project: NotebookWorkspaceRef,
+    state: NotebookWorkspaceState,
+    cellId: string,
+    fallbackCell: NotebookCell,
+    execution: NotebookExecution,
+    sessionStatus: NotebookSessionStatus
+  ): NotebookToolResult {
+    const nextStatus =
       this.notebookSessionRegistry.updateSessionState(
         project.workingDirectory,
         state.file.path,
-        'error',
-        error instanceof Error ? error.message : String(error)
-      )
-      throw error
+        execution.state === 'error' ? 'error' : 'idle',
+        execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
+      ) ?? sessionStatus
+    const cell = state.document.cells.find((item) => item.id === cellId) ?? fallbackCell
+    const index = state.document.cells.indexOf(cell)
+    return {
+      kind: 'notebook_cell_executed',
+      summary: `已运行 ${state.file.relativePath} 的 ${
+        index >= 0 ? cellLabel(index) : `cell: ${cellId}`
+      }，状态 ${execution.state}。`,
+      path: state.file.path,
+      relativePath: state.file.relativePath,
+      revision: state.document.revision,
+      cellId,
+      ...(index >= 0
+        ? { cellNumber: cellNumberForIndex(index), cell: summarizeCell(cell, index, false) }
+        : {}),
+      execution: {
+        state: execution.state,
+        executionCount: execution.executionCount,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        outputs: outputSummary(cell)
+      },
+      sessionStatus: nextStatus
     }
   }
 
-  private save(project: NotebookWorkspaceRef, params: Record<string, unknown>): NotebookToolResult {
-    const state = this.stateFor(project, stringValue(params.path, 'path'))
-    const saved = saveProjectNotebook(project.workingDirectory, {
+  private async save(
+    project: NotebookWorkspaceRef,
+    params: Record<string, unknown>
+  ): Promise<NotebookToolResult> {
+    const state = await this.stateFor(project, stringValue(params.path, 'path'))
+    const saved = await this.notebookWorkspace(project).save({
       path: state.file.path,
       document: state.document,
-      expectedRevision: state.savedRevision
+      expectedRevision: state.savedRevision,
+      ...(state.file.contentHash ? { expectedHash: state.file.contentHash } : {})
     })
     state.file = saved
     state.document = saved.document

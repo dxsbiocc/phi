@@ -47,6 +47,11 @@ export interface GlobOptions {
 export interface WorkspaceStat {
   kind: WorkspaceEntryKind
   size: number
+  modifiedAt?: string
+}
+
+export interface StatOptions {
+  includeModifiedAt?: boolean
 }
 
 export interface RemoveOptions {
@@ -205,7 +210,7 @@ export interface WorkspaceHost {
     mkdirp(path: string): Promise<void>
     readRange(path: string, options: ReadRangeOptions): Promise<ReadRangeResult>
     remove(path: string, options?: RemoveOptions): Promise<void>
-    stat(path: string): Promise<WorkspaceStat>
+    stat(path: string, options?: StatOptions): Promise<WorkspaceStat>
     writeAtomic(
       path: string,
       content: WorkspaceContent,

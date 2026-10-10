@@ -174,6 +174,31 @@ stopped -- 仍有打开的 notebook 且远程连接恢复 --> preparing_environm
 - `phi-r` 是在 R4 首批通过精简 conda-only 环境交付，还是等 R2.5b 支持额外源码包后再宣称与本地 R kernel 对齐。
 - 关闭最后一个 notebook 是立即停 server，还是保留短暂复用窗口；无论选择哪种，远程会话/项目释放、SSH 断线和应用退出都必须立即清理。
 
+### R4-I1 完成记录（2026-10-10）
+
+已抽出 host-aware `NotebookWorkspace`，`list/open/create/save/delete/watch` 可统一经
+`WorkspaceHost.fs` 运行，工具 executor 支持按 cwd 注入该文件后端；现有本地同步入口与
+测试语义保持不变。LocalHost 与本机 bash 假 SshHost 共用的契约已覆盖远程 anchor 零本机
+访问、越界符号链接、路径注入、1 MiB 上限、mtime、revision/内容 hash 冲突、
+`writeAtomic(expectedHash)` 竞争保护和可取消 watch 轮询。R4-I1 未接入 IPC/UI/Jupyter
+runtime，也未放行任何远程 `notebook.*` 工具；这些仍由 R4-I5/R4-I6 负责。
+
+### R4-I3 完成记录（2026-10-10）
+
+已新增 notebook 专用系统 OpenSSH `-L` tunnel 与远程 Jupyter lease/supervisor 底座：
+tunnel、远端 launcher 与 token stdin 共用同一条 SSH lease；本机和服务器端口均为随机回环
+端口，专用 argv 显式保留 `-L`、启用
+`ExitOnForwardFailure=yes`，且不继承会清空转发的 `ClearAllForwardings=yes`。每次 lease
+使用 `crypto.randomBytes(32)` 生成新 token，只经 SSH stdin 进入远端 Jupyter 环境；Jupyter
+关闭 server-info/browser-open 文件写入，状态、argv、文件、错误和分块日志均不保存 token。
+远端 launcher 以 `setsid` 持有 Jupyter 进程组，SSH EOF、tunnel/lease 断开、主动 stop 与进程
+退出都执行组/PID/组的 TERM→KILL 清理，并覆盖取消发生在 `setsid` 前的竞态；只有 PID/PGID
+消失后的非敏感 cleanup ack 才允许回到 stopped，硬断线无法确认时阻止第二个 runtime。本机
+tunnel 失败和服务器端口冲突均有限重试。自动化只使用本机 Bash/Perl 假 SSH 与假 Jupyter，
+覆盖双端绑定、host profile 参数、脱敏、重试上限、断线、无孤儿进程和活动句柄收敛。本步未接
+IPC/UI、远程环境服务或任何 `notebook.*` 工具放行，也未连接真实服务器；真机 OpenSSH、
+ControlMaster、拔网与应用退出验证仍按 R4-I3 真机门禁保留。
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`
@@ -332,7 +357,7 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
         - **仍未验证**：在真实 Phi 界面里「测试连接」与档案摘要的展示；B8（会话中断网 30 秒）；RNA-seq 多步骤全链路的重新回归；冷却门在真实服务器上的行为（需要故意输错密钥，有触发服务器封禁的风险，未做）；密码引导的真实 `sshd` 端到端（需要提供测试用户密码，未做）。
     - 已收紧：R1.1 契约测试 `workspace host terminates commands after their timeout` 改用相对命令运行时间和 timeout 的终止上界，同时保留退出码与信号断言；目标契约单独运行 5/5 轮、并行负载 6/6 个进程及全部 WorkspaceHost 测试均通过。
     - **第 2 步 R2.1 远程运行时根目录（2026-10-10，提交 `6d4e944f` 测试框架修复、`5b2af3eb` 功能）**：主机级与项目级两级覆盖（项目 > 主机 > 默认 `~/.phi/runtime`）；硬性错误只有「非绝对路径/含 `..`」与「最近存在的祖先不可写」，其余（不归当前用户、组或他人可写、符号链接、低空间、磁盘使用率高、`noexec`、共享盘提示）只给带后果说明的警告，用户确认后可继续；检查在服务器上只读，唯一写入是在最近存在且可写的祖先目录放一个临时探针并删除，不创建运行时目录；能力档案不含路径、用户名、主机名；设置里有主机级输入与项目覆盖及检测清单。干净副本验证：tsc 三项 0 错误，73 个测试文件 794/794（含 `main-integration` 218/218）。真实服务器验证（GPU、HPC-node3，只读）：默认位置、用户自己的 `/data/<用户>/…`（GPU，剩余约 4 TB 且无警告，对比默认家目录已用 91%）、NFS 共享盘与共享盘提示、不可写祖先、相对路径、含 `..`、`/tmp` 的警告，结果与事先写下的预期逐项一致，且两台服务器均未留下运行时目录或探针文件。
-    - **第 2 步 R2.2 远程 micromamba（2026-10-10，提交 `d26a512f`、`ff0e74ca`、`25ff8cac`）**：Linux x86_64 与 aarch64 的 micromamba 2.9.0-0，由用户在设置里点击安装（需先过运行时根目录检查与警告确认）；幂等、版本并存、安装后隔离运行验证；能力档案只记脱敏状态。下载来源经两次真机反馈才定型：
+    - **第 2 步 R2.2 远程 micromamba（2026-10-10，提交 `d26a512f`、`ff0e74ca`、`25ff8cac`）**：Linux x86_64 与 aarch64 的 micromamba 2.9.0-0，由用户在设置里点击安装（需先过运行时根目录检查与警告确认）；版本目录布局为 `<runtime-root>/bin/micromamba-<version>/micromamba`，保持幂等与版本并存，并在隔离环境中实际验证 `micromamba run`。旧的 `<runtime-root>/bin/micromamba-<version>` 文件布局会标记为不可用于 `run`，重新安装时保留旧二进制后迁移到新布局；能力档案只记脱敏状态。下载来源经两次真机反馈才定型：
         - 第一版“桌面下载再上传”被用户指出设计错误（服务器能联网就应自己下载）。第二版只探测一个地址，实测两台服务器的 github.com 时通时断，探测曾误报可达，随后下载空等约 5 分钟才回退。
         - 现行为：候选来源按“GitHub 主地址 → 用户在设置里填的镜像前缀 → manifest 镜像前缀（gh-proxy.com、ghfast.top）”顺序，每个来源先做约 256 KiB 的测速（要求不低于 50 KiB/s、共享约 8 秒），实际下载 20 秒低速即放弃、整体时限随文件大小最高 600 秒；每个来源下载的文件都用固定的 SHA-256 与大小校验，错误页面一类的文件丢弃并换下一个来源；全部来源失败才由桌面通过 SSH 中转。进度与档案只出现来源的主机名。
         - 干净副本验证：tsc 三项 0 错误；77 个测试文件 668/668；架构检查与资源检查通过。

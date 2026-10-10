@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  unlink
+} from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -22,6 +33,7 @@ import {
   type ReadRangeOptions,
   type ReadRangeResult,
   type RemoveOptions,
+  type StatOptions,
   type WorkspaceContent,
   type WorkspaceEntryKind,
   type WorkspaceHost,
@@ -43,6 +55,17 @@ function isInside(root: string, path: string): boolean {
 
 function sha256(content: WorkspaceContent): string {
   return createHash('sha256').update(content).digest('hex')
+}
+
+async function assertExpectedHash(target: string, expectedHash?: string): Promise<void> {
+  if (expectedHash === undefined) return
+  const current = await readFile(target).catch((error) => {
+    if (errorCode(error) === 'ENOENT') return undefined
+    throw error
+  })
+  if (current === undefined || sha256(current) !== expectedHash) {
+    throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
+  }
 }
 
 function entryKind(entry: EntryType): WorkspaceEntryKind {
@@ -79,6 +102,96 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined
 }
 
+const CAS_LOCK_TIMEOUT_MS = 30_000
+const CAS_LOCK_STALE_MS = 120_000
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return errorCode(error) !== 'ESRCH'
+  }
+}
+
+async function removeStaleLock(lockPath: string, modifiedMs: number): Promise<boolean> {
+  const ownerPath = join(lockPath, 'owner')
+  const owner = await readFile(ownerPath, 'utf8').catch(() => '')
+  const pid = /^([1-9][0-9]*):/.exec(owner)?.[1]
+  if (pid && processExists(Number(pid))) return false
+  if (!pid && Date.now() - modifiedMs <= CAS_LOCK_STALE_MS) return false
+  if (owner) {
+    const current = await readFile(ownerPath, 'utf8').catch(() => '')
+    if (current !== owner) return false
+    try {
+      await unlink(ownerPath)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return false
+      throw error
+    }
+  }
+  try {
+    await rmdir(lockPath)
+    return true
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return true
+    throw new Error('workspace atomic write lock could not be recovered')
+  }
+}
+
+async function releaseOwnedLock(
+  lockPath: string,
+  ownerPath: string,
+  ownerValue: string
+): Promise<void> {
+  const current = await readFile(ownerPath, 'utf8').catch(() => '')
+  if (current !== ownerValue) return
+  try {
+    await unlink(ownerPath)
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return
+    throw error
+  }
+  await rmdir(lockPath)
+}
+
+async function acquireWriteLock(target: string): Promise<() => Promise<void>> {
+  const lockPath = join(dirname(target), `.phi-cas-${sha256(target).slice(0, 32)}.lock`)
+  const deadline = Date.now() + CAS_LOCK_TIMEOUT_MS
+  while (true) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 })
+      break
+    } catch (error) {
+      if (errorCode(error) !== 'EEXIST') throw error
+      const info = await lstat(lockPath).catch((lockError) => {
+        if (errorCode(lockError) === 'ENOENT') return undefined
+        throw lockError
+      })
+      if (!info) continue
+      if (!info.isDirectory()) throw new Error('workspace atomic write lock is not a directory')
+      if (await removeStaleLock(lockPath, info.mtimeMs)) continue
+      if (Date.now() >= deadline) throw new Error('workspace atomic write lock timed out')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  const ownerPath = join(lockPath, 'owner')
+  const ownerValue = `${process.pid}:${randomUUID()}\n`
+  try {
+    const owner = await open(ownerPath, 'wx', 0o600)
+    try {
+      await owner.writeFile(ownerValue)
+    } finally {
+      await owner.close()
+    }
+  } catch (error) {
+    await releaseOwnedLock(lockPath, ownerPath, ownerValue)
+    await rmdir(lockPath).catch(() => undefined)
+    throw error
+  }
+  return () => releaseOwnedLock(lockPath, ownerPath, ownerValue)
+}
+
 class LocalFileSystem {
   private readonly root: string
 
@@ -93,7 +206,7 @@ class LocalFileSystem {
       mkdirp: (path) => this.mkdirp(path),
       readRange: (path, options) => this.readRange(path, options),
       remove: (path, options = {}) => this.remove(path, options),
-      stat: (path) => this.stat(path),
+      stat: (path, options = {}) => this.stat(path, options),
       writeAtomic: (path, content, options = {}) => this.writeAtomic(path, content, options)
     }
   }
@@ -217,10 +330,14 @@ class LocalFileSystem {
     await rm(target, { recursive: options.recursive ?? false, force: options.force ?? false })
   }
 
-  private async stat(path: string): Promise<WorkspaceStat> {
+  private async stat(path: string, options: StatOptions): Promise<WorkspaceStat> {
     const { target } = await this.entryPath(path)
     const info = await lstat(target)
-    return { kind: entryKind(info), size: info.size }
+    return {
+      kind: entryKind(info),
+      size: info.size,
+      ...(options.includeModifiedAt ? { modifiedAt: info.mtime.toISOString() } : {})
+    }
   }
 
   private async glob(pattern: string, options: GlobOptions): Promise<readonly string[]> {
@@ -247,21 +364,34 @@ class LocalFileSystem {
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
     const target = await this.writePath(path)
-    if (options.expectedHash !== undefined) {
-      const current = await readFile(target).catch((error) => {
-        if (errorCode(error) === 'ENOENT') return undefined
-        throw error
-      })
-      if (current === undefined || sha256(current) !== options.expectedHash) {
-        throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
+    const release = await acquireWriteLock(target)
+    try {
+      const lockedTarget = await this.writePath(path)
+      if (lockedTarget !== target) {
+        throw new WorkspaceHostError(
+          'path changed while waiting for write lock',
+          'PATH_OUTSIDE_ROOT'
+        )
       }
+      return await this.writeTarget(target, content, options)
+    } finally {
+      await release()
     }
+  }
+
+  private async writeTarget(
+    target: string,
+    content: WorkspaceContent,
+    options: AtomicWriteOptions
+  ): Promise<AtomicWriteResult> {
+    await assertExpectedHash(target, options.expectedHash)
     const temporary = join(dirname(target), `.phi-write-${randomUUID()}`)
     const handle = await open(temporary, 'wx', 0o600)
     try {
       await handle.writeFile(content)
       await handle.sync()
       await handle.close()
+      await assertExpectedHash(target, options.expectedHash)
       await rename(temporary, target)
     } catch (error) {
       await handle.close().catch(() => undefined)

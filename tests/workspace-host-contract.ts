@@ -1,5 +1,17 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -8,6 +20,24 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
 
 export type WorkspaceHostFactory = (root: string) => WorkspaceHost | Promise<WorkspaceHost>
+
+async function casLockPath(root: string, file: string): Promise<string> {
+  const target = join(await realpath(root), file)
+  const lockHash = createHash('sha256').update(target).digest('hex').slice(0, 32)
+  return join(root, `.phi-cas-${lockHash}.lock`)
+}
+
+async function writeWhenStagingAppears(root: string, target: string): Promise<void> {
+  for (let attempt = 0; attempt < 5_000; attempt += 1) {
+    const entries = await readdir(root)
+    if (entries.some((name) => name.startsWith('.phi-write-') || name.startsWith('.phi-edit-'))) {
+      await writeFile(target, 'external')
+      return
+    }
+    await delay(1)
+  }
+  throw new Error('timed out waiting for atomic write staging')
+}
 
 async function waitForFile(path: string): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -55,6 +85,123 @@ function atomicWriteContract(makeHost: WorkspaceHostFactory): void {
       )
       assert.equal(await readFile(join(root, 'result.txt'), 'utf8'), 'second')
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+function concurrentAtomicWriteContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host lets only one concurrent expected-hash write win', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-cas-'))
+    let host: WorkspaceHost | undefined
+    let peer: WorkspaceHost | undefined
+    try {
+      host = await makeHost(root)
+      const first = await host.fs.writeAtomic('result.txt', 'first')
+      peer = await makeHost(root)
+      let expectedHash = first.hash
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        const contents = [`left-${attempt}`, `right-${attempt}`]
+        const outcomes = await Promise.allSettled(
+          contents.map((content, index) =>
+            (index === 0 ? host : peer).fs.writeAtomic('result.txt', content, { expectedHash })
+          )
+        )
+        const fulfilled = outcomes
+          .map((outcome, index) => ({ outcome, index }))
+          .filter((item) => item.outcome.status === 'fulfilled')
+        const rejected = outcomes.filter((outcome) => outcome.status === 'rejected')
+
+        assert.equal(fulfilled.length, 1)
+        assert.equal(rejected.length, 1)
+        assert.equal((rejected[0] as PromiseRejectedResult).reason.code, 'HASH_MISMATCH')
+        const winner = fulfilled[0]
+        assert.ok(winner)
+        assert.equal(await readFile(join(root, 'result.txt'), 'utf8'), contents[winner.index])
+        if (winner.outcome.status !== 'fulfilled') assert.fail('expected one successful CAS write')
+        expectedHash = winner.outcome.value.hash
+      }
+    } finally {
+      await peer?.close?.()
+      await host?.close?.()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+function malformedAtomicWriteLockContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host rejects a malformed stale CAS lock without spinning', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-cas-lock-'))
+    let host: WorkspaceHost | undefined
+    try {
+      host = await makeHost(root)
+      const first = await host.fs.writeAtomic('result.txt', 'first')
+      const target = join(await realpath(root), 'result.txt')
+      const lockPath = await casLockPath(root, 'result.txt')
+      await mkdir(lockPath)
+      await writeFile(join(lockPath, 'unexpected'), 'malformed')
+      const stale = new Date(Date.now() - 180_000)
+      await utimes(lockPath, stale, stale)
+      const started = performance.now()
+
+      await assert.rejects(
+        host.fs.writeAtomic('result.txt', 'second', { expectedHash: first.hash })
+      )
+      assert.ok(performance.now() - started < 2_000)
+      assert.equal(await readFile(target, 'utf8'), 'first')
+    } finally {
+      await host?.close?.()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+function activeAtomicWriteLockContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host never steals an old lock from a live owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-live-cas-lock-'))
+    let host: WorkspaceHost | undefined
+    try {
+      host = await makeHost(root)
+      const first = await host.fs.writeAtomic('result.txt', 'first')
+      const lockPath = await casLockPath(root, 'result.txt')
+      await mkdir(lockPath)
+      await writeFile(join(lockPath, 'owner'), `${process.pid}:test-owner\n`)
+      const old = new Date(Date.now() - 180_000)
+      await utimes(lockPath, old, old)
+
+      const pending = host.fs.writeAtomic('result.txt', 'second', { expectedHash: first.hash })
+      await delay(100)
+      const beforeRelease = await readFile(join(root, 'result.txt'), 'utf8')
+      await rm(lockPath, { recursive: true, force: true })
+      await pending
+
+      assert.equal(beforeRelease, 'first')
+      assert.equal(await readFile(join(root, 'result.txt'), 'utf8'), 'second')
+    } finally {
+      await host?.close?.()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
+function externalAtomicWriteConflictContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host preserves an external write made while staging', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-external-cas-'))
+    let host: WorkspaceHost | undefined
+    const target = join(root, 'result.txt')
+    try {
+      host = await makeHost(root)
+      const first = await host.fs.writeAtomic('result.txt', 'first')
+      const externalWrite = writeWhenStagingAppears(root, target)
+      const pending = host.fs.writeAtomic('result.txt', 'x'.repeat(1024 * 1024), {
+        expectedHash: first.hash
+      })
+
+      await externalWrite
+      await assert.rejects(pending, { code: 'HASH_MISMATCH' })
+      assert.equal(await readFile(target, 'utf8'), 'external')
+    } finally {
+      await host?.close?.()
       await rm(root, { recursive: true, force: true })
     }
   })
@@ -273,6 +420,23 @@ function lifecycleContract(makeHost: WorkspaceHostFactory): void {
   })
 }
 
+function modifiedAtContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host exposes mtime only when requested', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-mtime-'))
+    try {
+      await writeFile(join(root, 'value.txt'), 'value')
+      const host = await makeHost(root)
+
+      assert.equal((await host.fs.stat('value.txt')).modifiedAt, undefined)
+      const modifiedAt = (await host.fs.stat('value.txt', { includeModifiedAt: true })).modifiedAt
+      assert.equal(typeof modifiedAt, 'string')
+      assert.ok(Number.isFinite(Date.parse(modifiedAt ?? '')))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
 function pathBoundaryContract(makeHost: WorkspaceHostFactory): void {
   test('workspace host rejects paths outside its root', async () => {
     const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-root-'))
@@ -372,6 +536,10 @@ function capabilityContract(makeHost: WorkspaceHostFactory): void {
 
 export function runWorkspaceHostContract(makeHost: WorkspaceHostFactory): void {
   atomicWriteContract(makeHost)
+  concurrentAtomicWriteContract(makeHost)
+  malformedAtomicWriteLockContract(makeHost)
+  activeAtomicWriteLockContract(makeHost)
+  externalAtomicWriteConflictContract(makeHost)
   rangeReadContract(makeHost)
   listContract(makeHost)
   globContract(makeHost)
@@ -380,6 +548,7 @@ export function runWorkspaceHostContract(makeHost: WorkspaceHostFactory): void {
   cancellationContract(makeHost)
   backgroundContract(makeHost)
   lifecycleContract(makeHost)
+  modifiedAtContract(makeHost)
   pathBoundaryContract(makeHost)
   linkBoundaryContract(makeHost)
   capabilityContract(makeHost)

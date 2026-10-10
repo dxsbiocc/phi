@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -21,6 +22,7 @@ export interface AnalysisNotebookFile {
   bytes: number
   modifiedAt: string
   savedRevision: string
+  contentHash?: string
   document: NotebookDocument
 }
 
@@ -28,6 +30,7 @@ export interface SaveProjectNotebookInput {
   path: string
   document: NotebookDocument
   expectedRevision?: string
+  expectedHash?: string
 }
 
 export interface DeleteProjectNotebookResult {
@@ -106,11 +109,8 @@ function resolveWritableNotebookPath(
   return { root, target: requested }
 }
 
-function notebookPayload(
-  root: string,
-  target: string,
-  document: NotebookDocument
-): AnalysisNotebookFile {
+function notebookPayload(root: string, target: string): AnalysisNotebookFile {
+  const { document, contentHash } = readNotebookDocument(target)
   const stats = statSync(target)
   return {
     path: target,
@@ -119,13 +119,20 @@ function notebookPayload(
     bytes: stats.size,
     modifiedAt: stats.mtime.toISOString(),
     savedRevision: document.revision,
+    contentHash,
     document
   }
 }
 
-function readNotebookDocument(target: string): NotebookDocument {
-  const text = readFileSync(target, 'utf-8')
-  return parseNotebook(JSON.parse(text))
+function readNotebookDocument(target: string): {
+  document: NotebookDocument
+  contentHash: string
+} {
+  const bytes = readFileSync(target)
+  return {
+    document: parseNotebook(JSON.parse(bytes.toString('utf-8'))),
+    contentHash: createHash('sha256').update(bytes).digest('hex')
+  }
 }
 
 function writeNotebookDocument(target: string, document: NotebookDocument): void {
@@ -133,7 +140,7 @@ function writeNotebookDocument(target: string, document: NotebookDocument): void
   writeFileSync(target, `${JSON.stringify(body, null, 2)}\n`, 'utf-8')
 }
 
-function createEmptyNotebookDocument(): NotebookDocument {
+export function createEmptyNotebookDocument(): NotebookDocument {
   return parseNotebook({
     nbformat: 4,
     nbformat_minor: 5,
@@ -198,7 +205,7 @@ export function openProjectNotebook(
   notebookPath: string
 ): AnalysisNotebookFile {
   const { root, target } = resolveExistingNotebookPath(workingDirectory, notebookPath)
-  return notebookPayload(root, target, readNotebookDocument(target))
+  return notebookPayload(root, target)
 }
 
 export function saveProjectNotebook(
@@ -206,15 +213,21 @@ export function saveProjectNotebook(
   input: SaveProjectNotebookInput
 ): AnalysisNotebookFile {
   const { root, target } = resolveWritableNotebookPath(workingDirectory, input.path)
-  if (input.expectedRevision && existsSync(target)) {
+  const exists = existsSync(target)
+  if (exists && (input.expectedRevision || input.expectedHash)) {
     const current = readNotebookDocument(target)
-    if (current.revision !== input.expectedRevision) {
+    if (
+      (input.expectedRevision && current.document.revision !== input.expectedRevision) ||
+      (input.expectedHash && current.contentHash !== input.expectedHash)
+    ) {
       throw new Error('Notebook 已在磁盘上变化，请重新打开后再保存')
     }
+  } else if (!exists && (input.expectedRevision || input.expectedHash)) {
+    throw new Error('Notebook 已在磁盘上变化，请重新打开后再保存')
   }
 
   writeNotebookDocument(target, input.document)
-  return notebookPayload(root, target, readNotebookDocument(target))
+  return notebookPayload(root, target)
 }
 
 export function createProjectNotebook(
@@ -229,7 +242,7 @@ export function createProjectNotebook(
     throw new Error('只能在当前项目内新建 notebook')
   }
   writeNotebookDocument(target, createEmptyNotebookDocument())
-  return notebookPayload(root, target, readNotebookDocument(target))
+  return notebookPayload(root, target)
 }
 
 export function closeProjectNotebook(

@@ -18,6 +18,7 @@ import type {
   ReadRangeResult,
   RemoveOptions,
   RunCommandOptions,
+  StatOptions,
   WorkspaceContent,
   WorkspaceHost,
   WorkspaceStat
@@ -127,7 +128,8 @@ export class HelperWorkspaceHost implements WorkspaceHost {
       mapHelperWorkspacePath(value, this.roots.remoteRoot, this.roots.canonicalRoot)
     return {
       glob: (pattern: string, options?: GlobOptions) => glob(pattern, options),
-      stat: (value: string) => this.client.request<WorkspaceStat>('fs.stat', { path: path(value) }),
+      stat: (value: string, options: StatOptions = {}) =>
+        this.client.request<WorkspaceStat>('fs.stat', { path: path(value), ...options }),
       list: (value: string, options: ListOptions = {}) =>
         this.client.request<ListResult>('fs.list', { path: path(value), ...options }),
       readRange: async (value: string, options: ReadRangeOptions) => {

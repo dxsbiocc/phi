@@ -18,6 +18,7 @@ import {
   type ReadRangeOptions,
   type ReadRangeResult,
   type RemoveOptions,
+  type StatOptions,
   type WorkspaceContent,
   type WorkspaceEntry,
   type WorkspaceHost,
@@ -32,6 +33,55 @@ function invalid(message: string): WorkspaceHostError {
 
 function hash(content: WorkspaceContent): string {
   return createHash('sha256').update(content).digest('hex')
+}
+
+function lockedMutationCommand(path: string, command: string): string {
+  const lock = posix.join(posix.dirname(path), `.phi-cas-${hash(path).slice(0, 32)}.lock`)
+  const perl = [
+    'use strict; use warnings;',
+    'use Errno qw(EEXIST EPERM);',
+    'use Fcntl qw(O_WRONLY O_CREAT O_EXCL S_IFMT S_IFDIR);',
+    'my ($lock, $command) = @ARGV;',
+    'my $owner = "$lock/owner"; my $owned = 0; my $deadline = time() + 30;',
+    'my $ownerValue = "$$:" . time() . ":" . rand() . "\n";',
+    'my $releaseOwned = sub {',
+    '  my $current = "";',
+    '  if (open(my $fh, "<", $owner)) { local $/; $current = <$fh> // ""; close($fh); }',
+    '  return unless $current eq $ownerValue;',
+    '  unlink($owner) or return;',
+    '  rmdir($lock);',
+    '};',
+    'END { $releaseOwned->() if $owned; }',
+    'while (!mkdir($lock, 0700)) {',
+    '  $!{EEXIST} or exit 83;',
+    '  my @info = lstat($lock);',
+    '  @info && (($info[2] & S_IFMT) == S_IFDIR) or exit 83;',
+    '  my $ownerContents = "";',
+    '  if (open(my $fh, "<", $owner)) { local $/; $ownerContents = <$fh> // ""; close($fh); }',
+    '  my $validPid = $ownerContents =~ /^([1-9][0-9]*):/;',
+    '  my $alive = $validPid && (kill(0, $1) || $!{EPERM});',
+    '  if (($validPid && !$alive) || (!$validPid && time() - $info[9] > 120)) {',
+    '    if (length($ownerContents)) {',
+    '      my $current = "";',
+    '      if (open(my $fh, "<", $owner)) { local $/; $current = <$fh> // ""; close($fh); }',
+    '      $current eq $ownerContents or exit 83;',
+    '      unlink($owner) or exit 83;',
+    '    }',
+    '    rmdir($lock) and next;',
+    '    exit 83;',
+    '  }',
+    '  time() < $deadline or exit 83;',
+    '  select undef, undef, undef, 0.01;',
+    '}',
+    'sysopen(my $fh, $owner, O_WRONLY | O_CREAT | O_EXCL, 0600) or do { rmdir $lock; exit 83; };',
+    'print($fh $ownerValue) or do { close($fh); $releaseOwned->(); exit 83; };',
+    'close($fh) or do { $releaseOwned->(); exit 83; };',
+    '$owned = 1;',
+    'my $status = system("bash", "-c", $command);',
+    '$status != -1 or exit 83;',
+    'exit(($status & 127) ? 84 : ($status >> 8));'
+  ].join('\n')
+  return `perl -e ${shellQuote(perl)} -- ${shellQuote(lock)} ${shellQuote(command)}`
 }
 
 function contentText(content: WorkspaceContent): string {
@@ -94,6 +144,16 @@ function compareNames(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
+async function remoteModifiedAt(session: RemoteSshSession, path: string): Promise<string> {
+  const source = 'my @info = stat($ARGV[0]); defined $info[9] or exit 1; print $info[9];'
+  const result = await session.exec(`perl -e ${shellQuote(source)} -- ${shellQuote(path)}`)
+  const seconds = Number(result.stdout)
+  if (result.code !== 0 || !Number.isFinite(seconds)) {
+    throw new Error('remote workspace mtime check failed')
+  }
+  return new Date(seconds * 1000).toISOString()
+}
+
 async function collectPaths(
   session: RemoteSshSession,
   directory: string,
@@ -141,7 +201,7 @@ class SshFileSystem {
       mkdirp: (path) => this.context.mkdirp(path),
       readRange: (path, options) => this.readRange(path, options),
       remove: (path, options = {}) => this.remove(path, options),
-      stat: (path) => this.stat(path),
+      stat: (path, options = {}) => this.stat(path, options),
       writeAtomic: (path, content, options = {}) => this.writeAtomic(path, content, options)
     }
   }
@@ -210,14 +270,19 @@ class SshFileSystem {
     })
   }
 
-  private async stat(path: string): Promise<WorkspaceStat> {
+  private async stat(path: string, options: StatOptions): Promise<WorkspaceStat> {
     return this.context.withPath(path, 'existing', async (session, resolved) => {
       const kind = await session.exec(buildRemoteReadKindCommand(resolved))
       if (kind.code !== 0) throw new Error('remote workspace target type check failed')
-      if (kind.stdout === 'directory') return { kind: 'directory', size: 0 }
-      if (kind.stdout !== 'file') return { kind: 'other', size: 0 }
+      const modifiedAt = options.includeModifiedAt
+        ? await remoteModifiedAt(session, resolved)
+        : undefined
+      if (kind.stdout === 'directory')
+        return { kind: 'directory', size: 0, ...(modifiedAt ? { modifiedAt } : {}) }
+      if (kind.stdout !== 'file')
+        return { kind: 'other', size: 0, ...(modifiedAt ? { modifiedAt } : {}) }
       const value = await readBytes(session, resolved, this.context.canonicalRoot, 0, 0)
-      return { kind: 'file', size: value.size }
+      return { kind: 'file', size: value.size, ...(modifiedAt ? { modifiedAt } : {}) }
     })
   }
 
@@ -261,7 +326,10 @@ class SshFileSystem {
     }
     const result = await this.runInput(
       session,
-      buildRemoteCreateFileCommand(path, this.context.canonicalRoot, Buffer.byteLength(text)),
+      lockedMutationCommand(
+        path,
+        buildRemoteCreateFileCommand(path, this.context.canonicalRoot, Buffer.byteLength(text))
+      ),
       text
     )
     if (result.code !== 0) throw new Error(`remote atomic create failed with code ${result.code}`)
@@ -282,11 +350,14 @@ class SshFileSystem {
     }
     const result = await this.runInput(
       session,
-      buildRemoteReplaceFileCommand(
+      lockedMutationCommand(
         path,
-        this.context.canonicalRoot,
-        currentHash,
-        Buffer.byteLength(text)
+        buildRemoteReplaceFileCommand(
+          path,
+          this.context.canonicalRoot,
+          currentHash,
+          Buffer.byteLength(text)
+        )
       ),
       text
     )

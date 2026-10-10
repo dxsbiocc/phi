@@ -10,9 +10,11 @@ import { SshHostContext, type SshHelperConfig, type SshHostConfig } from './ssh-
 import type {
   HostCapability,
   HostCapabilityProfile,
+  StatOptions,
   WorkspaceHost,
   WorkspacePortForward,
   WorkspacePty,
+  WorkspaceStat,
   WorkspaceWatch
 } from './types'
 
@@ -122,9 +124,15 @@ export class SshHost implements WorkspaceHost {
       mkdirp: async (...args) => (await this.selected()).fs.mkdirp(...args),
       readRange: async (...args) => (await this.selected()).fs.readRange(...args),
       remove: async (...args) => (await this.selected()).fs.remove(...args),
-      stat: async (...args) => (await this.selected()).fs.stat(...args),
+      stat: (path, options = {}) => this.stat(path, options),
       writeAtomic: async (...args) => (await this.selected()).fs.writeAtomic(...args)
     }
+  }
+
+  private async stat(path: string, options: StatOptions): Promise<WorkspaceStat> {
+    const result = await (await this.selected()).fs.stat(path, options)
+    if (!options.includeModifiedAt || result.modifiedAt) return result
+    return this.pureFs.stat(path, options)
   }
 
   private negotiatedExecution(): WorkspaceHost['exec'] {

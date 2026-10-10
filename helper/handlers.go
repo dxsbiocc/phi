@@ -6,6 +6,11 @@ type pathParams struct {
 	Path string `json:"path"`
 }
 
+type statParams struct {
+	Path              string `json:"path"`
+	IncludeModifiedAt bool   `json:"includeModifiedAt,omitempty"`
+}
+
 type readParams struct {
 	Path   string `json:"path"`
 	Offset int64  `json:"offset"`
@@ -60,11 +65,11 @@ func (server *rpcServer) dispatch(request rpcRequest) (any, error) {
 }
 
 func (server *rpcServer) handleStat(content json.RawMessage) (statResult, error) {
-	var params pathParams
+	var params statParams
 	if err := decodeParams(content, &params); err != nil {
 		return statResult{}, err
 	}
-	return server.fs.stat(params.Path)
+	return server.fs.stat(params.Path, params.IncludeModifiedAt)
 }
 
 func (server *rpcServer) handleReadRange(content json.RawMessage) (readRangeResult, error) {
