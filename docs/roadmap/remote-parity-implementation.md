@@ -217,6 +217,29 @@ kernelspec 列出/选择、服务器路径约束、用户 prefix 默认拒绝及
 未接 IPC/UI、未放行任何远程 `notebook.*` 工具，也未连接真实服务器；在线源、站点镜像和完全
 离线迁移仍按 R4-I2 真机门禁保留。
 
+### R4-I4 完成记录（2026-10-10）
+
+已新增仅含 `status/start/stop/connection` 的窄 `JupyterRuntimeBackend`，local adapter 继续复用
+固定 `127.0.0.1:28888`、空 token 和旧 Jupyter 接管语义；SSH adapter 先经 R4-I2 adapter
+准备受管环境与 `phi-python` kernelspec，再用该环境的绝对 `bin/jupyter`、服务器项目 cwd、
+Phi 专用 Jupyter 目录和 R4-I3 supervisor 启动 lease。远程 ready 仍只由带 token 的本机 tunnel
+`/api/status` 探测成立，不直接访问服务器端口，也不进入 local 的固定端口接管路径；环境准备可
+随 AbortSignal 取消。
+
+共享 session/execution 客户端现以非敏感且每次 runtime 唯一的 `runtimeId` 隔离 XSRF 与
+session/kernel：lease 换代后旧 session 只从桌面内存移除，不向新 server DELETE/interrupt，
+下一次显式 ensure 才创建新 kernel。HTTP token 仅进入 `Authorization`，WebSocket token 仅在
+内存 URL 中短暂构造，状态与错误同时遮蔽精确 token 和 `token=`；执行仍只发送一次
+`execute_request`，须同时收到 `execute_reply` 与 `idle` 才完成，默认 30 分钟且测试可替换，
+断线、错误或超时均不自动重放。关闭最后一个 notebook 只 DELETE session，server idle policy
+仍留给 R4-I7。
+
+自动化使用纯内存假 HTTP/WebSocket 与 R4-I3 的本机假 SSH/Jupyter，覆盖 token、XSRF、
+interrupt/delete、错误输出、超时替身、断线不重放、换代新 token/端口/kernel、并发 start 合并
+及最后 session 关闭语义。本步未接 IPC/UI、未放行远程 `notebook.*` 工具、未增加资源限制，
+也未联网或连接真实服务器；打包 Jupyter 的 REST/WebSocket、server-info 与大输出回流仍保留为
+真机门禁。
+
 ## 3. 核心设计决定
 
 ### 3.1 统一底层：`WorkspaceHost`

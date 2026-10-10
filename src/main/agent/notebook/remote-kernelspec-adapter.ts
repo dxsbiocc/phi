@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 
@@ -11,13 +12,14 @@ import type {
 } from '../remote-runtime/types'
 import type { AnalysisKernelDiagnostics, AnalysisKernelSummary } from './analysis-kernels'
 import { HOST_KERNEL_LABEL, hostKernelName, type KernelSpecFile } from './managed-kernels'
+import type { RemoteJupyterLaunchCommand } from './remote-jupyter-server'
 
 const REMOTE_JUPYTER_REF = 'phi:jupyter@1'
 const REMOTE_JUPYTER_SPEC = 'remote-environment.yml'
 const MANAGED_KERNEL_NAME = 'phi-python'
 const MANAGED_KERNEL_DISPLAY_NAME = 'Python 3.12 (phi-python)'
 
-type RemoteEnvironmentGateway = Pick<RemoteEnvironmentService, 'request' | 'bindSession'>
+type RemoteEnvironmentGateway = Pick<RemoteEnvironmentService, 'request' | 'bindSession' | 'cancel'>
 
 export interface RemoteKernelspecAdapterOptions {
   environments: RemoteEnvironmentGateway
@@ -29,10 +31,17 @@ export interface RemoteKernelspecAdapterOptions {
 export interface PrepareRemoteJupyterInput {
   runtimeSessionId: string
   requestId?: string
+  signal?: AbortSignal
 }
 
 export interface ListRemoteKernelsInput {
   runtimeSessionId: string
+  signal?: AbortSignal
+}
+
+export interface PreparedRemoteJupyterRuntime {
+  kernels: AnalysisKernelDiagnostics
+  launch: RemoteJupyterLaunchCommand
 }
 
 export interface RegisterRemoteUserPrefixInput {
@@ -45,22 +54,47 @@ export class RemoteKernelspecAdapter {
   constructor(private readonly options: RemoteKernelspecAdapterOptions) {}
 
   async prepare(input: PrepareRemoteJupyterInput): Promise<AnalysisKernelDiagnostics> {
-    const packages = remoteJupyterPackages(this.options.environmentsDir)
-    const result = await this.options.environments.request({
-      runtimeSessionId: input.runtimeSessionId,
-      environment: REMOTE_JUPYTER_REF,
-      packages,
-      reason: '准备含 Jupyter Server 与 ipykernel 的远程 Notebook 环境',
-      ...(input.requestId ? { requestId: input.requestId } : {})
-    })
-    if ('declined' in result) throw new Error('已取消准备远程 Notebook 环境')
-    if ('error' in result) throw remoteJupyterEnvironmentError(result.error)
+    await this.requestEnvironment(input)
     return this.list(input)
   }
 
+  async prepareRuntime(input: PrepareRemoteJupyterInput): Promise<PreparedRemoteJupyterRuntime> {
+    const kernels = await this.prepare(input)
+    input.signal?.throwIfAborted()
+    const handle = await this.bindManagedEnvironment(input.runtimeSessionId, input.signal)
+    const workspace = await this.options.openWorkspace(input.runtimeSessionId, input.signal)
+    try {
+      assertManagedPrefix(workspace, handle)
+      await prepareJupyterDirectories(workspace)
+      return { kernels, launch: remoteJupyterLaunch(workspace, handle) }
+    } finally {
+      await workspace.close?.().catch(() => undefined)
+    }
+  }
+
+  private async requestEnvironment(input: PrepareRemoteJupyterInput): Promise<void> {
+    const packages = remoteJupyterPackages(this.options.environmentsDir)
+    const requestId = input.requestId ?? (input.signal ? `notebook-${randomUUID()}` : undefined)
+    const cancel = (): void => this.options.environments.cancel({ requestId })
+    input.signal?.throwIfAborted()
+    input.signal?.addEventListener('abort', cancel, { once: true })
+    const result = await this.options.environments
+      .request({
+        runtimeSessionId: input.runtimeSessionId,
+        environment: REMOTE_JUPYTER_REF,
+        packages,
+        reason: '准备含 Jupyter Server 与 ipykernel 的远程 Notebook 环境',
+        ...(requestId ? { requestId } : {})
+      })
+      .finally(() => input.signal?.removeEventListener('abort', cancel))
+    if (input.signal?.aborted) throw new Error('远程 Notebook 环境准备已取消')
+    if ('declined' in result) throw new Error('已取消准备远程 Notebook 环境')
+    if ('error' in result) throw remoteJupyterEnvironmentError(result.error)
+  }
+
   async list(input: ListRemoteKernelsInput): Promise<AnalysisKernelDiagnostics> {
-    const handle = await this.bindManagedEnvironment(input.runtimeSessionId)
-    await this.writeManagedSpec(input.runtimeSessionId, handle)
+    const handle = await this.bindManagedEnvironment(input.runtimeSessionId, input.signal)
+    await this.writeManagedSpec(input.runtimeSessionId, handle, input.signal)
     return managedDiagnostics(handle, remoteJupyterPackages(this.options.environmentsDir))
   }
 
@@ -89,11 +123,16 @@ export class RemoteKernelspecAdapter {
     }
   }
 
-  private async bindManagedEnvironment(runtimeSessionId: string): Promise<RemoteEnvironmentHandle> {
+  private async bindManagedEnvironment(
+    runtimeSessionId: string,
+    signal?: AbortSignal
+  ): Promise<RemoteEnvironmentHandle> {
+    signal?.throwIfAborted()
     const bound = await this.options.environments.bindSession({
       runtimeSessionId,
       ref: REMOTE_JUPYTER_REF
     })
+    signal?.throwIfAborted()
     if ('notReady' in bound) {
       const value = bound.notReady as { message?: unknown }
       throw new Error(
@@ -105,15 +144,50 @@ export class RemoteKernelspecAdapter {
 
   private async writeManagedSpec(
     runtimeSessionId: string,
-    handle: RemoteEnvironmentHandle
+    handle: RemoteEnvironmentHandle,
+    signal?: AbortSignal
   ): Promise<void> {
-    const workspace = await this.options.openWorkspace(runtimeSessionId)
+    const workspace = await this.options.openWorkspace(runtimeSessionId, signal)
     try {
+      signal?.throwIfAborted()
       assertManagedPrefix(workspace, handle)
       await writeSpec(workspace, MANAGED_KERNEL_NAME, managedPythonSpec(handle))
       if (this.options.allowUserPrefixes !== true) await removeUserSpecs(workspace)
+      signal?.throwIfAborted()
     } finally {
       await workspace.close?.().catch(() => undefined)
+    }
+  }
+}
+
+async function prepareJupyterDirectories(workspace: RemoteRuntimeWorkspace): Promise<void> {
+  await Promise.all(
+    ['config', 'data', 'runtime'].map((name) =>
+      workspace.runtimeHost.fs.mkdirp(posix.join('jupyter', name))
+    )
+  )
+}
+
+function remoteJupyterLaunch(
+  workspace: RemoteRuntimeWorkspace,
+  handle: RemoteEnvironmentHandle
+): RemoteJupyterLaunchCommand {
+  const root = posix.join(workspace.runtimeRoot, 'jupyter')
+  return {
+    command: posix.join(handle.prefix, 'bin', 'jupyter'),
+    args: [
+      'server',
+      `--KernelSpecManager.kernel_dirs=${posix.join(root, 'kernels')}`,
+      '--KernelSpecManager.ensure_native_kernel=False'
+    ],
+    cwd: workspace.projectRoot,
+    env: {
+      IPYTHONDIR: posix.join(root, 'ipython'),
+      JUPYTER_CONFIG_DIR: posix.join(root, 'config'),
+      JUPYTER_DATA_DIR: posix.join(root, 'data'),
+      JUPYTER_PATH: root,
+      JUPYTER_RUNTIME_DIR: posix.join(root, 'runtime'),
+      PYTHONNOUSERSITE: '1'
     }
   }
 }

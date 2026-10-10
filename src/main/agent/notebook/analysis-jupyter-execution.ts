@@ -6,6 +6,7 @@ import type {
   NotebookOutput
 } from '../../../shared/notebookDocument'
 import type { JupyterServerConnection } from './analysis-jupyter-server'
+import { jupyterWebSocketToken } from './jupyter-runtime-backend'
 
 export type AnalysisCellExecutionState = 'idle' | 'error'
 
@@ -91,12 +92,12 @@ export type RawJupyterKernelMessage = {
   content?: unknown
 }
 
-type KernelWebSocketEvent = {
+export type KernelWebSocketEvent = {
   data?: unknown
   message?: string
 }
 
-type KernelWebSocket = {
+export type KernelWebSocket = {
   send(data: string): void
   close(): void
   addEventListener(event: 'open', listener: () => void): void
@@ -105,7 +106,7 @@ type KernelWebSocket = {
   addEventListener(event: 'close', listener: () => void): void
 }
 
-type KernelWebSocketConstructor = new (url: string) => KernelWebSocket
+export type KernelWebSocketConstructor = new (url: string) => KernelWebSocket
 
 // Real analysis cells (data loading, model training, etc.) routinely run far
 // longer than a typical request timeout. Only give up if the kernel truly
@@ -115,11 +116,6 @@ const COMPLETION_TIMEOUT_MS = 10_000
 const VARIABLE_INTROSPECTION_SENTINEL = '__PHI_NOTEBOOK_VARIABLES__'
 const PYTHON_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const R_IDENTIFIER_PATTERN = /^(?:[A-Za-z]|\.(?!\d))[A-Za-z0-9._]*$/
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  return String(error)
-}
 
 function jsonObject(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -563,7 +559,8 @@ function kernelChannelsUrl(
   const url = new URL(`/api/kernels/${encodeURIComponent(kernelId)}/channels`, connection.url)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   url.searchParams.set('session_id', sessionId)
-  if (connection.token) url.searchParams.set('token', connection.token)
+  const token = jupyterWebSocketToken(connection)
+  if (token) url.searchParams.set('token', token)
   return url.toString()
 }
 
@@ -576,163 +573,173 @@ function websocketConstructor(): KernelWebSocketConstructor {
 }
 
 export class WebSocketJupyterKernelClient implements JupyterKernelClient {
+  private readonly executionTimeoutMs: number
+  private readonly completionTimeoutMs: number
+  private readonly WebSocket?: KernelWebSocketConstructor
+
+  constructor(
+    options: {
+      executionTimeoutMs?: number
+      completionTimeoutMs?: number
+      webSocketConstructor?: KernelWebSocketConstructor
+    } = {}
+  ) {
+    this.executionTimeoutMs = positiveTimeout(options.executionTimeoutMs ?? EXECUTION_TIMEOUT_MS)
+    this.completionTimeoutMs = positiveTimeout(options.completionTimeoutMs ?? COMPLETION_TIMEOUT_MS)
+    if (options.webSocketConstructor) this.WebSocket = options.webSocketConstructor
+  }
+
   async executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult> {
-    const Constructor = websocketConstructor()
     const msgId = randomUUID()
-    const socket = new Constructor(
-      kernelChannelsUrl(request.connection, request.kernelId, request.sessionId)
-    )
-
-    return new Promise((resolve, reject) => {
-      const messages: RawJupyterKernelMessage[] = []
-      let sawIdle = false
-      let sawReply = false
-      const timeout = setTimeout(() => {
-        socket.close()
-        reject(new Error('Notebook cell execution timed out'))
-      }, EXECUTION_TIMEOUT_MS)
-
-      const finish = (): void => {
-        if (!sawIdle || !sawReply) return
-        clearTimeout(timeout)
-        socket.close()
-        resolve(normalizeJupyterKernelMessages(messages))
+    const socket = this.openSocket(request.connection, request.kernelId, request.sessionId)
+    let sawIdle = false
+    let sawReply = false
+    return collectKernelMessages(
+      socket,
+      executeRequestMessage(msgId, request),
+      msgId,
+      this.executionTimeoutMs,
+      'Notebook cell execution timed out',
+      'Jupyter kernel WebSocket closed before execution completed',
+      (messages, message) => {
+        const type = messageType(message)
+        const content = jsonObject(message.content)
+        if (type === 'execute_reply') sawReply = true
+        if (type === 'status' && content?.execution_state === 'idle') sawIdle = true
+        return sawIdle && sawReply ? normalizeJupyterKernelMessages(messages) : undefined
       }
-
-      socket.addEventListener('open', () => {
-        socket.send(
-          JSON.stringify({
-            header: {
-              msg_id: msgId,
-              username: 'phi',
-              session: request.sessionId,
-              date: new Date().toISOString(),
-              msg_type: 'execute_request',
-              version: '5.3'
-            },
-            parent_header: {},
-            metadata: {},
-            content: {
-              code: request.code,
-              silent: request.silent ?? false,
-              store_history: request.storeHistory ?? true,
-              user_expressions: {},
-              allow_stdin: false,
-              stop_on_error: true
-            },
-            channel: 'shell'
-          })
-        )
-      })
-      socket.addEventListener('message', (event) => {
-        try {
-          const raw =
-            typeof event.data === 'string'
-              ? event.data
-              : Buffer.from(event.data as ArrayBuffer).toString('utf8')
-          const message = JSON.parse(raw) as RawJupyterKernelMessage
-          if (message.parent_header?.msg_id !== msgId) return
-          messages.push(message)
-          const type = messageType(message)
-          const content = jsonObject(message.content)
-          if (type === 'execute_reply') sawReply = true
-          if (type === 'status' && content?.execution_state === 'idle') sawIdle = true
-          finish()
-        } catch (error) {
-          clearTimeout(timeout)
-          socket.close()
-          reject(error)
-        }
-      })
-      socket.addEventListener('error', (event) => {
-        clearTimeout(timeout)
-        socket.close()
-        reject(new Error(errorMessage(event.message ?? 'Jupyter kernel WebSocket error')))
-      })
-      socket.addEventListener('close', () => {
-        clearTimeout(timeout)
-        if (!sawIdle || !sawReply) {
-          reject(new Error('Jupyter kernel WebSocket closed before execution completed'))
-        }
-      })
-    })
+    )
   }
 
   async completeCode(request: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult> {
-    const Constructor = websocketConstructor()
     const msgId = randomUUID()
     const code = request.code
     const cursorPosition = Math.max(0, Math.min(request.cursorPosition, code.length))
-    const socket = new Constructor(
-      kernelChannelsUrl(request.connection, request.kernelId, request.sessionId)
+    const socket = this.openSocket(request.connection, request.kernelId, request.sessionId)
+    return collectKernelMessages(
+      socket,
+      completionRequestMessage(msgId, request, cursorPosition),
+      msgId,
+      this.completionTimeoutMs,
+      'Notebook code completion timed out',
+      'Jupyter kernel WebSocket closed before completion results arrived',
+      (messages, message) =>
+        messageType(message) === 'complete_reply'
+          ? normalizeJupyterKernelCompletionMessages(messages, cursorPosition)
+          : undefined
     )
-
-    return new Promise((resolve, reject) => {
-      const messages: RawJupyterKernelMessage[] = []
-      let sawReply = false
-      const timeout = setTimeout(() => {
-        socket.close()
-        reject(new Error('Notebook code completion timed out'))
-      }, COMPLETION_TIMEOUT_MS)
-
-      const finish = (): void => {
-        if (!sawReply) return
-        clearTimeout(timeout)
-        socket.close()
-        resolve(normalizeJupyterKernelCompletionMessages(messages, cursorPosition))
-      }
-
-      socket.addEventListener('open', () => {
-        socket.send(
-          JSON.stringify({
-            header: {
-              msg_id: msgId,
-              username: 'phi',
-              session: request.sessionId,
-              date: new Date().toISOString(),
-              msg_type: 'complete_request',
-              version: '5.3'
-            },
-            parent_header: {},
-            metadata: {},
-            content: {
-              code,
-              cursor_pos: cursorPosition
-            },
-            channel: 'shell'
-          })
-        )
-      })
-      socket.addEventListener('message', (event) => {
-        try {
-          const raw =
-            typeof event.data === 'string'
-              ? event.data
-              : Buffer.from(event.data as ArrayBuffer).toString('utf8')
-          const message = JSON.parse(raw) as RawJupyterKernelMessage
-          if (message.parent_header?.msg_id !== msgId) return
-          messages.push(message)
-          if (messageType(message) === 'complete_reply') sawReply = true
-          finish()
-        } catch (error) {
-          clearTimeout(timeout)
-          socket.close()
-          reject(error)
-        }
-      })
-      socket.addEventListener('error', (event) => {
-        clearTimeout(timeout)
-        socket.close()
-        reject(new Error(errorMessage(event.message ?? 'Jupyter kernel WebSocket error')))
-      })
-      socket.addEventListener('close', () => {
-        clearTimeout(timeout)
-        if (!sawReply) {
-          reject(new Error('Jupyter kernel WebSocket closed before completion results arrived'))
-        }
-      })
-    })
   }
+
+  private openSocket(
+    connection: JupyterServerConnection,
+    kernelId: string,
+    sessionId: string
+  ): KernelWebSocket {
+    const Constructor = this.WebSocket ?? websocketConstructor()
+    try {
+      return new Constructor(kernelChannelsUrl(connection, kernelId, sessionId))
+    } catch {
+      throw new Error('无法连接 Jupyter kernel WebSocket')
+    }
+  }
+}
+
+function executeRequestMessage(msgId: string, request: JupyterKernelExecuteRequest): unknown {
+  return kernelRequestMessage(msgId, request.sessionId, 'execute_request', {
+    code: request.code,
+    silent: request.silent ?? false,
+    store_history: request.storeHistory ?? true,
+    user_expressions: {},
+    allow_stdin: false,
+    stop_on_error: true
+  })
+}
+
+function completionRequestMessage(
+  msgId: string,
+  request: CompleteNotebookCodeInput,
+  cursorPosition: number
+): unknown {
+  return kernelRequestMessage(msgId, request.sessionId, 'complete_request', {
+    code: request.code,
+    cursor_pos: cursorPosition
+  })
+}
+
+function kernelRequestMessage(
+  msgId: string,
+  sessionId: string,
+  messageTypeName: string,
+  content: Record<string, unknown>
+): unknown {
+  return {
+    header: {
+      msg_id: msgId,
+      username: 'phi',
+      session: sessionId,
+      date: new Date().toISOString(),
+      msg_type: messageTypeName,
+      version: '5.3'
+    },
+    parent_header: {},
+    metadata: {},
+    content,
+    channel: 'shell'
+  }
+}
+
+function collectKernelMessages<T>(
+  socket: KernelWebSocket,
+  requestMessage: unknown,
+  msgId: string,
+  timeoutMs: number,
+  timeoutMessage: string,
+  closeMessage: string,
+  resolveWhen: (
+    messages: RawJupyterKernelMessage[],
+    message: RawJupyterKernelMessage
+  ) => T | undefined
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const messages: RawJupyterKernelMessage[] = []
+    let settled = false
+    const settle = (error?: unknown, result?: T): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      socket.close()
+      if (error) reject(error)
+      else resolve(result as T)
+    }
+    const timeout = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs)
+    socket.addEventListener('open', () => socket.send(JSON.stringify(requestMessage)))
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = parseKernelMessage(event)
+        if (message.parent_header?.msg_id !== msgId) return
+        messages.push(message)
+        const result = resolveWhen(messages, message)
+        if (result !== undefined) settle(undefined, result)
+      } catch {
+        settle(new Error('Jupyter kernel message 无效'))
+      }
+    })
+    socket.addEventListener('error', () => settle(new Error('Jupyter kernel WebSocket error')))
+    socket.addEventListener('close', () => settle(new Error(closeMessage)))
+  })
+}
+
+function parseKernelMessage(event: KernelWebSocketEvent): RawJupyterKernelMessage {
+  const raw =
+    typeof event.data === 'string'
+      ? event.data
+      : Buffer.from(event.data as ArrayBuffer).toString('utf8')
+  return JSON.parse(raw) as RawJupyterKernelMessage
+}
+
+function positiveTimeout(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Jupyter timeout 必须为正数')
+  return value
 }
 
 export class AnalysisNotebookExecutor {

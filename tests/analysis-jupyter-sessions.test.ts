@@ -12,7 +12,9 @@ import type { AnalysisKernelDiagnostics } from '../src/main/agent/notebook/analy
 
 class FakeJupyterSessionClient implements JupyterSessionClient {
   readonly created: JupyterSessionCreateRequest[] = []
+  readonly createConnections: JupyterServerConnection[] = []
   readonly deleted: string[] = []
+  readonly deleteConnections: JupyterServerConnection[] = []
   readonly interrupted: string[] = []
   nextSession: JupyterSessionRecord = {
     id: 'session-1',
@@ -22,14 +24,16 @@ class FakeJupyterSessionClient implements JupyterSessionClient {
   }
 
   async createSession(
-    _connection: JupyterServerConnection,
+    connection: JupyterServerConnection,
     request: JupyterSessionCreateRequest
   ): Promise<JupyterSessionRecord> {
+    this.createConnections.push(connection)
     this.created.push(request)
     return this.nextSession
   }
 
-  async deleteSession(_connection: JupyterServerConnection, sessionId: string): Promise<void> {
+  async deleteSession(connection: JupyterServerConnection, sessionId: string): Promise<void> {
+    this.deleteConnections.push(connection)
     this.deleted.push(sessionId)
   }
 
@@ -277,4 +281,125 @@ test('AnalysisNotebookSessionRegistry interrupts a tracked notebook kernel', asy
   assert.equal(interrupted.state, 'idle')
   assert.equal(interrupted.updatedAt, '2026-09-09T00:02:00.000Z')
   assert.match(interrupted.message ?? '', /停止请求/)
+})
+
+test('AnalysisNotebookSessionRegistry rejects an execution target from an older runtime', async () => {
+  const client = new FakeJupyterSessionClient()
+  let connection: JupyterServerConnection = {
+    url: 'http://127.0.0.1:41001/',
+    runtimeId: 'runtime-1'
+  }
+  const registry = new AnalysisNotebookSessionRegistry({
+    client,
+    getConnection: () => connection
+  })
+  const document = notebook({
+    kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+  })
+  const input = {
+    projectCwd: '/project',
+    notebookPath: '/project/notebooks/demo.ipynb',
+    document,
+    kernels: kernels()
+  }
+  await registry.ensureSession(input)
+
+  connection = { url: 'http://127.0.0.1:41002/', runtimeId: 'runtime-2' }
+
+  assert.equal(registry.executionTarget(input.projectCwd, input.notebookPath), null)
+  assert.equal(registry.projectSummary(input.projectCwd).activeSessionCount, 0)
+})
+
+test('AnalysisNotebookSessionRegistry creates a new kernel without deleting the old id on runtime change', async () => {
+  const client = new FakeJupyterSessionClient()
+  let connection: JupyterServerConnection = {
+    url: 'http://127.0.0.1:41001/',
+    runtimeId: 'runtime-1'
+  }
+  const registry = new AnalysisNotebookSessionRegistry({
+    client,
+    getConnection: () => connection
+  })
+  const input = {
+    projectCwd: '/project',
+    notebookPath: '/project/notebooks/demo.ipynb',
+    document: notebook({
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+    }),
+    kernels: kernels()
+  }
+  await registry.ensureSession(input)
+  client.nextSession = {
+    id: 'session-2',
+    kernelId: 'kernel-2',
+    kernelName: 'python3',
+    executionState: 'idle'
+  }
+
+  connection = { url: 'http://127.0.0.1:41002/', runtimeId: 'runtime-2' }
+  const recreated = await registry.ensureSession(input)
+
+  assert.equal(recreated.sessionId, 'session-2')
+  assert.equal(client.created.length, 2)
+  assert.deepEqual(
+    client.createConnections.map((value) => value.runtimeId),
+    ['runtime-1', 'runtime-2']
+  )
+  assert.deepEqual(client.deleted, [])
+})
+
+test('AnalysisNotebookSessionRegistry closes a stale runtime session without deleting it on the new server', async () => {
+  const client = new FakeJupyterSessionClient()
+  let connection: JupyterServerConnection = {
+    url: 'http://127.0.0.1:41001/',
+    runtimeId: 'runtime-1'
+  }
+  const registry = new AnalysisNotebookSessionRegistry({
+    client,
+    getConnection: () => connection
+  })
+  const input = {
+    projectCwd: '/project',
+    notebookPath: '/project/notebooks/demo.ipynb',
+    document: notebook({
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+    }),
+    kernels: kernels()
+  }
+  await registry.ensureSession(input)
+
+  connection = { url: 'http://127.0.0.1:41002/', runtimeId: 'runtime-2' }
+  const closed = await registry.closeSession(input.projectCwd, input.notebookPath)
+
+  assert.equal(closed.state, 'disconnected')
+  assert.deepEqual(client.deleted, [])
+  assert.deepEqual(client.deleteConnections, [])
+  assert.equal(registry.projectSummary(input.projectCwd).activeSessionCount, 0)
+})
+
+test('AnalysisNotebookSessionRegistry redacts remote tokens from public errors', async () => {
+  const client = new FakeJupyterSessionClient()
+  const token = 'remote-status-secret'
+  client.createSession = async () => {
+    throw new Error(`request failed: ?token=${token} ${token}`)
+  }
+  const registry = new AnalysisNotebookSessionRegistry({
+    client,
+    getConnection: () => ({
+      url: 'http://127.0.0.1:41001/',
+      runtimeId: 'remote-runtime-1',
+      authorizationHeader: () => `token ${token}`
+    })
+  })
+
+  const status = await registry.ensureSession({
+    projectCwd: '/project',
+    notebookPath: '/project/demo.ipynb',
+    document: notebook({}),
+    kernels: kernels()
+  })
+
+  assert.equal(status.state, 'error')
+  assert.doesNotMatch(status.message ?? '', new RegExp(token))
+  assert.match(status.message ?? '', /<redacted>/u)
 })

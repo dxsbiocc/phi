@@ -1,193 +1,207 @@
 import assert from 'node:assert/strict'
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import test from 'node:test'
-import { FetchJupyterSessionClient } from '../src/main/agent/notebook/analysis-jupyter-sessions'
+
+import {
+  FetchJupyterSessionClient,
+  type JupyterFetch,
+  type JupyterSessionCreateRequest
+} from '../src/main/agent/notebook/analysis-jupyter-sessions'
 
 const XSRF_TOKEN = 'test-xsrf-token'
+const REMOTE_TOKEN = 'remote-secret-token'
 
-function readBody(request: IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = []
-    request.on('data', (chunk: Buffer) => chunks.push(chunk))
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-  })
-}
-
-function hasValidXsrf(request: IncomingMessage): boolean {
-  const cookie = request.headers.cookie ?? ''
-  const header = request.headers['x-xsrftoken']
-  return cookie.includes(`_xsrf=${XSRF_TOKEN}`) && header === XSRF_TOKEN
-}
-
-/**
- * Emulates the two things real Jupyter Server does that
- * FetchJupyterSessionClient must handle correctly:
- * - GET / hands out an `_xsrf` cookie.
- * - POST/DELETE reject with 403 unless that cookie AND a matching
- *   X-XSRFToken header are both present (Tornado's CSRF protection, which
- *   applies even when ServerApp.token is disabled).
- */
-function startFakeJupyterServer(options: { rejectFirstNPosts?: number }): Promise<{
-  server: Server
+type CapturedRequest = {
+  method: string
   url: string
-  requests: { method: string; url: string }[]
-}> {
-  const requests: { method: string; url: string }[] = []
-  let sessionCounter = 0
-  let postsToReject = options.rejectFirstNPosts ?? 0
+  headers: Record<string, string>
+  body: string
+}
 
-  const server = createServer((request, response) => {
-    void handle(request, response)
-  })
+class FakeJupyterHttpService {
+  readonly requests: CapturedRequest[] = []
+  rejectFirstNPosts = 0
+  failNextSessionPost = false
+  requiredAuthorization?: string
+  private sessionCounter = 0
 
-  async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const method = request.method ?? 'GET'
-    const url = request.url ?? '/'
-    requests.push({ method, url })
+  readonly fetch: JupyterFetch = async (input, init) => {
+    const request = new Request(input, init)
+    const captured = await captureRequest(request)
+    this.requests.push(captured)
 
-    if (method === 'GET' && url === '/') {
-      response.setHeader('set-cookie', [`_xsrf=${XSRF_TOKEN}; Path=/`])
-      response.writeHead(200, { 'content-type': 'text/html' })
-      response.end('<html></html>')
-      return
+    if (
+      this.requiredAuthorization &&
+      captured.headers.authorization !== this.requiredAuthorization
+    ) {
+      return jsonResponse({ message: 'unauthorized' }, 401)
     }
-
-    if (method === 'POST' && url === '/api/sessions') {
-      // Simulate a cached token going stale for reasons outside the
-      // client's control (e.g. the server restarted with a new cookie
-      // secret): reject the first N attempts unconditionally, regardless of
-      // whether the request actually carried a valid xsrf cookie/header.
-      if (postsToReject > 0) {
-        postsToReject -= 1
-        response.writeHead(403, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ message: "'_xsrf' argument missing from POST" }))
-        return
+    if (captured.method === 'GET' && new URL(captured.url).pathname === '/') {
+      return new Response('<html></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html', 'set-cookie': `_xsrf=${XSRF_TOKEN}; Path=/` }
+      })
+    }
+    if (captured.method === 'POST' && new URL(captured.url).pathname === '/api/sessions') {
+      if (this.failNextSessionPost) {
+        this.failNextSessionPost = false
+        throw new Error('ECONNRESET after request receipt')
       }
-      if (!hasValidXsrf(request)) {
-        response.writeHead(403, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ message: "'_xsrf' argument missing from POST" }))
-        return
+      if (this.rejectFirstNPosts > 0) {
+        this.rejectFirstNPosts -= 1
+        return jsonResponse({ message: "'_xsrf' argument missing from POST" }, 403)
       }
-      await readBody(request)
-      sessionCounter += 1
-      response.writeHead(201, { 'content-type': 'application/json' })
-      response.end(
-        JSON.stringify({
-          id: `session-${sessionCounter}`,
-          kernel: { id: `kernel-${sessionCounter}`, name: 'python3', execution_state: 'starting' }
-        })
+      if (!hasValidXsrf(captured)) {
+        return jsonResponse({ message: "'_xsrf' argument missing from POST" }, 403)
+      }
+      this.sessionCounter += 1
+      return jsonResponse(
+        {
+          id: `session-${this.sessionCounter}`,
+          kernel: {
+            id: `kernel-${this.sessionCounter}`,
+            name: 'python3',
+            execution_state: 'starting'
+          }
+        },
+        201
       )
-      return
     }
-
-    if (method === 'DELETE' && url.startsWith('/api/sessions/')) {
-      if (!hasValidXsrf(request)) {
-        response.writeHead(403, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ message: "'_xsrf' argument missing from DELETE" }))
-        return
-      }
-      response.writeHead(204)
-      response.end()
-      return
+    if (captured.method === 'DELETE' && /^\/api\/sessions\//.test(new URL(captured.url).pathname)) {
+      return hasValidXsrf(captured)
+        ? new Response(null, { status: 204 })
+        : jsonResponse({ message: "'_xsrf' argument missing from DELETE" }, 403)
     }
-
-    if (method === 'POST' && url.startsWith('/api/kernels/') && url.endsWith('/interrupt')) {
-      if (!hasValidXsrf(request)) {
-        response.writeHead(403, { 'content-type': 'application/json' })
-        response.end(JSON.stringify({ message: "'_xsrf' argument missing from POST" }))
-        return
-      }
-      response.writeHead(204)
-      response.end()
-      return
+    if (
+      captured.method === 'POST' &&
+      /^\/api\/kernels\/[^/]+\/interrupt$/.test(new URL(captured.url).pathname)
+    ) {
+      return hasValidXsrf(captured)
+        ? new Response(null, { status: 204 })
+        : jsonResponse({ message: "'_xsrf' argument missing from POST" }, 403)
     }
-
-    response.writeHead(404)
-    response.end()
+    return new Response(null, { status: 404 })
   }
+}
 
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      const port = typeof address === 'object' && address ? address.port : 0
-      resolve({ server, url: `http://127.0.0.1:${port}/`, requests })
-    })
+function hasValidXsrf(request: CapturedRequest): boolean {
+  return (
+    request.headers.cookie?.includes(`_xsrf=${XSRF_TOKEN}`) === true &&
+    request.headers['x-xsrftoken'] === XSRF_TOKEN
+  )
+}
+
+async function captureRequest(request: Request): Promise<CapturedRequest> {
+  return {
+    method: request.method,
+    url: request.url,
+    headers: Object.fromEntries(request.headers.entries()),
+    body: await request.text()
+  }
+}
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' }
   })
 }
 
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve) => server.close(() => resolve()))
+function createRequest(): JupyterSessionCreateRequest {
+  return {
+    projectCwd: '/project',
+    notebookPath: '/project/demo.ipynb',
+    notebookRelativePath: 'demo.ipynb',
+    notebookName: 'demo.ipynb',
+    kernelName: 'python3'
+  }
 }
 
 test('FetchJupyterSessionClient fetches the _xsrf cookie and sends it back on create/delete', async () => {
-  const { server, url, requests } = await startFakeJupyterServer({})
-  try {
-    const client = new FetchJupyterSessionClient()
-    const connection = { url }
+  const service = new FakeJupyterHttpService()
+  const client = new FetchJupyterSessionClient(service.fetch)
+  const connection = { url: 'http://127.0.0.1:41001/', runtimeId: 'runtime-1' }
 
-    const created = await client.createSession(connection, {
-      projectCwd: '/project',
-      notebookPath: '/project/demo.ipynb',
-      notebookRelativePath: 'demo.ipynb',
-      notebookName: 'demo.ipynb',
-      kernelName: 'python3'
-    })
-    assert.equal(created.id, 'session-1')
-    assert.equal(created.kernelId, 'kernel-1')
+  const created = await client.createSession(connection, createRequest())
+  assert.equal(created.id, 'session-1')
+  assert.equal(created.kernelId, 'kernel-1')
+  await client.deleteSession(connection, created.id)
 
-    await client.deleteSession(connection, created.id)
-
-    // GET / (xsrf) -> POST /api/sessions -> DELETE /api/sessions/session-1,
-    // with the cookie fetched only once and reused for both mutating calls.
-    assert.deepEqual(
-      requests.map((entry) => `${entry.method} ${entry.url}`),
-      ['GET /', 'POST /api/sessions', 'DELETE /api/sessions/session-1']
-    )
-  } finally {
-    await closeServer(server)
-  }
+  assert.deepEqual(
+    service.requests.map((entry) => `${entry.method} ${new URL(entry.url).pathname}`),
+    ['GET /', 'POST /api/sessions', 'DELETE /api/sessions/session-1']
+  )
+  assert.ok(service.requests.slice(1).every(hasValidXsrf))
 })
 
 test('FetchJupyterSessionClient sends xsrf credentials when interrupting a kernel', async () => {
-  const { server, url, requests } = await startFakeJupyterServer({})
-  try {
-    const client = new FetchJupyterSessionClient()
-    const connection = { url }
+  const service = new FakeJupyterHttpService()
+  const client = new FetchJupyterSessionClient(service.fetch)
+  const connection = { url: 'http://127.0.0.1:41001/', runtimeId: 'runtime-1' }
 
-    await client.interruptKernel(connection, 'kernel-1')
+  await client.interruptKernel(connection, 'kernel-1')
 
-    assert.deepEqual(
-      requests.map((entry) => `${entry.method} ${entry.url}`),
-      ['GET /', 'POST /api/kernels/kernel-1/interrupt']
-    )
-  } finally {
-    await closeServer(server)
-  }
+  assert.deepEqual(
+    service.requests.map((entry) => `${entry.method} ${new URL(entry.url).pathname}`),
+    ['GET /', 'POST /api/kernels/kernel-1/interrupt']
+  )
+  assert.equal(hasValidXsrf(service.requests[1]), true)
 })
 
 test('FetchJupyterSessionClient transparently refreshes a stale _xsrf token after one 403', async () => {
-  // The very first POST is rejected once, unconditionally -- this is what
-  // happens when the Jupyter Server process was restarted with a new cookie
-  // secret between the client's earlier calls and now.
-  const { server, url, requests } = await startFakeJupyterServer({ rejectFirstNPosts: 1 })
-  try {
-    const client = new FetchJupyterSessionClient()
-    const connection = { url }
+  const service = new FakeJupyterHttpService()
+  service.rejectFirstNPosts = 1
+  const client = new FetchJupyterSessionClient(service.fetch)
 
-    const created = await client.createSession(connection, {
-      projectCwd: '/project',
-      notebookPath: '/project/demo.ipynb',
-      notebookRelativePath: 'demo.ipynb',
-      notebookName: 'demo.ipynb',
-      kernelName: 'python3'
-    })
+  const created = await client.createSession(
+    { url: 'http://127.0.0.1:41001/', runtimeId: 'runtime-1' },
+    createRequest()
+  )
 
-    assert.equal(created.id, 'session-1')
-    assert.deepEqual(
-      requests.map((entry) => `${entry.method} ${entry.url}`),
-      ['GET /', 'POST /api/sessions', 'GET /', 'POST /api/sessions']
-    )
-  } finally {
-    await closeServer(server)
+  assert.equal(created.id, 'session-1')
+  assert.deepEqual(
+    service.requests.map((entry) => `${entry.method} ${new URL(entry.url).pathname}`),
+    ['GET /', 'POST /api/sessions', 'GET /', 'POST /api/sessions']
+  )
+})
+
+test('FetchJupyterSessionClient sends remote authorization on GET and mutations without URL token', async () => {
+  const service = new FakeJupyterHttpService()
+  service.requiredAuthorization = `token ${REMOTE_TOKEN}`
+  const client = new FetchJupyterSessionClient(service.fetch)
+  const connection = {
+    url: 'http://127.0.0.1:41001/',
+    runtimeId: 'runtime-remote-1',
+    authorizationHeader: () => `token ${REMOTE_TOKEN}`
   }
+
+  const created = await client.createSession(connection, createRequest())
+  await client.interruptKernel(connection, created.kernelId)
+  await client.deleteSession(connection, created.id)
+
+  assert.ok(
+    service.requests.every((request) => request.headers.authorization === `token ${REMOTE_TOKEN}`)
+  )
+  assert.ok(service.requests.every((request) => !request.url.includes(REMOTE_TOKEN)))
+  assert.ok(service.requests.filter((request) => request.method !== 'GET').every(hasValidXsrf))
+})
+
+test('FetchJupyterSessionClient does not replay a session POST after transport failure', async () => {
+  const service = new FakeJupyterHttpService()
+  service.failNextSessionPost = true
+  const client = new FetchJupyterSessionClient(service.fetch)
+
+  await assert.rejects(
+    client.createSession(
+      { url: 'http://127.0.0.1:41001/', runtimeId: 'runtime-1' },
+      createRequest()
+    ),
+    /ECONNRESET/
+  )
+
+  assert.equal(
+    service.requests.filter(
+      (request) => request.method === 'POST' && new URL(request.url).pathname === '/api/sessions'
+    ).length,
+    1
+  )
 })

@@ -39,6 +39,7 @@ export interface RemoteJupyterLaunchCommand {
   command: string
   args?: string[]
   cwd?: string
+  env?: Record<string, string>
 }
 
 export interface RemoteJupyterConnection {
@@ -90,6 +91,7 @@ export function buildRemoteJupyterLaunchScript(
   const command = [launch.command, ...(launch.args ?? []), ...jupyterSecurityArgs(remotePort)]
     .map(shellQuote)
     .join(' ')
+  const environment = remoteJupyterEnvironment(launch.env)
   const graceSeconds = Math.max(0, shutdownGraceMs) / 1_000
   const startedMarker = cleanupMarker.replace('CLEANED', 'STARTED')
   return [
@@ -102,7 +104,7 @@ export function buildRemoteJupyterLaunchScript(
     "trap 'terminate_tree' EXIT",
     'IFS= read -r PHI_JUPYTER_TOKEN <&3 || exit 70',
     'test "${#PHI_JUPYTER_TOKEN}" -ge 43 || exit 71',
-    `JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" setsid ${command} &`,
+    `${environment}JUPYTER_TOKEN="$PHI_JUPYTER_TOKEN" setsid ${command} &`,
     'pid=$!',
     'unset PHI_JUPYTER_TOKEN',
     `printf '\\n%s\\n' ${shellQuote(startedMarker)}`,
@@ -116,6 +118,26 @@ export function buildRemoteJupyterLaunchScript(
     'terminate_tree',
     'exit "$status"'
   ].join('\n')
+}
+
+function remoteJupyterEnvironment(env: Record<string, string> | undefined): string {
+  if (!env) return ''
+  const allowed = new Set([
+    'IPYTHONDIR',
+    'JUPYTER_CONFIG_DIR',
+    'JUPYTER_DATA_DIR',
+    'JUPYTER_PATH',
+    'JUPYTER_RUNTIME_DIR',
+    'PYTHONNOUSERSITE'
+  ])
+  return Object.entries(env)
+    .map(([key, value]) => {
+      if (!allowed.has(key) || /[\r\n\0]/.test(value)) {
+        throw new Error('远程 Jupyter 环境变量无效')
+      }
+      return `${key}=${shellQuote(value)} `
+    })
+    .join('')
 }
 
 function cleanupFunctionLines(cleanupMarker: string, graceSeconds: number): string[] {

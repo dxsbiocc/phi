@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { realpathSync, statSync } from 'node:fs'
 import { request } from 'node:http'
 
@@ -21,11 +22,15 @@ type JupyterEndpoint = {
   url: string
   token?: string
   port?: number
+  runtimeId?: string
 }
 
 export type JupyterServerConnection = {
   url: string
   token?: string
+  authorizationHeader?: () => string | undefined
+  /** Non-sensitive identity that changes whenever the backing Jupyter process changes. */
+  runtimeId?: string
 }
 
 export type JupyterServerLaunch = {
@@ -76,6 +81,7 @@ type JupyterServerRecord = {
   message?: string
   logs: string[]
   pendingOutput: string
+  runtimeId: string
 }
 
 const MAX_LOG_LINES = 20
@@ -285,7 +291,8 @@ export class JupyterServerRegistry {
         port: this.port ?? jupyterPortForProject(projectCwd),
         state: 'stopped',
         logs: [],
-        pendingOutput: ''
+        pendingOutput: '',
+        runtimeId: ''
       }
     )
   }
@@ -311,7 +318,8 @@ export class JupyterServerRegistry {
       startedAt: this.now().toISOString(),
       message: '正在启动 Jupyter Server',
       logs: [],
-      pendingOutput: ''
+      pendingOutput: '',
+      runtimeId: randomUUID()
     }
     this.records.set(projectCwd, record)
 
@@ -417,7 +425,10 @@ export class JupyterServerRegistry {
   }
 
   private markReady(record: JupyterServerRecord, endpoint: JupyterEndpoint): void {
-    record.endpoint = endpoint
+    record.endpoint = {
+      ...endpoint,
+      runtimeId: record.runtimeId
+    }
     record.port = endpoint.port ?? record.port
     record.state = 'ready'
     record.message = 'Jupyter Server 已就绪'

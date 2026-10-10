@@ -6,6 +6,14 @@ import type {
   AnalysisKernelSummary
 } from './analysis-kernels'
 import type { JupyterServerConnection } from './analysis-jupyter-server'
+import {
+  jupyterAuthorizationHeader,
+  jupyterConnectionIdentity,
+  sanitizeJupyterConnectionError,
+  type JupyterRuntimeBackend
+} from './jupyter-runtime-backend'
+
+export type { JupyterServerConnection } from './analysis-jupyter-server'
 
 export type AnalysisNotebookKernelState =
   'missing' | 'idle' | 'busy' | 'restarting' | 'disconnected' | 'error'
@@ -85,6 +93,7 @@ type SessionRecord = {
   kernelDisplayName: string
   sessionId: string
   kernelId: string
+  runtimeId: string
   state: AnalysisNotebookKernelState
   startedAt: string
   updatedAt: string
@@ -209,7 +218,8 @@ function publicStatus(record: SessionRecord): AnalysisNotebookSessionStatus {
 
 function headers(connection: JupyterServerConnection): Record<string, string> {
   const result: Record<string, string> = { 'content-type': 'application/json' }
-  if (connection.token) result.authorization = `token ${connection.token}`
+  const authorization = jupyterAuthorizationHeader(connection)
+  if (authorization) result.authorization = authorization
   return result
 }
 
@@ -218,6 +228,7 @@ function sessionsUrl(connection: JupyterServerConnection): string {
 }
 
 type XsrfCredentials = { cookie: string; token: string }
+export type JupyterFetch = typeof fetch
 
 function responseSetCookies(response: Response): string[] {
   const withGetSetCookie = response.headers as Headers & { getSetCookie?: () => string[] }
@@ -228,15 +239,18 @@ function responseSetCookies(response: Response): string[] {
   return single ? [single] : []
 }
 
-async function fetchXsrfCredentials(connection: JupyterServerConnection): Promise<XsrfCredentials> {
+async function fetchXsrfCredentials(
+  connection: JupyterServerConnection,
+  fetchImpl: JupyterFetch
+): Promise<XsrfCredentials> {
   // Jupyter Server rejects every state-changing request (session/kernel
   // create & delete) with 403 "'_xsrf' argument missing from POST" unless
   // the request carries a matching _xsrf cookie + header -- Tornado's CSRF
   // protection applies even when ServerApp.token is disabled. A plain GET
   // is what makes the server hand out that cookie in the first place.
-  const response = await fetch(new URL('/', connection.url).toString(), {
+  const response = await fetchImpl(new URL('/', connection.url).toString(), {
     method: 'GET',
-    headers: connection.token ? { authorization: `token ${connection.token}` } : {}
+    headers: headers(connection)
   })
   const xsrfCookie = responseSetCookies(response)
     .map((entry) => entry.split(';')[0]?.trim())
@@ -262,22 +276,25 @@ function parseJupyterSession(
 }
 
 export class FetchJupyterSessionClient implements JupyterSessionClient {
-  private readonly xsrfByConnectionUrl = new Map<string, Promise<XsrfCredentials>>()
+  private readonly xsrfByConnection = new Map<string, Promise<XsrfCredentials>>()
+
+  constructor(private readonly fetchImpl: JupyterFetch = fetch) {}
 
   private xsrfFor(
     connection: JupyterServerConnection,
     forceRefresh = false
   ): Promise<XsrfCredentials> {
+    const identity = jupyterConnectionIdentity(connection)
     if (forceRefresh) {
-      this.xsrfByConnectionUrl.delete(connection.url)
+      this.xsrfByConnection.delete(identity)
     }
-    const cached = this.xsrfByConnectionUrl.get(connection.url)
+    const cached = this.xsrfByConnection.get(identity)
     if (cached) return cached
-    const pending = fetchXsrfCredentials(connection).catch((error) => {
-      this.xsrfByConnectionUrl.delete(connection.url)
+    const pending = fetchXsrfCredentials(connection, this.fetchImpl).catch((error) => {
+      this.xsrfByConnection.delete(identity)
       throw error
     })
-    this.xsrfByConnectionUrl.set(connection.url, pending)
+    this.xsrfByConnection.set(identity, pending)
     return pending
   }
 
@@ -287,7 +304,7 @@ export class FetchJupyterSessionClient implements JupyterSessionClient {
     init: { method: string; body?: string }
   ): Promise<Response> {
     const attempt = async (xsrf: XsrfCredentials): Promise<Response> =>
-      fetch(url, {
+      this.fetchImpl(url, {
         method: init.method,
         headers: {
           ...headers(connection),
@@ -355,12 +372,16 @@ export class AnalysisNotebookSessionRegistry {
   private readonly prepareKernel?: PrepareNotebookKernel
 
   constructor(options: {
-    getConnection: (projectCwd: string) => JupyterServerConnection | null
+    getConnection?: (projectCwd: string) => JupyterServerConnection | null
+    runtimeBackend?: Pick<JupyterRuntimeBackend, 'connection'>
     client?: JupyterSessionClient
     now?: () => Date
     prepareKernel?: PrepareNotebookKernel
   }) {
-    this.getConnection = options.getConnection
+    const backendConnection = options.runtimeBackend?.connection.bind(options.runtimeBackend)
+    const getConnection = options.getConnection ?? backendConnection
+    if (!getConnection) throw new Error('Notebook session registry 缺少 Jupyter runtime backend')
+    this.getConnection = getConnection
     this.client = options.client ?? new FetchJupyterSessionClient()
     this.now = options.now ?? (() => new Date())
     if (options.prepareKernel) this.prepareKernel = options.prepareKernel
@@ -369,13 +390,17 @@ export class AnalysisNotebookSessionRegistry {
   status(input: EnsureNotebookSessionInput): AnalysisNotebookSessionStatus {
     const key = this.key(input.projectCwd, input.notebookPath)
     const existing = this.records.get(key)
-    if (existing) return publicStatus(existing)
+    const connection = this.getConnection(input.projectCwd)
+    if (existing && connection && this.matchesRuntime(existing, connection)) {
+      return publicStatus(existing)
+    }
+    if (existing) this.records.delete(key)
     const kernel = selectNotebookKernel(input.document, input.kernels)
     if (!kernel) return this.missingStatus(input)
     if (kernel.status === 'not-built') {
       return this.notBuiltStatus(input, kernel, notBuiltMessage(kernel))
     }
-    if (!this.getConnection(input.projectCwd)) {
+    if (!connection) {
       return {
         projectCwd: input.projectCwd,
         notebookPath: input.notebookPath,
@@ -401,7 +426,9 @@ export class AnalysisNotebookSessionRegistry {
 
     const key = this.key(input.projectCwd, input.notebookPath)
     const existing = this.records.get(key)
-    if (existing && existing.kernelName === kernel.name && this.isHealthy(existing.state)) {
+    const connection = this.getConnection(input.projectCwd)
+    const sameRuntime = existing && connection && this.matchesRuntime(existing, connection)
+    if (sameRuntime && existing.kernelName === kernel.name && this.isHealthy(existing.state)) {
       return publicStatus(existing)
     }
 
@@ -415,7 +442,6 @@ export class AnalysisNotebookSessionRegistry {
       }
     }
 
-    const connection = this.getConnection(input.projectCwd)
     if (!connection) {
       return {
         projectCwd: input.projectCwd,
@@ -428,15 +454,15 @@ export class AnalysisNotebookSessionRegistry {
     }
 
     try {
-      if (existing) {
+      if (existing && sameRuntime) {
         try {
           await this.client.deleteSession(connection, existing.sessionId)
         } catch {
           // The previous session may already be gone (server restarted, kernel died).
           // Don't let cleanup of a stale session block creating a fresh one.
         }
-        this.records.delete(key)
       }
+      if (existing) this.records.delete(key)
       const created = await this.client.createSession(connection, {
         projectCwd: input.projectCwd,
         notebookPath: input.notebookPath,
@@ -452,6 +478,7 @@ export class AnalysisNotebookSessionRegistry {
         kernelDisplayName: kernel.displayName,
         sessionId: created.id,
         kernelId: created.kernelId,
+        runtimeId: jupyterConnectionIdentity(connection),
         state: sessionState(created.executionState),
         startedAt: timestamp,
         updatedAt: timestamp,
@@ -466,7 +493,7 @@ export class AnalysisNotebookSessionRegistry {
         kernelName: kernel.name,
         kernelDisplayName: kernel.displayName,
         state: 'error',
-        message: errorMessage(error),
+        message: sanitizeJupyterConnectionError(error, connection),
         updatedAt: this.now().toISOString()
       }
     }
@@ -488,14 +515,14 @@ export class AnalysisNotebookSessionRegistry {
     }
 
     const connection = this.getConnection(projectCwd)
-    if (connection) {
+    if (connection && this.matchesRuntime(existing, connection)) {
       try {
         await this.client.deleteSession(connection, existing.sessionId)
       } catch (error) {
         return {
           ...publicStatus(existing),
           state: 'error',
-          message: errorMessage(error),
+          message: sanitizeJupyterConnectionError(error, connection),
           updatedAt: this.now().toISOString()
         }
       }
@@ -529,7 +556,8 @@ export class AnalysisNotebookSessionRegistry {
     }
 
     const connection = this.getConnection(projectCwd)
-    if (!connection) {
+    if (!connection || !this.matchesRuntime(existing, connection)) {
+      this.records.delete(key)
       existing.state = 'disconnected'
       existing.message = 'Jupyter Server 尚未就绪'
       existing.updatedAt = this.now().toISOString()
@@ -544,7 +572,7 @@ export class AnalysisNotebookSessionRegistry {
       return publicStatus(existing)
     } catch (error) {
       existing.state = 'error'
-      existing.message = errorMessage(error)
+      existing.message = sanitizeJupyterConnectionError(error, connection)
       existing.updatedAt = this.now().toISOString()
       return publicStatus(existing)
     }
@@ -557,6 +585,10 @@ export class AnalysisNotebookSessionRegistry {
     const record = this.records.get(this.key(projectCwd, notebookPath))
     const connection = this.getConnection(projectCwd)
     if (!record || !connection) return null
+    if (!this.matchesRuntime(record, connection)) {
+      this.records.delete(this.key(projectCwd, notebookPath))
+      return null
+    }
     return {
       connection,
       sessionId: record.sessionId,
@@ -597,6 +629,10 @@ export class AnalysisNotebookSessionRegistry {
 
   private isHealthy(state: AnalysisNotebookKernelState): boolean {
     return state === 'idle' || state === 'busy' || state === 'restarting'
+  }
+
+  private matchesRuntime(record: SessionRecord, connection: JupyterServerConnection): boolean {
+    return record.runtimeId === jupyterConnectionIdentity(connection)
   }
 
   private notBuiltStatus(

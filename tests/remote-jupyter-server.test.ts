@@ -37,7 +37,14 @@ afterEach(async () => {
 test('remote launch and ssh argv bind loopback without embedding a token', () => {
   const cleanupMarker = '__PHI_JUPYTER_CLEANED_0123456789abcdef0123456789abcdef__'
   const script = buildRemoteJupyterLaunchScript(
-    { command: '/opt/phi/bin/jupyter', args: ['server'] },
+    {
+      command: '/opt/phi/bin/jupyter',
+      args: ['server'],
+      env: {
+        JUPYTER_PATH: '/srv/phi/runtime/jupyter',
+        JUPYTER_RUNTIME_DIR: '/srv/phi/runtime/jupyter/runtime'
+      }
+    },
     54123,
     cleanupMarker,
     25
@@ -50,6 +57,8 @@ test('remote launch and ssh argv bind loopback without embedding a token', () =>
   assert.match(script, /ServerApp\.write_server_info_file=False/)
   assert.match(script, /ServerApp\.write_browser_open_file=False/)
   assert.match(script, /ServerApp\.allow_remote_access=False/)
+  assert.match(script, /JUPYTER_PATH='\/srv\/phi\/runtime\/jupyter'/)
+  assert.match(script, /JUPYTER_RUNTIME_DIR='\/srv\/phi\/runtime\/jupyter\/runtime'/)
   assert.match(script, /trap 'terminate_tree; exit 73' HUP TERM INT/)
   assert.match(script, /trap 'terminate_tree' EXIT/)
   assert.match(script, /kill -TERM -"\$pid".*kill -TERM "\$pid".*kill -TERM -"\$pid"/s)
@@ -61,6 +70,19 @@ test('remote launch and ssh argv bind loopback without embedding a token', () =>
   assert.ok(!args.includes('ClearAllForwardings=yes'))
   assert.equal(args.at(-1), script)
   assert.doesNotMatch(args.join('\n'), /--ServerApp\.token=/)
+})
+
+test('remote launch rejects untrusted environment keys and token material', () => {
+  const cleanupMarker = '__PHI_JUPYTER_CLEANED_0123456789abcdef0123456789abcdef__'
+  assert.throws(
+    () =>
+      buildRemoteJupyterLaunchScript(
+        { command: '/opt/phi/bin/jupyter', env: { JUPYTER_TOKEN: 'must-not-be-accepted' } },
+        54123,
+        cleanupMarker
+      ),
+    /环境变量无效/u
+  )
 })
 
 test('token stays off argv, files, status, and logs; stop reaps the process group', async () => {

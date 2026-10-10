@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path'
 import test from 'node:test'
 
+import type { EnvRequestResult } from '../src/main/agent/content/env-request'
 import { RemoteKernelspecAdapter } from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import { resolveRemoteBaseEnvironment } from '../src/main/agent/remote-runtime/base-environment'
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
@@ -92,6 +93,39 @@ test('remote kernelspec listing returns the notebook shape and writes only serve
   }
 })
 
+test('remote runtime preparation launches managed jupyter with isolated server paths', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const adapter = createAdapter(fixture)
+
+    const prepared = await adapter.prepareRuntime({ runtimeSessionId: 'runtime-1' })
+
+    const envId = prepared.kernels.kernels[0]?.environment?.envId ?? ''
+    assert.equal(
+      prepared.launch.command,
+      join(fixture.runtimeRoot, 'envs', envId, 'bin', 'jupyter')
+    )
+    assert.equal(prepared.launch.cwd, fixture.projectRoot)
+    assert.deepEqual(prepared.launch.args, [
+      'server',
+      `--KernelSpecManager.kernel_dirs=${join(fixture.runtimeRoot, 'jupyter', 'kernels')}`,
+      '--KernelSpecManager.ensure_native_kernel=False'
+    ])
+    assert.equal(prepared.launch.env?.JUPYTER_PATH, join(fixture.runtimeRoot, 'jupyter'))
+    assert.equal(
+      prepared.launch.env?.JUPYTER_RUNTIME_DIR,
+      join(fixture.runtimeRoot, 'jupyter', 'runtime')
+    )
+    assert.doesNotMatch(JSON.stringify(prepared.launch), /token=/iu)
+    for (const directory of ['config', 'data', 'runtime']) {
+      assert.equal(existsSync(join(fixture.runtimeRoot, 'jupyter', directory)), true)
+    }
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('remote Jupyter preparation keeps the env_request missing-micromamba guidance', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
@@ -105,6 +139,36 @@ test('remote Jupyter preparation keeps the env_request missing-micromamba guidan
   } finally {
     fixture.cleanup()
   }
+})
+
+test('remote Jupyter preparation forwards cancellation to the environment service', async () => {
+  let requestId = ''
+  let finishRequest!: (result: EnvRequestResult) => void
+  const adapter = new RemoteKernelspecAdapter({
+    environments: {
+      request: (input) => {
+        requestId = String((input as { requestId?: unknown }).requestId ?? '')
+        return new Promise<EnvRequestResult>((resolve) => {
+          finishRequest = resolve
+        })
+      },
+      cancel: (input) => {
+        assert.equal((input as { requestId?: unknown }).requestId, requestId)
+        finishRequest({ error: '远程环境创建已取消' })
+      },
+      bindSession: async () => ({ notReady: { message: 'not used' } })
+    },
+    openWorkspace: async () => {
+      throw new Error('cancelled preparation must not open a workspace')
+    }
+  })
+  const controller = new AbortController()
+  const preparing = adapter.prepare({ runtimeSessionId: 'runtime-1', signal: controller.signal })
+
+  controller.abort()
+
+  await assert.rejects(preparing, /环境准备已取消/u)
+  assert.match(requestId, /^notebook-/u)
 })
 
 test('remote Jupyter preparation keeps the env_request offline-source guidance', async () => {
