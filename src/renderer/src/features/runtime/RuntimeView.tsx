@@ -9,7 +9,7 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { alpha } from '@mui/material/styles'
+import { alpha, type Theme } from '@mui/material/styles'
 import { GoSync } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
 import { isListedNotebookKernel } from '../analysis/lib/notebookSession'
@@ -39,6 +39,19 @@ const PythonIcon = PhiIcons.file.python
 const RIcon = PhiIcons.file.r
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 const macTitlebarHeight = 44
+const runtimeSidebarSurfaceSx = {
+  width: '100%',
+  minWidth: 0,
+  flexShrink: 0,
+  backgroundColor: (muiTheme: Theme) =>
+    muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  position: 'relative',
+  pt: isMac ? `${macTitlebarHeight + 8}px` : 2,
+  WebkitAppRegion: 'no-drag'
+} as const
 const runtimeSidebarActionButtonSize = 28
 const runtimeSidebarHoverActionSx = {
   opacity: 0,
@@ -105,6 +118,21 @@ function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null):
   return 'No endpoint'
 }
 
+export function RemoteRuntimeUnavailableSidebar(): React.JSX.Element {
+  return (
+    <Box className="app-sidebar-surface" sx={runtimeSidebarSurfaceSx}>
+      <Typography
+        data-phi-runtime-unavailable-notice="remote"
+        variant="body2"
+        color="text.secondary"
+        sx={{ p: 2 }}
+      >
+        远程项目的 Notebook/Jupyter 暂不可用。
+      </Typography>
+    </Box>
+  )
+}
+
 export function RuntimeSidebar({
   projectCwd,
   runtimeStatus,
@@ -126,22 +154,7 @@ export function RuntimeSidebar({
   const canStop = Boolean(projectCwd) && showStopServerAction
 
   return (
-    <Box
-      className="app-sidebar-surface"
-      sx={{
-        width: '100%',
-        minWidth: 0,
-        flexShrink: 0,
-        backgroundColor: (muiTheme) =>
-          muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        pt: isMac ? `${macTitlebarHeight + 8}px` : 2,
-        WebkitAppRegion: 'no-drag'
-      }}
-    >
+    <Box className="app-sidebar-surface" sx={runtimeSidebarSurfaceSx}>
       <List
         disablePadding
         sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 1, WebkitAppRegion: 'no-drag' }}

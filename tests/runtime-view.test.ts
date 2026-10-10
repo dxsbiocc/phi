@@ -5,7 +5,10 @@ import test from 'node:test'
 import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import { RuntimeSidebar } from '../src/renderer/src/features/runtime/RuntimeView'
+import {
+  RemoteRuntimeUnavailableSidebar,
+  RuntimeSidebar
+} from '../src/renderer/src/features/runtime/RuntimeView'
 import type { AnalysisJupyterRuntimeStatus } from '../src/renderer/src/types'
 
 const runtimeStatus: AnalysisJupyterRuntimeStatus = {
@@ -118,6 +121,21 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   assert.doesNotMatch(markup, /aria-label="刷新运行时"/)
   assert.doesNotMatch(markup, /Jupyter Runtime/)
   assert.doesNotMatch(markup, />运行时</)
+})
+
+test('remote runtime notice stays inside the padded sidebar without local Jupyter actions', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(RemoteRuntimeUnavailableSidebar)
+    )
+  )
+
+  assert.match(markup, /class="[^"]*app-sidebar-surface/)
+  assert.match(markup, /data-phi-runtime-unavailable-notice="remote"/)
+  assert.match(markup, /远程项目的 Notebook\/Jupyter 暂不可用/)
+  assert.doesNotMatch(markup, /Jupyter Server|Notebook Kernels|启动 Jupyter server/)
 })
 
 test('runtime sidebar swaps server start and stop actions in one slot', () => {

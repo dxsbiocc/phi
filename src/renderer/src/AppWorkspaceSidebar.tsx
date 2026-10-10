@@ -4,7 +4,7 @@ import SessionSidebar from './components/SessionSidebar'
 import { McpSidebar } from './features/mcp/McpView'
 import { PhiPluginSidebar } from './features/phi-plugin/PhiPluginsView'
 import type { PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
-import { RuntimeSidebar } from './features/runtime/RuntimeView'
+import { RemoteRuntimeUnavailableSidebar, RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
@@ -365,9 +365,7 @@ function AppWorkspaceSidebarImpl({
       </Box>
     ) : mode === 'runtime' ? (
       isRemoteProject ? (
-        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-          远程项目的 Notebook/Jupyter 暂不可用。
-        </Typography>
+        <RemoteRuntimeUnavailableSidebar />
       ) : (
         <RuntimeSidebar
           projectCwd={runtimeProjectCwd}
