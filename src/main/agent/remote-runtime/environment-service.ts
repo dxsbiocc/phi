@@ -28,7 +28,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
 const SETTINGS_GUIDANCE =
-  '请打开“设置 → 远程”，检查 micromamba 路径，或恢复由 Phi 管理的默认值后重试。Phi 没有回退到本机创建环境。'
+  '请打开“设置 → 远程”，使用“安装 micromamba”按钮完成安装，或检查 micromamba 路径、恢复由 Phi 管理的默认值后重试。Phi 没有回退到本机创建环境。'
 
 interface EnvironmentRecord extends RemoteEnvironmentHandle {
   baseRef: string
