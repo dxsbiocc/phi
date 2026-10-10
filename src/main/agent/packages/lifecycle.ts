@@ -65,10 +65,17 @@ export async function installPackages(
   options: InstallerOptions = {}
 ): Promise<InstalledPackage[]> {
   const agentDir = options.agentDir ?? plan.agentDir ?? getPhiAgentDir()
+  if (
+    options.retireWrapperPackageIds?.length &&
+    plan.packages.some((entry) => entry.type !== 'wrapper')
+  ) {
+    throw new Error('Retiring wrapper packages requires a wrapper-only install plan')
+  }
   cleanupStalePackageStaging({ agentDir, now: options.now })
   const stages: StagedPackage[] = []
   const installationLeases: EnvironmentLease[] = []
   const installedNow: Array<{ type: PackageType; id: string }> = []
+  let retireWrapperPackageIds = options.retireWrapperPackageIds
   try {
     for (const entry of plan.packages) {
       stages.push(
@@ -93,7 +100,8 @@ export async function installPackages(
           wrappers.push(stages[index])
           index += 1
         }
-        installStagedWrapperPackages(wrappers, agentDir)
+        installStagedWrapperPackages(wrappers, agentDir, retireWrapperPackageIds)
+        retireWrapperPackageIds = undefined
         installedNow.push(...wrappers.map((item) => ({ type: item.entry.type, id: item.entry.id })))
         continue
       }

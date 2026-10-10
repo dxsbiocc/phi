@@ -184,6 +184,39 @@ outputs:
   }
 })
 
+test('rejects legacy packages that would install several wrappers at once', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const adapter = (name: string): string => `id: nf-core/modules/samtools-${name}
+name: samtools ${name}
+summary: One module adapter.
+params: {}
+outputs:
+  result:
+    type: path
+    path: results/${name}.txt
+    primary: true
+`
+    const entry = wrapperEntry(registryDir, 'module-nf-core-samtools', {
+      files: {
+        'modules/nf-core/samtools/sort/wrapper/wrapper.yaml': adapter('sort'),
+        'modules/nf-core/samtools/index/wrapper/wrapper.yaml': adapter('index')
+      }
+    })
+    const source = registry(registryDir, [entry])
+
+    await assert.rejects(
+      installPackages(planInstall(source, { type: 'wrapper', id: entry.id }, { agentDir }), {
+        agentDir
+      }),
+      /包含 2 个 wrapper/
+    )
+    assert.deepEqual(readWrapperTreeState(agentDir).packages, {})
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('refuses wrapper paths already owned by another package', async () => {
   const { root, agentDir, registryDir } = sandbox()
   try {

@@ -313,7 +313,7 @@ export function WrapperDetail({
           </Typography>
         </Box>
       ) : (
-        <Box sx={{ maxWidth: 860, px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
+        <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
           <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
             <Box
               sx={{

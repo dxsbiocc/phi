@@ -36,6 +36,11 @@ test('official release publishes flat signed sidecars and explicitly versioned w
     )
     mkdirSync(wrapperDir, { recursive: true })
     writeFileSync(join(wrapperDir, 'main.nf'), 'process RUN {}\n')
+    mkdirSync(join(wrapperDir, 'wrapper'), { recursive: true })
+    writeFileSync(
+      join(wrapperDir, 'wrapper', 'wrapper.yaml'),
+      `id: nf-core/modules/fastqc-run\nname: FastQC run\nsummary: Test wrapper.\nparams: {}\noutputs:\n  report:\n    type: path\n    path: results/report.txt\n    primary: true\n`
+    )
     execFileSync('git', ['add', 'resources'], { cwd: sourceRoot })
     const keys = generateKeyPairSync('ed25519')
     const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString()

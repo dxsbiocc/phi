@@ -162,13 +162,23 @@ export function installStagedWrapperPackage(
 
 export function installStagedWrapperPackages(
   stages: StagedPackage[],
-  agentDir = getPhiAgentDir()
+  agentDir = getPhiAgentDir(),
+  retirePackageIds: readonly string[] = []
 ): void {
-  if (stages.length === 0) return
+  if (stages.length === 0 && retirePackageIds.length === 0) return
   let registry = readWrapperTreeState(agentDir)
   const candidate = createCandidateTree(agentDir)
   const installedPaths = new Map<string, string[]>()
+  const retired = new Set(retirePackageIds)
   try {
+    for (const id of retired) {
+      const previous = registry.packages[id]
+      if (!previous) throw new Error(`wrapper package ${id} is not installed`)
+      removeOwnedFiles(candidate, previous.paths)
+      const packages = { ...registry.packages }
+      delete packages[id]
+      registry = { version: TREE_REGISTRY_VERSION, packages }
+    }
     for (const staged of stages) {
       if (staged.entry.type !== 'wrapper') {
         throw new Error(
@@ -180,6 +190,12 @@ export function installStagedWrapperPackages(
         throw new Error(`expected a wrapper package manifest, received ${manifest.type}`)
       }
       const paths = listPackageTreeFiles(staged.dir)
+      const adapterCount = paths.filter((path) => path.endsWith('/wrapper/wrapper.yaml')).length
+      if (adapterCount > 1) {
+        throw new Error(
+          `软件包 ${staged.entry.id} 包含 ${adapterCount} 个 wrapper；请更新目录后逐个安装。`
+        )
+      }
       assertNoOwnershipConflicts(registry, staged.entry.id, paths, candidate)
       const previous = registry.packages[staged.entry.id]
       if (previous) removeOwnedFiles(candidate, previous.paths)
@@ -199,6 +215,17 @@ export function installStagedWrapperPackages(
         }
       }
       installedPaths.set(staged.entry.id, paths)
+    }
+    for (const [id, state] of Object.entries(registry.packages)) {
+      const missing = (state.manifest.dependsOn ?? []).find(
+        (dependency) =>
+          dependency.type === 'wrapper' &&
+          retired.has(dependency.id) &&
+          !registry.packages[dependency.id]
+      )
+      if (missing) {
+        throw new Error(`wrapper package ${id} still depends on retired package ${missing.id}`)
+      }
     }
     // Validate against the completed candidate so dependency packages may
     // appear later in the batch without bypassing ownership checks.

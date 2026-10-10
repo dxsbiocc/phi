@@ -184,24 +184,34 @@ function wrapper(root: string, path: string, id: string): string {
   return dir
 }
 
-test('wrapper registries select a family root before its adapter and ignore arbitrary leaf icons', async () => {
+test('wrapper registries publish a shared family icon without assigning duplicate tree ownership', async () => {
   const root = sandbox()
   const leaf = wrapper(root, 'modules/nf-core/alpha/run', 'nf-core/modules/alpha-run')
   write(join(leaf, 'wrapper/icon.svg'), icon)
   write(join(root, 'resources/wrappers/modules/nf-core/alpha/icon.png'), icon)
   const nestedOnly = wrapper(root, 'modules/nf-core/beta/run', 'nf-core/modules/beta-run')
-  write(join(nestedOnly, 'icon.svg'), icon)
+  write(join(nestedOnly, 'templates/icon.svg'), icon)
   const workflow = wrapper(root, 'workflows/demo', 'local/workflows/demo')
   write(join(workflow, 'wrapper/icon.svg'), icon)
   const index = build(root)
-  const family = index.packages.find((entry) => entry.id === 'module-nf-core-alpha')
+  const module = index.packages.find((entry) => entry.id === 'module-nf-core-alpha-run')
   const workflowEntry = index.packages.find((entry) => entry.id === 'workflow-local-demo')
-  assert.ok(family)
+  assert.ok(module)
   assert.ok(workflowEntry)
-  verifyPublishedIcon(root, family, 'modules/nf-core/alpha/icon.png', icon)
+  assert.deepEqual(module.iconAsset, {
+    path: `icons/wrapper-${module.id}-${module.version}.png`,
+    sha256: sha256(icon),
+    size: icon.length
+  })
+  assert.deepEqual(readFileSync(join(root, 'registry', module.iconAsset.path)), icon)
+  assert.ok(
+    !parseTarGz(readFileSync(join(root, 'registry', module.archive))).some(
+      (file) => file.path === 'modules/nf-core/alpha/icon.png'
+    )
+  )
   verifyPublishedIcon(root, workflowEntry, 'workflows/demo/wrapper/icon.svg', icon)
   assert.equal(
-    index.packages.find((entry) => entry.id === 'module-nf-core-beta')?.iconAsset,
+    index.packages.find((entry) => entry.id === 'module-nf-core-beta-run')?.iconAsset,
     undefined
   )
 
@@ -210,18 +220,19 @@ test('wrapper registries select a family root before its adapter and ignore arbi
     outDir: join(root, 'runtime-registry')
   })
   assert.deepEqual(
-    runtime.index.packages.find((entry) => entry.id === family.id)?.iconAsset,
-    family.iconAsset
+    runtime.index.packages.find((entry) => entry.id === module.id)?.iconAsset,
+    module.iconAsset
   )
   const agentDir = join(root, 'wrapper-agent')
   const plan = planInstall(
     readRegistry(join(root, 'registry')),
-    { type: 'wrapper', id: family.id },
+    { type: 'wrapper', id: module.id },
     { agentDir }
   )
   await installPackages(plan, { agentDir })
+  assert.equal(existsSync(join(agentDir, 'wrappers/tree/modules/nf-core/alpha/icon.png')), false)
   assert.deepEqual(
-    readFileSync(join(agentDir, 'wrappers/tree/modules/nf-core/alpha/icon.png')),
+    readFileSync(join(agentDir, 'wrappers/tree/modules/nf-core/alpha/run/wrapper/icon.svg')),
     icon
   )
 })

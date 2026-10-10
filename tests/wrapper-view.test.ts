@@ -122,6 +122,11 @@ test('wrapper sidebar and detail share the composition-owned image', async () =>
   assert.equal(markup.match(/<img[^>]*src="data:image\/png;base64,iVBORw0KGgo="/g)?.length, 2)
 })
 
+test('wrapper details stay centered in the available content pane', () => {
+  const markup = renderView()
+  assert.match(markup, /max-width:860px;margin-left:auto;margin-right:auto/)
+})
+
 test('a local project offers server compute only inside the Wrapper view', () => {
   const project: Project = {
     id: 'local-project',

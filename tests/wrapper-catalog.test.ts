@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -79,13 +87,14 @@ function writeBundledCompositionFixture(root: string, main = 'workflow {}\n'): v
 
 function writeBundledModuleFixture(root: string, name: string, main = 'workflow {}\n'): void {
   const wrapper = join(root, 'modules', 'acme', name, 'wrapper')
+  const adapterName = name.replaceAll('/', '-')
   mkdirSync(wrapper, { recursive: true })
   writeFileSync(join(wrapper, 'main.nf'), main)
   writeFileSync(join(wrapper, 'params.json'), '{}\n')
   writeFileSync(
     join(wrapper, 'wrapper.yaml'),
-    `id: acme/modules/${name}
-name: ${name}
+    `id: acme/modules/${adapterName}
+name: ${adapterName}
 summary: Small bundled wrapper fixture.
 params: {}
 outputs:
@@ -96,6 +105,105 @@ outputs:
 `
   )
 }
+
+test('reconciles a legacy family bundle into separately owned module packages', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bundled-family-migration-'))
+  const agentDir = join(root, 'agent')
+  const sourceRoot = join(root, 'source')
+  const legacyId = 'module-acme-family'
+  try {
+    writeBundledModuleFixture(sourceRoot, 'family/one')
+    writeBundledModuleFixture(sourceRoot, 'family/two')
+    const wrappersDir = join(agentDir, 'wrappers')
+    mkdirSync(wrappersDir, { recursive: true })
+    cpSync(join(sourceRoot, 'modules'), join(wrappersDir, 'tree', 'modules'), {
+      recursive: true
+    })
+    const paths = ['one', 'two']
+      .flatMap((name) =>
+        ['main.nf', 'params.json', 'wrapper.yaml'].map(
+          (file) => `modules/acme/family/${name}/wrapper/${file}`
+        )
+      )
+      .sort()
+    const title = 'Legacy family bundle'
+    const summary = 'Two module adapters in one old package.'
+    writeFileSync(
+      join(wrappersDir, 'tree.json'),
+      JSON.stringify({
+        version: 1,
+        packages: {
+          [legacyId]: {
+            version: '1.0.0',
+            title,
+            summary,
+            manifest: {
+              schemaVersion: 1,
+              id: legacyId,
+              type: 'wrapper',
+              version: '1.0.0',
+              title,
+              summary,
+              dependsOn: [],
+              files: 'files.json'
+            },
+            source: {
+              registry: 'bundled-wrappers',
+              id: legacyId,
+              type: 'wrapper',
+              version: '1.0.0',
+              sha256: 'a'.repeat(64),
+              installedAt: '2026-10-01T00:00:00.000Z',
+              installedBy: 'user',
+              trust: 'builtin'
+            },
+            paths
+          }
+        }
+      })
+    )
+    writeFileSync(
+      join(wrappersDir, 'bundled.json'),
+      JSON.stringify({
+        version: 1,
+        packageVersion: '1.0.0',
+        packageIds: [legacyId],
+        diagnostics: { unattributedIncludes: [], unattributedSupportFiles: [] }
+      })
+    )
+
+    const sourceEntrypoint = join(sourceRoot, 'modules/acme/family/one/wrapper/main.nf')
+    const legacyState = readFileSync(join(wrappersDir, 'tree.json'), 'utf8')
+    writeFileSync(sourceEntrypoint, "include { MISSING } from '../absent'\n")
+    await assert.rejects(
+      ensureBundledWrappersInstalled(agentDir, { sourceRoot, packageVersion: '1.1.0' }),
+      /include|absent/
+    )
+    assert.equal(readFileSync(join(wrappersDir, 'tree.json'), 'utf8'), legacyState)
+    assert.equal(
+      readFileSync(join(wrappersDir, 'tree', 'modules/acme/family/one/wrapper/main.nf'), 'utf8'),
+      'workflow {}\n'
+    )
+    writeFileSync(sourceEntrypoint, 'workflow {}\n')
+
+    const migrated = await ensureBundledWrappersInstalled(agentDir, {
+      sourceRoot,
+      packageVersion: '1.1.0'
+    })
+    assert.deepEqual(migrated.installed, ['module-acme-family-one', 'module-acme-family-two'])
+    assert.deepEqual(migrated.removed, [legacyId])
+    const state = JSON.parse(readFileSync(join(wrappersDir, 'tree.json'), 'utf8')) as {
+      packages: Record<string, { paths: string[] }>
+    }
+    assert.deepEqual(Object.keys(state.packages).sort(), migrated.installed)
+    assert.equal(
+      readFileSync(join(wrappersDir, 'tree', 'modules/acme/family/one/wrapper/main.nf'), 'utf8'),
+      'workflow {}\n'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('explicit wrapper source fingerprints are stable across equivalent trees', () => {
   const first = mkdtempSync(join(tmpdir(), 'phi-wrapper-fingerprint-a-'))

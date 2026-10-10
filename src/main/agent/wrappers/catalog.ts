@@ -17,16 +17,12 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { findResourceIcon } from '../resource-icons'
-import {
-  installPackages,
-  listInstalledPackages,
-  readRegistry,
-  uninstallPackage
-} from '../packages/installer'
+import { installPackages, listInstalledPackages, readRegistry } from '../packages/installer'
 import type { InstallPlan, InstalledPackage } from '../packages/installer'
 import {
   getWrapperCustomDir,
   getWrapperTreeOwnershipPath,
+  installStagedWrapperPackages,
   readWrapperTreeState
 } from '../packages/wrapper-tree'
 import {
@@ -523,6 +519,12 @@ export async function ensureBundledWrappersInstalled(
       id: BUNDLED_REGISTRY_ID
     }
     const pending = registry.packages
+    const packageIds = built.sources.map((source) => source.manifest.id).sort()
+    const nextIds = new Set(packageIds)
+    const retired = (marker?.packageIds ?? []).filter((id) => {
+      const current = installedTree[id]
+      return !nextIds.has(id) && current?.source.registry === BUNDLED_REGISTRY_ID
+    })
     if (pending.length > 0) {
       const root = pending.at(-1)
       if (!root) throw new Error('Bundled wrapper install plan unexpectedly has no root package')
@@ -534,36 +536,9 @@ export async function ensureBundledWrappersInstalled(
         environments: [],
         agentDir
       }
-      await installPackages(plan, { agentDir })
-    }
-    const packageIds = built.sources.map((source) => source.manifest.id).sort()
-    const nextIds = new Set(packageIds)
-    const stateBeforeRemoval = readWrapperTreeState(agentDir).packages
-    const retired = new Set(
-      (marker?.packageIds ?? []).filter((id) => {
-        const current = stateBeforeRemoval[id]
-        return !nextIds.has(id) && current?.source.registry === BUNDLED_REGISTRY_ID
-      })
-    )
-    const removed: string[] = []
-    while (retired.size > 0) {
-      const removable = [...retired].find((id) =>
-        [...retired].every(
-          (candidate) =>
-            candidate === id ||
-            !(stateBeforeRemoval[candidate]?.manifest.dependsOn ?? []).some(
-              (dependency) => dependency.type === 'wrapper' && dependency.id === id
-            )
-        )
-      )
-      if (!removable) {
-        throw new Error(
-          `Cannot reconcile cyclic retired wrapper packages: ${[...retired].join(', ')}`
-        )
-      }
-      uninstallPackage('wrapper', removable, { agentDir })
-      retired.delete(removable)
-      removed.push(removable)
+      await installPackages(plan, { agentDir, retireWrapperPackageIds: retired })
+    } else if (retired.length > 0) {
+      installStagedWrapperPackages([], agentDir, retired)
     }
     const ids = new Set(packageIds)
     const packages = listInstalledPackages({ agentDir }).filter(
@@ -591,7 +566,7 @@ export async function ensureBundledWrappersInstalled(
     return {
       packages,
       installed: pending.map((entry) => entry.id),
-      removed: removed.sort(),
+      removed: retired.sort(),
       migratedCustom,
       ...(migratedPackVersion ? { migratedPackVersion } : {}),
       legacyPackWarnings,

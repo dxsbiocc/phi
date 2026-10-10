@@ -91,6 +91,8 @@ export interface InstalledPackage {
 
 export interface InstallerOptions {
   agentDir?: string
+  /** Retire old wrapper owners in the same tree transaction as their replacements. */
+  retireWrapperPackageIds?: readonly string[]
   appVersion?: string
   runtimeRoot?: string
   environmentsDir?: string

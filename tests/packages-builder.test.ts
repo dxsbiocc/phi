@@ -168,7 +168,10 @@ function writeModule(
 ): string {
   const dir = join(root, 'resources', 'wrappers', 'modules', provider, family, component)
   write(join(dir, 'main.nf'), main)
-  writeWrapperAdapter(dir, `${provider}/modules/${family}-${component}`.replaceAll('_', '-'))
+  writeWrapperAdapter(
+    dir,
+    `${provider}/modules/${family.replaceAll('/', '-')}-${component}`.replaceAll('_', '-')
+  )
   return dir
 }
 
@@ -407,7 +410,7 @@ test('writes sorted registry entries with required and propagated index fields',
   assert.deepEqual(published, index)
 })
 
-test('groups module families and emits subworkflow and workflow tree packages', () => {
+test('packages individual modules and emits subworkflow and workflow tree packages', () => {
   const root = temporaryRepository()
   writeModule(root, 'nf-core', 'samtools', 'sort')
   writeModule(root, 'nf-core', 'samtools', 'index')
@@ -438,37 +441,73 @@ test('groups module families and emits subworkflow and workflow tree packages', 
   assert.deepEqual(
     index.packages.map((entry) => `${entry.type}:${entry.id}`),
     [
-      'wrapper:module-local-differential-expression',
-      'wrapper:module-nf-core-bcftools',
-      'wrapper:module-nf-core-samtools',
+      'wrapper:module-local-differential-expression-deseq2',
+      'wrapper:module-nf-core-bcftools-query',
+      'wrapper:module-nf-core-samtools-index',
+      'wrapper:module-nf-core-samtools-sort',
       'wrapper:subworkflow-nf-core-bam-sort',
       'wrapper:workflow-nf-core-rnaseq'
     ]
   )
   assert.deepEqual(report.wrapperCountsByKind, {
-    module: 3,
+    module: 4,
     subworkflow: 1,
     workflow: 1,
     support: 0
   })
   assert.deepEqual(report.unattributedSupportFiles, ['.nf-core.yml'])
 
-  const samtools = archiveEntries(
+  const samtoolsSort = archiveEntries(
     root,
     'registry',
-    registryEntry(index, 'wrapper', 'module-nf-core-samtools')
+    registryEntry(index, 'wrapper', 'module-nf-core-samtools-sort')
   ).map((entry) => entry.path)
-  assert.ok(samtools.includes('modules/nf-core/samtools/sort/main.nf'))
-  assert.ok(samtools.includes('modules/nf-core/samtools/index/main.nf'))
+  assert.ok(samtoolsSort.includes('modules/nf-core/samtools/sort/main.nf'))
+  assert.ok(!samtoolsSort.includes('modules/nf-core/samtools/index/main.nf'))
   const differentialExpression = archiveEntries(
     root,
     'registry',
-    registryEntry(index, 'wrapper', 'module-local-differential-expression')
+    registryEntry(index, 'wrapper', 'module-local-differential-expression-deseq2')
   ).map((entry) => entry.path)
   assert.ok(
     differentialExpression.includes('images/differential-expression-r/environment.yml'),
     'support used by one package belongs to that package'
   )
+})
+
+test('installing one module package does not include sibling wrappers', () => {
+  const root = temporaryRepository()
+  writeModule(root, 'nf-core', 'samtools', 'sort')
+  writeModule(root, 'nf-core', 'samtools', 'index')
+  trackResources(root)
+
+  const index = build(root)
+  const modules = index.packages.filter(
+    (entry) => entry.type === 'wrapper' && entry.id.startsWith('module-nf-core-samtools')
+  )
+  assert.equal(modules.length, 2)
+  for (const entry of modules) {
+    const adapters = archiveEntries(root, 'registry', entry).filter((file) =>
+      file.path.endsWith('/wrapper/wrapper.yaml')
+    )
+    assert.equal(adapters.length, 1, `${entry.id} should install exactly one wrapper`)
+  }
+})
+
+test('packages nested module adapters without including sibling modules or family files', () => {
+  const root = temporaryRepository()
+  const family = join(root, 'resources', 'wrappers', 'modules', 'local', 'expression')
+  writeModule(root, 'local', 'expression/visualization', 'volcano')
+  writeModule(root, 'local', 'expression/visualization', 'pca')
+  write(join(family, 'README.md'), 'Documentation for the module family.\n')
+  trackResources(root)
+
+  const index = build(root)
+  const volcano = registryEntry(index, 'wrapper', 'module-local-expression-visualization-volcano')
+  const paths = archiveEntries(root, 'registry', volcano).map((entry) => entry.path)
+  assert.ok(paths.includes('modules/local/expression/visualization/volcano/main.nf'))
+  assert.ok(!paths.includes('modules/local/expression/visualization/pca/main.nf'))
+  assert.ok(!paths.includes('modules/local/expression/README.md'))
 })
 
 test('rejects duplicate wrapper ids across package paths', () => {
@@ -510,7 +549,7 @@ test('creates a support package only when distinct packages reference the same s
     archiveEntries(root, 'registry', support).map((entry) => entry.path),
     ['files.json', 'images/shared-r/environment.yml', 'phi-package.yaml']
   )
-  for (const id of ['module-local-alpha', 'module-local-beta']) {
+  for (const id of ['module-local-alpha-run', 'module-local-beta-run']) {
     assert.deepEqual(registryEntry(index, 'wrapper', id).dependsOn, [
       { id: 'support-local-shared-r', type: 'wrapper', version: '^1.0.0' }
     ])
@@ -532,7 +571,7 @@ test('materializes a wrapper-only registry from a shipped filesystem tree withou
 
   assert.deepEqual(
     result.index.packages.map((entry) => `${entry.type}:${entry.id}`),
-    ['wrapper:module-nf-core-fastqc']
+    ['wrapper:module-nf-core-fastqc-run']
   )
   assert.deepEqual(JSON.parse(readFileSync(join(outDir, 'index.json'), 'utf8')), result.index)
   assert.ok(readFileSync(join(outDir, result.index.packages[0].archive)).length > 0)
@@ -568,8 +607,8 @@ test('computes deterministic wrapper dependencies from recursive includes and re
   })
   const pipeline = registryEntry(first.index, 'wrapper', 'subworkflow-nf-core-alignment-pipeline')
   assert.deepEqual(pipeline.dependsOn, [
-    { id: 'module-nf-core-bwa', type: 'wrapper', version: '^1.0.0' },
-    { id: 'module-nf-core-samtools', type: 'wrapper', version: '^1.0.0' },
+    { id: 'module-nf-core-bwa-mem', type: 'wrapper', version: '^1.0.0' },
+    { id: 'module-nf-core-samtools-view', type: 'wrapper', version: '^1.0.0' },
     { id: 'subworkflow-nf-core-align-reads', type: 'wrapper', version: '^1.0.0' }
   ])
   assert.ok(

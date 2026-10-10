@@ -14,7 +14,11 @@ import { stringify as stringifyYaml } from 'yaml'
 import { createDeterministicTarGz, type ArchiveFile } from '../../packages/archive'
 import { parseWrapperCompositionManifest } from '../composition/manifest'
 import { collectIncludeReferences } from '../composition/includes'
-import { findPackageIcon, writeRegistryIconAsset } from '../../packages/icon-assets'
+import {
+  findPackageIcon,
+  PACKAGE_ICON_FILENAMES,
+  writeRegistryIconAsset
+} from '../../packages/icon-assets'
 import type { RegistryIconAsset } from '../../../../shared/resourceIconTypes'
 
 export type WrapperPackageKind = 'module' | 'subworkflow' | 'workflow' | 'support'
@@ -43,6 +47,8 @@ export interface WrapperPackageSource {
   files: Map<string, Buffer>
   /** Optional icon at the family root or beside its root wrapper adapter. */
   iconPath?: string
+  /** A shared family icon may be published as a sidecar without duplicate tree ownership. */
+  iconData?: Buffer
 }
 
 export interface UnattributedWrapperInclude {
@@ -110,6 +116,7 @@ interface MutablePackage {
   summary: string
   filePaths: Set<string>
   dependencyIds: Set<string>
+  iconPath?: string
 }
 
 interface SupportUnit {
@@ -236,42 +243,74 @@ function validateWrapperAdapters(wrappersRoot: string, files: string[]): void {
 }
 
 function discoverComponentPackages(wrappersRoot: string, files: string[]): MutablePackage[] {
-  const roots = new Map<
-    string,
-    { kind: 'module' | 'subworkflow'; provider: string; name: string }
-  >()
+  const availableFiles = new Set(files)
+  const roots = new Map<string, { provider: string; name: string }>()
   for (const path of files) {
-    const match = /^(modules|subworkflows)\/([^/]+)\/([^/]+)(?:\/|$)/.exec(path)
+    const match = /^subworkflows\/([^/]+)\/([^/]+)(?:\/|$)/.exec(path)
     if (!match) continue
-    const kind = match[1] === 'modules' ? 'module' : 'subworkflow'
-    roots.set(`${match[1]}/${match[2]}/${match[3]}`, {
-      kind,
-      provider: match[2],
-      name: match[3]
+    roots.set(`subworkflows/${match[1]}/${match[2]}`, {
+      provider: match[1],
+      name: match[2]
     })
   }
 
   const packages: MutablePackage[] = [...roots.entries()].map(([root, definition]) => {
     const metadata = readAdapterMetadata(wrappersRoot, root)
     return {
-      id: packageId(definition.kind, definition.provider, definition.name),
+      id: packageId('subworkflow', definition.provider, definition.name),
       root,
-      kind: definition.kind,
+      kind: 'subworkflow',
       provider: definition.provider,
-      title:
-        definition.kind === 'subworkflow' && metadata
-          ? metadata.name
-          : `${definition.provider}/${definition.name} module family`,
+      title: metadata?.name ?? `${definition.provider}/${definition.name} subworkflow`,
       summary:
-        definition.kind === 'subworkflow' && metadata
-          ? metadata.summary
-          : `All vendored ${definition.provider}/${definition.name} wrapper modules.`,
+        metadata?.summary ?? `Vendored ${definition.provider}/${definition.name} subworkflow.`,
       filePaths: new Set(files.filter((path) => path.startsWith(`${root}/`))),
       dependencyIds: new Set()
     }
   })
 
-  const workflowSuffix = '/wrapper/wrapper.yaml'
+  const modulePackages = new Map<string, MutablePackage>()
+  const adapterSuffix = '/wrapper/wrapper.yaml'
+  for (const path of files.filter(
+    (candidate) => candidate.startsWith('modules/') && candidate.endsWith(adapterSuffix)
+  )) {
+    const root = path.slice(0, -adapterSuffix.length)
+    const match = /^modules\/([^/]+)\/(.+)$/.exec(root)
+    if (!match) continue
+    const metadata = readAdapterMetadata(wrappersRoot, root)
+    if (!metadata) continue
+    const familyRoot = root.split('/').slice(0, 3).join('/')
+    const familyIcon = PACKAGE_ICON_FILENAMES.map((name) => `${familyRoot}/${name}`).find((icon) =>
+      availableFiles.has(icon)
+    )
+    modulePackages.set(root, {
+      id: packageId('module', match[1], match[2].replaceAll('/', '-')),
+      root,
+      kind: 'module',
+      provider: match[1],
+      title: metadata.name,
+      summary: metadata.summary,
+      filePaths: new Set(),
+      dependencyIds: new Set(),
+      ...(familyIcon ? { iconPath: familyIcon } : {})
+    })
+  }
+  // The closest adapter owns each module file, including nested adapter trees.
+  // Family-level documentation without an adapter is deliberately not installed.
+  for (const path of files.filter((candidate) => candidate.startsWith('modules/'))) {
+    let root = path.slice(0, path.lastIndexOf('/'))
+    while (root.startsWith('modules/')) {
+      const owner = modulePackages.get(root)
+      if (owner) {
+        owner.filePaths.add(path)
+        break
+      }
+      root = root.slice(0, root.lastIndexOf('/'))
+    }
+  }
+  packages.push(...modulePackages.values())
+
+  const workflowSuffix = adapterSuffix
   for (const path of files.filter(
     (candidate) => candidate.startsWith('workflows/') && candidate.endsWith(workflowSuffix)
   )) {
@@ -440,8 +479,23 @@ function loadPackageSource(
     fileMap.set(path, readFileSync(fullPath))
   }
   fileMap.set('phi-package.yaml', Buffer.from(stringifyYaml(manifest), 'utf8'))
-  const iconPath = findPackageIcon(fileMap, [source.root, `${source.root}/wrapper`])
-  return { kind: source.kind, manifest, files: fileMap, ...(iconPath ? { iconPath } : {}) }
+  const iconPath =
+    source.iconPath ?? findPackageIcon(fileMap, [source.root, `${source.root}/wrapper`])
+  let iconData: Buffer | undefined
+  if (iconPath && !fileMap.has(iconPath)) {
+    const fullPath = join(wrappersRoot, ...iconPath.split('/'))
+    const stat = lstatSync(fullPath)
+    if (stat.isSymbolicLink()) throw new Error(`symbolic link is not allowed: ${iconPath}`)
+    if (!stat.isFile()) throw new Error(`non-regular wrapper package icon: ${iconPath}`)
+    iconData = readFileSync(fullPath)
+  }
+  return {
+    kind: source.kind,
+    manifest,
+    files: fileMap,
+    ...(iconPath ? { iconPath } : {}),
+    ...(iconData ? { iconData } : {})
+  }
 }
 
 function writeWrapperPackage(source: WrapperPackageSource, outDir: string): WrapperRegistryEntry {
@@ -459,7 +513,11 @@ function writeWrapperPackage(source: WrapperPackageSource, outDir: string): Wrap
   const archive = createDeterministicTarGz(archiveFiles)
   const archiveName = `wrapper-${source.manifest.id}-${source.manifest.version}.tar.gz`
   writeFileSync(join(outDir, archiveName), archive)
-  const iconAsset = writeRegistryIconAsset(source.manifest, source.iconPath, source.files, outDir)
+  const iconFiles =
+    source.iconPath && source.iconData
+      ? new Map([...source.files, [source.iconPath, source.iconData]])
+      : source.files
+  const iconAsset = writeRegistryIconAsset(source.manifest, source.iconPath, iconFiles, outDir)
   return {
     id: source.manifest.id,
     type: 'wrapper',
