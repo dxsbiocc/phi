@@ -58,9 +58,6 @@ export function HomeActivityHeatmap({
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
             过去一年的活跃度
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            每个方格代表一天，深色表示更多运行次数与任务历时。
-          </Typography>
         </Box>
         <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
           {loading ? (

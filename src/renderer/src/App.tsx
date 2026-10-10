@@ -51,6 +51,7 @@ import {
   officePromptFailureRecovery
 } from './features/office/lib/officePromptFailure'
 import { HomeView } from './features/home/HomeView'
+import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
@@ -3187,6 +3188,8 @@ function App(): React.JSX.Element {
     (activeView === 'chat' || activeView === 'analysis' || isResourceWorkspaceView)
   const showWorkspaceTitlebar =
     !isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs
+  const showHomeWorkspace =
+    isChatWorkspaceView && visibleWorkspaceTabs.length === 0 && !showProjectSessionPlaceholder
   const workspaceSidebarPreviewWidth = Math.min(360, Math.max(navigationPaneWidth, sidebarWidth))
   const isWorkspaceSidebarModeExpanded = useCallback(
     (mode: WorkspaceSidebarMode): boolean =>
@@ -4078,10 +4081,58 @@ function App(): React.JSX.Element {
     </>
   )
 
+  const loadHomeResources = useCallback((): void => {
+    void refreshSkillsForNavigation()
+    void refreshMcpServersForNavigation()
+  }, [refreshSkillsForNavigation, refreshMcpServersForNavigation])
+
+  const fetchHomeProjectSessions = useCallback(
+    async (project: Project): Promise<SessionSummary[]> => {
+      const list =
+        project.location.kind === 'ssh'
+          ? await rendererApi.listProjectSessionsById(project.id)
+          : await rendererApi.listProjectSessions(project.workingDirectory)
+      return mergeSessionSummariesRuntimeState(list, project.workingDirectory)
+    },
+    [mergeSessionSummariesRuntimeState, rendererApi]
+  )
+
   const emptyWorkspaceContent = (
     <HomeView
       sessions={sessions}
+      projects={projects}
+      projectSessionRefreshKey={projectSessionRefreshKey}
+      onFetchProjectSessions={fetchHomeProjectSessions}
+      resources={{
+        skills: {
+          total: skills.length,
+          active: skills.filter((skill) => skill.enabled).length,
+          loading: isLoadingSkills,
+          icons: homeResourceIcons(skills)
+        },
+        wrappers: {
+          total: wrapperCatalog.length,
+          active: wrapperCatalog.filter((wrapper) => !wrapper.hiddenReason).length,
+          loading: isLoadingWrappers,
+          icons: homeResourceIcons(wrapperCatalog)
+        },
+        connectors: {
+          total: mcpServers.length,
+          active: mcpServers.filter((server) => server.enabled !== false && !server.userDisabled)
+            .length,
+          icons: homeResourceIcons(mcpServers)
+        },
+        plugins: {
+          total: phiPluginsState.plugins.length,
+          active: phiPluginsState.plugins.filter((plugin) => plugin.enabled).length,
+          loading: phiPluginsState.loading,
+          icons: homeResourceIcons(phiPluginsState.plugins)
+        }
+      }}
+      wrapperRuns={wrapperRuns}
+      wrapperCatalog={wrapperCatalog}
       lastClosedSessionPath={activeSessionPath}
+      onLoadResources={loadHomeResources}
       onNewChat={() => void onNewChatFromSidebar()}
       onShowProjects={() => {
         setWorkspaceSidebarMode('projects')
@@ -4537,20 +4588,22 @@ function App(): React.JSX.Element {
                       minWidth: 0
                     }}
                   >
-                    <Typography
-                      variant="subtitle2"
-                      title={activeWorkspaceTitle}
-                      sx={{
-                        maxWidth: { xs: 220, sm: 360, md: 520 },
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        fontWeight: 600
-                      }}
-                    >
-                      {activeWorkspaceTitle}
-                    </Typography>
+                    {!showHomeWorkspace ? (
+                      <Typography
+                        variant="subtitle2"
+                        title={activeWorkspaceTitle}
+                        sx={{
+                          maxWidth: { xs: 220, sm: 360, md: 520 },
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontWeight: 600
+                        }}
+                      >
+                        {activeWorkspaceTitle}
+                      </Typography>
+                    ) : null}
                   </Box>
                 </Box>
                 {filePreview && !showProjectSessionPlaceholder ? (
