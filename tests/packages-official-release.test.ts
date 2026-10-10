@@ -53,7 +53,9 @@ test('official release publishes flat signed sidecars and explicitly versioned w
     assert.equal(registry.trust, 'official')
     const mcp = registry.packages.find((entry) => entry.type === 'mcp')!
     const wrapper = registry.packages.find((entry) => entry.type === 'wrapper')!
-    assert.equal(wrapper.version, '0.1.1')
+    // Must match the bundled wrapper tree version, or every online wrapper looks like a downgrade.
+    assert.equal(wrapper.version, '1.0.0')
+    for (const dependency of wrapper.dependsOn) assert.equal(dependency.version, '^1.0.0')
     assert.equal(mcp.iconAsset?.path, basename(mcp.iconAsset!.path))
     assert.equal(mcp.manifestAsset?.path, basename(mcp.manifestAsset!.path))
     assert.equal(readRegistryManifestAsset(registry.dir, mcp)?.id, 'demo-connector')
@@ -64,7 +66,7 @@ test('official release publishes flat signed sidecars and explicitly versioned w
     const manifest = parseTarGz(readFileSync(join(registry.dir, wrapper.archive))).find(
       (entry) => entry.path === 'phi-package.yaml'
     )!
-    assert.match(manifest.data.toString(), /version: 0\.1\.1/)
+    assert.match(manifest.data.toString(), /version: 1\.0\.0/)
     assert.equal(result.assetFiles.includes('index.json'), true)
     assert.equal(result.assetFiles.includes('index.sig.json'), true)
     assert.equal(

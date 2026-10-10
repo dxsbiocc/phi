@@ -51,7 +51,7 @@ export function prepareOfficialRelease(
       repoRoot: sourceRoot,
       outDir: buildDir,
       generatedAt: options.generatedAt,
-      wrapperVersion: options.wrapperVersion ?? '0.1.1'
+      wrapperVersion: options.wrapperVersion
     })
     const names = new Set(['index.json', 'index.sig.json'])
     const copy = (asset: { path: string; sha256: string; size: number }): string => {

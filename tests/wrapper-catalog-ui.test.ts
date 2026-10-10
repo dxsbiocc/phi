@@ -8,6 +8,7 @@ import type {
 import type { WrapperCompositionCatalogItem } from '../src/shared/wrapperCompositionManifestTypes'
 import {
   filterWrapperCatalogChoices,
+  wrapperChoiceNeedsRegistryInstall,
   wrapperCatalogChoices,
   wrapperCatalogGroups
 } from '../src/renderer/src/features/wrapper/lib/wrapperCatalog'
@@ -232,4 +233,39 @@ test('previous automatic seeds are not mistaken for user installations when the 
   assert.equal(cached[0].metadata, 'nf-core')
   assert.equal(cached[0].category, '模块')
   assert.equal(cached[0].version, '1.0.0')
+})
+
+test('bundled wrapper payloads at or above the catalog version are enabled without a registry install', () => {
+  const bundled = (id: string, version: string): InstalledPackageView => ({
+    id,
+    type: 'wrapper',
+    version,
+    title: id,
+    summary: '',
+    dir: '/tree',
+    installedAt: '2026-10-05T00:00:00.000Z',
+    installedBy: 'user',
+    registry: 'bundled-wrappers',
+    sha256: 'b'.repeat(64),
+    trust: 'builtin'
+  })
+  const choices = wrapperCatalogChoices(
+    [
+      wrapper('fastqc', { packageSelected: false }),
+      wrapper('older', { packageSelected: false }),
+      wrapper('absent', { packageSelected: false })
+    ],
+    [
+      registry([
+        packageEntry('fastqc', '1.0.0'),
+        packageEntry('older', '1.1.0'),
+        packageEntry('absent')
+      ])
+    ],
+    [bundled('fastqc', '1.0.0'), bundled('older', '1.0.0')]
+  )
+  const byId = new Map(choices.map((choice) => [choice.id, choice]))
+  assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('fastqc')!), false)
+  assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('older')!), true)
+  assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('absent')!), true)
 })

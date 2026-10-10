@@ -17,6 +17,7 @@ import {
 import {
   filterWrapperCatalogChoices,
   wrapperCatalogChoices,
+  wrapperChoiceNeedsRegistryInstall,
   wrapperCatalogGroups,
   type WrapperCatalogChoice
 } from '../lib/wrapperCatalog'
@@ -114,7 +115,7 @@ export function WrapperCatalogDialog({
     setBusyId(choice.id)
     setError(null)
     try {
-      if (!choice.installed) {
+      if (wrapperChoiceNeedsRegistryInstall(choice)) {
         if (!choice.registryPath || !choice.registryEntry)
           throw new Error('这个 wrapper 没有可用的安装来源。')
         await window.api.planPackageInstall(
