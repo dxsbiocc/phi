@@ -12,6 +12,7 @@ import type { PhiSessionManifest } from '../src/main/agent/session/session-store
 import { remoteUrlGuardDecision } from '../src/main/agent/agents/remote-url-guard'
 import {
   resolveRemoteBashContext,
+  resolveAuthorizedRemoteConnectionConfig,
   resolveRemoteWorkspacePath,
   withAuthorizedRemoteWorkspacePath,
   type RemoteWorkspaceBoundaryDependencies
@@ -406,6 +407,46 @@ test('authorized operation runs before SSH session closes', async () => {
     )
     assert.equal(result, 'x.txt')
     assert.equal(sample.closed(), 1)
+  } finally {
+    sample.cleanup()
+  }
+})
+
+test('notebook SSH configuration is resolved only from its authorized session project', () => {
+  const sample = fixture()
+  try {
+    const dependencies: RemoteWorkspaceBoundaryDependencies = {
+      ...sample.dependencies,
+      getHostProfile: (id) =>
+        id === 'host-a'
+          ? {
+              id,
+              label: 'Cluster A',
+              hostAlias: 'cluster-a',
+              user: 'notebook-user',
+              port: 2222,
+              identityFile: '/tmp/phi-notebook-key'
+            }
+          : undefined
+    }
+    const authorized = resolveAuthorizedRemoteConnectionConfig(
+      { sessionId: 'session-a', projectId: 'project-a' },
+      dependencies
+    )
+    assert.deepEqual(authorized.connection, {
+      host: 'cluster-a',
+      user: 'notebook-user',
+      port: 2222,
+      identityFile: '/tmp/phi-notebook-key'
+    })
+    assert.throws(
+      () =>
+        resolveAuthorizedRemoteConnectionConfig(
+          { sessionId: 'session-a', projectId: 'other-project' },
+          dependencies
+        ),
+      /不匹配/
+    )
   } finally {
     sample.cleanup()
   }

@@ -47,6 +47,13 @@ export interface AuthorizedRemoteBashContext {
   approvalScope: string
 }
 
+export interface AuthorizedRemoteConnectionConfig {
+  sessionId: string
+  projectId: string
+  hostAlias: string
+  connection: RemoteConnectionConfig
+}
+
 export function remoteBashApprovalScope(hostAlias: string, cwd: string): string {
   return `SSH ${hostAlias} · cwd ${cwd}；Shell 命令可访问项目目录之外，当前路径检查不是命令沙箱。`
 }
@@ -202,6 +209,40 @@ function boundProject(
   )
   if (!profile) throw new Error('远程项目的 SSH 服务器档案不可用')
   return { project, profile }
+}
+
+/** Resolves SSH argv inputs only after the Phi session is pinned to the saved remote project. */
+export function resolveAuthorizedRemoteConnectionConfig(
+  input: unknown,
+  dependencies: RemoteWorkspaceBoundaryDependencies = {}
+): AuthorizedRemoteConnectionConfig {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('远程连接请求无效')
+  }
+  const record = input as Record<string, unknown>
+  if (
+    Object.keys(record).some((key) => !['sessionId', 'projectId'].includes(key)) ||
+    typeof record.sessionId !== 'string' ||
+    !record.sessionId ||
+    typeof record.projectId !== 'string' ||
+    !record.projectId
+  ) {
+    throw new Error('远程连接请求只能包含会话和项目 ID')
+  }
+  const agentDir = dependencies.agentDir ?? getPhiAgentDir()
+  const request: RemoteWorkspacePathRequest = {
+    sessionId: record.sessionId,
+    projectId: record.projectId,
+    path: '.',
+    mode: 'existing'
+  }
+  const { profile } = boundProject(request, dependencies, agentDir)
+  return {
+    sessionId: request.sessionId,
+    projectId: request.projectId,
+    hostAlias: profile.hostAlias,
+    connection: remoteConnectionConfigForProfile(profile)
+  }
 }
 
 export function resolveRemoteWorkspaceHostBinding(
