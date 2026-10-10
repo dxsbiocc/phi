@@ -70,7 +70,6 @@ import type {
   ModelOption,
   NotebookCellJumpTarget,
   PermissionMode,
-  PluginCatalogItem,
   PromptAgentSummary,
   SkillSummary,
   ThinkingLevel,
@@ -125,7 +124,6 @@ type ViewProps = {
   contextCompacting?: boolean
   skills?: SkillSummary[]
   promptAgents?: PromptAgentSummary[]
-  plugins?: PluginCatalogItem[]
   onSelectModel: (model: ModelOption | null) => void
   thinkingLevel: ThinkingLevel
   onSelectThinkingLevel: (level: ThinkingLevel) => void
@@ -191,7 +189,6 @@ function ChatView({
   contextCompacting = false,
   skills = [],
   promptAgents = [],
-  plugins = [],
   onSelectModel,
   thinkingLevel,
   onSelectThinkingLevel,
@@ -700,7 +697,6 @@ function ChatView({
               panelRef={inputAddPanelRef}
               skills={skills}
               promptAgents={promptAgents}
-              plugins={plugins}
               cwd={cwd}
               onPickFiles={onPickInputFiles}
               onInsertReference={insertInputReference}

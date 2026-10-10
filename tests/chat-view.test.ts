@@ -23,7 +23,6 @@ import {
   formatInputFileReferences,
   formatInputFileReferenceTarget,
   formatPromptAgentReference,
-  formatPluginPromptReference,
   formatSkillPromptReference,
   parseInputInvocationReferences,
   inputFileReferencePathsFromDroppedFiles,
@@ -331,10 +330,6 @@ test('chat view formats add-menu references for prompt input', () => {
       trigger: '调用智能体：Visualization'
     }),
     '调用智能体：Visualization'
-  )
-  assert.equal(
-    formatPluginPromptReference({ name: 'Bio Plugin', source: 'npm:@phi/bio' }),
-    '引用开发者扩展：Bio Plugin（npm:@phi/bio）'
   )
   assert.equal(
     appendInputReference('先分析数据', '$omics-visualization'),
@@ -890,6 +885,22 @@ test('chat view shows delivered files with a preview action and current-file not
   assert.match(markup, /<button[^>]*aria-label="预览交付文件 report\.pdf"/)
   assert.match(markup, /报告/)
   assert.match(markup, /内容可能已更改/)
+})
+
+test('chat view renders ui blocks and the invalid replay fallback', () => {
+  const markup = renderChat([
+    {
+      id: 'ui-blocks-valid',
+      role: 'ui_blocks',
+      blocks: [{ type: 'metrics', title: '质控摘要', items: [{ label: '样本数', value: 12 }] }]
+    },
+    { id: 'ui-blocks-invalid', role: 'ui_blocks', blocks: null }
+  ])
+
+  assert.match(markup, /aria-label="结构化结果"/u)
+  assert.match(markup, /质控摘要/u)
+  assert.match(markup, /样本数/u)
+  assert.match(markup, /无法显示结构化内容/u)
 })
 
 test('chat view groups separate PNG and PDF deliveries under one title and notice', () => {
@@ -1771,10 +1782,7 @@ test('chat view shows current permission mode in the composer', () => {
 test('chat view shows add-context control before permissions', () => {
   const markup = renderChat([])
 
-  assert.match(
-    markup,
-    /aria-label="添加文件、智能体、Skill 或开发者扩展"[\s\S]*aria-label="选择权限模式/
-  )
+  assert.match(markup, /aria-label="添加文件、智能体或 Skill"[\s\S]*aria-label="选择权限模式/)
 })
 
 test('chat view uses the suggested next action as a passive placeholder', () => {

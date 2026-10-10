@@ -129,6 +129,7 @@ asarUnpack:
   - node_modules/y18n/**
   - node_modules/yaml/**
   - node_modules/yauzl/**
+  - node_modules/zod/**
   # Terminal PTY worker and cleanup supervisor also run under bun (src/main/terminal).
   # Their pi-natives dependency is covered by node_modules/@oh-my-pi/** above.
   - out/main/terminal/**

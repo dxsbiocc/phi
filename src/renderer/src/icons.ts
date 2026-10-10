@@ -753,7 +753,6 @@ export const PhiIcons = {
   },
   settings: {
     appearance: createPhiIcon('Appearance', TbPalette),
-    diagnostics: createPhiIcon('Diagnostics', FiCopy),
     permissions: createPhiIcon('Permissions', FiShield),
     persona: createPhiIcon('Persona', TbBrain),
     providers: createPhiIcon('Providers', TbNetwork),
@@ -898,7 +897,6 @@ export const PHI_ICON_META = {
   'nav.skills': { label: '技能', Icon: PhiIcons.nav.skills },
   'nav.visualization': { label: '可视化', Icon: PhiIcons.nav.visualization },
   'settings.appearance': { label: '外观', Icon: PhiIcons.settings.appearance },
-  'settings.diagnostics': { label: '诊断', Icon: PhiIcons.settings.diagnostics },
   'settings.permissions': { label: '权限', Icon: PhiIcons.settings.permissions },
   'settings.persona': { label: '助手人设', Icon: PhiIcons.settings.persona },
   'settings.providers': { label: 'Provider', Icon: PhiIcons.settings.providers },

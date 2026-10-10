@@ -1,16 +1,17 @@
-# P1 Plugin Beta Surface Closeout
+# P1 Pi Plugin Surface Closeout (Superseded)
 
 Date: 2026-09-06
+Superseded: 2026-10-10
 
-Scope: close the "Plugin Beta Surface" slice for the internal beta while keeping plugin management bounded to runtime-supported list, install, and remove flows.
+The original internal-beta slice exposed the global Pi package catalog as
+"Developer extensions" and routed list/install/remove through Phi IPC. Product
+review found that this implied project-level integration that the surface did
+not provide: there was no project-scoped enablement, live-session lifecycle, or
+callable Phi contract, and the chat reference only inserted descriptive text.
 
-| Roadmap item                                                              | Status | Evidence                                                                                                                                                                                                                          | Boundary                                                                    |
-| ------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Preserve plugin list/install/remove through the SDK/runtime               | Done   | `plugins:list`, `plugins:install`, and `plugins:remove` stay routed through the runtime adapter and OMP bridge. Covered by main integration plugin operation tests.                                                               | No independent plugin manager in Phi.                                       |
-| Do not add arbitrary URL download or local zip install                    | Done   | Plugin sources are validated before runtime install/remove; bare package names, `npm:`, and runtime-supported `git:` sources are allowed, while URLs, local paths, and archives are rejected. Covered by `tests/plugins.test.ts`. | Do not add URL, zip, tgz, or local file install in the beta.                |
-| Add concise confirmation for install source and remove target             | Done   | `PluginView` opens a confirmation dialog for install/remove and displays the exact plugin source. Existing UI behavior is covered by plugin view tests.                                                                           | No multi-step installer or dependency preview.                              |
-| Show plugin source, installed state, installed path, and operation errors | Done   | Plugin detail shows state, `pi install <source>`, optional local installed path, and operation error alerts. Covered by `tests/plugin-view.test.ts`.                                                                              | No full plugin manifest editor.                                             |
-| Keep latest operation failure visible until refresh or next operation     | Done   | `App` clears plugin operation errors on refresh or a new install/remove attempt, while `PluginView` keeps the current error visible in detail. Covered by plugin view and main integration tests.                                 | No persistent error history.                                                |
-| Add tests for confirm flows and failure state retention                   | Done   | Tests cover failure visibility, source/state/path visibility, source validation, and main IPC operation logging.                                                                                                                  | Live network catalog fetch and real install/uninstall remain runtime-owned. |
-
-Conclusion: P1 Plugin Beta Surface is ready to stop feature work. The next planned implementation slice should be **P2 UX Polish And Beta Release Readiness**.
+The user-facing page, chat reference, and `plugins:list/install/remove` bridge
+were therefore removed. OMP still discovers extensions configured outside Phi,
+so existing runtime compatibility is preserved. A future management surface
+must first define and test project scope, enablement, session refresh behavior,
+and an end-to-end callable integration. User-facing "plugin" continues to mean
+Phi plugin.

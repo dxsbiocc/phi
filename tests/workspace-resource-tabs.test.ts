@@ -11,7 +11,8 @@ import {
   resolveWorkspaceResourceTabIcons,
   upsertWorkspaceResourceTab,
   workspaceResourceTabKey,
-  type WorkspaceResourceTab
+  type WorkspaceResourceTab,
+  type WorkspaceSessionTab
 } from '../src/renderer/src/lib/workspaceResourceTabs'
 
 test('opening another item reuses the tab for its resource type', () => {
@@ -202,6 +203,36 @@ test('a modified notebook tab keeps a visible unsaved marker', () => {
     )
   )
   assert.match(markup, /未保存修改/)
+})
+
+test('an active conversation tab replaces its chat icon with an in-place dock action on interaction', () => {
+  const tab: WorkspaceSessionTab = {
+    key: 'session:/tmp/chat.jsonl',
+    kind: 'session',
+    itemId: '/tmp/chat.jsonl',
+    title: 'Conversation',
+    sessionPath: '/tmp/chat.jsonl',
+    sessionGeneration: 1,
+    sidebarMode: 'conversations'
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(WorkspaceResourceTabs, {
+        tabs: [tab],
+        activeKey: tab.key,
+        onSelect: () => undefined,
+        onClose: () => undefined,
+        onDockSessionTab: () => undefined
+      })
+    )
+  )
+
+  assert.match(markup, /workspace-session-tab-icon/)
+  assert.match(markup, /data-phi-session-tab-dock-action="true"/)
+  assert.match(markup, /aria-label="移到左侧边栏"/)
+  assert.match(markup, /workspace-session-tab-dock-action/)
 })
 
 test('a finished prompt only moves the active tab off session tabs', () => {

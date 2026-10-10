@@ -101,7 +101,9 @@ it('preserves the download capability when connection status is refreshed', asyn
       status: 'not-installed',
       download: { status: 'unreachable' }
     },
-    resolve: async () => ({ status: 'installed', version: '2.9.0-0' })
+    previousRipgrep: { status: 'not-installed' },
+    resolve: async () => ({ status: 'installed', version: '2.9.0-0' }),
+    resolveRipgrep: async () => ({ status: 'managed', version: '14.1.1' })
   })
 
   assert.deepEqual(profile.micromamba, {
@@ -109,4 +111,5 @@ it('preserves the download capability when connection status is refreshed', asyn
     version: '2.9.0-0',
     download: { status: 'unreachable' }
   })
+  assert.deepEqual(profile.ripgrep, { status: 'managed', version: '14.1.1' })
 })

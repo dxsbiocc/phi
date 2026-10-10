@@ -10,6 +10,7 @@ import OnboardingDialog from './components/OnboardingDialog'
 import NewProjectDialog from './features/project/NewProjectPanel'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import type { FileOpenConversationLayout } from '../../shared/appSettingsTypes'
 import type { ThemeMode } from './theme'
 import type { ThemeFamily } from './useThemeMode'
 import type {
@@ -73,6 +74,7 @@ export type AppDialogsProps = {
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -150,6 +152,7 @@ export default function AppDialogs({
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -224,11 +227,11 @@ export default function AppDialogs({
         }}
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
-        onCopyDiagnostics={() => rendererApi.copyDiagnostics()}
         noProjectTaskFolder={noProjectTaskFolder}
         allowExternalFileRead={allowExternalFileRead}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+        fileOpenConversationLayout={fileOpenConversationLayout}
         isSavingAppSettings={isSavingAppSettings}
         onUpdateAppSettings={onUpdateAppSettings}
         onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}

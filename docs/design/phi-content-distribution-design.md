@@ -284,8 +284,8 @@ Upgrade installs the new version side by side and switches atomically.
     but not uninstalled individually.
   - **Plugins page** lists composite capabilities only, with the example
     outputs and environment cost on the card.
-  - The existing pi plugin page is renamed **Developer extensions** and moved
-    to advanced settings. The word "plugin" in the UI means Phi plugins only.
+  - Pi plugin discovery remains a runtime compatibility layer without a Phi
+    management page. The word "plugin" in the UI means Phi plugins only.
 - A user can later "package these units as a plugin" to share them; the
   two-layer model is what makes that path possible.
 
@@ -649,7 +649,7 @@ models where credentials allow.
 | 3 | Catalog UI for skills, wrappers, connectors; wrapper per-family packages and tree assembly; enablement; migration | routing eval not worse; main first-turn prompt measurably smaller |
 | 4 | micromamba, `phi-python`, environment resolution, `skill_run`, environment page | script skills run on a clean machine without manual setup |
 | 5 | Core fetch tool, API skills, helper scripts, extended eval, db toolchain retirement | `api-skill` ≥ `db` on the extended eval; `src/main/agent/db/` substantially reduced |
-| 6 | Plugin loader, visualization plugin (viz logic moved out of the engine), `phi-r`, developer-extensions rename | visualization installs, runs in shared `phi-r`, uninstalls cleanly; no `viz_*` code left in the engine |
+| 6 | Plugin loader, visualization plugin (viz logic moved out of the engine), `phi-r` | visualization installs, runs in shared `phi-r`, uninstalls cleanly; no `viz_*` code left in the engine |
 | 7 | Remote signed registry, updates, mirrors, offline import, installer slimming | fresh install obtains content from the server; offline first launch works |
 | 8 | Remote / HPC parity for skills and environments | skill scripts run on an SSH project and on an offline cluster |
 | 9 | Orchestration on omp (§11.4): adapter-generated `spawns`, hard budgets, store tool, human checkpoints, run view; Co-Scientist–style reference plugin at level 1; freeze the Orchestration contract. Levels 2–3 follow when needed | the reference plugin completes a multi-round run within budget, survives an app restart (parked agents revived), and can be steered and stopped |

@@ -24,10 +24,12 @@ test('remote prompt reports a safe runtime root label and installed micromamba',
     rootLabel: '~/.phi/runtime',
     source: 'default',
     micromambaStatus: 'installed',
+    ripgrepStatus: 'system',
     micromambaPathLabel: '~/.phi/runtime/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.match(rendered, /~\/.phi\/runtime/)
   assert.match(rendered, /micromamba is installed and runnable/i)
+  assert.match(rendered, /ripgrep is available from the server PATH/i)
   assert.match(rendered, /~\/\.phi\/runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
   assert.match(rendered, /content-addressed skill resources/i)
   assert.match(rendered, /SSH login host/i)
@@ -40,11 +42,13 @@ test('remote prompt redacts absolute runtime paths and gives setup guidance with
     rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
     source: 'host',
     micromambaStatus: 'not-installed',
+    ripgrepStatus: 'not-installed',
     micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.match(rendered, /\$PHI_REMOTE_RUNTIME_ROOT/)
   assert.match(rendered, /remote host settings/i)
   assert.match(rendered, /will not install it automatically/i)
+  assert.match(rendered, /install ripgrep in remote host settings/i)
   assert.match(rendered, /\$PHI_REMOTE_RUNTIME_ROOT\/bin\/micromamba-2\.9\.0-0\/micromamba/)
   assert.doesNotMatch(rendered, /alice|cluster-a|\/home\//i)
 })
@@ -59,7 +63,8 @@ test('remote prompt distinguishes outdated, unusable and unchecked micromamba', 
       prompt({
         rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
         source: 'project',
-        micromambaStatus: status
+        micromambaStatus: status,
+        ripgrepStatus: 'managed'
       }),
       expected
     )
@@ -68,7 +73,8 @@ test('remote prompt distinguishes outdated, unusable and unchecked micromamba', 
     prompt({
       rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
       source: 'project',
-      micromambaStatus: 'unusable'
+      micromambaStatus: 'unusable',
+      ripgrepStatus: 'managed'
     }),
     /micromamba run.*legacy file layouts.*reinstall/i
   )
@@ -87,6 +93,7 @@ test('runtime context reads only host metadata and redacts absolute configured r
         assert.equal(agentDir, '/local/agent')
         return 'installed'
       },
+      readRipgrepStatus: () => 'managed',
       readMicromambaVersion: () => '2.9.0-0'
     }
   )
@@ -94,6 +101,7 @@ test('runtime context reads only host metadata and redacts absolute configured r
     rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
     source: 'host',
     micromambaStatus: 'installed',
+    ripgrepStatus: 'managed',
     micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
   })
   assert.equal(remoteRuntimeRootLabel('~/.phi/custom'), '~/.phi/custom')
@@ -111,6 +119,7 @@ test('runtime prompt context uses the same project runtime-root override as exec
       getHostProfile: () => ({ id: 'profile-1', label: 'Secret', hostAlias: 'cluster-secret' }),
       readHostRoot: () => '/host/runtime',
       readMicromambaStatus: () => 'installed',
+      readRipgrepStatus: () => 'not-installed',
       readMicromambaVersion: () => '2.9.0-0'
     }
   )
@@ -118,6 +127,7 @@ test('runtime prompt context uses the same project runtime-root override as exec
     rootLabel: '$PHI_REMOTE_RUNTIME_ROOT',
     source: 'project',
     micromambaStatus: 'installed',
+    ripgrepStatus: 'not-installed',
     micromambaPathLabel: '$PHI_REMOTE_RUNTIME_ROOT/bin/micromamba-2.9.0-0/micromamba'
   })
 })

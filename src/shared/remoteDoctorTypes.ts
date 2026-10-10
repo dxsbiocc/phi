@@ -11,6 +11,7 @@ export interface RemoteDoctorOptions {
   controller?: RemoteController
   runtime?: RemoteContainerRuntime
   nextflowBin?: string
+  containerRuntimeBin?: string
   refreshCapabilities?: boolean
   runtimeRootOverride?: {
     source: Exclude<RemoteRuntimeRootSource, 'default'>

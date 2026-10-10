@@ -115,6 +115,27 @@ test('launch script runs setup commands first and honors an explicit nextflow pa
   assert.match(script, /'\/opt\/nf\/bin\/nextflow' 'run'/)
 })
 
+test('a custom Docker binary directory is added to the remote launch PATH', () => {
+  const script = buildRemoteLaunchScript({
+    layout: LAYOUT,
+    profile: 'docker',
+    hpc: {
+      scheduler: 'local',
+      containerRuntimeBin: '/opt/docker/bin/docker'
+    }
+  })
+  assert.match(script, /export PATH='\/opt\/docker\/bin':"\$PATH"/)
+  const preflight = buildRemotePreflightScript({
+    hpc: {
+      scheduler: 'local',
+      runtime: 'docker',
+      containerRuntimeBin: '/opt/docker/bin/docker'
+    },
+    profile: 'docker'
+  })
+  assert.match(preflight, /\/opt\/docker\/bin\/docker/)
+})
+
 test('shared remote launch runs setup in the head process and records setup failure', () => {
   const dir = mkdtempSync(join(tmpdir(), 'phi-shared-launch-'))
   try {

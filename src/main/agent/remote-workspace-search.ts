@@ -5,7 +5,11 @@ import {
   type AuthorizedRemoteWorkspacePath,
   type RemoteWorkspaceBoundaryDependencies
 } from './remote-workspace-boundary'
+import { getProject } from './projects'
 import { readRemoteWorkspacePath } from './remote-workspace-read'
+import { readHostRuntimeRoot } from './remote-runtime-root-store'
+import { resolveProjectRuntimeRoot } from './remote-runtime/project-runtime-root'
+import { getRemoteRipgrepStatus } from './workspace-host/remote-ripgrep'
 import {
   shellQuote,
   type RemoteExecBoundedResult,
@@ -18,6 +22,9 @@ const GLOB_LIMIT = 200
 const GREP_FILE_LIMIT = 20
 const GREP_MATCH_LIMIT = 400
 const FALLBACK_FILE_LIMIT = 1000
+const RIPGREP_INSTALL_HINT = '可在设置 → 远程主机安装 ripgrep（使用 micromamba）'
+
+type RipgrepExecutable = { executablePath: string; engine: 'rg' | 'rg-managed' }
 
 export interface RemoteGlobRequest {
   sessionId: string
@@ -32,7 +39,7 @@ export interface RemoteGlobResult {
   paths: string[]
   content: string
   truncated: boolean
-  engine: 'rg' | 'find'
+  engine: 'rg' | 'rg-managed' | 'find'
   gitignoreApplied: boolean
 }
 
@@ -58,7 +65,7 @@ export interface RemoteGrepResult {
   fileCount: number
   matchCount: number
   truncated: boolean
-  engine: 'rg' | 'find-grep' | 'bounded-text' | 'mixed'
+  engine: 'rg' | 'rg-managed' | 'find' | 'bounded-text' | 'mixed'
   gitignoreApplied: boolean
 }
 
@@ -129,8 +136,29 @@ async function bounded(
   })
 }
 
-async function hasRg(session: RemoteSshSession): Promise<boolean> {
-  return (await session.exec('command -v rg >/dev/null 2>&1')).code === 0
+function searchRuntimeRoot(
+  projectId: string,
+  dependencies: RemoteWorkspaceBoundaryDependencies
+): string {
+  const project = (dependencies.getProject ?? getProject)(projectId)
+  if (!project || project.location.kind !== 'ssh') return '~/.phi/runtime'
+  const agentDir = dependencies.agentDir
+  const hostRoot = readHostRuntimeRoot(project.location.hostProfileId, agentDir)
+  return resolveProjectRuntimeRoot(project, hostRoot).configured
+}
+
+async function hasRg(
+  session: RemoteSshSession,
+  runtimeRoot: string
+): Promise<RipgrepExecutable | undefined> {
+  const status = await getRemoteRipgrepStatus(session, runtimeRoot)
+  if (!status.executablePath || (status.status !== 'system' && status.status !== 'managed')) {
+    return undefined
+  }
+  return {
+    executablePath: status.executablePath,
+    engine: status.status === 'managed' ? 'rg-managed' : 'rg'
+  }
 }
 
 function nulPaths(output: RemoteExecBoundedResult): { paths: string[]; truncated: boolean } {
@@ -146,7 +174,7 @@ function nulPaths(output: RemoteExecBoundedResult): { paths: string[]; truncated
 
 function matchGlob(pattern: string, relativePath: string): boolean {
   if (hasAdvancedGlob(pattern)) {
-    throw new Error('服务器没有 rg 时仅支持 *、** 和 ? 通配符；请缩小搜索或安装 rg')
+    throw new Error(`服务器没有 rg 时仅支持 *、** 和 ? 通配符；请缩小搜索；${RIPGREP_INSTALL_HINT}`)
   }
   let expression = '^'
   for (let index = 0; index < pattern.length; index += 1) {
@@ -185,17 +213,18 @@ async function collectFiles(
   session: RemoteSshSession,
   scope: AuthorizedRemoteWorkspacePath,
   pattern: string,
-  options: { hidden: boolean; gitignore: boolean }
+  options: { hidden: boolean; gitignore: boolean },
+  runtimeRoot: string
 ): Promise<{
   paths: string[]
   truncated: boolean
-  engine: 'rg' | 'find'
+  engine: 'rg' | 'rg-managed' | 'find'
   gitignoreApplied: boolean
 }> {
-  const rg = await hasRg(session)
+  const rg = await hasRg(session, runtimeRoot)
   if (!rg) matchGlob(pattern, 'probe') // validate fallback grammar before scanning
   const body = rg
-    ? `rg --files -0 ${options.hidden ? '--hidden' : ''} ${options.gitignore ? '' : '--no-ignore'} -g ${shellQuote(pattern)} ${options.hidden ? '' : "-g '!.*' -g '!**/.*'"} -- .`
+    ? `${shellQuote(rg.executablePath)} --files -0 ${options.hidden ? '--hidden' : ''} ${options.gitignore ? '' : '--no-ignore'} -g ${shellQuote(pattern)} ${options.hidden ? '' : "-g '!.*' -g '!**/.*'"} -- .`
     : `find . -type f ${options.hidden ? '' : "! -path '*/.*'"} -print0`
   const result = await bounded(session, physicalScopeCommand(scope, body))
   if (result.code !== 0 && !(rg && result.code === 1)) {
@@ -223,8 +252,8 @@ async function collectFiles(
   return {
     paths: [...filePaths, ...directoryPaths],
     truncated: parsed.truncated || directoryTruncated,
-    engine: rg ? 'rg' : 'find',
-    gitignoreApplied: rg && options.gitignore
+    engine: rg?.engine ?? 'find',
+    gitignoreApplied: Boolean(rg) && options.gitignore
   }
 }
 
@@ -257,7 +286,7 @@ export async function remoteGlob(
   const limit = Math.min((request.limit as number | undefined) ?? GLOB_LIMIT, GLOB_LIMIT)
   const found = new Set<string>()
   let truncated = false
-  let engine: 'rg' | 'find' = 'rg'
+  let engine: 'rg' | 'rg-managed' | 'find' = 'rg'
   let gitignoreApplied = true
   let hostAlias = ''
   for (const rawPath of paths) {
@@ -275,10 +304,16 @@ export async function remoteGlob(
             gitignoreApplied: true,
             hostAlias: authorized.hostAlias
           }
-        const found = await collectFiles(session, authorized, pattern ?? '**/*', {
-          hidden: request.hidden === true,
-          gitignore: request.gitignore !== false
-        })
+        const found = await collectFiles(
+          session,
+          authorized,
+          pattern ?? '**/*',
+          {
+            hidden: request.hidden === true,
+            gitignore: request.gitignore !== false
+          },
+          searchRuntimeRoot(request.projectId as string, dependencies)
+        )
         return { ...found, hostAlias: authorized.hostAlias }
       },
       dependencies
@@ -287,6 +322,7 @@ export async function remoteGlob(
     hostAlias = part.hostAlias
     truncated ||= part.truncated
     if (part.engine === 'find') engine = 'find'
+    else if (engine !== 'find' && part.engine === 'rg-managed') engine = 'rg-managed'
     gitignoreApplied &&= part.gitignoreApplied
   }
   const sorted = [...found].sort((left, right) => left.localeCompare(right))
@@ -299,7 +335,7 @@ export async function remoteGlob(
       ...(uris.length ? uris : [truncated ? '(no matches in inspected prefix)' : '(no matches)']),
       ...(truncated ? ['[results truncated; narrow path]'] : []),
       ...(engine === 'find' && request.gitignore !== false
-        ? ['[gitignore not applied: rg unavailable]']
+        ? [`[gitignore not applied: rg unavailable; ${RIPGREP_INSTALL_HINT}]`]
         : [])
     ].join('\n'),
     truncated,
@@ -383,11 +419,13 @@ async function fallbackGrep(
     physicalScopeCommand(scope, "find . -type f ! -path '*/.*' -print0")
   )
   if (fileList.code !== 0 || fileList.stdoutTruncated)
-    throw new Error('远程 find 文件范围过大或不可访问；请缩小路径')
+    throw new Error(`远程 find 文件范围过大或不可访问；请缩小路径；${RIPGREP_INSTALL_HINT}`)
   const candidates = nulPaths(fileList).paths.filter(
     (file) => !fileGlob || matchGlob(fileGlob, file.replace(/^\.\//, ''))
   )
-  if (candidates.length > FALLBACK_FILE_LIMIT) throw new Error('远程 find 文件过多；请缩小路径')
+  if (candidates.length > FALLBACK_FILE_LIMIT) {
+    throw new Error(`远程 find 文件过多；请缩小路径；${RIPGREP_INSTALL_HINT}`)
+  }
   if (candidates.length === 0) return { matches: [], truncated: false }
   const grepScript = [
     'set -u',
@@ -439,7 +477,7 @@ export async function remoteGrep(
     matches: RemoteGrepMatch[]
     truncated: boolean
     hostAlias: string
-    engine: 'rg' | 'find-grep' | 'bounded-text'
+    engine: 'rg' | 'rg-managed' | 'find' | 'bounded-text'
   }> = []
   for (const rawPath of pathSpecs) {
     const { base, pattern: fileGlob } = scopeFromPath(rawPath)
@@ -476,12 +514,15 @@ export async function remoteGrep(
           ? authorized
           : { ...authorized, path: posix.dirname(authorized.path) }
         const effectiveGlob = fileGlob
-        const rg = await hasRg(session)
+        const rg = await hasRg(
+          session,
+          searchRuntimeRoot(request.projectId as string, dependencies)
+        )
         let found: { matches: RemoteGrepMatch[]; truncated: boolean }
         if (rg) {
           const command = physicalScopeCommand(
             scope,
-            `rg --json --max-filesize 4M ${request.case === false ? '-i' : ''} ${request.gitignore === false ? '--no-ignore' : ''} ${effectiveGlob ? `-g ${shellQuote(effectiveGlob)} -g '!.*' -g '!**/.*'` : ''} -e ${shellQuote(request.pattern as string)} -- .`
+            `${shellQuote(rg.executablePath)} --json --max-filesize 4M ${request.case === false ? '-i' : ''} ${request.gitignore === false ? '--no-ignore' : ''} ${effectiveGlob ? `-g ${shellQuote(effectiveGlob)} -g '!.*' -g '!**/.*'` : ''} -e ${shellQuote(request.pattern as string)} -- .`
           )
           const output = await bounded(session, command)
           if (output.code !== 0 && output.code !== 1)
@@ -499,7 +540,7 @@ export async function remoteGrep(
         return {
           ...found,
           hostAlias: authorized.hostAlias,
-          engine: rg ? ('rg' as const) : ('find-grep' as const)
+          engine: rg?.engine ?? ('find' as const)
         }
       },
       dependencies
@@ -551,15 +592,14 @@ export async function remoteGrep(
     content: [
       content,
       ...(truncated ? ['[results truncated; use skip or narrow path]'] : []),
-      ...(parts.some((part) => part.engine === 'find-grep') && request.gitignore !== false
-        ? ['[gitignore not applied: rg unavailable]']
+      ...(parts.some((part) => part.engine === 'find') && request.gitignore !== false
+        ? [`[gitignore not applied: rg unavailable; ${RIPGREP_INSTALL_HINT}]`]
         : [])
     ].join('\n'),
     fileCount: selectedFiles.length,
     matchCount: selected.length,
     truncated,
     engine: result.engine,
-    gitignoreApplied:
-      parts.every((part) => part.engine !== 'find-grep') && request.gitignore !== false
+    gitignoreApplied: parts.every((part) => part.engine !== 'find') && request.gitignore !== false
   }
 }

@@ -1,5 +1,6 @@
 import type {
   RemoteMicromambaCapabilityProfile,
+  RemoteRipgrepCapabilityProfile,
   RemoteRuntimeRootCapabilityProfile,
   RemoteRuntimeRootCheckResult,
   RemoteRuntimeRootSource
@@ -13,6 +14,7 @@ import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { readLatestCapabilityProfileForHost } from './capability-profile-store'
 import { reconcileRemoteHelperProfile } from './helper-installer'
 import { getRemoteMicromambaStatus } from './remote-micromamba'
+import { getRemoteRipgrepStatus } from './remote-ripgrep'
 import type { ProbedHostCapabilityProfile } from './probe-parse'
 import { runtimeRootCapabilityProfile } from './runtime-root-profile'
 import type { HostCapabilityProfile } from './types'
@@ -22,6 +24,11 @@ export type MicromambaProfileResolver = (
   runtimeRoot: string,
   platform: HostCapabilityProfile['platform']
 ) => Promise<RemoteMicromambaCapabilityProfile | undefined>
+
+export type RipgrepProfileResolver = (
+  session: RemoteSshSession,
+  runtimeRoot: string
+) => Promise<RemoteRipgrepCapabilityProfile | undefined>
 
 function installedVersion(
   status: RemoteMicromambaStatusResult,
@@ -58,6 +65,18 @@ async function defaultMicromambaProfile(
   }
 }
 
+async function defaultRipgrepProfile(
+  session: RemoteSshSession,
+  runtimeRoot: string
+): Promise<RemoteRipgrepCapabilityProfile | undefined> {
+  const result = await getRemoteRipgrepStatus(session, runtimeRoot)
+  if (result.status === 'not-installed') return { status: 'not-installed' }
+  if ((result.status === 'system' || result.status === 'managed') && result.version) {
+    return { status: result.status, version: result.version }
+  }
+  return undefined
+}
+
 export function currentRemoteMicromambaVersion(): string | undefined {
   try {
     return remoteMicromambaManifestVersion()
@@ -73,21 +92,30 @@ export async function runtimeRootProfileWithMicromamba(input: {
   platform: HostCapabilityProfile['platform']
   check: RemoteRuntimeRootCheckResult
   previous?: RemoteMicromambaCapabilityProfile
+  previousRipgrep?: RemoteRipgrepCapabilityProfile
   resolve?: MicromambaProfileResolver
+  resolveRipgrep?: RipgrepProfileResolver
 }): Promise<RemoteRuntimeRootCapabilityProfile> {
-  const resolved =
-    input.check.status !== 'checked' || input.check.hardErrors.length > 0
-      ? input.previous
-      : await (input.resolve ?? defaultMicromambaProfile)(
-          input.session,
-          input.configuredRoot,
-          input.platform
-        )
+  const usableRoot = input.check.status === 'checked' && input.check.hardErrors.length === 0
+  let resolved = input.previous
+  let ripgrep = input.previousRipgrep
+  if (usableRoot) {
+    resolved = await (input.resolve ?? defaultMicromambaProfile)(
+      input.session,
+      input.configuredRoot,
+      input.platform
+    )
+    ripgrep = await (input.resolveRipgrep ?? defaultRipgrepProfile)(
+      input.session,
+      input.configuredRoot
+    )
+  }
   const micromamba = preserveDownloadCapability(resolved, input.previous)
   return runtimeRootCapabilityProfile(
     input.source,
     input.check,
-    micromamba ?? input.previous ?? { status: 'unchecked' }
+    micromamba ?? input.previous ?? { status: 'unchecked' },
+    ripgrep ?? input.previousRipgrep ?? { status: 'unchecked' }
   )
 }
 
@@ -108,7 +136,8 @@ export async function connectionProfileWithMicromamba(input: {
   const runtimeRoot = await runtimeRootProfileWithMicromamba({
     ...input,
     platform: latest.platform,
-    previous: latest.runtimeRoot?.micromamba
+    previous: latest.runtimeRoot?.micromamba,
+    previousRipgrep: latest.runtimeRoot?.ripgrep
   })
   return reconcileRemoteHelperProfile({ ...latest, runtimeRoot })
 }

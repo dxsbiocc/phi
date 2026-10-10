@@ -1210,37 +1210,3 @@ export async function listRuntimeSessions(cwd: string): Promise<SessionInfo[]> {
     name: info.name ?? info.title
   }))
 }
-
-export async function listRuntimePlugins(cwd: string): Promise<
-  Array<{
-    name: string
-    version?: string
-    path?: string
-    enabled?: boolean
-    manifest?: {
-      description?: string
-      name?: string
-    }
-  }>
-> {
-  return getOmpBridge().request('plugins.list', {
-    agentDir: getPhiAgentDir(),
-    cwd
-  })
-}
-
-export async function installRuntimePlugin(cwd: string, source: string): Promise<void> {
-  await getOmpBridge().request('plugins.install', {
-    agentDir: getPhiAgentDir(),
-    cwd,
-    source
-  })
-}
-
-export async function removeRuntimePlugin(cwd: string, source: string): Promise<void> {
-  await getOmpBridge().request('plugins.uninstall', {
-    agentDir: getPhiAgentDir(),
-    cwd,
-    name: source.replace(/^npm:/, '').replace(/^git:/, '').trim()
-  })
-}

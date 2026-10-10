@@ -6,6 +6,7 @@ import type {
   ToolCallItem,
   PresentedFilesItem,
   PlanReviewItem,
+  UiBlocksItem,
   WorkspaceChangeSummaryItem,
   WrapperPlanItem
 } from '../types'
@@ -18,6 +19,7 @@ export type VisibleChatItem =
   | AgentExecutionItem
   | WorkspaceChangeSummaryItem
   | PresentedFilesItem
+  | UiBlocksItem
   | PlanReviewItem
 
 export type ProcessingItem =
@@ -83,6 +85,7 @@ function isProcessingItem(message: ChatItem): message is ProcessingItem {
     message.role !== 'wrapper_plan' &&
     message.role !== 'workspace_changes' &&
     message.role !== 'presented_files' &&
+    message.role !== 'ui_blocks' &&
     message.role !== 'plan_review'
   )
 }

@@ -1,5 +1,6 @@
 import type { RemoteHpcSettings } from '../../../../../shared/wrapperRemoteTypes'
 import type { WrapperInputPathMapping } from '../../../../../shared/wrapperTypes'
+import type { RemoteEnvironmentToolPaths } from '../../../../../shared/remoteEnvironmentTypes'
 
 export interface ProjectRemoteConnection {
   id: string
@@ -19,6 +20,7 @@ export interface RemoteHostProfile {
   identityFile?: string
   runtimeRoot?: string
   downloadMirrorPrefix?: string
+  toolPaths?: RemoteEnvironmentToolPaths
   source?: 'ssh-config'
 }
 

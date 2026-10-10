@@ -339,44 +339,50 @@ test('workspace session tabs do not stack stale file previews under chat', () =>
   )
 })
 
-test('workspace file opens keep the left sidebar matched to the source surface', () => {
+test('reselecting an open workspace file preserves the manually chosen sidebar', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
 
-  assert.match(appSource, /const showActiveConversationInSidebar = useCallback/)
-  assert.match(appSource, /setWorkspaceSidebarMode\('conversations'\)/)
-  assert.match(appSource, /setIsSidebarOpen\(true\)/)
-  assert.match(
-    appSource,
-    /const previewFilePathInWorkspaceTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
-  )
-  assert.match(
-    appSource,
-    /const previewDirectoryPathInWorkspaceTab = useCallback[\s\S]{0,260}showActiveConversationInSidebar\(\)/
-  )
-  assert.doesNotMatch(
-    appSource,
-    /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,700}showActiveConversationInSidebar\(\)/
-  )
-  assert.match(appSource, /const onOpenWorkspaceFileFromSidebar = useCallback/)
-  assert.match(
-    appSource,
-    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,800}setWorkspaceSidebarMode\('files'\)/
-  )
-  assert.match(
-    appSource,
-    /const onOpenWorkspaceFileFromSidebar = useCallback[\s\S]{0,260}openRemoteWorkspacePath\(path, 'file'\)/
-  )
-  assert.match(
-    appSource,
-    /isNotebookFilePath\(path\)[\s\S]{0,120}onOpenNotebookWorkspaceFile\(path\)/
-  )
   const selectFileTabStart = appSource.indexOf('const onSelectWorkspaceFileTab = useCallback')
   const closeFileTabStart = appSource.indexOf('const onCloseWorkspaceFileTab = useCallback')
   assert.ok(selectFileTabStart >= 0)
   assert.ok(closeFileTabStart > selectFileTabStart)
   assert.doesNotMatch(
     appSource.slice(selectFileTabStart, closeFileTabStart),
-    /showActiveConversationInSidebar\(\)/
+    /applyFileOpenConversationLayout\(\)|setWorkspaceSidebarMode/
+  )
+})
+
+test('conversation tab and sidebar expose opposite companion layout actions', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const sidebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/AppWorkspaceSidebar.tsx'),
+    'utf8'
+  )
+
+  assert.match(appSource, /const onDockConversationToSidebar = useCallback/)
+  assert.match(appSource, /const onRestoreConversationToMain = useCallback/)
+  assert.match(
+    appSource,
+    /onDockSessionTab=\{[\s\S]{0,160}onDockConversationToSidebar[\s\S]{0,80}\}/
+  )
+  assert.doesNotMatch(appSource, /<CompanionChatToggle[\s\S]{0,100}destination="sidebar"/)
+  assert.match(appSource, /onRestoreConversationToMain: onRestoreConversationToMain/)
+  assert.match(sidebarSource, /destination="tab"/)
+  assert.match(sidebarSource, /onRestoreConversationToMain/)
+})
+
+test('file opening applies the saved conversation layout preference', () => {
+  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+  assert.match(appSource, /const applyFileOpenConversationLayout = useCallback/)
+  assert.match(appSource, /sidebarStateForFileOpenConversationLayout/)
+  assert.match(
+    appSource,
+    /const previewFilePathInWorkspaceTab = useCallback[\s\S]{0,260}applyFileOpenConversationLayout\(\)/
+  )
+  assert.match(
+    appSource,
+    /const onOpenNotebookWorkspaceFile = useCallback[\s\S]{0,260}applyFileOpenConversationLayout\(\)/
   )
 })
 

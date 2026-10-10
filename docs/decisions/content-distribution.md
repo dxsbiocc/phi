@@ -68,9 +68,10 @@ than plain URL fetching and about twice as slow (design Appendix A).
     approvals, human checkpoints, isolation by package, and the run view.
     Agent-driven orchestration comes first; declarative and programmatic
     levels later.
-11. **Pi plugins are developer extensions.** The existing pi plugin page is
-    renamed and moved to advanced settings; "plugin" in the UI means Phi
-    plugins.
+11. **Pi plugins remain a runtime compatibility layer.** Phi does not expose
+    their global catalog or install/remove controls until project-scoped
+    enablement and callable integration are defined. "Plugin" in the UI means
+    Phi plugins.
 12. **Runtime foundation first** ([phi-runtime-foundation.md](../design/phi-runtime-foundation.md), confirmed 2026-09-29):
     only the main agent's `bash` uses the host environment; all other
     execution runs in managed environments. Official environments install from

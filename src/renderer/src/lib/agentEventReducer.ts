@@ -16,6 +16,10 @@ import {
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
 import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
+import {
+  uiBlocksItemFromToolEvent,
+  unavailableUiBlocksItemFromToolEvent
+} from '../features/chat/lib/uiBlocks'
 import { outputPreviewText } from './toolOutputPresentation'
 
 export interface AgentEventReducerState {
@@ -737,6 +741,11 @@ export function reduceAgentEventState(
           ...(durationMs !== undefined ? { durationMs } : {})
         }
       }
+    }
+    if (event.type === 'tool_execution_end') {
+      const uiBlocks =
+        uiBlocksItemFromToolEvent(event) ?? unavailableUiBlocksItemFromToolEvent(event)
+      if (uiBlocks && !next.some((item) => item.id === uiBlocks.id)) next.push(uiBlocks)
     }
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }

@@ -132,7 +132,8 @@ export async function capabilityToolchainChecks(
     {
       scheduler: context.options.scheduler ?? 'local',
       controller: context.options.controller,
-      nextflowBin: context.options.nextflowBin
+      nextflowBin: context.options.nextflowBin,
+      containerRuntimeBin: context.options.containerRuntimeBin
     },
     context.options.runtime ?? DEFAULT_REMOTE_RUNTIME
   )

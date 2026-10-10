@@ -13,6 +13,7 @@ export interface RemoteRuntimeTarget {
   sessionId: string
   projectId: string
   configuredRoot: string
+  micromambaPath?: string
 }
 
 export async function openRemoteRuntimeWorkspace(
@@ -42,6 +43,7 @@ export async function openRemoteRuntimeWorkspace(
       runtimeHost,
       projectRoot: binding.canonicalRoot,
       runtimeRoot,
+      ...(target.micromambaPath ? { micromambaPath: target.micromambaPath } : {}),
       execWithInput: createRemoteRuntimeInputExec(binding.config.connect),
       close: async () => {
         await Promise.all([projectHost.close(), runtimeHost.close()])

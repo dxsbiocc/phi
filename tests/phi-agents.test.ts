@@ -758,6 +758,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /not_found/i)
     assert.match(prompt, /new and modified user-facing files separately/i)
     assert.match(prompt, /exact path and purpose/i)
+    assert.match(prompt, /render_blocks.*tabular results.*QC metrics.*progress/i)
     // The leader never learns the specialist's own tool functions.
     for (const name of ['wrapper_search', 'wrapper_inspect', 'wrapper_run']) {
       assert.ok(!new RegExp(`\\b${name}\\b`).test(prompt), `leader prompt must not mention ${name}`)

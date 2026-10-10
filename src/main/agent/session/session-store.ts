@@ -17,6 +17,8 @@ import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
 import { getPhiAgentDir } from '../runtime-paths'
 
+export { toolResultDetailsForSession } from './tool-result-details'
+
 export type SessionKind = 'ordinary' | 'project'
 export type SessionStatus =
   'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'

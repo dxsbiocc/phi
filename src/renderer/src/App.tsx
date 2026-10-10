@@ -23,6 +23,7 @@ import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
+  DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
@@ -34,6 +35,7 @@ import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { ChatArtifactSplit } from './features/chat/components/ChatArtifactSplit'
 import {
+  sidebarStateForFileOpenConversationLayout,
   shouldEnableOfficeChatSplit,
   sidebarHostsCurrentConversation
 } from './features/chat/lib/chatArtifactSplit'
@@ -67,7 +69,6 @@ import { createBrowserRequestIdFactory } from './features/browser/lib/browserPan
 import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browserTrustedOverlayGate'
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
-import { useDeveloperExtensionCatalog } from './features/developer-extensions/hooks/useDeveloperExtensionCatalog'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
 import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { WrapperDetail } from './features/wrapper/WrapperView'
@@ -570,6 +571,7 @@ function WorkspaceResourceHeader({
   activeKey,
   onSelect,
   onClose,
+  onDockSessionTab,
   actions,
   leadingChromeInset = 0,
   reserveTrailingChromeSpace = false
@@ -578,6 +580,7 @@ function WorkspaceResourceHeader({
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
+  onDockSessionTab?: (tab: WorkspaceSessionTab) => void
   actions?: React.ReactNode
   leadingChromeInset?: number
   reserveTrailingChromeSpace?: boolean
@@ -601,6 +604,7 @@ function WorkspaceResourceHeader({
         activeKey={activeKey}
         onSelect={onSelect}
         onClose={onClose}
+        onDockSessionTab={onDockSessionTab}
         connectorIcon={renderConnectorTabIcon}
         fileIcon={renderFileWorkspaceTabIcon}
       />
@@ -760,6 +764,9 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
+  const [fileOpenConversationLayout, setFileOpenConversationLayout] = useState(
+    DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT
+  )
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
@@ -783,7 +790,6 @@ function App(): React.JSX.Element {
   const getActiveCwd = useCallback(() => useSessionStore.getState().activeCwd, [])
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
-  const { extensions: plugins, refreshExtensions: refreshPlugins } = useDeveloperExtensionCatalog()
   const phiPluginsState = usePhiPlugins()
   const refreshPhiPluginsForNavigation = phiPluginsState.refreshForNavigation
   const {
@@ -854,6 +860,7 @@ function App(): React.JSX.Element {
     setAllowExternalFileRead(settings.allowExternalFileRead)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
+    setFileOpenConversationLayout(settings.fileOpenConversationLayout)
   }, [])
 
   useEffect(() => {
@@ -934,6 +941,7 @@ function App(): React.JSX.Element {
       const previousAllowExternalFileRead = allowExternalFileRead
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
+      const previousFileOpenConversationLayout = fileOpenConversationLayout
 
       if (patch.noProjectTaskFolder !== undefined) {
         setNoProjectTaskFolder(patch.noProjectTaskFolder)
@@ -947,6 +955,9 @@ function App(): React.JSX.Element {
       if (patch.nextActionSuggestionsEnabled !== undefined) {
         setNextActionSuggestionsEnabled(patch.nextActionSuggestionsEnabled)
       }
+      if (patch.fileOpenConversationLayout !== undefined) {
+        setFileOpenConversationLayout(patch.fileOpenConversationLayout)
+      }
 
       setIsSavingAppSettings(true)
       try {
@@ -957,6 +968,7 @@ function App(): React.JSX.Element {
         setAllowExternalFileRead(previousAllowExternalFileRead)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
+        setFileOpenConversationLayout(previousFileOpenConversationLayout)
         showSnackbarError(error, '保存通用设置失败')
       } finally {
         setIsSavingAppSettings(false)
@@ -965,6 +977,7 @@ function App(): React.JSX.Element {
     [
       allowExternalFileRead,
       applyAppSettings,
+      fileOpenConversationLayout,
       nextActionSuggestionsEnabled,
       noProjectTaskFolder,
       preventSleepDuringRuns,
@@ -1556,6 +1569,13 @@ function App(): React.JSX.Element {
     setIsSidebarOpen(true)
   }, [])
 
+  const applyFileOpenConversationLayout = useCallback((): void => {
+    const next = sidebarStateForFileOpenConversationLayout(fileOpenConversationLayout)
+    projectSidebarSelectionRequestRef.current += 1
+    setWorkspaceSidebarMode(next.workspaceSidebarMode)
+    setIsSidebarOpen(next.isSidebarOpen)
+  }, [fileOpenConversationLayout])
+
   const onNotebookDirtyChange = useCallback(
     (file: { path: string }, dirty: boolean): void => {
       setWorkspaceFileTabs((tabs) => {
@@ -1573,6 +1593,7 @@ function App(): React.JSX.Element {
   const onOpenNotebookWorkspaceFile = useCallback(
     (path: string): void => {
       if (blockRemoteLocalFileAction()) return
+      applyFileOpenConversationLayout()
       const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
@@ -1634,6 +1655,7 @@ function App(): React.JSX.Element {
       })
     },
     [
+      applyFileOpenConversationLayout,
       blockRemoteLocalFileAction,
       activateCachedAnalysisNotebook,
       filePreviewRequestRef,
@@ -2502,11 +2524,11 @@ function App(): React.JSX.Element {
   const previewFilePathInWorkspaceTab = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      showActiveConversationInSidebar()
+      applyFileOpenConversationLayout()
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       previewFilePath(path)
     },
-    [getActiveCwd, previewFilePath, showActiveConversationInSidebar]
+    [applyFileOpenConversationLayout, getActiveCwd, previewFilePath]
   )
 
   const openRemoteWorkspacePath = useCallback(
@@ -2525,13 +2547,18 @@ function App(): React.JSX.Element {
         showSnackbarError(new Error('远程路径不属于当前项目'), '无法打开远程文件')
         return
       }
-      setWorkspaceSidebarMode('files')
-      setIsSidebarOpen(true)
+      applyFileOpenConversationLayout()
       setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
       if (kind === 'directory') previewDirectoryPath(uri)
       else previewFilePath(uri)
     },
-    [getActiveRemoteProject, previewDirectoryPath, previewFilePath, showSnackbarError]
+    [
+      applyFileOpenConversationLayout,
+      getActiveRemoteProject,
+      previewDirectoryPath,
+      previewFilePath,
+      showSnackbarError
+    ]
   )
 
   const openActiveWrapperResultPath = useCallback(
@@ -2545,14 +2572,19 @@ function App(): React.JSX.Element {
       ) {
         return false
       }
-      setWorkspaceSidebarMode('files')
-      setIsSidebarOpen(true)
+      applyFileOpenConversationLayout()
       setActiveWorkspaceTabKey(workspaceFileTabKey(path))
       if (kind === 'directory') previewDirectoryPath(path)
       else previewFilePath(path)
       return true
     },
-    [activeWrapperResultScope, isActiveWrapperResultUri, previewDirectoryPath, previewFilePath]
+    [
+      activeWrapperResultScope,
+      applyFileOpenConversationLayout,
+      isActiveWrapperResultUri,
+      previewDirectoryPath,
+      previewFilePath
+    ]
   )
 
   const onOpenWrapperResult = useCallback(
@@ -2570,37 +2602,35 @@ function App(): React.JSX.Element {
         return
       }
       try {
+        applyFileOpenConversationLayout()
         const uri = openWrapperResultPath(scope, path, kind)
-        setWorkspaceSidebarMode('files')
-        setIsSidebarOpen(true)
         setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
       } catch (error) {
         showSnackbarError(error, '无法打开远程结果')
       }
     },
-    [openWrapperResultPath, showSnackbarError]
+    [applyFileOpenConversationLayout, openWrapperResultPath, showSnackbarError]
   )
 
   const previewDirectoryPathInWorkspaceTab = useCallback(
     (path: string): void => {
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      showActiveConversationInSidebar()
+      applyFileOpenConversationLayout()
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       previewDirectoryPath(path)
     },
-    [getActiveCwd, previewDirectoryPath, showActiveConversationInSidebar]
+    [applyFileOpenConversationLayout, getActiveCwd, previewDirectoryPath]
   )
 
   const onOpenWorkspaceFileFromSidebar = useCallback(
     (path: string): void => {
+      applyFileOpenConversationLayout()
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
         openRemoteWorkspacePath(path, 'file')
         return
       }
       if (blockRemoteLocalFileAction()) return
       const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      setWorkspaceSidebarMode('files')
-      setIsSidebarOpen(true)
       setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
       if (isNotebookFilePath(path)) {
         onOpenNotebookWorkspaceFile(path)
@@ -2609,6 +2639,7 @@ function App(): React.JSX.Element {
       previewFilePath(path)
     },
     [
+      applyFileOpenConversationLayout,
       blockRemoteLocalFileAction,
       getActiveCwd,
       onOpenNotebookWorkspaceFile,
@@ -2716,8 +2747,7 @@ function App(): React.JSX.Element {
   const onOpenInputAddMenu = useCallback((): void => {
     void refreshSkills()
     void refreshPromptAgents()
-    void refreshPlugins()
-  }, [refreshPlugins, refreshPromptAgents, refreshSkills])
+  }, [refreshPromptAgents, refreshSkills])
 
   const onPickInputFiles = useCallback(async (): Promise<string[]> => {
     try {
@@ -3794,6 +3824,27 @@ function App(): React.JSX.Element {
     [closeWorkspaceSidebarPreview, workspaceSidebarMode]
   )
 
+  const onDockConversationToSidebar = useCallback((): void => {
+    const target = activeWorkspaceFileTab ?? workspaceFileTabs.at(-1) ?? null
+    if (!target) return
+    closeWorkspaceSidebarPreview()
+    onSelectWorkspaceFileTab(target)
+    showActiveConversationInSidebar()
+  }, [
+    activeWorkspaceFileTab,
+    closeWorkspaceSidebarPreview,
+    onSelectWorkspaceFileTab,
+    showActiveConversationInSidebar,
+    workspaceFileTabs
+  ])
+
+  const onRestoreConversationToMain = useCallback((): void => {
+    closeWorkspaceSidebarPreview()
+    selectWorkspaceTab(currentSessionTab)
+    setWorkspaceSidebarMode('files')
+    setIsSidebarOpen(true)
+  }, [closeWorkspaceSidebarPreview, currentSessionTab, selectWorkspaceTab])
+
   const onSelectWorkspaceView = useCallback(
     (view: 'chat' | 'projects'): void => {
       onSelectWorkspaceSidebarMode(view === 'projects' ? 'projects' : 'conversations')
@@ -3974,7 +4025,6 @@ function App(): React.JSX.Element {
             contextCompacting={currentSessionIsCompacting}
             skills={skills}
             promptAgents={promptAgents}
-            plugins={plugins}
             onSelectModel={(model) => {
               void onSelectModel(model)
             }}
@@ -4266,7 +4316,6 @@ function App(): React.JSX.Element {
       workspaceSidebarMode
     })
   })
-
   const standardWorkspaceTabContent =
     activeWorkspaceTab?.kind === 'session'
       ? chatWorkspaceContent
@@ -4309,6 +4358,7 @@ function App(): React.JSX.Element {
       remoteConnection: activeRemoteConnection,
       onRetryRemoteConnection: onRetryRemoteConnection,
       onOpenRemoteSettings: () => openSettings('remote'),
+      onRestoreConversationToMain: onRestoreConversationToMain,
       activeWorkspacePath: activeWorkspaceSidePanelPath,
       workspaceFileTreeRevision: workspaceSidePanelTreeRevision,
       onOpenWorkspaceFile: onOpenWorkspaceFileFromSidebar,
@@ -4387,6 +4437,7 @@ function App(): React.JSX.Element {
       activeRemoteConnection,
       onRetryRemoteConnection,
       openSettings,
+      onRestoreConversationToMain,
       activeWorkspaceSidePanelPath,
       workspaceSidePanelTreeRevision,
       onOpenWorkspaceFileFromSidebar,
@@ -4636,6 +4687,9 @@ function App(): React.JSX.Element {
                       selectWorkspaceTab(tab)
                     }}
                     onClose={onCloseWorkspaceTab}
+                    onDockSessionTab={
+                      workspaceFileTabs.length > 0 ? onDockConversationToSidebar : undefined
+                    }
                     actions={
                       <OfficeCreateButton
                         bridge={rendererApi.office}
@@ -4895,6 +4949,7 @@ function App(): React.JSX.Element {
           allowExternalFileRead={allowExternalFileRead}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+          fileOpenConversationLayout={fileOpenConversationLayout}
           isSavingAppSettings={isSavingAppSettings}
           onUpdateAppSettings={onUpdateAppSettings}
           onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}

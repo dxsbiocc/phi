@@ -42,7 +42,6 @@ test('the composer uses resolved agent and skill artwork instead of fixed glyphs
       panelRef: createRef<HTMLDivElement>(),
       skills: [skill('skill-icon')],
       promptAgents: [agent],
-      plugins: [],
       cwd: '/workspace',
       onInsertReference: () => undefined,
       onClose: () => undefined

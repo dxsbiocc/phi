@@ -3,6 +3,10 @@ import { wrapperRunNotice, type WrapperRunFinishedEvent } from '../../../shared/
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
+import {
+  uiBlocksItemFromToolEvent,
+  unavailableUiBlocksItemFromToolEvent
+} from '../features/chat/lib/uiBlocks'
 import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
 import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
 import {
@@ -832,6 +836,9 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
             }
           }
         }
+        const uiBlocks =
+          uiBlocksItemFromToolEvent(message) ?? unavailableUiBlocksItemFromToolEvent(message)
+        if (uiBlocks && !items.some((item) => item.id === uiBlocks.id)) items.push(uiBlocks)
         continue
       }
 

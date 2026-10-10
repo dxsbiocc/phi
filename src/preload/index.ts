@@ -46,6 +46,11 @@ import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
 import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
+import type {
+  RemoteRipgrepProgress,
+  RemoteRipgrepResult,
+  RemoteRipgrepStatusResult
+} from '../shared/remoteRipgrepTypes'
 import type { PromptAgentSummary } from '../shared/promptAgentTypes'
 
 // Imported (unlike the other ambient types in this file, which are
@@ -62,6 +67,10 @@ import type {
   RemoteDoctorReport,
   RemoteNextflowInstallResult
 } from '../shared/remoteDoctorTypes'
+import type {
+  RemoteEnvironmentSettingInput,
+  RemoteEnvironmentToolPaths
+} from '../shared/remoteEnvironmentTypes'
 import type {
   WrapperRetargetRequest,
   WrapperInputPathMapping,
@@ -278,6 +287,7 @@ type RemoteHostProfile = {
   source?: 'ssh-config'
   runtimeRoot?: string
   downloadMirrorPrefix?: string
+  toolPaths?: RemoteEnvironmentToolPaths
 }
 type OpenSshHost = {
   alias: string
@@ -326,21 +336,6 @@ type ToolApprovalRequest = {
     consequence: 'read' | 'write' | 'irreversible'
     reason: 'external_origin' | 'form_submission' | 'irreversible'
   }
-}
-
-type PluginCatalogItem = {
-  id: string
-  name: string
-  source: string
-  description: string
-  author?: string
-  kind: 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
-  downloads?: string
-  updated?: string
-  homepageUrl: string
-  npmUrl: string
-  installed: boolean
-  installedPath?: string
 }
 
 type McpServerSummary = {
@@ -699,6 +694,17 @@ type RemoteMicromambaProgress = {
   totalBytes?: number
 }
 
+type RemoteRipgrepRequest = {
+  action: 'status' | 'install'
+  requestId: string
+  hostProfileId: string
+  runtimeRoot: string
+  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+  forceManaged?: boolean
+}
+
+type RemoteRipgrepIpcProgress = RemoteRipgrepProgress & { requestId: string }
+
 type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
@@ -733,7 +739,6 @@ type RendererAuthApi = {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => Unsubscribe
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
@@ -848,12 +853,20 @@ type RendererAuthApi = {
   }) => Promise<RemoteHostProfile>
   deleteRemoteHost: (id: string) => Promise<void>
   saveRemoteRuntimeRoot: (hostProfileId: string, runtimeRoot?: string) => Promise<RemoteHostProfile>
+  saveRemoteEnvironment: (
+    hostProfileId: string,
+    input: RemoteEnvironmentSettingInput
+  ) => Promise<RemoteHostProfile>
   saveRemoteMicromambaMirror: (
     hostProfileId: string,
     downloadMirrorPrefix?: string
   ) => Promise<RemoteHostProfile>
   remoteMicromamba: (request: RemoteMicromambaRequest) => Promise<RemoteMicromambaResult>
   onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void) => Unsubscribe
+  remoteRipgrep: (
+    request: RemoteRipgrepRequest
+  ) => Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult>
+  onRemoteRipgrepProgress: (cb: (progress: RemoteRipgrepIpcProgress) => void) => Unsubscribe
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,
@@ -963,9 +976,6 @@ type RendererAuthApi = {
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
   onToolApprovalCancelled: (cb: (requestId?: string) => void) => Unsubscribe
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
-  listPlugins: () => Promise<PluginCatalogItem[]>
-  installPlugin: (source: string) => Promise<PluginCatalogItem[]>
-  removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
   pickPhiPluginDirectory: () => Promise<string | null>
   previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
@@ -1222,7 +1232,6 @@ const api: RendererAuthApi = {
   },
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
-  copyDiagnostics: (): Promise<string> => ipcRenderer.invoke('diagnostics:copy'),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke('agent:prompt', text, sanitizePromptTargetForIpc(target)),
   readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
@@ -1399,6 +1408,11 @@ const api: RendererAuthApi = {
     runtimeRoot?: string
   ): Promise<RemoteHostProfile> =>
     ipcRenderer.invoke('remote:saveRuntimeRoot', hostProfileId, runtimeRoot),
+  saveRemoteEnvironment: (
+    hostProfileId: string,
+    input: RemoteEnvironmentSettingInput
+  ): Promise<RemoteHostProfile> =>
+    ipcRenderer.invoke('remote:saveEnvironment', hostProfileId, input),
   saveRemoteMicromambaMirror: (
     hostProfileId: string,
     downloadMirrorPrefix?: string
@@ -1410,6 +1424,15 @@ const api: RendererAuthApi = {
     const handler = (_: unknown, progress: RemoteMicromambaProgress): void => cb(progress)
     ipcRenderer.on('remote:micromambaProgress', handler)
     return () => ipcRenderer.removeListener('remote:micromambaProgress', handler)
+  },
+  remoteRipgrep: (
+    request: RemoteRipgrepRequest
+  ): Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult> =>
+    ipcRenderer.invoke('remote:ripgrep', request),
+  onRemoteRipgrepProgress: (cb: (progress: RemoteRipgrepIpcProgress) => void): Unsubscribe => {
+    const handler = (_: unknown, progress: RemoteRipgrepIpcProgress): void => cb(progress)
+    ipcRenderer.on('remote:ripgrepProgress', handler)
+    return () => ipcRenderer.removeListener('remote:ripgrepProgress', handler)
   },
   remoteDoctor: (
     hostProfileId: string,
@@ -1665,11 +1688,6 @@ const api: RendererAuthApi = {
     cancelled = false
   ): Promise<void> =>
     ipcRenderer.invoke('agent:interaction-response', requestId, response, cancelled),
-  listPlugins: (): Promise<PluginCatalogItem[]> => ipcRenderer.invoke('plugins:list'),
-  installPlugin: (source: string): Promise<PluginCatalogItem[]> =>
-    ipcRenderer.invoke('plugins:install', source),
-  removePlugin: (source: string): Promise<PluginCatalogItem[]> =>
-    ipcRenderer.invoke('plugins:remove', source),
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke('phiPlugins:list'),
   pickPhiPluginDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke('phiPlugins:pickDirectory'),

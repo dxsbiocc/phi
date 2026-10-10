@@ -12,10 +12,12 @@ import {
 } from '../src/main/agent/projects'
 import {
   listRemoteHostsWithRuntimeRoots,
+  saveRemoteEnvironmentSetting,
   saveRemoteMicromambaMirrorSetting,
   saveRemoteRuntimeRootSetting,
   updateProjectRemoteConnectionRuntimeAware
 } from '../src/main/agent/remote-runtime-root-settings'
+import { readHostRemoteEnvironmentPaths } from '../src/main/agent/remote-environment-store'
 import { readHostRemoteMicromambaMirrorPrefix } from '../src/main/agent/remote-micromamba-mirror-store'
 import { readHostRuntimeRoot } from '../src/main/agent/remote-runtime-root-store'
 import {
@@ -84,6 +86,59 @@ test('saving a host download mirror validates and returns the per-host prefix', 
     const cleared = saveRemoteMicromambaMirrorSetting(host.id, undefined, agentDir)
     assert.equal(cleared.downloadMirrorPrefix, undefined)
     assert.equal(readHostRemoteMicromambaMirrorPrefix(host.id, agentDir), undefined)
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('saving a host environment keeps Phi defaults implicit and persists only path overrides', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-remote-environment-setting-'))
+  try {
+    const host = saveRemoteHostProfile({ label: 'GPU', hostAlias: 'gpu' }, agentDir)
+    const updated = saveRemoteEnvironmentSetting(
+      host.id,
+      {
+        runtimeRoot: '  /data/phi/runtime/  ',
+        toolPaths: {
+          nextflow: ' /opt/nextflow/bin/nextflow ',
+          jupyter: '',
+          micromamba: '/home/scientist/bin/micromamba',
+          docker: '/usr/local/bin/docker'
+        }
+      },
+      agentDir,
+      '/missing/ssh-config'
+    )
+
+    assert.equal(updated.runtimeRoot, '/data/phi/runtime')
+    assert.deepEqual(updated.toolPaths, {
+      nextflow: '/opt/nextflow/bin/nextflow',
+      micromamba: '/home/scientist/bin/micromamba',
+      docker: '/usr/local/bin/docker'
+    })
+    assert.deepEqual(readHostRemoteEnvironmentPaths(host.id, agentDir), updated.toolPaths)
+    assert.deepEqual(
+      listRemoteHostsWithRuntimeRoots(agentDir, '/missing/ssh-config')[0].toolPaths,
+      updated.toolPaths
+    )
+
+    assert.throws(
+      () =>
+        saveRemoteEnvironmentSetting(
+          host.id,
+          { toolPaths: { nextflow: 'relative/nextflow' } },
+          agentDir
+        ),
+      /绝对路径/
+    )
+
+    const cleared = saveRemoteEnvironmentSetting(
+      host.id,
+      { runtimeRoot: undefined, toolPaths: {} },
+      agentDir
+    )
+    assert.equal(cleared.runtimeRoot, undefined)
+    assert.equal(cleared.toolPaths, undefined)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }

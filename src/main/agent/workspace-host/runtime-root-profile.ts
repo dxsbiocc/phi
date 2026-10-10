@@ -2,6 +2,7 @@ import type {
   RemoteMicromambaCapabilityProfile,
   RemoteMicromambaDownloadCapability,
   RemoteMicromambaProfileStatus,
+  RemoteRipgrepCapabilityProfile,
   RemoteRuntimeRootCapabilityProfile,
   RemoteRuntimeRootCheckResult,
   RemoteRuntimeRootProfileCheckState,
@@ -18,6 +19,8 @@ const MICROMAMBA_PROFILE_STATUSES = new Set([
   'unusable'
 ])
 const MICROMAMBA_VERSION_PATTERN = /^\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?$/
+const RIPGREP_PROFILE_STATUSES = new Set(['unchecked', 'not-installed', 'system', 'managed'])
+const RIPGREP_VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/
 
 function normalizedDownload(value: unknown): RemoteMicromambaDownloadCapability | undefined {
   if (typeof value !== 'object' || value === null) return undefined
@@ -78,6 +81,23 @@ export function normalizeRemoteMicromambaCapabilityProfile(
   return { status: candidate.status, version: candidate.version, ...(download ? { download } : {}) }
 }
 
+export function normalizeRemoteRipgrepCapabilityProfile(
+  value: unknown
+): RemoteRipgrepCapabilityProfile {
+  if (typeof value !== 'object' || value === null) return { status: 'unchecked' }
+  const candidate = value as { status?: unknown; version?: unknown }
+  if (typeof candidate.status !== 'string' || !RIPGREP_PROFILE_STATUSES.has(candidate.status)) {
+    return { status: 'unchecked' }
+  }
+  if (candidate.status === 'unchecked' || candidate.status === 'not-installed') {
+    return { status: candidate.status }
+  }
+  if (typeof candidate.version !== 'string' || !RIPGREP_VERSION_PATTERN.test(candidate.version)) {
+    return { status: 'unchecked' }
+  }
+  return { status: candidate.status as 'system' | 'managed', version: candidate.version }
+}
+
 export function withRemoteMicromambaCapabilityProfile<T extends HostCapabilityProfile>(
   profile: T,
   value: unknown
@@ -93,6 +113,7 @@ export function withRemoteMicromambaCapabilityProfile<T extends HostCapabilityPr
       hasHardError: runtimeRoot.hasHardError,
       warningCodes: runtimeRoot.warningCodes,
       micromamba: normalizeRemoteMicromambaCapabilityProfile(value),
+      ripgrep: normalizeRemoteRipgrepCapabilityProfile(runtimeRoot.ripgrep),
       checks: {
         pathResolution: runtimeRoot.checks.pathResolution,
         creation: runtimeRoot.checks.creation,
@@ -103,6 +124,20 @@ export function withRemoteMicromambaCapabilityProfile<T extends HostCapabilityPr
         executable: runtimeRoot.checks.executable,
         sharedFilesystem: runtimeRoot.checks.sharedFilesystem
       }
+    }
+  }
+}
+
+export function withRemoteRipgrepCapabilityProfile<T extends HostCapabilityProfile>(
+  profile: T,
+  value: unknown
+): T {
+  if (!profile.runtimeRoot) return profile
+  return {
+    ...profile,
+    runtimeRoot: {
+      ...profile.runtimeRoot,
+      ripgrep: normalizeRemoteRipgrepCapabilityProfile(value)
     }
   }
 }
@@ -163,7 +198,8 @@ function warningState(
 export function runtimeRootCapabilityProfile(
   source: RemoteRuntimeRootSource,
   result: RemoteRuntimeRootCheckResult,
-  previousMicromamba: RemoteMicromambaCapabilityProfile = { status: 'unchecked' }
+  previousMicromamba: RemoteMicromambaCapabilityProfile = { status: 'unchecked' },
+  previousRipgrep: RemoteRipgrepCapabilityProfile = { status: 'unchecked' }
 ): RemoteRuntimeRootCapabilityProfile {
   const warningCodes = [...new Set(result.warnings.map((warning) => warning.code))]
   const codes = new Set(warningCodes)
@@ -174,6 +210,7 @@ export function runtimeRootCapabilityProfile(
     hasHardError: result.hardErrors.length > 0,
     warningCodes,
     micromamba: normalizeRemoteMicromambaCapabilityProfile(previousMicromamba),
+    ripgrep: normalizeRemoteRipgrepCapabilityProfile(previousRipgrep),
     checks: {
       pathResolution: pathState(result),
       creation: creationState(result),

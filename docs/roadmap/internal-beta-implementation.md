@@ -112,18 +112,14 @@ Goal: preserve enough evidence for heavy users without overwhelming the renderer
 - Save SDK-provided thinking content, folded by default.
 - Add tests for output truncation metadata, artifact references, path recognition, Markdown safety, and code block copy controls where practical.
 
-## P1: Plugin Beta Surface
+## Deferred: Pi Developer Extension Management
 
-Goal: keep plugin management available but bounded.
+Goal: avoid exposing a global legacy package manager as if it were a project capability.
 
-- These are pi runtime plugins. Rename the page to "Developer extensions" and move it to advanced settings; "plugin" in the UI is reserved for Phi plugins (post-beta, runtime plan step 6).
-
-- Preserve plugin list/install/remove through the SDK/runtime.
-- Do not add arbitrary URL download or local zip install beyond runtime-supported source formats.
-- Add concise confirmation for install source and remove target.
-- Show plugin source, installed state, installed path, and operation errors.
-- Keep the latest plugin operation failure visible until refresh or the next operation.
-- Add tests for confirm flows and failure state retention where the UI can be exercised without live network installs.
+- Do not show the pi.dev catalog, install/remove controls, or developer-extension references in the internal-beta UI.
+- OMP may continue loading externally configured Pi extensions for compatibility.
+- Reconsider a Phi surface only after project-scoped enablement, live-session behavior, and an end-to-end callable integration are defined and tested.
+- Keep the user-facing word "plugin" reserved for Phi plugins.
 
 ## P1: Runtime Foundation And Content Distribution (steps 0–5)
 
@@ -157,18 +153,16 @@ Status (2026-10-06): merged into `main` and rendered inside the two-slot workben
 - Remote projects show "remote terminal comes later" and never fall back to a local shell.
 - Add tests for IPC sender/frame checks, workspace resolution, lifecycle and idempotent close, environment allowlist, input transactions, output flow control, and draft-never-executes; verify real PTY behavior with a separate local smoke script.
 
-## P1: Diagnostics And Logs
+## P1: Internal Logs
 
-Goal: make small-circle beta support fast and privacy-aware.
+Goal: retain privacy-aware operational evidence without exposing support internals as user settings.
 
-- Add a "copy diagnostics" action.
-- Include app version, platform, Node/Electron versions, session ID, project/cwd, provider/model ID, thinking level, permission mode, resource/plugin summaries, and recent errors.
-- Exclude secrets, full chat content, full tool output, and thinking text from lightweight diagnostics.
-- Add an explicit full session export action later, with a clear warning that it includes conversation and tool output.
+- Do not add a user-facing diagnostics settings page or raw support-summary export.
+- Keep explicit full session export separate, with a clear warning that it includes conversation and tool output.
 - Write logs to `~/.phi/logs`.
 - Retain logs for 14 days by default.
 - Avoid duplicating full tool output in ordinary logs.
-- Add tests for diagnostic redaction and log retention cleanup.
+- Add tests for log redaction and retention cleanup.
 
 ## P2: UX Polish And Beta Release Readiness
 

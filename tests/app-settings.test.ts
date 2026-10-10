@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../src/shared/appSettingsTypes'
@@ -29,7 +30,8 @@ test('app settings provide general preference defaults', () => {
       noProjectTaskFolder: join(agentDir, 'workspace'),
       allowExternalFileRead: false,
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
-      nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
+      nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
+      fileOpenConversationLayout: DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT
     })
   })
 })
@@ -45,7 +47,8 @@ test('app settings update general preferences while preserving unknown fields', 
         noProjectTaskFolder,
         allowExternalFileRead: true,
         preventSleepDuringRuns: true,
-        nextActionSuggestionsEnabled: false
+        nextActionSuggestionsEnabled: false,
+        fileOpenConversationLayout: 'tab'
       },
       agentDir
     )
@@ -55,7 +58,8 @@ test('app settings update general preferences while preserving unknown fields', 
       noProjectTaskFolder,
       allowExternalFileRead: true,
       preventSleepDuringRuns: true,
-      nextActionSuggestionsEnabled: false
+      nextActionSuggestionsEnabled: false,
+      fileOpenConversationLayout: 'tab'
     })
     assert.deepEqual(raw.custom, { keep: true })
     assert.equal(raw.noProjectTaskFolder, noProjectTaskFolder)
@@ -69,6 +73,15 @@ test('app settings rejects invalid no-project task folders', () => {
     assert.throws(
       () => updateAppSettings({ noProjectTaskFolder: 'relative/path' }, agentDir),
       /无项目任务文件夹必须是绝对路径/
+    )
+  })
+})
+
+test('app settings rejects invalid file-open conversation layouts', () => {
+  withTempAgentDir((agentDir) => {
+    assert.throws(
+      () => updateAppSettings({ fileOpenConversationLayout: 'floating' }, agentDir),
+      /打开文件时的对话布局设置无效/
     )
   })
 })

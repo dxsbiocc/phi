@@ -68,6 +68,9 @@ export type RemoteMicromambaCapabilityProfile = (
   | { status: 'installed' | 'outdated' | 'unusable'; version: string }
 ) & { download?: RemoteMicromambaDownloadCapability }
 
+export type RemoteRipgrepCapabilityProfile =
+  { status: 'unchecked' | 'not-installed' } | { status: 'system' | 'managed'; version: string }
+
 export interface RemoteRuntimeRootCapabilityProfile {
   source: RemoteRuntimeRootSource
   checkedAt: string
@@ -75,6 +78,7 @@ export interface RemoteRuntimeRootCapabilityProfile {
   hasHardError: boolean
   warningCodes: readonly RemoteRuntimeRootWarningCode[]
   micromamba?: RemoteMicromambaCapabilityProfile
+  ripgrep?: RemoteRipgrepCapabilityProfile
   checks: {
     pathResolution: RemoteRuntimeRootProfileCheckState
     creation: RemoteRuntimeRootProfileCheckState

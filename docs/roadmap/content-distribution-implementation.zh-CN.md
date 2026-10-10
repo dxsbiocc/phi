@@ -115,7 +115,7 @@
 | 6.1 | **冻结插件契约 v1**：目录结构、`phi-package.yaml`（`type: plugin`、`toolPrefix`）、`environments`、`components`、agent 的 `visibility`、预留 `orchestrator` | `docs/contracts/plugin.schema.json` | 样例通过 | 2 天 |
 | 6.2 | 插件加载器：从本地目录安装到 `~/.phi/packages/plugin/<id>/<version>/`；确保环境；注册 agent、skill 和脚本工具；升级时先建新环境再切换；卸载时移除引用并回收环境 | `src/main/agent/plugins/`（新建） | 测试覆盖安装、升级、卸载 | 3 天 |
 | 6.3 | 给 `resources/plugins/visualization/` 补上不含 `environments` 的 `phi-package.yaml`，改由插件加载器安装；移除步骤 4 的临时加载逻辑。提升内置插件版本，使升级时移除旧 `plugin:viz` 引用；现有 GC 在该环境无引用后回收它 | `resources/`、`src/main/agent/` | 通过插件加载器安装或升级后工作正常；不再有可视化私有环境被引用 | 1 天 |
-| 6.4 | 插件页（列表、从本地安装、卸载）；pi 插件页改名为"开发者扩展"，移到高级设置 | `features/plugin/` | UI 可用 | 2 天 |
+| 6.4 | Phi 插件页（列表、从本地安装、卸载）；在项目级集成完成前，不提供 pi 插件管理界面 | `features/plugin/` | UI 可用 | 2 天 |
 
 ### 步骤 7 内容分发（L6）
 

@@ -15,6 +15,7 @@ export const CORE_TOOL_NAMES = [
   'grep',
   'present_files',
   'read',
+  'render_blocks',
   'skill_run',
   'wrapper_cancel',
   'wrapper_inspect',

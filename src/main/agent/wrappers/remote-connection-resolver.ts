@@ -1,6 +1,7 @@
 import type { Project, ProjectRemoteConnection } from '../projects'
 import type { RemoteHpcSettings } from '../../../shared/wrapperRemoteTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from '../remote-hosts'
+import { readHostRemoteEnvironmentPaths } from '../remote-environment-store'
 import { getPhiAgentDir } from '../runtime-paths'
 import type { RemoteTarget } from './composition/remote-job'
 import type { ConnectImpl } from './executor-remote'
@@ -14,6 +15,20 @@ export interface RemoteSubmitOptions {
   hpc?: RemoteHpcSettings
   connectImpl?: ConnectImpl
   pollIntervalMs?: number
+}
+
+function withHostEnvironmentPaths(
+  hpc: RemoteHpcSettings | undefined,
+  hostProfileId: string,
+  agentDir: string
+): RemoteHpcSettings | undefined {
+  if (!hpc) return undefined
+  const paths = readHostRemoteEnvironmentPaths(hostProfileId, agentDir)
+  return {
+    ...hpc,
+    ...(!hpc.nextflowBin && paths.nextflow ? { nextflowBin: paths.nextflow } : {}),
+    ...(hpc.runtime === 'docker' && paths.docker ? { containerRuntimeBin: paths.docker } : {})
+  }
 }
 
 /** Resolve a project binding to the OpenSSH host alias owned by Phi. */
@@ -47,7 +62,7 @@ export function resolveProjectRemoteSubmitOptions(
   return {
     connection: resolveRemoteConnectionConfig(connection, agentDir),
     remoteWorkspaceRoot: project.remoteWorkspaceRoot,
-    hpc: connection.hpc
+    hpc: withHostEnvironmentPaths(connection.hpc, connection.hostProfileId, agentDir)
   }
 }
 
@@ -93,7 +108,11 @@ export function resolveProjectRemoteTarget(
       target: {
         connection: remoteConnectionConfigForProfile(hostProfile),
         workspaceRoot: project.location.canonicalRoot,
-        hpc: configured?.hpc ?? { scheduler: 'local' }
+        hpc: withHostEnvironmentPaths(
+          configured?.hpc ?? { scheduler: 'local' },
+          project.location.hostProfileId,
+          agentDir
+        )
       },
       connectionId: configured?.id ?? project.location.hostProfileId,
       projectId: project.id,
@@ -123,7 +142,7 @@ export function resolveProjectRemoteTarget(
       target: {
         connection: resolveRemoteConnectionConfig(connection, agentDir),
         workspaceRoot: project.remoteWorkspaceRoot,
-        hpc: connection.hpc
+        hpc: withHostEnvironmentPaths(connection.hpc, connection.hostProfileId, agentDir)
       },
       connectionId: connection.id,
       projectId: project.id,

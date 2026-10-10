@@ -7,6 +7,7 @@ import {
   ChatArtifactSplit,
   ChatArtifactSplitSurface
 } from '../src/renderer/src/features/chat/components/ChatArtifactSplit'
+import { CompanionChatToggle } from '../src/renderer/src/features/chat/components/CompanionChatToggle'
 import {
   CHAT_ARTIFACT_SPLIT_DEFAULT_RATIO,
   CHAT_ARTIFACT_SPLIT_KEYBOARD_STEP,
@@ -20,6 +21,7 @@ import {
   readChatArtifactSplitRatio,
   sidebarHostsCurrentConversation,
   shouldEnableOfficeChatSplit,
+  sidebarStateForFileOpenConversationLayout,
   writeChatArtifactSplitRatio
 } from '../src/renderer/src/features/chat/lib/chatArtifactSplit'
 
@@ -174,6 +176,31 @@ test('the sidebar hosts the current conversation only in its visible conversatio
     sidebarHostsCurrentConversation({ ...conversationMode, isSidebarOpen: false }),
     false
   )
+})
+
+test('file-open conversation layout maps to a deterministic sidebar destination', () => {
+  assert.deepEqual(sidebarStateForFileOpenConversationLayout('sidebar'), {
+    isSidebarOpen: true,
+    workspaceSidebarMode: 'conversations'
+  })
+  assert.deepEqual(sidebarStateForFileOpenConversationLayout('tab'), {
+    isSidebarOpen: true,
+    workspaceSidebarMode: 'files'
+  })
+})
+
+test('companion chat actions expose both layout directions without relying on drag', () => {
+  const sidebarMarkup = renderToStaticMarkup(
+    createElement(CompanionChatToggle, { destination: 'sidebar', onToggle: () => undefined })
+  )
+  const tabMarkup = renderToStaticMarkup(
+    createElement(CompanionChatToggle, { destination: 'tab', onToggle: () => undefined })
+  )
+
+  assert.match(sidebarMarkup, /data-phi-companion-chat-destination="sidebar"/)
+  assert.match(sidebarMarkup, /aria-label="移到左侧边栏"/)
+  assert.match(tabMarkup, /data-phi-companion-chat-destination="tab"/)
+  assert.match(tabMarkup, /aria-label="放回标签区"/)
 })
 
 test('chat artifact split renders chat and artifact with an accessible separator', () => {

@@ -30,9 +30,7 @@ import {
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
 import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
-import { PluginManager } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/manager'
 import { applyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
-import type { InstalledPlugin } from '@oh-my-pi/pi-coding-agent/extensibility/plugins/types'
 import type { AuthStorage, CredentialOrigin, StoredAuthCredential } from '@oh-my-pi/pi-ai'
 import type { Model } from '@oh-my-pi/pi-ai/types'
 import {
@@ -46,6 +44,7 @@ import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/de
 import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
+import { buildRenderBlocksTool } from '../deliverables/render-blocks-tool'
 import {
   buildRemoteProjectDownloadTool,
   type RemoteDownloadBackend
@@ -796,44 +795,6 @@ async function reloadResources(params: unknown): Promise<unknown> {
     systemPrompt: loader.getSystemPrompt(),
     appendSystemPrompt: loader.getAppendSystemPrompt()
   }
-}
-
-function serializePlugin(plugin: InstalledPlugin): unknown {
-  return {
-    name: plugin.name,
-    version: plugin.version,
-    path: plugin.path,
-    enabled: plugin.enabled,
-    enabledFeatures: plugin.enabledFeatures,
-    manifest: plugin.manifest
-  }
-}
-
-function normalizeInstallSpec(source: string): string {
-  const trimmed = source.trim()
-  return trimmed.startsWith('npm:') ? trimmed.slice('npm:'.length) : trimmed
-}
-
-async function listPlugins(params: unknown): Promise<unknown> {
-  const record = isRecord(params) ? params : {}
-  const manager = new PluginManager(stringValue(record.cwd, process.cwd()))
-  const plugins = await manager.list()
-  return plugins.map(serializePlugin)
-}
-
-async function installPlugin(params: unknown): Promise<unknown> {
-  const record = isRecord(params) ? params : {}
-  const manager = new PluginManager(stringValue(record.cwd, process.cwd()))
-  const plugin = await manager.install(normalizeInstallSpec(stringValue(record.source)), {
-    force: true
-  })
-  return serializePlugin(plugin)
-}
-
-async function uninstallPlugin(params: unknown): Promise<void> {
-  const record = isRecord(params) ? params : {}
-  const manager = new PluginManager(stringValue(record.cwd, process.cwd()))
-  await manager.uninstall(stringValue(record.name))
 }
 
 async function modelBySelector(
@@ -2076,6 +2037,7 @@ async function createSession(params: unknown): Promise<unknown> {
               requestHost('deliverables.present', request) as Promise<{ files: PresentedFile[] }>
           )
         ]),
+    buildRenderBlocksTool(),
     remoteRoot
       ? buildRemoteProjectDownloadTool(
           remoteDownloadBackend({
@@ -2928,12 +2890,6 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return logoutModelRuntime(params)
     case 'resources.reload':
       return reloadResources(params)
-    case 'plugins.list':
-      return listPlugins(params)
-    case 'plugins.install':
-      return installPlugin(params)
-    case 'plugins.uninstall':
-      return uninstallPlugin(params)
     case 'session.create':
       return createSession(params)
     case 'session.prompt':

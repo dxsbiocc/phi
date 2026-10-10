@@ -144,6 +144,41 @@ test('chat render groups keep delivered files outside the processing fold', () =
   assert.equal(groups.at(-1)?.key, 'delivery-1')
 })
 
+test('chat render groups keep ui blocks inline outside the processing fold', () => {
+  const groups = groupMessages(
+    [
+      { id: 'user-1', role: 'user', content: 'show QC' },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'render_blocks',
+        argsPreview: '',
+        argsJson: '',
+        output: 'done',
+        status: 'done'
+      },
+      {
+        id: 'ui-blocks-tool-1',
+        role: 'ui_blocks',
+        blocks: [{ type: 'metrics', items: [{ label: '样本数', value: 12 }] }]
+      },
+      { id: 'assistant-1', role: 'assistant', content: '质控完成。' }
+    ],
+    { activeRun: true }
+  )
+
+  const uiGroup = groups.find((group) => group.key === 'ui-blocks-tool-1')
+  assert.equal(uiGroup?.kind, 'single')
+  assert.equal(
+    groups.some(
+      (group) =>
+        group.kind === 'processing-group' &&
+        group.items.some((item) => item.id === 'ui-blocks-tool-1')
+    ),
+    false
+  )
+})
+
 test('separate PNG and PDF delivery events in one turn share a single file card', () => {
   const messages: ChatItem[] = [
     { id: 'user-1', role: 'user', content: 'make a heatmap in PNG and PDF' },

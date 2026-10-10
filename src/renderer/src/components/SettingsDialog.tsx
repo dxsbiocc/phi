@@ -6,10 +6,14 @@ import {
   Chip,
   Dialog,
   FormControlLabel,
+  FormControl,
+  FormLabel,
   IconButton,
   ListItemButton,
   ListItemText,
   Paper,
+  Radio,
+  RadioGroup,
   Stack,
   Switch,
   TextField,
@@ -19,6 +23,7 @@ import {
 import { GoPlus, GoSync } from 'react-icons/go'
 import { PhiIcons } from '../icons'
 import type { ModelOption, PhiAppSettingsPatch, ProviderAuthStatus } from '../types'
+import type { FileOpenConversationLayout } from '../../../shared/appSettingsTypes'
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt } from '../theme'
@@ -27,7 +32,6 @@ import { RemoteHostSettingsSection } from '../features/wrapper/components/Remote
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
 import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
-import DeveloperExtensionsView from '../features/developer-extensions/DeveloperExtensionsView'
 import { PermissionSettingsSection } from './PermissionView'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
@@ -35,7 +39,6 @@ import { AutoCompactionSettingsSection } from '../features/chat/components/AutoC
 
 const AddIcon = PhiIcons.action.add
 const CloseIcon = PhiIcons.action.close
-const ContentCopyIcon = PhiIcons.action.copy
 const KeyIcon = PhiIcons.entity.apiKey
 const LogoutIcon = PhiIcons.action.logout
 const RefreshIcon = GoSync
@@ -45,11 +48,8 @@ const ProviderIcon = PhiIcons.settings.providers
 const SearchIcon = PhiIcons.action.search
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
-const DiagnosticsIcon = PhiIcons.settings.diagnostics
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
-const AdvancedIcon = PhiIcons.entity.plugin
-const CheckIcon = PhiIcons.state.check
 
 export type SettingsCategory =
   | 'general'
@@ -59,8 +59,6 @@ export type SettingsCategory =
   | 'web-search'
   | 'permissions'
   | 'remote'
-  | 'diagnostics'
-  | 'advanced'
   | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
@@ -71,8 +69,6 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'web-search', label: '网页搜索', icon: <SearchIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
   { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
-  { id: 'diagnostics', label: '诊断', icon: <ContentCopyIcon fontSize="small" /> },
-  { id: 'advanced', label: '高级', icon: <AdvancedIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
 
@@ -320,6 +316,7 @@ function GeneralSection({
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -333,6 +330,7 @@ function GeneralSection({
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -405,6 +403,28 @@ function GeneralSection({
       </Box>
 
       <Box>
+        <FormControl disabled={isSavingAppSettings}>
+          <FormLabel id="file-open-conversation-layout-label">打开文件时的对话布局</FormLabel>
+          <RadioGroup
+            row
+            aria-labelledby="file-open-conversation-layout-label"
+            value={fileOpenConversationLayout}
+            onChange={(event) =>
+              onUpdateAppSettings({
+                fileOpenConversationLayout: event.target.value as FileOpenConversationLayout
+              })
+            }
+          >
+            <FormControlLabel value="sidebar" control={<Radio />} label="并排显示对话" />
+            <FormControlLabel value="tab" control={<Radio />} label="对话保留在标签区" />
+          </RadioGroup>
+          <Typography variant="caption" color="text.secondary">
+            打开文件或 Notebook 后仍可通过布局按钮随时切换。
+          </Typography>
+        </FormControl>
+      </Box>
+
+      <Box>
         <FormControlLabel
           disabled={isSavingAppSettings}
           control={
@@ -469,91 +489,6 @@ function GeneralSection({
   )
 }
 
-function DiagnosticsSection({
-  onCopyDiagnostics
-}: {
-  onCopyDiagnostics: () => Promise<string>
-}): React.JSX.Element {
-  const [isCopying, setIsCopying] = useState(false)
-  const [copiedAt, setCopiedAt] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleCopy = async (): Promise<void> => {
-    setIsCopying(true)
-    setError(null)
-    try {
-      await onCopyDiagnostics()
-      setCopiedAt(new Date().toLocaleTimeString())
-    } catch (copyError) {
-      setError(copyError instanceof Error ? copyError.message : String(copyError))
-    } finally {
-      setIsCopying(false)
-    }
-  }
-
-  return (
-    <Stack spacing={2.5}>
-      <Box>
-        <Typography variant="h5">诊断</Typography>
-        <Typography variant="body2" color="text.secondary">
-          给内部 beta 排查问题用的支持摘要，会自动过滤敏感信息和大段运行内容。
-        </Typography>
-      </Box>
-
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 1 }}>
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={2}
-          sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
-        >
-          <Box
-            sx={{
-              width: 42,
-              height: 42,
-              borderRadius: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              bgcolor: 'secondary.light',
-              color: 'secondary.dark',
-              flexShrink: 0
-            }}
-          >
-            <DiagnosticsIcon fontSize="small" />
-          </Box>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              复制支持摘要
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              包含应用版本、平台、当前会话、项目权限、模型、Provider、Skills、MCP、插件和最近错误。
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            startIcon={<ContentCopyIcon />}
-            disabled={isCopying}
-            onClick={handleCopy}
-            sx={{ minHeight: 44, flexShrink: 0 }}
-          >
-            {isCopying ? '复制中' : '复制诊断'}
-          </Button>
-        </Stack>
-
-        <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" icon={<CheckIcon />} label="密钥脱敏" />
-          <Chip size="small" icon={<CheckIcon />} label="不含聊天全文" />
-          <Chip size="small" icon={<CheckIcon />} label="不含工具完整输出" />
-          <Chip size="small" icon={<CheckIcon />} label="不含 thinking" />
-        </Stack>
-      </Paper>
-
-      {copiedAt ? <Alert severity="success">已复制 · {copiedAt}</Alert> : null}
-      {error ? <Alert severity="error">{error}</Alert> : null}
-    </Stack>
-  )
-}
-
 type SettingsDialogProps = {
   open: boolean
   onClose: () => void
@@ -577,11 +512,11 @@ type SettingsDialogProps = {
   ) => void
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
-  onCopyDiagnostics: () => Promise<string>
   noProjectTaskFolder: string
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
   onPickNoProjectTaskFolder: () => void
@@ -620,11 +555,11 @@ function SettingsDialog({
   onUpdateProjectDefaults,
   onOpenApprovalSession,
   onRespondApproval,
-  onCopyDiagnostics,
   noProjectTaskFolder,
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
   onPickNoProjectTaskFolder,
@@ -745,6 +680,7 @@ function SettingsDialog({
               allowExternalFileRead={allowExternalFileRead}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+              fileOpenConversationLayout={fileOpenConversationLayout}
               isSavingAppSettings={isSavingAppSettings}
               onUpdateAppSettings={onUpdateAppSettings}
               onPickNoProjectTaskFolder={onPickNoProjectTaskFolder}
@@ -794,10 +730,6 @@ function SettingsDialog({
             />
           )}
           {category === 'remote' && <RemoteHostSettingsSection />}
-          {category === 'diagnostics' && (
-            <DiagnosticsSection onCopyDiagnostics={onCopyDiagnostics} />
-          )}
-          {category === 'advanced' && <DeveloperExtensionsView />}
           {category === 'appearance' && (
             <AppearanceSettingsSection
               mode={themeMode}

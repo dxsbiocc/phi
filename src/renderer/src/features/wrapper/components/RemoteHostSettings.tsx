@@ -2,6 +2,7 @@ import { Box, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { OpenSshHost, RemoteHostProfile } from '../../../types'
+import type { RemoteEnvironmentSettingInput } from '../../../../../shared/remoteEnvironmentTypes'
 import type {
   SshBootstrapFinalResult,
   SshBootstrapTarget
@@ -11,7 +12,6 @@ import {
   remoteHostDoctorTarget,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
-import { useRemoteMicromambaSettings } from '../hooks/useRemoteMicromambaSettings'
 import { RemoteHostProfilesPanel, type RemoteHostDraft } from './RemoteHostProfilesPanel'
 import { RemoteHostPasswordBootstrapDialog } from './RemoteHostPasswordBootstrapDialog'
 
@@ -21,9 +21,10 @@ const EMPTY_HOST_DRAFT: RemoteHostDraft = {
   hostAlias: '',
   hostname: '',
   user: '',
-  port: '',
+  port: '22',
   identityFile: '',
-  source: 'ssh-config'
+  source: 'ssh-config',
+  authMode: 'passwordless'
 }
 
 /** SSH servers are global; project execution targets are chosen in the Wrapper flow. */
@@ -55,8 +56,6 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       ),
     []
   )
-  const { micromambaStates, installMicromamba } = useRemoteMicromambaSettings(doctorController)
-
   useEffect(() => (): void => doctorController.dispose(), [doctorController])
 
   useEffect(() => {
@@ -160,28 +159,14 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     }
   }
 
-  async function saveRuntimeRoot(host: RemoteHostProfile, runtimeRoot?: string): Promise<void> {
-    setHostBusy(true)
-    setHostError(null)
-    try {
-      const profile = await window.api.saveRemoteRuntimeRoot(host.id, runtimeRoot)
-      setHosts((previous) => [...previous.filter((item) => item.id !== profile.id), profile])
-      doctorController.invalidate(host.id)
-    } catch (error) {
-      setHostError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setHostBusy(false)
-    }
-  }
-
-  async function saveMicromambaMirror(
+  async function saveEnvironment(
     host: RemoteHostProfile,
-    downloadMirrorPrefix?: string
+    input: RemoteEnvironmentSettingInput
   ): Promise<void> {
     setHostBusy(true)
     setHostError(null)
     try {
-      const profile = await window.api.saveRemoteMicromambaMirror(host.id, downloadMirrorPrefix)
+      const profile = await window.api.saveRemoteEnvironment(host.id, input)
       setHosts((previous) => [...previous.filter((item) => item.id !== profile.id), profile])
       doctorController.invalidate(host.id)
     } catch (error) {
@@ -201,7 +186,8 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       user: host.user ?? configured?.user ?? '',
       port: host.port === undefined ? String(configured?.port ?? '') : String(host.port),
       identityFile: host.identityFile ?? configured?.identityFiles[0] ?? '',
-      source: host.source === 'ssh-config' ? 'ssh-config' : 'phi'
+      source: host.source === 'ssh-config' ? 'ssh-config' : 'phi',
+      authMode: 'existing-key'
     })
     setHostError(null)
     setHostDialogOpen(true)
@@ -232,10 +218,6 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     <Stack spacing={3}>
       <Box>
         <Typography variant="h5">远程</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, maxWidth: 760 }}>
-          管理 SSH 服务器。新建远程项目时选择服务器和目录；本地项目需要远程计算时，可在 Wrapper
-          中选择。
-        </Typography>
       </Box>
       <RemoteHostProfilesPanel
         hosts={hosts}
@@ -266,17 +248,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
         onTest={(host) =>
           void doctorController.check(remoteHostDoctorTarget(host.id, host.hostAlias))
         }
-        onRuntimeRootSave={(host, runtimeRoot) => void saveRuntimeRoot(host, runtimeRoot)}
-        onRuntimeRootCheck={(host, runtimeRoot) =>
-          void doctorController.check(
-            remoteHostDoctorTarget(host.id, host.hostAlias, runtimeRoot ?? '')
-          )
-        }
-        micromambaStates={micromambaStates}
-        onMicromambaInstall={(host, runtimeRoot, confirmedWarnings, downloadMirrorPrefix) =>
-          void installMicromamba(host, runtimeRoot, confirmedWarnings, downloadMirrorPrefix)
-        }
-        onMicromambaMirrorSave={(host, prefix) => void saveMicromambaMirror(host, prefix)}
+        onEnvironmentSave={(host, input) => void saveEnvironment(host, input)}
       />
       {bootstrapTarget && (
         <RemoteHostPasswordBootstrapDialog

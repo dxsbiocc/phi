@@ -10,6 +10,7 @@ import { WrapperSidebar } from './features/wrapper/WrapperView'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
 import { RetainedCatalogSidebars } from './components/RetainedCatalogSidebars'
+import { CompanionChatToggle } from './features/chat/components/CompanionChatToggle'
 import type { AppView } from './App'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import type {
@@ -39,12 +40,11 @@ export type AppWorkspaceSidebarProps = {
   sidebarWidth: number
   activeView: AppView
   activeChatView: ReactNode
+  onRestoreConversationToMain: () => void
   onStartSidebarResize: (event: MouseEvent<HTMLDivElement>) => void
-
   activeWorkspaceIsProject: boolean
   activeWorkspaceTitle: string
   activeWorkspaceScopeLabel: string
-
   workspaceSidebarMode: WorkspaceSidebarMode
 
   workspaceRootPath: string
@@ -148,6 +148,7 @@ function AppWorkspaceSidebarImpl({
   sidebarWidth,
   activeView,
   activeChatView,
+  onRestoreConversationToMain,
   onStartSidebarResize,
   activeWorkspaceIsProject,
   activeWorkspaceTitle,
@@ -281,33 +282,38 @@ function AppWorkspaceSidebarImpl({
             >
               {activeWorkspaceTitle}
             </Typography>
-            <Box
-              component="span"
-              data-phi-analysis-session-scope-label={
-                activeWorkspaceIsProject ? 'project' : 'ordinary'
-              }
-              title={activeWorkspaceScopeLabel}
-              sx={{
-                flexShrink: 0,
-                maxWidth: 132,
-                minWidth: 52,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                borderRadius: 999,
-                px: 1,
-                py: 0.35,
-                textAlign: 'center',
-                color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
-                bgcolor: activeWorkspaceIsProject ? 'rgba(46, 159, 179, 0.12)' : 'action.selected',
-                border: 1,
-                borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
-                fontSize: '0.76rem',
-                fontWeight: 800,
-                lineHeight: 1.35
-              }}
-            >
-              {activeWorkspaceScopeLabel}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexShrink: 0 }}>
+              <Box
+                component="span"
+                data-phi-analysis-session-scope-label={
+                  activeWorkspaceIsProject ? 'project' : 'ordinary'
+                }
+                title={activeWorkspaceScopeLabel}
+                sx={{
+                  flexShrink: 0,
+                  maxWidth: 132,
+                  minWidth: 52,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  borderRadius: 999,
+                  px: 1,
+                  py: 0.35,
+                  textAlign: 'center',
+                  color: activeWorkspaceIsProject ? 'primary.dark' : 'text.secondary',
+                  bgcolor: activeWorkspaceIsProject
+                    ? 'rgba(46, 159, 179, 0.12)'
+                    : 'action.selected',
+                  border: 1,
+                  borderColor: activeWorkspaceIsProject ? 'primary.light' : 'divider',
+                  fontSize: '0.76rem',
+                  fontWeight: 800,
+                  lineHeight: 1.35
+                }}
+              >
+                {activeWorkspaceScopeLabel}
+              </Box>
+              <CompanionChatToggle destination="tab" onToggle={onRestoreConversationToMain} />
             </Box>
           </Box>
         </Box>

@@ -7,12 +7,17 @@ import {
 } from '../src/main/agent/agents/remote-project-tool-guard'
 import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../src/main/agent/download/remote-project-download-tool'
 import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../src/main/agent/deliverables/remote-present-tool'
+import { PHI_ENV_REQUEST_DESCRIPTION } from '../src/main/agent/content/env-request-tool'
+import { PHI_SKILL_RUN_DESCRIPTION } from '../src/main/agent/content/skill-tools'
 
 type ToolInfo = { name: string; description: string; sourceInfo: { source: string } }
 
-function guard(tools: ToolInfo[]): (event: { toolName: string }) => Promise<unknown> {
+function guard(
+  tools: ToolInfo[],
+  dynamicSkillToolNames: ReadonlySet<string> = new Set()
+): (event: { toolName: string }) => Promise<unknown> {
   let handler: ((event: { toolName: string }) => Promise<unknown>) | undefined
-  createRemoteProjectToolGuardExtension()({
+  createRemoteProjectToolGuardExtension({ dynamicSkillToolNames: () => dynamicSkillToolNames })({
     on: (event: string, callback: typeof handler) => {
       if (event === 'tool_call') handler = callback
     },
@@ -49,6 +54,80 @@ test('remote guard releases verified project-independent tools one by one', asyn
     'agent_status'
   ]) {
     assert.equal(await handler({ toolName: name }), undefined, name)
+  }
+})
+
+test('remote guard releases only verified runtime and declared dynamic skill backends', async () => {
+  const verified = guard(
+    [
+      {
+        name: 'skill_run',
+        description: PHI_SKILL_RUN_DESCRIPTION,
+        sourceInfo: { source: 'extension' }
+      },
+      {
+        name: 'env_request',
+        description: PHI_ENV_REQUEST_DESCRIPTION,
+        sourceInfo: { source: 'extension' }
+      },
+      {
+        name: 'demo_analyze',
+        description: 'Remote dynamic tool',
+        sourceInfo: { source: 'extension' }
+      }
+    ],
+    new Set(['demo_analyze'])
+  )
+  assert.equal(await verified({ toolName: 'skill_run' }), undefined)
+  assert.equal(await verified({ toolName: 'env_request' }), undefined)
+  assert.equal(await verified({ toolName: 'demo_analyze' }), undefined)
+
+  const impostor = guard(
+    [
+      {
+        name: 'skill_run',
+        description: PHI_SKILL_RUN_DESCRIPTION,
+        sourceInfo: { source: 'builtin' }
+      },
+      {
+        name: 'env_request',
+        description: 'local environment tool',
+        sourceInfo: { source: 'extension' }
+      },
+      {
+        name: 'demo_analyze',
+        description: 'Builtin impostor',
+        sourceInfo: { source: 'builtin' }
+      }
+    ],
+    new Set(['demo_analyze'])
+  )
+  for (const name of ['skill_run', 'env_request', 'demo_analyze', 'unknown_dynamic']) {
+    assert.equal(((await impostor({ toolName: name })) as { block?: boolean }).block, true, name)
+  }
+
+  const sdkImpostor = guard(
+    [
+      {
+        name: 'skill_run',
+        description: PHI_SKILL_RUN_DESCRIPTION,
+        sourceInfo: { source: 'sdk' }
+      },
+      {
+        name: 'env_request',
+        description: PHI_ENV_REQUEST_DESCRIPTION,
+        sourceInfo: { source: 'sdk' }
+      },
+      {
+        name: 'demo_analyze',
+        description: 'SDK impostor',
+        sourceInfo: { source: 'sdk' }
+      }
+    ],
+    new Set(['demo_analyze'])
+  )
+  for (const name of ['skill_run', 'env_request', 'demo_analyze']) {
+    assert.equal(((await sdkImpostor({ toolName: name })) as { block?: boolean }).block, true, name)
   }
 })
 

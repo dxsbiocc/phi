@@ -118,7 +118,14 @@ export function buildRemoteLaunchScript(input: {
   hpc: RemoteHpcSettings | undefined
 }): string {
   const { layout, profile, hpc } = input
-  const setup = (hpc?.setupCommands ?? []).map((line) => line.trim()).filter(Boolean)
+  const runtimeBin = profile === 'docker' ? hpc?.containerRuntimeBin : undefined
+  const runtimeDir = runtimeBin?.slice(0, runtimeBin.lastIndexOf('/'))
+  const setup = [
+    ...(runtimeDir ? [`export PATH=${shellQuote(runtimeDir)}:"$PATH"`] : []),
+    ...(hpc?.setupCommands ?? [])
+  ]
+    .map((line) => line.trim())
+    .filter(Boolean)
   const nextflow = [
     hpc?.nextflowBin || 'nextflow',
     'run',
@@ -338,6 +345,9 @@ export function remotePreflightRequirements(
   return {
     nextflow: hpc?.nextflowBin || 'nextflow',
     requiresSbatch: hpc?.scheduler === 'slurm' || hpc?.controller === 'sbatch',
-    runtimeCandidates: runtimeTool[profile] ?? []
+    runtimeCandidates:
+      profile === 'docker' && hpc?.containerRuntimeBin
+        ? [hpc.containerRuntimeBin]
+        : (runtimeTool[profile] ?? [])
   }
 }

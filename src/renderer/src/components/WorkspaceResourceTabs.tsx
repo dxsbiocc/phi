@@ -1,10 +1,12 @@
-import { Box, Typography } from '@mui/material'
+import { Box, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
+import { VscLayoutSidebarLeftDock } from 'react-icons/vsc'
 import { PhiIcons } from '../icons'
 import { ResourceIcon, type ResourceIconProps } from './ResourceIcon'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import type {
   WorkspaceFileWorkspaceTab,
+  WorkspaceSessionTab,
   WorkspaceTab,
   WorkspaceTabKind
 } from '../lib/workspaceResourceTabs'
@@ -35,6 +37,7 @@ export function WorkspaceResourceTabs({
   activeKey,
   onSelect,
   onClose,
+  onDockSessionTab,
   connectorIcon,
   fileIcon
 }: {
@@ -42,6 +45,7 @@ export function WorkspaceResourceTabs({
   activeKey: string | null
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tab: WorkspaceTab) => void
+  onDockSessionTab?: (tab: WorkspaceSessionTab) => void
   connectorIcon?: (icon?: ResourceIconRef) => React.ReactNode
   fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
@@ -122,10 +126,73 @@ export function WorkspaceResourceTabs({
               '&:hover .workspace-resource-tab-close, &:focus-within .workspace-resource-tab-close':
                 {
                   opacity: 1
+                },
+              '&:hover .workspace-session-tab-icon, &:focus-within .workspace-session-tab-icon': {
+                opacity: 0
+              },
+              '&:hover .workspace-session-tab-dock-action, &:focus-within .workspace-session-tab-dock-action':
+                {
+                  opacity: 1
                 }
             }}
           >
-            {tab.kind === 'mcp' && connectorIcon ? (
+            {tab.kind === 'session' && selected && onDockSessionTab ? (
+              <Box
+                component="span"
+                sx={{ position: 'relative', width: 18, height: 18, flexShrink: 0 }}
+              >
+                <Icon
+                  className="workspace-session-tab-icon"
+                  sx={{
+                    position: 'absolute',
+                    inset: 0,
+                    fontSize: 18,
+                    transition: 'opacity 120ms ease'
+                  }}
+                />
+                <Tooltip title="移到左侧边栏" enterDelay={400}>
+                  <Box
+                    component="span"
+                    role="button"
+                    tabIndex={0}
+                    aria-label="移到左侧边栏"
+                    data-phi-session-tab-dock-action="true"
+                    className="workspace-session-tab-dock-action"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onDockSessionTab(tab)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onDockSessionTab(tab)
+                    }}
+                    sx={{
+                      position: 'absolute',
+                      inset: -3,
+                      width: 24,
+                      height: 24,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRadius: '50%',
+                      opacity: 0,
+                      cursor: 'pointer',
+                      color: 'primary.main',
+                      transition: 'opacity 120ms ease, background-color 120ms ease',
+                      WebkitAppRegion: 'no-drag',
+                      '&:hover, &:focus-visible': {
+                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                        outline: 'none'
+                      }
+                    }}
+                  >
+                    <VscLayoutSidebarLeftDock aria-hidden focusable="false" size={18} />
+                  </Box>
+                </Tooltip>
+              </Box>
+            ) : tab.kind === 'mcp' && connectorIcon ? (
               connectorIcon(tab.icon)
             ) : contentKind && 'icon' in tab && tab.icon ? (
               <ResourceIcon icon={tab.icon} kind={contentKind} size={20} fallbackSize={18} />

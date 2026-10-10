@@ -17,6 +17,10 @@ import type {
   RemoteNextflowInstallResult
 } from '../shared/remoteDoctorTypes'
 import type {
+  RemoteEnvironmentSettingInput,
+  RemoteEnvironmentToolPaths
+} from '../shared/remoteEnvironmentTypes'
+import type {
   ProjectLocation,
   RemoteProjectConnectionChange,
   RemoteProjectConnectionRetryRequest,
@@ -28,6 +32,11 @@ import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
 import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
+import type {
+  RemoteRipgrepProgress,
+  RemoteRipgrepResult,
+  RemoteRipgrepStatusResult
+} from '../shared/remoteRipgrepTypes'
 import type { PromptAgentSummary as PreloadPromptAgentSummary } from '../shared/promptAgentTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -163,6 +172,7 @@ type PreloadRemoteHostProfile = {
   source?: 'ssh-config'
   runtimeRoot?: string
   downloadMirrorPrefix?: string
+  toolPaths?: RemoteEnvironmentToolPaths
 }
 type PreloadOpenSshHost = {
   alias: string
@@ -211,21 +221,6 @@ type PreloadToolApprovalRequest = {
     consequence: 'read' | 'write' | 'irreversible'
     reason: 'external_origin' | 'form_submission' | 'irreversible'
   }
-}
-
-type PreloadPluginCatalogItem = {
-  id: string
-  name: string
-  source: string
-  description: string
-  author?: string
-  kind: 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
-  downloads?: string
-  updated?: string
-  homepageUrl: string
-  npmUrl: string
-  installed: boolean
-  installedPath?: string
 }
 
 type PreloadMcpServerSummary = {
@@ -481,6 +476,17 @@ type PreloadRemoteMicromambaProgress = {
   totalBytes?: number
 }
 
+type PreloadRemoteRipgrepRequest = {
+  action: 'status' | 'install'
+  requestId: string
+  hostProfileId: string
+  runtimeRoot: string
+  confirmedWarnings?: readonly RemoteRuntimeRootWarningCode[]
+  forceManaged?: boolean
+}
+
+type PreloadRemoteRipgrepProgress = RemoteRipgrepProgress & { requestId: string }
+
 type PreloadSaveAnalysisNotebookInput = {
   path: string
   document: Record<string, unknown>
@@ -629,7 +635,6 @@ declare global {
         cb: (progress: WrapperResultDownloadProgress) => void
       ) => () => void
       renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-      copyDiagnostics: () => Promise<string>
       sendPrompt: (
         text: string,
         target?: PreloadPromptTarget
@@ -893,6 +898,10 @@ declare global {
         hostProfileId: string,
         runtimeRoot?: string
       ) => Promise<PreloadRemoteHostProfile>
+      saveRemoteEnvironment: (
+        hostProfileId: string,
+        input: RemoteEnvironmentSettingInput
+      ) => Promise<PreloadRemoteHostProfile>
       saveRemoteMicromambaMirror: (
         hostProfileId: string,
         downloadMirrorPrefix?: string
@@ -901,6 +910,10 @@ declare global {
       onRemoteMicromambaProgress: (
         cb: (progress: PreloadRemoteMicromambaProgress) => void
       ) => () => void
+      remoteRipgrep: (
+        request: PreloadRemoteRipgrepRequest
+      ) => Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult>
+      onRemoteRipgrepProgress: (cb: (progress: PreloadRemoteRipgrepProgress) => void) => () => void
       remoteDoctor: (
         hostProfileId: string,
         remotePath?: string,
@@ -1041,9 +1054,6 @@ declare global {
       onToolApprovalRequest: (cb: (event: PreloadToolApprovalRequest) => void) => () => void
       onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
       respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
-      listPlugins: () => Promise<PreloadPluginCatalogItem[]>
-      installPlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
-      removePlugin: (source: string) => Promise<PreloadPluginCatalogItem[]>
       listPhiPlugins: () => Promise<PhiPluginListItem[]>
       pickPhiPluginDirectory: () => Promise<string | null>
       previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>

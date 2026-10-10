@@ -98,7 +98,9 @@ export type {
 } from './features/wrapper/lib/remoteConnectionTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
 import type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+import type { UiBlocksItem } from './features/chat/lib/uiBlocks'
 export type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+export type { UiBlocksItem } from './features/chat/lib/uiBlocks'
 import type { AuthInteractionEvent } from './lib/authTypes'
 import type { Project } from './lib/projectTypes'
 export type { Project } from './lib/projectTypes'
@@ -252,6 +254,7 @@ export type ChatItem =
   | RunLifecycleItem
   | WorkspaceChangeSummaryItem
   | PresentedFilesItem
+  | UiBlocksItem
   | PlanReviewItem
   | WrapperPlanItem
   | AgentExecutionItem
@@ -329,23 +332,6 @@ export type AgentUserInteractionResponse = {
   cancelled?: boolean
   globalNote?: string
   error?: string
-}
-
-export type PluginKind = 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
-
-export interface PluginCatalogItem {
-  id: string
-  name: string
-  source: string
-  description: string
-  author?: string
-  kind: PluginKind
-  downloads?: string
-  updated?: string
-  homepageUrl: string
-  npmUrl: string
-  installed: boolean
-  installedPath?: string
 }
 
 export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'
@@ -740,7 +726,6 @@ export type RendererApi = AutoCompactionApi & {
     cb: (progress: WrapperResultDownloadProgress) => void
   ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
-  copyDiagnostics: () => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
@@ -926,9 +911,6 @@ export type RendererApi = AutoCompactionApi & {
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void
   onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
-  listPlugins: () => Promise<PluginCatalogItem[]>
-  installPlugin: (source: string) => Promise<PluginCatalogItem[]>
-  removePlugin: (source: string) => Promise<PluginCatalogItem[]>
   pickPackageRegistryDirectory: () => Promise<string | null>
   pickPackageArchive: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>

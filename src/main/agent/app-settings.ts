@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
+  DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
@@ -31,6 +32,10 @@ function normalizeNoProjectTaskFolder(value: unknown, agentDir: string): string 
 
 function booleanSetting(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
+}
+
+function fileOpenConversationLayout(value: unknown): PhiAppSettings['fileOpenConversationLayout'] {
+  return value === 'sidebar' || value === 'tab' ? value : DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT
 }
 
 function hasOwnSetting(raw: Record<string, unknown>, key: keyof PhiAppSettingsPatch): boolean {
@@ -69,7 +74,8 @@ function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): Phi
     nextActionSuggestionsEnabled: booleanSetting(
       raw.nextActionSuggestionsEnabled,
       DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
-    )
+    ),
+    fileOpenConversationLayout: fileOpenConversationLayout(raw.fileOpenConversationLayout)
   }
 }
 
@@ -117,6 +123,16 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
       throw new Error('提示词建议设置必须是布尔值')
     }
     nextRaw.nextActionSuggestionsEnabled = patch.nextActionSuggestionsEnabled
+  }
+
+  if (hasOwnSetting(patch, 'fileOpenConversationLayout')) {
+    if (
+      patch.fileOpenConversationLayout !== 'sidebar' &&
+      patch.fileOpenConversationLayout !== 'tab'
+    ) {
+      throw new Error('打开文件时的对话布局设置无效')
+    }
+    nextRaw.fileOpenConversationLayout = patch.fileOpenConversationLayout
   }
 
   const path = getAppSettingsPath(agentDir)

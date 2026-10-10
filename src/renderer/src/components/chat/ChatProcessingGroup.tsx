@@ -7,6 +7,7 @@ import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
 import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
+import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import {
@@ -267,6 +268,9 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                     }
                   />
                 )
+              }
+              if (group.item.role === 'ui_blocks') {
+                return <UiBlocksCard key={group.key} item={group.item} />
               }
               if (group.item.role === 'plan_review') {
                 return <PlanReviewCard key={group.key} item={group.item} cwd={cwd} />

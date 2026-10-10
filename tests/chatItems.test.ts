@@ -50,6 +50,67 @@ test('session history restores declared final files as a separate card', () => {
   })
 })
 
+test('session history restores validated ui blocks beside the completed tool call', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      toolCallId: 'ui-call-1',
+      toolName: 'render_blocks',
+      args: { blocks: [] },
+      runId: 'run-1'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_completed',
+      toolCallId: 'ui-call-1',
+      toolName: 'render_blocks',
+      output: '已显示 1 个结构化结果。',
+      details: {
+        kind: 'ui_blocks',
+        blocks: [{ type: 'metrics', items: [{ label: '样本数', value: 12 }] }]
+      },
+      runId: 'run-1'
+    }
+  ])
+
+  assert.deepEqual(
+    items.map((item) => item.role),
+    ['tool', 'ui_blocks']
+  )
+  assert.deepEqual(items[1], {
+    id: 'ui-blocks-ui-call-1',
+    role: 'ui_blocks',
+    runId: 'run-1',
+    blocks: [{ type: 'metrics', items: [{ label: '样本数', value: 12 }] }]
+  })
+})
+
+test('session history keeps a bounded unavailable item for invalid ui block details', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      toolCallId: 'ui-call-invalid',
+      toolName: 'render_blocks',
+      args: {}
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_completed',
+      toolCallId: 'ui-call-invalid',
+      toolName: 'render_blocks',
+      details: { kind: 'ui_blocks', blocks: [{ type: 'html', content: '<script />' }] }
+    }
+  ])
+
+  assert.deepEqual(items.at(-1), {
+    id: 'ui-blocks-ui-call-invalid',
+    role: 'ui_blocks',
+    blocks: null
+  })
+})
+
 test('session history restores a reviewed plan and the user decision', () => {
   const items = chatItemsFromSessionMessages([
     {

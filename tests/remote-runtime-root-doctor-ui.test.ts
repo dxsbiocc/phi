@@ -69,14 +69,14 @@ test('a runtime-root check marks its host row busy even though it uses a candida
         onSave: () => undefined,
         onDelete: () => undefined,
         onTest: () => undefined,
-        onRuntimeRootSave: () => undefined,
-        onRuntimeRootCheck: () => undefined
+        onEnvironmentSave: () => undefined,
+        initialSelectedHostAlias: 'gpu'
       })
     )
   )
 
   assert.match(markup, /正在测试 GPU/)
-  assert.match(markup, /<button[^>]*disabled[^>]*>保存<\/button>/)
+  assert.match(markup, /<button[^>]*disabled[^>]*>保存中…<\/button>/)
 })
 
 test('a cached runtime-root timeout prevents an overall passing doctor summary', () => {

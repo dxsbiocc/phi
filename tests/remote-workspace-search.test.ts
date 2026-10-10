@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -17,17 +25,23 @@ import {
 } from '../src/main/agent/remote-workspace-search-tools'
 import type { RemoteWorkspaceBoundaryDependencies } from '../src/main/agent/remote-workspace-boundary'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
+import { REMOTE_RIPGREP_COMPLETE_MARKER } from '../src/shared/remoteRipgrepTypes'
 
 function fixture(noRg = false): {
   root: string
+  runtimeRoot: string
   agentDir: string
+  commands: string[]
   dependencies: RemoteWorkspaceBoundaryDependencies
   cleanup: () => void
 } {
   const base = mkdtempSync(join(tmpdir(), 'phi-remote-search-'))
   const root = join(base, 'project')
+  const runtimeRoot = join(base, "runtime root [managed] 'quoted'")
   const agentDir = join(base, 'phi')
   mkdirSync(root)
+  mkdirSync(runtimeRoot)
+  const commands: string[] = []
   const location = {
     kind: 'ssh' as const,
     hostProfileId: 'host-a',
@@ -42,7 +56,16 @@ function fixture(noRg = false): {
     workingDirectoryRealPath: location.canonicalRoot,
     permissionMode: 'ask',
     pathAvailable: true,
-    createdAt: '2026-09-24T00:00:00.000Z'
+    createdAt: '2026-09-24T00:00:00.000Z',
+    defaultRemoteConnectionId: 'runtime-host-a',
+    remoteConnections: [
+      {
+        id: 'runtime-host-a',
+        label: 'Cluster',
+        hostProfileId: 'host-a',
+        runtimeRoot
+      }
+    ]
   } as Project
   const manifest = {
     sessionId: 'session-a',
@@ -65,6 +88,7 @@ function fixture(noRg = false): {
       id === 'host-a' ? { id, label: 'Cluster', hostAlias: 'cluster-a' } : undefined,
     connectImpl: async (): Promise<RemoteSshSession> => ({
       exec: async (command) => {
+        commands.push(command)
         if (noRg && command.includes('command -v rg')) {
           return { stdout: '', stderr: '', code: 1, signal: null }
         }
@@ -77,6 +101,17 @@ function fixture(noRg = false): {
         }
       },
       execBounded: async (command, options) => {
+        commands.push(command)
+        if (noRg && command.includes('command -v rg')) {
+          return {
+            stdout: '',
+            stderr: '',
+            code: 3,
+            signal: null,
+            stdoutTruncated: false,
+            stderrTruncated: false
+          }
+        }
         const result = run(command)
         const stdout = Buffer.from(result.stdout ?? '')
         const stderr = Buffer.from(result.stderr ?? '')
@@ -112,10 +147,31 @@ function fixture(noRg = false): {
   }
   return {
     root,
+    runtimeRoot,
     agentDir,
+    commands,
     dependencies,
     cleanup: () => rmSync(base, { recursive: true, force: true })
   }
+}
+
+function installManagedRipgrep(
+  sample: ReturnType<typeof fixture>,
+  requestedVersion?: string
+): string {
+  const resolved = spawnSync('bash', ['-lc', 'command -v rg'], { encoding: 'utf-8' })
+  assert.equal(resolved.status, 0)
+  const systemRg = resolved.stdout.trim()
+  const versionOutput = spawnSync(systemRg, ['--version'], { encoding: 'utf-8' })
+  const version = requestedVersion ?? versionOutput.stdout.match(/^ripgrep\s+(\S+)/)?.[1]
+  assert.ok(version)
+  const prefix = join(sample.runtimeRoot, 'tools', `ripgrep-${version}`)
+  const binary = join(prefix, 'bin', 'rg')
+  mkdirSync(join(prefix, 'bin'), { recursive: true })
+  writeFileSync(binary, `#!/bin/sh\nexec ${JSON.stringify(systemRg)} "$@"\n`)
+  writeFileSync(join(prefix, REMOTE_RIPGREP_COMPLETE_MARKER), `${version}\n`)
+  chmodSync(binary, 0o755)
+  return binary
 }
 
 const identity = { sessionId: 'session-a', projectId: 'project-a' }
@@ -164,6 +220,7 @@ test('no-rg fallback uses bounded find and grep without following outside symlin
     const glob = await remoteGlob({ ...identity, path: 'src/**/*.ts' }, sample.dependencies)
     assert.equal(glob.engine, 'find')
     assert.match(glob.content, /gitignore not applied/)
+    assert.match(glob.content, /设置 → 远程主机.*ripgrep.*micromamba/)
     assert.equal(glob.paths.length, 2)
     assert(glob.paths.some((path) => /one\.ts/.test(path)))
     assert(glob.paths.some((path) => /line%0Aname\.ts/.test(path)))
@@ -171,9 +228,10 @@ test('no-rg fallback uses bounded find and grep without following outside symlin
       { ...identity, pattern: 'MAGIC', path: 'src' },
       sample.dependencies
     )
-    assert.equal(grep.engine, 'find-grep')
+    assert.equal(grep.engine, 'find')
     assert.equal(grep.matchCount, 2)
     assert.match(grep.content, /gitignore not applied/)
+    assert.match(grep.content, /设置 → 远程主机.*ripgrep.*micromamba/)
     await assert.rejects(
       remoteGrep({ ...identity, pattern: '[', path: 'src' }, sample.dependencies),
       /正则表达式无效/
@@ -182,6 +240,41 @@ test('no-rg fallback uses bounded find and grep without following outside symlin
       remoteGlob({ ...identity, path: 'src/*.{ts,md}' }, sample.dependencies),
       /仅支持 \*、\*\* 和 \?/
     )
+  } finally {
+    sample.cleanup()
+  }
+})
+
+test('managed ripgrep is quoted and used by remote glob and grep when PATH has no rg', async () => {
+  const sample = fixture(true)
+  try {
+    const binary = installManagedRipgrep(sample)
+    mkdirSync(join(sample.root, 'src'))
+    writeFileSync(join(sample.root, 'src', 'managed.ts'), 'MANAGED_SEARCH\n')
+
+    const glob = await remoteGlob({ ...identity, path: 'src/**/*.ts' }, sample.dependencies)
+    const grep = await remoteGrep(
+      { ...identity, pattern: 'MANAGED_SEARCH', path: 'src' },
+      sample.dependencies
+    )
+
+    assert.equal(glob.engine, 'rg-managed', sample.commands.join('\n---\n'))
+    assert.equal(grep.engine, 'rg-managed')
+    assert.equal(grep.matchCount, 1)
+    const managedSuffix = binary.slice(binary.indexOf('/tools/'))
+    assert(sample.commands.some((command) => command.includes(managedSuffix)))
+  } finally {
+    sample.cleanup()
+  }
+})
+
+test('system PATH ripgrep wins over a valid managed installation', async () => {
+  const sample = fixture()
+  try {
+    installManagedRipgrep(sample)
+    writeFileSync(join(sample.root, 'priority.txt'), 'SYSTEM_FIRST\n')
+    const result = await remoteGrep({ ...identity, pattern: 'SYSTEM_FIRST' }, sample.dependencies)
+    assert.equal(result.engine, 'rg')
   } finally {
     sample.cleanup()
   }

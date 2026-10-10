@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import type { Project, ProjectRemoteConnection } from '../src/main/agent/projects'
 import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
+import { saveHostRemoteEnvironmentPaths } from '../src/main/agent/remote-environment-store'
 import {
   resolveProjectRemoteSubmitOptions,
   resolveProjectRemoteTarget,
@@ -69,6 +70,35 @@ test('remote connection carries a saved host profile and its OpenSSH overrides',
       identityFile: '/tmp/lab-key'
     })
     assert.equal(options?.remoteWorkspaceRoot, '/cluster/lab/.phi')
+  })
+})
+
+test('remote targets inherit server-level Nextflow and Docker overrides', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile({ label: 'GPU', hostAlias: 'gpu' }, agentDir)
+    saveHostRemoteEnvironmentPaths(
+      host.id,
+      {
+        nextflow: '/opt/nextflow/bin/nextflow',
+        docker: '/opt/docker/bin/docker'
+      },
+      agentDir
+    )
+    const connection: ProjectRemoteConnection = {
+      id: 'gpu',
+      label: 'GPU',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'local', runtime: 'docker' }
+    }
+
+    const submit = resolveProjectRemoteSubmitOptions(project(connection), agentDir)
+    assert.equal(submit?.hpc?.nextflowBin, '/opt/nextflow/bin/nextflow')
+    assert.equal(submit?.hpc?.containerRuntimeBin, '/opt/docker/bin/docker')
+
+    const target = resolveProjectRemoteTarget(project(connection), undefined, agentDir)
+    assert.ok('target' in target)
+    assert.equal(target.target.hpc?.nextflowBin, '/opt/nextflow/bin/nextflow')
+    assert.equal(target.target.hpc?.containerRuntimeBin, '/opt/docker/bin/docker')
   })
 })
 

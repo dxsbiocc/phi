@@ -225,7 +225,7 @@ describe('remote runtime root settings UI', () => {
     assert.match(markup, /路径解析：\/data\/runtime/)
   })
 
-  it('puts save, clear, and check controls on every saved host row', () => {
+  it('shows a compact environment editor with the saved host override', () => {
     const markup = render(
       createElement(RemoteHostProfilesPanel, {
         hosts: [{ ...HOST, runtimeRoot: '/data/researcher/phi-runtime' }],
@@ -254,17 +254,19 @@ describe('remote runtime root settings UI', () => {
         onSave: () => undefined,
         onDelete: () => undefined,
         onTest: () => undefined,
-        onRuntimeRootSave: () => undefined,
-        onRuntimeRootCheck: () => undefined
+        onEnvironmentSave: () => undefined,
+        initialSelectedHostAlias: HOST.hostAlias
       })
     )
 
-    assert.match(markup, /运行时根目录/)
+    assert.match(markup, /默认运行环境/)
     assert.match(markup, /placeholder="~\/.phi\/runtime"/)
-    assert.match(markup, />保存</)
-    assert.match(markup, />清除</)
-    assert.match(markup, />检测</)
+    assert.match(markup, />保存环境配置</)
+    assert.match(markup, />恢复 Phi 默认值</)
+    assert.doesNotMatch(markup, />清除</)
+    assert.doesNotMatch(markup, />检测</)
     assert.match(markup, /value="\/data\/researcher\/phi-runtime"/)
+    assert.equal((markup.match(/data-shrink="true"/g) ?? []).length, 5)
   })
 
   it('loads and saves a project override that wins over the selected host override', () => {

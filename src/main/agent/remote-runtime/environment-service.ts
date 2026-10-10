@@ -28,7 +28,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
 const SETTINGS_GUIDANCE =
-  '请打开“设置 → 远程主机”，使用“安装 micromamba”按钮完成安装后重试。Phi 不会自动安装，也没有在本机创建环境。'
+  '请打开“设置 → 远程”，检查 micromamba 路径，或恢复由 Phi 管理的默认值后重试。Phi 没有回退到本机创建环境。'
 
 interface EnvironmentRecord extends RemoteEnvironmentHandle {
   baseRef: string
@@ -139,7 +139,10 @@ export class RemoteEnvironmentService {
   }
 
   micromambaPath(workspace: RemoteRuntimeWorkspace): string {
-    return remoteMicromambaPath(workspace.runtimeRoot, this.options.micromambaVersion)
+    return (
+      workspace.micromambaPath ??
+      remoteMicromambaPath(workspace.runtimeRoot, this.options.micromambaVersion)
+    )
   }
 
   private async confirm(input: ValidRemoteEnvironmentRequest): Promise<boolean> {
@@ -218,7 +221,10 @@ export class RemoteEnvironmentService {
     signal: AbortSignal
   ): Promise<void> {
     const binary = this.micromambaPath(workspace)
-    if (!(await isFile(workspace, posix.relative(workspace.runtimeRoot, binary)))) {
+    if (
+      !workspace.micromambaPath &&
+      !(await isFile(workspace, posix.relative(workspace.runtimeRoot, binary)))
+    ) {
       throw new Error(`服务器运行时根目录中没有可用的 micromamba。${SETTINGS_GUIDANCE}`)
     }
     const result = await workspace.projectHost.exec.run(

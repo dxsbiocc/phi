@@ -61,7 +61,6 @@ import {
   shell,
   BrowserWindow,
   WebContentsView,
-  clipboard,
   dialog,
   ipcMain,
   nativeImage,
@@ -175,10 +174,12 @@ import {
   saveRemoteHostProfile
 } from './agent/remote-hosts'
 import {
+  clearRemoteEnvironmentSetting,
   clearRemoteMicromambaMirrorSetting,
   clearRemoteRuntimeRootSetting,
   listRemoteHostsWithRuntimeRoots,
   remoteHostProfileWithRuntimeRoot,
+  saveRemoteEnvironmentSetting,
   saveRemoteMicromambaMirrorSetting,
   saveRemoteRuntimeRootSetting,
   updateProjectRemoteConnectionRuntimeAware
@@ -188,8 +189,10 @@ import { saveOpenSshHost } from './agent/ssh-config-editor'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
 import { registerRemoteMicromambaIpc } from './agent/remote-micromamba-ipc'
+import { registerRemoteRipgrepIpc } from './agent/remote-ripgrep-ipc'
 import { remoteMicromambaManifestVersion } from './agent/remote-micromamba-artifact'
 import { readHostRuntimeRoot } from './agent/remote-runtime-root-store'
+import { readHostRemoteEnvironmentPaths } from './agent/remote-environment-store'
 import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
 import { RemoteRuntimeController } from './agent/remote-runtime/controller'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
@@ -228,6 +231,10 @@ import {
   remoteProjectAnchorPath
 } from './agent/remote-project-anchor'
 import type { RemoteDoctorOptions } from '../shared/remoteDoctorTypes'
+import type {
+  RemoteEnvironmentSettingInput,
+  RemoteEnvironmentToolId
+} from '../shared/remoteEnvironmentTypes'
 import type { ProjectLocation, RemoteProjectCreateInput } from '../shared/projectLocation'
 import { renderMoleculeSvg } from './molecule-renderer'
 import {
@@ -278,7 +285,6 @@ import {
   type RuntimeModel,
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
-import { installPlugin as installDeveloperPlugin, listPlugins, removePlugin } from './agent/plugins'
 import {
   installPlugin as installPhiPlugin,
   listInstalledPlugins,
@@ -400,8 +406,7 @@ import {
   readWrapperPlanArtifact,
   readWrapperRun
 } from './agent/wrappers/store'
-import { formatDiagnostics, type DiagnosticsSnapshot } from './agent/diagnostics'
-import { LOG_RETENTION_DAYS, cleanupOldLogs, getPhiLogDir, writeAppLog } from './agent/app-logger'
+import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import { readAppSettings, updateAppSettings } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
@@ -491,7 +496,8 @@ import {
   type SessionStatus,
   type StoredSessionEvent,
   type UnreadKind,
-  listPhiSessions
+  listPhiSessions,
+  toolResultDetailsForSession
 } from './agent/session/session-store'
 import {
   updateNotebookCell,
@@ -503,13 +509,13 @@ import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTyp
 import { createBeforeQuitHandler } from './app-quit'
 import icon from '../../resources/icon.png?asset'
 
+// Compatibility boundary: Electron derives userData and macOS "Phi Safe Storage" from this name.
 const APP_NAME = 'Phi'
 // OfficeCLI may need 5 s to flush and another 2 s for a polite SIGTERM; preview teardown runs first.
 const APP_QUIT_CLEANUP_TIMEOUT_MS = 2_000
 // Office's share of the quit budget; the global cap must not grow for any one feature.
 const OFFICE_QUIT_DEADLINE_MS = 1_200
 const APP_ID = 'cn.phiscience.phi'
-// Compatibility boundary: Electron derives userData and macOS "Phi Safe Storage" from this name.
 const DEFAULT_WINDOW_WIDTH = 1280
 const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 860
@@ -1754,7 +1760,6 @@ const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
-const recentErrorSummaries: string[] = []
 let preventSleepBlockerId: number | null = null
 const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
   readManifest: findPhiSessionById,
@@ -1858,7 +1863,17 @@ function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undef
   const project = getProject(projectId)
   if (!project || project.location.kind !== 'ssh') return undefined
   const root = projectRemoteRuntimeRoot(project)
-  return { runtimeSessionId, sessionId, projectId, configuredRoot: root.configured }
+  const micromambaPath = readHostRemoteEnvironmentPaths(
+    project.location.hostProfileId,
+    AGENT_DIR
+  ).micromamba
+  return {
+    runtimeSessionId,
+    sessionId,
+    projectId,
+    configuredRoot: root.configured,
+    ...(micromambaPath ? { micromambaPath } : {})
+  }
 }
 
 const remoteRuntimeController = new RemoteRuntimeController({
@@ -2362,7 +2377,8 @@ const wrapperJobs = new WrapperJobManager({
               }
             }
           : {}),
-        ...(hpc.nextflowBin ? { nextflowBin: hpc.nextflowBin } : {})
+        ...(hpc.nextflowBin ? { nextflowBin: hpc.nextflowBin } : {}),
+        ...(hpc.containerRuntimeBin ? { containerRuntimeBin: hpc.containerRuntimeBin } : {})
       },
       { deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length) }
     )
@@ -2679,7 +2695,7 @@ function recordAgentSteer(
       cwd: origin.cwd
     })
   } catch (error) {
-    rememberErrorSummary(error)
+    logUnexpectedError(error)
   }
 }
 
@@ -3188,24 +3204,13 @@ function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEv
   })
 }
 
-function rememberErrorSummary(error: unknown): void {
+function logUnexpectedError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
-  recentErrorSummaries.unshift(message.slice(0, 500))
-  recentErrorSummaries.splice(20)
   writeAppLog({
     level: 'error',
     event: 'error_summary',
     metadata: { message }
   })
-}
-
-async function settledValue<T>(fallback: T, load: () => Promise<T> | T): Promise<T> {
-  try {
-    return await load()
-  } catch (error) {
-    rememberErrorSummary(error)
-    return fallback
-  }
 }
 
 function extractAssistantText(message: unknown): string {
@@ -4297,6 +4302,8 @@ function persistSessionEvent(
   const notebookDetails = isNotebookToolName(summary.toolName)
     ? notebookToolDetailsFromResult(summary.result)
     : undefined
+  const sessionDetails =
+    toolResultDetailsForSession(summary.toolName, summary.result) ?? notebookDetails
   const persisted = persistToolOutput(run.phiSessionId, {
     runId: run.runId,
     toolCallId: summary.toolCallId,
@@ -4313,7 +4320,7 @@ function persistSessionEvent(
     output: persisted.outputPreview,
     outputBytes: persisted.outputBytes,
     outputTruncated: persisted.truncated,
-    ...(notebookDetails ? { details: notebookDetails } : {}),
+    ...(sessionDetails ? { details: sessionDetails } : {}),
     ...(persisted.outputPath ? { outputPath: persisted.outputPath } : {}),
     ...(persisted.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {})
   })
@@ -4653,7 +4660,7 @@ function startAutomaticContinuation(
     promptTarget: null,
     automatic: true
   }).catch((error: unknown) => {
-    rememberErrorSummary(error)
+    logUnexpectedError(error)
     writeAppLog({
       level: 'error',
       event: 'wrapper_run_continue_failed',
@@ -4740,7 +4747,7 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   try {
     startAutomaticContinuation(phiSessionId, events)
   } catch (error) {
-    rememberErrorSummary(error)
+    logUnexpectedError(error)
   }
 }
 
@@ -4988,7 +4995,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
                   !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
               ) {
                 void abortSessionWithoutCancellingApprovals(session).catch((error) => {
-                  rememberErrorSummary(error)
+                  logUnexpectedError(error)
                   console.error('Failed to abort stale prompt:', error)
                 })
                 throw new StaleSessionError()
@@ -5055,7 +5062,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
           })
           broadcastSessionTimelineEvent(phiSessionId, stored)
         } catch (error) {
-          rememberErrorSummary(error)
+          logUnexpectedError(error)
         }
       }
     }
@@ -6538,7 +6545,7 @@ async function cleanupSessionRecord(
         !isStaleSessionError(error) &&
         !(mainWindowCleanupStarted && isExpectedShutdownCleanupError(error))
       ) {
-        rememberErrorSummary(error)
+        logUnexpectedError(error)
         console.error('Failed to clean up agent session:', error)
       }
     } finally {
@@ -6797,7 +6804,7 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
           })
         )
       } catch (persistError) {
-        rememberErrorSummary(persistError)
+        logUnexpectedError(persistError)
       }
       throw error
     }
@@ -6908,81 +6915,6 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
   return [...activePromptRuns.values()].filter(
     (run) => run.projectId === projectId && run.sessionKey !== sessionKey
   ).length
-}
-
-async function createDiagnosticsText(): Promise<string> {
-  const currentSnapshot: SessionSnapshot = {
-    path: currentSessionPath,
-    cwd: currentCwd,
-    permissionMode: currentPermissionMode
-  }
-  const [providers, projects, sessions, skills, mcpServers, plugins, selected, thinking, runtime] =
-    await Promise.all([
-      settledValue([], () => getAuthManager().getProviderStatuses()),
-      settledValue([], () => listProjects()),
-      settledValue([], () => listSessions()),
-      settledValue([], () =>
-        isRemoteResourceScope() ? listGlobalSkills() : listSkills(currentCwd)
-      ),
-      settledValue([], () =>
-        isRemoteResourceScope() ? listGlobalMcpServers() : listMcpServers(currentCwd)
-      ),
-      settledValue([], () => listPlugins()),
-      settledValue(null, () => resolveSessionModelSelection(currentSessionKey, currentSnapshot)),
-      settledValue(selectedThinkingLevel, () =>
-        resolveSessionThinkingLevel(currentSessionKey, currentSnapshot)
-      ),
-      settledValue(null, () => getAuthManager().getRuntime())
-    ])
-  const models = runtime ? runtime.getModels() : []
-  const phiSessionId =
-    getPhiSessionIdForKey(currentSessionKey) ??
-    (currentSessionPath
-      ? findPhiSessionByRuntimePath(currentSessionPath, currentCwd)?.sessionId
-      : undefined)
-  const currentSummary = currentSessionPath
-    ? sessions.find((session) => session.path === currentSessionPath)
-    : undefined
-  const activeRun = phiSessionId ? getActivePromptRun(currentSessionKey) : undefined
-  const snapshot: DiagnosticsSnapshot = {
-    generatedAt: new Date().toISOString(),
-    app: {
-      name: APP_NAME,
-      version: app.getVersion()
-    },
-    platform: {
-      os: process.platform,
-      node: process.versions.node,
-      electron: process.versions.electron
-    },
-    currentSession: {
-      path: currentSessionPath ?? null,
-      ...(phiSessionId ? { phiSessionId } : {}),
-      cwd: getCurrentSessionPayload().displayCwd,
-      permissionMode: currentPermissionMode,
-      status: currentSummary?.status,
-      unreadKind: currentSummary?.unreadKind,
-      activeRunId: activeRun?.runId
-    },
-    model: {
-      selected,
-      thinkingLevel: thinking,
-      availableCount: models.length
-    },
-    providers,
-    projects,
-    sessions,
-    skills,
-    mcpServers,
-    plugins,
-    activeRunCount: activePromptRuns.size,
-    logs: {
-      directory: getPhiLogDir(),
-      retentionDays: LOG_RETENTION_DAYS
-    },
-    recentErrors: recentErrorSummaries
-  }
-  return formatDiagnostics(snapshot)
 }
 
 async function invalidateAgentSession(): Promise<void> {
@@ -7552,7 +7484,7 @@ async function getAgentSession(
           run.stoppingPermanentProviderError = true
           run.recordedFailureMessage = redactSensitiveText(summary.errorMessage)
           void abortSessionWithoutCancellingApprovals(result.session).catch((error) => {
-            rememberErrorSummary(error)
+            logUnexpectedError(error)
           })
         }
         const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
@@ -7894,6 +7826,7 @@ app.whenReady().then(async () => {
     createDefaultSshBootstrapCoordinator()
   )
   registerRemoteMicromambaIpc(ipcMain)
+  registerRemoteRipgrepIpc(ipcMain)
   registerOfficeIpc()
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()
@@ -8034,13 +7967,6 @@ app.whenReady().then(async () => {
       return renderMoleculeSvg(value, width, height)
     }
   )
-  ipcMain.handle('diagnostics:copy', async () => {
-    const text = await createDiagnosticsText()
-    clipboard.writeText(text)
-    writeAppLog({ event: 'diagnostics_copied' })
-    return text
-  })
-
   ipcMain.handle('agent:prompt', async (_, text: string, targetInput?: unknown) => {
     const normalizedText = typeof text === 'string' ? text.trim() : ''
     const images = validatePromptImages(
@@ -8702,8 +8628,46 @@ app.whenReady().then(async () => {
       throw new Error('该服务器仍被项目使用，请先移除项目中的远程连接')
     }
     clearRemoteMicromambaMirrorSetting(id)
+    clearRemoteEnvironmentSetting(id)
     clearRemoteRuntimeRootSetting(id)
     deleteRemoteHostProfile(id)
+  })
+  ipcMain.handle('remote:saveEnvironment', async (_, hostProfileId: unknown, value: unknown) => {
+    if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
+      throw new Error('SSH 服务器档案 ID 无效')
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('远程环境配置无效')
+    }
+    const input = value as Record<string, unknown>
+    if (
+      input.runtimeRoot !== undefined &&
+      input.runtimeRoot !== null &&
+      typeof input.runtimeRoot !== 'string'
+    ) {
+      throw new Error('默认运行环境路径无效')
+    }
+    const toolPaths: Partial<Record<RemoteEnvironmentToolId, string>> = {}
+    if (input.toolPaths !== undefined) {
+      if (
+        !input.toolPaths ||
+        typeof input.toolPaths !== 'object' ||
+        Array.isArray(input.toolPaths)
+      ) {
+        throw new Error('远程工具路径无效')
+      }
+      for (const id of ['nextflow', 'jupyter', 'micromamba', 'docker'] as const) {
+        const path = (input.toolPaths as Record<string, unknown>)[id]
+        if (path !== undefined && typeof path !== 'string') {
+          throw new Error(`${id} 路径无效`)
+        }
+        if (typeof path === 'string') toolPaths[id] = path
+      }
+    }
+    return saveRemoteEnvironmentSetting(hostProfileId, {
+      ...(typeof input.runtimeRoot === 'string' ? { runtimeRoot: input.runtimeRoot } : {}),
+      toolPaths
+    } satisfies RemoteEnvironmentSettingInput)
   })
   ipcMain.handle(
     'remote:saveRuntimeRoot',
@@ -9226,39 +9190,6 @@ app.whenReady().then(async () => {
     }
   )
 
-  ipcMain.handle('plugins:list', async () => listPlugins())
-  ipcMain.handle('plugins:install', async (_, source: string) => {
-    try {
-      const list = await installDeveloperPlugin(source)
-      writeAppLog({ event: 'plugin_installed', metadata: { source } })
-      await invalidateAgentSession()
-      return list
-    } catch (error) {
-      rememberErrorSummary(error)
-      writeAppLog({
-        level: 'error',
-        event: 'plugin_install_failed',
-        metadata: { source, error: error instanceof Error ? error.message : String(error) }
-      })
-      throw error
-    }
-  })
-  ipcMain.handle('plugins:remove', async (_, source: string) => {
-    try {
-      const list = await removePlugin(source)
-      writeAppLog({ event: 'plugin_removed', metadata: { source } })
-      await invalidateAgentSession()
-      return list
-    } catch (error) {
-      rememberErrorSummary(error)
-      writeAppLog({
-        level: 'error',
-        event: 'plugin_remove_failed',
-        metadata: { source, error: error instanceof Error ? error.message : String(error) }
-      })
-      throw error
-    }
-  })
   ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
   ipcMain.handle('phiPlugins:pickDirectory', async () => {
     const window = getActiveWindow()
@@ -9284,7 +9215,7 @@ app.whenReady().then(async () => {
     try {
       return phiPluginInstallPreview(path)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       return {
         ok: false,
         path,
@@ -9340,7 +9271,7 @@ app.whenReady().then(async () => {
       if (result.ok) await invalidateAgentSession()
       return phiPluginMutation(result)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       return failedPhiPluginMutation(
         'install',
         `插件安装失败：${error instanceof Error ? error.message : String(error)}`
@@ -9358,7 +9289,7 @@ app.whenReady().then(async () => {
       })
       return phiPluginMutation(result)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       return failedPhiPluginMutation(
         'enabled',
         `插件状态更新失败：${error instanceof Error ? error.message : String(error)}`
@@ -9377,7 +9308,7 @@ app.whenReady().then(async () => {
       if (result.ok) await invalidateAgentSession()
       return phiPluginMutation(result)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       return failedPhiPluginMutation(
         'uninstall',
         `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
@@ -10138,7 +10069,7 @@ app.whenReady().then(async () => {
           nextflowLaunch: { builds: environmentBuilds }
         })
       } catch (error) {
-        rememberErrorSummary(error)
+        logUnexpectedError(error)
         throw error
       }
     }
@@ -10147,7 +10078,7 @@ app.whenReady().then(async () => {
     try {
       return cancelWrapperRunPlan(planId)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       throw error
     }
   })
@@ -10167,7 +10098,7 @@ app.whenReady().then(async () => {
       writeAppLog({ event: 'wrapper_custom_added', metadata: { sourceDir, id: entry.manifest.id } })
       return entry
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       writeAppLog({
         level: 'error',
         event: 'wrapper_custom_add_failed',
@@ -10198,7 +10129,7 @@ app.whenReady().then(async () => {
       }
       return cancelWrapperRun(runId)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       throw error
     }
   })
@@ -10221,7 +10152,7 @@ app.whenReady().then(async () => {
       writeAppLog({ event: 'wrapper_reproducibility_exported', metadata: { runId } })
       return result.filePath
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       writeAppLog({
         level: 'error',
         event: 'wrapper_reproducibility_export_failed',
@@ -10253,7 +10184,7 @@ app.whenReady().then(async () => {
     try {
       markdown = await generatePersonaMarkdown(trimmedDescription)
     } catch (error) {
-      rememberErrorSummary(error)
+      logUnexpectedError(error)
       console.error('生成人设配置失败，回退为原始描述:', error)
       markdown = fallbackMarkdownFromDescription(trimmedDescription)
     }

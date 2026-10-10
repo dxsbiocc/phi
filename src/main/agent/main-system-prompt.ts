@@ -18,6 +18,7 @@ export type RemoteRuntimePromptContext = {
   rootLabel: '~/.phi/runtime' | '$PHI_REMOTE_RUNTIME_ROOT' | `~/${string}`
   source: 'default' | 'host' | 'project'
   micromambaStatus: 'installed' | 'not-installed' | 'outdated' | 'unusable' | 'unchecked'
+  ripgrepStatus: 'system' | 'managed' | 'not-installed'
   micromambaPathLabel?: string
 }
 
@@ -93,11 +94,17 @@ function remoteRuntimePrompt(runtime: RemoteRuntimePromptContext): string {
     unchecked:
       'micromamba has not been verified. Treat remote environment tools as unavailable until the user checks remote host settings.'
   }[runtime.micromambaStatus]
+  const ripgrepStatus = {
+    system: 'ripgrep is available from the server PATH.',
+    managed: 'Phi-managed ripgrep is installed and available to remote search.',
+    'not-installed':
+      'ripgrep is not installed. Ask the user to install ripgrep in remote host settings; never install it automatically.'
+  }[runtime.ripgrepStatus]
   const executable = runtime.micromambaPathLabel
     ? ` micromamba executable: ${runtime.micromambaPathLabel};`
     : ''
   return (
-    `Remote runtime root (${runtime.source}): ${runtime.rootLabel};${executable} ${status} ` +
+    `Remote runtime root (${runtime.source}): ${runtime.rootLabel};${executable} ${status} ${ripgrepStatus} ` +
     'When available, env_request creates or reuses environments only under that server runtime root, and skill_run plus declared skill script tools upload content-addressed skill resources and execute them on the SSH login host. Their project cwd and project path arguments refer to the remote project. Never substitute a local environment, local project path, GUI handle, or local process when remote routing is unavailable.'
   )
 }

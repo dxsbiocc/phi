@@ -17,6 +17,7 @@ import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
 import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
+import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import {
@@ -700,6 +701,9 @@ const ChatMessageList = memo(function ChatMessageList({
             onOpenFile={onOpenLocalPath ? (path) => onOpenLocalPath(path, 'file') : undefined}
           />
         )
+      }
+      if (group.item.role === 'ui_blocks') {
+        return <UiBlocksCard item={group.item} />
       }
       if (group.item.role === 'plan_review') {
         return <PlanReviewCard item={group.item} cwd={cwd} />

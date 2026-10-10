@@ -41,11 +41,11 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onUpdateProjectDefaults: () => undefined,
     onOpenApprovalSession: () => undefined,
     onRespondApproval: () => undefined,
-    onCopyDiagnostics: async () => '',
     noProjectTaskFolder: '/Users/example/Documents/Codex',
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
+    fileOpenConversationLayout: 'sidebar',
     isSavingAppSettings: false,
     onUpdateAppSettings: () => undefined,
     onPickNoProjectTaskFolder: () => undefined,
@@ -152,27 +152,13 @@ test('settings dialog keeps configured provider rows information-dense', () => {
   assert.doesNotMatch(markup, /MuiAlert-root/)
 })
 
-test('settings dialog explains diagnostics as a privacy-safe support summary', () => {
-  const markup = renderSettingsDialog({ category: 'diagnostics' })
+test('settings dialog omits internal diagnostics and legacy developer extensions', () => {
+  const markup = renderSettingsDialog({ category: 'general' })
 
-  assert.match(markup, /复制支持摘要/)
-  assert.match(markup, /密钥脱敏/)
-  assert.match(markup, /不含聊天全文/)
-  assert.match(markup, /不含工具完整输出/)
-  assert.doesNotMatch(markup, /添加 Provider/)
-})
-
-test('settings dialog exposes developer extensions under advanced settings', () => {
-  const markup = renderSettingsDialog({ category: 'advanced' })
-
-  assert.match(markup, />高级</)
-  assert.match(markup, /开发者扩展/)
-  assert.match(markup, /Pi runtime/)
-  assert.match(markup, /软件源/)
-  assert.match(markup, /导入软件包…/)
-  assert.match(markup, /添加目录/)
-  assert.match(markup, /没有找到开发者扩展/)
-  assert.doesNotMatch(markup, /没有找到插件/)
+  assert.doesNotMatch(markup, />诊断</)
+  assert.doesNotMatch(markup, />高级</)
+  assert.doesNotMatch(markup, /复制支持摘要/)
+  assert.doesNotMatch(markup, /开发者扩展/)
 })
 
 test('settings dialog integrates theme family radio rows under appearance', () => {
@@ -197,6 +183,10 @@ test('settings dialog exposes general application settings', () => {
   assert.match(markup, /不会授予写入、执行或删除权限/)
   assert.match(markup, /运行任务时防止系统休眠/)
   assert.match(markup, /提示词建议/)
+  assert.match(markup, /打开文件时的对话布局/)
+  assert.match(markup, /并排显示对话/)
+  assert.match(markup, /对话保留在标签区/)
+  assert.match(markup, /checked=""[^>]*value="sidebar"|value="sidebar"[^>]*checked=""/)
   assert.match(markup, /上下文压缩/)
   assert.match(markup, /自动压缩设置仅作用于当前会话/)
   assert.match(markup, /打开会话后可调整压缩设置/)

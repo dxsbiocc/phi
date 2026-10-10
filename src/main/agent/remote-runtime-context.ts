@@ -17,6 +17,11 @@ type Dependencies = {
     agentDir: string
   ) => RemoteRuntimePromptContext['micromambaStatus']
   readMicromambaVersion?: () => string | undefined
+  readRipgrepStatus?: (
+    hostAlias: string,
+    projectRoot: string,
+    agentDir: string
+  ) => RemoteRuntimePromptContext['ripgrepStatus']
 }
 
 export function resolveRemoteRuntimePromptContext(
@@ -44,15 +49,33 @@ export function resolveRemoteRuntimePromptContext(
       )
     : 'unchecked'
   const rootLabel = remoteRuntimeRootLabel(root.configured)
+  const ripgrepStatus = profile
+    ? (dependencies.readRipgrepStatus ?? cachedRipgrepStatus)(
+        profile.hostAlias,
+        location.canonicalRoot,
+        agentDir
+      )
+    : 'not-installed'
   const micromambaVersion = (dependencies.readMicromambaVersion ?? currentRemoteMicromambaVersion)()
   return {
     rootLabel,
     source: root.source,
     micromambaStatus,
+    ripgrepStatus,
     ...(micromambaVersion
       ? { micromambaPathLabel: remoteMicromambaPath(rootLabel, micromambaVersion) }
       : {})
   }
+}
+
+function cachedRipgrepStatus(
+  hostAlias: string,
+  projectRoot: string,
+  agentDir: string
+): RemoteRuntimePromptContext['ripgrepStatus'] {
+  const status = readCapabilityProfile({ hostAlias, projectRoot }, { agentDir })?.runtimeRoot
+    ?.ripgrep?.status
+  return status === 'system' || status === 'managed' ? status : 'not-installed'
 }
 
 export function remoteRuntimeRootLabel(

@@ -12,14 +12,16 @@ export type RemoteRuntimeInputExec = (
 ) => Promise<CommandResult>
 
 export interface RemoteRuntimeWorkspace {
-  /** One direct SSH command whose script body is streamed over stdin. */
-  execWithInput: RemoteRuntimeInputExec
   projectHost: WorkspaceHost
   runtimeHost: WorkspaceHost
   /** Canonical absolute POSIX project directory on the server. */
   projectRoot: string
   /** Canonical absolute POSIX Phi runtime root on the server. */
   runtimeRoot: string
+  /** Optional server-level micromamba executable override. */
+  micromambaPath?: string
+  /** One direct SSH command whose script body is streamed over stdin. */
+  execWithInput: RemoteRuntimeInputExec
   close?(): Promise<void>
 }
 

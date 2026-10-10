@@ -31,6 +31,40 @@ test('provider-managed tool result appears as a completed tool card', () => {
   })
 })
 
+test('live render_blocks completion keeps the tool card and adds validated ui blocks', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'ui-call-1',
+    toolName: 'render_blocks',
+    args: { blocks: [] },
+    runId: 'run-1'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'tool_execution_end',
+    toolCallId: 'ui-call-1',
+    toolName: 'render_blocks',
+    runId: 'run-1',
+    result: {
+      content: [{ type: 'text', text: '已显示 1 个结构化结果。' }],
+      details: {
+        kind: 'ui_blocks',
+        blocks: [{ type: 'steps', items: [{ label: '质量控制', status: 'done' }] }]
+      }
+    }
+  })
+
+  assert.deepEqual(
+    state.messages.map((item) => item.role),
+    ['tool', 'ui_blocks']
+  )
+  assert.deepEqual(state.messages[1], {
+    id: 'ui-blocks-ui-call-1',
+    role: 'ui_blocks',
+    runId: 'run-1',
+    blocks: [{ type: 'steps', items: [{ label: '质量控制', status: 'done' }] }]
+  })
+})
+
 test('hosted web calls stay between the streamed blocks that announced them', () => {
   let state = createAgentEventReducerState()
   state = reduceAgentEventState(state, { type: 'message_start', message: { role: 'assistant' } })

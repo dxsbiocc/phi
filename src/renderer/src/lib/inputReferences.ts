@@ -1,5 +1,5 @@
 import { absoluteWorkspacePath } from './workspacePaths'
-import type { FileTreeEntry, PluginCatalogItem, PromptAgentSummary, SkillSummary } from '../types'
+import type { FileTreeEntry, PromptAgentSummary, SkillSummary } from '../types'
 
 export type InputFileReferenceQuery = {
   start: number
@@ -503,10 +503,4 @@ export function formatPromptAgentReference(
 ): string {
   if (agent.source === 'phi-agent') return `调用智能体：${agent.name}`
   return agent.trigger || `/prompts:${agent.name}`
-}
-
-export function formatPluginPromptReference(
-  plugin: Pick<PluginCatalogItem, 'name' | 'source'>
-): string {
-  return `引用开发者扩展：${plugin.name}（${plugin.source}）`
 }

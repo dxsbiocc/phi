@@ -38,6 +38,8 @@ export interface RemoteHpcSettings {
   singularityCacheDir?: string
   /** Absolute path of the launcher when `nextflow` is not on the login shell's PATH. */
   nextflowBin?: string
+  /** Absolute path of Docker when this host-level override should win over PATH detection. */
+  containerRuntimeBin?: string
   /** Shell lines run before Nextflow starts, e.g. `module load nextflow java`. */
   setupCommands?: string[]
   /**

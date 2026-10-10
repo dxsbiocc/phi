@@ -126,7 +126,7 @@ Wrappers in remote projects keep using the remote host's nextflow until step 8.
 | 6.1 | **Freeze Plugin contract v1**: layout, `phi-package.yaml` (`type: plugin`, `toolPrefix`), `environments`, `components`, agent `visibility`, reserved `orchestrator` | `docs/contracts/plugin.schema.json` | fixtures pass | 2 d |
 | 6.2 | Plugin loader: install from a local directory into `~/.phi/packages/plugin/<id>/<version>/`; ensure environments; register agents, skills, and script tools; upgrade builds the new environment before switching; uninstall removes references and collects environments | `src/main/agent/plugins/` (new) | tests for install, upgrade, uninstall | 3 d |
 | 6.3 | Add `phi-package.yaml` without `environments` to `resources/plugins/visualization/` and install it through the plugin loader; remove step 4's temporary loading. Bump the bundled plugin version so upgrade drops the legacy `plugin:viz` reference; the existing GC collects that environment once unreferenced | `resources/`, `src/main/agent/` | works after installing or upgrading through the loader; no visualization-private environment remains referenced | 1 d |
-| 6.4 | Plugins page (list, install from local, uninstall); rename the pi plugin page to Developer extensions under advanced settings | `features/plugin/` | usable UI | 2 d |
+| 6.4 | Phi Plugins page (list, install from local, uninstall); keep Pi plugin management outside the product UI until project-scoped integration exists | `features/plugin/` | usable UI | 2 d |
 
 ### Step 7 Content distribution (L6)
 

@@ -191,7 +191,7 @@ describe('remote micromamba settings UI', () => {
     assert.deepEqual(calls, [['noexec']])
   })
 
-  it('places the operation beside each host runtime-root setting', () => {
+  it('keeps installation controls out of the simplified host environment editor', () => {
     const markup = renderToStaticMarkup(
       createElement(
         ThemeProvider,
@@ -229,7 +229,6 @@ describe('remote micromamba settings UI', () => {
               }
             }
           },
-          micromambaStates: { [HOST.id]: { phase: 'idle' } },
           onDraftChange: () => undefined,
           onOpenAdd: () => undefined,
           onOpenEdit: () => undefined,
@@ -238,15 +237,14 @@ describe('remote micromamba settings UI', () => {
           onSave: () => undefined,
           onDelete: () => undefined,
           onTest: () => undefined,
-          onRuntimeRootSave: () => undefined,
-          onRuntimeRootCheck: () => undefined,
-          onMicromambaInstall: () => undefined,
+          onEnvironmentSave: () => undefined,
           initialSelectedHostAlias: HOST.hostAlias
         })
       )
     )
 
-    assert.match(markup, /安装\/更新 micromamba/)
-    assert.match(markup, /\/data\/runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
+    assert.match(markup, /micromamba 路径/)
+    assert.match(markup, /由 Phi 安装在运行时目录/)
+    assert.doesNotMatch(markup, /安装\/更新 micromamba|高级下载设置/)
   })
 })

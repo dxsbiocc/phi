@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Divider, Stack, Typography } from '@mui/material'
 
 import type { RemoteHostProfile } from '../../../types'
 import type { RemoteRuntimeRootWarningCode } from '../../../../../shared/remoteRuntimeRootTypes'
@@ -115,20 +116,26 @@ export function RemoteHostRuntimeRootEditor(
   )
   const save = (): void => props.onSave(props.host, normalized)
   return (
-    <>
-      <RuntimeRootEditorControl
-        {...props}
-        targetKey={targetKey}
-        value={value}
-        valueError={valueError}
-        onValue={setValue}
-        onSave={save}
-        onCheck={() => props.onCheck(props.host, normalized)}
-        onClear={() => {
-          setValue('')
-          props.onSave(props.host, undefined)
-        }}
-      />
+    <Stack spacing={2.25} sx={{ py: 1 }}>
+      <Stack spacing={1}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>
+          运行目录
+        </Typography>
+        <RuntimeRootEditorControl
+          {...props}
+          targetKey={targetKey}
+          value={value}
+          valueError={valueError}
+          onValue={setValue}
+          onSave={save}
+          onCheck={() => props.onCheck(props.host, normalized)}
+          onClear={() => {
+            setValue('')
+            props.onSave(props.host, undefined)
+          }}
+        />
+      </Stack>
+      {props.onMicromambaInstall && <Divider />}
       <MicromambaEditor
         host={props.host}
         doctorState={props.doctorState}
@@ -141,6 +148,6 @@ export function RemoteHostRuntimeRootEditor(
         onInstall={props.onMicromambaInstall}
         onMirrorSave={props.onMicromambaMirrorSave}
       />
-    </>
+    </Stack>
   )
 }

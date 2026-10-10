@@ -99,7 +99,7 @@ test('remote Jupyter preparation keeps the env_request missing-micromamba guidan
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+设置.+micromamba.+没有.+本机/u
+      /无法安装含 Jupyter \+ ipykernel.+设置.+micromamba 路径.+没有.+本机/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {

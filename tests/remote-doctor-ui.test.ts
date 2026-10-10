@@ -340,27 +340,6 @@ function findAction(root: ReactNode, label: string): () => void {
   throw new Error(`Missing ${label} action`)
 }
 
-function tooltipTexts(root: ReactNode): string[] {
-  const pending: ReactNode[] = [root]
-  const texts: string[] = []
-  while (pending.length > 0) {
-    const node = pending.pop()
-    if (Array.isArray(node)) {
-      pending.push(...node)
-      continue
-    }
-    if (!isValidElement(node)) continue
-    const props = node.props as { children?: ReactNode; title?: ReactNode }
-    if (typeof props.title === 'string') texts.push(props.title)
-    if (isValidElement(props.title)) {
-      const title = props.title.props as { children?: ReactNode }
-      if (typeof title.children === 'string') texts.push(title.children)
-    }
-    pending.push(props.children)
-  }
-  return texts
-}
-
 test('server card lists discovered aliases and keeps configuration fields in the dialog', () => {
   const props = {
     hosts: [{ id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' }],
@@ -412,6 +391,9 @@ test('server card lists discovered aliases and keeps configuration fields in the
     assert.match(markup, new RegExp(label))
   }
   assert.doesNotMatch(markup, />添加<\/button>/)
+  assert.doesNotMatch(markup, /~\/\.phi\/runtime/)
+  assert.doesNotMatch(markup, />测试连接<\/button>/)
+  assert.match(markup, /aria-label="配置 gpu"/)
   assert.doesNotMatch(markup, /服务器地址|私钥路径/)
   const gpuKey = remoteDoctorTargetKey(remoteHostDoctorTarget('ssh-config:gpu', 'gpu'))
   const failedMarkup = render(
@@ -420,8 +402,7 @@ test('server card lists discovered aliases and keeps configuration fields in the
       hostDoctorStates: { 'ssh-config:gpu': { phase: 'failed', key: gpuKey, message: '测试超时' } }
     })
   )
-  assert.match(failedMarkup, /aria-label="连接失败，重新测试 gpu"/)
-  assert.match(failedMarkup, /MuiIconButton-colorError/)
+  assert.match(failedMarkup, /连接失败/)
   const labKey = remoteDoctorTargetKey(remoteHostDoctorTarget('host-1', 'lab-hpc'))
   const runningMarkup = render(
     createElement(RemoteHostProfilesPanel, {
@@ -429,30 +410,24 @@ test('server card lists discovered aliases and keeps configuration fields in the
       hostDoctorStates: { 'host-1': { phase: 'running', key: labKey } }
     })
   )
-  const runningButton = runningMarkup.match(/<button[^>]*aria-label="正在测试 Lab"[^>]*>/)?.[0]
-  const otherButton = runningMarkup.match(/<button[^>]*aria-label="测试 gpu"[^>]*>/)?.[0]
-  assert.ok(runningButton)
-  assert.ok(otherButton)
-  assert.match(runningButton, /disabled/)
-  assert.doesNotMatch(otherButton, /disabled/)
-  const failedCard = RemoteHostProfilesPanel({
-    ...props,
-    hostDoctorStates: {
-      'ssh-config:gpu': { phase: 'failed', key: gpuKey, message: '测试超时' }
-    }
-  })
-  assert.ok(tooltipTexts(failedCard).includes('测试超时'))
+  assert.match(runningMarkup, /检测中/)
   const dialogMarkup = render(
-    createElement(RemoteHostDialog, { ...props, open: true, onClose: () => undefined })
+    createElement(RemoteHostDialog, {
+      ...props,
+      open: true,
+      onClose: () => undefined,
+      onPasswordBootstrap: () => undefined
+    })
   )
-  for (const label of ['SSH 别名', '服务器地址', '用户名', '端口', '私钥路径']) {
+  for (const label of ['SSH 别名', '服务器地址', '用户名', '端口', '认证方式']) {
     assert.match(dialogMarkup, new RegExp(label))
   }
+  assert.doesNotMatch(dialogMarkup, /私钥路径/)
   assert.doesNotMatch(dialogMarkup, /从 ~\/.ssh\/config 选择/)
   assert.doesNotMatch(markup, /type="password"|口令输入/)
 })
 
-test('server card routes add, edit, delete and test clicks to their own actions', () => {
+test('server list navigates to a detail view with scoped actions', () => {
   const calls: string[] = []
   const host = { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' }
   const props = {
@@ -495,17 +470,32 @@ test('server card routes add, edit, delete and test clicks to their own actions'
     },
     onTest: (item: { id: string }) => {
       calls.push(`test:${item.id}`)
-    }
+    },
+    onEnvironmentSave: () => undefined
   }
-  const card = RemoteHostProfilesPanel(props)
-  findAction(card, '添加服务器')()
-  findAction(card, '编辑 gpu')()
-  findAction(card, '编辑 Lab')()
-  findAction(card, '删除 Lab')()
-  assert.throws(() => findAction(card, '删除 gpu'), /Missing/)
-  findAction(card, '测试 gpu')()
-  findAction(card, '测试 Lab')()
-  findAction(card, '刷新服务器')()
+  const markup = render(createElement(RemoteHostProfilesPanel, props))
+  for (const label of ['添加服务器', '配置 gpu', '配置 Lab', '刷新服务器']) {
+    assert.match(markup, new RegExp(`aria-label="${label}"`))
+  }
+  assert.doesNotMatch(markup, /aria-label="测试 Lab"/)
+  const detailMarkup = render(
+    createElement(RemoteHostProfilesPanel, { ...props, initialSelectedHostAlias: 'lab-hpc' })
+  )
+  for (const label of ['编辑 Lab', '删除 Lab', '测试 Lab']) {
+    assert.match(detailMarkup, new RegExp(`aria-label="${label}"`))
+  }
+  assert.match(detailMarkup, /返回服务器列表/)
+  for (const label of ['环境配置', '默认运行环境', 'Nextflow', 'Jupyter', 'micromamba', 'Docker']) {
+    assert.match(detailMarkup, new RegExp(label))
+  }
+  assert.match(detailMarkup, /留空时由 Phi 管理/)
+  assert.doesNotMatch(detailMarkup, /安装\/更新 micromamba|高级下载设置|服务器能力档案/)
+  const discoveredDetailMarkup = render(
+    createElement(RemoteHostProfilesPanel, { ...props, initialSelectedHostAlias: 'gpu' })
+  )
+  assert.match(discoveredDetailMarkup, /aria-label="编辑 gpu"/)
+  assert.match(discoveredDetailMarkup, /aria-label="测试 gpu"/)
+  assert.doesNotMatch(discoveredDetailMarkup, /aria-label="删除 gpu"/)
   const dialog = RemoteHostDialog({
     open: true,
     draft: props.draft,
@@ -517,20 +507,10 @@ test('server card routes add, edit, delete and test clicks to their own actions'
   })
   findAction(dialog, '取消')()
   findAction(dialog, '添加服务器')()
-  assert.deepEqual(calls, [
-    'add',
-    'edit:ssh-config:gpu',
-    'edit:host-1',
-    'delete:host-1',
-    'test:ssh-config:gpu',
-    'test:host-1',
-    'reload',
-    'close',
-    'save'
-  ])
+  assert.deepEqual(calls, ['close', 'save'])
 })
 
-test('server card shows the retained capability profile after testing that host', () => {
+test('server detail keeps the connection status without exposing capability diagnostics', () => {
   const host = { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' }
   const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
   const markup = render(
@@ -566,12 +546,12 @@ test('server card shows the retained capability profile after testing that host'
       onReloadConfig: () => undefined,
       onSave: () => undefined,
       onDelete: () => undefined,
-      onTest: () => undefined
+      onTest: () => undefined,
+      initialSelectedHostAlias: host.hostAlias
     })
   )
-  assert.match(markup, /服务器能力档案/)
-  assert.match(markup, /Linux · x86_64/)
-  assert.match(markup, /检查时间/)
+  assert.match(markup, /连接正常/)
+  assert.doesNotMatch(markup, /服务器能力档案|Linux · x86_64|检查时间/)
 })
 
 test('project connection test uses its own host, directory and HPC settings', () => {

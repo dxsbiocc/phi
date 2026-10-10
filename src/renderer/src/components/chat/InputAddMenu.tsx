@@ -13,16 +13,14 @@ import { ResourceIcon } from '../ResourceIcon'
 import { PhiIcons } from '../../icons'
 import {
   formatInputFileReferences,
-  formatPluginPromptReference,
   formatPromptAgentReference,
   formatSkillPromptReference
 } from '../../lib/inputReferences'
-import type { PluginCatalogItem, PromptAgentSummary, SkillSummary } from '../../types'
+import type { PromptAgentSummary, SkillSummary } from '../../types'
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const AddIcon = PhiIcons.action.add
 const InputFileIcon = PhiIcons.tool.read
-const InputPluginIcon = PhiIcons.entity.plugin
 
 function InputAddGroup({
   title,
@@ -121,7 +119,6 @@ export function InputAddPanel({
   panelRef,
   skills,
   promptAgents,
-  plugins,
   cwd,
   onPickFiles,
   onInsertReference,
@@ -131,14 +128,12 @@ export function InputAddPanel({
   panelRef: Ref<HTMLDivElement>
   skills: SkillSummary[]
   promptAgents: PromptAgentSummary[]
-  plugins: PluginCatalogItem[]
   cwd: string
   onPickFiles?: () => Promise<string[]>
   onInsertReference: (reference: string) => void
   onClose: () => void
 }): ReactNode {
   const enabledSkills = useMemo(() => skills.filter((skill) => !skill.disabled), [skills])
-  const installedPlugins = useMemo(() => plugins.filter((plugin) => plugin.installed), [plugins])
   const insertReference = useCallback(
     (reference: string): void => {
       onClose()
@@ -211,21 +206,6 @@ export function InputAddPanel({
           <InputAddEmptyState>暂无可引用 Skill</InputAddEmptyState>
         )}
       </InputAddGroup>
-
-      <InputAddGroup title="开发者扩展">
-        {installedPlugins.length > 0 ? (
-          installedPlugins.map((plugin) => (
-            <InputAddMenuRow
-              key={plugin.id}
-              icon={<InputPluginIcon fontSize="small" />}
-              primary={plugin.name}
-              onClick={() => insertReference(formatPluginPromptReference(plugin))}
-            />
-          ))
-        ) : (
-          <InputAddEmptyState>暂无已安装开发者扩展</InputAddEmptyState>
-        )}
-      </InputAddGroup>
     </Paper>
   )
 }
@@ -242,12 +222,12 @@ export function InputAddControl({
   onToggle: () => void
 }): ReactNode {
   return (
-    <Tooltip title="添加文件、智能体、Skill 或开发者扩展" enterDelay={400}>
+    <Tooltip title="添加文件、智能体或 Skill" enterDelay={400}>
       <IconButton
         ref={buttonRef}
         size="small"
         type="button"
-        aria-label="添加文件、智能体、Skill 或开发者扩展"
+        aria-label="添加文件、智能体或 Skill"
         aria-controls={open ? controls : undefined}
         aria-expanded={open}
         aria-haspopup="menu"

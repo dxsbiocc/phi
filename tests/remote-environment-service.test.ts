@@ -4,6 +4,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   writeFileSync
 } from 'node:fs'
@@ -124,6 +125,30 @@ test('remote env_request creates and then reuses a content-addressed environment
     assert.doesNotMatch(calls[0] ?? '', /-c bioconda/u)
     assert.match(calls[0] ?? '', new RegExp(`root=${escapeRegExp(fixture.runtimeRoot)}$`))
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote env_request honors a server-level micromamba path override', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    const managed = installFakeMicromamba(fixture)
+    const custom = join(fixture.root, 'custom-bin', 'micromamba')
+    mkdirSync(join(fixture.root, 'custom-bin'))
+    copyFileSync(managed, custom)
+    chmodSync(custom, 0o755)
+    const service = new RemoteEnvironmentService({
+      micromambaVersion: 'test',
+      openWorkspace: async () => ({ ...fixture.workspace, micromambaPath: custom }),
+      confirm: async () => true,
+      resolveBasePackages: async () => ['python=3.12']
+    })
+
+    const result = await service.request(request({ requestId: 'custom-micromamba' }))
+
+    assert.ok('envId' in result)
+    assert.equal(service.micromambaPath({ ...fixture.workspace, micromambaPath: custom }), custom)
   } finally {
     fixture.cleanup()
   }

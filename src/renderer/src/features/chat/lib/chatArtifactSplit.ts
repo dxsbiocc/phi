@@ -1,4 +1,5 @@
 import { isOfficeDocumentPath } from '../../../lib/officeDocumentPath'
+import type { FileOpenConversationLayout } from '../../../../../shared/appSettingsTypes'
 
 export const CHAT_ARTIFACT_SPLIT_LEFT_MIN_PX = 360
 export const CHAT_ARTIFACT_SPLIT_RIGHT_MIN_PX = 320
@@ -22,6 +23,16 @@ export function sidebarHostsCurrentConversation({
   workspaceSidebarMode: string
 }): boolean {
   return isSidebarOpen && activeView === 'analysis' && workspaceSidebarMode === 'conversations'
+}
+
+export function sidebarStateForFileOpenConversationLayout(layout: FileOpenConversationLayout): {
+  isSidebarOpen: true
+  workspaceSidebarMode: 'conversations' | 'files'
+} {
+  return {
+    isSidebarOpen: true,
+    workspaceSidebarMode: layout === 'sidebar' ? 'conversations' : 'files'
+  }
 }
 
 export function shouldEnableOfficeChatSplit({

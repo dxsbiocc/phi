@@ -97,6 +97,10 @@ function normalizedOptions(input: unknown): RemoteDoctorOptions {
     ...(typeof value.nextflowBin === 'string' && value.nextflowBin.trim().length <= 512
       ? { nextflowBin: value.nextflowBin.trim() }
       : {}),
+    ...(typeof value.containerRuntimeBin === 'string' &&
+    value.containerRuntimeBin.trim().length <= 512
+      ? { containerRuntimeBin: value.containerRuntimeBin.trim() }
+      : {}),
     ...(value.refreshCapabilities === true ? { refreshCapabilities: true } : {}),
     ...(rootOverride && (rootOverride.source === 'host' || rootOverride.source === 'project')
       ? {

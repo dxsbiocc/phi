@@ -18,7 +18,6 @@ import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
-import { formatDiagnostics } from '../src/main/agent/diagnostics'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
@@ -454,7 +453,6 @@ type HarnessResult = {
   ) => void
   operationLog: Array<Record<string, unknown>>
   setOpenDialogResult: (result: { canceled: boolean; filePaths: string[] }) => void
-  copiedText: () => string
   exportedSessions: Array<{ sessionId: string; destination: string }>
   setWorkspaceChangeSummary: (summary: WorkspaceChangeSummary | null) => void
   setWorkspaceDiffPatch: (patch: string | null) => void
@@ -662,10 +660,7 @@ async function harness(
   ])
   const previewDirectories = new Map<string, Array<{ name: string; kind: 'directory' | 'file' }>>([
     [bundledCreateWrapperSkillDir, [{ name: 'references', kind: 'directory' }]],
-    [
-      path.join(bundledCreateWrapperSkillDir, 'references'),
-      [{ name: 'guide.md', kind: 'file' }]
-    ],
+    [path.join(bundledCreateWrapperSkillDir, 'references'), [{ name: 'guide.md', kind: 'file' }]],
     [
       '/projects/current',
       [
@@ -697,7 +692,6 @@ async function harness(
   ])
   const previewFileDescriptors = new Map<number, { path: string; content: Buffer }>()
   let nextPreviewFileDescriptor = 100
-  let copiedText = ''
   const runtimeSessionCwds = new Map<string, string>()
   const noop = (): undefined => undefined
   let phiSessionCounter = 0
@@ -1508,11 +1502,6 @@ async function harness(
           revealedPaths.push(filePath)
         }
       },
-      clipboard: {
-        writeText: (text: string): void => {
-          copiedText = text
-        }
-      },
       dialog: {
         showOpenDialog: async (
           ...args: unknown[]
@@ -2229,13 +2218,6 @@ async function harness(
         ...agentInteractionResponse
       })
     },
-    './agent/plugins': {
-      listPlugins: async (): Promise<unknown[]> => [
-        { id: 'plugin-1', name: 'Plugin', source: 'local', installed: true }
-      ],
-      installPlugin: async (): Promise<unknown[]> => [],
-      removePlugin: async (): Promise<unknown[]> => []
-    },
     './agent/plugins/bundled-install': {
       installBundledPlugins: async (): Promise<unknown> => ({
         installed: [],
@@ -2769,11 +2751,26 @@ async function harness(
       }),
       deleteRemoteHostProfile: (): void => {}
     },
+    './agent/remote-environment-store': {
+      readHostRemoteEnvironmentPaths: (): Record<string, string> => ({})
+    },
     './agent/remote-runtime-root-settings': {
       listRemoteHostsWithRuntimeRoots: (): unknown[] => [
         { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
       ],
       remoteHostProfileWithRuntimeRoot: (profile: unknown): unknown => profile,
+      saveRemoteEnvironmentSetting: (
+        id: string,
+        input: { runtimeRoot?: string; toolPaths?: Record<string, string> }
+      ) => ({
+        id,
+        label: 'Cluster',
+        hostAlias: 'cluster-one',
+        ...(input.runtimeRoot ? { runtimeRoot: input.runtimeRoot } : {}),
+        ...(input.toolPaths && Object.keys(input.toolPaths).length
+          ? { toolPaths: input.toolPaths }
+          : {})
+      }),
       saveRemoteMicromambaMirrorSetting: (id: string, downloadMirrorPrefix?: string) => ({
         id,
         label: 'Cluster',
@@ -2787,6 +2784,7 @@ async function harness(
         ...(runtimeRoot ? { runtimeRoot } : {})
       }),
       clearRemoteRuntimeRootSetting: (): void => {},
+      clearRemoteEnvironmentSetting: (): void => {},
       clearRemoteMicromambaMirrorSetting: (): void => {},
       updateProjectRemoteConnectionRuntimeAware: (id: string) => ({
         id,
@@ -2844,6 +2842,9 @@ async function harness(
           }
         })
       }
+    },
+    './agent/remote-ripgrep-ipc': {
+      registerRemoteRipgrepIpc: (): void => {}
     },
     './agent/remote-micromamba-artifact': {
       remoteMicromambaManifestVersion: () => '2.9.0-0'
@@ -3165,7 +3166,6 @@ async function harness(
         return { reason: 'remote execution is mocked out in main-integration.test.ts' }
       }
     },
-    './agent/diagnostics': { formatDiagnostics },
     './agent/app-logger': {
       LOG_RETENTION_DAYS: 14,
       cleanupOldLogs: () => 0,
@@ -3179,7 +3179,8 @@ async function harness(
         noProjectTaskFolder: appNoProjectTaskFolder,
         allowExternalFileRead,
         preventSleepDuringRuns: false,
-        nextActionSuggestionsEnabled: true
+        nextActionSuggestionsEnabled: true,
+        fileOpenConversationLayout: 'sidebar'
       }),
       updateAppSettings: (patch: Record<string, unknown>): Record<string, unknown> => {
         if (typeof patch.allowExternalFileRead === 'boolean') {
@@ -3189,7 +3190,8 @@ async function harness(
           noProjectTaskFolder: appNoProjectTaskFolder,
           allowExternalFileRead,
           preventSleepDuringRuns: false,
-          nextActionSuggestionsEnabled: true
+          nextActionSuggestionsEnabled: true,
+          fileOpenConversationLayout: 'sidebar'
         }
       }
     },
@@ -3608,8 +3610,7 @@ async function harness(
     },
     setDownloadImpl: (impl): void => {
       downloadImpl = impl
-    },
-    copiedText: () => copiedText
+    }
   }
 }
 
@@ -4736,7 +4737,8 @@ test('main IPC: app settings exposes general preferences', async () => {
     noProjectTaskFolder: '/workspace',
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
-    nextActionSuggestionsEnabled: true
+    nextActionSuggestionsEnabled: true,
+    fileOpenConversationLayout: 'sidebar'
   })
 })
 
@@ -5373,38 +5375,6 @@ test('remote result download requires a save-dialog choice and routes progress a
   assert.equal(await app.invoke('wrapperResults:cancelDownload', 'download_002'), false)
 })
 
-test('main IPC: diagnostics are copied without conversation or raw tool output', async () => {
-  const app = await harness()
-
-  const text = (await app.invoke('diagnostics:copy')) as string
-
-  assert.equal(app.copiedText(), text)
-  assert.match(text, /# Phi Diagnostics/)
-  assert.match(text, /App: Phi 9\.8\.7/)
-  assert.match(text, /Permission mode: auto/)
-  assert.match(text, /OpenAI \(openai\).*apiKey=yes/)
-  assert.match(text, /Skills: 1/)
-  assert.match(text, /MCP servers: 1/)
-  assert.match(text, /Log directory: \/tmp\/phi\/logs/)
-  assert.match(text, /Log retention days: 14/)
-  assert.doesNotMatch(text, /sk-/)
-  assert.doesNotMatch(text, /assistant final/)
-  assert.doesNotMatch(text, /abcdefghijklmnop/)
-  assert.doesNotMatch(text, /private chain of thought/)
-  assert.equal(
-    app.appLogs.some((entry) => entry.event === 'diagnostics_copied'),
-    true
-  )
-  assert.equal(
-    app.appLogs.some(
-      (entry) =>
-        entry.event === 'diagnostics_copied' &&
-        JSON.stringify(entry.metadata ?? {}).includes('Phi Diagnostics')
-    ),
-    false
-  )
-})
-
 test('main IPC: unavailable project paths are blocked before creating a project session', async () => {
   const app = await harness()
 
@@ -5455,6 +5425,35 @@ test('main IPC: saves and clears a host runtime-root override without credential
     }
   )
   await assert.rejects(app.invoke('remote:saveMicromambaMirror', 'host-1', 42), /镜像前缀无效/)
+})
+
+test('main IPC: saves a compact remote environment override without accepting unsafe paths', async () => {
+  const app = await harness()
+
+  assert.deepEqual(
+    await app.invoke('remote:saveEnvironment', 'host-1', {
+      runtimeRoot: '/data/runtime',
+      toolPaths: {
+        nextflow: '/opt/nextflow/bin/nextflow',
+        docker: '/usr/local/bin/docker'
+      }
+    }),
+    {
+      id: 'host-1',
+      label: 'Cluster',
+      hostAlias: 'cluster-one',
+      runtimeRoot: '/data/runtime',
+      toolPaths: {
+        nextflow: '/opt/nextflow/bin/nextflow',
+        docker: '/usr/local/bin/docker'
+      }
+    }
+  )
+  await assert.rejects(app.invoke('remote:saveEnvironment', '', {}), /档案 ID 无效/)
+  await assert.rejects(
+    app.invoke('remote:saveEnvironment', 'host-1', { toolPaths: { docker: 42 } }),
+    /docker 路径无效/
+  )
 })
 
 test('main IPC: installs remote micromamba only for an explicit validated request', async () => {
@@ -6658,30 +6657,6 @@ test('remote project permission switches apply to existing sessions and host tic
   await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'ask')
   assert.equal(options.shouldGate(), true)
   await assert.rejects(run({ ...input, requestId: 'mode-write-3' }), /尚未获得本次会话的批准/)
-})
-
-test('main IPC: plugin operations write compact support log events', async () => {
-  const app = await harness()
-
-  await app.invoke('plugins:install', 'npm:@phi/example')
-  await app.invoke('plugins:remove', 'npm:@phi/example')
-
-  assert.equal(
-    app.appLogs.some(
-      (entry) =>
-        entry.event === 'plugin_installed' &&
-        (entry.metadata as { source?: string }).source === 'npm:@phi/example'
-    ),
-    true
-  )
-  assert.equal(
-    app.appLogs.some(
-      (entry) =>
-        entry.event === 'plugin_removed' &&
-        (entry.metadata as { source?: string }).source === 'npm:@phi/example'
-    ),
-    true
-  )
 })
 
 test('main IPC exposes local package registry planning and lifecycle channels', async () => {

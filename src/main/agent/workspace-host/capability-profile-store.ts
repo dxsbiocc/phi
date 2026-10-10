@@ -13,7 +13,8 @@ import { join } from 'node:path'
 import { getPhiAgentDir } from '../runtime-paths'
 import type {
   RemoteMicromambaCapabilityProfile,
-  RemoteMicromambaDownloadCapability
+  RemoteMicromambaDownloadCapability,
+  RemoteRipgrepCapabilityProfile
 } from '../../../shared/remoteRuntimeRootTypes'
 import {
   probeHostCapabilities,
@@ -23,7 +24,8 @@ import {
 import type { ProbedHostCapabilityProfile } from './probe-parse'
 import {
   withExpectedRemoteMicromambaVersion,
-  withRemoteMicromambaCapabilityProfile
+  withRemoteMicromambaCapabilityProfile,
+  withRemoteRipgrepCapabilityProfile
 } from './runtime-root-profile'
 import { HOST_CAPABILITY_PROFILE_VERSION } from './types'
 
@@ -304,6 +306,25 @@ export function updateLatestCapabilityProfileMicromambaDownloadForHost(
   const updated = storeWithMicromambaStatus(store, cacheKey, micromamba)
   if (!updated) return false
   writeStore(agentDir, updated)
+  return true
+}
+
+export function updateLatestCapabilityProfileRipgrepForHost(
+  hostAlias: string,
+  status: RemoteRipgrepCapabilityProfile,
+  agentDir = getPhiAgentDir()
+): boolean {
+  const store = readStore(agentDir)
+  const cacheKey = store.latestByHost[capabilityProfileHostKey(hostAlias)]
+  const profile = cacheKey ? store.entries[cacheKey] : undefined
+  if (!cacheKey || !profile?.runtimeRoot) return false
+  writeStore(agentDir, {
+    ...store,
+    entries: {
+      ...store.entries,
+      [cacheKey]: withRemoteRipgrepCapabilityProfile(profile, status)
+    }
+  })
   return true
 }
 
