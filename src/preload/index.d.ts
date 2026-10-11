@@ -37,7 +37,10 @@ import type {
   RemoteRipgrepResult,
   RemoteRipgrepStatusResult
 } from '../shared/remoteRipgrepTypes'
-import type { PromptAgentSummary as PreloadPromptAgentSummary } from '../shared/promptAgentTypes'
+import type {
+  PromptAgentSummary as PreloadPromptAgentSummary,
+  RemoteProjectAgentTrustRequest as PreloadRemoteProjectAgentTrustRequest
+} from '../shared/promptAgentTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -1134,6 +1137,12 @@ declare global {
       ) => Promise<SkillSummary[]>
       deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
+      trustRemoteProjectAgent: (
+        input: PreloadRemoteProjectAgentTrustRequest
+      ) => Promise<PreloadPromptAgentSummary[]>
+      revokeRemoteProjectAgentTrust: (
+        input: PreloadRemoteProjectAgentTrustRequest
+      ) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
       listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
       installMcpConnector: (

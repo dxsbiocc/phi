@@ -4088,6 +4088,7 @@ function App(): React.JSX.Element {
                 : onForkUserMessage
             }
             onOpenInputAddMenu={onOpenInputAddMenu}
+            onRefreshPromptAgents={refreshPromptAgents}
             onPickInputFiles={onPickInputFiles}
             onGetPathForInputFile={rendererApi.getPathForFile}
             onInputFilesDropped={rendererApi.onInputFilesDropped}

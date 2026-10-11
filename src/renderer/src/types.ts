@@ -35,7 +35,10 @@ import type {
   WorkspaceDiffReference
 } from '../../shared/workspaceChangeTypes'
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
-import type { PromptAgentSummary } from '../../shared/promptAgentTypes'
+import type {
+  PromptAgentSummary,
+  RemoteProjectAgentTrustRequest
+} from '../../shared/promptAgentTypes'
 export type { PromptAgentSummary } from '../../shared/promptAgentTypes'
 import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
@@ -960,6 +963,10 @@ export type RendererApi = RendererApiFoundation & {
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
+  trustRemoteProjectAgent: (input: RemoteProjectAgentTrustRequest) => Promise<PromptAgentSummary[]>
+  revokeRemoteProjectAgentTrust: (
+    input: RemoteProjectAgentTrustRequest
+  ) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
   listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
   installMcpConnector: (

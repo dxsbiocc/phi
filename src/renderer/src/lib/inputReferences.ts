@@ -317,7 +317,7 @@ function uniqueInvocationReferences(
 function inputInvocationReferenceFromLine(
   line: string,
   skills: readonly Pick<SkillSummary, 'name'>[],
-  promptAgents: readonly Pick<PromptAgentSummary, 'name' | 'source' | 'trigger'>[]
+  promptAgents: readonly Pick<PromptAgentSummary, 'name' | 'source' | 'trigger' | 'available'>[]
 ): InputInvocationReference | null {
   const trimmed = line.trim()
   const skillMatch = SKILL_REFERENCE_PATTERN.exec(trimmed)
@@ -331,7 +331,9 @@ function inputInvocationReferenceFromLine(
   const promptAgentMatch = PROMPT_AGENT_REFERENCE_PATTERN.exec(trimmed)
   if (promptAgentMatch) {
     const name = promptAgentMatch[1] ?? ''
-    const agent = promptAgents.find((candidate) => candidate.name === name)
+    const agent = promptAgents.find(
+      (candidate) => candidate.name === name && candidate.available !== false
+    )
     if (agent) {
       return { kind: 'agent', name, text: agent.trigger || `/prompts:${name}` }
     }
@@ -340,13 +342,17 @@ function inputInvocationReferenceFromLine(
   const agentMatch = AGENT_REFERENCE_PATTERN.exec(trimmed)
   if (agentMatch) {
     const name = agentMatch[1] ?? ''
-    const agent = promptAgents.find((candidate) => candidate.name === name)
+    const agent = promptAgents.find(
+      (candidate) => candidate.name === name && candidate.available !== false
+    )
     if (agent) {
       return {
         kind: 'agent',
         name,
         text:
-          agent.source === 'phi-agent' ? `调用智能体：${name}` : agent.trigger || `/prompts:${name}`
+          agent.source === 'phi-agent' || agent.source === 'server-project-agent'
+            ? `调用智能体：${name}`
+            : agent.trigger || `/prompts:${name}`
       }
     }
   }
@@ -355,7 +361,12 @@ function inputInvocationReferenceFromLine(
   if (phiAgentMatch) {
     const name = phiAgentMatch[1] ?? ''
     if (
-      promptAgents.some((candidate) => candidate.name === name && candidate.source === 'phi-agent')
+      promptAgents.some(
+        (candidate) =>
+          candidate.name === name &&
+          candidate.available !== false &&
+          (candidate.source === 'phi-agent' || candidate.source === 'server-project-agent')
+      )
     ) {
       return { kind: 'agent', name, text: `调用智能体：${name}` }
     }
@@ -367,7 +378,10 @@ function inputInvocationReferenceFromLine(
 export function parseInputInvocationReferences(
   input: string,
   skills: readonly Pick<SkillSummary, 'name'>[] = [],
-  promptAgents: readonly Pick<PromptAgentSummary, 'name' | 'source' | 'trigger'>[] = []
+  promptAgents: readonly Pick<
+    PromptAgentSummary,
+    'name' | 'source' | 'trigger' | 'available'
+  >[] = []
 ): ParsedInputInvocationReferences {
   const references: InputInvocationReference[] = []
   const bodyLines: string[] = []

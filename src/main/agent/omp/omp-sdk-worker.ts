@@ -117,7 +117,7 @@ import {
   WEB_SEARCH_PROVIDER_DETAILS,
   webSearchSettingsFromValues
 } from '../web-search-settings'
-import { buildNotebookCustomTools, NOTEBOOK_TOOL_NAMES } from '../notebook/notebook-tools'
+import { buildNotebookCustomTools } from '../notebook/notebook-tools'
 import { readRuntimeSessionMessagesText } from '../runtime/runtime-session-text'
 import { buildAskUserQuestionCustomTools } from '../user-interaction-tools'
 import { buildBrowserTool } from '../browser/browser-tool'
@@ -136,14 +136,17 @@ import { buildAgentRunTools } from '../agents/run-tools'
 import { createAgentRunner, type AgentSessionLike } from '../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../agents/usage-log'
 import { buildScopedPhiToolMap, resolveAgentTools } from '../agents/tool-resolution'
-import { buildAgentTool } from '../agents/tool'
+import { agentDelegationToolDescription, buildAgentTool } from '../agents/tool'
 import { createSpecialistFallbackExtension } from '../agents/fallback-policy'
 import { createProjectToolBoundaryExtension } from '../agents/project-tool-boundary'
 import { createEnvironmentBindingExtension } from '../agents/environment-binding'
 import { createRemoteUrlGuardExtension } from '../agents/remote-url-guard'
 import { installSpecialistToolCallExtensions } from '../agents/specialist-tool-call-extensions'
+import { resolveRemoteAgentTools, shouldAttachRemoteParentTool } from '../agents/remote-agent-tools'
 import {
   createRemoteProjectToolGuardExtension,
+  remoteAgentSupportedToolNames,
+  remoteAgentToolRegistrationVerified,
   remoteWorkspaceToolsVerified
 } from '../agents/remote-project-tool-guard'
 import { AGENT_REPORT_PROTOCOL } from '../agents/report'
@@ -1109,8 +1112,15 @@ async function createPhiAgentSession(
   }
 ): Promise<AgentSessionLike> {
   const { sessionId, cwd, agentDir, ctx } = deps
+  const remoteResolution = deps.remoteRoot
+    ? resolveRemoteAgentTools(definition, remoteAgentSupportedToolNames())
+    : undefined
+  if (remoteResolution && !remoteResolution.available) {
+    throw new Error(remoteResolution.unavailableReason)
+  }
+  const runtimeDefinition = remoteResolution?.agent ?? definition
   const sessionCwd = deps.remoteRoot ? agentDir : cwd
-  const binding = await bindSpecialistEnvironment(definition, deps)
+  const binding = await bindSpecialistEnvironment(runtimeDefinition, deps)
   const holder = binding
     ? {
         ref: binding.ref,
@@ -1156,24 +1166,26 @@ async function createPhiAgentSession(
       : undefined
   if (loader) await loader.reload()
   const skills = loader
-    ? selectDeclaredSpecialistSkills(loader.getSkills().skills, definition.skills)
+    ? selectDeclaredSpecialistSkills(loader.getSkills().skills, runtimeDefinition.skills)
     : undefined
 
   const availableTools = phiToolFunctions(
     sessionId,
     agentDir,
     sessionCwd,
-    definition.name,
+    runtimeDefinition.name,
     deps.skillTools
       ? buildSkillRunTool(requestHost, {
           ...(typeof remoteSkillHost === 'string'
             ? { runtimeSessionId: remoteSkillHost }
             : remoteSkillHost),
-          allowedSkills: definition.skills
+          allowedSkills: runtimeDefinition.skills
         })
       : undefined
   )
   for (const tool of deps.remoteTools?.() ?? []) {
+    if (!shouldAttachRemoteParentTool(runtimeDefinition, tool.name, availableTools.has(tool.name)))
+      continue
     if (tool.name !== 'read' || !deps.remoteRead) availableTools.set(tool.name, tool)
   }
   const remoteMcpTools = deps.remoteMcpTools?.() ?? []
@@ -1188,7 +1200,9 @@ async function createPhiAgentSession(
   }
   const attachedScriptTools = buildScriptTools(
     (deps.skillTools ?? []).filter(
-      (tool) => definition.skills.includes(tool.skill) && tool.attachTo.includes(definition.name)
+      (tool) =>
+        runtimeDefinition.skills.includes(tool.skill) &&
+        tool.attachTo.includes(runtimeDefinition.name)
     ),
     requestHost,
     remoteSkillHost
@@ -1198,12 +1212,12 @@ async function createPhiAgentSession(
     const envRequest = buildEnvRequestTool(requestHost, {
       runtimeSessionId: sessionId,
       binding: holder,
-      agent: definition.name,
+      agent: runtimeDefinition.name,
       ...(deps.remoteProject ? { remoteProject: deps.remoteProject } : {})
     })
     availableTools.set(envRequest.name, envRequest)
   }
-  const declaredTools = [...definition.tools]
+  const declaredTools = [...runtimeDefinition.tools]
   for (const tool of attachedScriptTools) {
     if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
   }
@@ -1215,10 +1229,10 @@ async function createPhiAgentSession(
   const parentSession = deps.parent()?.session
   const parentModel = parentSession?.model || undefined
   let model = parentModel
-  if (definition.model && definition.model.length > 0) {
+  if (runtimeDefinition.model && runtimeDefinition.model.length > 0) {
     const selection = await selectAgentModel(
-      definition.name,
-      definition.model,
+      runtimeDefinition.name,
+      runtimeDefinition.model,
       async (selector) => {
         const slash = selector.indexOf('/')
         if (slash <= 0 || slash >= selector.length - 1) return undefined
@@ -1238,12 +1252,12 @@ async function createPhiAgentSession(
     if (selection.warning) process.stderr.write(`${selection.warning}\n`)
     model = selection.model
   }
-  const thinkingLevel = definition.thinkingLevel
-    ? (definition.thinkingLevel as ConfiguredThinkingLevel)
+  const thinkingLevel = runtimeDefinition.thinkingLevel
+    ? (runtimeDefinition.thinkingLevel as ConfiguredThinkingLevel)
     : parentSession?.thinkingLevel
   const result = await createLegacyAgentSession({
     agentId: `phi-agent-${sessionId}-${randomUUID()}`,
-    agentDisplayName: definition.name,
+    agentDisplayName: runtimeDefinition.name,
     cwd: sessionCwd,
     agentDir,
     settings,
@@ -1254,7 +1268,7 @@ async function createPhiAgentSession(
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(loader ? { resourceLoader: loader } : {}),
     ...(skills ? { skills } : {}),
-    appendSystemPrompt: `${definition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
+    appendSystemPrompt: `${runtimeDefinition.systemPrompt}${deps.remoteRoot ? `\n\nRemote project root: ${JSON.stringify(deps.remoteRoot)}.` : ''}\n\n${AGENT_REPORT_PROTOCOL}`,
     ...(customTools.length > 0 ? { customTools } : {}),
     toolNames,
     restrictToolNames: true,
@@ -1284,7 +1298,10 @@ async function createPhiAgentSession(
       reportRuntimeError: () =>
         process.stderr.write('Phi remote specialist extension handler failed\n')
     })
-    const verified = remoteWorkspaceToolsVerified(result.session.getAllToolInfos())
+    const verified = remoteWorkspaceToolsVerified(
+      result.session.getAllToolInfos(),
+      runtimeDefinition.tools
+    )
     if (!verified) {
       await result.session.dispose()
       throw new Error('远程专家文件/命令工具未覆盖本地实现；专家会话已拒绝启动')
@@ -1740,6 +1757,14 @@ async function createSession(params: unknown): Promise<unknown> {
       ? [
           createRemoteProjectToolGuardExtension({
             dynamicSkillToolNames: () => remoteSkillToolNames,
+            dynamicAgentToolNames: () => new Set(phiAgents.map((agent) => agent.name)),
+            dynamicAgentToolDescriptions: () =>
+              new Map(
+                phiAgents.map((agent) => [
+                  agent.name,
+                  agentDelegationToolDescription(agent, { cwd, remote: true })
+                ])
+              ),
             remoteMcpToolState: () => remoteMcpAccess?.state
           })
         ]
@@ -1848,18 +1873,14 @@ async function createSession(params: unknown): Promise<unknown> {
                   remoteRoot,
                   ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {}),
                   remoteContextFiles: remoteContextFiles ?? [],
-                  remoteTools: () =>
-                    customTools.filter((tool) =>
-                      [
-                        'read',
-                        'bash',
-                        'glob',
-                        'grep',
-                        'write',
-                        'edit',
-                        ...NOTEBOOK_TOOL_NAMES
-                      ].includes(tool.name)
-                    ),
+                  remoteTools: () => {
+                    const registered = parentRef.current?.session.getAllToolInfos() ?? []
+                    return customTools.filter(
+                      (tool) =>
+                        !tool.name.startsWith('mcp__') &&
+                        remoteAgentToolRegistrationVerified(tool.name, registered)
+                    )
+                  },
                   remoteMcpTools: () => {
                     const names = remoteMcpAccess?.state?.allowedToolNames
                     return (parentRef.current?.mcpManager?.getTools() ?? []).filter((tool) =>

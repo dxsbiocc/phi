@@ -369,6 +369,7 @@ type HarnessResult = {
   runStartInputs: Array<Record<string, unknown>>
   createdPhiSessions: Array<Record<string, unknown>>
   remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
+  remoteAgentMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
   wrapperJobOptions: Record<string, unknown>
   remoteResolverProjectIds: string[]
   remoteDoctorCalls: Array<{ hostProfileId: string; remotePath?: string; options?: unknown }>
@@ -492,6 +493,10 @@ async function harness(
   const runStartInputs: Array<Record<string, unknown>> = []
   const createdPhiSessions: Array<Record<string, unknown>> = []
   const remoteConnectionChecks: Array<{ sessionId: string; projectId: string }> = []
+  const remoteAgentMutations: Array<{
+    operation: 'trust' | 'revoke'
+    input: Record<string, unknown>
+  }> = []
   const wrapperJobOptions: Record<string, unknown> = {}
   const remoteResolverProjectIds: string[] = []
   const remoteDoctorCalls: Array<{
@@ -2960,6 +2965,34 @@ async function harness(
         target.includes(path.join('packages', 'plugin')) && target.endsWith('preview.png')
     },
     './agent/agents/remote-wrapper-agent': { loadRemoteWrapperAgent },
+    './agent/agents/remote-agent-service': {
+      loadRemoteAgentCatalog: async () => {
+        const wrapper = loadRemoteWrapperAgent(path.join(process.cwd(), 'resources', 'agents'))
+        return {
+          agents: wrapper ? [wrapper] : [],
+          entries: wrapper
+            ? [
+                {
+                  id: wrapper.filePath,
+                  name: wrapper.name,
+                  description: wrapper.description,
+                  source: 'phi-agent',
+                  trigger: `调用智能体：${wrapper.name}`,
+                  scope: 'local',
+                  available: true
+                }
+              ]
+            : [],
+          diagnostics: []
+        }
+      },
+      trustRemoteAgent: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteAgentMutations.push({ operation: 'trust', input })
+      },
+      revokeRemoteAgent: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteAgentMutations.push({ operation: 'revoke', input })
+      }
+    },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
@@ -3794,6 +3827,7 @@ async function harness(
     runStartInputs,
     createdPhiSessions,
     remoteConnectionChecks,
+    remoteAgentMutations,
     wrapperJobOptions,
     remoteResolverProjectIds,
     remoteDoctorCalls,
@@ -5881,7 +5915,35 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
     ),
     ['global']
   )
-  assert.deepEqual(await app.invoke('agents:list', current.cwd), [])
+  assert.deepEqual(
+    ((await app.invoke('agents:list', current.cwd)) as Array<{ name: string }>).map(
+      (agent) => agent.name
+    ),
+    ['Wrapper']
+  )
+  const agentTrustRequest = {
+    cwd: current.cwd,
+    relativePath: '.phi/agents/Reviewer.md',
+    contentHash: 'a'.repeat(64)
+  }
+  await app.invoke('agents:trustRemoteProject', agentTrustRequest)
+  await app.invoke('agents:revokeRemoteProjectTrust', agentTrustRequest)
+  assert.deepEqual(app.remoteAgentMutations, [
+    {
+      operation: 'trust',
+      input: {
+        relativePath: agentTrustRequest.relativePath,
+        contentHash: agentTrustRequest.contentHash
+      }
+    },
+    {
+      operation: 'revoke',
+      input: {
+        relativePath: agentTrustRequest.relativePath,
+        contentHash: agentTrustRequest.contentHash
+      }
+    }
+  ])
   assert.deepEqual(
     ((await app.invoke('mcp:listServers', current.cwd)) as Array<{ name: string }>).map(
       (server) => server.name

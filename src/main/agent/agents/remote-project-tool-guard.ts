@@ -35,15 +35,18 @@ export function remoteWorkspaceToolsVerified(
     name: string
     description: string
     sourceInfo: { source: string }
-  }[]
+  }[],
+  requiredNames: readonly string[] = REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.map(([name]) => name)
 ): boolean {
-  return REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.every(([name, description]) =>
-    tools.some(
-      (tool) =>
-        tool.name === name &&
-        tool.description === description &&
-        tool.sourceInfo.source !== 'builtin'
-    )
+  const required = new Set(requiredNames)
+  return REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.filter(([name]) => required.has(name)).every(
+    ([name, description]) =>
+      tools.some(
+        (tool) =>
+          tool.name === name &&
+          tool.description === description &&
+          tool.sourceInfo.source !== 'builtin'
+      )
   )
 }
 
@@ -80,6 +83,27 @@ const VERIFIED_REMOTE_TOOL_DESCRIPTIONS = new Map([
   ['env_request', PHI_ENV_REQUEST_DESCRIPTION]
 ])
 
+const MAIN_SESSION_ONLY_REMOTE_TOOLS = new Set([
+  'Wrapper',
+  'agent_status',
+  'agent_wait',
+  'agent_steer',
+  'agent_stop'
+])
+
+const REMOTE_AGENT_SUPPORTED_TOOL_NAMES = new Set<string>([
+  ...REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.map(([name]) => name),
+  ...[...SAFE_PHI_REMOTE_TOOLS].filter((name) => !MAIN_SESSION_ONLY_REMOTE_TOOLS.has(name)),
+  ...SAFE_REMOTE_BUILTINS,
+  ...VERIFIED_REMOTE_TOOL_DESCRIPTIONS.keys(),
+  ...NOTEBOOK_TOOL_DESCRIPTIONS.keys()
+])
+
+/** Static discovery inventory; runtime still verifies the exact registered backend. */
+export function remoteAgentSupportedToolNames(): ReadonlySet<string> {
+  return new Set(REMOTE_AGENT_SUPPORTED_TOOL_NAMES)
+}
+
 /** Each verified same-name remote backend is released separately. */
 export function remoteProjectToolDecision(
   toolName: string,
@@ -93,7 +117,8 @@ export function remoteProjectToolDecision(
   safeBuiltinRegistered = false,
   verifiedRemoteRuntimeToolRegistered = false,
   dynamicSkillToolRegistered = false,
-  verifiedRemoteNotebookToolRegistered = false
+  verifiedRemoteNotebookToolRegistered = false,
+  dynamicAgentToolRegistered = false
 ): { block: true; reason: string } | undefined {
   if (SAFE_REMOTE_BUILTINS.has(toolName) && safeBuiltinRegistered) return undefined
   if (toolName === 'read' && remoteReadRegistered) return undefined
@@ -124,6 +149,7 @@ export function remoteProjectToolDecision(
     return { block: true, reason: remoteToolBlockedReason(toolName) }
   }
   if (dynamicSkillToolRegistered) return undefined
+  if (dynamicAgentToolRegistered) return undefined
   return { block: true, reason: remoteToolBlockedReason(toolName) }
 }
 
@@ -174,13 +200,19 @@ function remoteToolBlockedReason(toolName: string): string {
 export function createRemoteProjectToolGuardExtension(
   options: {
     dynamicSkillToolNames?: () => ReadonlySet<string>
+    dynamicAgentToolNames?: () => ReadonlySet<string>
+    dynamicAgentToolDescriptions?: () => ReadonlyMap<string, string>
     remoteMcpToolState?: () => RemoteMcpGuardState | undefined
   } = {}
 ): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
-      const dynamicNames = options.dynamicSkillToolNames?.() ?? new Set<string>()
-      const registered = needsRegistration(event.toolName, dynamicNames) ? pi.getAllTools() : []
+      const dynamicSkillNames = options.dynamicSkillToolNames?.() ?? new Set<string>()
+      const dynamicAgentNames = options.dynamicAgentToolNames?.() ?? new Set<string>()
+      const dynamicAgentDescriptions = options.dynamicAgentToolDescriptions?.() ?? new Map()
+      const registered = needsRegistration(event.toolName, dynamicSkillNames, dynamicAgentNames)
+        ? pi.getAllTools()
+        : []
       if (event.toolName.startsWith('mcp__')) {
         const matches = registered.filter((tool) => tool.name === event.toolName)
         const source = matches.length === 1 ? matches[0]?.sourceInfo.source : undefined
@@ -198,14 +230,42 @@ export function createRemoteProjectToolGuardExtension(
         verifiedCustomTool(event.toolName, registered),
         verifiedBuiltinTool(event.toolName, registered),
         verifiedRemoteRuntimeTool(event.toolName, registered),
-        verifiedDynamicSkillTool(event.toolName, registered, dynamicNames),
-        verifiedNotebookTool(event.toolName, registered)
+        verifiedDynamicSkillTool(event.toolName, registered, dynamicSkillNames),
+        verifiedNotebookTool(event.toolName, registered),
+        verifiedDynamicAgentTool(
+          event.toolName,
+          registered,
+          dynamicAgentNames,
+          dynamicAgentDescriptions
+        )
       )
     })
   }
 }
 
-type ToolInfo = { name: string; description: string; sourceInfo: { source: string } }
+export type RemoteProjectToolInfo = {
+  name: string
+  description: string
+  sourceInfo: { source: string }
+}
+
+type ToolInfo = RemoteProjectToolInfo
+
+/** Reuses the runtime guard's exact allowlist and backend signatures for remote agents. */
+export function remoteAgentToolRegistrationVerified(
+  toolName: string,
+  registered: readonly RemoteProjectToolInfo[]
+): boolean {
+  const workspaceIndex = REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.findIndex(([name]) => name === toolName)
+  if (workspaceIndex >= 0) return workspaceRegistrationFlags(registered)[workspaceIndex] === true
+  if (SAFE_REMOTE_BUILTINS.has(toolName)) return verifiedBuiltinTool(toolName, registered)
+  if (SAFE_PHI_REMOTE_TOOLS.has(toolName)) return verifiedCustomTool(toolName, registered)
+  if (toolName === 'skill_run' || toolName === 'env_request') {
+    return verifiedRemoteRuntimeTool(toolName, registered)
+  }
+  if (NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName)) return verifiedNotebookTool(toolName, registered)
+  return VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) && verifiedCustomTool(toolName, registered)
+}
 
 function workspaceRegistrationFlags(
   tools: readonly ToolInfo[]
@@ -220,7 +280,11 @@ function workspaceRegistrationFlags(
   ) as [boolean, boolean, boolean, boolean, boolean, boolean]
 }
 
-function needsRegistration(toolName: string, dynamicNames: ReadonlySet<string>): boolean {
+function needsRegistration(
+  toolName: string,
+  dynamicSkillNames: ReadonlySet<string>,
+  dynamicAgentNames: ReadonlySet<string>
+): boolean {
   return (
     ['read', 'bash', 'glob', 'grep', 'write', 'edit'].includes(toolName) ||
     SAFE_REMOTE_BUILTINS.has(toolName) ||
@@ -228,7 +292,8 @@ function needsRegistration(toolName: string, dynamicNames: ReadonlySet<string>):
     VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) ||
     NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName) ||
     toolName.startsWith('mcp__') ||
-    dynamicNames.has(toolName)
+    dynamicSkillNames.has(toolName) ||
+    dynamicAgentNames.has(toolName)
   )
 }
 
@@ -265,6 +330,23 @@ function verifiedDynamicSkillTool(
   )
 }
 
+function verifiedDynamicAgentTool(
+  toolName: string,
+  registered: readonly ToolInfo[],
+  dynamicNames: ReadonlySet<string>,
+  descriptions: ReadonlyMap<string, string>
+): boolean {
+  if (!dynamicNames.has(toolName)) return false
+  const expected = descriptions.get(toolName)
+  if (!expected) return false
+  const matches = registered.filter((tool) => tool.name === toolName)
+  return (
+    matches.length === 1 &&
+    matches[0]?.sourceInfo.source === 'extension' &&
+    matches[0]?.description === expected
+  )
+}
+
 function verifiedBuiltinTool(toolName: string, registered: readonly ToolInfo[]): boolean {
   return (
     SAFE_REMOTE_BUILTINS.has(toolName) &&
@@ -274,10 +356,10 @@ function verifiedBuiltinTool(toolName: string, registered: readonly ToolInfo[]):
 
 function verifiedCustomTool(toolName: string, registered: readonly ToolInfo[]): boolean {
   const expected = VERIFIED_REMOTE_TOOL_DESCRIPTIONS.get(toolName)
-  return registered.some(
-    (tool) =>
-      tool.name === toolName &&
-      tool.sourceInfo.source !== 'builtin' &&
-      (expected === undefined || tool.description === expected)
+  const matches = registered.filter((tool) => tool.name === toolName)
+  return (
+    matches.length === 1 &&
+    matches[0]?.sourceInfo.source !== 'builtin' &&
+    (expected === undefined || matches[0]?.description === expected)
   )
 }

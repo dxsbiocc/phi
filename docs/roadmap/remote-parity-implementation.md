@@ -29,10 +29,10 @@
 | Notebook/Jupyter | 不注入 | `src/main/index.ts`（`notebookPrompt = remoteProject ? null : …`） |
 | Skills / 脚本工具 / viz | 关闭 | `index.ts`（`shouldLoadBundledSkills = !remoteProject`）、worker（`skillTools = remoteRoot ? undefined`） |
 | 受管环境 / `env_request` | 抛错 | worker（`environment binding is not supported for remote projects yet`） |
-| 项目级 MCP / 项目 agent | 仅全局 MCP；agent 仅 Wrapper | `index.ts`（`isRemoteResourceScope`、`remoteWrapperAgent`） |
+| 项目级 MCP / 项目 agent | 项目 MCP 仍为后续任务；agent 的 R5.1/R5.2 已完成代码与本机假 SSH 验证，真实服务器待验证 | 远程可用本机全局/插件/Wrapper agent；服务器项目 agent 经内容哈希信任门禁后才进入提示与工具表 |
 | Office 工具 / `present_files` | 关闭 | worker（`officeCustomTools = remoteRoot ? [] …`） |
 | Git | 无专门支持 | — |
-| 专家子智能体 | 仅 Wrapper 拿到远程工具 | worker（`remoteTools` 过滤） |
+| 专家子智能体 | 本机全局/插件、Wrapper 和已信任的服务器项目 agent 均按远程工具交集运行 | worker 对声明工具再做实际注册来源/签名校验；不可用 agent 只展示诊断 |
 
 待核实（第 1 步内顺带确认）：`buildProjectDownloadTool(cwd, agentDir)` 在远程项目下仍使用本地锚点目录。
 
@@ -44,7 +44,7 @@
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | A           | `browser`、`web_search`、`ask_user_question`、`palette_suggest`                                                                                                                                                                        | 浏览器、搜索、Phi 问答 UI 与调色板不使用项目 cwd，逐项放行。`browser` 仍沿用远程会话当前的输入动作限制。SDK 没有独立 `web_fetch`：网页抓取原本是 builtin `read(URL)` 分支，而远程项目的 `read` 已被服务器文件读取覆盖；本次以 `browser`/`web_search` 为可用替代，不把 URL 交给本机项目 `read`。                                                                                |
 | A（R3）     | `terminal:generateDraft`、`terminal:submitDraft`（renderer/main IPC，**不是 Agent custom tool**）                                                                                                                                       | 命令草稿在本机无工具模型会话中生成，不读取项目文件，也不写 PTY；只有用户在 UI 中显式提交才写入当前本地或 SSH PTY。该 IPC 不进入 `remote-project-tool-guard`；任何同名 Agent tool（含 builtin/extension）都视为伪造并拒绝。                                                                                                                                                |
-| A           | 动态 Phi agent 名（远程当前只有 `Wrapper`）、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 只在对应 Phi custom tool 已实际注册时放行。Wrapper 运行已有远程 job 后端；管理工具只操作本会话的 run registry，不解析本机项目路径。builtin `task` 不在此列。                                                                                                                                                                                                                   |
+| A（R5.1/R5.2） | 动态 Phi agent 名、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 本机全局/插件 agent、远程 Wrapper 与已信任的服务器项目 agent 可进入远程会话；每个 agent 的声明工具先与远程支持集合取交集，再按当前会话唯一注册、来源和 canonical description 二次验签。未知、Office、`lib.*`、未验证 `mcp__*` 被丢弃并逐项诊断；交集为空或 read/bash 均缺失时 agent 不可调用。动态 agent 名只有同时位于本会话定义集合且唯一注册为非 builtin custom tool 时放行。builtin `task` 不在此列。 |
 | B（后续）   | 条件 builtin `checkpoint`、`rewind`、`todo`、`goal`、`think`、`yield`、`ask`、`hub`；SDK 条件工具 `generate_image`、`tts`                                                                                                              | 这些 SDK 工具不是本轮的 Phi 子智能体管理面；其中 checkpoint/todo/hub 可能读取 cwd、写会话文件或管理本机进程，图像/语音工具还需确认远程输出与交付路径。逐项证明不触碰本机项目锚点前继续 fail-closed。                                                                                                                                                                           |
 | B（已有）   | `read`、`bash`、`glob`、`grep`、`write`、`edit`                                                                                                                                                                                        | 保持现有同名远程实现与 description/source 验签；任何 builtin 同名实现都拒绝。                                                                                                                                                                                                                                                                                                  |
 | B（R2.5b）  | `skill_run`、动态 `<toolPrefix>_<name>` 脚本工具；Skills 列出/读取（资源能力，不是独立工具名）                                                                                                                                         | 远程目录只列出/读取已启用的全局 Skills，忽略本机 anchor 中伪造的项目资源。经过校验的完整 Skill 目录按内容哈希上传到服务器运行时根 `skills/<hash>/`，已完成的相同哈希直接复用；脚本以远程项目目录为 cwd，经 `WorkspaceHost.exec` 在登录节点运行，并可用 `micromamba run -p <remote-env>`。guard 只放行远程服务实际声明且注册的动态工具名。项目级 Skill 仍留待远程资源信任机制。 |
@@ -423,7 +423,17 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 ### 第 5 步：项目级 MCP 与 agent 发现
 
-- 从远程项目根扫描 `.phi/` 资源，加信任门禁；HTTP 连接器留在本机，stdio 连接器在选定 host 上运行。
+- Agent 的 R5.1/R5.2 已完成；项目级 MCP 留作后续任务。HTTP 连接器留在本机、stdio 连接器在选定 host 上运行的 MCP 方案本次未实现。
+
+#### R5.1/R5.2 远程 agent 与信任（2026-10-11）
+
+- **R5.1 本机来源**：远程项目只读取本机 `~/.phi/agents`、已安装插件的 `agents/` 和 bundled `Wrapper.md`（加载远程 Wrapper 变体），不读取本机 anchor 的项目资源，也不引入本机全局兼容目录。优先级为全局 > 内置 Wrapper > 插件；本地项目原有的项目 > 全局 > bundled/插件规则不变。
+- **R5.2 服务器来源**：只经当前项目绑定的 `WorkspaceHost.fs` 扫描 `<远程项目根>/.phi/agents/*.md` 与 `.omp/.pi/.claude/agents/*.md`。每目录最多 256 项，单文件最多 256 KiB；非 `.md`、二进制、无效 UTF-8、越界符号链接、超限与非法定义只生成诊断，不拖垮其他 agent。解析继续使用 `definition.ts` 的 Phi/compat 校验；未知 hooks/MCP/cwd 字段不会进入定义，本机或服务器绝对路径型 environment 会被拒绝。
+- **信任键与本机存储**：精确信任键为「主机别名 + 规范化服务器项目根 + agent 相对路径 + 文件内容 SHA-256」。记录只保存在本机 `~/.phi/remote-agent-trust.json`，同目录独占临时文件写入后原子 rename，最终权限强制为 `0600`；文件正文、hooks、MCP 配置和本机路径不会写入该 JSON，服务器上不写信任状态。
+- **状态机**：首次发现为 `pending`（“来自服务器项目，未信任”）；用户显式信任当前 hash 后为 `trusted`；同一路径内容 hash 改变后自动变为 `changed`（“内容已变化，需要重新信任”）；重新信任新 hash 后恢复 `trusted`；撤销会删除该 host/root/path 的全部旧 hash 记录并回到 `pending`。trust/revoke IPC 都重新读取服务器文件并核对 renderer 提交的 hash，过期请求拒绝。
+- **提示、工具与同名规则**：pending、changed、invalid 或远程工具条件不满足的定义可在列表中显示状态与诊断，但不进入 leader 系统提示、`phiAgents`、fallback 或委派工具表。已信任项目 agent 优先于全局、内置/插件；未信任项目 agent 不参与同名覆盖。已信任但不可用的项目定义占据其名称并显示原因，不静默回退到另一个同名全局 agent。
+- **仍被拒绝**：项目级 MCP、frontmatter 扩展 MCP/hooks/路径权限、Office 与 `lib.*`、未知或伪造 builtin、没有当前远程注册后端的工具、越界/二进制/超限文件，以及 read/bash 两者都缺失的 agent。任何拒绝都不回退本机项目锚点。
+- **验证边界**：自动化只使用本机 Bash 冒充 SSH 的 `WorkspaceHost`，覆盖工具交集、不可用诊断、待信任隔离、信任/变更/撤销、同名优先级、恶意 frontmatter、文件边界、原子 `0600` 存储、IPC/preload 与两个 composer 入口；本次未联网、未连接真实服务器，真机门禁仍待做。
 
 ### 第 6 步：交付物链路
 

@@ -17,6 +17,7 @@ import {
   formatSkillPromptReference
 } from '../../lib/inputReferences'
 import type { PromptAgentSummary, SkillSummary } from '../../types'
+import { PromptAgentStatus, RemoteAgentTrustControl } from '../../features/agent/AgentTrustPanel'
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const AddIcon = PhiIcons.action.add
@@ -122,6 +123,7 @@ export function InputAddPanel({
   cwd,
   onPickFiles,
   onInsertReference,
+  onTrustChanged,
   onClose
 }: {
   panelId: string
@@ -131,6 +133,7 @@ export function InputAddPanel({
   cwd: string
   onPickFiles?: () => Promise<string[]>
   onInsertReference: (reference: string) => void
+  onTrustChanged?: () => Promise<void>
   onClose: () => void
 }): ReactNode {
   const enabledSkills = useMemo(() => skills.filter((skill) => !skill.disabled), [skills])
@@ -180,12 +183,25 @@ export function InputAddPanel({
       <InputAddGroup title="智能体">
         {promptAgents.length > 0 ? (
           promptAgents.map((agent) => (
-            <InputAddMenuRow
-              key={agent.id}
-              icon={<ResourceIcon icon={agent.icon} kind="agent" size={24} fallbackSize={18} />}
-              primary={agent.name}
-              onClick={() => insertReference(formatPromptAgentReference(agent))}
-            />
+            <Box key={agent.id}>
+              <InputAddMenuRow
+                icon={<ResourceIcon icon={agent.icon} kind="agent" size={24} fallbackSize={18} />}
+                primary={agent.name}
+                disabled={agent.available === false}
+                onClick={() => insertReference(formatPromptAgentReference(agent))}
+              />
+              <Box sx={{ px: 1 }}>
+                <PromptAgentStatus agent={agent} />
+              </Box>
+              <RemoteAgentTrustControl
+                agent={agent}
+                cwd={cwd}
+                onChanged={async () => {
+                  await onTrustChanged?.()
+                  onClose()
+                }}
+              />
+            </Box>
           ))
         ) : (
           <InputAddEmptyState>暂无可指定智能体</InputAddEmptyState>

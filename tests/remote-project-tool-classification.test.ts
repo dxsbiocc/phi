@@ -18,10 +18,21 @@ type ToolInfo = { name: string; description: string; sourceInfo: { source: strin
 
 function guard(
   tools: ToolInfo[],
-  dynamicSkillToolNames: ReadonlySet<string> = new Set()
+  dynamicSkillToolNames: ReadonlySet<string> = new Set(),
+  dynamicAgentToolNames: ReadonlySet<string> = new Set(),
+  dynamicAgentToolDescriptions: ReadonlyMap<string, string> = new Map(
+    [...dynamicAgentToolNames].map((name) => [
+      name,
+      tools.find((tool) => tool.name === name)?.description ?? ''
+    ])
+  )
 ): (event: { toolName: string }) => Promise<unknown> {
   let handler: ((event: { toolName: string }) => Promise<unknown>) | undefined
-  createRemoteProjectToolGuardExtension({ dynamicSkillToolNames: () => dynamicSkillToolNames })({
+  createRemoteProjectToolGuardExtension({
+    dynamicSkillToolNames: () => dynamicSkillToolNames,
+    dynamicAgentToolNames: () => dynamicAgentToolNames,
+    dynamicAgentToolDescriptions: () => dynamicAgentToolDescriptions
+  })({
     on: (event: string, callback: typeof handler) => {
       if (event === 'tool_call') handler = callback
     },
@@ -31,22 +42,71 @@ function guard(
   return handler
 }
 
+test('remote guard releases a dynamic agent only for one registered non-builtin tool', async () => {
+  const extension = {
+    name: 'Researcher',
+    description: 'Remote Researcher agent',
+    sourceInfo: { source: 'extension' }
+  }
+  assert.equal(
+    await guard([extension], new Set(), new Set(['Researcher']))({ toolName: 'Researcher' }),
+    undefined
+  )
+
+  for (const tools of [
+    [{ ...extension, sourceInfo: { source: 'builtin' } }],
+    [{ ...extension, sourceInfo: { source: 'mcp' } }],
+    [extension, { ...extension }]
+  ]) {
+    const decision = await guard(
+      tools,
+      new Set(),
+      new Set(['Researcher'])
+    )({ toolName: 'Researcher' })
+    assert.equal((decision as { block?: boolean }).block, true)
+  }
+  const undeclared = await guard([extension])({ toolName: 'Researcher' })
+  assert.equal((undeclared as { block?: boolean }).block, true)
+
+  const changedDescription = await guard(
+    [{ ...extension, description: 'Changed description' }],
+    new Set(),
+    new Set(['Researcher']),
+    new Map([['Researcher', extension.description]])
+  )({ toolName: 'Researcher' })
+  assert.equal((changedDescription as { block?: boolean }).block, true)
+
+  const duplicateWrapper = await guard(
+    [
+      { ...extension, name: 'Wrapper' },
+      { ...extension, name: 'Wrapper' }
+    ],
+    new Set(),
+    new Set(['Wrapper'])
+  )({ toolName: 'Wrapper' })
+  assert.equal((duplicateWrapper as { block?: boolean }).block, true)
+})
+
 test('remote guard releases verified project-independent tools one by one', async () => {
-  const handler = guard([
-    ...[
-      'browser',
-      'ask_user_question',
-      'palette_suggest',
-      'render_blocks',
-      'Wrapper',
-      'agent_status'
-    ].map((name) => ({
-      name,
-      description: `Phi ${name}`,
-      sourceInfo: { source: 'extension' }
-    })),
-    { name: 'web_search', description: 'Web search', sourceInfo: { source: 'builtin' } }
-  ])
+  const handler = guard(
+    [
+      ...[
+        'browser',
+        'ask_user_question',
+        'palette_suggest',
+        'render_blocks',
+        'Wrapper',
+        'agent_status'
+      ].map((name) => ({
+        name,
+        description: `Phi ${name}`,
+        sourceInfo: { source: 'extension' }
+      })),
+      { name: 'web_search', description: 'Web search', sourceInfo: { source: 'builtin' } }
+    ],
+    new Set(),
+    new Set(['Wrapper'])
+  )
 
   assert.equal(await handler({ toolName: 'web_search' }), undefined)
   for (const name of [

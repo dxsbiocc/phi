@@ -1,15 +1,19 @@
 import { Box, ListItemButton, ListItemIcon, ListItemText, Paper, Typography } from '@mui/material'
 import type { ResourceIconRef } from '../../../../shared/resourceIconTypes'
 import type { InputInvocationReferenceKind } from '../../lib/inputReferences'
+import type { PromptAgentSummary } from '../../types'
+import { PromptAgentStatus, RemoteAgentTrustControl } from '../../features/agent/AgentTrustPanel'
 import { ResourceIcon } from '../ResourceIcon'
 
 export type InputInvocationReferenceCandidate = {
+  id?: string
   icon?: ResourceIconRef
   kind: InputInvocationReferenceKind
   name: string
   description: string
   referenceText: string
-}
+  agent?: PromptAgentSummary
+} & Partial<Pick<PromptAgentSummary, 'scope' | 'trustState' | 'available' | 'diagnostics'>>
 
 export type InputInvocationReferenceMenuState = {
   kind: InputInvocationReferenceKind
@@ -20,9 +24,11 @@ export type InputInvocationReferenceMenuState = {
 
 type InputInvocationReferenceMenuProps = {
   state: InputInvocationReferenceMenuState
+  cwd?: string
   highlightedIndex: number
   onHighlight: (index: number) => void
   onSelect: (candidate: InputInvocationReferenceCandidate) => void
+  onTrustChanged?: () => Promise<void>
 }
 
 function menuTitle(state: InputInvocationReferenceMenuState): string {
@@ -36,57 +42,74 @@ function emptyText(kind: InputInvocationReferenceKind): string {
 
 function InputInvocationReferenceRow({
   candidate,
+  cwd,
   highlighted,
   onHighlight,
-  onSelect
+  onSelect,
+  onTrustChanged
 }: {
   candidate: InputInvocationReferenceCandidate
+  cwd?: string
   highlighted: boolean
   onHighlight: () => void
   onSelect: () => void
+  onTrustChanged?: () => Promise<void>
 }): React.JSX.Element {
   return (
-    <ListItemButton
-      dense
-      role="option"
-      aria-selected={highlighted}
-      selected={highlighted}
-      title={candidate.description || candidate.name}
-      onMouseEnter={onHighlight}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onSelect}
-      sx={{
-        borderRadius: 1.5,
-        minHeight: 42,
-        gap: 0.75,
-        px: 1,
-        py: 0.5,
-        '&.Mui-selected': {
-          bgcolor: 'action.hover',
-          '&:hover': { bgcolor: 'action.selected' }
-        }
-      }}
-    >
-      <ListItemIcon sx={{ minWidth: 30, color: 'primary.main' }}>
-        <ResourceIcon icon={candidate.icon} kind={candidate.kind} size={24} fallbackSize={18} />
-      </ListItemIcon>
-      <ListItemText
-        primary={candidate.name}
-        secondary={candidate.description || undefined}
-        slotProps={{
-          primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 750 } },
-          secondary: { noWrap: true, sx: { fontSize: '0.78rem' } }
+    <Box>
+      <ListItemButton
+        dense
+        role="option"
+        aria-selected={highlighted}
+        selected={highlighted}
+        disabled={candidate.available === false}
+        title={[candidate.description, ...(candidate.diagnostics ?? [])].filter(Boolean).join('\n')}
+        onMouseEnter={onHighlight}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={candidate.available === false ? undefined : onSelect}
+        sx={{
+          borderRadius: 1.5,
+          minHeight: 42,
+          gap: 0.75,
+          px: 1,
+          py: 0.5,
+          '&.Mui-selected': {
+            bgcolor: 'action.hover',
+            '&:hover': { bgcolor: 'action.selected' }
+          }
         }}
-      />
-    </ListItemButton>
+      >
+        <ListItemIcon sx={{ minWidth: 30, color: 'primary.main' }}>
+          <ResourceIcon icon={candidate.icon} kind={candidate.kind} size={24} fallbackSize={18} />
+        </ListItemIcon>
+        <ListItemText
+          primary={candidate.name}
+          secondary={candidate.description || undefined}
+          slotProps={{
+            primary: { noWrap: true, sx: { fontSize: '0.9rem', fontWeight: 750 } },
+            secondary: { noWrap: true, sx: { fontSize: '0.78rem' } }
+          }}
+        />
+        {candidate.kind === 'agent' && <PromptAgentStatus agent={candidate} compact />}
+      </ListItemButton>
+      {candidate.agent && cwd && (
+        <RemoteAgentTrustControl
+          agent={candidate.agent}
+          cwd={cwd}
+          onChanged={onTrustChanged ?? (() => undefined)}
+        />
+      )}
+    </Box>
   )
 }
 
 export function InputInvocationReferenceMenu({
   state,
+  cwd,
   highlightedIndex,
   onHighlight,
-  onSelect
+  onSelect,
+  onTrustChanged
 }: InputInvocationReferenceMenuProps): React.JSX.Element {
   return (
     <Paper
@@ -129,11 +152,13 @@ export function InputInvocationReferenceMenu({
       ) : (
         state.candidates.map((candidate, index) => (
           <InputInvocationReferenceRow
-            key={`${candidate.kind}-${candidate.name}`}
+            key={candidate.id ?? `${candidate.kind}-${candidate.name}`}
             candidate={candidate}
+            cwd={cwd}
             highlighted={index === highlightedIndex}
             onHighlight={() => onHighlight(index)}
             onSelect={() => onSelect(candidate)}
+            onTrustChanged={onTrustChanged}
           />
         ))
       )}

@@ -89,11 +89,17 @@ export function useInputInvocationReferenceMenu({
             .filter((agent) => candidateMatches(agent.name, visibleQuery.query))
             .map((agent): InputInvocationReferenceCandidate => {
               return {
+                id: agent.id,
                 ...(agent.icon ? { icon: agent.icon } : {}),
                 kind: 'agent',
                 name: agent.name,
                 description: agent.description,
-                referenceText: formatPromptAgentReference(agent)
+                referenceText: formatPromptAgentReference(agent),
+                agent,
+                ...(agent.scope ? { scope: agent.scope } : {}),
+                ...(agent.trustState ? { trustState: agent.trustState } : {}),
+                ...(agent.available !== undefined ? { available: agent.available } : {}),
+                ...(agent.diagnostics ? { diagnostics: agent.diagnostics } : {})
               }
             })
 
@@ -126,7 +132,7 @@ export function useInputInvocationReferenceMenu({
 
   const selectCandidate = useCallback(
     (candidate: InputInvocationReferenceCandidate): void => {
-      if (!activeQuery) return
+      if (!activeQuery || candidate.available === false) return
 
       const replacement = removeInputInvocationReferenceRange(input, activeQuery)
       setDismissedReferenceKey(null)

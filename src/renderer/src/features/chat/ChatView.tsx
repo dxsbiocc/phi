@@ -131,6 +131,7 @@ type ViewProps = {
   onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onForkUserMessage?: (messageId: string) => Promise<void> | void
   onOpenInputAddMenu?: () => void
+  onRefreshPromptAgents?: () => Promise<void>
   onPickInputFiles?: () => Promise<string[]>
   onGetPathForInputFile?: (file: File) => string
   onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
@@ -196,6 +197,7 @@ function ChatView({
   onRetryUserMessage,
   onForkUserMessage,
   onOpenInputAddMenu,
+  onRefreshPromptAgents,
   onPickInputFiles,
   onGetPathForInputFile,
   onInputFilesDropped,
@@ -700,6 +702,7 @@ function ChatView({
               cwd={cwd}
               onPickFiles={onPickInputFiles}
               onInsertReference={insertInputReference}
+              onTrustChanged={onRefreshPromptAgents}
               onClose={closeInputAddMenu}
             />
           )}
@@ -713,9 +716,11 @@ function ChatView({
           ) : invocationReferenceMenu.menuState ? (
             <InputInvocationReferenceMenu
               state={invocationReferenceMenu.menuState}
+              cwd={cwd}
               highlightedIndex={invocationReferenceMenu.highlightedIndex}
               onHighlight={invocationReferenceMenu.onHighlight}
               onSelect={invocationReferenceMenu.onSelect}
+              onTrustChanged={onRefreshPromptAgents}
             />
           ) : null}
           <Paper

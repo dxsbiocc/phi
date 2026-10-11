@@ -21,6 +21,7 @@ import type {
   PhiPluginProblemView
 } from '../shared/phiPluginTypes'
 import type { EnablementItemKey, EnablementScope } from '../shared/enablementTypes'
+import type { PromptAgentSummary } from '../shared/promptAgentTypes'
 import { localizePhiPluginProblemMessage } from '../shared/phiPluginProblems'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
@@ -398,7 +399,12 @@ import {
   validateWrapperResultDownloadRequest
 } from './agent/wrappers/remote-result-download'
 import { discoverPhiAgents } from './agent/agents/discovery'
-import { loadRemoteWrapperAgent } from './agent/agents/remote-wrapper-agent'
+import {
+  loadRemoteAgentCatalog,
+  revokeRemoteAgent,
+  trustRemoteAgent,
+  type RemoteAgentProjectContext
+} from './agent/agents/remote-agent-service'
 import { BackgroundAgentApprovalTracker } from './agent/agents/background-approval'
 import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
 import {
@@ -6048,6 +6054,43 @@ function isRemoteResourceScope(cwd?: string): boolean {
   )
 }
 
+function remoteAgentProjectContext(cwd?: string): RemoteAgentProjectContext {
+  const target = cwd ?? currentCwd
+  const remote = currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(currentCwd)
+  if (!remote) throw new Error('远程项目 agent 请求缺少有效的当前项目会话')
+  return {
+    sessionId: remote.sessionId,
+    projectId: remote.project.id,
+    cwd: target,
+    agentDir: AGENT_DIR,
+    bundledDir: getBundledAgentsDir()
+  }
+}
+
+function checkedRemoteAgentTrustMutation(value: unknown): {
+  cwd: string
+  relativePath: string
+  contentHash: string
+} {
+  if (!isRecord(value)) throw new Error('远程项目 agent 信任请求无效')
+  if (
+    Object.keys(value).some(
+      (key) => key !== 'cwd' && key !== 'relativePath' && key !== 'contentHash'
+    ) ||
+    typeof value.cwd !== 'string' ||
+    typeof value.relativePath !== 'string' ||
+    typeof value.contentHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.contentHash)
+  ) {
+    throw new Error('远程项目 agent 信任请求无效')
+  }
+  return value as { cwd: string; relativePath: string; contentHash: string }
+}
+
+async function listRemotePromptAgents(cwd?: string): Promise<PromptAgentSummary[]> {
+  return (await loadRemoteAgentCatalog(remoteAgentProjectContext(cwd))).entries
+}
+
 function isEnablementItemKey(value: unknown): value is EnablementItemKey {
   return (
     typeof value === 'string' &&
@@ -7491,11 +7534,14 @@ async function getAgentSession(
       // Phi scans its own agent definitions (plus legacy layouts for compatibility).
       // The same scan feeds the leader prompt here and the delegation tools the
       // worker builds, so the two can never disagree.
-      const remoteWrapperAgent = remoteProject
-        ? loadRemoteWrapperAgent(getBundledAgentsDir())
-        : undefined
       const agentScan = remoteProject
-        ? { agents: remoteWrapperAgent ? [remoteWrapperAgent] : [], diagnostics: [] }
+        ? await loadRemoteAgentCatalog({
+            sessionId: sessionManifest?.sessionId ?? '',
+            projectId: remoteProject.projectId,
+            cwd: creationSnapshot.cwd,
+            agentDir: AGENT_DIR,
+            bundledDir: getBundledAgentsDir()
+          })
         : discoverPhiAgents({
             cwd: creationSnapshot.cwd,
             agentDir: AGENT_DIR,
@@ -10063,8 +10109,28 @@ app.whenReady().then(async () => {
     return deleteSkill(filePath, cwd ?? currentCwd)
   })
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? [] : listPromptAgents(cwd ?? currentCwd)
+    isRemoteResourceScope(cwd) ? listRemotePromptAgents(cwd) : listPromptAgents(cwd ?? currentCwd)
   )
+  ipcMain.handle('agents:trustRemoteProject', async (_, input: unknown) => {
+    const request = checkedRemoteAgentTrustMutation(input)
+    const context = remoteAgentProjectContext(request.cwd)
+    await trustRemoteAgent(context, {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash
+    })
+    await invalidateAgentSession()
+    return (await loadRemoteAgentCatalog(context)).entries
+  })
+  ipcMain.handle('agents:revokeRemoteProjectTrust', async (_, input: unknown) => {
+    const request = checkedRemoteAgentTrustMutation(input)
+    const context = remoteAgentProjectContext(request.cwd)
+    await revokeRemoteAgent(context, {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash
+    })
+    await invalidateAgentSession()
+    return (await loadRemoteAgentCatalog(context)).entries
+  })
   const connectorSetups = new ConnectorSetupTracker(
     (progress) => sendToAllWindows('mcp:connectorSetupChanged', progress),
     undefined,

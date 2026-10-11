@@ -141,7 +141,10 @@ function executionContext(task: string, cwd: string | undefined, notes: string[]
   ].join('\n')
 }
 
-function delegationDescription(definition: PhiAgentDefinition, options: AgentToolOptions): string {
+export function agentDelegationToolDescription(
+  definition: PhiAgentDefinition,
+  options: AgentToolOptions = {}
+): string {
   const local = options.remote !== true
   const cwd = options.cwd?.trim()
   const images = local
@@ -176,7 +179,7 @@ export function buildAgentTool(
   return {
     name,
     label: name,
-    description: delegationDescription(definition, options),
+    description: agentDelegationToolDescription(definition, options),
     parameters: {
       type: 'object',
       required: ['task'],
