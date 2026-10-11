@@ -253,22 +253,7 @@ export async function prepareOfficialPackageInstall(
   )
   const plan = planInstall(verified, request, options)
   await boundedMap(plan.packages, 3, async (entry) => {
-    const asset = archiveAsset(entry)
-    try {
-      readRegistryAsset(verified.dir, asset)
-      return
-    } catch {
-      /* Replace only with verified bytes. */
-    }
-    const path = registryAssetPath(verified.dir, asset.path, true)
-    let download = archiveDownloads.get(path)
-    if (!download) {
-      download = downloadArchive(verified.dir, asset, options).finally(() =>
-        archiveDownloads.delete(path)
-      )
-      archiveDownloads.set(path, download)
-    }
-    await download
+    await ensureArchive(verified.dir, archiveAsset(entry), options)
   })
   planInstall(verified, request, options)
   return {
@@ -277,6 +262,44 @@ export async function prepareOfficialPackageInstall(
     notice: registry.notice,
     refreshedAt: registry.refreshedAt
   }
+}
+
+/** Fetch one verified archive without its dependencies, for read-only inspection before install. */
+export async function readOfficialPackageArchive(
+  registry: LocalRegistry,
+  entry: RegistryPackageEntry,
+  options: OfficialRegistryOptions = {}
+): Promise<Buffer> {
+  const agentDir = options.agentDir ?? getPhiAgentDir()
+  const root = officialRegistryDirectory(agentDir)
+  if (!isOfficialRegistryDirectory(registry.dir, agentDir) || resolve(registry.dir) === root) {
+    throw new Error('official package archives require a verified cache generation')
+  }
+  safeRegistryDirectory(agentDir, root)
+  const asset = archiveAsset(entry)
+  await ensureArchive(registry.dir, asset, options)
+  return readRegistryAsset(registry.dir, asset)
+}
+
+/** Keep any archive that already verifies; otherwise replace it only with verified bytes. */
+async function ensureArchive(
+  dir: string,
+  asset: RegistryAsset,
+  options: OfficialRegistryOptions
+): Promise<void> {
+  try {
+    readRegistryAsset(dir, asset)
+    return
+  } catch {
+    /* Replace only with verified bytes. */
+  }
+  const path = registryAssetPath(dir, asset.path, true)
+  let download = archiveDownloads.get(path)
+  if (!download) {
+    download = downloadArchive(dir, asset, options).finally(() => archiveDownloads.delete(path))
+    archiveDownloads.set(path, download)
+  }
+  await download
 }
 
 function verifiedGeneration(

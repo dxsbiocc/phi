@@ -110,7 +110,8 @@ import type {
   PackageInstallPlanView,
   PackageManagerType,
   PackageRegistryView,
-  PackageUpdateView
+  PackageUpdateView,
+  WrapperPackageDetailView
 } from '../shared/packageManagerTypes'
 import type {
   EnablementItemKey,
@@ -1024,6 +1025,7 @@ type RendererAuthApi = {
     id: string,
     version?: string
   ) => Promise<PackageInstallPlanView>
+  readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
   installPackage: (
     dir: string,
     type: PackageManagerType,
@@ -1757,6 +1759,8 @@ const api: RendererAuthApi = {
     id: string,
     version?: string
   ): Promise<PackageInstallPlanView> => ipcRenderer.invoke('packages:plan', dir, type, id, version),
+  readWrapperPackageDetail: (dir: string, id: string): Promise<WrapperPackageDetailView> =>
+    ipcRenderer.invoke('packages:wrapperDetail', dir, id),
   installPackage: (
     dir: string,
     type: PackageManagerType,

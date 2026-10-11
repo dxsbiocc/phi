@@ -1,3 +1,5 @@
+import type { WrapperCompositionManifest } from './wrapperCompositionManifestTypes'
+
 export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 export type PackageTrust = 'builtin' | 'official' | 'imported'
 
@@ -88,3 +90,13 @@ export interface OfflinePackageImportPreview {
   plan: PackageInstallPlanView
 }
 import type { ResourceIconRef } from './resourceIconTypes'
+
+/** The wrappers inside one wrapper package, read from the local tree or the verified archive. */
+export interface WrapperPackageDetailView {
+  id: string
+  version: string
+  source: 'installed' | 'registry'
+  wrappers: WrapperCompositionManifest[]
+  /** Wrapper manifests in the package that could not be parsed. */
+  skipped: number
+}
