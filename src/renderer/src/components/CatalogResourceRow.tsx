@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { Box, ListItemButton } from '@mui/material'
+import { Box, IconButton, ListItemButton } from '@mui/material'
 import { CatalogEnableSwitch } from './CatalogEnableSwitch'
+import { PhiIcons } from '../icons'
 import { catalogSidebarRowSx } from '../lib/catalogSidebarStyles'
 
 export type CatalogResourceRowProps = {
@@ -15,6 +16,8 @@ export type CatalogResourceRowProps = {
   disabledReason?: string
   onSelect: () => void
   onEnabledChange?: (enabled: boolean) => void | Promise<void | boolean>
+  /** Shows a remove button beside the switch; the caller reports failures. */
+  onRemove?: () => void | Promise<void>
 }
 
 /** Selection and enablement are sibling controls so a switch never opens the detail page. */
@@ -29,7 +32,8 @@ export function CatalogResourceRow({
   busy = false,
   disabledReason,
   onSelect,
-  onEnabledChange
+  onEnabledChange,
+  onRemove
 }: CatalogResourceRowProps): React.JSX.Element {
   const [pending, setPending] = useState<boolean | null>(null)
   const active = pending ?? enabled
@@ -60,6 +64,7 @@ export function CatalogResourceRow({
           position: 'relative',
           p: 0.25,
           pr: 0.5,
+          '--catalog-control-width': onRemove ? '72px' : '44px',
           '& .catalog-enable-control': {
             position: 'absolute',
             right: 4,
@@ -72,10 +77,10 @@ export function CatalogResourceRow({
           '&:hover .catalog-enable-control, &:has(:focus-visible) .catalog-enable-control, &[data-phi-catalog-pending="true"] .catalog-enable-control':
             { opacity: 1, pointerEvents: 'auto' },
           '&:hover .catalog-row-content, &:has(:focus-visible) .catalog-row-content, &[data-phi-catalog-pending="true"] .catalog-row-content':
-            { pr: '44px' },
+            { pr: 'var(--catalog-control-width)' },
           '@media (hover: none)': {
             '& .catalog-enable-control': { opacity: 1, pointerEvents: 'auto' },
-            '& .catalog-row-content': { pr: '44px' }
+            '& .catalog-row-content': { pr: 'var(--catalog-control-width)' }
           },
           '@media (prefers-reduced-motion: reduce)': {
             '& .catalog-enable-control': { transition: 'none' }
@@ -148,7 +153,19 @@ export function CatalogResourceRow({
           {children}
         </Box>
       </ListItemButton>
-      <Box className="catalog-enable-control">
+      <Box className="catalog-enable-control" sx={{ display: 'flex', alignItems: 'center' }}>
+        {onRemove ? (
+          <IconButton
+            size="small"
+            aria-label={`卸载 ${label}`}
+            title={`卸载 ${label}`}
+            disabled={updating}
+            onClick={() => void onRemove()}
+            sx={{ width: 28, height: 28 }}
+          >
+            <PhiIcons.action.delete size={16} />
+          </IconButton>
+        ) : null}
         <CatalogEnableSwitch
           checked={active}
           busy={updating}

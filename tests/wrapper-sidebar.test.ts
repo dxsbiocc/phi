@@ -124,5 +124,7 @@ test('wrapper sidebar excludes untouched bundled packages and keeps explicitly d
   assert.match(markup, /data-phi-catalog-status="enabled"/)
   assert.match(markup, /aria-label="启用 fastqc"/)
   assert.match(markup, /aria-label="关闭 my-qc"/)
+  assert.match(markup, /aria-label="卸载 fastqc"/)
+  assert.match(markup, /aria-label="卸载 my-qc"/)
   assert.match(markup, /2 个工具 · 1 已启用/)
 })

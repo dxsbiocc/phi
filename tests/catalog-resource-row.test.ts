@@ -34,3 +34,30 @@ for (const resource of ['skills', 'wrappers', 'connectors', 'plugins'] as const)
     assert.match(markup, /aria-label="关闭 Example"/)
   })
 }
+
+test('a remove button appears beside the switch only when the row can be removed', () => {
+  const render = (onRemove?: () => void): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        // eslint-disable-next-line react/no-children-prop -- The component requires children in its typed props.
+        createElement(CatalogResourceRow, {
+          id: 'example',
+          resource: 'wrappers',
+          label: 'Example',
+          icon: createElement('span'),
+          children: 'Example',
+          enabled: true,
+          onSelect: () => undefined,
+          onEnabledChange: () => undefined,
+          ...(onRemove ? { onRemove } : {})
+        })
+      )
+    )
+  assert.match(
+    render(() => undefined),
+    /aria-label="卸载 Example"/
+  )
+  assert.doesNotMatch(render(), /卸载/)
+})

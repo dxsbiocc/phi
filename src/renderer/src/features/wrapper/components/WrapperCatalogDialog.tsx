@@ -24,6 +24,7 @@ import {
 } from '../lib/wrapperCatalog'
 import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
 import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/wrapperInstallPlan'
+import { useWrapperPackageRemoval } from '../hooks/useWrapperPackageRemoval'
 import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 
@@ -76,6 +77,15 @@ export function WrapperCatalogDialog({
     }
   }, [])
 
+  const refreshAfterRemoval = useCallback(async (): Promise<void> => {
+    await onRefresh()
+    const refreshed = await readCatalog()
+    setRegistries(refreshed.registries)
+    setInstalledPackages(refreshed.installed)
+    setError(refreshed.error)
+    setSourceNotice(refreshed.notice)
+  }, [onRefresh, readCatalog])
+  const removal = useWrapperPackageRemoval(refreshAfterRemoval)
   useEffect(() => {
     if (!open) return undefined
     let active = true
@@ -165,25 +175,6 @@ export function WrapperCatalogDialog({
     }
   }
 
-  async function remove(choice: WrapperCatalogChoice): Promise<void> {
-    if (busyId) return
-    setBusyId(choice.id)
-    setError(null)
-    try {
-      await window.api.removeWrapperPackage(choice.id)
-      await onRefresh()
-      const refreshed = await readCatalog()
-      setRegistries(refreshed.registries)
-      setInstalledPackages(refreshed.installed)
-      setError(refreshed.error)
-      setSourceNotice(refreshed.notice)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusyId(null)
-    }
-  }
-
   function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
     const { label, done, removable } = wrapperChoiceAction(choice)
     return (
@@ -201,8 +192,8 @@ export function WrapperCatalogDialog({
           <Button
             size="small"
             color="error"
-            disabled={Boolean(busyId)}
-            onClick={() => void remove(choice)}
+            disabled={Boolean(busyId) || Boolean(removal.removingId)}
+            onClick={() => void removal.remove(choice.id)}
             aria-label={`卸载 ${choice.title}`}
           >
             卸载
@@ -307,9 +298,9 @@ export function WrapperCatalogDialog({
             ) : null
           }
         >
-          {error ? (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+          {(error ?? removal.error) ? (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={error ? undefined : removal.clearError}>
+              {error ?? removal.error}
             </Alert>
           ) : null}
           {sourceNotice ? (

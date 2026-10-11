@@ -7,7 +7,7 @@ import {
   useState,
   type RefObject
 } from 'react'
-import { Box, CircularProgress, List, Typography } from '@mui/material'
+import { Alert, Box, CircularProgress, List, Typography } from '@mui/material'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
@@ -24,6 +24,7 @@ import {
 import { filterWrappers, selectedWrappers, visibleWrapperTier } from '../lib/wrapperSidebar'
 import { groupWrapperPackages, type WrapperPackageGroup } from '../lib/wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierLabel } from '../lib/wrapperView'
+import { useWrapperPackageRemoval } from '../hooks/useWrapperPackageRemoval'
 import { WrapperCatalogDialog } from './WrapperCatalogDialog'
 
 export interface WrapperSidebarProps {
@@ -175,7 +176,8 @@ function WrapperTierGroupAccordion({
   onSelect,
   onLoadMore,
   busyPackageId,
-  onSetPackageEnabled
+  onSetPackageEnabled,
+  onRemovePackage
 }: {
   tier: string
   packages: WrapperPackageGroup[]
@@ -188,6 +190,7 @@ function WrapperTierGroupAccordion({
   onLoadMore: (tier: string, totalCount: number) => void
   busyPackageId?: string | null
   onSetPackageEnabled?: WrapperSidebarProps['onSetPackageEnabled']
+  onRemovePackage?: (packageId: string) => Promise<void>
 }): React.JSX.Element {
   const detailsRef = useRef<HTMLDivElement | null>(null)
 
@@ -249,6 +252,9 @@ function WrapperTierGroupAccordion({
               onSetPackageEnabled && group.managed
                 ? (enabled) => onSetPackageEnabled(group.key, enabled)
                 : undefined
+            }
+            onRemove={
+              onRemovePackage && group.managed ? () => onRemovePackage(group.key) : undefined
             }
             icon={
               <Box
@@ -320,6 +326,7 @@ export function WrapperSidebar({
   cancelTrustedOverlay,
   onPreviewInteractionChange
 }: WrapperSidebarProps): React.JSX.Element {
+  const removal = useWrapperPackageRemoval(onRefresh)
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [catalogPending, setCatalogPending] = useState(false)
@@ -419,6 +426,11 @@ export function WrapperSidebar({
       summary={`${chosenPackages.length} 个工具 · ${chosenPackages.filter((group) => group.enabled).length} 已启用`}
       action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} />}
     >
+      {removal.error ? (
+        <Alert severity="error" onClose={removal.clearError} sx={{ mx: 1, mb: 1 }}>
+          {removal.error}
+        </Alert>
+      ) : null}
       <List
         ref={listRef}
         disablePadding
@@ -459,6 +471,7 @@ export function WrapperSidebar({
               onLoadMore={handleLoadMore}
               busyPackageId={busyPackageId}
               onSetPackageEnabled={onSetPackageEnabled}
+              onRemovePackage={removal.remove}
             />
           ))
         )}
