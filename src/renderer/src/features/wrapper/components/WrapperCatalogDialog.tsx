@@ -23,6 +23,8 @@ import {
   type WrapperCatalogChoice
 } from '../lib/wrapperCatalog'
 import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
+import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/wrapperInstallPlan'
+import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 
 export interface WrapperCatalogDialogProps {
@@ -51,6 +53,10 @@ export function WrapperCatalogDialog({
   const [error, setError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [pendingInstall, setPendingInstall] = useState<{
+    choice: WrapperCatalogChoice
+    summary: WrapperInstallSummary
+  } | null>(null)
 
   const readCatalog = useCallback(async (): Promise<{
     registries: PackageRegistryView[]
@@ -114,7 +120,7 @@ export function WrapperCatalogDialog({
   const visibleChoices = result.rows
   const detailChoice = detailId ? choices.find((choice) => choice.id === detailId) : undefined
 
-  async function add(choice: WrapperCatalogChoice): Promise<void> {
+  async function add(choice: WrapperCatalogChoice, confirmed = false): Promise<void> {
     if (busyId) return
     setBusyId(choice.id)
     setError(null)
@@ -122,12 +128,17 @@ export function WrapperCatalogDialog({
       if (wrapperChoiceNeedsRegistryInstall(choice)) {
         if (!choice.registryPath || !choice.registryEntry)
           throw new Error('这个 wrapper 没有可用的安装来源。')
-        await window.api.planPackageInstall(
+        const plan = await window.api.planPackageInstall(
           choice.registryPath,
           'wrapper',
           choice.id,
           choice.registryEntry.version
         )
+        const summary = summarizeWrapperInstallPlan(plan, choice.id)
+        if (summary.needsConfirmation && !confirmed) {
+          setPendingInstall({ choice, summary })
+          return
+        }
         const installed = await installCatalogPackage(
           window.api,
           choice.registryPath,
@@ -188,6 +199,7 @@ export function WrapperCatalogDialog({
   function close(): void {
     if (busyId) return
     setDetailId(null)
+    setPendingInstall(null)
     setLoading(true)
     setError(null)
     setPage(0)
@@ -310,6 +322,16 @@ export function WrapperCatalogDialog({
           )}
         </CatalogBrowseLayout>
       )}
+      <WrapperInstallConfirmDialog
+        title={pendingInstall?.choice.title ?? ''}
+        summary={pendingInstall?.summary ?? null}
+        onCancel={() => setPendingInstall(null)}
+        onConfirm={() => {
+          const target = pendingInstall?.choice
+          setPendingInstall(null)
+          if (target) void add(target, true)
+        }}
+      />
     </Dialog>
   )
 }
