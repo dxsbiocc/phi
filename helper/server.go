@@ -47,6 +47,7 @@ type rpcServer struct {
 	mu          sync.Mutex
 	runs        map[string]runControl
 	backgrounds map[string]*backgroundProcess
+	transfers   *transferSessions
 	nextHandle  uint64
 	requests    sync.WaitGroup
 }
@@ -59,7 +60,8 @@ func newRPCServer(root string) (*rpcServer, error) {
 	serverContext, cancel := context.WithCancel(context.Background())
 	return &rpcServer{
 		fs: fs, runner: newProcessRunner(fs.guard), runs: make(map[string]runControl),
-		backgrounds: make(map[string]*backgroundProcess), context: serverContext, cancel: cancel,
+		backgrounds: make(map[string]*backgroundProcess), transfers: newTransferSessions(),
+		context: serverContext, cancel: cancel,
 	}, nil
 }
 
@@ -74,6 +76,27 @@ func (server *rpcServer) serve(input io.Reader, output io.Writer) error {
 		if err != nil {
 			server.shutdown()
 			return err
+		}
+		if isBinaryTransferPayload(payload) {
+			frame, decodeErr := decodeBinaryTransferFrame(payload)
+			if decodeErr != nil {
+				server.shutdown()
+				return decodeErr
+			}
+			response, transferErr := server.handleBinaryTransferFrame(frame)
+			if transferErr != nil {
+				response = transferErrorFrame(frame.TransferID, frame.Offset, transferErr)
+			}
+			encoded, encodeErr := encodeBinaryTransferFrame(response)
+			if encodeErr != nil {
+				server.shutdown()
+				return encodeErr
+			}
+			if err := writer.write(encoded); err != nil {
+				server.shutdown()
+				return err
+			}
+			continue
 		}
 		request, rpcErr := decodeRequest(payload)
 		if rpcErr != nil {
@@ -219,6 +242,7 @@ func (server *rpcServer) shutdown() {
 		cancel()
 	}
 	server.requests.Wait()
+	server.closeTransfers()
 	server.mu.Lock()
 	backgrounds := make([]*managedProcess, 0, len(server.backgrounds))
 	for _, background := range server.backgrounds {

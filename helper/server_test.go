@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -124,6 +127,69 @@ func TestServerReturnsStructuredPathError(t *testing.T) {
 	}
 }
 
+func TestServerBrokenBinaryFramePreservesAcknowledgedUploadForReconnect(t *testing.T) {
+	root := t.TempDir()
+	server := mustServer(t, root)
+	reader, writer := io.Pipe()
+	responseReader, responseWriter := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.serve(reader, responseWriter) }()
+
+	writeRequest(t, writer, rpcRequest{
+		JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "transfer.upload.open",
+		Params: mustJSON(t, map[string]any{
+			"transferId": "upload-1", "path": "result.part", "offset": 0,
+		}),
+	})
+	if response := readResponse(t, responseReader); response.Error != nil {
+		t.Fatalf("open error: %+v", response.Error)
+	}
+	writeBinaryTransfer(t, writer, uploadDataFrame("upload-1", 0, []byte("first")))
+	ack := readBinaryTransfer(t, responseReader)
+	if ack.Type != binaryUploadAck || ack.Offset != 0 || ack.Length != 5 {
+		t.Fatalf("ack = %+v", ack)
+	}
+	writeBinaryTransfer(t, writer, uploadDataFrame("upload-1", 0, []byte("duplicate")))
+	rejected := readBinaryTransfer(t, responseReader)
+	if rejected.Type != binaryTransferError ||
+		!bytes.HasPrefix(rejected.Data, []byte("OFFSET_MISMATCH\n")) {
+		t.Fatalf("duplicate response = %+v", rejected)
+	}
+
+	broken, err := encodeBinaryTransferFrame(uploadDataFrame("upload-1", 5, []byte("broken")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(broken)))
+	if _, err := writer.Write(header[:]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(broken[:len(broken)/2]); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("serve error = %v, want unexpected EOF", err)
+	}
+	if err := responseWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "result.part"))
+	if err != nil || !bytes.Equal(content, []byte("first")) {
+		t.Fatalf("partial = %q, error = %v", content, err)
+	}
+
+	reconnected := mustServer(t, root)
+	if _, err := reconnected.openUpload(uploadOpenParams{
+		TransferID: "upload-1", Path: "result.part", Offset: 5,
+	}); err != nil {
+		t.Fatalf("reconnect failed: %v", err)
+	}
+}
+
 func mustServer(t *testing.T, root string) *rpcServer {
 	t.Helper()
 	server, err := newRPCServer(root)
@@ -164,4 +230,28 @@ func readResponse(t *testing.T, reader io.Reader) rpcResponse {
 		t.Fatal(err)
 	}
 	return response
+}
+
+func writeBinaryTransfer(t *testing.T, writer io.Writer, frame binaryTransferFrame) {
+	t.Helper()
+	payload, err := encodeBinaryTransferFrame(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFrame(writer, payload); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readBinaryTransfer(t *testing.T, reader io.Reader) binaryTransferFrame {
+	t.Helper()
+	payload, err := readFrame(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := decodeBinaryTransferFrame(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return frame
 }

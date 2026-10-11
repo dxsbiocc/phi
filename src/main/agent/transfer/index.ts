@@ -2,6 +2,11 @@ export { TransferStateError, transitionTransferState } from './state-machine'
 export { FileTransferManager } from './manager'
 export { FileTransferRegistry } from './registry'
 export { LocalTransferDataPlane } from './local-data-plane'
+export { HelperTransferDataPlane } from './helper-data-plane'
+export type {
+  HelperTransferDataPlaneOptions,
+  HelperTransferDataPlaneStatus
+} from './helper-data-plane'
 export { TransferError } from './errors'
 export { DEFAULT_TRANSFER_POLICY, GIB, MIB } from './types'
 export type {

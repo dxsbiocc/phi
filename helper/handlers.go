@@ -36,8 +36,107 @@ type removeParams struct {
 	Force     bool   `json:"force,omitempty"`
 }
 
+type transferInspectParams struct {
+	Path string `json:"path"`
+}
+
+type transferTruncateParams struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type transferHashParams struct {
+	Path   string `json:"path"`
+	Offset int64  `json:"offset,omitempty"`
+	Length *int64 `json:"length,omitempty"`
+}
+
+type transferPublishParams struct {
+	PartialPath     string `json:"partialPath"`
+	DestinationPath string `json:"destinationPath"`
+	ExpectedSize    int64  `json:"expectedSize"`
+	ExpectedSHA256  string `json:"expectedSha256"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
+type transferCloseParams struct {
+	TransferID string `json:"transferId"`
+}
+
 func (server *rpcServer) dispatch(request rpcRequest) (any, error) {
 	switch request.Method {
+	case "protocol.negotiate":
+		var params protocolNegotiationParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.negotiateProtocol(params)
+	case "transfer.inspect":
+		var params transferInspectParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.fs.transferInspect(params.Path)
+	case "transfer.identity":
+		var params transferInspectParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.fs.transferIdentity(params.Path)
+	case "transfer.create":
+		var params transferInspectParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.fs.transferCreate(params.Path)
+	case "transfer.truncate":
+		var params transferTruncateParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, server.fs.transferTruncate(params.Path, params.Size)
+	case "transfer.hash":
+		var params transferHashParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.fs.transferHashContext(server.context, params.Path, params.Offset, params.Length)
+	case "transfer.sync":
+		var params transferInspectParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, server.fs.transferSync(params.Path)
+	case "transfer.publish":
+		var params transferPublishParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.publishTransfer(params)
+	case "transfer.remove":
+		var params transferInspectParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, server.fs.remove(params.Path, false, true)
+	case "transfer.upload.open":
+		var params uploadOpenParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.openUpload(params)
+	case "transfer.download.open":
+		var params downloadOpenParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return server.openDownload(params)
+	case "transfer.close":
+		var params transferCloseParams
+		if err := decodeParams(request.Params, &params); err != nil {
+			return nil, err
+		}
+		return map[string]any{}, server.closeTransfer(params.TransferID)
 	case "fs.stat":
 		return server.handleStat(request.Params)
 	case "fs.readRange":

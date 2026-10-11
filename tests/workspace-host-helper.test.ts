@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { after, afterEach, before, test } from 'node:test'
 
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import {
+  FileTransferManager,
+  FileTransferRegistry,
+  HelperTransferDataPlane
+} from '../src/main/agent/transfer'
+import type { TransferDataPlane } from '../src/main/agent/transfer/data-plane'
 import { createWorkspaceHostRemoteSession } from '../src/main/agent/workspace-host/remote-session'
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
@@ -120,5 +126,79 @@ test('legacy remote session reads text through the helper-backed WorkspaceHost',
     hosts.delete(host)
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('TS helper data plane interoperates with the Go helper for upload and download', async () => {
+  const localRoot = await mkdtemp(join(tmpdir(), 'phi-helper-data-plane-local-'))
+  const remoteRoot = await mkdtemp(join(tmpdir(), 'phi-helper-data-plane-remote-'))
+  const canonicalRoot = await realpath(remoteRoot)
+  const session = createLocalShellSession(remoteRoot)
+  const fallback: TransferDataPlane = {
+    id: 'ssh',
+    destinationKey: (request) => `fallback:${request.transferId}`,
+    async open() {
+      throw new Error('capable Go helper unexpectedly selected pure SSH fallback')
+    }
+  }
+  const plane = new HelperTransferDataPlane({
+    hostId: 'contract-host',
+    workspaceId: 'contract-workspace',
+    remoteRoot,
+    canonicalRoot,
+    connect: () =>
+      session.openStdio!(
+        `${JSON.stringify(helperPath)} serve --root ${JSON.stringify(canonicalRoot)}`
+      ),
+    fallback
+  })
+  try {
+    const content = Buffer.concat([Buffer.alloc(1024 * 1024, 0x71), Buffer.from([0, 0xff])])
+    const expectedHash = createHash('sha256').update(content).digest('hex')
+    const source = join(localRoot, 'source.bin')
+    await writeFile(source, content)
+    const upload = await new FileTransferManager({
+      registry: new FileTransferRegistry(join(localRoot, 'upload-registry.json')),
+      dataPlanes: [plane]
+    }).enqueue({
+      transferId: 'go-upload',
+      direction: 'upload',
+      hostKey: 'contract-host',
+      dataPlaneId: plane.id,
+      source: { kind: 'local-path', path: source },
+      destination: {
+        kind: 'remote-workspace-path',
+        hostId: 'contract-host',
+        workspaceId: 'contract-workspace',
+        relativePath: 'result.bin'
+      },
+      expectedSha256: expectedHash
+    }).completion
+    assert.equal(upload.sha256, expectedHash)
+    assert.deepEqual(await readFile(join(remoteRoot, 'result.bin')), content)
+
+    const destination = join(localRoot, 'downloaded.bin')
+    const download = await new FileTransferManager({
+      registry: new FileTransferRegistry(join(localRoot, 'download-registry.json')),
+      dataPlanes: [plane]
+    }).enqueue({
+      transferId: 'go-download',
+      direction: 'download',
+      hostKey: 'contract-host',
+      dataPlaneId: plane.id,
+      source: {
+        kind: 'remote-workspace-path',
+        hostId: 'contract-host',
+        workspaceId: 'contract-workspace',
+        relativePath: 'result.bin'
+      },
+      destination: { kind: 'local-path', path: destination }
+    }).completion
+    assert.equal(download.sha256, expectedHash)
+    assert.deepEqual(await readFile(destination), content)
+  } finally {
+    await session.close()
+    await rm(localRoot, { recursive: true, force: true })
+    await rm(remoteRoot, { recursive: true, force: true })
   }
 })

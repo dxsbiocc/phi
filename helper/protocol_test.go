@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -65,5 +66,52 @@ func TestRequestRejectsTrailingJSONValue(t *testing.T) {
 	))
 	if rpcErr == nil || rpcErr.Code != -32700 {
 		t.Fatalf("rpc error = %+v, want parse error", rpcErr)
+	}
+}
+
+func TestBinaryTransferFrameRoundTrip(t *testing.T) {
+	content := []byte{0, 1, 2, 0xff}
+	digest := sha256.Sum256(content)
+	want := binaryTransferFrame{
+		Type: binaryUploadData, TransferID: "transfer-1", Offset: 8,
+		Length: uint32(len(content)), Digest: digest, Data: content,
+	}
+	payload, err := encodeBinaryTransferFrame(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeBinaryTransferFrame(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != want.Type || got.TransferID != want.TransferID || got.Offset != want.Offset ||
+		got.Length != want.Length || got.Digest != want.Digest || !bytes.Equal(got.Data, want.Data) {
+		t.Fatalf("frame = %+v, want %+v", got, want)
+	}
+}
+
+func TestBinaryTransferFrameRejectsBrokenAndOversizedChunks(t *testing.T) {
+	digest := sha256.Sum256([]byte("short"))
+	payload, err := encodeBinaryTransferFrame(binaryTransferFrame{
+		Type: binaryUploadData, TransferID: "transfer-1", Offset: 0,
+		Length: 5, Digest: digest, Data: []byte("short"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = decodeBinaryTransferFrame(payload[:len(payload)-1])
+	assertProtocolCode(t, err, "INVALID_FRAME")
+	_, err = encodeBinaryTransferFrame(binaryTransferFrame{
+		Type: binaryUploadData, TransferID: "transfer-1", Length: maxTransferChunkBytes + 1,
+		Data: make([]byte, maxTransferChunkBytes+1),
+	})
+	assertProtocolCode(t, err, "FRAME_TOO_LARGE")
+}
+
+func assertProtocolCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var protocolErr *protocolError
+	if !errors.As(err, &protocolErr) || protocolErr.code != code {
+		t.Fatalf("error = %v, want %s", err, code)
 	}
 }
