@@ -6,6 +6,7 @@ import type {
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
+import { wrapperFamilyName } from './wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierLabel } from './wrapperView'
 import type { CatalogBrowseGroup } from '../../../components/catalog/CatalogBrowseLayout'
 import { catalogPackages } from '../../../lib/contentCatalog'
@@ -43,7 +44,7 @@ export function wrapperCatalogChoices(
     const { provider, tier, name } = parseWrapperCompositionId(entry.id)
     choices.set(id, {
       id,
-      title: name || entry.name,
+      title: (entry.enablementId ?? entry.packageId) ? wrapperFamilyName(id) : name || entry.name,
       summary: entry.summary,
       metadata: provider,
       category: provider === 'custom' ? '自定义' : wrapperTierLabel(tier) || '其他',
@@ -63,7 +64,7 @@ export function wrapperCatalogChoices(
       cached.registryEntry = entry
       cached.registryPath = registry.dir
       if (!cached.installed) {
-        cached.title = entry.title
+        cached.title = wrapperFamilyName(entry.id)
         cached.summary = entry.summary
         cached.metadata = registry.label ?? registry.id
         cached.version = entry.version
@@ -74,7 +75,7 @@ export function wrapperCatalogChoices(
     const selected = Boolean(existing && existing.registry !== 'bundled-wrappers')
     choices.set(entry.id, {
       id: entry.id,
-      title: entry.title,
+      title: wrapperFamilyName(entry.id),
       summary: entry.summary,
       metadata: registry.label ?? registry.id,
       version: selected ? existing?.version : entry.version,
@@ -109,6 +110,18 @@ export function wrapperChoiceNeedsRegistryInstall(choice: WrapperCatalogChoice):
     semver.valid(catalogVersion) &&
     semver.gte(choice.bundledVersion, catalogVersion)
   )
+}
+
+export interface WrapperChoiceAction {
+  label: '已添加' | '启用' | '添加' | '安装'
+  /** Nothing left to do for this choice. */
+  done: boolean
+}
+
+export function wrapperChoiceAction(choice: WrapperCatalogChoice): WrapperChoiceAction {
+  if (choice.selected && choice.enabled) return { label: '已添加', done: true }
+  if (choice.selected) return { label: '启用', done: false }
+  return { label: choice.installed ? '添加' : '安装', done: false }
 }
 
 export function filterWrapperCatalogChoices(

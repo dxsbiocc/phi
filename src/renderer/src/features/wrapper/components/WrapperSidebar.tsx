@@ -22,6 +22,7 @@ import {
   type TrustedOverlayRequest
 } from '../../../lib/trustedOverlayRequests'
 import { filterWrappers, selectedWrappers, visibleWrapperTier } from '../lib/wrapperSidebar'
+import { groupWrapperPackages, type WrapperPackageGroup } from '../lib/wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierLabel } from '../lib/wrapperView'
 import { WrapperCatalogDialog } from './WrapperCatalogDialog'
 
@@ -40,24 +41,20 @@ export interface WrapperSidebarProps {
   onPreviewInteractionChange?: (active: boolean) => void
 }
 
-/** Groups by the `<provider>/<tier>/...` id convention — see `parseWrapperCompositionId`. */
+/** Groups tool families by the `<provider>/<tier>/...` id convention of their wrappers. */
 function groupByTier(
-  catalog: WrapperCompositionCatalogItem[]
-): Array<{ tier: string; entries: WrapperCompositionCatalogItem[] }> {
+  packages: WrapperPackageGroup[]
+): Array<{ tier: string; packages: WrapperPackageGroup[] }> {
   const order = ['workflows', 'subworkflows', 'modules']
-  const byTier = new Map<string, WrapperCompositionCatalogItem[]>()
-  // Seed every known tier up front so one with no wrappers yet (e.g.
-  // subworkflows, today) still shows up as an empty group rather than
-  // disappearing from the sidebar entirely.
+  const byTier = new Map<string, WrapperPackageGroup[]>()
+  // Seed every known tier up front so one with no wrappers yet still shows up as an
+  // empty group rather than disappearing from the sidebar entirely.
   for (const tier of order) {
     byTier.set(tier, [])
   }
-  for (const entry of catalog) {
-    const { tier } = parseWrapperCompositionId(entry.id)
-    const key = tier || '其他'
-    const bucket = byTier.get(key) ?? []
-    bucket.push(entry)
-    byTier.set(key, bucket)
+  for (const group of packages) {
+    const key = group.tier || '其他'
+    byTier.set(key, [...(byTier.get(key) ?? []), group])
   }
   const sortedKeys = [...byTier.keys()].sort((a, b) => {
     const ia = order.indexOf(a)
@@ -67,7 +64,7 @@ function groupByTier(
     if (ib === -1) return -1
     return ia - ib
   })
-  return sortedKeys.map((tier) => ({ tier, entries: byTier.get(tier) ?? [] }))
+  return sortedKeys.map((tier) => ({ tier, packages: byTier.get(tier) ?? [] }))
 }
 
 // Rendering every entry in a large tier group at once (nf-core/modules alone
@@ -169,7 +166,7 @@ function LoadMoreSentinel({
 
 function WrapperTierGroupAccordion({
   tier,
-  entries,
+  packages,
   selectedId,
   visibleCount,
   expanded,
@@ -181,7 +178,7 @@ function WrapperTierGroupAccordion({
   onSetPackageEnabled
 }: {
   tier: string
-  entries: WrapperCompositionCatalogItem[]
+  packages: WrapperPackageGroup[]
   selectedId: string | null
   visibleCount: number
   expanded: boolean
@@ -197,10 +194,12 @@ function WrapperTierGroupAccordion({
   // Pagination must never hide the currently selected wrapper — if it's
   // further down than the default page (e.g. its tab was reopened from
   // elsewhere), reveal up through it regardless of how much has loaded in.
-  const selectedIndex = entries.findIndex((entry) => entry.id === selectedId)
+  const selectedIndex = packages.findIndex((group) =>
+    group.members.some((entry) => entry.id === selectedId)
+  )
   const effectiveVisibleCount = Math.max(visibleCount, selectedIndex + 1)
-  const visibleEntries = entries.slice(0, effectiveVisibleCount)
-  const remainingCount = entries.length - visibleEntries.length
+  const visiblePackages = packages.slice(0, effectiveVisibleCount)
+  const remainingCount = packages.length - visiblePackages.length
 
   return (
     // Only one tier group is expanded at a time, and none of the three
@@ -214,45 +213,41 @@ function WrapperTierGroupAccordion({
       expanded={expanded}
       onExpandedChange={(isExpanded) => onExpandedChange(tier, isExpanded)}
       title={wrapperTierLabel(tier)}
-      count={entries.length}
+      count={packages.length}
       expandedBodyMaxHeight={expandedBodyMaxHeight}
       detailsRef={detailsRef}
     >
-      {entries.length === 0 ? (
+      {packages.length === 0 ? (
         <Box sx={{ px: 2, py: 1.5 }}>
           <Typography variant="body2" color="text.disabled">
             暂无{wrapperTierLabel(tier)} wrapper
           </Typography>
         </Box>
       ) : null}
-      {visibleEntries.map((entry) => {
-        // The id's own name segment, not the author-chosen display name,
-        // is the trustworthy identifier — a manifest's `name` is free text
-        // and could be set to anything, including something misleading
-        // about which wrapper this actually is.
-        const { provider, name } = parseWrapperCompositionId(entry.id)
+      {visiblePackages.map((group) => {
+        const lead = group.members[0]
+        const { provider } = parseWrapperCompositionId(lead.id)
+        const detail = `${provider} · ${group.members.length} 个工具`
         return (
           <CatalogResourceRow
-            key={entry.id}
-            id={entry.id}
+            key={group.key}
+            id={group.key}
             resource="wrappers"
-            label={name}
-            enabled={entry.packageEnabled !== false}
-            selected={entry.id === selectedId}
-            busy={
-              Boolean(busyPackageId) && busyPackageId === (entry.enablementId ?? entry.packageId)
-            }
-            onSelect={() => onSelect(entry)}
+            label={group.name}
+            enabled={group.enabled}
+            selected={group.members.some((entry) => entry.id === selectedId)}
+            busy={Boolean(busyPackageId) && busyPackageId === group.key}
+            onSelect={() => onSelect(group.open(selectedId))}
             disabledReason={
-              busyPackageId && busyPackageId !== (entry.enablementId ?? entry.packageId)
+              busyPackageId && busyPackageId !== group.key
                 ? '正在更新 wrapper'
-                : entry.enablementId || entry.packageId
+                : group.managed
                   ? undefined
                   : '用户自定义 wrapper 始终可用'
             }
             onEnabledChange={
-              onSetPackageEnabled && (entry.enablementId ?? entry.packageId)
-                ? (enabled) => onSetPackageEnabled(entry.enablementId ?? entry.packageId!, enabled)
+              onSetPackageEnabled && group.managed
+                ? (enabled) => onSetPackageEnabled(group.key, enabled)
                 : undefined
             }
             icon={
@@ -264,19 +259,19 @@ function WrapperTierGroupAccordion({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  bgcolor: entry.packageEnabled !== false ? 'primary.main' : 'action.hover',
-                  color: entry.packageEnabled !== false ? 'primary.contrastText' : 'text.secondary',
+                  bgcolor: group.enabled ? 'primary.main' : 'action.hover',
+                  color: group.enabled ? 'primary.contrastText' : 'text.secondary',
                   flexShrink: 0
                 }}
               >
-                <ResourceIcon icon={entry.icon} kind="wrapper" size={32} fallbackSize={18} />
+                <ResourceIcon icon={lead.icon} kind="wrapper" size={32} fallbackSize={18} />
               </Box>
             }
           >
             <Box sx={{ minWidth: 0, flex: 1 }}>
               <Typography
                 noWrap
-                title={name}
+                title={group.name}
                 sx={{
                   fontFamily: 'var(--font-mono)',
                   fontSize: '0.875rem',
@@ -284,15 +279,15 @@ function WrapperTierGroupAccordion({
                   lineHeight: 1.25
                 }}
               >
-                {name}
+                {group.name}
               </Typography>
               <Typography
                 noWrap
-                title={`${provider} · ${entry.summary}`}
+                title={detail}
                 color="text.secondary"
                 sx={{ mt: 0.25, fontSize: '0.75rem', lineHeight: 1.25 }}
               >
-                {provider} · {entry.summary}
+                {detail}
               </Typography>
             </Box>
           </CatalogResourceRow>
@@ -302,7 +297,7 @@ function WrapperTierGroupAccordion({
         <LoadMoreSentinel
           rootRef={detailsRef}
           tier={tier}
-          totalCount={entries.length}
+          totalCount={packages.length}
           remainingCount={remainingCount}
           onLoadMore={onLoadMore}
         />
@@ -365,13 +360,14 @@ export function WrapperSidebar({
     })
   }
   const chosenCatalog = useMemo(() => selectedWrappers(catalog), [catalog])
+  const chosenPackages = useMemo(() => groupWrapperPackages(chosenCatalog), [chosenCatalog])
   const filteredCatalog = useMemo(
     () => filterWrappers(chosenCatalog, query),
     [chosenCatalog, query]
   )
   const groups = useMemo(() => {
-    const grouped = groupByTier(filteredCatalog)
-    return query.trim() ? grouped.filter((group) => group.entries.length > 0) : grouped
+    const grouped = groupByTier(groupWrapperPackages(filteredCatalog))
+    return query.trim() ? grouped.filter((group) => group.packages.length > 0) : grouped
   }, [filteredCatalog, query])
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
   const listRef = useRef<HTMLUListElement | null>(null)
@@ -420,7 +416,7 @@ export function WrapperSidebar({
       query={query}
       onQueryChange={setQuery}
       searchPlaceholder="搜索 wrapper"
-      summary={`${chosenCatalog.length} 个 wrapper · ${chosenCatalog.filter((entry) => entry.packageEnabled !== false).length} 已启用`}
+      summary={`${chosenPackages.length} 个工具 · ${chosenPackages.filter((group) => group.enabled).length} 已启用`}
       action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} />}
     >
       <List
@@ -453,7 +449,7 @@ export function WrapperSidebar({
             <WrapperTierGroupAccordion
               key={group.tier}
               tier={group.tier}
-              entries={group.entries}
+              packages={group.packages}
               selectedId={selectedId}
               visibleCount={visibleCounts[group.tier] ?? DEFAULT_VISIBLE_ENTRY_COUNT}
               expanded={group.tier === visibleTier}

@@ -101,6 +101,7 @@ import type {
   OfflinePackageImportPreview,
   InstalledPackageView,
   PackageInstallPlanView,
+  WrapperPackageDetailView,
   PackageManagerType,
   PackageRegistryView,
   PackageUpdateView
@@ -1102,6 +1103,7 @@ declare global {
         id: string,
         version?: string
       ) => Promise<PackageInstallPlanView>
+      readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
       installPackage: (
         dir: string,
         type: PackageManagerType,

@@ -4003,6 +4003,7 @@ function App(): React.JSX.Element {
         onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
         onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
         onOpenRemoteSettings={() => openSettings('remote')}
+        onSelectWrapper={onOpenWrapperTab}
       />
     ) : null
   ) : (

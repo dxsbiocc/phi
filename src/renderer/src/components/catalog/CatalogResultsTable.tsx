@@ -26,13 +26,16 @@ export function CatalogResultsTable({
   nameLabel,
   detailsLabel,
   rows,
-  rowAttribute
+  rowAttribute,
+  onOpen
 }: {
   label: string
   nameLabel: string
   detailsLabel: string
   rows: readonly CatalogResultRow[]
   rowAttribute: string
+  /** When set, clicking a row (or pressing Enter on its name) opens that entry's detail. */
+  onOpen?: (id: string) => void
 }): React.JSX.Element {
   return (
     <TableContainer
@@ -61,17 +64,39 @@ export function CatalogResultsTable({
         </TableHead>
         <TableBody>
           {rows.map((row) => (
-            <TableRow key={row.rowKey} hover {...{ [rowAttribute]: row.id }}>
+            <TableRow
+              key={row.rowKey}
+              hover
+              {...{ [rowAttribute]: row.id }}
+              {...(onOpen ? { onClick: () => onOpen(row.id) } : {})}
+              sx={onOpen ? { cursor: 'pointer' } : undefined}
+            >
               <TableCell>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                <Box
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}
+                  {...(onOpen
+                    ? {
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-label': `查看 ${row.title} 详情`,
+                        onKeyDown: (event: React.KeyboardEvent) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          onOpen(row.id)
+                        }
+                      }
+                    : {})}
+                >
                   {row.icon}
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere' }}>
                       {row.title}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary" noWrap title={row.summary}>
-                      {row.summary}
-                    </Typography>
+                    {row.summary ? (
+                      <Typography variant="body2" color="text.secondary" noWrap title={row.summary}>
+                        {row.summary}
+                      </Typography>
+                    ) : null}
                     <Typography
                       variant="caption"
                       color="text.secondary"
@@ -92,7 +117,14 @@ export function CatalogResultsTable({
               >
                 {row.details}
               </TableCell>
-              <TableCell align="right">{row.action}</TableCell>
+              <TableCell
+                align="right"
+                {...(onOpen
+                  ? { onClick: (event: React.MouseEvent) => event.stopPropagation() }
+                  : {})}
+              >
+                {row.action}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

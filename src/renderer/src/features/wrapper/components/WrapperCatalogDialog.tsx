@@ -17,11 +17,13 @@ import {
 import {
   filterWrapperCatalogChoices,
   wrapperCatalogChoices,
+  wrapperChoiceAction,
   wrapperChoiceNeedsRegistryInstall,
   wrapperCatalogGroups,
   type WrapperCatalogChoice
 } from '../lib/wrapperCatalog'
 import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
+import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 
 export interface WrapperCatalogDialogProps {
   open: boolean
@@ -48,6 +50,7 @@ export function WrapperCatalogDialog({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   const readCatalog = useCallback(async (): Promise<{
     registries: PackageRegistryView[]
@@ -109,6 +112,7 @@ export function WrapperCatalogDialog({
   const result = getCatalogPage(filtered, groupId === selectedGroupId ? page : 0, rowsPerPage)
   if (!loading && page !== result.page) setPage(result.page)
   const visibleChoices = result.rows
+  const detailChoice = detailId ? choices.find((choice) => choice.id === detailId) : undefined
 
   async function add(choice: WrapperCatalogChoice): Promise<void> {
     if (busyId) return
@@ -150,6 +154,21 @@ export function WrapperCatalogDialog({
     }
   }
 
+  function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
+    const { label, done } = wrapperChoiceAction(choice)
+    return (
+      <Button
+        size="small"
+        variant={done ? 'text' : 'outlined'}
+        disabled={done || Boolean(busyId)}
+        onClick={() => void add(choice)}
+        aria-label={`${label} ${choice.title}`}
+      >
+        {busyId === choice.id ? <CircularProgress size={16} /> : label}
+      </Button>
+    )
+  }
+
   async function chooseDirectory(): Promise<void> {
     if (busyId) return
     setBusyId('__directory__')
@@ -168,6 +187,7 @@ export function WrapperCatalogDialog({
 
   function close(): void {
     if (busyId) return
+    setDetailId(null)
     setLoading(true)
     setError(null)
     setPage(0)
@@ -194,113 +214,102 @@ export function WrapperCatalogDialog({
         }
       }}
     >
-      <CatalogBrowseLayout
-        title="Wrapper"
-        closeLabel="关闭 wrapper 目录"
-        groups={groups}
-        selectedGroupId={selectedGroupId}
-        onGroupChange={(id) => {
-          setGroupId(id)
-          setPage(0)
-        }}
-        query={query}
-        onQueryChange={(value) => {
-          setQuery(value)
-          setPage(0)
-        }}
-        searchLabel="搜索 wrapper 目录"
-        onClose={close}
-        busy={Boolean(busyId)}
-        page={result.page}
-        rowsPerPage={rowsPerPage}
-        actions={
-          <CatalogAddButton
-            label="添加 wrapper 目录"
-            disabled={Boolean(busyId)}
-            onClick={() => void chooseDirectory()}
-          />
-        }
-        footer={
-          !loading ? (
-            <CatalogPagination
-              count={filtered.length}
-              page={result.page}
-              rowsPerPage={rowsPerPage}
-              onPageChange={setPage}
-              onRowsPerPageChange={(size) => {
-                setRowsPerPage(size)
-                setPage(0)
-              }}
+      {detailChoice ? (
+        <WrapperPackageDetailPage
+          choice={detailChoice}
+          catalog={catalog}
+          action={renderAction(detailChoice)}
+          onBack={() => setDetailId(null)}
+        />
+      ) : (
+        <CatalogBrowseLayout
+          title="Wrapper"
+          closeLabel="关闭 wrapper 目录"
+          groups={groups}
+          selectedGroupId={selectedGroupId}
+          onGroupChange={(id) => {
+            setGroupId(id)
+            setPage(0)
+          }}
+          query={query}
+          onQueryChange={(value) => {
+            setQuery(value)
+            setPage(0)
+          }}
+          searchLabel="搜索 wrapper 目录"
+          onClose={close}
+          busy={Boolean(busyId)}
+          page={result.page}
+          rowsPerPage={rowsPerPage}
+          actions={
+            <CatalogAddButton
+              label="添加 wrapper 目录"
+              disabled={Boolean(busyId)}
+              onClick={() => void chooseDirectory()}
             />
-          ) : null
-        }
-      >
-        {error ? (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        ) : null}
-        {sourceNotice ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            {sourceNotice}
-          </Alert>
-        ) : null}
-        {loading ? (
-          <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
-            <CircularProgress size={22} />
-          </Box>
-        ) : filtered.length === 0 ? (
-          <Typography color="text.secondary" sx={{ py: 4 }}>
-            {query.trim() ? '没有匹配的 wrapper' : '这个分组暂无 wrapper，可添加本地目录。'}
-          </Typography>
-        ) : (
-          <CatalogResultsTable
-            label="Wrapper 目录列表"
-            nameLabel="Wrapper"
-            detailsLabel="分类 / 版本"
-            rowAttribute="data-phi-wrapper-catalog-choice"
-            rows={visibleChoices.map((choice) => {
-              const added = choice.selected && choice.enabled
-              return {
-                rowKey: choice.id,
-                id: choice.id,
-                icon: (
-                  <ResourceIcon
-                    icon={choice.cached?.icon ?? choice.registryEntry?.icon}
-                    kind="wrapper"
-                    sx={{ color: 'primary.main' }}
-                  />
-                ),
-                title: choice.title,
-                summary: choice.summary,
-                metadata: choice.metadata,
-                details: `${choice.category}${choice.version ? ` · v${choice.version}` : ''}`,
-                action: (
-                  <Button
-                    size="small"
-                    variant={added ? 'text' : 'outlined'}
-                    disabled={added || Boolean(busyId)}
-                    onClick={() => void add(choice)}
-                    aria-label={`${added ? '已添加' : choice.selected ? '启用' : choice.installed ? '添加' : '安装'} ${choice.title}`}
-                  >
-                    {busyId === choice.id ? (
-                      <CircularProgress size={16} />
-                    ) : added ? (
-                      '已添加'
-                    ) : choice.selected ? (
-                      '启用'
-                    ) : choice.installed ? (
-                      '添加'
-                    ) : (
-                      '安装'
-                    )}
-                  </Button>
-                )
-              }
-            })}
-          />
-        )}
-      </CatalogBrowseLayout>
+          }
+          footer={
+            !loading ? (
+              <CatalogPagination
+                count={filtered.length}
+                page={result.page}
+                rowsPerPage={rowsPerPage}
+                onPageChange={setPage}
+                onRowsPerPageChange={(size) => {
+                  setRowsPerPage(size)
+                  setPage(0)
+                }}
+              />
+            ) : null
+          }
+        >
+          {error ? (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          ) : null}
+          {sourceNotice ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {sourceNotice}
+            </Alert>
+          ) : null}
+          {loading ? (
+            <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
+              <CircularProgress size={22} />
+            </Box>
+          ) : filtered.length === 0 ? (
+            <Typography color="text.secondary" sx={{ py: 4 }}>
+              {query.trim() ? '没有匹配的 wrapper' : '这个分组暂无 wrapper，可添加本地目录。'}
+            </Typography>
+          ) : (
+            <CatalogResultsTable
+              label="Wrapper 目录列表"
+              nameLabel="工具"
+              detailsLabel="分类 / 版本"
+              rowAttribute="data-phi-wrapper-catalog-choice"
+              onOpen={setDetailId}
+              rows={visibleChoices.map((choice) => {
+                return {
+                  rowKey: choice.id,
+                  id: choice.id,
+                  icon: (
+                    <ResourceIcon
+                      icon={choice.cached?.icon ?? choice.registryEntry?.icon}
+                      kind="wrapper"
+                      sx={{ color: 'primary.main' }}
+                    />
+                  ),
+                  title: choice.title,
+                  summary: '',
+                  metadata: choice.metadata,
+                  details: `${choice.category}${choice.version ? ` · v${choice.version}` : ''}`,
+                  action: renderAction(choice)
+                }
+              })}
+            />
+          )}
+        </CatalogBrowseLayout>
+      )}
     </Dialog>
   )
 }

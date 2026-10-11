@@ -60,7 +60,7 @@ test('search reveals a matching group while preserving manual collapse outside s
 test('wrapper sidebar exposes search and keeps a selected item beyond its initial page visible', () => {
   const modules = Array.from({ length: 30 }, (_, index) => ({
     ...catalog[1],
-    id: `local/modules/m${index}`,
+    id: `local/modules/m${String(index).padStart(2, '0')}`,
     name: `Module ${index}`
   }))
   const markup = renderToStaticMarkup(
@@ -88,11 +88,16 @@ test('wrapper sidebar exposes search and keeps a selected item beyond its initia
 
 test('wrapper sidebar excludes untouched bundled packages and keeps explicitly disabled choices', () => {
   const entries: WrapperCompositionCatalogItem[] = [
-    { ...catalog[0], packageId: 'workflow-rnaseq', packageSelected: false, packageEnabled: false },
+    {
+      ...catalog[0],
+      packageId: 'workflow-nf-core-rnaseq',
+      packageSelected: false,
+      packageEnabled: false
+    },
     {
       ...catalog[1],
-      packageId: 'module-fastqc',
-      enablementId: 'module-fastqc',
+      packageId: 'module-nf-core-fastqc',
+      enablementId: 'module-nf-core-fastqc',
       packageSelected: true,
       packageEnabled: false
     },
@@ -113,11 +118,11 @@ test('wrapper sidebar excludes untouched bundled packages and keeps explicitly d
       })
     )
   )
-  assert.doesNotMatch(markup, /data-phi-catalog-row="nf-core\/workflows\/rnaseq"/)
-  assert.match(markup, /data-phi-catalog-row="local\/modules\/fastqc"/)
+  assert.doesNotMatch(markup, /data-phi-catalog-row="workflow-nf-core-rnaseq"/)
+  assert.match(markup, /data-phi-catalog-row="module-nf-core-fastqc"/)
   assert.match(markup, /data-phi-catalog-status="disabled"/)
   assert.match(markup, /data-phi-catalog-status="enabled"/)
   assert.match(markup, /aria-label="启用 fastqc"/)
   assert.match(markup, /aria-label="关闭 my-qc"/)
-  assert.match(markup, /2 个 wrapper · 1 已启用/)
+  assert.match(markup, /2 个工具 · 1 已启用/)
 })

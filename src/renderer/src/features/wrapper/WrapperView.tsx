@@ -17,6 +17,9 @@ import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetai
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
+import { WrapperPackageRail } from './components/WrapperPackageRail'
+import { wrapperFamilyName } from './lib/wrapperFamily'
+import { wrapperPackageMembers } from './lib/wrapperPackageDetail'
 import { ResourceIcon } from '../../components/ResourceIcon'
 import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
 import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
@@ -66,6 +69,8 @@ export interface WrapperDetailProps {
     defaults: { defaultRemoteConnectionId?: string | null; remoteWorkspaceRoot?: string | null }
   ) => Promise<void>
   onOpenRemoteSettings?: () => void
+  /** Switch to another wrapper of the same package from the tool list. */
+  onSelectWrapper?: (entry: WrapperCompositionCatalogItem) => void
 }
 
 export interface WrapperViewContentProps extends WrapperDetailProps {
@@ -207,7 +212,8 @@ export function WrapperDetail({
   updatingRemoteProjectId,
   onUpdateProjectRemoteConnection,
   onUpdateProjectRemoteDefaults,
-  onOpenRemoteSettings
+  onOpenRemoteSettings,
+  onSelectWrapper
 }: WrapperDetailProps): React.JSX.Element {
   const selected = useMemo(
     () => catalog.find((entry) => entry.id === selectedId),
@@ -298,313 +304,334 @@ export function WrapperDetail({
   const moduleDetails =
     moduleDetailsResult?.id === selectedId ? moduleDetailsResult.details : undefined
 
-  return (
-    <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-      {error && (
-        <Alert severity="error" sx={{ m: 3, mb: 0 }}>
-          {error}
-        </Alert>
-      )}
+  const packageKey = selected ? (selected.enablementId ?? selected.packageId) : undefined
+  const siblings = useMemo(
+    () => (packageKey ? wrapperPackageMembers(catalog, packageKey) : []),
+    [catalog, packageKey]
+  )
 
-      {!selected ? (
-        <Box sx={{ px: { xs: 3, md: 5 }, pt: 3 }}>
-          <Typography variant="body2" color="text.secondary">
-            从左侧选择一个 wrapper 查看详情。
-          </Typography>
-        </Box>
-      ) : (
-        <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
-          <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-            <Box
-              sx={{
-                width: 72,
-                height: 72,
-                borderRadius: 1,
-                bgcolor: 'primary.main',
-                color: 'primary.contrastText',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}
-            >
-              <ResourceIcon icon={selected.icon} kind="wrapper" size={72} fallbackSize={24} />
-            </Box>
-            <Box sx={{ minWidth: 0, flex: 1 }}>
-              <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                {selected.name}
-              </Typography>
-              {/* The canonical id, not the display name above, is what actually
-                  identifies this wrapper — keep it visible right next to the name. */}
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ fontFamily: 'var(--font-mono)', display: 'block' }}
+  return (
+    <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+      {packageKey && siblings.length > 1 && onSelectWrapper ? (
+        <WrapperPackageRail
+          familyName={wrapperFamilyName(packageKey)}
+          members={siblings}
+          selectedId={selectedId}
+          onSelect={onSelectWrapper}
+        />
+      ) : null}
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+        {error && (
+          <Alert severity="error" sx={{ m: 3, mb: 0 }}>
+            {error}
+          </Alert>
+        )}
+
+        {!selected ? (
+          <Box sx={{ px: { xs: 3, md: 5 }, pt: 3 }}>
+            <Typography variant="body2" color="text.secondary">
+              从左侧选择一个 wrapper 查看详情。
+            </Typography>
+          </Box>
+        ) : (
+          <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
+            <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
+              <Box
+                sx={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: 1,
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}
               >
-                {selected.id}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                {selected.summary}
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
-                <Chip
-                  size="small"
-                  color={wrapperProviderColor(parseWrapperCompositionId(selected.id).provider)}
-                  label={parseWrapperCompositionId(selected.id).provider}
-                />
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={wrapperTierLabel(parseWrapperCompositionId(selected.id).tier)}
-                />
-              </Stack>
-              <Box sx={{ mt: 1.5 }}>
-                <WrapperPackageControl
-                  wrapper={selected}
-                  busy={packageEnablementBusy}
-                  onSetEnabled={onSetPackageEnabled}
+                <ResourceIcon icon={selected.icon} kind="wrapper" size={72} fallbackSize={24} />
+              </Box>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
+                  {selected.name}
+                </Typography>
+                {/* The canonical id, not the display name above, is what actually
+                  identifies this wrapper — keep it visible right next to the name. */}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontFamily: 'var(--font-mono)', display: 'block' }}
+                >
+                  {selected.id}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  {selected.summary}
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
+                  <Chip
+                    size="small"
+                    color={wrapperProviderColor(parseWrapperCompositionId(selected.id).provider)}
+                    label={parseWrapperCompositionId(selected.id).provider}
+                  />
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={wrapperTierLabel(parseWrapperCompositionId(selected.id).tier)}
+                  />
+                </Stack>
+                <Box sx={{ mt: 1.5 }}>
+                  <WrapperPackageControl
+                    wrapper={selected}
+                    busy={packageEnablementBusy}
+                    onSetEnabled={onSetPackageEnabled}
+                  />
+                </Box>
+              </Box>
+            </Stack>
+
+            {project && (
+              <Box sx={{ mt: 2 }}>
+                <WrapperExecutionTargetControl
+                  project={project}
+                  busy={updatingRemoteProjectId === project.id}
+                  onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
+                  onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
+                  onOpenRemoteSettings={onOpenRemoteSettings}
                 />
               </Box>
-            </Box>
-          </Stack>
+            )}
 
-          {project && (
-            <Box sx={{ mt: 2 }}>
-              <WrapperExecutionTargetControl
-                project={project}
-                busy={updatingRemoteProjectId === project.id}
-                onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
-                onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
-                onOpenRemoteSettings={onOpenRemoteSettings}
-              />
-            </Box>
-          )}
+            <Divider sx={{ my: 4 }} />
 
-          <Divider sx={{ my: 4 }} />
-
-          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            结构
-          </Typography>
-          {graph && (
-            // Keyed by wrapper id so switching wrappers remounts the whole
-            // ReactFlow instance instead of reusing it with a new `graph`
-            // prop — `fitView` only runs once on mount, so reusing the
-            // instance left the old pan/zoom transform in place for a
-            // completely different graph, which for a same-size-or-smaller
-            // one meant the new nodes could land entirely outside the
-            // visible viewport (an apparently blank diagram).
-            <WrapperFlowDiagram
-              key={selected.id}
-              graph={graph}
-              height={graph.nodes.length > 8 ? 480 : 180}
-            />
-          )}
-
-          <Divider sx={{ my: 4 }} />
-
-          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-            输入
-          </Typography>
-          {inputParams.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              无
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+              结构
             </Typography>
-          ) : (
-            inputParams.map(([key, param]) => (
-              <Typography key={key} variant="body2" color="text.secondary">
-                {key} ({param.type}
-                {param.required ? '，必填' : ''})
-                {param.description ? ` — ${param.description}` : ''}
-              </Typography>
-            ))
-          )}
+            {graph && (
+              // Keyed by wrapper id so switching wrappers remounts the whole
+              // ReactFlow instance instead of reusing it with a new `graph`
+              // prop — `fitView` only runs once on mount, so reusing the
+              // instance left the old pan/zoom transform in place for a
+              // completely different graph, which for a same-size-or-smaller
+              // one meant the new nodes could land entirely outside the
+              // visible viewport (an apparently blank diagram).
+              <WrapperFlowDiagram
+                key={selected.id}
+                graph={graph}
+                height={graph.nodes.length > 8 ? 480 : 180}
+              />
+            )}
 
-          {optionParams.length > 0 && (
-            <>
-              <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-                选项
+            <Divider sx={{ my: 4 }} />
+
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+              输入
+            </Typography>
+            {inputParams.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                无
               </Typography>
-              {optionParams.map(([key, param]) => (
+            ) : (
+              inputParams.map(([key, param]) => (
                 <Typography key={key} variant="body2" color="text.secondary">
                   {key} ({param.type}
                   {param.required ? '，必填' : ''})
                   {param.description ? ` — ${param.description}` : ''}
                 </Typography>
-              ))}
-            </>
-          )}
+              ))
+            )}
 
-          <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-            输出
-          </Typography>
-          {outputs.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              无
-            </Typography>
-          ) : (
-            outputs.map(([key, output]) => (
-              <Typography key={key} variant="body2" color="text.secondary">
-                {key} — {output.path}
-                {output.primary ? '（主要）' : ''}
-              </Typography>
-            ))
-          )}
-
-          {moduleDetails?.meta && (
-            <>
-              <Divider sx={{ my: 4 }} />
-              <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-                关于
-              </Typography>
-              {moduleDetails.meta.description && (
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  {moduleDetails.meta.description}
+            {optionParams.length > 0 && (
+              <>
+                <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
+                  选项
                 </Typography>
-              )}
-              {moduleDetails.meta.keywords && moduleDetails.meta.keywords.length > 0 && (
-                <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', rowGap: 1 }}>
-                  {moduleDetails.meta.keywords.map((keyword) => (
-                    <Chip key={keyword} size="small" variant="outlined" label={keyword} />
-                  ))}
-                </Stack>
-              )}
-              {moduleDetails.meta.tools?.map((tool) => (
-                <Box key={tool.name} sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                    {tool.name}
+                {optionParams.map(([key, param]) => (
+                  <Typography key={key} variant="body2" color="text.secondary">
+                    {key} ({param.type}
+                    {param.required ? '，必填' : ''})
+                    {param.description ? ` — ${param.description}` : ''}
                   </Typography>
-                  {tool.description && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                      {tool.description}
-                    </Typography>
-                  )}
-                  <Stack
-                    direction="row"
-                    spacing={1.5}
-                    sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5, alignItems: 'center' }}
-                  >
-                    {tool.licence?.map((licence) => (
-                      <Chip key={licence} size="small" label={licence} />
-                    ))}
-                    {tool.homepage && (
-                      <Link
-                        href={tool.homepage}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        variant="body2"
-                      >
-                        主页
-                      </Link>
-                    )}
-                    {tool.documentation && (
-                      <Link
-                        href={tool.documentation}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        variant="body2"
-                      >
-                        文档
-                      </Link>
-                    )}
-                    {tool.doi && (
-                      <Link
-                        href={`https://doi.org/${tool.doi}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        variant="body2"
-                      >
-                        DOI
-                      </Link>
-                    )}
-                  </Stack>
-                </Box>
-              ))}
-              {moduleDetails.meta.authors && moduleDetails.meta.authors.length > 0 && (
-                <Typography variant="caption" color="text.secondary">
-                  作者：{moduleDetails.meta.authors.join('、')}
-                </Typography>
-              )}
-            </>
-          )}
-
-          {moduleDetails?.environment && (
-            <>
-              <Divider sx={{ my: 4 }} />
-              <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-                环境
-              </Typography>
-              <WrapperYamlBlock yaml={moduleDetails.environment} />
-            </>
-          )}
-
-          <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-            运行记录
-          </Typography>
-          {selectedRuns.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              还没有运行记录。
-            </Typography>
-          ) : (
-            <Stack spacing={0.75}>
-              {selectedRuns
-                .slice()
-                .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                .map((run) => (
-                  <Stack key={run.runId} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                    <Chip
-                      size="small"
-                      label={runStateLabel(run.state)}
-                      color={runStateColor(run.state)}
-                    />
-                    <Typography variant="body2" color="text.secondary">
-                      {run.runId}
-                    </Typography>
-                    {run.remote ? (
-                      <Typography variant="caption" color="text.secondary">
-                        SSH {run.remote.host}
-                      </Typography>
-                    ) : null}
-                    <Typography variant="caption" color="text.secondary">
-                      {new Date(run.createdAt).toLocaleString()}
-                    </Typography>
-                    {runProgressLabel(run) ? (
-                      <Typography variant="caption" color="text.secondary">
-                        {runProgressLabel(run)}
-                      </Typography>
-                    ) : null}
-                    <Box sx={{ flex: 1 }} />
-                    {canCancelBackgroundRun(run) ? (
-                      <Button
-                        size="small"
-                        color="error"
-                        aria-label="取消运行"
-                        onClick={() => onCancelRun?.(run.runId)}
-                      >
-                        取消运行
-                      </Button>
-                    ) : null}
-                    <Tooltip title="导出可复现性元数据">
-                      <span>
-                        <IconButton
-                          aria-label="导出可复现性元数据"
-                          size="small"
-                          onClick={() => onExportReproducibility?.(run.runId)}
-                        >
-                          <ExportIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <WrapperRunResultActions
-                      run={run}
-                      onOpenLocalPath={onOpenLocalPath}
-                      onOpenRemoteResult={onOpenRemoteResult}
-                    />
-                  </Stack>
                 ))}
-            </Stack>
-          )}
-        </Box>
-      )}
+              </>
+            )}
+
+            <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
+              输出
+            </Typography>
+            {outputs.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                无
+              </Typography>
+            ) : (
+              outputs.map(([key, output]) => (
+                <Typography key={key} variant="body2" color="text.secondary">
+                  {key} — {output.path}
+                  {output.primary ? '（主要）' : ''}
+                </Typography>
+              ))
+            )}
+
+            {moduleDetails?.meta && (
+              <>
+                <Divider sx={{ my: 4 }} />
+                <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+                  关于
+                </Typography>
+                {moduleDetails.meta.description && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                    {moduleDetails.meta.description}
+                  </Typography>
+                )}
+                {moduleDetails.meta.keywords && moduleDetails.meta.keywords.length > 0 && (
+                  <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', rowGap: 1 }}>
+                    {moduleDetails.meta.keywords.map((keyword) => (
+                      <Chip key={keyword} size="small" variant="outlined" label={keyword} />
+                    ))}
+                  </Stack>
+                )}
+                {moduleDetails.meta.tools?.map((tool) => (
+                  <Box key={tool.name} sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                      {tool.name}
+                    </Typography>
+                    {tool.description && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                        {tool.description}
+                      </Typography>
+                    )}
+                    <Stack
+                      direction="row"
+                      spacing={1.5}
+                      sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5, alignItems: 'center' }}
+                    >
+                      {tool.licence?.map((licence) => (
+                        <Chip key={licence} size="small" label={licence} />
+                      ))}
+                      {tool.homepage && (
+                        <Link
+                          href={tool.homepage}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          variant="body2"
+                        >
+                          主页
+                        </Link>
+                      )}
+                      {tool.documentation && (
+                        <Link
+                          href={tool.documentation}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          variant="body2"
+                        >
+                          文档
+                        </Link>
+                      )}
+                      {tool.doi && (
+                        <Link
+                          href={`https://doi.org/${tool.doi}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          variant="body2"
+                        >
+                          DOI
+                        </Link>
+                      )}
+                    </Stack>
+                  </Box>
+                ))}
+                {moduleDetails.meta.authors && moduleDetails.meta.authors.length > 0 && (
+                  <Typography variant="caption" color="text.secondary">
+                    作者：{moduleDetails.meta.authors.join('、')}
+                  </Typography>
+                )}
+              </>
+            )}
+
+            {moduleDetails?.environment && (
+              <>
+                <Divider sx={{ my: 4 }} />
+                <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+                  环境
+                </Typography>
+                <WrapperYamlBlock yaml={moduleDetails.environment} />
+              </>
+            )}
+
+            <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
+              运行记录
+            </Typography>
+            {selectedRuns.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                还没有运行记录。
+              </Typography>
+            ) : (
+              <Stack spacing={0.75}>
+                {selectedRuns
+                  .slice()
+                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                  .map((run) => (
+                    <Stack
+                      key={run.runId}
+                      direction="row"
+                      spacing={1}
+                      sx={{ alignItems: 'center' }}
+                    >
+                      <Chip
+                        size="small"
+                        label={runStateLabel(run.state)}
+                        color={runStateColor(run.state)}
+                      />
+                      <Typography variant="body2" color="text.secondary">
+                        {run.runId}
+                      </Typography>
+                      {run.remote ? (
+                        <Typography variant="caption" color="text.secondary">
+                          SSH {run.remote.host}
+                        </Typography>
+                      ) : null}
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(run.createdAt).toLocaleString()}
+                      </Typography>
+                      {runProgressLabel(run) ? (
+                        <Typography variant="caption" color="text.secondary">
+                          {runProgressLabel(run)}
+                        </Typography>
+                      ) : null}
+                      <Box sx={{ flex: 1 }} />
+                      {canCancelBackgroundRun(run) ? (
+                        <Button
+                          size="small"
+                          color="error"
+                          aria-label="取消运行"
+                          onClick={() => onCancelRun?.(run.runId)}
+                        >
+                          取消运行
+                        </Button>
+                      ) : null}
+                      <Tooltip title="导出可复现性元数据">
+                        <span>
+                          <IconButton
+                            aria-label="导出可复现性元数据"
+                            size="small"
+                            onClick={() => onExportReproducibility?.(run.runId)}
+                          >
+                            <ExportIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <WrapperRunResultActions
+                        run={run}
+                        onOpenLocalPath={onOpenLocalPath}
+                        onOpenRemoteResult={onOpenRemoteResult}
+                      />
+                    </Stack>
+                  ))}
+              </Stack>
+            )}
+          </Box>
+        )}
+      </Box>
     </Box>
   )
 }
@@ -668,6 +695,7 @@ export function WrapperViewContent({
           onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}
           onUpdateProjectRemoteDefaults={onUpdateProjectRemoteDefaults}
           onOpenRemoteSettings={onOpenRemoteSettings}
+          onSelectWrapper={(entry) => onSelect(entry.id)}
         />
       </DetailPage>
     </>
