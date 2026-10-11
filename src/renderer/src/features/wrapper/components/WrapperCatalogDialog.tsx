@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Box, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Dialog, Typography } from '@mui/material'
 import type {
   InstalledPackageView,
   PackageRegistryView
@@ -176,30 +176,20 @@ export function WrapperCatalogDialog({
   }
 
   function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
-    const { label, done, removable } = wrapperChoiceAction(choice)
+    const { label, kind } = wrapperChoiceAction(choice)
+    const removing = kind === 'remove'
+    const working = busyId === choice.id || removal.removingId === choice.id
     return (
-      <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
-        <Button
-          size="small"
-          variant={done ? 'text' : 'outlined'}
-          disabled={done || Boolean(busyId)}
-          onClick={() => void add(choice)}
-          aria-label={`${label} ${choice.title}`}
-        >
-          {busyId === choice.id ? <CircularProgress size={16} /> : label}
-        </Button>
-        {removable ? (
-          <Button
-            size="small"
-            color="error"
-            disabled={Boolean(busyId) || Boolean(removal.removingId)}
-            onClick={() => void removal.remove(choice.id)}
-            aria-label={`卸载 ${choice.title}`}
-          >
-            卸载
-          </Button>
-        ) : null}
-      </Stack>
+      <Button
+        size="small"
+        variant="outlined"
+        color={removing ? 'error' : 'primary'}
+        disabled={Boolean(busyId) || Boolean(removal.removingId)}
+        onClick={() => void (removing ? removal.remove(choice.id) : add(choice))}
+        aria-label={`${label} ${choice.title}`}
+      >
+        {working ? <CircularProgress size={16} /> : label}
+      </Button>
     )
   }
 
@@ -323,7 +313,6 @@ export function WrapperCatalogDialog({
               detailsLabel="分类 / 版本"
               rowAttribute="data-phi-wrapper-catalog-choice"
               onOpen={setDetailId}
-              actionWidth={168}
               rows={visibleChoices.map((choice) => {
                 return {
                   rowKey: choice.id,

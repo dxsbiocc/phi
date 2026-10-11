@@ -359,8 +359,8 @@ test('skill catalog preserves official packages sharing bundled names and instal
   assert.match(markup, /成像/)
   assert.match(markup, /软件包/)
   assert.match(markup, /添加/)
-  assert.match(markup, /已安装/)
-  assert.equal(markup.match(/>已安装</g)?.length, 1)
+  assert.equal(markup.match(/>卸载</g)?.length, 1)
+  assert.doesNotMatch(markup, />已安装</)
   assert.match(markup, /软件包/)
   assert.match(markup, /v1\.0\.0 · 1 KB/)
   assert.doesNotMatch(markup, /未安装/)
@@ -386,8 +386,9 @@ test('installed skill packages can be uninstalled from the catalog and every row
     },
     registryDir: '/explicit'
   })
-  assert.match(markup, /aria-label="卸载 installed"/)
-  assert.doesNotMatch(markup, /aria-label="卸载 available"/)
+  assert.match(markup, /<button[^>]*>卸载<\/button>/)
+  assert.equal(markup.match(/>卸载</g)?.length, 1)
+  assert.equal(markup.match(/>安装</g)?.length, 1)
   assert.match(markup, /aria-label="查看 installed 详情"/)
   assert.match(markup, /aria-label="查看 available 详情"/)
 })

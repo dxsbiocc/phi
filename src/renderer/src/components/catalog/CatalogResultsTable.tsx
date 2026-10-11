@@ -27,8 +27,7 @@ export function CatalogResultsTable({
   detailsLabel,
   rows,
   rowAttribute,
-  onOpen,
-  actionWidth = 120
+  onOpen
 }: {
   label: string
   nameLabel: string
@@ -37,8 +36,6 @@ export function CatalogResultsTable({
   rowAttribute: string
   /** When set, clicking a row (or pressing Enter on its name) opens that entry's detail. */
   onOpen?: (id: string) => void
-  /** Width of the action column, for rows that carry more than one button. */
-  actionWidth?: number
 }): React.JSX.Element {
   return (
     <TableContainer
@@ -60,7 +57,7 @@ export function CatalogResultsTable({
             <TableCell sx={{ width: 144, display: { xs: 'none', sm: 'table-cell' } }}>
               {detailsLabel}
             </TableCell>
-            <TableCell align="right" sx={{ width: actionWidth }}>
+            <TableCell align="right" sx={{ width: 120 }}>
               操作
             </TableCell>
           </TableRow>

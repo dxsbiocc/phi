@@ -113,17 +113,15 @@ export function wrapperChoiceNeedsRegistryInstall(choice: WrapperCatalogChoice):
 }
 
 export interface WrapperChoiceAction {
-  label: '已添加' | '启用' | '添加' | '安装'
-  /** Nothing left to do for this choice. */
-  done: boolean
-  /** The user has chosen this package, so it can be taken out again. */
-  removable: boolean
+  label: '安装' | '添加' | '卸载'
+  /** `add` brings the package into use, `remove` takes a chosen package out again. */
+  kind: 'add' | 'remove'
 }
 
+/** One action per choice: a chosen package offers removal, anything else offers adding. */
 export function wrapperChoiceAction(choice: WrapperCatalogChoice): WrapperChoiceAction {
-  if (choice.selected && choice.enabled) return { label: '已添加', done: true, removable: true }
-  if (choice.selected) return { label: '启用', done: false, removable: true }
-  return { label: choice.installed ? '添加' : '安装', done: false, removable: false }
+  if (choice.selected) return { label: '卸载', kind: 'remove' }
+  return { label: choice.installed ? '添加' : '安装', kind: 'add' }
 }
 
 export function filterWrapperCatalogChoices(

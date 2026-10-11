@@ -229,40 +229,31 @@ export function SkillCatalogDialog({
     const key = `package:${entry.id}@${entry.version}`
     const installed = installedPackageIds.has(entry.id)
     const updateAvailable = installed && updateIds.has(entry.id)
+    const removing = installed && !updateAvailable
+    const busy = busyKey !== null || removal.removingId !== null
+    const label =
+      busyKey === key
+        ? updateAvailable
+          ? '正在更新…'
+          : '正在安装…'
+        : removal.removingId === entry.id
+          ? '正在卸载…'
+          : updateAvailable
+            ? '更新'
+            : installed
+              ? '卸载'
+              : '安装'
     return (
-      <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
-        <Button
-          size="small"
-          variant={installed && !updateAvailable ? 'outlined' : 'contained'}
-          disabled={
-            (installed && !updateAvailable) ||
-            busyKey !== null ||
-            (updateAvailable ? !onApplyUpdate : !onInstallPackage)
-          }
-          onClick={() => void install(entry)}
-        >
-          {busyKey === key
-            ? updateAvailable
-              ? '正在更新…'
-              : '正在安装…'
-            : updateAvailable
-              ? '更新'
-              : installed
-                ? '已安装'
-                : '安装'}
-        </Button>
-        {installed ? (
-          <Button
-            size="small"
-            color="error"
-            disabled={busyKey !== null || removal.removingId !== null}
-            onClick={() => void removal.remove(entry.id)}
-            aria-label={`卸载 ${entry.title}`}
-          >
-            {removal.removingId === entry.id ? '正在卸载…' : '卸载'}
-          </Button>
-        ) : null}
-      </Stack>
+      <Button
+        size="small"
+        variant={removing ? 'outlined' : 'contained'}
+        color={removing ? 'error' : 'primary'}
+        disabled={busy || (!removing && (updateAvailable ? !onApplyUpdate : !onInstallPackage))}
+        onClick={() => void (removing ? removal.remove(entry.id) : install(entry))}
+        aria-label={`${updateAvailable ? '更新' : installed ? '卸载' : '安装'} ${entry.title}`}
+      >
+        {label}
+      </Button>
     )
   }
 
@@ -378,7 +369,6 @@ export function SkillCatalogDialog({
             rows={rows}
             rowAttribute="data-phi-skill-catalog-card"
             onOpen={setDetailId}
-            actionWidth={176}
           />
           {matchingItems.length === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>

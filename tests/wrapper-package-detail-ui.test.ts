@@ -82,7 +82,7 @@ test('member filter matches name, id and summary case-insensitively', () => {
   assert.equal(filterWrapperMembers(members, 'nothing').length, 0)
 })
 
-test('choice action labels follow the install state', () => {
+test('one action per choice: install or add when absent, uninstall once chosen', () => {
   const base = { id: 'x', title: 'x', summary: '', metadata: '', category: '' }
   const choice = (state: Partial<WrapperCatalogChoice>): WrapperCatalogChoice => ({
     ...base,
@@ -91,23 +91,15 @@ test('choice action labels follow the install state', () => {
     enabled: false,
     ...state
   })
-  assert.deepEqual(wrapperChoiceAction(choice({})), {
-    label: '安装',
-    done: false,
-    removable: false
-  })
-  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), {
-    label: '添加',
-    done: false,
-    removable: false
-  })
+  assert.deepEqual(wrapperChoiceAction(choice({})), { label: '安装', kind: 'add' })
+  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), { label: '添加', kind: 'add' })
+  // A chosen package is removed whether or not it is currently switched on.
   assert.deepEqual(wrapperChoiceAction(choice({ installed: true, selected: true })), {
-    label: '启用',
-    done: false,
-    removable: true
+    label: '卸载',
+    kind: 'remove'
   })
   assert.deepEqual(
     wrapperChoiceAction(choice({ installed: true, selected: true, enabled: true })),
-    { label: '已添加', done: true, removable: true }
+    { label: '卸载', kind: 'remove' }
   )
 })
