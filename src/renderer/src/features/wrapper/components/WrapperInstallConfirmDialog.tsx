@@ -10,7 +10,8 @@ import {
   Typography
 } from '@mui/material'
 
-import { formatPackageSize, type WrapperInstallSummary } from '../lib/wrapperInstallPlan'
+import { formatPackageSize } from '../../../components/catalog/packageSize'
+import type { WrapperInstallSummary } from '../lib/wrapperInstallPlan'
 
 /** Lists everything one install will add before any of it is downloaded. */
 export function WrapperInstallConfirmDialog({

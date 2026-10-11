@@ -1,0 +1,61 @@
+import { Chip } from '@mui/material'
+
+import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
+import { ResourceIcon } from '../../../components/ResourceIcon'
+import { useSkillPackageMarkdown } from '../hooks/useSkillPackageMarkdown'
+import { formatPackageSize } from '../../../components/catalog/packageSize'
+import type { SkillCatalogPackage } from '../lib/skillCatalogBrowser'
+import { SkillDetailBody } from './SkillDetailBody'
+
+/** Catalog preview of one skill package, drawn by the same body as the installed skill page. */
+export function SkillPackageDetailPage({
+  entry,
+  installed,
+  action,
+  onBack
+}: {
+  entry: SkillCatalogPackage
+  installed: boolean
+  /** The install / update / uninstall controls, shared with the catalog table. */
+  action: React.ReactNode
+  onBack: () => void
+}): React.JSX.Element {
+  const markdown = useSkillPackageMarkdown(entry.registryDir, entry.id)
+  const origin = entry.registryLabel ?? '软件包'
+  return (
+    <CatalogDetailFrame
+      entryId={entry.id}
+      backLabel="返回技能目录"
+      icon={<ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />}
+      title={entry.title}
+      chips={
+        <>
+          <Chip size="small" variant="outlined" label={`v${entry.version}`} />
+          <Chip size="small" variant="outlined" label={formatPackageSize(entry.size)} />
+        </>
+      }
+      action={action}
+      onBack={onBack}
+    >
+      <SkillDetailBody
+        name={entry.title}
+        icon={entry.icon}
+        enabled
+        sourceLabel={`软件包 · ${origin}`}
+        chips={
+          <>
+            <Chip size="small" variant="outlined" label={origin} />
+            <Chip
+              size="small"
+              color={installed ? 'success' : 'default'}
+              label={installed ? '已安装' : '未安装'}
+            />
+          </>
+        }
+        description={entry.summary}
+        sourceText={`软件包 · ${origin} · v${entry.version}`}
+        markdown={markdown}
+      />
+    </CatalogDetailFrame>
+  )
+}

@@ -2,10 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { PackageInstallPlanView } from '../src/shared/packageManagerTypes'
-import {
-  formatPackageSize,
-  summarizeWrapperInstallPlan
-} from '../src/renderer/src/features/wrapper/lib/wrapperInstallPlan'
+import { summarizeWrapperInstallPlan } from '../src/renderer/src/features/wrapper/lib/wrapperInstallPlan'
 
 function plan(
   entries: Array<{ id: string; size: number; installedBy?: 'user' | 'dependency' }>
@@ -62,10 +59,4 @@ test('dependencies are listed by tool name with their kind, largest-first order 
   )
   assert.equal(summary.root.name, 'align-bowtie2')
   assert.equal(summary.totalSize, 5732)
-})
-
-test('sizes are shown in B, KB or MB', () => {
-  assert.equal(formatPackageSize(512), '512 B')
-  assert.equal(formatPackageSize(78571), '76.7 KB')
-  assert.equal(formatPackageSize(5 * 1024 * 1024), '5.0 MB')
 })

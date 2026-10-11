@@ -115,3 +115,12 @@ export interface WrapperRemovalView {
   kind: 'deselected' | 'uninstalled'
   id: string
 }
+
+/** What the catalog shows for one skill package before it is installed. */
+export interface SkillPackageDetailView {
+  id: string
+  version: string
+  source: 'installed' | 'registry'
+  /** The package's raw SKILL.md, or null when it cannot be read. */
+  skillMd: string | null
+}

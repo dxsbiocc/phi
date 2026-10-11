@@ -327,6 +327,7 @@ import {
 } from './agent/packages/installer'
 import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
 import type { InstallerOptions } from './agent/packages/installer-types'
+import { readSkillPackageDetail } from './agent/packages/skill-detail'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
@@ -9716,6 +9717,19 @@ app.whenReady().then(async () => {
       }
     }
   )
+  ipcMain.handle('packages:skillDetail', async (_, dir: unknown, id: unknown) => {
+    if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
+      throw new Error('技能软件包详情参数无效')
+    }
+    try {
+      const registry = await readContentRegistry(dir, officialContentSourceOptions())
+      return await readSkillPackageDetail(registry, id, officialContentSourceOptions())
+    } catch (error) {
+      throw new Error(
+        `读取技能软件包详情失败：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  })
   ipcMain.handle('packages:wrapperDetail', async (_, dir: unknown, id: unknown) => {
     if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
       throw new Error('wrapper 软件包详情参数无效')

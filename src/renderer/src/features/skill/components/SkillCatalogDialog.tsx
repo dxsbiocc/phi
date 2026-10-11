@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { Alert, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
 import type {
   PackageRegistryEntryView,
@@ -9,20 +9,23 @@ import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
+import { usePackageRemoval } from '../../../components/catalog/usePackageRemoval'
 import { getCatalogPage } from '../../../components/catalog/catalogPaging'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
 import {
   CatalogResultsTable,
   type CatalogResultRow
 } from '../../../components/catalog/CatalogResultsTable'
-import { formatPackageSize } from '../lib/skillCatalog'
+import { formatPackageSize } from '../../../components/catalog/packageSize'
+import { SkillPackageDetailPage } from './SkillPackageDetailPage'
 import {
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
   knownSkillCatalogPackages,
   skillCatalogBrowserReducer,
   skillCatalogGroups,
-  skillCatalogItems
+  skillCatalogItems,
+  type SkillCatalogPackage
 } from '../lib/skillCatalogBrowser'
 
 export type SkillCatalogDialogProps = {
@@ -69,6 +72,7 @@ export function SkillCatalogDialog({
   const [loadingKnownRegistries, setLoadingKnownRegistries] = useState(false)
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [browser, dispatchBrowser] = useReducer(
     skillCatalogBrowserReducer,
     initialSkillCatalogBrowserState
@@ -132,8 +136,22 @@ export function SkillCatalogDialog({
     }
     return ids
   }, [installedDuringSession, skills])
+  const afterRemoval = useCallback(async (): Promise<void> => {
+    await onRefresh?.()
+  }, [onRefresh])
+  const removal = usePackageRemoval(
+    useCallback(async (id: string) => {
+      await window.api.uninstallPackage('skill', id)
+      setInstalledDuringSession((current) => {
+        const next = new Set(current)
+        next.delete(id)
+        return next
+      })
+    }, []),
+    afterRemoval
+  )
   const loading = loadingRegistry || loadingKnownRegistries || isRegistryLoading
-  const error = actionError ?? registryError ?? sourceError
+  const error = actionError ?? registryError ?? sourceError ?? removal.error
   const items = useMemo(() => skillCatalogItems(loading ? [] : packages), [loading, packages])
   const groups = useMemo(() => skillCatalogGroups(items), [items])
   const selectedGroupId = groups.some((group) => group.id === browser.groupId)
@@ -161,6 +179,7 @@ export function SkillCatalogDialog({
   function close(): void {
     dispatchBrowser({ type: 'close' })
     setActionError(null)
+    setDetailId(null)
     onClose()
   }
 
@@ -206,20 +225,12 @@ export function SkillCatalogDialog({
     }
   }
 
-  const rows: CatalogResultRow[] = visibleItems.map((item) => {
-    const { entry } = item
+  function renderAction(entry: SkillCatalogPackage): React.JSX.Element {
     const key = `package:${entry.id}@${entry.version}`
     const installed = installedPackageIds.has(entry.id)
     const updateAvailable = installed && updateIds.has(entry.id)
-    return {
-      rowKey: key,
-      id: entry.id,
-      icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
-      title: entry.title,
-      summary: entry.summary,
-      metadata: entry.registryLabel ?? '软件包',
-      details: `v${entry.version} · ${formatPackageSize(entry.size)}`,
-      action: (
+    return (
+      <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
         <Button
           size="small"
           variant={installed && !updateAvailable ? 'outlined' : 'contained'}
@@ -240,9 +251,32 @@ export function SkillCatalogDialog({
                 ? '已安装'
                 : '安装'}
         </Button>
-      )
-    }
-  })
+        {installed ? (
+          <Button
+            size="small"
+            color="error"
+            disabled={busyKey !== null || removal.removingId !== null}
+            onClick={() => void removal.remove(entry.id)}
+            aria-label={`卸载 ${entry.title}`}
+          >
+            {removal.removingId === entry.id ? '正在卸载…' : '卸载'}
+          </Button>
+        ) : null}
+      </Stack>
+    )
+  }
+
+  const rows: CatalogResultRow[] = visibleItems.map(({ entry }) => ({
+    rowKey: `package:${entry.id}@${entry.version}`,
+    id: entry.id,
+    icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
+    title: entry.title,
+    summary: entry.summary,
+    metadata: entry.registryLabel ?? '软件包',
+    details: `v${entry.version} · ${formatPackageSize(entry.size)}`,
+    action: renderAction(entry)
+  }))
+  const detailEntry = detailId ? items.find((item) => item.entry.id === detailId)?.entry : undefined
 
   return (
     <Dialog
@@ -264,81 +298,99 @@ export function SkillCatalogDialog({
         }
       }}
     >
-      <CatalogBrowseLayout
-        title="技能目录"
-        closeLabel="关闭技能目录"
-        groups={groups}
-        selectedGroupId={selectedGroupId}
-        onGroupChange={(groupId) => dispatchBrowser({ type: 'group', groupId })}
-        query={browser.query}
-        onQueryChange={(query) => dispatchBrowser({ type: 'query', query })}
-        page={page}
-        rowsPerPage={browser.rowsPerPage}
-        searchLabel="搜索技能名称或说明"
-        onClose={close}
-        busy={busyKey !== null}
-        actions={
-          <CatalogAddButton
-            label="添加技能目录"
-            disabled={loading || busyKey !== null || !onPickRegistryDirectory || !onReadRegistry}
-            onClick={() => void chooseRegistry()}
-          />
-        }
-        footer={
-          <CatalogPagination
-            count={matchingItems.length}
-            page={page}
-            rowsPerPage={browser.rowsPerPage}
-            onPageChange={(nextPage) => dispatchBrowser({ type: 'page', page: nextPage })}
-            onRowsPerPageChange={(rowsPerPage) =>
-              dispatchBrowser({ type: 'page-size', rowsPerPage })
-            }
-          />
-        }
-      >
-        {error ? (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setActionError(null)}>
-            {error}
-          </Alert>
-        ) : null}
-        {isSkillsLoading && skills.length === 0 && !selectedGroupId.startsWith('category:') ? (
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
-            <CircularProgress size={18} />
-            <Typography variant="body2" color="text.secondary">
-              正在读取已安装技能
-            </Typography>
-          </Stack>
-        ) : null}
-        {loading ? (
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
-            <CircularProgress size={18} />
-            <Typography variant="body2" color="text.secondary">
-              正在读取 Phi Packages 和本地目录
-            </Typography>
-          </Stack>
-        ) : null}
-        {sourceNotice ? (
-          <Alert severity="info" sx={{ mb: 2 }}>
-            {sourceNotice}
-          </Alert>
-        ) : null}
-        <CatalogResultsTable
-          label="技能目录结果"
-          nameLabel="技能"
-          detailsLabel="版本 / 大小"
-          rows={rows}
-          rowAttribute="data-phi-skill-catalog-card"
+      {detailEntry ? (
+        <SkillPackageDetailPage
+          entry={detailEntry}
+          installed={installedPackageIds.has(detailEntry.id)}
+          action={renderAction(detailEntry)}
+          onBack={() => setDetailId(null)}
         />
-        {matchingItems.length === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
-            {browser.query.trim()
-              ? '没有匹配的技能，请尝试其他关键词。'
-              : displayedRegistry
-                ? '目录中没有可安装的技能包'
-                : '已知软件源中没有可安装的技能包'}
-          </Typography>
-        ) : null}
-      </CatalogBrowseLayout>
+      ) : (
+        <CatalogBrowseLayout
+          title="技能目录"
+          closeLabel="关闭技能目录"
+          groups={groups}
+          selectedGroupId={selectedGroupId}
+          onGroupChange={(groupId) => dispatchBrowser({ type: 'group', groupId })}
+          query={browser.query}
+          onQueryChange={(query) => dispatchBrowser({ type: 'query', query })}
+          page={page}
+          rowsPerPage={browser.rowsPerPage}
+          searchLabel="搜索技能名称或说明"
+          onClose={close}
+          busy={busyKey !== null}
+          actions={
+            <CatalogAddButton
+              label="添加技能目录"
+              disabled={loading || busyKey !== null || !onPickRegistryDirectory || !onReadRegistry}
+              onClick={() => void chooseRegistry()}
+            />
+          }
+          footer={
+            <CatalogPagination
+              count={matchingItems.length}
+              page={page}
+              rowsPerPage={browser.rowsPerPage}
+              onPageChange={(nextPage) => dispatchBrowser({ type: 'page', page: nextPage })}
+              onRowsPerPageChange={(rowsPerPage) =>
+                dispatchBrowser({ type: 'page-size', rowsPerPage })
+              }
+            />
+          }
+        >
+          {error ? (
+            <Alert
+              severity="error"
+              sx={{ mb: 2 }}
+              onClose={() => {
+                setActionError(null)
+                removal.clearError()
+              }}
+            >
+              {error}
+            </Alert>
+          ) : null}
+          {isSkillsLoading && skills.length === 0 && !selectedGroupId.startsWith('category:') ? (
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
+              <CircularProgress size={18} />
+              <Typography variant="body2" color="text.secondary">
+                正在读取已安装技能
+              </Typography>
+            </Stack>
+          ) : null}
+          {loading ? (
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
+              <CircularProgress size={18} />
+              <Typography variant="body2" color="text.secondary">
+                正在读取 Phi Packages 和本地目录
+              </Typography>
+            </Stack>
+          ) : null}
+          {sourceNotice ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {sourceNotice}
+            </Alert>
+          ) : null}
+          <CatalogResultsTable
+            label="技能目录结果"
+            nameLabel="技能"
+            detailsLabel="版本 / 大小"
+            rows={rows}
+            rowAttribute="data-phi-skill-catalog-card"
+            onOpen={setDetailId}
+            actionWidth={176}
+          />
+          {matchingItems.length === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
+              {browser.query.trim()
+                ? '没有匹配的技能，请尝试其他关键词。'
+                : displayedRegistry
+                  ? '目录中没有可安装的技能包'
+                  : '已知软件源中没有可安装的技能包'}
+            </Typography>
+          ) : null}
+        </CatalogBrowseLayout>
+      )}
     </Dialog>
   )
 }

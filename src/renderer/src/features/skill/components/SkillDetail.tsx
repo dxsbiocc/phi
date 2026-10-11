@@ -1,15 +1,11 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import {
-  Alert,
-  Box,
   Button,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   IconButton,
   MenuItem,
   Stack,
@@ -18,11 +14,10 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import MarkdownContent from '../../../components/MarkdownContent'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PhiIcons } from '../../../icons'
 import type { SkillSummary } from '../../../types'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
+import { SkillDetailBody } from './SkillDetailBody'
 import {
   skillDirectory,
   skillIsEnabled,
@@ -310,62 +305,47 @@ export function SkillDetail({
   const enabled = skillIsEnabled(selectedSkill)
   const cannotDelete = deleteDisabledReason(selectedSkill)
   return (
-    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
-      <Box sx={{ width: '100%', maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
-        <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-          <Box
-            sx={{
-              width: 72,
-              height: 72,
-              borderRadius: 1,
-              bgcolor: enabled ? 'primary.main' : 'action.disabledBackground',
-              color: enabled ? 'primary.contrastText' : 'text.secondary',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
-          >
-            <ResourceIcon icon={selectedSkill.icon} kind="skill" size={72} fallbackSize={24} />
-          </Box>
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-              {selectedSkill.name}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {skillSourceLabel(selectedSkill)}
-            </Typography>
-            <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
-              <Chip size="small" variant="outlined" label={skillSourceLabel(selectedSkill)} />
+    <>
+      <SkillDetailBody
+        name={selectedSkill.name}
+        icon={selectedSkill.icon}
+        enabled={enabled}
+        sourceLabel={skillSourceLabel(selectedSkill)}
+        chips={
+          <>
+            <Chip size="small" variant="outlined" label={skillSourceLabel(selectedSkill)} />
+            <Chip
+              size="small"
+              color={enabled ? 'success' : 'default'}
+              label={enabled ? '已启用' : '已关闭'}
+            />
+            {selectedSkill.deprecated ? (
               <Chip
                 size="small"
-                color={enabled ? 'success' : 'default'}
-                label={enabled ? '已启用' : '已关闭'}
+                color="warning"
+                variant="outlined"
+                label={DEPRECATED_SKILL_LABEL}
+                title={selectedSkill.deprecated}
               />
-              {selectedSkill.deprecated ? (
-                <Chip
-                  size="small"
-                  color="warning"
-                  variant="outlined"
-                  label={DEPRECATED_SKILL_LABEL}
-                  title={selectedSkill.deprecated}
-                />
-              ) : null}
-              {selectedSkill.projectOverride !== null && projectCwd ? (
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={selectedSkill.projectOverride ? '项目已启用' : '项目已关闭'}
-                />
-              ) : null}
-            </Stack>
-            {selectedSkill.deprecated ? (
-              <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
-                {selectedSkill.deprecated}
-              </Typography>
             ) : null}
-          </Box>
-          <Stack spacing={1} sx={{ alignItems: 'flex-end', flexShrink: 0 }}>
+            {selectedSkill.projectOverride !== null && projectCwd ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={selectedSkill.projectOverride ? '项目已启用' : '项目已关闭'}
+              />
+            ) : null}
+          </>
+        }
+        notice={
+          selectedSkill.deprecated ? (
+            <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+              {selectedSkill.deprecated}
+            </Typography>
+          ) : null
+        }
+        actions={
+          <>
             <SkillEnablementActions
               skill={selectedSkill}
               busySkillId={busySkillId}
@@ -390,93 +370,20 @@ export function SkillDetail({
                 </IconButton>
               </span>
             </Tooltip>
-          </Stack>
-        </Stack>
-
-        <Divider sx={{ my: 4 }} />
-        <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-          说明
-        </Typography>
-        <Typography variant="body1" sx={{ maxWidth: 720 }}>
-          {selectedSkill.description || '这个技能没有提供说明。'}
-        </Typography>
-
-        <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-          来源
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {skillSourceCategoryLabels[selectedSkill.sourceCategory]} · {selectedSkill.source}
-        </Typography>
-
-        <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-          文件
-        </Typography>
-        <Typography
-          component="code"
-          sx={{
-            display: 'block',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.84rem',
-            color: 'text.secondary',
-            overflowWrap: 'anywhere'
-          }}
-        >
-          {selectedSkill.filePath}
-        </Typography>
-
-        <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-          SKILL.md
-        </Typography>
-        <Box
-          sx={{
-            border: 1,
-            borderColor: 'divider',
-            borderRadius: 1,
-            bgcolor: (theme) =>
-              theme.palette.mode === 'dark'
-                ? 'rgba(255, 255, 255, 0.03)'
-                : 'rgba(15, 42, 48, 0.025)',
-            overflow: 'auto',
-            maxHeight: '62vh'
-          }}
-        >
-          {skillContent.isLoading ? (
-            <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>
-              <CircularProgress size={20} />
-              <Typography variant="body2" color="text.secondary">
-                正在读取 SKILL.md
-              </Typography>
-            </Stack>
-          ) : skillContent.error ? (
-            <Alert severity="warning" sx={{ m: 2 }}>
-              {skillContent.error}
-            </Alert>
-          ) : skillContent.content !== null ? (
-            <Box
-              sx={{
-                p: 2,
-                minWidth: 0,
-                '& [data-phi-markdown-code-language="markdown"]': { whiteSpace: 'pre-wrap' }
-              }}
-            >
-              <MarkdownContent
-                text={skillContent.content}
-                cwd={skillDirectory(selectedSkill.filePath)}
-              />
-            </Box>
-          ) : (
-            <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-              选择技能后会在这里显示完整源文。
-            </Typography>
-          )}
-        </Box>
-      </Box>
+          </>
+        }
+        description={selectedSkill.description}
+        sourceText={`${skillSourceCategoryLabels[selectedSkill.sourceCategory]} · ${selectedSkill.source}`}
+        location={selectedSkill.filePath}
+        markdown={skillContent}
+        markdownCwd={skillDirectory(selectedSkill.filePath)}
+      />
       <SkillDeleteDialog
         skill={deleteCandidate}
         isDeleting={isDeleting}
         onClose={() => setDeleteCandidate(null)}
         onConfirm={confirmDelete}
       />
-    </Box>
+    </>
   )
 }

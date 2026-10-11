@@ -10,24 +10,12 @@ import type {
 import { readModuleDetails, readWrapperDag } from '../wrappers/composition/module-files'
 import { parseWrapperCompositionManifest } from '../wrappers/composition/manifest'
 import { getPhiAgentDir } from '../runtime-paths'
-import { parseTarGz } from './archive'
 import type { LocalRegistry, RegistryPackageEntry } from './installer-types'
-import {
-  isOfficialRegistryDirectory,
-  readOfficialPackageArchive,
-  type OfficialRegistryOptions
-} from './official-registry'
-import { readRegistryAsset } from './registry-assets'
+import type { OfficialRegistryOptions } from './official-registry'
+import { archiveFiles, readPackageArchive, type PackageFiles } from './package-archive'
 import { getWrapperTreeDir, readWrapperTreeState } from './wrapper-tree'
 
 const MANIFEST_SUFFIX = '/wrapper/wrapper.yaml'
-
-/** The files of one package, from the installed tree or a verified archive. */
-interface PackageFiles {
-  paths: readonly string[]
-  /** `undefined` when the file is missing or cannot be read. */
-  read: (path: string) => string | undefined
-}
 
 /**
  * List the wrappers a package contains so the catalog can show them before installation.
@@ -49,37 +37,11 @@ export async function readWrapperPackageDetail(
   if (installed && installed.version === entry.version) {
     return summarize(entry, 'installed', installedFiles(agentDir, installed.paths))
   }
-  return summarize(entry, 'registry', archiveFiles(await readArchive(registry, entry, options)))
-}
-
-function readArchive(
-  registry: LocalRegistry,
-  entry: RegistryPackageEntry,
-  options: OfficialRegistryOptions
-): Promise<Buffer> {
-  const agentDir = options.agentDir ?? getPhiAgentDir()
-  if (isOfficialRegistryDirectory(registry.dir, agentDir)) {
-    return readOfficialPackageArchive(registry, entry, options)
-  }
-  return Promise.resolve(
-    readRegistryAsset(registry.dir, {
-      path: entry.archive,
-      sha256: entry.sha256,
-      size: entry.size
-    })
+  return summarize(
+    entry,
+    'registry',
+    archiveFiles(await readPackageArchive(registry, entry, options))
   )
-}
-
-function archiveFiles(archive: Buffer): PackageFiles {
-  const files = new Map(
-    parseTarGz(archive)
-      .filter((file) => file.type === 'file')
-      .map((file) => [file.path, file.data] as const)
-  )
-  return {
-    paths: [...files.keys()],
-    read: (path) => files.get(path)?.toString('utf8')
-  }
 }
 
 function installedFiles(agentDir: string, paths: readonly string[]): PackageFiles {

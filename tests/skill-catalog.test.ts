@@ -5,8 +5,8 @@ import type {
   PackageRegistryView
 } from '../src/shared/packageManagerTypes'
 import type { SkillSummary } from '../src/shared/skillTypes'
+import { formatPackageSize } from '../src/renderer/src/components/catalog/packageSize'
 import {
-  formatPackageSize,
   registrySkillPackages,
   skillSourceLabel
 } from '../src/renderer/src/features/skill/lib/skillCatalog'

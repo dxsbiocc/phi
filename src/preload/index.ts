@@ -111,6 +111,7 @@ import type {
   PackageManagerType,
   PackageRegistryView,
   PackageUpdateView,
+  SkillPackageDetailView,
   WrapperPackageDetailView,
   WrapperRemovalView
 } from '../shared/packageManagerTypes'
@@ -1030,6 +1031,7 @@ type RendererAuthApi = {
     version?: string
   ) => Promise<PackageInstallPlanView>
   readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
+  readSkillPackageDetail: (dir: string, id: string) => Promise<SkillPackageDetailView>
   removeWrapperPackage: (id: string) => Promise<WrapperRemovalView>
   installPackage: (
     dir: string,
@@ -1769,6 +1771,8 @@ const api: RendererAuthApi = {
   ): Promise<PackageInstallPlanView> => ipcRenderer.invoke('packages:plan', dir, type, id, version),
   readWrapperPackageDetail: (dir: string, id: string): Promise<WrapperPackageDetailView> =>
     ipcRenderer.invoke('packages:wrapperDetail', dir, id),
+  readSkillPackageDetail: (dir: string, id: string): Promise<SkillPackageDetailView> =>
+    ipcRenderer.invoke('packages:skillDetail', dir, id),
   removeWrapperPackage: (id: string): Promise<WrapperRemovalView> =>
     ipcRenderer.invoke('packages:removeWrapper', id),
   installPackage: (

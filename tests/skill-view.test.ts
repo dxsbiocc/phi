@@ -371,6 +371,27 @@ test('skill catalog preserves official packages sharing bundled names and instal
   assert.doesNotMatch(markup, /加载更多/)
 })
 
+test('installed skill packages can be uninstalled from the catalog and every row opens its detail', () => {
+  const markup = renderSkillCatalog({
+    skills: [
+      skill({ name: 'installed', sourceId: 'installed', sourceCategory: 'installed-package' })
+    ],
+    registry: {
+      id: 'explicit',
+      dir: '/explicit',
+      trust: 'imported',
+      schemaVersion: 1,
+      generatedAt: '2026-10-07',
+      packages: [packageEntry('installed'), packageEntry('available')]
+    },
+    registryDir: '/explicit'
+  })
+  assert.match(markup, /aria-label="卸载 installed"/)
+  assert.doesNotMatch(markup, /aria-label="卸载 available"/)
+  assert.match(markup, /aria-label="查看 installed 详情"/)
+  assert.match(markup, /aria-label="查看 available 详情"/)
+})
+
 test('skill catalog keeps loading and registry errors visible within the browser', () => {
   const markup = renderSkillCatalog({
     isSkillsLoading: true,
