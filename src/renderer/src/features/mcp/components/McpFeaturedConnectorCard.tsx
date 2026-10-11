@@ -160,7 +160,7 @@ export function McpFeaturedConnectorCard({
           {installed && authorized && !enabled && (
             <Chip size="small" variant="outlined" label="已停用" />
           )}
-          {connector.unavailableReason && (
+          {connector.unavailableReason && (!installed || updateAvailable) && (
             <Chip size="small" variant="outlined" label="需要新版 Phi" />
           )}
           {connector.transport === 'stdio' &&
@@ -233,7 +233,10 @@ export function McpFeaturedConnectorCard({
           aria-label={actionLabel}
           title={actionLabel}
           size="small"
-          disabled={!authorizing && (Boolean(connector.unavailableReason) || busy)}
+          disabled={
+            !authorizing &&
+            ((Boolean(connector.unavailableReason) && (!installed || updateAvailable)) || busy)
+          }
           onClick={(event) => {
             event.stopPropagation()
             if (authorizing) onCancel?.()

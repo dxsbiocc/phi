@@ -54,7 +54,8 @@ export function McpFeaturedConnectorDetails({
       </Button>
     ) : null
   let actions: React.JSX.Element
-  if (connector.unavailableReason) {
+  if (connector.unavailableReason && !server) {
+    // The version requirement only stops a new install; a connector that is already added works.
     actions = (
       <Button variant="outlined" disabled>
         需要新版 Phi
@@ -62,15 +63,27 @@ export function McpFeaturedConnectorDetails({
     )
   } else if (connector.environmentState === 'not-built') {
     actions = (
-      <Button variant="contained" disabled={busy} onClick={onBuildEnvironment}>
-        构建环境
-      </Button>
+      <Stack direction="row" spacing={1}>
+        <Button variant="contained" disabled={busy} onClick={onBuildEnvironment}>
+          构建环境
+        </Button>
+        {removeButton}
+      </Stack>
     )
   } else if (updateAvailable) {
     actions = (
-      <Button variant="contained" disabled={busy} onClick={onAdd}>
-        更新
-      </Button>
+      <Stack direction="row" spacing={1}>
+        {connector.unavailableReason ? (
+          <Button variant="outlined" disabled title={connector.unavailableReason}>
+            更新需要新版 Phi
+          </Button>
+        ) : (
+          <Button variant="contained" disabled={busy} onClick={onAdd}>
+            更新
+          </Button>
+        )}
+        {removeButton}
+      </Stack>
     )
   } else if (
     connector.transport === 'stdio' &&
@@ -161,8 +174,7 @@ export function McpFeaturedConnectorDetails({
                 busy ||
                 authorizing ||
                 (server.enabled === false &&
-                  (Boolean(connector.unavailableReason) ||
-                    connector.environmentState === 'not-built' ||
+                  (connector.environmentState === 'not-built' ||
                     ((connector.apiKey || connector.signIn === '需要登录') &&
                       authStatus !== 'authenticated')))
               }

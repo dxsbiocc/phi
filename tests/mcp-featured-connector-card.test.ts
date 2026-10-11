@@ -204,3 +204,18 @@ test('connector cards render resource-owned metadata icons independently of thei
   assert.match(missing, /data-phi-resource-icon="mcp"/)
   assert.doesNotMatch(missing, /<img/)
 })
+
+test('a connector that needs a newer Phi shows that note only while it is not added or has an update pending', () => {
+  const needsNewer = { unavailableReason: '需要 Phi 1.0.1 或更高版本' }
+  assert.match(render('notion', false, false, needsNewer), /需要新版 Phi/)
+  assert.doesNotMatch(
+    render('notion', true, true, needsNewer),
+    /需要新版 Phi/,
+    'an added, working connector is not "unavailable"'
+  )
+  assert.match(
+    render('notion', true, true, needsNewer, true, false, true),
+    /需要新版 Phi/,
+    'an update it cannot take yet is still flagged'
+  )
+})
