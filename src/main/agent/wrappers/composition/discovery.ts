@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
-import { parse as parseYaml } from 'yaml'
 
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import { getEnablementPath, getEnablementSnapshot } from '../../enablement'
@@ -13,11 +12,8 @@ import {
   wrapperTreeRegistryPath
 } from '../../packages/wrapper-tree'
 import { parseWrapperCompositionManifest, type WrapperCompositionManifest } from './manifest'
-import type {
-  WrapperModuleDetails,
-  WrapperModuleMeta,
-  WrapperModuleTool
-} from '../../../../shared/wrapperModuleDetailsTypes'
+import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
+import { readModuleDetails, readWrapperDag, type ReadComponentFile } from './module-files'
 
 /**
  * Discovery for the agent-composition wrapper layout — see
@@ -327,8 +323,6 @@ export function findWrapperCompositionEntry(
   return listWrapperCompositionCatalog(options).find((entry) => entry.manifest.id === id)
 }
 
-const DAG_FILE = 'dag.mmd'
-
 /**
  * Reads the pre-generated Mermaid DAG next to a wrapper's own `wrapper.yaml`,
  * when one exists — see `scripts/generate-wrapper-dags.mjs` for how it's
@@ -342,60 +336,19 @@ export function readWrapperCompositionDag(
   options: WrapperCompositionDiscoveryOptions = {}
 ): string | undefined {
   const entry = findWrapperCompositionEntry(id, options)
-  if (!entry) return undefined
-  const dagPath = join(entry.wrapperDir, DAG_FILE)
-  if (!existsSync(dagPath)) return undefined
-  try {
-    return readFileSync(dagPath, 'utf-8')
-  } catch {
-    return undefined
-  }
+  return entry ? readWrapperDag(readFromDirectory(entry.wrapperDir)) : undefined
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function asStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const strings = value.filter((item): item is string => typeof item === 'string')
-  return strings.length > 0 ? strings : undefined
-}
-
-/**
- * `meta.yml`'s `tools` field is a YAML list of single-key maps, e.g.
- * `[{fastqc: {description, homepage, licence, ...}}]` — one entry per tool
- * the module wraps (almost always exactly one).
- */
-function parseTools(value: unknown): WrapperModuleTool[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const tools: WrapperModuleTool[] = []
-  for (const item of value) {
-    if (!isRecord(item)) continue
-    const [name, info] = Object.entries(item)[0] ?? []
-    if (typeof name !== 'string' || !isRecord(info)) continue
-    tools.push({
-      name,
-      description: typeof info.description === 'string' ? info.description.trim() : undefined,
-      homepage: typeof info.homepage === 'string' ? info.homepage : undefined,
-      documentation: typeof info.documentation === 'string' ? info.documentation : undefined,
-      licence: asStringArray(info.licence),
-      doi: typeof info.doi === 'string' ? info.doi : undefined,
-      identifier:
-        typeof info.identifier === 'string' && info.identifier ? info.identifier : undefined
-    })
-  }
-  return tools.length > 0 ? tools : undefined
-}
-
-function parseModuleMeta(yamlText: string): WrapperModuleMeta | undefined {
-  const doc: unknown = parseYaml(yamlText)
-  if (!isRecord(doc)) return undefined
-  return {
-    description: typeof doc.description === 'string' ? doc.description : undefined,
-    keywords: asStringArray(doc.keywords),
-    tools: parseTools(doc.tools),
-    authors: asStringArray(doc.authors)
+/** Reads component files from a directory on disk; a missing or unreadable file is `undefined`. */
+function readFromDirectory(directory: string): ReadComponentFile {
+  return (name) => {
+    const path = join(directory, name)
+    if (!existsSync(path)) return undefined
+    try {
+      return readFileSync(path, 'utf-8')
+    } catch {
+      return undefined
+    }
   }
 }
 
@@ -418,29 +371,7 @@ export function readWrapperModuleDetails(
   const entry = findWrapperCompositionEntry(id, options)
   if (!entry) return undefined
 
-  const metaPath = join(entry.componentDir, 'meta.yml')
-  const environmentPath = join(entry.componentDir, 'environment.yml')
-
-  let meta: WrapperModuleMeta | undefined
-  if (existsSync(metaPath)) {
-    try {
-      meta = parseModuleMeta(readFileSync(metaPath, 'utf-8'))
-    } catch {
-      meta = undefined
-    }
-  }
-
-  let environment: string | undefined
-  if (existsSync(environmentPath)) {
-    try {
-      environment = readFileSync(environmentPath, 'utf-8')
-    } catch {
-      environment = undefined
-    }
-  }
-
-  if (!meta && !environment) return undefined
-  return { meta, environment }
+  return readModuleDetails(readFromDirectory(entry.componentDir))
 }
 
 export function resetWrapperCompositionCatalogCache(): void {

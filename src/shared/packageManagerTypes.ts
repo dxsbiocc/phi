@@ -1,4 +1,5 @@
 import type { WrapperCompositionManifest } from './wrapperCompositionManifestTypes'
+import type { WrapperModuleDetails } from './wrapperModuleDetailsTypes'
 
 export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 export type PackageTrust = 'builtin' | 'official' | 'imported'
@@ -92,11 +93,19 @@ export interface OfflinePackageImportPreview {
 import type { ResourceIconRef } from './resourceIconTypes'
 
 /** The wrappers inside one wrapper package, read from the local tree or the verified archive. */
+/** A wrapper with the extra files the detail page shows beside its manifest. */
+export interface WrapperPackageMember extends WrapperCompositionManifest {
+  /** Mermaid DAG next to the wrapper, when one was generated. */
+  dag?: string
+  /** The component's `meta.yml` / `environment.yml`. */
+  details?: WrapperModuleDetails
+}
+
 export interface WrapperPackageDetailView {
   id: string
   version: string
   source: 'installed' | 'registry'
-  wrappers: WrapperCompositionManifest[]
+  wrappers: WrapperPackageMember[]
   /** Wrapper manifests in the package that could not be parsed. */
   skipped: number
 }

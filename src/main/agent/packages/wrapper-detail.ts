@@ -3,8 +3,11 @@ import { join, resolve, sep } from 'node:path'
 
 import semver from 'semver'
 
-import type { WrapperPackageDetailView } from '../../../shared/packageManagerTypes'
-import type { WrapperCompositionManifest } from '../../../shared/wrapperCompositionManifestTypes'
+import type {
+  WrapperPackageDetailView,
+  WrapperPackageMember
+} from '../../../shared/packageManagerTypes'
+import { readModuleDetails, readWrapperDag } from '../wrappers/composition/module-files'
 import { parseWrapperCompositionManifest } from '../wrappers/composition/manifest'
 import { getPhiAgentDir } from '../runtime-paths'
 import { parseTarGz } from './archive'
@@ -19,9 +22,11 @@ import { getWrapperTreeDir, readWrapperTreeState } from './wrapper-tree'
 
 const MANIFEST_SUFFIX = '/wrapper/wrapper.yaml'
 
-interface ManifestSource {
-  path: string
-  read: () => string
+/** The files of one package, from the installed tree or a verified archive. */
+interface PackageFiles {
+  paths: readonly string[]
+  /** `undefined` when the file is missing or cannot be read. */
+  read: (path: string) => string | undefined
 }
 
 /**
@@ -42,13 +47,9 @@ export async function readWrapperPackageDetail(
 
   const installed = readWrapperTreeState(agentDir).packages[id]
   if (installed && installed.version === entry.version) {
-    return summarize(entry, 'installed', installedSources(agentDir, installed.paths))
+    return summarize(entry, 'installed', installedFiles(agentDir, installed.paths))
   }
-  const archive = await readArchive(registry, entry, options)
-  const sources = parseTarGz(archive)
-    .filter((file) => file.type === 'file' && file.path.endsWith(MANIFEST_SUFFIX))
-    .map<ManifestSource>((file) => ({ path: file.path, read: () => file.data.toString('utf8') }))
-  return summarize(entry, 'registry', sources)
+  return summarize(entry, 'registry', archiveFiles(await readArchive(registry, entry, options)))
 }
 
 function readArchive(
@@ -69,30 +70,50 @@ function readArchive(
   )
 }
 
-function installedSources(agentDir: string, paths: readonly string[]): ManifestSource[] {
+function archiveFiles(archive: Buffer): PackageFiles {
+  const files = new Map(
+    parseTarGz(archive)
+      .filter((file) => file.type === 'file')
+      .map((file) => [file.path, file.data] as const)
+  )
+  return {
+    paths: [...files.keys()],
+    read: (path) => files.get(path)?.toString('utf8')
+  }
+}
+
+function installedFiles(agentDir: string, paths: readonly string[]): PackageFiles {
   const root = resolve(getWrapperTreeDir(agentDir))
-  return paths
-    .filter((path) => path.endsWith(MANIFEST_SUFFIX))
-    .map((path) => ({
-      path,
-      read: () => {
-        const file = resolve(join(root, ...path.split('/')))
-        if (!file.startsWith(root + sep)) throw new Error(`wrapper path escapes the tree: ${path}`)
+  return {
+    paths,
+    read: (path) => {
+      const file = resolve(join(root, ...path.split('/')))
+      if (!file.startsWith(root + sep)) return undefined
+      try {
         return readFileSync(file, 'utf8')
+      } catch {
+        return undefined
       }
-    }))
+    }
+  }
 }
 
 function summarize(
   entry: RegistryPackageEntry,
   source: WrapperPackageDetailView['source'],
-  sources: readonly ManifestSource[]
+  files: PackageFiles
 ): WrapperPackageDetailView {
-  const wrappers: WrapperCompositionManifest[] = []
+  const wrappers: WrapperPackageMember[] = []
   let skipped = 0
-  for (const item of [...sources].sort((left, right) => left.path.localeCompare(right.path))) {
+  for (const path of files.paths.filter((candidate) => candidate.endsWith(MANIFEST_SUFFIX))) {
+    const wrapperDir = path.slice(0, -'/wrapper.yaml'.length)
+    const componentDir = wrapperDir.slice(0, -'/wrapper'.length)
+    const inDirectory = (directory: string) => (name: string) => files.read(`${directory}/${name}`)
     try {
-      wrappers.push(parseWrapperCompositionManifest(item.read()))
+      const manifest = parseWrapperCompositionManifest(files.read(path) ?? '')
+      const dag = readWrapperDag(inDirectory(wrapperDir))
+      const details = readModuleDetails(inDirectory(componentDir))
+      wrappers.push({ ...manifest, ...(dag ? { dag } : {}), ...(details ? { details } : {}) })
     } catch {
       skipped += 1
     }

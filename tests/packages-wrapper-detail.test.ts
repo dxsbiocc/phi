@@ -46,7 +46,13 @@ const archiveFiles = [
     data: Buffer.from(wrapperYaml('sort'))
   },
   { path: 'modules/nf-core/demo/broken/wrapper/wrapper.yaml', data: Buffer.from('not: [valid') },
-  { path: 'modules/nf-core/demo/sort/main.nf', data: Buffer.from('process SORT {}\n') }
+  { path: 'modules/nf-core/demo/sort/main.nf', data: Buffer.from('process SORT {}\n') },
+  { path: 'modules/nf-core/demo/sort/meta.yml', data: Buffer.from('description: Sort things\n') },
+  {
+    path: 'modules/nf-core/demo/sort/environment.yml',
+    data: Buffer.from('channels: [conda-forge]\n')
+  },
+  { path: 'modules/nf-core/demo/sort/wrapper/dag.mmd', data: Buffer.from('flowchart TD\n') }
 ]
 
 function fixture(options: { corrupt?: boolean } = {}): {
@@ -103,6 +109,12 @@ test('uninstalled package detail downloads only its own archive, lists valid wra
     detail.wrappers.map((wrapper) => wrapper.id),
     ['nf-core/modules/demo-sort', 'nf-core/modules/demo-view']
   )
+  const sort = detail.wrappers[0]
+  assert.equal(sort.dag, 'flowchart TD\n')
+  assert.equal(sort.details?.meta?.description, 'Sort things')
+  assert.equal(sort.details?.environment, 'channels: [conda-forge]\n')
+  assert.equal(detail.wrappers[1].dag, undefined)
+  assert.equal(detail.wrappers[1].details, undefined)
   assert.equal(detail.wrappers[0].params.reads.required, true)
   assert.equal(detail.wrappers[0].outputs.bam.primary, true)
   assert.equal(detail.skipped, 1)
@@ -159,6 +171,8 @@ test('installed package detail reads the local tree without any download', async
   assert.deepEqual(f.requests, [])
   assert.equal(detail.source, 'installed')
   assert.equal(detail.wrappers.length, 2)
+  assert.equal(detail.wrappers[0].details?.meta?.description, 'Sort things')
+  assert.equal(detail.wrappers[0].dag, 'flowchart TD\n')
 })
 
 test('package detail rejects unknown packages and archives that fail verification', async () => {

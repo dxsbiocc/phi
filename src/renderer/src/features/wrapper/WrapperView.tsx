@@ -1,39 +1,21 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Divider,
-  IconButton,
-  Link,
-  Stack,
-  Tooltip,
-  Typography
-} from '@mui/material'
-import { type Theme } from '@mui/material/styles'
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { Alert, Box, Button, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { useMemo, type MouseEvent, type ReactNode } from 'react'
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
-import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetailsTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
-import { WrapperContractSections, WrapperIdentity } from './components/WrapperContract'
+import { WrapperDetailBody } from './components/WrapperDetailBody'
+import { useWrapperDetailData } from './hooks/useWrapperDetailData'
 import { WrapperPackageRail } from './components/WrapperPackageRail'
 import { isManagedWrapper, wrapperFamilyName, wrapperPackageKey } from './lib/wrapperFamily'
 import { wrapperPackageMembers } from './lib/wrapperPackageDetail'
-import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
-import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
-import { highlightLine } from '../../lib/syntaxHighlight'
-import { syntaxTokenColor } from '../../lib/syntaxTheme'
 import {
   canCancelBackgroundRun,
-  parseWrapperCompositionId,
   runProgressLabel,
   runStateColor,
   runStateLabel
 } from './lib/wrapperView'
 import type { LocalPathKind } from '../../components/MarkdownContent'
-import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
 import { WrapperRunResultActions } from './components/WrapperRunResultActions'
 import { WrapperExecutionTargetControl } from './components/WrapperExecutionTargetControl'
 import { WrapperPackageControl } from './components/WrapperPackageControl'
@@ -156,45 +138,6 @@ function DetailPage({
   )
 }
 
-/**
- * Renders raw text with this app's own YAML tokenizer (`syntaxHighlight.ts`)
- * — not a parsed/summarized view: `environment.yml` shows exactly what's on
- * disk, whatever fields it actually has, rather than only the
- * `channels`/`dependencies` shape this component happened to expect.
- */
-function WrapperYamlBlock({ yaml }: { yaml: string }): React.JSX.Element {
-  const lines = useMemo(() => yaml.replace(/\n$/, '').split('\n'), [yaml])
-  return (
-    <Box
-      sx={{
-        bgcolor: 'background.default',
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 1.5,
-        overflow: 'auto',
-        fontFamily: 'var(--font-mono)',
-        fontSize: '0.8rem',
-        lineHeight: 1.6
-      }}
-    >
-      {lines.map((line, index) => (
-        <Box key={index} sx={{ whiteSpace: 'pre' }}>
-          {highlightLine(line, 'yaml').map((token, tokenIndex) => (
-            <Box
-              key={tokenIndex}
-              component="span"
-              sx={{ color: (theme: Theme) => syntaxTokenColor(theme, token.kind) }}
-            >
-              {token.value}
-            </Box>
-          ))}
-        </Box>
-      ))}
-    </Box>
-  )
-}
-
 export function WrapperDetail({
   catalog,
   runs,
@@ -221,83 +164,7 @@ export function WrapperDetail({
     () => runs.filter((run) => run.wrapper.canonicalId === selectedId),
     [runs, selectedId]
   )
-  const tier = selected ? parseWrapperCompositionId(selected.id).tier : ''
-  const params = useMemo(() => (selected ? Object.entries(selected.params) : []), [selected])
-  const inputParams = useMemo(() => params.filter(([, param]) => param.kind === 'input'), [params])
-  const outputs = useMemo(() => (selected ? Object.entries(selected.outputs) : []), [selected])
-  const paramsGraph = useMemo(
-    // Built from the wrapper's own declared params/outputs — its real,
-    // user-facing contract — not Nextflow's internal process signature.
-    // See buildWrapperParamsFlowGraph's own doc comment for why those two
-    // can genuinely disagree (a module's process can take extra channels
-    // the wrapper hardcodes off).
-    () =>
-      selected
-        ? buildWrapperParamsFlowGraph({
-            name: selected.name,
-            inputLabels: inputParams.map(([key]) => key),
-            outputLabels: outputs.map(([key]) => key)
-          })
-        : undefined,
-    [selected, inputParams, outputs]
-  )
-  // Only "workflows" (a complete multi-process pipeline) benefits from the
-  // real Nextflow DAG: it has no small enumerable params that represent its
-  // internal structure the way a module's do, so the params-graph above
-  // would just be a handful of top-level pipeline options, not a structure
-  // view at all. Keyed by the id the fetch was made for, so a still-in-flight
-  // fetch from a previously-selected wrapper never applies once selection
-  // moves on (react-hooks/set-state-in-effect wants setState in the async
-  // callback, not synchronously at the top of the effect).
-  const [dagResult, setDagResult] = useState<{ id: string; source: string | undefined }>()
-  useEffect(() => {
-    if (!selectedId || tier !== 'workflows') return undefined
-    let cancelled = false
-    void window.api
-      .getWrapperCompositionDag(selectedId)
-      .then((dag) => {
-        if (!cancelled) setDagResult({ id: selectedId, source: dag })
-      })
-      .catch(() => {
-        if (!cancelled) setDagResult({ id: selectedId, source: undefined })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedId, tier])
-  const dagSource =
-    tier === 'workflows' && dagResult?.id === selectedId ? dagResult.source : undefined
-  // Nextflow's raw dag.mmd is mostly channel/value plumbing (`channel.empty`,
-  // merge points, …) — parseWrapperNextflowDag collapses all of that down to
-  // real processes and the direct dependencies between them. Falls back to
-  // the params-graph above if parsing finds no processes (e.g. dag.mmd
-  // failed to generate for this wrapper).
-  const graph = useMemo(
-    () => (dagSource ? parseWrapperNextflowDag(dagSource) : undefined) ?? paramsGraph,
-    [dagSource, paramsGraph]
-  )
-  const [moduleDetailsResult, setModuleDetailsResult] = useState<{
-    id: string
-    details: WrapperModuleDetails | undefined
-  }>()
-  useEffect(() => {
-    if (!selectedId) return undefined
-    let cancelled = false
-    void window.api
-      .getWrapperCompositionModuleDetails(selectedId)
-      .then((details) => {
-        if (!cancelled) setModuleDetailsResult({ id: selectedId, details })
-      })
-      .catch(() => {
-        if (!cancelled) setModuleDetailsResult({ id: selectedId, details: undefined })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedId])
-  const moduleDetails =
-    moduleDetailsResult?.id === selectedId ? moduleDetailsResult.details : undefined
-
+  const detailData = useWrapperDetailData(selected)
   const packageKey =
     selected && isManagedWrapper(selected) ? wrapperPackageKey(selected) : undefined
   const siblings = useMemo(
@@ -330,208 +197,104 @@ export function WrapperDetail({
           </Box>
         ) : (
           <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
-            <WrapperIdentity manifest={selected} icon={selected.icon}>
-              <WrapperPackageControl
-                wrapper={selected}
-                busy={packageEnablementBusy}
-                onSetEnabled={onSetPackageEnabled}
-              />
-            </WrapperIdentity>
-
-            {project && (
-              <Box sx={{ mt: 2 }}>
-                <WrapperExecutionTargetControl
-                  project={project}
-                  busy={updatingRemoteProjectId === project.id}
-                  onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
-                  onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
-                  onOpenRemoteSettings={onOpenRemoteSettings}
+            <WrapperDetailBody
+              manifest={selected}
+              icon={selected.icon}
+              graph={detailData.graph}
+              moduleDetails={detailData.moduleDetails}
+              identityExtras={
+                <WrapperPackageControl
+                  wrapper={selected}
+                  busy={packageEnablementBusy}
+                  onSetEnabled={onSetPackageEnabled}
                 />
-              </Box>
-            )}
-
-            <Divider sx={{ my: 4 }} />
-
-            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-              结构
-            </Typography>
-            {graph && (
-              // Keyed by wrapper id so switching wrappers remounts the whole
-              // ReactFlow instance instead of reusing it with a new `graph`
-              // prop — `fitView` only runs once on mount, so reusing the
-              // instance left the old pan/zoom transform in place for a
-              // completely different graph, which for a same-size-or-smaller
-              // one meant the new nodes could land entirely outside the
-              // visible viewport (an apparently blank diagram).
-              <WrapperFlowDiagram
-                key={selected.id}
-                graph={graph}
-                height={graph.nodes.length > 8 ? 480 : 180}
-              />
-            )}
-
-            <Divider sx={{ my: 4 }} />
-
-            <WrapperContractSections manifest={selected} />
-
-            {moduleDetails?.meta && (
-              <>
-                <Divider sx={{ my: 4 }} />
-                <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-                  关于
-                </Typography>
-                {moduleDetails.meta.description && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                    {moduleDetails.meta.description}
-                  </Typography>
-                )}
-                {moduleDetails.meta.keywords && moduleDetails.meta.keywords.length > 0 && (
-                  <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', rowGap: 1 }}>
-                    {moduleDetails.meta.keywords.map((keyword) => (
-                      <Chip key={keyword} size="small" variant="outlined" label={keyword} />
-                    ))}
-                  </Stack>
-                )}
-                {moduleDetails.meta.tools?.map((tool) => (
-                  <Box key={tool.name} sx={{ mb: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                      {tool.name}
-                    </Typography>
-                    {tool.description && (
-                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                        {tool.description}
-                      </Typography>
-                    )}
-                    <Stack
-                      direction="row"
-                      spacing={1.5}
-                      sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.5, alignItems: 'center' }}
-                    >
-                      {tool.licence?.map((licence) => (
-                        <Chip key={licence} size="small" label={licence} />
-                      ))}
-                      {tool.homepage && (
-                        <Link
-                          href={tool.homepage}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          variant="body2"
-                        >
-                          主页
-                        </Link>
-                      )}
-                      {tool.documentation && (
-                        <Link
-                          href={tool.documentation}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          variant="body2"
-                        >
-                          文档
-                        </Link>
-                      )}
-                      {tool.doi && (
-                        <Link
-                          href={`https://doi.org/${tool.doi}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          variant="body2"
-                        >
-                          DOI
-                        </Link>
-                      )}
-                    </Stack>
+              }
+              afterIdentity={
+                project ? (
+                  <Box sx={{ mt: 2 }}>
+                    <WrapperExecutionTargetControl
+                      project={project}
+                      busy={updatingRemoteProjectId === project.id}
+                      onUpdateRemoteConnection={onUpdateProjectRemoteConnection}
+                      onUpdateRemoteDefaults={onUpdateProjectRemoteDefaults}
+                      onOpenRemoteSettings={onOpenRemoteSettings}
+                    />
                   </Box>
-                ))}
-                {moduleDetails.meta.authors && moduleDetails.meta.authors.length > 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    作者：{moduleDetails.meta.authors.join('、')}
-                  </Typography>
-                )}
-              </>
-            )}
-
-            {moduleDetails?.environment && (
-              <>
-                <Divider sx={{ my: 4 }} />
-                <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-                  环境
-                </Typography>
-                <WrapperYamlBlock yaml={moduleDetails.environment} />
-              </>
-            )}
-
-            <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-              运行记录
-            </Typography>
-            {selectedRuns.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                还没有运行记录。
+                ) : null
+              }
+            >
+              <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
+                运行记录
               </Typography>
-            ) : (
-              <Stack spacing={0.75}>
-                {selectedRuns
-                  .slice()
-                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                  .map((run) => (
-                    <Stack
-                      key={run.runId}
-                      direction="row"
-                      spacing={1}
-                      sx={{ alignItems: 'center' }}
-                    >
-                      <Chip
-                        size="small"
-                        label={runStateLabel(run.state)}
-                        color={runStateColor(run.state)}
-                      />
-                      <Typography variant="body2" color="text.secondary">
-                        {run.runId}
-                      </Typography>
-                      {run.remote ? (
-                        <Typography variant="caption" color="text.secondary">
-                          SSH {run.remote.host}
-                        </Typography>
-                      ) : null}
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(run.createdAt).toLocaleString()}
-                      </Typography>
-                      {runProgressLabel(run) ? (
-                        <Typography variant="caption" color="text.secondary">
-                          {runProgressLabel(run)}
-                        </Typography>
-                      ) : null}
-                      <Box sx={{ flex: 1 }} />
-                      {canCancelBackgroundRun(run) ? (
-                        <Button
+              {selectedRuns.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  还没有运行记录。
+                </Typography>
+              ) : (
+                <Stack spacing={0.75}>
+                  {selectedRuns
+                    .slice()
+                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                    .map((run) => (
+                      <Stack
+                        key={run.runId}
+                        direction="row"
+                        spacing={1}
+                        sx={{ alignItems: 'center' }}
+                      >
+                        <Chip
                           size="small"
-                          color="error"
-                          aria-label="取消运行"
-                          onClick={() => onCancelRun?.(run.runId)}
-                        >
-                          取消运行
-                        </Button>
-                      ) : null}
-                      <Tooltip title="导出可复现性元数据">
-                        <span>
-                          <IconButton
-                            aria-label="导出可复现性元数据"
+                          label={runStateLabel(run.state)}
+                          color={runStateColor(run.state)}
+                        />
+                        <Typography variant="body2" color="text.secondary">
+                          {run.runId}
+                        </Typography>
+                        {run.remote ? (
+                          <Typography variant="caption" color="text.secondary">
+                            SSH {run.remote.host}
+                          </Typography>
+                        ) : null}
+                        <Typography variant="caption" color="text.secondary">
+                          {new Date(run.createdAt).toLocaleString()}
+                        </Typography>
+                        {runProgressLabel(run) ? (
+                          <Typography variant="caption" color="text.secondary">
+                            {runProgressLabel(run)}
+                          </Typography>
+                        ) : null}
+                        <Box sx={{ flex: 1 }} />
+                        {canCancelBackgroundRun(run) ? (
+                          <Button
                             size="small"
-                            onClick={() => onExportReproducibility?.(run.runId)}
+                            color="error"
+                            aria-label="取消运行"
+                            onClick={() => onCancelRun?.(run.runId)}
                           >
-                            <ExportIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <WrapperRunResultActions
-                        run={run}
-                        onOpenLocalPath={onOpenLocalPath}
-                        onOpenRemoteResult={onOpenRemoteResult}
-                      />
-                    </Stack>
-                  ))}
-              </Stack>
-            )}
+                            取消运行
+                          </Button>
+                        ) : null}
+                        <Tooltip title="导出可复现性元数据">
+                          <span>
+                            <IconButton
+                              aria-label="导出可复现性元数据"
+                              size="small"
+                              onClick={() => onExportReproducibility?.(run.runId)}
+                            >
+                              <ExportIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <WrapperRunResultActions
+                          run={run}
+                          onOpenLocalPath={onOpenLocalPath}
+                          onOpenRemoteResult={onOpenRemoteResult}
+                        />
+                      </Stack>
+                    ))}
+                </Stack>
+              )}
+            </WrapperDetailBody>
           </Box>
         )}
       </Box>

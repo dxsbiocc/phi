@@ -6,7 +6,8 @@ import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PhiIcons } from '../../../icons'
 import { useWrapperPackageMembers } from '../hooks/useWrapperPackageMembers'
 import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
-import { WrapperContractSections, WrapperIdentity } from './WrapperContract'
+import { useWrapperDetailData } from '../hooks/useWrapperDetailData'
+import { WrapperDetailBody } from './WrapperDetailBody'
 import { WrapperPackageRail } from './WrapperPackageRail'
 
 export interface WrapperPackageDetailPageProps {
@@ -30,6 +31,10 @@ export function WrapperPackageDetailPage({
   const members = useWrapperPackageMembers(catalog, choice)
   const [pickedId, setPickedId] = useState<string | null>(null)
   const selected = members.wrappers.find((entry) => entry.id === pickedId) ?? members.wrappers[0]
+  const detailData = useWrapperDetailData(
+    selected,
+    members.bundled ? { dag: selected?.dag, details: selected?.details } : undefined
+  )
 
   return (
     <Box
@@ -77,17 +82,19 @@ export function WrapperPackageDetailPage({
           ) : members.status === 'error' ? (
             <Alert severity="error">{members.error}</Alert>
           ) : selected ? (
-            <Stack spacing={3}>
+            <Box sx={{ maxWidth: 860, mx: 'auto' }}>
               {members.skipped > 0 ? (
-                <Alert severity="warning">
+                <Alert severity="warning" sx={{ mb: 2 }}>
                   有 {members.skipped} 个 wrapper 的清单无法解析，已跳过。
                 </Alert>
               ) : null}
-              <WrapperIdentity manifest={selected} icon={choice.cached?.icon} />
-              <Box>
-                <WrapperContractSections manifest={selected} />
-              </Box>
-            </Stack>
+              <WrapperDetailBody
+                manifest={selected}
+                icon={choice.cached?.icon}
+                graph={detailData.graph}
+                moduleDetails={detailData.moduleDetails}
+              />
+            </Box>
           ) : (
             <Typography color="text.secondary">这个软件包里没有可显示的 wrapper。</Typography>
           )}

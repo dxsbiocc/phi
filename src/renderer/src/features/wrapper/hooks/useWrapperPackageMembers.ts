@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type {
-  WrapperCompositionCatalogItem,
-  WrapperCompositionManifest
-} from '../../../../../shared/wrapperCompositionManifestTypes'
+import type { WrapperPackageMember } from '../../../../../shared/packageManagerTypes'
+import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
 import { wrapperPackageMembers } from '../lib/wrapperPackageDetail'
 
 export interface WrapperPackageMembersState {
   status: 'loading' | 'ready' | 'error'
-  wrappers: WrapperCompositionManifest[]
+  wrappers: WrapperPackageMember[]
+  /** Whether each member carries its own dag/meta files (read from the archive). */
+  bundled: boolean
   /** Manifests in the package that could not be parsed. */
   skipped: number
   error?: string
@@ -17,7 +17,7 @@ export interface WrapperPackageMembersState {
 
 interface RemoteResult {
   key: string
-  wrappers: WrapperCompositionManifest[]
+  wrappers: WrapperPackageMember[]
   skipped: number
   error?: string
 }
@@ -58,17 +58,19 @@ export function useWrapperPackageMembers(
     }
   }, [local.length, registryPath, choice.id, key])
 
-  if (local.length > 0) return { status: 'ready', wrappers: local, skipped: 0 }
+  if (local.length > 0) return { status: 'ready', wrappers: local, bundled: false, skipped: 0 }
   if (!registryPath) {
     return {
       status: 'error',
       wrappers: [],
+      bundled: false,
       skipped: 0,
       error: '这个 wrapper 没有可查看详情的来源。'
     }
   }
-  if (!remote || remote.key !== key) return { status: 'loading', wrappers: [], skipped: 0 }
+  if (!remote || remote.key !== key)
+    return { status: 'loading', wrappers: [], bundled: false, skipped: 0 }
   return remote.error
-    ? { status: 'error', wrappers: [], skipped: 0, error: remote.error }
-    : { status: 'ready', wrappers: remote.wrappers, skipped: remote.skipped }
+    ? { status: 'error', wrappers: [], bundled: false, skipped: 0, error: remote.error }
+    : { status: 'ready', wrappers: remote.wrappers, bundled: true, skipped: remote.skipped }
 }
