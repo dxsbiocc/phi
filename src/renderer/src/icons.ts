@@ -188,15 +188,24 @@ const FILE_ICON_MARKDOWN = '#6B7280'
 const FILE_ICON_JSON = '#F2C94C'
 const MATERIAL_ICON_ASSET_PREFIX = '../../../node_modules/material-icon-theme/icons/'
 const MATERIAL_ICON_MANIFEST = materialIconManifestJson as Manifest
-const MATERIAL_ICON_SVG_MODULES =
-  typeof import.meta.glob === 'function'
-    ? import.meta.glob('../../../node_modules/material-icon-theme/icons/*.svg', {
-        eager: true,
-        import: 'default',
-        query: '?raw'
-      })
-    : {}
-const MATERIAL_ICON_SVG_MARKUP = MATERIAL_ICON_SVG_MODULES as Record<string, string>
+/**
+ * Vite replaces the `import.meta.glob(...)` call itself at build time, but not a `typeof` check of
+ * it, so guarding the call with `typeof import.meta.glob` made the bundled icons unreachable at
+ * runtime and every icon outside the inline list fell back to a file glyph. Outside Vite (tests
+ * under Bun) the call throws, and icons are then read from disk instead.
+ */
+function bundledMaterialIconMarkup(): Record<string, string> {
+  try {
+    return import.meta.glob('../../../node_modules/material-icon-theme/icons/*.svg', {
+      eager: true,
+      import: 'default',
+      query: '?raw'
+    }) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+const MATERIAL_ICON_SVG_MARKUP = bundledMaterialIconMarkup()
 const MATERIAL_ICON_COMPONENT_CACHE = new Map<string, PhiIconComponent>()
 const MATERIAL_ICON_DIRECT_SVG_MARKUP: Record<string, string> = {
   'adobe-illustrator': materialAdobeIllustratorSvg,
