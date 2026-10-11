@@ -23,7 +23,7 @@ function statusCopy(props: TerminalStatusPaneProps): {
       return { title: '正在启动 Shell…' }
     case 'exited':
       return {
-        title: `Shell 已退出（代码 ${props.exitCode ?? '—'}）`,
+        title: props.message || `Shell 已退出（代码 ${props.exitCode ?? '—'}）`,
         canCreate: true
       }
     case 'failed':
@@ -34,7 +34,7 @@ function statusCopy(props: TerminalStatusPaneProps): {
         canCreate: true
       }
     case 'remote':
-      return { title: '远程终端将在后续版本支持' }
+      return { title: '请先打开远程项目会话' }
     case 'unsupported':
       return { title: '当前平台暂不支持终端', alert: true }
     case 'limit':

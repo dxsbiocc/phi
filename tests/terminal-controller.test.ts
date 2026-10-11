@@ -426,6 +426,32 @@ test('writes the dim retention notice for attach and live gaps', async () => {
   controller.dispose()
 })
 
+test('SSH disconnect does not reconnect and later create uses the current session binding', async () => {
+  const bridge = new FakeBridge()
+  const existing = snapshot('terminal-remote', 'project:remote', {
+    host: 'ssh',
+    hostLabel: 'cluster-a',
+    initialCwd: '/srv/project'
+  })
+  bridge.listResults.set('remote', [existing])
+  bridge.attachResults.set(existing.terminalId, [attachment(existing, 1)])
+  const { controller } = harness(bridge)
+  const firstRef = { kind: 'project', projectId: 'remote', sessionId: 'session-a' } as const
+  await controller.ensureWorkspace(firstRef)
+
+  bridge.emit({
+    type: 'state',
+    snapshot: { ...existing, state: 'exited', exitCode: 255 }
+  })
+  assert.equal(controller.getWorkspaceSnapshot(firstRef).terminals[0]?.state, 'exited')
+  assert.equal(bridge.createCalls.length, 0)
+
+  const currentRef = { kind: 'project', projectId: 'remote', sessionId: 'session-b' } as const
+  await controller.create(currentRef)
+  assert.deepEqual(bridge.createCalls[0]?.workspace, currentRef)
+  controller.dispose()
+})
+
 test('StrictMode-style double ensure creates once and creation is isolated per workspace', async () => {
   const bridge = new FakeBridge()
   const createGate = new Deferred<TerminalResult<TerminalSnapshot>>()

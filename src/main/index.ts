@@ -762,7 +762,24 @@ function getTerminalManager(): TerminalManager {
           getProject,
           noProjectTaskFolder: getNoProjectTaskFolder,
           realDirectory: (path) => realDirectoryPath(path),
-          isRemoteAnchor: (path) => isRemoteProjectAnchorPath(path, AGENT_DIR)
+          isRemoteAnchor: (path) => isRemoteProjectAnchorPath(path, AGENT_DIR),
+          resolveRemoteWorkspaceHostBinding: (input, options) => {
+            const binding = resolveRemoteWorkspaceHostBinding(input, {
+              agentDir: AGENT_DIR
+            })
+            const authorized = resolveAuthorizedRemoteConnectionConfig(input, {
+              agentDir: AGENT_DIR,
+              userInitiated: options.userInitiated
+            })
+            return {
+              hostAlias: binding.hostAlias,
+              remoteRoot: binding.remoteRoot,
+              connection: {
+                ...authorized.connection,
+                userInitiated: options.userInitiated
+              }
+            }
+          }
         }),
       sink: (event) => {
         if (

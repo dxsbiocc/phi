@@ -9,9 +9,12 @@ export type TerminalWorkspaceTarget = TerminalWorkspaceRef | 'remote'
  * back to a local shell.
  */
 export function terminalWorkspaceRefFromActiveProject(
-  project: Pick<Project, 'id' | 'location'> | null | undefined
+  project: Pick<Project, 'id' | 'location'> | null | undefined,
+  sessionId?: string | null
 ): TerminalWorkspaceTarget {
   if (!project) return { kind: 'ordinary' }
-  if (project.location.kind === 'ssh') return 'remote'
+  if (project.location.kind === 'ssh') {
+    return sessionId ? { kind: 'project', projectId: project.id, sessionId } : 'remote'
+  }
   return { kind: 'project', projectId: project.id }
 }

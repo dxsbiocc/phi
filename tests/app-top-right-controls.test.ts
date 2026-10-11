@@ -314,7 +314,7 @@ test('terminal panel renders through its workbench slot with the slot header act
   )
   assert.match(
     appSource,
-    /useTerminalWorkspaceRestoration\(rendererApi\.terminal, projects, activeProjectId\)/
+    /useTerminalWorkspaceRestoration\(\s*rendererApi\.terminal,\s*projects,\s*activeProjectId,\s*activePhiSessionId\s*\)/
   )
   // Maximize and close are owned by the workbench, not by terminal-local App state.
   assert.doesNotMatch(appSource, /terminalPanelMaximized/)

@@ -15,6 +15,7 @@ import {
   type TerminalDraftGenerationResult,
   type TerminalDraftManagerFacade,
   type TerminalDraftSession,
+  type TerminalDraftSessionContext,
   type TerminalDraftTargetSnapshot
 } from '../src/main/terminal/terminal-command-draft'
 import { buildTerminalDraftSessionFactory } from '../src/main/terminal/terminal-draft-session'
@@ -82,7 +83,9 @@ class FakeManager implements TerminalDraftManagerFacade {
       workspaceKey: 'project:alpha',
       workspaceLabel: 'Alpha',
       initialCwd: '/work/alpha',
+      draftCwd: '/work/alpha',
       shell: '/bin/zsh',
+      host: 'local',
       state: 'open'
     })
   }
@@ -220,6 +223,60 @@ test('prompt contains only bounded, explicitly allowed terminal context', async 
   assert.doesNotMatch(prompt, /TRUNCATED_SELECTION_SECRET/u)
   assert.doesNotMatch(prompt, /BUFFER_SECRET_MUST_NOT_LEAK/u)
   assert.doesNotMatch(prompt, /ENV_SECRET_MUST_NOT_LEAK/u)
+  await service.dispose()
+})
+
+test('remote command drafting stays local and writes only after explicit submit', async () => {
+  const manager = new FakeManager()
+  manager.snapshots.set('terminal-a', {
+    terminalId: 'terminal-a',
+    workspaceKey: 'project:remote',
+    workspaceLabel: 'cluster-a · Remote Project',
+    initialCwd: '/srv/remote project',
+    draftCwd: '/safe/local/tasks',
+    shell: '/bin/sh',
+    host: 'ssh',
+    state: 'open'
+  })
+  const contexts: TerminalDraftSessionContext[] = []
+  const session = new FakeSession(
+    JSON.stringify({ command: 'pwd', explanation: '显示远程目录。', requiredInputs: [] })
+  )
+  const service = new TerminalDraftService({
+    manager,
+    createSession: async (context) => {
+      contexts.push(context)
+      return session
+    },
+    randomDraftId: () => 'draft-remote'
+  })
+
+  const draft = await service.generate({
+    requestId: 'generate-remote',
+    terminalId: 'terminal-a',
+    kind: 'command',
+    request: '显示目录'
+  })
+  assert.deepEqual(contexts, [
+    {
+      terminalId: 'terminal-a',
+      workspaceKey: 'project:remote',
+      cwd: '/safe/local/tasks'
+    }
+  ])
+  assert.equal(manager.inputCalls.length, 0)
+  assert.match(session.prompts[0], /"platform":"remote POSIX shell over SSH"/u)
+  assert.match(session.prompts[0], /"shell":"sh"/u)
+  assert.match(session.prompts[0], /"initialDirectory":"\/srv\/remote project"/u)
+  assert.doesNotMatch(session.prompts[0], /\/safe\/local\/tasks/u)
+
+  await service.submit({
+    requestId: 'submit-remote',
+    draftId: draft.draftId,
+    source: draft.source,
+    bracketedPaste: false
+  })
+  assert.deepEqual(manager.inputCalls, [{ terminalId: 'terminal-a', data: 'pwd\r' }])
   await service.dispose()
 })
 

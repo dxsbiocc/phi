@@ -300,7 +300,8 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
     status = {
       kind: 'exited',
       compact: true,
-      exitCode: workspace.activeTerminal.exitCode
+      exitCode: workspace.activeTerminal.exitCode,
+      ...(workspace.activeTerminal.host === 'ssh' ? { message: '连接已断开，可重新打开终端' } : {})
     }
   } else if (workspace.activeTerminal?.state === 'failed') {
     status = {

@@ -1036,7 +1036,12 @@ function App(): React.JSX.Element {
     onUpdateProjectRemoteConnection,
     onUpdateProjectRemoteDefaults
   } = useProjects(showSnackbarError)
-  useTerminalWorkspaceRestoration(rendererApi.terminal, projects, activeProjectId)
+  useTerminalWorkspaceRestoration(
+    rendererApi.terminal,
+    projects,
+    activeProjectId,
+    activePhiSessionId
+  )
 
   const getActiveRemoteProject = useCallback(() => {
     const state = useSessionStore.getState()

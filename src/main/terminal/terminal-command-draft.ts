@@ -20,9 +20,10 @@ type MaybePromise<T> = T | Promise<T>
 
 export interface TerminalDraftTargetSnapshot extends Pick<
   TerminalSnapshot,
-  'terminalId' | 'workspaceKey' | 'initialCwd' | 'shell' | 'state'
+  'terminalId' | 'workspaceKey' | 'initialCwd' | 'shell' | 'state' | 'host'
 > {
   workspaceLabel: string
+  draftCwd: string
 }
 
 export interface TerminalDraftManagerFacade {
@@ -207,6 +208,7 @@ export function buildTerminalDraftPrompt(input: {
   shell: string
   workspaceLabel: string
   initialCwd: string
+  host: TerminalSnapshot['host']
   selection?: string
   selectionTruncated?: boolean
 }): string {
@@ -216,7 +218,7 @@ export function buildTerminalDraftPrompt(input: {
     shell: input.shell,
     project: input.workspaceLabel,
     initialDirectory: input.initialCwd,
-    platform: 'macOS',
+    platform: input.host === 'ssh' ? 'remote POSIX shell over SSH' : 'macOS',
     ...(input.selection !== undefined
       ? {
           selection: input.selection,
@@ -377,7 +379,7 @@ export class TerminalDraftService {
           await this.createSession({
             terminalId: target.terminalId,
             workspaceKey: target.workspaceKey,
-            cwd: target.initialCwd
+            cwd: target.draftCwd
           })
       )
       session = await Promise.race([sessionPromise, control])
@@ -397,6 +399,7 @@ export class TerminalDraftService {
         shell: basename(target.shell),
         workspaceLabel: target.workspaceLabel,
         initialCwd: target.initialCwd,
+        host: target.host,
         ...(selection
           ? {
               selection: selection.text,

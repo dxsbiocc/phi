@@ -189,6 +189,10 @@ test('rejects extra keys, bad dimensions, oversized input, and NUL input as inva
       [{ workspace: { kind: 'ordinary', cwd: '/x' }, cols: 80, rows: 24, requestId: 'request_2' }]
     ],
     [
+      'terminal:list',
+      [{ kind: 'project', projectId: 'remote-project', sessionId: 'bad\0session' }]
+    ],
+    [
       'terminal:create',
       [{ workspace: { kind: 'ordinary' }, cols: 19, rows: 24, requestId: 'request_3' }]
     ],
@@ -323,6 +327,27 @@ test('draft IPC validates trusted callers and exact request keys before routing'
       message: 'Terminal renderer is not authorized'
     })
   }
+})
+
+test('routes an exact remote project workspace with its bound session id', async () => {
+  const seen: unknown[] = []
+  const manager = fakeManager({
+    list: async (workspace) => {
+      seen.push(workspace)
+      return []
+    }
+  })
+  const { trusted, handlers } = registeredHarness({ manager })
+  assert.ok(trusted)
+  const result = await invoke(handlers, 'terminal:list', event(trusted), {
+    kind: 'project',
+    projectId: 'remote-project',
+    sessionId: 'remote-session'
+  })
+  assert.deepEqual(result, { ok: true, value: [] })
+  assert.deepEqual(seen, [
+    { kind: 'project', projectId: 'remote-project', sessionId: 'remote-session' }
+  ])
 })
 
 test('returns unsupported_platform for create and an empty list outside macOS', async () => {

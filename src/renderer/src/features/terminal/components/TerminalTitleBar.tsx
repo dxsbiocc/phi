@@ -8,6 +8,12 @@ import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../../../l
 const AddIcon = PhiIcons.action.add
 const MoreIcon = PhiIcons.action.more
 
+function terminalDisplayTitle(terminal: TerminalSnapshot): string {
+  return terminal.host === 'ssh' && terminal.hostLabel
+    ? `${terminal.hostLabel} · ${terminal.title}`
+    : terminal.title
+}
+
 function TitleButton(props: {
   label: string
   disabled?: boolean
@@ -154,13 +160,13 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
           >
             {props.terminals.map((terminal) => (
               <option key={terminal.terminalId} value={terminal.terminalId}>
-                {terminal.title}
+                {terminalDisplayTitle(terminal)}
               </option>
             ))}
           </Box>
         ) : (
           <Typography component="span" sx={{ fontSize: 14, fontWeight: 600, px: 0.5 }}>
-            Terminal
+            {activeTerminal?.host === 'ssh' ? terminalDisplayTitle(activeTerminal) : 'Terminal'}
           </Typography>
         )}
       </Box>

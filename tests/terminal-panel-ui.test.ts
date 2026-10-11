@@ -179,6 +179,27 @@ test('terminal title bar switches to a compact selector for multiple terminals',
   assert.doesNotMatch(markup, />Terminal<\/span>/)
 })
 
+test('SSH terminal titles display the server identifier', () => {
+  const single = titleBarMarkup({
+    terminals: [terminal({ host: 'ssh', hostLabel: 'cluster-a' })]
+  })
+  assert.match(single, /cluster-a · Terminal 1/u)
+
+  const multiple = titleBarMarkup({
+    terminals: [
+      terminal({ host: 'ssh', hostLabel: 'cluster-a' }),
+      terminal({
+        terminalId: 'terminal-2',
+        title: 'Terminal 2',
+        host: 'ssh',
+        hostLabel: 'cluster-a'
+      })
+    ]
+  })
+  assert.match(multiple, />cluster-a · Terminal 1</u)
+  assert.match(multiple, />cluster-a · Terminal 2</u)
+})
+
 test('terminal status panes cover lifecycle, platform, remote, and limit states', () => {
   const cases: Array<{
     kind: TerminalStatusKind
@@ -188,7 +209,7 @@ test('terminal status panes cover lifecycle, platform, remote, and limit states'
     { kind: 'starting', expected: /正在启动 Shell/ },
     { kind: 'exited', expected: /Shell 已退出（代码 7）/, props: { exitCode: 7 } },
     { kind: 'failed', expected: /Shell 无法启动/, props: { message: 'Shell 无法启动' } },
-    { kind: 'remote', expected: /远程终端将在后续版本支持/ },
+    { kind: 'remote', expected: /请先打开远程项目会话/ },
     { kind: 'unsupported', expected: /当前平台暂不支持终端/ },
     {
       kind: 'limit',
@@ -217,6 +238,16 @@ test('terminal status panes cover lifecycle, platform, remote, and limit states'
   )
   assert.match(limit, /请先结束一个终端后再新建/)
   assert.match(limit, /role="alert"/)
+
+  const disconnected = renderWithTheme(
+    createElement(TerminalStatusPane, {
+      kind: 'exited',
+      message: '连接已断开，可重新打开终端',
+      onCreate: noop
+    })
+  )
+  assert.match(disconnected, /连接已断开，可重新打开终端/u)
+  assert.match(disconnected, />新建终端</u)
 })
 
 test('multi-line paste preview shows bounded context and explicit send/cancel actions', () => {
@@ -457,7 +488,7 @@ test('terminal panel explains unavailable bridges without rendering a terminal v
   }
 })
 
-test('terminal workspace resolution rejects SSH fallback and UI never labels a current directory', () => {
+test('terminal workspace resolution binds SSH projects to the active session', () => {
   const localProject = {
     id: 'local-project',
     location: { kind: 'local', path: '/work/local', realPath: '/work/local' }
@@ -478,6 +509,11 @@ test('terminal workspace resolution rejects SSH fallback and UI never labels a c
     projectId: 'local-project'
   })
   assert.equal(terminalWorkspaceRefFromActiveProject(remoteProject), 'remote')
+  assert.deepEqual(terminalWorkspaceRefFromActiveProject(remoteProject, 'session-remote'), {
+    kind: 'project',
+    projectId: 'remote-project',
+    sessionId: 'session-remote'
+  })
 
   for (const file of [
     'TerminalPanel.tsx',

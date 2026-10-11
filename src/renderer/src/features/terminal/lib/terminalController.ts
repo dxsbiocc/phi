@@ -216,6 +216,8 @@ class RendererTerminalController implements TerminalController {
         initialized: false
       }
       this.workspaces.set(key, record)
+    } else if (ref.kind === 'project' && ref.sessionId) {
+      record.ref = { ...ref }
     }
     return record
   }

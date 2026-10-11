@@ -66,6 +66,9 @@ test('remote project prompt presents the server root without exposing the SDK an
   assert.match(prompt, /\/cluster\/project/)
   assert.match(prompt, /Delegate Wrapper runs and run control/)
   assert.match(prompt, /temporarily unavailable/)
+  assert.match(prompt, /interactive SSH shell/u)
+  assert.match(prompt, /writes nothing to the PTY until the user explicitly sends/u)
+  assert.match(prompt, /not automatically reconnected/u)
 })
 
 test('remote project guard blocks built-in and Phi custom tools before local execution', async () => {

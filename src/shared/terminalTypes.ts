@@ -6,7 +6,8 @@ export const TERMINAL_MAX_INPUT_BYTES = 64 * 1024
 export const TERMINAL_RING_BUFFER_BYTES = 2 * 1024 * 1024
 export const TERMINAL_CREDIT_WINDOW_BYTES = 512 * 1024
 
-export type TerminalWorkspaceRef = { kind: 'project'; projectId: string } | { kind: 'ordinary' }
+export type TerminalWorkspaceRef =
+  { kind: 'project'; projectId: string; sessionId?: string } | { kind: 'ordinary' }
 
 export type TerminalErrorCode =
   | 'not_found'
@@ -25,7 +26,8 @@ export interface TerminalSnapshot {
   terminalId: string
   workspaceKey: string
   title: string
-  host: 'local'
+  host: 'local' | 'ssh'
+  hostLabel?: string
   initialCwd: string
   shell: string
   state: TerminalState

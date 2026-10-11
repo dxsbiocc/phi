@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import type { TerminalWorkspaceRef } from '../src/shared/terminalTypes'
 import { TerminalError } from '../src/main/terminal/terminal-error'
+import { shellQuote } from '../src/main/agent/wrappers/remote-ssh-session'
 import {
   resolveTerminalWorkspace,
   type TerminalWorkspaceDependencies
@@ -29,6 +30,9 @@ function dependencies(
     noProjectTaskFolder: () => '/trusted/tasks',
     realDirectory: (path) => path,
     isRemoteAnchor: () => false,
+    resolveRemoteWorkspaceHostBinding: () => {
+      throw new Error('unexpected remote workspace resolution')
+    },
     ...overrides
   }
 }
@@ -59,7 +63,8 @@ test('resolves a local project through realDirectory and preserves project ident
   assert.deepEqual(resolveTerminalWorkspace({ kind: 'project', projectId: 'alpha' }, deps), {
     workspaceKey: 'project:alpha',
     cwd: '/real/alpha',
-    label: 'Project Alpha'
+    label: 'Project Alpha',
+    launch: { kind: 'local', localCwd: '/real/alpha' }
   })
   assert.deepEqual(realDirectoryCalls, ['/display/alpha'])
 })
@@ -101,7 +106,8 @@ test('resolves the configured ordinary task folder without creating or replacing
   assert.deepEqual(resolveTerminalWorkspace({ kind: 'ordinary' }, deps), {
     workspaceKey: 'ordinary',
     cwd: '/real/trusted-tasks',
-    label: basename('/real/trusted-tasks')
+    label: basename('/real/trusted-tasks'),
+    launch: { kind: 'local', localCwd: '/real/trusted-tasks' }
   })
   assert.deepEqual(calls, ['/display/trusted-tasks'])
 })
@@ -117,9 +123,81 @@ test('returns not_found when a project is not registered', () => {
   )
 })
 
-test('rejects SSH projects as remote_unsupported before resolving a local directory', () => {
-  let realDirectoryCalled = false
-  assertTerminalError(
+test('resolves an SSH project to an exact user-initiated ssh -tt launch', () => {
+  let userInitiated = false
+  const remoteRoot = "/work/-project with space/'quote'/$cash/`tick`/line\nbreak"
+  const workspace = resolveTerminalWorkspace(
+    { kind: 'project', projectId: 'remote', sessionId: 'session-remote' },
+    dependencies({
+      getProject: () => ({
+        name: 'Remote Project',
+        location: {
+          kind: 'ssh',
+          hostProfileId: 'cluster-profile',
+          remoteRoot,
+          canonicalRoot: remoteRoot
+        }
+      }),
+      noProjectTaskFolder: () => '/safe/local/tasks',
+      realDirectory: (path) => path,
+      resolveRemoteWorkspaceHostBinding: (input, options) => {
+        assert.deepEqual(input, { sessionId: 'session-remote', projectId: 'remote' })
+        userInitiated = options.userInitiated
+        return {
+          hostAlias: 'cluster-a',
+          remoteRoot,
+          connection: {
+            host: 'cluster-a',
+            user: 'researcher',
+            port: 2202,
+            identityFile: '/keys/id_ed25519',
+            userInitiated: true
+          }
+        }
+      },
+      sshExecutable: () => '/fake/bin/ssh'
+    })
+  )
+
+  assert.equal(userInitiated, true)
+  assert.equal(workspace.workspaceKey, 'project:remote')
+  assert.equal(workspace.cwd, remoteRoot)
+  assert.equal(workspace.label, 'cluster-a · Remote Project')
+  assert.equal(workspace.launch.kind, 'ssh')
+  if (workspace.launch.kind !== 'ssh') throw new Error('expected SSH launch')
+  assert.equal(workspace.launch.application, '/fake/bin/ssh')
+  assert.equal(workspace.launch.localCwd, '/safe/local/tasks')
+  assert.equal(workspace.launch.hostLabel, 'cluster-a')
+  assert.deepEqual(workspace.launch.args, [
+    '-tt',
+    '-l',
+    'researcher',
+    '-p',
+    '2202',
+    '-i',
+    '/keys/id_ed25519',
+    '-o',
+    'IdentitiesOnly=yes',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'StrictHostKeyChecking=yes',
+    '-o',
+    'ForwardAgent=no',
+    '-o',
+    'ClearAllForwardings=yes',
+    '-o',
+    'ServerAliveInterval=15',
+    '-o',
+    'ServerAliveCountMax=3',
+    'cluster-a',
+    `cd -- ${shellQuote(remoteRoot)} || { printf '%s\\n' '远程项目目录不存在或无法进入，已停止启动终端。' >&2; exit 72; }\nexec "\${SHELL:-/bin/sh}" -il`
+  ])
+  assert.doesNotMatch(workspace.launch.args.join('\0'), /SendEnv|SetEnv/u)
+})
+
+test('requires a bound session for SSH projects without reporting remote_unsupported', () => {
+  const error = assertTerminalError(
     () =>
       resolveTerminalWorkspace(
         { kind: 'project', projectId: 'remote' },
@@ -132,16 +210,12 @@ test('rejects SSH projects as remote_unsupported before resolving a local direct
               remoteRoot: '/work/project',
               canonicalRoot: '/work/project'
             }
-          }),
-          realDirectory: () => {
-            realDirectoryCalled = true
-            return '/unexpected'
-          }
+          })
         })
       ),
-    'remote_unsupported'
+    'unavailable'
   )
-  assert.equal(realDirectoryCalled, false)
+  assert.doesNotMatch(error.message, /remote_unsupported/u)
 })
 
 test('rejects local paths that resolve into a remote project anchor', () => {
@@ -198,7 +272,8 @@ test('ignores renderer-supplied cwd and derives the ordinary workspace from trus
   assert.deepEqual(resolveTerminalWorkspace(untrustedRef, deps), {
     workspaceKey: 'ordinary',
     cwd: '/trusted/tasks-real',
-    label: 'tasks-real'
+    label: 'tasks-real',
+    launch: { kind: 'local', localCwd: '/trusted/tasks-real' }
   })
   assert.deepEqual(realDirectoryCalls, ['/trusted/tasks'])
 })

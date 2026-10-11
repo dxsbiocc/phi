@@ -57,13 +57,14 @@ export function useTerminalWorkspace(
   projects: readonly Project[]
 ): TerminalWorkspaceHookValue {
   const activeProjectId = useSessionStore((state) => state.activeProjectId)
+  const activePhiSessionId = useSessionStore((state) => state.activePhiSessionId)
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId)
     : null
   const ready = !activeProjectId || Boolean(activeProject)
   const target = useMemo(
-    () => terminalWorkspaceRefFromActiveProject(activeProject),
-    [activeProject]
+    () => terminalWorkspaceRefFromActiveProject(activeProject, activePhiSessionId),
+    [activePhiSessionId, activeProject]
   )
   const controller = useMemo(() => getTerminalController(bridge), [bridge])
   const ref = target === 'remote' ? null : target

@@ -19,6 +19,7 @@ import { TerminalError } from './terminal-error'
 import { TERMINAL_ID_PATTERN } from './terminal-protocol'
 
 const MAX_PROJECT_ID_BYTES = 256
+const MAX_SESSION_ID_BYTES = 256
 const MAX_DRAFT_ID_BYTES = 128
 const MAX_DRAFT_REQUEST_BYTES = 4 * 1024
 const MAX_DRAFT_SOURCE_BYTES = 16 * 1024
@@ -132,10 +133,18 @@ function workspaceRef(value: unknown): TerminalWorkspaceRef {
     return { kind: 'ordinary' }
   }
   if (input.kind === 'project') {
-    const parsed = exactRecord(input, ['kind', 'projectId'])
+    const parsed = exactRecord(
+      input,
+      input.sessionId === undefined ? ['kind', 'projectId'] : ['kind', 'projectId', 'sessionId']
+    )
     return {
       kind: 'project',
-      projectId: boundedString(parsed.projectId, MAX_PROJECT_ID_BYTES, { rejectNul: true })
+      projectId: boundedString(parsed.projectId, MAX_PROJECT_ID_BYTES, { rejectNul: true }),
+      ...(parsed.sessionId === undefined
+        ? {}
+        : {
+            sessionId: boundedString(parsed.sessionId, MAX_SESSION_ID_BYTES, { rejectNul: true })
+          })
     }
   }
   return invalidRequest()

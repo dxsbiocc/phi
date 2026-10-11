@@ -8,6 +8,7 @@ import {
 } from '../src/shared/terminalTypes'
 import { TerminalError } from '../src/main/terminal/terminal-error'
 import { BunExecutableNotFoundError } from '../src/main/terminal/terminal-bun'
+import { buildSshTerminalLaunch } from '../src/main/terminal/terminal-launch'
 import type {
   TerminalCreateOptions,
   TerminalHostEvent,
@@ -207,6 +208,58 @@ test('deduplicates in-flight creates and a lost-response retry by requestId', as
   const lostResponseRetry = await manager.create(project('alpha'), 120, 40, 'request_dedupe')
   assert.equal(lostResponseRetry.terminalId, firstResult.terminalId)
   assert.equal(host.createCalls.length, 1)
+  await manager.dispose()
+})
+
+test('creates an SSH terminal from its launch spec without resolving a local shell', async () => {
+  const host = new FakeTerminalHost()
+  const manager = new TerminalManager({
+    resolveWorkspace: async () => ({
+      workspaceKey: 'project:remote',
+      cwd: '/srv/project',
+      label: 'cluster-a · Remote Project',
+      launch: buildSshTerminalLaunch({
+        connection: { host: 'cluster-a', user: 'researcher' },
+        remoteRoot: '/srv/project',
+        localCwd: '/safe/local/tasks',
+        hostLabel: 'cluster-a',
+        sshExecutable: '/fake/ssh'
+      })
+    }),
+    sink: () => undefined,
+    hostFactory: () => host,
+    randomTerminalId: () => 'terminal-remote-0001',
+    environment: {
+      HOME: '/Users/tester',
+      SHELL: '/bin/zsh',
+      SSH_AUTH_SOCK: '/tmp/agent.sock',
+      LANG: 'zh_CN.UTF-8',
+      CONDA_PREFIX: '/secret/conda',
+      OPENAI_API_KEY: 'secret'
+    },
+    resolveShell: () => {
+      throw new Error('local shell resolution must not run')
+    }
+  })
+
+  const snapshot = await manager.create(
+    { kind: 'project', projectId: 'remote', sessionId: 'session-a' },
+    80,
+    24,
+    'remote_create_1'
+  )
+  assert.equal(snapshot.host, 'ssh')
+  assert.equal(snapshot.hostLabel, 'cluster-a')
+  assert.equal(snapshot.initialCwd, '/srv/project')
+  assert.equal(snapshot.shell, '/bin/sh')
+  assert.equal(host.createCalls.length, 1)
+  assert.equal(host.createCalls[0].application, '/fake/ssh')
+  assert.equal(host.createCalls[0].cwd, '/safe/local/tasks')
+  assert.equal(host.createCalls[0].env.TERM, 'xterm-256color')
+  assert.equal(host.createCalls[0].env.SSH_AUTH_SOCK, '/tmp/agent.sock')
+  assert.equal(host.createCalls[0].env.CONDA_PREFIX, undefined)
+  assert.equal(host.createCalls[0].env.OPENAI_API_KEY, undefined)
+  assert.equal(manager.snapshot(snapshot.terminalId)?.draftCwd, '/safe/local/tasks')
   await manager.dispose()
 })
 

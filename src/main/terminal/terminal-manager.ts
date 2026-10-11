@@ -15,6 +15,7 @@ import {
 import { TerminalError } from './terminal-error'
 import { BunExecutableNotFoundError } from './terminal-bun'
 import { buildTerminalEnv, resolveTerminalShell, type TerminalShellLaunch } from './terminal-env'
+import type { TerminalWorkspaceLaunch } from './terminal-launch'
 import {
   TerminalHost,
   type TerminalCreateOptions,
@@ -34,6 +35,7 @@ export interface TerminalManagerWorkspace {
   workspaceKey: string
   cwd: string
   label: string
+  launch?: TerminalWorkspaceLaunch
 }
 
 export interface TerminalHostLike {
@@ -74,6 +76,7 @@ interface OutputSubscription {
 interface ManagedTerminal {
   snapshot: TerminalSnapshot
   workspaceLabel: string
+  draftCwd: string
   nextEpoch: number
   subscription?: OutputSubscription
   closePromise?: Promise<void>
@@ -84,6 +87,16 @@ interface ManagedTerminal {
 interface CreateRequestEntry {
   promise: Promise<TerminalSnapshot>
   settledAt?: number
+}
+
+interface ResolvedTerminalLaunch {
+  application: string
+  args: string[]
+  localCwd: string
+  shell: string
+  host: TerminalSnapshot['host']
+  hostLabel?: string
+  message?: string
 }
 
 function cloneSnapshot(snapshot: TerminalSnapshot): TerminalSnapshot {
@@ -136,10 +149,16 @@ export class TerminalManager {
       .map((record) => cloneSnapshot(record.snapshot))
   }
 
-  snapshot(terminalId: string): (TerminalSnapshot & { workspaceLabel: string }) | undefined {
+  snapshot(
+    terminalId: string
+  ): (TerminalSnapshot & { workspaceLabel: string; draftCwd: string }) | undefined {
     const record = this.terminals.get(terminalId)
     return record
-      ? { ...cloneSnapshot(record.snapshot), workspaceLabel: record.workspaceLabel }
+      ? {
+          ...cloneSnapshot(record.snapshot),
+          workspaceLabel: record.workspaceLabel,
+          draftCwd: record.draftCwd
+        }
       : undefined
   }
 
@@ -335,35 +354,36 @@ export class TerminalManager {
       )
     }
 
-    let shell: TerminalShellLaunch
-    try {
-      shell = this.shellResolver(this.environment)
-    } catch {
-      throw new TerminalError('unavailable', 'Terminal shell is unavailable')
-    }
+    const launch = this.resolveLaunch(workspace)
     const id = this.randomTerminalId()
     const snapshot: TerminalSnapshot = {
       terminalId: id,
       workspaceKey: workspace.workspaceKey,
       title: `Terminal ${this.lowestFreeTitleNumber(workspace.workspaceKey)}`,
-      host: 'local',
+      host: launch.host,
+      ...(launch.hostLabel ? { hostLabel: launch.hostLabel } : {}),
       initialCwd: workspace.cwd,
-      shell: shell.application,
+      shell: launch.shell,
       state: 'starting',
       createdAt: new Date(this.now()).toISOString(),
       cols,
       rows,
-      ...(shell.fallbackReason ? { message: shell.fallbackReason } : {})
+      ...(launch.message ? { message: launch.message } : {})
     }
-    const record: ManagedTerminal = { snapshot, workspaceLabel: workspace.label, nextEpoch: 0 }
+    const record: ManagedTerminal = {
+      snapshot,
+      workspaceLabel: workspace.label,
+      draftCwd: launch.localCwd,
+      nextEpoch: 0
+    }
     this.terminals.set(id, record)
 
     try {
       await this.host.createTerminal({
         terminalId: id,
-        application: shell.application,
-        args: shell.args,
-        cwd: workspace.cwd,
+        application: launch.application,
+        args: launch.args,
+        cwd: launch.localCwd,
         env: buildTerminalEnv(this.environment),
         cols,
         rows
@@ -385,6 +405,33 @@ export class TerminalManager {
         this.updateState(record, { state: 'failed', message: mappedError.message })
       }
       throw mappedError
+    }
+  }
+
+  private resolveLaunch(workspace: TerminalManagerWorkspace): ResolvedTerminalLaunch {
+    if (workspace.launch?.kind === 'ssh') {
+      return {
+        application: workspace.launch.application,
+        args: [...workspace.launch.args],
+        localCwd: workspace.launch.localCwd,
+        shell: '/bin/sh',
+        host: 'ssh',
+        hostLabel: workspace.launch.hostLabel
+      }
+    }
+    let shell: TerminalShellLaunch
+    try {
+      shell = this.shellResolver(this.environment)
+    } catch {
+      throw new TerminalError('unavailable', 'Terminal shell is unavailable')
+    }
+    return {
+      application: shell.application,
+      args: shell.args,
+      localCwd: workspace.launch?.localCwd ?? workspace.cwd,
+      shell: shell.application,
+      host: 'local',
+      message: shell.fallbackReason
     }
   }
 

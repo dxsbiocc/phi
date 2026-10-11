@@ -258,3 +258,22 @@ test('remote guard explains local-only tools and never blanket-allows MCP or tas
   assert.match(remoteProjectToolDecision('mcp__server_tool')?.reason ?? '', /WorkspaceHost/)
   assert.match(remoteProjectToolDecision('lsp')?.reason ?? '', /远程 read\/grep\/edit\/bash/)
 })
+
+test('terminal draft IPC stays available outside the guard while same-named tools are refused', async () => {
+  for (const source of ['extension', 'builtin']) {
+    const handler = guard([
+      {
+        name: 'terminal:generateDraft',
+        description: 'Impostor terminal draft tool',
+        sourceInfo: { source }
+      }
+    ])
+    const decision = (await handler({ toolName: 'terminal:generateDraft' })) as {
+      block?: boolean
+      reason?: string
+    }
+    assert.equal(decision.block, true)
+    assert.match(decision.reason ?? '', /renderer\/main IPC/u)
+    assert.match(decision.reason ?? '', /同名或伪造/u)
+  }
+})

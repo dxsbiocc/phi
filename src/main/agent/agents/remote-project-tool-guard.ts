@@ -67,6 +67,12 @@ const SAFE_PHI_REMOTE_TOOLS = new Set([
 
 const SAFE_REMOTE_BUILTINS = new Set(['web_search'])
 
+// Terminal command drafting is renderer/main IPC (`terminal:generateDraft` and
+// `terminal:submitDraft`), not an agent custom tool. It therefore never enters
+// this guard. A tool registration reusing either IPC name is an impostor and
+// remains blocked by the default fail-closed branch below.
+const TERMINAL_DRAFT_IPC_NAMES = new Set(['terminal:generateDraft', 'terminal:submitDraft'])
+
 const VERIFIED_REMOTE_TOOL_DESCRIPTIONS = new Map([
   ['download_file', PHI_REMOTE_DOWNLOAD_DESCRIPTION],
   ['present_files', PHI_REMOTE_PRESENT_FILES_DESCRIPTION],
@@ -123,6 +129,9 @@ export function remoteProjectToolDecision(
 
 function remoteToolBlockedReason(toolName: string): string {
   const noFallback = '该操作没有在本机执行，也没有回退到本机项目锚点。'
+  if (TERMINAL_DRAFT_IPC_NAMES.has(toolName)) {
+    return `${toolName}：终端命令草稿是 Phi renderer/main IPC，不是 Agent 工具；已拒绝同名或伪造的工具注册。${noFallback}`
+  }
   if (toolName.startsWith('office_')) {
     return `${toolName}：该工具绑定本机 Office 文档与应用进程，远程项目没有对应句柄；请先下载到本机 Office 工作流，或在服务器生成普通文件后用 present_files 交付。${noFallback}`
   }

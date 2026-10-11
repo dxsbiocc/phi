@@ -33,6 +33,8 @@ describe('buildTerminalEnv', () => {
       PI_CODING_AGENT_DIR: '/secret/agent',
       ELECTRON_RENDERER_URL: 'http://internal',
       OPENAI_API_KEY: 'secret',
+      CONDA_PREFIX: '/secret/conda',
+      CONDA_DEFAULT_ENV: 'secret-env',
       MOONSHOT_BASE_URL: 'https://internal'
     })
 

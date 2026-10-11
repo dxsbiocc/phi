@@ -9,15 +9,16 @@ import { terminalWorkspaceRefFromActiveProject } from '../lib/terminalWorkspaceR
 export function useTerminalWorkspaceRestoration(
   bridge: unknown,
   projects: readonly Project[],
-  activeProjectId: string | null
+  activeProjectId: string | null,
+  activePhiSessionId: string | null
 ): void {
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId)
     : null
   const ready = !activeProjectId || Boolean(activeProject)
   const target = useMemo(
-    () => terminalWorkspaceRefFromActiveProject(activeProject),
-    [activeProject]
+    () => terminalWorkspaceRefFromActiveProject(activeProject, activePhiSessionId),
+    [activePhiSessionId, activeProject]
   )
   const controller = useMemo(
     () => (isTerminalBridgeAvailable(bridge) ? getTerminalController(bridge) : null),

@@ -1,6 +1,6 @@
 # 远程项目与本地能力对齐实施计划
 
-状态：**设计已确认，待实施第 1 步**
+状态：**第 3 步代码完成，真实服务器验证待做**
 创建日期：2026-10-08
 前置：`.omx/plans/remote-wrapper-capability.md`（文件/命令/Wrapper 闭环）、`docs/roadmap/remote-e01-validation.md`
 
@@ -25,7 +25,7 @@
 | read/write/edit/glob/grep/bash | 已有同名远程实现 | `src/main/agent/omp/omp-sdk-worker.ts`（`remoteRoot` 分支） |
 | Wrapper（Nextflow/Slurm） | 已有；GPU 单机与 HPC 集群已实跑 | `src/main/agent/wrappers/composition/remote-*.ts` |
 | 文件面板预览/下载 | 已有 | `src/main/agent/remote-workspace-file-ui.ts` |
-| 终端 | 不支持 | `src/main/terminal/terminal-workspace.ts`（`remote_unsupported`） |
+| 终端 | 已支持（R3；真实服务器验证待做） | 本机 PTY 启动系统 OpenSSH `ssh -tt`；resize、背压、输出缓冲与进程组清理复用本地终端链路 |
 | Notebook/Jupyter | 不注入 | `src/main/index.ts`（`notebookPrompt = remoteProject ? null : …`） |
 | Skills / 脚本工具 / viz | 关闭 | `index.ts`（`shouldLoadBundledSkills = !remoteProject`）、worker（`skillTools = remoteRoot ? undefined`） |
 | 受管环境 / `env_request` | 抛错 | worker（`environment binding is not supported for remote projects yet`） |
@@ -43,6 +43,7 @@
 | 类别        | 实际注册面                                                                                                                                                                                                                             | R2.5 结论                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | A           | `browser`、`web_search`、`ask_user_question`、`palette_suggest`                                                                                                                                                                        | 浏览器、搜索、Phi 问答 UI 与调色板不使用项目 cwd，逐项放行。`browser` 仍沿用远程会话当前的输入动作限制。SDK 没有独立 `web_fetch`：网页抓取原本是 builtin `read(URL)` 分支，而远程项目的 `read` 已被服务器文件读取覆盖；本次以 `browser`/`web_search` 为可用替代，不把 URL 交给本机项目 `read`。                                                                                |
+| A（R3）     | `terminal:generateDraft`、`terminal:submitDraft`（renderer/main IPC，**不是 Agent custom tool**）                                                                                                                                       | 命令草稿在本机无工具模型会话中生成，不读取项目文件，也不写 PTY；只有用户在 UI 中显式提交才写入当前本地或 SSH PTY。该 IPC 不进入 `remote-project-tool-guard`；任何同名 Agent tool（含 builtin/extension）都视为伪造并拒绝。                                                                                                                                                |
 | A           | 动态 Phi agent 名（远程当前只有 `Wrapper`）、`agent_status`、`agent_wait`、`agent_steer`、`agent_stop`，以及 Wrapper 专家内部的 `wrapper_search`、`wrapper_inspect`、`wrapper_run`、`wrapper_status`、`wrapper_wait`、`wrapper_cancel` | 只在对应 Phi custom tool 已实际注册时放行。Wrapper 运行已有远程 job 后端；管理工具只操作本会话的 run registry，不解析本机项目路径。builtin `task` 不在此列。                                                                                                                                                                                                                   |
 | B（后续）   | 条件 builtin `checkpoint`、`rewind`、`todo`、`goal`、`think`、`yield`、`ask`、`hub`；SDK 条件工具 `generate_image`、`tts`                                                                                                              | 这些 SDK 工具不是本轮的 Phi 子智能体管理面；其中 checkpoint/todo/hub 可能读取 cwd、写会话文件或管理本机进程，图像/语音工具还需确认远程输出与交付路径。逐项证明不触碰本机项目锚点前继续 fail-closed。                                                                                                                                                                           |
 | B（已有）   | `read`、`bash`、`glob`、`grep`、`write`、`edit`                                                                                                                                                                                        | 保持现有同名远程实现与 description/source 验签；任何 builtin 同名实现都拒绝。                                                                                                                                                                                                                                                                                                  |
@@ -410,8 +411,10 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 ### 第 3 步：远程终端
 
-- helper 增加 PTY（resize、背压、进程组清理）；终端工作区解析改为按 host 能力，替换 `remote_unsupported`。
-- 保持"agent 只起草命令，用户显式发送才写入 PTY"的既有约束；终端环境变量仍用白名单。
+- 不扩展 helper PTY。远程终端在本机现有 PTY 中运行系统 OpenSSH `ssh -tt`，以保存的 host alias 继承 OpenSSH 配置，并显式保留 user/port/identity、`BatchMode=yes`、严格 host key、禁 agent forwarding 与 keepalive；远端只执行安全引用后的 `cd -- <project-root>`，目录不可进入时输出明确中文错误，再 `exec "${SHELL:-/bin/sh}" -il`。
+- 本机启动 cwd 使用可信任务目录而非 remote anchor；环境继续经过 `terminal-env.ts` 白名单，固定 `TERM=xterm-256color`，不使用 `SendEnv`/`SetEnv` 转发本机环境。resize、背压、输出缓冲、进程组清理与应用退出清理全部复用本地终端链路；结束本机 ssh 进程让服务器 shell 收到 SIGHUP。
+- 新建终端是用户主动入口，不受 SSH 认证冷却拦截；PTY 内认证错误仅作为终端 stderr 展示，因无法可靠分类而不写入冷却记录。断线后显示“连接已断开，可重新打开终端”，不自动重连、不自动重放命令。
+- 保持命令草稿为 renderer/main IPC 的无工具模型会话：生成只返回可编辑草稿，只有用户显式发送才写入 PTY；它不是 Agent custom tool，同名伪造工具仍由远程守卫 fail-closed。
 
 ### 第 4 步：远程 Notebook/Jupyter
 
@@ -497,6 +500,8 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
       - **后续事项（未做）**：(1) 服务器端撤销已安装的公钥（用户触发、不可由 agent 调用）；(2) 引导进程持锁时崩溃会留下 `.phi-bootstrap.lock` 陈旧锁，需要手动删除，应加过期回收；(3) 强制卸载恰好发生在不可中断的 `ssh-keygen` 或远端安装操作中时可能留下未配置的孤立密钥文件；(4) 真实「只有密码认证的 sshd」端到端测试已写（`ssh-password-bootstrap-real`），需要提供测试用户密码才能跑；(5) 如要支持钥匙串存密码，需要为这类主机单独构造较宽松的 SSH 选项（`BatchMode=no`），不得影响密钥模式的主机。
     - 启动调整（2026-10-09）：`predev`/`prestart` 不再准备 Go 或编译 Helper。开发版在首次远程使用时按服务器架构准备，源码、工具链指纹及产物校验一致时复用；发布 `build` 仍生成两个 Linux 目标，安装后的客户端连接服务器时使用预构建产物。
     - 遗留：远程 Nextflow 的 curl 安装器为过渡实现，见第 2 步；并发取消测试的 `waitFor` 原先没有超时上限，已在新增回归测试里加了有限超时，旧测试未改。
+
+  - **R3 远程终端完成记录（2026-10-11，未提交，真实服务器验证待做）**：终端工作区按已绑定的 session/project 解析 SSH host 与项目根，在本机安全目录启动系统 `ssh -tt`，不依赖 helper；危险远程路径经单引号 shell quote，目录不存在时不会落到 home。终端 UI 标出服务器 alias，ssh 退出后只提示用户重新打开；无自动重连或命令重放。命令草稿仍是 `noTools: 'all'` 的本机 IPC 流程，生成阶段零 PTY 写入，显式提交才发送。认证冷却对新建终端这一用户入口不生效，终端内失败不计入冷却。自动化验证使用本机假 ssh/假远程 shell，不联网、不连接真实服务器：相关测试 174/174、`main-integration` 224/224；`bun run typecheck` 三个 tsconfig 均为 0 错误；`bun run lint` 与 `bun run check:architecture` 通过（保留既有大文件 warning）。
 
 ## 8. 风险
 
