@@ -269,6 +269,13 @@ import {
   type RemoteProjectSkillCatalog,
   type RemoteProjectSkillContext
 } from './agent/content/remote-project-skill-service'
+import {
+  loadRemoteProjectMcpCatalog,
+  revokeRemoteProjectMcpTrust,
+  trustRemoteProjectMcp,
+  type RemoteProjectMcpCatalog,
+  type RemoteProjectMcpContext
+} from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import { collectGarbage } from './agent/envs/gc'
 import { cleanupInactiveMcpVersions } from './agent/packages/mcp-version-cleanup'
@@ -6115,6 +6122,10 @@ function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
   }
 }
 
+function remoteMcpProjectContext(cwd?: string): RemoteProjectMcpContext {
+  return remoteSkillProjectContext(cwd)
+}
+
 async function listRemoteProjectSkills(
   cwd?: string
 ): Promise<Awaited<ReturnType<typeof listSkills>>> {
@@ -6200,6 +6211,44 @@ function checkedRemoteSkillTrustMutation(value: unknown): {
     throw new Error('远程项目 Skill 信任请求无效')
   }
   return value as { cwd: string; relativePath: string; contentHash: string }
+}
+
+function checkedRemoteMcpTrustMutation(value: unknown): {
+  cwd: string
+  relativePath: string
+  contentHash: string
+  confirmedItemIds: string[]
+} {
+  if (!isRecord(value)) throw new Error('远程项目 MCP 信任请求无效')
+  if (
+    Object.keys(value).some(
+      (key) =>
+        key !== 'cwd' &&
+        key !== 'relativePath' &&
+        key !== 'contentHash' &&
+        key !== 'confirmedItemIds'
+    ) ||
+    typeof value.cwd !== 'string' ||
+    typeof value.relativePath !== 'string' ||
+    !/^(?:\.phi\/mcp\.json|\.mcp\.json|\.omp\/mcp\.json|\.pi\/mcp\.json)$/u.test(
+      value.relativePath
+    ) ||
+    typeof value.contentHash !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.contentHash) ||
+    !Array.isArray(value.confirmedItemIds) ||
+    value.confirmedItemIds.length > 1024 ||
+    !value.confirmedItemIds.every(
+      (item) => typeof item === 'string' && item.length > 0 && item.length <= 512
+    )
+  ) {
+    throw new Error('远程项目 MCP 信任请求无效')
+  }
+  return value as {
+    cwd: string
+    relativePath: string
+    contentHash: string
+    confirmedItemIds: string[]
+  }
 }
 
 async function listRemotePromptAgents(cwd?: string): Promise<PromptAgentSummary[]> {
@@ -7670,6 +7719,14 @@ async function getAgentSession(
             agentDir: AGENT_DIR
           })
         : undefined
+      const remoteMcpCatalog: RemoteProjectMcpCatalog | undefined = remoteProject
+        ? await loadRemoteProjectMcpCatalog({
+            sessionId: sessionManifest?.sessionId ?? '',
+            projectId: remoteProject.projectId,
+            cwd: creationSnapshot.cwd,
+            agentDir: AGENT_DIR
+          })
+        : undefined
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
           event:
@@ -7911,6 +7968,9 @@ async function getAgentSession(
         ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
+        ...(remoteMcpCatalog?.runtimeServers.length
+          ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
+          : {}),
         projectBound: Boolean(project),
         ...(remoteProject
           ? {
@@ -10322,11 +10382,38 @@ app.whenReady().then(async () => {
     })
     return toolNames
   }
+  const listedMcpServers = async (
+    cwd?: string
+  ): Promise<Awaited<ReturnType<typeof listMcpServers>>> => {
+    if (!isRemoteResourceScope(cwd)) return listMcpServers(cwd ?? currentCwd)
+    const [globalServers, projectCatalog] = await Promise.all([
+      listGlobalMcpServers(),
+      loadRemoteProjectMcpCatalog(remoteMcpProjectContext(cwd))
+    ])
+    return [...globalServers, ...projectCatalog.summaries]
+  }
   ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
-    const servers = await (isRemoteResourceScope(cwd)
-      ? listGlobalMcpServers()
-      : listMcpServers(cwd ?? currentCwd))
+    const servers = await listedMcpServers(cwd)
     return withConnectorMetadata(servers, await connectorCatalog())
+  })
+  ipcMain.handle('mcp:trustRemoteProject', async (_, input: unknown) => {
+    const request = checkedRemoteMcpTrustMutation(input)
+    await trustRemoteProjectMcp(remoteMcpProjectContext(request.cwd), {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash,
+      confirmedItemIds: request.confirmedItemIds
+    })
+    await invalidateAgentSession()
+    return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
+  })
+  ipcMain.handle('mcp:revokeRemoteProjectTrust', async (_, input: unknown) => {
+    const request = checkedRemoteMcpTrustMutation(input)
+    await revokeRemoteProjectMcpTrust(remoteMcpProjectContext(request.cwd), {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash
+    })
+    await invalidateAgentSession()
+    return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
   })
   ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog())
   ipcMain.handle(
@@ -10442,6 +10529,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'mcp:setConnectorEnabled',
     async (_, name: string, enabled: boolean, sourcePath?: string) => {
+      if (typeof sourcePath === 'string' && sourcePath.startsWith('ssh://')) {
+        throw new Error('服务器项目 MCP 的启用状态由服务器配置文件管理')
+      }
       setMcpConnectorEnabled(
         name,
         Boolean(enabled),

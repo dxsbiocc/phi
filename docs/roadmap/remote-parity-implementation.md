@@ -29,7 +29,7 @@
 | Notebook/Jupyter | 不注入 | `src/main/index.ts`（`notebookPrompt = remoteProject ? null : …`） |
 | Skills / 脚本工具 / viz | 关闭 | `index.ts`（`shouldLoadBundledSkills = !remoteProject`）、worker（`skillTools = remoteRoot ? undefined`） |
 | 受管环境 / `env_request` | 抛错 | worker（`environment binding is not supported for remote projects yet`） |
-| 项目级 MCP / 项目 agent | 项目 MCP 仍为后续任务；agent 的 R5.1/R5.2 已完成代码与本机假 SSH 验证，真实服务器待验证 | 远程可用本机全局/插件/Wrapper agent；服务器项目 agent 经内容哈希信任门禁后才进入提示与工具表 |
+| 项目级 MCP / 项目 agent | R5.1/R5.2/R5.3 已完成代码与本机假 SSH 验证，真实服务器待验证 | 服务器项目 agent 与 MCP 配置均经内容哈希信任门禁；HTTPS 留在桌面端，stdio 经所选 SSH host 在服务器项目根运行 |
 | Office 工具 / `present_files` | 关闭 | worker（`officeCustomTools = remoteRoot ? [] …`） |
 | Git | 无专门支持 | — |
 | 专家子智能体 | 本机全局/插件、Wrapper 和已信任的服务器项目 agent 均按远程工具交集运行 | worker 对声明工具再做实际注册来源/签名校验；不可用 agent 只展示诊断 |
@@ -423,7 +423,7 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 ### 第 5 步：项目级 MCP 与 agent 发现
 
-- Agent 的 R5.1/R5.2 已完成；项目级 MCP 留作后续任务。HTTP 连接器留在本机、stdio 连接器在选定 host 上运行的 MCP 方案本次未实现。
+- Agent 的 R5.1/R5.2 与项目级 MCP 的 R5.3 已完成代码和本机假 SSH 验证；真实服务器验证仍待做。
 
 #### R5.1/R5.2 远程 agent 与信任（2026-10-11）
 
@@ -434,6 +434,23 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 - **提示、工具与同名规则**：pending、changed、invalid 或远程工具条件不满足的定义可在列表中显示状态与诊断，但不进入 leader 系统提示、`phiAgents`、fallback 或委派工具表。已信任项目 agent 优先于全局、内置/插件；未信任项目 agent 不参与同名覆盖。已信任但不可用的项目定义占据其名称并显示原因，不静默回退到另一个同名全局 agent。
 - **仍被拒绝**：项目级 MCP、frontmatter 扩展 MCP/hooks/路径权限、Office 与 `lib.*`、未知或伪造 builtin、没有当前远程注册后端的工具、越界/二进制/超限文件，以及 read/bash 两者都缺失的 agent。任何拒绝都不回退本机项目锚点。
 - **验证边界**：自动化只使用本机 Bash 冒充 SSH 的 `WorkspaceHost`，覆盖工具交集、不可用诊断、待信任隔离、信任/变更/撤销、同名优先级、恶意 frontmatter、文件边界、原子 `0600` 存储、IPC/preload 与两个 composer 入口；本次未联网、未连接真实服务器，真机门禁仍待做。
+
+#### R5.3 远程项目级 MCP（2026-10-11）
+
+- **服务器来源与信任**：只经当前项目绑定的 `WorkspaceHost` 读取服务器项目根下的
+  `.phi/mcp.json`、`.mcp.json`、`.omp/mcp.json`、`.pi/mcp.json`。信任键为主机别名、
+  canonical 项目根、相对路径与文件 SHA-256；本机原子 `0600` 信任存储记录 hash，不保存配置
+  正文。pending、changed、invalid 配置只展示，不进入 MCP snapshot，不启动连接器或注入工具。
+- **逐项确认**：信任弹窗列出配置文件中的每个 HTTPS 地址，以及每个 stdio 的完整 executable、
+  每个 argv 和环境变量名；全部逐项勾选后主进程重新读取服务器文件、核对 hash 与确认项集合，
+  才保存信任。环境变量值不进入展示或信任存储。
+- **运行位置**：HTTPS 配置保持桌面端直连。stdio 由桌面端 MCP 管理器启动系统 `ssh`，固定
+  `-T`、`BatchMode=yes`、strict host key、关闭 agent/forwarding、清空 `SendEnv`，并以严格
+  POSIX 引用执行 `cd -P <remote-root>`、核对 canonical root 后通过 `/usr/bin/env -i` 的显式
+  白名单环境 `exec <command> <args>`；不读取、不回退本机项目 anchor。
+- **验证边界**：本机 Bash 假 SSH 覆盖约定路径、pending 隔离、逐项确认、hash 变化、撤销、
+  symlink 越界、参数/环境引用与本机环境不泄漏；worker 另校验主进程传入的 SSH/HTTPS 快照后
+  才覆盖同名全局配置。真实 OpenSSH、断线清理和真实 MCP initialize/tools 握手仍需真机验证。
 
 ### 第 6 步：交付物链路
 

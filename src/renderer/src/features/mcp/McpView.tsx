@@ -12,6 +12,7 @@ import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
 import { CatalogResourceRow } from '../../components/CatalogResourceRow'
 import { ConnectorIcon } from './components/ConnectorIcon'
+import { isRemoteProjectMcpServer } from './lib/remoteProjectMcpTrust'
 import { McpDetailPanel as McpDetail, type McpDetailPanelProps } from './components/McpDetailPanel'
 import { SidebarAccordionGroup } from '../../components/SidebarAccordionGroup'
 import { DiscoverButton } from '../../components/DiscoverButton'
@@ -292,7 +293,11 @@ export function McpSidebar({
                       setExpandedCategory(group.category)
                       onSelectServer(server)
                     }}
-                    onEnabledChange={(enabled) => setConnectorEnabled(server, enabled)}
+                    onEnabledChange={
+                      isRemoteProjectMcpServer(server)
+                        ? undefined
+                        : (enabled) => setConnectorEnabled(server, enabled)
+                    }
                     icon={<ConnectorIcon icon={server.icon} size={32} />}
                   >
                     <Tooltip

@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -324,6 +325,8 @@ export type CreateAgentSessionOptions = {
     location: Extract<ProjectLocation, { kind: 'ssh' }>
     contextFiles: Array<{ path: string; content: string }>
   }
+  /** Main-process verified, trusted server-project MCP snapshot. */
+  remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
 }
@@ -1129,6 +1132,7 @@ export async function createRuntimeAgentSession(
     phiAgents: options.phiAgents,
     projectBound: options.projectBound,
     remoteProject: options.remoteProject,
+    remoteProjectMcpServers: options.remoteProjectMcpServers,
     personaMarkdown: options.personaMarkdown
   }
   const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)

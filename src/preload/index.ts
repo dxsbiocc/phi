@@ -52,6 +52,7 @@ import type {
   RemoteRipgrepStatusResult
 } from '../shared/remoteRipgrepTypes'
 import type { PromptAgentSummary, RemoteProjectAgentTrustRequest } from '../shared/promptAgentTypes'
+import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -1063,6 +1064,8 @@ type RendererAuthApi = {
     input: RemoteProjectAgentTrustRequest
   ) => Promise<PromptAgentSummary[]>
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
+  trustRemoteProjectMcp: (input: RemoteProjectMcpTrustRequest) => Promise<McpServerSummary[]>
+  revokeRemoteProjectMcpTrust: (input: RemoteProjectMcpTrustRequest) => Promise<McpServerSummary[]>
   listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
   installMcpConnector: (
     id: string,
@@ -1823,6 +1826,10 @@ const api: RendererAuthApi = {
   ): Promise<PromptAgentSummary[]> => ipcRenderer.invoke('agents:revokeRemoteProjectTrust', input),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
     ipcRenderer.invoke('mcp:listServers', cwd),
+  trustRemoteProjectMcp: (input: RemoteProjectMcpTrustRequest): Promise<McpServerSummary[]> =>
+    ipcRenderer.invoke('mcp:trustRemoteProject', input),
+  revokeRemoteProjectMcpTrust: (input: RemoteProjectMcpTrustRequest): Promise<McpServerSummary[]> =>
+    ipcRenderer.invoke('mcp:revokeRemoteProjectTrust', input),
   listMcpConnectorCatalog: (): Promise<FeaturedMcpConnector[]> =>
     ipcRenderer.invoke('mcp:listConnectorCatalog'),
   installMcpConnector: (

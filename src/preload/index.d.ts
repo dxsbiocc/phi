@@ -41,6 +41,7 @@ import type {
   PromptAgentSummary as PreloadPromptAgentSummary,
   RemoteProjectAgentTrustRequest as PreloadRemoteProjectAgentTrustRequest
 } from '../shared/promptAgentTypes'
+import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -1152,6 +1153,12 @@ declare global {
         input: PreloadRemoteProjectAgentTrustRequest
       ) => Promise<PreloadPromptAgentSummary[]>
       listMcpServers: (cwd?: string) => Promise<PreloadMcpServerSummary[]>
+      trustRemoteProjectMcp: (
+        input: RemoteProjectMcpTrustRequest
+      ) => Promise<PreloadMcpServerSummary[]>
+      revokeRemoteProjectMcpTrust: (
+        input: RemoteProjectMcpTrustRequest
+      ) => Promise<PreloadMcpServerSummary[]>
       listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
       installMcpConnector: (
         id: string,

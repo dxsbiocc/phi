@@ -371,6 +371,7 @@ type HarnessResult = {
   remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
   remoteAgentMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
   remoteSkillMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
+  remoteMcpMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
   wrapperJobOptions: Record<string, unknown>
   remoteResolverProjectIds: string[]
   remoteDoctorCalls: Array<{ hostProfileId: string; remotePath?: string; options?: unknown }>
@@ -499,6 +500,10 @@ async function harness(
     input: Record<string, unknown>
   }> = []
   const remoteSkillMutations: Array<{
+    operation: 'trust' | 'revoke'
+    input: Record<string, unknown>
+  }> = []
+  const remoteMcpMutations: Array<{
     operation: 'trust' | 'revoke'
     input: Record<string, unknown>
   }> = []
@@ -2734,6 +2739,39 @@ async function harness(
         if (mcpApiKeyValidationFailure) throw mcpApiKeyValidationFailure
       }
     },
+    './agent/mcp/remote-project-mcp-service': {
+      loadRemoteProjectMcpCatalog: async (): Promise<unknown> => ({
+        summaries: [
+          {
+            id: 'ssh://cluster-one/canonical/project/.phi/mcp.json:server-mcp',
+            name: 'server-mcp',
+            sourcePath: 'ssh://cluster-one/canonical/project/.phi/mcp.json',
+            status: 'configured',
+            trustState: 'pending',
+            available: false,
+            diagnostics: ['来自服务器项目，未信任'],
+            relativePath: '.phi/mcp.json',
+            contentHash: 'c'.repeat(64),
+            remoteProjectCwd: '/isolated/remote-project-anchors/remote-project-1',
+            confirmationItems: [
+              {
+                id: 'server-mcp:command',
+                serverName: 'server-mcp',
+                kind: 'stdio-command',
+                value: '/opt/server-mcp'
+              }
+            ]
+          }
+        ],
+        runtimeServers: []
+      }),
+      trustRemoteProjectMcp: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteMcpMutations.push({ operation: 'trust', input })
+      },
+      revokeRemoteProjectMcpTrust: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteMcpMutations.push({ operation: 'revoke', input })
+      }
+    },
     './agent/resources': {
       listGlobalSkills: async (): Promise<unknown[]> => [
         {
@@ -3854,6 +3892,7 @@ async function harness(
     remoteConnectionChecks,
     remoteAgentMutations,
     remoteSkillMutations,
+    remoteMcpMutations,
     wrapperJobOptions,
     remoteResolverProjectIds,
     remoteDoctorCalls,
@@ -5993,17 +6032,42 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
       }
     }
   ])
+  const mcpTrustRequest = {
+    cwd: current.cwd,
+    relativePath: '.phi/mcp.json',
+    contentHash: 'c'.repeat(64),
+    confirmedItemIds: ['server-mcp:command']
+  }
+  await app.invoke('mcp:trustRemoteProject', mcpTrustRequest)
+  await app.invoke('mcp:revokeRemoteProjectTrust', mcpTrustRequest)
+  assert.deepEqual(app.remoteMcpMutations, [
+    {
+      operation: 'trust',
+      input: {
+        relativePath: mcpTrustRequest.relativePath,
+        contentHash: mcpTrustRequest.contentHash,
+        confirmedItemIds: mcpTrustRequest.confirmedItemIds
+      }
+    },
+    {
+      operation: 'revoke',
+      input: {
+        relativePath: mcpTrustRequest.relativePath,
+        contentHash: mcpTrustRequest.contentHash
+      }
+    }
+  ])
   assert.deepEqual(
     ((await app.invoke('mcp:listServers', current.cwd)) as Array<{ name: string }>).map(
       (server) => server.name
     ),
-    ['global-mcp']
+    ['global-mcp', 'server-mcp']
   )
   assert.deepEqual(
     ((await app.invoke('mcp:listServers', '/projects/current')) as Array<{ name: string }>).map(
       (server) => server.name
     ),
-    ['global-mcp']
+    ['global-mcp', 'server-mcp']
   )
   assert.deepEqual(
     await app.invoke('skills:read', '/isolated/skills/global/SKILL.md', current.cwd),

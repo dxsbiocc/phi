@@ -81,6 +81,12 @@ import {
   type RemoteMcpProfilePolicy
 } from '../mcp/remote-mcp-policy'
 import {
+  mergeRemoteMcpPolicies,
+  mergeRemoteProjectMcpSnapshot,
+  remoteProjectMcpPolicy,
+  remoteProjectMcpRuntimeServersValue
+} from '../mcp/remote-project-mcp-runtime'
+import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
   featuredApiKeyMcpConfig,
@@ -195,6 +201,7 @@ type RuntimeContext = {
 
 type RemoteMcpAccess = {
   localProjectAnchor: string
+  projectPolicy?: RemoteMcpProfilePolicy
   state?: RemoteMcpGuardState
 }
 
@@ -1372,10 +1379,13 @@ function refreshRemoteMcpAccess(
   tools: ReturnType<MCPManager['getTools']>
 ): RemoteMcpProfilePolicy {
   access.state = undefined
-  const policy = buildRemoteMcpProfilePolicy(readMcpConfig(agentDir), {
-    agentDir,
-    localProjectAnchor: access.localProjectAnchor
-  })
+  const policy = mergeRemoteMcpPolicies(
+    buildRemoteMcpProfilePolicy(readMcpConfig(agentDir), {
+      agentDir,
+      localProjectAnchor: access.localProjectAnchor
+    }),
+    access.projectPolicy
+  )
   access.state = buildRemoteMcpGuardState(policy, tools, {
     agentDir,
     localProjectAnchor: access.localProjectAnchor
@@ -1474,6 +1484,11 @@ async function applyConnectorEnabledForSession(session: SessionEntry, name: stri
   }
   const manager = liveMcpManager(result)
   if (!manager) return
+  if (session.remoteMcpAccess?.projectPolicy?.allowedServerNames.has(name)) {
+    refreshRemoteMcpAccess(session.remoteMcpAccess, agentDir, manager.getTools())
+    await result.session.refreshMCPTools(manager.getTools() as never)
+    return
+  }
   const entry = readMcpServerEntry(name, agentDir)
   const disabled = isMcpConnectorUserDisabled(name, agentDir) || entry?.enabled === false
   if (disabled) {
@@ -1545,12 +1560,14 @@ async function leasedProfileMcpManager(
   projectCwd: string,
   settings: Settings,
   authStorage: AuthStorage,
-  remoteProjectAnchor?: string
+  remoteProjectAnchor?: string,
+  remoteProjectMcpServers: ReturnType<typeof remoteProjectMcpRuntimeServersValue> = []
 ): Promise<{
   manager: MCPManager
   leases: Map<string, EnvironmentLease>
   transports: Map<string, OwnedStdioTransportScope>
   remotePolicy?: RemoteMcpProfilePolicy
+  projectPolicy?: RemoteMcpProfilePolicy
 }> {
   const profile = readMcpConfig(agentDir)
   const plan = remoteMcpLoadPlan({
@@ -1582,8 +1599,13 @@ async function leasedProfileMcpManager(
           options as Parameters<typeof loadAllMCPConfigs>[1]
         )) as unknown as McpSnapshotLike
     })
-    snapshot = prepared.snapshot as unknown as Awaited<ReturnType<typeof loadAllMCPConfigs>>
-    remotePolicy = prepared.policy
+    const merged = mergeRemoteProjectMcpSnapshot(
+      prepared.snapshot,
+      prepared.policy,
+      remoteProjectMcpServers
+    )
+    snapshot = merged.snapshot as unknown as Awaited<ReturnType<typeof loadAllMCPConfigs>>
+    remotePolicy = merged.policy
   } else {
     snapshot = await loadAllMCPConfigs(plan.cwd, {
       ...discoveryOptions,
@@ -1626,7 +1648,14 @@ async function leasedProfileMcpManager(
     const transports = trackOwnedStdioTransports(manager)
     manager.setAuthStorage(authStorage)
     if (settings.get('mcp.notifications')) manager.setNotificationsEnabled(true)
-    return { manager, leases, transports, ...(remotePolicy ? { remotePolicy } : {}) }
+    const projectPolicy = remoteProjectMcpPolicy(remoteProjectMcpServers)
+    return {
+      manager,
+      leases,
+      transports,
+      ...(remotePolicy ? { remotePolicy } : {}),
+      ...(projectPolicy ? { projectPolicy } : {})
+    }
   } catch (error) {
     for (const lease of leases.values()) lease.release()
     throw error
@@ -1735,6 +1764,9 @@ async function createSession(params: unknown): Promise<unknown> {
         projectId: stringValue(remoteRecord?.projectId)
       }
     : undefined
+  const remoteProjectMcpServers = remoteRoot
+    ? remoteProjectMcpRuntimeServersValue(record.remoteProjectMcpServers, agentDir)
+    : []
   const remoteRuntimeRecord = isRecord(record.remoteRuntimeRoot)
     ? record.remoteRuntimeRoot
     : undefined
@@ -2161,7 +2193,8 @@ async function createSession(params: unknown): Promise<unknown> {
         cwd,
         settings,
         ctx.authStorage,
-        remoteRoot ? cwd : undefined
+        remoteRoot ? cwd : undefined,
+        remoteProjectMcpServers
       )
     : undefined
   const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
@@ -2169,6 +2202,7 @@ async function createSession(params: unknown): Promise<unknown> {
   try {
     const mcpTools = leasedMcp ? (await leasedMcp.manager.discoverAndConnect()).tools : undefined
     if (remoteMcpAccess && leasedMcp?.remotePolicy) {
+      remoteMcpAccess.projectPolicy = leasedMcp.projectPolicy
       remoteMcpAccess.state = buildRemoteMcpGuardState(leasedMcp.remotePolicy, mcpTools ?? [], {
         agentDir,
         localProjectAnchor: remoteMcpAccess.localProjectAnchor

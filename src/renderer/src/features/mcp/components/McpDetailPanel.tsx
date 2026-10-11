@@ -13,6 +13,8 @@ import { ConnectorIcon } from './ConnectorIcon'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
 import type { ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
+import { isRemoteProjectMcpServer } from '../lib/remoteProjectMcpTrust'
+import { RemoteProjectMcpTrustPanel } from './RemoteProjectMcpTrustPanel'
 
 export interface McpDetailPanelProps {
   selectedServer: McpServerSummary | null
@@ -60,6 +62,8 @@ export function McpDetailPanel({
           (entry.url === selectedServer.url && (!entry.apiKey || entry.id === selectedServer.name))
       )
     : undefined
+  const remoteProjectServer =
+    selectedServer && isRemoteProjectMcpServer(selectedServer) ? selectedServer : null
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
   const authStatus =
     connector && !connector.apiKey && !connector.oauthAuthorizationOrigin
@@ -76,6 +80,8 @@ export function McpDetailPanel({
   const [toolRefresh, setToolRefresh] = useState(0)
   const canReadTools = Boolean(
     connector &&
+    (!remoteProjectServer ||
+      (remoteProjectServer.trustState === 'trusted' && remoteProjectServer.available)) &&
     !(connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin) &&
     (!(connector.apiKey || connector.oauthAuthorizationOrigin) || authStatus === 'authenticated')
   )
@@ -98,6 +104,7 @@ export function McpDetailPanel({
 
   useEffect(() => {
     if (!connector) return
+    if (remoteProjectServer && !remoteProjectServer.available) return
     if (!connector.apiKey && !connector.oauthAuthorizationOrigin) return
     let active = true
     const status = connector.apiKey
@@ -125,7 +132,7 @@ export function McpDetailPanel({
     return () => {
       active = false
     }
-  }, [connector, selectedServer])
+  }, [connector, remoteProjectServer, selectedServer])
 
   useEffect(() => {
     const request = ++toolRequestRef.current
@@ -237,16 +244,20 @@ export function McpDetailPanel({
               connector={connector}
               server={selectedServer}
               authStatus={authStatus}
-              busy={busy}
+              busy={busy || Boolean(remoteProjectServer && !remoteProjectServer.available)}
               toolNames={toolNames}
               toolsLoading={toolsLoading}
               toolsError={toolsError}
               iconSize={72}
               onAdd={() => undefined}
-              onRemove={onRemoveServer ? () => void remove() : undefined}
+              onRemove={onRemoveServer && !remoteProjectServer ? () => void remove() : undefined}
               onAuthorize={() => void authorize()}
               onApiKey={() => setApiKeyDialogOpen(true)}
-              onEnabledChange={onRefreshServers ? (enabled) => void setEnabled(enabled) : undefined}
+              onEnabledChange={
+                onRefreshServers && !remoteProjectServer
+                  ? (enabled) => void setEnabled(enabled)
+                  : undefined
+              }
               onRetry={refreshTools}
             />
           ) : (
@@ -263,10 +274,16 @@ export function McpDetailPanel({
                   <Chip
                     size="small"
                     variant="outlined"
-                    label={selectedServer.enabled === false ? '已停用' : '已配置'}
+                    label={
+                      remoteProjectServer
+                        ? '服务器项目'
+                        : selectedServer.enabled === false
+                          ? '已停用'
+                          : '已配置'
+                    }
                     sx={{ mt: 1.5 }}
                   />
-                  {onRefreshServers && (
+                  {onRefreshServers && !remoteProjectServer && (
                     <Button
                       variant="outlined"
                       disabled={busy}
@@ -306,6 +323,12 @@ export function McpDetailPanel({
               ) : null}
             </>
           )}
+          {remoteProjectServer ? (
+            <RemoteProjectMcpTrustPanel
+              server={remoteProjectServer}
+              onChanged={onRefreshServers}
+            />
+          ) : null}
           {error && (
             <Alert severity="error" sx={{ mt: 3 }}>
               {error}

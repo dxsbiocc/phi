@@ -413,7 +413,11 @@ function AppWorkspaceSidebarImpl({
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
         onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
-        notice={isRemoteProject ? '远程项目级 MCP 暂未接通；当前仅显示全局配置。' : undefined}
+        notice={
+          isRemoteProject
+            ? '服务器项目 MCP 需逐项信任；HTTPS 在桌面端连接，stdio 在所选服务器运行。'
+            : undefined
+        }
       />
     ) : mode === 'wrappers' ? (
       <WrapperSidebar
