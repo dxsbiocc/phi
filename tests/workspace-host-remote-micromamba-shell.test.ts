@@ -87,6 +87,7 @@ test('verification exercises micromamba run against an offline temporary prefix'
   assert.match(script, /conda-meta\/history/)
   assert.match(script, /'--rc-file' '\/dev\/null' 'run' '-p' "\$phi_prefix" '\/bin\/sh' '-c'/)
   assert.match(script, /env -i HOME=/)
+  assert.match(script, /XDG_CACHE_HOME='\/runtime\/cache'/)
   assert.match(script, /MAMBA_PKGS_DIRS='\/runtime\/pkgs'/)
   assert.match(script, /'info' '--no-rc'/)
   assert.doesNotMatch(script, /CONDA_/)

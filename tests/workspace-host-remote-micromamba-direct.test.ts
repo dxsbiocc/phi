@@ -131,6 +131,7 @@ async function artifactFixture(): Promise<{
     '  printf \'Error unknown MAMBA_EXE: "%s", filename must be mamba or micromamba\\n\' "$phi_executable" >&2',
     '  exit 1',
     'fi',
+    '[ "${XDG_CACHE_HOME:-}" = "${MAMBA_ROOT_PREFIX:?}/cache" ] || exit 96',
     'if [ "$1" = "--version" ]; then echo 2.9.0; exit 0; fi',
     'if [ "$1" = "--rc-file" ] && [ "$3" = "info" ]; then echo "platform : linux-64"; exit 0; fi',
     'if [ "$1" = "info" ]; then echo "platform : linux-64"; exit 0; fi',

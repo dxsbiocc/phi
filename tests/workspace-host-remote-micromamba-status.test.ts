@@ -47,11 +47,13 @@ async function writeMicromamba(
   const path = options.legacyLayout ? releasePath : join(releasePath, 'micromamba')
   await mkdir(options.legacyLayout ? join(root, 'bin') : releasePath, { recursive: true })
   const binaryVersion = release.replace(/-\d+$/, '')
+  const cacheCheck = '[ "${XDG_CACHE_HOME:-}" = "${MAMBA_ROOT_PREFIX:?}/cache" ] || exit 96'
   const content =
     options.runnable === false
-      ? '#!/bin/sh\nexit 9\n'
+      ? `#!/bin/sh\n${cacheCheck}\nexit 9\n`
       : [
           '#!/bin/sh',
+          cacheCheck,
           `if [ "$1" = "--version" ]; then echo '${binaryVersion}'; exit 0; fi`,
           `if [ "$1" = "info" ] && [ "$2" = "--no-rc" ]; then echo 'platform : ${options.platform ?? 'linux-64'}'; exit 0; fi`,
           'if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "run" ]; then shift 5; exec "$@"; fi',

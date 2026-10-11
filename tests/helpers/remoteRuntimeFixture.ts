@@ -96,6 +96,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     HOME: remoteHome,
     CONDA_DEFAULT_ENV: 'private',
     CONDA_PREFIX: join(remoteHome, 'miniconda3'),
+    XDG_CACHE_HOME: join(remoteHome, '.cache'),
     MAMBA_ROOT_PREFIX: join(remoteHome, 'private-mamba'),
     MAMBA_PKGS_DIRS: join(remoteHome, 'private-pkgs')
   }
@@ -288,6 +289,7 @@ phi_calls="$phi_root/micromamba-invocations.log"
 if env | grep -q '^CONDA_'; then exit 91; fi
 if env | grep '^MAMBA_' | grep -Ev '^(MAMBA_ROOT_PREFIX|MAMBA_PKGS_DIRS)=' >/dev/null; then exit 92; fi
 [ "\${MAMBA_PKGS_DIRS:-}" = "$phi_root/pkgs" ] || exit 93
+[ "\${XDG_CACHE_HOME:-}" = "$phi_root/cache" ] || exit 96
 if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
 if [ "\${1:-}" = --rc-file ]; then [ "\${2:-}" = /dev/null ] || exit 94; shift 2; fi
 command_name=\${1:-}

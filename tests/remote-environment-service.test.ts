@@ -132,6 +132,8 @@ test('remote env_request creates and then reuses a content-addressed environment
     const [invocation] = readFakeMicromambaInvocations(fixture)
     assert.equal(invocation?.env.MAMBA_ROOT_PREFIX, fixture.runtimeRoot)
     assert.equal(invocation?.env.MAMBA_PKGS_DIRS, join(fixture.runtimeRoot, 'pkgs'))
+    assert.equal(invocation?.env.XDG_CACHE_HOME, join(fixture.runtimeRoot, 'cache'))
+    assert.notEqual(invocation?.env.XDG_CACHE_HOME, join(fixture.remoteHome, '.cache'))
     assert.ok(invocation?.env.HOME)
     assert.equal(invocation?.env.PATH, '/usr/bin:/bin')
     assert.equal(

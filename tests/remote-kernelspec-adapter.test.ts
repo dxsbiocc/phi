@@ -66,6 +66,9 @@ test('remote Jupyter environment is created once and reused by content hash', as
       .split('\n')
     assert.equal(calls.length, 1)
     assert.match(calls[0] ?? '', /jupyter_server=2\.21\.1/u)
+    const [invocation] = readFakeMicromambaInvocations(fixture)
+    assert.equal(invocation?.env.XDG_CACHE_HOME, join(fixture.runtimeRoot, 'cache'))
+    assert.notEqual(invocation?.env.XDG_CACHE_HOME, join(fixture.remoteHome, '.cache'))
     assert.match(calls[0] ?? '', /jupyter_client=8\.10\.0/u)
     assert.match(calls[0] ?? '', /ipykernel=7\.4\.0/u)
   } finally {

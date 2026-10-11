@@ -139,6 +139,8 @@ test('installs ripgrep with micromamba into an atomically activated managed pref
   for (const invocation of invocations) {
     assert.equal(invocation.env.MAMBA_ROOT_PREFIX, remote.runtimeRoot)
     assert.equal(invocation.env.MAMBA_PKGS_DIRS, join(remote.runtimeRoot, 'pkgs'))
+    assert.equal(invocation.env.XDG_CACHE_HOME, join(remote.runtimeRoot, 'cache'))
+    assert.notEqual(invocation.env.XDG_CACHE_HOME, join(remote.remoteHome, '.cache'))
     assert.equal(
       Object.keys(invocation.env).some((name) => name.startsWith('CONDA_')),
       false
@@ -152,6 +154,7 @@ test('installs ripgrep with micromamba into an atomically activated managed pref
         command.includes('env -i') &&
         command.includes("'create' '--no-rc' '-p'") &&
         command.includes("'--override-channels' '-c' 'conda-forge' '--yes' 'ripgrep'") &&
+        command.includes(`XDG_CACHE_HOME='${join(remote.runtimeRoot, 'cache')}'`) &&
         command.includes(`MAMBA_ROOT_PREFIX='${remote.runtimeRoot}'`) &&
         command.includes(`MAMBA_PKGS_DIRS='${join(remote.runtimeRoot, 'pkgs')}'`)
     )
