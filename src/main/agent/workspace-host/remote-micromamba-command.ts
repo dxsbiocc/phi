@@ -34,6 +34,7 @@ function isolatedEnvironment(input: RemoteMicromambaCommandInput): string[] {
     'HOME="${HOME:-/}"',
     path,
     'TMPDIR="${TMPDIR:-/tmp}"',
+    `XDG_CACHE_HOME=${shellQuote(posix.join(input.runtimeRoot, 'cache'))}`,
     `MAMBA_ROOT_PREFIX=${shellQuote(input.runtimeRoot)}`,
     `MAMBA_PKGS_DIRS=${shellQuote(posix.join(input.runtimeRoot, 'pkgs'))}`
   ]

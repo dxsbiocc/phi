@@ -3,7 +3,8 @@ import test from 'node:test'
 
 import {
   buildRemoteMicromambaHostCommand,
-  buildRemoteMicromambaShellCommand
+  buildRemoteMicromambaShellCommand,
+  type RemoteMicromambaSubcommand
 } from '../src/main/agent/workspace-host/remote-micromamba-command'
 import {
   createRemoteRuntimeFixture,
@@ -26,6 +27,7 @@ test('remote micromamba create starts from an empty environment and pins Phi pac
   assert.match(command[2] ?? '', /exec env -i/u)
   assert.match(command[2] ?? '', /HOME="\$\{HOME:-\/\}"/u)
   assert.match(command[2] ?? '', /PATH='\/usr\/bin:\/bin'/u)
+  assert.match(command[2] ?? '', /XDG_CACHE_HOME='\/srv\/phi runtime\/cache'/u)
   assert.match(command[2] ?? '', /MAMBA_ROOT_PREFIX='\/srv\/phi runtime'/u)
   assert.match(command[2] ?? '', /MAMBA_PKGS_DIRS='\/srv\/phi runtime\/pkgs'/u)
   assert.match(command[2] ?? '', /'create' '--no-rc'/u)
@@ -43,10 +45,33 @@ test('remote micromamba run preserves task HOME and PATH without trusting run --
   assert.match(command, /^env -i /u)
   assert.match(command, /HOME="\$\{HOME:-\/\}"/u)
   assert.match(command, /PATH="\$\{PATH:-\/usr\/bin:\/bin\}"/u)
+  assert.match(command, /XDG_CACHE_HOME='\/srv\/phi runtime\/cache'/u)
   assert.match(command, /MAMBA_PKGS_DIRS='\/srv\/phi runtime\/pkgs'/u)
   assert.match(command, /'--rc-file' '\/dev\/null' 'run'/u)
   assert.doesNotMatch(command, /--no-rc/u)
   assert.doesNotMatch(command, /CONDA_/u)
+})
+
+test('every remote micromamba subcommand pins XDG cache under the runtime root', () => {
+  const subcommands: readonly RemoteMicromambaSubcommand[] = [
+    'create',
+    'info',
+    'install',
+    'list',
+    'run',
+    'shell',
+    'version'
+  ]
+
+  for (const subcommand of subcommands) {
+    const command = buildRemoteMicromambaShellCommand({
+      binary: BINARY,
+      runtimeRoot: ROOT,
+      subcommand
+    })
+    assert.match(command, /XDG_CACHE_HOME='\/srv\/phi runtime\/cache'/u, subcommand)
+    assert.doesNotMatch(command, /XDG_CACHE_HOME="\$\{HOME/u, subcommand)
+  }
 })
 
 test('the fake micromamba observes only Phi runtime state and isolated argv', async () => {
@@ -57,6 +82,7 @@ test('the fake micromamba observes only Phi runtime state and isolated argv', as
     const dirtyEnv = {
       HOME: fixture.remoteHome,
       PATH: '/private/conda/bin:/usr/bin:/bin',
+      XDG_CACHE_HOME: `${fixture.remoteHome}/.cache`,
       CONDA_PREFIX: '/private/conda',
       MAMBA_ROOT_PREFIX: '/private/mamba',
       MAMBA_PKGS_DIRS: '/private/pkgs',
@@ -91,6 +117,8 @@ test('the fake micromamba observes only Phi runtime state and isolated argv', as
     for (const call of calls) {
       assert.equal(call.env.MAMBA_ROOT_PREFIX, fixture.runtimeRoot)
       assert.equal(call.env.MAMBA_PKGS_DIRS, `${fixture.runtimeRoot}/pkgs`)
+      assert.equal(call.env.XDG_CACHE_HOME, `${fixture.runtimeRoot}/cache`)
+      assert.notEqual(call.env.XDG_CACHE_HOME, dirtyEnv.XDG_CACHE_HOME)
       assert.equal(call.env.HOME, fixture.remoteHome)
       assert.equal(
         Object.keys(call.env).some((name) => name.startsWith('CONDA_')),

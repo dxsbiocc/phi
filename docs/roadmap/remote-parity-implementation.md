@@ -538,7 +538,12 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
   env -i HOME=$HOME PATH=/usr/bin:/bin MAMBA_ROOT_PREFIX=<root> MAMBA_PKGS_DIRS=<root>/pkgs micromamba create --no-rc -p <prefix> --override-channels -c conda-forge -y <pkgs>
   ```
 
-  在本地磁盘上，冷缓存耗时 11 秒，热缓存耗时 5 秒。远程 micromamba 调用应统一经过共享构造器，按子命令处理 `--no-rc` 支持差异，并阻止 `CONDA_*` 等用户配置污染；默认 runtime root 仍为 `~/.phi/runtime`。
+  在本地磁盘上，冷缓存耗时 11 秒，热缓存耗时 5 秒。远程 micromamba 调用应统一经过共享构造器，按子命令处理 `--no-rc` 支持差异，并阻止 `CONDA_*` 等用户配置污染；默认 runtime root 仍为 `~/.phi/runtime`。所有此类调用还显式设置 `XDG_CACHE_HOME=<runtime-root>/cache`，因此 micromamba 及 `micromamba run` 启动的技能脚本只会把缓存写入运行时根；技能脚本继承该变量仅改变缓存位置，保留其所需的 `HOME`。
 - **写入失败与诊断**：HPC 的 NFS 家目录存在服务端配额；`df` 显示 20T 可用、`quota -s` 显示 none，但实际写入报 `Disk quota exceeded`。此时 micromamba 在 Linking 阶段无错误行地以退出码 1 结束。一个 Jupyter 环境约含 1.97 万个文件、约 400 MB，几个环境即可耗尽该位置的空间或文件数配额。micromamba 失败而输出没有明确原因时，应在目标 runtime root 做可自清理的小写入探测，区分 quota、空间不足、只读和其他错误；运行时根检查只在根目录之外创建临时目录、写入不超过 8 个小文件，并以约 4 秒独立看门狗把超时降级为“未能判断”，再用单次 `rm -rf` 自清理。命中配额或空间耗尽时，建议在「设置 → 远程主机」把运行时目录改到工作区所在文件系统等有空间的位置，或清理旧环境；HPC 已把运行时目录改到 `/cluster/facility` 下的工作区文件系统目录。
 - **Phi 自有离线缓存**：包缓存固定为 `<runtime-root>/pkgs`。环境创建先在线尝试；只有输出表明 conda 源因 DNS、连接或超时而不可达时，才尝试一次 `--offline`，重试成功即确认缓存满足请求并标注使用了本地缓存。缓存不足时继续提示配置镜像，或在可联网机器预构建后迁移。设置页只展示缓存条目数与字节数；字节统计超时则只展示条目数，本阶段不提供清理按钮。
-- **范围边界**：「计算节点可见性探针」仍须先取得用户同意，本任务未实现；所有环境与缓存操作仍只发生在登录节点，不在计算节点执行任何操作。
+- **范围边界**：所有环境与缓存操作仍只发生在登录节点。计算节点可见性已用一次性手动探针验证（见下文“计算节点可见性探针”），产品内的探针按钮与能力档案字段 `computeNodeVisibility` 尚未实现。
+- **计算节点可见性探针（2026-10-11，用户同意后执行，HPC，Slurm 17.11，glibc 2.17，作业各限时 3 至 5 分钟、1 核、256 MB，固定节点，按作业号跟踪，结束后确认无遗留作业与目录）**：
+    - `node1`（计算节点）：运行时目录、micromamba、环境目录均可见；隔离写法下环境里的 Python、`micromamba run`（包缓存在 NFS 与在节点本地盘各一次）、NFS 上的 POSIX 文件锁、在运行时目录写文件全部成功，整个作业 2 秒；外网不通（`http=000`，与“计算节点离线”一致）。结论：**受管环境可以在计算节点上使用。**
+    - `node2`（计算节点）：同样能看到文件，但对该 NFS 的访问极慢甚至卡死（单次 `stat` 约 4 秒，`ls` 约 6.5 秒，运行程序挂住直到作业超时；`node1` 与登录节点同样操作均在 0.5 秒内）。这是集群本身的问题，不是 micromamba 的问题；前两轮固定在 `node2` 的探针因此不能代表计算节点常态。
+    - 建议在该集群的 Wrapper 执行目标里把 `node2` 与 `node4` 一并排除：「额外 sbatch 参数」（任务作业）与「主进程作业的额外 sbatch 参数」（控制器作业）两个字段都要填 `--exclude=node2,node4`，只填前者控制器作业仍可能落在坏节点上。
+    - 探针还发现 `micromamba run` 会在用户家目录写 `~/.cache/mamba/proc`（进程登记，家目录配额紧时不应写）。隔离构造器已为所有子命令加 `XDG_CACHE_HOME=<runtime-root>/cache`；GPU 实测建环境与运行前后家目录缓存均为 0 个新文件。skill 脚本因此也继承该变量，只影响缓存位置。
