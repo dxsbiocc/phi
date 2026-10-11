@@ -12,28 +12,28 @@ export type SnackbarNotice = {
 
 const appearance = {
   info: {
-    title: '提示',
+    label: '提示',
     color: '#2455E8',
     softColor: '#D4DFFF',
     backgroundColor: '#F2F5FF',
     Icon: FiInfo
   },
   success: {
-    title: '成功',
+    label: '成功',
     color: '#16834A',
     softColor: '#D4F3E1',
     backgroundColor: '#F1FBF5',
     Icon: FiCheckCircle
   },
   warning: {
-    title: '警告',
+    label: '警告',
     color: '#B76D00',
     softColor: '#FFE6C1',
     backgroundColor: '#FFF8EA',
     Icon: FiAlertTriangle
   },
   error: {
-    title: '错误',
+    label: '错误',
     color: '#C81919',
     softColor: '#FFD2D0',
     backgroundColor: '#FFF3F3',
@@ -41,7 +41,7 @@ const appearance = {
   }
 } satisfies Record<
   SnackbarSeverity,
-  { title: string; color: string; softColor: string; backgroundColor: string; Icon: typeof FiInfo }
+  { label: string; color: string; softColor: string; backgroundColor: string; Icon: typeof FiInfo }
 >
 
 type AppSnackbarCardProps = {
@@ -54,7 +54,7 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
   { notice, onClose, style },
   ref
 ): React.JSX.Element {
-  const { title, color, softColor, backgroundColor, Icon } = appearance[notice.severity]
+  const { label, color, softColor, backgroundColor, Icon } = appearance[notice.severity]
 
   return (
     <Box
@@ -66,14 +66,14 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        gap: '15px',
+        gap: '10px',
         boxSizing: 'border-box',
         width: 600,
         maxWidth: 'calc(100% - 32px)',
-        minHeight: 80,
-        py: '10px',
-        pl: '23px',
-        pr: '10px',
+        minHeight: 44,
+        py: '4px',
+        pl: '24px',
+        pr: '6px',
         overflow: 'hidden',
         borderRadius: '8px',
         bgcolor: backgroundColor,
@@ -82,7 +82,7 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
     >
       <Box
         component="svg"
-        viewBox="0 0 18 80"
+        viewBox="0 0 18 40"
         preserveAspectRatio="none"
         aria-hidden="true"
         sx={{
@@ -93,41 +93,45 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
           fill: softColor
         }}
       >
-        <path d="M0 0H10Q18 5 10 10Q2 15 10 20Q18 25 10 30Q2 35 10 40Q18 45 10 50Q2 55 10 60Q18 65 10 70Q2 75 10 80H0Z" />
+        <path d="M0 0H10Q18 5 10 10Q2 15 10 20Q18 25 10 30Q2 35 10 40H0Z" />
       </Box>
       <Box
-        aria-hidden="true"
+        role="img"
+        aria-label={label}
         sx={{
           display: 'grid',
-          flex: '0 0 35px',
+          flex: '0 0 24px',
           placeItems: 'center',
-          width: 35,
-          height: 35,
+          width: 24,
+          height: 24,
           borderRadius: '50%',
           bgcolor: softColor,
           color,
-          fontSize: 17
+          fontSize: 14
         }}
       >
         <Icon />
       </Box>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ color, fontSize: 17, fontWeight: 700, lineHeight: 1.3 }}>
-          {title}
-        </Typography>
-        <Typography
-          sx={{ color: '#555555', fontSize: 14, lineHeight: 1.4, overflowWrap: 'anywhere' }}
-        >
-          {notice.message}
-        </Typography>
-      </Box>
+      <Typography
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          py: '6px',
+          color: '#555555',
+          fontSize: 14,
+          lineHeight: 1.4,
+          overflowWrap: 'anywhere'
+        }}
+      >
+        {notice.message}
+      </Typography>
       <IconButton
         aria-label="关闭通知"
         onClick={onClose}
         size="small"
-        sx={{ flexShrink: 0, color: '#555555', '&:hover': { bgcolor: '#F2F2F2' } }}
+        sx={{ flexShrink: 0, p: '4px', color: '#555555', '&:hover': { bgcolor: '#F2F2F2' } }}
       >
-        <FiX size={18} />
+        <FiX size={16} />
       </IconButton>
     </Box>
   )
