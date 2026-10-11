@@ -10,7 +10,18 @@ export type RemoteRuntimeRootWarningCode =
   | 'shared-filesystem-info'
 
 export type RemoteRuntimeRootHardErrorCode =
-  'invalid-configured-root' | 'unable-to-expand' | 'ancestor-not-writable'
+  | 'invalid-configured-root'
+  | 'unable-to-expand'
+  | 'ancestor-not-writable'
+  | 'write-capacity-exhausted'
+
+export type RemoteRuntimeRootWriteCapacity =
+  'ok' | 'quota-exceeded' | 'no-space' | 'read-only' | 'other'
+
+export interface RemoteRuntimePackageCacheStatus {
+  entryCount: number | null
+  bytes: number | null
+}
 
 export type RemoteRuntimeRootCheckStatus = 'checked' | 'timed-out' | 'failed' | 'incomplete'
 
@@ -41,7 +52,9 @@ export interface RemoteRuntimeRootCheckResult {
   diskUsePercent: number | null
   inodeUsePercent: number | null
   executable: boolean | null
+  writeCapacity: RemoteRuntimeRootWriteCapacity | null
   sharedFilesystem: boolean | null
+  packageCache: RemoteRuntimePackageCacheStatus
   computeNodeVisibility: 'unknown'
   hardErrors: readonly RemoteRuntimeRootHardError[]
   warnings: readonly RemoteRuntimeRootWarning[]
@@ -77,6 +90,7 @@ export interface RemoteRuntimeRootCapabilityProfile {
   status: RemoteRuntimeRootCheckStatus
   hasHardError: boolean
   warningCodes: readonly RemoteRuntimeRootWarningCode[]
+  packageCache?: RemoteRuntimePackageCacheStatus
   micromamba?: RemoteMicromambaCapabilityProfile
   ripgrep?: RemoteRipgrepCapabilityProfile
   checks: {

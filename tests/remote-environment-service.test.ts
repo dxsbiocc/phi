@@ -5,6 +5,7 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync
 } from 'node:fs'
@@ -13,7 +14,11 @@ import test from 'node:test'
 
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
 import { countWorkspaceHostOperations } from './helpers/countingWorkspaceHost'
-import { createRemoteRuntimeFixture, installFakeMicromamba } from './helpers/remoteRuntimeFixture'
+import {
+  createRemoteRuntimeFixture,
+  installFakeMicromamba,
+  readFakeMicromambaInvocations
+} from './helpers/remoteRuntimeFixture'
 
 const ENVIRONMENT_HOST_OPERATION_BASELINE = { create: 9, reuse: 9 } as const
 const ENVIRONMENT_HOST_OPERATION_LIMIT = 8
@@ -120,10 +125,20 @@ test('remote env_request creates and then reuses a content-addressed environment
     assert.equal(calls.length, 1)
     assert.match(
       calls[0] ?? '',
-      /^create -p .*\/envs\/[a-f0-9]{64} --override-channels -c conda-forge --yes/u
+      /^create --no-rc -p .*\/envs\/[a-f0-9]{64} --override-channels -c conda-forge --yes/u
     )
     assert.doesNotMatch(calls[0] ?? '', /-c bioconda/u)
     assert.match(calls[0] ?? '', new RegExp(`root=${escapeRegExp(fixture.runtimeRoot)}$`))
+    const [invocation] = readFakeMicromambaInvocations(fixture)
+    assert.equal(invocation?.env.MAMBA_ROOT_PREFIX, fixture.runtimeRoot)
+    assert.equal(invocation?.env.MAMBA_PKGS_DIRS, join(fixture.runtimeRoot, 'pkgs'))
+    assert.ok(invocation?.env.HOME)
+    assert.equal(invocation?.env.PATH, '/usr/bin:/bin')
+    assert.equal(
+      Object.keys(invocation?.env ?? {}).some((key) => key.startsWith('CONDA_')),
+      false
+    )
+    assert.deepEqual(invocation?.argv.slice(0, 2), ['create', '--no-rc'])
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
     fixture.cleanup()
@@ -354,9 +369,114 @@ test('remote env_request turns conda connectivity failures into an actionable Ch
 
     assert.ok('error' in result)
     assert.match(result.error, /无法访问 conda/u)
+    assert.match(result.error, /本地缓存不足/u)
     assert.match(result.error, /镜像/u)
     assert.match(result.error, /可联网机器/u)
+    const calls = readFakeMicromambaInvocations(fixture)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.argv.includes('--offline'), false)
+    assert.equal(calls[1]?.argv.includes('--offline'), true)
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote env_request retries once offline and reports a sufficient Phi cache', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture, 'test', 'cached-offline')
+    const service = new RemoteEnvironmentService({
+      micromambaVersion: 'test',
+      openWorkspace: async () => fixture.workspace,
+      confirm: async () => true
+    })
+
+    const result = await service.request(request({ requestId: 'cached-offline' }))
+
+    assert.ok('envId' in result)
+    assert.equal(result.notice, '使用了本地缓存')
+    const calls = readFakeMicromambaInvocations(fixture)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.argv.includes('--offline'), false)
+    assert.equal(calls[1]?.argv.filter((arg) => arg === '--offline').length, 1)
+    assert.ok((calls[1]?.argv.indexOf('--offline') ?? -1) < (calls[1]?.argv.indexOf('six') ?? -1))
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote env_request diagnoses a silent quota failure during its offline retry', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    const binary = installFakeMicromamba(fixture)
+    writeFileSync(
+      binary,
+      `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "\${MAMBA_ROOT_PREFIX:?}/offline-retry-calls.log"
+case " $* " in
+  *" --offline "*) exit 1 ;;
+esac
+printf 'Could not resolve host: conda.anaconda.org\\n' >&2
+exit 7
+`
+    )
+    chmodSync(binary, 0o755)
+    const service = new RemoteEnvironmentService({
+      micromambaVersion: 'test',
+      openWorkspace: async () => fixture.workspace,
+      confirm: async () => true,
+      writeProbeFailure: 'quota-exceeded'
+    })
+
+    const result = await service.request(request({ requestId: 'offline-silent-quota' }))
+
+    assert.ok('error' in result)
+    assert.match(result.error, /写入空间或文件数配额已用尽/u)
+    assert.doesNotMatch(result.error, /本地缓存不足/u)
+    const calls = readFileSync(join(fixture.runtimeRoot, 'offline-retry-calls.log'), 'utf8')
+      .trim()
+      .split('\n')
+    assert.equal(calls.length, 2)
+    assert.match(calls[1] ?? '', /--offline.*six/u)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote env_request diagnoses a silent quota failure and cleans its write probe', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture, 'test', 'silent')
+    const run = fixture.workspace.projectHost.exec.run
+    const probeLimits: Array<{ timeoutMs?: number; maxOutputBytes?: number }> = []
+    fixture.workspace.projectHost.exec.run = (command, options) => {
+      if (command[0] === 'sh' && command[2]?.includes('.phi-write-probe')) {
+        probeLimits.push({
+          timeoutMs: options.timeoutMs,
+          maxOutputBytes: options.maxOutputBytes
+        })
+      }
+      return run(command, options)
+    }
+    const service = new RemoteEnvironmentService({
+      micromambaVersion: 'test',
+      openWorkspace: async () => fixture.workspace,
+      confirm: async () => true,
+      writeProbeFailure: 'quota-exceeded'
+    })
+
+    const result = await service.request(request({ requestId: 'silent-quota' }))
+
+    assert.ok('error' in result)
+    assert.match(result.error, /写入空间或文件数配额已用尽/u)
+    assert.match(result.error, /设置 → 远程主机/u)
+    assert.deepEqual(probeLimits, [{ timeoutMs: 10_000, maxOutputBytes: 32 * 1024 }])
+    assert.equal(
+      readdirSync(fixture.runtimeRoot).some((name) => name.startsWith('.phi-write-probe-')),
+      false
+    )
   } finally {
     fixture.cleanup()
   }

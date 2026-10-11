@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -30,6 +31,7 @@ export interface RemoteRuntimeFixture {
   projectRoot: string
   runtimeRoot: string
   localAnchor: string
+  remoteHome: string
   workspace: RemoteRuntimeWorkspace
   sessions: LocalShellSession[]
   connect(): Promise<LocalShellSession>
@@ -80,22 +82,33 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   const projectPath = join(root, 'server-project')
   const runtimePath = join(root, 'server-runtime')
   const localAnchor = join(root, 'local-anchor')
-  for (const path of [projectPath, runtimePath, localAnchor]) mkdirSync(path)
+  const remoteHome = join(root, 'remote-home')
+  for (const path of [projectPath, runtimePath, localAnchor, remoteHome]) mkdirSync(path)
+  writeFileSync(join(remoteHome, '.condarc'), 'channels:\n  - private-channel\nssl_verify: false\n')
   const projectRoot = realpathSync(projectPath)
   const runtimeRoot = realpathSync(runtimePath)
   const sessions: LocalShellSession[] = []
   const shimDir = join(root, 'setsid-shim')
   mkdirSync(shimDir)
   const restoreSetsid = installSetsidShim(shimDir)
+  const inheritedEnv = {
+    ...process.env,
+    HOME: remoteHome,
+    CONDA_DEFAULT_ENV: 'private',
+    CONDA_PREFIX: join(remoteHome, 'miniconda3'),
+    MAMBA_ROOT_PREFIX: join(remoteHome, 'private-mamba'),
+    MAMBA_PKGS_DIRS: join(remoteHome, 'private-pkgs')
+  }
   const connect = async (): Promise<LocalShellSession> => {
     const session = createLocalShellSession(runtimeRoot)
-    session.execWithInput = (command, input) => execWithInput(session, command, input)
-    session.execBounded = (command, options) => execBounded(session, command, options)
+    installExecEnvironment(session, inheritedEnv)
+    session.execWithInput = (command, input) => execWithInput(session, command, input, inheritedEnv)
+    session.execBounded = (command, options) => execBounded(session, command, options, inheritedEnv)
     sessions.push(session)
     return session
   }
   const workspace: RemoteRuntimeWorkspace = {
-    projectHost: sshHost(projectRoot, sessions),
+    projectHost: sshHost(projectRoot, sessions, inheritedEnv),
     runtimeHost: new SshHost({ remoteRoot: runtimeRoot, canonicalRoot: runtimeRoot, connect }),
     projectRoot,
     runtimeRoot,
@@ -106,6 +119,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     projectRoot,
     runtimeRoot,
     localAnchor,
+    remoteHome,
     workspace,
     sessions,
     connect,
@@ -116,28 +130,56 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   }
 }
 
-function sshHost(root: string, sessions: LocalShellSession[]): SshHost {
+function sshHost(
+  root: string,
+  sessions: LocalShellSession[],
+  inheritedEnv: NodeJS.ProcessEnv
+): SshHost {
   return new SshHost({
     remoteRoot: root,
     canonicalRoot: root,
     connect: async () => {
       const session = createLocalShellSession(root)
-      session.execWithInput = (command, input) => execWithInput(session, command, input)
-      session.execBounded = (command, options) => execBounded(session, command, options)
+      installExecEnvironment(session, inheritedEnv)
+      session.execWithInput = (command, input) =>
+        execWithInput(session, command, input, inheritedEnv)
+      session.execBounded = (command, options) =>
+        execBounded(session, command, options, inheritedEnv)
       sessions.push(session)
       return session
     }
   })
 }
 
+function installExecEnvironment(session: LocalShellSession, env: NodeJS.ProcessEnv): void {
+  const fallback = session.exec.bind(session)
+  session.exec = (command) => {
+    if (/^ps -ww -o args= -p [1-9][0-9]*$/u.test(command)) return fallback(command)
+    session.commands.push(command)
+    return new Promise((resolve, reject) => {
+      const child = spawn('bash', ['-c', command], {
+        env,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')))
+      child.once('error', reject)
+      child.once('close', (code, signal) => resolve({ stdout, stderr, code, signal }))
+    })
+  }
+}
+
 function execBounded(
   session: LocalShellSession,
   command: string,
-  options: RemoteExecBoundedOptions
+  options: RemoteExecBoundedOptions,
+  env: NodeJS.ProcessEnv
 ): Promise<RemoteExecBoundedResult> {
   session.commands.push(command)
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('bash', ['-c', command], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let stdoutTruncated = false
@@ -181,11 +223,12 @@ function execBounded(
 function execWithInput(
   session: LocalShellSession,
   command: string,
-  input: string
+  input: string,
+  env: NodeJS.ProcessEnv
 ): Promise<RemoteExecResult> {
   session.commands.push(command)
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('bash', ['-c', command], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     const stdout: Buffer[] = []
     const stderr: Buffer[] = []
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
@@ -206,7 +249,7 @@ function execWithInput(
 export function installFakeMicromamba(
   fixture: RemoteRuntimeFixture,
   version = 'test',
-  mode: 'ok' | 'offline' = 'ok'
+  mode: 'ok' | 'offline' | 'cached-offline' | 'silent' = 'ok'
 ): string {
   const versionDir = join(fixture.runtimeRoot, 'bin', `micromamba-${version}`)
   mkdirSync(versionDir, { recursive: true, mode: 0o755 })
@@ -232,21 +275,43 @@ if [ "\${1:-}" = --version ]; then
 fi
 ${runSystemRipgrep}
 `
-  const source =
-    mode === 'offline'
-      ? `#!/bin/sh
-${executableCheck}if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
-echo "Could not resolve host: conda.anaconda.org" >&2
-exit 7
-`
-      : `#!/bin/sh
+  const source = `#!/bin/sh
 set -eu
-${executableCheck}if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
-command_name=$1
-shift
-phi_root=\${MAMBA_ROOT_PREFIX:?}
+${executableCheck}phi_root=\${MAMBA_ROOT_PREFIX:?}
+phi_calls="$phi_root/micromamba-invocations.log"
+{
+  printf 'B\\0'
+  env | sort | while IFS= read -r phi_env; do printf 'E%s\\0' "$phi_env"; done
+  for phi_arg in "$@"; do printf 'A%s\\0' "$phi_arg"; done
+  printf 'Z\\0'
+} >> "$phi_calls"
+if env | grep -q '^CONDA_'; then exit 91; fi
+if env | grep '^MAMBA_' | grep -Ev '^(MAMBA_ROOT_PREFIX|MAMBA_PKGS_DIRS)=' >/dev/null; then exit 92; fi
+[ "\${MAMBA_PKGS_DIRS:-}" = "$phi_root/pkgs" ] || exit 93
+if [ "\${1:-}" = --version ]; then echo 2.9.0; exit 0; fi
+if [ "\${1:-}" = --rc-file ]; then [ "\${2:-}" = /dev/null ] || exit 94; shift 2; fi
+command_name=\${1:-}
+shift || :
+phi_no_rc=0
+phi_offline=0
+for phi_arg in "$@"; do
+  [ "$phi_arg" = --no-rc ] && phi_no_rc=1
+  [ "$phi_arg" = --offline ] && phi_offline=1
+done
 printf '%s|root=%s\\n' "$command_name $*" "\${MAMBA_ROOT_PREFIX:-}" >> "$phi_root/micromamba-calls.log"
 if [ "$command_name" = create ]; then
+  [ "$phi_no_rc" -eq 1 ] || exit 95
+  if [ '${mode}' = silent ]; then exit 1; fi
+  if [ '${mode}' = offline ] || [ '${mode}' = cached-offline ]; then
+    if [ "$phi_offline" -eq 0 ]; then
+      echo "Could not resolve host: conda.anaconda.org" >&2
+      exit 7
+    fi
+    if [ '${mode}' = offline ]; then
+      echo "Specified package cache does not contain requested packages" >&2
+      exit 8
+    fi
+  fi
   prefix=
   while [ "$#" -gt 0 ]; do
     if [ "$1" = -p ]; then prefix=$2; shift 2; continue; fi
@@ -269,6 +334,35 @@ exit 9
   writeFileSync(path, source)
   chmodSync(path, 0o755)
   return path
+}
+
+export interface FakeMicromambaInvocation {
+  env: Readonly<Record<string, string>>
+  argv: readonly string[]
+}
+
+export function readFakeMicromambaInvocations(
+  fixture: RemoteRuntimeFixture
+): FakeMicromambaInvocation[] {
+  const fields = readFileSync(join(fixture.runtimeRoot, 'micromamba-invocations.log'), 'utf8')
+    .split('\0')
+    .filter(Boolean)
+  const calls: FakeMicromambaInvocation[] = []
+  let env: Record<string, string> = {}
+  let argv: string[] = []
+  for (const field of fields) {
+    if (field === 'B') {
+      env = {}
+      argv = []
+    } else if (field === 'Z') calls.push({ env, argv })
+    else if (field.startsWith('A')) argv.push(field.slice(1))
+    else if (field.startsWith('E')) {
+      const entry = field.slice(1)
+      const separator = entry.indexOf('=')
+      if (separator > 0) env[entry.slice(0, separator)] = entry.slice(separator + 1)
+    }
+  }
+  return calls
 }
 
 export function writeTestSkill(

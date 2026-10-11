@@ -7,6 +7,7 @@ import {
   type EnvRequestResult
 } from '../content/env-request'
 import { remoteMicromambaPath } from '../../../shared/remoteMicromambaTypes'
+import { buildRemoteMicromambaHostCommand } from '../workspace-host/remote-micromamba-command'
 import type { CommandResult } from '../workspace-host/types'
 import type {
   OpenRemoteRuntimeWorkspace,
@@ -24,9 +25,12 @@ import {
   probeEnvironmentMarker,
   publishEnvironmentMarker
 } from './environment-transport'
+import { diagnoseRemoteCommandFailure, type RemoteWriteProbeFailure } from './write-diagnostics'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
+const WRITE_PROBE_TIMEOUT_MS = 10_000
+const WRITE_PROBE_OUTPUT_BYTES = 32 * 1024
 const SETTINGS_GUIDANCE =
   '请打开“设置 → 远程”，使用“安装 micromamba”按钮完成安装，或检查 micromamba 路径、恢复由 Phi 管理的默认值后重试。Phi 没有回退到本机创建环境。'
 
@@ -46,6 +50,7 @@ export interface RemoteEnvironmentServiceOptions {
   ) => Promise<{ packages: readonly string[]; channels: readonly string[] }>
   timeoutMs?: number
   maxOutputBytes?: number
+  writeProbeFailure?: RemoteWriteProbeFailure
 }
 
 export class RemoteEnvironmentService {
@@ -178,15 +183,22 @@ export class RemoteEnvironmentService {
     const packages = uniquePackages([...base.packages, ...input.packages])
     const channels = ['conda-forge']
     const record = environmentRecord(workspace, input, packages, channels)
+    let usedLocalCache = false
     await this.withLock(`${workspace.runtimeRoot}\0${record.envId}`, signal, async () => {
       const previousReady = previous?.envId === record.envId
       if (!previousReady && !(await this.environmentReady(workspace, record, signal))) {
-        await this.createEnvironment(workspace, record, signal)
+        usedLocalCache = await this.createEnvironment(workspace, record, signal)
       }
     })
     signal.throwIfAborted()
     await this.writeAliases(workspace, input.environment, record, signal)
-    return { ref: record.ref, envId: record.envId, name: record.name, added: record.added }
+    return {
+      ref: record.ref,
+      envId: record.envId,
+      name: record.name,
+      added: record.added,
+      ...(usedLocalCache ? { notice: '使用了本地缓存' } : {})
+    }
   }
 
   private async baseEnvironment(
@@ -219,7 +231,7 @@ export class RemoteEnvironmentService {
     workspace: RemoteRuntimeWorkspace,
     record: EnvironmentRecord,
     signal: AbortSignal
-  ): Promise<void> {
+  ): Promise<boolean> {
     const binary = this.micromambaPath(workspace)
     if (
       !workspace.micromambaPath &&
@@ -227,28 +239,104 @@ export class RemoteEnvironmentService {
     ) {
       throw new Error(`服务器运行时根目录中没有可用的 micromamba。${SETTINGS_GUIDANCE}`)
     }
-    const result = await workspace.projectHost.exec.run(
-      [
-        binary,
-        'create',
-        '-p',
-        record.prefix,
-        '--override-channels',
-        ...record.channels.flatMap((channel) => ['-c', channel]),
-        '--yes',
-        ...record.packages
-      ],
-      {
-        cwd: workspace.projectRoot,
-        env: { MAMBA_ROOT_PREFIX: workspace.runtimeRoot },
-        signal,
-        timeoutMs: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxOutputBytes: this.options.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES
-      }
+    const args = createArguments(record)
+    const result = await this.runCreate(workspace, binary, args, signal)
+    const usedLocalCache = await this.resolveCreateResult(
+      workspace,
+      binary,
+      createArguments(record, true),
+      result,
+      signal
     )
-    throwForCreateFailure(result)
     signal.throwIfAborted()
     await publishEnvironmentMarker(workspace, record.envId, json(record), signal)
+    return usedLocalCache
+  }
+
+  private runCreate(
+    workspace: RemoteRuntimeWorkspace,
+    binary: string,
+    args: readonly string[],
+    signal: AbortSignal
+  ): Promise<CommandResult> {
+    return workspace.projectHost.exec.run(
+      buildRemoteMicromambaHostCommand({
+        binary,
+        runtimeRoot: workspace.runtimeRoot,
+        subcommand: 'create',
+        args
+      }),
+      this.runOptions(workspace, signal)
+    )
+  }
+
+  private async resolveCreateResult(
+    workspace: RemoteRuntimeWorkspace,
+    binary: string,
+    offlineArgs: readonly string[],
+    result: CommandResult,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    throwForTermination(result)
+    if (result.code === 0) return false
+    if (isCondaConnectivityFailure(result)) {
+      const offline = await this.runCreate(workspace, binary, offlineArgs, signal)
+      throwForTermination(offline)
+      if (offline.code === 0) return true
+      await this.throwDiagnosedFailure(workspace, offline, signal)
+      throwCondaConnectivityFailure()
+    }
+    await this.throwDiagnosedFailure(workspace, result, signal)
+    throwCreateFailure(result)
+  }
+
+  private async throwDiagnosedFailure(
+    workspace: RemoteRuntimeWorkspace,
+    result: CommandResult,
+    signal: AbortSignal
+  ): Promise<void> {
+    const diagnosis = await diagnoseRemoteCommandFailure(
+      result,
+      workspace.runtimeRoot,
+      async (script) => {
+        const probed = await workspace.projectHost.exec.run(
+          ['sh', '-c', script],
+          this.writeProbeOptions(workspace, signal)
+        )
+        return probed
+      },
+      this.options.writeProbeFailure
+    )
+    if (diagnosis && diagnosis.kind !== 'other') throw new Error(diagnosis.message)
+  }
+
+  private runOptions(
+    workspace: RemoteRuntimeWorkspace,
+    signal: AbortSignal
+  ): {
+    cwd: string
+    signal: AbortSignal
+    timeoutMs: number
+    maxOutputBytes: number
+  } {
+    return {
+      cwd: workspace.projectRoot,
+      signal,
+      timeoutMs: this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxOutputBytes: this.options.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES
+    }
+  }
+
+  private writeProbeOptions(
+    workspace: RemoteRuntimeWorkspace,
+    signal: AbortSignal
+  ): ReturnType<RemoteEnvironmentService['runOptions']> {
+    const options = this.runOptions(workspace, signal)
+    return {
+      ...options,
+      timeoutMs: Math.min(options.timeoutMs, WRITE_PROBE_TIMEOUT_MS),
+      maxOutputBytes: Math.min(options.maxOutputBytes, WRITE_PROBE_OUTPUT_BYTES)
+    }
   }
 
   private async writeAliases(
@@ -320,16 +408,36 @@ function environmentRecord(
   }
 }
 
-function throwForCreateFailure(result: CommandResult): void {
+function createArguments(record: EnvironmentRecord, offline = false): string[] {
+  return [
+    '-p',
+    record.prefix,
+    '--override-channels',
+    ...record.channels.flatMap((channel) => ['-c', channel]),
+    '--yes',
+    ...(offline ? ['--offline'] : []),
+    ...record.packages
+  ]
+}
+
+function throwForTermination(result: CommandResult): void {
   if (result.terminationReason === 'cancelled') throw new Error('远程环境创建已取消')
   if (result.terminationReason === 'timeout') throw new Error('远程环境创建超时')
-  if (result.code === 0) return
+}
+
+function isCondaConnectivityFailure(result: CommandResult): boolean {
+  const detail = `${result.stderr}\n${result.stdout}`
+  return /resolve host|network is unreachable|connection|repodata|timed? out|ssl/iu.test(detail)
+}
+
+function throwCondaConnectivityFailure(): never {
+  throw new Error(
+    '服务器无法访问 conda 软件源，且 Phi 的本地缓存不足以满足请求。请使用服务器管理员提供的 conda 镜像配置，或先在可联网机器构建环境后再迁移到服务器；Phi 没有回退到本机创建环境。'
+  )
+}
+
+function throwCreateFailure(result: CommandResult): never {
   const detail = `${result.stderr}\n${result.stdout}`.trim()
-  if (/resolve host|network is unreachable|connection|repodata|timed? out|ssl/i.test(detail)) {
-    throw new Error(
-      '服务器无法访问 conda 软件源。请使用服务器管理员提供的 conda 镜像配置，或先在可联网机器构建环境后再迁移到服务器；Phi 没有回退到本机创建环境。'
-    )
-  }
   throw new Error(`服务器上的 micromamba 创建环境失败：${detail || `exit code ${result.code}`}`)
 }
 

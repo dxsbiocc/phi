@@ -130,7 +130,7 @@ async function runEnvRequest(
       content: [
         {
           type: 'text',
-          text: `\u5df2\u6dfb\u52a0 ${result.added.join('\u3001')}\u3002\u73af\u5883 ${result.name}\uff08${result.ref}\uff09`
+          text: `\u5df2\u6dfb\u52a0 ${result.added.join('\u3001')}\u3002\u73af\u5883 ${result.name}\uff08${result.ref}\uff09${result.notice ? `\u3002${result.notice}` : ''}`
         }
       ],
       details: result
@@ -220,7 +220,7 @@ function isFailure(value: unknown): value is { error: string } {
 
 function isSuccess(
   value: unknown
-): value is { ref: string; envId: string; name: string; added: string[] } {
+): value is { ref: string; envId: string; name: string; added: string[]; notice?: string } {
   if (!isRecord(value)) return false
   return (
     typeof value.ref === 'string' &&
@@ -229,7 +229,8 @@ function isSuccess(
     value.envId.length > 0 &&
     typeof value.name === 'string' &&
     value.name.length > 0 &&
-    isStringArray(value.added)
+    isStringArray(value.added) &&
+    (value.notice === undefined || typeof value.notice === 'string')
   )
 }
 

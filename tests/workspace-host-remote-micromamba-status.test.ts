@@ -53,8 +53,8 @@ async function writeMicromamba(
       : [
           '#!/bin/sh',
           `if [ "$1" = "--version" ]; then echo '${binaryVersion}'; exit 0; fi`,
-          `if [ "$1" = "--rc-file" ]; then echo 'platform : ${options.platform ?? 'linux-64'}'; exit 0; fi`,
-          'if [ "$1" = "run" ]; then shift 3; exec "$@"; fi',
+          `if [ "$1" = "info" ] && [ "$2" = "--no-rc" ]; then echo 'platform : ${options.platform ?? 'linux-64'}'; exit 0; fi`,
+          'if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "run" ]; then shift 5; exec "$@"; fi',
           'exit 2',
           ''
         ].join('\n')

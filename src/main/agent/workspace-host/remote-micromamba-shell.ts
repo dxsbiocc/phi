@@ -1,4 +1,5 @@
 import { shellQuote } from '../wrappers/remote-ssh-session'
+import { buildRemoteMicromambaShellCommand } from './remote-micromamba-command'
 
 import type {
   RemoteMicromambaDownloadCapability,
@@ -18,6 +19,7 @@ const RELEASE_MARKER = '__PHI_MICROMAMBA_RELEASE__='
 const LEGACY_RELEASE_MARKER = '__PHI_MICROMAMBA_LEGACY_RELEASE__='
 const PROBE_BYTES = 256 * 1024
 const MINIMUM_BYTES_PER_SECOND = 50 * 1024
+const VERIFICATION_PREFIX_PLACEHOLDER = '__PHI_MICROMAMBA_VERIFY_PREFIX__'
 
 function watchdogLines(command: string, timeoutSeconds: number | string): string[] {
   return [
@@ -257,14 +259,27 @@ export function buildCleanupScript(path: string): string {
 }
 
 export function buildVerificationScript(path: string, root: string): string {
+  const versionCommand = buildRemoteMicromambaShellCommand({
+    binary: path,
+    runtimeRoot: root,
+    subcommand: 'version'
+  })
+  const infoCommand = buildRemoteMicromambaShellCommand({
+    binary: path,
+    runtimeRoot: root,
+    subcommand: 'info'
+  })
+  const runCommand = buildRemoteMicromambaShellCommand({
+    binary: path,
+    runtimeRoot: root,
+    subcommand: 'run',
+    args: ['-p', VERIFICATION_PREFIX_PLACEHOLDER, '/bin/sh', '-c', ':']
+  }).replace(shellQuote(VERIFICATION_PREFIX_PLACEHOLDER), '"$phi_prefix"')
   return [
     'set +e',
-    `phi_binary=${shellQuote(path)}`,
-    `phi_root=${shellQuote(root)}`,
-    'phi_home=${HOME:-/}',
-    'phi_version=$(env -i HOME="$phi_home" MAMBA_ROOT_PREFIX="$phi_root" CONDARC= MAMBARC= "$phi_binary" --version 2>/dev/null)',
+    `phi_version=$(${versionCommand} 2>/dev/null)`,
     'phi_version_status=$?',
-    'phi_info=$(env -i HOME="$phi_home" MAMBA_ROOT_PREFIX="$phi_root" CONDARC= MAMBARC= "$phi_binary" --rc-file /dev/null info 2>/dev/null)',
+    `phi_info=$(${infoCommand} 2>/dev/null)`,
     'phi_info_status=$?',
     'phi_platform=$(printf \x27%s\\n\x27 "$phi_info" | sed -n \x27s/^[[:space:]]*platform[[:space:]]*:[[:space:]]*//p\x27 | head -n 1)',
     'phi_run_status=1',
@@ -272,7 +287,7 @@ export function buildVerificationScript(path: string, root: string): string {
     'if [ -n "$phi_prefix" ]; then',
     '  mkdir -p "$phi_prefix/conda-meta" && : > "$phi_prefix/conda-meta/history"',
     '  if [ "$?" -eq 0 ]; then',
-    '    env -i HOME="$phi_home" MAMBA_ROOT_PREFIX="$phi_root" CONDARC= MAMBARC= "$phi_binary" --rc-file /dev/null run -p "$phi_prefix" /bin/sh -c \x27:\x27 >/dev/null 2>&1',
+    `    ${runCommand} >/dev/null 2>&1`,
     '    phi_run_status=$?',
     '  fi',
     '  rm -rf "$phi_prefix"',

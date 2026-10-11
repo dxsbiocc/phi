@@ -6,6 +6,7 @@ import {
   type RemoteExecBoundedResult,
   type RemoteSshSession
 } from '../wrappers/remote-ssh-session'
+import { buildRemoteMicromambaShellCommand } from './remote-micromamba-command'
 
 export interface RemoteExecutableCandidate {
   version: string
@@ -173,7 +174,11 @@ export async function findLatestMicromamba(
   for (const candidate of parseRemoteCandidates(scan.stdout)) {
     const result = await runBoundedRemoteCommand(
       session,
-      `${shellQuote(candidate.executablePath)} --version`,
+      buildRemoteMicromambaShellCommand({
+        binary: candidate.executablePath,
+        runtimeRoot: root,
+        subcommand: 'version'
+      }),
       STATUS_TIMEOUT_MS,
       MAX_STATUS_OUTPUT_BYTES,
       signal
@@ -198,9 +203,24 @@ export function buildPrepareRipgrepPrefixScript(root: string, temporaryPrefix: s
 export function buildCreateRipgrepPrefixCommand(
   root: string,
   micromambaPath: string,
-  temporaryPrefix: string
+  temporaryPrefix: string,
+  offline = false
 ): string {
-  return `MAMBA_ROOT_PREFIX=${shellQuote(root)} ${shellQuote(micromambaPath)} create -p ${shellQuote(temporaryPrefix)} --override-channels -c conda-forge --yes ripgrep`
+  return buildRemoteMicromambaShellCommand({
+    binary: micromambaPath,
+    runtimeRoot: root,
+    subcommand: 'create',
+    args: [
+      '-p',
+      temporaryPrefix,
+      '--override-channels',
+      '-c',
+      'conda-forge',
+      '--yes',
+      ...(offline ? ['--offline'] : []),
+      'ripgrep'
+    ]
+  })
 }
 
 export function buildWriteRipgrepMarkerCommand(temporaryPrefix: string, version: string): string {

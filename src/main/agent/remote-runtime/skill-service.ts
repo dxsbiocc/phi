@@ -6,10 +6,12 @@ import type { SkillNotReady } from '../content/skill-host'
 import type { SkillRunResult } from '../content/skill-run'
 import type { ScriptToolResult } from '../content/script-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
-import type { CommandResult } from '../workspace-host/types'
+import { buildRemoteMicromambaHostCommand } from '../workspace-host/remote-micromamba-command'
+import type { CommandResult, HostCommand } from '../workspace-host/types'
 import { RemoteEnvironmentService } from './environment-service'
 import { remoteScriptArguments } from './script-arguments'
 import { prepareRemoteSkillBundle } from './skill-bundle'
+import { diagnoseRemoteCommandFailure, type RemoteWriteDiagnosis } from './write-diagnostics'
 import {
   checkedRawArgs,
   checkedScript,
@@ -37,6 +39,8 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
+const WRITE_PROBE_TIMEOUT_MS = 10_000
+const WRITE_PROBE_OUTPUT_BYTES = 8 * 1024
 interface RememberedTool {
   skill: ValidatedSkill
   tool: ScriptTool
@@ -85,13 +89,13 @@ export class RemoteSkillService {
     try {
       const skill = await this.resolveSkill(input.skill, input.allowedSkills)
       workspace = await this.options.openWorkspace(input.runtimeSessionId, controller.signal)
-      const bundle = await prepareRemoteSkillBundle(skill.dir, workspace, controller.signal)
+      const bundle = await this.prepareBundle(skill.dir, workspace, controller.signal)
       const script = checkedScript(bundle, input.script)
       const cwd = await projectCwd(workspace, input.runCwd)
       const selected = await this.environmentFor(workspace, skill, input.sessionEnvironment)
       if (!selected.environment) return notReady(selected.ref)
       const args = checkedRawArgs(input.args, workspace, bundle)
-      const command = [
+      const command: [string, 'run', ...string[]] = [
         this.options.environments.micromambaPath(workspace),
         'run',
         '-p',
@@ -101,7 +105,7 @@ export class RemoteSkillService {
         ...args
       ]
       const startedAt = performance.now()
-      const result = await this.execute(workspace, command, cwd, controller.signal)
+      const result = await this.executeMicromambaRun(workspace, command, cwd, controller.signal)
       return skillResult(
         result,
         selected.environment,
@@ -211,18 +215,80 @@ export class RemoteSkillService {
 
   private execute(
     workspace: RemoteRuntimeWorkspace,
-    command: string[],
+    command: HostCommand,
     cwd: string,
     signal: AbortSignal,
     timeoutMs = this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   ): Promise<CommandResult> {
     return workspace.projectHost.exec.run(command as [string, ...string[]], {
       cwd,
-      env: { MAMBA_ROOT_PREFIX: workspace.runtimeRoot },
       signal,
       timeoutMs,
       maxOutputBytes: this.options.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES
     })
+  }
+
+  private async executeMicromambaRun(
+    workspace: RemoteRuntimeWorkspace,
+    command: readonly [string, 'run', ...string[]],
+    cwd: string,
+    signal: AbortSignal,
+    timeoutMs = this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  ): Promise<CommandResult> {
+    const [binary, , ...args] = command
+    const result = await this.execute(
+      workspace,
+      buildRemoteMicromambaHostCommand({
+        binary,
+        runtimeRoot: workspace.runtimeRoot,
+        subcommand: 'run',
+        args
+      }),
+      cwd,
+      signal,
+      timeoutMs
+    )
+    const diagnosis = await this.diagnoseFailure(workspace, result, signal)
+    return diagnosis && diagnosis.kind !== 'other'
+      ? { ...result, stderr: appendMessage(result.stderr, diagnosis.message) }
+      : result
+  }
+
+  private async prepareBundle(
+    skillDir: string,
+    workspace: RemoteRuntimeWorkspace,
+    signal: AbortSignal
+  ): ReturnType<typeof prepareRemoteSkillBundle> {
+    try {
+      return await prepareRemoteSkillBundle(skillDir, workspace, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const message = errorText(error)
+      if (!/^远程 Skill bundle (?:校验|上传)失败：/u.test(message)) throw error
+      const diagnosis = await this.diagnoseFailure(
+        workspace,
+        { code: 1, stdout: '', stderr: message, signal: null, truncated: false },
+        signal
+      )
+      if (diagnosis && diagnosis.kind !== 'other') {
+        throw new Error(appendMessage(message, diagnosis.message))
+      }
+      throw error
+    }
+  }
+
+  private diagnoseFailure(
+    workspace: RemoteRuntimeWorkspace,
+    result: CommandResult,
+    signal: AbortSignal
+  ): Promise<RemoteWriteDiagnosis | undefined> {
+    return diagnoseRemoteCommandFailure(result, workspace.runtimeRoot, (script) =>
+      workspace.execWithInput(script, {
+        signal,
+        timeoutMs: WRITE_PROBE_TIMEOUT_MS,
+        maxOutputBytes: WRITE_PROBE_OUTPUT_BYTES
+      })
+    ).catch(() => undefined)
   }
 
   private async executeScriptTool(
@@ -231,7 +297,7 @@ export class RemoteSkillService {
     input: RemoteScriptToolRequest,
     signal: AbortSignal
   ): Promise<ScriptToolResult> {
-    const bundle = await prepareRemoteSkillBundle(remembered.skill.dir, workspace, signal)
+    const bundle = await this.prepareBundle(remembered.skill.dir, workspace, signal)
     const selected = await this.environmentFor(
       workspace,
       remembered.skill,
@@ -241,7 +307,7 @@ export class RemoteSkillService {
       return missingToolEnvironment(remembered.skill, input.sessionEnvironment)
     const { flags } = await remoteScriptArguments(workspace, remembered.tool.args, input.args)
     const run = translatedRun(remembered.skill, remembered.tool, bundle)
-    const command = [
+    const command: [string, 'run', ...string[]] = [
       this.options.environments.micromambaPath(workspace),
       'run',
       '-p',
@@ -250,7 +316,13 @@ export class RemoteSkillService {
       ...flags
     ]
     const timeout = (remembered.tool.timeoutSeconds ?? DEFAULT_TIMEOUT_MS / 1000) * 1000
-    const result = await this.execute(workspace, command, workspace.projectRoot, signal, timeout)
+    const result = await this.executeMicromambaRun(
+      workspace,
+      command,
+      workspace.projectRoot,
+      signal,
+      timeout
+    )
     return scriptToolResult(
       result,
       remembered.tool,
@@ -271,4 +343,9 @@ export class RemoteSkillService {
   private end(requestId: string, controller: AbortController): void {
     if (this.runs.get(requestId) === controller) this.runs.delete(requestId)
   }
+}
+
+function appendMessage(output: string, message: string): string {
+  const trimmed = output.trimEnd()
+  return trimmed ? `${trimmed}\n${message}` : message
 }

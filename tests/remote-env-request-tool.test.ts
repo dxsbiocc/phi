@@ -53,3 +53,31 @@ test('remote env_request forwards verified identity and cancels by request id', 
   assert.equal(result.isError, true)
   assert.match((result.content[0] as { text: string }).text, /取消/u)
 })
+
+test('remote env_request surfaces a successful local-cache retry notice', async () => {
+  const request: SkillHostRequest = async (method) => {
+    assert.equal(method, 'environments.request')
+    return {
+      ref: 'project:python-x1',
+      envId: 'env-1',
+      name: 'python-x1',
+      added: ['six'],
+      notice: '使用了本地缓存'
+    }
+  }
+  const tool = buildEnvRequestTool(request, {
+    runtimeSessionId: 'runtime-1',
+    requireEnvironment: true
+  })
+
+  const result = await tool.execute(
+    'call-1',
+    { packages: ['six'], reason: 'need six', environment: 'phi:python@1' },
+    undefined,
+    { sessionManager: { getCwd: () => '/local/anchor' } } as never,
+    undefined
+  )
+
+  assert.equal(result.isError, undefined)
+  assert.match((result.content[0] as { text: string }).text, /使用了本地缓存/u)
+})

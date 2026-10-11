@@ -15,9 +15,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
 import { RemoteSkillService } from '../src/main/agent/remote-runtime/skill-service'
+import type { CommandResult } from '../src/main/agent/workspace-host/types'
 import {
   createRemoteRuntimeFixture,
   installFakeMicromamba,
+  readFakeMicromambaInvocations,
+  type FakeMicromambaInvocation,
   writeTestSkill
 } from './helpers/remoteRuntimeFixture'
 import { countWorkspaceHostOperations } from './helpers/countingWorkspaceHost'
@@ -175,6 +178,116 @@ test('remote skill_run uploads one content-addressed bundle and reuses it', asyn
     setup.fixture.cleanup()
   }
 })
+
+test('remote skill micromamba run preserves HOME and PATH without conda contamination', async () => {
+  const setup = await services()
+  try {
+    const result = await setup.skillService.run(runRequest())
+
+    assert.equal(result.exitCode, 0)
+    assertIsolatedSkillInvocation(readFakeMicromambaInvocations(setup.fixture).at(-1), setup)
+
+    await setup.skillService.scriptTools()
+    const dynamic = await setup.skillService.scriptTool({
+      requestId: 'isolated-script-tool',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'isolated' }
+    })
+    assert.equal(dynamic.ok, true)
+    assertIsolatedSkillInvocation(readFakeMicromambaInvocations(setup.fixture).at(-1), setup)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+test('remote skill failures expose write-capacity guidance for runs and bundle uploads', async () => {
+  const setup = await services()
+  try {
+    const original = setup.fixture.workspace.execWithInput
+    let quotaProbes = 0
+    setup.fixture.workspace.execWithInput = async (script, options) => {
+      if (script.includes('.phi-write-probe-$$')) {
+        quotaProbes += 1
+        return commandResult('__PHI_WRITE_PROBE__=quota-exceeded\n', '', 0)
+      }
+      return original(script, options)
+    }
+    writeFileSync(join(setup.skill.dir, 'scripts', 'run.sh'), '#!/bin/sh\nexit 1\n')
+    writeFileSync(join(setup.skill.dir, 'scripts', 'json.sh'), '#!/bin/sh\nexit 1\n')
+
+    const run = await setup.skillService.run(runRequest({ requestId: 'silent-skill-run' }))
+    assert.equal(run.exitCode, 1)
+    assert.match(run.stderr, /写入空间或文件数配额已用尽/u)
+
+    await setup.skillService.scriptTools()
+    const dynamic = await setup.skillService.scriptTool({
+      requestId: 'silent-script-tool',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'silent' }
+    })
+    assert.equal(dynamic.ok, false)
+    if (!dynamic.ok) assert.match(dynamic.error, /写入空间或文件数配额已用尽/u)
+    assert.equal(quotaProbes, 2)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+test('remote skill bundle upload diagnoses a silent quota failure', async () => {
+  const setup = await services()
+  try {
+    const original = setup.fixture.workspace.execWithInput
+    let failedUpload = false
+    setup.fixture.workspace.execWithInput = async (script, options) => {
+      if (!failedUpload && script.includes('phi_decode()')) {
+        failedUpload = true
+        return commandResult('', '', 1)
+      }
+      if (script.includes('.phi-write-probe-$$')) {
+        return commandResult('__PHI_WRITE_PROBE__=quota-exceeded\n', '', 0)
+      }
+      return original(script, options)
+    }
+
+    await assert.rejects(
+      () => setup.skillService.run(runRequest({ requestId: 'silent-bundle-upload' })),
+      /写入空间或文件数配额已用尽/u
+    )
+    assert.equal(failedUpload, true)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+function assertIsolatedSkillInvocation(
+  invocation: FakeMicromambaInvocation | undefined,
+  setup: ServiceSetup
+): void {
+  assert.ok(invocation)
+  assert.deepEqual(invocation.argv.slice(0, 3), ['--rc-file', '/dev/null', 'run'])
+  assert.equal(invocation.env.HOME, setup.fixture.remoteHome)
+  assert.equal(invocation.env.PATH, process.env.PATH)
+  assert.equal(invocation.env.MAMBA_ROOT_PREFIX, setup.fixture.runtimeRoot)
+  assert.equal(invocation.env.MAMBA_PKGS_DIRS, join(setup.fixture.runtimeRoot, 'pkgs'))
+  assert.equal(invocation.env.CONDARC, undefined)
+  assert.equal(invocation.env.MAMBARC, undefined)
+  assert.equal(
+    Object.keys(invocation.env).some((name) => name.startsWith('CONDA_')),
+    false
+  )
+  assert.deepEqual(
+    Object.keys(invocation.env)
+      .filter((name) => name.startsWith('MAMBA_'))
+      .sort(),
+    ['MAMBA_PKGS_DIRS', 'MAMBA_ROOT_PREFIX']
+  )
+}
+
+function commandResult(stdout: string, stderr: string, code: number): CommandResult {
+  return { stdout, stderr, code, signal: null, truncated: false }
+}
 
 test('remote dynamic skill tool executes in the remote project and returns JSON', async () => {
   const setup = await services()

@@ -14,6 +14,7 @@ import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRo
 import {
   createRemoteRuntimeFixture,
   installFakeMicromamba,
+  readFakeMicromambaInvocations,
   type RemoteRuntimeFixture
 } from './helpers/remoteRuntimeFixture'
 import type { LocalShellSession } from './helpers/localShellSession'
@@ -35,6 +36,10 @@ function boundedResult(code: number): RemoteExecBoundedResult {
     stdoutTruncated: false,
     stderrTruncated: false
   }
+}
+
+function boundedOutput(code: number, stdout: string, stderr = ''): RemoteExecBoundedResult {
+  return { ...boundedResult(code), stdout, stderr }
 }
 
 function hideSystemRipgrep(session: LocalShellSession): void {
@@ -121,14 +126,30 @@ test('installs ripgrep with micromamba into an atomically activated managed pref
     '14.1.1\n'
   )
   assert.equal(statSync(join(remote.runtimeRoot, 'tools')).mode & 0o777, 0o700)
-  assert.match(readFileSync(join(remote.runtimeRoot, 'micromamba-calls.log'), 'utf8'), /create -p/)
+  assert.match(
+    readFileSync(join(remote.runtimeRoot, 'micromamba-calls.log'), 'utf8'),
+    /create --no-rc -p/
+  )
+  const invocations = readFakeMicromambaInvocations(remote)
+  assert.equal(invocations.length, 2)
+  for (const invocation of invocations) {
+    assert.equal(invocation.env.MAMBA_ROOT_PREFIX, remote.runtimeRoot)
+    assert.equal(invocation.env.MAMBA_PKGS_DIRS, join(remote.runtimeRoot, 'pkgs'))
+    assert.equal(
+      Object.keys(invocation.env).some((name) => name.startsWith('CONDA_')),
+      false
+    )
+  }
+  assert.deepEqual(invocations[1].argv.slice(0, 2), ['create', '--no-rc'])
   assert.ok(
     session.commands.some(
       (command) =>
         command.includes('/micromamba') &&
-        command.includes('create -p') &&
-        command.includes('--override-channels -c conda-forge --yes ripgrep') &&
-        command.includes(`MAMBA_ROOT_PREFIX='${remote.runtimeRoot}'`)
+        command.includes('env -i') &&
+        command.includes("'create' '--no-rc' '-p'") &&
+        command.includes("'--override-channels' '-c' 'conda-forge' '--yes' 'ripgrep'") &&
+        command.includes(`MAMBA_ROOT_PREFIX='${remote.runtimeRoot}'`) &&
+        command.includes(`MAMBA_PKGS_DIRS='${join(remote.runtimeRoot, 'pkgs')}'`)
     )
   )
 })
@@ -249,7 +270,7 @@ test('reports a settings action when micromamba is missing', async () => {
   assert.match(result.message, /设置 → 远程主机.*安装 micromamba/u)
 })
 
-test('distinguishes an unreachable conda source from other installation failures', async () => {
+test('reports an unreachable conda source when the local package cache is insufficient', async () => {
   const remote = fixture()
   installFakeMicromamba(remote, 'offline', 'offline')
   const session = await remote.connect()
@@ -259,7 +280,50 @@ test('distinguishes an unreachable conda source from other installation failures
 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'source-unreachable')
-  assert.match(result.message, /配置可用镜像.*可联网机器预构建/u)
+  assert.match(result.message, /本地缓存不足.*配置可用镜像.*可联网机器预构建/u)
+  const creates = readFakeMicromambaInvocations(remote).filter(({ argv }) => argv[0] === 'create')
+  assert.equal(creates.length, 2)
+  assert.equal(creates[0].argv.includes('--offline'), false)
+  assert.equal(creates[1].argv.includes('--offline'), true)
+})
+
+test('retries with the isolated local package cache after a source failure', async () => {
+  const remote = fixture()
+  installFakeMicromamba(remote, 'cached', 'cached-offline')
+  const session = await remote.connect()
+  hideSystemRipgrep(session)
+
+  const result = await installManaged(remote, session)
+
+  assert.equal(result.status, 'installed')
+  assert.match(result.message, /使用本地缓存/u)
+  const creates = readFakeMicromambaInvocations(remote).filter(({ argv }) => argv[0] === 'create')
+  assert.equal(creates.length, 2)
+  assert.equal(creates[0].argv.includes('--offline'), false)
+  assert.equal(creates[1].argv.includes('--offline'), true)
+})
+
+test('diagnoses a silent micromamba failure as exhausted server quota', async () => {
+  const remote = fixture()
+  installFakeMicromamba(remote, 'silent', 'silent')
+  const session = await remote.connect()
+  hideSystemRipgrep(session)
+  const execute = session.execBounded?.bind(session)
+  assert.ok(execute)
+  session.execBounded = async (command, options) => {
+    if (command.includes('__PHI_WRITE_PROBE__=')) {
+      session.commands.push(command)
+      return boundedOutput(0, '__PHI_WRITE_PROBE__=quota-exceeded\n')
+    }
+    return execute(command, options)
+  }
+
+  const result = await installManaged(remote, session)
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errorCode, 'installation-failed')
+  assert.match(result.message, /写入空间或文件数配额已用尽/u)
+  assert.match(result.message, /设置 → 远程主机/u)
 })
 
 test('selects the newest valid managed marker and ignores incomplete prefixes', async () => {

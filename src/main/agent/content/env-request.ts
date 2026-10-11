@@ -31,7 +31,7 @@ export interface EnvironmentRequestConfirm {
 }
 
 export type EnvRequestResult =
-  | { ref: string; envId: string; name: string; added: string[] }
+  | { ref: string; envId: string; name: string; added: string[]; notice?: string }
   | { declined: true }
   | { error: string }
 

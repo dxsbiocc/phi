@@ -29,11 +29,13 @@ const COMPLETE_CHECK_KEYS = [
   'path.group_or_other_writable',
   'path.symlink',
   'path.executable',
+  'path.write_capacity',
   'fs.type',
   'fs.available_kib',
   'fs.disk_use_percent',
   'fs.inode_use_percent',
-  'fs.shared'
+  'fs.shared',
+  'cache.entry_count'
 ] as const
 
 function emptyResult(
@@ -57,7 +59,9 @@ function emptyResult(
     diskUsePercent: null,
     inodeUsePercent: null,
     executable: null,
+    writeCapacity: null,
     sharedFilesystem: null,
+    packageCache: { entryCount: null, bytes: null },
     computeNodeVisibility: 'unknown',
     hardErrors: [],
     warnings: []
@@ -91,7 +95,9 @@ function hardErrors(rows: ParsedRows): readonly RemoteRuntimeRootHardError[] {
   const messages: Readonly<Record<RemoteRuntimeRootHardErrorCode, string>> = {
     'invalid-configured-root': '运行时根目录写法无效，请使用绝对路径或以 ~/ 开头的路径。',
     'unable-to-expand': '无法在远端展开并规范化运行时根目录。',
-    'ancestor-not-writable': '最近的已存在祖先目录不可写，无法在此创建运行时目录。'
+    'ancestor-not-writable': '最近的已存在祖先目录不可写，无法在此创建运行时目录。',
+    'write-capacity-exhausted':
+      '服务器上该位置的写入空间或文件数配额已用尽；请在 设置 → 远程主机 把运行时目录改到有空间的位置（例如工作区所在文件系统），或清理旧环境'
   }
   return code && messages[code] ? [{ code, message: messages[code] }] : []
 }
@@ -174,10 +180,27 @@ function checkedResult(
     diskUsePercent: numberValue(rows.get('fs.disk_use_percent')),
     inodeUsePercent: numberValue(rows.get('fs.inode_use_percent')),
     executable: boolValue(rows.get('path.executable')),
+    writeCapacity: writeCapacityValue(rows.get('path.write_capacity')),
     sharedFilesystem: boolValue(rows.get('fs.shared')),
+    packageCache: {
+      entryCount: numberValue(rows.get('cache.entry_count')),
+      bytes: numberValue(rows.get('cache.bytes'))
+    },
     hardErrors: hardErrors(rows)
   }
   return { ...result, warnings: collectWarnings(result, options) }
+}
+
+function writeCapacityValue(
+  value: string | undefined
+): RemoteRuntimeRootCheckResult['writeCapacity'] {
+  return value === 'ok' ||
+    value === 'quota-exceeded' ||
+    value === 'no-space' ||
+    value === 'read-only' ||
+    value === 'other'
+    ? value
+    : null
 }
 
 export function parseRemoteRuntimeRootCheck(

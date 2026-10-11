@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -10,6 +10,7 @@ import {
   parseRemoteRuntimeRootCheck
 } from '../src/main/agent/workspace-host/runtime-root-check'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
+import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import { createLocalShellSession, type LocalShellSession } from './helpers/localShellSession'
 
 function runWithInput(command: string, input: string, home?: string): Promise<RemoteExecResult> {
@@ -53,11 +54,14 @@ function successfulRows(overrides: readonly string[] = []): readonly string[] {
     'path.group_or_other_writable=0',
     'path.symlink=0',
     'path.executable=1',
+    'path.write_capacity=ok',
     'fs.type=ext4',
     'fs.available_kib=20000000',
     'fs.disk_use_percent=20',
     'fs.inode_use_percent=10',
     'fs.shared=0',
+    'cache.entry_count=3',
+    'cache.bytes=4096',
     ...overrides
   ]
 }
@@ -169,11 +173,14 @@ describe('remote runtime root check', () => {
         'path.group_or_other_writable=1',
         'path.symlink=1',
         'path.executable=0',
+        'path.write_capacity=ok',
         'fs.type=nfs4',
         'fs.available_kib=1024',
         'fs.disk_use_percent=95',
         'fs.inode_use_percent=42',
-        'fs.shared=1'
+        'fs.shared=1',
+        'cache.entry_count=2',
+        'cache.bytes=2048'
       ]),
       '~/.phi/runtime'
     )
@@ -226,6 +233,95 @@ describe('remote runtime root check', () => {
       result.hardErrors.map(({ code }) => code),
       ['ancestor-not-writable']
     )
+  })
+
+  it('reports quota and no-space capacity failures as a hard error and cleans the probe', async () => {
+    for (const [mode, capacity] of [
+      ['edquot', 'quota-exceeded'],
+      ['no-space', 'no-space']
+    ] as const) {
+      const parent = await mkdtemp(join(tmpdir(), `phi-runtime-${mode}-`))
+      const session = localSession()
+
+      try {
+        const result = await checkRemoteRuntimeRoot(session, join(parent, 'runtime'), {
+          capacityProbeFailureMode: mode
+        })
+
+        assert.equal(result.status, 'checked')
+        assert.equal(result.writeCapacity, capacity)
+        assert.deepEqual(
+          result.hardErrors.map(({ code }) => code),
+          ['write-capacity-exhausted']
+        )
+        assert.match(
+          result.hardErrors[0]?.message ?? '',
+          /服务器上该位置的写入空间或文件数配额已用尽；请在 设置 → 远程主机 把运行时目录改到有空间的位置（例如工作区所在文件系统），或清理旧环境/
+        )
+        assert.deepEqual(await readdir(parent), [])
+      } finally {
+        await session.close()
+        await rm(parent, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('classifies read-only and other capacity failures without changing hard-error policy', async () => {
+    for (const mode of ['read-only', 'other'] as const) {
+      const parent = await mkdtemp(join(tmpdir(), `phi-runtime-${mode}-`))
+      const session = localSession()
+
+      try {
+        const result = await checkRemoteRuntimeRoot(session, join(parent, 'runtime'), {
+          capacityProbeFailureMode: mode
+        })
+
+        assert.equal(result.status, 'checked')
+        assert.equal(result.writeCapacity, mode)
+        assert.deepEqual(result.hardErrors, [])
+        assert.deepEqual(await readdir(parent), [])
+      } finally {
+        await session.close()
+        await rm(parent, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('reports package-cache entries and preserves the count when byte sizing is unavailable', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'phi-runtime-cache-'))
+    const root = join(parent, 'runtime')
+    const cache = join(root, 'pkgs')
+    const session = localSession()
+    await mkdir(join(cache, 'extracted-package'), { recursive: true })
+    await writeFile(join(cache, 'package.tar.bz2'), 'cached package')
+
+    try {
+      const result = await checkRemoteRuntimeRoot(session, root)
+
+      assert.equal(result.status, 'checked')
+      assert.equal(result.packageCache.entryCount, 2)
+      assert.ok(result.packageCache.bytes === null || result.packageCache.bytes > 0)
+      assert.deepEqual(await readdir(root), ['pkgs'])
+      assert.deepEqual(await readdir(parent), ['runtime'])
+    } finally {
+      await session.close()
+      await rm(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('parses cache bytes when available and keeps them nullable after a du timeout', () => {
+    const sized = parseRemoteRuntimeRootCheck(output(successfulRows()), '/runtime')
+    const timedOut = parseRemoteRuntimeRootCheck(
+      output(successfulRows().filter((row) => !row.startsWith('cache.bytes='))),
+      '/runtime'
+    )
+
+    assert.deepEqual(sized.packageCache, { entryCount: 3, bytes: 4096 })
+    assert.deepEqual(timedOut.packageCache, { entryCount: 3, bytes: null })
+    assert.deepEqual(runtimeRootCapabilityProfile('host', timedOut).packageCache, {
+      entryCount: 3,
+      bytes: null
+    })
   })
 
   it('detects an unwritable real ancestor without creating the runtime root', async () => {

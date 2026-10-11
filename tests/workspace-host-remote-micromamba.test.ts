@@ -88,7 +88,7 @@ async function fakeArtifact(
     '  exit 1',
     'fi',
     `if [ "$1" = "--version" ]; then ${options.versionFails ? 'exit 9' : `printf '%s\\n' '${options.reportedVersion ?? version.replace(/-\d+$/, '')}'; exit 0`}; fi`,
-    `if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "info" ]; then ${options.infoFails ? 'exit 9' : `printf '%s\\n' 'platform : ${options.reportedPlatform ?? 'linux-64'}'; exit 0`}; fi`,
+    `if [ "$1" = "info" ] && [ "$2" = "--no-rc" ]; then ${options.infoFails ? 'exit 9' : `printf '%s\\n' 'platform : ${options.reportedPlatform ?? 'linux-64'}'; exit 0`}; fi`,
     `if [ "$1" = "--rc-file" ] && [ "$2" = "/dev/null" ] && [ "$3" = "run" ]; then ${options.runFails ? 'exit 17' : 'shift 5; exec "$@"'}; fi`,
     'exit 2',
     ''

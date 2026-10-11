@@ -133,6 +133,7 @@ async function artifactFixture(): Promise<{
     'fi',
     'if [ "$1" = "--version" ]; then echo 2.9.0; exit 0; fi',
     'if [ "$1" = "--rc-file" ] && [ "$3" = "info" ]; then echo "platform : linux-64"; exit 0; fi',
+    'if [ "$1" = "info" ]; then echo "platform : linux-64"; exit 0; fi',
     'if [ "$1" = "--rc-file" ] && [ "$3" = "run" ]; then shift 5; exec "$@"; fi',
     'exit 2',
     ''

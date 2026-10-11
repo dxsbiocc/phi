@@ -10,17 +10,22 @@ import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/envir
 import {
   createRemoteRuntimeFixture,
   installFakeMicromamba,
+  readFakeMicromambaInvocations,
   type RemoteRuntimeFixture
 } from './helpers/remoteRuntimeFixture'
 
 function createAdapter(
   fixture: RemoteRuntimeFixture,
-  options: { allowUserPrefixes?: boolean } = {}
+  options: {
+    allowUserPrefixes?: boolean
+    writeProbeFailure?: 'quota-exceeded' | 'no-space' | 'read-only'
+  } = {}
 ): RemoteKernelspecAdapter {
   const service = new RemoteEnvironmentService({
     micromambaVersion: 'test',
     openWorkspace: async () => fixture.workspace,
     confirm: async () => true,
+    ...(options.writeProbeFailure ? { writeProbeFailure: options.writeProbeFailure } : {}),
     resolveBaseEnvironment: (ref, pluginId) =>
       resolveRemoteBaseEnvironment(ref, pluginId, '/unused-agent')
   })
@@ -182,6 +187,39 @@ test('remote Jupyter preparation keeps the env_request offline-source guidance',
       /无法安装含 Jupyter \+ ipykernel.+无法访问 conda.+镜像.+可联网机器.+没有回退/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote Jupyter preparation reuses the Phi cache after an online source failure', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture, 'test', 'cached-offline')
+    const adapter = createAdapter(fixture)
+
+    const prepared = await adapter.prepare({ runtimeSessionId: 'runtime-1' })
+
+    assert.equal(prepared.kernels[0]?.status, 'ready')
+    const calls = readFakeMicromambaInvocations(fixture)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0]?.argv.includes('--offline'), false)
+    assert.equal(calls[1]?.argv.includes('--offline'), true)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote Jupyter preparation surfaces a silent runtime-root quota failure', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture, 'test', 'silent')
+    const adapter = createAdapter(fixture, { writeProbeFailure: 'quota-exceeded' })
+
+    await assert.rejects(
+      adapter.prepare({ runtimeSessionId: 'runtime-1' }),
+      /无法安装含 Jupyter \+ ipykernel.+写入空间或文件数配额已用尽.+设置 → 远程主机/u
+    )
   } finally {
     fixture.cleanup()
   }

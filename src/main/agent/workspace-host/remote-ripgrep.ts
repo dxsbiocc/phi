@@ -11,7 +11,12 @@ import type {
   RemoteRuntimeRootCheckResult,
   RemoteRuntimeRootWarningCode
 } from '../../../shared/remoteRuntimeRootTypes'
-import { shellQuote, type RemoteSshSession } from '../wrappers/remote-ssh-session'
+import { diagnoseRemoteCommandFailure } from '../remote-runtime/write-diagnostics'
+import {
+  shellQuote,
+  type RemoteExecBoundedResult,
+  type RemoteSshSession
+} from '../wrappers/remote-ssh-session'
 import { checkRemoteRuntimeRoot } from './runtime-root-check'
 import {
   buildActivateRipgrepPrefixScript,
@@ -171,23 +176,64 @@ async function createPrefix(
   mamba: Candidate,
   temporaryPrefix: string,
   signal?: AbortSignal
-): Promise<void> {
-  const command = buildCreateRipgrepPrefixCommand(root, mamba.executablePath, temporaryPrefix)
-  const result = await runBoundedRemoteCommand(
+): Promise<boolean> {
+  const result = await runCreatePrefix(session, root, mamba, temporaryPrefix, false, signal)
+  assertNotAborted(signal)
+  if (result.code === 0) return false
+  if (ripgrepSourceUnavailable(`${result.stdout}\n${result.stderr}`)) {
+    const offline = await runCreatePrefix(session, root, mamba, temporaryPrefix, true, signal)
+    assertNotAborted(signal)
+    if (offline.code === 0) return true
+    await throwDiagnosedInstallFailure(session, root, offline, signal)
+    throw new InstallFailure(
+      'source-unreachable',
+      '无法访问 conda 软件源，且本地缓存不足；请配置可用镜像，或在可联网机器预构建后再使用。'
+    )
+  }
+  await throwDiagnosedInstallFailure(session, root, result, signal)
+  throw new InstallFailure('installation-failed', 'micromamba 未能完成 ripgrep 安装。')
+}
+async function runCreatePrefix(
+  session: RemoteSshSession,
+  root: string,
+  mamba: Candidate,
+  temporaryPrefix: string,
+  offline: boolean,
+  signal?: AbortSignal
+): Promise<RemoteExecBoundedResult> {
+  const command = buildCreateRipgrepPrefixCommand(
+    root,
+    mamba.executablePath,
+    temporaryPrefix,
+    offline
+  )
+  return runBoundedRemoteCommand(
     session,
     command,
     INSTALL_TIMEOUT_MS,
     MAX_INSTALL_OUTPUT_BYTES,
     signal
   )
-  if (result.code === 0) return
-  if (ripgrepSourceUnavailable(`${result.stdout}\n${result.stderr}`)) {
-    throw new InstallFailure(
-      'source-unreachable',
-      '无法访问 conda 软件源；请配置可用镜像，或在可联网机器预构建后再使用。'
-    )
+}
+async function throwDiagnosedInstallFailure(
+  session: RemoteSshSession,
+  root: string,
+  result: Awaited<ReturnType<typeof runBoundedRemoteCommand>>,
+  signal?: AbortSignal
+): Promise<void> {
+  const diagnosis = await diagnoseRemoteCommandFailure(
+    {
+      code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      terminationReason: result.signal ? 'terminated' : undefined
+    },
+    root,
+    (script) => runBoundedRemoteCommand(session, script, STATUS_TIMEOUT_MS, 8 * 1024, signal)
+  )
+  if (diagnosis && diagnosis.kind !== 'other') {
+    throw new InstallFailure('installation-failed', diagnosis.message)
   }
-  throw new InstallFailure('installation-failed', 'micromamba 未能完成 ripgrep 安装。')
 }
 async function writeMarker(
   session: RemoteSshSession,
@@ -239,7 +285,8 @@ function successfulResult(
   startedAt: number,
   warnings: readonly RemoteRuntimeRootWarningCode[],
   candidate: Candidate,
-  installed: boolean
+  installed: boolean,
+  usedOfflineCache = false
 ): RemoteRipgrepResult {
   return {
     status: installed ? 'installed' : 'already-installed',
@@ -247,7 +294,11 @@ function successfulResult(
     version: candidate.version,
     durationMs: duration(options.now, startedAt),
     warningCodes: warnings,
-    message: installed ? '远端受管 ripgrep 安装并验证成功。' : '远端受管 ripgrep 已安装且可运行。'
+    message: installed
+      ? usedOfflineCache
+        ? '远端受管 ripgrep 已使用本地缓存安装并验证成功。'
+        : '远端受管 ripgrep 安装并验证成功。'
+      : '远端受管 ripgrep 已安装且可运行。'
   }
 }
 async function installManaged(
@@ -295,7 +346,7 @@ async function populateAndActivatePrefix(
   startedAt: number
 ): Promise<RemoteRipgrepResult> {
   emit(options, { stage: 'remote-downloading', message: '正在通过 micromamba 安装 ripgrep…' })
-  await createPrefix(session, root, mamba, temporaryPrefix, options.signal)
+  const usedOfflineCache = await createPrefix(session, root, mamba, temporaryPrefix, options.signal)
   assertNotAborted(options.signal)
   emit(options, { stage: 'verifying-installation', message: '正在验证 ripgrep…' })
   const executablePath = posix.join(temporaryPrefix, 'bin', 'rg')
@@ -323,7 +374,14 @@ async function populateAndActivatePrefix(
     throw new InstallFailure('verification-failed', '受管 ripgrep 激活后验证失败。')
   }
   emit(options, { stage: 'complete', message: '远端 ripgrep 安装完成。' })
-  return successfulResult(options, startedAt, warnings, candidate, activation === 'activated')
+  return successfulResult(
+    options,
+    startedAt,
+    warnings,
+    candidate,
+    activation === 'activated',
+    usedOfflineCache
+  )
 }
 async function existingRipgrepResult(
   session: RemoteSshSession,

@@ -112,6 +112,7 @@ export function withRemoteMicromambaCapabilityProfile<T extends HostCapabilityPr
       status: runtimeRoot.status,
       hasHardError: runtimeRoot.hasHardError,
       warningCodes: runtimeRoot.warningCodes,
+      packageCache: runtimeRoot.packageCache,
       micromamba: normalizeRemoteMicromambaCapabilityProfile(value),
       ripgrep: normalizeRemoteRipgrepCapabilityProfile(runtimeRoot.ripgrep),
       checks: {
@@ -209,6 +210,7 @@ export function runtimeRootCapabilityProfile(
     status: result.status,
     hasHardError: result.hardErrors.length > 0,
     warningCodes,
+    packageCache: result.packageCache,
     micromamba: normalizeRemoteMicromambaCapabilityProfile(previousMicromamba),
     ripgrep: normalizeRemoteRipgrepCapabilityProfile(previousRipgrep),
     checks: {

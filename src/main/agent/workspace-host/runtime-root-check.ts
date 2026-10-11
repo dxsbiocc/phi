@@ -9,6 +9,7 @@ import {
   type RemoteRuntimeRootParseOptions
 } from './runtime-root-check-parser'
 import { buildRemoteRuntimeRootCheckScript } from './runtime-root-check-script'
+import type { RemoteRuntimeRootCheckScriptOptions } from './runtime-root-check-script'
 
 export {
   DEFAULT_REMOTE_RUNTIME_ROOT_HIGH_DISK_USE_PERCENT,
@@ -17,7 +18,8 @@ export {
 } from './runtime-root-check-parser'
 export { buildRemoteRuntimeRootCheckScript } from './runtime-root-check-script'
 
-export interface RemoteRuntimeRootCheckOptions extends RemoteRuntimeRootParseOptions {
+export interface RemoteRuntimeRootCheckOptions
+  extends RemoteRuntimeRootParseOptions, RemoteRuntimeRootCheckScriptOptions {
   timeoutMs?: number
 }
 
@@ -84,7 +86,7 @@ export async function checkRemoteRuntimeRoot(
   if (!session.execWithInput) return remoteRuntimeRootCheckFailure(configuredRoot, 'failed', now)
   try {
     const result = await withTimeout(
-      session.execWithInput('sh -s', buildRemoteRuntimeRootCheckScript(configuredRoot)),
+      session.execWithInput('sh -s', buildRemoteRuntimeRootCheckScript(configuredRoot, options)),
       options.timeoutMs ?? DEFAULT_REMOTE_RUNTIME_ROOT_CHECK_TIMEOUT_MS
     )
     if (result.code !== 0) return remoteRuntimeRootCheckFailure(configuredRoot, 'failed', now)
