@@ -19,6 +19,7 @@ import {
   filterWrapperCatalogChoices,
   wrapperCatalogChoices,
   wrapperChoiceAction,
+  wrapperChoiceIcon,
   wrapperChoiceNeedsRegistryInstall,
   wrapperCatalogGroups,
   type WrapperCatalogChoice
@@ -322,7 +323,7 @@ export function WrapperCatalogDialog({
                   id: choice.id,
                   icon: (
                     <ResourceIcon
-                      icon={choice.cached?.icon ?? choice.registryEntry?.icon}
+                      icon={wrapperChoiceIcon(choice)}
                       kind="wrapper"
                       sx={{ color: 'primary.main' }}
                     />

@@ -329,6 +329,7 @@ import { prepareContentPackageInstall, readContentRegistry } from './agent/packa
 import type { InstallerOptions } from './agent/packages/installer-types'
 import { readSkillPackageDetail } from './agent/packages/skill-detail'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
+import { withConnectorMetadata } from './agent/mcp-server-view'
 import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
@@ -10108,22 +10109,7 @@ app.whenReady().then(async () => {
     const servers = await (isRemoteResourceScope(cwd)
       ? listGlobalMcpServers()
       : listMcpServers(cwd ?? currentCwd))
-    const catalog = await connectorCatalog()
-    return servers.map((server) => {
-      const connector = catalog.find(
-        (entry) =>
-          entry.id === server.packageId || (server.url !== undefined && entry.url === server.url)
-      )
-      return connector
-        ? {
-            ...server,
-            connectorId: connector.id,
-            category: connector.category,
-            title: connector.name,
-            icon: server.icon ?? connector.icon
-          }
-        : server
-    })
+    return withConnectorMetadata(servers, await connectorCatalog())
   })
   ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog())
   ipcMain.handle(

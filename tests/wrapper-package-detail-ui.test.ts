@@ -9,6 +9,7 @@ import {
 } from '../src/renderer/src/features/wrapper/lib/wrapperPackageDetail'
 import {
   wrapperChoiceAction,
+  wrapperChoiceIcon,
   type WrapperCatalogChoice
 } from '../src/renderer/src/features/wrapper/lib/wrapperCatalog'
 
@@ -102,4 +103,22 @@ test('one action per choice: install or add when absent, uninstall once chosen',
     wrapperChoiceAction(choice({ installed: true, selected: true, enabled: true })),
     { label: '卸载', kind: 'remove' }
   )
+})
+
+test('a catalog logo is shown instead of a generated icon the installed copy fell back to', () => {
+  const base = { id: 'x', title: 'x', summary: '', metadata: '', category: '' }
+  const choice = (state: Partial<WrapperCatalogChoice>): WrapperCatalogChoice => ({
+    ...base,
+    installed: true,
+    selected: true,
+    enabled: true,
+    ...state
+  })
+  const registryIcon = { key: 'registry-logo' }
+  const cachedIcon = { key: 'generated-or-installed' }
+  const entry = { icon: registryIcon } as WrapperCatalogChoice['registryEntry']
+  const cached = { icon: cachedIcon } as WrapperCatalogChoice['cached']
+  assert.equal(wrapperChoiceIcon(choice({ registryEntry: entry, cached })), registryIcon)
+  assert.equal(wrapperChoiceIcon(choice({ cached })), cachedIcon)
+  assert.equal(wrapperChoiceIcon(choice({})), undefined)
 })

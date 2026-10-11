@@ -1,5 +1,6 @@
 import semver from 'semver'
 
+import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import type {
   InstalledPackageView,
   PackageRegistryEntryView,
@@ -110,6 +111,11 @@ export function wrapperChoiceNeedsRegistryInstall(choice: WrapperCatalogChoice):
     semver.valid(catalogVersion) &&
     semver.gte(choice.bundledVersion, catalogVersion)
   )
+}
+
+/** The catalog's own logo wins; the installed copy's icon (possibly a generated one) is next. */
+export function wrapperChoiceIcon(choice: WrapperCatalogChoice): ResourceIconRef | undefined {
+  return choice.registryEntry?.icon ?? choice.cached?.icon
 }
 
 export interface WrapperChoiceAction {

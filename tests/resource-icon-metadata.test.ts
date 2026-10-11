@@ -285,15 +285,20 @@ test('installed connectors and plugins without their own icon get a stable fallb
     agentDir,
     appVersion: '1.0.0'
   })
+  const listed = (): ReturnType<typeof listConnectorCatalog>[number] | undefined =>
+    listConnectorCatalog({ agentDir, appVersion: '1.0.0', registries: [registry] }).find(
+      (entry) => entry.id === 'plain-connector'
+    )
+  const connector = listed()
+  assert.ok(connector?.icon, 'an installed connector gets an icon')
+  assert.ok(readResourceIcon(connector.icon.key))
+  assert.deepEqual(listed()?.icon, connector.icon, 'and keeps it')
+  // The installed server itself is not given a generated icon here: the catalog logo, when there
+  // is one, must reach the sidebar first (see withConnectorMetadata).
   const server = (await listMcpServers(project)).find(
     (entry) => entry.packageId === 'plain-connector'
   )
-  assert.ok(server?.icon, 'an installed connector gets an icon')
-  assert.ok(readResourceIcon(server.icon.key))
-  const again = (await listMcpServers(project)).find(
-    (entry) => entry.packageId === 'plain-connector'
-  )
-  assert.deepEqual(again?.icon, server.icon, 'and keeps it')
+  assert.equal(server?.icon, undefined)
 
   const installedPlugin = listInstalledPlugins({ agentDir })[0]
   assert.ok(installedPlugin, 'the plugin installed by the previous test is still there')

@@ -4,7 +4,7 @@ import { Alert, Box, Chip, CircularProgress, Typography } from '@mui/material'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { useWrapperPackageMembers } from '../hooks/useWrapperPackageMembers'
-import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
+import { wrapperChoiceIcon, type WrapperCatalogChoice } from '../lib/wrapperCatalog'
 import { useWrapperDetailData } from '../hooks/useWrapperDetailData'
 import { WrapperDetailBody } from './WrapperDetailBody'
 import { WrapperPackageRail } from './WrapperPackageRail'
@@ -66,7 +66,7 @@ export function WrapperPackageDetailPage({
             ) : null}
             <WrapperDetailBody
               manifest={selected}
-              icon={choice.cached?.icon}
+              icon={wrapperChoiceIcon(choice)}
               graph={detailData.graph}
               moduleDetails={detailData.moduleDetails}
               extraChips={
