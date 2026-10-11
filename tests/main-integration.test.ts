@@ -2527,6 +2527,30 @@ async function harness(
     './agent/packages/icon-views': {
       packageRegistryIconView: (registry: unknown): unknown => registry
     },
+    './agent/packages/skill-detail': {
+      readSkillPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
+        id,
+        markdown: ''
+      })
+    },
+    './agent/packages/wrapper-detail': {
+      readWrapperPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
+        id,
+        wrappers: []
+      })
+    },
+    './agent/mcp-server-view': {
+      withConnectorMetadata: (servers: readonly unknown[]): unknown[] => [...servers]
+    },
+    './agent/packages/mutation-queue': {
+      runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
+    },
+    './agent/packages/wrapper-removal': {
+      removeWrapperPackage: async (): Promise<unknown> => ({
+        kind: 'deselected',
+        id: ''
+      })
+    },
     './agent/resource-icons': { readResourceIcon: (): null => null },
     './agent/packages/installer': {
       addKnownRegistry: noop,
