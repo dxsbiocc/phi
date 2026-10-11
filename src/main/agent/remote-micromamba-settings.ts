@@ -23,6 +23,10 @@ import {
 } from './workspace-host/capability-profile-store'
 import { probeHostCapabilities } from './workspace-host/probe'
 import { ensureRemoteMicromamba } from './workspace-host/remote-micromamba'
+import {
+  cachedRemoteRuntimeRootCheck,
+  type CheckRemoteRuntimeRoot
+} from './workspace-host/runtime-root-check-cache'
 import type { HostCapabilityProfile } from './workspace-host/types'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import { connectRemoteSshSession, type RemoteSshSession } from './wrappers/remote-ssh-session'
@@ -62,6 +66,7 @@ export interface RemoteMicromambaSettingsDependencies {
     options?: Parameters<typeof getRemoteMicromambaArtifact>[1]
   ) => Promise<RemoteMicromambaArtifact>
   ensure?: typeof ensureRemoteMicromamba
+  checkRuntimeRoot?: CheckRemoteRuntimeRoot
   updateLatestProfile?: (
     hostAlias: string,
     status: RemoteMicromambaCapabilityProfile,
@@ -154,13 +159,15 @@ async function obtainArtifact(
 function installationInput(
   request: RemoteMicromambaSettingsRequest,
   artifact: RemoteMicromambaArtifact & { url?: string; urls?: readonly string[] },
-  obtainLocalArtifact?: () => Promise<RemoteMicromambaArtifact>
+  obtainLocalArtifact: (() => Promise<RemoteMicromambaArtifact>) | undefined,
+  checkRuntimeRoot: CheckRemoteRuntimeRoot
 ): Parameters<typeof ensureRemoteMicromamba>[1] {
   return {
     runtimeRoot: request.runtimeRoot,
     confirmedWarnings: request.confirmedWarnings ?? [],
     artifact,
     obtainLocalArtifact,
+    checkRuntimeRoot,
     signal: request.signal,
     onProgress: (progress) =>
       request.onProgress?.({
@@ -196,13 +203,14 @@ async function legacyInstallation(
   session: RemoteSshSession,
   platform: Platform,
   request: RemoteMicromambaSettingsRequest,
-  dependencies: RemoteMicromambaSettingsDependencies
+  dependencies: RemoteMicromambaSettingsDependencies,
+  checkRuntimeRoot: CheckRemoteRuntimeRoot
 ): Promise<RemoteMicromambaResult> {
   const artifact = await obtainArtifact(platform, request, dependencies.getArtifact!)
   request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
   return (dependencies.ensure ?? ensureRemoteMicromamba)(
     session,
-    installationInput(request, artifact)
+    installationInput(request, artifact, undefined, checkRuntimeRoot)
   )
 }
 
@@ -211,19 +219,23 @@ async function runInstallation(
   platform: Platform,
   request: RemoteMicromambaSettingsRequest,
   dependencies: RemoteMicromambaSettingsDependencies,
-  startedAt: number
+  startedAt: number,
+  checkRuntimeRoot: CheckRemoteRuntimeRoot
 ): Promise<RemoteMicromambaResult> {
   try {
     if (dependencies.getArtifact && !dependencies.describeArtifact) {
-      return await legacyInstallation(session, platform, request, dependencies)
+      return await legacyInstallation(session, platform, request, dependencies, checkRuntimeRoot)
     }
     const artifact = describedArtifact(platform, request, dependencies)
     const getArtifact = dependencies.getArtifact ?? getRemoteMicromambaArtifact
     request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
     return await (dependencies.ensure ?? ensureRemoteMicromamba)(
       session,
-      installationInput(request, artifact, () =>
-        obtainArtifact(platform, request, getArtifact, 'desktop-relay')
+      installationInput(
+        request,
+        artifact,
+        () => obtainArtifact(platform, request, getArtifact, 'desktop-relay'),
+        checkRuntimeRoot
       )
     )
   } catch (error) {
@@ -274,7 +286,21 @@ export async function installRemoteMicromambaForHost(
   try {
     request.onProgress?.({ stage: 'probe', message: '正在检测服务器平台…' })
     const platform = await (dependencies.probePlatform ?? defaultProbePlatform)(session)
-    const result = await runInstallation(session, platform, request, dependencies, startedAt)
+    const checkRuntimeRoot: CheckRemoteRuntimeRoot = (candidateSession, configuredRoot) =>
+      cachedRemoteRuntimeRootCheck(
+        hostProfileId,
+        candidateSession,
+        configuredRoot,
+        dependencies.checkRuntimeRoot
+      )
+    const result = await runInstallation(
+      session,
+      platform,
+      request,
+      dependencies,
+      startedAt,
+      checkRuntimeRoot
+    )
     persistCapabilityResult(profile.hostAlias, result, agentDir, dependencies)
     return result
   } finally {

@@ -8,6 +8,10 @@ import {
   getRemoteRipgrepStatus,
   REMOTE_RIPGREP_COMPLETE_MARKER
 } from '../src/main/agent/workspace-host/remote-ripgrep'
+import {
+  runRemoteRipgrepForHost,
+  type RemoteRipgrepSettingsDependencies
+} from '../src/main/agent/remote-ripgrep-settings'
 import type { RemoteExecBoundedResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import type { RemoteRipgrepResult } from '../src/shared/remoteRipgrepTypes'
 import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
@@ -374,4 +378,73 @@ test('rejects an invalid runtime root before reading managed tool directories', 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'runtime-root-check-failed')
   assert.equal(session.commands.length, 0)
+})
+
+test('explains a timed-out runtime-root check as a slow server retry', async () => {
+  const remote = fixture()
+  const session = await remote.connect()
+  hideSystemRipgrep(session)
+
+  const result = await ensureRemoteRipgrep(session, {
+    runtimeRoot: remote.runtimeRoot,
+    confirmedWarnings: [],
+    forceManaged: true,
+    checkRuntimeRoot: async () => ({
+      ...checkedRoot(remote.runtimeRoot),
+      status: 'timed-out',
+      expandedPath: null
+    })
+  })
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errorCode, 'runtime-root-check-failed')
+  assert.match(result.message, /服务器响应慢.*稍后重试/u)
+})
+
+test('reuses the completed root check when warning confirmation retries installation', async () => {
+  let rootChecks = 0
+  let ensureCalls = 0
+  const dependencies: RemoteRipgrepSettingsDependencies = {
+    getHostProfile: () => ({ id: 'host-rg-cache', label: 'Cluster', hostAlias: 'cluster' }),
+    connect: async () => ({ close: async () => undefined }) as never,
+    checkRuntimeRoot: async () => {
+      rootChecks += 1
+      return checkedRoot('/runtime')
+    },
+    ensure: async (session, input) => {
+      ensureCalls += 1
+      assert.ok(input.checkRuntimeRoot)
+      await input.checkRuntimeRoot(session, input.runtimeRoot)
+      return ensureCalls === 1
+        ? {
+            status: 'needs-confirmation' as const,
+            durationMs: 1,
+            warningCodes: ['shared-filesystem-info' as const],
+            message: '需要确认'
+          }
+        : {
+            status: 'installed' as const,
+            durationMs: 1,
+            warningCodes: [],
+            executablePath: '/runtime/tools/ripgrep/bin/rg',
+            version: '14.1.1',
+            message: '已安装'
+          }
+    }
+  }
+
+  const first = await runRemoteRipgrepForHost(
+    'host-rg-cache',
+    { action: 'install', runtimeRoot: '/runtime', confirmedWarnings: [] },
+    dependencies
+  )
+  const second = await runRemoteRipgrepForHost(
+    'host-rg-cache',
+    { action: 'install', runtimeRoot: '/runtime', confirmedWarnings: ['shared-filesystem-info'] },
+    dependencies
+  )
+
+  assert.equal(first.status, 'needs-confirmation')
+  assert.equal(second.status, 'installed')
+  assert.equal(rootChecks, 1)
 })

@@ -355,6 +355,21 @@ test('remote env_request enforces its server timeout', async () => {
   }
 })
 
+test('remote env_request preserves the slow-server runtime-root retry guidance', async () => {
+  const service = new RemoteEnvironmentService({
+    micromambaVersion: 'test',
+    openWorkspace: async () => {
+      throw new Error('服务器响应慢，运行时根目录检查超时，请稍后重试。')
+    },
+    confirm: async () => true
+  })
+
+  const result = await service.request(request())
+
+  assert.ok('error' in result)
+  assert.match(result.error, /服务器响应慢.*稍后重试/u)
+})
+
 test('remote env_request turns conda connectivity failures into an actionable Chinese error', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {

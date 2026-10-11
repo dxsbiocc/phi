@@ -25,7 +25,7 @@ export interface RemoteRuntimeRootCheckOptions
 
 export type RemoteRuntimeRootCheckSession = Pick<RemoteSshSession, 'execWithInput'>
 
-const DEFAULT_REMOTE_RUNTIME_ROOT_CHECK_TIMEOUT_MS = 10_000
+export const DEFAULT_REMOTE_RUNTIME_ROOT_CHECK_TIMEOUT_MS = 30_000
 
 function configuredRootError(configuredRoot: string): RemoteRuntimeRootHardError | undefined {
   if (!configuredRoot || configuredRoot.includes('\0') || /[\r\n]/.test(configuredRoot)) {

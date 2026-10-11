@@ -20,6 +20,7 @@ import {
   ensureRemoteMicromamba,
   type EnsureRemoteMicromambaOptions
 } from '../src/main/agent/workspace-host/remote-micromamba'
+import { checkRemoteRuntimeRoot } from '../src/main/agent/workspace-host/runtime-root-check'
 import type {
   RemoteMicromambaArtifact,
   RemoteMicromambaResult
@@ -283,6 +284,50 @@ test('returns a hard runtime-root error without writing or leaking its path', as
     assert.equal(session.commands.length, 0)
     assert.equal(session.uploads.length, 0)
     await assert.rejects(access(root))
+  } finally {
+    await session.close()
+  }
+})
+
+test('explains a timed-out runtime-root check as a slow server retry', async () => {
+  const root = join(await temporaryDirectory('phi-remote-micromamba-timeout-'), 'runtime')
+  const artifact = await fakeArtifact()
+  const session = localSession()
+
+  try {
+    const result = await installWithCheckedRoot(session, root, artifact, {
+      checkRuntimeRoot: async () =>
+        checkedRoot(root, { status: 'timed-out', expandedPath: null, writeCapacity: null })
+    })
+
+    assert.equal(result.status, 'failed')
+    assert.equal(result.errorCode, 'runtime-root-check-failed')
+    assert.match(result.message, /服务器响应慢.*稍后重试/u)
+    assert.equal(session.commands.length, 0)
+  } finally {
+    await session.close()
+  }
+})
+
+test('installs when a slow capacity probe reaches only its soft sub-timeout', async () => {
+  const root = join(await temporaryDirectory('phi-remote-micromamba-slow-probe-'), 'runtime')
+  const artifact = await fakeArtifact()
+  const session = localSession()
+
+  try {
+    const result = await installWithCheckedRoot(session, root, artifact, {
+      checkRuntimeRoot: async (candidateSession, configuredRoot) => {
+        const check = await checkRemoteRuntimeRoot(candidateSession, configuredRoot, {
+          capacityProbeDelaySeconds: 2,
+          capacityProbeTimeoutSeconds: 1,
+          timeoutMs: 5_000
+        })
+        assert.equal(check.writeCapacity, null)
+        return check
+      }
+    })
+
+    assert.equal(result.status, 'installed', JSON.stringify(result))
   } finally {
     await session.close()
   }

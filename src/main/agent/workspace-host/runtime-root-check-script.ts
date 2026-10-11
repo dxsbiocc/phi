@@ -10,6 +10,13 @@ export type RemoteRuntimeRootCapacityProbeFailureMode =
 
 export interface RemoteRuntimeRootCheckScriptOptions {
   capacityProbeFailureMode?: RemoteRuntimeRootCapacityProbeFailureMode
+  capacityProbeTimeoutSeconds?: number
+  capacityProbeDelaySeconds?: number
+}
+
+function boundedSeconds(value: number | undefined, fallback: number, maximum: number): string {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return String(fallback)
+  return String(Math.min(value, maximum))
 }
 
 const REMOTE_RUNTIME_ROOT_CHECK_SCRIPT_TEMPLATE = `#!/bin/sh
@@ -19,6 +26,8 @@ export LC_ALL
 
 phi_configured_root=__PHI_CONFIGURED_ROOT__
 phi_capacity_probe_failure_mode=__PHI_CAPACITY_PROBE_FAILURE_MODE__
+phi_capacity_probe_timeout=__PHI_CAPACITY_PROBE_TIMEOUT_SECONDS__
+phi_capacity_probe_delay=__PHI_CAPACITY_PROBE_DELAY_SECONDS__
 phi_probe_file=
 phi_capacity_probe_dir=
 
@@ -43,18 +52,22 @@ phi_hard_error() {
 phi_emit_capacity_result() {
   phi_emit path.write_capacity "$1"
   case "$1" in
-    quota-exceeded|no-space) phi_hard_error write-capacity-exhausted ;;
+    quota-exceeded|no-space|read-only) phi_hard_error write-capacity-exhausted ;;
+  esac
+}
+
+phi_capacity_error_value() {
+  phi_capacity_error_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$phi_capacity_error_lower" in
+    *"disk quota exceeded"*|*edquot*|*quota*exceeded*) printf '%s' quota-exceeded ;;
+    *"no space left on device"*|*enospc*) printf '%s' no-space ;;
+    *"read-only file system"*|*erofs*) printf '%s' read-only ;;
+    *) printf '%s' other ;;
   esac
 }
 
 phi_classify_capacity_error() {
-  phi_capacity_error_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  case "$phi_capacity_error_lower" in
-    *"disk quota exceeded"*|*edquot*|*quota*exceeded*) phi_emit_capacity_result quota-exceeded ;;
-    *"no space left on device"*|*enospc*) phi_emit_capacity_result no-space ;;
-    *"read-only file system"*|*erofs*) phi_emit_capacity_result read-only ;;
-    *) phi_emit_capacity_result other ;;
-  esac
+  phi_emit_capacity_result "$(phi_capacity_error_value "$1")"
 }
 
 phi_injected_capacity_error() {
@@ -83,41 +96,62 @@ phi_select_capacity_ancestor() {
   done
 }
 
-phi_probe_write_capacity() {
-  phi_select_capacity_ancestor
-  test -n "$phi_capacity_ancestor" || { phi_emit_capacity_result other; return; }
-
-  phi_capacity_candidate=$phi_capacity_ancestor/.phi-runtime-root-capacity-probe-$$
-  phi_capacity_error=$(mkdir "$phi_capacity_candidate" 2>&1)
-  if test $? -ne 0; then phi_classify_capacity_error "$phi_capacity_error"; return; fi
-  phi_capacity_probe_dir=$phi_capacity_candidate
-  phi_capacity_started=$(date +%s 2>/dev/null)
-  case "$phi_capacity_started" in ''|*[!0-9]*) phi_capacity_deadline= ;; *) phi_capacity_deadline=$((phi_capacity_started + 3)) ;; esac
-
+phi_capacity_probe_task() {
+  phi_capacity_result=ok
+  phi_capacity_error=$(mkdir "$phi_capacity_probe_dir" 2>&1)
+  if test $? -ne 0; then
+    phi_capacity_result=$(phi_capacity_error_value "$phi_capacity_error")
+  elif test "$phi_capacity_probe_delay" != 0; then
+    sleep "$phi_capacity_probe_delay" >/dev/null 2>&1
+  fi
   phi_capacity_index=1
-  phi_capacity_error=
-  phi_capacity_failed=0
-  while test "$phi_capacity_index" -le 200; do
-    if test -n "$phi_capacity_deadline" && test $(( (phi_capacity_index - 1) % 20 )) -eq 0; then
-      phi_capacity_now=$(date +%s 2>/dev/null)
-      if test -n "$phi_capacity_now" && test "$phi_capacity_now" -ge "$phi_capacity_deadline"; then
-        phi_capacity_error=capacity-probe-timeout
-        phi_capacity_failed=1
-        break
-      fi
-    fi
-    if test "$phi_capacity_index" = 100 && test -n "$phi_capacity_probe_failure_mode"; then
-      phi_capacity_error=$(phi_injected_capacity_error)
-      phi_capacity_failed=1
+  while test "$phi_capacity_result" = ok && test "$phi_capacity_index" -le 8; do
+    if test "$phi_capacity_index" = 4 && test -n "$phi_capacity_probe_failure_mode"; then
+      phi_capacity_result=$(phi_capacity_error_value "$(phi_injected_capacity_error)")
       break
     fi
     phi_capacity_error=$( (printf '%s\n' x >"$phi_capacity_probe_dir/$phi_capacity_index") 2>&1)
-    if test $? -ne 0; then phi_capacity_failed=1; break; fi
+    if test $? -ne 0; then
+      phi_capacity_result=$(phi_capacity_error_value "$phi_capacity_error")
+      break
+    fi
+    test -s "$phi_capacity_probe_dir/$phi_capacity_index" || { phi_capacity_result=other; break; }
     phi_capacity_index=$((phi_capacity_index + 1))
   done
-  rm -rf "$phi_capacity_probe_dir"
-  phi_capacity_probe_dir=
-  if test "$phi_capacity_failed" = 1; then phi_classify_capacity_error "$phi_capacity_error"; else phi_emit_capacity_result ok; fi
+  rm -rf "$phi_capacity_probe_dir" 2>/dev/null || return 1
+  printf '%s' "$phi_capacity_result"
+}
+
+phi_capacity_probe_with_watchdog() {
+  phi_capacity_probe_task &
+  phi_capacity_pid=$!
+  (trap 'kill "$phi_capacity_sleep" 2>/dev/null; exit 0' TERM INT; sleep "$phi_capacity_probe_timeout" & phi_capacity_sleep=$!; wait "$phi_capacity_sleep"; kill "$phi_capacity_pid" 2>/dev/null && printf '%s' timeout) 2>/dev/null &
+  phi_capacity_watchdog=$!
+  if wait "$phi_capacity_pid"; then phi_capacity_status=0; else phi_capacity_status=$?; fi
+  kill "$phi_capacity_watchdog" 2>/dev/null || :
+  wait "$phi_capacity_watchdog" 2>/dev/null || :
+  printf ':%s' "$phi_capacity_status"
+}
+
+phi_probe_write_capacity() {
+  phi_select_capacity_ancestor
+  test -n "$phi_capacity_ancestor" || { phi_emit_capacity_result other; return; }
+  phi_capacity_probe_dir=$phi_capacity_ancestor/.phi-runtime-root-capacity-probe-$$
+  phi_capacity_outcome=$(phi_capacity_probe_with_watchdog)
+  case "$phi_capacity_outcome" in
+    *:0)
+      phi_capacity_value=\${phi_capacity_outcome%:*}
+      phi_capacity_probe_dir=
+      case "$phi_capacity_value" in
+        ok|quota-exceeded|no-space|read-only|other) phi_emit_capacity_result "$phi_capacity_value" ;;
+        *) phi_emit_capacity_result unknown ;;
+      esac
+      ;;
+    *)
+      if rm -rf "$phi_capacity_probe_dir" 2>/dev/null; then phi_capacity_probe_dir=; fi
+      phi_emit_capacity_result unknown
+      ;;
+  esac
 }
 
 phi_read_package_cache() {
@@ -286,8 +320,17 @@ export function buildRemoteRuntimeRootCheckScript(
   return REMOTE_RUNTIME_ROOT_CHECK_SCRIPT_TEMPLATE.replace(
     '__PHI_CONFIGURED_ROOT__',
     shellQuote(configuredRoot)
-  ).replace(
-    '__PHI_CAPACITY_PROBE_FAILURE_MODE__',
-    shellQuote(options.capacityProbeFailureMode ?? '')
   )
+    .replace(
+      '__PHI_CAPACITY_PROBE_FAILURE_MODE__',
+      shellQuote(options.capacityProbeFailureMode ?? '')
+    )
+    .replace(
+      '__PHI_CAPACITY_PROBE_TIMEOUT_SECONDS__',
+      shellQuote(boundedSeconds(options.capacityProbeTimeoutSeconds, 4, 30))
+    )
+    .replace(
+      '__PHI_CAPACITY_PROBE_DELAY_SECONDS__',
+      shellQuote(boundedSeconds(options.capacityProbeDelaySeconds, 0, 60))
+    )
 }

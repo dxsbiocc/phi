@@ -8,6 +8,10 @@ import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote
 import { getPhiAgentDir } from './runtime-paths'
 import { updateLatestCapabilityProfileRipgrepForHost } from './workspace-host/capability-profile-store'
 import { ensureRemoteRipgrep, getRemoteRipgrepStatus } from './workspace-host/remote-ripgrep'
+import {
+  cachedRemoteRuntimeRootCheck,
+  type CheckRemoteRuntimeRoot
+} from './workspace-host/runtime-root-check-cache'
 import type { ConnectImpl } from './wrappers/executor-remote'
 import { connectRemoteSshSession, type RemoteSshSession } from './wrappers/remote-ssh-session'
 
@@ -30,6 +34,7 @@ export interface RemoteRipgrepSettingsDependencies {
   connect?: ConnectImpl
   status?: typeof getRemoteRipgrepStatus
   ensure?: typeof ensureRemoteRipgrep
+  checkRuntimeRoot?: CheckRemoteRuntimeRoot
   updateLatestProfile?: (
     hostAlias: string,
     status: RemoteRipgrepCapabilityProfile,
@@ -58,7 +63,8 @@ function capabilityStatus(
 async function runRequest(
   session: RemoteSshSession,
   request: RemoteRipgrepSettingsRequest,
-  dependencies: RemoteRipgrepSettingsDependencies
+  dependencies: RemoteRipgrepSettingsDependencies,
+  checkRuntimeRoot: CheckRemoteRuntimeRoot
 ): Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult> {
   if (request.action === 'status') {
     request.onProgress?.({ stage: 'checking-existing', message: '正在检查远程 ripgrep…' })
@@ -70,6 +76,7 @@ async function runRequest(
     confirmedWarnings: request.confirmedWarnings ?? [],
     forceManaged: request.forceManaged,
     signal: request.signal,
+    checkRuntimeRoot,
     onProgress: request.onProgress
   })
 }
@@ -89,7 +96,14 @@ export async function runRemoteRipgrepForHost(
     userInitiated: true
   })
   try {
-    const result = await runRequest(session, request, dependencies)
+    const checkRuntimeRoot: CheckRemoteRuntimeRoot = (candidateSession, configuredRoot) =>
+      cachedRemoteRuntimeRootCheck(
+        hostProfileId,
+        candidateSession,
+        configuredRoot,
+        dependencies.checkRuntimeRoot
+      )
+    const result = await runRequest(session, request, dependencies, checkRuntimeRoot)
     const status = capabilityStatus(result)
     if (status) {
       ;(dependencies.updateLatestProfile ?? updateLatestCapabilityProfileRipgrepForHost)(

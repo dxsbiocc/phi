@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { openRemoteRuntimeWorkspace } from '../src/main/agent/remote-runtime/workspace'
+import {
+  openRemoteRuntimeWorkspace,
+  resolveRemoteRuntimeRoot
+} from '../src/main/agent/remote-runtime/workspace'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 
 test('remote runtime workspace expands a tilde root through the SSH host', async () => {
@@ -50,4 +53,26 @@ test('remote runtime workspace expands a tilde root through the SSH host', async
     process.env.HOME = previousHome
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('remote runtime root resolution identifies a slow server timeout', async () => {
+  await assert.rejects(
+    resolveRemoteRuntimeRoot(
+      {
+        exec: {
+          run: async () => ({
+            stdout: '',
+            stderr: '',
+            code: null,
+            signal: 'SIGTERM',
+            truncated: false,
+            terminationReason: 'timeout' as const
+          })
+        }
+      } as never,
+      { canonicalRoot: '/project' } as never,
+      '/runtime'
+    ),
+    /服务器响应慢.*稍后重试/u
+  )
 })

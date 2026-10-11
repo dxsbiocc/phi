@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { installRemoteMicromambaForHost } from '../src/main/agent/remote-micromamba-settings'
+import {
+  installRemoteMicromambaForHost,
+  type RemoteMicromambaSettingsDependencies
+} from '../src/main/agent/remote-micromamba-settings'
 import type { RemoteMicromambaResult } from '../src/shared/remoteMicromambaTypes'
+import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
 
 const artifact = {
   version: '2.9.0-0',
@@ -21,6 +25,34 @@ function installedResult(): RemoteMicromambaResult {
     installPath: '/data/runtime/bin/micromamba-2.9.0-0/micromamba',
     warningCodes: [] as const,
     message: 'micromamba 已安装并验证。'
+  }
+}
+
+function checkedRoot(): RemoteRuntimeRootCheckResult {
+  return {
+    configured: '/data/runtime',
+    checkedAt: '2026-10-11T00:00:00.000Z',
+    status: 'checked',
+    expandedPath: '/data/runtime',
+    exists: true,
+    nearestExistingAncestor: '/data/runtime',
+    ancestorWritable: true,
+    ownedByCurrentUser: true,
+    groupOrOtherWritable: false,
+    hasSymlink: false,
+    fsType: 'nfs4',
+    availableKiB: 20_000_000,
+    diskUsePercent: 20,
+    inodeUsePercent: 10,
+    executable: true,
+    writeCapacity: 'ok',
+    sharedFilesystem: true,
+    packageCache: { entryCount: 0, bytes: 0 },
+    computeNodeVisibility: 'unknown',
+    hardErrors: [],
+    warnings: [
+      { code: 'shared-filesystem-info', message: '共享文件系统', consequence: '稍后验证计算节点' }
+    ]
   }
 }
 
@@ -88,6 +120,52 @@ describe('remote micromamba settings operation', () => {
       ),
       /SSH 服务器档案不存在/
     )
+  })
+
+  it('reuses the completed root check when warning confirmation retries installation', async () => {
+    let rootChecks = 0
+    let ensureCalls = 0
+    const dependencies: RemoteMicromambaSettingsDependencies = {
+      getHostProfile: () => ({ id: 'host-cache', label: 'Cluster', hostAlias: 'cluster' }),
+      connect: async () => ({ close: async () => undefined }) as never,
+      probePlatform: async () => ({
+        os: 'linux',
+        arch: 'x86_64',
+        libc: { name: 'glibc' as const }
+      }),
+      getArtifact: async () => artifact,
+      checkRuntimeRoot: async () => {
+        rootChecks += 1
+        return checkedRoot()
+      },
+      ensure: async (session, input) => {
+        ensureCalls += 1
+        assert.ok(input.checkRuntimeRoot)
+        await input.checkRuntimeRoot(session, input.runtimeRoot)
+        return ensureCalls === 1
+          ? {
+              ...installedResult(),
+              status: 'needs-confirmation' as const,
+              warningCodes: ['shared-filesystem-info' as const]
+            }
+          : installedResult()
+      }
+    }
+
+    const first = await installRemoteMicromambaForHost(
+      'host-cache',
+      { runtimeRoot: '/data/runtime', confirmedWarnings: [] },
+      dependencies
+    )
+    const second = await installRemoteMicromambaForHost(
+      'host-cache',
+      { runtimeRoot: '/data/runtime', confirmedWarnings: ['shared-filesystem-info'] },
+      dependencies
+    )
+
+    assert.equal(first.status, 'needs-confirmation')
+    assert.equal(second.status, 'installed')
+    assert.equal(rootChecks, 1)
   })
 
   it('persists a micromamba run verification failure as unusable', async () => {

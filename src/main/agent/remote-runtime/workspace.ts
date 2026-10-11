@@ -8,6 +8,8 @@ import { SshHost } from '../workspace-host/ssh-host'
 import { createRemoteRuntimeInputExec } from './input-exec'
 import type { RemoteRuntimeWorkspace } from './types'
 
+const REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS = 30_000
+
 export interface RemoteRuntimeTarget {
   runtimeSessionId: string
   sessionId: string
@@ -27,7 +29,7 @@ export async function openRemoteRuntimeWorkspace(
   const binding = resolveBinding({ sessionId: target.sessionId, projectId: target.projectId })
   const projectHost = new SshHost(binding.config)
   try {
-    const runtimeRoot = await resolvedRuntimeRoot(
+    const runtimeRoot = await resolveRemoteRuntimeRoot(
       projectHost,
       binding,
       target.configuredRoot,
@@ -55,7 +57,7 @@ export async function openRemoteRuntimeWorkspace(
   }
 }
 
-async function resolvedRuntimeRoot(
+export async function resolveRemoteRuntimeRoot(
   host: SshHost,
   binding: RemoteWorkspaceHostBinding,
   configuredRoot: string,
@@ -75,10 +77,13 @@ async function resolvedRuntimeRoot(
   const result = await host.exec.run(['sh', '-c', script, 'phi-runtime-root', configured], {
     cwd: binding.canonicalRoot,
     signal,
-    timeoutMs: 10_000,
+    timeoutMs: REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS,
     maxOutputBytes: 4096
   })
   const root = result.stdout.trim()
+  if (result.terminationReason === 'timeout') {
+    throw new Error('服务器响应慢，运行时根目录检查超时，请稍后重试。')
+  }
   if (result.code !== 0 || !validRemoteAbsolutePath(root)) {
     throw new Error(
       '服务器运行时根目录不存在或无法安全解析；请在远程主机设置中检查该目录与 micromamba 安装。'

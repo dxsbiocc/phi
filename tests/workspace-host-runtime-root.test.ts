@@ -6,7 +6,9 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
 import {
+  buildRemoteRuntimeRootCheckScript,
   checkRemoteRuntimeRoot,
+  DEFAULT_REMOTE_RUNTIME_ROOT_CHECK_TIMEOUT_MS,
   parseRemoteRuntimeRootCheck
 } from '../src/main/agent/workspace-host/runtime-root-check'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
@@ -83,6 +85,34 @@ describe('remote runtime root check', () => {
       assert.equal(result.ancestorWritable, true)
       assert.equal(result.hardErrors.length, 0)
       assert.equal(session.commands.at(-1), 'sh -s')
+      assert.deepEqual(await readdir(parent), [])
+    } finally {
+      await session.close()
+      await rm(parent, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds a slow capacity probe, degrades it to unknown, and removes every probe file', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'phi-runtime-root-slow-probe-'))
+    const configuredRoot = join(parent, 'missing', 'runtime')
+    const session = localSession()
+    const script = buildRemoteRuntimeRootCheckScript(configuredRoot)
+    const startedAt = Date.now()
+
+    try {
+      const result = await checkRemoteRuntimeRoot(session, configuredRoot, {
+        capacityProbeDelaySeconds: 2,
+        capacityProbeTimeoutSeconds: 1,
+        timeoutMs: 5_000
+      })
+
+      assert.equal(DEFAULT_REMOTE_RUNTIME_ROOT_CHECK_TIMEOUT_MS, 30_000)
+      assert.match(script, /phi_capacity_index[^\n]*-le 8/u)
+      assert.doesNotMatch(script, /-le 200/u)
+      assert.ok(Date.now() - startedAt < 2_500)
+      assert.equal(result.status, 'checked')
+      assert.equal(result.writeCapacity, null)
+      assert.deepEqual(result.hardErrors, [])
       assert.deepEqual(await readdir(parent), [])
     } finally {
       await session.close()
@@ -266,7 +296,7 @@ describe('remote runtime root check', () => {
     }
   })
 
-  it('classifies read-only and other capacity failures without changing hard-error policy', async () => {
+  it('treats read-only as a hard capacity error but leaves unknown failures non-blocking', async () => {
     for (const mode of ['read-only', 'other'] as const) {
       const parent = await mkdtemp(join(tmpdir(), `phi-runtime-${mode}-`))
       const session = localSession()
@@ -278,7 +308,10 @@ describe('remote runtime root check', () => {
 
         assert.equal(result.status, 'checked')
         assert.equal(result.writeCapacity, mode)
-        assert.deepEqual(result.hardErrors, [])
+        assert.deepEqual(
+          result.hardErrors.map(({ code }) => code),
+          mode === 'read-only' ? ['write-capacity-exhausted'] : []
+        )
         assert.deepEqual(await readdir(parent), [])
       } finally {
         await session.close()

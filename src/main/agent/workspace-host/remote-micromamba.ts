@@ -231,7 +231,10 @@ function checkFailureResult(
       ...common,
       status: 'failed',
       errorCode: 'runtime-root-check-failed',
-      message: '无法确认远端运行时根目录，请重新检查连接与目录权限。'
+      message:
+        check.status === 'timed-out'
+          ? '服务器响应慢，运行时根目录检查超时，请稍后重试。'
+          : '无法确认远端运行时根目录，请重新检查连接与目录权限。'
     }
   }
   const confirmed = new Set(options.confirmedWarnings)
