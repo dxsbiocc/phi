@@ -14,18 +14,18 @@ func TestFileSystemAtomicWriteDetectsHashConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := fs.writeAtomic("result.txt", []byte("first"), nil)
+	first, err := fs.writeAtomic("result.txt", []byte("first"), nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := fs.writeAtomic("result.txt", []byte("second"), &first.Hash)
+	second, err := fs.writeAtomic("result.txt", []byte("second"), &first.Hash, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.Hash == first.Hash {
 		t.Fatal("hash did not change")
 	}
-	_, err = fs.writeAtomic("result.txt", []byte("stale"), &first.Hash)
+	_, err = fs.writeAtomic("result.txt", []byte("stale"), &first.Hash, false)
 	var domainErr *domainError
 	if !errors.As(err, &domainErr) || domainErr.code != "HASH_MISMATCH" {
 		t.Fatalf("error = %v, want HASH_MISMATCH", err)
@@ -36,6 +36,47 @@ func TestFileSystemAtomicWriteDetectsHashConflict(t *testing.T) {
 	}
 	if !bytes.Equal(content, []byte("second")) {
 		t.Fatalf("content = %q, want second", content)
+	}
+}
+
+func TestFileSystemAtomicWriteIfAbsentHasOneWinner(t *testing.T) {
+	root := t.TempDir()
+	fs, err := newFileSystem(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.writeAtomic("result.bin", []byte{0, 1, 2}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fs.writeAtomic("result.bin", []byte("replacement"), nil, true)
+	var domainErr *domainError
+	if !errors.As(err, &domainErr) || domainErr.code != "HASH_MISMATCH" {
+		t.Fatalf("error = %v, want HASH_MISMATCH", err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "result.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(content, []byte{0, 1, 2}) {
+		t.Fatalf("content = %v, want original bytes", content)
+	}
+}
+
+func TestFileSystemRejectsOversizedAtomicWrite(t *testing.T) {
+	root := t.TempDir()
+	fs, err := newFileSystem(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fs.writeAtomic(
+		"oversized.bin", make([]byte, maxAtomicWriteBytes+1), nil, false,
+	)
+	var domainErr *domainError
+	if !errors.As(err, &domainErr) || domainErr.code != "INVALID_ARGUMENT" {
+		t.Fatalf("error = %v, want INVALID_ARGUMENT", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "oversized.bin")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized target exists or stat failed unexpectedly: %v", err)
 	}
 }
 

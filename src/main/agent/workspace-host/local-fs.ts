@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  link,
   lstat,
   mkdir,
   open,
@@ -24,6 +25,7 @@ import {
 } from 'node:path'
 
 import {
+  WORKSPACE_ATOMIC_WRITE_MAX_BYTES,
   WorkspaceHostError,
   type AtomicWriteOptions,
   type AtomicWriteResult,
@@ -57,6 +59,17 @@ function sha256(content: WorkspaceContent): string {
   return createHash('sha256').update(content).digest('hex')
 }
 
+function checkedWriteContent(content: WorkspaceContent): Buffer {
+  const byteLength = typeof content === 'string' ? Buffer.byteLength(content) : content.byteLength
+  if (byteLength > WORKSPACE_ATOMIC_WRITE_MAX_BYTES) {
+    throw new WorkspaceHostError(
+      'workspace atomic writes are limited to 25 MiB',
+      'INVALID_ARGUMENT'
+    )
+  }
+  return Buffer.isBuffer(content) ? content : Buffer.from(content)
+}
+
 async function assertExpectedHash(target: string, expectedHash?: string): Promise<void> {
   if (expectedHash === undefined) return
   const current = await readFile(target).catch((error) => {
@@ -66,6 +79,24 @@ async function assertExpectedHash(target: string, expectedHash?: string): Promis
   if (current === undefined || sha256(current) !== expectedHash) {
     throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
   }
+}
+
+async function assertAbsent(target: string): Promise<void> {
+  const exists = await lstat(target).then(
+    () => true,
+    (error) => {
+      if (errorCode(error) === 'ENOENT') return false
+      throw error
+    }
+  )
+  if (exists) {
+    throw new WorkspaceHostError('file exists but an absent target was required', 'HASH_MISMATCH')
+  }
+}
+
+async function assertWritePrecondition(target: string, options: AtomicWriteOptions): Promise<void> {
+  if (options.ifAbsent) return assertAbsent(target)
+  return assertExpectedHash(target, options.expectedHash)
 }
 
 function entryKind(entry: EntryType): WorkspaceEntryKind {
@@ -363,6 +394,13 @@ class LocalFileSystem {
     content: WorkspaceContent,
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
+    const bytes = checkedWriteContent(content)
+    if (options.ifAbsent && options.expectedHash !== undefined) {
+      throw new WorkspaceHostError(
+        'expectedHash and ifAbsent cannot be combined',
+        'INVALID_ARGUMENT'
+      )
+    }
     const target = await this.writePath(path)
     const release = await acquireWriteLock(target)
     try {
@@ -373,7 +411,7 @@ class LocalFileSystem {
           'PATH_OUTSIDE_ROOT'
         )
       }
-      return await this.writeTarget(target, content, options)
+      return await this.writeTarget(target, bytes, options)
     } finally {
       await release()
     }
@@ -381,18 +419,33 @@ class LocalFileSystem {
 
   private async writeTarget(
     target: string,
-    content: WorkspaceContent,
+    content: Uint8Array,
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
-    await assertExpectedHash(target, options.expectedHash)
+    await assertWritePrecondition(target, options)
     const temporary = join(dirname(target), `.phi-write-${randomUUID()}`)
     const handle = await open(temporary, 'wx', 0o600)
     try {
       await handle.writeFile(content)
       await handle.sync()
       await handle.close()
-      await assertExpectedHash(target, options.expectedHash)
-      await rename(temporary, target)
+      await assertWritePrecondition(target, options)
+      if (options.ifAbsent) {
+        try {
+          await link(temporary, target)
+        } catch (error) {
+          if (errorCode(error) === 'EEXIST') {
+            throw new WorkspaceHostError(
+              'file exists but an absent target was required',
+              'HASH_MISMATCH'
+            )
+          }
+          throw error
+        }
+        await unlink(temporary)
+      } else {
+        await rename(temporary, target)
+      }
     } catch (error) {
       await handle.close().catch(() => undefined)
       await rm(temporary, { force: true })

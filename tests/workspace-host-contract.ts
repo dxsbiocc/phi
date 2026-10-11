@@ -90,21 +90,128 @@ function atomicWriteContract(makeHost: WorkspaceHostFactory): void {
   })
 }
 
+function extendedAtomicWriteContract(makeHost: WorkspaceHostFactory): void {
+  test('workspace host supports binary and create-only atomic writes', async (context) => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-extended-write-'))
+    const withHost = async (operation: (host: WorkspaceHost) => Promise<void>): Promise<void> => {
+      const host = await makeHost(root)
+      try {
+        await operation(host)
+      } finally {
+        await host.close?.()
+      }
+    }
+    try {
+      await context.test('atomically writes binary content containing NUL bytes', async () => {
+        await withHost(async (host) => {
+          const content = Buffer.from([0x00, 0xff, 0x80, 0x41, 0x00, 0x42])
+          const result = await host.fs.writeAtomic('result.bin', content)
+
+          assert.equal(result.hash, createHash('sha256').update(content).digest('hex'))
+          assert.deepEqual(await readFile(join(root, 'result.bin')), content)
+        })
+      })
+
+      await context.test('atomically writes binary content at the 25 MiB limit', async () => {
+        await withHost(async (host) => {
+          const content = Buffer.alloc(25 * 1024 * 1024, 0xa5)
+          const result = await host.fs.writeAtomic('maximum.bin', content)
+
+          assert.equal(result.hash, createHash('sha256').update(content).digest('hex'))
+          assert.deepEqual(await host.fs.stat('maximum.bin'), {
+            kind: 'file',
+            size: content.byteLength
+          })
+        })
+      })
+
+      await context.test('rejects binary content above the 25 MiB limit', async () => {
+        await withHost(async (host) => {
+          const content = Buffer.alloc(25 * 1024 * 1024 + 1, 0xa5)
+
+          await assert.rejects(host.fs.writeAtomic('oversized.bin', content), {
+            code: 'INVALID_ARGUMENT'
+          })
+          await assert.rejects(access(join(root, 'oversized.bin')))
+        })
+      })
+
+      await context.test('creates a missing file when ifAbsent is set', async () => {
+        await withHost(async (host) => {
+          const content = Buffer.from([0x00, 0xff, 0x42])
+          const result = await host.fs.writeAtomic('created.bin', content, { ifAbsent: true })
+
+          assert.equal(result.hash, createHash('sha256').update(content).digest('hex'))
+          assert.deepEqual(await readFile(join(root, 'created.bin')), content)
+        })
+      })
+
+      await context.test('does not overwrite an existing file when ifAbsent is set', async () => {
+        await withHost(async (host) => {
+          await host.fs.writeAtomic('existing.bin', Buffer.from('existing'))
+
+          await assert.rejects(
+            host.fs.writeAtomic('existing.bin', Buffer.from('replacement'), {
+              ifAbsent: true
+            }),
+            { code: 'HASH_MISMATCH' }
+          )
+          assert.deepEqual(await readFile(join(root, 'existing.bin')), Buffer.from('existing'))
+        })
+      })
+
+      await context.test('lets only one concurrent create-only write win', async () => {
+        const primary = await makeHost(root)
+        const secondary = await makeHost(root)
+        try {
+          const path = 'concurrent.bin'
+          const contents = [Buffer.from('left'), Buffer.from('right')]
+          const outcomes = await Promise.allSettled(
+            contents.map((content, index) =>
+              (index === 0 ? primary : secondary).fs.writeAtomic(path, content, { ifAbsent: true })
+            )
+          )
+          const fulfilled = outcomes
+            .map((outcome, index) => ({ outcome, index }))
+            .filter((item) => item.outcome.status === 'fulfilled')
+          const rejected = outcomes.filter((outcome) => outcome.status === 'rejected')
+
+          assert.equal(fulfilled.length, 1)
+          assert.equal(rejected.length, 1)
+          assert.equal((rejected[0] as PromiseRejectedResult).reason.code, 'HASH_MISMATCH')
+          const winner = fulfilled[0]
+          assert.ok(winner)
+          assert.deepEqual(await readFile(join(root, path)), contents[winner.index])
+        } finally {
+          await secondary.close?.()
+          await primary.close?.()
+        }
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}
+
 function concurrentAtomicWriteContract(makeHost: WorkspaceHostFactory): void {
   test('workspace host lets only one concurrent expected-hash write win', async () => {
     const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-cas-'))
     let host: WorkspaceHost | undefined
     let peer: WorkspaceHost | undefined
     try {
-      host = await makeHost(root)
-      const first = await host.fs.writeAtomic('result.txt', 'first')
-      peer = await makeHost(root)
+      const primary = await makeHost(root)
+      host = primary
+      const first = await primary.fs.writeAtomic('result.txt', 'first')
+      const secondary = await makeHost(root)
+      peer = secondary
       let expectedHash = first.hash
       for (let attempt = 0; attempt < 16; attempt += 1) {
         const contents = [`left-${attempt}`, `right-${attempt}`]
         const outcomes = await Promise.allSettled(
           contents.map((content, index) =>
-            (index === 0 ? host : peer).fs.writeAtomic('result.txt', content, { expectedHash })
+            (index === 0 ? primary : secondary).fs.writeAtomic('result.txt', content, {
+              expectedHash
+            })
           )
         )
         const fulfilled = outcomes
@@ -193,7 +300,7 @@ function externalAtomicWriteConflictContract(makeHost: WorkspaceHostFactory): vo
       host = await makeHost(root)
       const first = await host.fs.writeAtomic('result.txt', 'first')
       const externalWrite = writeWhenStagingAppears(root, target)
-      const pending = host.fs.writeAtomic('result.txt', 'x'.repeat(1024 * 1024), {
+      const pending = host.fs.writeAtomic('result.txt', Buffer.alloc(4 * 1024 * 1024, 0x78), {
         expectedHash: first.hash
       })
 
@@ -552,4 +659,5 @@ export function runWorkspaceHostContract(makeHost: WorkspaceHostFactory): void {
   pathBoundaryContract(makeHost)
   linkBoundaryContract(makeHost)
   capabilityContract(makeHost)
+  extendedAtomicWriteContract(makeHost)
 }

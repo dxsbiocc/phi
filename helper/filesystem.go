@@ -22,6 +22,7 @@ type fileSystem struct {
 }
 
 const maxReadRangeBytes = 8*1024*1024 + 1
+const maxAtomicWriteBytes = 25 * 1024 * 1024
 
 type statResult struct {
 	Kind       string `json:"kind"`
@@ -261,7 +262,33 @@ func assertExpectedHash(target string, expectedHash *string) error {
 	return nil
 }
 
-func (fs *fileSystem) writeAtomic(path string, content []byte, expectedHash *string) (writeResult, error) {
+func assertAbsent(target string) error {
+	_, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return newDomainError("HASH_MISMATCH", "file exists but an absent target was required")
+}
+
+func assertWritePrecondition(target string, expectedHash *string, ifAbsent bool) error {
+	if ifAbsent {
+		return assertAbsent(target)
+	}
+	return assertExpectedHash(target, expectedHash)
+}
+
+func (fs *fileSystem) writeAtomic(
+	path string, content []byte, expectedHash *string, ifAbsent bool,
+) (writeResult, error) {
+	if len(content) > maxAtomicWriteBytes {
+		return writeResult{}, invalidArgument("workspace atomic writes are limited to 25 MiB")
+	}
+	if ifAbsent && expectedHash != nil {
+		return writeResult{}, invalidArgument("expectedHash and ifAbsent cannot be combined")
+	}
 	target, err := fs.guard.writable(path)
 	if err != nil {
 		return writeResult{}, err
@@ -278,7 +305,7 @@ func (fs *fileSystem) writeAtomic(path string, content []byte, expectedHash *str
 	if lockedTarget != target {
 		return writeResult{}, outsideRoot()
 	}
-	if err := assertExpectedHash(target, expectedHash); err != nil {
+	if err := assertWritePrecondition(target, expectedHash, ifAbsent); err != nil {
 		return writeResult{}, err
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(target), ".phi-write-*")
@@ -290,10 +317,22 @@ func (fs *fileSystem) writeAtomic(path string, content []byte, expectedHash *str
 	if err := writeAndSync(temporary, content); err != nil {
 		return writeResult{}, err
 	}
-	if err := assertExpectedHash(target, expectedHash); err != nil {
+	if err := assertWritePrecondition(target, expectedHash, ifAbsent); err != nil {
 		return writeResult{}, err
 	}
-	if err := os.Rename(temporaryPath, target); err != nil {
+	if ifAbsent {
+		if err := os.Link(temporaryPath, target); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return writeResult{}, newDomainError(
+					"HASH_MISMATCH", "file exists but an absent target was required",
+				)
+			}
+			return writeResult{}, err
+		}
+		if err := os.Remove(temporaryPath); err != nil {
+			return writeResult{}, err
+		}
+	} else if err := os.Rename(temporaryPath, target); err != nil {
 		return writeResult{}, err
 	}
 	return writeResult{Hash: hashBytes(content)}, nil

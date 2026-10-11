@@ -3,9 +3,10 @@ import { posix } from 'node:path'
 import { isRemotePathInside } from '../remote-path-containment'
 import { shellQuote, type RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { HelperRpcClient } from './helper-rpc'
-import { WorkspaceHostError } from './types'
+import { WORKSPACE_ATOMIC_WRITE_MAX_BYTES, WorkspaceHostError } from './types'
 import type {
   AtomicWriteOptions,
+  AtomicWriteResult,
   BackgroundProcessHandle,
   BackgroundProcessState,
   CommandResult,
@@ -86,7 +87,15 @@ export function mapHelperWorkspacePath(
 }
 
 function encodedContent(content: WorkspaceContent): string {
-  return Buffer.from(typeof content === 'string' ? content : content).toString('base64')
+  const byteLength = typeof content === 'string' ? Buffer.byteLength(content) : content.byteLength
+  if (byteLength > WORKSPACE_ATOMIC_WRITE_MAX_BYTES) {
+    throw new WorkspaceHostError(
+      'workspace atomic writes are limited to 25 MiB',
+      'INVALID_ARGUMENT'
+    )
+  }
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content)
+  return bytes.toString('base64')
 }
 
 function decodeContent(content: string): Buffer {
@@ -139,12 +148,35 @@ export class HelperWorkspaceHost implements WorkspaceHost {
         })
         return { ...result, content: decodeContent(result.content) }
       },
-      writeAtomic: (value: string, content: WorkspaceContent, options: AtomicWriteOptions = {}) =>
-        this.client.request('fs.writeAtomic', {
-          path: path(value),
-          content: encodedContent(content),
-          ...options
-        }),
+      writeAtomic: (value: string, content: WorkspaceContent, options: AtomicWriteOptions = {}) => {
+        if (options.ifAbsent && options.expectedHash !== undefined) {
+          throw new WorkspaceHostError(
+            'expectedHash and ifAbsent cannot be combined',
+            'INVALID_ARGUMENT'
+          )
+        }
+        return this.client
+          .request<AtomicWriteResult>('fs.writeAtomic', {
+            path: path(value),
+            content: encodedContent(content),
+            ...(options.expectedHash !== undefined ? { expectedHash: options.expectedHash } : {}),
+            ...(options.ifAbsent ? { ifAbsent: true } : {})
+          })
+          .catch((error: unknown) => {
+            if (
+              options.ifAbsent &&
+              error instanceof WorkspaceHostError &&
+              error.code === 'INVALID_ARGUMENT' &&
+              /unknown field ["']ifAbsent["']/.test(error.message)
+            ) {
+              throw new WorkspaceHostError(
+                'remote helper does not support create-only atomic writes; update it or use the pure SSH fallback',
+                'INVALID_ARGUMENT'
+              )
+            }
+            throw error
+          })
+      },
       mkdirp: async (value: string) => {
         await this.client.request('fs.mkdirp', { path: path(value) })
       },

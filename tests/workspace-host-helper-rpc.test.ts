@@ -2,10 +2,14 @@ import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 
-import { mapHelperWorkspacePath } from '../src/main/agent/workspace-host/helper-host'
+import {
+  HelperWorkspaceHost,
+  mapHelperWorkspacePath
+} from '../src/main/agent/workspace-host/helper-host'
 import { HelperRpcClient } from '../src/main/agent/workspace-host/helper-rpc'
 import { WorkspaceHostError } from '../src/main/agent/workspace-host/types'
 import type { RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
+import { createLocalShellSession } from './helpers/localShellSession'
 
 function frame(value: unknown): Buffer {
   const payload = Buffer.from(JSON.stringify(value))
@@ -91,6 +95,58 @@ test('helper RPC maps structured path errors to WorkspaceHostError', async () =>
     return true
   })
   await client.close()
+})
+
+test('helper write keeps old helpers compatible or surfaces unsupported ifAbsent clearly', async () => {
+  const fixture = fakeProcess()
+  const host = new HelperWorkspaceHost(
+    createLocalShellSession(),
+    fixture.process,
+    {} as ConstructorParameters<typeof HelperWorkspaceHost>[2],
+    async () => [],
+    undefined,
+    { remoteRoot: '/workspace', canonicalRoot: '/workspace' }
+  )
+
+  const legacyRequest = new Promise<Buffer>((resolve) => fixture.requests.once('data', resolve))
+  const legacyWrite = host.fs.writeAtomic('legacy.bin', Buffer.from([0]), { ifAbsent: false })
+  const legacyFrame = await legacyRequest
+  const legacyBody = JSON.parse(
+    legacyFrame.subarray(4, legacyFrame.readUInt32BE(0) + 4).toString('utf8')
+  ) as { id: number; params: Record<string, unknown> }
+  assert.equal('ifAbsent' in legacyBody.params, false)
+  fixture.responses.write(
+    frame({ jsonrpc: '2.0', id: legacyBody.id, result: { hash: '0'.repeat(64) } })
+  )
+  await legacyWrite
+
+  const unsupportedRequest = new Promise<Buffer>((resolve) =>
+    fixture.requests.once('data', resolve)
+  )
+  const unsupportedWrite = host.fs.writeAtomic('new.bin', Buffer.from([0]), { ifAbsent: true })
+  const unsupportedFrame = await unsupportedRequest
+  const unsupportedBody = JSON.parse(
+    unsupportedFrame.subarray(4, unsupportedFrame.readUInt32BE(0) + 4).toString('utf8')
+  ) as { id: number; params: Record<string, unknown> }
+  assert.equal(unsupportedBody.params.ifAbsent, true)
+  fixture.responses.write(
+    frame({
+      jsonrpc: '2.0',
+      id: unsupportedBody.id,
+      error: {
+        code: -32602,
+        message: 'invalid method parameters: json: unknown field "ifAbsent"',
+        data: { code: 'INVALID_ARGUMENT' }
+      }
+    })
+  )
+  await assert.rejects(unsupportedWrite, (error) => {
+    assert.ok(error instanceof WorkspaceHostError)
+    assert.equal(error.code, 'INVALID_ARGUMENT')
+    assert.match(error.message, /does not support create-only atomic writes/)
+    return true
+  })
+  await host.close()
 })
 
 test('helper transport maps an absolute workspace alias into the canonical root', () => {

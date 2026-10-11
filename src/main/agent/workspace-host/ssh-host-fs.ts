@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, matchesGlob, posix } from 'node:path'
 
 import { RemoteWorkspaceTargetMissingError } from '../remote-workspace-boundary'
@@ -9,6 +9,7 @@ import { MAX_REMOTE_LOG_RAW_BYTES, readRemoteFileChunk } from '../wrappers/remot
 import { shellQuote, type RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { SshHostContext } from './ssh-host-context'
 import {
+  WORKSPACE_ATOMIC_WRITE_MAX_BYTES,
   WorkspaceHostError,
   type AtomicWriteOptions,
   type AtomicWriteResult,
@@ -35,8 +36,16 @@ function hash(content: WorkspaceContent): string {
   return createHash('sha256').update(content).digest('hex')
 }
 
-function lockedMutationCommand(path: string, command: string): string {
-  const lock = posix.join(posix.dirname(path), `.phi-cas-${hash(path).slice(0, 32)}.lock`)
+function checkedBinaryWriteContent(content: Uint8Array): Buffer {
+  if (content.byteLength > WORKSPACE_ATOMIC_WRITE_MAX_BYTES) {
+    throw invalid('workspace atomic writes are limited to 25 MiB')
+  }
+  return Buffer.isBuffer(content) ? content : Buffer.from(content)
+}
+
+function lockedMutationCommand(path: string, command: string, relative = false): string {
+  const lockName = `.phi-cas-${hash(path).slice(0, 32)}.lock`
+  const lock = relative ? lockName : posix.join(posix.dirname(path), lockName)
   const perl = [
     'use strict; use warnings;',
     'use Errno qw(EEXIST EPERM);',
@@ -84,17 +93,11 @@ function lockedMutationCommand(path: string, command: string): string {
   return `perl -e ${shellQuote(perl)} -- ${shellQuote(lock)} ${shellQuote(command)}`
 }
 
-function contentText(content: WorkspaceContent): string {
-  const bytes = typeof content === 'string' ? Buffer.from(content) : Buffer.from(content)
+function contentText(content: string): string {
+  const bytes = Buffer.from(content)
   if (bytes.length > REMOTE_WRITE_MAX_BYTES) throw invalid('remote text is limited to 1 MiB')
-  let text: string
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    throw invalid('pure SSH atomic writes require UTF-8 text')
-  }
-  if (text.includes('\0')) throw invalid('remote text cannot contain NUL bytes')
-  return text
+  if (content.includes('\0')) throw invalid('remote text cannot contain NUL bytes')
+  return content
 }
 
 async function readBytes(
@@ -138,6 +141,190 @@ async function readWholeFile(
   const value = await readBytes(session, path, root, 0, REMOTE_WRITE_MAX_BYTES + 1)
   if (value.size > REMOTE_WRITE_MAX_BYTES) throw invalid('remote text is limited to 1 MiB')
   return value.bytes
+}
+
+const SSH_ATOMIC_UPLOAD_TIMEOUT_MS = 5 * 60_000
+const SSH_ATOMIC_MAX_OUTPUT_BYTES = 64 * 1024
+
+function stagedMutationCommand(
+  path: string,
+  canonicalRoot: string,
+  stageName: string,
+  expectedBytes: number,
+  contentHash: string,
+  options: AtomicWriteOptions
+): string {
+  const leaf = posix.basename(path)
+  const parent = posix.dirname(path)
+  const mode = options.ifAbsent ? 'absent' : options.expectedHash !== undefined ? 'hash' : 'replace'
+  const perl = [
+    'use strict; use warnings;',
+    'use Digest::SHA;',
+    'use Errno qw(EEXIST);',
+    'use Fcntl qw(O_RDONLY O_NOFOLLOW S_IFMT S_IFREG);',
+    'my ($leaf, $stage, $mode, $expectedHash, $expectedBytes, $contentHash) = @ARGV;',
+    'sub hashRegular {',
+    '  my ($name, $missingCode, $kindCode) = @_;',
+    '  sysopen(my $fh, $name, O_RDONLY | O_NOFOLLOW) or exit $missingCode;',
+    '  binmode($fh);',
+    '  my @opened = stat($fh);',
+    '  @opened && (($opened[2] & S_IFMT) == S_IFREG) or exit $kindCode;',
+    '  my $sha = Digest::SHA->new(256); $sha->addfile($fh); my $digest = $sha->hexdigest;',
+    '  my @named = lstat($name);',
+    '  @named && (($named[2] & S_IFMT) == S_IFREG) or exit $kindCode;',
+    '  for my $index (0, 1, 7, 9, 10) { $named[$index] == $opened[$index] or exit 76; }',
+    '  close($fh) or exit $missingCode;',
+    '  return ($digest, @opened);',
+    '}',
+    'my ($uploadedHash, @uploaded) = hashRegular($stage, 85, 86);',
+    '$uploaded[7] == $expectedBytes && $uploadedHash eq $contentHash or exit 87;',
+    'if ($mode eq "absent") {',
+    '  (-e $leaf || -l $leaf) and exit 76;',
+    '  link($stage, $leaf) or exit($!{EEXIST} ? 76 : 88);',
+    '  unlink($stage) or exit 89;',
+    '} elsif ($mode eq "hash") {',
+    '  my ($beforeHash, @before) = hashRegular($leaf, 73, 74);',
+    '  $beforeHash eq $expectedHash or exit 76;',
+    '  my ($latestHash, @latest) = hashRegular($leaf, 73, 74);',
+    '  $latestHash eq $expectedHash or exit 76;',
+    '  for my $index (0, 1, 7, 9, 10) { $latest[$index] == $before[$index] or exit 76; }',
+    '  rename($stage, $leaf) or exit 88;',
+    '} elsif ($mode eq "replace") {',
+    '  if (-e $leaf || -l $leaf) {',
+    '    my @current = lstat($leaf);',
+    '    @current && (($current[2] & S_IFMT) == S_IFREG) or exit 74;',
+    '  }',
+    '  rename($stage, $leaf) or exit 88;',
+    '} else { exit 90; }',
+    'undef $stage;'
+  ].join('\n')
+  const script = [
+    'set -eu',
+    `expected_parent=${shellQuote(parent)}`,
+    'actual_parent=$(pwd -P) || exit 72',
+    '[ "$actual_parent" = "$expected_parent" ] || exit 72',
+    `root=${shellQuote(canonicalRoot)}`,
+    'if [ "$root" != / ]; then',
+    '  case "$actual_parent" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
+    'fi',
+    'command -v perl >/dev/null 2>&1 || exit 91',
+    `perl -e ${shellQuote(perl)} -- ${shellQuote(leaf)} ${shellQuote(stageName)} ${shellQuote(mode)} ${shellQuote(options.expectedHash ?? '')} ${expectedBytes} ${shellQuote(contentHash)}`
+  ].join('\n')
+  return `bash -c ${shellQuote(script)}`
+}
+
+function streamedAtomicWriteCommand(
+  path: string,
+  canonicalRoot: string,
+  stageName: string,
+  expectedBytes: number,
+  contentHash: string,
+  options: AtomicWriteOptions
+): string {
+  const parent = posix.dirname(path)
+  const receiver = [
+    'use strict; use warnings;',
+    'use Digest::SHA;',
+    'use Fcntl qw(O_WRONLY O_CREAT O_EXCL O_NOFOLLOW);',
+    'my ($stage, $expectedBytes, $contentHash) = @ARGV;',
+    'sysopen(my $fh, $stage, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600) or exit 85;',
+    'binmode(STDIN); binmode($fh);',
+    'my $received = 0; my $sha = Digest::SHA->new(256);',
+    'while (1) {',
+    '  my $count = sysread(STDIN, my $chunk, 65536);',
+    '  defined($count) or exit 86;',
+    '  last if $count == 0;',
+    '  $received += $count; $received <= $expectedBytes or exit 86;',
+    '  $sha->add($chunk);',
+    '  my $offset = 0;',
+    '  while ($offset < $count) {',
+    '    my $written = syswrite($fh, $chunk, $count - $offset, $offset);',
+    '    defined($written) && $written > 0 or exit 86;',
+    '    $offset += $written;',
+    '  }',
+    '}',
+    '$received == $expectedBytes && $sha->hexdigest eq $contentHash or exit 87;',
+    'close($fh) or exit 86;'
+  ].join('\n')
+  const commit = lockedMutationCommand(
+    path,
+    stagedMutationCommand(path, canonicalRoot, stageName, expectedBytes, contentHash, options),
+    true
+  )
+  const script = [
+    'set -eu',
+    `expected_parent=${shellQuote(parent)}`,
+    `cd -P -- ${shellQuote(parent)} || exit 72`,
+    'verify_parent() {',
+    '  actual_parent=$(pwd -P) || exit 72',
+    '  [ "$actual_parent" = "$expected_parent" ] || exit 72',
+    `root=${shellQuote(canonicalRoot)}`,
+    'if [ "$root" != / ]; then',
+    '  case "$actual_parent" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
+    'fi',
+    '}',
+    'verify_parent',
+    'umask 077',
+    `[ ! -e ${shellQuote(stageName)} ] && [ ! -L ${shellQuote(stageName)} ] || exit 85`,
+    `cleanup() { rm -f -- ${shellQuote(stageName)}; }`,
+    'trap cleanup EXIT',
+    'command -v perl >/dev/null 2>&1 || exit 91',
+    `perl -e ${shellQuote(receiver)} -- ${shellQuote(stageName)} ${expectedBytes} ${shellQuote(contentHash)}`,
+    'verify_parent',
+    commit,
+    'cleanup',
+    'trap - EXIT'
+  ].join('\n')
+  return `bash -c ${shellQuote(script)}`
+}
+
+async function runBinaryInput(
+  session: RemoteSshSession,
+  command: string,
+  content: Uint8Array
+): Promise<{ stdout: string; stderr: string; code: number | null; signal: string | null }> {
+  if (!session.openStdio) {
+    throw new Error('当前 SSH 连接不支持安全二进制输入')
+  }
+  const process = await session.openStdio(command)
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  let outputBytes = 0
+  let outputOverflow = false
+  let finished = false
+  const collect = (target: Buffer[], chunk: Buffer): void => {
+    outputBytes += chunk.byteLength
+    if (outputBytes > SSH_ATOMIC_MAX_OUTPUT_BYTES) {
+      outputOverflow = true
+      return
+    }
+    target.push(chunk)
+  }
+  process.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk))
+  process.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk))
+  process.stdin.on('error', () => undefined)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('remote atomic write timed out; result may be unknown')),
+      SSH_ATOMIC_UPLOAD_TIMEOUT_MS
+    )
+  })
+  try {
+    process.stdin.end(content)
+    const result = await Promise.race([process.closed, timeout])
+    finished = true
+    if (outputOverflow) throw new Error('remote atomic write produced too much output')
+    return {
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+      code: result.code,
+      signal: result.signal
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (!finished) await process.close().catch(() => undefined)
+  }
 }
 
 function compareNames(left: string, right: string): number {
@@ -300,7 +487,22 @@ class SshFileSystem {
     content: WorkspaceContent,
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
-    const text = contentText(content)
+    if (options.ifAbsent && options.expectedHash !== undefined) {
+      throw invalid('expectedHash and ifAbsent cannot be combined')
+    }
+    if (typeof content === 'string') {
+      const text = contentText(content)
+      if (!options.ifAbsent) return this.writeLegacyText(path, text, options)
+      return this.writeBinary(path, Buffer.from(text), options)
+    }
+    return this.writeBinary(path, checkedBinaryWriteContent(content), options)
+  }
+
+  private async writeBinary(
+    path: string,
+    content: Uint8Array,
+    options: AtomicWriteOptions
+  ): Promise<AtomicWriteResult> {
     return this.context.withSession(async (session) => {
       let target: string
       try {
@@ -308,23 +510,39 @@ class SshFileSystem {
       } catch (error) {
         if (!(error instanceof RemoteWorkspaceTargetMissingError)) throw error
         target = await this.context.resolve(session, path, 'create')
-        return this.createFile(session, target, text, content, options)
       }
-      return this.replaceFile(session, target, text, content, options)
+      return this.stageAndCommit(session, target, content, options)
     })
   }
 
-  private async createFile(
+  private async writeLegacyText(
+    path: string,
+    text: string,
+    options: AtomicWriteOptions
+  ): Promise<AtomicWriteResult> {
+    return this.context.withSession(async (session) => {
+      let target: string
+      try {
+        target = await this.context.resolve(session, path, 'existing')
+      } catch (error) {
+        if (!(error instanceof RemoteWorkspaceTargetMissingError)) throw error
+        target = await this.context.resolve(session, path, 'create')
+        return this.createTextFile(session, target, text, options)
+      }
+      return this.replaceTextFile(session, target, text, options)
+    })
+  }
+
+  private async createTextFile(
     session: RemoteSshSession,
     path: string,
     text: string,
-    content: WorkspaceContent,
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
     if (options.expectedHash !== undefined) {
       throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
     }
-    const result = await this.runInput(
+    const result = await this.runTextInput(
       session,
       lockedMutationCommand(
         path,
@@ -333,14 +551,13 @@ class SshFileSystem {
       text
     )
     if (result.code !== 0) throw new Error(`remote atomic create failed with code ${result.code}`)
-    return { hash: hash(content) }
+    return { hash: hash(text) }
   }
 
-  private async replaceFile(
+  private async replaceTextFile(
     session: RemoteSshSession,
     path: string,
     text: string,
-    content: WorkspaceContent,
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
     const current = await readWholeFile(session, path, this.context.canonicalRoot)
@@ -348,7 +565,7 @@ class SshFileSystem {
     if (options.expectedHash !== undefined && options.expectedHash !== currentHash) {
       throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
     }
-    const result = await this.runInput(
+    const result = await this.runTextInput(
       session,
       lockedMutationCommand(
         path,
@@ -365,16 +582,48 @@ class SshFileSystem {
       throw new WorkspaceHostError('file does not match the expected hash', 'HASH_MISMATCH')
     }
     if (result.code !== 0) throw new Error(`remote atomic replace failed with code ${result.code}`)
-    return { hash: hash(content) }
+    return { hash: hash(text) }
   }
 
-  private runInput(
+  private runTextInput(
     session: RemoteSshSession,
     command: string,
     input: string
   ): ReturnType<NonNullable<RemoteSshSession['execWithInput']>> {
     if (!session.execWithInput) throw new Error('当前 SSH 连接不支持安全文本输入')
     return session.execWithInput(command, input)
+  }
+
+  private async stageAndCommit(
+    session: RemoteSshSession,
+    path: string,
+    content: Uint8Array,
+    options: AtomicWriteOptions
+  ): Promise<AtomicWriteResult> {
+    const stageName = `.phi-write-${randomUUID()}`
+    const contentHash = hash(content)
+    const result = await runBinaryInput(
+      session,
+      streamedAtomicWriteCommand(
+        path,
+        this.context.canonicalRoot,
+        stageName,
+        content.byteLength,
+        contentHash,
+        options
+      ),
+      content
+    )
+    if (result.code === 73 || result.code === 76) {
+      throw new WorkspaceHostError(
+        options.ifAbsent
+          ? 'file exists but an absent target was required'
+          : 'file does not match the expected hash',
+        'HASH_MISMATCH'
+      )
+    }
+    if (result.code !== 0) throw new Error(`remote atomic write failed with code ${result.code}`)
+    return { hash: contentHash }
   }
 }
 

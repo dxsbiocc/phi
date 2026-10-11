@@ -55,7 +55,7 @@ func runSelftest() selftestResult {
 }
 
 func selftestFileSystem(fs *fileSystem) error {
-	written, err := fs.writeAtomic("probe.txt", []byte("phi"), nil)
+	written, err := fs.writeAtomic("probe.txt", []byte("phi"), nil, false)
 	if err != nil {
 		return err
 	}

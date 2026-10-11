@@ -21,6 +21,7 @@ type writeParams struct {
 	Path         string  `json:"path"`
 	Content      []byte  `json:"content"`
 	ExpectedHash *string `json:"expectedHash,omitempty"`
+	IfAbsent     bool    `json:"ifAbsent,omitempty"`
 }
 
 type listParams struct {
@@ -85,7 +86,7 @@ func (server *rpcServer) handleWriteAtomic(content json.RawMessage) (writeResult
 	if err := decodeParams(content, &params); err != nil {
 		return writeResult{}, err
 	}
-	return server.fs.writeAtomic(params.Path, params.Content, params.ExpectedHash)
+	return server.fs.writeAtomic(params.Path, params.Content, params.ExpectedHash, params.IfAbsent)
 }
 
 func (server *rpcServer) handleList(content json.RawMessage) (listResult, error) {

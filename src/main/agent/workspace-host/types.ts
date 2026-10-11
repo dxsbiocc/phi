@@ -2,8 +2,11 @@ import type { RemoteRuntimeRootCapabilityProfile } from '../../../shared/remoteR
 
 export type WorkspaceContent = string | Uint8Array
 
+export const WORKSPACE_ATOMIC_WRITE_MAX_BYTES = 25 * 1024 * 1024
+
 export interface AtomicWriteOptions {
   expectedHash?: string
+  ifAbsent?: boolean
 }
 
 export interface AtomicWriteResult {
