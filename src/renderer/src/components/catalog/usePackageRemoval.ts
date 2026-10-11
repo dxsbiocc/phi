@@ -1,26 +1,29 @@
 import { useCallback, useState } from 'react'
 
+import { useBusyKeys } from './useBusyKeys'
+
 export interface PackageRemoval {
-  /** The package being removed, if any. */
-  removingId: string | null
+  /** Whether this package is being removed right now. */
+  isRemoving: (id: string) => boolean
   /** Why the last removal failed, e.g. which installed packages still need it. */
   error: string | null
   clearError: () => void
   remove: (id: string) => Promise<void>
 }
 
-/** One removal flow for every catalog and sidebar that offers it. */
+/** One removal flow for every catalog and sidebar that offers it; removals do not block each other. */
 export function usePackageRemoval(
   removePackage: (id: string) => Promise<unknown>,
   afterRemove: () => Promise<void> | void
 ): PackageRemoval {
-  const [removingId, setRemovingId] = useState<string | null>(null)
+  const busy = useBusyKeys()
   const [error, setError] = useState<string | null>(null)
+  const { has, start, finish } = busy
 
   const remove = useCallback(
     async (id: string): Promise<void> => {
-      if (removingId) return
-      setRemovingId(id)
+      if (has(id)) return
+      start(id)
       setError(null)
       try {
         await removePackage(id)
@@ -28,11 +31,11 @@ export function usePackageRemoval(
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
       } finally {
-        setRemovingId(null)
+        finish(id)
       }
     },
-    [afterRemove, removePackage, removingId]
+    [afterRemove, finish, has, removePackage, start]
   )
   const clearError = useCallback(() => setError(null), [])
-  return { removingId, error, clearError, remove }
+  return { isRemoving: has, error, clearError, remove }
 }

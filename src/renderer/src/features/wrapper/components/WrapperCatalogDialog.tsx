@@ -8,6 +8,7 @@ import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrappe
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
+import { useBusyKeys } from '../../../components/catalog/useBusyKeys'
 import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsTable'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import {
@@ -27,6 +28,8 @@ import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/
 import { useWrapperPackageRemoval } from '../hooks/useWrapperPackageRemoval'
 import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
+
+const DIRECTORY_KEY = '__directory__'
 
 export interface WrapperCatalogDialogProps {
   open: boolean
@@ -50,7 +53,7 @@ export function WrapperCatalogDialog({
   const [registries, setRegistries] = useState<PackageRegistryView[]>([])
   const [installedPackages, setInstalledPackages] = useState<InstalledPackageView[]>([])
   const [loading, setLoading] = useState(true)
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const busy = useBusyKeys()
   const [error, setError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -131,8 +134,8 @@ export function WrapperCatalogDialog({
   const detailChoice = detailId ? choices.find((choice) => choice.id === detailId) : undefined
 
   async function add(choice: WrapperCatalogChoice, confirmed = false): Promise<void> {
-    if (busyId) return
-    setBusyId(choice.id)
+    if (busy.has(choice.id)) return
+    busy.start(choice.id)
     setError(null)
     try {
       if (wrapperChoiceNeedsRegistryInstall(choice)) {
@@ -171,20 +174,20 @@ export function WrapperCatalogDialog({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusyId(null)
+      busy.finish(choice.id)
     }
   }
 
   function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
     const { label, kind } = wrapperChoiceAction(choice)
     const removing = kind === 'remove'
-    const working = busyId === choice.id || removal.removingId === choice.id
+    const working = busy.has(choice.id) || removal.isRemoving(choice.id)
     return (
       <Button
         size="small"
         variant="outlined"
         color={removing ? 'error' : 'primary'}
-        disabled={Boolean(busyId) || Boolean(removal.removingId)}
+        disabled={working}
         onClick={() => void (removing ? removal.remove(choice.id) : add(choice))}
         aria-label={`${label} ${choice.title}`}
       >
@@ -194,8 +197,8 @@ export function WrapperCatalogDialog({
   }
 
   async function chooseDirectory(): Promise<void> {
-    if (busyId) return
-    setBusyId('__directory__')
+    if (busy.has(DIRECTORY_KEY)) return
+    busy.start(DIRECTORY_KEY)
     setError(null)
     try {
       const path = await window.api.pickPackageRegistryDirectory()
@@ -205,12 +208,12 @@ export function WrapperCatalogDialog({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusyId(null)
+      busy.finish(DIRECTORY_KEY)
     }
   }
 
   function close(): void {
-    if (busyId) return
+    if (busy.any) return
     setDetailId(null)
     setPendingInstall(null)
     setLoading(true)
@@ -263,13 +266,13 @@ export function WrapperCatalogDialog({
           }}
           searchLabel="搜索 wrapper 目录"
           onClose={close}
-          busy={Boolean(busyId)}
+          busy={busy.any}
           page={result.page}
           rowsPerPage={rowsPerPage}
           actions={
             <CatalogAddButton
               label="添加 wrapper 目录"
-              disabled={Boolean(busyId)}
+              disabled={busy.has(DIRECTORY_KEY)}
               onClick={() => void chooseDirectory()}
             />
           }

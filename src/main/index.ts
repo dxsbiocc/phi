@@ -329,6 +329,7 @@ import { prepareContentPackageInstall, readContentRegistry } from './agent/packa
 import type { InstallerOptions } from './agent/packages/installer-types'
 import { readSkillPackageDetail } from './agent/packages/skill-detail'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
+import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
@@ -975,6 +976,13 @@ function registerOfficeIpc(): void {
 // apply to catalog metadata and package archives. The transport remains usable in Node/tests.
 const officialRegistryFetch: typeof fetch = (input, init) =>
   net.fetch(input instanceof URL ? input.toString() : input, init)
+
+/** Package changes share registries on disk, so they run one after another (see mutation-queue). */
+function serializedPackageMutation<Args extends unknown[], Result>(
+  handler: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result>
+): (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> {
+  return (event, ...args) => runPackageMutation(() => handler(event, ...args))
+}
 
 function officialContentSourceOptions(): {
   agentDir: string
@@ -9745,94 +9753,104 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle(
     'packages:install',
-    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
-      if (
-        typeof dir !== 'string' ||
-        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-        typeof id !== 'string' ||
-        id.length === 0 ||
-        (version !== undefined && typeof version !== 'string')
-      ) {
-        throw new Error('软件包安装参数无效')
+    serializedPackageMutation(
+      async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
+        if (
+          typeof dir !== 'string' ||
+          (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+          typeof id !== 'string' ||
+          id.length === 0 ||
+          (version !== undefined && typeof version !== 'string')
+        ) {
+          throw new Error('软件包安装参数无效')
+        }
+        try {
+          const registry = await readContentRegistry(dir, officialContentSourceOptions())
+          const installedBefore = new Set(
+            listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+          )
+          await prepareContentPackageInstall(
+            registry,
+            { type, id, ...(version ? { version } : {}) },
+            officialContentSourceOptions()
+          )
+          const plan = planRegistryInstall(
+            registry,
+            { type, id, ...(version ? { version } : {}) },
+            { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+          )
+          const result = await installRegistryPackages(plan, {
+            agentDir: AGENT_DIR,
+            runtimeRoot: getRuntimeRoot(),
+            names: await installedPluginNamespace(),
+            build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+          })
+          for (const installed of result) {
+            if (
+              installed.type === 'skill' &&
+              !installedBefore.has(`${installed.type}:${installed.id}`)
+            ) {
+              setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+            }
+            if (
+              installed.type === 'mcp' &&
+              !installedBefore.has(`${installed.type}:${installed.id}`)
+            ) {
+              setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+              setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+            }
+          }
+          if (result.some((installed) => installed.type === 'wrapper')) {
+            resetWrapperCompositionCatalogCache()
+          }
+          await invalidateAgentSession()
+          return result
+        } catch (error) {
+          throw new Error(
+            `安装软件包失败：${error instanceof Error ? error.message : String(error)}`
+          )
+        }
       }
+    )
+  )
+  ipcMain.handle(
+    'packages:removeWrapper',
+    serializedPackageMutation(async (_, id: unknown) => {
+      if (typeof id !== 'string' || id.length === 0) throw new Error('wrapper 软件包参数无效')
       try {
-        const registry = await readContentRegistry(dir, officialContentSourceOptions())
-        const installedBefore = new Set(
-          listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
-        )
-        await prepareContentPackageInstall(
-          registry,
-          { type, id, ...(version ? { version } : {}) },
-          officialContentSourceOptions()
-        )
-        const plan = planRegistryInstall(
-          registry,
-          { type, id, ...(version ? { version } : {}) },
-          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
-        )
-        const result = await installRegistryPackages(plan, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot(),
-          names: await installedPluginNamespace(),
-          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-        })
-        for (const installed of result) {
-          if (
-            installed.type === 'skill' &&
-            !installedBefore.has(`${installed.type}:${installed.id}`)
-          ) {
-            setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
-          }
-          if (
-            installed.type === 'mcp' &&
-            !installedBefore.has(`${installed.type}:${installed.id}`)
-          ) {
-            setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
-            setMcpPackageEnabled(installed.id, true, AGENT_DIR)
-          }
-        }
-        if (result.some((installed) => installed.type === 'wrapper')) {
-          resetWrapperCompositionCatalogCache()
-        }
+        const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
+        resetWrapperCompositionCatalogCache()
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(`安装软件包失败：${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(error instanceof Error ? error.message : String(error))
       }
-    }
+    })
   )
-  ipcMain.handle('packages:removeWrapper', async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) throw new Error('wrapper 软件包参数无效')
-    try {
-      const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
-      resetWrapperCompositionCatalogCache()
-      await invalidateAgentSession()
-      return result
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : String(error))
-    }
-  })
-  ipcMain.handle('packages:uninstall', async (_, type: unknown, id: unknown) => {
-    if (
-      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-      typeof id !== 'string' ||
-      id.length === 0
-    ) {
-      throw new Error('软件包卸载参数无效')
-    }
-    try {
-      const result = uninstallRegistryPackage(type, id, {
-        agentDir: AGENT_DIR,
-        runtimeRoot: getRuntimeRoot()
-      })
-      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-      if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
-      await invalidateAgentSession()
-      return result
-    } catch (error) {
-      throw new Error(`卸载软件包失败：${error instanceof Error ? error.message : String(error)}`)
-    }
-  })
+  ipcMain.handle(
+    'packages:uninstall',
+    serializedPackageMutation(async (_, type: unknown, id: unknown) => {
+      if (
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+        typeof id !== 'string' ||
+        id.length === 0
+      ) {
+        throw new Error('软件包卸载参数无效')
+      }
+      try {
+        const result = uninstallRegistryPackage(type, id, {
+          agentDir: AGENT_DIR,
+          runtimeRoot: getRuntimeRoot()
+        })
+        if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+        if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+        await invalidateAgentSession()
+        return result
+      } catch (error) {
+        throw new Error(`卸载软件包失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    })
+  )
   ipcMain.handle('packages:listInstalled', async () => {
     try {
       return listRegistryPackages({ agentDir: AGENT_DIR })
@@ -9856,110 +9874,122 @@ app.whenReady().then(async () => {
       )
     }
   })
-  ipcMain.handle('packages:import', async (_, path: unknown) => {
-    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
-    const installedBefore = new Set(
-      listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
-    )
-    try {
-      const result = await importOfflinePackage(path, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion(),
-        runtimeRoot: getRuntimeRoot(),
-        registries: (await loadPackageRegistries()).registries,
-        preparePackage: async (registry, entry) => {
-          await prepareContentPackageInstall(
-            registry,
-            { type: entry.type, id: entry.id, version: entry.version },
-            officialContentSourceOptions()
-          )
-        },
-        names: await installedPluginNamespace(),
-        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-      })
-      for (const installed of result) {
-        if (
-          !installedBefore.has(`${installed.type}:${installed.id}`) &&
-          installed.type === 'skill'
-        ) {
-          setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+  ipcMain.handle(
+    'packages:import',
+    serializedPackageMutation(async (_, path: unknown) => {
+      if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+      const installedBefore = new Set(
+        listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
+      )
+      try {
+        const result = await importOfflinePackage(path, {
+          agentDir: AGENT_DIR,
+          appVersion: app.getVersion(),
+          runtimeRoot: getRuntimeRoot(),
+          registries: (await loadPackageRegistries()).registries,
+          preparePackage: async (registry, entry) => {
+            await prepareContentPackageInstall(
+              registry,
+              { type: entry.type, id: entry.id, version: entry.version },
+              officialContentSourceOptions()
+            )
+          },
+          names: await installedPluginNamespace(),
+          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+        })
+        for (const installed of result) {
+          if (
+            !installedBefore.has(`${installed.type}:${installed.id}`) &&
+            installed.type === 'skill'
+          ) {
+            setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+          }
+          if (
+            !installedBefore.has(`${installed.type}:${installed.id}`) &&
+            installed.type === 'mcp'
+          ) {
+            setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+            setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+          }
         }
-        if (!installedBefore.has(`${installed.type}:${installed.id}`) && installed.type === 'mcp') {
-          setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
-          setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+        if (result.some((installed) => installed.type === 'wrapper')) {
+          resetWrapperCompositionCatalogCache()
         }
+        await invalidateAgentSession()
+        return result
+      } catch (error) {
+        throw new Error(`导入软件包失败：${error instanceof Error ? error.message : String(error)}`)
       }
-      if (result.some((installed) => installed.type === 'wrapper')) {
-        resetWrapperCompositionCatalogCache()
-      }
-      await invalidateAgentSession()
-      return result
-    } catch (error) {
-      throw new Error(`导入软件包失败：${error instanceof Error ? error.message : String(error)}`)
-    }
-  })
+    })
+  )
   ipcMain.handle('packages:listUpdates', async () =>
     packageUpdateViews(await refreshCachedPackageUpdates())
   )
-  ipcMain.handle('packages:applyUpdate', async (_, type: unknown, id: unknown) => {
-    if (
-      (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-      typeof id !== 'string' ||
-      id.length === 0
-    ) {
-      throw new Error('软件包更新参数无效')
-    }
-    const loaded = await loadPackageRegistries()
-    const updates = listPackageUpdates(loaded.registries, {
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion()
+  ipcMain.handle(
+    'packages:applyUpdate',
+    serializedPackageMutation(async (_, type: unknown, id: unknown) => {
+      if (
+        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
+        typeof id !== 'string' ||
+        id.length === 0
+      ) {
+        throw new Error('软件包更新参数无效')
+      }
+      const loaded = await loadPackageRegistries()
+      const updates = listPackageUpdates(loaded.registries, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion()
+      })
+      const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
+      if (!update) throw new Error(`没有可用更新：${type}:${id}`)
+      const result = await applyPackageUpdate(update, loaded.registries, {
+        preparePackage: async (registry, request) => {
+          await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
+        },
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        runtimeRoot: getRuntimeRoot(),
+        names: await installedPluginNamespace(),
+        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+      })
+      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+      cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion()
+      })
+      await invalidateAgentSession()
+      return result
     })
-    const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
-    if (!update) throw new Error(`没有可用更新：${type}:${id}`)
-    const result = await applyPackageUpdate(update, loaded.registries, {
-      preparePackage: async (registry, request) => {
-        await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
-      },
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion(),
-      runtimeRoot: getRuntimeRoot(),
-      names: await installedPluginNamespace(),
-      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+  )
+  ipcMain.handle(
+    'packages:applyAllUpdates',
+    serializedPackageMutation(async () => {
+      const loaded = await loadPackageRegistries()
+      const updates = listPackageUpdates(loaded.registries, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion()
+      })
+      const result = await applyPackageUpdates(updates, loaded.registries, {
+        preparePackage: async (registry, request) => {
+          await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
+        },
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion(),
+        runtimeRoot: getRuntimeRoot(),
+        names: await installedPluginNamespace(),
+        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+      })
+      if (updates.some((update) => update.type === 'wrapper')) {
+        resetWrapperCompositionCatalogCache()
+      }
+      cachedPackageUpdates = listPackageUpdates(loaded.registries, {
+        agentDir: AGENT_DIR,
+        appVersion: app.getVersion()
+      })
+      await invalidateAgentSession()
+      return result
     })
-    if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion()
-    })
-    await invalidateAgentSession()
-    return result
-  })
-  ipcMain.handle('packages:applyAllUpdates', async () => {
-    const loaded = await loadPackageRegistries()
-    const updates = listPackageUpdates(loaded.registries, {
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion()
-    })
-    const result = await applyPackageUpdates(updates, loaded.registries, {
-      preparePackage: async (registry, request) => {
-        await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
-      },
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion(),
-      runtimeRoot: getRuntimeRoot(),
-      names: await installedPluginNamespace(),
-      build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-    })
-    if (updates.some((update) => update.type === 'wrapper')) {
-      resetWrapperCompositionCatalogCache()
-    }
-    cachedPackageUpdates = listPackageUpdates(loaded.registries, {
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion()
-    })
-    await invalidateAgentSession()
-    return result
-  })
+  )
   ipcMain.handle('enablement:get', async (_, projectCwd?: unknown) => {
     if (projectCwd !== undefined && typeof projectCwd !== 'string') {
       throw new Error('项目目录无效')

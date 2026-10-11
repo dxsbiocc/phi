@@ -9,6 +9,7 @@ import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
+import { useBusyKeys } from '../../../components/catalog/useBusyKeys'
 import { usePackageRemoval } from '../../../components/catalog/usePackageRemoval'
 import { getCatalogPage } from '../../../components/catalog/catalogPaging'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
@@ -71,7 +72,7 @@ export function SkillCatalogDialog({
 }: SkillCatalogDialogProps): React.JSX.Element {
   const [localRegistry, setLocalRegistry] = useState<PackageRegistryView | null>(null)
   const [loadingRegistry, setLoadingRegistry] = useState(false)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const installing = useBusyKeys()
   const [actionError, setActionError] = useState<string | null>(null)
   const [installedDuringSession, setInstalledDuringSession] = useState<Set<string>>(new Set())
   const [removedDuringSession, setRemovedDuringSession] = useState<Set<string>>(new Set())
@@ -207,8 +208,8 @@ export function SkillCatalogDialog({
     const updating = updateIds.has(entry.id)
     const sourceDir = entry.registryDir
     if (updating ? !onApplyUpdate : !onInstallPackage || !sourceDir) return
-    const key = `package:${entry.id}@${entry.version}`
-    setBusyKey(key)
+    if (installing.has(entry.id)) return
+    installing.start(entry.id)
     setActionError(null)
     try {
       if (updating) await onApplyUpdate?.(entry)
@@ -224,34 +225,32 @@ export function SkillCatalogDialog({
     } catch (cause) {
       setActionError(`安装技能包失败：${errorMessage(cause)}`)
     } finally {
-      setBusyKey(null)
+      installing.finish(entry.id)
     }
   }
 
   function renderAction(entry: SkillCatalogPackage): React.JSX.Element {
-    const key = `package:${entry.id}@${entry.version}`
     const installed = installedPackageIds.has(entry.id)
     const updateAvailable = installed && updateIds.has(entry.id)
     const removing = installed && !updateAvailable
-    const busy = busyKey !== null || removal.removingId !== null
-    const label =
-      busyKey === key
-        ? updateAvailable
-          ? '正在更新…'
-          : '正在安装…'
-        : removal.removingId === entry.id
-          ? '正在卸载…'
-          : updateAvailable
-            ? '更新'
-            : installed
-              ? '卸载'
-              : '安装'
+    const working = installing.has(entry.id) || removal.isRemoving(entry.id)
+    const label = installing.has(entry.id)
+      ? updateAvailable
+        ? '正在更新…'
+        : '正在安装…'
+      : removal.isRemoving(entry.id)
+        ? '正在卸载…'
+        : updateAvailable
+          ? '更新'
+          : installed
+            ? '卸载'
+            : '安装'
     return (
       <Button
         size="small"
         variant={removing ? 'outlined' : 'contained'}
         color={removing ? 'error' : 'primary'}
-        disabled={busy || (!removing && (updateAvailable ? !onApplyUpdate : !onInstallPackage))}
+        disabled={working || (!removing && (updateAvailable ? !onApplyUpdate : !onInstallPackage))}
         onClick={() => void (removing ? removal.remove(entry.id) : install(entry))}
         aria-label={`${updateAvailable ? '更新' : installed ? '卸载' : '安装'} ${entry.title}`}
       >
@@ -275,7 +274,7 @@ export function SkillCatalogDialog({
   return (
     <Dialog
       open={open}
-      onClose={busyKey ? undefined : close}
+      onClose={installing.any ? undefined : close}
       aria-label="技能目录"
       maxWidth={false}
       slotProps={{
@@ -312,11 +311,11 @@ export function SkillCatalogDialog({
           rowsPerPage={browser.rowsPerPage}
           searchLabel="搜索技能名称或说明"
           onClose={close}
-          busy={busyKey !== null}
+          busy={installing.any}
           actions={
             <CatalogAddButton
               label="添加技能目录"
-              disabled={loading || busyKey !== null || !onPickRegistryDirectory || !onReadRegistry}
+              disabled={loading || !onPickRegistryDirectory || !onReadRegistry}
               onClick={() => void chooseRegistry()}
             />
           }
