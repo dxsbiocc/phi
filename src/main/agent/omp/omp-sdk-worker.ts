@@ -1,4 +1,8 @@
 import { readDirectSkills } from '../runtime/direct-skills'
+import {
+  mergeRemoteProjectSkills,
+  remoteProjectSkillsValue
+} from './remote-project-skills'
 import { randomUUID } from 'node:crypto'
 import { editDiffString } from '@oh-my-pi/pi-natives'
 import { cpSync, existsSync } from 'node:fs'
@@ -159,7 +163,10 @@ import { resolveRemoteRuntimePromptContext } from '../remote-runtime-context'
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
-import { readRemoteSkillResource } from '../content/remote-skill-resource'
+import {
+  readRemoteSkillResource,
+  type RemoteReadableSkill
+} from '../content/remote-skill-resource'
 import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
 import {
   filterEnabledMainSkills,
@@ -392,6 +399,25 @@ function requestHost(
   })
   return new Promise<unknown>((resolve, reject) => {
     pendingHostRequests.set(id, { resolve, reject })
+  })
+}
+
+function readLoadedSkillResource(
+  path: string,
+  skills: readonly RemoteReadableSkill[],
+  remoteProject?: { sessionId: string; projectId: string }
+): RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult> {
+  return readRemoteSkillResource(path, skills, {
+    ...(remoteProject
+      ? {
+          readRemote: async (uri: string) =>
+            (await requestHost('remoteSkills.readResource', {
+              sessionId: remoteProject.sessionId,
+              projectId: remoteProject.projectId,
+              path: uri
+            })) as RemoteWorkspaceReadResult
+        }
+      : {})
   })
 }
 
@@ -690,16 +716,17 @@ function resourceOptions(params: unknown): DefaultResourceLoaderOptions {
   const cwd = stringValue(record.cwd, process.cwd())
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   const skillFiles = stringArrayValue(record.additionalSkillFiles) ?? []
+  const remoteProjectSkills = remoteProjectSkillsValue(record.remoteProjectSkills)
 
   return {
-    ...(skillFiles.length > 0 && !booleanValue(record.noSkills)
+    ...((skillFiles.length > 0 || remoteProjectSkills.length > 0) &&
+    !booleanValue(record.noSkills)
       ? {
           skillsOverride: (base) => {
             const direct = readDirectSkills(skillFiles)
-            const paths = new Set(direct.map((skill) => skill.filePath))
             return {
               ...base,
-              skills: [...base.skills.filter((skill) => !paths.has(skill.filePath)), ...direct]
+              skills: mergeRemoteProjectSkills(base.skills, direct, remoteProjectSkills)
             }
           }
         }
@@ -1194,7 +1221,7 @@ async function createPhiAgentSession(
     availableTools.set(
       'read',
       buildRemoteWorkspaceReadTool(deps.remoteRead, {
-        readResource: (path) => readRemoteSkillResource(path, skills ?? [])
+        readResource: (path) => readLoadedSkillResource(path, skills ?? [], deps.remoteProject)
       })
     )
   }
@@ -1789,12 +1816,21 @@ async function createSession(params: unknown): Promise<unknown> {
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
           skillsOverride: (base) => {
             const resolved = contentResourceOptions.skillsOverride?.(base) ?? base
-            sessionSkillNames ??= new Set(
-              filterEnabledMainSkills(
-                resolved.skills,
-                mainSkillEnablementOptions(cwd, agentDir, remoteRoot ?? undefined)
-              ).map((skill) => skill.name)
-            )
+            if (!sessionSkillNames) {
+              const enabled = new Set(
+                filterEnabledMainSkills(
+                  resolved.skills,
+                  mainSkillEnablementOptions(cwd, agentDir, remoteRoot ?? undefined)
+                ).map((skill) => skill.name)
+              )
+              sessionSkillNames = new Set(
+                resolved.skills
+                  .filter(
+                    (skill) => skill.source === 'server-project' || enabled.has(skill.name)
+                  )
+                  .map((skill) => skill.name)
+              )
+            }
             return {
               ...resolved,
               skills: resolved.skills.filter((skill) => sessionSkillNames?.has(skill.name))
@@ -2012,7 +2048,12 @@ async function createSession(params: unknown): Promise<unknown> {
         }
       }),
       buildRemoteWorkspaceReadTool(remoteWorkspaceRead!, {
-        readResource: (path) => readRemoteSkillResource(path, resources?.getSkills().skills ?? [])
+        readResource: (path) =>
+          readLoadedSkillResource(
+            path,
+            resources?.getSkills().skills ?? [],
+            remoteProjectIdentity
+          )
       }),
       buildRemoteWorkspaceGlobTool(
         async (input) =>

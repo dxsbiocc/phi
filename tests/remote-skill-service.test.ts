@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync
@@ -15,6 +17,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
 import { RemoteSkillService } from '../src/main/agent/remote-runtime/skill-service'
+import type { RemoteSkillBundleFile } from '../src/main/agent/remote-runtime/types'
+import type { SkillRunResult } from '../src/main/agent/content/skill-run'
 import type { CommandResult } from '../src/main/agent/workspace-host/types'
 import {
   createRemoteRuntimeFixture,
@@ -31,6 +35,8 @@ interface ServiceSetup {
   environments: RemoteEnvironmentService
   environment: { ref: string; envId: string; name: string; added: string[] }
   skillService: RemoteSkillService
+  listRuntimeSessionIds: Array<string | undefined>
+  setSkillsEnabled(enabled: boolean): void
 }
 
 const SKILL_HOST_OPERATION_BASELINE = {
@@ -42,7 +48,12 @@ const SKILL_HOST_OPERATION_BASELINE = {
 const SKILL_HOST_OPERATION_LIMIT = 8
 
 async function services(
-  options: { sleeper?: boolean; noisy?: boolean; maxOutputBytes?: number } = {}
+  options: {
+    sleeper?: boolean
+    noisy?: boolean
+    maxOutputBytes?: number
+    remoteSnapshot?: boolean
+  } = {}
 ): Promise<ServiceSetup> {
   const fixture = createRemoteRuntimeFixture()
   installFakeMicromamba(fixture)
@@ -62,13 +73,66 @@ async function services(
     environment: 'phi:python@1'
   })
   assert.ok('envId' in environment)
+  const remoteFiles = options.remoteSnapshot ? snapshotSkill(skill.dir) : undefined
+  if (options.remoteSnapshot) rmSync(skill.dir, { recursive: true, force: true })
+  const listRuntimeSessionIds: Array<string | undefined> = []
+  let skillsEnabled = true
   const skillService = new RemoteSkillService({
     openWorkspace: async () => fixture.workspace,
     environments,
-    listSkills: async () => [{ ...skill, insidePlugin: false }],
+    listSkills: async (runtimeSessionId) => {
+      listRuntimeSessionIds.push(runtimeSessionId)
+      return skillsEnabled
+        ? [
+            options.remoteSnapshot
+              ? {
+                  ...skill,
+                  filePath: '/server/project/.phi/skills/remote-demo/SKILL.md',
+                  dir: '/server/project/.phi/skills/remote-demo',
+                  insidePlugin: false,
+                  remoteProject: true,
+                  files: remoteFiles
+                }
+              : { ...skill, insidePlugin: false }
+          ]
+        : []
+    },
     ...(options.maxOutputBytes ? { maxOutputBytes: options.maxOutputBytes } : {})
   })
-  return { fixture, skill, environments, environment, skillService }
+  return {
+    fixture,
+    skill,
+    environments,
+    environment,
+    skillService,
+    listRuntimeSessionIds,
+    setSkillsEnabled: (enabled) => {
+      skillsEnabled = enabled
+    }
+  }
+}
+
+function snapshotSkill(root: string, directory = root): RemoteSkillBundleFile[] {
+  const files: RemoteSkillBundleFile[] = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...snapshotSkill(root, path))
+      continue
+    }
+    assert.equal(entry.isFile(), true)
+    const content = readFileSync(path)
+    files.push({
+      relativePath: path
+        .slice(root.length + 1)
+        .split('/')
+        .join('/'),
+      content,
+      contentHash: createHash('sha256').update(content).digest('hex'),
+      executable: Boolean(statSync(path).mode & 0o111)
+    })
+  }
+  return files
 }
 
 function runRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -90,11 +154,13 @@ test('remote skill paths report WorkspaceHost operation baselines', async (t) =>
   const counter = countWorkspaceHostOperations(setup.fixture.workspace)
   try {
     const first = await setup.skillService.run(runRequest({ requestId: 'count-first' }))
+    assertCompletedSkillRun(first)
     assert.equal(first.exitCode, 0)
     const firstUpload = counter.snapshot()
     counter.reset()
 
     const reused = await setup.skillService.run(runRequest({ requestId: 'count-reuse' }))
+    assertCompletedSkillRun(reused)
     assert.equal(reused.exitCode, 0)
     const reuse = counter.snapshot()
     counter.reset()
@@ -153,6 +219,8 @@ test('remote skill_run uploads one content-addressed bundle and reuses it', asyn
     const first = await setup.skillService.run(runRequest())
     const publicationsAfterFirst = publications
     const second = await setup.skillService.run(runRequest({ requestId: 'skill-request-2' }))
+    assertCompletedSkillRun(first)
+    assertCompletedSkillRun(second)
     assert.equal(first.exitCode, 0)
     assert.match(
       first.stdout,
@@ -179,10 +247,80 @@ test('remote skill_run uploads one content-addressed bundle and reuses it', asyn
   }
 })
 
+test('remote skill_run executes a discovered server snapshot without a local source directory', async () => {
+  const setup = await services({ remoteSnapshot: true })
+  try {
+    assert.equal(existsSync(setup.skill.dir), false)
+
+    const result = await setup.skillService.run(
+      runRequest({ requestId: 'server-snapshot-skill-run' })
+    )
+    assertCompletedSkillRun(result)
+
+    assert.equal(result.exitCode, 0)
+    assert.match(result.stdout, /\|hello\|dependency$/u)
+    assert.equal(existsSync(setup.skill.dir), false)
+    assert.deepEqual(setup.listRuntimeSessionIds, ['runtime-1'])
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+test('remote dynamic skill tool executes from the discovered server snapshot', async () => {
+  const setup = await services({ remoteSnapshot: true })
+  try {
+    const listed = await setup.skillService.scriptTools({ runtimeSessionId: 'runtime-1' })
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name),
+      ['remotedemo_json', 'remotedemo_write']
+    )
+    assert.equal(existsSync(setup.skill.dir), false)
+
+    const result = await setup.skillService.scriptTool({
+      requestId: 'server-snapshot-script-tool',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'from-server' }
+    })
+
+    assert.equal(result.ok, true)
+    if (result.ok) {
+      assert.deepEqual(result.output, {
+        message: 'from-server',
+        cwd: setup.fixture.projectRoot
+      })
+    }
+    assert.deepEqual(setup.listRuntimeSessionIds, ['runtime-1', 'runtime-1'])
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
+test('remote dynamic skill tool cannot execute after its trusted source disappears', async () => {
+  const setup = await services({ remoteSnapshot: true })
+  try {
+    await setup.skillService.scriptTools({ runtimeSessionId: 'runtime-1' })
+    setup.setSkillsEnabled(false)
+
+    const result = await setup.skillService.scriptTool({
+      requestId: 'revoked-server-snapshot-script-tool',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'must-not-run' }
+    })
+
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /不再受信任|untrusted/u)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
 test('remote skill micromamba run preserves HOME and PATH without conda contamination', async () => {
   const setup = await services()
   try {
     const result = await setup.skillService.run(runRequest())
+    assertCompletedSkillRun(result)
 
     assert.equal(result.exitCode, 0)
     assertIsolatedSkillInvocation(readFakeMicromambaInvocations(setup.fixture).at(-1), setup)
@@ -217,6 +355,7 @@ test('remote skill failures expose write-capacity guidance for runs and bundle u
     writeFileSync(join(setup.skill.dir, 'scripts', 'json.sh'), '#!/bin/sh\nexit 1\n')
 
     const run = await setup.skillService.run(runRequest({ requestId: 'silent-skill-run' }))
+    assertCompletedSkillRun(run)
     assert.equal(run.exitCode, 1)
     assert.match(run.stderr, /写入空间或文件数配额已用尽/u)
 
@@ -330,6 +469,8 @@ test('concurrent first runs serialize one remote bundle publication', async () =
       setup.skillService.run(runRequest({ requestId: 'parallel-1' })),
       setup.skillService.run(runRequest({ requestId: 'parallel-2' }))
     ])
+    assertCompletedSkillRun(first)
+    assertCompletedSkillRun(second)
     assert.equal(first.exitCode, 0)
     assert.equal(second.exitCode, 0)
     assert.equal(readdirSync(join(setup.fixture.runtimeRoot, 'skills')).length, 1)
@@ -346,6 +487,7 @@ test('remote skill_run cancellation terminates the WorkspaceHost process group',
     const pid = Number(await waitForFile(pidPath))
     setup.skillService.cancel({ requestId: 'skill-request-1' })
     const result = await pending
+    assertCompletedSkillRun(result)
     assert.equal(result.terminated, 'aborted')
     assert.equal(processExists(pid), false)
     assert.equal(existsSync(join(setup.fixture.localAnchor, 'started.pid')), false)
@@ -382,6 +524,7 @@ test('remote skill_run reports bounded output truncation', async () => {
   const setup = await services({ noisy: true, maxOutputBytes: 128 })
   try {
     const result = await setup.skillService.run(runRequest())
+    assertCompletedSkillRun(result)
 
     assert.equal(result.exitCode, 0)
     assert.equal(result.truncated.stdout, true)
@@ -399,6 +542,7 @@ test('remote skill_run passes shell metacharacters as argv without injection', a
     const argument = `$(touch ${marker}); value with spaces`
 
     const result = await setup.skillService.run(runRequest({ args: [argument] }))
+    assertCompletedSkillRun(result)
 
     assert.equal(result.exitCode, 0)
     assert.match(result.stdout, /\$\(touch .*injected\.txt\); value with spaces/u)
@@ -538,6 +682,7 @@ async function assertRepairsBundle(
   )
   const beforeRepair = publications()
   const repaired = await setup.skillService.run(runRequest({ requestId: 'skill-request-repair' }))
+  assertCompletedSkillRun(repaired)
   assert.equal(repaired.exitCode, 0)
   assert.ok(publications() > beforeRepair)
   writeFileSync(
@@ -545,17 +690,25 @@ async function assertRepairsBundle(
     'XXXXXXXXXX'
   )
   const tampered = await setup.skillService.run(runRequest({ requestId: 'skill-request-tamper' }))
+  assertCompletedSkillRun(tampered)
   assert.equal(tampered.exitCode, 0)
   assert.match(tampered.stdout, /dependency$/u)
   chmodSync(join(setup.fixture.runtimeRoot, 'skills', bundle, 'scripts'), 0o755)
   const permissionRepair = await setup.skillService.run(
     runRequest({ requestId: 'skill-request-permission' })
   )
+  assertCompletedSkillRun(permissionRepair)
   assert.equal(permissionRepair.exitCode, 0)
   assert.equal(
     statSync(join(setup.fixture.runtimeRoot, 'skills', bundle, 'scripts')).mode & 0o777,
     0o700
   )
+}
+
+function assertCompletedSkillRun(
+  result: Awaited<ReturnType<RemoteSkillService['run']>>
+): asserts result is SkillRunResult {
+  assert.equal('notReady' in result, false, 'expected the remote environment to be ready')
 }
 
 async function waitForFile(path: string): Promise<string> {

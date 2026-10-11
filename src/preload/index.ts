@@ -120,7 +120,11 @@ import type {
   EnablementScope,
   EnablementSnapshot
 } from '../shared/enablementTypes'
-import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type {
+  RemoteProjectSkillTrustRequest,
+  SkillContent,
+  SkillSummary
+} from '../shared/skillTypes'
 import type {
   FeaturedMcpConnector,
   McpConnectorSetupProgress,
@@ -1051,6 +1055,8 @@ type RendererAuthApi = {
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
+  trustRemoteProjectSkill: (input: RemoteProjectSkillTrustRequest) => Promise<SkillSummary[]>
+  revokeRemoteProjectSkillTrust: (input: RemoteProjectSkillTrustRequest) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   trustRemoteProjectAgent: (input: RemoteProjectAgentTrustRequest) => Promise<PromptAgentSummary[]>
   revokeRemoteProjectAgentTrust: (
@@ -1804,6 +1810,10 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('skills:setDisabled', filePath, disabled, cwd),
   deleteSkill: (filePath: string, cwd?: string): Promise<SkillSummary[]> =>
     ipcRenderer.invoke('skills:delete', filePath, cwd),
+  trustRemoteProjectSkill: (input: RemoteProjectSkillTrustRequest): Promise<SkillSummary[]> =>
+    ipcRenderer.invoke('skills:trustRemoteProject', input),
+  revokeRemoteProjectSkillTrust: (input: RemoteProjectSkillTrustRequest): Promise<SkillSummary[]> =>
+    ipcRenderer.invoke('skills:revokeRemoteProjectTrust', input),
   listPromptAgents: (cwd?: string): Promise<PromptAgentSummary[]> =>
     ipcRenderer.invoke('agents:list', cwd),
   trustRemoteProjectAgent: (input: RemoteProjectAgentTrustRequest): Promise<PromptAgentSummary[]> =>

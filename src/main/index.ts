@@ -260,6 +260,15 @@ import {
   type ConfirmBuildRequest,
   type PresentArtifactsRequest
 } from './agent/content/skill-host'
+import {
+  loadRemoteProjectSkillCatalog,
+  readRemoteProjectSkillContent,
+  readRemoteProjectSkillResource,
+  revokeRemoteProjectSkillTrust,
+  trustRemoteProjectSkill,
+  type RemoteProjectSkillCatalog,
+  type RemoteProjectSkillContext
+} from './agent/content/remote-project-skill-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import { collectGarbage } from './agent/envs/gc'
 import { cleanupInactiveMcpVersions } from './agent/packages/mcp-version-cleanup'
@@ -287,6 +296,7 @@ import {
   getCoreAuthoringSkillDir,
   openRuntimeSessionManager,
   readAutoCompactionDefaults,
+  type Skill as RuntimeSkill,
   type ModelRuntime,
   type RuntimeModel,
   type RuntimeResourceLoader
@@ -2068,11 +2078,11 @@ const remoteRuntimeController = new RemoteRuntimeController({
   resolveTarget: directRemoteRuntimeTarget,
   confirmEnvironment: (request) => confirmEnvironmentRequest(request),
   resolveBaseEnvironment: (ref, pluginId) => resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
-  listSkills: async () => {
+  listSkills: async (_runtimeSessionId, target) => {
     const plugins = new Map(
       loadedPlugins({ agentDir: AGENT_DIR }).map((plugin) => [plugin.id, plugin])
     )
-    return (await listGlobalSkills())
+    const globalSkills = (await listGlobalSkills())
       .filter((skill) => skill.enabled)
       .map((skill) => {
         const plugin = skill.sourceId ? plugins.get(skill.sourceId) : undefined
@@ -2090,6 +2100,18 @@ const remoteRuntimeController = new RemoteRuntimeController({
             : {})
         }
       })
+    if (!target) return globalSkills
+    const projectCatalog = await loadRemoteProjectSkillCatalog({
+      sessionId: target.sessionId,
+      projectId: target.projectId,
+      cwd: remoteProjectAnchorPath(target.projectId, AGENT_DIR),
+      agentDir: AGENT_DIR
+    })
+    const projectNames = new Set(projectCatalog.sources.map((skill) => skill.name))
+    return [
+      ...projectCatalog.sources,
+      ...globalSkills.filter((skill) => !projectNames.has(skill.name))
+    ]
   }
 })
 
@@ -2369,6 +2391,14 @@ function remoteRequestProjectId(params: unknown): string {
   const projectId = (params as Record<string, unknown>).projectId
   return typeof projectId === 'string' ? projectId : ''
 }
+
+function remoteSkillContextFromRequest(params: unknown): RemoteProjectSkillContext {
+  if (!isRecord(params)) throw new Error('远程项目 Skill 读取请求无效')
+  const sessionId = optionalStringField(params, 'sessionId')
+  const projectId = optionalStringField(params, 'projectId')
+  if (!sessionId || !projectId) throw new Error('远程项目 Skill 读取请求无效')
+  return { sessionId, projectId, cwd: '', agentDir: AGENT_DIR }
+}
 async function runWrapperResultRead<T>(
   request: unknown,
   read: (request: unknown, options: { signal: AbortSignal }) => Promise<T>
@@ -2452,6 +2482,15 @@ getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
     })
   )
 )
+getOmpBridge().registerHostHandler('remoteSkills.readResource', (params) => {
+  if (!isRecord(params) || typeof params.path !== 'string') {
+    throw new Error('远程项目 Skill 读取请求无效')
+  }
+  const context = remoteSkillContextFromRequest(params)
+  return remoteConnectionTracker.observe(context.projectId, () =>
+    readRemoteProjectSkillResource(context, params.path as string)
+  )
+})
 getOmpBridge().registerHostHandler('remoteWorkspace.glob', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteGlob(params, { connectHost: connectRemoteWorkspaceHost })
@@ -5196,26 +5235,23 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
 
     let loadedSkills = loadedSkillNamesBySession.get(phiSessionId)
     if (!loadedSkills) {
-      if (
-        project?.location?.kind === 'ssh' ||
-        isRemoteProjectAnchorPath(runSnapshot.cwd, AGENT_DIR)
-      ) {
+      try {
+        loadedSkills = (
+          isRemoteResourceScope(runSnapshot.cwd)
+            ? await listRemoteProjectSkills(runSnapshot.cwd)
+            : await listSkills(runSnapshot.cwd)
+        )
+          .filter((skill) => skill.enabled)
+          .map((skill) => skill.name)
+          .sort()
+      } catch (error) {
         loadedSkills = []
-      } else {
-        try {
-          loadedSkills = (await listSkills(runSnapshot.cwd))
-            .filter((skill) => skill.enabled)
-            .map((skill) => skill.name)
-            .sort()
-        } catch (error) {
-          loadedSkills = []
-          writeAppLog({
-            event: 'session_loaded_skills_unavailable',
-            level: 'warn',
-            sessionId: phiSessionId,
-            metadata: { error: error instanceof Error ? error.message : String(error) }
-          })
-        }
+        writeAppLog({
+          event: 'session_loaded_skills_unavailable',
+          level: 'warn',
+          sessionId: phiSessionId,
+          metadata: { error: error instanceof Error ? error.message : String(error) }
+        })
       }
       loadedSkillNamesBySession.set(phiSessionId, loadedSkills)
     }
@@ -6067,6 +6103,64 @@ function remoteAgentProjectContext(cwd?: string): RemoteAgentProjectContext {
   }
 }
 
+function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
+  const target = cwd ?? currentCwd
+  const remote = currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(currentCwd)
+  if (!remote) throw new Error('远程项目 Skill 请求缺少有效的当前项目会话')
+  return {
+    sessionId: remote.sessionId,
+    projectId: remote.project.id,
+    cwd: target,
+    agentDir: AGENT_DIR
+  }
+}
+
+async function listRemoteProjectSkills(
+  cwd?: string
+): Promise<Awaited<ReturnType<typeof listSkills>>> {
+  const [globalSkills, projectCatalog] = await Promise.all([
+    listGlobalSkills(),
+    loadRemoteProjectSkillCatalog(remoteSkillProjectContext(cwd))
+  ])
+  const trustedNames = new Set(projectCatalog.sources.map((skill) => skill.name))
+  return [
+    ...globalSkills.filter((skill) => !trustedNames.has(skill.name)),
+    ...projectCatalog.summaries
+  ]
+}
+
+function remoteRuntimeSkillDefinitions(catalog: RemoteProjectSkillCatalog): RuntimeSkill[] {
+  return catalog.sources.flatMap((source) => {
+    const entry = catalog.summaries.find(
+      (candidate) =>
+        candidate.relativePath === source.filePath && candidate.trustState === 'trusted'
+    )
+    const discovered = catalog.entries.find(
+      (candidate) => candidate.relativePath === source.filePath
+    )
+    if (!entry?.relativePath || !entry.contentHash) return []
+    return [
+      {
+        name: entry.name,
+        description: entry.description,
+        filePath: entry.filePath,
+        ...(discovered?.disableModelInvocation ? { disableModelInvocation: true } : {}),
+        sourceInfo: {
+          source: 'server-project',
+          scope: 'project',
+          origin: 'server-project',
+          path: entry.relativePath,
+          baseDir: entry.filePath.slice(0, -'/SKILL.md'.length)
+        },
+        remoteProject: {
+          relativePath: entry.relativePath,
+          contentHash: entry.contentHash
+        }
+      }
+    ]
+  })
+}
+
 function checkedRemoteAgentTrustMutation(value: unknown): {
   cwd: string
   relativePath: string
@@ -6083,6 +6177,27 @@ function checkedRemoteAgentTrustMutation(value: unknown): {
     !/^[a-f0-9]{64}$/.test(value.contentHash)
   ) {
     throw new Error('远程项目 agent 信任请求无效')
+  }
+  return value as { cwd: string; relativePath: string; contentHash: string }
+}
+
+function checkedRemoteSkillTrustMutation(value: unknown): {
+  cwd: string
+  relativePath: string
+  contentHash: string
+} {
+  if (!isRecord(value)) throw new Error('远程项目 Skill 信任请求无效')
+  if (
+    Object.keys(value).some(
+      (key) => key !== 'cwd' && key !== 'relativePath' && key !== 'contentHash'
+    ) ||
+    typeof value.cwd !== 'string' ||
+    typeof value.relativePath !== 'string' ||
+    !/^\.(?:phi|omp|pi)\/skills\/[a-z0-9][a-z0-9-]{0,63}\/SKILL\.md$/u.test(value.relativePath) ||
+    typeof value.contentHash !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.contentHash)
+  ) {
+    throw new Error('远程项目 Skill 信任请求无效')
   }
   return value as { cwd: string; relativePath: string; contentHash: string }
 }
@@ -7547,6 +7662,14 @@ async function getAgentSession(
             agentDir: AGENT_DIR,
             bundledDir: getBundledAgentsDir()
           })
+      const remoteSkillCatalog = remoteProject
+        ? await loadRemoteProjectSkillCatalog({
+            sessionId: sessionManifest?.sessionId ?? '',
+            projectId: remoteProject.projectId,
+            cwd: creationSnapshot.cwd,
+            agentDir: AGENT_DIR
+          })
+        : undefined
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
           event:
@@ -7760,7 +7883,10 @@ async function getAgentSession(
                 noExtensions: true,
                 noPromptTemplates: true,
                 noThemes: true,
-                noContextFiles: true
+                noContextFiles: true,
+                remoteProjectSkills: remoteSkillCatalog
+                  ? remoteRuntimeSkillDefinitions(remoteSkillCatalog)
+                  : []
               }
             : {}),
           ...(appendSystemPrompt.length > 0 ? { appendSystemPrompt } : {}),
@@ -10085,10 +10211,15 @@ app.whenReady().then(async () => {
     return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
   })
   ipcMain.handle('skills:list', async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listGlobalSkills() : listSkills(cwd ?? currentCwd)
+    isRemoteResourceScope(cwd) ? listRemoteProjectSkills(cwd) : listSkills(cwd ?? currentCwd)
   )
   ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
+      const context = remoteSkillProjectContext(cwd)
+      const catalog = await loadRemoteProjectSkillCatalog(context)
+      if (catalog.summaries.some((skill) => skill.filePath === filePath)) {
+        return readRemoteProjectSkillContent(context, filePath)
+      }
       return readGlobalSkillContent(filePath)
     }
     return readSkillContent(filePath, cwd ?? currentCwd)
@@ -10107,6 +10238,26 @@ app.whenReady().then(async () => {
       throw new Error('远程项目 Skills 暂不可用')
     }
     return deleteSkill(filePath, cwd ?? currentCwd)
+  })
+  ipcMain.handle('skills:trustRemoteProject', async (_, input: unknown) => {
+    const request = checkedRemoteSkillTrustMutation(input)
+    const context = remoteSkillProjectContext(request.cwd)
+    await trustRemoteProjectSkill(context, {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash
+    })
+    await invalidateAgentSession()
+    return listRemoteProjectSkills(request.cwd)
+  })
+  ipcMain.handle('skills:revokeRemoteProjectTrust', async (_, input: unknown) => {
+    const request = checkedRemoteSkillTrustMutation(input)
+    const context = remoteSkillProjectContext(request.cwd)
+    await revokeRemoteProjectSkillTrust(context, {
+      relativePath: request.relativePath,
+      contentHash: request.contentHash
+    })
+    await invalidateAgentSession()
+    return listRemoteProjectSkills(request.cwd)
   })
   ipcMain.handle('agents:list', async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listRemotePromptAgents(cwd) : listPromptAgents(cwd ?? currentCwd)

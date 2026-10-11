@@ -402,7 +402,6 @@ function AppWorkspaceSidebarImpl({
         activeSkillId={activeSkillId}
         onSelectSkill={(skill) => navigate(() => onOpenSkill(skill))}
         onOpenCatalog={() => navigate(onOpenSkillCatalog)}
-        notice={isRemoteProject ? '远程项目级 Skills 暂未接通；当前仅显示全局 Skills。' : undefined}
       />
     ) : mode === 'mcp' ? (
       <McpSidebar

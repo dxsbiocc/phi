@@ -116,7 +116,11 @@ import type {
   EnablementScope,
   EnablementSnapshot
 } from '../shared/enablementTypes'
-import type { SkillContent, SkillSummary } from '../shared/skillTypes'
+import type {
+  RemoteProjectSkillTrustRequest,
+  SkillContent,
+  SkillSummary
+} from '../shared/skillTypes'
 import type {
   FeaturedMcpConnector,
   McpConnectorSetupProgress,
@@ -1136,6 +1140,10 @@ declare global {
         cwd?: string
       ) => Promise<SkillSummary[]>
       deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
+      trustRemoteProjectSkill: (input: RemoteProjectSkillTrustRequest) => Promise<SkillSummary[]>
+      revokeRemoteProjectSkillTrust: (
+        input: RemoteProjectSkillTrustRequest
+      ) => Promise<SkillSummary[]>
       listPromptAgents: (cwd?: string) => Promise<PreloadPromptAgentSummary[]>
       trustRemoteProjectAgent: (
         input: PreloadRemoteProjectAgentTrustRequest

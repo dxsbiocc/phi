@@ -24,10 +24,22 @@ export interface SkillSummary {
   environment?: string
   /** Declared `metadata.version` from the skill file. */
   version?: string
+  /** Present only for a Skill discovered in the selected SSH project. */
+  trustState?: PromptAgentTrustState
+  available?: boolean
+  diagnostics?: string[]
+  relativePath?: string
+  contentHash?: string
 }
 
 export interface SkillContent {
   filePath: string
   content: string
 }
+export interface RemoteProjectSkillTrustRequest {
+  cwd: string
+  relativePath: string
+  contentHash: string
+}
 import type { ResourceIconRef } from './resourceIconTypes'
+import type { PromptAgentTrustState } from './promptAgentTypes'

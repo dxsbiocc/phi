@@ -195,11 +195,13 @@ export function SkillSidebar({
                     selected={selectedSkill?.id === skill.id}
                     busy={busySkillId === skill.id}
                     disabledReason={
-                      skill.core
-                        ? '核心技能由 Phi 依赖，不可关闭'
-                        : skill.sourceCategory === 'plugin'
-                          ? '由所属插件管理，请在插件中切换'
-                          : undefined
+                      skill.trustState
+                        ? '服务器项目 Skill 通过详情页的信任按钮管理'
+                        : skill.core
+                          ? '核心技能由 Phi 依赖，不可关闭'
+                          : skill.sourceCategory === 'plugin'
+                            ? '由所属插件管理，请在插件中切换'
+                            : undefined
                     }
                     onSelect={() => onSelectSkill(skill)}
                     onEnabledChange={

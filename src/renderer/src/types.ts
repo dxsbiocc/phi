@@ -716,7 +716,6 @@ export interface AnalysisNotebookFormatResult {
 }
 
 type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi
-
 export type RendererApi = RendererApiFoundation & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
@@ -962,6 +961,8 @@ export type RendererApi = RendererApiFoundation & {
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
+  trustRemoteProjectSkill: (input: RemoteProjectAgentTrustRequest) => Promise<SkillSummary[]>
+  revokeRemoteProjectSkillTrust: (input: RemoteProjectAgentTrustRequest) => Promise<SkillSummary[]>
   listPromptAgents: (cwd?: string) => Promise<PromptAgentSummary[]>
   trustRemoteProjectAgent: (input: RemoteProjectAgentTrustRequest) => Promise<PromptAgentSummary[]>
   revokeRemoteProjectAgentTrust: (

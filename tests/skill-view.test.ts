@@ -153,6 +153,41 @@ test('skill detail centers capped content while retaining scrolling and responsi
   assert.match(markup, /padding-left:40px;padding-right:40px;/)
 })
 
+test('remote project skill detail reuses the server trust interaction instead of local controls', () => {
+  const remote = skill({
+    id: 'ssh://cluster/srv/project/.phi/skills/server-demo/SKILL.md',
+    name: 'server-demo',
+    description: 'Server project fixture',
+    filePath: 'ssh://cluster/srv/project/.phi/skills/server-demo/SKILL.md',
+    source: 'server-project',
+    scope: 'project',
+    sourceCategory: 'project',
+    sourceCategoryLabel: '项目',
+    core: false,
+    enabled: false,
+    disabled: true,
+    trustState: 'pending',
+    available: false,
+    diagnostics: ['来自服务器项目，未信任'],
+    relativePath: '.phi/skills/server-demo/SKILL.md',
+    contentHash: 'a'.repeat(64)
+  })
+  const markup = themed(
+    createElement(SkillDetail, {
+      selectedSkill: remote,
+      projectCwd: '/local/remote-project-anchor',
+      onSetGlobalEnabled: () => undefined,
+      onDeleteSkill: () => undefined
+    })
+  )
+
+  assert.match(markup, /服务器项目/)
+  assert.match(markup, /未信任/)
+  assert.match(markup, />信任</)
+  assert.doesNotMatch(markup, /全局启用/)
+  assert.doesNotMatch(markup, /卸载技能 server-demo/)
+})
+
 test('skill sidebar keeps management actions out of the browsing list', () => {
   const markup = renderSkillSidebar()
 

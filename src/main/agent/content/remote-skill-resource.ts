@@ -11,15 +11,35 @@ export type RemoteReadableSkill = {
   filePath: string
   baseDir: string
   containRoot?: string
+  source?: string
+  sourceInfo?: { source?: string }
+}
+
+export type RemoteSkillResourceReadOptions = {
+  readRemote?: (uri: string) => RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
 }
 
 export function readRemoteSkillResource(
   uri: string,
   skills: readonly RemoteReadableSkill[]
-): RemoteWorkspaceReadResult {
+): RemoteWorkspaceReadResult
+export function readRemoteSkillResource(
+  uri: string,
+  skills: readonly RemoteReadableSkill[],
+  options: RemoteSkillResourceReadOptions
+): RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
+export function readRemoteSkillResource(
+  uri: string,
+  skills: readonly RemoteReadableSkill[],
+  options: RemoteSkillResourceReadOptions = {}
+): RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult> {
   const parsed = parseSkillUri(uri)
   const skill = skills.find((candidate) => candidate.name === parsed.name)
   if (!skill) throw new Error(`Unknown skill: ${parsed.name}`)
+  if (skill.source === 'server-project' || skill.sourceInfo?.source === 'server-project') {
+    if (!options.readRemote) throw new Error('远程会话没有加载该服务器项目 Skill 资源')
+    return options.readRemote(uri)
+  }
   const target = parsed.relativePath
     ? resolveSkillPath(skill, parsed.relativePath)
     : containedRealPath(skill.containRoot ?? skill.baseDir, skill.filePath)

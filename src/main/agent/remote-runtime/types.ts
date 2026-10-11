@@ -39,6 +39,13 @@ export interface RemoteEnvironmentHandle {
   channels: string[]
 }
 
+export interface RemoteSkillBundleFile {
+  relativePath: string
+  content: Buffer
+  contentHash: string
+  executable: boolean
+}
+
 export interface RemoteSkillSource {
   name: string
   filePath: string
@@ -47,4 +54,6 @@ export interface RemoteSkillSource {
   pluginId?: string
   toolPrefix?: string
   remoteUnsupportedReason?: string
+  files?: readonly RemoteSkillBundleFile[]
+  remoteProject?: boolean
 }

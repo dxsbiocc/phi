@@ -370,6 +370,7 @@ type HarnessResult = {
   createdPhiSessions: Array<Record<string, unknown>>
   remoteConnectionChecks: Array<{ sessionId: string; projectId: string }>
   remoteAgentMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
+  remoteSkillMutations: Array<{ operation: 'trust' | 'revoke'; input: Record<string, unknown> }>
   wrapperJobOptions: Record<string, unknown>
   remoteResolverProjectIds: string[]
   remoteDoctorCalls: Array<{ hostProfileId: string; remotePath?: string; options?: unknown }>
@@ -494,6 +495,10 @@ async function harness(
   const createdPhiSessions: Array<Record<string, unknown>> = []
   const remoteConnectionChecks: Array<{ sessionId: string; projectId: string }> = []
   const remoteAgentMutations: Array<{
+    operation: 'trust' | 'revoke'
+    input: Record<string, unknown>
+  }> = []
+  const remoteSkillMutations: Array<{
     operation: 'trust' | 'revoke'
     input: Record<string, unknown>
   }> = []
@@ -2993,6 +2998,26 @@ async function harness(
         remoteAgentMutations.push({ operation: 'revoke', input })
       }
     },
+    './agent/content/remote-project-skill-service': {
+      loadRemoteProjectSkillCatalog: async () => ({
+        sources: [],
+        entries: [],
+        diagnostics: [],
+        summaries: []
+      }),
+      readRemoteProjectSkillContent: async (): Promise<never> => {
+        throw new Error('服务器项目 Skill fixture 不存在')
+      },
+      readRemoteProjectSkillResource: async (): Promise<never> => {
+        throw new Error('服务器项目 Skill fixture 不存在')
+      },
+      trustRemoteProjectSkill: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteSkillMutations.push({ operation: 'trust', input })
+      },
+      revokeRemoteProjectSkillTrust: async (_context: unknown, input: Record<string, unknown>) => {
+        remoteSkillMutations.push({ operation: 'revoke', input })
+      }
+    },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
@@ -3828,6 +3853,7 @@ async function harness(
     createdPhiSessions,
     remoteConnectionChecks,
     remoteAgentMutations,
+    remoteSkillMutations,
     wrapperJobOptions,
     remoteResolverProjectIds,
     remoteDoctorCalls,
@@ -5941,6 +5967,29 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
       input: {
         relativePath: agentTrustRequest.relativePath,
         contentHash: agentTrustRequest.contentHash
+      }
+    }
+  ])
+  const skillTrustRequest = {
+    cwd: current.cwd,
+    relativePath: '.phi/skills/server-demo/SKILL.md',
+    contentHash: 'b'.repeat(64)
+  }
+  await app.invoke('skills:trustRemoteProject', skillTrustRequest)
+  await app.invoke('skills:revokeRemoteProjectTrust', skillTrustRequest)
+  assert.deepEqual(app.remoteSkillMutations, [
+    {
+      operation: 'trust',
+      input: {
+        relativePath: skillTrustRequest.relativePath,
+        contentHash: skillTrustRequest.contentHash
+      }
+    },
+    {
+      operation: 'revoke',
+      input: {
+        relativePath: skillTrustRequest.relativePath,
+        contentHash: skillTrustRequest.contentHash
       }
     }
   ])

@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+
 import type { ScriptTool, ValidatedSkill } from '../content/skill'
 import { scriptToolsOf, validateSkill } from '../content/skill'
 import { scriptToolApproval } from '../content/script-tools'
@@ -10,7 +14,11 @@ import { buildRemoteMicromambaHostCommand } from '../workspace-host/remote-micro
 import type { CommandResult, HostCommand } from '../workspace-host/types'
 import { RemoteEnvironmentService } from './environment-service'
 import { remoteScriptArguments } from './script-arguments'
-import { prepareRemoteSkillBundle } from './skill-bundle'
+import {
+  prepareRemoteSkillBundle,
+  prepareRemoteSkillBundleFiles,
+  validateRemoteSkillBundleFiles
+} from './skill-bundle'
 import { diagnoseRemoteCommandFailure, type RemoteWriteDiagnosis } from './write-diagnostics'
 import {
   checkedRawArgs,
@@ -34,6 +42,7 @@ import type {
   OpenRemoteRuntimeWorkspace,
   RemoteEnvironmentHandle,
   RemoteRuntimeWorkspace,
+  RemoteSkillBundleFile,
   RemoteSkillSource
 } from './types'
 
@@ -44,39 +53,52 @@ const WRITE_PROBE_OUTPUT_BYTES = 8 * 1024
 interface RememberedTool {
   skill: ValidatedSkill
   tool: ScriptTool
+  source: RemoteSkillSource
 }
 
 export interface RemoteSkillServiceOptions {
   openWorkspace: OpenRemoteRuntimeWorkspace
   environments: RemoteEnvironmentService
-  listSkills: () => Promise<readonly RemoteSkillSource[]>
+  listSkills: (runtimeSessionId?: string) => Promise<readonly RemoteSkillSource[]>
   timeoutMs?: number
   maxOutputBytes?: number
 }
 
 export class RemoteSkillService {
   private readonly remembered = new Map<string, RememberedTool>()
+  private readonly latestRemembered = new Map<string, RememberedTool>()
   private readonly runs = new Map<string, AbortController>()
   private readonly cancelled = new Set<string>()
 
   constructor(private readonly options: RemoteSkillServiceOptions) {}
 
-  async scriptTools(): Promise<{ tools: ScriptToolDescriptor[]; problems: string[] }> {
+  async scriptTools(
+    params?: unknown
+  ): Promise<{ tools: ScriptToolDescriptor[]; problems: string[] }> {
     const tools: ScriptToolDescriptor[] = []
     const problems: string[] = []
     const seen = new Set<string>()
-    for (const source of await this.options.listSkills()) {
-      const skill = this.validateSource(source, problems)
-      const prefix = source.toolPrefix ?? skill?.phi?.toolPrefix
-      if (!skill || !prefix) continue
-      for (const tool of scriptToolsOf(skill, { prefix })) {
+    const runtimeSessionId = field(params, 'runtimeSessionId')
+    for (const source of await this.options.listSkills(runtimeSessionId)) {
+      const prepared = this.withValidatedSource(source, problems, (skill) => {
+        const prefix = source.toolPrefix ?? skill.phi?.toolPrefix
+        return { skill, tools: prefix ? scriptToolsOf(skill, { prefix }) : [] }
+      })
+      if (!prepared) continue
+      for (const tool of prepared.tools) {
         if (seen.has(tool.name)) {
           problems.push(`duplicate script tool name '${tool.name}'`)
           continue
         }
         seen.add(tool.name)
-        this.remembered.set(tool.name, { skill, tool })
-        tools.push(descriptor(tool, skill.name))
+        const remembered = {
+          skill: prepared.skill,
+          tool,
+          source
+        }
+        this.remembered.set(toolKey(runtimeSessionId, tool.name), remembered)
+        this.latestRemembered.set(tool.name, remembered)
+        tools.push(descriptor(tool, prepared.skill.name))
       }
     }
     return { tools, problems }
@@ -87,12 +109,20 @@ export class RemoteSkillService {
     const controller = this.begin(input.requestId)
     let workspace: RemoteRuntimeWorkspace | undefined
     try {
-      const skill = await this.resolveSkill(input.skill, input.allowedSkills)
+      const resolved = await this.resolveSkill(
+        input.skill,
+        input.allowedSkills,
+        input.runtimeSessionId
+      )
       workspace = await this.options.openWorkspace(input.runtimeSessionId, controller.signal)
-      const bundle = await this.prepareBundle(skill.dir, workspace, controller.signal)
+      const bundle = await this.prepareBundle(resolved.source, workspace, controller.signal)
       const script = checkedScript(bundle, input.script)
       const cwd = await projectCwd(workspace, input.runCwd)
-      const selected = await this.environmentFor(workspace, skill, input.sessionEnvironment)
+      const selected = await this.environmentFor(
+        workspace,
+        resolved.skill,
+        input.sessionEnvironment
+      )
       if (!selected.environment) return notReady(selected.ref)
       const args = checkedRawArgs(input.args, workspace, bundle)
       const command: [string, 'run', ...string[]] = [
@@ -128,10 +158,13 @@ export class RemoteSkillService {
     const controller = this.begin(input.requestId)
     let workspace: RemoteRuntimeWorkspace | undefined
     try {
-      const remembered = this.remembered.get(input.tool)
+      const remembered =
+        this.remembered.get(toolKey(input.runtimeSessionId, input.tool)) ??
+        this.remembered.get(toolKey(undefined, input.tool))
       if (!remembered) throw new Error(`unknown script tool '${input.tool}'`)
+      const current = await this.refreshRemoteSource(input.runtimeSessionId, remembered)
       workspace = await this.options.openWorkspace(input.runtimeSessionId, controller.signal)
-      return await this.executeScriptTool(workspace, remembered, input, controller.signal)
+      return await this.executeScriptTool(workspace, current, input, controller.signal)
     } catch (error) {
       if (controller.signal.aborted) return { ok: false, error: 'aborted', warnings: [] }
       return { ok: false, error: errorText(error), warnings: [] }
@@ -150,20 +183,35 @@ export class RemoteSkillService {
 
   approvalFor(toolName: string, input: unknown): 'exec' | 'read' | 'write' | undefined {
     if (toolName === 'skill_run') return 'exec'
-    const remembered = this.remembered.get(toolName)
+    const runtimeSessionId = field(input, 'runtimeSessionId')
+    const remembered =
+      this.remembered.get(toolKey(runtimeSessionId, toolName)) ??
+      this.remembered.get(toolKey(undefined, toolName)) ??
+      (!runtimeSessionId ? this.latestRemembered.get(toolName) : undefined)
     return remembered ? scriptToolApproval(remembered.tool, input) : undefined
   }
 
-  private validateSource(
+  private withValidatedSource<T>(
     source: RemoteSkillSource,
-    problems: string[]
-  ): ValidatedSkill | undefined {
+    problems: string[],
+    consume: (skill: ValidatedSkill) => T
+  ): T | undefined {
     if (source.remoteUnsupportedReason) {
       problems.push(`${source.name}: ${source.remoteUnsupportedReason}`)
       return undefined
     }
+    let temporaryRoot: string | undefined
     try {
-      const result = validateSkill(source.dir, {
+      let dir = source.dir
+      if (source.files) {
+        const files = validateRemoteSkillBundleFiles(source.files)
+        temporaryRoot = mkdtempSync(join(tmpdir(), 'phi-remote-skill-validation-'))
+        dir = join(temporaryRoot, 'skill')
+        materializeSkillSnapshot(dir, files)
+      } else if (source.remoteProject) {
+        throw new Error('服务器项目 Skill 缺少已发现的文件快照；没有回退到本机。')
+      }
+      const result = validateSkill(dir, {
         insidePlugin: source.insidePlugin,
         expectedName: source.name
       })
@@ -174,7 +222,7 @@ export class RemoteSkillService {
           )
           return undefined
         }
-        return result.skill
+        return consume(result.skill)
       }
       const problem = result.errors[0]
       problems.push(
@@ -184,19 +232,27 @@ export class RemoteSkillService {
       )
     } catch (error) {
       problems.push(`invalid skill '${source.name}': ${errorText(error)}`)
+    } finally {
+      if (temporaryRoot) rmSync(temporaryRoot, { recursive: true, force: true })
     }
     return undefined
   }
 
-  private async resolveSkill(name: string, allowed?: readonly string[]): Promise<ValidatedSkill> {
+  private async resolveSkill(
+    name: string,
+    allowed: readonly string[] | undefined,
+    runtimeSessionId: string
+  ): Promise<{ skill: ValidatedSkill; source: RemoteSkillSource }> {
     if (allowed && !allowed.includes(name)) throw new Error(`skill '${name}' is disabled`)
-    const source = (await this.options.listSkills()).find((candidate) => candidate.name === name)
+    const source = (await this.options.listSkills(runtimeSessionId)).find(
+      (candidate) => candidate.name === name
+    )
     if (!source) throw new Error(`unknown skill '${name}'`)
     if (source.remoteUnsupportedReason) throw new Error(source.remoteUnsupportedReason)
     const problems: string[] = []
-    const skill = this.validateSource(source, problems)
+    const skill = this.withValidatedSource(source, problems, (value) => value)
     if (!skill) throw new Error(problems[0] ?? `invalid skill '${name}'`)
-    return skill
+    return { skill, source }
   }
 
   private async environmentFor(
@@ -211,6 +267,22 @@ export class RemoteSkillService {
     const choice = resolveSkillEnvironment(skill, sessionEnvironment)
     const environment = await this.options.environments.resolveInWorkspace(choice.ref, workspace)
     return { ref: choice.ref, warnings: choice.warnings, ...(environment ? { environment } : {}) }
+  }
+
+  private async refreshRemoteSource(
+    runtimeSessionId: string,
+    remembered: RememberedTool
+  ): Promise<RememberedTool> {
+    if (!remembered.source.remoteProject) return remembered
+    const source = (await this.options.listSkills(runtimeSessionId)).find(
+      (candidate) => candidate.remoteProject && candidate.name === remembered.source.name
+    )
+    if (!source?.files || !sameSkillSnapshot(remembered.source.files, source.files)) {
+      throw new Error(
+        `服务器项目 Skill '${remembered.source.name}' 不再受信任或内容已变化；请刷新并重新信任后再运行。`
+      )
+    }
+    return { ...remembered, source }
   }
 
   private execute(
@@ -255,12 +327,14 @@ export class RemoteSkillService {
   }
 
   private async prepareBundle(
-    skillDir: string,
+    source: RemoteSkillSource,
     workspace: RemoteRuntimeWorkspace,
     signal: AbortSignal
   ): ReturnType<typeof prepareRemoteSkillBundle> {
     try {
-      return await prepareRemoteSkillBundle(skillDir, workspace, signal)
+      return source.files
+        ? await prepareRemoteSkillBundleFiles(source.files, workspace, signal)
+        : await prepareRemoteSkillBundle(source.dir, workspace, signal)
     } catch (error) {
       signal.throwIfAborted()
       const message = errorText(error)
@@ -297,7 +371,7 @@ export class RemoteSkillService {
     input: RemoteScriptToolRequest,
     signal: AbortSignal
   ): Promise<ScriptToolResult> {
-    const bundle = await this.prepareBundle(remembered.skill.dir, workspace, signal)
+    const bundle = await this.prepareBundle(remembered.source, workspace, signal)
     const selected = await this.environmentFor(
       workspace,
       remembered.skill,
@@ -348,4 +422,44 @@ export class RemoteSkillService {
 function appendMessage(output: string, message: string): string {
   const trimmed = output.trimEnd()
   return trimmed ? `${trimmed}\n${message}` : message
+}
+
+function materializeSkillSnapshot(root: string, files: readonly RemoteSkillBundleFile[]): void {
+  mkdirSync(root, { recursive: true, mode: 0o700 })
+  for (const file of files) {
+    const path = join(root, ...file.relativePath.split('/'))
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    writeFileSync(path, file.content, { mode: file.executable ? 0o700 : 0o600 })
+  }
+}
+
+function toolKey(runtimeSessionId: string | undefined, toolName: string): string {
+  return `${runtimeSessionId ?? ''}\0${toolName}`
+}
+
+function field(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const item = (value as Record<string, unknown>)[key]
+  return typeof item === 'string' && item ? item : undefined
+}
+
+function sameSkillSnapshot(
+  left: readonly RemoteSkillBundleFile[] | undefined,
+  right: readonly RemoteSkillBundleFile[]
+): boolean {
+  if (!left) return false
+  const checkedLeft = validateRemoteSkillBundleFiles(left)
+  const checkedRight = validateRemoteSkillBundleFiles(right)
+  return (
+    checkedLeft.length === checkedRight.length &&
+    checkedLeft.every((file, index) => {
+      const other = checkedRight[index]
+      return (
+        other !== undefined &&
+        file.relativePath === other.relativePath &&
+        file.contentHash === other.contentHash &&
+        file.executable === other.executable
+      )
+    })
+  )
 }

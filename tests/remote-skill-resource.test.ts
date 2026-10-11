@@ -82,3 +82,33 @@ test('remote skill reader rejects unknown, traversal, escaping symlink and binar
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('remote project skill resources are resolved by the trusted server reader', async () => {
+  const requests: string[] = []
+  const result = await readRemoteSkillResource(
+    'skill://server-demo/references/guide.md',
+    [
+      {
+        name: 'server-demo',
+        filePath: 'ssh://cluster/srv/project/.phi/skills/server-demo/SKILL.md',
+        baseDir: 'ssh://cluster/srv/project/.phi/skills/server-demo',
+        sourceInfo: { source: 'server-project' }
+      }
+    ],
+    {
+      readRemote: async (uri) => {
+        requests.push(uri)
+        return {
+          kind: 'file',
+          path: uri,
+          content: '# Server guide\n',
+          fileSize: 15,
+          contentType: 'text/markdown'
+        }
+      }
+    }
+  )
+
+  assert.deepEqual(requests, ['skill://server-demo/references/guide.md'])
+  assert.equal(result.content, '# Server guide\n')
+})

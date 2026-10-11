@@ -154,6 +154,10 @@ export interface Skill {
     path?: string
     baseDir?: string
   }
+  remoteProject?: {
+    relativePath: string
+    contentHash: string
+  }
 }
 
 export interface SessionInfo {
@@ -227,6 +231,8 @@ export type ResourceLoaderOptions = {
   additionalSkillPaths?: string[]
   /** Exact content entry files; avoids scanning inactive sibling versions or bundled domain skills. */
   additionalSkillFiles?: string[]
+  /** Trusted server-project skills supplied as metadata; content stays on the WorkspaceHost. */
+  remoteProjectSkills?: Skill[]
   additionalPromptTemplatePaths?: string[]
   additionalThemePaths?: string[]
   extensionFactories?: InlineExtension[]
@@ -620,6 +626,7 @@ function serializableResourceOptions(options: ResourceLoaderOptions): Record<str
     additionalExtensionPaths: options.additionalExtensionPaths,
     additionalSkillPaths: options.additionalSkillPaths,
     additionalSkillFiles: options.additionalSkillFiles,
+    remoteProjectSkills: options.remoteProjectSkills,
     additionalPromptTemplatePaths: options.additionalPromptTemplatePaths,
     additionalThemePaths: options.additionalThemePaths,
     noExtensions: options.noExtensions,

@@ -4,18 +4,13 @@ import { join, posix, relative, sep } from 'node:path'
 
 import { untilAbort } from './abort-wait'
 import { publishRemoteSkillBundle, validateRemoteSkillBundle } from './skill-bundle-transport'
-import type { RemoteRuntimeWorkspace } from './types'
+import type { RemoteRuntimeWorkspace, RemoteSkillBundleFile } from './types'
+
+export type { RemoteSkillBundleFile } from './types'
 
 const MAX_FILES = 2_000
 const MAX_BYTES = 64 * 1024 * 1024
 const bundleLocks = new Map<string, Promise<void>>()
-
-export interface RemoteSkillBundleFile {
-  relativePath: string
-  content: Buffer
-  contentHash: string
-  executable: boolean
-}
 
 export interface RemoteSkillBundle {
   hash: string
@@ -30,23 +25,73 @@ export async function prepareRemoteSkillBundle(
   signal?: AbortSignal
 ): Promise<RemoteSkillBundle> {
   const files = collectFiles(skillDir)
-  const hash = bundleHash(files)
+  return prepareRemoteSkillBundleFiles(files, workspace, signal)
+}
+
+export async function prepareRemoteSkillBundleFiles(
+  files: readonly RemoteSkillBundleFile[],
+  workspace: RemoteRuntimeWorkspace,
+  signal?: AbortSignal
+): Promise<RemoteSkillBundle> {
+  const checkedFiles = validateRemoteSkillBundleFiles(files)
+  const hash = bundleHash(checkedFiles)
   const relativeDir = posix.join('skills', hash)
   const bundle = {
     hash,
     relativeDir,
     absoluteDir: posix.join(workspace.runtimeRoot, relativeDir),
-    files: new Set(files.map((file) => file.relativePath))
+    files: new Set(checkedFiles.map((file) => file.relativePath))
   }
   return withBundleLock(`${workspace.runtimeRoot}\0${hash}`, signal, async () => {
-    const validation = await validateRemoteSkillBundle(workspace, bundle, files, signal)
+    const validation = await validateRemoteSkillBundle(workspace, bundle, checkedFiles, signal)
     if (validation.status === 'unsafe') {
       throw new Error('远程 Skill bundle 目标包含不安全的符号链接')
     }
     if (validation.status === 'reusable') return bundle
-    await publishRemoteSkillBundle(workspace, bundle, files, signal)
+    await publishRemoteSkillBundle(workspace, bundle, checkedFiles, signal)
     return bundle
   })
+}
+
+export function validateRemoteSkillBundleFiles(
+  files: readonly RemoteSkillBundleFile[]
+): RemoteSkillBundleFile[] {
+  const checked: RemoteSkillBundleFile[] = []
+  const paths = new Set<string>()
+  let bytes = 0
+  for (const file of files) {
+    const parts = file.relativePath.split('/')
+    if (
+      !file.relativePath ||
+      posix.isAbsolute(file.relativePath) ||
+      file.relativePath.includes('\\') ||
+      parts.some((part) => !part || part === '.' || part === '..' || part.includes('\0'))
+    ) {
+      throw new Error(`Skill 资源路径无效：${file.relativePath}`)
+    }
+    if (paths.has(file.relativePath)) {
+      throw new Error(`Skill 资源路径重复：${file.relativePath}`)
+    }
+    if (!Buffer.isBuffer(file.content)) throw new Error(`Skill 资源内容无效：${file.relativePath}`)
+    const content = Buffer.from(file.content)
+    const contentHash = createHash('sha256').update(content).digest('hex')
+    if (contentHash !== file.contentHash) {
+      throw new Error(`Skill 资源内容哈希不匹配：${file.relativePath}`)
+    }
+    bytes += content.length
+    if (checked.length >= MAX_FILES || bytes > MAX_BYTES) {
+      throw new Error('Skill 资源超过远程上传上限（2000 个文件或 64 MiB）')
+    }
+    paths.add(file.relativePath)
+    checked.push({
+      relativePath: file.relativePath,
+      content,
+      contentHash,
+      executable: file.executable === true
+    })
+  }
+  checked.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+  return checked
 }
 
 function collectFiles(root: string): RemoteSkillBundleFile[] {

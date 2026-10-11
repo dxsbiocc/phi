@@ -10,7 +10,10 @@ import { openRemoteRuntimeWorkspace, type RemoteRuntimeTarget } from './workspac
 export interface RemoteRuntimeControllerOptions {
   micromambaVersion: string
   resolveTarget: (params: unknown) => RemoteRuntimeTarget | undefined
-  listSkills: () => Promise<readonly RemoteSkillSource[]>
+  listSkills: (
+    runtimeSessionId?: string,
+    target?: RemoteRuntimeTarget
+  ) => Promise<readonly RemoteSkillSource[]>
   confirmEnvironment: (request: EnvironmentRequestConfirm) => Promise<boolean>
   resolveBasePackages?: (ref: string, pluginId?: string) => Promise<readonly string[]>
   resolveBaseEnvironment?: RemoteEnvironmentServiceOptions['resolveBaseEnvironment']
@@ -43,7 +46,11 @@ export class RemoteRuntimeController {
     this.skills = new RemoteSkillService({
       openWorkspace,
       environments: this.environments,
-      listSkills: options.listSkills
+      listSkills: (runtimeSessionId) =>
+        options.listSkills(
+          runtimeSessionId,
+          runtimeSessionId ? this.targets.get(runtimeSessionId) : undefined
+        )
     })
   }
 
@@ -52,8 +59,8 @@ export class RemoteRuntimeController {
   }
 
   scriptTools(params: unknown): ReturnType<RemoteSkillService['scriptTools']> {
-    this.requireTarget(params)
-    return this.skills.scriptTools()
+    const target = this.requireTarget(params)
+    return this.skills.scriptTools({ runtimeSessionId: target.runtimeSessionId })
   }
 
   runSkill(params: unknown): ReturnType<RemoteSkillService['run']> {

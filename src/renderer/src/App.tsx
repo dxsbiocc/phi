@@ -3969,7 +3969,7 @@ function App(): React.JSX.Element {
       <SkillDetail
         selectedSkill={activeResourceSkill}
         busySkillId={busySkillId}
-        projectCwd={activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory}
+        projectCwd={activeProject?.workingDirectory}
         onSetGlobalEnabled={onSetSkillGlobalEnabled}
         onSetProjectOverride={onSetSkillProjectOverride}
         onNavigateToPlugin={(pluginId) => {
@@ -3979,6 +3979,7 @@ function App(): React.JSX.Element {
         }}
         onSetSkillDisabled={onSetSkillDisabled}
         onDeleteSkill={onDeleteSkill}
+        onRefresh={refreshSkills}
       />
     ) : activeWorkspaceResourceTab.kind === 'mcp' ? (
       <McpDetail

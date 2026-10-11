@@ -1,11 +1,68 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 
-import { prepareRemoteSkillBundle } from '../src/main/agent/remote-runtime/skill-bundle'
+import {
+  prepareRemoteSkillBundle,
+  prepareRemoteSkillBundleFiles
+} from '../src/main/agent/remote-runtime/skill-bundle'
 import { createRemoteRuntimeFixture, writeTestSkill } from './helpers/remoteRuntimeFixture'
+
+test('remote skill bundle publishes a discovered server file snapshot', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  const content = Buffer.from('server skill\n')
+  try {
+    const bundle = await prepareRemoteSkillBundleFiles(
+      [
+        {
+          relativePath: 'SKILL.md',
+          content,
+          contentHash: '629e5d61a86594225feaffffb03cb38e3abec2e74d929ed0dc59b02b7dd02a2d',
+          executable: false
+        }
+      ],
+      fixture.workspace
+    )
+
+    assert.equal(
+      Buffer.compare(
+        Buffer.from('server skill\n'),
+        readFileSync(join(fixture.runtimeRoot, bundle.relativeDir, 'SKILL.md'))
+      ),
+      0
+    )
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote skill bundle rejects traversal in a discovered server file snapshot', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  const content = Buffer.from('escape\n')
+  const sentinel = join(fixture.runtimeRoot, 'escape.txt')
+  writeFileSync(sentinel, 'keep')
+  try {
+    await assert.rejects(
+      prepareRemoteSkillBundleFiles(
+        [
+          {
+            relativePath: '../escape.txt',
+            content,
+            contentHash: '6471c588e03b49ae22dd3eae13bf88ef36a2b1a5eced7b9cfbeeb9af1d41522f',
+            executable: false
+          }
+        ],
+        fixture.workspace
+      ),
+      /路径/u
+    )
+    assert.equal(readFileSync(sentinel, 'utf8'), 'keep')
+  } finally {
+    fixture.cleanup()
+  }
+})
 
 test('remote skill bundle rejects a symlink destination without deleting its target', async () => {
   const fixture = createRemoteRuntimeFixture()

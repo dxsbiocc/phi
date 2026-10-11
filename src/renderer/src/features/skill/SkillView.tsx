@@ -166,6 +166,7 @@ export default function SkillView({
           onNavigateToPlugin={onNavigateToPlugin}
           onSetSkillDisabled={onSetSkillDisabled}
           onDeleteSkill={onDeleteSkill}
+          onRefresh={onRefresh}
         />
       </DetailPage>
       <SkillCatalogDialog

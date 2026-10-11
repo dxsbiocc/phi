@@ -16,7 +16,9 @@ import {
 } from '@mui/material'
 import { PhiIcons } from '../../../icons'
 import type { SkillSummary } from '../../../types'
+import { RemoteProjectTrustControl, RemoteProjectTrustStatus } from '../../agent/AgentTrustPanel'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
+import { mutateRemoteSkillTrust } from '../lib/remoteSkillTrust'
 import { SkillDetailBody } from './SkillDetailBody'
 import {
   skillDirectory,
@@ -41,6 +43,7 @@ export type SkillDetailProps = {
   /** Compatibility bridge for callers that still expose disabled instead of enabled. */
   onSetSkillDisabled?: (skill: SkillSummary, disabled: boolean) => Promise<void> | void
   onDeleteSkill?: (skill: SkillSummary) => Promise<void> | void
+  onRefresh?: () => Promise<void> | void
 }
 
 type SkillContentState = {
@@ -51,6 +54,7 @@ type SkillContentState = {
 
 type LoadedSkillContent = {
   filePath: string
+  contentHash: string | null
   content: string | null
   error: string | null
 }
@@ -58,6 +62,7 @@ type LoadedSkillContent = {
 function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState {
   const [loadedContent, setLoadedContent] = useState<LoadedSkillContent | null>(null)
   const selectedFilePath = selectedSkill?.filePath ?? null
+  const selectedContentHash = selectedSkill?.contentHash ?? null
   const canReadSkillContent = typeof window !== 'undefined' && Boolean(window.api?.readSkillContent)
 
   useEffect(() => {
@@ -70,6 +75,7 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
         if (cancelled) return
         setLoadedContent({
           filePath: selectedFilePath,
+          contentHash: selectedContentHash,
           content: skillMarkdownBody(result.content),
           error: null
         })
@@ -78,6 +84,7 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
         if (cancelled) return
         setLoadedContent({
           filePath: selectedFilePath,
+          contentHash: selectedContentHash,
           content: null,
           error: error instanceof Error ? error.message : String(error)
         })
@@ -86,7 +93,7 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
     return () => {
       cancelled = true
     }
-  }, [canReadSkillContent, selectedFilePath])
+  }, [canReadSkillContent, selectedContentHash, selectedFilePath])
 
   if (!selectedFilePath) return { content: null, isLoading: false, error: null }
   if (!canReadSkillContent) {
@@ -98,10 +105,15 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
   }
 
   const current =
-    loadedContent?.filePath === selectedFilePath ? loadedContent : { content: null, error: null }
+    loadedContent?.filePath === selectedFilePath &&
+    loadedContent.contentHash === selectedContentHash
+      ? loadedContent
+      : { content: null, error: null }
   return {
     content: current.content,
-    isLoading: loadedContent?.filePath !== selectedFilePath,
+    isLoading:
+      loadedContent?.filePath !== selectedFilePath ||
+      loadedContent.contentHash !== selectedContentHash,
     error: current.error
   }
 }
@@ -274,7 +286,8 @@ export function SkillDetail({
   onSetProjectOverride,
   onNavigateToPlugin,
   onSetSkillDisabled,
-  onDeleteSkill
+  onDeleteSkill,
+  onRefresh
 }: SkillDetailProps): React.JSX.Element {
   const skillContent = useSkillContent(selectedSkill)
   const [deleteCandidate, setDeleteCandidate] = useState<SkillSummary | null>(null)
@@ -303,6 +316,7 @@ export function SkillDetail({
   }
 
   const enabled = skillIsEnabled(selectedSkill)
+  const remoteProjectSkill = selectedSkill.trustState !== undefined
   const cannotDelete = deleteDisabledReason(selectedSkill)
   return (
     <>
@@ -314,11 +328,13 @@ export function SkillDetail({
         chips={
           <>
             <Chip size="small" variant="outlined" label={skillSourceLabel(selectedSkill)} />
-            <Chip
-              size="small"
-              color={enabled ? 'success' : 'default'}
-              label={enabled ? '已启用' : '已关闭'}
-            />
+            {!remoteProjectSkill ? (
+              <Chip
+                size="small"
+                color={enabled ? 'success' : 'default'}
+                label={enabled ? '已启用' : '已关闭'}
+              />
+            ) : null}
             {selectedSkill.deprecated ? (
               <Chip
                 size="small"
@@ -338,45 +354,59 @@ export function SkillDetail({
           </>
         }
         notice={
-          selectedSkill.deprecated ? (
-            <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
-              {selectedSkill.deprecated}
-            </Typography>
-          ) : null
+          <>
+            {remoteProjectSkill ? (
+              <RemoteProjectTrustStatus resource={selectedSkill} sourceLabel="服务器项目" />
+            ) : null}
+            {selectedSkill.deprecated ? (
+              <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+                {selectedSkill.deprecated}
+              </Typography>
+            ) : null}
+          </>
         }
         actions={
-          <>
-            <SkillEnablementActions
-              skill={selectedSkill}
-              busySkillId={busySkillId}
-              projectCwd={projectCwd}
-              onSetGlobalEnabled={onSetGlobalEnabled}
-              onSetProjectOverride={onSetProjectOverride}
-              onNavigateToPlugin={onNavigateToPlugin}
-              onSetSkillDisabled={onSetSkillDisabled}
+          remoteProjectSkill && projectCwd ? (
+            <RemoteProjectTrustControl
+              resource={selectedSkill}
+              cwd={projectCwd}
+              onMutate={mutateRemoteSkillTrust}
+              onChanged={onRefresh ?? (() => undefined)}
             />
-            <Tooltip title={cannotDelete ?? '卸载技能'}>
-              <span>
-                <IconButton
-                  size="small"
-                  color="error"
-                  disabled={
-                    busySkillId === selectedSkill.id || !onDeleteSkill || Boolean(cannotDelete)
-                  }
-                  aria-label={`卸载技能 ${selectedSkill.name}`}
-                  onClick={() => setDeleteCandidate(selectedSkill)}
-                >
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </>
+          ) : (
+            <>
+              <SkillEnablementActions
+                skill={selectedSkill}
+                busySkillId={busySkillId}
+                projectCwd={projectCwd}
+                onSetGlobalEnabled={onSetGlobalEnabled}
+                onSetProjectOverride={onSetProjectOverride}
+                onNavigateToPlugin={onNavigateToPlugin}
+                onSetSkillDisabled={onSetSkillDisabled}
+              />
+              <Tooltip title={cannotDelete ?? '卸载技能'}>
+                <span>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    disabled={
+                      busySkillId === selectedSkill.id || !onDeleteSkill || Boolean(cannotDelete)
+                    }
+                    aria-label={`卸载技能 ${selectedSkill.name}`}
+                    onClick={() => setDeleteCandidate(selectedSkill)}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </>
+          )
         }
         description={selectedSkill.description}
         sourceText={`${skillSourceCategoryLabels[selectedSkill.sourceCategory]} · ${selectedSkill.source}`}
         location={selectedSkill.filePath}
         markdown={skillContent}
-        markdownCwd={skillDirectory(selectedSkill.filePath)}
+        markdownCwd={remoteProjectSkill ? undefined : skillDirectory(selectedSkill.filePath)}
       />
       <SkillDeleteDialog
         skill={deleteCandidate}
