@@ -439,9 +439,350 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 - Office 与 `present_files`：远端落地 → 本地缓存预览 → 哈希冲突检查后回写；缓存有大小上限并可清理。
 
+#### R6 远程 Office 设计
+
+本节只设计第 6 步中的 Office 链路，不实现代码、不连接真实服务器。边界是：远程文件仍以服务器为权威来源，OfficeCLI、resident、watch 和预览网关继续运行在桌面端，只能接触 Phi 管理的本机副本；远程失败不得把路径解析到远程项目的本机 anchor。现有 Office 目录有 161 个文件、27,562 行，R6 应在文件/缓存边界做适配，不把整套 Office 驱动改写成服务器进程。
+
+##### R6.1 已核实的本地完整链路
+
+**入口、打开与运行关联。**
+
+| 入口 | 当前实际链路 |
+| --- | --- |
+| 用户打开文件 | 工作区打开动作最终进入 `previewFilePathInWorkspaceTab`；文件路径是 `.xlsx/.docx/.pptx` 时，`FilePreviewPanel` 挂载 `OfficePanel(sourcePath)`（`src/renderer/src/App.tsx:2692-2714`；`src/renderer/src/features/file-preview/FilePreviewPanel.tsx:409-416,490-499`）。`useOfficeDocument` 调 `office:open`，记录 `artifactId/sessionId`，每秒轮询 `office:status`，卸载时 `office:close`（`src/renderer/src/features/office/hooks/useOfficeDocument.ts:54-77,80-144`）。IPC 只接收 `sourcePath/fresh`，`sessionId/projectId/projectLocation/allowRoots` 来自可信当前会话（`src/main/agent/office/office-ipc.ts:114-139`；`src/main/index.ts:906-922`）。 |
+| 聊天里的 `@文件` | Composer 只把文件引用解析为 prompt 上下文（`src/renderer/src/features/chat/ChatView.tsx:263-306,355-360`），**不会**自动打开或绑定 Office。`office_*` 的目标来自当前激活且已经 ready 的 Office 页签：renderer registry 产出 `artifactId`，主进程在提交时把它绑定到可信的 `runId/sessionId/projectId`（`src/renderer/src/App.tsx:1094-1110,4101-4112`；`src/main/agent/office/office-prompt-target.ts:14-48`）。因此 R6 也不得把任意 `@ssh://...` 当成 Office 句柄。 |
+| `present_files` | 普通交付卡直接打开 `file.path`；带 Office 元数据的本地交付卡先用 `{artifactId, outputId}` 调 `office.resolveOutput`，再走同一文件打开入口（`src/renderer/src/features/chat/hooks/usePresentedFileOpen.ts:11-28`；`src/renderer/src/features/chat/lib/presentedOfficeFile.ts:9-20`）。远程 `present_files` 已返回服务器校验后的 `ssh://` 路径，R6 应让该 URI 进入下面的缓存物化流程，而不是本地 `resolveOutput`。 |
+| 生成的草稿 | 新建 controller 调 `office:create`，ready 后以返回的 `document.sourcePath` 打开页签（`src/renderer/src/features/office/lib/officeCreateController.ts:37-64`）。空白草稿位于会话私有 `artifacts/office/<artifactId>/`，OfficeCLI `create` 后接管 resident 并启动预览（`src/main/agent/office/office-files.ts:89-105,161-188,347-357`；`src/main/agent/office/office-process.ts:146-180`）。远程项目中的空白草稿起初没有远程源，应保持本机且标为“尚未回写”，直到另存或交付选择服务器目标。 |
+
+`OfficeOpeningFlow` 先以 `sessionId + sourcePath` 去重，复用已登记/已打开的 artifact 和并发 opening Promise；新文档严格按 `prepareDraft → startDocument → startPreview → rememberReady` 执行（`src/main/agent/office/office-service-open.ts:65-138,141-178,216-268`）。本地源不是原地编辑：它通过 realpath/allow-root/普通文件/25 MiB 准入，读取全部字节并计算 SHA-256，再以 `wx` 写入会话草稿和 `artifact.json`；项目原文件不被 OfficeCLI 直接持有（`src/main/agent/office/office-files.ts:58-63,136-159,266-344`）。
+
+**草稿注册表与完整性。**
+
+- `artifact.json` 保存 `artifactId/sessionId/projectId/kind/draftPath/readOnly?`；源文档另有 `sourcePath/sourceHash`，空白文档为 `origin:'blank'` 且 source 两字段为 `null`，CSV/TSV 导入还保存格式、分隔符、行列数和源 SHA-256（`src/main/agent/office/office-file-contract.ts:41-80`）。
+- `OfficeDraftRegistry` 扫描每个 session 的 `artifacts/office/*/artifact.json`，按登记文件 mtime 排序；优先匹配草稿路径，再以源 realpath + 当前源 SHA-256 匹配，源 hash 已变化则返回 `source_changed` 而不覆盖旧草稿（`src/main/agent/office/office-draft-registry.ts:200-276,279-312`）。
+- 重开前验证 session/project/artifact 身份、固定目录布局、普通文件、非符号链接以及真实路径仍在 Office artifact root 内（`src/main/agent/office/office-registered-draft.ts:19-28,48-83`）。`operations.json` 保存 content revision、操作 digest/status/receipt、写前证据、freeze/needsSave/reconcile，以及保存状态、最后保存 revision/时间和 `savedDraftHash`；文件自身带 checksum，并以 temp `wx` + rename 更新（`src/main/agent/office/office-operation-log.ts:38-70,112-160`；`src/main/agent/office/office-operation-log-metadata.ts:14-36`）。`outputs.json` 另存输出相对路径、revision、SHA-256、大小、交付检查/警告或导出 sheet 信息（`src/main/agent/office/office-output-log.ts:9-49,80-106`）。
+- 完整性检查重读 `artifact.json` 身份，验证草稿位置、25 MiB 上限和 Open XML 包，再比较草稿 SHA-256 与最后确认的 `savedDraftHash`；不明变化会持久化 `freezeState:'unknown'`、`needsSave:true`，正常关闭导致的可信重打包才更新 hash（`src/main/agent/office/office-draft-integrity.ts:64-142,144-218`）。
+
+**实时预览与本机句柄。** OfficeCLI 由绝对 `binaryPath` 以 `shell:false` 启动（`src/main/agent/office/office-driver.ts:53-75`）。`open <draftPath>` 后通过草稿文件 owner 登记 `residentPid`（`src/main/agent/office/office-process.ts:158-180`）；另起长期 `watch <draftPath> --port <loopback>`，用 `/usr/sbin/lsof` 验证该 PID 确实监听 `127.0.0.1`（`src/main/agent/office/office-watch-process.ts:67-145`）。本机 gateway 代理 HTML/资源和 `/events` SSE，限制路由、Host/Origin、正文大小并注入只读/编辑与 AI 高亮适配（`src/main/agent/office/office-preview.ts:35-64,130-187,293-377,402-421`）；renderer 只在 sandbox、context isolation、无 Node 的 webview 加载 gateway URL（`src/renderer/src/features/office/components/OfficeReadyDocument.tsx:66-92`；`src/main/agent/office/office-webview.ts:40-68`）。`OwnedOfficeDocument` 因而实际持有 `binaryPath + draftPath + residentPid + watchPid/watchPort + gatewayPort/previewUrl`（`src/main/agent/office/office-service-state.ts:59-71,269-284`）。
+
+**三个 Agent 工具对本机资源的依赖。**
+
+| 工具 | 绑定与本机依赖 |
+| --- | --- |
+| `office_read` | schema 没有路径、session 或 artifact 参数，描述明确目标由当前 run 固定（`src/main/agent/office/office-tools.ts:27-103`）。host 从可信 `agentRunId/originSessionId` 找 run，服务再取得 owned 文档，构造含本机 `binaryPath/draftPath/revision/selection` 的读取上下文，按 XLSX/DOCX/PPTX 调 OfficeCLI/包读取器（`src/main/agent/office/office-tool-host.ts:103-120`；`src/main/agent/office/office-service-read.ts:25-60`；`src/main/agent/office/office-read.ts:81-115,168-180`）。它不接收 PID，但依赖该草稿对应 resident 的一致状态。 |
+| `office_apply` | 只接受九类 operation + `baseRevision`，可信 `toolCallId` 由 host context 注入；模型提供的 `runId/sessionId/artifactId/path/toolCallId` 会被丢弃（`src/main/agent/office/office-apply-tool.ts:11-28`；`src/main/agent/office/office-apply-tool-contract.ts:214-245`；`src/main/agent/office/office-tool-host.ts:150-183,227-238`）。事务在本机草稿上完成写前快照、revision 检查、OfficeCLI 修改、读回、save、operation log 与预览确认（`src/main/agent/office/office-write.ts:94-112,215-259`；`src/main/agent/office/office-cell-writer.ts:28-55`）。 |
+| `office_deliver` | 输入只有可选文件名，不允许路径/身份，承诺在工作区创建新文件且不覆盖（`src/main/agent/office/office-deliver-tool.ts:6-32`）；host 只信 run 与 SDK toolCallId（`src/main/agent/office/office-deliver-tool-host.ts:19-50`）。本地实现还依赖 `cwd/cwdRealPath` 的本机 `lstat/realpath/access`，刷盘本机草稿，发布不可变副本，重新打开成品做内容检查，再走交付卡（`src/main/agent/office/office-deliver-target.ts:31-66,110-147`；`src/main/agent/office/office-deliver.ts:144-250,299-370`）。 |
+
+**保存、另存、导出、交付与同步 fs。**
+
+- 保存先进入每文档 operation queue，运行 `officecli save <draftPath>`，异步 `stat` 确认非空，再以 `lstat/readFile + officecli validate + SHA-256` 验证内容，最后更新 operation log；失败保留内容并标为可重试（`src/main/agent/office/office-save.ts:42-108,125-167`；`src/main/agent/office/office-save-verification.ts:28-71`）。它只保存会话草稿，不覆盖本地源文件。
+- 另存先 realpath 校验项目内新目标并拒绝已存在文件；草稿刷盘后读源并核对 hash，向同目录临时文件 `wx` 写入，验证后以 hard link 原子发布，最终读回 hash/文件身份并清临时文件（`src/main/agent/office/office-save-as-target.ts:49-117`；`src/main/agent/office/office-save-as-copy.ts:31-108`；`src/main/agent/office/office-save-as.ts:109-153`）。
+- 导出只针对 XLSX：刷盘后分块读取 sheet，在内存序列化 CSV/TSV；目标父目录在发布前后复核，输出也采用 temp `wx` + 读回 + hard link no-overwrite + inode/dev 复核（`src/main/agent/office/office-export.ts:101-142,160-193`；`src/main/agent/office/office-export-target.ts:20-80,125-161`；`src/main/agent/office/office-export-output.ts:30-70,73-126`）。
+- 交付复用不可变副本发布，但还会重开输出、按文档类型检查 schema/最近写入，验证 `present_files` 路径后才记 `outputs.json`（`src/main/agent/office/office-deliver.ts:183-250,343-370`；`src/main/agent/office/office-deliver-checks.ts:43-90,190-260`）。
+- 上述核心文件读写都用 `node:fs/promises`。明确的同步本机 fs 是：OfficeCLI manifest/候选/二进制 hash 探测的 `readFileSync/statSync/existsSync`（`src/main/agent/office/office-runtime.ts:114-128,177-203`）；取消未登记导入半成品的 `rmSync`（`src/main/agent/office/office-service-create.ts:395-429`）；交付上下文的 `realpathSync(run.cwd)` 回退（`src/main/index.ts:1639-1651`）；以及交付卡本地校验使用的 `realpathSync/lstatSync`（`src/main/agent/deliverables/present-files.ts:18-47,65-82`）。远程分支不得调用后三者解析本机 anchor。
+
+##### R6.2 远程方案
+
+**总体形态。** `ssh://` 只作展示身份；主进程必须从当前 `sessionId + projectId` 解析已授权 `WorkspaceHost`，确认 URI 的 host alias 与 canonical project root 一致，再以规范 `relativePath` 操作服务器。打开远程 Office 文件时先 `stat(includeModifiedAt:true)`，只接受项目根内非符号链接普通文件和受支持扩展名，下载前与累计读取后都执行 25 MiB 上限；用 `readRange` 分块下载并计算 SHA-256，Open XML 校验通过后才把缓存条目原子发布。`WorkspaceHost` 已提供二进制 `readRange`、size/mtime 与 `writeAtomic(expectedHash)`（`src/main/agent/workspace-host/types.ts:3-22,47-55,206-241`），Notebook 已展示打开时记 content hash、保存时 CAS、把 `HASH_MISMATCH` 映射为冲突的范式（`src/main/agent/notebook/notebook-workspace.ts:137-187,231-261`）。
+
+缓存基准文件只负责跨入口去重；每个 Office artifact 仍复制出会话私有 `draftPath`。OfficeCLI、resident、watch、gateway、`office_read` 和 `office_apply` 继续只看该本机 draft；它们永远不收到 `ssh://`、服务器绝对路径或本机远程项目 anchor。已绑定远程源的“保存”在本机刷盘与验证成功后，读取 draft 字节并以下载/上次成功回写的 SHA-256 作为 `expectedHash` 回写同一远程相对路径；成功才更新远程基线。`office_apply` 自身只提交本机草稿事务，不在每次 tool call 隐式做网络写回。空白/导入草稿在选择远程目标前只保存本机草稿。
+
+**必须先补的 Host 契约。** 当前纯 SSH `writeAtomic` 强制把内容解为 UTF-8、拒绝 NUL 且限 1 MiB，不能写 XLSX/DOCX/PPTX（`src/main/agent/workspace-host/ssh-host-fs.ts:87-97,133-140`）；helper 虽支持二进制 CAS，但不能成为唯一前提，否则 helper 降级就失去 Office（`helper/filesystem.go:250-299`）。R6 第一块必须让纯 SSH 也支持最多 25 MiB 的二进制原子 CAS（优先复用 SSH/SFTP staging，在服务器锁内做 hash + rename），并把参数化 WorkspaceHost contract 同时跑在 LocalHost、纯 SSH 和 helper。另存/导出/交付现有语义都禁止覆盖，而当前 `writeAtomic` 未表达“目标必须不存在”；因此还要给 `AtomicWriteOptions` 增加 `ifAbsent`（或等价 create-only CAS）并在三后端实现，不能用“先 stat、后无条件写”制造竞态（当前 CAS 与竞态测试：`tests/workspace-host-contract.ts:68-129,187-207`）。
+
+**缓存位置、唯一性与安全。**
+
+- 默认根为 `<getPhiAgentDir()>/cache/remote-office/v1/`，即通常的 `~/.phi/cache/remote-office/v1/`；不放项目 anchor，也不放服务器。Phi agent 根的定义见 `src/main/agent/runtime-paths.ts:11-17`。
+- 逻辑键严格为 `hostAlias + NUL + canonicalProjectRoot + NUL + normalizedRelativePath`，磁盘目录只使用该串的 SHA-256；条目固定叶名如 `source.xlsx`，metadata 记录 host alias、项目 canonical root、relative/absolute remote path、`ssh://` URI、下载 SHA-256、size、mtime、lastAccess 和 sync/pin 状态。远程路径大小写不折叠；同一 canonical path 只有一个 cache manager entry 和一个 in-flight materialization Promise。不同 lexical 路径先经 WorkspaceHost/URI 授权归一化；硬链接别名因现有 stat 没有 dev/inode，只能视为不同文件并记为已知限制。
+- 服务器侧复用 WorkspaceHost 的 realpath/root 边界和 `present_files` 的 `O_NOFOLLOW` 普通文件检查；现有契约已拒绝根外路径和逃逸 symlink（`tests/workspace-host-contract.ts:440-503`）。本机侧缓存根及每层目录必须 `lstat` 拒绝 symlink，目录 0700、文件 0600，所有 `.part`/metadata 都以固定散列目录内的 `wx + fsync + rename` 发布；远程 basename 只作显示，不参与本机目录拼接。
+- 单文件默认上限维持现有 25 MiB（`src/main/agent/office/office-files.ts:58,312-323`）。总预算默认 1 GiB，统计基准缓存以及远程绑定的 session draft/staging；按 `lastAccess` 做 LRU。未保存、待回写、uploading、unknown、conflict、仍被 resident/watch/页签/run 使用的条目全部 pin，不得淘汰。若只剩 pinned 条目且预算不足，拒绝打开新的远程 Office 文件并说明原因，不删除用户改动。
+- 提供显式“清理远程 Office 缓存”操作：默认只删除 clean、unreferenced、unpinned 条目，并报告释放量和跳过的 dirty 项；强制丢弃 dirty 必须逐项确认，不与普通清理合并。应用启动时清 `.part` 和无引用的 stale temp，但不能清 dirty/unknown 草稿。
+
+**断线、冲突与回执不确定。** 下载断线只删本次 `.part`，旧的完整缓存仍可离线打开。回写断线/超时不得改 base hash，draft、日志和缓存持久标为 `unknown` 并 pin；重连后先取服务器内容 hash：等于本地待上传 hash 表示上次其实成功，等于旧 base hash 才可安全重试，否则进入 `conflict`。`HASH_MISMATCH` 也直接进入 conflict，绝不覆盖。UI 给出“另存为新的远程文件 / 重新下载远端版本 / 放弃本次回写”；默认停在冲突页并保留本机修改。“重新下载”是可能丢弃修改的独立确认动作，“放弃”只取消回写、继续保留 pinned 本机草稿，除非用户另行明确删除。
+
+**保存、另存、导出与交付。** 绑定已有远程源的显式保存使用 `writeAtomic(expectedHash=remoteBaseSha256)`；远程另存、CSV/TSV 导出和 `office_deliver` 默认使用 `ifAbsent` 在服务器项目内创建新文件。成品先在本机临时副本上完成现有 OfficeCLI validate/内容抽检，再上传完全相同的已哈希字节，并核对 `writeAtomic` 返回 hash；不能把服务器路径交给 Node fs。远程原文件是否允许被 `office_deliver` 覆盖不应偷渡进现有 schema：默认永不覆盖，若未来允许，必须是单独的显式用户动作和审批语义。
+
+**与 `present_files`/`ssh://` 衔接。** 远程 `present_files` 已在服务器按项目身份检查普通文件、拒绝 `..`/NUL/传入的 `ssh://`、真实路径重复和 symlink，再返回 `ssh://<host><absolute-path>`（`src/main/agent/deliverables/remote-present-files.ts:21-95,105-138`）；URI parser 只接受当前 host 与 canonical root 内的路径（`src/shared/remoteWorkspacePath.ts:18-56`）。R6 复用的是这套服务器授权、卡片和点击路由；当前远程预览只支持 ≤1 MiB UTF-8 文本，不能用于 Office 二进制本体（`src/main/agent/remote-workspace-file-ui.ts:82-113`）。Office 扩展名的 `ssh://` 点击应直接进入 cache acquire/open；远程 `office_deliver` 返回同样的 `ssh:// PresentedFile` 并附 Office revision/hash/checks，但 renderer 遇到 `ssh://` 时直接打开 URI，不调用只会解析本机 output log 的 `office.resolveOutput`。
+
+**远程工具放行。** 当前 worker 在远程项目不注册 Office 工具，guard 对全部 `office_*` 给出本机句柄原因并声明无 anchor 回退（`src/main/agent/omp/omp-sdk-worker.ts:1958-1960`；`src/main/agent/agents/remote-project-tool-guard.ts:156-163`）。R6 完成前保持该状态。完成后只注册 `office_read/office_apply/office_deliver` 三个现有 schema，并导出统一 canonical description map；guard 只有在当前会话同名工具**恰好一份**、`sourceInfo.source === 'extension'`、description 逐字匹配且可信远程 Office backend 已绑定时放行。Notebook 的 verifier 与反冒充测试就是模板（`src/main/agent/agents/remote-project-tool-guard.ts:300-308`；`tests/remote-project-tool-classification.test.ts:258-283`）。缺 backend、重复注册、builtin 同名、描述漂移、未知 `office_*`、失效 artifact 或断线均 fail-closed，host handler 只从 run 的 session/project 取 WorkspaceHost/cache binding，绝不接受模型传入 host/path，也不退回本机项目锚点。
+
+##### R6.3 现有数据模型的最小侵入点
+
+1. **Artifact 与持久状态。** 在 `OfficeArtifactIdentity` 增加可选判别式 `remoteBinding`：`version/hostAlias/canonicalProjectRoot/relativePath/remotePath/remoteUri/cacheKey`；`sourcePath` 对远程文件继续是用户可见的规范 `ssh://`，`draftPath` 始终是本机私有草稿，缓存绝对路径不进入 renderer/tool。下载时的 SHA-256/size/mtime 放 cache metadata，初始 SHA 仍可复用 `sourceHash`（现模型：`src/main/agent/office/office-file-contract.ts:41-80`）。`operations.json` 的 metadata 增加可更新的 `remoteBaseSha256/size/mtime`、`remoteSyncState: clean|pending|unknown|conflict`、待上传 hash 和最后成功回写时间；不要把“本机草稿已 save”与“服务器已同步”混成一个 `saveState`（现保存 metadata：`src/main/agent/office/office-operation-log-metadata.ts:14-59`）。
+2. **打开/注册/完整性。** `OfficeOpenRequest` 已有可信 `projectLocation`，renderer 的 `OfficeOpenInput` 无需新增 host/path 权限字段。新增 `RemoteOfficeBindingResolver` 和 `RemoteOfficeCache`; `office-files.ts` 的远程分支先物化缓存再复制 session draft，`office-draft-registry.ts` 对远程项按 cache key/URI/sourceHash 匹配，不得对 `ssh://` 调本机 `realpath/stat/readFile`；`office-registered-draft.ts` 继续校验本机 draft 布局，同时核对远程 binding 与当前 session/project。离线重开只要本机登记和包完整即可，但显示 pending/offline，不能假报服务器已同步。
+3. **服务与 IPC。** `OfficeServiceDependencies` 增加窄的 `materializeRemoteSource/writeBackRemote/publishRemoteOutput/reconcileRemoteWrite`，避免 reader/writer/watch 感知 WorkspaceHost。`OfficePreviewDocument`/`OfficeSaveResult` 只公开 `remote:{uri,syncState,baseSha256?}` 摘要和冲突恢复能力（现公开面：`src/shared/officeProtocol.ts:95-118,145-178,269-352`）；`office:open/status/save/saveAs/export/resolveOutput` 扩展远程结果，并新增冲突动作与 `office:remoteCacheStatus/clearRemoteCache`。preload 仍只传 artifact/request ID 和经 UI 选择的项目内**相对**目标，主进程负责重新授权。
+4. **输出模型。** `outputs.json` 的 record 增加 local/remote location 判别与远程 relative path/URI，解析输出时按 location 走本机 realpath 或 WorkspaceHost，不让远程输出落入 `office-output-path.ts` 的本机路径逻辑。远程 save-as/export UI 不能用系统文件保存框选择服务器路径，应复用远程目录浏览并提交相对目标；`office_deliver` 仍只接受文件名。
+5. **拒绝点改为有 backend 才放行。** 删除 `office-registered-draft.ts:24`、`office-files.ts:295-296,353`、`office-import-files.ts:258` 的 blanket SSH 拒绝，改为要求可信 remote binding；删除 `office-save-ipc.ts:70-72`、`office-export-ipc.ts:74-76`、`office-deliver.ts:120-122` 的无条件拒绝，改走 remote transfer/output adapter；`omp-sdk-worker.ts:1958` 改为只在远程 backend 注册成功时构造工具；`remote-project-tool-guard.ts:161-163` 改为上述精确验签放行。`src/main/index.ts:1648-1651` 的远程交付上下文必须取 canonical remote root，不能再 `realpathSync(run.cwd)`。
+
+**预计修改/新增文件（实现清单）。**
+
+- Host 前置：`src/main/agent/workspace-host/types.ts`、`local-fs.ts`、`ssh-host-fs.ts`、`helper-host.ts`、`src/main/agent/wrappers/remote-ssh-session.ts`、`helper/handlers.go`、`helper/filesystem.go`，以及 `tests/workspace-host-contract.ts`、纯 SSH/helper contract tests。
+- 新边界模块：新增 `src/main/agent/office/remote-office-binding.ts`、`remote-office-cache.ts`、`remote-office-transfer.ts`、`remote-office-output.ts`。
+- Artifact/恢复：`office-file-contract.ts`、`office-files.ts`、`office-import-files.ts`、`office-draft-registry.ts`、`office-registered-draft.ts`、`office-draft-integrity.ts`、`office-operation-log-metadata.ts`、`office-output-log.ts`。
+- Service/输出：`office-service-state.ts`、`office-service-factory.ts`、`office-service-open.ts`、`office-save.ts`、`office-output-save.ts`、`office-save-ipc.ts`、`office-save-as.ts`/`office-save-as-target.ts`/`office-save-as-copy.ts`、`office-export-ipc.ts`/`office-export.ts`/`office-export-target.ts`/`office-export-output.ts`、`office-deliver.ts`/`office-deliver-target.ts`、`office-output-path.ts`。
+- 注册/展示：`office-tools.ts`、`office-deliver-tool.ts`、`src/main/agent/agents/remote-project-tool-guard.ts`、`src/main/agent/omp/omp-sdk-worker.ts`、`src/main/index.ts`、`src/main/agent/deliverables/remote-present-files.ts`、`src/shared/officeProtocol.ts`、`src/shared/presentedFileTypes.ts`、`src/preload/index.ts`、`src/preload/index.d.ts`、`src/renderer/src/features/chat/lib/presentedOfficeFile.ts`、`src/renderer/src/features/office/OfficePanel.tsx` 及其 save/save-as/export hooks/components。Office read/apply 的公开 schema、reader/writer、watch/preview 应只回归，不做结构性改写。
+
+##### R6.4 实施拆分、依赖与验证
+
+| 顺序 | 范围与主要文件 | 自动化（全程不联网、不连真实服务器） | 必须的真机门禁 | 依赖 |
+| --- | --- | --- | --- | --- |
+| R6-I1 Host 二进制 CAS | 扩展 `AtomicWriteOptions` 的 25 MiB binary + `ifAbsent` 语义；改 LocalHost、纯 SSH、helper 及 Go handler | 扩展 `tests/workspace-host-contract.ts`：三后端跑二进制/NUL、25 MiB 边界、旧 hash、并发唯一赢家、external write、create-only、symlink；`tests/workspace-host-ssh.test.ts:28-60` 用真实本机 bash 执行纯 SSH shell，helper test 现场构建 helper（`tests/helpers/localShellSession.ts:19-31,60-67`） | 真实 OpenSSH/SFTP、ControlMaster；helper 与纯 SSH 降级；上传/提交后断线和响应丢失；服务器无 staging/lock 残留 | 无；是后续硬前置 |
+| R6-I2 缓存与传输 | 新增 binding/cache/transfer；分页下载、metadata、单实例、1 GiB LRU/pin、显式清理、启动恢复 | LocalHost + 本机 bash SshHost 参数化：三格式、25 MiB、下载中断、`.part` 恢复、URI/路径逃逸、内外 symlink、并发多入口只物化一次、LRU、dirty/unknown 不淘汰、零 anchor 访问 | 真实 SSH 延迟/断网；路径含空格、引号、非 ASCII；慢 NFS；大文件中断 | I1 |
+| R6-I3 Artifact/打开/预览 | 接 `office-files/registry/integrity/service-open/factory`；远程源 → 基准缓存 → session draft；空白草稿 remote-unbound；离线恢复 | 复用 Office files/registry/integrity/service tests，加 fake WorkspaceHost；断言 OfficeCLI 参数永远是缓存/session 本机路径且 `ssh://` 不进入 spawn | 本机真实 OfficeCLI 对缓存 XLSX/DOCX/PPTX 的 resident、watch、webview、编辑、关闭、应用重启恢复和进程释放 | I2 |
+| R6-I4 保存与冲突恢复 | `office-save`/operation metadata/IPC/UI；CAS 回写、pending/unknown/conflict、另存/重下/放弃 | 成功回写、服务器先变、写时竞态、断线前/后提交、响应丢失三分支对账；所有失败保留 draft/hash/log/pin；重新下载需显式处理 dirty | 两个客户端外部修改；真实断网/重连；NFS mtime 粒度与 CAS 结果 | I1-I3 |
+| R6-I5 另存/导出/交付与卡片 | remote output adapter、create-only、新远程 target picker、Office 内容复核、outputs log、remote `PresentedFile`/`ssh://` | save-as/export/deliver 各测 no-overwrite、hash、取消、重放、并发目标、断线清理；远程卡片点击不调本机 `resolveOutput`；复用 `tests/remote-present-files.test.ts:83-135` 的无 anchor/O_NOFOLLOW 断言 | 真实服务器权限/配额、三格式成品重开抽检、CSV/TSV、真实 Phi 卡片与下载 | I1-I4 |
+| R6-I6 工具注册与守卫 | 导出 description map，远程 worker 注册三工具，guard 精确验签；host handler 仍只信 run/toolCallId | 正确唯一 extension 注册放行；缺失/重复/builtin/description 漂移/未知 Office/缺 backend 全拒绝；read/apply/deliver 端到端且无模型路径参数、无 anchor fallback | 真实远程对话绑定页签后 read → apply → save → deliver，一轮审批与取消 | I3-I5 |
+| R6-I7 生命周期与交付门禁 | cache 设置/清理 UI、session/project/app close、文档与手动清单；全量回归 | cache budget/pin、关闭与重开、崩溃 temp、活动 handle/timer/process 清零；最后跑 typecheck、架构检查、lint、Office/remote/WorkspaceHost 相关测试 | helper/fallback 各一轮；UI 冲突三选项、断线重试、清理跳过 dirty；应用退出后服务器无临时文件、本机无 Office 残进程 | I1-I6 |
+
+本机假 SSH 的依据是 `tests/helpers/localShellSession.ts:19-23,31-67`：它通过真实 `bash -c` 执行与 SSH 相同的 shell 字符串，不需要 sshd；`tests/workspace-host-ssh.test.ts:48-60` 将其注入真实 `SshHost` 并跑共享契约。它足以覆盖协议、路径和竞态，但不能代替真实 OpenSSH/SFTP、ControlMaster、断线时序、NFS/配额、真实 OfficeCLI/webview 与进程释放门禁。
+
+##### R6.5 风险与需要用户决定
+
+**已识别风险。** 纯 SSH 二进制写与 create-only 尚未实现；helper frame、SFTP、SSH stdin 和内存峰值必须守住 25 MiB + 编码开销。远程文件可能在分块下载中变化，mtime 只作提示，最终以 SHA-256 CAS 为权威。网络响应丢失会造成“可能已提交”，必须对账，不能盲重试。缓存含敏感文档且默认未加密，应继承 Phi 数据目录权限并在 UI 说明。NFS 锁/rename/mtime、服务器配额与慢登录节点会放大写回延迟。host alias 改名会形成新 key；硬链接别名在现有 stat 契约下不能识别为同一 inode。恶意 Open XML 仍需沿用 25 MiB、条目/内容上限和 package 校验。远程 Office 仍要求桌面端是当前受支持的 macOS OfficeCLI 平台（`src/main/agent/office/office-runtime.ts:9-38`），服务器本身不需要 Office。
+
+| 待用户决定 | 建议默认 |
+| --- | --- |
+| 缓存位置是否可配置 | 首版固定 `~/.phi/cache/remote-office/v1`，设置页显示位置和占用；之后再考虑自定义。 |
+| 总缓存上限 | 默认 1 GiB、可配置；超限时只淘汰 clean/unpinned，不能为满足硬上限删除 dirty。 |
+| 单文件上限 | 保持现有 25 MiB；如要提高，必须先验证 OfficeCLI、helper frame、SFTP、内存和预览 HTML 上限。 |
+| 冲突后的默认选项 | 默认不执行任何覆盖，保留并 pin 本机修改；主操作建议“另存为新的远程文件”，重新下载必须二次确认。 |
+| “保存”是否回写已绑定远程原文件 | 建议是：只有显式保存才以 base SHA-256 CAS 回写；apply 只保存本机草稿，UI 明确显示“待回写”。空白/导入草稿先要求另存目标。 |
+| 是否允许 `office_deliver` 直接覆盖远程原文件 | 建议否。保持现有“创建新文件、绝不覆盖”的工具契约；覆盖源文件只属于显式保存。 |
+| 远程另存/导出目标 UI | 建议复用远程目录浏览器并只提交项目内相对路径，不使用本机系统保存框。 |
+
 ### 第 7 步：收尾
 
 - Git（基于 exec）、带断点续传的上传/下载、PBS/LSF 执行器、Nextflow 被硬杀后的 Slurm 残留作业清理。
+
+## R7 远程 Git 与文件传输设计
+
+本节基于 `main@c273a578` 的只读代码核对，范围仅是第 7 步剩余项。Nextflow 被硬杀后的
+Slurm 残留作业清理已在 R1.7 完成并真机验证，本节不重复设计。PBS/LSF 目前没有真实目标
+集群，只记录实现前提、可由假命令覆盖的范围和必须真机验证的门禁，不把它们列为本阶段可交付
+能力。
+
+### R7.1 Git 现状与远程缺口
+
+生产代码中真正启动 `git` 的业务实现只有工作区变更捕获和项目状态两处；其余条目是调用方、
+持久化/UI 消费者或能力探测。完整链路如下。
+
+| 调用点 | 用途 | 同步/异步 | 本机路径假定与远程现状 |
+| --- | --- | --- | --- |
+| `src/main/agent/session/workspace-changes.ts:35-75,92-110,132-151,181-229,231-330` | `rev-parse` 找仓库根与 HEAD，`diff`/`ls-files` 找 tracked/untracked 文件，`show` 读起始版本，`diff --no-index` 计算行数和逐文件 patch | `execFile` Promise，异步；单条 Git 5 秒/2 MiB，整次捕获 5 秒，最多 1000 路径、16 MiB baseline、每文件 1 MiB | 直接执行桌面 `git`，随后用 Node `realpath/lstat/readFile/mkdtemp` 访问桌面路径和桌面临时目录；不能用于服务器路径 |
+| `src/main/index.ts:5216-5217,5359-5377` | 每轮 agent 运行前建 baseline，结束后写 `workspace_changes` timeline event 和 diff artifact | 异步并串在 run 生命周期两端 | SSH 项目在入口处明确把 baseline 设为 `null`，因此远程运行返回空、不会产生变更卡片 |
+| `src/main/agent/projects.ts:178-205,226-235` | `rev-parse --is-inside-work-tree`，再取 branch/短 HEAD 与 `status --porcelain`，供侧栏显示分支和 dirty | `execFileSync`，每条 1 秒；一次刷新最多四次阻塞主进程 | 只给 local project 调用；`normalizeProjectAvailability`（`111-129`）和 `listProjects`（`226-235`）都把 SSH 项目的 `gitStatus` 设为 `undefined` |
+| `src/main/agent/session/workspace-diffs.ts:14-53`、`src/main/index.ts:8375`、`src/preload/index.ts:1293-1295` | 把 patch 按 SHA-256 存在本机会话 `artifacts/workspace-diffs`，经 IPC 按引用读取并复核 hash | 持久化为同步文件 I/O；renderer 读取为异步 IPC | artifact 本来就应留在本机 Phi 会话目录；只缺服务器端 patch 的生产者，不应改成从 renderer 直读服务器 |
+| `src/renderer/src/features/chat/components/WorkspaceChangesCard.tsx:14-48,239-262`、`WorkspaceDiffDialog.tsx:14-90` | 显示文件净变化、行数和按需 diff；dialog 最多渲染 5000 行 | React 异步加载 artifact | UI 可复用，但远程文件打开必须保持 `ssh://`/服务器路径语义；远程无 event 时当前整块为空 |
+| `src/main/agent/session/session-export.ts:123-187`、`src/main/index.ts:8843-8863` | 导出本地 Phi 会话树、runtime 历史、blobs 和已有 diff artifacts | 异步本地复制、校验、临时目录后 rename | 明确不复制项目文件；远程 Git 接入后只需让本地 session artifact 自然进入导出，不应在导出时重新连接服务器或重跑 Git |
+| `src/main/agent/agents/tool.ts:125-157`、`src/main/agent/omp/omp-sdk-worker.ts:1093-1151` | 专家子智能体继承项目 cwd；远程专家把 SDK cwd 收敛到 `agentDir`，文件工具再路由服务器 | 异步创建独立 agent session | Phi 没有调用上游 SDK 的可选 worktree isolation；本地专家共用原项目工作树，远程专家也没有服务器 worktree。R7 不应把“子智能体 worktree”误报成现有功能 |
+| `src/main/agent/workspace-host/local-host.ts:14-20,39-57`、`probe-script.ts:180-205`、`probe-parse.ts:315-324` | 本机用 `which git`，服务器探测跑 `git --version`，把结果写入 host capability；远程能力摘要 UI 在 `RemoteCapabilityProfileSummary.tsx:10-18` 展示 Git | 本机探测同步；服务器整体探测异步 | 只证明命令存在，不证明项目是仓库，也没有提供 branch/diff/log 能力 |
+
+`.git` 后缀清理、跳过 `.git` 目录和 GitHub source archive 下载不是 Git 可执行文件调用，不纳入
+Git service。上游 `@oh-my-pi/pi-coding-agent` 虽自带 worktree 实现，Phi 当前没有注册或调用它；
+首批也不应在服务器偷偷创建分支/worktree。
+
+### R7.2 Git 设计
+
+**统一服务。** 新建 main-process `WorkspaceGitService`（建议
+`src/main/agent/git/workspace-git.ts`），输入是已授权的 `WorkspaceHost`、canonical project root
+和结构化操作，不接收 renderer/模型传来的任意 argv。服务器命令一律走
+`WorkspaceHost.exec.run`，路径参数作为 argv 并在 pathspec 前放 `--`；不拼用户可控 shell。
+本地项目可以先保留现状，再用同一服务迁移到 `LocalHost`，但远程路径不得回退到本机 anchor。
+
+首批只开放只读操作，且把一次 UI 动作合并为一次 Git 调用，避免 HPC 上每次 SSH 往返约 1 秒、
+纯 SSH 文件操作约 3 秒的放大：
+
+| 操作 | 固定命令形状与解析 | 建议上限 |
+| --- | --- | --- |
+| 项目摘要 | `status --porcelain=v2 --branch -z --untracked-files=normal`，一次得到 branch/HEAD/dirty；detached HEAD 才补短 OID，不能按旧实现连跑 3–4 次 | 15 秒、2 MiB；超时/截断显示“状态不可用”，不得当作 clean |
+| diff | `diff --no-color --no-ext-diff --no-textconv --unified=3`；staged/unstaged 明确分开，pathspec 必须经过项目边界校验 | 30 秒；沿用每文件 128 KiB、每轮 2 MiB、最多 50 文件，超限只给统计与截断提示 |
+| log | `log` 使用固定 `--format`、NUL 分隔、固定排序，不解析本地化的人类文本 | 最多 100 条、1 MiB、30 秒 |
+| branch | `branch --format=<固定字段>`；不允许 `--contains` 等无界查询由 renderer 任意下发 | 最多 500 refs、512 KiB、15 秒 |
+| rev-parse | 只允许预定义的 `--show-toplevel`、`--verify HEAD`、`--short HEAD` | 15 秒、64 KiB |
+
+运行前后变更捕获保留当前“只报告本轮净变化”的语义，不能退化成简单的 `HEAD` diff（否则会把
+运行前已有改动算进本轮）。远程实现用两次有界批处理：开始时一次 `exec` 记录 Git 可见路径、
+HEAD 和最多 16 MiB 的 baseline 到服务器端 0700、带 owner/lease 的临时目录；结束时一次
+`exec` 在服务器比较、生成有界 JSON/patch 并清理 lease。新增路径以起始 HEAD 为旧值，运行前已
+dirty 的路径以 baseline 为旧值。异常退出留下的目录只由后续同项目操作按 owner、版本和 TTL
+回收；不扫描或删除非 Phi 临时目录。这样不会对每个文件产生一次 SSH 往返。最终 patch 仍写入
+本机 `workspace-diffs` artifact，session export 保持离线、可复核。纯 SSH 与 helper 必须跑同一
+组契约测试；NFS 上还要实测 Git 命令时间、临时 baseline 配额、rename/close-to-open 可见性。
+
+**配置与副作用隔离。** Git 进程使用最小环境，显式设置 `LC_ALL=C`、`GIT_OPTIONAL_LOCKS=0`、
+`GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`、`GIT_CONFIG_NOSYSTEM=1`、
+`GIT_CONFIG_GLOBAL=/dev/null`、`GIT_PAGER=cat`/`PAGER=cat`，并清掉继承的 `GIT_DIR`、
+`GIT_WORK_TREE`、`GIT_INDEX_FILE`、alternate object/config/askpass/SSH 覆盖变量。只读命令固定加
+`-c core.fsmonitor=false -c color.ui=false`，diff 另禁用 ext-diff/textconv；不得执行 alias，
+不得把用户全局 exclude、pager、fsmonitor、credential helper 或签名程序带进 Phi。仓库自身配置
+仍会被 Git 读取，因此命令白名单与 `--no-ext-diff --no-textconv` 仍是必要边界。
+
+`safe.directory` 绝不能写用户全局配置，也不能使用 `safe.directory=*`。先按默认安全检查运行；
+若 Git 报 dubious ownership，只显示仓库所有权风险。未来如允许继续，必须由用户对**精确的、
+已经 canonicalize 且等于项目根的仓库根**单独确认，再仅在该次命令用
+`-c safe.directory=<exact-root>`；仓库根落在项目根外时直接拒绝。
+
+**凭据边界与写操作。** `status/diff/log/branch/rev-parse` 都是本地对象库操作；R7 不执行
+`fetch/pull/push/clone/remote`，不转发 token、密码、SSH agent、credential helper 或 askpass，
+也不新增 Git 凭据设置。首批不向 agent/UI 注册写操作。后续若增加，只能是结构化动作并沿用
+项目审批：`commit` 只提交用户已 staged 的集合并预览文件/消息；`switch/checkout` 先证明不会
+覆盖 dirty 文件；`stash` 明示会同时改 refs/index/worktree并返回 stash OID。`add` 与上述动作分开
+审批；`reset --hard`、`clean`、force checkout、branch force-delete、rebase，以及所有网络动作仍
+拒绝。hooks、filters、commit signing 都可能启动仓库配置的外部程序，启用前必须另做策略决定；
+不得在“只读 Git”名义下顺带运行。
+
+**降级与 UI。** 服务器无 Git、不是仓库、dubious ownership、超时、输出截断和 NFS 过慢是五种
+不同状态，分别给出可恢复提示；都不能伪装成 detached/clean。侧栏继续复用 `ProjectRow`，但 SSH
+项目应在服务器 alias 旁显示 branch/dirty 或“Git 不可用”，hover 显示原因和“刷新 Git”；项目
+进入/切换、run 结束与手动刷新触发一次缓存刷新，普通 token 流不刷新。工作区变更卡和 diff
+dialog 复用现有 UI，远程文件点击走 `ssh://` 打开。写操作若以后开放，审批卡必须显示服务器、
+canonical 仓库根、动作、受影响文件/分支和是否会改工作树。
+
+预计涉及：`src/main/agent/git/`（新服务）、`workspace-host/types.ts`（仅在现有 exec 契约不足时
+扩充，不加 Git 专属万能命令）、`session/workspace-changes.ts`、`session/workspace-diffs.ts`、
+`projects.ts`、`src/main/index.ts`、preload 类型/IPC、`src/shared/workspaceChangeTypes.ts`、
+`ProjectRow.tsx`、`projectHoverDetails.ts`、`WorkspaceChangesCard.tsx`、`WorkspaceDiffDialog.tsx` 及
+对应 tests。`session-export.ts` 原则上不改逻辑，只补远程 artifact 回归测试。
+
+### R7.3 文件传输现状
+
+| 链路 | 当前方式 | 校验/原子性 | 续传、取消、进度与资源问题 |
+| --- | --- | --- | --- |
+| `src/main/agent/download/file-transfer.ts:142-284`；本地 `download_file` 与本机 micromamba artifact 使用 | 桌面 HTTP streaming 到 `<dest>.part`，旁置 JSON 保存 URL hash、ETag/Last-Modified 和总大小 | 完成后流式算本地 SHA-256，再 rename；只返回 digest，不一定有调用方给定的 expected digest | 已有 HTTP Range/If-Range 续传、重试、idle timeout、取消和进度；同一 destination 互斥。它只解决 HTTP→本机，不是 SSH 传输层 |
+| `remote-project-download.ts:29-100,206-266` | 服务器 `curl` 直接下载到随机临时目录，再 hard-link 发布到远程项目 | 大小上限、父目录/链接边界与不覆盖已有目标；没有 SHA-256 | 有取消，600 秒上限；没有进度、retry/Range、跨重启续传，失败清理临时文件 |
+| `remote-result-download.ts:150-270` + `remote-result-read.ts:72-108` | 从 offset 0 开始，按最多约 195 KiB raw 的授权 range 反复读，写本地随机 `.part` | 每页核对源 identity/size，完成后本地 fsync+SHA-256；服务器有 Perl Digest::SHA 时比较远端 digest，再 rename 且拒绝覆盖下载期间被改的目标 | 有进度和取消，但 `finally` 总删随机 part，重试/重启不能续传；高延迟下每 195 KiB 一次往返，大文件不可接受 |
+| `WorkspaceHost.fs`：helper 的 `helper/filesystem.go:90-117,264-315`、`helper-host.ts:126-154`；纯 SSH 的 `ssh-host-fs.ts:100-140,298-335` | helper `readRange` 最多 8 MiB，`writeAtomic` 把整文件作为 JSON/base64 帧；纯 SSH 读约 195 KiB/page，写仅限 1 MiB UTF-8 text | helper/纯 SSH atomic write 都有 expectedHash 与临时文件 rename | 没有 streaming write/resume/progress；helper 帧上限 64 MiB 且客户端会 Buffer/JSON/base64 复制，`remote-session.ts:185-188` 的 `uploadFile` 更会先把本机文件整体读入内存 |
+| `remote-ssh-session.ts:56-73,708-730` 及 helper installer、R2.2 micromamba、wrapper bundle、Singularity image | 系统 `sftp put` 单次上传 | helper installer 与 micromamba 上传后做远端 SHA-256并原子激活；wrapper bundle另验 archive/manifest；image 只 `.part` 后 rename，没有 digest | 无 resume/细粒度进度；取消靠杀 SFTP。helper/micromamba 最多重试整文件且每次换随机 staging；大镜像断线会全部重传 |
+| Wrapper 输入：`path-mapping.ts:72-175`、`plans.ts:197-210` | 本机项目跑远端时，`source:local` 只按已配置的 localRoot→remoteRoot 映射路径；SSH 项目直接拒绝本机输入 | 仅检查路径/边界，后续验证服务器文件存在 | **当前没有 Wrapper 输入上传**；tool 描述也明确“Phi maps paths but does not upload data”。R7 不能把路径映射误写成已上传 |
+
+各链路各自有局部安全措施，但没有统一队列、稳定 transfer identity、跨重试 partial、并发上限或
+统一进度状态；数 GB 文件还会在 helper/adapter 路径造成整文件内存读取。
+
+### R7.4 统一带断点续传的传输层
+
+**抽象与状态机。** 新建 main-process `FileTransferManager`，接受已授权的
+`LocalPath`/`RemoteWorkspacePath`/`AuthorizedWrapperResultPath` endpoint，而不是任意 renderer
+绝对服务器路径。统一状态为 `queued → preparing → transferring → verifying → publishing → saved`，
+以及 `paused/cancelled/failed`；事件带 transferId、方向、已传/总字节、续传起点、瞬时/平滑速度和
+阶段，但日志不含主机名、用户名、URL query、token 或私有绝对路径。默认全局最多 2 个活动传输、
+同一 host 1 个、同一 destination 1 个；其余排队，可取消。进度按最多 4 Hz 且至少 1 MiB 增量节流。
+
+**稳定 partial 与恢复。** 目标同目录使用 0600 普通文件
+`.<basename>.phi-transfer-<transferId>.part` 和原子更新的 `.json` manifest；目录传输使用同目录
+0700 staging dir。manifest 记录协议版本、方向、授权 source identity（device/inode/size/mtime 或
+等价 helper identity）、expected size/SHA-256、已确认 offset 与 chunk size，不存凭据。恢复前同时
+核对 manifest、source identity、part 类型/owner/size 和最后确认 chunk hash；part 大于 durable
+offset 时先截断，源变化、offset 越界、符号链接或 manifest 不匹配时拒绝续传并要求显式重开。
+取消默认保留可恢复 partial；用户选择“取消并删除”或 TTL 清理才删除。TTL/配额清理由 Phi
+transfer registry 精确枚举，不 glob 删除陌生 `.part`。
+
+**流与校验。** 固定 8 MiB raw chunk（可按链路调节），读取、写入和 SHA-256 增量计算都用 stream，
+绝不 `readFile`/`Buffer.concat` 数 GB 内容；最多保留两个 raw chunk，base64 仅用于兼容旧 helper
+RPC且不能成为新 data plane。若调用方有固定 digest（helper、micromamba、content-addressed
+bundle），开始前就登记；否则源端和目标端都算完整 SHA-256并比较。每 64 MiB 或 5 秒原子落一
+次 durable offset，完成时 fsync/close、再次核对 source identity、全量 SHA-256和大小，再在同一
+文件系统 rename。hash 工具缺失时 helper 仍可用 Go 实现；纯 SSH 若 `sha256sum`/`shasum`/
+`openssl`/Perl Digest::SHA 均不可用，就明确拒绝“已校验的大文件传输”，不能降级成只看大小。
+
+**helper 与纯 SSH。** helper 是首选 data plane：新增 versioned transfer RPC/二进制帧，持久 stdio
+通道内允许有限窗口流水（不为每 chunk 重开 SSH），helper 负责 path guard、offset 写入、hash、
+fsync 和 atomic publish。纯 SSH 是 helper 安装本身及 helper 不可用时的必备后端：一次 preflight
+解析/锁定路径和 offset，一条长生命周期 `ssh` stdin/stdout 流从 offset 继续（服务器端
+`dd`/等价小脚本），一次 postflight 做 identity/hash/rename，目标是**固定约 3 次控制往返 + 1 条
+连续数据流**，而不是按 chunk exec。系统 SFTP 的 `reput/reget` 和 rsync 可作为未来加速器，但不
+作为正确性基础：SFTP 批处理进度不可稳定解析，rsync 不保证服务器安装且 delta 扫描会在 NFS
+上额外读两遍文件。若以后启用 rsync，只能在能力探测、固定参数、同一 manifest/hash/发布协议
+之下替换 data plane。
+
+**高延迟、NFS 与大文件。** 控制面批量化，数据面保持单流；不对每 195 KiB/8 MiB 做独立 SSH
+exec。NFS 上不每 chunk fsync/rename，只做周期 checkpoint 和最终 fsync/rename/复核；把远端
+完整 SHA-256的顺序读耗时单独显示为 `verifying`，不能用更短 timeout 误判失败。开始前分别检查
+源大小、目标文件系统可用空间/配额写探针；需要保留 partial 时按“剩余字节 + manifest + 安全
+余量”判断。数 GB 文件内存保持 O(chunk)，磁盘最多一个 partial 加最终文件；rename 同文件系统
+不复制。目标已存在默认拒绝，覆盖必须是单独审批/显式 Save dialog 选择，不能先删目标。
+
+**迁移顺序。** 远程结果下载先迁到 manager，保留现有授权路径、source identity、保存目标竞态
+检查和 IPC/UI，再获得跨取消/重启续传。`RemoteSshSession.uploadFile` 改成 manager 的薄 adapter；
+helper bootstrap 固定走纯 SSH，helper 就绪后 micromamba、wrapper bundle、Singularity image 和
+remote-session 大文件走 helper，且都传 expected digest。服务器直下的 `download_file` 复用同一
+manifest/状态机，用 `curl --continue-at -` 加 ETag/Last-Modified/大小和最终 SHA-256；它仍由
+服务器联网，不中转桌面。Wrapper 输入新增显式 `source:'upload'`（或等价独立选择），上传到
+`<runDir>/inputs/<content-hash>/` 后才改 params；现有 `source:'local'` 继续表示共享路径映射，绝不
+静默变成数据上传。glob/目录输入先建稳定 manifest，显示文件数/总大小并审批，再逐文件复用同一
+层；提交 Nextflow 前所有输入必须完成并通过 digest。
+
+预计涉及：新增 `src/main/agent/transfer/` 与 shared/preload transfer types；扩展
+`workspace-host/types.ts`、`helper/protocol.go`/`handlers.go`/`filesystem.go`、
+`helper-host.ts`、纯 SSH stream adapter、`remote-ssh-session.ts`；迁移
+`remote-result-download.ts`/`remote-result-read.ts`、`remote-project-download.ts`、
+`helper-installer.ts`、`remote-micromamba-transfer.ts`、`remote-bundle.ts`、`remote-images.ts`、
+`path-mapping.ts`/`plans.ts`/wrapper run 提交流程，以及现有下载进度 UI。现有
+`download/file-transfer.ts` 保留 HTTP adapter 语义，不再成为第二套调度器。
+
+### R7.5 PBS/LSF 前提、风险与结论
+
+当前类型只允许 `scheduler: 'slurm' | 'local'`、controller 只允许 `login | sbatch`
+（`src/shared/wrapperRemoteTypes.ts:10-53`）；`executor-remote.ts:33-39` 也明确要求 PBS/LSF 等有
+真实集群后再做 dialect-specific runner。因此此处只能安全实现纯 parser/script builder 和注入式
+fake-command 测试，不能安全地开放生产设置或宣称支持。
+
+| 调度器 | 最低命令与状态映射 | 取消语义 | 假命令能证明 / 必须真机证明 |
+| --- | --- | --- | --- |
+| PBS/OpenPBS/PBS Pro（Torque 必须另列兼容矩阵） | `qsub` 提交并解析可能带 server suffix/array index 的 job id；`qstat`/`qstat -f` 查 active/final（若站点支持 history 则另探测）；Q/H/W/S/T/R/E 视为未终态，F/C 必须结合 `Exit_status` 或 Phi 的 exit-code sentinel，未知/已清理但无 sentinel 为 `lost`，不能猜成功 | `qdel` 只表示接受取消请求；可选 `qsig` 的 TERM/KILL 语义和支持度按站点探测。取消后必须重查 queue/history 与 exit sentinel；“job unknown”不是已取消证明 | fake 可测 qsub 输出解析、`#PBS` 脚本、资源参数、状态映射、claim/reconnect、qdel 调用与超时；真机必须测命令/flag 方言、history 保留、数组作业、queue/account/resource 语法、信号/子进程树、日志路径、共享盘和 Nextflow `pbs`/`pbspro` 真实任务 |
+| IBM Spectrum LSF | `bsub`（通常 stdin）提交并解析 `Job <id>`；`bjobs` 查 active，必要时 `bjobs -l`/`bhist` 查 final；PEND/WAIT/PSUSP/USUSP/SSUSP/RUN 为未终态，DONE 只有 exit evidence 为 0 才成功，EXIT 为失败，UNKWN/ZOMBI 为 unknown/failed 而非自动重试 | `bkill` 的默认信号序列、`bkill -s` 支持和 job group/array 行为受站点配置影响；调用成功后仍要轮询消失/终态并核对 sentinel | fake 可测 bsub/bjobs 文本解析、`#BSUB` 脚本、状态映射、bkill 调用、reconnect/idempotency；真机必须测不同版本 `-o` 格式、终态保留、queue/project/resource/select 语法、信号升级、execution host 环境、日志/共享盘和 Nextflow `lsf` 实际提交 |
+
+共同前提是：拿到至少一套可清理的测试 queue、明确的站点策略、Nextflow/Java/容器或 conda 可用、
+登录节点与计算节点都能看到 run/runtime/cache 根，并允许做最小短作业、取消、断线重连和应用退出
+后的残留核对。测试记录仍需脱敏。建议**本阶段搁置 PBS/LSF 生产实现**；真实集群到位后先做
+read-only doctor + 10 分钟内的最小 submit/status/cancel 探针，再决定是复用 scheduler adapter
+还是分别实现 controller。没有真机门禁时，最多提交不进入 UI/配置类型的纯 parser 代码。
+
+### R7.6 实施拆分与验证
+
+| 顺序 | 范围、文件与依赖 | 本机自动化 | 必须真机验证 |
+| --- | --- | --- | --- |
+| R7-I1 传输契约与 manager | 新增 shared types、`src/main/agent/transfer/`、registry/queue/manifest/local adapter；无依赖 | 临时目录覆盖 stable partial、resume、源变化、hash mismatch、取消保留/删除、目标竞态、并发上限、数 GB 稀疏/生成流且内存不随文件增长 | 无；只做本机层 |
+| R7-I2 helper data plane | 扩展 versioned Go protocol、helper/client host；依赖 I1 | Go/TS 契约、乱序/重复 offset、断帧、重连、窗口/背压、path guard、fsync/rename、旧 helper 自动降级 | Linux x86_64/aarch64；断网续传、helper 升降级、NFS hash/rename、进程清零 |
+| R7-I3 纯 SSH data plane | 长流 preflight/stream/postflight；依赖 I1，可与 I2 并行 | fake ssh 覆盖 stdin/stdout 二进制、路径注入、partial 恢复、缺 hash 工具、TERM→KILL、固定控制往返上限 | OpenSSH/ControlMaster、高延迟链路、数 GB、断网/重连、NFS/配额；helper bootstrap 必测 |
+| R7-I4 结果下载与远程直下迁移 | `remote-result-*`、`remote-project-download*`、IPC/progress UI；依赖 I1 + I2/I3 任一可用 | 复用现有授权/符号链接/目标竞态测试，增加重启续传、进度节流、expected/remote digest；旧测试语义不降级 | GPU/HPC 各下载多 GB 文件，暂停/断网/重启续传，最终两端 SHA-256一致且无陌生 partial |
+| R7-I5 上传消费者迁移 | `RemoteSshSession.uploadFile` adapter，helper installer（先纯 SSH）、micromamba、bundle、image；依赖 I2/I3，可与 I4 后半并行 | 每个调用方保留自己的内容/激活门禁；断点重试不换 staging；进度与取消；禁止整文件 `readFile` | 两架构 helper、micromamba 与大镜像；NFS 上传/校验/原子激活；退出 Phi 后可续传且无进程残留 |
+| R7-I6 Wrapper 输入上传 | 新显式 upload source、run input staging、审批/UI；依赖 I4/I5 | 单文件/glob/目录 manifest、同内容复用、路径映射不变、提交前门禁、取消不启动 Nextflow | 真实大 FASTQ/数 GB 输入、共享映射与 upload 两模式、计算节点可见性、配额与断线 |
+| R7-I7 只读 Git service/项目摘要 | 新 `agent/git`，改 `projects.ts`/main/preload/sidebar；只依赖现有 WorkspaceHost，可与 I1-I3 并行 | LocalHost + helper + 纯 SSH 参数化；无 Git/非仓库/dubious/timeout/truncated；全局 config/alias/pager/credential helper 不被读取；一次刷新往返预算 | GPU/HPC 的 branch/dirty/detached、大仓库/NFS 耗时、global config 污染样本、safe.directory 错误提示 |
+| R7-I8 远程运行变更/diff | host-aware baseline lease、timeline/artifact/UI；依赖 I7 | dirty baseline、新增/删除/二进制/大文件/路径特殊字符、并行外部修改、异常 lease 回收；保持 50 文件/128 KiB/2 MiB 上限 | 高延迟/NFS、运行中断与应用崩溃、session export 离线读取 diff、服务器临时目录清零 |
+| R7-I9 Git 写操作（条件项） | commit/switch/stash 结构化接口与审批；依赖 I7，且必须先解决 R7.7 的用户决定 | hooks/signing/filter 禁用或启用策略、dirty/冲突、审批、取消、崩溃恢复；绝无网络命令/凭据 | 在一次性仓库验证提交/切换/冲突/恢复；未真机前不开放 |
+| R7-I10 PBS/LSF（延期） | 真集群到位后另起步骤；依赖站点前提，与 Git/传输无代码依赖 | fake CLI/parser/status/cancel/reconcile | 两类调度器分别真机；任一不能互相代替 |
+
+每个实现步都需跑受影响测试、`bun run typecheck`、`bun run lint`、
+`bun run check:architecture`；helper 改动另跑 Go test/vet。I1/I7 可并行，I2/I3 可在 I1 契约冻结后
+并行，I4 与 I5 在各自 backend 稳定后并行；I6 不能早于上传与结果链路，I8 不能早于 Git service。
+
+### R7.7 风险与需要用户决定
+
+**主要风险：** Git status/diff 与最终 SHA-256 都会在 NFS 上触发全量 metadata/顺序读，timeout
+不能设得像本地盘一样短；远程 baseline 和可恢复 partial 会消耗用户配额；helper binary framing
+升级必须兼容旧 helper并能降级；纯 SSH 中断发生在远端 close/fsync/rename 附近时结果可能未知，
+必须靠 manifest+hash 对账；同一路径被用户或另一会话修改时不能自动覆盖；服务器 hash 工具、
+`stat`/`dd` 方言和 NFS rename/durability 有站点差异；Git 仓库配置中的 filters/hooks/signing 是
+潜在外部执行面；多 GB transfer 的进度事件和错误文本也必须保持有界、脱敏。PBS/LSF 最大风险是
+在 mock 全绿时仍误判真实 scheduler 状态或取消结果。
+
+需要用户在实现前决定：
+
+- Git 首批是否严格只读；建议是。若要写，先决定 hooks/filters/签名是否全部禁用，以及
+  `commit/switch/stash` 中哪些进入首批，危险 reset/clean/force 与网络 Git 仍不做。
+- dubious ownership 时是否允许对精确 canonical project root 做一次性 `safe.directory` 信任；
+  建议默认拒绝，设置页由用户逐项目确认，永不写 global config。
+- Git 自动刷新预算：建议项目进入/切换、run 完成和手动刷新，15 秒即降级；不做文件监听或
+  token 流刷新。超大仓库是否允许用户关闭自动刷新。
+- partial 默认保留多久及配额：建议完成后立即删 metadata，失败/取消保留 7 天；每 host 上限
+  20 GiB 或运行时根可用空间的 10%（取小者），超过先提示用户清理，不静默删正在使用的 partial。
+- 传输默认并发：建议全局 2、每 host 1；chunk 8 MiB、64 MiB/5 秒 checkpoint。是否允许用户按
+  站点调高，需在真机吞吐与 NFS 压力测试后决定。
+- Wrapper 的本机数据是继续只支持共享路径映射，还是增加显式 upload；建议两者并存且
+  `source:'upload'` 必须显式，显示文件数/总大小/服务器落点后审批，绝不把旧 `source:'local'`
+  静默改义。
+- 服务器缺 SHA-256 能力且 helper 不可用时是否允许仅大小校验；建议不允许，对需要搬运的文件
+  明确提示先恢复 helper/哈希工具。
+- PBS/LSF 是否现在投入；建议搁置到有各自真实集群和可清理测试 queue，再按 R7-I10 启动。
 
 ## 5. 降级原则
 
