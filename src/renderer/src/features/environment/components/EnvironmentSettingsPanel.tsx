@@ -8,7 +8,6 @@ import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogContentText from '@mui/material/DialogContentText'
 import DialogTitle from '@mui/material/DialogTitle'
-import Divider from '@mui/material/Divider'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
@@ -19,10 +18,17 @@ import type {
 } from '../../../../../shared/environmentTypes'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { useSessionStore } from '../../../stores/sessionStore'
-import { HostDependenciesSection } from './HostDependenciesSection'
-import { HostToolsSection } from './HostToolsSection'
 import { ManagedEnvironmentsSection } from './ManagedEnvironmentsSection'
-import { buildEnvironmentSections, formatEnvironmentSize } from '../lib/environmentPanel'
+import { ManagedEnvironmentDetail } from './ManagedEnvironmentDetail'
+import {
+  buildEnvironmentSections,
+  formatEnvironmentSize,
+  managedEnvironmentHostResources
+} from '../lib/environmentPanel'
+import {
+  readManagedEnvironmentCache,
+  refreshManagedEnvironmentCache
+} from '../lib/managedEnvironmentApi'
 
 type PendingAction =
   | { kind: 'build'; environment: ManagedEnvironmentEntry }
@@ -37,6 +43,12 @@ export type EnvironmentSettingsPanelProps = {
   redetecting: boolean
   onRedetect: () => Promise<void>
   onSavePath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
+}
+
+type LoadManagedOptions = {
+  blocking?: boolean
+  force?: boolean
+  includeDynamic?: boolean
 }
 
 function errorMessage(cause: unknown): string {
@@ -103,53 +115,79 @@ export function EnvironmentSettingsPanel({
   const projectCwd = useSessionStore((state) =>
     state.activeProjectLocation?.kind === 'local' ? state.activeCwd || undefined : undefined
   )
+  const cachedManaged = readManagedEnvironmentCache(projectCwd)
   const requestRef = useRef(0)
-  const [managed, setManaged] = useState<ManagedEnvironmentEntry[]>([])
-  const [managedLoading, setManagedLoading] = useState(true)
+  const [managed, setManaged] = useState<ManagedEnvironmentEntry[]>(() => [
+    ...(cachedManaged ?? [])
+  ])
+  const [managedLoading, setManagedLoading] = useState(() => !cachedManaged)
   const [managedError, setManagedError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionWorking, setActionWorking] = useState(false)
   const [busyEnvId, setBusyEnvId] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null)
 
-  const loadManaged = useCallback(async (): Promise<void> => {
-    const request = ++requestRef.current
-    setManagedLoading(true)
-    setManagedError(null)
-    try {
-      if (typeof window.api.listManagedEnvironments !== 'function') {
-        throw new Error('环境管理接口尚未加载，请完全退出并重新打开 Phi 后再试')
+  const loadManaged = useCallback(
+    async ({
+      blocking = true,
+      force = false,
+      includeDynamic = true
+    }: LoadManagedOptions = {}): Promise<void> => {
+      const request = ++requestRef.current
+      if (blocking) setManagedLoading(true)
+      setManagedError(null)
+      try {
+        if (typeof window.api.listManagedEnvironments !== 'function') {
+          throw new Error('环境管理接口尚未加载，请完全退出并重新打开 Phi 后再试')
+        }
+        const environments = await refreshManagedEnvironmentCache(
+          projectCwd,
+          () => window.api.listManagedEnvironments(projectCwd, includeDynamic),
+          { force, scope: includeDynamic ? 'full' : 'summary' }
+        )
+        if (request !== requestRef.current) return
+        setManaged([...environments])
+      } catch (cause) {
+        if (request !== requestRef.current) return
+        setManagedError(`无法读取托管环境：${errorMessage(cause)}`)
+      } finally {
+        if (request === requestRef.current) setManagedLoading(false)
       }
-      const environments = await window.api.listManagedEnvironments(projectCwd)
-      if (request !== requestRef.current) return
-      setManaged(environments)
-    } catch (cause) {
-      if (request !== requestRef.current) return
-      setManagedError(`无法读取托管环境：${errorMessage(cause)}`)
-    } finally {
-      if (request === requestRef.current) setManagedLoading(false)
-    }
-  }, [projectCwd])
+    },
+    [projectCwd]
+  )
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadManaged(), 0)
+    const cached = readManagedEnvironmentCache(projectCwd)
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        await loadManaged({ blocking: !cached, includeDynamic: false })
+        await loadManaged({ blocking: false, force: true, includeDynamic: true })
+      })()
+    }, 0)
     return () => {
       window.clearTimeout(timer)
       requestRef.current += 1
     }
-  }, [loadManaged])
+  }, [loadManaged, projectCwd])
 
-  const sections = buildEnvironmentSections(managed, snapshot)
+  const sections = buildEnvironmentSections(managed)
   const managedEnvironments = sections[0].items
-  const hostDependencies = sections[1].items
-  const hostTools = sections[2].items
+  const selectedEnvironment = selectedEnvironmentId
+    ? (managedEnvironments.find((environment) => environment.envId === selectedEnvironmentId) ??
+      null)
+    : null
+  const selectedHostResources = selectedEnvironment
+    ? managedEnvironmentHostResources(selectedEnvironment, snapshot)
+    : { dependencies: [], tools: [] }
 
   const refreshAll = async (): Promise<void> => {
     setRefreshError(null)
     try {
       await onRedetect()
-      await loadManaged()
+      await loadManaged({ force: true })
     } catch (cause) {
       setRefreshError(`重新检测失败：${errorMessage(cause)}`)
     }
@@ -163,7 +201,7 @@ export function EnvironmentSettingsPanel({
     try {
       await window.api.rebuildManagedEnvironment(environment.envId)
       setNotice(`已重新构建 ${environment.label ?? environment.ref}。`)
-      await loadManaged()
+      await loadManaged({ force: true })
     } catch (cause) {
       setManagedError(`无法重新构建环境：${errorMessage(cause)}`)
     } finally {
@@ -204,7 +242,7 @@ export function EnvironmentSettingsPanel({
         )
       }
       setPendingAction(null)
-      await loadManaged()
+      await loadManaged({ force: true })
     } catch (cause) {
       const verb = action.kind === 'build' ? '构建' : action.kind === 'remove' ? '移除' : '清理'
       setManagedError(`${verb}失败：${errorMessage(cause)}`)
@@ -213,6 +251,42 @@ export function EnvironmentSettingsPanel({
       setBusyEnvId(null)
       setActionWorking(false)
     }
+  }
+
+  if (selectedEnvironment) {
+    return (
+      <Stack spacing={2.5}>
+        {notice ? (
+          <Alert severity="success" variant="outlined" onClose={() => setNotice(null)}>
+            {notice}
+          </Alert>
+        ) : null}
+        <ManagedEnvironmentDetail
+          environment={selectedEnvironment}
+          hostResources={selectedHostResources}
+          hostBusy={loading || redetecting}
+          busy={actionWorking || busyEnvId === selectedEnvironment.envId}
+          error={managedError}
+          onBack={() => setSelectedEnvironmentId(null)}
+          onBuild={() => setPendingAction({ kind: 'build', environment: selectedEnvironment })}
+          onRebuild={() => void rebuild(selectedEnvironment)}
+          onRemove={() => setPendingAction({ kind: 'remove', environment: selectedEnvironment })}
+          onSaveHostPath={onSavePath}
+        />
+        <EnvironmentBuildConfirmDialog
+          environment={pendingAction?.kind === 'build' ? pendingAction.environment : null}
+          working={actionWorking}
+          onClose={() => setPendingAction(null)}
+          onConfirm={() => void confirmAction()}
+        />
+        <DestructiveActionDialog
+          action={pendingAction?.kind === 'build' ? null : pendingAction}
+          working={actionWorking}
+          onClose={() => setPendingAction(null)}
+          onConfirm={() => void confirmAction()}
+        />
+      </Stack>
+    )
   }
 
   return (
@@ -229,8 +303,7 @@ export function EnvironmentSettingsPanel({
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="h5">环境</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            管理 Phi 的可复现环境，并检查必须由本机提供的依赖。Python、R 和 Conda 由托管环境提供，
-            不再作为宿主要求。
+            管理 Phi 的可复现环境。Jupyter、Nextflow 与容器运行时会自动检测，并显示在对应环境中。
           </Typography>
           {snapshot?.scannedAt ? (
             <Typography variant="caption" color="text.secondary">
@@ -263,32 +336,17 @@ export function EnvironmentSettingsPanel({
 
       <ManagedEnvironmentsSection
         environments={managedEnvironments}
+        snapshot={snapshot}
         loading={managedLoading || actionWorking}
         error={managedError}
         busyEnvId={busyEnvId}
-        onRetry={() => void loadManaged()}
+        onRetry={() => void loadManaged({ force: true })}
         onBuild={(environment) => setPendingAction({ kind: 'build', environment })}
         onRebuild={(environment) => void rebuild(environment)}
         onRemove={(environment) => setPendingAction({ kind: 'remove', environment })}
         onClean={() => setPendingAction({ kind: 'clean' })}
+        onOpen={(environment) => setSelectedEnvironmentId(environment.envId)}
       />
-
-      <Divider />
-      {loading && !snapshot ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress size={28} />
-        </Box>
-      ) : (
-        <>
-          <HostDependenciesSection dependencies={hostDependencies} />
-          <Divider />
-          <HostToolsSection
-            tools={hostTools}
-            busy={loading || redetecting}
-            onSavePath={onSavePath}
-          />
-        </>
-      )}
 
       <EnvironmentBuildConfirmDialog
         environment={pendingAction?.kind === 'build' ? pendingAction.environment : null}

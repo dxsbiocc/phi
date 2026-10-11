@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import type { EnvironmentBuild } from '../../../shared/environmentBuildTypes'
 import type {
   ManagedEnvironmentConsumer,
   ManagedEnvironmentEntry,
+  ManagedEnvironmentPackage,
   ManagedEnvironmentState
 } from '../../../shared/environmentTypes'
 import { discoverPhiAgents } from '../agents/discovery'
@@ -14,6 +15,7 @@ import {
   computeEnvId,
   currentPlatform,
   getRuntimeRoot,
+  parseExplicitLock,
   readEnvironmentIndex,
   type EnvironmentIndexEntry,
   type PhiPlatform
@@ -42,6 +44,8 @@ export interface ListManagedEnvironmentsOptions {
   /** Tests and non-UI callers can supply the already-loaded consumer declarations. */
   consumers?: readonly ManagedEnvironmentConsumerDeclaration[]
   sizeOf?: (prefix: string) => Promise<number>
+  /** False returns only file-backed catalog data; sizes, cache estimates and discovered consumers are deferred. */
+  includeDynamic?: boolean
 }
 
 interface KnownEnvironment {
@@ -141,6 +145,78 @@ function environmentId(descriptor: ReturnType<typeof describeEnvironment>): stri
     sourcePackages: descriptor.spec.sourcePackages,
     installation: descriptor.spec.installation
   })
+}
+
+function normalizedPackageName(name: string): string {
+  return name.toLowerCase().replaceAll('_', '-')
+}
+
+function lockedPackageVersions(lockText: string): Map<string, string> {
+  const parsed = parseExplicitLock(lockText)
+  if (!parsed.ok) return new Map()
+  const versions = new Map<string, string>()
+  for (const entry of parsed.entries) {
+    let filename: string
+    try {
+      filename = decodeURIComponent(basename(new URL(entry.url).pathname))
+    } catch {
+      continue
+    }
+    const stem = filename.endsWith('.tar.bz2')
+      ? filename.slice(0, -'.tar.bz2'.length)
+      : filename.endsWith('.conda')
+        ? filename.slice(0, -'.conda'.length)
+        : filename
+    const buildSeparator = stem.lastIndexOf('-')
+    const versionSeparator = stem.lastIndexOf('-', buildSeparator - 1)
+    if (versionSeparator <= 0 || buildSeparator <= versionSeparator) continue
+    const name = stem.slice(0, versionSeparator)
+    const version = stem.slice(versionSeparator + 1, buildSeparator)
+    if (name && version) versions.set(normalizedPackageName(name), version)
+  }
+  return versions
+}
+
+function requestedDependency(value: string): { name: string; version?: string } | undefined {
+  const match = /^([a-zA-Z0-9_.-]+)\s*(.*)$/u.exec(value.trim())
+  if (!match?.[1]) return undefined
+  const requested = match[2]?.trim().replace(/^=(?!=)/u, '')
+  return { name: match[1], ...(requested ? { version: requested } : {}) }
+}
+
+function environmentPackages(
+  descriptor: ReturnType<typeof describeEnvironment>
+): ManagedEnvironmentPackage[] {
+  const locked = lockedPackageVersions(descriptor.lockText)
+  const packages = new Map<string, ManagedEnvironmentPackage>()
+  const add = (
+    dependency: { name: string; version?: string },
+    manager: ManagedEnvironmentPackage['manager']
+  ): void => {
+    const key = `${manager}:${normalizedPackageName(dependency.name)}`
+    packages.set(key, {
+      name: dependency.name,
+      manager,
+      ...((locked.get(normalizedPackageName(dependency.name)) ?? dependency.version)
+        ? { version: locked.get(normalizedPackageName(dependency.name)) ?? dependency.version }
+        : {})
+    })
+  }
+  for (const dependency of descriptor.spec.dependencies) {
+    if (typeof dependency === 'string') {
+      const parsed = requestedDependency(dependency)
+      if (parsed) add(parsed, 'conda')
+      continue
+    }
+    for (const pip of dependency.pip) {
+      const parsed = requestedDependency(pip)
+      if (parsed) add(parsed, 'pip')
+    }
+  }
+  for (const source of descriptor.spec.sourcePackages ?? []) {
+    add({ name: source.name, version: source.ref.slice(0, 12) }, source.source)
+  }
+  return [...packages.values()]
 }
 
 function metadataState(prefix: string): ManagedEnvironmentState | undefined {
@@ -308,14 +384,17 @@ export async function listManagedEnvironments(
   const platform = options.platform ?? currentPlatform()
   const builds = options.builds ?? []
   const sizeOf = options.sizeOf ?? directorySize
+  const includeDynamic = options.includeDynamic !== false
   const known = [
     ...officialEnvironments(environmentsDir),
     ...pluginEnvironments(plugins),
     ...projectEnvironments(options.projectDir)
   ]
   const consumerDeclarations = [
-    ...(options.consumers ??
-      (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir))),
+    ...(includeDynamic
+      ? (options.consumers ??
+        (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir)))
+      : []),
     ...FIXED_CONSUMERS
   ]
   const consumers = consumersByRef(consumerDeclarations, known, options.projectDir)
@@ -343,14 +422,16 @@ export async function listManagedEnvironments(
         source: environment.source,
         ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
         label: descriptor.spec.name,
+        packages: environmentPackages(descriptor),
         ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
         referrers: [...(indexEntry?.referrers ?? [])].sort(),
         consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
         ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
         ...(errorFor(indexEntry, build, state) ? { error: errorFor(indexEntry, build, state) } : {})
       }
-      if (state === 'absent') entry.estimate = estimateBuild(root, descriptor.lockText)
-      else if (indexEntry) entry.sizeBytes = await sizeOf(indexEntry.prefix)
+      if (includeDynamic && state === 'absent')
+        entry.estimate = estimateBuild(root, descriptor.lockText)
+      else if (includeDynamic && indexEntry) entry.sizeBytes = await sizeOf(indexEntry.prefix)
       return entry
     })
   )
@@ -364,10 +445,11 @@ export async function listManagedEnvironments(
       envId,
       state,
       source: 'orphaned',
+      packages: [],
       label: indexEntry.name,
       referrers: [...indexEntry.referrers].sort(),
       consumers: [],
-      sizeBytes: await sizeOf(indexEntry.prefix),
+      ...(includeDynamic ? { sizeBytes: await sizeOf(indexEntry.prefix) } : {}),
       ...(errorFor(indexEntry, build, state) ? { error: errorFor(indexEntry, build, state) } : {})
     }
     entries.push(entry)

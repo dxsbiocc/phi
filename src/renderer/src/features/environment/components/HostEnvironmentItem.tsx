@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import Box from '@mui/material/Box'
 import Chip from '@mui/material/Chip'
-import Collapse from '@mui/material/Collapse'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
@@ -10,15 +9,15 @@ type HostEnvironmentItemProps = {
   id: string
   icon: ReactNode
   title: string
-  summary: string
+  summary?: string
   status: {
     label: string
     color: 'success' | 'warning' | 'default'
   }
   contextLabel?: string
   action?: ReactNode
-  expanded?: boolean
   details?: ReactNode
+  choiceSelected?: boolean
 }
 
 export function HostEnvironmentItem({
@@ -29,15 +28,28 @@ export function HostEnvironmentItem({
   status,
   contextLabel,
   action,
-  expanded = false,
-  details
+  details,
+  choiceSelected
 }: HostEnvironmentItemProps): React.JSX.Element {
   return (
     <Paper
       component="article"
       variant="outlined"
       data-phi-host-environment-item={id}
-      sx={{ minWidth: 0, overflow: 'hidden', borderRadius: 2 }}
+      {...(choiceSelected === undefined
+        ? {}
+        : {
+            'data-phi-environment-choice': 'local',
+            'data-phi-environment-choice-selected': String(choiceSelected)
+          })}
+      sx={{
+        minWidth: 0,
+        overflow: 'hidden',
+        borderRadius: 2,
+        ...(choiceSelected === undefined
+          ? {}
+          : { borderColor: choiceSelected ? 'success.main' : 'divider' })
+      }}
     >
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minHeight: 76, p: 1.5 }}>
         <Box
@@ -68,22 +80,22 @@ export function HostEnvironmentItem({
             <Chip size="small" color={status.color} variant="outlined" label={status.label} />
             {contextLabel ? <Chip size="small" variant="outlined" label={contextLabel} /> : null}
           </Stack>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            noWrap
-            title={summary}
-            sx={{ mt: 0.25 }}
-          >
-            {summary}
-          </Typography>
+          {summary ? (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              noWrap
+              title={summary}
+              sx={{ mt: 0.25 }}
+            >
+              {summary}
+            </Typography>
+          ) : null}
         </Box>
         {action ? <Box sx={{ flexShrink: 0 }}>{action}</Box> : null}
       </Stack>
       {details ? (
-        <Collapse in={expanded} unmountOnExit>
-          <Box sx={{ px: 1.5, py: 1.5, borderTop: 1, borderColor: 'divider' }}>{details}</Box>
-        </Collapse>
+        <Box sx={{ px: 1.5, py: 1.5, borderTop: 1, borderColor: 'divider' }}>{details}</Box>
       ) : null}
     </Paper>
   )

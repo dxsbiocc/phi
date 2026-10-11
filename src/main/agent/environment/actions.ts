@@ -32,10 +32,10 @@ const REMOVABLE_STATES = new Set(['ready', 'failed', 'drifted'])
 const CLEAN_BUILD_GUARD_REFERRER = 'environment-panel:active-build'
 const LEGACY_VERSIONED_PLUGIN_REFERRER = /^plugin:[a-z][a-z0-9-]*@/u
 
-type Catalog = (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+type Catalog = (projectCwd?: string, includeDynamic?: boolean) => Promise<ManagedEnvironmentEntry[]>
 
 export interface ManagedEnvironmentActions {
-  list(projectCwd?: unknown): Promise<ManagedEnvironmentEntry[]>
+  list(projectCwd?: unknown, includeDynamic?: unknown): Promise<ManagedEnvironmentEntry[]>
   build(ref: unknown, projectCwd?: unknown, pluginId?: unknown): { envId: string }
   rebuild(envId: unknown): Promise<void>
   remove(envId: unknown): Promise<ManagedEnvironmentRemoveResult>
@@ -64,6 +64,12 @@ function projectDirectory(value: unknown): string | undefined {
     throw new Error('项目目录不存在或不是文件夹')
   }
   return path
+}
+
+function dynamicDetails(value: unknown): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'boolean') throw new Error('环境详情选项必须是布尔值')
+  return value
 }
 
 function environmentRef(value: unknown): string {
@@ -153,9 +159,12 @@ export function createManagedEnvironmentActions(
   const repair = dependencies.repair ?? repairEnvironment
   const descriptors = new Map<string, BuildTarget>()
 
-  async function list(projectCwdValue?: unknown): Promise<ManagedEnvironmentEntry[]> {
+  async function list(
+    projectCwdValue?: unknown,
+    includeDynamicValue?: unknown
+  ): Promise<ManagedEnvironmentEntry[]> {
     const projectCwd = projectDirectory(projectCwdValue)
-    const entries = await dependencies.catalog(projectCwd)
+    const entries = await dependencies.catalog(projectCwd, dynamicDetails(includeDynamicValue))
     for (const entry of entries) {
       if (entry.source === 'orphaned') continue
       descriptors.set(entry.envId, {

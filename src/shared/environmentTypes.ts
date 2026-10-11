@@ -111,6 +111,12 @@ export interface ManagedEnvironmentConsumer {
   label?: string
 }
 
+export interface ManagedEnvironmentPackage {
+  name: string
+  version?: string
+  manager: 'conda' | 'pip' | 'github' | 'cran'
+}
+
 export interface ManagedEnvironmentEntry {
   ref: string
   envId: string
@@ -120,6 +126,7 @@ export interface ManagedEnvironmentEntry {
   pluginId?: string
   label?: string
   description?: string
+  packages?: ManagedEnvironmentPackage[]
   sizeBytes?: number
   estimate?: EnvironmentBuildEstimate
   referrers: string[]

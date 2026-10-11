@@ -1873,10 +1873,11 @@ const managedEnvironmentActions = createManagedEnvironmentActions({
     if (!options?.dryRun) cleanupInactiveMcpVersions(AGENT_DIR, root)
     return result
   },
-  catalog: (projectDir) =>
+  catalog: (projectDir, includeDynamic) =>
     listManagedEnvironments({
       ...(projectDir ? { projectDir } : {}),
-      builds: environmentBuilds.list()
+      builds: environmentBuilds.list(),
+      includeDynamic
     })
 })
 // The notebook server joins builds started elsewhere (chat prompt or the environment panel).
@@ -8393,13 +8394,18 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('managedEnvironments:list', async (_, projectCwd: unknown) => {
-    try {
-      return await managedEnvironmentActions.list(projectCwd)
-    } catch (error) {
-      throw new Error(`读取托管环境失败：${error instanceof Error ? error.message : String(error)}`)
+  ipcMain.handle(
+    'managedEnvironments:list',
+    async (_, projectCwd: unknown, includeDynamic: unknown) => {
+      try {
+        return await managedEnvironmentActions.list(projectCwd, includeDynamic)
+      } catch (error) {
+        throw new Error(
+          `读取托管环境失败：${error instanceof Error ? error.message : String(error)}`
+        )
+      }
     }
-  })
+  )
   ipcMain.handle(
     'managedEnvironments:build',
     async (_, ref: unknown, projectCwd: unknown, pluginId: unknown) => {

@@ -4,6 +4,8 @@ import Stack from '@mui/material/Stack'
 import { TbPackages } from 'react-icons/tb'
 
 import type { ManagedEnvironmentEntry } from '../../../../../shared/environmentTypes'
+import type { ManagedEnvironmentHostResources } from '../lib/environmentPanel'
+import { hostToolDisplayVersion, hostToolPresentation } from '../lib/hostEnvironmentStatus'
 import apptainerLogoSvg from '../assets/apptainer.svg?raw'
 import jupyterLogoSvg from '../assets/jupyter.svg?raw'
 import nextflowLogoSvg from '../assets/nextflow.svg?raw'
@@ -130,10 +132,9 @@ export function EnvironmentBrandIcon({
         height: size,
         p: 1,
         flexShrink: 0,
-        borderRadius: 2.5,
+        borderRadius: '50%',
         display: 'grid',
         placeItems: 'center',
-        bgcolor: 'common.white',
         border: '1px solid',
         borderColor: 'divider'
       }}
@@ -173,6 +174,76 @@ export function EnvironmentCapabilityChips({
           data-phi-environment-capability={key}
           label={label}
           sx={{ bgcolor: 'background.paper' }}
+        />
+      ))}
+      {hidden > 0 ? <Chip size="small" variant="outlined" label={`+${hidden}`} /> : null}
+    </Stack>
+  )
+}
+
+type HostCapabilityChip = {
+  id: string
+  label: string
+  color: 'success' | 'warning' | 'default'
+  title?: string
+}
+
+function hostCapabilityChips(resources: ManagedEnvironmentHostResources): HostCapabilityChip[] {
+  const tools = resources.tools.map((tool): HostCapabilityChip => {
+    const label = tool.id === 'jupyter' ? 'Jupyter' : 'Nextflow'
+    const presentation = hostToolPresentation(tool)
+    return {
+      id: tool.id,
+      label: `${label} ${presentation.label}`,
+      color: presentation.color,
+      title: [hostToolDisplayVersion(tool), tool.path ?? tool.detectedPath, tool.detail]
+        .filter(Boolean)
+        .join(' · ')
+    }
+  })
+  const dependencies = resources.dependencies.map((dependency): HostCapabilityChip => {
+    const state =
+      dependency.status === 'ready'
+        ? '可用'
+        : dependency.status === 'unavailable'
+          ? '不可用'
+          : '未检测到'
+    return {
+      id: dependency.id,
+      label: `${dependency.label} ${state}`,
+      color:
+        dependency.status === 'ready'
+          ? 'success'
+          : dependency.status === 'unavailable'
+            ? 'warning'
+            : 'default',
+      title: [dependency.version, dependency.path, dependency.detail].filter(Boolean).join(' · ')
+    }
+  })
+  return [...tools, ...dependencies]
+}
+
+export function EnvironmentHostCapabilityChips({
+  resources,
+  limit = 3
+}: {
+  resources: ManagedEnvironmentHostResources
+  limit?: number
+}): React.JSX.Element {
+  const capabilities = hostCapabilityChips(resources)
+  const visible = capabilities.slice(0, limit)
+  const hidden = capabilities.length - visible.length
+  return (
+    <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', rowGap: 0.75 }}>
+      {visible.map((capability) => (
+        <Chip
+          key={capability.id}
+          size="small"
+          color={capability.color}
+          variant="outlined"
+          data-phi-host-capability={capability.id}
+          label={capability.label}
+          title={capability.title || undefined}
         />
       ))}
       {hidden > 0 ? <Chip size="small" variant="outlined" label={`+${hidden}`} /> : null}

@@ -54,6 +54,7 @@ test('detectEnvironmentTools marks tools ready from injected which/runner', () =
   const byId = Object.fromEntries(tools.map((tool) => [tool.id, tool]))
   assert.equal(byId.nextflow?.status, 'ready')
   assert.equal(byId.nextflow?.activePath, '/opt/nextflow')
+  assert.equal(byId.nextflow?.detectedVersion, '24.0.0')
   assert.equal(byId.docker?.status, 'ready')
   assert.equal(byId.micromamba?.status, 'ready')
   assert.equal(byId.jupyter?.status, 'ready')
@@ -166,6 +167,26 @@ test('probeCustomToolPath rejects missing files', () => {
   const probed = probeCustomToolPath('docker', '/no/such/docker')
   assert.equal(probed.status, 'invalid')
   assert.equal(probed.source, 'custom')
+})
+
+test('custom Nextflow validation can resolve Java from the selected environment bin', () => {
+  const binDir = mkdtempSync(join(tmpdir(), 'phi-nextflow-bin-'))
+  const nextflow = join(binDir, 'nextflow')
+  const siblingJava = join(binDir, 'phi-sibling-java')
+  try {
+    writeFileSync(siblingJava, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    writeFileSync(
+      nextflow,
+      "#!/bin/sh\nset -e\nphi-sibling-java\nprintf 'nextflow version 26.04.6 build 1\\n'\n",
+      { mode: 0o755 }
+    )
+
+    const probed = probeCustomToolPath('nextflow', nextflow)
+    assert.equal(probed.status, 'ready', probed.messages?.join('\n'))
+    assert.equal(probed.detectedVersion, '26.04.6')
+  } finally {
+    rmSync(binDir, { recursive: true, force: true })
+  }
 })
 
 test('environment store scans once then dismisses summary', () => {

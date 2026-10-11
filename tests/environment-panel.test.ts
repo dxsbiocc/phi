@@ -6,6 +6,7 @@ import {
   buildEnvironmentSections,
   formatBuildEstimate,
   formatEnvironmentSize,
+  managedEnvironmentHostResources,
   managedEnvironmentSourceLabel,
   managedEnvironmentStateLabel
 } from '../src/renderer/src/features/environment/lib/environmentPanel'
@@ -22,7 +23,7 @@ function managed(overrides: Partial<ManagedEnvironmentEntry>): ManagedEnvironmen
   }
 }
 
-test('builds the three product sections and sorts managed sources', () => {
+test('builds one environment section and sorts managed sources', () => {
   const snapshot: EnvironmentSnapshot = {
     scannedAt: '2026-10-01T00:00:00.000Z',
     firstScanCompleted: true,
@@ -41,29 +42,36 @@ test('builds the three product sections and sorts managed sources', () => {
       }
     ]
   }
-  const sections = buildEnvironmentSections(
-    [
-      managed({ ref: 'project:python-x1', source: 'project' }),
-      managed({ ref: 'plugin:demo', source: 'plugin' }),
-      managed({ ref: 'orphan:old', source: 'orphaned' }),
-      managed({ ref: 'phi:python@1', source: 'official' })
-    ],
-    snapshot
-  )
+  const sections = buildEnvironmentSections([
+    managed({ ref: 'project:python-x1', source: 'project' }),
+    managed({ ref: 'plugin:demo', source: 'plugin' }),
+    managed({ ref: 'orphan:old', source: 'orphaned' }),
+    managed({ ref: 'phi:python@1', source: 'official' })
+  ])
 
   assert.deepEqual(
     sections.map((section) => section.title),
-    ['托管环境', '宿主依赖', '可选的本机工具']
+    ['环境']
   )
   assert.deepEqual(
     sections[0].items.map((entry) => entry.ref),
     ['phi:python@1', 'plugin:demo', 'project:python-x1', 'orphan:old']
   )
-  assert.equal(sections[1].items[0]?.label, 'Docker')
-  assert.equal(sections[2].items[0]?.label, 'Nextflow')
+  const nextflowResources = managedEnvironmentHostResources(
+    managed({ ref: 'phi:nextflow@1' }),
+    snapshot
+  )
+  assert.deepEqual(
+    nextflowResources.dependencies.map((item) => item.label),
+    ['Docker']
+  )
+  assert.deepEqual(
+    nextflowResources.tools.map((item) => item.label),
+    ['Nextflow']
+  )
 })
 
-test('legacy snapshot fallback excludes Python, R and conda-style tools', () => {
+test('legacy snapshot host detection is merged into its matching environment', () => {
   const snapshot = {
     scannedAt: '2026-10-01T00:00:00.000Z',
     firstScanCompleted: true,
@@ -76,16 +84,32 @@ test('legacy snapshot fallback excludes Python, R and conda-style tools', () => 
       { id: 'jupyter', label: 'Jupyter', status: 'missing', source: 'none' }
     ]
   } as EnvironmentSnapshot
-  const sections = buildEnvironmentSections([], snapshot)
+  const nextflowResources = managedEnvironmentHostResources(
+    managed({ ref: 'phi:nextflow@1' }),
+    snapshot
+  )
+  const jupyterResources = managedEnvironmentHostResources(
+    managed({ ref: 'phi:jupyter@1' }),
+    snapshot
+  )
+  const pythonResources = managedEnvironmentHostResources(
+    managed({ ref: 'phi:python@1' }),
+    snapshot
+  )
 
   assert.deepEqual(
-    sections[1].items.map((item) => item.label),
+    nextflowResources.dependencies.map((item) => item.label),
     ['Docker']
   )
   assert.deepEqual(
-    sections[2].items.map((item) => item.label),
-    ['Nextflow', 'Jupyter']
+    nextflowResources.tools.map((item) => item.label),
+    ['Nextflow']
   )
+  assert.deepEqual(
+    jupyterResources.tools.map((item) => item.label),
+    ['Jupyter']
+  )
+  assert.deepEqual(pythonResources, { dependencies: [], tools: [] })
 })
 
 test('formats states, sources, sizes and estimates for Chinese UI copy', () => {

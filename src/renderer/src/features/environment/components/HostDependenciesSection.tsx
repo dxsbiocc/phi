@@ -1,4 +1,3 @@
-import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { TbContainer } from 'react-icons/tb'
@@ -24,51 +23,41 @@ function dependencyIcon(id: EnvironmentHostDependencyId): React.JSX.Element {
   return <TbContainer aria-hidden size={22} />
 }
 
-export function HostDependenciesSection({
+export function HostDependenciesList({
   dependencies
 }: {
   dependencies: readonly EnvironmentHostDependency[]
 }): React.JSX.Element {
+  if (dependencies.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        尚未完成容器运行时检测。
+      </Typography>
+    )
+  }
   return (
-    <Stack component="section" spacing={1} aria-labelledby="host-dependencies-title">
-      <Box>
-        <Typography id="host-dependencies-title" variant="h6">
-          宿主依赖
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          容器运行时由本机提供；Phi 只检查，不会安装。
-        </Typography>
-      </Box>
-
-      {dependencies.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          尚未完成宿主依赖检测。
-        </Typography>
-      ) : (
-        <Stack spacing={1}>
-          {dependencies.map((dependency) => {
-            const status = dependencyStatus(dependency)
-            const summary = [
-              dependency.version,
-              dependency.detail,
-              dependency.path,
-              ...(dependency.messages ?? [])
-            ]
-              .filter(Boolean)
-              .join(' · ')
-            return (
-              <HostEnvironmentItem
-                key={dependency.id}
-                id={dependency.id}
-                icon={dependencyIcon(dependency.id)}
-                title={dependency.label}
-                summary={summary || '未检测到可用路径'}
-                status={status}
-              />
-            )
-          })}
-        </Stack>
-      )}
+    <Stack spacing={1}>
+      {dependencies.map((dependency) => {
+        const status = dependencyStatus(dependency)
+        const summary = [
+          dependency.version,
+          dependency.detail,
+          dependency.path,
+          ...(dependency.messages ?? [])
+        ]
+          .filter(Boolean)
+          .join(' · ')
+        return (
+          <HostEnvironmentItem
+            key={dependency.id}
+            id={dependency.id}
+            icon={dependencyIcon(dependency.id)}
+            title={dependency.label}
+            summary={summary || '未检测到可用路径'}
+            status={status}
+          />
+        )
+      })}
     </Stack>
   )
 }

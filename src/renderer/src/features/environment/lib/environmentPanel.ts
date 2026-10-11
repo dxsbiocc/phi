@@ -10,28 +10,18 @@ import type {
 } from '../../../../../shared/environmentTypes'
 export { formatBuildEstimate, formatEnvironmentSize } from '../../../lib/environmentFormatting'
 
-export type EnvironmentPanelSection =
-  | {
-      id: 'managed'
-      title: '托管环境'
-      items: ManagedEnvironmentEntry[]
-    }
-  | {
-      id: 'host-dependencies'
-      title: '宿主依赖'
-      items: EnvironmentHostDependency[]
-    }
-  | {
-      id: 'host-tools'
-      title: '可选的本机工具'
-      items: EnvironmentHostTool[]
-    }
+export type EnvironmentPanelSection = {
+  id: 'managed'
+  title: '环境'
+  items: ManagedEnvironmentEntry[]
+}
 
-export type EnvironmentPanelSections = [
-  Extract<EnvironmentPanelSection, { id: 'managed' }>,
-  Extract<EnvironmentPanelSection, { id: 'host-dependencies' }>,
-  Extract<EnvironmentPanelSection, { id: 'host-tools' }>
-]
+export type EnvironmentPanelSections = [Extract<EnvironmentPanelSection, { id: 'managed' }>]
+
+export type ManagedEnvironmentHostResources = {
+  dependencies: EnvironmentHostDependency[]
+  tools: EnvironmentHostTool[]
+}
 
 const SOURCE_ORDER: Record<ManagedEnvironmentSource, number> = {
   official: 0,
@@ -82,6 +72,40 @@ function legacyHostDependencies(snapshot: EnvironmentSnapshot): EnvironmentHostD
     }))
 }
 
+export function environmentHostResources(
+  snapshot: EnvironmentSnapshot | null
+): ManagedEnvironmentHostResources {
+  if (!snapshot) return { dependencies: [], tools: [] }
+  return {
+    dependencies: snapshot.hostDependencies?.length
+      ? [...snapshot.hostDependencies]
+      : legacyHostDependencies(snapshot),
+    tools: snapshot.hostTools?.length ? [...snapshot.hostTools] : legacyHostTools(snapshot)
+  }
+}
+
+export function managedEnvironmentHostResources(
+  environment: ManagedEnvironmentEntry,
+  snapshot: EnvironmentSnapshot | null
+): ManagedEnvironmentHostResources {
+  const resources = environmentHostResources(snapshot)
+  if (environment.ref.startsWith('phi:jupyter@')) {
+    return {
+      dependencies: [],
+      tools: resources.tools.filter((tool) => tool.id === 'jupyter')
+    }
+  }
+  if (environment.ref.startsWith('phi:nextflow@')) {
+    return {
+      dependencies: resources.dependencies.filter(
+        (dependency) => dependency.id === 'docker' || dependency.id === 'singularity'
+      ),
+      tools: resources.tools.filter((tool) => tool.id === 'nextflow')
+    }
+  }
+  return { dependencies: [], tools: [] }
+}
+
 function legacyHostTools(snapshot: EnvironmentSnapshot): EnvironmentHostTool[] {
   return snapshot.tools
     .filter(
@@ -112,25 +136,9 @@ function sortedManaged(items: readonly ManagedEnvironmentEntry[]): ManagedEnviro
 
 /** Keeps the panel's product-level grouping independent from its MUI rendering. */
 export function buildEnvironmentSections(
-  managed: readonly ManagedEnvironmentEntry[],
-  snapshot: EnvironmentSnapshot | null
+  managed: readonly ManagedEnvironmentEntry[]
 ): EnvironmentPanelSections {
-  const hostDependencies = snapshot
-    ? snapshot.hostDependencies?.length
-      ? snapshot.hostDependencies
-      : legacyHostDependencies(snapshot)
-    : []
-  const hostTools = snapshot
-    ? snapshot.hostTools?.length
-      ? snapshot.hostTools
-      : legacyHostTools(snapshot)
-    : []
-
-  return [
-    { id: 'managed', title: '托管环境', items: sortedManaged(managed) },
-    { id: 'host-dependencies', title: '宿主依赖', items: [...hostDependencies] },
-    { id: 'host-tools', title: '可选的本机工具', items: [...hostTools] }
-  ]
+  return [{ id: 'managed', title: '环境', items: sortedManaged(managed) }]
 }
 
 export function managedEnvironmentStateLabel(state: ManagedEnvironmentState): string {

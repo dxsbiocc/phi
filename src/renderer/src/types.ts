@@ -76,6 +76,7 @@ import type {
   ManualCompactionTarget
 } from '../../shared/contextUsageTypes'
 import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
+import type { ManagedEnvironmentRendererApi } from './features/environment/lib/managedEnvironmentApi'
 import type {
   WrapperResultDirectoryRequest,
   WrapperResultDownloadProgress,
@@ -711,7 +712,9 @@ export interface AnalysisNotebookFormatResult {
   message?: string
 }
 
-export type RendererApi = AutoCompactionApi & {
+type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi
+
+export type RendererApi = RendererApiFoundation & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   office: OfficeRendererBridge
@@ -771,15 +774,6 @@ export type RendererApi = AutoCompactionApi & {
     path: string | null
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
-  listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
-  buildManagedEnvironment: (
-    ref: string,
-    projectCwd?: string,
-    pluginId?: string
-  ) => Promise<{ envId: string }>
-  rebuildManagedEnvironment: (envId: string) => Promise<void>
-  removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
-  cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
   listModels: () => Promise<ModelOption[]>
   selectModel: (providerId: string, modelId: string) => Promise<void>
   getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>

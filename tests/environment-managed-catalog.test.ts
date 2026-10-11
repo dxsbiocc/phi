@@ -198,3 +198,42 @@ test('managed catalog does not add a private environment for the disabled visual
     rmSync(temp, { recursive: true, force: true })
   }
 })
+
+test('summary catalog returns locked package versions without dynamic filesystem work', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-summary-'))
+  const root = join(temp, 'runtime')
+  const environmentsDir = join(temp, 'official')
+  try {
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    const descriptor = describeEnvironment('phi:python@1', {
+      environmentsDir,
+      platform: 'darwin-arm64'
+    })
+    addIndexed(root, envIdFor(descriptor), 'phi-python')
+    let sizeCalls = 0
+
+    const catalog = await listManagedEnvironments({
+      root,
+      environmentsDir,
+      platform: 'darwin-arm64',
+      consumers: [],
+      includeDynamic: false,
+      sizeOf: async () => {
+        sizeCalls += 1
+        return 123
+      }
+    })
+
+    const python = catalog.find((entry) => entry.ref === 'phi:python@1')
+    assert.equal(sizeCalls, 0)
+    assert.equal(python?.sizeBytes, undefined)
+    assert.equal(python?.estimate, undefined)
+    assert.ok(
+      python?.packages?.some(
+        (dependency) => dependency.name === 'python' && dependency.version === '3.12.14'
+      )
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})

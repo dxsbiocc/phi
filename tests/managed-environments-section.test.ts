@@ -6,9 +6,57 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 import { ManagedEnvironmentsSection } from '../src/renderer/src/features/environment/components/ManagedEnvironmentsSection'
-import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
+import { EnvironmentBrandIcon } from '../src/renderer/src/features/environment/components/EnvironmentBrandIcon'
+import type { EnvironmentSnapshot, ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
 
 const noop = (): void => undefined
+
+test('environment brand icon has a round border and inherits the surface background', () => {
+  const markup = renderToStaticMarkup(
+    createElement(EnvironmentBrandIcon, {
+      environment: {
+        ref: 'phi:jupyter@1',
+        envId: 'phi-jupyter-0123456789ab',
+        state: 'absent',
+        source: 'official',
+        referrers: [],
+        consumers: []
+      },
+      size: 52
+    })
+  )
+  assert.match(markup, /border-radius:50%/)
+  assert.doesNotMatch(markup, /background-color:/)
+})
+
+const snapshot: EnvironmentSnapshot = {
+  scannedAt: '2026-10-11T00:00:00.000Z',
+  firstScanCompleted: true,
+  summaryDismissed: true,
+  tools: [],
+  hostDependencies: [
+    { id: 'docker', label: 'Docker', status: 'ready', version: '28.0.1' },
+    { id: 'singularity', label: 'Singularity / Apptainer', status: 'missing' }
+  ],
+  hostTools: [
+    {
+      id: 'jupyter',
+      label: 'Jupyter',
+      status: 'ready',
+      management: 'host-unmanaged',
+      selected: false,
+      detectedPath: '/opt/homebrew/bin/jupyter',
+      kernels: []
+    },
+    {
+      id: 'nextflow',
+      label: 'Nextflow',
+      status: 'missing',
+      management: 'host-unmanaged',
+      selected: false
+    }
+  ]
+}
 
 function render(environments: ManagedEnvironmentEntry[]): string {
   return renderToStaticMarkup(
@@ -17,6 +65,7 @@ function render(environments: ManagedEnvironmentEntry[]): string {
       { theme: createTheme() },
       createElement(ManagedEnvironmentsSection, {
         environments,
+        snapshot,
         loading: false,
         error: null,
         busyEnvId: null,
@@ -24,13 +73,14 @@ function render(environments: ManagedEnvironmentEntry[]): string {
         onBuild: noop,
         onRebuild: noop,
         onRemove: noop,
-        onClean: noop
+        onClean: noop,
+        onOpen: noop
       })
     )
   )
 }
 
-test('managed environments render as compact branded cards without a nested details surface', () => {
+test('managed environments render as openable branded cards', () => {
   const markup = render([
     {
       ref: 'phi:jupyter@1',
@@ -67,11 +117,15 @@ test('managed environments render as compact branded cards without a nested deta
   ])
 
   assert.match(markup, /data-phi-managed-environment-card="phi:jupyter@1"/)
+  assert.match(markup, /aria-label="查看 phi-jupyter 详情"/)
   assert.match(markup, /aria-label="Jupyter 官方图标"/)
   assert.match(markup, /data-phi-environment-logo="jupyter"/)
-  assert.match(markup, /data-phi-environment-capability="notebook-server"/)
-  assert.match(markup, /data-phi-environment-capability="java"/)
-  assert.match(markup, /data-phi-environment-capability="docker"/)
+  assert.match(markup, /data-phi-host-capability="jupyter"/)
+  assert.match(markup, /Jupyter 已检测到/)
+  assert.match(markup, /data-phi-host-capability="nextflow"/)
+  assert.match(markup, /Nextflow 未检测到/)
+  assert.match(markup, /data-phi-host-capability="docker"/)
+  assert.match(markup, /Docker 可用/)
   assert.doesNotMatch(markup, /data-phi-environment-capability="conda"/)
   assert.match(markup, /Singularity \/ Apptainer/)
   assert.equal(markup.match(/data-phi-environment-slot="capabilities"/g)?.length, 2)
@@ -82,6 +136,6 @@ test('managed environments render as compact branded cards without a nested deta
   assert.match(markup, /发现 1 个旧版遗留环境/)
   assert.match(markup, /清理遗留环境/)
   assert.match(markup, /查看估算并构建/)
-  assert.doesNotMatch(markup, /查看详情/)
   assert.doesNotMatch(markup, /无引用，可安全移除/)
+  assert.match(markup, /MuiCardActionArea-focusHighlight\{display:none;/)
 })

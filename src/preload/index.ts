@@ -795,7 +795,10 @@ type RendererAuthApi = {
     path: string | null
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
-  listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+  listManagedEnvironments: (
+    projectCwd?: string,
+    includeDynamic?: boolean
+  ) => Promise<ManagedEnvironmentEntry[]>
   buildManagedEnvironment: (
     ref: string,
     projectCwd?: string,
@@ -1320,8 +1323,11 @@ const api: RendererAuthApi = {
     path: string | null
   ): Promise<EnvironmentSnapshot> => ipcRenderer.invoke('environment:setToolPath', toolId, path),
   pickEnvironmentBinary: (): Promise<string | null> => ipcRenderer.invoke('environment:pickBinary'),
-  listManagedEnvironments: (projectCwd?: string): Promise<ManagedEnvironmentEntry[]> =>
-    ipcRenderer.invoke('managedEnvironments:list', projectCwd),
+  listManagedEnvironments: (
+    projectCwd?: string,
+    includeDynamic?: boolean
+  ): Promise<ManagedEnvironmentEntry[]> =>
+    ipcRenderer.invoke('managedEnvironments:list', projectCwd, includeDynamic),
   buildManagedEnvironment: (
     ref: string,
     projectCwd?: string,

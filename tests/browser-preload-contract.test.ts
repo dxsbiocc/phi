@@ -93,7 +93,11 @@ test('preload and renderer expose only one namespaced browser bridge using share
   )
   assert.match(
     renderer,
-    /export type RendererApi = AutoCompactionApi & \{[\s\S]*browser: BrowserRendererBridge/
+    /type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi/
+  )
+  assert.match(
+    renderer,
+    /export type RendererApi = RendererApiFoundation & \{[\s\S]*browser: BrowserRendererBridge/
   )
 
   const design = source('docs/superpowers/specs/2026-09-30-in-app-browser-design.md')

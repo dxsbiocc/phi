@@ -787,7 +787,10 @@ declare global {
         path: string | null
       ) => Promise<EnvironmentSnapshot>
       pickEnvironmentBinary: () => Promise<string | null>
-      listManagedEnvironments: (projectCwd?: string) => Promise<ManagedEnvironmentEntry[]>
+      listManagedEnvironments: (
+        projectCwd?: string,
+        includeDynamic?: boolean
+      ) => Promise<ManagedEnvironmentEntry[]>
       buildManagedEnvironment: (
         ref: string,
         projectCwd?: string,

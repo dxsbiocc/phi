@@ -2,6 +2,7 @@ import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
+import CardActionArea from '@mui/material/CardActionArea'
 import CardActions from '@mui/material/CardActions'
 import CardContent from '@mui/material/CardContent'
 import Chip from '@mui/material/Chip'
@@ -9,17 +10,26 @@ import CircularProgress from '@mui/material/CircularProgress'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import type { ManagedEnvironmentEntry } from '../../../../../shared/environmentTypes'
+import type {
+  EnvironmentSnapshot,
+  ManagedEnvironmentEntry
+} from '../../../../../shared/environmentTypes'
 import {
   formatBuildEstimate,
   formatEnvironmentSize,
+  managedEnvironmentHostResources,
   managedEnvironmentSourceLabel,
   managedEnvironmentStateLabel
 } from '../lib/environmentPanel'
-import { EnvironmentBrandIcon, EnvironmentCapabilityChips } from './EnvironmentBrandIcon'
+import {
+  EnvironmentBrandIcon,
+  EnvironmentCapabilityChips,
+  EnvironmentHostCapabilityChips
+} from './EnvironmentBrandIcon'
 
 type ManagedEnvironmentsSectionProps = {
   environments: readonly ManagedEnvironmentEntry[]
+  snapshot: EnvironmentSnapshot | null
   loading: boolean
   error: string | null
   busyEnvId: string | null
@@ -28,6 +38,7 @@ type ManagedEnvironmentsSectionProps = {
   onRebuild: (entry: ManagedEnvironmentEntry) => void
   onRemove: (entry: ManagedEnvironmentEntry) => void
   onClean: () => void
+  onOpen: (entry: ManagedEnvironmentEntry) => void
 }
 
 function stateColor(
@@ -46,17 +57,23 @@ function environmentTitle(environment: ManagedEnvironmentEntry): string {
 
 function EnvironmentCard({
   environment,
+  snapshot,
   busy,
+  onOpen,
   onBuild,
   onRebuild,
   onRemove
 }: {
   environment: ManagedEnvironmentEntry
+  snapshot: EnvironmentSnapshot | null
   busy: boolean
+  onOpen: () => void
   onBuild: () => void
   onRebuild: () => void
   onRemove: () => void
 }): React.JSX.Element {
+  const hostResources = managedEnvironmentHostResources(environment, snapshot)
+  const hasHostResources = hostResources.tools.length + hostResources.dependencies.length > 0
   const removable =
     environment.referrers.length === 0 &&
     (environment.state === 'ready' ||
@@ -90,82 +107,107 @@ function EnvironmentCard({
         minWidth: 0,
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 2
+        borderRadius: 2,
+        transition: (theme) =>
+          theme.transitions.create(['background-color', 'border-color'], {
+            duration: theme.transitions.duration.shorter
+          }),
+        '&:hover, &:focus-within': {
+          bgcolor: 'action.hover',
+          borderColor: 'primary.light'
+        }
       }}
     >
-      <CardContent
+      <CardActionArea
+        aria-label={`查看 ${environmentTitle(environment)} 详情`}
+        onClick={onOpen}
         sx={{
-          p: 2,
-          pb: 0.5,
           flex: 1,
-          display: 'grid',
-          gridTemplateRows: '60px 44px 56px 20px',
-          rowGap: 1,
-          minHeight: 0
+          minHeight: 0,
+          display: 'block',
+          textAlign: 'left',
+          '& .MuiCardActionArea-focusHighlight': { display: 'none' }
         }}
       >
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start', minWidth: 0 }}>
-          <EnvironmentBrandIcon environment={environment} size={52} />
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0 }}>
-              <Typography
-                variant="h6"
-                noWrap
-                sx={{ minWidth: 0, fontSize: '1.05rem', fontWeight: 700 }}
-              >
-                {environmentTitle(environment)}
-              </Typography>
-              <Chip
-                size="small"
-                color={stateColor(environment.state)}
-                variant="outlined"
-                label={managedEnvironmentStateLabel(environment.state)}
-                sx={{ flexShrink: 0 }}
-              />
-            </Stack>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              noWrap
-              sx={{ display: 'block', mt: 0.5, fontFamily: 'var(--font-mono)' }}
-            >
-              {environment.ref}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {managedEnvironmentSourceLabel(environment.source)}
-            </Typography>
-          </Box>
-        </Stack>
-
-        <Typography
-          variant="body2"
-          color={environment.error ? 'error.main' : 'text.secondary'}
+        <CardContent
           sx={{
-            display: '-webkit-box',
-            WebkitBoxOrient: 'vertical',
-            WebkitLineClamp: 2,
-            overflow: 'hidden'
+            p: 2,
+            pb: 0.5,
+            height: '100%',
+            display: 'grid',
+            gridTemplateRows: '60px 44px 56px 20px',
+            rowGap: 1,
+            minHeight: 0,
+            '&:last-child': { pb: 0.5 }
           }}
         >
-          {description}
-        </Typography>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start', minWidth: 0 }}>
+            <EnvironmentBrandIcon environment={environment} size={52} />
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0 }}>
+                <Typography
+                  variant="h6"
+                  noWrap
+                  sx={{ minWidth: 0, fontSize: '1.05rem', fontWeight: 700 }}
+                >
+                  {environmentTitle(environment)}
+                </Typography>
+                <Chip
+                  size="small"
+                  color={stateColor(environment.state)}
+                  variant="outlined"
+                  label={managedEnvironmentStateLabel(environment.state)}
+                  sx={{ flexShrink: 0 }}
+                />
+              </Stack>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                noWrap
+                sx={{ display: 'block', mt: 0.5, fontFamily: 'var(--font-mono)' }}
+              >
+                {environment.ref}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" noWrap>
+                {managedEnvironmentSourceLabel(environment.source)}
+              </Typography>
+            </Box>
+          </Stack>
 
-        <Box
-          data-phi-environment-slot="capabilities"
-          sx={{ minHeight: 0, overflow: 'hidden', alignContent: 'start' }}
-        >
-          <EnvironmentCapabilityChips environment={environment} />
-        </Box>
-        <Typography
-          data-phi-environment-slot="estimate"
-          variant="caption"
-          color="text.secondary"
-          noWrap
-          sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-        >
-          {secondaryMetric}
-        </Typography>
-      </CardContent>
+          <Typography
+            variant="body2"
+            color={environment.error ? 'error.main' : 'text.secondary'}
+            sx={{
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 2,
+              overflow: 'hidden'
+            }}
+          >
+            {description}
+          </Typography>
+
+          <Box
+            data-phi-environment-slot="capabilities"
+            sx={{ minHeight: 0, overflow: 'hidden', alignContent: 'start' }}
+          >
+            {hasHostResources ? (
+              <EnvironmentHostCapabilityChips resources={hostResources} />
+            ) : (
+              <EnvironmentCapabilityChips environment={environment} />
+            )}
+          </Box>
+          <Typography
+            data-phi-environment-slot="estimate"
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
+            {secondaryMetric}
+          </Typography>
+        </CardContent>
+      </CardActionArea>
 
       <CardActions sx={{ px: 2, pb: 1.5, pt: 0.5, height: 56, alignItems: 'flex-end', gap: 1.5 }}>
         <Box data-phi-environment-slot="metrics" sx={{ flex: 1, minWidth: 0 }}>
@@ -224,6 +266,7 @@ function EnvironmentCard({
 
 export function ManagedEnvironmentsSection({
   environments,
+  snapshot,
   loading,
   error,
   busyEnvId,
@@ -231,7 +274,8 @@ export function ManagedEnvironmentsSection({
   onBuild,
   onRebuild,
   onRemove,
-  onClean
+  onClean,
+  onOpen
 }: ManagedEnvironmentsSectionProps): React.JSX.Element {
   const currentEnvironments = environments.filter(
     (environment) => environment.source !== 'orphaned'
@@ -254,10 +298,10 @@ export function ManagedEnvironmentsSection({
       >
         <Box>
           <Typography id="managed-environments-title" variant="h6">
-            托管环境
+            环境
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Phi 按锁文件构建并隔离这些环境。构建进度统一显示在后台任务面板。
+            Phi 自动检测 Jupyter、Nextflow 和容器运行时；需要隔离时再按锁文件构建环境。
           </Typography>
         </Box>
         <Button size="small" color="warning" disabled={loading} onClick={onClean}>
@@ -291,10 +335,12 @@ export function ManagedEnvironmentsSection({
             <EnvironmentCard
               key={`${environment.ref}:${environment.envId}`}
               environment={environment}
+              snapshot={snapshot}
               busy={busyEnvId === environment.envId}
               onBuild={() => onBuild(environment)}
               onRebuild={() => onRebuild(environment)}
               onRemove={() => onRemove(environment)}
+              onOpen={() => onOpen(environment)}
             />
           ))}
         </Box>

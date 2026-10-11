@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { delimiter, dirname, join, sep } from 'node:path'
 
 import {
   ENVIRONMENT_TOOL_IDS,
@@ -35,10 +35,19 @@ export type CommandRunner = (command: string, args: string[]) => string
 export type WhichResolver = (name: string) => string | undefined
 
 function defaultRunner(command: string, args: string[]): string {
+  const commandDirectory = dirname(command)
   return execFileSync(command, args, {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 8_000
+    timeout: 8_000,
+    env: {
+      ...process.env,
+      PATH: [commandDirectory, ...(process.env.PATH ?? '').split(delimiter).filter(Boolean)].join(
+        delimiter
+      ),
+      NXF_ANSI_LOG: 'false',
+      NXF_DISABLE_CHECK_LATEST: 'true'
+    }
   })
 }
 
@@ -184,18 +193,20 @@ function detectMicromambaFamily(runner: CommandRunner, which: WhichResolver): En
 }
 
 function detectNextflow(runner: CommandRunner, which: WhichResolver): EnvironmentToolState {
+  const detectedVersion = (path: string): string | undefined => {
+    try {
+      return parseNextflowVersion(runner(path, ['-version']))
+    } catch {
+      return undefined
+    }
+  }
   if (process.env.NEXTFLOW_BIN && existsSync(process.env.NEXTFLOW_BIN)) {
     const path = process.env.NEXTFLOW_BIN
-    return readyTool(
-      'nextflow',
-      path,
-      probeVersion(runner, path, ['-version']),
-      '来自 NEXTFLOW_BIN'
-    )
+    return readyTool('nextflow', path, detectedVersion(path), '来自 NEXTFLOW_BIN')
   }
   const path = resolveNamedBinary(['nextflow'], which)
   if (!path) return missingTool('nextflow')
-  return readyTool('nextflow', path, probeVersion(runner, path, ['-version']))
+  return readyTool('nextflow', path, detectedVersion(path))
 }
 
 function detectDocker(runner: CommandRunner, which: WhichResolver): EnvironmentToolState {
