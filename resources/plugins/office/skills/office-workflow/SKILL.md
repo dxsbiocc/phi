@@ -35,7 +35,7 @@ phi:
 
 ## 选择规则
 
-1. **原生 `phi-office`**：仅当用户已在 Phi 右侧打开一份 Office 文件，并且要做少量交互式修改时使用。没有当前打开目标、要新生成文件、需要批量处理或复杂排版时，不选这条路线。
+1. **原生 Office 工具**（`office_read`、`office_apply`、`office_deliver`）：仅当用户已在 Phi 右侧打开一份 Office 文件，并且要做少量交互式修改时使用。没有当前打开目标、要新生成文件、需要批量处理或复杂排版时，不选这条路线。
 2. **一次性 Python/Node 脚本**：生成、图表、图片、复杂格式和批量任务的默认路线。按 `xlsx`、`pptx`、`docx` 或 `pdf` 技能编写一个项目内脚本，再用 `skill_run` 通过托管环境执行。
 3. **常驻 notebook 内核**：大文档、计算中间状态需要保留、或要多轮迭代时使用。通过 `notebook.*` 在 `phi-python` 内核中持有 openpyxl workbook、python-pptx presentation 或 python-docx document 对象，分步运行，在里程碑处调用文档对象的 `save(...)`。
 

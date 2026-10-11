@@ -281,14 +281,14 @@ function installedSkill(name: string, sourceId = name): SkillSummary {
 }
 
 test('a package removed in this session stops counting as installed before the skill list refreshes', () => {
-  const skills = [installedSkill('anndata'), installedSkill('phi-office')]
+  const skills = [installedSkill('anndata'), installedSkill('markitdown')]
   assert.deepEqual([...installedSkillPackageIds(skills, new Set(), new Set())].sort(), [
     'anndata',
-    'phi-office'
+    'markitdown'
   ])
   assert.deepEqual(
     [...installedSkillPackageIds(skills, new Set(), new Set(['anndata']))],
-    ['phi-office']
+    ['markitdown']
   )
 })
 

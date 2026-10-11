@@ -260,7 +260,7 @@ bundled skill and plugin trees):
 | `xlsx`            | 12     | 0   |
 
 The other bundled skill directories (`anndata`, `create-wrapper`,
-`networkx`, `nextflow`, `phi-office`, `pysam`, `scikit-survival`, `seaborn`,
+`networkx`, `nextflow`, `pysam`, `scikit-survival`, `seaborn`,
 and `shap`) contain no Python or R scripts. Their documented packages are in
 the last section where applicable.
 

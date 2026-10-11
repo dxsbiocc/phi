@@ -1,6 +1,6 @@
 ---
 name: docx
-description: 用 python-docx 创建、批量编辑或检查 Word .docx 文档，适用于标题、样式、列表、表格、图片、页眉页脚和分节排版；已在右侧打开的文件只需少量交互式修改时改用原生 phi-office。
+description: 用 python-docx 创建、批量编辑或检查 Word .docx 文档，适用于标题、样式、列表、表格、图片、页眉页脚和分节排版；已在右侧打开的文件只需少量交互式修改时改用原生 Office 工具。
 compatibility: Runs in phi:python@1.
 phi:
   environment: phi:python@1
@@ -24,7 +24,7 @@ phi:
 
 # DOCX
 
-用 `python-docx` 完成生成、复杂排版和批量修改，并将成品保存到项目内的相对路径。如果用户已在 Phi 右侧打开一份 Word 文档，且只要少量交互式修改，改用原生 `phi-office`；不要为小改动重建整份文档。
+用 `python-docx` 完成生成、复杂排版和批量修改，并将成品保存到项目内的相对路径。如果用户已在 Phi 右侧打开一份 Word 文档，且只要少量交互式修改，改用原生 Office 工具（`office_read`、`office_apply`、`office_deliver`）；不要为小改动重建整份文档。
 
 ## 创建与样式
 
