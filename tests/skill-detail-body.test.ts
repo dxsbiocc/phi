@@ -63,7 +63,7 @@ test('loading and failed SKILL.md reads are stated, not blank', () => {
   )
 })
 
-test('the catalog preview uses the same body and carries the install controls', () => {
+test('the catalog preview keeps identity and every chip in the content, not the top bar', () => {
   const entry: SkillCatalogPackage = {
     id: 'anndata',
     type: 'skill',
@@ -90,10 +90,16 @@ test('the catalog preview uses the same body and carries the install controls', 
     'anndata',
     'v1.0.0',
     '19 KB',
+    'Phi Packages',
     '未安装',
     '说明',
     'ACTION-SLOT'
   ]) {
     assert.ok(markup.includes(text), `missing: ${text}`)
   }
+  // The name appears once (in the content header); the top bar no longer repeats it.
+  assert.equal(markup.match(/>anndata</g)?.length, 1)
+  // Version, size and status chips sit together in one row.
+  const chipRow = markup.slice(markup.indexOf('v1.0.0') - 400, markup.indexOf('未安装') + 20)
+  assert.ok(chipRow.includes('19 KB') && chipRow.includes('Phi Packages'))
 })

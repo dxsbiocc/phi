@@ -59,6 +59,7 @@ export function WrapperDetailBody({
   icon,
   graph,
   moduleDetails,
+  extraChips,
   identityExtras,
   afterIdentity,
   children
@@ -67,6 +68,8 @@ export function WrapperDetailBody({
   icon?: ResourceIconRef
   graph: WrapperFlowGraph | undefined
   moduleDetails: WrapperModuleDetails | undefined
+  /** More chips in the identity chip row. */
+  extraChips?: React.ReactNode
   /** Controls under the identity chips. */
   identityExtras?: React.ReactNode
   /** Content right below the identity block. */
@@ -76,7 +79,7 @@ export function WrapperDetailBody({
 }): React.JSX.Element {
   return (
     <>
-      <WrapperIdentity manifest={manifest} icon={icon}>
+      <WrapperIdentity manifest={manifest} icon={icon} extraChips={extraChips}>
         {identityExtras}
       </WrapperIdentity>
       {afterIdentity}

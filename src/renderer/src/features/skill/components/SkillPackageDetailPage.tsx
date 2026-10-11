@@ -1,7 +1,6 @@
 import { Chip } from '@mui/material'
 
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import { useSkillPackageMarkdown } from '../hooks/useSkillPackageMarkdown'
 import { formatPackageSize } from '../../../components/catalog/packageSize'
 import type { SkillCatalogPackage } from '../lib/skillCatalogBrowser'
@@ -23,20 +22,7 @@ export function SkillPackageDetailPage({
   const markdown = useSkillPackageMarkdown(entry.registryDir, entry.id)
   const origin = entry.registryLabel ?? '软件包'
   return (
-    <CatalogDetailFrame
-      entryId={entry.id}
-      backLabel="返回技能目录"
-      icon={<ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />}
-      title={entry.title}
-      chips={
-        <>
-          <Chip size="small" variant="outlined" label={`v${entry.version}`} />
-          <Chip size="small" variant="outlined" label={formatPackageSize(entry.size)} />
-        </>
-      }
-      action={action}
-      onBack={onBack}
-    >
+    <CatalogDetailFrame entryId={entry.id} backLabel="返回技能目录" action={action} onBack={onBack}>
       <SkillDetailBody
         name={entry.title}
         icon={entry.icon}
@@ -45,6 +31,8 @@ export function SkillPackageDetailPage({
         chips={
           <>
             <Chip size="small" variant="outlined" label={origin} />
+            <Chip size="small" variant="outlined" label={`v${entry.version}`} />
+            <Chip size="small" variant="outlined" label={formatPackageSize(entry.size)} />
             <Chip
               size="small"
               color={installed ? 'success' : 'default'}

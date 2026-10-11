@@ -81,3 +81,11 @@ test('page-specific slots render in order around the shared sections', () => {
     positions
   )
 })
+
+test('extra chips join the provider and tier chips in the identity block', () => {
+  const markup = render({ extraChips: createElement('span', null, 'EXTRA-V1') })
+  const tier = markup.indexOf('模块')
+  const extra = markup.indexOf('EXTRA-V1')
+  assert.ok(tier >= 0 && extra > tier)
+  assert.ok(extra < markup.indexOf('输入'))
+})

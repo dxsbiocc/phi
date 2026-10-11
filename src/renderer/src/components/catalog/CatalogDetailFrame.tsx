@@ -1,23 +1,20 @@
-import { Box, Button, Stack, Typography } from '@mui/material'
+import { Box, Button, Stack } from '@mui/material'
 
 import { PhiIcons } from '../../icons'
 
-/** The shared shell of a catalog entry's detail page: back, identity, chips, action, body. */
+/**
+ * The shared shell of a catalog entry's detail page. The top bar only carries navigation and the
+ * entry's install/uninstall control; its name and chips belong to the content.
+ */
 export function CatalogDetailFrame({
   entryId,
   backLabel,
-  icon,
-  title,
-  chips,
   action,
   onBack,
   children
 }: {
   entryId: string
   backLabel: string
-  icon: React.ReactNode
-  title: string
-  chips?: React.ReactNode
   /** The install / uninstall controls of the entry. */
   action: React.ReactNode
   onBack: () => void
@@ -28,7 +25,11 @@ export function CatalogDetailFrame({
       data-phi-catalog-detail={entryId}
       sx={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}
     >
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{ alignItems: 'center', justifyContent: 'space-between', px: 3, py: 2 }}
+      >
         <Button
           size="small"
           aria-label={backLabel}
@@ -37,11 +38,6 @@ export function CatalogDetailFrame({
         >
           返回
         </Button>
-        {icon}
-        <Typography variant="h6" noWrap sx={{ flex: 1, minWidth: 0 }} title={title}>
-          {title}
-        </Typography>
-        {chips}
         {action}
       </Stack>
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', borderTop: 1, borderColor: 'divider' }}>

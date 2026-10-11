@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Alert, Box, Chip, CircularProgress, Typography } from '@mui/material'
 
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { useWrapperPackageMembers } from '../hooks/useWrapperPackageMembers'
 import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
@@ -40,22 +39,6 @@ export function WrapperPackageDetailPage({
     <CatalogDetailFrame
       entryId={choice.id}
       backLabel="返回 wrapper 目录"
-      icon={
-        <ResourceIcon
-          icon={choice.cached?.icon ?? choice.registryEntry?.icon}
-          kind="wrapper"
-          sx={{ color: 'primary.main' }}
-        />
-      }
-      title={choice.title}
-      chips={
-        <>
-          <Chip size="small" label={choice.category} />
-          {choice.version ? (
-            <Chip size="small" variant="outlined" label={`v${choice.version}`} />
-          ) : null}
-        </>
-      }
       action={action}
       onBack={onBack}
     >
@@ -65,7 +48,6 @@ export function WrapperPackageDetailPage({
           members={members.wrappers}
           selectedId={selected?.id ?? null}
           onSelect={(entry) => setPickedId(entry.id)}
-          showHeading={false}
         />
       ) : null}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', p: 3 }}>
@@ -87,6 +69,11 @@ export function WrapperPackageDetailPage({
               icon={choice.cached?.icon}
               graph={detailData.graph}
               moduleDetails={detailData.moduleDetails}
+              extraChips={
+                choice.version ? (
+                  <Chip size="small" variant="outlined" label={`v${choice.version}`} />
+                ) : null
+              }
             />
           </Box>
         ) : (

@@ -17,10 +17,13 @@ import {
 export function WrapperIdentity({
   manifest,
   icon,
+  extraChips,
   children
 }: {
   manifest: WrapperCompositionManifest
   icon?: ResourceIconRef
+  /** More chips in the same row as the provider and tier, e.g. the package version. */
+  extraChips?: React.ReactNode
   /** Extra controls shown under the chips. */
   children?: React.ReactNode
 }): React.JSX.Element {
@@ -61,6 +64,7 @@ export function WrapperIdentity({
         <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
           <Chip size="small" color={wrapperProviderColor(provider)} label={provider} />
           <Chip size="small" variant="outlined" label={wrapperTierLabel(tier)} />
+          {extraChips}
         </Stack>
         {children ? <Box sx={{ mt: 1.5 }}>{children}</Box> : null}
       </Box>
