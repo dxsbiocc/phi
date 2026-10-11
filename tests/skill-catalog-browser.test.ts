@@ -4,10 +4,12 @@ import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../src/shared/packageManagerTypes'
+import type { SkillSummary } from '../src/shared/skillTypes'
 import { getCatalogPage } from '../src/renderer/src/components/catalog/catalogPaging'
 import {
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
+  installedSkillPackageIds,
   knownSkillCatalogPackages,
   skillCatalogBrowserReducer,
   skillCatalogGroups,
@@ -256,4 +258,52 @@ test('skill catalog clamps pages after successful shrink but preserves them duri
     page: getCatalogPage([], shrunk.page, shrunk.rowsPerPage).page
   })
   assert.equal(empty.page, 0)
+})
+
+function installedSkill(name: string, sourceId = name): SkillSummary {
+  return {
+    id: `/skills/${name}/SKILL.md`,
+    name,
+    description: '',
+    filePath: `/skills/${name}/SKILL.md`,
+    source: 'installed',
+    scope: 'user',
+    sourceCategory: 'installed-package',
+    sourceCategoryLabel: '软件包',
+    sourceId,
+    enabled: true,
+    globalEnabled: true,
+    globalOverride: null,
+    projectOverride: null,
+    core: false,
+    disabled: false
+  }
+}
+
+test('a package removed in this session stops counting as installed before the skill list refreshes', () => {
+  const skills = [installedSkill('anndata'), installedSkill('phi-office')]
+  assert.deepEqual([...installedSkillPackageIds(skills, new Set(), new Set())].sort(), [
+    'anndata',
+    'phi-office'
+  ])
+  assert.deepEqual(
+    [...installedSkillPackageIds(skills, new Set(), new Set(['anndata']))],
+    ['phi-office']
+  )
+})
+
+test('a package installed in this session counts at once, and a later removal wins', () => {
+  assert.deepEqual(
+    [...installedSkillPackageIds([], new Set(['markitdown']), new Set())],
+    ['markitdown']
+  )
+  assert.deepEqual(
+    [...installedSkillPackageIds([], new Set(['markitdown']), new Set(['markitdown']))],
+    []
+  )
+})
+
+test('non-package skills never count as installed packages', () => {
+  const bundled: SkillSummary = { ...installedSkill('create-wrapper'), sourceCategory: 'bundled' }
+  assert.deepEqual([...installedSkillPackageIds([bundled], new Set(), new Set())], [])
 })

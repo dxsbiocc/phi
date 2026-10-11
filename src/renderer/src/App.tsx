@@ -4610,6 +4610,7 @@ function App(): React.JSX.Element {
           onPickRegistryDirectory={() => rendererApi.pickPackageRegistryDirectory()}
           onReadRegistry={(dir) => rendererApi.readPackageRegistry(dir)}
           onInstallPackage={onInstallSkillPackage}
+          onRefresh={refreshSkills}
           onApplyUpdate={async (entry) => {
             await rendererApi.applyPackageUpdate('skill', entry.id)
             await refreshSkills()

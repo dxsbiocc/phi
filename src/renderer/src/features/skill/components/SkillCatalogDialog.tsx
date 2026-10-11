@@ -21,6 +21,7 @@ import { SkillPackageDetailPage } from './SkillPackageDetailPage'
 import {
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
+  installedSkillPackageIds,
   knownSkillCatalogPackages,
   skillCatalogBrowserReducer,
   skillCatalogGroups,
@@ -42,6 +43,12 @@ export type SkillCatalogDialogProps = {
   onInstallPackage?: (registryDir: string, entry: PackageRegistryEntryView) => Promise<void> | void
   onApplyUpdate?: (entry: PackageRegistryEntryView) => Promise<void> | void
   onRefresh?: () => Promise<void> | void
+}
+
+function withoutId(ids: ReadonlySet<string>, id: string): Set<string> {
+  const next = new Set(ids)
+  next.delete(id)
+  return next
 }
 
 function errorMessage(error: unknown): string {
@@ -67,6 +74,7 @@ export function SkillCatalogDialog({
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [installedDuringSession, setInstalledDuringSession] = useState<Set<string>>(new Set())
+  const [removedDuringSession, setRemovedDuringSession] = useState<Set<string>>(new Set())
   const [updateIds, setUpdateIds] = useState<Set<string>>(new Set())
   const [knownRegistries, setKnownRegistries] = useState<PackageRegistryView[]>([])
   const [loadingKnownRegistries, setLoadingKnownRegistries] = useState(false)
@@ -129,24 +137,18 @@ export function SkillCatalogDialog({
     () => knownSkillCatalogPackages([...knownRegistries, displayedRegistry ?? null]),
     [displayedRegistry, knownRegistries]
   )
-  const installedPackageIds = useMemo(() => {
-    const ids = new Set(installedDuringSession)
-    for (const skill of skills) {
-      if (skill.sourceCategory === 'installed-package') ids.add(skill.sourceId ?? skill.name)
-    }
-    return ids
-  }, [installedDuringSession, skills])
+  const installedPackageIds = useMemo(
+    () => installedSkillPackageIds(skills, installedDuringSession, removedDuringSession),
+    [installedDuringSession, removedDuringSession, skills]
+  )
   const afterRemoval = useCallback(async (): Promise<void> => {
     await onRefresh?.()
   }, [onRefresh])
   const removal = usePackageRemoval(
     useCallback(async (id: string) => {
       await window.api.uninstallPackage('skill', id)
-      setInstalledDuringSession((current) => {
-        const next = new Set(current)
-        next.delete(id)
-        return next
-      })
+      setInstalledDuringSession((current) => withoutId(current, id))
+      setRemovedDuringSession((current) => new Set(current).add(id))
     }, []),
     afterRemoval
   )
@@ -212,6 +214,7 @@ export function SkillCatalogDialog({
       if (updating) await onApplyUpdate?.(entry)
       else await onInstallPackage?.(sourceDir!, entry)
       setInstalledDuringSession((current) => new Set(current).add(entry.id))
+      setRemovedDuringSession((current) => withoutId(current, entry.id))
       setUpdateIds((current) => {
         const next = new Set(current)
         next.delete(entry.id)

@@ -4,6 +4,7 @@ import type {
 } from '../../../../../shared/packageManagerTypes'
 import { CATALOG_DEFAULT_PAGE_SIZE } from '../../../components/catalog/catalogPaging'
 import { catalogPackages } from '../../../lib/contentCatalog'
+import type { SkillSummary } from '../../../types'
 
 export type SkillCatalogPackage = PackageRegistryEntryView & {
   registryDir?: string
@@ -122,4 +123,21 @@ export function skillCatalogBrowserReducer(
     case 'close':
       return initialSkillCatalogBrowserState
   }
+}
+
+/**
+ * Which catalog packages are installed. The skill list can lag behind an install or removal, so
+ * the ones changed in this session decide first: installed ones count, removed ones do not.
+ */
+export function installedSkillPackageIds(
+  skills: readonly SkillSummary[],
+  installedDuringSession: ReadonlySet<string>,
+  removedDuringSession: ReadonlySet<string>
+): Set<string> {
+  const ids = new Set(installedDuringSession)
+  for (const skill of skills) {
+    if (skill.sourceCategory === 'installed-package') ids.add(skill.sourceId ?? skill.name)
+  }
+  for (const id of removedDuringSession) ids.delete(id)
+  return ids
 }
