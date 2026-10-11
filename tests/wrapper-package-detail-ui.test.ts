@@ -5,7 +5,7 @@ import type { WrapperCompositionCatalogItem } from '../src/shared/wrapperComposi
 import {
   filterWrapperMembers,
   wrapperPackageMembers,
-  wrapperParamRows
+  wrapperParamConstraint
 } from '../src/renderer/src/features/wrapper/lib/wrapperPackageDetail'
 import {
   wrapperChoiceAction,
@@ -47,26 +47,26 @@ test('package members are the cached wrappers of that package, sorted by id', ()
   assert.deepEqual(wrapperPackageMembers(catalog, 'absent'), [])
 })
 
-test('parameter rows list inputs, then options, then outputs-as-params, required first', () => {
-  const rows = wrapperParamRows({
-    id: 'nf-core/modules/demo',
-    name: 'demo',
-    summary: 's',
-    params: {
-      threads: { kind: 'option', type: 'integer', required: false, minimum: 1, maximum: 64 },
-      mode: { kind: 'option', type: 'string', required: true, enum: ['a', 'b'] },
-      reads: { kind: 'input', type: 'fastq', required: true, description: 'FASTQ reads' },
-      bai: { kind: 'input', type: 'file', required: false }
-    },
-    outputs: {}
-  })
-  assert.deepEqual(
-    rows.map((row) => row.name),
-    ['reads', 'bai', 'mode', 'threads']
+test('parameter constraints describe enums and numeric ranges', () => {
+  assert.equal(
+    wrapperParamConstraint({ kind: 'option', type: 'string', required: true, enum: ['a', 'b'] }),
+    '可选值：a、b'
   )
-  assert.equal(rows[0].description, 'FASTQ reads')
-  assert.equal(rows[2].constraint, '可选值：a、b')
-  assert.equal(rows[3].constraint, '范围：1 – 64')
+  assert.equal(
+    wrapperParamConstraint({
+      kind: 'option',
+      type: 'integer',
+      required: false,
+      minimum: 1,
+      maximum: 64
+    }),
+    '范围：1 – 64'
+  )
+  assert.equal(
+    wrapperParamConstraint({ kind: 'option', type: 'integer', required: false, minimum: 1 }),
+    '范围：1 – ∞'
+  )
+  assert.equal(wrapperParamConstraint({ kind: 'input', type: 'file', required: true }), '')
 })
 
 test('member filter matches name, id and summary case-insensitively', () => {
@@ -91,14 +91,23 @@ test('choice action labels follow the install state', () => {
     enabled: false,
     ...state
   })
-  assert.deepEqual(wrapperChoiceAction(choice({})), { label: '安装', done: false })
-  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), { label: '添加', done: false })
+  assert.deepEqual(wrapperChoiceAction(choice({})), {
+    label: '安装',
+    done: false,
+    removable: false
+  })
+  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), {
+    label: '添加',
+    done: false,
+    removable: false
+  })
   assert.deepEqual(wrapperChoiceAction(choice({ installed: true, selected: true })), {
     label: '启用',
-    done: false
+    done: false,
+    removable: true
   })
   assert.deepEqual(
     wrapperChoiceAction(choice({ installed: true, selected: true, enabled: true })),
-    { label: '已添加', done: true }
+    { label: '已添加', done: true, removable: true }
   )
 })

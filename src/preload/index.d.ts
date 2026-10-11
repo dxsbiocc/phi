@@ -102,6 +102,7 @@ import type {
   InstalledPackageView,
   PackageInstallPlanView,
   WrapperPackageDetailView,
+  WrapperRemovalView,
   PackageManagerType,
   PackageRegistryView,
   PackageUpdateView
@@ -1104,6 +1105,7 @@ declare global {
         version?: string
       ) => Promise<PackageInstallPlanView>
       readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
+      removeWrapperPackage: (id: string) => Promise<WrapperRemovalView>
       installPackage: (
         dir: string,
         type: PackageManagerType,

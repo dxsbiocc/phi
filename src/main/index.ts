@@ -328,6 +328,7 @@ import {
 import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
 import type { InstallerOptions } from './agent/packages/installer-types'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
+import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
 import { readResourceIcon } from './agent/resource-icons'
@@ -9780,6 +9781,17 @@ app.whenReady().then(async () => {
       }
     }
   )
+  ipcMain.handle('packages:removeWrapper', async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('wrapper 软件包参数无效')
+    try {
+      const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
+      resetWrapperCompositionCatalogCache()
+      await invalidateAgentSession()
+      return result
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : String(error))
+    }
+  })
   ipcMain.handle('packages:uninstall', async (_, type: unknown, id: unknown) => {
     if (
       (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||

@@ -1,22 +1,25 @@
 import { useMemo, useState } from 'react'
 import { Box, InputAdornment, List, ListItemButton, TextField, Typography } from '@mui/material'
 
-import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
+import type { WrapperCompositionManifest } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { PhiIcons } from '../../../icons'
 import { wrapperToolLabel } from '../lib/wrapperFamily'
 import { filterWrapperMembers } from '../lib/wrapperPackageDetail'
 
 /** The tools of the open wrapper's package; choosing one opens that tool's page. */
-export function WrapperPackageRail({
+export function WrapperPackageRail<T extends WrapperCompositionManifest>({
   familyName,
   members,
   selectedId,
-  onSelect
+  onSelect,
+  showHeading = true
 }: {
   familyName: string
-  members: readonly WrapperCompositionCatalogItem[]
+  members: readonly T[]
   selectedId: string | null
-  onSelect: (entry: WrapperCompositionCatalogItem) => void
+  onSelect: (entry: T) => void
+  /** Hide the family title where the surrounding page already shows it. */
+  showHeading?: boolean
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const visible = useMemo(() => filterWrapperMembers(members, query), [members, query])
@@ -36,14 +39,18 @@ export function WrapperPackageRail({
         bgcolor: 'background.default'
       }}
     >
-      <Box sx={{ px: 2, pt: 2, pb: 1 }}>
-        <Typography variant="subtitle1" sx={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
-          {familyName}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {members.length} 个工具
-        </Typography>
-      </Box>
+      {showHeading ? (
+        <Box sx={{ px: 2, pt: 2, pb: 1 }}>
+          <Typography variant="subtitle1" sx={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
+            {familyName}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {members.length} 个工具
+          </Typography>
+        </Box>
+      ) : (
+        <Box sx={{ pt: 1 }} />
+      )}
       {members.length > 6 ? (
         <Box sx={{ px: 1.5, pb: 1 }}>
           <TextField

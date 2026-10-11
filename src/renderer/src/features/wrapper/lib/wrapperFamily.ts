@@ -1,5 +1,11 @@
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
+import {
+  isConventionalWrapperPackageId,
+  wrapperFamilyName
+} from '../../../../../shared/wrapperPackageNames'
 import { parseWrapperCompositionId } from './wrapperView'
+
+export { wrapperFamilyName }
 
 /** One tool family: a wrapper package shown as a single row (samtools, gatk4, rnaseq…). */
 export interface WrapperPackageGroup {
@@ -17,11 +23,14 @@ export interface WrapperPackageGroup {
   open: (preferredId: string | null) => WrapperCompositionCatalogItem
 }
 
-const PACKAGE_ID = /^(?:module|subworkflow|workflow)-(?:nf-core|local)-(.+)$/
+/** The package a wrapper belongs to; custom wrappers are their own package. */
+export function wrapperPackageKey(entry: WrapperCompositionCatalogItem): string {
+  return entry.enablementId ?? entry.packageId ?? entry.id
+}
 
-/** `module-nf-core-samtools` → `samtools`; ids that do not follow the convention are kept. */
-export function wrapperFamilyName(packageId: string): string {
-  return PACKAGE_ID.exec(packageId)?.[1] ?? packageId
+/** Whether the user can switch the wrapper's package (custom wrappers are always available). */
+export function isManagedWrapper(entry: WrapperCompositionCatalogItem): boolean {
+  return Boolean(entry.enablementId ?? entry.packageId)
 }
 
 /** Conventional package ids show as their tool; a lone custom wrapper keeps its own name. */
@@ -30,7 +39,7 @@ function displayName(
   members: readonly WrapperCompositionCatalogItem[],
   firstName: string
 ): string {
-  if (PACKAGE_ID.test(key)) return wrapperFamilyName(key)
+  if (isConventionalWrapperPackageId(key)) return wrapperFamilyName(key)
   return members.length === 1 ? firstName || members[0].name : key
 }
 
@@ -39,12 +48,12 @@ export function groupWrapperPackages(
 ): WrapperPackageGroup[] {
   const byKey = new Map<string, WrapperCompositionCatalogItem[]>()
   for (const entry of catalog) {
-    const key = entry.enablementId ?? entry.packageId ?? entry.id
+    const key = wrapperPackageKey(entry)
     byKey.set(key, [...(byKey.get(key) ?? []), entry])
   }
   const groups = [...byKey].map(([key, entries]) => {
     const members = [...entries].sort((left, right) => left.id.localeCompare(right.id))
-    const managed = members.some((entry) => entry.enablementId ?? entry.packageId)
+    const managed = members.some(isManagedWrapper)
     const parsed = parseWrapperCompositionId(members[0].id)
     return {
       key,

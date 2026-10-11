@@ -17,10 +17,10 @@ import type { WrapperModuleDetails } from '../../../../shared/wrapperModuleDetai
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import type { Project, ProjectRemoteConnection } from '../../types'
 import { PhiIcons } from '../../icons'
+import { WrapperContractSections, WrapperIdentity } from './components/WrapperContract'
 import { WrapperPackageRail } from './components/WrapperPackageRail'
-import { wrapperFamilyName } from './lib/wrapperFamily'
+import { isManagedWrapper, wrapperFamilyName, wrapperPackageKey } from './lib/wrapperFamily'
 import { wrapperPackageMembers } from './lib/wrapperPackageDetail'
-import { ResourceIcon } from '../../components/ResourceIcon'
 import { buildWrapperParamsFlowGraph } from './lib/wrapperFlow'
 import { parseWrapperNextflowDag } from './lib/wrapperNextflowDag'
 import { highlightLine } from '../../lib/syntaxHighlight'
@@ -30,9 +30,7 @@ import {
   parseWrapperCompositionId,
   runProgressLabel,
   runStateColor,
-  runStateLabel,
-  wrapperProviderColor,
-  wrapperTierLabel
+  runStateLabel
 } from './lib/wrapperView'
 import type { LocalPathKind } from '../../components/MarkdownContent'
 import { WrapperFlowDiagram } from './components/WrapperFlowDiagram'
@@ -226,10 +224,6 @@ export function WrapperDetail({
   const tier = selected ? parseWrapperCompositionId(selected.id).tier : ''
   const params = useMemo(() => (selected ? Object.entries(selected.params) : []), [selected])
   const inputParams = useMemo(() => params.filter(([, param]) => param.kind === 'input'), [params])
-  const optionParams = useMemo(
-    () => params.filter(([, param]) => param.kind === 'option'),
-    [params]
-  )
   const outputs = useMemo(() => (selected ? Object.entries(selected.outputs) : []), [selected])
   const paramsGraph = useMemo(
     // Built from the wrapper's own declared params/outputs — its real,
@@ -304,7 +298,8 @@ export function WrapperDetail({
   const moduleDetails =
     moduleDetailsResult?.id === selectedId ? moduleDetailsResult.details : undefined
 
-  const packageKey = selected ? (selected.enablementId ?? selected.packageId) : undefined
+  const packageKey =
+    selected && isManagedWrapper(selected) ? wrapperPackageKey(selected) : undefined
   const siblings = useMemo(
     () => (packageKey ? wrapperPackageMembers(catalog, packageKey) : []),
     [catalog, packageKey]
@@ -335,59 +330,13 @@ export function WrapperDetail({
           </Box>
         ) : (
           <Box sx={{ maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
-            <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-              <Box
-                sx={{
-                  width: 72,
-                  height: 72,
-                  borderRadius: 1,
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0
-                }}
-              >
-                <ResourceIcon icon={selected.icon} kind="wrapper" size={72} fallbackSize={24} />
-              </Box>
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
-                  {selected.name}
-                </Typography>
-                {/* The canonical id, not the display name above, is what actually
-                  identifies this wrapper — keep it visible right next to the name. */}
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontFamily: 'var(--font-mono)', display: 'block' }}
-                >
-                  {selected.id}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                  {selected.summary}
-                </Typography>
-                <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 1 }}>
-                  <Chip
-                    size="small"
-                    color={wrapperProviderColor(parseWrapperCompositionId(selected.id).provider)}
-                    label={parseWrapperCompositionId(selected.id).provider}
-                  />
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    label={wrapperTierLabel(parseWrapperCompositionId(selected.id).tier)}
-                  />
-                </Stack>
-                <Box sx={{ mt: 1.5 }}>
-                  <WrapperPackageControl
-                    wrapper={selected}
-                    busy={packageEnablementBusy}
-                    onSetEnabled={onSetPackageEnabled}
-                  />
-                </Box>
-              </Box>
-            </Stack>
+            <WrapperIdentity manifest={selected} icon={selected.icon}>
+              <WrapperPackageControl
+                wrapper={selected}
+                busy={packageEnablementBusy}
+                onSetEnabled={onSetPackageEnabled}
+              />
+            </WrapperIdentity>
 
             {project && (
               <Box sx={{ mt: 2 }}>
@@ -423,53 +372,7 @@ export function WrapperDetail({
 
             <Divider sx={{ my: 4 }} />
 
-            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-              输入
-            </Typography>
-            {inputParams.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                无
-              </Typography>
-            ) : (
-              inputParams.map(([key, param]) => (
-                <Typography key={key} variant="body2" color="text.secondary">
-                  {key} ({param.type}
-                  {param.required ? '，必填' : ''})
-                  {param.description ? ` — ${param.description}` : ''}
-                </Typography>
-              ))
-            )}
-
-            {optionParams.length > 0 && (
-              <>
-                <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-                  选项
-                </Typography>
-                {optionParams.map(([key, param]) => (
-                  <Typography key={key} variant="body2" color="text.secondary">
-                    {key} ({param.type}
-                    {param.required ? '，必填' : ''})
-                    {param.description ? ` — ${param.description}` : ''}
-                  </Typography>
-                ))}
-              </>
-            )}
-
-            <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-              输出
-            </Typography>
-            {outputs.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                无
-              </Typography>
-            ) : (
-              outputs.map(([key, output]) => (
-                <Typography key={key} variant="body2" color="text.secondary">
-                  {key} — {output.path}
-                  {output.primary ? '（主要）' : ''}
-                </Typography>
-              ))
-            )}
+            <WrapperContractSections manifest={selected} />
 
             {moduleDetails?.meta && (
               <>

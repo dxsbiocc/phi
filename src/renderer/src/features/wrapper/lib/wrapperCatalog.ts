@@ -6,7 +6,7 @@ import type {
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { wrapperFamilyName } from './wrapperFamily'
+import { isManagedWrapper, wrapperFamilyName, wrapperPackageKey } from './wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierLabel } from './wrapperView'
 import type { CatalogBrowseGroup } from '../../../components/catalog/CatalogBrowseLayout'
 import { catalogPackages } from '../../../lib/contentCatalog'
@@ -39,12 +39,12 @@ export function wrapperCatalogChoices(
     installedPackages.filter((entry) => entry.type === 'wrapper').map((entry) => [entry.id, entry])
   )
   for (const entry of catalog) {
-    const id = entry.enablementId ?? entry.packageId ?? entry.id
+    const id = wrapperPackageKey(entry)
     if (choices.has(id)) continue
     const { provider, tier, name } = parseWrapperCompositionId(entry.id)
     choices.set(id, {
       id,
-      title: (entry.enablementId ?? entry.packageId) ? wrapperFamilyName(id) : name || entry.name,
+      title: isManagedWrapper(entry) ? wrapperFamilyName(id) : name || entry.name,
       summary: entry.summary,
       metadata: provider,
       category: provider === 'custom' ? '自定义' : wrapperTierLabel(tier) || '其他',
@@ -116,12 +116,14 @@ export interface WrapperChoiceAction {
   label: '已添加' | '启用' | '添加' | '安装'
   /** Nothing left to do for this choice. */
   done: boolean
+  /** The user has chosen this package, so it can be taken out again. */
+  removable: boolean
 }
 
 export function wrapperChoiceAction(choice: WrapperCatalogChoice): WrapperChoiceAction {
-  if (choice.selected && choice.enabled) return { label: '已添加', done: true }
-  if (choice.selected) return { label: '启用', done: false }
-  return { label: choice.installed ? '添加' : '安装', done: false }
+  if (choice.selected && choice.enabled) return { label: '已添加', done: true, removable: true }
+  if (choice.selected) return { label: '启用', done: false, removable: true }
+  return { label: choice.installed ? '添加' : '安装', done: false, removable: false }
 }
 
 export function filterWrapperCatalogChoices(

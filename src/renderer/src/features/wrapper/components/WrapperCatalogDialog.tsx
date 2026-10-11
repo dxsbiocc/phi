@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, Box, Button, CircularProgress, Dialog, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
 import type {
   InstalledPackageView,
   PackageRegistryView
@@ -165,18 +165,50 @@ export function WrapperCatalogDialog({
     }
   }
 
+  async function remove(choice: WrapperCatalogChoice): Promise<void> {
+    if (busyId) return
+    setBusyId(choice.id)
+    setError(null)
+    try {
+      await window.api.removeWrapperPackage(choice.id)
+      await onRefresh()
+      const refreshed = await readCatalog()
+      setRegistries(refreshed.registries)
+      setInstalledPackages(refreshed.installed)
+      setError(refreshed.error)
+      setSourceNotice(refreshed.notice)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
-    const { label, done } = wrapperChoiceAction(choice)
+    const { label, done, removable } = wrapperChoiceAction(choice)
     return (
-      <Button
-        size="small"
-        variant={done ? 'text' : 'outlined'}
-        disabled={done || Boolean(busyId)}
-        onClick={() => void add(choice)}
-        aria-label={`${label} ${choice.title}`}
-      >
-        {busyId === choice.id ? <CircularProgress size={16} /> : label}
-      </Button>
+      <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+        <Button
+          size="small"
+          variant={done ? 'text' : 'outlined'}
+          disabled={done || Boolean(busyId)}
+          onClick={() => void add(choice)}
+          aria-label={`${label} ${choice.title}`}
+        >
+          {busyId === choice.id ? <CircularProgress size={16} /> : label}
+        </Button>
+        {removable ? (
+          <Button
+            size="small"
+            color="error"
+            disabled={Boolean(busyId)}
+            onClick={() => void remove(choice)}
+            aria-label={`卸载 ${choice.title}`}
+          >
+            卸载
+          </Button>
+        ) : null}
+      </Stack>
     )
   }
 
@@ -300,6 +332,7 @@ export function WrapperCatalogDialog({
               detailsLabel="分类 / 版本"
               rowAttribute="data-phi-wrapper-catalog-choice"
               onOpen={setDetailId}
+              actionWidth={168}
               rows={visibleChoices.map((choice) => {
                 return {
                   rowKey: choice.id,

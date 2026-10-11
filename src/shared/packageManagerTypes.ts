@@ -100,3 +100,9 @@ export interface WrapperPackageDetailView {
   /** Wrapper manifests in the package that could not be parsed. */
   skipped: number
 }
+
+export interface WrapperRemovalView {
+  /** `deselected` keeps the bundled files; `uninstalled` deleted the installed package. */
+  kind: 'deselected' | 'uninstalled'
+  id: string
+}
