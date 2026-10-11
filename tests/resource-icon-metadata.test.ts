@@ -18,7 +18,7 @@ process.env.PI_CODING_AGENT_DIR = agentDir
 
 const { listSkills, listMcpServers, listPromptAgents } = await import('../src/main/agent/resources')
 const { buildPhiPluginListItem } = await import('../src/main/agent/plugins/details')
-const { installPlugin } = await import('../src/main/agent/plugins/loader')
+const { installPlugin, listInstalledPlugins } = await import('../src/main/agent/plugins/loader')
 const { listConnectorCatalog, installCatalogConnector } =
   await import('../src/main/agent/mcp-connectors')
 const { addCustomWrapper, listWrapperCatalog } = await import('../src/main/agent/wrappers/catalog')
@@ -261,4 +261,46 @@ test('legacy and composition wrapper metadata select own icons and bounded famil
   assert.ok(own?.icon)
   assert.deepEqual(own.icon, findResourceIcon(wrapper))
   assert.notDeepEqual(own.icon, fallback.icon)
+})
+
+test('installed connectors and plugins without their own icon get a stable fallback, uninstalled ones do not', async () => {
+  const source = join(root, 'plain-connector-source')
+  mkdirSync(source)
+  writeFileSync(
+    join(source, 'phi-package.yaml'),
+    `schemaVersion: 1\nid: plain-connector\ntype: mcp\nversion: 1.0.0\ntitle: Plain connector\nsummary: No icon of its own.\nconnector:\n  transport: http\n  publisher: Fixture\n  category: 科研数据\n  url: https://example.com/plain\n  auth: none\n`
+  )
+  const registry = writeMcpRegistryFixture(join(root, 'plain-registry'), [
+    readFileSync(join(source, 'phi-package.yaml'), 'utf8')
+  ])
+  // Not installed yet: the catalog entry stays on the default glyph.
+  const notInstalled = listConnectorCatalog({
+    agentDir,
+    appVersion: '1.0.0',
+    registries: [registry]
+  })
+  assert.equal(notInstalled.find((entry) => entry.id === 'plain-connector')?.icon, undefined)
+
+  await installCatalogConnector(source, 'plain-connector', '1.0.0', {
+    agentDir,
+    appVersion: '1.0.0'
+  })
+  const server = (await listMcpServers(project)).find(
+    (entry) => entry.packageId === 'plain-connector'
+  )
+  assert.ok(server?.icon, 'an installed connector gets an icon')
+  assert.ok(readResourceIcon(server.icon.key))
+  const again = (await listMcpServers(project)).find(
+    (entry) => entry.packageId === 'plain-connector'
+  )
+  assert.deepEqual(again?.icon, server.icon, 'and keeps it')
+
+  const installedPlugin = listInstalledPlugins({ agentDir })[0]
+  assert.ok(installedPlugin, 'the plugin installed by the previous test is still there')
+  const loaded: LoadedPlugin = { ...installedPlugin, enabled: true }
+  rmSync(join(loaded.dir, 'icon.svg'), { force: true })
+  const item = buildPhiPluginListItem(loaded)
+  assert.ok(item.icon, 'an installed plugin gets an icon')
+  assert.ok(readResourceIcon(item.icon.key))
+  assert.deepEqual(buildPhiPluginListItem(loaded).icon, item.icon)
 })

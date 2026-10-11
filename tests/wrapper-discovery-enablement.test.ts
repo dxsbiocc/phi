@@ -299,3 +299,37 @@ test('wrapper_run refuses a disabled package even when called directly by id', a
   assert.equal(started.ok, false)
   if (!started.ok) assert.match(started.error, /disabled/)
 })
+
+test('only wrapper packages the user chose, and custom wrappers, receive a fallback icon', () => {
+  const agentDir = fixture(true)
+  const before = listWrapperCompositionCatalogStatus({ agentDir })
+  assert.equal(before.length, 2)
+  assert.ok(
+    before.every((entry) => entry.icon === undefined),
+    'untouched bundled packages stay on the default glyph'
+  )
+
+  setEnabled('wrapper:module-nf-core-fastqc', true, { agentDir })
+  const custom = join(agentDir, 'wrappers', 'custom', 'modules', 'acme', 'toy', 'wrapper')
+  write(join(custom, 'wrapper.yaml'), wrapperYaml('acme/modules/toy'))
+  write(join(custom, 'main.nf'), 'workflow {}\n')
+  write(join(custom, 'params.json'), '{}\n')
+  resetWrapperCompositionCatalogCache()
+
+  const after = listWrapperCompositionCatalogStatus({ agentDir })
+  const chosen = after.find((entry) => entry.id === 'nf-core/modules/fastqc')
+  const dependent = after.find((entry) => entry.id === 'nf-core/subworkflows/qc')
+  const mine = after.find((entry) => entry.id === 'acme/modules/toy')
+  assert.ok(chosen?.icon, 'a chosen package gets an icon')
+  assert.equal(dependent?.icon, undefined, 'a package nobody chose still has none')
+  assert.ok(mine?.icon, 'a custom wrapper gets an icon')
+
+  resetWrapperCompositionCatalogCache()
+  assert.deepEqual(
+    listWrapperCompositionCatalogStatus({ agentDir }).find(
+      (entry) => entry.id === 'nf-core/modules/fastqc'
+    )?.icon,
+    chosen?.icon,
+    'the same package keeps the same icon'
+  )
+})

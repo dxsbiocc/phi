@@ -149,7 +149,7 @@ test('bundled curated catalog contains sixteen verified 512px WebP thumbnails', 
       id: string
       name: string
       category: string
-      kinds: Array<'agent' | 'skill'>
+      kinds: string[]
       path: string
       sourceUrl: string
       sha256: string
@@ -187,5 +187,26 @@ test('bundled curated catalog contains sixteen verified 512px WebP thumbnails', 
       assert.equal(data.readUInt16LE(26) & 0x3fff, 512, entry.id)
       assert.equal(data.readUInt16LE(28) & 0x3fff, 512, entry.id)
     }
+  }
+})
+
+test('the bundled catalog serves every resource kind with a stable, verified icon', () => {
+  const kinds = ['agent', 'skill', 'plugin', 'wrapper', 'mcp'] as const
+  for (const kind of kinds) {
+    for (const stableId of ['alpha', 'beta', 'samtools', 'markitdown']) {
+      const first = resolveCuratedResourceIcon(kind, stableId)
+      assert.ok(first, `${kind}:${stableId} has an icon`)
+      assert.deepEqual(resolveCuratedResourceIcon(kind, stableId), first, 'stable across calls')
+    }
+  }
+  // Same name, different kind may pick differently, but each stays within its own candidates.
+  const catalog = JSON.parse(
+    readFileSync(join(process.cwd(), 'resources', 'icons', 'catalog.json'), 'utf8')
+  ) as { entries: Array<{ kinds: string[] }> }
+  for (const kind of kinds) {
+    assert.ok(
+      catalog.entries.some((entry) => entry.kinds.includes(kind)),
+      `an image for ${kind}`
+    )
   }
 })

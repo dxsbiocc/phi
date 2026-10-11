@@ -5,7 +5,9 @@ import { basename, dirname, join, relative } from 'node:path'
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import { getEnablementPath, getEnablementSnapshot } from '../../enablement'
 import { getPhiAgentDir } from '../../runtime-paths'
+import { resolveCuratedResourceIcon } from '../../curated-icons'
 import { findResourceIcon } from '../../resource-icons'
+import type { ResourceIconRef } from '../../../../shared/resourceIconTypes'
 import {
   readWrapperTreeRegistry,
   wrapperTreeDir,
@@ -278,16 +280,29 @@ export function listWrapperCompositionCatalog(
   return catalogFor(options).entries.filter((entry) => !entry.hiddenReason)
 }
 
+/**
+ * A wrapper that ships no icon gets a stable generated one, but only once the user has it:
+ * a package they chose, or a custom wrapper. One package shares one icon across its tools.
+ */
+function fallbackWrapperIcon(
+  entry: WrapperCompositionEntry,
+  selectedPackages: ReadonlySet<string>
+): ResourceIconRef | undefined {
+  if (entry.enablementId && !selectedPackages.has(entry.enablementId)) return undefined
+  return resolveCuratedResourceIcon('wrapper', entry.enablementId ?? entry.manifest.id)
+}
+
 /** Includes disabled wrappers so the renderer can explain and change package enablement. */
 export function listWrapperCompositionCatalogStatus(
   options: WrapperCompositionDiscoveryOptions = {}
 ): WrapperCompositionCatalogItem[] {
   const catalog = catalogFor(options)
   return catalog.entries.map((entry) => {
-    const icon = findResourceIcon(entry.wrapperDir, [
-      entry.componentDir,
-      ...(entry.familyDir ? [entry.familyDir] : [])
-    ])
+    const icon =
+      findResourceIcon(entry.wrapperDir, [
+        entry.componentDir,
+        ...(entry.familyDir ? [entry.familyDir] : [])
+      ]) ?? fallbackWrapperIcon(entry, catalog.packageSelected)
     return {
       ...entry.manifest,
       ...(icon ? { icon } : {}),

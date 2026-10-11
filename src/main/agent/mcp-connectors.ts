@@ -30,6 +30,7 @@ import type {
 } from '../../shared/mcpConnectorCatalog'
 import type { EnvironmentBuildStartOptions } from './content/environment-builds'
 import type { EnvironmentDescriptor } from './content/environment-refs'
+import { resolveCuratedResourceIcon } from './curated-icons'
 import { findResourceIcon, registerResourceIconAsset } from './resource-icons'
 import type { RegistryIconAsset } from '../../shared/resourceIconTypes'
 import { listActiveMcpPackages } from './packages/mcp-store'
@@ -192,7 +193,8 @@ export function listConnectorCatalog(
       const icon =
         (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
         (packageDir ? findResourceIcon(packageDir) : undefined) ??
-        (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined)
+        (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined) ??
+        (installedRoot ? resolveCuratedResourceIcon('mcp', manifest.id) : undefined)
       const unavailableReason =
         manifest.minAppVersion && semver.lt(appVersion, manifest.minAppVersion)
           ? `需要 Phi ${manifest.minAppVersion} 或更高版本`

@@ -7,7 +7,7 @@ are maintained in [phi-packages](https://github.com/dxsbiocc/phi-packages).
 | Path                     | Ownership                                                               |
 | ------------------------ | ----------------------------------------------------------------------- |
 | `icon.png`               | Application icon                                                        |
-| `icons/`                 | Versioned, application-owned fallback icons for agents and skills       |
+| `icons/`                 | Versioned, application-owned fallback icons for installed content       |
 | `agents/`                | Core Wrapper agent                                                      |
 | `skills/create-wrapper/` | Core wrapper-authoring skill                                            |
 | `palettes/`              | Application palette definitions                                         |
@@ -23,8 +23,9 @@ example `plugins/visualization/agents/Visualization.md`) and install with that
 plugin. The package contract currently has no standalone `agent` package type.
 
 `icons/` is presentation infrastructure rather than installable domain content.
-Its small offline catalog provides deterministic fallbacks only when an agent or
-skill has no explicit icon. Source, commercial-use attribution, and integrity
+Its small offline catalog provides deterministic fallbacks only when an agent or an
+installed skill, plugin, wrapper package or connector has no explicit icon. Content
+that is not installed keeps the default glyph. Source, commercial-use attribution, and integrity
 metadata are retained alongside the 512 px WebP thumbnails.
 
 `office/` and `plugins/office/` serve different purposes. The former is a core

@@ -565,7 +565,9 @@ async function listMcpServersFromPaths(configPaths: string[]): Promise<McpServer
       const server = toMcpServerSummary(name, value, path, disabled.has(name))
       if (!server || seen.has(server.id)) continue
       const installedRoot = server.packageId ? installedRoots.get(server.packageId) : undefined
-      const icon = installedRoot ? findResourceIcon(installedRoot) : undefined
+      const icon =
+        (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
+        resolveCuratedResourceIcon('mcp', server.packageId ?? server.id)
       if (icon) server.icon = icon
       seen.add(server.id)
       servers.push(server)

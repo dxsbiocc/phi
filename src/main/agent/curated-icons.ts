@@ -7,7 +7,8 @@ import { RESOURCE_ICON_MAX_BYTES } from '../../shared/resourceIconTypes'
 import { getBundledResourceDir } from './runtime/runtime-adapter'
 import { readResourceIcon, registerResourceIconAsset } from './resource-icons'
 
-export type CuratedIconKind = 'agent' | 'skill'
+/** Resource kinds that can be given a fallback icon once they are installed. */
+export type CuratedIconKind = 'agent' | 'skill' | 'plugin' | 'wrapper' | 'mcp'
 
 interface CuratedIconEntry {
   id: string
@@ -36,7 +37,9 @@ interface CachedCatalog {
 }
 
 const catalogCache = new Map<string, CachedCatalog>()
-const KINDS = new Set<CuratedIconKind>(['agent', 'skill'])
+const KINDS = new Set<CuratedIconKind>(['agent', 'skill', 'plugin', 'wrapper', 'mcp'])
+/** A catalog must at least cover the original two kinds; the others may be left out. */
+const REQUIRED_KINDS: CuratedIconKind[] = ['agent', 'skill']
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const SHA256 = /^[a-f0-9]{64}$/
 const CATALOG_NAME = 'catalog.json'
@@ -68,7 +71,7 @@ function parseEntry(value: unknown): CuratedIconEntry | undefined {
     !SLUG.test(category) ||
     !Array.isArray(kinds) ||
     kinds.length === 0 ||
-    kinds.length > 2 ||
+    kinds.length > KINDS.size ||
     !kinds.every(
       (kind): kind is CuratedIconKind =>
         typeof kind === 'string' && KINDS.has(kind as CuratedIconKind)
@@ -117,7 +120,7 @@ function parseCatalog(value: unknown): CuratedIconCatalog | undefined {
   if (new Set(typedEntries.map((entry) => entry.id)).size !== typedEntries.length) return undefined
   if (new Set(typedEntries.map((entry) => entry.path)).size !== typedEntries.length)
     return undefined
-  if (![...KINDS].every((kind) => typedEntries.some((entry) => entry.kinds.includes(kind)))) {
+  if (!REQUIRED_KINDS.every((kind) => typedEntries.some((entry) => entry.kinds.includes(kind)))) {
     return undefined
   }
   return {
