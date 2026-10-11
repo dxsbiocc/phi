@@ -1,4 +1,6 @@
 export { TransferStateError, transitionTransferState } from './state-machine'
+export { FileTransferCoordinator, getFileTransferCoordinator } from './coordinator'
+export type { CoordinatedTransferRequest, FileTransferCoordinatorOptions } from './coordinator'
 export { FileTransferManager } from './manager'
 export { FileTransferRegistry } from './registry'
 export { LocalTransferDataPlane } from './local-data-plane'

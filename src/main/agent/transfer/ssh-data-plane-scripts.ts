@@ -43,6 +43,10 @@ function containmentCheck(parent: string, canonicalRoot: string): string {
   return `actual_parent=$(CDPATH= cd -P ${shellQuote(parent)} 2>/dev/null && pwd -P) || fail INVALID_PATH\ncase "$actual_parent" in ${shellQuote(canonicalRoot)}|${shellQuote(`${canonicalRoot}/`)}*) ;; *) fail INVALID_PATH ;; esac`
 }
 
+function exactContainmentCheck(parent: string, canonicalRoot: string): string {
+  return `${containmentCheck(parent, canonicalRoot)}\n[ "$actual_parent" = ${shellQuote(parent)} ] || fail INVALID_PATH`
+}
+
 function hashToolProbe(): string {
   return `if command -v sha256sum >/dev/null 2>&1; then hash_tool=sha256sum
 elif command -v shasum >/dev/null 2>&1; then hash_tool=shasum
@@ -254,7 +258,7 @@ export function buildDownloadPreflightScript(paths: {
 }): string {
   return `set -eu
 fail() { printf 'PHI_ERROR=%s\\n' "$1"; exit 46; }
-${containmentCheck(paths.parent, paths.canonicalRoot)}
+${exactContainmentCheck(paths.parent, paths.canonicalRoot)}
 ${hashToolProbe()}
 [ ! -L ${shellQuote(paths.source)} ] && [ -f ${shellQuote(paths.source)} ] || fail SOURCE_CHANGED
 identity=$(stat -Lc '%d|%i|%s|%y' ${shellQuote(paths.source)} 2>/dev/null || stat -f '%d|%i|%z|%m' ${shellQuote(paths.source)} 2>/dev/null) || fail SOURCE_CHANGED
@@ -263,6 +267,8 @@ printf 'PHI_HASH=%s\\nPHI_ID=%s\\n' "$hash_tool" "$identity"`
 
 export function buildDownloadStreamScript(paths: {
   source: string
+  sourceParent: string
+  canonicalRoot: string
   offset: number
   hashTool: RemoteHashTool
 }): string {
@@ -272,6 +278,7 @@ ${hashFunctions()}
 fail() { printf 'PHI_ERROR=%s\\n' "$1" >&2; exit 47; }
 identity() { stat -Lc '%d|%i|%s|%y' "$1" 2>/dev/null || stat -f '%d|%i|%z|%m' "$1" 2>/dev/null; }
 [ ! -L ${shellQuote(paths.source)} ] && [ -f ${shellQuote(paths.source)} ] || fail SOURCE_CHANGED
+${exactContainmentCheck(paths.sourceParent, paths.canonicalRoot)}
 before=$(identity ${shellQuote(paths.source)}) || fail SOURCE_CHANGED
 digest=$(hash_file ${shellQuote(paths.source)}) || fail HASH_UNAVAILABLE
 printf 'PHI_HASH=%s\\nPHI_BEFORE=%s\\n' "$digest" "$before" >&2
@@ -300,4 +307,24 @@ trap - TERM HUP INT
 after=$(identity ${shellQuote(paths.source)}) || fail SOURCE_CHANGED
 [ "$after" = "$before" ] || fail SOURCE_CHANGED
 printf 'PHI_AFTER=%s\\n' "$after" >&2`
+}
+
+export function buildDownloadHashScript(paths: {
+  source: string
+  hashTool: RemoteHashTool
+  sourceParent: string
+  canonicalRoot: string
+}): string {
+  return `set -eu
+hash_tool=${shellQuote(paths.hashTool)}
+${hashFunctions()}
+fail() { printf 'PHI_ERROR=%s\\n' "$1"; exit 49; }
+identity() { stat -Lc '%d|%i|%s|%y' "$1" 2>/dev/null || stat -f '%d|%i|%z|%m' "$1" 2>/dev/null; }
+[ ! -L ${shellQuote(paths.source)} ] && [ -f ${shellQuote(paths.source)} ] || fail SOURCE_CHANGED
+${exactContainmentCheck(paths.sourceParent, paths.canonicalRoot)}
+before=$(identity ${shellQuote(paths.source)}) || fail SOURCE_CHANGED
+digest=$(hash_file ${shellQuote(paths.source)}) || fail HASH_UNAVAILABLE
+after=$(identity ${shellQuote(paths.source)}) || fail SOURCE_CHANGED
+[ "$after" = "$before" ] || fail SOURCE_CHANGED
+printf 'PHI_HASH=%s\\nPHI_BEFORE=%s\\nPHI_AFTER=%s\\n' "$digest" "$before" "$after"`
 }

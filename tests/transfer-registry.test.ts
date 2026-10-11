@@ -35,6 +35,8 @@ test('retention cleanup uses TTL and per-host free-space quota on registry-owned
       return {
         transferId,
         hostKey,
+        cleanupOwner: 'test-owner',
+        storageKey: 'test-storage',
         status,
         retainedBytes,
         partialLocator,
@@ -91,6 +93,110 @@ test('retention cleanup uses TTL and per-host free-space quota on registry-owned
     })
     assert.ok(runtimeRootCap.quotaBytes > 0)
     assert.ok(runtimeRootCap.quotaBytes <= 20 * 1024 * 1024 * 1024)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('startup reconciliation turns prior-process active entries into retained failures', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-transfer-registry-reconcile-'))
+  try {
+    const registry = new FileTransferRegistry(join(root, 'registry.json'))
+    await registry.upsert({
+      transferId: 'interrupted',
+      hostKey: 'host-a',
+      cleanupOwner: 'test-owner',
+      storageKey: 'test-storage',
+      partialLocator: join(root, 'interrupted.part'),
+      manifestLocator: join(root, 'interrupted.part.json'),
+      status: 'active',
+      retainedBytes: 42,
+      createdAt: 100,
+      updatedAt: 200
+    })
+
+    assert.equal(await registry.reconcileInterrupted(500), 1)
+    assert.deepEqual(await registry.list(), [
+      {
+        transferId: 'interrupted',
+        hostKey: 'host-a',
+        cleanupOwner: 'test-owner',
+        storageKey: 'test-storage',
+        partialLocator: join(root, 'interrupted.part'),
+        manifestLocator: join(root, 'interrupted.part.json'),
+        status: 'failed',
+        retainedBytes: 42,
+        createdAt: 100,
+        updatedAt: 500
+      }
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('cleanup isolates owners and storage domains and excludes queued resumptions', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-transfer-registry-domain-'))
+  try {
+    const registry = new FileTransferRegistry(join(root, 'registry.json'))
+    const now = 1_900_000_000_000
+    const entries: TransferRegistryEntry[] = [
+      {
+        transferId: 'wrapper-expired',
+        hostKey: 'host-a',
+        cleanupOwner: 'wrapper-result',
+        storageKey: 'local-device-1',
+        partialLocator: 'wrapper.part',
+        manifestLocator: 'wrapper.part.json',
+        status: 'failed',
+        retainedBytes: 10,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        transferId: 'wrapper-resuming',
+        hostKey: 'host-a',
+        cleanupOwner: 'wrapper-result',
+        storageKey: 'local-device-1',
+        partialLocator: 'resuming.part',
+        manifestLocator: 'resuming.part.json',
+        status: 'cancelled',
+        retainedBytes: 10,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        transferId: 'remote-expired',
+        hostKey: 'host-a',
+        cleanupOwner: 'remote-http-direct',
+        storageKey: 'remote-root-1',
+        partialLocator: 'remote.part',
+        manifestLocator: 'remote.part.json',
+        status: 'failed',
+        retainedBytes: 10,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    for (const entry of entries) await registry.upsert(entry)
+    const removed: string[] = []
+
+    const result = await registry.cleanupRetained({
+      hostKey: 'host-a',
+      cleanupOwner: 'wrapper-result',
+      storageKey: 'local-device-1',
+      excludeTransferIds: new Set(['wrapper-resuming']),
+      freeBytes: 1_000_000,
+      now,
+      removeOwned: async (entry) => removed.push(entry.transferId)
+    })
+
+    assert.deepEqual(removed, ['wrapper-expired'])
+    assert.deepEqual(result.removedTransferIds, ['wrapper-expired'])
+    assert.deepEqual(
+      new Set((await registry.list()).map((entry) => entry.transferId)),
+      new Set(['wrapper-resuming', 'remote-expired'])
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

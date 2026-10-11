@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
   writeSync
 } from 'node:fs'
@@ -134,6 +135,121 @@ test('pure SSH download streams binary chunks and verifies both endpoints', asyn
 
     assert.equal(result.sha256, sha256(content))
     assert.deepEqual(readFileSync(destination), content)
+  } finally {
+    await ssh.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('pure SSH download rechecks the live source identity before publishing', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-ssh-download-live-identity-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-ssh-download-live-identity-remote-'))
+  const ssh = createLocalShellSession(remoteRoot)
+  try {
+    const remotePath = join(remoteRoot, 'changing.bin')
+    const content = Buffer.alloc(1024 * 1024 + 17, 0x31)
+    writeFileSync(remotePath, content)
+    const destination = join(localRoot, 'downloaded.bin')
+    const plane = new SshTransferDataPlane({
+      host: new LocalHost(remoteRoot),
+      hostId: 'test-host',
+      workspaceId: 'test-workspace',
+      remoteRoot,
+      canonicalRoot: realpathSync(remoteRoot),
+      openStream: (command) => ssh.openStdio!(command)
+    })
+    const manager = new FileTransferManager({
+      registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+      dataPlanes: [plane],
+      onEvent: (event) => {
+        if (event.state === 'verifying')
+          writeFileSync(remotePath, Buffer.alloc(content.length, 0x32))
+      }
+    })
+
+    await assert.rejects(
+      manager.enqueue({
+        transferId: 'ssh-download-live-identity',
+        direction: 'download',
+        hostKey: 'test-host',
+        dataPlaneId: plane.id,
+        source: {
+          kind: 'remote-workspace-path',
+          hostId: 'test-host',
+          workspaceId: 'test-workspace',
+          relativePath: 'changing.bin'
+        },
+        destination: { kind: 'local-path', path: destination }
+      }).completion,
+      (error: unknown) =>
+        ['SOURCE_CHANGED', 'HASH_MISMATCH'].includes(String((error as { code?: unknown })?.code))
+    )
+    assert.equal(existsSync(destination), false)
+  } finally {
+    await ssh.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('pure SSH download refuses a partial replaced after SHA-256 verification', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-ssh-download-partial-race-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-ssh-download-partial-race-remote-'))
+  const ssh = createLocalShellSession(remoteRoot)
+  try {
+    const content = Buffer.alloc(1024 * 1024 + 17, 0x41)
+    writeFileSync(join(remoteRoot, 'result.bin'), content)
+    const destination = join(localRoot, 'downloaded.bin')
+    const transferId = 'ssh-download-partial-race'
+    const partial = join(localRoot, `.downloaded.bin.phi-transfer-${transferId}.part`)
+    let replaced = false
+    let replacementFailure: unknown
+    const plane = new SshTransferDataPlane({
+      host: new LocalHost(remoteRoot),
+      hostId: 'test-host',
+      workspaceId: 'test-workspace',
+      remoteRoot,
+      canonicalRoot: realpathSync(remoteRoot),
+      openStream: (command) => ssh.openStdio!(command)
+    })
+    const manager = new FileTransferManager({
+      registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+      dataPlanes: [plane],
+      onEvent: (event) => {
+        if (event.state !== 'publishing') return
+        try {
+          unlinkSync(partial)
+          writeFileSync(partial, Buffer.alloc(content.length, 0x42), { mode: 0o600 })
+          replaced = true
+        } catch (error) {
+          replacementFailure = error
+        }
+      }
+    })
+
+    const outcome = await manager
+      .enqueue({
+        transferId,
+        direction: 'download',
+        hostKey: 'test-host',
+        dataPlaneId: plane.id,
+        source: {
+          kind: 'remote-workspace-path',
+          hostId: 'test-host',
+          workspaceId: 'test-workspace',
+          relativePath: 'result.bin'
+        },
+        destination: { kind: 'local-path', path: destination }
+      })
+      .completion.then(
+        () => null,
+        (error: unknown) => error
+      )
+    assert.equal(replacementFailure, undefined)
+    assert.equal(replaced, true)
+    assert.equal((outcome as { code?: unknown } | null)?.code, 'INVALID_PARTIAL')
+    assert.equal(existsSync(destination), false)
   } finally {
     await ssh.close()
     rmSync(localRoot, { recursive: true, force: true })

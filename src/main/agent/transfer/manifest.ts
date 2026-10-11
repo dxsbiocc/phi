@@ -86,11 +86,20 @@ export function sameSourceIdentity(
   left: TransferSourceIdentity,
   right: TransferSourceIdentity
 ): boolean {
+  const crossSshHelper =
+    new Set([left.kind, right.kind]).size === 2 &&
+    [left.kind, right.kind].every((kind) => kind === 'file' || kind === 'ssh-file-v1')
+  const leftTime = crossSshHelper ? Date.parse(left.mtime) : Number.NaN
+  const rightTime = crossSshHelper ? Date.parse(right.mtime) : Number.NaN
   return (
-    left.kind === right.kind &&
+    (left.kind === right.kind || crossSshHelper) &&
     left.device === right.device &&
     left.inode === right.inode &&
     left.size === right.size &&
-    left.mtime === right.mtime
+    (left.mtime === right.mtime ||
+      (crossSshHelper &&
+        Number.isFinite(leftTime) &&
+        Number.isFinite(rightTime) &&
+        leftTime === rightTime))
   )
 }

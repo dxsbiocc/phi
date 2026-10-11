@@ -22,6 +22,7 @@ export interface AuthorizedWrapperResultPath {
   runId: string
   hostAlias: string
   scope: 'run' | 'output'
+  workspaceRoot: string
   root: string
   path: string
 }
@@ -189,6 +190,7 @@ export async function withAuthorizedWrapperResultPath<T>(
         runId: request.runId,
         hostAlias: profile.hostAlias,
         scope: request.scope,
+        workspaceRoot,
         root,
         path
       },

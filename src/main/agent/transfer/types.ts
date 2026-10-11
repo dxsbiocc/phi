@@ -67,6 +67,7 @@ export type TransferRequest = Readonly<{
   source: TransferEndpoint
   destination: TransferEndpoint
   expectedSha256?: string
+  retention?: Readonly<{ cleanupOwner: string; storageKey: string }>
 }>
 
 export type TransferSourceIdentity = Readonly<{

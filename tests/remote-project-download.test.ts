@@ -80,3 +80,26 @@ test('remote download reports server network failures without local fallback', a
   assert.equal(content?.type, 'text')
   if (content?.type === 'text') assert.match(content.text, /服务器无法联网/)
 })
+
+test('remote download forwards an expected SHA-256 to the server transfer', async () => {
+  const expectedSha256 = 'a'.repeat(64)
+  let received: Record<string, unknown> | undefined
+  const tool = buildRemoteProjectDownloadTool(async (request) => {
+    received = request
+    return {
+      path: 'ssh://cluster-a/project/data.txt',
+      displayPath: 'data.txt',
+      bytes: 12
+    }
+  })
+
+  const result = await tool.execute(
+    'call-digest',
+    { url: 'https://example.org/data.txt', expectedSha256 },
+    undefined,
+    {} as never
+  )
+
+  assert.equal(result.isError, undefined)
+  assert.equal(received?.expectedSha256, expectedSha256)
+})

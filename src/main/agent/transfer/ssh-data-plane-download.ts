@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, open, rename, statfs, unlink } from 'node:fs/promises'
+import { open, rename, statfs, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 
@@ -14,12 +14,16 @@ import { TransferError } from './errors'
 import { parseTransferManifest, type TransferManifest } from './manifest'
 import {
   hashLocalFile,
+  hashVerifiedLocalFile,
   inspectLocalPath,
   localOwnerId,
+  publishVerifiedLocalFile,
+  type VerifiedLocalFile,
   transferAbortError
 } from './ssh-data-plane-local'
 import {
   buildDownloadPreflightScript,
+  buildDownloadHashScript,
   buildDownloadStreamScript,
   shellScriptCommand,
   type RemoteHashTool
@@ -115,8 +119,7 @@ export class SshDownloadSession implements TransferDataPlaneSession {
   private readonly sourceParent: string
   private readonly destination: string
   private sourceState?: RemoteSourceState
-  private currentIdentity?: TransferSourceIdentity
-  private sourceHash?: string
+  private verifiedPartial?: VerifiedLocalFile
 
   constructor(
     request: TransferRequest,
@@ -124,7 +127,7 @@ export class SshDownloadSession implements TransferDataPlaneSession {
     destination: string,
     private readonly options: SshTransferDataPlaneOptions
   ) {
-    this.source = joinPosix(options.remoteRoot, sourceRelative)
+    this.source = joinPosix(options.canonicalRoot, sourceRelative)
     this.sourceParent = this.source.slice(0, this.source.lastIndexOf('/')) || '/'
     this.destination = destination
     const partialName = `.${basename(destination)}.phi-transfer-${request.transferId}.part`
@@ -168,7 +171,6 @@ export class SshDownloadSession implements TransferDataPlaneSession {
     const filesystem = await statfs(dirname(this.destination))
     const available = Number(filesystem.bavail) * Number(filesystem.bsize)
     this.sourceState = { identity, hashTool: hashTool as RemoteHashTool }
-    this.currentIdentity = identity
     return {
       sourceIdentity: identity,
       expectedSize: identity.size,
@@ -181,8 +183,26 @@ export class SshDownloadSession implements TransferDataPlaneSession {
   }
 
   async inspectSource(): Promise<TransferSourceIdentity> {
-    if (!this.currentIdentity) throw new Error('SSH transfer preflight has not completed')
-    return this.currentIdentity
+    if (!this.sourceState) throw new Error('SSH transfer preflight has not completed')
+    const result = await this.options.host.exec.run(
+      [
+        'sh',
+        '-c',
+        buildDownloadPreflightScript({
+          source: this.source,
+          parent: this.sourceParent,
+          canonicalRoot: this.options.canonicalRoot
+        })
+      ],
+      {
+        cwd: '.',
+        timeoutMs: this.options.controlTimeoutMs ?? DEFAULT_CONTROL_TIMEOUT_MS,
+        maxOutputBytes: MAX_CONTROL_OUTPUT_BYTES
+      }
+    )
+    if (result.code !== 0) throw mappedError(result.stdout, 'Remote source inspection failed')
+    const identity = parseIdentity(lineValue(result.stdout, 'PHI_ID'))
+    return identity
   }
 
   async loadManifest(): Promise<TransferManifest | null> {
@@ -293,6 +313,8 @@ export class SshDownloadSession implements TransferDataPlaneSession {
       shellScriptCommand(
         buildDownloadStreamScript({
           source: this.source,
+          sourceParent: this.sourceParent,
+          canonicalRoot: this.options.canonicalRoot,
           offset: copyOptions.offset,
           hashTool: source.hashTool
         })
@@ -356,8 +378,6 @@ export class SshDownloadSession implements TransferDataPlaneSession {
       if (!digest || !SHA256_PATTERN.test(digest) || !sameIdentity(before, after)) {
         throw new TransferError('SOURCE_CHANGED', 'Remote transfer source changed during download')
       }
-      this.sourceHash = digest
-      this.currentIdentity = after
       if (position > lastCheckpoint) {
         const lastSize = Math.min(copyOptions.chunkSize, position)
         const lastOffset = position - lastSize
@@ -381,34 +401,44 @@ export class SshDownloadSession implements TransferDataPlaneSession {
     }
   }
 
-  async hashSource(): Promise<string> {
-    if (!this.sourceHash) {
-      throw new TransferError('HASH_UNAVAILABLE', 'Remote source SHA-256 was not verified')
+  async hashSource(_chunkSize: number, signal?: AbortSignal): Promise<string> {
+    const source = this.sourceState
+    if (!source) throw new Error('SSH transfer preflight has not completed')
+    const result = await this.options.host.exec.run(
+      [
+        'sh',
+        '-c',
+        buildDownloadHashScript({
+          source: this.source,
+          sourceParent: this.sourceParent,
+          canonicalRoot: this.options.canonicalRoot,
+          hashTool: source.hashTool
+        })
+      ],
+      {
+        cwd: '.',
+        timeoutMs: this.options.controlTimeoutMs ?? DEFAULT_CONTROL_TIMEOUT_MS,
+        maxOutputBytes: MAX_CONTROL_OUTPUT_BYTES,
+        signal
+      }
+    )
+    if (result.code !== 0) throw mappedError(result.stdout, 'Remote source hash failed')
+    const digest = lineValue(result.stdout, 'PHI_HASH')
+    const before = parseIdentity(lineValue(result.stdout, 'PHI_BEFORE'))
+    const after = parseIdentity(lineValue(result.stdout, 'PHI_AFTER'))
+    if (!digest || !SHA256_PATTERN.test(digest) || !sameIdentity(before, after)) {
+      throw new TransferError('SOURCE_CHANGED', 'Remote transfer source changed during hashing')
     }
-    return this.sourceHash
+    return digest
   }
 
-  hashPartial(chunkSize: number, signal?: AbortSignal): Promise<string> {
-    return hashLocalFile(this.partialLocator, chunkSize, undefined, signal)
+  async hashPartial(chunkSize: number, signal?: AbortSignal): Promise<string> {
+    this.verifiedPartial = await hashVerifiedLocalFile(this.partialLocator, chunkSize, signal)
+    return this.verifiedPartial.sha256
   }
 
   async publish(): Promise<void> {
-    const partial = await inspectLocalPath(this.partialLocator)
-    if (partial.kind !== 'file') {
-      throw new TransferError('INVALID_PARTIAL', 'Transfer partial is not a regular file')
-    }
-    try {
-      await link(this.partialLocator, this.destination)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new TransferError(
-          'DESTINATION_EXISTS',
-          'Transfer destination appeared before publish'
-        )
-      }
-      throw error
-    }
-    await unlink(this.partialLocator)
+    await publishVerifiedLocalFile(this.partialLocator, this.destination, this.verifiedPartial)
     await syncDirectory(dirname(this.destination))
   }
 

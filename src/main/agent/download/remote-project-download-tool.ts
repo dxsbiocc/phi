@@ -11,7 +11,13 @@ export const PHI_REMOTE_DOWNLOAD_DESCRIPTION =
 
 export type RemoteDownloadResult = { path: string; displayPath: string; bytes: number }
 export type RemoteDownloadBackend = (
-  request: { toolCallId: string; url: string; outputPath: string; maxFileBytes: number },
+  request: {
+    toolCallId: string
+    url: string
+    outputPath: string
+    maxFileBytes: number
+    expectedSha256?: string
+  },
   signal?: AbortSignal
 ) => Promise<RemoteDownloadResult>
 
@@ -45,12 +51,18 @@ function parameters(): CustomTool['parameters'] {
     properties: {
       url: { type: 'string' },
       outputPath: { type: 'string', description: 'Remote project-relative destination path.' },
-      maxFileBytes: { type: 'integer', minimum: 1, maximum: MAX_BYTES }
+      maxFileBytes: { type: 'integer', minimum: 1, maximum: MAX_BYTES },
+      expectedSha256: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' }
     }
   }
 }
 
-function checkedInput(value: unknown): { url: string; outputPath: string; maxFileBytes: number } {
+function checkedInput(value: unknown): {
+  url: string
+  outputPath: string
+  maxFileBytes: number
+  expectedSha256?: string
+} {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('url is required')
   const record = value as Record<string, unknown>
@@ -67,7 +79,19 @@ function checkedInput(value: unknown): { url: string; outputPath: string; maxFil
     typeof requested === 'number' && Number.isInteger(requested)
       ? Math.min(Math.max(requested, 1), MAX_BYTES)
       : DEFAULT_MAX_BYTES
-  return { url: url.toString(), outputPath, maxFileBytes }
+  const expectedSha256 =
+    typeof record.expectedSha256 === 'string' && /^[a-fA-F0-9]{64}$/.test(record.expectedSha256)
+      ? record.expectedSha256.toLowerCase()
+      : undefined
+  if (record.expectedSha256 !== undefined && expectedSha256 === undefined) {
+    throw new Error('expectedSha256 must be a 64-character hexadecimal SHA-256')
+  }
+  return {
+    url: url.toString(),
+    outputPath,
+    maxFileBytes,
+    ...(expectedSha256 ? { expectedSha256 } : {})
+  }
 }
 
 function unsafeOutputPath(path: string): boolean {

@@ -47,6 +47,8 @@ type NegotiationResult = Readonly<{
   }>
 }>
 
+class HelperConnectionUnavailableError extends Error {}
+
 function supportsDataPlane(result: NegotiationResult): boolean {
   const capability = result.capabilities?.transferDataPlane
   return (
@@ -108,6 +110,9 @@ export class HelperTransferDataPlane implements TransferDataPlane {
     try {
       connection = await this.openNegotiatedConnection()
     } catch (error) {
+      if (error instanceof HelperConnectionUnavailableError) {
+        return this.degrade(request, 'Remote helper unavailable; using pure SSH fallback')
+      }
       if (
         error instanceof HelperProtocolError &&
         (error.rpcCode === -32601 || error.domainCode === 'UNSUPPORTED_PROTOCOL')
@@ -142,7 +147,12 @@ export class HelperTransferDataPlane implements TransferDataPlane {
   }
 
   private async openNegotiatedConnection(): Promise<NegotiatedHelperConnection> {
-    const process = await this.options.connect()
+    let process: RemoteStdioProcess
+    try {
+      process = await this.options.connect()
+    } catch {
+      throw new HelperConnectionUnavailableError()
+    }
     const client = new HelperDataPlaneProtocolClient(process, {
       requestTimeoutMs: this.options.controlTimeoutMs
     })

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { link, open, rename, statfs, unlink } from 'node:fs/promises'
+import { open, rename, statfs, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path'
 
 import type {
@@ -23,8 +23,11 @@ import {
 import { parseTransferManifest, sameSourceIdentity, type TransferManifest } from './manifest'
 import {
   hashLocalFile,
+  hashVerifiedLocalFile,
   inspectLocalPath,
   localOwnerId,
+  publishVerifiedLocalFile,
+  type VerifiedLocalFile,
   transferAbortError
 } from './ssh-data-plane-local'
 import type { TransferProgress, TransferRequest, TransferSourceIdentity } from './types'
@@ -117,6 +120,7 @@ export class HelperDownloadSession implements TransferDataPlaneSession {
   private readonly sourcePath: string
   private readonly destination: string
   private sourceIdentity?: TransferSourceIdentity
+  private verifiedPartial?: VerifiedLocalFile
 
   constructor(
     private readonly request: TransferRequest,
@@ -309,29 +313,13 @@ export class HelperDownloadSession implements TransferDataPlaneSession {
     return checkedHash(await this.rpc('transfer.hash', { path: this.sourcePath }, signal))
   }
 
-  hashPartial(chunkSize: number, signal?: AbortSignal): Promise<string> {
-    return hashLocalFile(this.partialLocator, chunkSize, undefined, signal)
+  async hashPartial(chunkSize: number, signal?: AbortSignal): Promise<string> {
+    this.verifiedPartial = await hashVerifiedLocalFile(this.partialLocator, chunkSize, signal)
+    return this.verifiedPartial.sha256
   }
 
   async publish(): Promise<void> {
-    const handle = await open(this.partialLocator, constants.O_RDONLY | noFollowFlag())
-    try {
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    try {
-      await link(this.partialLocator, this.destination)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-        throw new TransferError(
-          'DESTINATION_EXISTS',
-          'Transfer destination appeared before publish'
-        )
-      }
-      throw error
-    }
-    await unlink(this.partialLocator)
+    await publishVerifiedLocalFile(this.partialLocator, this.destination, this.verifiedPartial)
     await syncDirectory(dirname(this.destination))
   }
 

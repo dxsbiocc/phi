@@ -1,17 +1,29 @@
+import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { posix } from 'node:path'
 
 import { remoteWorkspaceUri } from '../../../shared/remoteWorkspacePath'
 import {
+  resolveRemoteWorkspaceHostBinding,
   withAuthorizedRemoteWorkspacePath,
   type RemoteWorkspaceBoundaryDependencies
 } from '../remote-workspace-boundary'
+import { getProject, listProjects, type Project } from '../projects'
+import { getPhiAgentDir } from '../runtime-paths'
+import { getFileTransferCoordinator } from '../transfer'
+import type { TransferEvent, TransferHandle } from '../transfer/types'
 import { shellQuote, type RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { validateDownloadUrl } from './project-download-tool'
+import {
+  deterministicRemoteDownloadId,
+  RemoteProjectDownloadDataPlane,
+  remoteDownloadFreeBytes,
+  removeOwnedRemoteDownloadState,
+  type RemoteProjectDownloadContext
+} from './remote-project-download-data-plane'
 import type { RemoteDownloadResult } from './remote-project-download-tool'
 
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
-const OUTPUT_BYTES = 16 * 1024
 
 type Request = {
   sessionId: string
@@ -21,16 +33,26 @@ type Request = {
   url: string
   outputPath: string
   maxFileBytes: number
+  expectedSha256?: string
 }
 
-type ActiveDownload = { controller: AbortController; session?: RemoteSshSession }
+type ActiveDownload = {
+  controller: AbortController
+  session?: RemoteSshSession
+  handle?: TransferHandle
+}
 type DownloadIdentity = Pick<Request, 'sessionId' | 'projectId' | 'requestId'>
+
+export type RemoteProjectDownloadDependencies = RemoteWorkspaceBoundaryDependencies &
+  Readonly<{
+    onTransferEvent?: (event: TransferEvent) => void
+    listProjects?: () => readonly Project[]
+  }>
 
 export class RemoteProjectDownloadManager {
   private readonly active = new Map<string, ActiveDownload>()
   private readonly cancelledBeforeStart = new Set<string>()
-
-  constructor(private readonly dependencies: RemoteWorkspaceBoundaryDependencies = {}) {}
+  constructor(private readonly dependencies: RemoteProjectDownloadDependencies = {}) {}
 
   async run(input: unknown): Promise<RemoteDownloadResult> {
     const request = checkedRequest(input)
@@ -40,7 +62,7 @@ export class RemoteProjectDownloadManager {
     if (this.cancelledBeforeStart.delete(key)) entry.controller.abort()
     this.active.set(key, entry)
     try {
-      return await executeRemoteDownload(request, entry, this.dependencies)
+      return await this.execute(request, entry)
     } finally {
       this.active.delete(key)
     }
@@ -59,45 +81,126 @@ export class RemoteProjectDownloadManager {
       return
     }
     entry.controller.abort()
-    if (entry?.session) void entry.session.close()
+    entry.handle?.cancel()
+    if (entry.session && !entry.handle) void entry.session.close()
   }
-}
 
-async function executeRemoteDownload(
-  request: Request,
-  active: ActiveDownload,
-  dependencies: RemoteWorkspaceBoundaryDependencies
-): Promise<RemoteDownloadResult> {
-  active.controller.signal.throwIfAborted()
-  return withAuthorizedRemoteWorkspacePath(
-    {
-      sessionId: request.sessionId,
-      projectId: request.projectId,
-      path: request.outputPath,
-      mode: 'create'
-    },
-    async (authorized, session) => {
-      active.session = session
-      active.controller.signal.throwIfAborted()
-      if (!session.execBounded) throw new Error('服务器下载后端不可用')
-      const resolution = await resolveRemoteAddress(session, request.url, active.controller.signal)
-      const result = await session.execBounded(
-        downloadCommand(request, authorized.path, authorized.canonicalRoot, resolution),
-        {
-          timeoutMs: 600_000,
-          maxOutputBytes: OUTPUT_BYTES,
-          signal: active.controller.signal
+  private async execute(request: Request, active: ActiveDownload): Promise<RemoteDownloadResult> {
+    active.controller.signal.throwIfAborted()
+    resolveRemoteWorkspaceHostBinding(
+      { sessionId: request.sessionId, projectId: request.projectId },
+      this.dependencies
+    )
+    const project = (this.dependencies.getProject ?? getProject)(request.projectId)
+    if (!project || project.location.kind !== 'ssh') throw new Error('远程项目位置无效')
+    const hostKey = project.location.hostProfileId
+    return withAuthorizedRemoteWorkspacePath(
+      {
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        path: request.outputPath,
+        mode: 'create'
+      },
+      async (authorized, session) => {
+        active.session = session
+        active.controller.signal.throwIfAborted()
+        if (!session.execBounded) throw new Error('服务器下载后端不可用')
+        const resolution = await resolveRemoteAddress(
+          session,
+          request.url,
+          active.controller.signal
+        )
+        const sourceUrl = new URL(request.url)
+        const sourceFingerprint = createHash('sha256')
+          .update(`${sourceUrl.origin}${sourceUrl.pathname}`)
+          .digest('hex')
+        const transferId = deterministicRemoteDownloadId({
+          hostKey,
+          workspaceId: request.projectId,
+          destination: authorized.path,
+          sourceFingerprint
+        })
+        const context: RemoteProjectDownloadContext = {
+          transferId,
+          hostKey,
+          workspaceId: request.projectId,
+          session,
+          url: request.url,
+          sourceFingerprint,
+          ...(resolution.curlResolve ? { curlResolve: resolution.curlResolve } : {}),
+          destination: authorized.path,
+          relativePath: authorized.relativePath,
+          canonicalRoot: authorized.canonicalRoot,
+          maxFileBytes: request.maxFileBytes
         }
-      )
-      const bytes = downloadedBytes(result)
-      return {
-        path: remoteWorkspaceUri(authorized.hostAlias, authorized.path),
-        displayPath: authorized.relativePath,
-        bytes
-      }
-    },
-    dependencies
-  )
+        const coordinator = getFileTransferCoordinator(
+          this.dependencies.agentDir ?? getPhiAgentDir()
+        )
+        const releaseReservation = coordinator.reserveRetention(transferId)
+        let storageKey: string
+        try {
+          const freeBytes = await remoteDownloadFreeBytes(context)
+          const allowedRoots = new Set(
+            (this.dependencies.listProjects ?? listProjects)().flatMap((candidate) =>
+              candidate.location.kind === 'ssh' && candidate.location.hostProfileId === hostKey
+                ? [candidate.location.canonicalRoot]
+                : []
+            )
+          )
+          allowedRoots.add(authorized.canonicalRoot)
+          storageKey = `remote-root:${createHash('sha256').update(authorized.canonicalRoot).digest('hex')}`
+          await coordinator.cleanupRetained({
+            hostKey,
+            cleanupOwner: 'remote-http-direct',
+            storageKey,
+            freeBytes,
+            removeOwned: (entry) =>
+              removeOwnedRemoteDownloadState(entry, session, hostKey, allowedRoots)
+          })
+        } finally {
+          releaseReservation()
+        }
+        const plane = new RemoteProjectDownloadDataPlane()
+        plane.bind(context)
+        try {
+          const handle = coordinator.enqueue(
+            {
+              transferId,
+              direction: 'download',
+              hostKey,
+              retention: { cleanupOwner: 'remote-http-direct', storageKey },
+              source: {
+                kind: 'remote-workspace-path',
+                hostId: hostKey,
+                workspaceId: request.projectId,
+                relativePath: '.phi-http-source/' + sourceFingerprint
+              },
+              destination: {
+                kind: 'remote-workspace-path',
+                hostId: hostKey,
+                workspaceId: request.projectId,
+                relativePath: authorized.relativePath
+              },
+              ...(request.expectedSha256 ? { expectedSha256: request.expectedSha256 } : {})
+            },
+            plane,
+            this.dependencies.onTransferEvent
+          )
+          active.handle = handle
+          if (active.controller.signal.aborted) handle.cancel()
+          const result = await handle.completion
+          return {
+            path: remoteWorkspaceUri(authorized.hostAlias, authorized.path),
+            displayPath: authorized.relativePath,
+            bytes: result.bytes
+          }
+        } finally {
+          plane.unbind(transferId)
+        }
+      },
+      this.dependencies
+    )
+  }
 }
 
 type RemoteAddress = { curlResolve?: string }
@@ -203,69 +306,6 @@ function ipv6Bytes(address: string): number[] | undefined {
   })
 }
 
-function downloadCommand(
-  request: Request,
-  destination: string,
-  canonicalRoot: string,
-  remoteAddress: RemoteAddress
-): string {
-  const resolveArgument = remoteAddress.curlResolve
-    ? ` --resolve ${shellQuote(remoteAddress.curlResolve)}`
-    : ''
-  return [
-    'set +e',
-    'umask 077',
-    `phi_url=${shellQuote(request.url)}`,
-    `phi_root=${shellQuote(canonicalRoot)}`,
-    `phi_parent=${shellQuote(posix.dirname(destination))}`,
-    `phi_dest=${shellQuote(posix.basename(destination))}`,
-    'cd -P -- "$phi_parent" || exit 88',
-    '[ "$PWD" = "$phi_parent" ] || exit 88',
-    'if [ "$phi_root" != / ]; then case "$PWD" in "$phi_root"|"$phi_root"/*) ;; *) exit 88 ;; esac; fi',
-    '[ ! -e "$phi_dest" ] && [ ! -L "$phi_dest" ] || exit 87',
-    'command -v mktemp >/dev/null 2>&1 || exit 86',
-    'phi_stage=$(mktemp -d ".${phi_dest}.phi-download.XXXXXXXX") || exit 86',
-    'phi_tmp="$phi_stage/payload"',
-    'trap \'rm -f -- "$phi_tmp"; rmdir -- "$phi_stage" 2>/dev/null || true\' EXIT HUP INT TERM',
-    'command -v curl >/dev/null 2>&1 || exit 81',
-    `phi_http=$(curl --fail --silent --show-error --noproxy '*' --proto '=https' --max-redirs 0 --connect-timeout 20 --max-time 600 --max-filesize ${request.maxFileBytes}${resolveArgument} --write-out '%{http_code}' --output "$phi_tmp" "$phi_url")`,
-    'phi_status=$?',
-    'case "$phi_status" in 0) ;; 6|7|28) exit 83 ;; 63) exit 82 ;; *) exit 84 ;; esac',
-    'case "$phi_http" in 2??) ;; 3??) exit 85 ;; *) exit 84 ;; esac',
-    'phi_bytes=$(wc -c < "$phi_tmp") || exit 84',
-    `test "$phi_bytes" -le ${request.maxFileBytes} || exit 82`,
-    'ln -- "$phi_tmp" "$phi_dest" || exit 87',
-    'rm -f -- "$phi_tmp" || exit 84',
-    'rmdir -- "$phi_stage" || exit 84',
-    'trap - EXIT HUP INT TERM',
-    'printf \'PHI_REMOTE_DOWNLOAD_V1\\t%s\\n\' "$phi_bytes"'
-  ].join('\n')
-}
-
-function downloadedBytes(
-  result: Awaited<ReturnType<NonNullable<RemoteSshSession['execBounded']>>>
-): number {
-  if (result.code === 81)
-    throw new Error('服务器缺少 curl，无法直接下载；请先安装 curl 或手动准备文件。')
-  if (result.code === 82) throw new Error('服务器下载文件超过 maxFileBytes，已删除临时文件。')
-  if (result.code === 83) {
-    throw new Error('服务器无法联网或无法访问该地址；请检查服务器网络/防火墙后重试。')
-  }
-  if (result.code === 85) {
-    throw new Error('服务器下载地址发生重定向；请提供最终的公开 HTTPS 地址后重试。')
-  }
-  if (result.code === 86) throw new Error('服务器缺少安全临时目录工具，无法开始下载。')
-  if (result.code === 87) throw new Error('远程下载目标已存在或在发布时被占用；未覆盖现有文件。')
-  if (result.code === 88) throw new Error('远程下载目标父目录已变化或移出项目根目录。')
-  if (result.code !== 0 || result.stdoutTruncated || result.stderrTruncated) {
-    throw new Error('服务器下载失败；没有改用本机网络或本机项目目录。')
-  }
-  const match = /^PHI_REMOTE_DOWNLOAD_V1\t([0-9]+)\n$/.exec(result.stdout)
-  const bytes = match ? Number(match[1]) : Number.NaN
-  if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('服务器下载结果格式无效')
-  return bytes
-}
-
 function checkedRequest(value: unknown): Request {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('远程下载请求无效')
@@ -277,7 +317,8 @@ function checkedRequest(value: unknown): Request {
     'toolCallId',
     'url',
     'outputPath',
-    'maxFileBytes'
+    'maxFileBytes',
+    'expectedSha256'
   ]
   if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error('远程下载请求无效')
   if (
@@ -302,6 +343,12 @@ function checkedRequest(value: unknown): Request {
     (record.maxFileBytes as number) > MAX_BYTES
   )
     throw new Error('远程下载大小上限无效')
+  if (
+    record.expectedSha256 !== undefined &&
+    (typeof record.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(record.expectedSha256))
+  ) {
+    throw new Error('远程下载 SHA-256 无效')
+  }
   return record as unknown as Request
 }
 

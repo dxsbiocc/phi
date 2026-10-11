@@ -2521,7 +2521,7 @@ const remoteMutationManager = new RemoteWorkspaceMutationManager({
   connectHost: connectRemoteWorkspaceHost
 })
 const remoteProjectDownloadManager = new RemoteProjectDownloadManager({
-  connectHost: connectRemoteWorkspaceHost
+  agentDir: AGENT_DIR
 })
 getOmpBridge().registerHostHandler('remoteWorkspace.write', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>

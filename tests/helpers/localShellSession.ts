@@ -66,6 +66,20 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
         child.on('close', (code, signal) => resolve({ stdout, stderr, code, signal }))
       })
     },
+    async execBounded(command, options) {
+      options.signal?.throwIfAborted()
+      const result = await session.exec(command)
+      options.signal?.throwIfAborted()
+      const stdoutTruncated = Buffer.byteLength(result.stdout, 'utf8') > options.maxOutputBytes
+      const stderrTruncated = Buffer.byteLength(result.stderr, 'utf8') > options.maxOutputBytes
+      return {
+        ...result,
+        stdout: stdoutTruncated ? result.stdout.slice(0, options.maxOutputBytes) : result.stdout,
+        stderr: stderrTruncated ? result.stderr.slice(0, options.maxOutputBytes) : result.stderr,
+        stdoutTruncated,
+        stderrTruncated
+      }
+    },
     async readTextFile(remotePath) {
       return readFileSync(remotePath, 'utf-8')
     },
@@ -84,6 +98,7 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
       copyFileSync(localPath, remotePath)
     },
     async openStdio(command): Promise<RemoteStdioProcess> {
+      session.commands.push(command)
       const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
       stdioProcesses.add(child)
       const closed = new Promise<{ code: number | null; signal: string | null }>(

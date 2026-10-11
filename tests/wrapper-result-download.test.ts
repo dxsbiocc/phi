@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { FileTransferCoordinator, FileTransferRegistry } from '../src/main/agent/transfer'
 import { downloadWrapperResultToPath } from '../src/main/agent/wrappers/remote-result-download'
 import type { WrapperResultDownloadProgress } from '../src/shared/wrapperResultTypes'
+import { createLocalShellSession } from './helpers/localShellSession'
 import { wrapperResultFixture, wrapperResultRequest } from './helpers/wrapperResultFixture'
 
 function request(path: string): ReturnType<typeof wrapperResultRequest> & { requestId: string } {
@@ -15,6 +25,232 @@ function request(path: string): ReturnType<typeof wrapperResultRequest> & { requ
 function stagedFiles(directory: string): string[] {
   return readdirSync(directory).filter((name) => name.includes('.phi-download-'))
 }
+
+test('wrapper result download uses the resumable SSH stream data plane', async () => {
+  const f = wrapperResultFixture()
+  const session = createLocalShellSession(f.workspace)
+  try {
+    const content = Buffer.alloc(2 * 1024 * 1024 + 19, 0x5c)
+    writeFileSync(join(f.outputRoot, 'streamed.bin'), content)
+    f.dependencies.connectImpl = async () => session
+    const destination = join(f.outside, 'streamed.bin')
+
+    const result = await downloadWrapperResultToPath(
+      request('streamed.bin'),
+      destination,
+      f.dependencies
+    )
+
+    assert.deepEqual(readFileSync(destination), content)
+    assert.equal(result.sha256, `sha256:${createHash('sha256').update(content).digest('hex')}`)
+    assert.equal(result.remoteDigestVerified, true)
+    assert.ok(session.commands.some((command) => command.includes('PHI_ID=')))
+    assert.equal(
+      session.commands.some((command) => command.includes('PHI_LOG_V1')),
+      false
+    )
+  } finally {
+    await session.close()
+    f.cleanup()
+  }
+})
+
+test('ancestor symlink swap after authorization is rejected before streaming bytes', async () => {
+  const f = wrapperResultFixture()
+  try {
+    const attackerRoot = join(f.outside, 'attacker-results')
+    mkdirSync(attackerRoot)
+    writeFileSync(join(attackerRoot, 'report.html'), 'attacker bytes')
+    const originalRoot = `${f.outputRoot}.original`
+    const connect = f.dependencies.connectImpl!
+    f.dependencies.connectImpl = async (config) => {
+      const session = await connect(config)
+      const execBounded = session.execBounded!.bind(session)
+      let swapped = false
+      return {
+        ...session,
+        execBounded: async (command, options) => {
+          if (!swapped && command.includes('PHI_ID=')) {
+            swapped = true
+            renameSync(f.outputRoot, originalRoot)
+            symlinkSync(attackerRoot, f.outputRoot)
+          }
+          return execBounded(command, options)
+        }
+      }
+    }
+    const destination = join(f.outside, 'must-not-leak.html')
+
+    await assert.rejects(
+      downloadWrapperResultToPath(request('report.html'), destination, f.dependencies),
+      /preflight|传输|路径/i
+    )
+    assert.equal(existsSync(destination), false)
+    assert.equal(
+      readdirSync(f.outside).some((name) => name.includes('.phi-transfer-')),
+      false
+    )
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('unavailable helper data plane automatically falls back to the SSH stream', async () => {
+  const f = wrapperResultFixture()
+  const session = createLocalShellSession(f.workspace)
+  let helperAttempts = 0
+  try {
+    f.dependencies.connectImpl = async () => session
+    const destination = join(f.outside, 'helper-fallback.html')
+    const saved = await downloadWrapperResultToPath(request('report.html'), destination, {
+      ...f.dependencies,
+      transferHelperConnect: async () => {
+        helperAttempts += 1
+        throw new Error('helper unavailable')
+      }
+    })
+
+    assert.equal(helperAttempts, 1)
+    assert.equal(saved.remoteDigestVerified, true)
+    assert.equal(readFileSync(destination, 'utf8'), '<html>ok</html>')
+    assert.ok(session.commands.some((command) => command.includes('PHI_BEFORE=')))
+  } finally {
+    await session.close()
+    f.cleanup()
+  }
+})
+
+test('expected SHA-256 mismatch fails closed and retains the resumable partial', async () => {
+  const f = wrapperResultFixture()
+  try {
+    const destination = join(f.outside, 'wrong-digest.html')
+    await assert.rejects(
+      downloadWrapperResultToPath(request('report.html'), destination, {
+        ...f.dependencies,
+        expectedSha256: '0'.repeat(64)
+      }),
+      /摘要不一致/
+    )
+
+    assert.equal(existsSync(destination), false)
+    assert.ok(readdirSync(f.outside).some((name) => name.endsWith('.part')))
+    assert.ok(readdirSync(f.outside).some((name) => name.endsWith('.part.json')))
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('cancelled stream download resumes from its durable checkpoint after manager restart', async () => {
+  const f = wrapperResultFixture()
+  const sessions: ReturnType<typeof createLocalShellSession>[] = []
+  try {
+    const content = Buffer.alloc(4 * 1024 * 1024 + 23, 0x36)
+    writeFileSync(join(f.outputRoot, 'resume.bin'), content)
+    f.dependencies.connectImpl = async () => {
+      const session = createLocalShellSession(f.workspace)
+      sessions.push(session)
+      return session
+    }
+    const destination = join(f.outside, 'resume.bin')
+    const controller = new AbortController()
+    const coordinator = new FileTransferCoordinator({
+      registry: new FileTransferRegistry(
+        join(f.dependencies.agentDir!, 'transfers', 'registry.json')
+      ),
+      policy: {
+        chunkSizeBytes: 512 * 1024,
+        checkpointBytes: 512 * 1024,
+        progressBytes: 1,
+        progressIntervalMs: 0
+      }
+    })
+
+    await assert.rejects(
+      downloadWrapperResultToPath(request('resume.bin'), destination, {
+        ...f.dependencies,
+        signal: controller.signal,
+        transferCoordinator: coordinator,
+        onProgress: (progress) => {
+          if (progress.phase === 'downloading' && progress.bytesDownloaded >= 512 * 1024) {
+            controller.abort()
+          }
+        }
+      }),
+      { code: 'ABORTED' }
+    )
+    assert.equal(existsSync(destination), false)
+    const part = readdirSync(f.outside).find((name) => name.endsWith('.part'))
+    assert.ok(part)
+    const manifestPath = join(f.outside, `${part}.json`)
+    const checkpoint = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      durableOffset: number
+    }
+    assert.ok(checkpoint.durableOffset >= 512 * 1024)
+
+    const progress: WrapperResultDownloadProgress[] = []
+    const saved = await downloadWrapperResultToPath(request('resume.bin'), destination, {
+      ...f.dependencies,
+      transferCoordinator: coordinator,
+      onProgress: (event) => progress.push(event)
+    })
+
+    assert.equal(saved.bytes, content.byteLength)
+    assert.deepEqual(readFileSync(destination), content)
+    assert.equal(
+      readdirSync(f.outside).some((name) => name.includes('.phi-transfer-')),
+      false
+    )
+    assert.ok(
+      sessions[1]?.commands.some(
+        (command) =>
+          command.includes('tail -c') && command.includes(String(checkpoint.durableOffset + 1))
+      )
+    )
+    assert.ok(progress.some((event) => event.bytesDownloaded >= checkpoint.durableOffset))
+  } finally {
+    await Promise.all(sessions.map((session) => session.close()))
+    f.cleanup()
+  }
+})
+
+test('stream progress is phase-bounded and contains no host or path details', async () => {
+  const f = wrapperResultFixture()
+  const session = createLocalShellSession(f.workspace)
+  try {
+    const content = Buffer.alloc(2 * 1024 * 1024 + 1, 0x71)
+    writeFileSync(join(f.outputRoot, 'progress.bin'), content)
+    f.dependencies.connectImpl = async () => session
+    const progress: WrapperResultDownloadProgress[] = []
+
+    await downloadWrapperResultToPath(request('progress.bin'), join(f.outside, 'progress.bin'), {
+      ...f.dependencies,
+      onProgress: (event) => progress.push(event)
+    })
+
+    assert.deepEqual(
+      progress.map((event) => event.phase),
+      ['downloading', 'verifying', 'saving']
+    )
+    assert.deepEqual(Object.keys(progress[0] ?? {}).sort(), [
+      'bytesDownloaded',
+      'phase',
+      'requestId',
+      'totalBytes'
+    ])
+    const serialized = JSON.stringify(progress)
+    assert.doesNotMatch(serialized, /cluster-a|host-a/)
+    assert.equal(serialized.includes(f.workspace), false)
+    assert.equal(serialized.includes(f.outputRoot), false)
+    assert.equal(serialized.includes(f.outside), false)
+    assert.deepEqual(
+      progress.map((event) => event.bytesDownloaded),
+      [...progress.map((event) => event.bytesDownloaded)].sort((left, right) => left - right)
+    )
+  } finally {
+    await session.close()
+    f.cleanup()
+  }
+})
 
 test('explicit single-file download stages, verifies, renames and leaves the remote file untouched', async () => {
   const f = wrapperResultFixture()
@@ -68,7 +304,8 @@ test('zero-byte and multi-page downloads preserve exact bytes and monotonic prog
     })
     assert.equal(saved.bytes, bytes.length)
     assert.deepEqual(readFileSync(target), bytes)
-    assert.ok(progress.length > 5)
+    assert.ok(progress.length >= 1)
+    assert.ok(progress.length <= 3)
     assert.deepEqual(
       progress,
       [...progress].sort((a, b) => a - b)
@@ -80,35 +317,17 @@ test('zero-byte and multi-page downloads preserve exact bytes and monotonic prog
   }
 })
 
-test('a server without Digest::SHA still saves a locally hashed file', async () => {
+test('the stream data plane verifies the server SHA-256 with an available remote tool', async () => {
   const f = wrapperResultFixture()
   try {
-    const connect = f.dependencies.connectImpl!
-    f.dependencies.connectImpl = async (config) => {
-      const session = await connect(config)
-      const execBounded = session.execBounded!.bind(session)
-      return {
-        ...session,
-        execBounded: async (command, options) =>
-          command.includes('PHI_SHA256_V1')
-            ? {
-                stdout: 'UNAVAILABLE\n',
-                stderr: '',
-                code: 0,
-                signal: null,
-                stdoutTruncated: false,
-                stderrTruncated: false
-              }
-            : execBounded(command, options)
-      }
-    }
     const destination = join(f.outside, 'no-remote-digest.html')
     const saved = await downloadWrapperResultToPath(
       request('report.html'),
       destination,
       f.dependencies
     )
-    assert.equal(saved.remoteDigestVerified, false)
+    assert.equal(saved.remoteDigestVerified, true)
+    assert.ok(f.commands.some((command) => command.includes('PHI_HASH=')))
     assert.match(saved.sha256, /^sha256:[a-f0-9]{64}$/)
     assert.equal(readFileSync(destination, 'utf8'), '<html>ok</html>')
   } finally {
@@ -169,7 +388,7 @@ test('a same-name target is replaced only after verification; special targets ar
   }
 })
 
-test('cancelled and disconnected transfers clean the temp file without replacing a target', async () => {
+test('cancelled and disconnected transfers retain resumable state without replacing a target', async () => {
   const f = wrapperResultFixture()
   try {
     const bytes = Buffer.alloc(400_000, 0x42)
@@ -187,19 +406,19 @@ test('cancelled and disconnected transfers clean the temp file without replacing
     )
     assert.equal(existsSync(cancelTarget), false)
     assert.deepEqual(stagedFiles(f.outside), [])
+    assert.ok(readdirSync(f.outside).some((name) => name.endsWith('.part')))
 
     const destination = join(f.outside, 'preserved.bin')
     writeFileSync(destination, 'previous download')
     const connect = f.dependencies.connectImpl!
-    let pages = 0
     f.dependencies.connectImpl = async (config) => {
       const session = await connect(config)
-      const execBounded = session.execBounded!.bind(session)
+      const openStdio = session.openStdio!.bind(session)
       return {
         ...session,
-        execBounded: async (command, options) => {
-          if (command.includes('PHI_LOG_V1') && ++pages === 3) throw new Error('SSH disconnected')
-          return execBounded(command, options)
+        openStdio: async (command) => {
+          if (command.includes('PHI_BEFORE=')) throw new Error('SSH disconnected')
+          return openStdio(command)
         }
       }
     }
@@ -238,21 +457,22 @@ test('remote replacement or local target changes during download refuse publicat
     assert.deepEqual(stagedFiles(f.outside), [])
 
     writeFileSync(remotePath, bytes)
-    writeFileSync(destination, 'original')
+    const targetDestination = join(f.outside, 'target-race.bin')
+    writeFileSync(targetDestination, 'original')
     let replaced = false
     await assert.rejects(
-      downloadWrapperResultToPath(request('changing.bin'), destination, {
+      downloadWrapperResultToPath(request('changing.bin'), targetDestination, {
         ...f.dependencies,
         onProgress: (next) => {
           if (!replaced && next.phase === 'downloading' && next.bytesDownloaded > 0) {
             replaced = true
-            writeFileSync(destination, 'someone else changed this file')
+            writeFileSync(targetDestination, 'someone else changed this file')
           }
         }
       }),
       /目标文件在下载期间发生变化/
     )
-    assert.equal(readFileSync(destination, 'utf8'), 'someone else changed this file')
+    assert.equal(readFileSync(targetDestination, 'utf8'), 'someone else changed this file')
     assert.deepEqual(stagedFiles(f.outside), [])
   } finally {
     f.cleanup()
@@ -288,19 +508,15 @@ test('two downloads cannot publish to the same selected local target concurrentl
     const connect = f.dependencies.connectImpl!
     f.dependencies.connectImpl = async (config) => {
       const session = await connect(config)
-      const execBounded = session.execBounded!.bind(session)
+      const openStdio = session.openStdio!.bind(session)
       return {
         ...session,
-        execBounded: async (command, options) => {
-          if (command.includes('PHI_LOG_V1')) {
+        openStdio: async (command) => {
+          if (command.includes('PHI_BEFORE=')) {
             entered()
-            return new Promise((_resolve, reject) => {
-              options.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
-                once: true
-              })
-            })
+            return openStdio('sleep 60')
           }
-          return execBounded(command, options)
+          return openStdio(command)
         }
       }
     }

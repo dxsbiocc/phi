@@ -759,3 +759,60 @@ test('preflight capacity contract rejects remaining bytes plus checkpoint safety
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('a terminal job can be forgotten so its stable transfer id can be retried', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-transfer-forget-'))
+  try {
+    const source = join(root, 'source.bin')
+    const destination = join(root, 'saved.bin')
+    writeFileSync(source, 'stable transfer payload')
+    const manager = makeManager(root)
+    const request: TransferRequest = {
+      transferId: 'stable-retry',
+      direction: 'local',
+      hostKey: 'local',
+      dataPlaneId: 'local',
+      source: { kind: 'local-path', path: source },
+      destination: { kind: 'local-path', path: destination }
+    }
+
+    await manager.enqueue(request).completion
+    assert.throws(() => manager.enqueue(request), /already registered/)
+    assert.equal(manager.forget('stable-retry'), true)
+    unlinkSync(destination)
+    await manager.enqueue(request).completion
+    assert.equal(readFileSync(destination, 'utf8'), 'stable transfer payload')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('enqueue snapshots endpoint objects before the queued job starts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-transfer-request-snapshot-'))
+  try {
+    const source = join(root, 'source.bin')
+    const destination = join(root, 'saved.bin')
+    const changedDestination = join(root, 'changed.bin')
+    writeFileSync(source, 'immutable request payload')
+    const endpoint: { kind: 'local-path'; path: string } = {
+      kind: 'local-path',
+      path: destination
+    }
+    const handle = makeManager(root).enqueue({
+      transferId: 'request-snapshot',
+      direction: 'local',
+      hostKey: 'local',
+      dataPlaneId: 'local',
+      source: { kind: 'local-path', path: source },
+      destination: endpoint
+    })
+
+    endpoint.path = changedDestination
+    await handle.completion
+
+    assert.equal(readFileSync(destination, 'utf8'), 'immutable request payload')
+    assert.equal(existsSync(changedDestination), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

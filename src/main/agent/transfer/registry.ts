@@ -10,6 +10,8 @@ export type TransferRegistryStatus = 'active' | 'paused' | 'cancelled' | 'failed
 export type TransferRegistryEntry = Readonly<{
   transferId: string
   hostKey: string
+  cleanupOwner: string
+  storageKey: string
   partialLocator: string
   manifestLocator: string
   status: TransferRegistryStatus
@@ -41,6 +43,8 @@ function parseDocument(value: unknown): RegistryDocument {
     return (
       typeof item.transferId === 'string' &&
       typeof item.hostKey === 'string' &&
+      typeof item.cleanupOwner === 'string' &&
+      typeof item.storageKey === 'string' &&
       typeof item.partialLocator === 'string' &&
       typeof item.manifestLocator === 'string' &&
       ['active', 'paused', 'cancelled', 'failed'].includes(String(item.status)) &&
@@ -80,12 +84,27 @@ export class FileTransferRegistry {
     )
   }
 
+  async reconcileInterrupted(now = Date.now()): Promise<number> {
+    let reconciled = 0
+    await this.mutate(async (entries) =>
+      entries.map((entry) => {
+        if (entry.status !== 'active') return entry
+        reconciled += 1
+        return { ...entry, status: 'failed' as const, updatedAt: now }
+      })
+    )
+    return reconciled
+  }
+
   async cleanupRetained(
     options: Readonly<{
       hostKey: string
+      cleanupOwner?: string
+      storageKey?: string
+      excludeTransferIds?: ReadonlySet<string>
       freeBytes?: number
       now?: number
-      removeOwned: (entry: TransferRegistryEntry) => Promise<void>
+      removeOwned: (entry: TransferRegistryEntry) => Promise<boolean | void>
     }>
   ): Promise<RegistryCleanupResult> {
     const now = options.now ?? Date.now()
@@ -97,7 +116,14 @@ export class FileTransferRegistry {
     )
     const all = await this.list()
     const candidates = all
-      .filter((entry) => entry.hostKey === options.hostKey && entry.status !== 'active')
+      .filter(
+        (entry) =>
+          entry.hostKey === options.hostKey &&
+          entry.status !== 'active' &&
+          (options.cleanupOwner === undefined || entry.cleanupOwner === options.cleanupOwner) &&
+          (options.storageKey === undefined || entry.storageKey === options.storageKey) &&
+          !options.excludeTransferIds?.has(entry.transferId)
+      )
       .sort((left, right) => left.updatedAt - right.updatedAt)
     const expired = new Set(
       candidates
@@ -107,16 +133,17 @@ export class FileTransferRegistry {
     let retainedBytes = candidates
       .filter((entry) => !expired.has(entry.transferId))
       .reduce((sum, entry) => sum + entry.retainedBytes, 0)
-    const removeIds = new Set(expired)
+    const plannedRemoveIds = new Set(expired)
     for (const entry of candidates) {
       if (retainedBytes <= quotaBytes) break
-      if (removeIds.has(entry.transferId)) continue
-      removeIds.add(entry.transferId)
+      if (plannedRemoveIds.has(entry.transferId)) continue
+      plannedRemoveIds.add(entry.transferId)
       retainedBytes -= entry.retainedBytes
     }
+    const removeIds = new Set<string>()
     for (const entry of candidates) {
-      if (!removeIds.has(entry.transferId)) continue
-      await options.removeOwned(entry)
+      if (!plannedRemoveIds.has(entry.transferId)) continue
+      if ((await options.removeOwned(entry)) !== false) removeIds.add(entry.transferId)
     }
     if (removeIds.size > 0) {
       await this.mutate(async (entries) =>
@@ -125,7 +152,9 @@ export class FileTransferRegistry {
     }
     return {
       removedTransferIds: [...removeIds],
-      retainedBytes,
+      retainedBytes: candidates
+        .filter((entry) => !removeIds.has(entry.transferId))
+        .reduce((sum, entry) => sum + entry.retainedBytes, 0),
       quotaBytes
     }
   }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable, Writable } from 'node:stream'
 import test from 'node:test'
 
 import { RemoteProjectDownloadManager } from '../src/main/agent/download/remote-project-download'
@@ -20,21 +21,7 @@ test('remote download manager runs curl on the selected server without local fal
     canonicalRoot: '/remote/project'
   }
   const commands: string[] = []
-  let call = 0
-  const execute = async (command: string): Promise<ReturnType<typeof result>> => {
-    commands.push(command)
-    call += 1
-    if (call === 1) return result('/remote/project/downloads/data.txt\0')
-    if (call === 2) return result('93.184.216.34\n')
-    return result('PHI_REMOTE_DOWNLOAD_V1\t12\n')
-  }
-  const session = {
-    exec: execute,
-    execBounded: execute,
-    async close(): Promise<void> {
-      return undefined
-    }
-  } as unknown as RemoteSshSession
+  const session = scriptedSession(commands)
   const manager = new RemoteProjectDownloadManager({
     agentDir,
     getManifest: () =>
@@ -64,13 +51,11 @@ test('remote download manager runs curl on the selected server without local fal
       bytes: 12
     })
     assert.match(commands[1] ?? '', /getent ahosts/)
-    assert.match(commands[2] ?? '', /curl/)
-    assert.match(commands[2] ?? '', /--resolve 'example\.org:443:93\.184\.216\.34'/)
-    assert.match(commands[2] ?? '', /cd -P/)
-    assert.match(commands[2] ?? '', /phi_root='\/remote\/project'/)
-    assert.match(commands[2] ?? '', /mktemp -d/)
-    assert.match(commands[2] ?? '', /ln --/)
-    assert.doesNotMatch(commands[2] ?? '', /mv --/)
+    const curlCommand = commands.find((command) => command.includes('--continue-at -')) ?? ''
+    assert.match(curlCommand, /curl -q/)
+    assert.match(curlCommand, /--continue-at -/)
+    assert.match(curlCommand, /--resolve 'example\.org:443:93\.184\.216\.34'/)
+    assert.ok(commands.some((command) => command.includes('ln -- "$phi_part" "$phi_dest"')))
     assert.ok(commands.every((command) => !command.includes(anchor)))
     assert.equal(readFileSync(sentinel, 'utf8'), 'untouched')
   } finally {
@@ -81,19 +66,9 @@ test('remote download manager runs curl on the selected server without local fal
 test('remote download manager surfaces server network errors without retrying locally', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-remote-download-network-'))
   const anchor = ensureRemoteProjectAnchor('project-1', agentDir)
-  const execute = async (command: string): Promise<ReturnType<typeof result>> =>
-    command.includes('candidate=')
-      ? result('/remote/project/data.txt\0')
-      : command.includes('getent ahosts')
-        ? result('93.184.216.34\n')
-        : { ...result(''), code: 83 }
-  const session = {
-    exec: execute,
-    execBounded: execute,
-    async close(): Promise<void> {
-      return undefined
-    }
-  } as unknown as RemoteSshSession
+  const session = scriptedSession([], {
+    headResult: { ...result('PHI_ERROR=NETWORK\n'), code: 83 }
+  })
   const manager = managerWithSession(session, agentDir, anchor)
   try {
     await assert.rejects(
@@ -116,19 +91,7 @@ test('remote download manager surfaces server network errors without retrying lo
 test('remote download refuses server redirects instead of following an unvalidated host', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-remote-download-redirect-'))
   const anchor = ensureRemoteProjectAnchor('project-1', agentDir)
-  const execute = async (command: string): Promise<ReturnType<typeof result>> =>
-    command.includes('candidate=')
-      ? result('/remote/project/data.txt\0')
-      : command.includes('getent ahosts')
-        ? result('93.184.216.34\n')
-        : { ...result(''), code: 85 }
-  const session = {
-    exec: execute,
-    execBounded: execute,
-    async close(): Promise<void> {
-      return undefined
-    }
-  } as unknown as RemoteSshSession
+  const session = scriptedSession([], { headResult: headResult(302) })
   try {
     await assert.rejects(
       managerWithSession(session, agentDir, anchor).run({
@@ -252,19 +215,7 @@ test('remote download rejects hostnames that resolve to private server addresses
 test('remote download no-clobber publish reports a target race without overwrite', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-remote-download-race-'))
   const anchor = ensureRemoteProjectAnchor('project-1', agentDir)
-  const execute = async (command: string): Promise<ReturnType<typeof result>> =>
-    command.includes('candidate=')
-      ? result('/remote/project/data.txt\0')
-      : command.includes('getent ahosts')
-        ? result('93.184.216.34\n')
-        : { ...result(''), code: 87 }
-  const session = {
-    exec: execute,
-    execBounded: execute,
-    async close(): Promise<void> {
-      return undefined
-    }
-  } as unknown as RemoteSshSession
+  const session = scriptedSession([], { publishRace: true })
   try {
     await assert.rejects(
       managerWithSession(session, agentDir, anchor).run({
@@ -325,4 +276,106 @@ function result(stdout: string): {
     stdoutTruncated: false,
     stderrTruncated: false
   }
+}
+const digest = 'a'.repeat(64)
+
+function headResult(status = 200): ReturnType<typeof result> {
+  return result(
+    [
+      `PHI_HTTP_CODE=${status}`,
+      'PHI_HTTP_SIZE=12',
+      `PHI_HTTP_ETAG_HEX=${Buffer.from('"fixture-v1"').toString('hex')}`,
+      'PHI_HTTP_LAST_MODIFIED_HEX=',
+      `PHI_HTTP_SHA256_HEX=${Buffer.from(digest).toString('hex')}`,
+      'PHI_HTTP_DIGEST_HEX=',
+      ''
+    ].join('\n')
+  )
+}
+
+function scriptedSession(
+  commands: string[],
+  options: Readonly<{
+    headResult?: ReturnType<typeof result>
+    publishRace?: boolean
+  }> = {}
+): RemoteSshSession {
+  let partialSize: number | null = null
+  const execute = async (command: string): Promise<ReturnType<typeof result>> => {
+    commands.push(command)
+    if (command.includes('candidate=')) {
+      return result(
+        command.includes('downloads/data.txt')
+          ? '/remote/project/downloads/data.txt\0'
+          : '/remote/project/data.txt\0'
+      )
+    }
+    if (command.includes('getent ahosts')) return result('93.184.216.34\n')
+    if (
+      command.includes('df -Pk') &&
+      command.includes('PHI_SPACE=') &&
+      !command.includes('hash_tool=sha256sum')
+    ) {
+      return result('PHI_SPACE=1073741824\n')
+    }
+    if (command.includes('hash_tool=sha256sum')) {
+      return result(
+        [
+          'PHI_HASH=sha256sum',
+          'PHI_SPACE=1073741824',
+          'PHI_PART=missing:0',
+          'PHI_MANIFEST_HEX=',
+          ''
+        ].join('\n')
+      )
+    }
+    if (command.includes('curl -q --head')) return options.headResult ?? headResult()
+    if (command.includes('PHI_PART=file:%s')) {
+      return result(
+        partialSize === null ? 'PHI_PART=missing:0\n' : `PHI_PART=file:${partialSize}\n`
+      )
+    }
+    if (command.includes('phi_manifest=') && command.includes('set -C; : > "$phi_part"')) {
+      partialSize = 0
+      return result('')
+    }
+    if (command.includes('tail -c +') && command.includes("printf 'PHI_HASH=%s")) {
+      return result(`PHI_HASH=${digest}\n`)
+    }
+    if (command.includes('ln -- "$phi_part" "$phi_dest"')) {
+      if (options.publishRace) {
+        return { ...result('PHI_ERROR=DESTINATION_EXISTS\n'), code: 49 }
+      }
+      partialSize = null
+      return result(`PHI_HASH=${digest}\n`)
+    }
+    return result('')
+  }
+  return {
+    exec: execute,
+    execBounded: execute,
+    async openStdio(command) {
+      commands.push(command)
+      partialSize = 12
+      return {
+        stdin: new Writable({
+          write(_chunk, _encoding, callback) {
+            callback()
+          }
+        }),
+        stdout: Readable.from([
+          `PHI_PROGRESS_V1\t12\t0\t12\t${digest}\n`,
+          `PHI_REMOTE_DOWNLOAD_V2\t12\t${digest}\n`
+        ]),
+        stderr: Readable.from([]),
+        closed: Promise.resolve({ code: 0, signal: null }),
+        async close() {
+          return undefined
+        }
+      }
+    },
+    async close() {
+      return undefined
+    }
+  } as unknown as RemoteSshSession
 }

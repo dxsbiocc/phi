@@ -7,6 +7,7 @@ import {
   TransferStateError,
   transitionTransferState
 } from '../src/main/agent/transfer'
+import { sameSourceIdentity } from '../src/main/agent/transfer/manifest'
 
 test('transfer defaults and state transitions follow the R7 contract', () => {
   assert.deepEqual(DEFAULT_TRANSFER_POLICY, {
@@ -43,4 +44,26 @@ test('transfer errors remain byte-bounded when UTF-8 text crosses the truncation
 
   assert.ok(Buffer.byteLength(error.message) <= 1024)
   assert.ok(error.message.endsWith('...'))
+})
+
+test('helper and pure SSH identities for the same file are resume-compatible', () => {
+  const helper = {
+    kind: 'file',
+    device: '42',
+    inode: '99',
+    size: 1234,
+    mtime: '2026-10-11T08:09:10.123456789Z'
+  }
+  const ssh = {
+    ...helper,
+    kind: 'ssh-file-v1',
+    mtime: '2026-10-11 08:09:10.123456789 +0000'
+  }
+
+  assert.equal(sameSourceIdentity(helper, ssh), true)
+  assert.equal(sameSourceIdentity(helper, { ...ssh, inode: '100' }), false)
+  assert.equal(
+    sameSourceIdentity(helper, { ...ssh, mtime: '2026-10-11 08:09:11.123456789 +0000' }),
+    false
+  )
 })

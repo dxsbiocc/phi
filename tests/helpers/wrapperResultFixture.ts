@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -94,6 +94,27 @@ export function wrapperResultFixture(): {
     },
     exists: async () => {
       throw new Error('exists not used')
+    },
+    openStdio: async (command) => {
+      commands.push(command)
+      const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+      const closed = new Promise<{ code: number | null; signal: string | null }>(
+        (resolve, reject) => {
+          child.once('error', reject)
+          child.once('close', (code, signal) => resolve({ code, signal }))
+        }
+      )
+      return {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        async close() {
+          child.stdin.end()
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+          await closed.catch(() => undefined)
+        }
+      }
     },
     close: async () => {
       closeCount += 1

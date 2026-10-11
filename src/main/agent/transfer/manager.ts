@@ -116,20 +116,28 @@ export class FileTransferManager {
   }
 
   enqueue(request: TransferRequest): TransferHandle {
-    validateRequest(request)
-    if (this.jobs.has(request.transferId)) {
+    const snapshot: TransferRequest = Object.freeze({
+      ...request,
+      source: Object.freeze({ ...request.source }),
+      destination: Object.freeze({ ...request.destination }),
+      ...(request.retention === undefined
+        ? {}
+        : { retention: Object.freeze({ ...request.retention }) })
+    })
+    validateRequest(snapshot)
+    if (this.jobs.has(snapshot.transferId)) {
       throw new TransferError('INVALID_REQUEST', 'Transfer id is already registered')
     }
-    const plane = this.planes.get(request.dataPlaneId)
+    const plane = this.planes.get(snapshot.dataPlaneId)
     if (plane === undefined) {
       throw new TransferError('INVALID_REQUEST', 'Requested transfer data plane is unavailable')
     }
     const pending = deferred()
     const now = this.now()
     const job: Job = {
-      request: { ...request },
+      request: snapshot,
       plane,
-      destinationKey: plane.destinationKey(request),
+      destinationKey: plane.destinationKey(snapshot),
       deferred: pending,
       controller: new AbortController(),
       session: null,
@@ -149,15 +157,15 @@ export class FileTransferManager {
       retentionEstablished: false,
       retentionCreatedAt: now
     }
-    this.jobs.set(request.transferId, job)
-    this.queue.push(request.transferId)
+    this.jobs.set(snapshot.transferId, job)
+    this.queue.push(snapshot.transferId)
     this.emit(job)
     this.schedule()
     return Object.freeze({
-      transferId: request.transferId,
+      transferId: snapshot.transferId,
       completion: pending.promise,
-      cancel: (options) => this.cancel(request.transferId, options),
-      pause: () => this.pause(request.transferId)
+      cancel: (options) => this.cancel(snapshot.transferId, options),
+      pause: () => this.pause(snapshot.transferId)
     })
   }
 
@@ -176,6 +184,12 @@ export class FileTransferManager {
 
   getState(transferId: string): TransferState | null {
     return this.jobs.get(transferId)?.state ?? null
+  }
+
+  forget(transferId: string): boolean {
+    const state = this.jobs.get(transferId)?.state
+    if (state === undefined || !['saved', 'cancelled', 'failed'].includes(state)) return false
+    return this.jobs.delete(transferId)
   }
 
   private cancel(transferId: string, options?: Readonly<{ discardPartial?: boolean }>): void {
@@ -563,6 +577,8 @@ export class FileTransferManager {
     await this.registry.upsert({
       transferId: job.request.transferId,
       hostKey: job.request.hostKey,
+      cleanupOwner: job.request.retention?.cleanupOwner ?? job.request.dataPlaneId,
+      storageKey: job.request.retention?.storageKey ?? job.request.hostKey,
       partialLocator: session.partialLocator,
       manifestLocator: session.manifestLocator,
       status,

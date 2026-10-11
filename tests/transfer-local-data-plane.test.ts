@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -10,6 +10,10 @@ import {
   LocalTransferDataPlane,
   type TransferRequest
 } from '../src/main/agent/transfer'
+import {
+  hashVerifiedLocalFile,
+  publishVerifiedLocalFile
+} from '../src/main/agent/transfer/ssh-data-plane-local'
 
 test('local destination keys normalize path aliases for the single-destination queue lock', () => {
   const plane = new LocalTransferDataPlane()
@@ -49,6 +53,29 @@ test('local preflight refuses a symbolic-link source', async () => {
     })
 
     await assert.rejects(handle.completion, { code: 'SOURCE_CHANGED' })
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('verified local publish refuses a late symbolic-link partial swap', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-transfer-publish-symlink-'))
+  try {
+    const partial = join(root, 'partial.bin')
+    const replacement = join(root, 'replacement.bin')
+    const destination = join(root, 'saved.bin')
+    writeFileSync(partial, 'verified payload', { mode: 0o600 })
+    writeFileSync(replacement, 'attacker payload', { mode: 0o600 })
+    const verified = await hashVerifiedLocalFile(partial, 1024)
+    rmSync(partial)
+    symlinkSync(replacement, partial)
+
+    await assert.rejects(
+      publishVerifiedLocalFile(partial, destination, verified),
+      (error: unknown) =>
+        ['ELOOP', 'INVALID_PARTIAL'].includes(String((error as { code?: unknown })?.code))
+    )
+    assert.equal(existsSync(destination), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

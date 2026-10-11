@@ -435,6 +435,67 @@ test('old helper capability negotiation degrades to pure SSH with a clear reason
   await process.close()
 })
 
+test('unavailable helper connection degrades to pure SSH without exposing connection details', async () => {
+  const fallbackSession = {} as TransferDataPlaneSession
+  let fallbackOpens = 0
+  const plane = new HelperTransferDataPlane({
+    hostId: 'host-id',
+    workspaceId: 'workspace-id',
+    remoteRoot: '/srv/project',
+    canonicalRoot: '/srv/project',
+    connect: async () => {
+      throw new Error('ssh://alice@private.example/path?token=secret')
+    },
+    fallback: {
+      id: 'ssh',
+      destinationKey: () => 'ssh:destination',
+      async open() {
+        fallbackOpens += 1
+        return fallbackSession
+      }
+    }
+  })
+
+  assert.equal(await plane.open(uploadRequest()), fallbackSession)
+  assert.equal(fallbackOpens, 1)
+  assert.deepEqual(plane.status(), {
+    state: 'degraded',
+    reason: 'Remote helper unavailable; using pure SSH fallback'
+  })
+})
+
+test('malformed helper negotiation fails closed instead of changing data planes', async () => {
+  let fallbackOpens = 0
+  const process = fakeProcess((request, responses) => {
+    responses.write(
+      jsonFrame({
+        jsonrpc: '2.0',
+        id: request.id,
+        error: { code: -32700, message: 'remote helper returned invalid JSON' }
+      })
+    )
+  })
+  const plane = new HelperTransferDataPlane({
+    hostId: 'host-id',
+    workspaceId: 'workspace-id',
+    remoteRoot: '/srv/project',
+    canonicalRoot: '/srv/project',
+    connect: async () => process,
+    fallback: {
+      id: 'ssh',
+      destinationKey: () => 'ssh:destination',
+      async open() {
+        fallbackOpens += 1
+        return {} as TransferDataPlaneSession
+      }
+    }
+  })
+
+  await assert.rejects(plane.open(uploadRequest()), /invalid JSON/)
+  assert.equal(fallbackOpens, 0)
+  await process.close()
+})
+
 test('incompatible helper protocol degrades to pure SSH with a clear reason', async () => {
   const fallbackSession = {} as TransferDataPlaneSession
   let fallbackOpens = 0
