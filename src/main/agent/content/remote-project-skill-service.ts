@@ -48,10 +48,12 @@ function bindingFor(
   context: RemoteProjectSkillContext,
   dependencies: RemoteProjectSkillServiceDependencies
 ): RemoteWorkspaceHostBinding {
+  // The boundary rejects any key besides sessionId/projectId, so never forward the whole context.
+  const identity = { sessionId: context.sessionId, projectId: context.projectId }
   return (
     dependencies.resolveBinding ??
     ((input) => resolveRemoteWorkspaceHostBinding(input, { agentDir: context.agentDir }))
-  )(context)
+  )(identity)
 }
 
 function hostFor(

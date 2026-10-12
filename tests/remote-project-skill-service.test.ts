@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
+
 import {
   loadRemoteProjectSkillCatalog,
   readRemoteProjectSkillContent,
@@ -29,19 +31,22 @@ test('remote project Skill stays view-only until its complete server snapshot is
     agentDir
   }
   const dependencies = {
-    resolveBinding: () => ({
-      sessionId: context.sessionId,
-      projectId: context.projectId,
-      hostAlias: 'fixture-host',
-      remoteRoot: fixture.projectRoot,
-      canonicalRoot: fixture.projectRoot,
-      cacheKey: 'fixture',
-      config: {
+    resolveBinding: (input: unknown) => {
+      assertBoundaryIdentity(input)
+      return {
+        sessionId: context.sessionId,
+        projectId: context.projectId,
+        hostAlias: 'fixture-host',
         remoteRoot: fixture.projectRoot,
         canonicalRoot: fixture.projectRoot,
-        connect: fixture.connect
+        cacheKey: 'fixture',
+        config: {
+          remoteRoot: fixture.projectRoot,
+          canonicalRoot: fixture.projectRoot,
+          connect: fixture.connect
+        }
       }
-    }),
+    },
     createHost: () =>
       new SshHost({
         remoteRoot: fixture.projectRoot,

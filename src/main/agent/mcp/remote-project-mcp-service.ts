@@ -380,14 +380,16 @@ async function scan(
   connection: AuthorizedRemoteConnectionConfig
   configs: LoadedConfig[]
 }> {
+  // The boundary rejects any key besides sessionId/projectId, so never forward the whole context.
+  const identity = { sessionId: context.sessionId, projectId: context.projectId }
   const binding = (
     dependencies.resolveBinding ??
     ((input) => resolveRemoteWorkspaceHostBinding(input, { agentDir: context.agentDir }))
-  )(context)
+  )(identity)
   const connection = (
     dependencies.resolveConnection ??
     ((input) => resolveAuthorizedRemoteConnectionConfig(input, { agentDir: context.agentDir }))
-  )(context)
+  )(identity)
   if (
     binding.sessionId !== connection.sessionId ||
     binding.projectId !== connection.projectId ||

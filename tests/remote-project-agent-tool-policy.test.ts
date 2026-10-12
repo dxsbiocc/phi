@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { discoverRemoteAgentCatalog } from '../src/main/agent/agents/remote-agent-catalog'
 import { trustRemoteAgent } from '../src/main/agent/agents/remote-agent-service'
 import { trustRemoteProjectAgent } from '../src/main/agent/agents/remote-agent-trust-store'
+import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
 import { createRemoteRuntimeFixture } from './helpers/remoteRuntimeFixture'
 
 function agentMarkdown(name: string, tools = ['read', 'bash']): string {
@@ -124,19 +125,22 @@ test('trust mutation re-reads the server file and rejects a stale renderer hash'
         },
         { relativePath, contentHash: 'f'.repeat(64) },
         {
-          resolveBinding: () => ({
-            sessionId: 'session-1',
-            projectId: 'project-1',
-            hostAlias: 'fake-lab',
-            remoteRoot: fixture.projectRoot,
-            canonicalRoot: fixture.projectRoot,
-            cacheKey: 'test',
-            config: {
+          resolveBinding: (input: unknown) => {
+            assertBoundaryIdentity(input)
+            return {
+              sessionId: 'session-1',
+              projectId: 'project-1',
+              hostAlias: 'fake-lab',
               remoteRoot: fixture.projectRoot,
               canonicalRoot: fixture.projectRoot,
-              connect: fixture.connect
+              cacheKey: 'test',
+              config: {
+                remoteRoot: fixture.projectRoot,
+                canonicalRoot: fixture.projectRoot,
+                connect: fixture.connect
+              }
             }
-          }),
+          },
           createHost: () => fixture.workspace.projectHost
         }
       ),

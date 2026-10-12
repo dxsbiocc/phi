@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
+
 import {
   loadRemoteProjectMcpCatalog,
   revokeRemoteProjectMcpTrust,
@@ -69,13 +71,19 @@ function fixture(): {
       agentDir
     },
     dependencies: {
-      resolveBinding: () => binding,
-      resolveConnection: () => ({
-        sessionId: binding.sessionId,
-        projectId: binding.projectId,
-        hostAlias: binding.hostAlias,
-        connection: { host: binding.hostAlias }
-      }),
+      resolveBinding: (input: unknown) => {
+        assertBoundaryIdentity(input)
+        return binding
+      },
+      resolveConnection: (input: unknown) => {
+        assertBoundaryIdentity(input)
+        return {
+          sessionId: binding.sessionId,
+          projectId: binding.projectId,
+          hostAlias: binding.hostAlias,
+          connection: { host: binding.hostAlias }
+        }
+      },
       createHost: () => new SshHost(binding.config)
     },
     cleanup: () => rmSync(root, { recursive: true, force: true })

@@ -423,11 +423,6 @@ function AppWorkspaceSidebarImpl({
         cancelTrustedOverlay={cancelTrustedOverlay}
         onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
         localConnectorsAllowed={!isRemoteProject}
-        notice={
-          isRemoteProject
-            ? '服务器项目 MCP 需逐项信任；HTTPS 在桌面端连接，stdio 在所选服务器运行。'
-            : undefined
-        }
       />
     ) : mode === 'wrappers' ? (
       <WrapperSidebar
