@@ -7,16 +7,7 @@ import ts from 'typescript'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
-interface RemoteAgentPreloadApi {
-  listPromptAgents: (cwd: string) => Promise<unknown>
-  trustRemoteProjectAgent: (input: unknown) => Promise<unknown>
-  revokeRemoteProjectAgentTrust: (input: unknown) => Promise<unknown>
-}
-
-function loadRemoteAgentPreload(): {
-  api: RemoteAgentPreloadApi
-  calls: Array<{ channel: string; args: unknown[] }>
-} {
+test('preload exposes list, trust and revoke as the only remote agent IPC operations', async () => {
   const compiled = ts.transpileModule(source('src/preload/index.ts'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
   }).outputText
@@ -50,11 +41,11 @@ function loadRemoteAgentPreload(): {
     { addEventListener: (): void => undefined },
     console
   )
-  return { api: exposed.get('api') as RemoteAgentPreloadApi, calls }
-}
-
-test('preload exposes list, trust and revoke as the only remote agent IPC operations', async () => {
-  const { api, calls } = loadRemoteAgentPreload()
+  const api = exposed.get('api') as {
+    listPromptAgents: (cwd: string) => Promise<unknown>
+    trustRemoteProjectAgent: (input: unknown) => Promise<unknown>
+    revokeRemoteProjectAgentTrust: (input: unknown) => Promise<unknown>
+  }
   const request = {
     cwd: '/local/anchor',
     relativePath: '.phi/agents/Reviewer.md',

@@ -1352,6 +1352,55 @@ test('analysis view uses the selected R kernel logo in the notebook header', () 
   assert.match(markup, /data-phi-material-icon="r"/)
 })
 
+test('analysis view resolves a legacy kernel name to the managed kernel without a missing row', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {
+      kernelspec: { display_name: 'R', language: 'R', name: 'ir' },
+      language_info: { name: 'R' }
+    },
+    cells: [{ id: 'code', cell_type: 'code', execution_count: null, metadata: {}, outputs: [] }]
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/r-analysis.ipynb',
+      relativePath: 'notebooks/r-analysis.ipynb',
+      name: 'r-analysis.ipynb',
+      bytes: 512,
+      modifiedAt: '2026-10-12T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    kernelDiagnostics: {
+      jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
+      kernels: [
+        {
+          name: 'phi-r',
+          displayName: 'R 4.4 (phi-r)',
+          language: 'r',
+          rawLanguage: 'R',
+          source: 'managed'
+        },
+        {
+          name: 'host-ir',
+          displayName: 'R · host (unmanaged)',
+          language: 'r',
+          rawLanguage: 'R',
+          source: 'host'
+        }
+      ],
+      preferredKernelName: 'phi-python',
+      hasPythonKernel: false,
+      hasRKernel: true,
+      messages: []
+    }
+  })
+
+  assert.doesNotMatch(markup, /R notebook/)
+  assert.match(markup, /R 4\.4 \(phi-r\) \(phi-r\)/)
+})
+
 test('analysis view keeps kernel selection available while a notebook kernel is busy or starting', () => {
   const document = parseNotebook({
     nbformat: 4,
@@ -1420,6 +1469,15 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
   assert.match(
     kernelSwitchDialogSource,
     /Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。/
+  )
+  assert.match(
+    analysisSource,
+    /const saved = await onSaveNotebook\?\.\(pending\.file, pending\.nextDocument\)/
+  )
+  assert.match(analysisSource, /if \(saved === false\) return/)
+  assert.ok(
+    analysisSource.indexOf('const saved = await onSaveNotebook') <
+      analysisSource.indexOf('await onStopNotebookSession')
   )
   assert.doesNotMatch(analysisSource, /window\.confirm\(\s*notebookKernelSwitchConfirmationMessage/)
 })
@@ -2044,14 +2102,21 @@ test('pending notebook kernel appears in the runtime list before the session exi
       extra: {},
       revision: '1'
     },
-    kernels: [
-      {
-        name: 'python3',
-        displayName: 'Python 3.10 (test venv)',
-        language: 'python',
-        rawLanguage: 'python'
-      }
-    ]
+    kernelDiagnostics: {
+      jupyterServer: { available: true, command: 'jupyter' },
+      kernels: [
+        {
+          name: 'python3',
+          displayName: 'Python 3.10 (test venv)',
+          language: 'python',
+          rawLanguage: 'python'
+        }
+      ],
+      preferredKernelName: 'python3',
+      hasPythonKernel: true,
+      hasRKernel: false,
+      messages: []
+    }
   })
   const status = upsertNotebookKernelSession(null, pending, {
     projectCwd: '/project',

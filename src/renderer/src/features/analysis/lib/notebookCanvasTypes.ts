@@ -47,7 +47,10 @@ export type NotebookCanvasProps = {
   cellExecutionError?: string | null
   availableNotebooks?: NotebookListEntry[]
   projectCwd?: string | null
-  onSaveNotebook?: (file: AnalysisNotebookFile, document: NotebookDocument) => void | Promise<void>
+  onSaveNotebook?: (
+    file: AnalysisNotebookFile,
+    document: NotebookDocument
+  ) => boolean | void | Promise<boolean | void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onNotebookDirtyChange?: (file: AnalysisNotebookFile, dirty: boolean) => void
   onStartNotebookSession?: (

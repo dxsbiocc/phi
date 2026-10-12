@@ -576,6 +576,7 @@ type AnalysisKernelDiagnostics = {
     rawLanguage: string
     resourceDir?: string
     executable?: string
+    source?: 'managed' | 'host'
   }>
   preferredKernelName?: string
   hasPythonKernel: boolean

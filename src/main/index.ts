@@ -9316,8 +9316,8 @@ app.whenReady().then(async () => {
           sessions.updateSessionState(
             workspace.workingDirectory,
             file.path,
-            execution.state === 'error' ? 'error' : 'idle',
-            execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
+            'idle',
+            execution.state === 'error' ? 'Cell 执行出错，kernel 仍可继续使用' : 'Cell 执行完成'
           ) ?? sessionStatus
         return {
           ...execution,

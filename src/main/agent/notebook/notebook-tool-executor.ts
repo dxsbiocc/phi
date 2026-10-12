@@ -557,8 +557,8 @@ export class AnalysisNotebookToolExecutor {
       this.notebookSessionRegistry.updateSessionState(
         project.workingDirectory,
         state.file.path,
-        execution.state === 'error' ? 'error' : 'idle',
-        execution.state === 'error' ? 'Cell 执行出错' : 'Cell 执行完成'
+        'idle',
+        execution.state === 'error' ? 'Cell 执行出错，kernel 仍可继续使用' : 'Cell 执行完成'
       ) ?? sessionStatus
     const cell = state.document.cells.find((item) => item.id === cellId) ?? fallbackCell
     const index = state.document.cells.indexOf(cell)

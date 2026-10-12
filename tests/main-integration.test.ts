@@ -441,6 +441,7 @@ type HarnessResult = {
     language?: string
     cursorPosition?: number
   }>
+  setNotebookExecutionState: (state: 'idle' | 'error') => void
   notebookFormatCalls: Array<{
     projectCwd: string
     source: string
@@ -656,6 +657,7 @@ async function harness(
     language?: string
     cursorPosition?: number
   }> = []
+  let notebookExecutionState: 'idle' | 'error' = 'idle'
   const notebookFormatCalls: Array<{
     projectCwd: string
     source: string
@@ -1253,7 +1255,7 @@ async function harness(
             extra: {}
           }
         ],
-        state: 'idle',
+        state: notebookExecutionState,
         startedAt: '2026-09-09T00:00:00.000Z',
         completedAt: '2026-09-09T00:00:01.000Z'
       }
@@ -2561,29 +2563,33 @@ async function harness(
     './agent/packages/icon-views': {
       packageRegistryIconView: (registry: unknown): unknown => registry
     },
-    './agent/packages/skill-detail': {
-      readSkillPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
-        id,
-        markdown: ''
-      })
-    },
-    './agent/packages/wrapper-detail': {
-      readWrapperPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
-        id,
-        wrappers: []
-      })
-    },
-    './agent/mcp-server-view': {
-      withConnectorMetadata: (servers: readonly unknown[]): unknown[] => [...servers]
-    },
-    './agent/packages/mutation-queue': {
-      runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
-    },
-    './agent/packages/wrapper-removal': {
-      removeWrapperPackage: async (): Promise<unknown> => ({
-        kind: 'deselected',
-        id: ''
-      })
+    './agent/packages/github-source': {
+      previewGithubSource: async (): Promise<unknown> => ({
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        packages: [],
+        skipped: [],
+        warnings: []
+      }),
+      addGithubSource: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      checkGithubSourceUpdate: async (): Promise<unknown> => ({ changed: false }),
+      applyGithubSourceUpdate: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      removeGithubSource: async (): Promise<boolean> => true,
+      listGithubSources: (): unknown => ({ version: 1, sources: [] })
     },
     './agent/resource-icons': { readResourceIcon: (): null => null },
     './agent/packages/installer': {
@@ -2718,6 +2724,12 @@ async function harness(
           }
         }
       }
+    },
+    './agent/mcp/custom-stdio': {
+      addLocalMcpConnector: async (): Promise<{ tools: string[] }> => ({ tools: [] }),
+      listLocalMcpRuntimes: async (): Promise<unknown[]> => [],
+      removeLocalMcpConnector: noop,
+      validateLocalConnectorRequest: (value: unknown): unknown => value
     },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: (
@@ -3121,6 +3133,35 @@ async function harness(
       revokeRemoteProjectSkillTrust: async (_context: unknown, input: Record<string, unknown>) => {
         remoteSkillMutations.push({ operation: 'revoke', input })
       }
+    },
+    './agent/packages/skill-detail': {
+      readSkillPackageDetail: async (): Promise<Record<string, never>> => ({})
+    },
+    './agent/packages/wrapper-detail': {
+      readWrapperPackageDetail: async (): Promise<Record<string, never>> => ({})
+    },
+    './agent/mcp-server-view': {
+      withConnectorMetadata: (servers: unknown[]): unknown[] => servers
+    },
+    './agent/mcp/local-connector-jobs': {
+      createLocalConnectorJobs: () => ({
+        startLocalConnectorAdd: (request: { name?: string }) => ({
+          started: true,
+          name: request.name ?? 'local'
+        }),
+        cancelLocalConnectorAdd: async (): Promise<void> => undefined,
+        retryLocalConnectorAdd: (name: string) => ({ started: true, name }),
+        listLocalConnectorJobs: (): unknown[] => []
+      })
+    },
+    './agent/packages/mutation-queue': {
+      runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
+    },
+    './agent/packages/wrapper-removal': {
+      removeWrapperPackage: (id: string): { kind: 'uninstalled'; id: string } => ({
+        kind: 'uninstalled',
+        id
+      })
     },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
@@ -4123,6 +4164,9 @@ async function harness(
     notebookSessionCalls,
     remoteNotebookCalls,
     notebookExecutionCalls,
+    setNotebookExecutionState: (state): void => {
+      notebookExecutionState = state
+    },
     notebookFormatCalls,
     managedEnvironmentBuildCalls,
     openDialogOptions,
@@ -8374,6 +8418,53 @@ test('main IPC: analysis notebook cell execution updates the returned document',
       cwd: '/projects/research',
       path: '/projects/research/notebooks/demo.ipynb'
     },
+    {
+      action: 'state:busy',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    {
+      action: 'state:idle',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    }
+  ])
+})
+
+test('main IPC: a cell error keeps the notebook kernel session usable', async () => {
+  const app = await harness()
+  app.setNotebookExecutionState('error')
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'R', language: 'R', name: 'ir' } },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'ggplot(data)'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:executeNotebookCell',
+    '/projects/research',
+    'notebooks/demo.ipynb',
+    document,
+    'cell-1'
+  )) as {
+    state: string
+    sessionStatus: { state: string; message: string }
+  }
+
+  assert.equal(result.state, 'error')
+  assert.equal(result.sessionStatus.state, 'idle')
+  assert.equal(result.sessionStatus.message, 'Cell 执行出错，kernel 仍可继续使用')
+  assert.deepEqual(app.notebookSessionCalls.slice(-2), [
     {
       action: 'state:busy',
       cwd: '/projects/research',

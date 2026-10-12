@@ -2,7 +2,12 @@ import { useState } from 'react'
 import { Box, Fab, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { PhiIcons } from '../../../icons'
-import { kernelOptionLabel, notebookKernelName, notebookLanguage } from '../lib/notebookViewModel'
+import {
+  kernelOptionLabel,
+  notebookKernelName,
+  notebookLanguage,
+  resolveNotebookKernel
+} from '../lib/notebookViewModel'
 import type { AnalysisKernelDiagnostics, AnalysisKernelSummary } from '../../../types'
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 
@@ -62,11 +67,13 @@ export function NotebookKernelControl({
   onKernelChange?: (kernelName: string) => void | Promise<void>
 }): React.JSX.Element | null {
   const kernelOptions = kernelDiagnostics?.kernels ?? []
-  const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
-  const selectedKernel = kernelOptions.find((kernel) => kernel.name === selectedKernelName)
-  const selectedKernelIsMissing = Boolean(
-    selectedKernelName && !kernelOptions.some((kernel) => kernel.name === selectedKernelName)
-  )
+  const requestedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
+  const selectedKernel =
+    draftDocument && kernelDiagnostics
+      ? resolveNotebookKernel(draftDocument, kernelDiagnostics)
+      : undefined
+  const selectedKernelName = selectedKernel?.name ?? requestedKernelName
+  const selectedKernelIsMissing = Boolean(requestedKernelName && !selectedKernel)
   const canSelectKernel = Boolean(draftDocument && onKernelChange && kernelOptions.length > 0)
   const [kernelMenuAnchor, setKernelMenuAnchor] = useState<HTMLElement | null>(null)
   const kernelMenuOpen = Boolean(kernelMenuAnchor)
