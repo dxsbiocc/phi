@@ -47,6 +47,11 @@ import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
 import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
 import type {
+  PrepareRemoteProjectUploadInput,
+  RemoteProjectUploadJob,
+  StartRemoteProjectUploadOptions
+} from '../shared/remoteProjectUploadTypes'
+import type {
   RemoteRipgrepProgress,
   RemoteRipgrepResult,
   RemoteRipgrepStatusResult
@@ -143,7 +148,13 @@ type AgentEventSummary = Record<string, unknown>
 type Unsubscribe = () => void
 
 const INPUT_FILE_DROP_TARGET_ATTRIBUTE = 'data-phi-file-drop-target'
-const inputFilesDroppedSubscribers = new Set<(paths: string[]) => void>()
+type InputFileDropTarget = {
+  kind: 'chat-composer' | 'wrapper-input' | 'remote-file-tree'
+  path?: string
+}
+const inputFilesDroppedSubscribers = new Set<
+  (paths: string[], target: InputFileDropTarget) => void
+>()
 
 type AuthStatusItem = {
   providerId: string
@@ -759,8 +770,9 @@ type RendererAuthApi = {
   getFileIcon: (path: string) => Promise<string | null>
   readResourceIcon: (key: string) => Promise<string | null>
   pickInputFiles: () => Promise<string[]>
+  pickLocalUploadFiles: () => Promise<string[]>
   getPathForFile: (file: File) => string
-  onInputFilesDropped: (cb: (paths: string[]) => void) => Unsubscribe
+  onInputFilesDropped: (cb: (paths: string[], target: InputFileDropTarget) => void) => Unsubscribe
   previewFile: (path: string) => Promise<FilePreview>
   previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
@@ -1131,6 +1143,25 @@ type RendererAuthApi = {
   listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
   cancelEnvironmentBuild: (envId: string) => Promise<void>
   onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => Unsubscribe
+  prepareRemoteProjectUpload: (
+    projectId: string,
+    input: PrepareRemoteProjectUploadInput
+  ) => Promise<RemoteProjectUploadJob>
+  startRemoteProjectUpload: (
+    projectId: string,
+    jobId: string,
+    options?: StartRemoteProjectUploadOptions
+  ) => Promise<RemoteProjectUploadJob>
+  listRemoteProjectUploads: () => Promise<RemoteProjectUploadJob[]>
+  cancelRemoteProjectUpload: (jobId: string) => Promise<void>
+  retryRemoteProjectUpload: (jobId: string) => Promise<RemoteProjectUploadJob>
+  onRemoteProjectUploadsChanged: (cb: (job: RemoteProjectUploadJob) => void) => Unsubscribe
+  completeWrapperInputUpload: (
+    jobId: string,
+    planId: string,
+    inputId: string,
+    expectedRevision: number
+  ) => Promise<WrapperRunPlan>
   listAgentJobs: () => Promise<BackgroundAgentJob[]>
   listShellJobs: () => Promise<BackgroundShellJob[]>
   stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
@@ -1262,8 +1293,11 @@ const api: RendererAuthApi = {
   readResourceIcon: (key: string): Promise<string | null> =>
     ipcRenderer.invoke('resources:readIcon', key),
   pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
+  pickLocalUploadFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickLocalUpload'),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
-  onInputFilesDropped: (cb: (paths: string[]) => void): Unsubscribe => {
+  onInputFilesDropped: (
+    cb: (paths: string[], target: InputFileDropTarget) => void
+  ): Unsubscribe => {
     inputFilesDroppedSubscribers.add(cb)
     return () => {
       inputFilesDroppedSubscribers.delete(cb)
@@ -1685,6 +1719,23 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('environmentBuilds:changed', handler)
     }
   },
+  prepareRemoteProjectUpload: (projectId, input): Promise<RemoteProjectUploadJob> =>
+    ipcRenderer.invoke('remoteProjectUploads:prepare', projectId, input),
+  startRemoteProjectUpload: (projectId, jobId, options): Promise<RemoteProjectUploadJob> =>
+    ipcRenderer.invoke('remoteProjectUploads:start', projectId, jobId, options),
+  listRemoteProjectUploads: (): Promise<RemoteProjectUploadJob[]> =>
+    ipcRenderer.invoke('remoteProjectUploads:list'),
+  cancelRemoteProjectUpload: (jobId): Promise<void> =>
+    ipcRenderer.invoke('remoteProjectUploads:cancel', jobId),
+  retryRemoteProjectUpload: (jobId): Promise<RemoteProjectUploadJob> =>
+    ipcRenderer.invoke('remoteProjectUploads:retry', jobId),
+  onRemoteProjectUploadsChanged: (cb): Unsubscribe => {
+    const handler = (_: unknown, job: RemoteProjectUploadJob): void => cb(job)
+    ipcRenderer.on('remoteProjectUploads:changed', handler)
+    return () => ipcRenderer.removeListener('remoteProjectUploads:changed', handler)
+  },
+  completeWrapperInputUpload: (jobId, planId, inputId, expectedRevision): Promise<WrapperRunPlan> =>
+    ipcRenderer.invoke('wrappers:completeInputUpload', jobId, planId, inputId, expectedRevision),
   onAnalysisNotebookFileChanged: (
     cb: (change: AnalysisNotebookFileChange) => void
   ): Unsubscribe => {
@@ -1973,10 +2024,16 @@ function dataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {
   return Array.from(dataTransfer.items).some((item) => item.kind === 'file')
 }
 
-function inputFileDropTargetFromEvent(event: DragEvent): Element | null {
+function inputFileDropTargetFromEvent(event: DragEvent): InputFileDropTarget | null {
   const target = event.target
   if (!target || typeof (target as Element).closest !== 'function') return null
-  return (target as Element).closest(`[${INPUT_FILE_DROP_TARGET_ATTRIBUTE}="chat-composer"]`)
+  const element = (target as Element).closest(`[${INPUT_FILE_DROP_TARGET_ATTRIBUTE}]`)
+  const kind = element?.getAttribute(INPUT_FILE_DROP_TARGET_ATTRIBUTE)
+  if (kind !== 'chat-composer' && kind !== 'wrapper-input' && kind !== 'remote-file-tree') {
+    return null
+  }
+  const path = element?.getAttribute('data-phi-file-drop-path')?.trim()
+  return { kind, ...(path ? { path } : {}) }
 }
 
 function droppedFilePathsFromEvent(event: DragEvent): string[] {
@@ -1998,10 +2055,10 @@ function droppedFilePathsFromEvent(event: DragEvent): string[] {
   return paths
 }
 
-function notifyInputFilesDropped(paths: string[]): void {
+function notifyInputFilesDropped(paths: string[], target: InputFileDropTarget): void {
   for (const subscriber of inputFilesDroppedSubscribers) {
     try {
-      subscriber(paths)
+      subscriber(paths, target)
     } catch (error) {
       console.error(error)
     }
@@ -2011,7 +2068,8 @@ function notifyInputFilesDropped(paths: string[]): void {
 window.addEventListener(
   'dragover',
   (event) => {
-    if (!inputFileDropTargetFromEvent(event) || !dataTransferHasFiles(event.dataTransfer)) return
+    if (inputFileDropTargetFromEvent(event) === null || !dataTransferHasFiles(event.dataTransfer))
+      return
     event.preventDefault()
     event.dataTransfer!.dropEffect = 'copy'
   },
@@ -2021,12 +2079,13 @@ window.addEventListener(
 window.addEventListener(
   'drop',
   (event) => {
-    if (!inputFileDropTargetFromEvent(event) || !dataTransferHasFiles(event.dataTransfer)) return
+    const target = inputFileDropTargetFromEvent(event)
+    if (!target || !dataTransferHasFiles(event.dataTransfer)) return
     const paths = droppedFilePathsFromEvent(event)
     if (paths.length === 0) return
     event.preventDefault()
     event.stopPropagation()
-    notifyInputFilesDropped(paths)
+    notifyInputFilesDropped(paths, target)
   },
   true
 )

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../../../../shared/backgroundJobTypes'
 import type { EnvironmentBuild } from '../../../../shared/environmentBuildTypes'
 import type { McpConnectorSetupProgress } from '../../../../shared/mcpConnectorCatalog'
+import type { RemoteProjectUploadJob } from '../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../icons'
 import { formatAgentDuration } from '../../lib/agentRunsOverview'
@@ -48,9 +49,48 @@ function shellStateLabel(state: BackgroundShellJob['state']): string {
   return labels[state]
 }
 
+const UPLOAD_STATE_LABELS: Record<RemoteProjectUploadJob['status'], string> = {
+  queued: '排队',
+  uploading: '上传中',
+  verifying: '校验',
+  completed: '完成',
+  failed: '失败',
+  cancelled: '已取消'
+}
+
+function uploadTitle(upload: RemoteProjectUploadJob): string {
+  const first = upload.files[0]?.name ?? '本机文件'
+  return upload.totalFiles > 1 ? `${first} 等 ${upload.totalFiles} 个文件` : first
+}
+
+function uploadDetail(upload: RemoteProjectUploadJob): string {
+  const renamed = upload.files.find((file) => file.resolution === 'renamed')
+  const totalMiB = upload.totalBytes / 1024 ** 2
+  const transferredMiB = upload.bytesTransferred / 1024 ** 2
+  return [
+    UPLOAD_STATE_LABELS[upload.status],
+    `${transferredMiB.toFixed(1)} / ${totalMiB.toFixed(1)} MiB`,
+    upload.bytesPerSecond > 0
+      ? `${(upload.bytesPerSecond / 1024 ** 2).toFixed(1)} MiB/s`
+      : undefined,
+    renamed?.destinationPath
+      ? `同名文件已改为 ${renamed.destinationPath.split('/').pop()}`
+      : undefined,
+    upload.error
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function uploadPercent(upload: RemoteProjectUploadJob): number | undefined {
+  if (upload.totalBytes <= 0) return undefined
+  return Math.min(100, Math.max(0, (upload.bytesTransferred / upload.totalBytes) * 100))
+}
+
 function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
+  if (item.kind === 'upload') return uploadTitle(item.upload)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
@@ -59,6 +99,7 @@ function jobTitle(item: UnifiedBackgroundJob): string {
 function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'connector') return '连接器'
   if (item.kind === 'environment') return '环境'
+  if (item.kind === 'upload') return '上传'
   if (item.kind === 'wrapper') return 'Wrapper'
   return item.run.sessionTitle
 }
@@ -66,6 +107,7 @@ function jobSource(item: UnifiedBackgroundJob): string {
 function jobSubtitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'connector') return item.setup.summary ?? item.setup.id
   if (item.kind === 'environment') return item.build.envId
+  if (item.kind === 'upload') return item.upload.destinationDirectory || '项目根目录'
   if (item.kind === 'agent') return item.run.task
   if (item.kind === 'shell') return '后台命令'
   return item.run.runId
@@ -74,6 +116,7 @@ function jobSubtitle(item: UnifiedBackgroundJob): string {
 function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
+  if (item.kind === 'upload') return uploadDetail(item.upload)
   if (item.kind === 'wrapper') {
     return [runStateLabel(item.run.state), runProgressLabel(item.run)].filter(Boolean).join(' · ')
   }
@@ -106,6 +149,7 @@ function canStopJob(item: UnifiedBackgroundJob): boolean {
 function stopTooltip(item: UnifiedBackgroundJob): string {
   if (item.kind === 'connector') return '取消添加'
   if (item.kind === 'environment') return '取消构建'
+  if (item.kind === 'upload') return '取消上传'
   if (item.kind === 'agent') return '停止这个 Agent'
   if (item.kind === 'shell') return '停止这个后台命令'
   return '取消这个 Wrapper 运行'
@@ -134,6 +178,17 @@ function upsertConnectorJob(
   return next
 }
 
+function upsertUploadJob(
+  current: readonly RemoteProjectUploadJob[],
+  job: RemoteProjectUploadJob
+): RemoteProjectUploadJob[] {
+  const index = current.findIndex((item) => item.id === job.id)
+  if (index === -1) return [job, ...current]
+  const next = current.slice()
+  next[index] = job
+  return next
+}
+
 export function BackgroundJobsPanel({
   onOpenSession,
   onOpenWrapper,
@@ -154,6 +209,7 @@ export function BackgroundJobsPanel({
   const [wrapperRuns, setWrapperRuns] = useState<WrapperRun[]>([])
   const [environmentBuilds, setEnvironmentBuilds] = useState<EnvironmentBuild[]>([])
   const [connectorJobs, setConnectorJobs] = useState<McpConnectorSetupProgress[]>([])
+  const [uploadJobs, setUploadJobs] = useState<RemoteProjectUploadJob[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [stoppingKey, setStoppingKey] = useState<string | null>(null)
@@ -172,7 +228,8 @@ export function BackgroundJobsPanel({
     },
     shellJobs,
     environmentBuilds,
-    connectorJobs
+    connectorJobs,
+    uploadJobs
   )
   const selectedConnector = connectorJobs.find((setup) => setup.id === selectedConnectorId)
 
@@ -185,7 +242,7 @@ export function BackgroundJobsPanel({
         setLoaded(true)
         return
       }
-      const [agents, shells, wrappers, builds, connectors] = await Promise.allSettled([
+      const [agents, shells, wrappers, builds, connectors, uploads] = await Promise.allSettled([
         window.api.listAgentJobs(),
         typeof window.api.listShellJobs === 'function'
           ? window.api.listShellJobs()
@@ -196,19 +253,24 @@ export function BackgroundJobsPanel({
           : Promise.resolve<EnvironmentBuild[]>([]),
         typeof window.api.listLocalConnectorJobs === 'function'
           ? window.api.listLocalConnectorJobs()
-          : Promise.resolve<McpConnectorSetupProgress[]>([])
+          : Promise.resolve<McpConnectorSetupProgress[]>([]),
+        typeof window.api.listRemoteProjectUploads === 'function'
+          ? window.api.listRemoteProjectUploads()
+          : Promise.resolve<RemoteProjectUploadJob[]>([])
       ])
       if (agents.status === 'fulfilled') setAgentJobs(agents.value)
       if (shells.status === 'fulfilled') setShellJobs(shells.value)
       if (wrappers.status === 'fulfilled') setWrapperRuns(wrappers.value)
       if (builds.status === 'fulfilled') setEnvironmentBuilds(builds.value)
       if (connectors.status === 'fulfilled') setConnectorJobs(connectors.value)
+      if (uploads.status === 'fulfilled') setUploadJobs(uploads.value)
       setError(
         agents.status === 'rejected' ||
           shells.status === 'rejected' ||
           wrappers.status === 'rejected' ||
           builds.status === 'rejected' ||
-          connectors.status === 'rejected'
+          connectors.status === 'rejected' ||
+          uploads.status === 'rejected'
           ? '部分任务状态暂时无法读取，稍后会自动重试。'
           : ''
       )
@@ -251,6 +313,13 @@ export function BackgroundJobsPanel({
     return () => window.clearTimeout(timer)
   }, [connectorJobs, onRequestedConnectorJobHandled, requestedConnectorJobId])
 
+  useEffect(() => {
+    if (typeof window.api.onRemoteProjectUploadsChanged !== 'function') return undefined
+    return window.api.onRemoteProjectUploadsChanged((job) => {
+      setUploadJobs((current) => upsertUploadJob(current, job))
+    })
+  }, [])
+
   const clearRecent = (): void => {
     dismissBackgroundJobs(jobs.recent.map((item) => item.key))
     setDismissedKeys(new Set(dismissedBackgroundJobKeys()))
@@ -276,6 +345,8 @@ export function BackgroundJobsPanel({
         await window.api.stopShellJob(item.run.agentSessionId, item.run.jobId)
       } else if (item.kind === 'wrapper') {
         await window.api.cancelWrapperRun(item.run.runId)
+      } else if (item.kind === 'upload') {
+        await window.api.cancelRemoteProjectUpload(item.upload.id)
       } else if (item.kind === 'environment') {
         await window.api.cancelEnvironmentBuild(item.build.envId)
       } else {
@@ -303,15 +374,36 @@ export function BackgroundJobsPanel({
     }
   }
 
+  const retryUpload = async (
+    item: Extract<UnifiedBackgroundJob, { kind: 'upload' }>
+  ): Promise<void> => {
+    setStoppingKey(item.key)
+    setError('')
+    try {
+      await window.api.retryRemoteProjectUpload(item.upload.id)
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '重试上传失败')
+    } finally {
+      setStoppingKey(null)
+    }
+  }
+
   const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => {
     const canStop = canStopJob(item)
     const canOpen =
       item.kind === 'agent' || item.kind === 'shell' || (item.kind === 'wrapper' && onOpenWrapper)
     const canRetry = item.kind === 'connector' && item.setup.phase === 'failed'
+    const canRetryUpload = item.kind === 'upload' && item.upload.status === 'failed'
     const title = jobTitle(item)
     const subtitle = jobSubtitle(item)
     const detail = jobDetail(item, nowMs)
-    const percent = item.kind === 'environment' ? environmentBuildPercent(item.build) : undefined
+    const percent =
+      item.kind === 'environment'
+        ? environmentBuildPercent(item.build)
+        : item.kind === 'upload'
+          ? uploadPercent(item.upload)
+          : undefined
     return (
       <Box
         key={item.key}
@@ -399,16 +491,16 @@ export function BackgroundJobsPanel({
           >
             {detail}
           </Typography>
-          {item.kind === 'environment' && item.active && (
+          {(item.kind === 'environment' || item.kind === 'upload') && item.active && (
             <LinearProgress
               variant={percent === undefined ? 'indeterminate' : 'determinate'}
               value={percent ?? 0}
-              aria-label="环境构建进度"
+              aria-label={item.kind === 'upload' ? '文件上传进度' : '环境构建进度'}
               sx={{ mt: 0.75, height: 2, borderRadius: 1 }}
             />
           )}
         </Box>
-        {(canOpen || canStop || canRetry) && (
+        {(canOpen || canStop || canRetry || canRetryUpload) && (
           <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
             {canOpen && (
               <Button
@@ -431,9 +523,11 @@ export function BackgroundJobsPanel({
                     aria-label={
                       item.kind === 'environment'
                         ? '取消构建'
-                        : item.kind === 'connector'
-                          ? `取消添加 ${title}`
-                          : `停止 ${title}`
+                        : item.kind === 'upload'
+                          ? `取消上传 ${title}`
+                          : item.kind === 'connector'
+                            ? `取消添加 ${title}`
+                            : `停止 ${title}`
                     }
                     disabled={stoppingKey === item.key}
                     onClick={(event) => {
@@ -445,6 +539,15 @@ export function BackgroundJobsPanel({
                   </IconButton>
                 </span>
               </Tooltip>
+            )}
+            {canRetryUpload && item.kind === 'upload' && (
+              <Button
+                size="small"
+                disabled={stoppingKey === item.key}
+                onClick={() => void retryUpload(item)}
+              >
+                重试
+              </Button>
             )}
             {canRetry && (
               <Button

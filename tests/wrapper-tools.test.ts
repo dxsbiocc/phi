@@ -11,8 +11,10 @@ import {
   buildWrapperExecuteTool,
   buildWrapperInspectTool,
   buildWrapperSearchTool,
+  wrapperPlanNeedsUploadSelection,
   wrapperToolName
 } from '../src/main/agent/wrappers/tools'
+import type { WrapperRunPlan } from '../src/shared/wrapperTypes'
 import { installLegacyFastqQcWrapper } from './helpers/wrapperFixtures'
 
 // Always resolves the callback through a Promise chain before cleanup runs —
@@ -211,5 +213,31 @@ test('generated execute-tool schema preserves options and allows explicit input 
         path: { type: 'string', minLength: 1 }
       }
     })
+    assert.deepEqual(reads.anyOf[2], {
+      type: 'object',
+      required: ['source'],
+      additionalProperties: false,
+      properties: {
+        source: { type: 'string', enum: ['upload'] }
+      }
+    })
   })
+})
+
+test('an explicit upload source keeps the plan card available for user file selection', () => {
+  const pending = {
+    inputs: [{ source: 'upload', remotePaths: [], localPaths: [] }],
+    validation: {
+      valid: false,
+      errors: ['输入 "reads" 等待用户选择本机文件上传']
+    }
+  } as unknown as WrapperRunPlan
+  assert.equal(wrapperPlanNeedsUploadSelection(pending), true)
+  assert.equal(
+    wrapperPlanNeedsUploadSelection({
+      ...pending,
+      validation: { valid: false, errors: ['服务器配置无效'] }
+    }),
+    false
+  )
 })

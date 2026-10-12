@@ -20,6 +20,7 @@ import {
   WrapperPlanTargetDetails,
   WrapperPlanTargetSummary
 } from './WrapperPlanTarget'
+import { WrapperInputUploadDialog } from './WrapperInputUploadDialog'
 
 const DoneIcon = PhiIcons.state.done
 const DeniedIcon = PhiIcons.state.denied
@@ -152,6 +153,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [heavyWorkloadAcknowledged, setHeavyWorkloadAcknowledged] = useState(false)
+  const [uploadInputId, setUploadInputId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!item.planId) return
@@ -398,6 +400,42 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
           </Typography>
         )}
 
+        {isUnsubmitted &&
+          plan.targetSelection?.target === 'remote' &&
+          plan.targetSelection.projectLocation.kind === 'ssh' &&
+          plan.inputDeclarations &&
+          plan.inputDeclarations.length > 0 && (
+            <Stack spacing={0.75} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                本机输入上传
+              </Typography>
+              {plan.inputDeclarations.map((declaration) => {
+                const input = plan.inputs.find((candidate) => candidate.id === declaration.id)
+                const uploaded = input?.source === 'upload' ? input.remotePaths?.[0] : undefined
+                return (
+                  <Stack
+                    key={declaration.id}
+                    direction="row"
+                    spacing={1}
+                    sx={{ alignItems: 'center', minWidth: 0 }}
+                  >
+                    <Typography variant="caption" sx={{ flex: 1, overflowWrap: 'anywhere' }}>
+                      {declaration.id}
+                      {uploaded ? ` → ${uploaded}` : ''}
+                    </Typography>
+                    <Button
+                      size="small"
+                      disabled={busy}
+                      onClick={() => setUploadInputId(declaration.id)}
+                    >
+                      {uploaded ? '重新选择' : '选择本机输入'}
+                    </Button>
+                  </Stack>
+                )
+              })}
+            </Stack>
+          )}
+
         {plan.requiresHeavyWorkloadAcknowledgement && isUnsubmitted && (
           <Stack
             direction="row"
@@ -544,6 +582,18 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
             提交运行
           </Button>
         </Stack>
+        {uploadInputId && (
+          <WrapperInputUploadDialog
+            plan={plan}
+            inputId={uploadInputId}
+            open
+            onClose={() => setUploadInputId(null)}
+            onUploaded={(updated) => {
+              setPlan(updated)
+              setUploadInputId(null)
+            }}
+          />
+        )}
       </Stack>
     </Paper>
   )

@@ -134,7 +134,12 @@ type ViewProps = {
   onRefreshPromptAgents?: () => Promise<void>
   onPickInputFiles?: () => Promise<string[]>
   onGetPathForInputFile?: (file: File) => string
-  onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
+  onInputFilesDropped?: (
+    cb: (
+      paths: string[],
+      target: { kind: 'chat-composer' | 'wrapper-input' | 'remote-file-tree'; path?: string }
+    ) => void
+  ) => () => void
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   officeTarget?: OfficeComposerTarget

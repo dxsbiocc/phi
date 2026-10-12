@@ -24,7 +24,12 @@ export function useComposerFileDrop({
 }: {
   cwd: string
   onGetPathForFile?: (file: File) => string
-  onInputFilesDropped?: (cb: (paths: string[]) => void) => () => void
+  onInputFilesDropped?: (
+    cb: (
+      paths: string[],
+      target: { kind: 'chat-composer' | 'wrapper-input' | 'remote-file-tree'; path?: string }
+    ) => void
+  ) => () => void
   onInsertReference: (reference: string) => void
 }): ComposerFileDropState {
   const [isDragActive, setIsDragActive] = useState(false)
@@ -58,7 +63,8 @@ export function useComposerFileDrop({
   useEffect(() => {
     if (!onInputFilesDropped) return undefined
 
-    return onInputFilesDropped((paths) => {
+    return onInputFilesDropped((paths, target) => {
+      if (target.kind !== 'chat-composer') return
       if (paths.length === 0) return
       resetDragState()
       insertDroppedFilePaths(paths)

@@ -1,4 +1,4 @@
-import type { WrapperManifestStep } from './wrapperManifestTypes'
+import type { WrapperManifestInput, WrapperManifestStep } from './wrapperManifestTypes'
 import type { ProjectLocation } from './projectLocation'
 
 // Phi Wrapper core types.
@@ -83,7 +83,7 @@ export interface WrapperInputResolution {
   kind: 'path' | 'glob' | 'samplesheet'
   userValue: string
   /** Explicit provenance; legacy strings on a remote run mean remote paths. */
-  source?: 'local' | 'remote'
+  source?: 'local' | 'remote' | 'upload'
   localPaths: string[]
   /** Final server paths passed to Nextflow, never inferred from local existence. */
   remotePaths?: string[]
@@ -93,10 +93,8 @@ export interface WrapperInputResolution {
   containerPaths?: string[]
 }
 
-export interface WrapperInputReference {
-  source: 'local' | 'remote'
-  path: string
-}
+export type WrapperInputReference =
+  { source: 'local' | 'remote'; path: string } | { source: 'upload' }
 
 export interface WrapperInputPathMapping {
   localRoot: string
@@ -158,6 +156,8 @@ export interface WrapperRunPlan {
   requiresHeavyWorkloadAcknowledgement?: boolean
   heavyWorkloadAcknowledged?: boolean
   params: Record<string, unknown>
+  /** Snapshotted declarations keep the upload dialog independent of a mutable catalog. */
+  inputDeclarations?: WrapperManifestInput[]
   inputs: WrapperInputResolution[]
   /** Local project directory or canonical SSH project root; never Phi's local remote-session anchor. */
   cwd: string
@@ -180,6 +180,14 @@ export interface WrapperRetargetRequest {
   target: 'local' | 'remote'
   expectedRevision: number
   confirmedLocalFallback?: boolean
+}
+
+export interface WrapperUploadedInputRecord {
+  planId: string
+  inputId: string
+  expectedRevision: number
+  localPath: string
+  remotePath: string
 }
 
 export interface WrapperSubmitConfirmation {

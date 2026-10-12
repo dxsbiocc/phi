@@ -25,6 +25,7 @@ import type {
   RemoteProjectConnectionState,
   RemoteProjectCreateInput
 } from '../../shared/projectLocation'
+import type { RemoteProjectUploadRendererApi } from '../../shared/remoteProjectUploadTypes'
 import type { OpenSshHostInput } from '../../shared/remoteHostProfile'
 import type {
   RemoteDirectoryListRequest,
@@ -710,9 +711,12 @@ export interface AnalysisNotebookFormatResult {
   message?: string
 }
 
-type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi & McpRendererApi
-
-export type RendererApi = RendererApiFoundation & {
+export interface RendererApi
+  extends
+    AutoCompactionApi,
+    ManagedEnvironmentRendererApi,
+    McpRendererApi,
+    RemoteProjectUploadRendererApi {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   office: OfficeRendererBridge
@@ -728,7 +732,6 @@ export type RendererApi = RendererApiFoundation & {
   readResourceIcon: (key: string) => Promise<string | null>
   pickInputFiles: () => Promise<string[]>
   getPathForFile: (file: File) => string
-  onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
   previewFile: (path: string) => Promise<FilePreview>
   previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
   previewWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultPreview>

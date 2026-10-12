@@ -8,6 +8,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 
 import type { BackgroundAgentJob, BackgroundShellJob } from '../src/shared/backgroundJobTypes'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
+import type { RemoteProjectUploadJob } from '../src/shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../src/shared/wrapperTypes'
 import { BackgroundJobsPanel } from '../src/renderer/src/features/jobs/BackgroundJobsPanel'
 import {
@@ -183,6 +184,50 @@ test('job overview uses the existing cancellation policy for Wrapper runs', () =
   assert.equal(canStopUnifiedWrapperRun(wrapper({ executor: 'slurm-controller' })), true)
   assert.equal(canStopUnifiedWrapperRun(wrapper({ state: 'running', executor: 'local' })), false)
   assert.equal(canStopUnifiedWrapperRun(wrapper({ state: 'completed' })), false)
+})
+
+test('remote project uploads appear with transfer progress and remain retryable after failure', () => {
+  const upload: RemoteProjectUploadJob = {
+    id: 'upload-1',
+    status: 'uploading',
+    destinationDirectory: 'reads',
+    totalFiles: 1,
+    totalBytes: 1024,
+    bytesTransferred: 512,
+    bytesPerSecond: 256,
+    requiresConfirmation: false,
+    confirmed: true,
+    files: [
+      {
+        localPath: '/tmp/sample.fastq.gz',
+        relativePath: 'sample.fastq.gz',
+        name: 'sample.fastq.gz',
+        size: 1024,
+        sha256: 'a'.repeat(64),
+        resolution: 'pending'
+      }
+    ],
+    createdAt: Date.parse('2026-10-12T00:00:00.000Z'),
+    updatedAt: Date.parse('2026-10-12T00:00:01.000Z')
+  }
+  const active = selectBackgroundJobs([], [], {}, [], [], [], [upload])
+  assert.deepEqual(
+    active.active.map((item) => item.key),
+    ['upload:upload-1']
+  )
+  assert.equal(active.active[0]?.kind, 'upload')
+
+  const failed = selectBackgroundJobs(
+    [],
+    [],
+    {},
+    [],
+    [],
+    [],
+    [{ ...upload, status: 'failed', error: 'connection lost' }]
+  )
+  assert.deepEqual(failed.active, [])
+  assert.equal(failed.recent[0]?.key, 'upload:upload-1')
 })
 
 test('right sidebar job panel is available even when no job is running', () => {

@@ -6,12 +6,20 @@ import type {
   EnvironmentBuild,
   EnvironmentBuildState
 } from '../../../../../shared/environmentBuildTypes'
+import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 
 export type UnifiedBackgroundJob =
   | { kind: 'agent'; key: string; active: boolean; timestamp: string; run: BackgroundAgentJob }
+  | {
+      kind: 'upload'
+      key: string
+      active: boolean
+      timestamp: string
+      upload: RemoteProjectUploadJob
+    }
   | { kind: 'shell'; key: string; active: boolean; timestamp: string; run: BackgroundShellJob }
   | { kind: 'wrapper'; key: string; active: boolean; timestamp: string; run: WrapperRun }
   | {
@@ -150,7 +158,8 @@ export function selectBackgroundJobs(
   query: BackgroundJobQuery = {},
   shells: readonly BackgroundShellJob[] = [],
   environments: readonly EnvironmentBuild[] = [],
-  connectors: readonly McpConnectorSetupProgress[] = []
+  connectors: readonly McpConnectorSetupProgress[] = [],
+  uploads: readonly RemoteProjectUploadJob[] = []
 ): { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 8
   const items: UnifiedBackgroundJob[] = [
@@ -195,7 +204,14 @@ export function selectBackgroundJobs(
           timestamp: active ? (setup.startedAt ?? setup.updatedAt) : setup.updatedAt,
           setup
         }
-      })
+      }),
+    ...uploads.map((upload): UnifiedBackgroundJob => ({
+      kind: 'upload',
+      key: `upload:${upload.id}`,
+      active: ['queued', 'uploading', 'verifying'].includes(upload.status),
+      timestamp: new Date(upload.updatedAt).toISOString(),
+      upload
+    }))
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
     right.timestamp.localeCompare(left.timestamp)
@@ -216,7 +232,9 @@ function belongsInFinishedTray(item: UnifiedBackgroundJob, query: BackgroundJobQ
       ? item.build.finishedAt
       : item.kind === 'connector'
         ? item.setup.updatedAt
-        : item.run.completedAt
+        : item.kind === 'upload'
+          ? item.timestamp
+          : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
 }
 

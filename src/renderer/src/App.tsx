@@ -137,6 +137,10 @@ import {
 import { RemoteProjectFileContext } from './lib/remoteProjectFileContext'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
 import { shouldRetryRemoteReads } from './features/project/lib/remoteConnectionUi'
+import {
+  rememberRemoteUploadDestination,
+  remoteUploadDestinationDirectory
+} from './lib/remoteUploadDestination'
 import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { messagesForUserRetry } from './lib/chatRetry'
@@ -2985,19 +2989,88 @@ function App(): React.JSX.Element {
     getActiveRemoteProject,
     loadFilePreview
   ])
-  const activeRemoteFileScope =
-    activeProjectLocation?.kind === 'ssh' && activeProject?.remoteHostAlias
-      ? {
-          hostAlias: activeProject.remoteHostAlias,
-          canonicalRoot: activeProjectLocation.canonicalRoot
-        }
-      : null
+  const activeRemoteFileScope = useMemo(
+    () =>
+      activeProjectLocation?.kind === 'ssh' && activeProject?.remoteHostAlias
+        ? {
+            hostAlias: activeProject.remoteHostAlias,
+            canonicalRoot: activeProjectLocation.canonicalRoot
+          }
+        : null,
+    [activeProject, activeProjectLocation]
+  )
   const workspaceFilesRootPath =
     activeProjectLocation?.kind === 'ssh'
       ? activeRemoteFileScope
         ? remoteWorkspaceUri(activeRemoteFileScope.hostAlias, activeRemoteFileScope.canonicalRoot)
         : ''
       : activeCwd
+  const onSelectRemoteUploadDirectory = useCallback(
+    (path: string): void => {
+      if (activeProjectId && activeRemoteFileScope) {
+        rememberRemoteUploadDestination(activeProjectId, path)
+      }
+    },
+    [activeProjectId, activeRemoteFileScope]
+  )
+  const onDropRemoteProjectFiles = useCallback(
+    async (paths: string[], destinationPath: string): Promise<void> => {
+      if (!activeProjectId || !activeRemoteFileScope) {
+        showSnackbarError(new Error('当前不是可上传的 SSH 项目'), '无法上传文件')
+        return
+      }
+      const destinationDirectory = remoteUploadDestinationDirectory(
+        destinationPath,
+        activeRemoteFileScope.hostAlias,
+        activeRemoteFileScope.canonicalRoot
+      )
+      if (destinationDirectory === null) {
+        showSnackbarError(new Error('上传落点不属于当前远程项目'), '无法上传文件')
+        return
+      }
+      try {
+        const job = await rendererApi.prepareRemoteProjectUpload(activeProjectId, {
+          sourcePaths: paths,
+          destinationDirectory
+        })
+        let confirmed = !job.requiresConfirmation
+        if (job.requiresConfirmation) {
+          confirmed = window.confirm(
+            `将上传 ${job.totalFiles} 个文件（${(job.totalBytes / 1024 ** 3).toFixed(2)} GiB），是否继续？`
+          )
+        }
+        if (!confirmed) {
+          await rendererApi.cancelRemoteProjectUpload(job.id)
+          return
+        }
+        await rendererApi.startRemoteProjectUpload(activeProjectId, job.id, { confirmed })
+        showSnackbar('上传已进入后台任务', 'info')
+      } catch (error) {
+        showSnackbarError(error, '无法上传文件')
+      }
+    },
+    [activeProjectId, activeRemoteFileScope, rendererApi, showSnackbar, showSnackbarError]
+  )
+
+  useEffect(() => {
+    if (typeof rendererApi.onRemoteProjectUploadsChanged !== 'function') return undefined
+    return rendererApi.onRemoteProjectUploadsChanged((job) => {
+      if (job.status !== 'completed') return
+      setWorkspaceSidePanelTreeRevision((value) => value + 1)
+      const renamed = job.files.filter((file) => file.resolution === 'renamed')
+      if (renamed.length > 0) {
+        const names = renamed
+          .slice(0, 3)
+          .map((file) => file.destinationPath?.split('/').pop())
+          .filter(Boolean)
+          .join('、')
+        showSnackbar(
+          `上传完成；${renamed.length} 个同名文件已改名${names ? `：${names}` : ''}`,
+          'info'
+        )
+      }
+    })
+  }, [rendererApi, showSnackbar])
   const remoteFileIdentity =
     activeProjectLocation?.kind === 'ssh'
       ? `${activeProjectId ?? ''}:${activeRemoteFileScope?.hostAlias ?? ''}:${activeProjectLocation.canonicalRoot}`
@@ -4471,6 +4544,12 @@ function App(): React.JSX.Element {
       activeWorkspacePath: activeWorkspaceSidePanelPath,
       workspaceFileTreeRevision: workspaceSidePanelTreeRevision,
       onOpenWorkspaceFile: onOpenWorkspaceFileFromSidebar,
+      onSelectWorkspaceDirectory:
+        activeProjectLocation?.kind === 'ssh' ? onSelectRemoteUploadDirectory : undefined,
+      onDropLocalPaths:
+        activeProjectLocation?.kind === 'ssh'
+          ? (paths, destinationPath) => void onDropRemoteProjectFiles(paths, destinationPath)
+          : undefined,
       onListWorkspaceDirectory: onListPreviewDirectory,
       runtimeProjectCwd: activeProject?.workingDirectory ?? '',
       runtimeStatus: analysisJupyterRuntimeStatus,
@@ -4551,6 +4630,8 @@ function App(): React.JSX.Element {
       activeWorkspaceSidePanelPath,
       workspaceSidePanelTreeRevision,
       onOpenWorkspaceFileFromSidebar,
+      onSelectRemoteUploadDirectory,
+      onDropRemoteProjectFiles,
       onListPreviewDirectory,
       activeProject?.workingDirectory,
       analysisJupyterRuntimeStatus,

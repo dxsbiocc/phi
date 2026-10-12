@@ -111,12 +111,16 @@ export function WorkspaceFilesPane({
   activePath,
   treeRevision,
   onOpenFile,
+  onSelectDirectory,
+  onDropLocalPaths,
   onListDirectory
 }: {
   rootPath?: string | null
   activePath?: string | null
   treeRevision: number
   onOpenFile?: (path: string) => void
+  onSelectDirectory?: (path: string) => void
+  onDropLocalPaths?: (paths: string[], destinationPath: string) => void
   onListDirectory?: (path: string) => Promise<DirectoryListing>
 }): React.JSX.Element {
   if (!rootPath || !onOpenFile || !onListDirectory) {
@@ -151,6 +155,8 @@ export function WorkspaceFilesPane({
       rootPath={rootPath}
       activePath={activePath ?? rootPath}
       onOpenFile={onOpenFile}
+      onSelectDirectory={onSelectDirectory}
+      onDropLocalPaths={onDropLocalPaths}
       onListDirectory={onListDirectory}
       variant="standalone"
     />

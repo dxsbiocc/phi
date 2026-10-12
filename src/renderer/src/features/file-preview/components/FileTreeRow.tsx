@@ -17,6 +17,7 @@ export function FileTreeRow({
   isExpanded,
   isActive,
   genericDirectoryIcons = false,
+  localDropTargetPath,
   onClick
 }: {
   entry: FileTreeEntry
@@ -24,6 +25,7 @@ export function FileTreeRow({
   isExpanded: boolean
   isActive: boolean
   genericDirectoryIcons?: boolean
+  localDropTargetPath?: string
   onClick: () => void
 }): React.JSX.Element {
   const isDirectory = entry.kind === 'directory'
@@ -41,6 +43,8 @@ export function FileTreeRow({
       type="button"
       data-phi-file-kind={entryIcon.kind}
       data-phi-file-path={entry.path}
+      data-phi-file-drop-target={localDropTargetPath ? 'remote-file-tree' : undefined}
+      data-phi-file-drop-path={localDropTargetPath}
       aria-current={isActive ? 'location' : undefined}
       title={entry.displayPath}
       onClick={onClick}

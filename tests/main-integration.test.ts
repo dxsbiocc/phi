@@ -2985,6 +2985,7 @@ async function harness(
       readWrapperPlanArtifact: (): undefined => undefined
     },
     './agent/wrappers/plans': {
+      recordWrapperUploadedInput: (request: Record<string, unknown>) => request,
       retargetWrapperRunPlan: (request: Record<string, unknown>) => {
         retargetRequests.push(request)
         wrapperPlan = { ...wrapperPlan, revision: Number(wrapperPlan?.revision ?? 1) + 1 }
@@ -3129,6 +3130,9 @@ async function harness(
       saveRemoteHostProfile: (input: { id?: string; label: string; hostAlias: string }) => ({
         id: input.id ?? 'test-remote-host',
         ...input
+      }),
+      remoteConnectionConfigForProfile: (profile: { hostAlias: string }) => ({
+        host: profile.hostAlias
       }),
       deleteRemoteHostProfile: (): void => {}
     },
@@ -3338,6 +3342,84 @@ async function harness(
           return undefined
         }
       }
+    },
+    './agent/remote-project-upload': {
+      RemoteProjectUploadService: class {
+        private jobs = new Map<string, Record<string, unknown>>()
+        private listener: ((job: Record<string, unknown>) => void) | undefined
+        subscribe(listener: (job: Record<string, unknown>) => void): () => void {
+          this.listener = listener
+          return () => undefined
+        }
+        async prepare(_projectId: string, input: { sourcePaths: string[] }): Promise<unknown> {
+          const id = `upload-${this.jobs.size + 1}`
+          const job = {
+            id,
+            status: 'queued',
+            sourcePaths: input.sourcePaths,
+            destinationDirectory: '',
+            totalFiles: input.sourcePaths.length,
+            totalBytes: input.sourcePaths.length,
+            bytesTransferred: 0,
+            bytesPerSecond: 0,
+            requiresConfirmation: false,
+            confirmed: false,
+            files: input.sourcePaths.map((path) => ({
+              localPath: path,
+              relativePath: path.split('/').pop(),
+              name: path.split('/').pop(),
+              size: 1,
+              sha256: 'a'.repeat(64),
+              resolution: 'pending'
+            })),
+            createdAt: 1,
+            updatedAt: 1
+          }
+          this.jobs.set(id, job)
+          this.listener?.(job)
+          return job
+        }
+        async start(_projectId: string, jobId: string): Promise<unknown> {
+          const current = this.jobs.get(jobId)!
+          const files = (current.files as Array<Record<string, unknown>>).map((file) => ({
+            ...file,
+            destinationPath: `/canonical/project/${String(file.name)}`,
+            resolution: 'uploaded'
+          }))
+          const job = {
+            ...current,
+            files,
+            status: 'completed',
+            bytesTransferred: current.totalBytes
+          }
+          this.jobs.set(jobId, job)
+          this.listener?.(job)
+          return job
+        }
+        async wait(_projectId: string, jobId: string): Promise<unknown> {
+          return this.jobs.get(jobId)
+        }
+        async list(): Promise<unknown[]> {
+          return [...this.jobs.values()]
+        }
+        async cancel(jobId: string): Promise<unknown> {
+          const job = { ...this.jobs.get(jobId), status: 'cancelled' }
+          this.jobs.set(jobId, job)
+          return job
+        }
+        async retry(jobId: string): Promise<unknown> {
+          return this.start('', jobId)
+        }
+        async dispose(): Promise<void> {
+          return undefined
+        }
+      }
+    },
+    './agent/transfer': {
+      remoteTransferHostKey: (host: string) => `host:${host}`
+    },
+    './agent/wrappers/remote-ssh-session': {
+      connectRemoteSshSession: async () => ({ close: async () => undefined })
     },
     './agent/remote-workspace-boundary': {
       remoteBashApprovalScope: (hostAlias: string, cwd: string) =>
@@ -5296,6 +5378,60 @@ test('main IPC: input file picker returns an empty list when cancelled', async (
   const app = await harness()
 
   assert.deepEqual(await app.invoke('files:pickInput'), [])
+})
+
+test('main IPC: local upload selection becomes a background remote-project job before Wrapper binding', async () => {
+  const app = await harness()
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/tmp/sample.fastq.gz'] })
+
+  assert.deepEqual(await app.invoke('files:pickLocalUpload'), ['/tmp/sample.fastq.gz'])
+  const prepared = (await app.invoke('remoteProjectUploads:prepare', 'project-1', {
+    sourcePaths: ['/tmp/sample.fastq.gz'],
+    destinationDirectory: 'reads'
+  })) as { id: string; status: string }
+  assert.equal(prepared.status, 'queued')
+
+  const started = (await app.invoke('remoteProjectUploads:start', 'project-1', prepared.id, {
+    confirmed: true
+  })) as { status: string }
+  assert.equal(started.status, 'completed')
+  const jobs = (await app.invoke('remoteProjectUploads:list')) as Array<{ id: string }>
+  assert.deepEqual(
+    jobs.map((job) => job.id),
+    [prepared.id]
+  )
+  assert.equal(
+    app.events.some((event) => event.channel === 'remoteProjectUploads:changed'),
+    true
+  )
+
+  app.setWrapperPlan({
+    revision: 1,
+    targetSelection: {
+      projectId: 'project-1',
+      target: 'remote',
+      projectLocation: { kind: 'ssh' }
+    }
+  })
+  const recorded = (await app.invoke(
+    'wrappers:completeInputUpload',
+    prepared.id,
+    'plan-1',
+    'reads',
+    1
+  )) as {
+    planId: string
+    inputId: string
+    localPath: string
+    remotePath: string
+  }
+  assert.deepEqual(recorded, {
+    planId: 'plan-1',
+    inputId: 'reads',
+    expectedRevision: 1,
+    localPath: '/tmp/sample.fastq.gz',
+    remotePath: '/canonical/project/sample.fastq.gz'
+  })
 })
 
 test('main IPC: file preview is limited to project and Phi-owned files', async () => {

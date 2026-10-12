@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
 
-import { getProject, getProjectByCwd, type Project } from '../projects'
+import { getProject, getProjectByCwd, listProjects, type Project } from '../projects'
+import { remoteProjectAnchorPath } from '../remote-project-anchor'
 import { getPhiAgentDir } from '../runtime-paths'
 import { findWrapperCatalogEntry, type WrapperCatalogEntry } from './catalog'
 import { isEngineExecutable } from './manifest'
@@ -12,6 +13,7 @@ import type { ResolvedRemoteTarget } from './remote-connection-resolver'
 import { DEFAULT_REMOTE_RUNTIME } from '../../../shared/wrapperRemoteTypes'
 import { chooseWrapperTarget, type WrapperTargetDecision } from './target-policy'
 import {
+  isWithinRemoteRoot,
   parseWrapperInputReference,
   resolveLocalInputPath,
   resolveRemoteInputPath
@@ -30,6 +32,7 @@ import type {
   WrapperInputResolution,
   WrapperResourceRequest,
   WrapperRunPlan,
+  WrapperUploadedInputRecord,
   WrapperRetargetRequest
 } from './types'
 
@@ -77,7 +80,14 @@ function resolvePlanTarget(
   decision: WrapperTargetDecision
   errors: string[]
 } {
-  const project = input.projectId ? getProject(input.projectId) : getProjectByCwd(input.cwd)
+  const project = input.projectId
+    ? getProject(input.projectId)
+    : (getProjectByCwd(input.cwd) ??
+      listProjects().find(
+        (candidate) =>
+          candidate.location.kind === 'ssh' &&
+          input.cwd === remoteProjectAnchorPath(candidate.id, agentDir)
+      ))
   const errors = input.projectId && !project ? ['计划所属项目不存在'] : []
   if (
     input.projectId &&
@@ -346,6 +356,7 @@ function buildPlan(
       undefined,
     heavyWorkloadAcknowledged: false,
     params: resolvedParams,
+    inputDeclarations: manifest.inputs.map((declaration) => ({ ...declaration })),
     inputs,
     cwd: planCwd,
     outputDir: input.outputDir ?? defaultOutputDir(manifest),
@@ -465,6 +476,95 @@ export function reviseWrapperRunPlan(
   writeWrapperPlan(plan, agentDir)
   auditPlanRequest(plan, agentDir)
   return plan
+}
+
+/** Records a user-approved upload only after the transfer service has published it remotely. */
+export function recordWrapperUploadedInput(
+  request: WrapperUploadedInputRecord,
+  agentDir = getPhiAgentDir()
+): WrapperRunPlan {
+  const existing = readWrapperPlan(request.planId, agentDir)
+  if (!existing) throw new Error(`计划不存在: ${request.planId}`)
+  if (!['draft', 'valid', 'invalid'].includes(existing.state) || isWrapperPlanExpired(existing)) {
+    throw new Error('计划已提交、取消或过期，不能再绑定上传输入。')
+  }
+  if (existing.revision !== request.expectedRevision) {
+    throw new Error('计划已更新，请重新选择本机输入。')
+  }
+  const target = existing.targetSelection
+  const projectLocation = target?.projectLocation
+  if (
+    !target ||
+    target.target !== 'remote' ||
+    projectLocation?.kind !== 'ssh' ||
+    !target.remoteRoot
+  ) {
+    throw new Error('只有 SSH 项目的远程 Wrapper 计划可以绑定上传输入。')
+  }
+  if (!isAbsolute(request.localPath) || /[\0\r\n]/.test(request.localPath)) {
+    throw new Error('本机上传路径无效。')
+  }
+  if (
+    !request.remotePath.startsWith('/') ||
+    request.remotePath !== request.remotePath.replace(/\/+/g, '/') ||
+    /[\0\r\n]/.test(request.remotePath) ||
+    !isWithinRemoteRoot(projectLocation.canonicalRoot, request.remotePath)
+  ) {
+    throw new Error('上传落点必须位于远程项目目录内。')
+  }
+  const wrapper = findWrapperCatalogEntry(
+    existing.wrapper.canonicalId,
+    existing.wrapper.version,
+    agentDir
+  )
+  if (!wrapper) throw new Error('计划对应的 Wrapper 已不可用，请重新创建计划。')
+  if (!wrapper.manifest.inputs.some((input) => input.id === request.inputId)) {
+    throw new Error(`Wrapper 未声明输入: ${request.inputId}`)
+  }
+  const revised = reviseWrapperRunPlan(
+    existing.planId,
+    {
+      ...existing.params,
+      [request.inputId]: { source: 'remote', path: request.remotePath }
+    },
+    { actor: existing.actor, wrapper, cwd: existing.cwd, agentDir }
+  )
+  const previousUploads = new Map(
+    existing.inputs
+      .filter((input) => input.source === 'upload')
+      .map((input) => [input.id, input] as const)
+  )
+  const recorded: WrapperRunPlan = {
+    ...revised,
+    inputs: revised.inputs.map((input) => {
+      if (input.id === request.inputId) {
+        return {
+          ...input,
+          source: 'upload',
+          userValue: request.localPath,
+          localPaths: [request.localPath],
+          remotePaths: [request.remotePath],
+          allowedRemoteRoot: projectLocation.canonicalRoot
+        }
+      }
+      const previous = previousUploads.get(input.id)
+      const unchangedRemotePaths =
+        previous?.remotePaths?.length === input.remotePaths?.length &&
+        previous?.remotePaths?.every((path, index) => path === input.remotePaths?.[index])
+      return previous && unchangedRemotePaths
+        ? {
+            ...input,
+            source: 'upload',
+            userValue: previous.userValue,
+            localPaths: [...previous.localPaths],
+            remotePaths: previous.remotePaths ? [...previous.remotePaths] : undefined,
+            allowedRemoteRoot: previous.allowedRemoteRoot
+          }
+        : input
+    })
+  }
+  writeWrapperPlan(recorded, agentDir)
+  return recorded
 }
 
 /** A target change is a revalidated plan revision, never a mutable submit-time override. */

@@ -33,6 +33,11 @@ import type { SshBootstrapRendererBridge } from '../shared/sshBootstrapTypes'
 import type { RemoteRuntimeRootWarningCode } from '../shared/remoteRuntimeRootTypes'
 import type { RemoteMicromambaResult } from '../shared/remoteMicromambaTypes'
 import type {
+  PrepareRemoteProjectUploadInput,
+  RemoteProjectUploadJob,
+  StartRemoteProjectUploadOptions
+} from '../shared/remoteProjectUploadTypes'
+import type {
   RemoteRipgrepProgress,
   RemoteRipgrepResult,
   RemoteRipgrepStatusResult
@@ -650,8 +655,14 @@ declare global {
       getFileIcon: (path: string) => Promise<string | null>
       readResourceIcon: (key: string) => Promise<string | null>
       pickInputFiles: () => Promise<string[]>
+      pickLocalUploadFiles: () => Promise<string[]>
       getPathForFile: (file: File) => string
-      onInputFilesDropped: (cb: (paths: string[]) => void) => () => void
+      onInputFilesDropped: (
+        cb: (
+          paths: string[],
+          target: { kind: 'chat-composer' | 'wrapper-input' | 'remote-file-tree'; path?: string }
+        ) => void
+      ) => () => void
       previewFile: (path: string) => Promise<PreloadFilePreview>
       previewRemoteWorkspaceFile: (
         request: RemoteWorkspaceFileRequest
@@ -1224,6 +1235,25 @@ declare global {
       listEnvironmentBuilds: () => Promise<EnvironmentBuild[]>
       cancelEnvironmentBuild: (envId: string) => Promise<void>
       onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void) => () => void
+      prepareRemoteProjectUpload: (
+        projectId: string,
+        input: PrepareRemoteProjectUploadInput
+      ) => Promise<RemoteProjectUploadJob>
+      startRemoteProjectUpload: (
+        projectId: string,
+        jobId: string,
+        options?: StartRemoteProjectUploadOptions
+      ) => Promise<RemoteProjectUploadJob>
+      listRemoteProjectUploads: () => Promise<RemoteProjectUploadJob[]>
+      cancelRemoteProjectUpload: (jobId: string) => Promise<void>
+      retryRemoteProjectUpload: (jobId: string) => Promise<RemoteProjectUploadJob>
+      onRemoteProjectUploadsChanged: (cb: (job: RemoteProjectUploadJob) => void) => () => void
+      completeWrapperInputUpload: (
+        jobId: string,
+        planId: string,
+        inputId: string,
+        expectedRevision: number
+      ) => Promise<WrapperRunPlan>
       listAgentJobs: () => Promise<BackgroundAgentJob[]>
       listShellJobs: () => Promise<BackgroundShellJob[]>
       stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>

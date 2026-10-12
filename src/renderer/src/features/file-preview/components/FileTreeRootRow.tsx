@@ -11,6 +11,7 @@ export function FileTreeRootRow({
   rootDisplayPath,
   isExpanded,
   isActive,
+  localDropTargetPath,
   onToggle
 }: {
   rootPath: string
@@ -18,6 +19,7 @@ export function FileTreeRootRow({
   rootDisplayPath: string
   isExpanded: boolean
   isActive: boolean
+  localDropTargetPath?: string
   onToggle: () => void
 }): React.JSX.Element {
   const RootChevronIcon = isExpanded ? CollapseIcon : ExpandIcon
@@ -30,6 +32,8 @@ export function FileTreeRootRow({
       type="button"
       data-phi-file-tree-root="true"
       data-phi-file-kind="directory"
+      data-phi-file-drop-target={localDropTargetPath ? 'remote-file-tree' : undefined}
+      data-phi-file-drop-path={localDropTargetPath}
       title={rootDisplayPath}
       aria-expanded={isExpanded}
       onClick={onToggle}

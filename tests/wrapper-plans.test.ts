@@ -16,6 +16,7 @@ import type { WrapperCatalogEntry } from '../src/main/agent/wrappers/catalog'
 import {
   createWrapperRunPlan,
   isWrapperPlanExpired,
+  recordWrapperUploadedInput,
   retargetWrapperRunPlan,
   reviseWrapperRunPlan
 } from '../src/main/agent/wrappers/plans'
@@ -541,6 +542,116 @@ test('SSH project plans use their bound host and canonical path for ordinary SSH
       )
     })
   }
+})
+
+test('an SSH plan records only a completed explicit upload and becomes submit-ready with its server path', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const project = registerSshProject(agentDir, { scheduler: 'slurm', controller: 'sbatch' })
+    const localPath = join(projectDir, 'reads.fastq.gz')
+    writeFileSync(localPath, 'reads')
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: { source: 'upload' } },
+      cwd: join(agentDir, 'remote-project-anchors', project.id),
+      projectId: project.id,
+      agentDir
+    })
+
+    assert.equal(plan.state, 'invalid')
+    assert.equal(plan.inputs[0]?.source, 'upload')
+    assert.equal(plan.inputDeclarations?.[0]?.id, 'reads')
+    assert.match(plan.validation.errors.join('; '), /等待用户选择/)
+
+    const revised = recordWrapperUploadedInput(
+      {
+        planId: plan.planId,
+        inputId: 'reads',
+        expectedRevision: plan.revision,
+        localPath,
+        remotePath: '/data/project/reads.fastq.gz'
+      },
+      agentDir
+    )
+    assert.equal(revised.state, 'valid', revised.validation.errors.join('; '))
+    assert.equal(revised.revision, plan.revision + 1)
+    assert.equal(revised.params.reads, '/data/project/reads.fastq.gz')
+    assert.equal(revised.inputs[0]?.source, 'upload')
+    assert.deepEqual(revised.inputs[0]?.localPaths, [localPath])
+    assert.deepEqual(revised.inputs[0]?.remotePaths, ['/data/project/reads.fastq.gz'])
+    assert.equal(revised.inputs[0]?.allowedRemoteRoot, '/data/project')
+  })
+})
+
+test('recording a second uploaded input preserves the first input upload provenance', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const project = registerSshProject(agentDir)
+    const samples = join(projectDir, 'samples.csv')
+    const fasta = join(projectDir, 'reference.fa')
+    writeFileSync(samples, 'sample,fastq_1,fastq_2\n')
+    writeFileSync(fasta, '>chr1\nACGT\n')
+    const wrapper = installLegacyRnaseqWrapper(agentDir, projectDir)
+    const initial = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper,
+      params: {
+        input: { source: 'upload' },
+        fasta: { source: 'upload' },
+        gtf: '/data/project/genes.gtf'
+      },
+      cwd: join(agentDir, 'remote-project-anchors', project.id),
+      projectId: project.id,
+      agentDir
+    })
+    const withSamples = recordWrapperUploadedInput(
+      {
+        planId: initial.planId,
+        inputId: 'input',
+        expectedRevision: initial.revision,
+        localPath: samples,
+        remotePath: '/data/project/samples.csv'
+      },
+      agentDir
+    )
+    const completed = recordWrapperUploadedInput(
+      {
+        planId: withSamples.planId,
+        inputId: 'fasta',
+        expectedRevision: withSamples.revision,
+        localPath: fasta,
+        remotePath: '/data/project/reference.fa'
+      },
+      agentDir
+    )
+
+    const recordedSamples = completed.inputs.find((input) => input.id === 'input')
+    const recordedFasta = completed.inputs.find((input) => input.id === 'fasta')
+    assert.equal(recordedSamples?.source, 'upload')
+    assert.deepEqual(recordedSamples?.localPaths, [samples])
+    assert.deepEqual(recordedSamples?.remotePaths, ['/data/project/samples.csv'])
+    assert.equal(recordedFasta?.source, 'upload')
+    assert.deepEqual(recordedFasta?.localPaths, [fasta])
+    assert.deepEqual(recordedFasta?.remotePaths, ['/data/project/reference.fa'])
+  })
+})
+
+test('a Wrapper tool running from a private SSH anchor resolves the registered project without local fallback', () => {
+  withProjectHarness(({ agentDir, projectDir }) => {
+    const project = registerSshProject(agentDir, { scheduler: 'slurm', controller: 'sbatch' })
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: fastqQcWrapper(agentDir, projectDir),
+      params: { reads: { source: 'upload' } },
+      cwd: join(agentDir, 'remote-project-anchors', project.id),
+      agentDir
+    })
+    assert.equal(plan.targetSelection?.projectId, project.id)
+    assert.equal(plan.targetSelection?.projectLocation.kind, 'ssh')
+    assert.equal(plan.targetSelection?.target, 'remote')
+    assert.equal(plan.executor, 'slurm-controller')
+    assert.equal(plan.inputs[0]?.source, 'upload')
+    assert.match(plan.validation.errors.join('; '), /等待用户选择/)
+  })
 })
 
 test('SSH project without a compatible remote profile is invalid and cannot fall back to local', () => {

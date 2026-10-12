@@ -8,6 +8,7 @@ import {
   type WrapperCatalogEntry
 } from './catalog'
 import { createWrapperRunPlan } from './plans'
+import type { WrapperRunPlan } from './types'
 
 /**
  * Builds the LLM-callable `wrapper_*` tools — see docs/design/phi-wrapper-
@@ -159,6 +160,14 @@ export function buildWrapperInspectTool(agentDir: string = getPhiAgentDir()): Cu
   }
 }
 
+export function wrapperPlanNeedsUploadSelection(plan: WrapperRunPlan): boolean {
+  return (
+    plan.inputs.some((input) => input.source === 'upload' && input.remotePaths?.length === 0) &&
+    plan.validation.errors.length > 0 &&
+    plan.validation.errors.every((error) => error.includes('等待用户选择本机文件上传'))
+  )
+}
+
 /**
  * Builds the `wrapper_<id>` execute tool for one specific catalog entry.
  * Calling it creates a `WrapperRunPlan` (never a submitted run — submission
@@ -193,6 +202,14 @@ export function buildWrapperExecuteTool(
             source: { type: 'string', enum: ['local', 'remote'] },
             path: { type: 'string', minLength: 1 }
           }
+        },
+        {
+          type: 'object',
+          required: ['source'],
+          additionalProperties: false,
+          properties: {
+            source: { type: 'string', enum: ['upload'] }
+          }
         }
       ]
     }
@@ -216,14 +233,17 @@ export function buildWrapperExecuteTool(
           agentDir
         })
 
+        const waitingForUpload = wrapperPlanNeedsUploadSelection(plan)
         const summary = plan.validation.valid
           ? `已创建计划 ${plan.planId}（${manifest.id}），校验通过。请让用户在聊天中查看计划卡片并提交。`
-          : `已创建计划 ${plan.planId}（${manifest.id}），但校验未通过：${plan.validation.errors.join('; ')}`
+          : waitingForUpload
+            ? `已创建计划 ${plan.planId}（${manifest.id}）。请让用户在计划卡中选择本机输入并完成上传。`
+            : `已创建计划 ${plan.planId}（${manifest.id}），但校验未通过：${plan.validation.errors.join('; ')}`
 
         return {
           content: [{ type: 'text', text: summary }],
           details: { kind: 'wrapper_plan', planId: plan.planId },
-          ...(plan.validation.valid ? {} : { isError: true })
+          ...(plan.validation.valid || waitingForUpload ? {} : { isError: true })
         }
       } catch (error) {
         return {

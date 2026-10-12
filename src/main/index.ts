@@ -124,7 +124,7 @@ import {
   type OfficeDeliverApprovalInput
 } from './agent/office/office-deliver-approval'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
@@ -172,6 +172,7 @@ import {
 import {
   deleteRemoteHostProfile,
   getRemoteHostProfile,
+  remoteConnectionConfigForProfile,
   saveRemoteHostProfile
 } from './agent/remote-hosts'
 import {
@@ -209,6 +210,8 @@ import { createCursorH2Bridge } from './agent/cursor-h2-bridge'
 import { installRemoteNextflow } from './agent/remote-nextflow-install'
 import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
 import { createCheckedRemoteProject } from './agent/remote-project-create'
+import { RemoteProjectUploadService } from './agent/remote-project-upload'
+import { remoteTransferHostKey } from './agent/transfer'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
 import {
   remoteBashApprovalScope,
@@ -447,7 +450,8 @@ import {
 } from './agent/agents/run-continue'
 import { agentRunHostHandlers } from './agent/agents/run-host'
 import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
-import { retargetWrapperRunPlan } from './agent/wrappers/plans'
+import { recordWrapperUploadedInput, retargetWrapperRunPlan } from './agent/wrappers/plans'
+import { connectRemoteSshSession } from './agent/wrappers/remote-ssh-session'
 import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
 import {
   listWrapperRuns,
@@ -2408,6 +2412,31 @@ async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
   }
 }
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
+const remoteProjectUploads = new RemoteProjectUploadService({
+  connectProject: async (projectId) => {
+    const project = getProject(projectId)
+    if (!project || project.location.kind !== 'ssh') {
+      throw new Error('只能向已登记的 SSH 项目上传本机文件')
+    }
+    const profile = getRemoteHostProfile(project.location.hostProfileId, AGENT_DIR)
+    if (!profile) throw new Error('远程项目的 SSH 服务器档案不可用')
+    const session = await connectRemoteSshSession({
+      ...remoteConnectionConfigForProfile(profile),
+      readyTimeoutMs: 10_000,
+      execTimeoutMs: 30_000
+    })
+    return {
+      session,
+      remoteProjectRoot: project.location.remoteRoot,
+      canonicalRemoteProjectRoot: project.location.canonicalRoot,
+      hostKey: remoteTransferHostKey(profile.hostAlias),
+      workspaceId: createHash('sha256').update(project.location.canonicalRoot).digest('hex')
+    }
+  }
+})
+remoteProjectUploads.subscribe((job) => {
+  sendToAllWindows('remoteProjectUploads:changed', job)
+})
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
   string,
@@ -7570,6 +7599,7 @@ function cleanupMainWindowRuntime(): Promise<void> {
       safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
       safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
       safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
+      safeCleanupStep('remote_upload_cleanup_failed', () => remoteProjectUploads.dispose()),
       safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
       safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
     ])
@@ -8434,6 +8464,99 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? [] : result.filePaths
   })
+  ipcMain.handle('files:pickLocalUpload', async () => {
+    const window = getActiveWindow()
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openFile', 'openDirectory', 'multiSelections']
+    }
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options)
+    return result.canceled ? [] : result.filePaths
+  })
+  ipcMain.handle('remoteProjectUploads:prepare', async (_, projectId: unknown, value: unknown) => {
+    if (typeof projectId !== 'string' || !projectId || !isRecord(value)) {
+      throw new Error('远程项目上传请求无效')
+    }
+    const sourcePaths = value.sourcePaths
+    const destinationDirectory = value.destinationDirectory
+    if (
+      Object.keys(value).some((key) => key !== 'sourcePaths' && key !== 'destinationDirectory') ||
+      !Array.isArray(sourcePaths) ||
+      sourcePaths.some((path) => typeof path !== 'string') ||
+      (destinationDirectory !== undefined && typeof destinationDirectory !== 'string')
+    ) {
+      throw new Error('远程项目上传只能包含本机来源和项目内落点')
+    }
+    return remoteProjectUploads.prepare(projectId, {
+      sourcePaths,
+      ...(typeof destinationDirectory === 'string' ? { destinationDirectory } : {})
+    })
+  })
+  ipcMain.handle(
+    'remoteProjectUploads:start',
+    async (_, projectId: unknown, jobId: unknown, value: unknown) => {
+      if (typeof projectId !== 'string' || !projectId || typeof jobId !== 'string' || !jobId) {
+        throw new Error('远程项目上传任务无效')
+      }
+      if (
+        value !== undefined &&
+        (!isRecord(value) ||
+          Object.keys(value).some((key) => key !== 'confirmed') ||
+          (value.confirmed !== undefined && typeof value.confirmed !== 'boolean'))
+      ) {
+        throw new Error('远程项目上传确认无效')
+      }
+      return remoteProjectUploads.start(projectId, jobId, {
+        confirmed: isRecord(value) && value.confirmed === true
+      })
+    }
+  )
+  ipcMain.handle('remoteProjectUploads:list', () => remoteProjectUploads.list())
+  ipcMain.handle('remoteProjectUploads:cancel', async (_, jobId: unknown) => {
+    if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
+    await remoteProjectUploads.cancel(jobId)
+  })
+  ipcMain.handle('remoteProjectUploads:retry', async (_, jobId: unknown) => {
+    if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
+    return remoteProjectUploads.retry(jobId)
+  })
+  ipcMain.handle(
+    'wrappers:completeInputUpload',
+    async (_, jobId: unknown, planId: unknown, inputId: unknown, expectedRevision: unknown) => {
+      if (
+        typeof jobId !== 'string' ||
+        typeof planId !== 'string' ||
+        typeof inputId !== 'string' ||
+        !Number.isSafeInteger(expectedRevision)
+      ) {
+        throw new Error('Wrapper 上传输入绑定无效')
+      }
+      const plan = readWrapperPlan(planId)
+      const projectId = plan?.targetSelection?.projectId
+      if (!projectId || plan.targetSelection?.projectLocation.kind !== 'ssh') {
+        throw new Error('Wrapper 上传输入计划不属于 SSH 项目')
+      }
+      const job = await remoteProjectUploads.wait(projectId, jobId)
+      if (
+        job.status !== 'completed' ||
+        job.sourcePaths.length !== 1 ||
+        !job.files[0]?.destinationPath
+      ) {
+        throw new Error('上传未完成，Wrapper 计划不会启动')
+      }
+      const parts = job.files[0].relativePath.split('/')
+      let remotePath = job.files[0].destinationPath
+      for (let index = 1; index < parts.length; index += 1) remotePath = posix.dirname(remotePath)
+      return recordWrapperUploadedInput({
+        planId,
+        inputId,
+        expectedRevision: expectedRevision as number,
+        localPath: job.sourcePaths[0]!,
+        remotePath
+      })
+    }
+  )
   ipcMain.handle('files:preview', async (_, filePath: string) => {
     return createFilePreview(filePath)
   })

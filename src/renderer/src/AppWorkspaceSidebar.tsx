@@ -56,6 +56,8 @@ export type AppWorkspaceSidebarProps = {
   activeWorkspacePath: string | null
   workspaceFileTreeRevision: number
   onOpenWorkspaceFile: (path: string) => void
+  onSelectWorkspaceDirectory?: (path: string) => void
+  onDropLocalPaths?: (paths: string[], destinationPath: string) => void
   onListWorkspaceDirectory: (path: string) => Promise<DirectoryListing>
 
   runtimeProjectCwd: string
@@ -164,6 +166,8 @@ function AppWorkspaceSidebarImpl({
   activeWorkspacePath,
   workspaceFileTreeRevision,
   onOpenWorkspaceFile,
+  onSelectWorkspaceDirectory,
+  onDropLocalPaths,
   onListWorkspaceDirectory,
   runtimeProjectCwd,
   runtimeStatus,
@@ -366,6 +370,8 @@ function AppWorkspaceSidebarImpl({
               activePath={activeWorkspacePath}
               treeRevision={workspaceFileTreeRevision}
               onOpenFile={(path) => navigate(() => onOpenWorkspaceFile(path))}
+              onSelectDirectory={onSelectWorkspaceDirectory}
+              onDropLocalPaths={onDropLocalPaths}
               onListDirectory={onListWorkspaceDirectory}
             />
           )}

@@ -47,6 +47,7 @@ type ProjectFileTreeProps = {
   activePath: string
   onOpenFile: (path: string) => void
   onSelectDirectory?: (path: string) => void
+  onDropLocalPaths?: (paths: string[], destinationPath: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
   initialListing?: DirectoryListing
   genericDirectoryIcons?: boolean
@@ -163,6 +164,7 @@ export function ProjectFileTree({
   activePath,
   onOpenFile,
   onSelectDirectory,
+  onDropLocalPaths,
   onListDirectory,
   initialListing,
   genericDirectoryIcons = false,
@@ -192,6 +194,14 @@ export function ProjectFileTree({
     [revealPath, rootPath]
   )
   const revealTarget = revealPaths.at(-1) ?? ''
+
+  useEffect(() => {
+    if (!onDropLocalPaths || typeof window.api.onInputFilesDropped !== 'function') return undefined
+    return window.api.onInputFilesDropped((paths, target) => {
+      if (target.kind !== 'remote-file-tree' || !target.path || paths.length === 0) return
+      onDropLocalPaths(paths, target.path)
+    })
+  }, [onDropLocalPaths])
 
   useEffect(() => {
     if (revealPaths.length === 0) return
@@ -502,6 +512,7 @@ export function ProjectFileTree({
               isExpanded={isExpanded}
               isActive={isActive}
               genericDirectoryIcons={genericDirectoryIcons}
+              localDropTargetPath={onDropLocalPaths && isDirectory ? entry.path : undefined}
               onClick={() => {
                 if (isDirectory) {
                   onSelectDirectory?.(entry.path)
@@ -520,6 +531,7 @@ export function ProjectFileTree({
       expandedPaths,
       genericDirectoryIcons,
       onOpenFile,
+      onDropLocalPaths,
       onSelectDirectory,
       toggleDirectory
     ]
@@ -581,6 +593,7 @@ export function ProjectFileTree({
           rootDisplayPath={rootDisplayPath}
           isExpanded={rootExpanded}
           isActive={rootActive}
+          localDropTargetPath={onDropLocalPaths ? rootPath : undefined}
           onToggle={() => {
             onSelectDirectory?.(rootPath)
             toggleDirectory(rootPath)

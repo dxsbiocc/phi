@@ -50,20 +50,24 @@ export function parseWrapperInputReference(
   value: unknown,
   defaultSource: WrapperInputReference['source']
 ): { reference?: WrapperInputReference; errors: string[] } {
-  const reference: WrapperInputReference | undefined =
-    typeof value === 'string'
-      ? { source: defaultSource, path: value }
-      : value &&
-          typeof value === 'object' &&
-          !Array.isArray(value) &&
-          Object.keys(value).sort().join(',') === 'path,source' &&
-          ((value as Record<string, unknown>).source === 'local' ||
-            (value as Record<string, unknown>).source === 'remote') &&
-          typeof (value as Record<string, unknown>).path === 'string'
-        ? (value as WrapperInputReference)
-        : undefined
+  let reference: WrapperInputReference | undefined
+  if (typeof value === 'string' && defaultSource !== 'upload') {
+    reference = { source: defaultSource, path: value }
+  } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const keys = Object.keys(record).sort().join(',')
+    if (keys === 'source' && record.source === 'upload') {
+      reference = { source: 'upload' }
+    } else if (
+      keys === 'path,source' &&
+      (record.source === 'local' || record.source === 'remote') &&
+      typeof record.path === 'string'
+    ) {
+      reference = { source: record.source, path: record.path }
+    }
+  }
   if (!reference) return { errors: [`输入 "${inputId}" 必须是路径或 {source, path} 引用`] }
-  if (!reference.path.trim() || reference.path.includes('\0')) {
+  if (reference.source !== 'upload' && (!reference.path.trim() || reference.path.includes('\0'))) {
     return { errors: [`输入 "${inputId}" 不能为空或包含 NUL`] }
   }
   return { reference, errors: [] }
@@ -76,6 +80,23 @@ export function resolveRemoteInputPath(
 ): PathResolutionResult {
   const parsed = parseWrapperInputReference(inputId, value, 'remote')
   if (!parsed.reference) return { errors: parsed.errors }
+  if (parsed.reference.source === 'upload') {
+    if (context.projectLocation?.kind !== 'ssh') {
+      return { errors: [`输入 "${inputId}" 仅能在 SSH 项目中选择本机文件上传`] }
+    }
+    return {
+      resolution: {
+        id: inputId,
+        kind: 'path',
+        source: 'upload',
+        userValue: '',
+        localPaths: [],
+        remotePaths: [],
+        allowedRemoteRoot: context.projectLocation.canonicalRoot
+      },
+      errors: [`输入 "${inputId}" 等待用户选择本机文件上传`]
+    }
+  }
   const { source, path } = parsed.reference
   if (REMOTE_URL_PATTERN.test(path)) {
     return source === 'remote'

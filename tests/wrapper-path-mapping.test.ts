@@ -71,6 +71,22 @@ test('SSH project resolves relative, absolute and glob inputs only inside its se
   )
 })
 
+test('SSH upload provenance waits for a user-selected local path without changing source local mapping', () => {
+  const pending = resolveRemoteInputPath('reads', { source: 'upload' }, { projectLocation: ssh })
+  assert.equal(pending.resolution?.source, 'upload')
+  assert.deepEqual(pending.resolution?.localPaths, [])
+  assert.deepEqual(pending.resolution?.remotePaths, [])
+  assert.match(pending.errors[0], /选择.*上传/)
+
+  const mapped = resolveRemoteInputPath(
+    'reads',
+    { source: 'local', path: '/Users/me/project/data/reads.fastq.gz' },
+    { projectLocation: local, mapping }
+  )
+  assert.equal(mapped.resolution?.source, 'local')
+  assert.deepEqual(mapped.resolution?.remotePaths, ['/cluster/project/data/reads.fastq.gz'])
+})
+
 test('local project maps only explicit local references and leaves remote strings remote', () => {
   const context = { projectLocation: local, mapping }
   const mapped = resolveRemoteInputPath(
