@@ -20,6 +20,7 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -1155,6 +1156,8 @@ type RendererAuthApi = {
   cancelRemoteProjectUpload: (jobId: string) => Promise<void>
   retryRemoteProjectUpload: (jobId: string) => Promise<RemoteProjectUploadJob>
   onRemoteProjectUploadsChanged: (cb: (job: RemoteProjectUploadJob) => void) => Unsubscribe
+  listRemoteJupyterJobs: () => Promise<RemoteJupyterStartJob[]>
+  onRemoteJupyterJobsChanged: (cb: (job: RemoteJupyterStartJob) => void) => Unsubscribe
   completeWrapperInputUpload: (
     jobId: string,
     planId: string,
@@ -1712,6 +1715,13 @@ const api: RendererAuthApi = {
     const handler = (_: unknown, job: RemoteProjectUploadJob): void => cb(job)
     ipcRenderer.on('remoteProjectUploads:changed', handler)
     return () => ipcRenderer.removeListener('remoteProjectUploads:changed', handler)
+  },
+  listRemoteJupyterJobs: (): Promise<RemoteJupyterStartJob[]> =>
+    ipcRenderer.invoke('remoteJupyterJobs:list'),
+  onRemoteJupyterJobsChanged: (cb): Unsubscribe => {
+    const handler = (_: unknown, job: RemoteJupyterStartJob): void => cb(job)
+    ipcRenderer.on('remoteJupyterJobs:changed', handler)
+    return () => ipcRenderer.removeListener('remoteJupyterJobs:changed', handler)
   },
   completeWrapperInputUpload: (jobId, planId, inputId, expectedRevision): Promise<WrapperRunPlan> =>
     ipcRenderer.invoke('wrappers:completeInputUpload', jobId, planId, inputId, expectedRevision),

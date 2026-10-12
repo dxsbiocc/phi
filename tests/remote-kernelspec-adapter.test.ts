@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import type { EnvRequestResult } from '../src/main/agent/content/env-request'
-import { RemoteKernelspecAdapter } from '../src/main/agent/notebook/remote-kernelspec-adapter'
+import {
+  parseDetectedRemoteJupyter,
+  RemoteKernelspecAdapter
+} from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import { resolveRemoteBaseEnvironment } from '../src/main/agent/remote-runtime/base-environment'
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
 import {
@@ -352,4 +355,114 @@ test('an opted-in user prefix without ipykernel is not registered or exposed in 
   } finally {
     fixture.cleanup()
   }
+})
+
+function installFakeServerJupyter(
+  prefix: string,
+  options: { ipykernel?: boolean; version?: string } = {}
+): { jupyter: string; python: string } {
+  const bin = join(prefix, 'bin')
+  mkdirSync(bin, { recursive: true })
+  const jupyter = join(bin, 'jupyter')
+  const python = join(bin, 'python')
+  writeFileSync(
+    jupyter,
+    `#!/bin/sh\nif [ "$1 $2" = "server --version" ]; then echo ${options.version ?? '2.14.2'}; exit 0; fi\nexit 1\n`
+  )
+  writeFileSync(
+    python,
+    `#!/bin/sh\nif [ "$1 $2" = "-c import ipykernel" ]; then exit ${options.ipykernel === false ? 1 : 0}; fi\nexit 1\n`
+  )
+  chmodSync(jupyter, 0o755)
+  chmodSync(python, 0o755)
+  return { jupyter, python }
+}
+
+test('an existing server Jupyter with ipykernel is used without building an environment', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const existing = installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'))
+    const progress: string[] = []
+    const prepared = await createAdapter(fixture).prepareRuntime({
+      runtimeSessionId: 'runtime-1',
+      onProgress: (text) => progress.push(text)
+    })
+
+    assert.equal(prepared.source, 'existing')
+    assert.equal(prepared.launch.command, existing.jupyter)
+    assert.equal(prepared.launch.args[0], 'server')
+    assert.equal(prepared.kernels.preferredKernelName, 'server-python')
+    assert.equal(prepared.kernels.jupyterServer.version, '2.14.2')
+    assert.equal(createAdapter(fixture).select(prepared.kernels).name, 'server-python')
+    const spec = JSON.parse(
+      readFileSync(
+        join(fixture.runtimeRoot, 'jupyter', 'kernels', 'server-python', 'kernel.json'),
+        'utf8'
+      )
+    ) as { argv: string[] }
+    assert.equal(spec.argv[0], existing.python)
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
+    assert.ok(
+      progress.some((line) => line.includes(`使用服务器已有的 Jupyter：${existing.jupyter}`))
+    )
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('the configured Jupyter path wins over one found elsewhere on the server', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'))
+    const configured = installFakeServerJupyter(join(fixture.remoteHome, 'tools'), {
+      version: '2.15.0'
+    })
+    const service = new RemoteEnvironmentService({
+      micromambaVersion: 'test',
+      openWorkspace: async () => fixture.workspace,
+      confirm: async () => true
+    })
+    const adapter = new RemoteKernelspecAdapter({
+      environments: service,
+      openWorkspace: async () => fixture.workspace,
+      configuredJupyterPath: () => configured.jupyter
+    })
+    const prepared = await adapter.prepareRuntime({ runtimeSessionId: 'runtime-1' })
+    assert.equal(prepared.launch.command, configured.jupyter)
+    assert.equal(prepared.kernels.jupyterServer.version, '2.15.0')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a server Jupyter whose Python lacks ipykernel falls back to the managed environment', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'), { ipykernel: false })
+    const progress: string[] = []
+    const prepared = await createAdapter(fixture).prepareRuntime({
+      runtimeSessionId: 'runtime-1',
+      onProgress: (text) => progress.push(text)
+    })
+    assert.equal(prepared.source, 'managed')
+    assert.equal(prepared.kernels.preferredKernelName, 'phi-python')
+    assert.ok(progress.some((line) => line.includes('改用 Phi 受管环境')))
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('detection output is accepted only with absolute paths', () => {
+  assert.deepEqual(
+    parseDetectedRemoteJupyter('noise\nPHI_JUPYTER\t/opt/bin/jupyter\t/opt/bin/python\t2.1\n'),
+    {
+      jupyter: '/opt/bin/jupyter',
+      python: '/opt/bin/python',
+      version: '2.1'
+    }
+  )
+  assert.equal(parseDetectedRemoteJupyter('PHI_JUPYTER\tjupyter\t/opt/bin/python\t2.1'), undefined)
+  assert.equal(parseDetectedRemoteJupyter(''), undefined)
 })

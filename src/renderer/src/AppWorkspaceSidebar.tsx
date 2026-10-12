@@ -67,6 +67,7 @@ export type AppWorkspaceSidebarProps = {
   onOpenRuntimeNotebook: (notebookPath: string) => void
   onRefreshRuntime: () => void
   onStartRuntime: (cwd: string) => void
+  onOpenRuntimeStartLog?: () => void
   onStopRuntime: (cwd: string) => void
   onStopRuntimeNotebookKernel: (notebookPath: string) => void
 
@@ -177,6 +178,7 @@ function AppWorkspaceSidebarImpl({
   onOpenRuntimeNotebook,
   onRefreshRuntime,
   onStartRuntime,
+  onOpenRuntimeStartLog,
   onStopRuntime,
   onStopRuntimeNotebookKernel,
   phiPlugins,
@@ -388,6 +390,7 @@ function AppWorkspaceSidebarImpl({
         closingNotebookPath={runtimeClosingNotebookPath}
         onRefresh={onRefreshRuntime}
         onStartJupyter={onStartRuntime}
+        {...(onOpenRuntimeStartLog ? { onOpenStartLog: onOpenRuntimeStartLog } : {})}
         onStopJupyter={onStopRuntime}
         onStopNotebookKernel={onStopRuntimeNotebookKernel}
       />

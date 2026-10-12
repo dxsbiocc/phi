@@ -2,6 +2,7 @@ import {
   Box,
   Chip,
   IconButton,
+  Link,
   List,
   ListItemButton,
   ListItemText,
@@ -27,6 +28,8 @@ export interface RuntimeSidebarProps {
   closingNotebookPath?: string | null
   onRefresh: () => void
   onStartJupyter: (cwd: string) => void
+  /** Opens the newest remote Jupyter startup job in the background jobs panel. */
+  onOpenStartLog?: () => void
   onStopJupyter: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => void
   onStopNotebookKernel: (notebookPath: string) => void
 }
@@ -145,6 +148,7 @@ export function RuntimeSidebar({
   closingNotebookPath = null,
   onRefresh,
   onStartJupyter,
+  onOpenStartLog,
   onStopJupyter,
   onStopNotebookKernel
 }: RuntimeSidebarProps): React.JSX.Element {
@@ -248,18 +252,40 @@ export function RuntimeSidebar({
                 />
               </Stack>
             }
-            secondary={serverMetaLabel(server)}
+            secondary={
+              <>
+                <Box
+                  component="span"
+                  title={serverMetaLabel(server)}
+                  sx={{
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden'
+                  }}
+                >
+                  {serverMetaLabel(server)}
+                </Box>
+                {server?.runtimeKind === 'ssh' && onOpenStartLog ? (
+                  <Link
+                    component="button"
+                    type="button"
+                    underline="hover"
+                    data-phi-runtime-start-log
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onOpenStartLog()
+                    }}
+                    sx={{ fontSize: '0.78rem', mt: 0.25, display: 'inline-block' }}
+                  >
+                    查看启动日志
+                  </Link>
+                ) : null}
+              </>
+            }
             slotProps={{
               primary: { component: 'div' },
-              secondary: {
-                sx: {
-                  fontSize: '0.8rem',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden'
-                }
-              }
+              secondary: { component: 'div', sx: { fontSize: '0.8rem' } }
             }}
           />
           <Stack

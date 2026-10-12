@@ -21,6 +21,11 @@ import {
 } from './jupyter-runtime-backend'
 import { RemoteKernelspecAdapter } from './remote-kernelspec-adapter'
 import { RemoteJupyterServerSupervisor } from './remote-jupyter-server'
+import {
+  describeRemoteJupyterError,
+  type RemoteJupyterStartJobHandle,
+  type RemoteJupyterStartJobs
+} from './remote-jupyter-start-jobs'
 import type { RemoteJupyterResourcePolicyInput } from './remote-jupyter-resource-guard'
 import { AnalysisNotebookToolExecutor, type NotebookDraftChange } from './notebook-tool-executor'
 import type { NotebookToolRequest } from './notebook-tools'
@@ -54,8 +59,12 @@ export class RemoteNotebookRuntimeController {
       projectCwd: string
       serverLabel: string
       runtime: JupyterRuntimeBackend
+      /** Starts the background-job record of one startup attempt. */
+      beginJob?: () => RemoteJupyterStartJobHandle | undefined
     }
   ) {}
+
+  private job?: RemoteJupyterStartJobHandle
 
   status(): RemoteNotebookServerStatus {
     const current = this.options.runtime.status(this.options.projectCwd)
@@ -80,9 +89,17 @@ export class RemoteNotebookRuntimeController {
   start(): RemoteNotebookServerStatus {
     if (!this.starting && !this.status().hasEndpoint) {
       this.lastError = undefined
-      const pending = this.options.runtime.start(this.options.projectCwd).catch((error) => {
-        this.lastError = error instanceof Error ? error.message : String(error)
-      })
+      const job = this.options.beginJob?.()
+      this.job = job
+      job?.step(`连接 ${this.options.serverLabel}，准备启动远程 Jupyter`)
+      const pending = this.options.runtime.start(this.options.projectCwd).then(
+        () => job?.succeed(),
+        (error) => {
+          // Causes carry the actual reason, such as an early exit or a probe timeout.
+          this.lastError = describeRemoteJupyterError(error)
+          job?.fail(error)
+        }
+      )
       const tracked = pending.finally(() => {
         if (this.starting === tracked) this.starting = undefined
       })
@@ -97,6 +114,7 @@ export class RemoteNotebookRuntimeController {
 
   async stop(options: { abandonUnconfirmed?: boolean } = {}): Promise<RemoteNotebookServerStatus> {
     const pending = this.starting
+    if (pending) this.job?.cancel()
     await this.options.runtime.stop(this.options.projectCwd, options)
     await pending
     this.lastError = undefined
@@ -136,6 +154,11 @@ type RemoteBackendOptions = {
   notebookExecutor: AnalysisNotebookExecutor
   onDraftChanged?: (change: NotebookDraftChange) => void
   resourcePolicy?: RemoteJupyterResourcePolicyInput
+  projectId?: string
+  /** Records each startup attempt as a background job. */
+  startJobs?: RemoteJupyterStartJobs
+  /** The Jupyter path saved in the host's remote settings. */
+  configuredJupyterPath?: () => string | undefined
 }
 
 export type RemoteAnalysisNotebookBackendOptions = Omit<RemoteBackendOptions, 'projectHost'> & {
@@ -161,6 +184,7 @@ export class RemoteAnalysisNotebookBackend {
   readonly tools: AnalysisNotebookToolExecutor
   readonly controller: RemoteNotebookRuntimeController
   private readonly watches = new Map<string, NotebookWorkspaceWatchSubscription>()
+  private currentJob?: RemoteJupyterStartJobHandle
 
   constructor(private readonly options: RemoteBackendOptions) {
     this.projectCwd = options.projectCwd
@@ -173,17 +197,34 @@ export class RemoteAnalysisNotebookBackend {
     this.runtime = new RemoteJupyterRuntimeBackend({
       kernelspecs,
       runtimeSessionId: options.runtimeSessionId,
+      onProgress: (text) => this.currentJob?.step(text),
       createSupervisor: (launch) =>
         new RemoteJupyterServerSupervisor({
           connection: options.connection,
           launch,
+          // Server output is the only place a failing launch explains itself.
+          onLog: (line) => this.currentJob?.output(line),
+          onStateChange: (status) => this.currentJob?.state(status.state, status.message),
           ...(options.resourcePolicy ? { resourcePolicy: options.resourcePolicy } : {})
         })
     })
+    const startJobs = options.startJobs
     this.controller = new RemoteNotebookRuntimeController({
       projectCwd: options.projectCwd,
       serverLabel: options.serverLabel,
-      runtime: this.runtime
+      runtime: this.runtime,
+      ...(startJobs
+        ? {
+            beginJob: () => {
+              this.currentJob = startJobs.begin({
+                projectId: options.projectId ?? options.projectCwd,
+                projectName: options.projectName,
+                serverLabel: options.serverLabel
+              })
+              return this.currentJob
+            }
+          }
+        : {})
     })
     this.sessions = new AnalysisNotebookSessionRegistry({ runtimeBackend: this.runtime })
     this.tools = this.createToolExecutor(options)
@@ -256,7 +297,10 @@ export class RemoteAnalysisNotebookBackend {
     })
     return new RemoteKernelspecAdapter({
       environments,
-      openWorkspace: options.openWorkspace
+      openWorkspace: options.openWorkspace,
+      ...(options.configuredJupyterPath
+        ? { configuredJupyterPath: options.configuredJupyterPath }
+        : {})
     })
   }
 

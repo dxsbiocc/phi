@@ -469,6 +469,7 @@ import {
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import { getOmpBridge } from './agent/omp/omp-bridge'
+import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
   normalizeProjectMemorySettings,
   type ProjectMemorySnapshot
@@ -1487,6 +1488,8 @@ function projectRemoteRuntimeRoot(project: Project): ReturnType<typeof resolveRe
   return resolveProjectRuntimeRoot(project, hostOverride)
 }
 
+const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
+
 function remoteNotebookTarget(project: Project, sessionId: string): RemoteRuntimeTarget {
   if (project.location.kind !== 'ssh') throw new Error('远程 Notebook 项目位置无效')
   const root = projectRemoteRuntimeRoot(project)
@@ -1528,6 +1531,13 @@ function createRemoteNotebookBackend(
       return openRemoteRuntimeWorkspace(remoteNotebookTarget(project, activeSessionId), signal)
     },
     connection: authorized.connection,
+    projectId: project.id,
+    startJobs: remoteJupyterStartJobs,
+    // Read at each start, so a path saved in remote settings applies without reopening.
+    configuredJupyterPath: () =>
+      project.location.kind === 'ssh'
+        ? readHostRemoteEnvironmentPaths(project.location.hostProfileId, AGENT_DIR).jupyter
+        : undefined,
     confirmEnvironment: async () => true,
     resolveBaseEnvironment: (ref, pluginId) =>
       resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
@@ -1927,6 +1937,9 @@ const remoteProjectUploads = new RemoteProjectUploadService({
 })
 remoteProjectUploads.subscribe((job) => {
   sendToAllWindows('remoteProjectUploads:changed', job)
+})
+remoteJupyterStartJobs.subscribe((job) => {
+  sendToAllWindows('remoteJupyterJobs:changed', job)
 })
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
@@ -7916,6 +7929,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle('remoteProjectUploads:list', () => remoteProjectUploads.list())
+  ipcMain.handle('remoteJupyterJobs:list', () => remoteJupyterStartJobs.list())
   ipcMain.handle('remoteProjectUploads:cancel', async (_, jobId: unknown) => {
     if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
     await remoteProjectUploads.cancel(jobId)

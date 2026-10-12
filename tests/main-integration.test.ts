@@ -25,6 +25,7 @@ import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
+import * as remoteJupyterStartJobs from '../src/main/agent/notebook/remote-jupyter-start-jobs'
 import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
@@ -1351,6 +1352,7 @@ async function harness(
     '../shared/htmlReportPreview': htmlReportPreview,
     '../shared/phiPluginProblems': phiPluginProblems,
     '../shared/projectMemoryTypes': projectMemoryTypes,
+    './agent/notebook/remote-jupyter-start-jobs': remoteJupyterStartJobs,
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },

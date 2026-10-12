@@ -134,6 +134,8 @@ export interface RemoteJupyterRuntimeBackendOptions {
   kernelspecs: RemoteKernelAdapter
   runtimeSessionId: string
   createSupervisor: (launch: RemoteJupyterLaunchCommand) => RemoteSupervisor
+  /** Human-readable preparation steps, for the startup log. */
+  onProgress?: (text: string) => void
 }
 
 export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
@@ -192,7 +194,8 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
     try {
       const prepared = await this.options.kernelspecs.prepareRuntime({
         runtimeSessionId: this.options.runtimeSessionId,
-        signal
+        signal,
+        ...(this.options.onProgress ? { onProgress: this.options.onProgress } : {})
       })
       this.currentKernels = prepared.kernels
       this.preparing = false

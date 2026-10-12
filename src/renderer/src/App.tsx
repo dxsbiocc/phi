@@ -40,7 +40,7 @@ import { SessionExportDialog } from './features/chat/components/SessionExportDia
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
-import { BackgroundJobsPanel } from './features/jobs/BackgroundJobsPanel'
+import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
 import BrowserPanel from './features/browser/BrowserPanel'
 import TerminalPanel from './features/terminal/TerminalPanel'
 import { useTerminalWorkspaceRestoration } from './features/terminal/hooks/useTerminalWorkspaceRestoration'
@@ -1169,6 +1169,7 @@ function App(): React.JSX.Element {
     emptyWorkspaceSidePanelState
   )
   const [requestedConnectorJobId, setRequestedConnectorJobId] = useState<string | null>(null)
+  const [requestedBackgroundJobKey, setRequestedBackgroundJobKey] = useState<string | null>(null)
   const [requestedTerminalInput, setRequestedTerminalInput] = useState<{
     id: string
     text: string
@@ -1223,6 +1224,11 @@ function App(): React.JSX.Element {
     [onOpenBackgroundJobs]
   )
   useLocalConnectorNotices(showSnackbar, onOpenLocalConnectorJobs, refreshMcpServers)
+  // Remote Jupyter startup is a background job; its steps and errors live in the jobs panel.
+  const onOpenJupyterStartLog = useCallback((): void => {
+    setRequestedBackgroundJobKey(LATEST_JUPYTER_JOB_KEY)
+    onOpenBackgroundJobs()
+  }, [onOpenBackgroundJobs])
   const onOpenWebUrl = useCallback(
     (url: string): void => {
       void browserLinkOpeningCoordinator.open(url)
@@ -4453,8 +4459,11 @@ function App(): React.JSX.Element {
         void refreshAnalysisJupyterRuntimeStatus()
       },
       onStartRuntime: (cwd) => {
+        const remote = analysisJupyterRuntimeStatus?.server?.runtimeKind === 'ssh'
         void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+        if (remote) onOpenJupyterStartLog()
       },
+      onOpenRuntimeStartLog: onOpenJupyterStartLog,
       onStopRuntime: (cwd) => {
         void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
       },
@@ -4511,6 +4520,7 @@ function App(): React.JSX.Element {
       getSessionRuntimeState: getSessionRuntimeState
     }),
     [
+      onOpenJupyterStartLog,
       activeWorkspaceIsProject,
       activeWorkspaceTitle,
       activeWorkspaceScopeLabel,
@@ -4895,6 +4905,12 @@ function App(): React.JSX.Element {
                         requestedConnectorJobId={requestedConnectorJobId}
                         onRequestedConnectorJobHandled={(id) =>
                           setRequestedConnectorJobId((current) => (current === id ? null : current))
+                        }
+                        requestedJobKey={requestedBackgroundJobKey}
+                        onRequestedJobHandled={(key) =>
+                          setRequestedBackgroundJobKey((current) =>
+                            current === key ? null : current
+                          )
                         }
                         onOpenSetupAgent={onOpenConnectorSetupAgent}
                         onOpenSetupTerminal={onOpenConnectorSetupTerminal}
