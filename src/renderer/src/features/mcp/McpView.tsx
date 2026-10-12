@@ -46,6 +46,7 @@ export type McpSidebarProps = {
   localConnectorsAllowed?: boolean
   notice?: string
   onRegisterConnectorDialogCloser?: (close: () => void) => () => void
+  onOpenConnectorJob?: (jobId: string) => void
 }
 
 export type McpDetailProps = McpDetailPanelProps
@@ -150,7 +151,8 @@ export function McpSidebar({
   onPreviewInteractionChange,
   localConnectorsAllowed = true,
   notice,
-  onRegisterConnectorDialogCloser
+  onRegisterConnectorDialogCloser,
+  onOpenConnectorJob
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -354,6 +356,7 @@ export function McpSidebar({
           open={catalogOpen}
           servers={servers}
           localConnectorsAllowed={localConnectorsAllowed}
+          onOpenConnectorJob={onOpenConnectorJob}
           onClose={closeCatalog}
           onRefresh={onRefreshServers}
         />

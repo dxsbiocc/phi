@@ -42,17 +42,21 @@ import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 import { McpGithubImportDialog } from './McpGithubImportDialog'
 import { McpImportedInstallDialog } from './McpImportedInstallDialog'
 import { McpSourcesPanel } from './McpSourcesPanel'
-import { useConnectorSetupProgress } from '../hooks/useConnectorSetupProgress'
+import { useCustomConnectorCatalogEntries } from '../hooks/useCustomConnectorCatalogEntries'
 import {
   connectorSetupActive,
   localConnectorToolsPrerequisite
 } from '../lib/connectorSetupPresentation'
 import type { LocalConnectorInitialDraft } from '../lib/localConnectorDraft'
-
+import {
+  CUSTOM_CONNECTOR_GROUP,
+  type CustomConnectorServerEntry
+} from '../lib/customConnectorGroup'
+import { McpCustomConnectorDetail } from './McpCustomConnectorDetail'
+import { McpCustomConnectorGroup } from './McpCustomConnectorGroup'
 type CatalogPage = 'list' | 'detail'
-type CatalogGroup = (typeof mcpConnectorCategories)[number]
+type CatalogGroup = (typeof mcpConnectorCategories)[number] | typeof CUSTOM_CONNECTOR_GROUP
 type ImportedConnectorAction = 'install' | 'oauth' | 'api-key'
-
 function ipcErrorMessage(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause)
   return message.replace(/^Error invoking remote method '[^']+': (?:[^:]+: )?/, '')
@@ -70,6 +74,7 @@ export interface McpConnectorCatalogDialogProps {
   open: boolean
   servers: McpServerSummary[]
   localConnectorsAllowed?: boolean
+  onOpenConnectorJob?: (jobId: string) => void
   onClose: () => void
   onRefresh: () => Promise<void>
 }
@@ -92,6 +97,7 @@ export function McpConnectorCatalogDialog({
   open,
   servers,
   localConnectorsAllowed = true,
+  onOpenConnectorJob,
   onClose,
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
@@ -132,8 +138,8 @@ export function McpConnectorCatalogDialog({
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsError, setToolsError] = useState<string | null>(null)
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
+  const [removeConfirmationServerId, setRemoveConfirmationServerId] = useState<string | null>(null)
   const toolRequestRef = useRef(0)
-
   const onSetupChange = useCallback(
     (progress: McpConnectorSetupProgress) => {
       if (page !== 'detail' || selectedId !== progress.id) return
@@ -153,7 +159,17 @@ export function McpConnectorCatalogDialog({
     },
     [page, selectedId]
   )
-  const setupById = useConnectorSetupProgress(open, onSetupChange)
+  const showReadyCustomGroup = useCallback(() => {
+    setGroup(CUSTOM_CONNECTOR_GROUP)
+    setQuery('')
+  }, [])
+  const { entries: customEntries, setupById } = useCustomConnectorCatalogEntries({
+    open,
+    servers,
+    page,
+    onSetupChange,
+    onReady: showReadyCustomGroup
+  })
   const connectors = useMemo(
     () =>
       catalogConnectors.map((connector) => {
@@ -230,20 +246,27 @@ export function McpConnectorCatalogDialog({
     }
   }, [open, servers])
   const selected = connectors.find((connector) => connector.id === selectedId)
+  const selectedCustom = customEntries.find(
+    (entry): entry is CustomConnectorServerEntry =>
+      entry.kind === 'server' && entry.server.id === selectedId
+  )
   const apiKeyDialogConnector =
     connectors.find((connector) => connector.id === apiKeyDialogId && connector.apiKey) ?? null
   const selectedAuthStatus = authStatusById[selectedId] ?? 'checking'
   const normalizedQuery = query.trim().toLowerCase()
   const filteredFeatured = useMemo(
     () =>
-      filterFeaturedConnectors(connectors, {
-        category: group,
-        query,
-        signIn: signInFilter,
-        install: installFilter,
-        sort,
-        isInstalled: (connector) => connector.added || Boolean(matchingServer(connector, servers))
-      }),
+      group === CUSTOM_CONNECTOR_GROUP
+        ? []
+        : filterFeaturedConnectors(connectors, {
+            category: group,
+            query,
+            signIn: signInFilter,
+            install: installFilter,
+            sort,
+            isInstalled: (connector) =>
+              connector.added || Boolean(matchingServer(connector, servers))
+          }),
     [connectors, group, installFilter, query, servers, signInFilter, sort]
   )
 
@@ -348,6 +371,22 @@ export function McpConnectorCatalogDialog({
     }
   }
 
+  async function removeCustomConnector(server: McpServerSummary): Promise<void> {
+    setBusy(server.name)
+    setError(null)
+    try {
+      if (server.userStdio) await window.api.removeLocalMcpConnector(server.name)
+      else if (server.url) await window.api.removeRemoteMcpConnector(server.name, server.url)
+      else throw new Error('此连接器不能从 Phi 中移除')
+      await onRefresh()
+      setRemoveConfirmationServerId(null)
+      setPage('list')
+    } catch (cause) {
+      setError(ipcErrorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
   async function refreshOAuthStatus(connector: FeaturedMcpConnector): Promise<void> {
     try {
       const authenticated = await window.api.getFeaturedMcpAuthStatus(connector.id)
@@ -520,6 +559,12 @@ export function McpConnectorCatalogDialog({
         if (request === toolRequestRef.current) setToolsLoading(false)
       })
   }
+  function openCustomDetail(entry: CustomConnectorServerEntry): void {
+    setSelectedId(entry.server.id)
+    setRemoveConfirmationServerId(null)
+    setPage('detail')
+    setError(null)
+  }
 
   function close(): void {
     if (customAuthorizingName) {
@@ -544,6 +589,7 @@ export function McpConnectorCatalogDialog({
     setSignInFilter('all')
     setInstallFilter('all')
     setSort('default')
+    setRemoveConfirmationServerId(null)
     setPage('list')
     setCatalogLoading(true)
     onClose()
@@ -577,6 +623,8 @@ export function McpConnectorCatalogDialog({
       }
       await refreshCatalog()
       savedCustomAuthRef.current = null
+      setGroup(CUSTOM_CONNECTOR_GROUP)
+      setPage('list')
       setCustomOpen(false)
     } catch (cause) {
       setCustomError(featuredAuthFailureNotice(ipcErrorMessage(cause)))
@@ -606,6 +654,7 @@ export function McpConnectorCatalogDialog({
     setQuery('')
     setError(null)
     setApiKeyInput('')
+    setRemoveConfirmationServerId(null)
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
@@ -746,6 +795,16 @@ export function McpConnectorCatalogDialog({
                   </Typography>
                 </ListItemButton>
               ))}
+            <ListItemButton
+              key={CUSTOM_CONNECTOR_GROUP}
+              selected={group === CUSTOM_CONNECTOR_GROUP && page === 'list'}
+              onClick={() => openGroup(CUSTOM_CONNECTOR_GROUP)}
+              sx={{ borderRadius: 1.5, mb: 0.5 }}
+            >
+              <Typography variant="body2">
+                {CUSTOM_CONNECTOR_GROUP} · {customEntries.length}
+              </Typography>
+            </ListItemButton>
           </List>
         </Box>
         <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -760,7 +819,20 @@ export function McpConnectorCatalogDialog({
                 {sourceNotice}
               </Alert>
             ) : null}
-            {page === 'detail' && selected ? (
+            {page === 'detail' && group === CUSTOM_CONNECTOR_GROUP && selectedCustom ? (
+              <McpCustomConnectorDetail
+                entry={selectedCustom}
+                busy={busy !== null}
+                error={error}
+                confirmingRemove={removeConfirmationServerId === selectedCustom.server.id}
+                onEnabledChange={(enabled) =>
+                  void setConnectorEnabled(selectedCustom.server, enabled)
+                }
+                onRequestRemove={() => setRemoveConfirmationServerId(selectedCustom.server.id)}
+                onCancelRemove={() => setRemoveConfirmationServerId(null)}
+                onConfirmRemove={() => void removeCustomConnector(selectedCustom.server)}
+              />
+            ) : page === 'detail' && selected ? (
               <McpFeaturedConnectorDetails
                 connector={selected}
                 server={matchingServer(selected, servers)}
@@ -787,6 +859,15 @@ export function McpConnectorCatalogDialog({
                   if (server) void setConnectorEnabled(server, enabled)
                 }}
                 onRetry={() => openDetail(selected, true)}
+              />
+            ) : group === CUSTOM_CONNECTOR_GROUP ? (
+              <McpCustomConnectorGroup
+                entries={customEntries}
+                query={query}
+                busy={busy !== null}
+                onQueryChange={setQuery}
+                onOpen={openCustomDetail}
+                onViewJob={(jobId) => onOpenConnectorJob?.(jobId)}
               />
             ) : (
               <>
@@ -819,7 +900,7 @@ export function McpConnectorCatalogDialog({
                 )}
               </>
             )}
-            {error && (
+            {error && !(page === 'detail' && group === CUSTOM_CONNECTOR_GROUP) && (
               <Alert severity="error" sx={{ mt: 3 }} onClose={() => setError(null)}>
                 {error}
               </Alert>

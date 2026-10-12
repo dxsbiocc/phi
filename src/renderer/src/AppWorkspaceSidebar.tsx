@@ -92,6 +92,7 @@ export type AppWorkspaceSidebarProps = {
   onOpenMcpServer: (server: McpServerSummary) => void
   onRefreshMcpServers: () => Promise<void>
   onRegisterMcpConnectorDialogCloser: (close: () => void) => () => void
+  onOpenConnectorJob: (jobId: string) => void
 
   wrapperCatalog: WrapperCompositionCatalogItem[]
   selectedWrapperId: string | null
@@ -198,6 +199,7 @@ function AppWorkspaceSidebarImpl({
   onOpenMcpServer,
   onRefreshMcpServers,
   onRegisterMcpConnectorDialogCloser,
+  onOpenConnectorJob: onOpenLocalConnectorJobs,
   wrapperCatalog,
   selectedWrapperId,
   isLoadingWrappers,
@@ -419,6 +421,7 @@ function AppWorkspaceSidebarImpl({
         onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
         onRefreshServers={onRefreshMcpServers}
         onRegisterConnectorDialogCloser={onRegisterMcpConnectorDialogCloser}
+        onOpenConnectorJob={onOpenLocalConnectorJobs}
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
         onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
