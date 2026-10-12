@@ -82,3 +82,14 @@ test('macOS signing uses a certificate when configured and ad-hoc signing otherw
     false
   )
 })
+
+test('local packaging scripts never publish, even on CI', () => {
+  const scripts = (
+    JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>
+    }
+  ).scripts
+  for (const name of ['build:unpack', 'build:win', 'build:mac', 'build:linux']) {
+    assert.match(scripts[name] ?? '', /electron-builder .*--publish never$/, name)
+  }
+})
