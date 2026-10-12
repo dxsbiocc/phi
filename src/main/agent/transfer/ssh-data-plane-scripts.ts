@@ -218,9 +218,13 @@ worker=$!
 exec 3<&-
 wait "$worker" || fail STREAM_FAILED
 worker=
-trap - TERM HUP INT
+# A cancel that lands now still records the durable offset first, then stops.
+cancelled=0
+trap 'cancelled=1' TERM HUP INT
 sync_file ${shellQuote(paths.partial)}
 write_manifest || fail INVALID_MANIFEST
+trap - TERM HUP INT
+[ "$cancelled" = 0 ] || exit 143
 size=$(file_size ${shellQuote(paths.partial)}) || fail INVALID_PARTIAL
 digest=$(hash_file ${shellQuote(paths.partial)}) || fail HASH_UNAVAILABLE
 printf 'PHI_SIZE=%s\\nPHI_HASH=%s\\n' "$size" "$digest"`
