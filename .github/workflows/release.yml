@@ -103,6 +103,9 @@ jobs:
           else
             echo "No certificate configured: ad-hoc signing (Gatekeeper will ask users to allow the app)."
             echo "SIGNING_ARGS=-c.mac.identity=- -c.mac.hardenedRuntime=false" >> "$GITHUB_ENV"
+            # electron-builder skips signing on PR builds; ad-hoc signing uses no secrets,
+            # so PRs still get (and verify) the same bundle signature a release gets.
+            echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"
           fi
       - name: Package
         env:

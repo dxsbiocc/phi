@@ -73,6 +73,10 @@ test('macOS signing uses a certificate when configured and ad-hoc signing otherw
   assert.equal(choose?.if, "runner.os == 'macOS'")
   assert.match(choose?.run ?? '', /-c\.mac\.identity=- -c\.mac\.hardenedRuntime=false/)
   assert.match(choose?.run ?? '', /-c\.mac\.notarize=true/)
+  // Forced only in the ad-hoc branch, which uses no secrets.
+  const adHoc = (choose?.run ?? '').split('else')[1] ?? ''
+  assert.match(adHoc, /CSC_FOR_PULL_REQUEST=true/)
+  assert.doesNotMatch((choose?.run ?? '').split('else')[0] ?? '', /CSC_FOR_PULL_REQUEST/)
   const verify = steps.find((step) => step.name === 'Check macOS signature')
   assert.match(verify?.run ?? '', /codesign --verify --deep --strict/)
   // Secrets reach the tools through env only; nothing prints them.
