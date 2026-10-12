@@ -7458,6 +7458,7 @@ test('main IPC exposes additive plugin details with global skill enablement', as
   await app.invoke('enablement:set', 'skill:detail-skill', false, { type: 'global' })
 
   const plugins = (await app.invoke('phiPlugins:list')) as Array<Record<string, unknown>>
+  assert.match(String((plugins[0]?.icon as { key?: unknown } | undefined)?.key), /^[0-9a-f]{64}$/)
   assert.deepEqual(plugins, [
     {
       id: 'detail-plugin',
@@ -7468,6 +7469,8 @@ test('main IPC exposes additive plugin details with global skill enablement', as
       source: 'local',
       installedAt: '2026-10-07T00:00:00.000Z',
       directory: '/plugins/detail-plugin',
+      // An installed plugin without its own icon gets a catalog fallback, checked below.
+      icon: plugins[0]?.icon,
       agents: [],
       skills: ['detail-skill'],
       scriptTools: ['detl_inspect'],

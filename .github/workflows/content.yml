@@ -75,7 +75,7 @@ jobs:
     timeout-minutes: 20
     env:
       # Update this reviewed revision with intentional catalog changes; never track main implicitly.
-      PHI_PACKAGES_REVISION: b5a1261ac03c471a740f4f2e77df33111a0d6d25
+      PHI_PACKAGES_REVISION: 30dacb2928bb0772332cbf341bf90044f2cfa849
     steps:
       - name: Checkout Phi
         uses: actions/checkout@v4
