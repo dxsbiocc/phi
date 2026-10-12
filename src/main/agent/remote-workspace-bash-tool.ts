@@ -2,11 +2,26 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteBashRequest, RemoteBashResult } from './remote-workspace-bash'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
+import { pickDeclaredToolInput } from './remote-workspace-tool-input'
 
 export const PHI_REMOTE_BASH_DESCRIPTION =
   'Phi remote project bash: execute a bounded non-interactive Bash command on the selected SSH server with cwd fixed to the project root. A shell command can access paths outside that root. Use Wrapper for long-running Nextflow or Slurm jobs. PTY and async mode are unavailable.'
 
 type BashInput = Pick<RemoteBashRequest, 'command' | 'timeout' | 'cwd' | 'env' | 'pty' | 'async'>
+
+const BASH_PARAMETERS = {
+  type: 'object',
+  required: ['command'],
+  properties: {
+    command: { type: 'string' },
+    timeout: { type: 'number', minimum: 1, maximum: 120 },
+    cwd: { type: 'string' },
+    env: { type: 'object', additionalProperties: { type: 'string' } },
+    pty: { type: 'boolean' },
+    async: { type: 'boolean' }
+  },
+  additionalProperties: false
+} as const
 
 function formatResult(result: RemoteBashResult): string {
   if (result.status === 'unknown') return result.message
@@ -31,23 +46,11 @@ export function buildRemoteWorkspaceBashTool(
     description: PHI_REMOTE_BASH_DESCRIPTION,
     loadMode: 'essential',
     strict: true,
-    parameters: {
-      type: 'object',
-      required: ['command'],
-      properties: {
-        command: { type: 'string' },
-        timeout: { type: 'number', minimum: 1, maximum: 120 },
-        cwd: { type: 'string' },
-        env: { type: 'object', additionalProperties: { type: 'string' } },
-        pty: { type: 'boolean' },
-        async: { type: 'boolean' }
-      },
-      additionalProperties: false
-    },
+    parameters: BASH_PARAMETERS,
     approval: 'exec',
     async execute(toolCallId, params, _onUpdate, _ctx, signal) {
       try {
-        const input = params as Record<string, unknown>
+        const input = pickDeclaredToolInput(params, BASH_PARAMETERS)
         if (typeof input.command !== 'string' || !input.command.trim()) {
           throw new Error('请提供远程 Bash 命令')
         }

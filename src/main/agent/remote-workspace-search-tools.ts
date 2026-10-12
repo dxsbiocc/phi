@@ -7,6 +7,7 @@ import type {
   RemoteGrepResult
 } from './remote-workspace-search'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
+import { pickDeclaredToolInput } from './remote-workspace-tool-input'
 
 export const PHI_REMOTE_GLOB_DESCRIPTION =
   'Phi remote project glob: find files on the selected SSH server within the project root. Pass path, hidden, gitignore, and limit as in the local glob tool. Raw ssh:// URLs are not accepted.'
@@ -17,6 +18,30 @@ export const PHI_REMOTE_GREP_DESCRIPTION =
 type GlobInput = Pick<RemoteGlobRequest, 'path' | 'hidden' | 'gitignore' | 'limit'>
 type GrepInput = Pick<RemoteGrepRequest, 'pattern' | 'path' | 'case' | 'gitignore' | 'skip'>
 
+const GLOB_PARAMETERS = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' },
+    hidden: { type: 'boolean' },
+    gitignore: { type: 'boolean' },
+    limit: { type: 'number' }
+  },
+  additionalProperties: false
+} as const
+
+const GREP_PARAMETERS = {
+  type: 'object',
+  required: ['pattern'],
+  properties: {
+    pattern: { type: 'string' },
+    path: { type: 'string' },
+    case: { type: 'boolean' },
+    gitignore: { type: 'boolean' },
+    skip: { type: ['number', 'null'] }
+  },
+  additionalProperties: false
+} as const
+
 export function buildRemoteWorkspaceGlobTool(
   run: (input: GlobInput) => Promise<RemoteGlobResult>
 ): CustomTool {
@@ -26,20 +51,11 @@ export function buildRemoteWorkspaceGlobTool(
     description: PHI_REMOTE_GLOB_DESCRIPTION,
     loadMode: 'essential',
     strict: true,
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string' },
-        hidden: { type: 'boolean' },
-        gitignore: { type: 'boolean' },
-        limit: { type: 'number' }
-      },
-      additionalProperties: false
-    },
+    parameters: GLOB_PARAMETERS,
     approval: 'read',
     async execute(_toolCallId, params) {
       try {
-        const result = await run(params as GlobInput)
+        const result = await run(pickDeclaredToolInput(params, GLOB_PARAMETERS) as GlobInput)
         return {
           content: [{ type: 'text', text: result.content }],
           details: {
@@ -71,22 +87,11 @@ export function buildRemoteWorkspaceGrepTool(
     description: PHI_REMOTE_GREP_DESCRIPTION,
     loadMode: 'essential',
     strict: true,
-    parameters: {
-      type: 'object',
-      required: ['pattern'],
-      properties: {
-        pattern: { type: 'string' },
-        path: { type: 'string' },
-        case: { type: 'boolean' },
-        gitignore: { type: 'boolean' },
-        skip: { type: ['number', 'null'] }
-      },
-      additionalProperties: false
-    },
+    parameters: GREP_PARAMETERS,
     approval: 'read',
     async execute(_toolCallId, params) {
       try {
-        const input = params as Record<string, unknown>
+        const input = pickDeclaredToolInput(params, GREP_PARAMETERS)
         if (typeof input.pattern !== 'string' || !input.pattern.trim()) {
           throw new Error('请提供远程 grep 正则表达式')
         }

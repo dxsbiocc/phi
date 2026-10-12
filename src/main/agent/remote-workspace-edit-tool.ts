@@ -2,6 +2,7 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
+import { pickDeclaredToolInput } from './remote-workspace-tool-input'
 
 export const PHI_REMOTE_EDIT_DESCRIPTION =
   'Phi remote project edit (OMP replace mode): change an existing UTF-8 file on the selected SSH server. Read the file first, then pass path, old_string, new_string, and optional replace_all. A changed or unread file is refused.'
@@ -10,6 +11,18 @@ export type RemoteEditToolResult = RemoteMutationResult & {
   diff?: string
   firstChangedLine?: number
 }
+
+const EDIT_PARAMETERS = {
+  type: 'object',
+  required: ['path', 'old_string', 'new_string'],
+  properties: {
+    path: { type: 'string' },
+    old_string: { type: 'string' },
+    new_string: { type: 'string' },
+    replace_all: { type: 'boolean' }
+  },
+  additionalProperties: false
+} as const
 
 export function buildRemoteWorkspaceEditTool(
   edit: (
@@ -24,21 +37,11 @@ export function buildRemoteWorkspaceEditTool(
     description: PHI_REMOTE_EDIT_DESCRIPTION,
     loadMode: 'essential',
     strict: true,
-    parameters: {
-      type: 'object',
-      required: ['path', 'old_string', 'new_string'],
-      properties: {
-        path: { type: 'string' },
-        old_string: { type: 'string' },
-        new_string: { type: 'string' },
-        replace_all: { type: 'boolean' }
-      },
-      additionalProperties: false
-    },
+    parameters: EDIT_PARAMETERS,
     approval: 'write',
     async execute(toolCallId, params, _onUpdate, _ctx, signal) {
       try {
-        const input = params as Record<string, unknown>
+        const input = pickDeclaredToolInput(params, EDIT_PARAMETERS)
         if (
           typeof input.path !== 'string' ||
           !input.path ||
