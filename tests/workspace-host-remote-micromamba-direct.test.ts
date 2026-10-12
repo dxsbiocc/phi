@@ -44,12 +44,18 @@ function runScript(command: string, input: string, path: string): Promise<Remote
 
 function localSession(bin: string, probeOverride?: string): LocalShellSession {
   const session = createLocalShellSession()
+  const path = `${bin}:${process.env.PATH ?? ''}`
+  // execBounded (used for the direct download) delegates to exec, so both must see the fake tools.
+  session.exec = (command) => {
+    session.commands.push(command)
+    return runScript(command, '', path)
+  }
   session.execWithInput = (command, input) => {
     session.commands.push(command)
     if (probeOverride && input.includes('__PHI_MICROMAMBA_NETWORK__=')) {
       return Promise.resolve({ stdout: `${probeOverride}\n`, stderr: '', code: 0, signal: null })
     }
-    return runScript(command, input, `${bin}:${process.env.PATH ?? ''}`)
+    return runScript(command, input, path)
   }
   return session
 }
