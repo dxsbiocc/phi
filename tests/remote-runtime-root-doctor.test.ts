@@ -25,6 +25,8 @@ function executeWithInput(command: string, input: string): Promise<RemoteExecRes
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')))
     child.on('close', (code, signal) => resolve({ stdout, stderr, code, signal }))
+    // A script that exits before reading its input must not raise EPIPE, as in the real session.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(input)
   })
 }

@@ -182,7 +182,11 @@ test('fake prlimit rejection and fake ps breach report fallback before terminati
       join(root, 'ps'),
       '#!/bin/sh\nprintf "ps\\n" >> "$PHI_RESOURCE_TRACE"\nprintf "ignored\\n"\n'
     )
-    await installExecutable(join(root, 'awk'), '#!/bin/sh\ncat >/dev/null\nprintf "101 1 1\\n"\n')
+    // Report the breach only once the stubborn process runs, so the test always terminates it.
+    await installExecutable(
+      join(root, 'awk'),
+      '#!/bin/sh\ncat >/dev/null\nwhile [ ! -s "$PHI_STUBBORN_PID" ]; do /bin/sleep 0.01; done\nprintf "101 1 1\\n"\n'
+    )
     await installExecutable(
       join(root, 'setsid'),
       '#!/usr/bin/perl\nuse POSIX;\nPOSIX::setsid();\nopen(my $fh, ">", $ENV{"PHI_STUBBORN_PID"}) or die $!;\nprint $fh "$$\\n";\nclose $fh;\nexec @ARGV or die "exec: $!";\n'
