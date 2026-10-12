@@ -115,9 +115,7 @@ test('package scripts fetch Bun before building application output', () => {
   }
   assert.equal(packageJson.scripts['bun:fetch'], 'node scripts/runtime/fetch-bun.mjs')
   assert.match(packageJson.scripts.build, /runtime:fetch && bun run bun:fetch &&/u)
-  for (const scriptName of ['prestart', 'predev', 'build']) {
-    assert.doesNotMatch(packageJson.scripts[scriptName], /office:fetch/u, scriptName)
+  for (const scriptName of Object.keys(packageJson.scripts)) {
+    assert.doesNotMatch(scriptName, /^office:/u, 'the retired Office runtime has no scripts')
   }
-  assert.equal(packageJson.scripts['office:fetch'], 'node scripts/office/fetch-officecli.mjs')
-  assert.ok(packageJson.scripts['office:smoke'])
 })

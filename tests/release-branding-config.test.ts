@@ -104,7 +104,6 @@ test('Linux packages are branded x64 AppImage and deb artifacts with desktop met
 })
 
 test('officecli stays out of every packaged application', () => {
-  assert.ok(builder.files?.includes('!resources/office/officecli/**'))
   assert.equal(
     builder.mac?.extraResources?.some((entry) => entry.from?.includes('office/officecli')),
     false

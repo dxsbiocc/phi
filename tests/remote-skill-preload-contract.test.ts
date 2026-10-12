@@ -5,8 +5,6 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-import * as promptTarget from '../src/preload/promptTarget'
-
 test('preload exposes trust and revoke operations for remote project Skills', async () => {
   const compiled = ts.transpileModule(
     readFileSync(resolve(process.cwd(), 'src/preload/index.ts'), 'utf8'),
@@ -22,7 +20,6 @@ test('preload exposes trust and revoke operations for remote project Skills', as
   const exposed = new Map<string, unknown>()
   const ipcRenderer = new FakeIpcRenderer()
   const load = (specifier: string): unknown => {
-    if (specifier === './promptTarget') return promptTarget
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

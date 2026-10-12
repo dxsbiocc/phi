@@ -24,7 +24,6 @@ files:
   - '!resources/runtime/micromamba/**'
   - '!resources/runtime/bun/**'
   - '!resources/remote-helper/**'
-  - '!resources/office/officecli/**'
 extraResources:
   # Both Linux helpers ship on every desktop platform because the connected
   # remote host, rather than the desktop host, determines the selected binary.
@@ -89,7 +88,9 @@ asarUnpack:
   - node_modules/json-schema-traverse/**
   - node_modules/json-stringify-safe/**
   - node_modules/lightningcss/**
-  - node_modules/lightningcss-darwin-arm64/**
+  # Native platform packages match every platform/arch, so Linux and Intel macOS
+  # builds unpack the variant their install resolved.
+  - node_modules/lightningcss-*/**
   - node_modules/long/**
   - node_modules/lru-cache/**
   - node_modules/lucide-react/**
@@ -116,8 +117,7 @@ asarUnpack:
   - node_modules/semver-compare/**
   - node_modules/serialize-error/**
   - node_modules/sharp/**
-  - node_modules/sherpa-onnx-darwin-arm64/**
-  - node_modules/sherpa-onnx-node/**
+  - node_modules/sherpa-onnx-*/**
   - node_modules/source-map-js/**
   - node_modules/sprintf-js/**
   - node_modules/tailwindcss/**

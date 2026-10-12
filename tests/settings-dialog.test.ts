@@ -39,6 +39,7 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     updatingProjectId: null,
     onUpdateProjectPermissionMode: () => undefined,
     onUpdateProjectDefaults: () => undefined,
+    onProjectUpdated: () => undefined,
     onOpenApprovalSession: () => undefined,
     onRespondApproval: () => undefined,
     noProjectTaskFolder: '/Users/example/Documents/Codex',
@@ -236,4 +237,42 @@ test('settings dialog renders project permission controls without hiding default
   assert.match(markup, /思考等级/)
   assert.match(markup, /放宽项目工具限制/)
   assert.match(markup, /\/Users\/example\/Downloads\/Work\/App\/Phi/)
+})
+
+test('memory settings list each project with lesson recording tied to project memory', () => {
+  const base = {
+    workingDirectory: '/work/demo',
+    permissionMode: 'ask' as const,
+    createdAt: '2026-01-01T00:00:00.000Z'
+  }
+  const projects: Project[] = [
+    {
+      ...base,
+      id: 'local-on',
+      name: 'Local on',
+      location: { kind: 'local', path: '/work/demo', realPath: '/work/demo' },
+      memory: { enabled: true, learn: true }
+    },
+    {
+      ...base,
+      id: 'remote-off',
+      name: 'Remote off',
+      location: {
+        kind: 'ssh',
+        hostProfileId: 'host',
+        remoteRoot: '/srv/demo',
+        canonicalRoot: '/srv/demo'
+      }
+    }
+  ]
+  const markup = renderSettingsDialog({ category: 'memory', projects })
+
+  assert.match(markup, /记忆/)
+  assert.match(markup, /不会写到服务器/)
+  assert.match(markup, /Local on[\s\S]*本地项目/)
+  assert.match(markup, /Remote off[\s\S]*远程项目/)
+  // Four switches: the first project has both on; the remote project's lesson switch is disabled.
+  assert.equal((markup.match(/type="checkbox"/g) ?? []).length, 4)
+  assert.equal((markup.match(/checked=""/g) ?? []).length, 2)
+  assert.equal((markup.match(/disabled=""/g) ?? []).length, 1)
 })

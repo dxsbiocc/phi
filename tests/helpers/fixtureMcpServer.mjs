@@ -64,6 +64,16 @@ input.on('line', (line) => {
       ],
       ...(secondPage ? {} : { nextCursor: 'second' })
     })
+  } else if (request.method === 'tools/call') {
+    // Echo the call so a caller can see exactly which arguments reached the server.
+    reply(request.id, {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({ tool: request.params?.name, arguments: request.params?.arguments })
+        }
+      ]
+    })
   }
 })
 input.on('close', () => {

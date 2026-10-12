@@ -2,13 +2,6 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
 import type { TerminalEvent, TerminalRendererBridge } from '../shared/terminalTypes'
 import type {
-  OfficePromptTargetFailure,
-  OfficeRendererBridge,
-  OfficeSelectionEvent,
-  OfficeTargetInput
-} from '../shared/officeProtocol'
-import { sanitizePromptTargetForIpc } from './promptTarget'
-import type {
   RemoteWorkspaceFileRequest,
   RemoteWorkspacePathProbeRequest,
   RemoteWorkspacePathStat
@@ -31,6 +24,8 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -280,9 +275,7 @@ type CurrentSession = SessionRuntimeState & {
   messages?: unknown[]
 }
 
-type PromptResult =
-  | { path: string | null; phiSessionId?: string; sessionGeneration: number }
-  | OfficePromptTargetFailure
+type PromptResult = { path: string | null; phiSessionId?: string; sessionGeneration: number }
 
 type PromptTarget = {
   path: string | null
@@ -293,7 +286,6 @@ type PromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
-  officeTarget?: OfficeTargetInput
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -346,6 +338,7 @@ type Project = {
   remoteConnections?: ProjectRemoteConnection[]
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
+  memory?: ProjectMemorySettings
   createdAt: string
 }
 
@@ -761,7 +754,6 @@ type RemoteRipgrepIpcProgress = RemoteRipgrepProgress & { requestId: string }
 type RendererAuthApi = {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
-  office: OfficeRendererBridge
   sshBootstrap: SshBootstrapRendererBridge
   readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
@@ -897,6 +889,14 @@ type RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<Project>
+  getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ) => Promise<ProjectMemorySnapshot>
+  clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
   listRemoteProjectDirectories: (
     request: RemoteDirectoryListRequest
@@ -1163,6 +1163,8 @@ type RendererAuthApi = {
   cancelRemoteProjectUpload: (jobId: string) => Promise<void>
   retryRemoteProjectUpload: (jobId: string) => Promise<RemoteProjectUploadJob>
   onRemoteProjectUploadsChanged: (cb: (job: RemoteProjectUploadJob) => void) => Unsubscribe
+  listRemoteJupyterJobs: () => Promise<RemoteJupyterStartJob[]>
+  onRemoteJupyterJobsChanged: (cb: (job: RemoteJupyterStartJob) => void) => Unsubscribe
   completeWrapperInputUpload: (
     jobId: string,
     planId: string,
@@ -1229,36 +1231,6 @@ const terminalBridge: TerminalRendererBridge = {
   }
 }
 
-const officeBridge: OfficeRendererBridge = {
-  enabled: typeof process !== 'undefined' && process.env?.PHI_OFFICE_DEV === '1',
-  create: (input) => ipcRenderer.invoke('office:create', input),
-  cancelCreate: (input) => ipcRenderer.invoke('office:cancelCreate', input),
-  importFile: (input) => ipcRenderer.invoke('office:import', input),
-  cancelImport: (input) => ipcRenderer.invoke('office:cancelImport', input),
-  open: (input) => ipcRenderer.invoke('office:open', input),
-  close: (input) => ipcRenderer.invoke('office:close', input),
-  clearSelection: (input) => ipcRenderer.invoke('office:clearSelection', input),
-  reconcile: (input) => ipcRenderer.invoke('office:reconcile', input),
-  save: (input) => ipcRenderer.invoke('office:save', input),
-  saveAs: (input) => ipcRenderer.invoke('office:saveAs', input),
-  exportSheet: (input) => ipcRenderer.invoke('office:export', input),
-  cancelExport: (input) => ipcRenderer.invoke('office:cancelExport', input),
-  revealOutput: (input) => ipcRenderer.invoke('office:revealOutput', input),
-  resolveOutput: (input) => ipcRenderer.invoke('office:resolveOutput', input),
-  status: (input) => ipcRenderer.invoke('office:status', input),
-  setPreviewPreferences: (input) => ipcRenderer.invoke('office:setPreviewPreferences', input),
-  onSelection: (listener) => {
-    const handler = (_event: unknown, selection: OfficeSelectionEvent): void => listener(selection)
-    let subscribed = true
-    ipcRenderer.on('office:selection', handler)
-    return () => {
-      if (!subscribed) return
-      subscribed = false
-      ipcRenderer.removeListener('office:selection', handler)
-    }
-  }
-}
-
 const sshBootstrapBridge: SshBootstrapRendererBridge = {
   inspectTarget: (input) => ipcRenderer.invoke('sshBootstrap:inspectTarget', input),
   confirmHostKey: (attemptId) => ipcRenderer.invoke('sshBootstrap:confirmHostKey', attemptId),
@@ -1274,7 +1246,6 @@ const sshBootstrapBridge: SshBootstrapRendererBridge = {
 const api: RendererAuthApi = {
   browser: browserBridge,
   terminal: terminalBridge,
-  office: officeBridge,
   sshBootstrap: sshBootstrapBridge,
   readyWindow: (background: string): Promise<void> =>
     ipcRenderer.invoke('window:renderer-ready', background),
@@ -1347,7 +1318,7 @@ const api: RendererAuthApi = {
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
     ipcRenderer.invoke('molecules:renderSvg', value, width, height),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
-    ipcRenderer.invoke('agent:prompt', text, sanitizePromptTargetForIpc(target)),
+    ipcRenderer.invoke('agent:prompt', text, target),
   readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
     ipcRenderer.invoke('agent:readPromptImage', ref),
   readWorkspaceDiff: (ref: WorkspaceDiffReference): Promise<string> =>
@@ -1501,6 +1472,17 @@ const api: RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings): Promise<Project> =>
+    ipcRenderer.invoke('projects:updateMemory', id, settings),
+  getProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
+    ipcRenderer.invoke('memory:snapshot', id),
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ): Promise<ProjectMemorySnapshot> => ipcRenderer.invoke('memory:deleteLesson', id, index, text),
+  clearProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
+    ipcRenderer.invoke('memory:clear', id),
   listRemoteHosts: (): Promise<RemoteHostProfile[]> =>
     ipcRenderer.invoke('projects:listRemoteHosts'),
   listRemoteProjectDirectories: (
@@ -1743,6 +1725,13 @@ const api: RendererAuthApi = {
     const handler = (_: unknown, job: RemoteProjectUploadJob): void => cb(job)
     ipcRenderer.on('remoteProjectUploads:changed', handler)
     return () => ipcRenderer.removeListener('remoteProjectUploads:changed', handler)
+  },
+  listRemoteJupyterJobs: (): Promise<RemoteJupyterStartJob[]> =>
+    ipcRenderer.invoke('remoteJupyterJobs:list'),
+  onRemoteJupyterJobsChanged: (cb): Unsubscribe => {
+    const handler = (_: unknown, job: RemoteJupyterStartJob): void => cb(job)
+    ipcRenderer.on('remoteJupyterJobs:changed', handler)
+    return () => ipcRenderer.removeListener('remoteJupyterJobs:changed', handler)
   },
   completeWrapperInputUpload: (jobId, planId, inputId, expectedRevision): Promise<WrapperRunPlan> =>
     ipcRenderer.invoke('wrappers:completeInputUpload', jobId, planId, inputId, expectedRevision),

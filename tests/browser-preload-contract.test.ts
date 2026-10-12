@@ -9,7 +9,6 @@ import type {
   BrowserRendererEventEnvelope,
   BrowserUiCommand
 } from '../src/shared/browserTypes'
-import * as promptTarget from '../src/preload/promptTarget'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -93,11 +92,7 @@ test('preload and renderer expose only one namespaced browser bridge using share
   )
   assert.match(
     renderer,
-    /type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi/
-  )
-  assert.match(
-    renderer,
-    /export type RendererApi = RendererApiFoundation & \{[\s\S]*browser: BrowserRendererBridge/
+    /export interface RendererApi\s+extends\s+AutoCompactionApi,\s+ManagedEnvironmentRendererApi,[^{]*\{\s+browser: BrowserRendererBridge/
   )
 
   const design = source('docs/superpowers/specs/2026-09-30-in-app-browser-design.md')
@@ -147,7 +142,6 @@ test('preload browser bridge invokes exact channels and independently unsubscrib
   const fakeWindow = { addEventListener: (): void => undefined }
   const load = (specifier: string): unknown => {
     // The preload's only local dependency is the pure prompt-target sanitiser.
-    if (specifier === './promptTarget') return promptTarget
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

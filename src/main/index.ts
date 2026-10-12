@@ -1,9 +1,4 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
-import {
-  sanitizeOfficeTargetInput,
-  type OfficePromptTargetFailure,
-  type OfficeTargetInput
-} from '../shared/officeProtocol'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionOverrides,
@@ -84,45 +79,6 @@ import { TerminalIpcCoordinator, registerTerminalRendererIpc } from './terminal/
 import { TerminalDraftService } from './terminal/terminal-command-draft'
 import { buildTerminalDraftSessionFactory } from './terminal/terminal-draft-session'
 import { TerminalManager } from './terminal/terminal-manager'
-import {
-  createOfficeService,
-  type OfficeOpenRequest,
-  type OfficeService
-} from './agent/office/office-service'
-import { OfficeIpcCoordinator, registerOfficeRendererIpc } from './agent/office/office-ipc'
-import { chooseOfficeSaveAsTarget } from './agent/office/office-save-as-dialog'
-import {
-  OfficeExportIpcFlow,
-  registerOfficeExportRendererIpc
-} from './agent/office/office-export-ipc'
-import { chooseOfficeExportTarget } from './agent/office/office-export-dialog'
-import { installOfficeWebviewSecurity } from './agent/office/office-webview'
-import { prepareOfficePromptSubmission } from './agent/office/office-prompt-target'
-import {
-  createOfficeApplyHostHandler,
-  createOfficeDescribeHostHandler,
-  createOfficeReadHostHandler,
-  parseOfficeWriteRequest
-} from './agent/office/office-tool-host'
-import {
-  createOfficeDeliverHostHandler,
-  parseOfficeDeliverInput
-} from './agent/office/office-deliver-tool-host'
-import type { OfficeDeliveryResult } from './agent/office/office-deliver'
-import type { OfficeWriteRequest } from './agent/office/office-write'
-import { officeToolApproval } from './agent/office/office-tools'
-import {
-  OfficeApplyApprovalRegistry,
-  formatOfficeApplyApprovalSummary,
-  officeApplyApprovalDigest,
-  type OfficeApplyApprovalInput
-} from './agent/office/office-approval'
-import {
-  OfficeDeliverApprovalRegistry,
-  formatOfficeDeliverApprovalSummary,
-  officeDeliverApprovalDigest,
-  type OfficeDeliverApprovalInput
-} from './agent/office/office-deliver-approval'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -158,6 +114,7 @@ import {
   subscribeRemoteProjectConnection,
   updateProjectPermissionMode,
   updateProjectDefaults,
+  updateProjectMemory,
   updateProjectRemoteDefaults,
   type PermissionMode,
   type ModelSelection,
@@ -512,10 +469,12 @@ import {
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import { getOmpBridge } from './agent/omp/omp-bridge'
+import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
-  validateOfficePresentedFile,
-  validatePresentedFiles
-} from './agent/deliverables/present-files'
+  normalizeProjectMemorySettings,
+  type ProjectMemorySnapshot
+} from '../shared/projectMemoryTypes'
+import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
 import {
@@ -570,10 +529,7 @@ import icon from '../../resources/icon.png?asset'
 
 // Compatibility boundary: Electron derives userData and macOS "Phi Safe Storage" from this name.
 const APP_NAME = 'Phi'
-// OfficeCLI may need 5 s to flush and another 2 s for a polite SIGTERM; preview teardown runs first.
 const APP_QUIT_CLEANUP_TIMEOUT_MS = 2_000
-// Office's share of the quit budget; the global cap must not grow for any one feature.
-const OFFICE_QUIT_DEADLINE_MS = 1_200
 const APP_ID = 'cn.phiscience.phi'
 const DEFAULT_WINDOW_WIDTH = 1280
 const DEFAULT_WINDOW_HEIGHT = 820
@@ -636,7 +592,6 @@ let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
 const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
-const OFFICE_DEV_ENABLED = process.env.PHI_OFFICE_DEV === '1'
 let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
@@ -925,97 +880,6 @@ const terminalIpcCoordinator = new TerminalIpcCoordinator({
   }
 })
 
-function currentOfficeContext():
-  (Omit<OfficeOpenRequest, 'sourcePath'> & { outputRoot: string }) | undefined {
-  const current = getCurrentSessionPayload()
-  if (!current.phiSessionId) return undefined
-  const pathScope = currentLocalPathScope()
-  return {
-    sessionId: current.phiSessionId,
-    projectId: current.projectId ?? null,
-    ...(current.projectLocation ? { projectLocation: current.projectLocation } : {}),
-    allowRoots: localFileAllowRoots({
-      agentDir: resolve(AGENT_DIR),
-      sessionCwd: pathScope.cwd,
-      sessionCwdRealPath: pathScope.cwdRealPath,
-      projectRoots: listLocalProjectAllowRoots()
-    }),
-    outputRoot: pathScope.cwdRealPath ?? pathScope.cwd
-  }
-}
-
-function registerOfficeIpc(): void {
-  if (!OFFICE_DEV_ENABLED) return
-  officeService ??= createOfficeService()
-  registerOfficeRendererIpc(
-    ipcMain,
-    new OfficeIpcCoordinator({
-      service: officeService,
-      getTrustedRenderer: () => {
-        const window = mainWindow
-        return window && !window.isDestroyed() ? window.webContents : null
-      },
-      resolveContext: currentOfficeContext,
-      chooseSaveAsTarget: (input) =>
-        chooseOfficeSaveAsTarget(input, {
-          officeDev: OFFICE_DEV_ENABLED,
-          isPackaged: app.isPackaged,
-          // Automated Electron smoke cannot drive a native save sheet; packaged builds ignore it.
-          smokePath: process.env.PHI_OFFICE_SMOKE_SAVE_AS_PATH,
-          getWindow: () => mainWindow ?? undefined,
-          showSaveDialog: async (window, options) => {
-            const electronOptions: Electron.SaveDialogOptions = {
-              title: options.title,
-              defaultPath: options.defaultPath,
-              filters: options.filters.map((filter) => ({
-                name: filter.name,
-                extensions: [...filter.extensions]
-              }))
-            }
-            return window
-              ? dialog.showSaveDialog(window as BrowserWindow, electronOptions)
-              : dialog.showSaveDialog(electronOptions)
-          }
-        }),
-      revealPath: (path) => shell.showItemInFolder(assertRevealPathAllowed(path))
-    })
-  )
-  registerOfficeExportRendererIpc(
-    ipcMain,
-    new OfficeExportIpcFlow({
-      service: officeService,
-      getTrustedRenderer: () => {
-        const window = mainWindow
-        return window && !window.isDestroyed() ? window.webContents : null
-      },
-      resolveContext: currentOfficeContext,
-      chooseExportTarget: (input) =>
-        chooseOfficeExportTarget(input, {
-          officeDev: OFFICE_DEV_ENABLED,
-          isPackaged: app.isPackaged,
-          smokePath:
-            input.format === 'csv'
-              ? process.env.PHI_OFFICE_SMOKE_EXPORT_CSV_PATH
-              : process.env.PHI_OFFICE_SMOKE_EXPORT_TSV_PATH,
-          getWindow: () => mainWindow ?? undefined,
-          showSaveDialog: async (window, options) => {
-            const electronOptions: Electron.SaveDialogOptions = {
-              title: options.title,
-              defaultPath: options.defaultPath,
-              filters: options.filters.map((filter) => ({
-                name: filter.name,
-                extensions: [...filter.extensions]
-              }))
-            }
-            return window
-              ? dialog.showSaveDialog(window as BrowserWindow, electronOptions)
-              : dialog.showSaveDialog(electronOptions)
-          }
-        })
-    })
-  )
-}
-
 // The desktop uses Chromium networking so the operating system's proxy settings also
 // apply to catalog metadata and package archives. The transport remains usable in Node/tests.
 const officialRegistryFetch: typeof fetch = (input, init) =>
@@ -1208,7 +1072,6 @@ type PromptTargetInput = {
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
   planMode?: boolean
-  officeTarget?: OfficeTargetInput | null
 }
 
 interface PromptRun {
@@ -1407,10 +1270,6 @@ const selectedModel: ModelSelection | null = null
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
 let currentSessionKey = createSessionKey(undefined, currentCwd, freshSessionCounter)
-let officeService: OfficeService | null = null
-let officeDescribeHostHandler: ReturnType<typeof createOfficeDescribeHostHandler> | null = null
-const officeApplyApprovals = new OfficeApplyApprovalRegistry()
-const officeDeliverApprovals = new OfficeDeliverApprovalRegistry()
 let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
@@ -1521,367 +1380,6 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
   }
 }
 
-function officeApprovalInput(request: OfficeWriteRequest): OfficeApplyApprovalInput {
-  return {
-    operation: officeApprovalOperation(request.operation),
-    baseRevision: request.baseRevision
-  }
-}
-
-function officeApprovalOperation(
-  operation: OfficeWriteRequest['operation']
-): OfficeApplyApprovalInput['operation'] {
-  if (
-    operation.type === 'add_slide' ||
-    operation.type === 'set_slide_text' ||
-    operation.type === 'add_paragraph' ||
-    operation.type === 'set_paragraph_text'
-  ) {
-    return officeDocumentApprovalOperation(operation)
-  }
-  return officeWorkbookApprovalOperation(operation)
-}
-
-function officeDocumentApprovalOperation(
-  operation: Extract<
-    OfficeWriteRequest['operation'],
-    { type: 'add_slide' | 'set_slide_text' | 'add_paragraph' | 'set_paragraph_text' }
-  >
-): OfficeApplyApprovalInput['operation'] {
-  if (operation.type === 'add_slide') {
-    return {
-      type: 'add_slide',
-      title: operation.title,
-      ...(operation.body === undefined ? {} : { body: operation.body }),
-      ...(operation.position ? { position: operation.position } : {})
-    }
-  }
-  if (operation.type === 'set_slide_text') {
-    return {
-      type: 'set_slide_text',
-      slideId: operation.slideId,
-      elementId: operation.elementId,
-      text: operation.text,
-      ...(operation.expectedText === undefined ? {} : { expectedText: operation.expectedText })
-    }
-  }
-  if (operation.type === 'add_paragraph') {
-    return {
-      type: 'add_paragraph',
-      text: operation.text,
-      ...(operation.position ? { position: operation.position } : {})
-    }
-  }
-  return {
-    type: 'set_paragraph_text',
-    paraId: operation.paraId,
-    text: operation.text,
-    ...(operation.expectedText === undefined ? {} : { expectedText: operation.expectedText })
-  }
-}
-
-function officeWorkbookApprovalOperation(
-  operation: Exclude<
-    OfficeWriteRequest['operation'],
-    { type: 'add_slide' | 'set_slide_text' | 'add_paragraph' | 'set_paragraph_text' }
-  >
-): OfficeApplyApprovalInput['operation'] {
-  if (operation.type === 'add_sheet') {
-    return {
-      type: 'add_sheet',
-      name: operation.name
-    }
-  }
-  if (operation.type === 'set_range') {
-    return {
-      type: 'set_range',
-      sheet: operation.sheet,
-      range: operation.range,
-      values: operation.values
-    }
-  }
-  if (operation.type === 'set_formula') {
-    return {
-      type: 'set_formula',
-      sheet: operation.sheet,
-      cell: operation.cell,
-      formula: operation.formula
-    }
-  }
-  if (operation.type === 'format_range') {
-    return {
-      type: 'format_range',
-      sheet: operation.sheet,
-      range: operation.range,
-      format: operation.format
-    }
-  }
-  return {
-    type: 'set_cell',
-    sheet: operation.sheet,
-    cell: operation.cell,
-    value: operation.value
-  }
-}
-
-function authorizeOfficeWrite(
-  runId: string,
-  toolCallId: string | undefined,
-  request: OfficeWriteRequest
-): boolean {
-  const run = [...activePromptRuns.values()].find(
-    (candidate) => candidate.runId === runId && !candidate.cancelled
-  )
-  const manifest = run ? findPhiSessionById(run.phiSessionId) : undefined
-  if (!manifest) return false
-  if (manifest.permissionMode !== 'ask') return true
-  return Boolean(
-    toolCallId && officeApplyApprovals.consume(runId, toolCallId, officeApprovalInput(request))
-  )
-}
-
-function authorizeOfficeDelivery(
-  runId: string,
-  toolCallId: string,
-  input: OfficeDeliverApprovalInput
-): boolean {
-  const run = activeOfficePromptRun(runId)
-  const manifest = run ? findPhiSessionById(run.phiSessionId) : undefined
-  if (!manifest) return false
-  if (manifest.permissionMode !== 'ask') return true
-  return officeDeliverApprovals.consume(runId, toolCallId, input)
-}
-
-function activeOfficePromptRun(runId: string): PromptRun | undefined {
-  return [...activePromptRuns.values()].find(
-    (candidate) => candidate.runId === runId && !candidate.cancelled
-  )
-}
-
-function officeDeliveryRunContext(runId: string): {
-  readonly run: PromptRun
-  readonly cwdRealPath: string
-  readonly remote: boolean
-} {
-  const run = activeOfficePromptRun(runId)
-  if (!run) throw Object.assign(new Error('Office run is unavailable'), { code: 'no_target' })
-  const manifest = findPhiSessionById(run.phiSessionId)
-  const project = run.projectId ? getProject(run.projectId) : undefined
-  const cwdRealPath =
-    manifest?.cwdRealPath ?? project?.workingDirectoryRealPath ?? realpathSync(run.cwd)
-  const remote = manifest?.projectLocation?.kind === 'ssh' || project?.location.kind === 'ssh'
-  return { run, cwdRealPath, remote }
-}
-
-function officeDeliveryChecks(result: OfficeDeliveryResult): {
-  schema: 'passed'
-  content: 'passed'
-  samples: number
-  pageCount?: number
-} {
-  const content = result.checks.find((check) => check.name === `${result.kind}_content`)
-  if (!result.checks.some((check) => check.name === 'schema') || !content) {
-    throw Object.assign(new Error('Office delivery checks are incomplete'), {
-      code: 'delivery_check_failed'
-    })
-  }
-  return {
-    schema: 'passed',
-    content: 'passed',
-    samples: content.sampled ?? 0,
-    ...(content.pageCount === undefined ? {} : { pageCount: content.pageCount })
-  }
-}
-
-function publicOfficeDeliveryResult(result: OfficeDeliveryResult): Record<string, unknown> {
-  return {
-    fileName: result.fileName,
-    outputPath: result.outputPath,
-    kind: result.kind,
-    revision: result.revision,
-    sha256: result.sha256,
-    size: result.size,
-    warnings: result.warnings,
-    checks: officeDeliveryChecks(result),
-    ...(result.deduplicated ? { deduplicated: true } : {})
-  }
-}
-
-async function deliverOfficeOutputFromRun(
-  runId: string,
-  input: OfficeDeliverApprovalInput,
-  operationId: string
-): Promise<Record<string, unknown>> {
-  const context = officeDeliveryRunContext(runId)
-  officeService ??= createOfficeService()
-  const artifactId = officeService.resolveRunTarget(runId).artifactId
-  let presentedFile: PresentedFile | undefined
-  const result = await officeService.deliverDocument(
-    runId,
-    context.run.cwd,
-    context.cwdRealPath,
-    input.outputName,
-    {
-      operationId,
-      remote: context.remote,
-      authorize: () => authorizeOfficeDelivery(runId, operationId, input),
-      validatePresentation: (delivery) => {
-        presentedFile = validateOfficePresentedFile(context.run.cwd, {
-          path: delivery.absolutePath,
-          artifactId,
-          outputId: delivery.outputId,
-          kind: delivery.kind,
-          revision: delivery.revision,
-          sha256: delivery.sha256,
-          warnings: [...delivery.warnings].slice(0, 8),
-          checks: officeDeliveryChecks(delivery)
-        })
-      }
-    }
-  )
-  if (!presentedFile) {
-    throw Object.assign(new Error('Office presentation validation did not complete'), {
-      code: 'delivery_check_failed'
-    })
-  }
-  ensureOfficeDeliveryPresented(context.run, operationId, presentedFile)
-  return publicOfficeDeliveryResult(result)
-}
-
-function ensureOfficeDeliveryPresented(
-  run: PromptRun,
-  operationId: string,
-  file: PresentedFile
-): void {
-  const identity = file.office
-  if (!identity) throw new Error('Office delivery metadata is missing')
-  const exists = readSessionEvents(run.phiSessionId).some((event) =>
-    sessionEventHasOfficeOutput(event, identity)
-  )
-  if (!exists) recordPresentedFiles(run, operationId, [file])
-}
-
-function sessionEventHasOfficeOutput(
-  event: StoredSessionEvent,
-  identity: NonNullable<PresentedFile['office']>
-): boolean {
-  if (event.type !== 'files_presented' || !Array.isArray(event.files)) return false
-  return event.files.some((value) => {
-    if (!isRecord(value) || !isRecord(value.office)) return false
-    return (
-      value.office.artifactId === identity.artifactId &&
-      value.office.outputId === identity.outputId &&
-      value.office.kind === identity.kind &&
-      value.office.revision === identity.revision &&
-      value.office.sha256 === identity.sha256
-    )
-  })
-}
-
-async function prepareOfficeToolApproval(
-  sessionKey: string,
-  toolName: string,
-  input: Record<string, unknown>,
-  event: { toolCallId?: string; agentRunId?: string }
-): Promise<{ summary: string; approvalDigest?: string; skipApproval?: boolean } | undefined> {
-  if (toolName === 'office_deliver') {
-    return prepareOfficeDeliveryApproval(sessionKey, input, event)
-  }
-  if (toolName !== 'office_apply') return undefined
-  if (!officeDescribeHostHandler) throw new Error('Office 写入审批暂不可用')
-  const request = parseOfficeWriteRequest(input)
-  const activeRun = getActivePromptRun(sessionKey)
-  const originSessionId = activeRun?.session?.runtimeSessionId
-  const trustedRunId =
-    event.agentRunId ??
-    (originSessionId ? resolveActiveOfficeRun(originSessionId)?.runId : undefined)
-  if (trustedRunId && event.toolCallId) {
-    officeService ??= createOfficeService()
-    const bypass =
-      typeof officeService.shouldBypassWriteApproval === 'function'
-        ? await officeService.shouldBypassWriteApproval(trustedRunId, request, event.toolCallId)
-        : request.operation.type === 'set_cell' &&
-          (await officeService.shouldBypassCellEditApproval(
-            trustedRunId,
-            {
-              sheet: request.operation.sheet,
-              cell: request.operation.cell,
-              value: request.operation.value,
-              baseRevision: request.baseRevision
-            },
-            event.toolCallId
-          ))
-    if (bypass) {
-      return { summary: '', skipApproval: true }
-    }
-  }
-  const described = await officeDescribeHostHandler(input, {
-    ...(originSessionId ? { originSessionId } : {}),
-    ...(event.agentRunId ? { agentRunId: event.agentRunId } : {}),
-    ...(event.toolCallId ? { toolCallId: event.toolCallId } : {})
-  })
-  if (!described.ok) throw new Error(described.error.message)
-  const approvalInput = officeApprovalInput(request)
-  return {
-    summary: formatOfficeApplyApprovalSummary(described.value),
-    approvalDigest: officeApplyApprovalDigest(approvalInput)
-  }
-}
-
-async function prepareOfficeDeliveryApproval(
-  sessionKey: string,
-  value: Record<string, unknown>,
-  event: { toolCallId?: string; agentRunId?: string }
-): Promise<{ summary: string; approvalDigest?: string; skipApproval?: boolean }> {
-  const input = parseOfficeDeliverInput(value)
-  const activeRun = getActivePromptRun(sessionKey)
-  const originSessionId = activeRun?.session?.runtimeSessionId
-  const runId =
-    event.agentRunId ??
-    (originSessionId ? resolveActiveOfficeRun(originSessionId)?.runId : undefined)
-  if (!runId || !event.toolCallId) throw new Error('Office 交付审批暂不可用')
-  const context = officeDeliveryRunContext(runId)
-  officeService ??= createOfficeService()
-  if (
-    await officeService.shouldBypassDeliverApproval(
-      runId,
-      context.run.cwd,
-      context.cwdRealPath,
-      input.outputName,
-      event.toolCallId
-    )
-  ) {
-    return { summary: '', skipApproval: true }
-  }
-  const description = await officeService.describeDelivery(
-    runId,
-    context.run.cwd,
-    context.cwdRealPath,
-    input.outputName,
-    event.toolCallId
-  )
-  return {
-    summary: formatOfficeDeliverApprovalSummary(description),
-    approvalDigest: officeDeliverApprovalDigest(input)
-  }
-}
-
-function resolveActiveOfficeRun(originSessionId: string): { runId: string } | undefined {
-  const run = findActivePromptRunByRuntimeSessionId(originSessionId)
-  return run && !run.cancelled ? { runId: run.runId } : undefined
-}
-
-function clearOfficeRunTarget(runId: string): boolean {
-  officeApplyApprovals.clearRun(runId)
-  officeDeliverApprovals.clearRun(runId)
-  return officeService?.clearRunTarget(runId) ?? false
-}
-
-function isActiveOfficeApprovalRun(runId: string): boolean {
-  const run = [...activePromptRuns.values()].find((candidate) => candidate.runId === runId)
-  return Boolean(run && !run.cancelled)
-}
-
 const phiSessionIdsByKey = new Map<string, string>()
 const loadedSkillNamesBySession = new Map<string, string[]>()
 const sessionKeyAliases = new Map<string, string>()
@@ -1990,6 +1488,8 @@ function projectRemoteRuntimeRoot(project: Project): ReturnType<typeof resolveRe
   return resolveProjectRuntimeRoot(project, hostOverride)
 }
 
+const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
+
 function remoteNotebookTarget(project: Project, sessionId: string): RemoteRuntimeTarget {
   if (project.location.kind !== 'ssh') throw new Error('远程 Notebook 项目位置无效')
   const root = projectRemoteRuntimeRoot(project)
@@ -2031,6 +1531,13 @@ function createRemoteNotebookBackend(
       return openRemoteRuntimeWorkspace(remoteNotebookTarget(project, activeSessionId), signal)
     },
     connection: authorized.connection,
+    projectId: project.id,
+    startJobs: remoteJupyterStartJobs,
+    // Read at each start, so a path saved in remote settings applies without reopening.
+    configuredJupyterPath: () =>
+      project.location.kind === 'ssh'
+        ? readHostRemoteEnvironmentPaths(project.location.hostProfileId, AGENT_DIR).jupyter
+        : undefined,
     confirmEnvironment: async () => true,
     resolveBaseEnvironment: (ref, pluginId) =>
       resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
@@ -2125,13 +1632,7 @@ const remoteRuntimeController = new RemoteRuntimeController({
           filePath: skill.filePath,
           dir: dirname(skill.filePath),
           insidePlugin: skill.sourceCategory === 'plugin',
-          ...(plugin ? { pluginId: plugin.id, toolPrefix: plugin.toolPrefix } : {}),
-          ...(skill.sourceId === 'office'
-            ? {
-                remoteUnsupportedReason:
-                  '该 Skill 绑定本机 Office 应用或文档句柄；请先下载到本机 Office 工作流，或在服务器用 bash/skill_run 生成普通文件后用 present_files 交付。没有回退到本机执行。'
-              }
-            : {})
+          ...(plugin ? { pluginId: plugin.id, toolPrefix: plugin.toolPrefix } : {})
         }
       })
     if (!target) return globalSkills
@@ -2437,6 +1938,9 @@ const remoteProjectUploads = new RemoteProjectUploadService({
 remoteProjectUploads.subscribe((job) => {
   sendToAllWindows('remoteProjectUploads:changed', job)
 })
+remoteJupyterStartJobs.subscribe((job) => {
+  sendToAllWindows('remoteJupyterJobs:changed', job)
+})
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
   string,
@@ -2726,53 +2230,6 @@ getOmpBridge().registerHostHandler('browser.execute', (params) =>
 getOmpBridge().registerHostHandler('browser.cancel', (params) =>
   browserToolHostCoordinator.cancel(params)
 )
-if (OFFICE_DEV_ENABLED) {
-  getOmpBridge().registerHostHandler(
-    'office.read',
-    createOfficeReadHostHandler({
-      resolveActiveRun: resolveActiveOfficeRun,
-      readRange: (runId, params) => {
-        officeService ??= createOfficeService()
-        return officeService.readRange(runId, params)
-      }
-    })
-  )
-  officeDescribeHostHandler = createOfficeDescribeHostHandler({
-    resolveActiveRun: resolveActiveOfficeRun,
-    describeCellEdit: (runId, params) => {
-      officeService ??= createOfficeService()
-      return officeService.describeCellEdit(runId, params)
-    },
-    describeWriteRequest: (runId, request) => {
-      officeService ??= createOfficeService()
-      return officeService.describeWriteRequest(runId, request)
-    }
-  })
-  getOmpBridge().registerHostHandler('office.describe', officeDescribeHostHandler)
-  getOmpBridge().registerHostHandler(
-    'office.apply',
-    createOfficeApplyHostHandler({
-      resolveActiveRun: resolveActiveOfficeRun,
-      authorizeWrite: authorizeOfficeWrite,
-      applyCellEdit: (runId, params, options) => {
-        officeService ??= createOfficeService()
-        return officeService.applyCellEdit(runId, params, options)
-      },
-      applyWriteRequest: (runId, request, options) => {
-        officeService ??= createOfficeService()
-        return officeService.applyWriteRequest(runId, request, options)
-      }
-    })
-  )
-  getOmpBridge().registerHostHandler(
-    'office.deliver',
-    createOfficeDeliverHostHandler({
-      resolveActiveRun: resolveActiveOfficeRun,
-      deliver: deliverOfficeOutputFromRun
-    })
-  )
-}
-
 async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
   const raw = await getOmpBridge().request<unknown>('agentRuns.list', {})
   if (!Array.isArray(raw)) return []
@@ -4983,9 +4440,6 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
   const path = record.path === null ? null : typeof record.path === 'string' ? record.path : null
   const phiSessionId = typeof record.phiSessionId === 'string' ? record.phiSessionId : undefined
   const cwd = typeof record.cwd === 'string' && record.cwd.trim() ? record.cwd : currentCwd
-  const officeTarget = Object.hasOwn(record, 'officeTarget')
-    ? (sanitizeOfficeTargetInput(record.officeTarget) ?? null)
-    : undefined
   return {
     path,
     ...(phiSessionId ? { phiSessionId } : {}),
@@ -4997,8 +4451,7 @@ function parsePromptTarget(input: unknown): PromptTargetInput | null {
     ...(typeof record.retryUserMessageId === 'string'
       ? { retryUserMessageId: record.retryUserMessageId }
       : {}),
-    ...(record.planMode === true ? { planMode: true } : {}),
-    ...(officeTarget !== undefined ? { officeTarget } : {})
+    ...(record.planMode === true ? { planMode: true } : {})
   }
 }
 
@@ -5156,15 +4609,11 @@ interface SubmitPromptInput {
  * conversation is on screen, so it also serves prompts for a conversation in the
  * background. The `agent:prompt` handler and automatic continuation both use it.
  */
-async function submitPromptRun(input: SubmitPromptInput): Promise<
-  | {
-      path: string | null
-      phiSessionId?: string
-      sessionGeneration: number
-    }
-  | OfficePromptTargetFailure
-  | null
-> {
+async function submitPromptRun(input: SubmitPromptInput): Promise<{
+  path: string | null
+  phiSessionId?: string
+  sessionGeneration: number
+} | null> {
   const normalizedText = input.text
   const promptTarget = input.promptTarget
   const runSessionKey = resolveSessionKeyAlias(input.sessionKey)
@@ -5191,30 +4640,10 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
   if (hasActivePromptRun(runSessionKey)) {
     throw new Error('会话正在运行')
   }
-  const officePreparation =
-    promptTarget?.officeTarget !== undefined
-      ? await prepareOfficePromptSubmission(
-          promptTarget.officeTarget,
-          {
-            runId,
-            sessionId: phiSessionId,
-            projectId: project?.id ?? null
-          },
-          officeService,
-          () => advancePromptGeneration(runSessionKey)
-        )
-      : { ok: true as const, value: advancePromptGeneration(runSessionKey) }
-  if (!officePreparation.ok) return officePreparation
+  const runGeneration = advancePromptGeneration(runSessionKey)
   // A real user message starts the automatic wake-up count over only after preflight succeeds.
   if (!input.automatic) automaticContinuations.delete(phiSessionId)
-  const runGeneration = officePreparation.value
-  let storedImages: ReturnType<typeof persistPromptImages> = []
-  try {
-    storedImages = input.images?.length ? persistPromptImages(phiSessionId, input.images) : []
-  } catch (error) {
-    clearOfficeRunTarget(runId)
-    throw error
-  }
+  const storedImages = input.images?.length ? persistPromptImages(phiSessionId, input.images) : []
   const otherActiveProjectRuns = project
     ? countOtherActiveProjectRuns(project.id, runSessionKey)
     : 0
@@ -5260,7 +4689,6 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
       })
     }
   } catch (error) {
-    clearOfficeRunTarget(runId)
     deleteActivePromptRun(runSessionKey, promptRun)
     throw error
   }
@@ -5459,13 +4887,11 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<
     runSessionKey,
     run.then(
       () => {
-        clearOfficeRunTarget(runId)
         deleteActivePromptRun(runSessionKey, promptRun)
         notifySessionChanged()
         flushPendingContinuations(phiSessionId, promptRun.cancelled)
       },
       () => {
-        clearOfficeRunTarget(runId)
         deleteActivePromptRun(runSessionKey, promptRun)
         notifySessionChanged()
         flushPendingContinuations(phiSessionId, promptRun.cancelled)
@@ -7469,6 +6895,38 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
   ).length
 }
 
+function requireProject(id: string): Project {
+  const project = getProject(id)
+  if (!project) throw new Error('项目不存在')
+  return project
+}
+
+/** The session manager cwd memory is keyed by: the project directory or the remote anchor. */
+function projectMemoryTarget(project: Project): { agentDir: string; cwd: string } {
+  return {
+    agentDir: AGENT_DIR,
+    cwd:
+      project.location.kind === 'ssh'
+        ? ensureRemoteProjectAnchor(project.id)
+        : project.workingDirectory
+  }
+}
+
+async function projectMemorySnapshot(id: string): Promise<ProjectMemorySnapshot> {
+  const project = requireProject(id)
+  const files = await getOmpBridge().request<Omit<ProjectMemorySnapshot, 'projectId' | 'settings'>>(
+    'memory.read',
+    projectMemoryTarget(project)
+  )
+  return {
+    projectId: id,
+    settings: normalizeProjectMemorySettings(project.memory),
+    summary: files.summary,
+    summaryUpdatedAt: files.summaryUpdatedAt,
+    lessons: files.lessons
+  }
+}
+
 async function invalidateAgentSession(): Promise<void> {
   const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
@@ -7478,7 +6936,6 @@ async function invalidateAgentSession(): Promise<void> {
   const activePromptRun = getActivePromptRun(currentSessionKey)
   if (activePromptRun) {
     activePromptRun.cancelled = true
-    clearOfficeRunTarget(activePromptRun.runId)
     cancelBrowserRun(activePromptRun)
     void cleanupBrowserRunTabs(activePromptRun)
   }
@@ -7509,7 +6966,6 @@ async function stopPromptRun(
 ): Promise<void> {
   if (invalidateGeneration) advancePromptGeneration(sessionKey)
   run.cancelled = true
-  clearOfficeRunTarget(run.runId)
   cancelBrowserRun(run)
   const browserCleanup = cleanupBrowserRunTabs(run)
   remoteBashManager.cancelSession(run.phiSessionId)
@@ -7533,7 +6989,6 @@ function stopAllPromptRuns(): {
   for (const [sessionKey, run] of activePromptRuns) {
     advancePromptGeneration(sessionKey)
     run.cancelled = true
-    clearOfficeRunTarget(run.runId)
     cancelBrowserRun(run)
   }
   const browserCleanup = Promise.all(runs.map((run) => cleanupBrowserRunTabs(run)))
@@ -7593,9 +7048,6 @@ function cleanupMainWindowRuntime(): Promise<void> {
     await Promise.allSettled([
       promptShutdown.browserCleanup,
       safeCleanupStep('terminal_cleanup_failed', () => disposeTerminalManager()),
-      safeCleanupStep('office_cleanup_failed', () =>
-        officeService?.dispose({ deadlineMs: OFFICE_QUIT_DEADLINE_MS })
-      ),
       safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
       safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
       safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
@@ -7801,12 +7253,9 @@ async function getAgentSession(
               createApprovalExtension({
                 signal: sessionAbortController.signal,
                 classifyTool: (toolName, input) =>
-                  officeToolApproval(toolName) ??
-                  (remoteProject
+                  remoteProject
                     ? remoteRuntimeController.approvalFor(toolName, input)
-                    : skillHost.approvalFor(toolName, input)),
-                prepareClassifiedToolApproval: (toolName, input, _context, event) =>
-                  prepareOfficeToolApproval(sessionKey, toolName, input, event),
+                    : skillHost.approvalFor(toolName, input),
                 ...(remoteProject
                   ? {
                       shouldGate: () =>
@@ -7867,32 +7316,6 @@ async function getAgentSession(
                 onApprovalResolved: (request, approved) => {
                   if (!request.sessionId) return
                   if (approved) {
-                    if (
-                      request.toolName === 'office_apply' &&
-                      request.runId &&
-                      request.toolCallId &&
-                      request.approvalDigest &&
-                      isActiveOfficeApprovalRun(request.runId)
-                    ) {
-                      officeApplyApprovals.grant(
-                        request.runId,
-                        request.toolCallId,
-                        request.approvalDigest
-                      )
-                    }
-                    if (
-                      request.toolName === 'office_deliver' &&
-                      request.runId &&
-                      request.toolCallId &&
-                      request.approvalDigest &&
-                      isActiveOfficeApprovalRun(request.runId)
-                    ) {
-                      officeDeliverApprovals.grant(
-                        request.runId,
-                        request.toolCallId,
-                        request.approvalDigest
-                      )
-                    }
                     if (
                       remoteProject &&
                       request.toolName === 'bash' &&
@@ -8025,6 +7448,7 @@ async function getAgentSession(
           ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
           : {}),
         projectBound: Boolean(project),
+        ...(project?.memory?.enabled ? { memory: project.memory } : {}),
         ...(remoteProject
           ? {
               ...(project ? { remoteRuntimeRoot: projectRemoteRuntimeRoot(project) } : {}),
@@ -8154,8 +7578,7 @@ function createWindow(): void {
     icon: appIcon,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
-      sandbox: false,
-      webviewTag: OFFICE_DEV_ENABLED
+      sandbox: false
     }
   })
   mainWindow = window
@@ -8191,12 +7614,6 @@ function createWindow(): void {
   })
   window.webContents.on('render-process-gone', () => startup.fail('renderer-process-gone'))
   window.webContents.setBackgroundThrottling(false)
-  if (OFFICE_DEV_ENABLED) {
-    installOfficeWebviewSecurity(
-      window.webContents,
-      (url) => officeService?.ownsPreviewUrl(url) === true
-    )
-  }
   if (process.platform === 'darwin') {
     window.setVibrancy(null)
     window.setWindowButtonVisibility(false)
@@ -8421,7 +7838,6 @@ app.whenReady().then(async () => {
   )
   registerRemoteMicromambaIpc(ipcMain)
   registerRemoteRipgrepIpc(ipcMain)
-  registerOfficeIpc()
   ipcMain.handle('window:close', () => {
     getActiveWindow()?.close()
   })
@@ -8513,6 +7929,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle('remoteProjectUploads:list', () => remoteProjectUploads.list())
+  ipcMain.handle('remoteJupyterJobs:list', () => remoteJupyterStartJobs.list())
   ipcMain.handle('remoteProjectUploads:cancel', async (_, jobId: unknown) => {
     if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
     await remoteProjectUploads.cancel(jobId)
@@ -9124,12 +8541,6 @@ app.whenReady().then(async () => {
         writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
       }
     }
-    if (manifest?.sessionId && officeService) {
-      await officeService.closeSession(manifest.sessionId).catch((error) => {
-        writeAppLog({ level: 'error', event: 'office_session_cleanup_failed' })
-        throw error
-      })
-    }
     if (
       manifest?.projectId &&
       remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
@@ -9205,6 +8616,13 @@ app.whenReady().then(async () => {
       writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
     })
     await disposeRemoteNotebookBackend(id)
+    const project = getProject(id)
+    if (project?.memory) {
+      // Memory lives under Phi's own directory, so it would outlive the project otherwise.
+      await getOmpBridge()
+        .request('memory.clear', projectMemoryTarget(project))
+        .catch(() => writeAppLog({ level: 'error', event: 'project_memory_clear_failed' }))
+    }
     deleteProject(id)
   })
   ipcMain.handle(
@@ -9257,6 +8675,24 @@ app.whenReady().then(async () => {
       return updateProjectDefaults(id, defaults)
     }
   )
+  // Memory settings reach the worker at session creation, so they apply to new conversations.
+  ipcMain.handle('projects:updateMemory', async (_, id: string, settings: unknown) =>
+    updateProjectMemory(id, settings)
+  )
+  ipcMain.handle('memory:snapshot', async (_, id: string) => projectMemorySnapshot(id))
+  ipcMain.handle('memory:deleteLesson', async (_, id: string, index: unknown, text: unknown) => {
+    const project = requireProject(id)
+    await getOmpBridge().request('memory.deleteLesson', {
+      ...projectMemoryTarget(project),
+      index,
+      text
+    })
+    return projectMemorySnapshot(id)
+  })
+  ipcMain.handle('memory:clear', async (_, id: string) => {
+    await getOmpBridge().request('memory.clear', projectMemoryTarget(requireProject(id)))
+    return projectMemorySnapshot(id)
+  })
   ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
   ipcMain.handle('projects:listRemoteDirectories', async (_, input: unknown) =>
     listRemoteProjectDirectories(input)

@@ -68,7 +68,8 @@ export function checkedRemoteWriteRequest(value: unknown): RemoteWriteRequest {
 export function buildRemoteCreateFileCommand(
   path: string,
   canonicalRoot: string,
-  expectedBytes: number
+  expectedBytes: number,
+  options: { createParents?: boolean } = {}
 ): string {
   const leaf = posix.basename(path)
   const parent = posix.dirname(path)
@@ -107,8 +108,32 @@ export function buildRemoteCreateFileCommand(
   ].join('\n')
   const script = [
     'set -eu',
-    `cd -P -- ${shellQuote(parent)} || exit 72`,
     `root=${shellQuote(canonicalRoot)}`,
+    ...(options.createParents
+      ? [
+          // Create missing directories one name at a time from the project root, so a
+          // symbolic link swapped in on the way can never lead outside it.
+          `parent=${shellQuote(parent)}`,
+          'if [ "$root" != / ]; then',
+          '  case "$parent" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
+          'fi',
+          'cd -P -- "$root" || exit 72',
+          'rest=${parent#"$root"}',
+          'set -f',
+          'IFS=/',
+          'for part in $rest; do',
+          '  [ -n "$part" ] || continue',
+          '  if [ ! -e "$part" ] && [ ! -L "$part" ]; then mkdir -- "$part" 2>/dev/null || [ -d "$part" ] || exit 71; fi',
+          '  cd -P -- "$part" || exit 72',
+          '  if [ "$root" != / ]; then',
+          '    case "$PWD" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
+          '  fi',
+          'done',
+          'unset IFS',
+          'set +f'
+        ]
+      : []),
+    `cd -P -- ${shellQuote(parent)} || exit 72`,
     'if [ "$root" != / ]; then',
     '  case "$PWD" in "$root"|"$root"/*) ;; *) exit 72 ;; esac',
     'fi',
@@ -120,6 +145,7 @@ export function buildRemoteCreateFileCommand(
 
 function writeFailure(code: number | null): Error {
   const reason: Record<number, string> = {
+    71: '无法在项目内创建父目录',
     72: '父目录已移出项目根目录或不可访问',
     73: '目标已存在；不会覆盖现有文件',
     74: '临时文件创建失败',
@@ -172,7 +198,7 @@ export class RemoteWorkspaceWriteManager {
           sessionId: request.sessionId,
           projectId: request.projectId,
           path: request.path,
-          mode: 'create'
+          mode: 'create-parents'
         },
         async (authorized, session) => {
           entry.session = session
@@ -181,7 +207,8 @@ export class RemoteWorkspaceWriteManager {
           const command = buildRemoteCreateFileCommand(
             authorized.path,
             authorized.canonicalRoot,
-            Buffer.byteLength(request.content, 'utf8')
+            Buffer.byteLength(request.content, 'utf8'),
+            { createParents: true }
           )
           let result: Awaited<ReturnType<NonNullable<RemoteSshSession['execWithInput']>>>
           try {

@@ -33,6 +33,7 @@ import { EnvironmentSettingsPanel } from '../features/environment/components/Env
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
 import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
 import { PermissionSettingsSection } from './PermissionView'
+import { MemorySettingsPanel } from '../features/memory/MemorySettingsPanel'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
 import { AutoCompactionSettingsSection } from '../features/chat/components/AutoCompactionSettingsSection'
@@ -48,6 +49,7 @@ const ProviderIcon = PhiIcons.settings.providers
 const SearchIcon = PhiIcons.action.search
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
+const MemoryIcon = PhiIcons.settings.memory
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
 
@@ -58,6 +60,7 @@ export type SettingsCategory =
   | 'providers'
   | 'web-search'
   | 'permissions'
+  | 'memory'
   | 'remote'
   | 'appearance'
 
@@ -68,6 +71,7 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
   { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
   { id: 'web-search', label: '网页搜索', icon: <SearchIcon fontSize="small" /> },
   { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
+  { id: 'memory', label: '记忆', icon: <MemoryIcon fontSize="small" /> },
   { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
   { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
 ]
@@ -510,6 +514,7 @@ type SettingsDialogProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
+  onProjectUpdated: (project: Project) => void
   onOpenApprovalSession: (path: string) => void
   onRespondApproval: (requestId: string, approved: boolean) => void
   noProjectTaskFolder: string
@@ -553,6 +558,7 @@ function SettingsDialog({
   updatingProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
+  onProjectUpdated,
   onOpenApprovalSession,
   onRespondApproval,
   noProjectTaskFolder,
@@ -728,6 +734,9 @@ function SettingsDialog({
               onOpenApprovalSession={onOpenApprovalSession}
               onRespondApproval={onRespondApproval}
             />
+          )}
+          {category === 'memory' && (
+            <MemorySettingsPanel projects={projects} onProjectUpdated={onProjectUpdated} />
           )}
           {category === 'remote' && <RemoteHostSettingsSection />}
           {category === 'appearance' && (

@@ -4,6 +4,8 @@ import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { withConnectorMetadata } from '../src/main/agent/mcp-server-view'
+
 const syntax = ts.createSourceFile(
   'src/main/index.ts',
   readFileSync('src/main/index.ts', 'utf8'),
@@ -48,15 +50,17 @@ test('configured legacy connectors inherit their verified catalog icons without 
     { id: 'notion', name: 'Notion', url: configured[1].url, icon: { key: 'verified-notion' } }
   ]
   const handler = runInNewContext(serverListHandler(), {
-    currentCwd: '/project',
-    isRemoteResourceScope: () => false,
-    listMcpServers: async () => configured,
+    listedMcpServers: async () => configured,
+    withConnectorMetadata,
     connectorCatalog: async () => catalog
   }) as (_: unknown) => Promise<Array<(typeof configured)[number] & { icon?: { key: string } }>>
   const result = await handler(undefined)
   assert.equal(result[0].icon?.key, 'verified-composio')
   assert.equal(result[1].icon?.key, 'verified-notion')
-  assert.equal(result[2], configured[2])
+  // A connector the catalog does not know keeps its fields and gets a stable fallback icon.
+  const { icon: fallback, ...custom } = result[2]
+  assert.deepEqual(custom, configured[2])
+  assert.match(fallback?.key ?? '', /^[0-9a-f]{64}$/)
 })
 
 test('installed connector icons take precedence over catalog previews', async () => {
@@ -64,9 +68,8 @@ test('installed connector icons take precedence over catalog previews', async ()
     { id: 'cbioportal', packageId: 'cbioportal', icon: { key: 'installed-icon' } }
   ]
   const handler = runInNewContext(serverListHandler(), {
-    currentCwd: '/project',
-    isRemoteResourceScope: () => true,
-    listGlobalMcpServers: async () => configured,
+    listedMcpServers: async () => configured,
+    withConnectorMetadata,
     connectorCatalog: async () => [{ id: 'cbioportal', icon: { key: 'preview-icon' } }]
   }) as (_: unknown) => Promise<typeof configured>
   assert.equal((await handler(undefined))[0].icon.key, 'installed-icon')

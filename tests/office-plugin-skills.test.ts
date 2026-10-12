@@ -39,11 +39,11 @@ test('the bundled office plugin owns five managed-Python skills and no private r
   assert.deepEqual(result.warnings, [])
   assert(result.plugin)
   assert.equal(result.plugin.manifest.id, 'office')
-  assert.equal(result.plugin.manifest.version, '1.0.2')
+  assert.equal(result.plugin.manifest.version, '1.0.3')
   assert.equal(result.plugin.manifest.title, '办公文档')
   assert.equal(
     result.plugin.manifest.summary,
-    '使用托管 Python 生成和处理 Excel、Word、PowerPoint 与 PDF，并用原生 Office 工具对已打开文件做少量交互式修改。'
+    '使用托管 Python 生成和处理 Excel、Word、PowerPoint 与 PDF。'
   )
   assert.equal(result.plugin.manifest.toolPrefix, 'officepy')
   assert.equal(result.plugin.manifest.environments, undefined)
@@ -315,11 +315,12 @@ test('the docx skill teaches complete managed creation and honest validation bou
     /extract_text\.py/u,
     /hyperlink/iu,
     /comments/iu,
-    /tracked revisions/iu,
-    /office_apply/u
+    /tracked revisions/iu
   ]) {
     assert.match(body, expected)
   }
+  // The native Office tools are retired; the skill must not route to them.
+  assert.doesNotMatch(body, /office_(read|apply|deliver)/u)
   assert.doesNotMatch(body, /PDF/iu)
 })
 

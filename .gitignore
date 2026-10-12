@@ -20,10 +20,6 @@ resources/runtime/bun/
 # `bun run build:helper`; source and the canonical version remain tracked.
 resources/remote-helper/
 
-# OfficeCLI binaries downloaded by `bun run office:fetch`. Version, URL, and sha256
-# live in resources/office/manifest.json, which is committed.
-resources/office/officecli/
-
 # Local agent-tool runtime state (progress tracking, screenshots) — not
 # project source.
 .omx/

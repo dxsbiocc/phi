@@ -5,8 +5,6 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-import * as promptTarget from '../src/preload/promptTarget'
-
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
 test('SSH bootstrap uses one shared preload bridge without extending renderer types', () => {
@@ -47,7 +45,6 @@ test('preload SSH bootstrap bridge invokes only the staged renderer channels', a
   const ipcRenderer = new FakeIpcRenderer()
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
-    if (specifier === './promptTarget') return promptTarget
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

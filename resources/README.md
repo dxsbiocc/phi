@@ -12,7 +12,6 @@ are maintained in [phi-packages](https://github.com/dxsbiocc/phi-packages).
 | `skills/create-wrapper/` | Core wrapper-authoring skill                                            |
 | `palettes/`              | Application palette definitions                                         |
 | `runtime/`               | Managed runtime manifests, environments, and locks                      |
-| `office/`                | OfficeCLI runtime manifest and fetched platform binary                  |
 | `plugins/office/`        | Retained private Office plugin; some components restrict redistribution |
 
 `agents/` currently contains only `Wrapper.md`. Phi directly loads this core
@@ -28,11 +27,10 @@ installed skill, plugin, wrapper package or connector has no explicit icon. Cont
 that is not installed keeps the default glyph. Source, commercial-use attribution, and integrity
 metadata are retained alongside the 512 px WebP thumbnails.
 
-`office/` and `plugins/office/` serve different purposes. The former is a core
-runtime, while the latter is private source and is excluded from desktop packages.
+`plugins/office/` is private plugin source and is excluded from desktop packages.
 The application does not automatically install plugins from this directory.
 
-Fetched Micromamba and OfficeCLI binaries are ignored by Git. Finder metadata,
+Fetched Micromamba binaries are ignored by Git. Finder metadata,
 Python caches, Nextflow work directories, and retired `db-connectors/` sources do
 not belong here. `bun run check:resources` checks this boundary as well as
 untracked run leftovers.

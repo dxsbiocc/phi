@@ -5,8 +5,6 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-import * as promptTarget from '../src/preload/promptTarget'
-
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
 interface RemoteAgentPreloadApi {
@@ -34,7 +32,6 @@ function loadRemoteAgentPreload(): {
   const exposed = new Map<string, unknown>()
   const ipcRenderer = new FakeIpcRenderer()
   const load = (specifier: string): unknown => {
-    if (specifier === './promptTarget') return promptTarget
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

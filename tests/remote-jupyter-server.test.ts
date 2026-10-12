@@ -14,6 +14,7 @@ import {
 import {
   openRemoteJupyterLease,
   remoteJupyterLeaseActivity,
+  sanitizeRemoteJupyterText,
   type OpenRemoteJupyterLeaseOptions,
   type RemoteJupyterLease
 } from '../src/main/agent/notebook/remote-jupyter-lease'
@@ -23,6 +24,10 @@ import {
   installRemoteJupyterSetsid,
   writeRemoteJupyterTestExecutables
 } from './helpers/remoteJupyterScripts'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+import { pidIsRunning } from './helpers/processLiveness'
+
+holdEventLoopForTests()
 
 const cleanups: Array<() => Promise<void> | void> = []
 
@@ -92,6 +97,20 @@ test('remote launch rejects untrusted environment keys and token material', () =
   )
 })
 
+test('log redaction also removes token pieces split across lines', () => {
+  const token = 'LkHk6VT7UZoeAKvItZmaCvZa76FcKRRC5AnUltaVJ5A'
+  // A launcher marker printed mid-token leaves each half on its own line.
+  assert.equal(sanitizeRemoteJupyterText(`split=${token.slice(0, 12)}`, token), 'split=<redacted>')
+  assert.equal(sanitizeRemoteJupyterText(token.slice(12), token), '<redacted>')
+  assert.equal(sanitizeRemoteJupyterText(`x${token.slice(5, 20)}y`, token), 'x<redacted>y')
+  // Short coincidences and ordinary words stay readable.
+  assert.equal(sanitizeRemoteJupyterText('Kernel LkHk6VT started', token), 'Kernel LkHk6VT started')
+  assert.equal(
+    sanitizeRemoteJupyterText('ServerApp running at http://127.0.0.1:8888/', token),
+    'ServerApp running at http://127.0.0.1:8888/'
+  )
+})
+
 test('token stays off argv, files, status, and logs; stop reaps the process group', async () => {
   const fixture = await createFixture()
   const logs: string[] = []
@@ -114,7 +133,8 @@ test('token stays off argv, files, status, and logs; stop reaps the process grou
   assert.equal(endpoint.hostname, '127.0.0.1')
   assert.ok(Number(endpoint.port) >= 41001)
   assert.equal(connection.authorizationHeader(), authorization)
-  await waitFor(() => logs.some((line) => line.includes('<redacted>')))
+  // The fake prints the token split across a 20 ms pause; wait for that line itself.
+  await waitFor(() => logs.includes('split=<redacted>'))
 
   assert.doesNotMatch(await readFile(fixture.sshArgsPath, 'utf8'), new RegExp(token))
   assert.doesNotMatch(await readFile(fixture.jupyterArgsPath, 'utf8'), new RegExp(token))
@@ -565,12 +585,7 @@ async function readPids(path: string): Promise<number[]> {
 }
 
 async function pidIsAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  return pidIsRunning(pid)
 }
 
 async function waitFor(

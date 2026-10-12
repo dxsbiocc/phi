@@ -67,7 +67,12 @@ export function buildPhiRemoteProjectSystemPrompt(
   defaultPrompt: string[],
   anchorCwd: string,
   remoteRoot: string,
-  options: { personaMarkdown?: string; runtime?: RemoteRuntimePromptContext } = {}
+  options: {
+    personaMarkdown?: string
+    runtime?: RemoteRuntimePromptContext
+    /** Project memory read locally; the SDK's own injection reads the wrong root here. */
+    memoryBlock?: string
+  } = {}
 ): string[] {
   return [
     ...buildPhiMainSystemPrompt(
@@ -80,7 +85,8 @@ export function buildPhiRemoteProjectSystemPrompt(
       'The notebook.list, notebook.read, notebook.insert_cell, notebook.update_cell, notebook.delete_cell, notebook.run_cell, and notebook.save tools operate server-side notebooks. Jupyter and kernels run on the SSH login host through Phi-managed routing only after the user explicitly starts the remote Notebook runtime; never guess a port or token and never use the local project anchor or local Jupyter as fallback. ' +
       "The Terminal panel can open an interactive SSH shell for this project. Terminal command drafting happens only in Phi's local UI and writes nothing to the PTY until the user explicitly sends the editable draft; a disconnected terminal is not automatically reconnected and no command is replayed. " +
       'Never treat Phi session storage as project files or fall back to local execution.',
-    ...(options.runtime ? [remoteRuntimePrompt(options.runtime)] : [])
+    ...(options.runtime ? [remoteRuntimePrompt(options.runtime)] : []),
+    ...(options.memoryBlock ? [options.memoryBlock] : [])
   ]
 }
 

@@ -10,7 +10,6 @@ import type {
   TerminalRendererBridge,
   TerminalWorkspaceRef
 } from '../src/shared/terminalTypes'
-import * as promptTarget from '../src/preload/promptTarget'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -47,7 +46,6 @@ test('preload terminal bridge invokes exact channels and independently unsubscri
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
     // The preload's only local dependency is the pure prompt-target sanitiser.
-    if (specifier === './promptTarget') return promptTarget
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

@@ -1,6 +1,5 @@
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { PromptImageInput } from '../../../shared/promptImageTypes'
-import type { OfficePromptTargetFailure, OfficeTargetInput } from '../../../shared/officeProtocol'
 
 export type SessionStatus =
   'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
@@ -57,7 +56,7 @@ export interface PromptSuccessResult {
   sessionGeneration: number
 }
 
-export type PromptResult = PromptSuccessResult | OfficePromptTargetFailure
+export type PromptResult = PromptSuccessResult
 
 export interface PromptTarget {
   path: string | null
@@ -68,7 +67,6 @@ export interface PromptTarget {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
-  officeTarget?: OfficeTargetInput
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'

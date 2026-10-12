@@ -33,6 +33,9 @@ import type {
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { updateNotebookCell } from '../src/shared/notebookDocument'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 type Backend = {
   name: string
@@ -55,6 +58,8 @@ function execWithInput(command: string, input: string): Promise<RemoteExecResult
         signal
       })
     })
+    // A script that exits before reading its input must not raise EPIPE, as in the real session.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(input)
   })
 }

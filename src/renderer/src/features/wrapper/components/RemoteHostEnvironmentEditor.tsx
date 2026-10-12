@@ -20,7 +20,11 @@ const TOOL_FIELDS: ReadonlyArray<{
   managed: string
 }> = [
   { id: 'nextflow', label: 'Nextflow', managed: '由 Phi 托管' },
-  { id: 'jupyter', label: 'Jupyter', managed: '由 Phi 托管' },
+  {
+    id: 'jupyter',
+    label: 'Jupyter',
+    managed: '先检测服务器已有的 Jupyter（PATH、conda），没有再由 Phi 托管'
+  },
   { id: 'micromamba', label: 'micromamba', managed: '由 Phi 安装在运行时目录' },
   { id: 'docker', label: 'Docker', managed: '从服务器 PATH 自动检测' }
 ]
@@ -133,7 +137,7 @@ export function RemoteHostEnvironmentEditor({
             value={toolPaths[id] ?? ''}
             error={Boolean(pathErrors[id])}
             disabled={busy}
-            placeholder="由 Phi 管理"
+            placeholder={id === 'jupyter' ? '自动检测' : '由 Phi 管理'}
             helperText={pathErrors[id] ?? `默认：${managed}`}
             onChange={(event) =>
               setToolPaths((current) => ({ ...current, [id]: event.target.value }))

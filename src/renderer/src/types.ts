@@ -4,9 +4,9 @@ import type {
   NotebookOutput
 } from '../../shared/notebookDocument'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { TerminalRendererBridge } from '../../shared/terminalTypes'
-import type { OfficeRendererBridge } from '../../shared/officeProtocol'
 import type {
   EnvironmentGetResult,
   EnvironmentHostDependency,
@@ -723,7 +723,6 @@ export interface RendererApi
     RemoteProjectUploadRendererApi {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
-  office: OfficeRendererBridge
   readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -832,6 +831,14 @@ export interface RendererApi
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<Project>
+  getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ) => Promise<ProjectMemorySnapshot>
+  clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
   listRemoteProjectDirectories: (
     request: RemoteDirectoryListRequest

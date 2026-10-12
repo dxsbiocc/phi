@@ -18,6 +18,9 @@ const REMOTE_JUPYTER_REF = 'phi:jupyter@1'
 const REMOTE_JUPYTER_SPEC = 'remote-environment.yml'
 const MANAGED_KERNEL_NAME = 'phi-python'
 const MANAGED_KERNEL_DISPLAY_NAME = 'Python 3.12 (phi-python)'
+const SERVER_KERNEL_NAME = 'server-python'
+const SERVER_KERNEL_LABEL = '服务器现有环境'
+const DETECT_TIMEOUT_MS = 45_000
 
 type RemoteEnvironmentGateway = Pick<RemoteEnvironmentService, 'request' | 'bindSession' | 'cancel'>
 
@@ -26,12 +29,23 @@ export interface RemoteKernelspecAdapterOptions {
   openWorkspace: OpenRemoteRuntimeWorkspace
   environmentsDir?: string
   allowUserPrefixes?: boolean
+  /** The Jupyter path saved in the host's remote settings; tried before PATH. */
+  configuredJupyterPath?: () => string | undefined
+}
+
+/** A Jupyter Server already installed on the server, with an ipykernel-capable Python. */
+export interface ExistingRemoteJupyter {
+  jupyter: string
+  python: string
+  version?: string
 }
 
 export interface PrepareRemoteJupyterInput {
   runtimeSessionId: string
   requestId?: string
   signal?: AbortSignal
+  /** Human-readable steps for the startup log. */
+  onProgress?: (text: string) => void
 }
 
 export interface ListRemoteKernelsInput {
@@ -42,6 +56,8 @@ export interface ListRemoteKernelsInput {
 export interface PreparedRemoteJupyterRuntime {
   kernels: AnalysisKernelDiagnostics
   launch: RemoteJupyterLaunchCommand
+  /** Which Jupyter runs: one found on the server, or Phi's managed environment. */
+  source: 'existing' | 'managed'
 }
 
 export interface RegisterRemoteUserPrefixInput {
@@ -59,6 +75,11 @@ export class RemoteKernelspecAdapter {
   }
 
   async prepareRuntime(input: PrepareRemoteJupyterInput): Promise<PreparedRemoteJupyterRuntime> {
+    const existing = await this.prepareExistingRuntime(input)
+    if (existing) return existing
+    input.onProgress?.(
+      '服务器上没有可用的 Jupyter Server（需要 jupyter server 与 ipykernel）；改用 Phi 受管环境 phi:jupyter@1，首次创建可能需要几分钟。'
+    )
     const kernels = await this.prepare(input)
     input.signal?.throwIfAborted()
     const handle = await this.bindManagedEnvironment(input.runtimeSessionId, input.signal)
@@ -66,7 +87,44 @@ export class RemoteKernelspecAdapter {
     try {
       assertManagedPrefix(workspace, handle)
       await prepareJupyterDirectories(workspace)
-      return { kernels, launch: remoteJupyterLaunch(workspace, handle) }
+      input.onProgress?.(`使用受管环境中的 Jupyter：${posix.join(handle.prefix, 'bin', 'jupyter')}`)
+      return {
+        kernels,
+        launch: remoteJupyterLaunch(workspace, posix.join(handle.prefix, 'bin', 'jupyter')),
+        source: 'managed'
+      }
+    } finally {
+      await workspace.close?.().catch(() => undefined)
+    }
+  }
+
+  /** Uses a Jupyter already on the server when one is complete enough to run notebooks. */
+  private async prepareExistingRuntime(
+    input: PrepareRemoteJupyterInput
+  ): Promise<PreparedRemoteJupyterRuntime | undefined> {
+    const workspace = await this.options.openWorkspace(input.runtimeSessionId, input.signal)
+    try {
+      const configured = this.options.configuredJupyterPath?.()?.trim() || undefined
+      input.onProgress?.(
+        configured
+          ? `正在检查设置中的 Jupyter 路径 ${configured}，以及服务器 PATH 与常见 conda 位置…`
+          : '正在检测服务器上已有的 Jupyter（登录 shell 的 PATH 与常见 conda 位置）…'
+      )
+      const existing = await detectExistingRemoteJupyter(workspace, configured, input.signal)
+      if (!existing) return undefined
+      input.signal?.throwIfAborted()
+      input.onProgress?.(
+        `使用服务器已有的 Jupyter：${existing.jupyter}${existing.version ? `（jupyter_server ${existing.version}）` : ''}，kernel Python：${existing.python}`
+      )
+      // The spec creates jupyter/ first; the parallel mkdirs below would race on it.
+      await writeSpec(workspace, SERVER_KERNEL_NAME, serverPythonSpec(existing))
+      await prepareJupyterDirectories(workspace)
+      if (this.options.allowUserPrefixes !== true) await removeUserSpecs(workspace)
+      return {
+        kernels: existingDiagnostics(existing),
+        launch: remoteJupyterLaunch(workspace, existing.jupyter),
+        source: 'existing'
+      }
     } finally {
       await workspace.close?.().catch(() => undefined)
     }
@@ -168,13 +226,71 @@ async function prepareJupyterDirectories(workspace: RemoteRuntimeWorkspace): Pro
   )
 }
 
+/**
+ * Candidates in order: the configured path, `jupyter` on the login shell's PATH (module and
+ * conda setups live there), then common conda installs. A candidate counts only when
+ * `jupyter server --version` works and the Python beside it imports ipykernel.
+ */
+export const DETECT_REMOTE_JUPYTER_SCRIPT = [
+  'configured="$1"',
+  'found=$(command -v jupyter 2>/dev/null || true)',
+  'for candidate in "$configured" "$found" "${CONDA_PREFIX:+$CONDA_PREFIX/bin/jupyter}" \\',
+  '  "$HOME/miniforge3/bin/jupyter" "$HOME/mambaforge/bin/jupyter" "$HOME/miniconda3/bin/jupyter" \\',
+  '  "$HOME/anaconda3/bin/jupyter" /opt/conda/bin/jupyter /usr/local/bin/jupyter /usr/bin/jupyter; do',
+  '  case "$candidate" in /*) ;; *) continue ;; esac',
+  '  [ -x "$candidate" ] || continue',
+  '  dir=$(dirname "$candidate")',
+  '  python="$dir/python"',
+  '  [ -x "$python" ] || python="$dir/python3"',
+  '  [ -x "$python" ] || continue',
+  '  version=$("$candidate" server --version 2>/dev/null | tail -n 1) || continue',
+  '  [ -n "$version" ] || continue',
+  '  "$python" -c "import ipykernel" >/dev/null 2>&1 || continue',
+  `  printf 'PHI_JUPYTER\\t%s\\t%s\\t%s\\n' "$candidate" "$python" "$version"`,
+  '  exit 0',
+  'done',
+  'exit 3'
+].join('\n')
+
+export async function detectExistingRemoteJupyter(
+  workspace: RemoteRuntimeWorkspace,
+  configured: string | undefined,
+  signal?: AbortSignal
+): Promise<ExistingRemoteJupyter | undefined> {
+  const result = await workspace.projectHost.exec.run(
+    ['bash', '-lc', DETECT_REMOTE_JUPYTER_SCRIPT, 'phi-detect-jupyter', configured ?? ''],
+    {
+      cwd: workspace.projectRoot,
+      timeoutMs: DETECT_TIMEOUT_MS,
+      maxOutputBytes: 65_536,
+      ...(signal ? { signal } : {})
+    }
+  )
+  if (result.code !== 0 || result.terminationReason) return undefined
+  return parseDetectedRemoteJupyter(result.stdout)
+}
+
+export function parseDetectedRemoteJupyter(stdout: string): ExistingRemoteJupyter | undefined {
+  const line = stdout
+    .split('\n')
+    .reverse()
+    .find((entry) => entry.startsWith('PHI_JUPYTER\t'))
+  if (!line) return undefined
+  const [, jupyter, python, version] = line.split('\t')
+  const absolute = (path: string | undefined): path is string =>
+    Boolean(path && posix.isAbsolute(path) && !/[\0\r\n]/.test(path))
+  if (!absolute(jupyter) || !absolute(python)) return undefined
+  const trimmed = version?.trim()
+  return { jupyter, python, ...(trimmed ? { version: trimmed } : {}) }
+}
+
 function remoteJupyterLaunch(
   workspace: RemoteRuntimeWorkspace,
-  handle: RemoteEnvironmentHandle
+  jupyter: string
 ): RemoteJupyterLaunchCommand {
   const root = posix.join(workspace.runtimeRoot, 'jupyter')
   return {
-    command: posix.join(handle.prefix, 'bin', 'jupyter'),
+    command: jupyter,
     args: [
       'server',
       `--KernelSpecManager.kernel_dirs=${posix.join(root, 'kernels')}`,
@@ -255,6 +371,47 @@ function managedPythonSpec(handle: RemoteEnvironmentHandle): KernelSpecFile {
       debugger: true,
       phi: { managed: true, ref: REMOTE_JUPYTER_REF, envId: handle.envId }
     }
+  }
+}
+
+function serverPythonSpec(existing: ExistingRemoteJupyter): KernelSpecFile {
+  const bin = posix.dirname(existing.python)
+  return {
+    argv: [existing.python, '-m', 'ipykernel_launcher', '-f', '{connection_file}'],
+    display_name: `Python (${SERVER_KERNEL_LABEL})`,
+    language: 'python',
+    env: {
+      PATH: `${bin}:/usr/bin:/bin`,
+      PYTHONDONTWRITEBYTECODE: '1',
+      MPLBACKEND: 'module://matplotlib_inline.backend_inline'
+    },
+    interrupt_mode: 'signal',
+    metadata: { debugger: true, phi: { managed: false, serverExisting: true } }
+  }
+}
+
+function existingDiagnostics(existing: ExistingRemoteJupyter): AnalysisKernelDiagnostics {
+  const kernel: AnalysisKernelSummary = {
+    name: SERVER_KERNEL_NAME,
+    displayName: `Python (${SERVER_KERNEL_LABEL})`,
+    language: 'python',
+    rawLanguage: 'python',
+    executable: existing.python,
+    label: SERVER_KERNEL_LABEL,
+    status: 'ready'
+  }
+  return {
+    jupyterServer: {
+      available: true,
+      command: 'jupyter',
+      managed: false,
+      ...(existing.version ? { version: existing.version } : {})
+    },
+    kernels: [kernel],
+    preferredKernelName: SERVER_KERNEL_NAME,
+    hasPythonKernel: true,
+    hasRKernel: false,
+    messages: [`使用服务器已有的 Jupyter：${existing.jupyter}`]
   }
 }
 
