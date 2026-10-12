@@ -4,7 +4,7 @@
 // handlers and the real remote skill service, which run on a local shell standing in for SSH.
 // Unit tests that call a tool's execute() directly skip that loop, which is where a schema,
 // guard or boundary mismatch fails every call in a real remote project.
-import { existsSync, readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -14,7 +14,10 @@ import {
   discoverAuthStorage
 } from '@oh-my-pi/pi-coding-agent'
 import { createAgentSession } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import { loadAllMCPConfigs } from '@oh-my-pi/pi-coding-agent/mcp/config'
+import { MCPManager } from '@oh-my-pi/pi-coding-agent/mcp/manager'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
+import { setAgentDir } from '@oh-my-pi/pi-utils'
 import {
   createMockModel,
   registerMockApi,
@@ -25,6 +28,12 @@ import {
 import { createRemoteProjectToolGuardExtension } from '../../src/main/agent/agents/remote-project-tool-guard'
 import { createRemoteUrlGuardExtension } from '../../src/main/agent/agents/remote-url-guard'
 import { buildScriptTools, buildSkillRunTool } from '../../src/main/agent/content/skill-tools'
+import {
+  buildRemoteMcpGuardState,
+  loadRemoteApplicationMcp,
+  remoteMcpLoadPlan,
+  type McpSnapshotLike
+} from '../../src/main/agent/mcp/remote-mcp-policy'
 import {
   buildRemoteWorkspaceCustomTools,
   buildRemoteWorkspaceRead
@@ -56,7 +65,35 @@ const fixture = createRemoteRuntimeFixture()
 try {
   installFakeMicromamba(fixture)
   const skill = writeTestSkill(fixture)
+  // The same skill shipped inside a plugin: the plugin, not the skill, owns the tool prefix.
+  const pluginSkillDir = join(fixture.root, 'plugins', 'demo-plugin', 'skills', 'plugin-demo')
+  cpSync(skill.dir, pluginSkillDir, { recursive: true })
+  const pluginSkillFile = join(pluginSkillDir, 'SKILL.md')
+  writeFileSync(
+    pluginSkillFile,
+    readFileSync(pluginSkillFile, 'utf8')
+      .replace('name: remote-demo', 'name: plugin-demo')
+      .replace('  toolPrefix: remotedemo\n', '')
+  )
+  const pluginSkill = { name: 'plugin-demo', dir: pluginSkillDir, filePath: pluginSkillFile }
   const agentDir = join(fixture.root, 'phi')
+  // The worker process starts with this agent directory; here it is set before any SDK use.
+  setAgentDir(agentDir)
+  // An application-level stdio MCP server that only calls out, as remote projects allow.
+  const mcpProfile = {
+    mcpServers: {
+      fixture: {
+        command: process.execPath,
+        args: [
+          join(process.cwd(), 'tests', 'helpers', 'fixtureMcpServer.mjs'),
+          join(fixture.root, 'mcp-snapshot.json'),
+          'success'
+        ]
+      }
+    }
+  }
+  mkdirSync(agentDir, { recursive: true })
+  writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify(mcpProfile))
 
   // Main process: the project registry, session manifest and host the handlers resolve.
   const location = {
@@ -107,7 +144,10 @@ try {
         configuredRoot: fixture.runtimeRoot
       }
     },
-    listSkills: async () => [{ ...skill, insidePlugin: false }],
+    listSkills: async () => [
+      { ...skill, insidePlugin: false },
+      { ...pluginSkill, insidePlugin: true, pluginId: 'demo-plugin', toolPrefix: 'plg' }
+    ],
     confirmEnvironment: async () => true,
     resolveBasePackages: async () => ['bash'],
     openWorkspace: async () => fixture.workspace
@@ -179,7 +219,7 @@ try {
     }),
     buildSkillRunTool(requestHost, {
       runtimeSessionId: RUNTIME_SESSION_ID,
-      allowedSkills: [skill.name],
+      allowedSkills: [skill.name, pluginSkill.name],
       remoteProject
     }),
     ...scriptTools
@@ -211,6 +251,13 @@ try {
         call('remotedemo_json', { message: 'hi' })
       ]
     },
+    {
+      content: [
+        call('skill_run', { skill: pluginSkill.name, script: 'run.sh', args: ['plugin'] }),
+        call('plg_json', { message: 'from-plugin' })
+      ]
+    },
+    { content: [call('mcp__fixture_first', { query: 'from-mcp' })] },
     { content: ['done'] }
   ]
   registerMockApi()
@@ -219,6 +266,43 @@ try {
   const authStorage = await discoverAuthStorage(agentDir)
   authStorage.setRuntimeApiKey('mock', 'test')
   const settings = await Settings.init({ cwd: agentDir, agentDir })
+  // Remote MCP: only the application mcp.json, loaded from agentDir, guarded by its policy.
+  const mcpPlan = remoteMcpLoadPlan({
+    projectCwd: anchor,
+    agentDir,
+    enableProjectConfig: true,
+    remote: true
+  })
+  const mcp = await loadRemoteApplicationMcp({
+    agentDir,
+    localProjectAnchor: anchor,
+    profile: mcpProfile,
+    options: {
+      filterExa: true,
+      extensionRoots: {
+        explicit: [],
+        mode: 'merge',
+        configured: settings.get('extensions') ?? [],
+        configuredLevel: settings.extensionsSourceLevel()
+      }
+    },
+    load: async (loadCwd, options) =>
+      (await loadAllMCPConfigs(
+        loadCwd,
+        options as Parameters<typeof loadAllMCPConfigs>[1]
+      )) as unknown as McpSnapshotLike
+  })
+  const mcpManager = new MCPManager(
+    mcpPlan.cwd,
+    null,
+    async () => mcp.snapshot as unknown as Awaited<ReturnType<typeof loadAllMCPConfigs>>
+  )
+  mcpManager.setAuthStorage(authStorage)
+  const mcpTools = (await mcpManager.discoverAndConnect()).tools
+  const mcpState = buildRemoteMcpGuardState(mcp.policy, mcpTools, {
+    agentDir,
+    localProjectAnchor: anchor
+  })
   const result = await createAgentSession({
     agentId: 'phi-remote-agent-loop-smoke',
     agentDisplayName: 'Main',
@@ -230,14 +314,19 @@ try {
     sessionManager: SessionManager.inMemory(agentDir),
     model: mock.model,
     customTools,
-    enableMCP: false,
+    mcpManager,
+    enableMCP: true,
     enableLsp: false,
     disableExtensionDiscovery: true,
     extensions: [
-      createRemoteProjectToolGuardExtension({ dynamicSkillToolNames: () => scriptToolNames }),
+      createRemoteProjectToolGuardExtension({
+        dynamicSkillToolNames: () => scriptToolNames,
+        remoteMcpToolState: () => mcpState
+      }),
       createRemoteUrlGuardExtension()
     ]
   })
+  await result.session.refreshMCPTools(mcpTools)
   await initializeExtensions(result.session, {
     reportSendError: () => undefined,
     reportRuntimeError: () => undefined
@@ -254,6 +343,7 @@ try {
   })
   await result.session.prompt('exercise every remote tool')
   await result.session.dispose()
+  await mcpManager.disconnectAll?.()
 
   process.stdout.write(
     JSON.stringify({

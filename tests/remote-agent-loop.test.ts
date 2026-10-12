@@ -6,7 +6,7 @@ import test from 'node:test'
 const bunAvailable = spawnSync('bun', ['--version'], { encoding: 'utf8' }).status === 0
 
 test(
-  'a real agent loop runs every remote file, command and skill tool on the server',
+  'a real agent loop runs remote file, command, skill, plugin skill and MCP tools',
   { skip: !bunAvailable },
   () => {
     const result = spawnSync(
@@ -33,8 +33,11 @@ test(
       'edit',
       'glob',
       'grep',
+      'mcp__fixture_first',
+      'plg_json',
       'read',
       'remotedemo_json',
+      'skill_run',
       'skill_run',
       'write'
     ])
@@ -55,10 +58,18 @@ test(
     assert.match(text('bash'), /beta/)
     assert.match(text('glob'), /notes\/a\.txt/)
     assert.match(text('grep'), /notes\/a\.txt:1:beta/)
-    assert.match(text('skill_run'), /exit code: 0/)
-    assert.match(text('skill_run'), /\|hello\|dependency/)
+    const skillRuns = output.toolResults.filter((entry) => entry.toolName === 'skill_run')
+    assert.ok(skillRuns.some((entry) => /\|hello\|dependency/.test(entry.text)))
+    assert.ok(skillRuns.some((entry) => /\|plugin\|dependency/.test(entry.text)))
     assert.match(text('remotedemo_json'), /"message": "hi"/)
+    // A plugin skill's script tool takes the plugin's prefix and runs on the server too.
+    assert.match(text('plg_json'), /"message": "from-plugin"/)
     assert.equal(output.file, 'beta\n')
-    assert.equal(output.modelCalls, 6)
+    // The application MCP server receives exactly the model's arguments, without the intent field.
+    assert.deepEqual(JSON.parse(text('mcp__fixture_first')), {
+      tool: 'fixture_first',
+      arguments: { query: 'from-mcp' }
+    })
+    assert.equal(output.modelCalls, 8)
   }
 )
