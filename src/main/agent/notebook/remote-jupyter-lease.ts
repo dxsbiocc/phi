@@ -232,12 +232,16 @@ async function closeRemoteJupyterLease(
   graceMs: number
 ): Promise<void> {
   if (isClosed()) return
+  // The remote cleanup sleeps for the grace period, then confirms the group is gone for up
+  // to REMOTE_CLEANUP_CONFIRM_MS. Ending ssh sooner loses its confirmation marker.
+  const cleanupBudget = graceMs + REMOTE_CLEANUP_CONFIRM_MS
   child.stdin.end()
-  if (await settlesWithin(closed, graceMs + 300)) return
+  if (await settlesWithin(closed, cleanupBudget)) return
   child.kill('SIGTERM')
-  if (await settlesWithin(closed, graceMs)) return
+  if (await settlesWithin(closed, cleanupBudget)) return
   child.kill('SIGKILL')
-  await closed
+  // A killed ssh closes at once; never let a stuck pipe hold cleanup forever.
+  await settlesWithin(closed, KILLED_LEASE_CLOSE_MS)
 }
 
 export function defaultRemoteJupyterReadyProbe(
@@ -284,9 +288,36 @@ export function pauseForRemoteJupyter(ms: number, signal?: AbortSignal): Promise
 }
 
 export function sanitizeRemoteJupyterText(text: string, token?: string): string {
-  let sanitized = token ? text.split(token).join('<redacted>') : text
+  let sanitized = token ? redactTokenFragments(text.split(token).join('<redacted>'), token) : text
   sanitized = sanitized.replace(/([?&]token=)[^\s&'"\n]+/gi, '$1<redacted>')
   return sanitized.slice(0, 2_000)
+}
+
+/** Shortest token piece treated as secret; random text rarely matches 8 token characters. */
+const MIN_TOKEN_FRAGMENT = 8
+
+/**
+ * Redacts pieces of the token, not only the whole token. Jupyter and the lease launcher share
+ * one stdout, so a launcher marker can land mid-token and split it across two log lines.
+ */
+function redactTokenFragments(text: string, token: string): string {
+  if (token.length < MIN_TOKEN_FRAGMENT) return text
+  return text.replace(/[A-Za-z0-9_-]{8,}/g, (run) => {
+    let result = ''
+    let index = 0
+    while (index < run.length) {
+      let end = index
+      while (end < run.length && token.includes(run.slice(index, end + 1))) end += 1
+      if (end - index >= MIN_TOKEN_FRAGMENT) {
+        result += '<redacted>'
+        index = end
+      } else {
+        result += run[index]
+        index += 1
+      }
+    }
+    return result
+  })
 }
 
 export function sanitizedRemoteJupyterError(error: unknown, token?: string): Error {
@@ -305,6 +336,10 @@ function positiveInteger(value: number): number {
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error('远程 Jupyter SSH lease 已取消')
 }
+
+/** The remote confirm loop (20 × 50 ms) plus margin for a slow host or connection. */
+const REMOTE_CLEANUP_CONFIRM_MS = 1_500
+const KILLED_LEASE_CLOSE_MS = 2_000
 
 function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout>

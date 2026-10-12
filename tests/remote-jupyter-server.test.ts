@@ -14,6 +14,7 @@ import {
 import {
   openRemoteJupyterLease,
   remoteJupyterLeaseActivity,
+  sanitizeRemoteJupyterText,
   type OpenRemoteJupyterLeaseOptions,
   type RemoteJupyterLease
 } from '../src/main/agent/notebook/remote-jupyter-lease'
@@ -93,6 +94,20 @@ test('remote launch rejects untrusted environment keys and token material', () =
         cleanupMarker
       ),
     /环境变量无效/u
+  )
+})
+
+test('log redaction also removes token pieces split across lines', () => {
+  const token = 'LkHk6VT7UZoeAKvItZmaCvZa76FcKRRC5AnUltaVJ5A'
+  // A launcher marker printed mid-token leaves each half on its own line.
+  assert.equal(sanitizeRemoteJupyterText(`split=${token.slice(0, 12)}`, token), 'split=<redacted>')
+  assert.equal(sanitizeRemoteJupyterText(token.slice(12), token), '<redacted>')
+  assert.equal(sanitizeRemoteJupyterText(`x${token.slice(5, 20)}y`, token), 'x<redacted>y')
+  // Short coincidences and ordinary words stay readable.
+  assert.equal(sanitizeRemoteJupyterText('Kernel LkHk6VT started', token), 'Kernel LkHk6VT started')
+  assert.equal(
+    sanitizeRemoteJupyterText('ServerApp running at http://127.0.0.1:8888/', token),
+    'ServerApp running at http://127.0.0.1:8888/'
   )
 })
 
