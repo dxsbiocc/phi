@@ -16,6 +16,7 @@ import {
   parseRemoteJupyterResourceMarker,
   remoteJupyterResourceGuardActivity
 } from '../src/main/agent/notebook/remote-jupyter-resource-guard'
+import { pidIsRunning } from './helpers/processLiveness'
 
 const execFileAsync = promisify(execFile)
 
@@ -252,10 +253,5 @@ async function installExecutable(path: string, source: string): Promise<void> {
 }
 
 function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  return pidIsRunning(pid)
 }

@@ -42,6 +42,11 @@ export async function writeRemoteJupyterTestExecutables(
     ps,
     [
       '#!/bin/bash',
+      // The cleanup's live-member listing needs the host's real process table.
+      'if [[ "$*" == "-A -o pgid= -o stat=" ]]; then',
+      '  for real in /bin/ps /usr/bin/ps; do [[ -x "$real" ]] && exec "$real" "$@"; done',
+      '  exit 1',
+      'fi',
       'pid="${!#}"',
       'kill -0 "$pid" 2>/dev/null || exit 1',
       'case "$*" in',

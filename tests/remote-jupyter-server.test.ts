@@ -24,6 +24,7 @@ import {
   writeRemoteJupyterTestExecutables
 } from './helpers/remoteJupyterScripts'
 import { holdEventLoopForTests } from './helpers/holdEventLoop'
+import { pidIsRunning } from './helpers/processLiveness'
 
 holdEventLoopForTests()
 
@@ -569,12 +570,7 @@ async function readPids(path: string): Promise<number[]> {
 }
 
 async function pidIsAlive(pid: number): Promise<boolean> {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  return pidIsRunning(pid)
 }
 
 async function waitFor(
