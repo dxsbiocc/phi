@@ -158,9 +158,6 @@ function remoteToolBlockedReason(toolName: string): string {
   if (TERMINAL_DRAFT_IPC_NAMES.has(toolName)) {
     return `${toolName}：终端命令草稿是 Phi renderer/main IPC，不是 Agent 工具；已拒绝同名或伪造的工具注册。${noFallback}`
   }
-  if (toolName.startsWith('office_')) {
-    return `${toolName}：该工具绑定本机 Office 文档与应用进程，远程项目没有对应句柄；请先下载到本机 Office 工作流，或在服务器生成普通文件后用 present_files 交付。${noFallback}`
-  }
   if (toolName.startsWith('notebook.')) {
     return `${toolName}：当前会话未注册经过验证的远程 Notebook/Jupyter 后端；不会使用本机 Jupyter。${noFallback}`
   }

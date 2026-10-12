@@ -4,7 +4,6 @@ import { GoChevronRight } from 'react-icons/go'
 import { fileIconForPath } from '../../../icons'
 import type { PresentedFilesItem } from '../../../types'
 import { formatBytes } from '../../../lib/toolOutputPresentation'
-import { OfficePresentedFileDetails } from './OfficePresentedFileDetails'
 import { usePresentedFileOpen } from '../hooks/usePresentedFileOpen'
 
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
@@ -209,7 +208,6 @@ export function PresentedFilesCard({
                     {formatBytes(file.bytes)}
                   </Typography>
                 </Box>
-                {file.office ? <OfficePresentedFileDetails office={file.office} /> : null}
                 {openError ? (
                   <Typography variant="caption" sx={{ display: 'block', color: 'error.main' }}>
                     交付文件已失效：{openError}
@@ -236,11 +234,7 @@ export function PresentedFilesCard({
       <Typography
         variant="caption"
         noWrap
-        title={
-          item.files.some((file) => file.office)
-            ? '打开的是经校验的 Office 交付版本；如文件被修改，入口会失效。'
-            : '打开的是工作区中的当前文件，内容可能已更改。'
-        }
+        title="打开的是工作区中的当前文件，内容可能已更改。"
         sx={{
           display: 'block',
           mt: 1,
@@ -249,9 +243,7 @@ export function PresentedFilesCard({
           '@container phi-chat (max-width: 560px)': { mt: 0.5, px: 0.25, fontSize: '0.67rem' }
         }}
       >
-        {item.files.some((file) => file.office)
-          ? '打开的是经校验的 Office 交付版本；如文件被修改，入口会失效。'
-          : '打开的是工作区中的当前文件，内容可能已更改。'}
+        打开的是工作区中的当前文件，内容可能已更改。
       </Typography>
     </Box>
   )

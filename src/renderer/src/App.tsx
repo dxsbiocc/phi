@@ -33,25 +33,7 @@ import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
-import { ChatArtifactSplit } from './features/chat/components/ChatArtifactSplit'
-import {
-  sidebarStateForFileOpenConversationLayout,
-  shouldEnableOfficeChatSplit,
-  sidebarHostsCurrentConversation
-} from './features/chat/lib/chatArtifactSplit'
-import { OfficeCreateButton } from './features/office/components/OfficeCreateButton'
-import { isOfficeDocumentPath } from './lib/officeDocumentPath'
-import { useOfficePromptTarget } from './features/office/hooks/useOfficePromptTarget'
-import { officeDocumentRegistry } from './features/office/lib/officeDocumentRegistry'
-import {
-  retargetCapturedOfficePrompt,
-  visibleOfficeComposerTarget,
-  withCapturedOfficeTarget
-} from './features/office/lib/officePromptTarget'
-import {
-  isOfficePromptTargetFailure,
-  officePromptFailureRecovery
-} from './features/office/lib/officePromptFailure'
+import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -1111,31 +1093,6 @@ function App(): React.JSX.Element {
     setIsSidebarOpen,
     setActiveView: navigateToView
   })
-  const officeDevelopmentEnabled =
-    typeof window !== 'undefined' && window.api?.office?.enabled === true
-  const activeOfficeFileTab = workspaceFileTabs.find(
-    (tab) =>
-      tab.path === activeWorkspaceFilePath &&
-      activeWorkspaceTabKey === workspaceFileTabKey(tab.path) &&
-      isOfficeDocumentPath(tab.path)
-  )
-  const readyOfficeTarget = useOfficePromptTarget(
-    officeDevelopmentEnabled ? (activeOfficeFileTab?.path ?? null) : null,
-    activeOfficeFileTab?.name ?? ''
-  )
-  const [dismissedOfficeArtifactId, setDismissedOfficeArtifactId] = useState<string | null>(null)
-  const officeComposerTarget = visibleOfficeComposerTarget(
-    readyOfficeTarget,
-    dismissedOfficeArtifactId
-  )
-  const onClearOfficeSelection = useCallback(
-    (artifactId: string): void => {
-      officeDocumentRegistry.publishSelection(artifactId, null)
-      void rendererApi.office.clearSelection({ artifactId }).catch(() => undefined)
-    },
-    [rendererApi]
-  )
-
   const onNavigateToNotebookView = useCallback((): void => {
     setFilePreview(null)
     navigateToView('analysis')
@@ -2384,37 +2341,6 @@ function App(): React.JSX.Element {
                 ...(options.planMode ? { planMode: true } : {})
               }
         )
-        if (isOfficePromptTargetFailure(result)) {
-          const officeRecovery = officePromptFailureRecovery(result, text)
-          if (!officeRecovery) return false
-          setDraftInputs((prev) =>
-            prev[activeDraftKey]
-              ? prev
-              : updateSessionDraft(prev, activeDraftKey, officeRecovery.draft)
-          )
-          if (images.length) {
-            setDraftImagesBySession((prev) =>
-              prev[activeDraftKey]?.length ? prev : { ...prev, [activeDraftKey]: images }
-            )
-          }
-          if (
-            sendRequest === sendRequestRef.current &&
-            submitGeneration === useSessionStore.getState().activeSessionGeneration
-          ) {
-            if (optimisticUserMessageId) {
-              updateMessages((prev) =>
-                prev.filter((message) => message.id !== optimisticUserMessageId)
-              )
-            }
-            showSnackbarError(
-              Object.assign(new Error(officeRecovery.error.message), {
-                code: officeRecovery.error.code
-              }),
-              '发送消息失败'
-            )
-          }
-          return false
-        }
         if (
           !result ||
           sendRequest !== sendRequestRef.current ||
@@ -2446,7 +2372,7 @@ function App(): React.JSX.Element {
                 ...(updated[materializedQueueKey] ?? []),
                 ...queued.map((item) => ({
                   ...item,
-                  target: retargetCapturedOfficePrompt(item.target, materializedTarget)
+                  target: { ...item.target, ...materializedTarget }
                 }))
               ]
               return updated
@@ -2551,16 +2477,12 @@ function App(): React.JSX.Element {
       showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
       return
     }
-    const target = withCapturedOfficeTarget<PromptTarget>(
-      {
-        path: useSessionStore.getState().activeSessionPath,
-        phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
-        cwd: useSessionStore.getState().activeCwd,
-        sessionGeneration: useSessionStore.getState().activeSessionGeneration
-      },
-      officeComposerTarget,
-      officeDevelopmentEnabled
-    )
+    const target: PromptTarget = {
+      path: useSessionStore.getState().activeSessionPath,
+      phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
+      cwd: useSessionStore.getState().activeCwd,
+      sessionGeneration: useSessionStore.getState().activeSessionGeneration
+    }
     if (currentSessionIsBusy || isSendingRef.current) {
       queuePromptText(text, target, { images, planMode: planReviewEnabled })
       clearInputImages()
@@ -4234,19 +4156,6 @@ function App(): React.JSX.Element {
             onInputFilesDropped={rendererApi.onInputFilesDropped}
             onListInputDirectory={onListInputDirectory}
             onChatSubmit={onChatSubmit}
-            officeTarget={
-              officeDevelopmentEnabled ? (officeComposerTarget ?? undefined) : undefined
-            }
-            onRemoveOfficeTarget={
-              officeComposerTarget
-                ? () => setDismissedOfficeArtifactId(officeComposerTarget.artifactId)
-                : undefined
-            }
-            onClearOfficeSelection={
-              officeComposerTarget?.selection
-                ? () => onClearOfficeSelection(officeComposerTarget.artifactId)
-                : undefined
-            }
             planReviewEnabled={planReviewEnabled}
             onTogglePlanReview={togglePlanReview}
             disablePlanReview={activeProjectLocation?.kind === 'ssh'}
@@ -4487,17 +4396,6 @@ function App(): React.JSX.Element {
     ) : null
   ) : null
 
-  const officeChatSplitEnabled = shouldEnableOfficeChatSplit({
-    officeEnabled: typeof window !== 'undefined' && window.api?.office?.enabled === true,
-    activeTabKind: activeWorkspaceTab?.kind,
-    activeTabPath: isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? activeWorkspaceTab.path : null,
-    previewPath: activeFilePreviewState ? filePreviewStatePath(activeFilePreviewState) : null,
-    currentConversationInSidebar: sidebarHostsCurrentConversation({
-      activeView,
-      isSidebarOpen,
-      workspaceSidebarMode
-    })
-  })
   const standardWorkspaceTabContent =
     activeWorkspaceTab?.kind === 'session'
       ? chatWorkspaceContent
@@ -4505,13 +4403,7 @@ function App(): React.JSX.Element {
         ? activeWorkspaceFileTabContent
         : activeWorkspaceResourceContent
 
-  const activeWorkspaceTabContent = officeChatSplitEnabled ? (
-    <ChatArtifactSplit enabled artifact={activeWorkspaceFileTabContent}>
-      {chatWorkspaceContent}
-    </ChatArtifactSplit>
-  ) : (
-    standardWorkspaceTabContent
-  )
+  const activeWorkspaceTabContent = standardWorkspaceTabContent
 
   const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
     const dismiss =
@@ -4884,13 +4776,6 @@ function App(): React.JSX.Element {
                     onClose={onCloseWorkspaceTab}
                     onDockSessionTab={
                       workspaceFileTabs.length > 0 ? onDockConversationToSidebar : undefined
-                    }
-                    actions={
-                      <OfficeCreateButton
-                        bridge={rendererApi.office}
-                        disabled={!activePhiSessionId}
-                        onCreated={previewFilePathInWorkspaceTab}
-                      />
                     }
                     leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
                     reserveTrailingChromeSpace={workspaceSidePanelCollapsed}

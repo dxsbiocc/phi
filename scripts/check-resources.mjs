@@ -10,18 +10,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // leftover and must not ship. `.DS_Store` is macOS noise.
 // `resources/runtime/micromamba/` holds binaries from `bun run runtime:fetch`;
 // `resources/runtime/bun/` holds binaries from `bun run bun:fetch`;
-// `resources/office/officecli/` is allowed only for a developer's explicit
-// `bun run office:fetch`; electron-builder excludes it from every installer.
 // `resources/remote-helper/` holds cross-compiled output from `bun run build:helper`.
 const ALLOWED_UNTRACKED_RESOURCES = {
   basenames: new Set(['.DS_Store']),
   paths: new Set(['resources/README.md']),
-  prefixes: [
-    'resources/runtime/micromamba/',
-    'resources/runtime/bun/',
-    'resources/office/officecli/',
-    'resources/remote-helper/'
-  ]
+  prefixes: ['resources/runtime/micromamba/', 'resources/runtime/bun/', 'resources/remote-helper/']
 }
 
 const MAX_LISTED_OFFENDING_PATHS = 50
@@ -51,7 +44,6 @@ const PHI_RESOURCE_PARENTS = new Set(['resources/skills', 'resources/plugins'])
 const PHI_RESOURCE_ROOTS = [
   'resources/agents',
   'resources/icons',
-  'resources/office',
   'resources/palettes',
   'resources/remote-helper',
   'resources/runtime',

@@ -1,8 +1,5 @@
 import { readDirectSkills } from '../runtime/direct-skills'
-import {
-  mergeRemoteProjectSkills,
-  remoteProjectSkillsValue
-} from './remote-project-skills'
+import { mergeRemoteProjectSkills, remoteProjectSkillsValue } from './remote-project-skills'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
@@ -165,11 +162,7 @@ import { resolveRemoteRuntimePromptContext } from '../remote-runtime-context'
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
-import {
-  readRemoteSkillResource,
-  type RemoteReadableSkill
-} from '../content/remote-skill-resource'
-import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
+import { readRemoteSkillResource, type RemoteReadableSkill } from '../content/remote-skill-resource'
 import {
   filterEnabledMainSkills,
   filterMainScriptTools,
@@ -422,17 +415,6 @@ function readLoadedSkillResource(
         }
       : {})
   })
-}
-
-function officeHostRequest(sessionId: string): OfficeHostRequest {
-  return (method, params, requestContext) => {
-    const activeHostRunId = sessions.get(sessionId)?.activeHostRunId
-    return requestHost(method, params, {
-      ...requestContext,
-      originSessionId: sessionId,
-      ...(activeHostRunId ? { agentRunId: activeHostRunId } : {})
-    })
-  }
 }
 
 function handleHostResponse(response: HostResponse): void {
@@ -722,8 +704,7 @@ function resourceOptions(params: unknown): DefaultResourceLoaderOptions {
   const remoteProjectSkills = remoteProjectSkillsValue(record.remoteProjectSkills)
 
   return {
-    ...((skillFiles.length > 0 || remoteProjectSkills.length > 0) &&
-    !booleanValue(record.noSkills)
+    ...((skillFiles.length > 0 || remoteProjectSkills.length > 0) && !booleanValue(record.noSkills)
       ? {
           skillsOverride: (base) => {
             const direct = readDirectSkills(skillFiles)
@@ -1853,9 +1834,7 @@ async function createSession(params: unknown): Promise<unknown> {
               )
               sessionSkillNames = new Set(
                 resolved.skills
-                  .filter(
-                    (skill) => skill.source === 'server-project' || enabled.has(skill.name)
-                  )
+                  .filter((skill) => skill.source === 'server-project' || enabled.has(skill.name))
                   .map((skill) => skill.name)
               )
             }
@@ -2018,7 +1997,6 @@ async function createSession(params: unknown): Promise<unknown> {
       allowTypeText: () => parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
-  const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
   const remoteWorkspaceCustomTools = remoteWorkspaceRead
     ? buildRemoteWorkspaceCustomTools(requestHost, remoteWorkspaceIdentity, {
         read: remoteWorkspaceRead,
@@ -2079,7 +2057,6 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]
       : []),
-    ...officeCustomTools,
     browserCustomTool
   ]
 

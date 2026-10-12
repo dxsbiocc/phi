@@ -305,8 +305,8 @@ test('remote guard releases only the seven exactly registered notebook backends'
 })
 
 test('remote guard explains local-only tools and never blanket-allows MCP or task', () => {
-  assert.match(remoteProjectToolDecision('office_apply')?.reason ?? '', /本机 Office/)
-  assert.match(remoteProjectToolDecision('office_apply')?.reason ?? '', /下载到本机|服务器/)
+  // The retired native Office tools are refused like any other unknown tool.
+  assert.equal(remoteProjectToolDecision('office_apply')?.block, true)
   assert.match(remoteProjectToolDecision('notebook.run_cell')?.reason ?? '', /本机 Jupyter/)
   assert.match(remoteProjectToolDecision('lib.save')?.reason ?? '', /本机项目文献库/)
   for (const name of ['task', 'mcp__server_tool', 'skill_run', 'env_request']) {

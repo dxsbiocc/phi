@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react'
 
 import type { PresentedFile } from '../../../../../shared/presentedFileTypes'
-import { resolvePresentedFileOpenPath } from '../lib/presentedOfficeFile'
 
 export function usePresentedFileOpen(onOpenFile?: (path: string) => void): {
   openFile: (file: PresentedFile) => Promise<void>
@@ -12,12 +11,8 @@ export function usePresentedFileOpen(onOpenFile?: (path: string) => void): {
     async (file: PresentedFile): Promise<void> => {
       if (!onOpenFile) return
       try {
-        const path = await resolvePresentedFileOpenPath(
-          file,
-          file.office ? window.api.office.resolveOutput : undefined
-        )
         setErrors((current) => withoutKey(current, file.path))
-        onOpenFile(path)
+        onOpenFile(file.path)
       } catch (error) {
         const message = error instanceof Error ? error.message : '交付文件入口已失效'
         setErrors((current) => ({ ...current, [file.path]: message }))

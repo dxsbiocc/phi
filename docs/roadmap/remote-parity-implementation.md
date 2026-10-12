@@ -30,7 +30,7 @@
 | Skills / 脚本工具 / viz | 关闭 | `index.ts`（`shouldLoadBundledSkills = !remoteProject`）、worker（`skillTools = remoteRoot ? undefined`） |
 | 受管环境 / `env_request` | 抛错 | worker（`environment binding is not supported for remote projects yet`） |
 | 项目级 MCP / 项目 agent | R5.1/R5.2/R5.3 已完成代码与本机假 SSH 验证，真实服务器待验证 | 服务器项目 agent 与 MCP 配置均经内容哈希信任门禁；HTTPS 留在桌面端，stdio 经所选 SSH host 在服务器项目根运行 |
-| Office 工具 / `present_files` | 关闭 | worker（`officeCustomTools = remoteRoot ? [] …`） |
+| `present_files` | 已支持（`ssh://` 引用，复用远程预览/下载） | `src/main/agent/deliverables/remote-present-files.ts` |
 | Git | 无专门支持 | — |
 | 专家子智能体 | 本机全局/插件、Wrapper 和已信任的服务器项目 agent 均按远程工具交集运行 | worker 对声明工具再做实际注册来源/签名校验；不可用 agent 只展示诊断 |
 
@@ -456,7 +456,9 @@ helper 解决"能不能执行"；受管环境（micromamba + `phi-base`）解决
 
 - Office 与 `present_files`：远端落地 → 本地缓存预览 → 哈希冲突检查后回写；缓存有大小上限并可清理。
 
-#### R6 远程 Office 设计
+#### R6 远程 Office 设计（已撤销）
+
+> 2026-10-12：应用内原生 Office 功能（OfficeCLI、Office 面板、`office_*` 工具）已整体删除，本节设计不再实施，仅作历史记录。Excel/Word/PowerPoint/PDF 由「办公文档」插件的托管 Python skills 处理，本地和远程项目都可用。
 
 本节只设计第 6 步中的 Office 链路，不实现代码、不连接真实服务器。边界是：远程文件仍以服务器为权威来源，OfficeCLI、resident、watch 和预览网关继续运行在桌面端，只能接触 Phi 管理的本机副本；远程失败不得把路径解析到远程项目的本机 anchor。现有 Office 目录有 161 个文件、27,562 行，R6 应在文件/缓存边界做适配，不把整套 Office 驱动改写成服务器进程。
 

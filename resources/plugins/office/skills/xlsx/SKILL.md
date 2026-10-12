@@ -247,7 +247,7 @@ wb.save('modified.xlsx')
 
 `openpyxl` 写入的公式没有缓存值，Excel 打开时会重算；在此之前，Python 读取这些单元格会得到空值。
 
-Use `check_formulas.py` before delivery to catch common static defects. 需要查看计算值时，把文件在 Phi 右侧打开（原生查看器）。若 Office 引擎已启用且 `office_read` 可用，可用它读取 OfficeCLI 公式引擎计算的值；个别函数不支持时会明确报错，它不是完整替代。
+Use `check_formulas.py` before delivery to catch common static defects. 需要查看计算值时，请用户在 Excel 等电子表格应用中打开文件。
 
 ## Formula Verification Checklist
 

@@ -19,7 +19,7 @@
 | macOS 权限声明 | 摄像头、麦克风描述是模板文案，与产品不符 | `electron-builder.yml` 的 `extendInfo` |
 | CI | 新增仅 `workflow_dispatch` 的 Linux x64 构建并上传产物工作流；不发布，尚未实际触发验证 | `.github/workflows/package-linux.yml` |
 | 内置运行时 | bun 已固定 `darwin-arm64`、`linux-x64`；micromamba 清单覆盖 `darwin-arm64`、`darwin-x64`、`linux-x64` | `resources/runtime/manifest.json` |
-| OfficeCLI | 不再内置于任何安装包；源码与手动开发脚本保留，运行时支持 `~/.phi` 用户安装位置并在缺失/不支持时降级 | `electron-builder.yml`、`src/main/agent/office/office-runtime.ts` |
+| OfficeCLI | 已随原生 Office 功能删除（2026-10-12），不再有源码、脚本或安装包内容 | — |
 | 图标 | 有 `.icns`、`.ico`、`.png` | `build/` |
 
 ## 阻塞项与已解除项
@@ -55,7 +55,7 @@ Windows 未签名会触发 SmartScreen 警告。证书与账号由用户提供�
 - 验证：`bun run build:unpack` 后启动，确认应用名、数据目录、钥匙串条目符合预期。
 
 ### 步骤 2：内置 bun（darwin-arm64 与 linux-x64 已完成配置）
-- 新增脚本，参照现有 `scripts/runtime`、`scripts/office` 的 fetch 与校验方式：
+- 新增脚本，参照现有 `scripts/runtime` 的 fetch 与校验方式：
   按平台和架构下载固定版本 bun，校验哈希，写入 `resources/runtime/bun/<platform>-<arch>/`。
 - `electron-builder.yml` 的 `extraResources` 按 `${arch}` 带入，三个平台各自配置，
   并加入 `asarUnpack` 之外的"不进 asar"约束（可执行文件不能在 asar 内）。
