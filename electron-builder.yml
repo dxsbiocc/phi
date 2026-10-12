@@ -39,6 +39,7 @@ asarUnpack:
   # imports at runtime must be unpacked. `bun run check:asar-unpack` derives the
   # required set from the worker's import graph and prints any glob missing here.
   - package.json
+  - out/main/file-preview-media.*
   - out/main/agent/**
   - out/shared/**
   # Runtime package closure of the OMP worker (scoped packages grouped by scope).

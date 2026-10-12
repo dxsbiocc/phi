@@ -1,7 +1,20 @@
+export const REMOTE_WORKSPACE_PATH_PROBE_LIMIT = 64
+
 export interface RemoteWorkspaceFileRequest {
   sessionId: string
   projectId: string
   path: string
+}
+
+export interface RemoteWorkspacePathProbeRequest {
+  sessionId: string
+  projectId: string
+  paths: string[]
+}
+
+export interface RemoteWorkspacePathStat {
+  path: string
+  kind: 'file' | 'directory' | 'missing'
 }
 
 function validHost(hostAlias: string): boolean {

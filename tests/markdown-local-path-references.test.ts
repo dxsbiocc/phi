@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   collectBareFileReferencePaths,
+  collectRemoteProjectReferencePaths,
   inlineCodeFilePath,
   localHrefToPath,
   localPathKindForReference,
@@ -53,4 +54,51 @@ test('markdown local path references reject glob patterns', () => {
   assert.equal(inlineCodeFilePath('./xxx.{png,pdf}', cwd), null)
   assert.equal(localHrefToPath('./*.pdf', cwd), null)
   assert.equal(localHrefToPath('./xxx.{png,pdf}', cwd), null)
+})
+
+test('remote markdown candidates cover canonical project root and current working directory only', () => {
+  assert.deepEqual(
+    collectRemoteProjectReferencePaths(
+      'Open `params.json`, ./report.txt, and ssh://gpu/data/project/results/final.csv.',
+      '/data/project/wrappers/runs/wrun_1',
+      {
+        hostAlias: 'gpu',
+        remoteRoot: '/data/project',
+        canonicalRoot: '/data/project'
+      }
+    ),
+    [
+      '/data/project/wrappers/runs/wrun_1/params.json',
+      '/data/project/params.json',
+      '/data/project/wrappers/runs/wrun_1/report.txt',
+      '/data/project/report.txt',
+      '/data/project/results/final.csv'
+    ]
+  )
+})
+
+test('remote markdown candidates canonicalize remote-root aliases', () => {
+  assert.deepEqual(
+    collectRemoteProjectReferencePaths(
+      'Open /mount/project/data.txt and ./local.txt.',
+      '/mount/project/runs',
+      {
+        hostAlias: 'gpu',
+        remoteRoot: '/mount/project',
+        canonicalRoot: '/real/project'
+      }
+    ),
+    ['/real/project/data.txt', '/real/project/runs/local.txt', '/real/project/local.txt']
+  )
+})
+
+test('remote markdown candidates preserve a slash project root', () => {
+  assert.deepEqual(
+    collectRemoteProjectReferencePaths('Open params.json.', '/runs', {
+      hostAlias: 'gpu',
+      remoteRoot: '/',
+      canonicalRoot: '/'
+    }),
+    ['/runs/params.json', '/params.json']
+  )
 })

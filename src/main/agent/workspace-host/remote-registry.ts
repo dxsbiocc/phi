@@ -1,5 +1,14 @@
+import { posix } from 'node:path'
+
+import {
+  REMOTE_WORKSPACE_PATH_PROBE_LIMIT,
+  type RemoteWorkspacePathProbeRequest,
+  type RemoteWorkspacePathStat
+} from '../../../shared/remoteWorkspacePath'
+import { isRemotePathInside } from '../remote-path-containment'
 import {
   resolveRemoteWorkspaceHostBinding,
+  validRemoteAbsolutePath,
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
 import { remoteMicromambaManifestVersion } from '../remote-micromamba-artifact'
@@ -26,7 +35,12 @@ interface RemoteWorkspaceHostRegistryDependencies {
   helperResourceRoot?: string
   helperDevelopmentRoot?: string
   expectedMicromambaVersion?: string
+  now?: () => number
+  pathStatTtlMs?: number
 }
+
+const DEFAULT_PATH_STAT_TTL_MS = 2_000
+const PATH_STAT_CACHE_LIMIT = 2_048
 
 function expectedMicromambaVersion(
   dependencies: RemoteWorkspaceHostRegistryDependencies
@@ -109,8 +123,50 @@ function sshHostConfig(
   }
 }
 
+function checkedPathProbeRequest(input: unknown): RemoteWorkspacePathProbeRequest {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('远程路径探测请求无效')
+  }
+  const record = input as Record<string, unknown>
+  if (
+    Object.keys(record).some((key) => !['sessionId', 'projectId', 'paths'].includes(key)) ||
+    typeof record.sessionId !== 'string' ||
+    !record.sessionId ||
+    Buffer.byteLength(record.sessionId, 'utf8') > 256 ||
+    typeof record.projectId !== 'string' ||
+    !record.projectId ||
+    Buffer.byteLength(record.projectId, 'utf8') > 256 ||
+    !Array.isArray(record.paths) ||
+    record.paths.length > REMOTE_WORKSPACE_PATH_PROBE_LIMIT ||
+    record.paths.some((path) => typeof path !== 'string')
+  ) {
+    throw new Error('远程路径探测请求只能包含会话、项目 ID 和路径数组（最多 64 项）')
+  }
+  return record as unknown as RemoteWorkspacePathProbeRequest
+}
+
+function checkedProbePaths(paths: string[], canonicalRoot: string): string[] {
+  if (!validRemoteAbsolutePath(canonicalRoot) || posix.normalize(canonicalRoot) !== canonicalRoot) {
+    throw new Error('远程项目根目录无效')
+  }
+  return paths.map((path) => {
+    if (
+      !validRemoteAbsolutePath(path) ||
+      posix.normalize(path) !== path ||
+      !isRemotePathInside(canonicalRoot, path)
+    ) {
+      throw new Error('远程路径探测只接受项目根目录内的规范绝对路径')
+    }
+    return path
+  })
+}
+
 export class RemoteWorkspaceHostRegistry {
   private readonly entries = new Map<string, HostEntry>()
+  private readonly pathStats = new Map<
+    string,
+    { expiresAt: number; stat: RemoteWorkspacePathStat }
+  >()
 
   constructor(private readonly dependencies: RemoteWorkspaceHostRegistryDependencies = {}) {}
 
@@ -119,16 +175,59 @@ export class RemoteWorkspaceHostRegistry {
       sessionId: request.sessionId,
       projectId: request.projectId
     })
-    const current = this.entries.get(binding.sessionId)
-    const entry =
-      current?.projectId === binding.projectId && current.cacheKey === binding.cacheKey
-        ? current
-        : this.create(binding)
-    this.entries.set(binding.sessionId, entry)
+    const entry = this.entry(binding)
     return createWorkspaceHostRemoteSession(entry.host, entry.canonicalRoot, {
       onFailure: () => void this.releaseSession(binding.sessionId),
       defaultTimeoutMs: request.execTimeoutMs
     })
+  }
+
+  async statPaths(input: unknown): Promise<RemoteWorkspacePathStat[]> {
+    const request = checkedPathProbeRequest(input)
+    const binding = (this.dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
+      sessionId: request.sessionId,
+      projectId: request.projectId
+    })
+    const paths = checkedProbePaths(request.paths, binding.canonicalRoot)
+    if (paths.length === 0) return []
+    const now = (this.dependencies.now ?? Date.now)()
+    const result = new Map<string, RemoteWorkspacePathStat>()
+    const uncached = [...new Set(paths)].filter((path) => {
+      const cached = this.pathStats.get(this.pathStatCacheKey(binding.cacheKey, path))
+      if (!cached || cached.expiresAt <= now) return true
+      result.set(path, cached.stat)
+      return false
+    })
+    if (uncached.length > 0) {
+      const statMany = this.entry(binding).host.fs.statMany
+      if (!statMany) throw new Error('远程工作区不支持批量路径探测')
+      const stats = await statMany(uncached)
+      if (stats.length !== uncached.length) throw new Error('远程路径探测返回格式无效')
+      const ttlMs = this.dependencies.pathStatTtlMs ?? DEFAULT_PATH_STAT_TTL_MS
+      for (let index = 0; index < uncached.length; index += 1) {
+        const path = uncached[index]!
+        const stat = stats[index]
+        if (
+          !stat ||
+          stat.path !== path ||
+          (stat.kind !== 'file' && stat.kind !== 'directory' && stat.kind !== 'missing')
+        ) {
+          throw new Error('远程路径探测返回格式无效')
+        }
+        const value: RemoteWorkspacePathStat = { path, kind: stat.kind }
+        result.set(path, value)
+        this.pathStats.set(this.pathStatCacheKey(binding.cacheKey, path), {
+          expiresAt: now + ttlMs,
+          stat: value
+        })
+      }
+      while (this.pathStats.size > PATH_STAT_CACHE_LIMIT) {
+        const oldestKey = this.pathStats.keys().next().value
+        if (!oldestKey) break
+        this.pathStats.delete(oldestKey)
+      }
+    }
+    return paths.map((path) => result.get(path)!)
   }
 
   async releaseSession(sessionId: string): Promise<void> {
@@ -153,6 +252,21 @@ export class RemoteWorkspaceHostRegistry {
     )
     this.entries.clear()
     await Promise.all(closing)
+    this.pathStats.clear()
+  }
+
+  private entry(binding: RemoteWorkspaceHostBinding): HostEntry {
+    const current = this.entries.get(binding.sessionId)
+    const entry =
+      current?.projectId === binding.projectId && current.cacheKey === binding.cacheKey
+        ? current
+        : this.create(binding)
+    this.entries.set(binding.sessionId, entry)
+    return entry
+  }
+
+  private pathStatCacheKey(bindingCacheKey: string, path: string): string {
+    return JSON.stringify([bindingCacheKey, path])
   }
 
   private create(binding: RemoteWorkspaceHostBinding): HostEntry {

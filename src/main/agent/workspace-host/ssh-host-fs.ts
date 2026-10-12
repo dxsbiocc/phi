@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute, matchesGlob, posix } from 'node:path'
 
+import { REMOTE_WORKSPACE_PATH_PROBE_LIMIT } from '../../../shared/remoteWorkspacePath'
 import { RemoteWorkspaceTargetMissingError } from '../remote-workspace-boundary'
 import { buildRemoteReadKindCommand, listRemoteDirectoryEntries } from '../remote-workspace-read'
 import { buildRemoteReplaceFileCommand } from '../remote-workspace-edit'
@@ -23,6 +24,7 @@ import {
   type WorkspaceContent,
   type WorkspaceEntry,
   type WorkspaceHost,
+  type WorkspacePathStat,
   type WorkspaceStat
 } from './types'
 
@@ -341,6 +343,40 @@ async function remoteModifiedAt(session: RemoteSshSession, path: string): Promis
   return new Date(seconds * 1000).toISOString()
 }
 
+function buildRemoteStatManyCommand(
+  remoteRoot: string,
+  canonicalRoot: string,
+  paths: readonly string[]
+): string {
+  const source = [
+    'use strict; use warnings;',
+    'use Cwd qw(realpath);',
+    'use Fcntl qw(:mode);',
+    'my ($root, @paths) = @ARGV;',
+    'for my $path (@paths) {',
+    '  my $kind = "missing";',
+    '  my $resolved = realpath($path);',
+    '  my $inside = defined($resolved) && (',
+    '    $root eq "/" ? index($resolved, "/") == 0 : $resolved eq $root || index($resolved, "$root/") == 0',
+    '  );',
+    '  if ($inside) {',
+    '    my @info = lstat($resolved);',
+    '    if (@info) {',
+    '      $kind = S_ISREG($info[2]) ? "file" : S_ISDIR($info[2]) ? "directory" : "missing";',
+    '    }',
+    '  }',
+    '  print $path, "\\0", $kind, "\\0";',
+    '}'
+  ].join('\n')
+  const script = [
+    'set -eu',
+    `cd -P -- ${shellQuote(remoteRoot)} || exit 30`,
+    `[ "$PWD" = ${shellQuote(canonicalRoot)} ] || exit 30`,
+    `exec perl -e ${shellQuote(source)} -- ${[canonicalRoot, ...paths].map(shellQuote).join(' ')}`
+  ].join('\n')
+  return `bash -c ${shellQuote(script)}`
+}
+
 async function collectPaths(
   session: RemoteSshSession,
   directory: string,
@@ -389,6 +425,7 @@ class SshFileSystem {
       readRange: (path, options) => this.readRange(path, options),
       remove: (path, options = {}) => this.remove(path, options),
       stat: (path, options = {}) => this.stat(path, options),
+      statMany: (paths) => this.statMany(paths),
       writeAtomic: (path, content, options = {}) => this.writeAtomic(path, content, options)
     }
   }
@@ -470,6 +507,54 @@ class SshFileSystem {
         return { kind: 'other', size: 0, ...(modifiedAt ? { modifiedAt } : {}) }
       const value = await readBytes(session, resolved, this.context.canonicalRoot, 0, 0)
       return { kind: 'file', size: value.size, ...(modifiedAt ? { modifiedAt } : {}) }
+    })
+  }
+
+  private async statMany(paths: readonly string[]): Promise<readonly WorkspacePathStat[]> {
+    if (paths.length === 0) return []
+    if (paths.length > REMOTE_WORKSPACE_PATH_PROBE_LIMIT) {
+      throw invalid('path probe is limited to 64 paths')
+    }
+    const candidates = paths.map((path) => {
+      if (!posix.isAbsolute(path) || posix.normalize(path) !== path) {
+        throw invalid('path probe requires normalized absolute paths')
+      }
+      const candidate = this.context.candidate(path)
+      if (candidate !== path) throw invalid('path probe path is outside the workspace')
+      return candidate
+    })
+    return this.context.withSession(async (session) => {
+      const command = buildRemoteStatManyCommand(
+        this.context.remoteRoot,
+        this.context.canonicalRoot,
+        candidates
+      )
+      const result = session.execBounded
+        ? await session.execBounded(command, { timeoutMs: 30_000, maxOutputBytes: 512 * 1024 })
+        : await session.exec(command)
+      if (
+        result.code !== 0 ||
+        ('stdoutTruncated' in result && result.stdoutTruncated) ||
+        ('stderrTruncated' in result && result.stderrTruncated)
+      ) {
+        throw new Error('remote workspace path probe failed')
+      }
+      if (!result.stdout.endsWith('\0')) throw new Error('remote workspace path probe malformed')
+      const fields = result.stdout.slice(0, -1).split('\0')
+      if (fields.length !== candidates.length * 2) {
+        throw new Error('remote workspace path probe malformed')
+      }
+      return candidates.map((path, index): WorkspacePathStat => {
+        const returnedPath = fields[index * 2]
+        const kind = fields[index * 2 + 1]
+        if (
+          returnedPath !== path ||
+          (kind !== 'file' && kind !== 'directory' && kind !== 'missing')
+        ) {
+          throw new Error('remote workspace path probe malformed')
+        }
+        return { path, kind }
+      })
     })
   }
 

@@ -4,7 +4,7 @@ import type { RemoteWorkspaceReadResult } from './remote-workspace-read'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 
 export const PHI_REMOTE_READ_DESCRIPTION =
-  'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server, or read an enabled global Skill through skill://. Project paths run on the server; Skill resources are restricted to the loaded Skill root. Raw ssh:// URLs and inline selectors are not supported.'
+  'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server, or read an enabled global Skill through skill://. Project paths run on the server; Skill resources are restricted to the loaded Skill root. Raw ssh:// URLs are not supported; line selectors such as path:10-50 match local read syntax.'
 
 type RemoteReadOptions = {
   readResource?: (path: string) => RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
@@ -29,11 +29,36 @@ export function buildRemoteWorkspaceReadTool(
     approval: 'read',
     async execute(_toolCallId, params) {
       try {
+        if (typeof params !== 'object' || params === null || Array.isArray(params)) {
+          throw new Error('远程 read 只接受 path 字段')
+        }
         const input = params as Record<string, unknown>
-        if (typeof input.path !== 'string' || !input.path) throw new Error('请提供远程项目内路径')
+        if (Object.keys(input).some((key) => key !== 'path')) {
+          throw new Error('远程 read 只接受 path 字段')
+        }
+        if (typeof input.path !== 'string' || !input.path) {
+          throw new Error('请提供远程项目内路径')
+        }
         const result = input.path.startsWith('skill://')
           ? await readResource(input.path, options)
           : await read(input.path)
+        if (result.kind === 'image') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Image: ${result.path} (${result.fileSize} bytes)`
+              },
+              { type: 'image', data: result.data, mimeType: result.contentType }
+            ],
+            details: {
+              resolvedPath: result.path,
+              kind: 'file',
+              fileSize: result.fileSize,
+              contentType: result.contentType
+            }
+          }
+        }
         return {
           content: [{ type: 'text', text: result.content }],
           details: {

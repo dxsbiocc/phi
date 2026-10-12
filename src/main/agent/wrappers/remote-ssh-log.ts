@@ -131,6 +131,9 @@ export async function readRemoteFileChunk(
     : await session.exec(command)
   options.signal?.throwIfAborted()
   if (result.code !== 0) {
+    if (options.noFollow || options.canonicalRoot) {
+      throw new Error('远程文件读取失败：远程文件不可访问或已变成符号链接')
+    }
     throw new Error(`远程日志读取失败: ${(result.stderr || result.stdout).trim() || result.code}`)
   }
   if (

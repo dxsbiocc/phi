@@ -339,7 +339,7 @@ export async function resolveRemotePathOnSession(
     throw new Error('远程路径授权返回超过上限')
   }
   if (result.code !== 0) {
-    if (result.code === 31) throw new RemoteWorkspaceTargetMissingError()
+    if (result.code === 31) throw new RemoteWorkspaceTargetMissingError(candidate)
     throw new Error(`远程路径授权失败：${RESOLVE_ERRORS[result.code ?? -1] ?? '远程检查未完成'}`)
   }
   const nul = result.stdout.indexOf('\0')
@@ -352,8 +352,8 @@ export async function resolveRemotePathOnSession(
 }
 
 export class RemoteWorkspaceTargetMissingError extends Error {
-  constructor() {
-    super('远程路径授权失败：目标不存在')
+  constructor(readonly relativePath?: string) {
+    super(relativePath ? `远程目标不存在：${relativePath}` : '远程目标不存在')
   }
 }
 
@@ -383,13 +383,20 @@ export async function withAuthorizedRemoteWorkspacePath<T>(
       })
   try {
     dependencies.onConnected?.(session)
-    const path = await resolveRemotePathOnSession(
-      session,
-      remoteRoot,
-      canonicalRoot,
-      candidate,
-      request.mode
-    )
+    let path: string
+    try {
+      path = await resolveRemotePathOnSession(
+        session,
+        remoteRoot,
+        canonicalRoot,
+        candidate,
+        request.mode
+      )
+    } catch (error) {
+      if (!(error instanceof RemoteWorkspaceTargetMissingError)) throw error
+      const root = isRemotePathInside(canonicalRoot, candidate) ? canonicalRoot : remoteRoot
+      throw new RemoteWorkspaceTargetMissingError(posix.relative(root, candidate) || '.')
+    }
     if (!isRemotePathInside(canonicalRoot, path)) {
       throw new Error('远程路径超出项目根目录')
     }

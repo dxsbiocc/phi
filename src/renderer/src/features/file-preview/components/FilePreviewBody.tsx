@@ -11,6 +11,19 @@ import { MolecularStructureFilePreview } from './MolecularStructureFilePreview'
 import { ProjectFileTree } from './ProjectFileTree'
 import { SpreadsheetPreview } from './SpreadsheetPreview'
 
+function binaryPreviewMessage(mimeType: string): string {
+  const subtype = mimeType.split('/').at(-1)?.replace(/^x-/, '') ?? 'binary'
+  const label =
+    mimeType === 'application/octet-stream'
+      ? 'BINARY'
+      : subtype
+          .replace(/^vnd\./, '')
+          .replace(/[^a-z0-9]+/gi, ' ')
+          .trim()
+          .toUpperCase()
+  return `二进制文件（${label}），不支持文本预览；原文件保留在服务器上。`
+}
+
 type FilePreviewBodyProps = {
   state: FilePreviewPanelState
   onOpenFile: (path: string) => void
@@ -85,7 +98,7 @@ export function FilePreviewBody({
         <Alert severity="info" variant="outlined">
           {state.file.reason === 'large_file'
             ? '文件较大，预览仅显示元数据；完整文件仍保留在服务器上。'
-            : '此二进制文件暂不能直接预览，原文件保留在服务器上。'}
+            : binaryPreviewMessage(state.file.mimeType)}
         </Alert>
         <Button
           size="small"

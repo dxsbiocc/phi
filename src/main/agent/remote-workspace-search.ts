@@ -6,7 +6,7 @@ import {
   type RemoteWorkspaceBoundaryDependencies
 } from './remote-workspace-boundary'
 import { getProject } from './projects'
-import { readRemoteWorkspacePath } from './remote-workspace-read'
+import { readRemoteWorkspaceTextFile } from './remote-workspace-read'
 import { readHostRuntimeRoot } from './remote-runtime-root-store'
 import { resolveProjectRuntimeRoot } from './remote-runtime/project-runtime-root'
 import { getRemoteRipgrepStatus } from './workspace-host/remote-ripgrep'
@@ -487,11 +487,11 @@ export async function remoteGrep(
         const directory = (await session.exec(`test -d ${shellQuote(authorized.path)}`)).code === 0
         if (!directory && fileGlob) throw new Error('远程 grep 通配符基目录不是文件夹')
         if (!directory && !fileGlob) {
-          const file = await readRemoteWorkspacePath(
-            { sessionId: request.sessionId, projectId: request.projectId, path: authorized.path },
-            dependencies
+          const file = await readRemoteWorkspaceTextFile(
+            session,
+            authorized.path,
+            authorized.canonicalRoot
           )
-          if (file.kind !== 'file') throw new Error('远程 grep 目标已不再是普通文件')
           let expression: RegExp
           try {
             expression = new RegExp(request.pattern as string, request.case === false ? 'i' : '')

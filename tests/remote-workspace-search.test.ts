@@ -318,6 +318,19 @@ test('single-file grep reuses safe bounded read and does not search same-name si
   }
 })
 
+test('single-file grep never treats a truncated agent read as complete search input', async () => {
+  const sample = fixture()
+  try {
+    writeFileSync(join(sample.root, 'large.txt'), `${'safe\n'.repeat(220_000)}needle\n`)
+    await assert.rejects(
+      remoteGrep({ ...identity, pattern: 'needle', path: 'large.txt' }, sample.dependencies),
+      /1 MiB|字节上限/
+    )
+  } finally {
+    sample.cleanup()
+  }
+})
+
 test('search refuses wrong project, root escape, malformed regex and reports result limits', async () => {
   const sample = fixture()
   try {

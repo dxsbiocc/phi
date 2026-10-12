@@ -54,6 +54,13 @@ export interface WorkspaceStat {
   modifiedAt?: string
 }
 
+export type WorkspacePathKind = 'file' | 'directory' | 'missing'
+
+export interface WorkspacePathStat {
+  path: string
+  kind: WorkspacePathKind
+}
+
 export interface StatOptions {
   includeModifiedAt?: boolean
 }
@@ -215,6 +222,7 @@ export interface WorkspaceHost {
     readRange(path: string, options: ReadRangeOptions): Promise<ReadRangeResult>
     remove(path: string, options?: RemoveOptions): Promise<void>
     stat(path: string, options?: StatOptions): Promise<WorkspaceStat>
+    statMany?(paths: readonly string[]): Promise<readonly WorkspacePathStat[]>
     writeAtomic(
       path: string,
       content: WorkspaceContent,

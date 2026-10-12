@@ -74,7 +74,11 @@ import type {
   ManualCompactionOutcome,
   ManualCompactionTarget
 } from '../../shared/contextUsageTypes'
-import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
+import type {
+  RemoteWorkspaceFileRequest,
+  RemoteWorkspacePathProbeRequest,
+  RemoteWorkspacePathStat
+} from '../../shared/remoteWorkspacePath'
 import type { ManagedEnvironmentRendererApi } from './features/environment/lib/managedEnvironmentApi'
 import type {
   WrapperResultDirectoryRequest,
@@ -736,6 +740,9 @@ export interface RendererApi
   previewWrapperResult: (request: WrapperResultReadRequest) => Promise<WrapperResultPreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
+  statRemoteWorkspacePaths: (
+    request: RemoteWorkspacePathProbeRequest
+  ) => Promise<RemoteWorkspacePathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
   listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest) => Promise<DirectoryListing>
   listWrapperResultDirectory: (request: WrapperResultDirectoryRequest) => Promise<DirectoryListing>

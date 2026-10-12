@@ -7977,9 +7977,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('files:preview', async (_, filePath: string) => {
     return createFilePreview(filePath)
   })
+  ipcMain.handle('remoteWorkspace:statPaths', async (_, request: unknown) =>
+    remoteConnectionTracker.observe(remoteRequestProjectId(request), async () =>
+      (await import('./agent/workspace-host/remote-registry')).remoteWorkspaceHosts.statPaths(
+        request
+      )
+    )
+  )
   ipcMain.handle('remoteWorkspace:preview', async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      previewRemoteWorkspaceFile(request)
+      previewRemoteWorkspaceFile(request, { connectHost: connectRemoteWorkspaceHost })
     )
   )
   ipcMain.handle('remoteWorkspace:listDirectory', async (_, request: unknown) =>

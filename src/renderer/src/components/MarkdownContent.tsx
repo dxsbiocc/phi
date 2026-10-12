@@ -14,7 +14,6 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import { PhiIcons } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
 import {
-  remotePathInsideRoot,
   remotePathWithinProjectUri,
   tokenizeRemoteWorkspaceUris
 } from '../../../shared/remoteWorkspacePath'
@@ -29,14 +28,17 @@ import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
 import type { FilePreview } from '../types'
 import {
   collectBareFileReferencePaths,
+  collectRemoteProjectReferencePaths,
   inlineCodeBareFilePath,
   inlineCodeFilePath,
   isLocalPathHref,
   localHrefToPath,
   localPathKindForReference,
   matchedBareFileReference,
+  matchedRemoteProjectPathReference,
   stripLineReference,
   tokenizeBareFileReferences,
+  tokenizeRemoteProjectBareFileReferences,
   type LocalPathKind
 } from '../lib/markdownLocalPathReferences'
 import {
@@ -52,7 +54,11 @@ import {
 } from './markdown/MarkdownColorToken'
 import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
-import { canStatLocalPaths, useLocalPathKinds } from '../lib/markdownLocalPathPreview'
+import {
+  canStatLocalPaths,
+  useLocalPathKinds,
+  useRemotePathKinds
+} from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
@@ -154,28 +160,26 @@ function isPathInsideDirectory(path: string, directory: string): boolean {
   return path === normalizedDirectory || path.startsWith(`${normalizedDirectory}/`)
 }
 
-function renderableLocalPathKind(
+function renderableLocalPath(
   text: string,
   absolutePath: string,
   cwd: string,
   localPathKinds: ReadonlyMap<string, LocalPathKind>,
   remoteProject?: RemoteProjectFileContextValue | null
-): LocalPathKind | null {
+): { absolutePath: string; pathKind: LocalPathKind } | null {
   if (remoteProject) {
-    return remoteProject.hostAlias &&
-      remotePathInsideRoot(absolutePath, remoteProject.canonicalRoot)
-      ? text.trim().endsWith('/') || absolutePath === remoteProject.canonicalRoot
-        ? 'directory'
-        : 'file'
-      : null
+    return matchedRemoteProjectPathReference(text, absolutePath, cwd, remoteProject, localPathKinds)
   }
   const confirmedKind = localPathKinds.get(absolutePath)
-  if (confirmedKind) return confirmedKind
+  if (confirmedKind) return { absolutePath, pathKind: confirmedKind }
   if (canStatLocalPaths()) return null
+  let pathKind: LocalPathKind
   if (isPathInsideDirectory(absolutePath, cwd)) {
-    return localPathKindForReference(text, absolutePath, cwd, true)
+    pathKind = localPathKindForReference(text, absolutePath, cwd, true)
+  } else {
+    pathKind = localPathKindForReference(text, absolutePath, cwd, false)
   }
-  return localPathKindForReference(text, absolutePath, cwd, false)
+  return { absolutePath, pathKind }
 }
 
 function syntaxLanguageForMarkdownCode(language: string | null): SyntaxLanguage {
@@ -337,9 +341,10 @@ function MarkdownImage({
       ? remotePathWithinProjectUri(src, remoteProject.hostAlias, remoteProject.canonicalRoot)
       : null
   const localPath = explicitRemotePath ?? localHrefToPath(src, cwd)
-  const pathKind = localPath
-    ? renderableLocalPathKind(alt || localPath, localPath, cwd, localPathKinds, remoteProject)
+  const renderablePath = localPath
+    ? renderableLocalPath(src || localPath, localPath, cwd, localPathKinds, remoteProject)
     : null
+  const pathKind = renderablePath?.pathKind ?? null
   const [previewState, setPreviewState] = useState<{ path: string; preview: FilePreview } | null>(
     null
   )
@@ -378,11 +383,11 @@ function MarkdownImage({
   }, [localPath, pathKind, remoteProject])
 
   if (remoteProject) {
-    return localPath && pathKind ? (
+    return renderablePath ? (
       <LocalPathButton
-        text={alt || src || localPath}
-        absolutePath={localPath}
-        pathKind={pathKind}
+        text={alt || src || renderablePath.absolutePath}
+        absolutePath={renderablePath.absolutePath}
+        pathKind={renderablePath.pathKind}
       />
     ) : (
       <InlineCodeShell>{alt || src || ''}</InlineCodeShell>
@@ -497,20 +502,31 @@ function renderDecoratedText(
     : [{ kind: 'text' as const, text }]
   remoteTokens.forEach((remoteToken, remoteIndex) => {
     if (remoteToken.kind === 'path') {
+      const renderablePath = renderableLocalPath(
+        remoteToken.text,
+        remoteToken.path,
+        cwd,
+        localPathKinds,
+        remoteProject
+      )
       nodes.push(
-        <LocalPathButton
-          key={`${keyPrefix}-remote-${remoteIndex}`}
-          text={remoteToken.text}
-          absolutePath={remoteToken.path}
-          pathKind={remoteToken.text.endsWith('/') ? 'directory' : 'file'}
-          onOpenLocalPath={onOpenLocalPath}
-        />
+        renderablePath ? (
+          <LocalPathButton
+            key={`${keyPrefix}-remote-${remoteIndex}`}
+            text={remoteToken.text}
+            absolutePath={renderablePath.absolutePath}
+            pathKind={renderablePath.pathKind}
+            onOpenLocalPath={onOpenLocalPath}
+          />
+        ) : (
+          remoteToken.text
+        )
       )
       return
     }
     tokenizeLocalPaths(remoteToken.text, cwd).forEach((token, pathIndex) => {
       if (token.kind === 'path') {
-        const pathKind = renderableLocalPathKind(
+        const renderablePath = renderableLocalPath(
           token.text,
           token.absolutePath,
           cwd,
@@ -518,12 +534,12 @@ function renderDecoratedText(
           remoteProject
         )
         nodes.push(
-          pathKind ? (
+          renderablePath ? (
             <LocalPathButton
               key={`${keyPrefix}-path-${remoteIndex}-${pathIndex}-${token.absolutePath}`}
               text={token.text}
-              absolutePath={token.absolutePath}
-              pathKind={pathKind}
+              absolutePath={renderablePath.absolutePath}
+              pathKind={renderablePath.pathKind}
               onOpenLocalPath={onOpenLocalPath}
             />
           ) : (
@@ -532,30 +548,31 @@ function renderDecoratedText(
         )
         return
       }
-      tokenizeBareFileReferences(token.text, cwd, localPathKinds).forEach(
-        (fileToken, fileIndex) => {
-          if (fileToken.kind === 'path') {
-            nodes.push(
-              <LocalPathButton
-                key={`${keyPrefix}-file-${remoteIndex}-${pathIndex}-${fileIndex}-${fileToken.absolutePath}`}
-                text={fileToken.text}
-                absolutePath={fileToken.absolutePath}
-                pathKind={fileToken.pathKind}
-                onOpenLocalPath={onOpenLocalPath}
-              />
-            )
-            return
-          }
+      ;(remoteProject
+        ? tokenizeRemoteProjectBareFileReferences(token.text, cwd, remoteProject, localPathKinds)
+        : tokenizeBareFileReferences(token.text, cwd, localPathKinds)
+      ).forEach((fileToken, fileIndex) => {
+        if (fileToken.kind === 'path') {
           nodes.push(
-            ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) => (
-              <MarkdownColorTokenView
-                key={`${keyPrefix}-color-${remoteIndex}-${pathIndex}-${fileIndex}-${colorIndex}`}
-                token={colorToken}
-              />
-            ))
+            <LocalPathButton
+              key={`${keyPrefix}-file-${remoteIndex}-${pathIndex}-${fileIndex}-${fileToken.absolutePath}`}
+              text={fileToken.text}
+              absolutePath={fileToken.absolutePath}
+              pathKind={fileToken.pathKind}
+              onOpenLocalPath={onOpenLocalPath}
+            />
           )
+          return
         }
-      )
+        nodes.push(
+          ...tokenizeMarkdownColors(fileToken.text).map((colorToken, colorIndex) => (
+            <MarkdownColorTokenView
+              key={`${keyPrefix}-color-${remoteIndex}-${pathIndex}-${fileIndex}-${colorIndex}`}
+              token={colorToken}
+            />
+          ))
+        )
+      })
     })
   })
 
@@ -608,24 +625,21 @@ function InlineCode({
   const explicitRemotePath = remoteProject
     ? remotePathWithinProjectUri(codeText, remoteProject.hostAlias, remoteProject.canonicalRoot)
     : null
-  if (explicitRemotePath) {
-    return <LocalPathButton text={codeText} absolutePath={explicitRemotePath} pathKind="file" />
-  }
-  const localPath = inlineCodeFilePath(codeText, cwd)
+  const localPath = explicitRemotePath ?? inlineCodeFilePath(codeText, cwd)
   if (localPath) {
-    const pathKind = renderableLocalPathKind(
+    const renderablePath = renderableLocalPath(
       codeText,
       localPath,
       cwd,
       localPathKinds,
       remoteProject
     )
-    if (pathKind) {
+    if (renderablePath) {
       return (
         <LocalPathButton
           text={codeText}
-          absolutePath={localPath}
-          pathKind={pathKind}
+          absolutePath={renderablePath.absolutePath}
+          pathKind={renderablePath.pathKind}
           onOpenLocalPath={onOpenLocalPath}
         />
       )
@@ -634,7 +648,15 @@ function InlineCode({
 
   const bareLocalPath = inlineCodeBareFilePath(codeText, cwd)
   const bareReference = bareLocalPath
-    ? matchedBareFileReference(stripLineReference(codeText.trim()), cwd, localPathKinds)
+    ? remoteProject
+      ? matchedRemoteProjectPathReference(
+          stripLineReference(codeText.trim()),
+          bareLocalPath,
+          cwd,
+          remoteProject,
+          localPathKinds
+        )
+      : matchedBareFileReference(stripLineReference(codeText.trim()), cwd, localPathKinds)
     : null
   if (bareReference) {
     return (
@@ -671,24 +693,21 @@ function MarkdownContentImpl({
   showColorPalettes = false
 }: MarkdownContentProps): React.JSX.Element {
   const remoteProject = useRemoteProjectFileContext()
-  const localPathReferencePaths = useMemo(
-    () => [
-      ...new Set([
-        ...collectBareFileReferencePaths(text, cwd),
-        ...collectLocalPathTokenPaths(text, cwd)
-      ])
-    ],
-    [cwd, text]
+  const pathReferencePaths = useMemo(
+    () =>
+      remoteProject
+        ? collectRemoteProjectReferencePaths(text, cwd, remoteProject)
+        : [
+            ...new Set([
+              ...collectBareFileReferencePaths(text, cwd),
+              ...collectLocalPathTokenPaths(text, cwd)
+            ])
+          ],
+    [cwd, remoteProject, text]
   )
-  const statPathKinds = useLocalPathKinds(cwd, localPathReferencePaths, !remoteProject)
-  const localPathKinds = useMemo<ReadonlyMap<string, LocalPathKind>>(() => {
-    if (!remoteProject) return statPathKinds
-    const kinds = new Map<string, LocalPathKind>()
-    for (const path of collectBareFileReferencePaths(text, cwd)) {
-      if (remotePathInsideRoot(path, remoteProject.canonicalRoot)) kinds.set(path, 'file')
-    }
-    return kinds
-  }, [cwd, remoteProject, statPathKinds, text])
+  const localStatPathKinds = useLocalPathKinds(cwd, pathReferencePaths, !remoteProject)
+  const remoteStatPathKinds = useRemotePathKinds(remoteProject, pathReferencePaths)
+  const localPathKinds = remoteProject ? remoteStatPathKinds : localStatPathKinds
   const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
 
   const components = useMemo<Components>(
@@ -771,11 +790,19 @@ function MarkdownContentImpl({
             remoteProject.canonicalRoot
           )
           if (remotePath) {
+            const renderablePath = renderableLocalPath(
+              href,
+              remotePath,
+              cwd,
+              localPathKinds,
+              remoteProject
+            )
+            if (!renderablePath) return <>{children}</>
             return (
               <LocalPathButton
                 text={textFromNode(children) || href}
-                absolutePath={remotePath}
-                pathKind={href.endsWith('/') ? 'directory' : 'file'}
+                absolutePath={renderablePath.absolutePath}
+                pathKind={renderablePath.pathKind}
               />
             )
           }
@@ -784,19 +811,19 @@ function MarkdownContentImpl({
         const localPath = localHrefToPath(href, cwd)
         if (localPath) {
           const label = textFromNode(children)
-          const pathKind = renderableLocalPathKind(
-            label,
+          const renderablePath = renderableLocalPath(
+            href ?? label,
             localPath,
             cwd,
             localPathKinds,
             remoteProject
           )
-          if (pathKind) {
+          if (renderablePath) {
             return (
               <LocalPathButton
                 text={label}
-                absolutePath={localPath}
-                pathKind={pathKind}
+                absolutePath={renderablePath.absolutePath}
+                pathKind={renderablePath.pathKind}
                 onOpenLocalPath={onOpenLocalPath}
               />
             )

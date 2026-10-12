@@ -1,12 +1,28 @@
 import { posix } from 'node:path'
 
 import {
+  resolveRemoteWorkspacePath,
   withAuthorizedRemoteWorkspacePath,
+  RemoteWorkspaceTargetMissingError,
   type AuthorizedRemoteWorkspacePath,
   type RemoteWorkspaceBoundaryDependencies
 } from './remote-workspace-boundary'
 import { shellQuote, type RemoteSshSession } from './wrappers/remote-ssh-session'
 import { remoteWorkspaceUri } from '../../shared/remoteWorkspacePath'
+import {
+  binaryReadExplanation,
+  classifyRemoteWorkspaceFile,
+  inspectRemoteWorkspaceFile,
+  readRemoteWorkspaceFileBase64,
+  readRemoteWorkspaceFilePrefix,
+  REMOTE_FILE_MEDIA_BYTES
+} from './remote-workspace-file-content'
+import {
+  readRemoteTextWindow,
+  REMOTE_AGENT_TEXT_MAX_BYTES,
+  REMOTE_AGENT_TEXT_MAX_LINES,
+  splitRemoteReadSelector
+} from './remote-workspace-read-selector'
 
 export const REMOTE_READ_MAX_BYTES = 1024 * 1024
 const REMOTE_TEXT_RESPONSE_MAX_BYTES = 1536 * 1024
@@ -26,7 +42,22 @@ function isProbablyBinaryHeader(header: Uint8Array): boolean {
 }
 
 export type RemoteWorkspaceReadResult =
-  | { kind: 'file'; path: string; content: string; fileSize: number; contentType: string }
+  | {
+      kind: 'file'
+      path: string
+      content: string
+      fileSize: number
+      contentType: string
+      truncated?: boolean
+      continuation?: string
+    }
+  | {
+      kind: 'image'
+      path: string
+      data: string
+      fileSize: number
+      contentType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
+    }
   | {
       kind: 'directory'
       path: string
@@ -148,12 +179,16 @@ function readError(code: number | null, kind: 'file' | 'directory'): Error {
   )
 }
 
-async function readKind(session: RemoteSshSession, path: string): Promise<'file' | 'directory'> {
+async function readKind(
+  session: RemoteSshSession,
+  path: string,
+  relativePath: string
+): Promise<'file' | 'directory'> {
   const result = await session.exec(buildRemoteReadKindCommand(path))
   if (result.code !== 0) throw new Error('远程目标类型检查失败')
   if (result.stdout === 'file' || result.stdout === 'directory') return result.stdout
   if (result.stdout === 'other') throw new Error('远程目标不是普通文件或目录')
-  if (result.stdout === 'missing') throw new Error('远程目标不存在')
+  if (result.stdout === 'missing') throw new RemoteWorkspaceTargetMissingError(relativePath)
   throw new Error('远程目标类型返回格式无效')
 }
 
@@ -248,35 +283,149 @@ export async function readRemoteWorkspacePath(
   if (
     Object.keys(request).some((key) => !['sessionId', 'projectId', 'path'].includes(key)) ||
     typeof request.sessionId !== 'string' ||
+    !request.sessionId ||
     typeof request.projectId !== 'string' ||
-    typeof request.path !== 'string'
+    !request.projectId ||
+    typeof request.path !== 'string' ||
+    !request.path
   ) {
     throw new Error('远程读取请求只能包含会话、项目 ID 和路径')
   }
+  let target = splitRemoteReadSelector(request.path)
+  if (target.selector) {
+    try {
+      await resolveRemoteWorkspacePath(
+        { ...request, path: request.path, mode: 'existing' },
+        dependencies
+      )
+      target = { path: request.path }
+    } catch (error) {
+      if (!(error instanceof RemoteWorkspaceTargetMissingError)) throw error
+    }
+  }
   return withAuthorizedRemoteWorkspacePath(
-    { ...request, mode: 'existing' },
+    { ...request, path: target.path, mode: 'existing' },
     async (authorized, session) => {
       dependencies.onResolved?.(authorized)
-      const kind = await readKind(session, authorized.path)
+      const kind = await readKind(session, authorized.path, authorized.relativePath || '.')
       if (dependencies.expectedKind && kind !== dependencies.expectedKind) {
         throw new Error(
-          dependencies.expectedKind === 'file' ? '远程目标不是普通文本文件' : '远程目标不是目录'
+          dependencies.expectedKind === 'file' ? '远程目标不是普通文件' : '远程目标不是目录'
         )
       }
       const path = remoteWorkspaceUri(authorized.hostAlias, authorized.path)
       if (kind === 'file') {
-        const { content, fileSize } = await readRemoteWorkspaceTextFile(
+        const snapshot = await inspectRemoteWorkspaceFile(
           session,
           authorized.path,
-          authorized.canonicalRoot
+          authorized.canonicalRoot,
+          undefined,
+          authorized.relativePath
         )
-        dependencies.onFileRead?.(authorized, content)
+        let classification = classifyRemoteWorkspaceFile(authorized.path, snapshot.head)
+        if (classification.kind === 'text' && snapshot.size > snapshot.head.length) {
+          const sniffBytes = await readRemoteWorkspaceFilePrefix(
+            session,
+            authorized.path,
+            authorized.canonicalRoot,
+            snapshot,
+            BINARY_SNIFF_BYTES
+          )
+          classification = classifyRemoteWorkspaceFile(authorized.path, sniffBytes)
+        }
+        if (classification.kind === 'image') {
+          if (snapshot.size > REMOTE_FILE_MEDIA_BYTES) {
+            return {
+              kind: 'file',
+              path,
+              content: `图片文件（${classification.label}）超过 10 MiB，未载入模型。请在 bash 中使用 \`file ${shellQuote(authorized.path)}\` 检查。`,
+              fileSize: snapshot.size,
+              contentType: classification.mimeType
+            }
+          }
+          const data = await readRemoteWorkspaceFileBase64(
+            session,
+            authorized.path,
+            authorized.canonicalRoot,
+            snapshot,
+            snapshot.size
+          )
+          return {
+            kind: 'image',
+            path,
+            data,
+            fileSize: snapshot.size,
+            contentType: classification.mimeType
+          }
+        }
+        if (classification.kind === 'binary' || classification.kind === 'pdf') {
+          return {
+            kind: 'file',
+            path,
+            content: binaryReadExplanation(authorized.path, classification.label),
+            fileSize: snapshot.size,
+            contentType: classification.mimeType
+          }
+        }
+        if (!target.selector && snapshot.size <= REMOTE_READ_MAX_BYTES) {
+          let text: { content: string; fileSize: number }
+          try {
+            text = await readRemoteWorkspaceTextFile(
+              session,
+              authorized.path,
+              authorized.canonicalRoot
+            )
+          } catch (error) {
+            if (!(error instanceof Error) || !/二进制|UTF-8/.test(error.message)) throw error
+            return {
+              kind: 'file',
+              path,
+              content: binaryReadExplanation(authorized.path, 'BINARY'),
+              fileSize: snapshot.size,
+              contentType: 'application/octet-stream'
+            }
+          }
+          dependencies.onFileRead?.(authorized, text.content)
+          const lineCount =
+            text.content.length === 0
+              ? 0
+              : text.content.split('\n').length - (text.content.endsWith('\n') ? 1 : 0)
+          if (
+            Buffer.byteLength(text.content, 'utf8') <= REMOTE_AGENT_TEXT_MAX_BYTES &&
+            lineCount <= REMOTE_AGENT_TEXT_MAX_LINES
+          ) {
+            return {
+              kind: 'file',
+              path,
+              content: text.content,
+              fileSize: snapshot.size,
+              contentType: contentTypeFor(authorized.path)
+            }
+          }
+        }
+        const window = await readRemoteTextWindow(
+          session,
+          { path: authorized.path, canonicalRoot: authorized.canonicalRoot },
+          snapshot,
+          target.selector
+        )
+        if (window.binary) {
+          return {
+            kind: 'file',
+            path,
+            content: binaryReadExplanation(authorized.path, 'BINARY'),
+            fileSize: snapshot.size,
+            contentType: 'application/octet-stream'
+          }
+        }
         return {
           kind: 'file',
           path,
-          content,
-          fileSize,
-          contentType: contentTypeFor(authorized.path)
+          content: window.content,
+          fileSize: snapshot.size,
+          contentType: contentTypeFor(authorized.path),
+          ...(window.truncated ? { truncated: true } : {}),
+          ...(window.continuation ? { continuation: window.continuation } : {})
         }
       }
       const entries = await listRemoteDirectoryEntries(
