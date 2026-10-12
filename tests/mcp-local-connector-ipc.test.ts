@@ -5,8 +5,6 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-import * as promptTarget from '../src/preload/promptTarget'
-
 type LocalRequest = {
   name: string
   runtime: { kind: 'environment'; ref: string } | { kind: 'host' }
@@ -210,7 +208,6 @@ test('preload exposes typed local connector methods without changing argv shape'
   const ipcRenderer = new IpcRenderer()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
-      if (specifier === './promptTarget') return promptTarget
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

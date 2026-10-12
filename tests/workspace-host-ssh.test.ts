@@ -54,6 +54,8 @@ function execWithInput(command: string, input: string): Promise<RemoteExecResult
         signal
       })
     })
+    // A script that exits before reading its input must not raise EPIPE, as in the real session.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(input)
   })
 }

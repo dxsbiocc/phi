@@ -1,13 +1,10 @@
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
 import type { TerminalRendererBridge } from '../shared/terminalTypes'
-import type {
-  OfficePromptTargetFailure,
-  OfficeRendererBridge,
-  OfficeTargetInput
-} from '../shared/officeProtocol'
 import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
 import type { RemoteHpcSettings } from '../shared/wrapperRemoteTypes'
@@ -172,12 +169,9 @@ type PreloadPromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
-  officeTarget?: OfficeTargetInput
 }
 
-type PreloadPromptResult =
-  | { path: string | null; phiSessionId?: string; sessionGeneration: number }
-  | OfficePromptTargetFailure
+type PreloadPromptResult = { path: string | null; phiSessionId?: string; sessionGeneration: number }
 
 /** Mirrors `ProjectRemoteConnection` (src/main/agent/projects.ts) — no secret material, see that type's doc comment. */
 type PreloadProjectRemoteConnection = {
@@ -228,6 +222,7 @@ type PreloadProject = {
   remoteConnections?: PreloadProjectRemoteConnection[]
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
+  memory?: ProjectMemorySettings
   createdAt: string
 }
 
@@ -646,7 +641,6 @@ declare global {
     api: {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
-      office: OfficeRendererBridge
       sshBootstrap: SshBootstrapRendererBridge
       readyWindow: (background: string) => Promise<void>
       closeWindow: () => Promise<void>
@@ -941,6 +935,14 @@ declare global {
           defaultThinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
         }
       ) => Promise<PreloadProject>
+      updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<PreloadProject>
+      getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+      deleteProjectMemoryLesson: (
+        id: string,
+        index: number,
+        text: string
+      ) => Promise<ProjectMemorySnapshot>
+      clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
       listRemoteHosts: () => Promise<PreloadRemoteHostProfile[]>
       listRemoteProjectDirectories: (
         request: RemoteDirectoryListRequest
@@ -1255,6 +1257,8 @@ declare global {
       cancelRemoteProjectUpload: (jobId: string) => Promise<void>
       retryRemoteProjectUpload: (jobId: string) => Promise<RemoteProjectUploadJob>
       onRemoteProjectUploadsChanged: (cb: (job: RemoteProjectUploadJob) => void) => () => void
+      listRemoteJupyterJobs: () => Promise<RemoteJupyterStartJob[]>
+      onRemoteJupyterJobsChanged: (cb: (job: RemoteJupyterStartJob) => void) => () => void
       completeWrapperInputUpload: (
         jobId: string,
         planId: string,

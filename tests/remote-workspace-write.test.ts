@@ -228,6 +228,69 @@ test('symlink parent escape and unbound project are rejected before content tran
   }
 })
 
+test('remote write creates missing parent directories inside the project', async () => {
+  const f = fixture()
+  try {
+    mkdirSync(join(f.root, 'existing'))
+    const nested = await new RemoteWorkspaceWriteManager(f.dependencies).create(
+      request('existing/new/deeper/file.txt', 'nested')
+    )
+    assert.equal(nested.status, 'created')
+    assert.equal(
+      readFileSync(join(f.root, 'existing', 'new', 'deeper', 'file.txt'), 'utf8'),
+      'nested'
+    )
+    const fresh = await new RemoteWorkspaceWriteManager(f.dependencies).create({
+      ...request('results/table.tsv', 'a\tb\n'),
+      requestId: 'request-fresh'
+    })
+    assert.equal(fresh.status, 'created')
+    assert.equal(readFileSync(join(f.root, 'results', 'table.tsv'), 'utf8'), 'a\tb\n')
+    assert.equal(existsSync(join(f.anchor, 'results')), false)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('missing parents under an escaping or dangling link are refused without creating anything', async () => {
+  const f = fixture()
+  try {
+    symlinkSync(f.outside, join(f.root, 'escape'))
+    symlinkSync(join(f.base, 'absent'), join(f.root, 'dangling'))
+    writeFileSync(join(f.root, 'plain.txt'), 'file')
+    await assert.rejects(
+      new RemoteWorkspaceWriteManager(f.dependencies).create(request('escape/new/file.txt')),
+      /超出项目根目录/
+    )
+    await assert.rejects(
+      new RemoteWorkspaceWriteManager(f.dependencies).create(request('dangling/new/file.txt')),
+      /父目录不可访问/
+    )
+    await assert.rejects(
+      new RemoteWorkspaceWriteManager(f.dependencies).create(request('plain.txt/new/file.txt')),
+      /父目录不可访问/
+    )
+    assert.deepEqual(readdirSync(f.outside), [])
+    assert.equal(existsSync(join(f.base, 'absent')), false)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('a missing parent turned into an escaping link after authorization is not followed', async () => {
+  const f = fixture()
+  try {
+    f.beforeInput(() => symlinkSync(f.outside, join(f.root, 'late')))
+    await assert.rejects(
+      new RemoteWorkspaceWriteManager(f.dependencies).create(request('late/new/file.txt')),
+      /父目录已移出项目根目录/
+    )
+    assert.deepEqual(readdirSync(f.outside), [])
+  } finally {
+    f.cleanup()
+  }
+})
+
 test('parent replaced after authorization cannot redirect publication outside the project', async () => {
   const f = fixture()
   try {

@@ -4,6 +4,7 @@ import type {
   RemoteProjectReachability
 } from '../../../shared/projectLocation'
 import type { ProjectRemoteConnection } from '../features/wrapper/lib/remoteConnectionTypes'
+import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
 
 /** App-wide project view; location determines whether its path is local or on SSH. */
 export interface Project {
@@ -22,6 +23,7 @@ export interface Project {
   remoteConnections?: ProjectRemoteConnection[]
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
+  memory?: ProjectMemorySettings
   createdAt: string
 }
 

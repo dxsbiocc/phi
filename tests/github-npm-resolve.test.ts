@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { resolveNpmPackage } from '../src/main/agent/packages/github-project-hint'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 const repository = { owner: 'xieningqing', name: 'qq-email-mcp', repo: 'xieningqing/qq-email-mcp' }
 

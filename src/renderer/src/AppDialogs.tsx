@@ -55,6 +55,7 @@ export type AppDialogsProps = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => void
+  onProjectUpdated: (project: Project) => void
   onOpenApprovalSession: (path: string) => void
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
@@ -133,6 +134,7 @@ export default function AppDialogs({
   updatingPermissionProjectId,
   onUpdateProjectPermissionMode,
   onUpdateProjectDefaults,
+  onProjectUpdated,
   onOpenApprovalSession,
   onRespondToolApproval,
   themeMode,
@@ -216,6 +218,7 @@ export default function AppDialogs({
         onUpdateProjectDefaults={(projectId, defaults) => {
           void onUpdateProjectDefaults(projectId, defaults)
         }}
+        onProjectUpdated={onProjectUpdated}
         onOpenApprovalSession={onOpenApprovalSession}
         onRespondApproval={onRespondToolApproval}
         noProjectTaskFolder={noProjectTaskFolder}

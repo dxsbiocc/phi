@@ -11,6 +11,10 @@ import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import type { RemoteProjectUploadJob } from '../src/shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../src/shared/wrapperTypes'
 import { BackgroundJobsPanel } from '../src/renderer/src/features/jobs/BackgroundJobsPanel'
+import { BackgroundJobDetail } from '../src/renderer/src/features/jobs/components/BackgroundJobDetail'
+import { BackgroundJobGroup } from '../src/renderer/src/features/jobs/components/BackgroundJobGroup'
+import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
+import type { RemoteJupyterStartJob } from '../src/shared/remoteJupyterJobTypes'
 import {
   canStopUnifiedWrapperRun,
   dismissBackgroundJobs,
@@ -416,4 +420,119 @@ test('environment build percent uses bytes when known, otherwise packages', () =
     ),
     25
   )
+})
+
+const jupyterJob: RemoteJupyterStartJob = {
+  id: 'jup-1',
+  projectId: 'project-1',
+  projectName: 'GPU',
+  serverLabel: 'gpu-login',
+  state: 'failed',
+  phase: '启动失败',
+  startedAt: '2026-09-27T10:00:00.000Z',
+  finishedAt: '2026-09-27T10:01:00.000Z',
+  error: '远程 Jupyter 在 3 次尝试后仍未就绪：远程 Jupyter 进程提前退出',
+  entries: [
+    { at: '2026-09-27T10:00:01.000Z', kind: 'step', text: '正在检测服务器上已有的 Jupyter' },
+    {
+      at: '2026-09-27T10:00:30.000Z',
+      kind: 'output',
+      text: 'ModuleNotFoundError: No module named jupyter_server'
+    },
+    { at: '2026-09-27T10:01:00.000Z', kind: 'error', text: '远程 Jupyter 进程提前退出' }
+  ]
+}
+
+function render(element: React.ReactElement): string {
+  return renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
+}
+
+test('remote Jupyter startups are jobs: running ones are active, finished ones are completed', () => {
+  const running = { ...jupyterJob, state: 'running' as const, finishedAt: undefined }
+  const result = selectBackgroundJobs(
+    [],
+    [],
+    { finishedAfter: '2026-09-27T09:00:00.000Z' },
+    [],
+    [],
+    [],
+    [],
+    [running, { ...jupyterJob, id: 'jup-0' }]
+  )
+  assert.deepEqual(
+    result.active.map((item) => item.key),
+    ['jupyter:jup-1']
+  )
+  assert.deepEqual(
+    result.recent.map((item) => item.key),
+    ['jupyter:jup-0']
+  )
+})
+
+test('job groups collapse and expand with their count', () => {
+  const props = { id: 'running', title: '运行中', count: 2, onToggle: () => undefined }
+  const open = render(createElement(BackgroundJobGroup, { ...props, expanded: true }, 'rows'))
+  const closed = render(createElement(BackgroundJobGroup, { ...props, expanded: false }, 'rows'))
+  assert.match(open, /aria-expanded="true"/)
+  assert.match(open, /运行中/)
+  assert.match(open, />2</)
+  assert.match(closed, /aria-expanded="false"/)
+})
+
+test('a job row opens its detail as a whole and no longer jumps to the conversation', () => {
+  const [item] = selectBackgroundJobs([agent], []).active
+  assert.ok(item)
+  const markup = render(
+    createElement(BackgroundJobRow, {
+      item,
+      nowMs: Date.parse('2026-09-27T10:00:05.000Z'),
+      busy: false,
+      onOpen: () => undefined,
+      onStop: () => undefined
+    })
+  )
+  assert.match(markup, /role="button"/)
+  assert.match(markup, /aria-label="查看 Wrapper 详情"/)
+  assert.doesNotMatch(markup, /打开对话/)
+  assert.match(markup, /aria-label="停止 Wrapper"/)
+})
+
+test('a failed Jupyter startup shows its error and full startup log inside the panel', () => {
+  const [item] = selectBackgroundJobs([], [], {}, [], [], [], [], [jupyterJob]).recent
+  assert.ok(item)
+  const markup = render(
+    createElement(BackgroundJobDetail, {
+      item,
+      nowMs: Date.parse('2026-09-27T10:02:00.000Z'),
+      busy: false,
+      onBack: () => undefined,
+      onStop: () => undefined,
+      onOpenSession: () => undefined
+    })
+  )
+  assert.match(markup, /aria-label="返回任务列表"/)
+  assert.match(markup, /启动 Jupyter Server · GPU/)
+  assert.match(markup, /启动失败/)
+  assert.match(markup, /3 次尝试后仍未就绪：远程 Jupyter 进程提前退出/)
+  assert.match(markup, /data-phi-jupyter-start-log/)
+  assert.match(markup, /No module named jupyter_server/)
+  assert.match(markup, /gpu-login/)
+})
+
+test('agent job details keep an explicit button to open the conversation', () => {
+  const [item] = selectBackgroundJobs([agent], []).active
+  assert.ok(item)
+  const markup = render(
+    createElement(BackgroundJobDetail, {
+      item,
+      nowMs: Date.parse('2026-09-27T10:00:05.000Z'),
+      busy: false,
+      onBack: () => undefined,
+      onStop: () => undefined,
+      onOpenSession: () => undefined
+    })
+  )
+  assert.match(markup, /Run quality control/)
+  assert.match(markup, /打开对话/)
+  assert.match(markup, /停止这个 Agent/)
 })

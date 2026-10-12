@@ -1,6 +1,6 @@
 ---
 name: office-workflow
-description: 为 Excel、Word、PowerPoint 和 PDF 任务选择原生小改、一次性 Python/Node 脚本或常驻 notebook 内核工作流。
+description: 为 Excel、Word、PowerPoint 和 PDF 任务选择一次性 Python/Node 脚本或常驻 notebook 内核工作流。
 compatibility: Runs in phi:python@1.
 phi:
   environment: phi:python@1
@@ -31,15 +31,14 @@ phi:
 
 # Office 工作流
 
-根据文档是否已在右侧打开、任务规模和交互次数选择路线。所有成品都保存到当前项目内的相对路径；不得为完成任务改动宿主机或用户环境。
+根据任务规模和交互次数选择路线。所有成品都保存到当前项目内的相对路径；不得为完成任务改动宿主机或用户环境。
 
 ## 选择规则
 
-1. **原生 Office 工具**（`office_read`、`office_apply`、`office_deliver`）：仅当用户已在 Phi 右侧打开一份 Office 文件，并且要做少量交互式修改时使用。没有当前打开目标、要新生成文件、需要批量处理或复杂排版时，不选这条路线。
-2. **一次性 Python/Node 脚本**：生成、图表、图片、复杂格式和批量任务的默认路线。按 `xlsx`、`pptx`、`docx` 或 `pdf` 技能编写一个项目内脚本，再用 `skill_run` 通过托管环境执行。
-3. **常驻 notebook 内核**：大文档、计算中间状态需要保留、或要多轮迭代时使用。通过 `notebook.*` 在 `phi-python` 内核中持有 openpyxl workbook、python-pptx presentation 或 python-docx document 对象，分步运行，在里程碑处调用文档对象的 `save(...)`。
+1. **一次性 Python/Node 脚本**：生成、修改、图表、图片、复杂格式和批量任务的默认路线。按 `xlsx`、`pptx`、`docx` 或 `pdf` 技能编写一个项目内脚本，再用 `skill_run` 通过托管环境执行。
+2. **常驻 notebook 内核**：大文档、计算中间状态需要保留、或要多轮迭代时使用。通过 `notebook.*` 在 `phi-python` 内核中持有 openpyxl workbook、python-pptx presentation 或 python-docx document 对象，分步运行，在里程碑处调用文档对象的 `save(...)`。
 
-## 路线 B：一次性托管脚本
+## 路线 A：一次性托管脚本
 
 先按对应文档技能编写 `scripts/build_report.py`，让脚本自行创建输出父目录、保存文件并执行读回检查。然后运行：
 
@@ -71,7 +70,7 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 
 `run_project_script.py` 只接受当前项目内现有的 `.py`、`.js`、`.cjs` 或 `.mjs` 相对路径，并由 `skill_run` 的执行审批保护。Node 分支只使用 `phi:python@1` 托管 PATH 中的 `node`，并传递托管 `node_modules`。不要在脚本里下载工具或修改环境。
 
-## 路线 C：常驻内核最小序列
+## 路线 B：常驻内核最小序列
 
 以用户已在 Phi 中创建并选用 `phi-python` 内核的 `notebooks/office-build.ipynb` 为例。先读取 notebook，并从回执中取得代码 cell 的稳定 `id`：
 
@@ -150,7 +149,7 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 }
 ```
 
-- 用户可在 Phi 文件预览里打开成品。原生 Office 预览显示的是打开时的草稿副本；Python 重新生成后，需重新打开该文件才能查看新版本。
+- 用户可在 Phi 文件预览里查看成品，或用系统默认应用打开。Python 重新生成后，需重新打开该文件才能查看新版本。
 - 完成读回核对后，用 `present_files` 交付最重要的现有文件：
 
 ```json tool-call

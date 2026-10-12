@@ -74,8 +74,6 @@ test('Phi resources retain core assets and the private Office plugin', () => {
       'resources/runtime/manifest.json',
       'resources/runtime/micromamba/darwin-arm64/micromamba',
       'resources/remote-helper/0.1.0/linux-amd64/phi-helper',
-      'resources/office/manifest.json',
-      'resources/office/officecli/darwin-arm64/officecli',
       'resources/palettes/default.yaml',
       'resources/skills',
       'resources/skills/create-wrapper/SKILL.md',
@@ -154,13 +152,12 @@ test('resource check allows cross-compiled remote helper artifacts', () => {
   )
 })
 
-test('resource check allows developer-fetched OfficeCLI while rejecting adjacent leftovers', () => {
-  assert.deepEqual(
-    offendingResourcePaths(['resources/office/officecli/darwin-arm64/officecli']),
-    []
-  )
-  assert.deepEqual(offendingResourcePaths(['resources/office/officecli-backup/officecli']), [
-    'resources/office/officecli-backup/officecli'
+test('the retired OfficeCLI runtime is no longer an allowed resource', () => {
+  assert.deepEqual(offendingResourcePaths(['resources/office/officecli/darwin-arm64/officecli']), [
+    'resources/office/officecli/darwin-arm64/officecli'
+  ])
+  assert.deepEqual(misplacedPhiResourcePaths(['resources/office/manifest.json']), [
+    'resources/office/manifest.json'
   ])
 })
 

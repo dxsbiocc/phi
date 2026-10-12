@@ -232,3 +232,38 @@ test('runtime sidebar renders the empty notebook kernel state inline', () => {
   assert.doesNotMatch(markup, /Nextflow/)
   assert.doesNotMatch(markup, /Slurm/)
 })
+
+test('a remote Jupyter card links to its startup log and keeps the full message reachable', () => {
+  const message = '远程 Jupyter 在 3 次尝试后仍未就绪：远程 Jupyter 进程提前退出，详见日志'
+  const props = {
+    projectCwd: '/srv/project',
+    runtimeStatus: {
+      server: {
+        projectCwd: '/srv/project',
+        runtimeKind: 'ssh',
+        serverLabel: 'GPU',
+        state: 'error',
+        hasEndpoint: false,
+        message
+      },
+      notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
+    } as unknown as AnalysisJupyterRuntimeStatus,
+    onRefresh: () => undefined,
+    onStartJupyter: () => undefined,
+    onStopJupyter: () => undefined,
+    onStopNotebookKernel: () => undefined
+  }
+  const render = (extra: Partial<ComponentProps<typeof RuntimeSidebar>>): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(RuntimeSidebar, { ...props, ...extra })
+      )
+    )
+  const markup = render({ onOpenStartLog: () => undefined })
+  assert.match(markup, /data-phi-runtime-start-log/)
+  assert.match(markup, /查看启动日志/)
+  assert.match(markup, new RegExp(`title="GPU · 登录节点 · ${message}"`))
+  assert.doesNotMatch(render({}), /查看启动日志/)
+})

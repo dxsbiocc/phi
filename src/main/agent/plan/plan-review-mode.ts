@@ -33,16 +33,7 @@ export type PlanReviewSession = {
   setPlanReferencePath: (path: string) => void
 }
 
-const PLAN_TOOLS = new Set([
-  'read',
-  'glob',
-  'grep',
-  'write',
-  'edit',
-  'todo',
-  'ask_user_question',
-  'office_read'
-])
+const PLAN_TOOLS = new Set(['read', 'glob', 'grep', 'write', 'edit', 'todo', 'ask_user_question'])
 
 /** Return false when this session is already waiting in plan mode. */
 export async function enterPlanReviewMode(

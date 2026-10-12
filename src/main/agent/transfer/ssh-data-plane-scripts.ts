@@ -196,7 +196,8 @@ write_manifest() {
 }
 worker=
 stop_worker() {
-  trap - TERM HUP INT
+  # A disconnect can deliver several signals; a second one must not cut the cleanup short.
+  trap '' TERM HUP INT
   if [ -n "$worker" ]; then
     kill -TERM "$worker" 2>/dev/null || true
     step=0
@@ -209,13 +210,21 @@ stop_worker() {
   exit 143
 }
 trap stop_worker TERM HUP INT
-cat <&0 >> ${shellQuote(paths.partial)} &
+# A background job's stdin is /dev/null in a non-interactive POSIX sh (dash on Debian and
+# Ubuntu), even with <&0, so the stream is handed over on its own descriptor.
+exec 3<&0
+cat <&3 >> ${shellQuote(paths.partial)} &
 worker=$!
+exec 3<&-
 wait "$worker" || fail STREAM_FAILED
 worker=
-trap - TERM HUP INT
+# A cancel that lands now still records the durable offset first, then stops.
+cancelled=0
+trap 'cancelled=1' TERM HUP INT
 sync_file ${shellQuote(paths.partial)}
 write_manifest || fail INVALID_MANIFEST
+trap - TERM HUP INT
+[ "$cancelled" = 0 ] || exit 143
 size=$(file_size ${shellQuote(paths.partial)}) || fail INVALID_PARTIAL
 digest=$(hash_file ${shellQuote(paths.partial)}) || fail HASH_UNAVAILABLE
 printf 'PHI_SIZE=%s\\nPHI_HASH=%s\\n' "$size" "$digest"`
@@ -311,7 +320,8 @@ digest=$(hash_file ${shellQuote(paths.source)}) || fail HASH_UNAVAILABLE
 printf 'PHI_HASH=%s\\nPHI_BEFORE=%s\\n' "$digest" "$before" >&2
 worker=
 stop_worker() {
-  trap - TERM HUP INT
+  # A disconnect can deliver several signals; a second one must not cut the cleanup short.
+  trap '' TERM HUP INT
   if [ -n "$worker" ]; then
     kill -TERM "$worker" 2>/dev/null || true
     step=0

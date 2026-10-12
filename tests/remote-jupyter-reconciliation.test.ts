@@ -17,6 +17,7 @@ import {
   installRemoteJupyterSetsid,
   writeRemoteJupyterTestExecutables
 } from './helpers/remoteJupyterScripts'
+import { pidIsRunning } from './helpers/processLiveness'
 
 const LEASE_ID = '0123456789abcdef0123456789abcdef'
 const cleanups: Array<() => Promise<void> | void> = []
@@ -291,12 +292,7 @@ function childClosed(
 }
 
 function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
+  return pidIsRunning(pid)
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {

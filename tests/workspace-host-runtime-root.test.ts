@@ -14,6 +14,9 @@ import {
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import { createLocalShellSession, type LocalShellSession } from './helpers/localShellSession'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 function runWithInput(command: string, input: string, home?: string): Promise<RemoteExecResult> {
   return new Promise((resolve) => {
@@ -26,6 +29,8 @@ function runWithInput(command: string, input: string, home?: string): Promise<Re
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')))
     child.on('close', (code, signal) => resolve({ stdout, stderr, code, signal }))
+    // A script that exits before reading its input must not raise EPIPE, as in the real session.
+    child.stdin.on('error', () => undefined)
     child.stdin.end(input)
   })
 }

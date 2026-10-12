@@ -1,4 +1,5 @@
 import type { PhiAgentDefinition } from '../agents/definition'
+import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -319,6 +320,8 @@ export type CreateAgentSessionOptions = {
   phiAgents?: PhiAgentDefinition[]
   /** Restrict explicit file paths in project sessions to the selected project. */
   projectBound?: boolean
+  /** The project's memory policy; absent for sessions outside a project. */
+  memory?: ProjectMemorySettings
   remoteProject?: {
     phiSessionId: string
     projectId: string
@@ -1131,6 +1134,7 @@ export async function createRuntimeAgentSession(
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents,
     projectBound: options.projectBound,
+    memory: options.memory,
     remoteProject: options.remoteProject,
     remoteProjectMcpServers: options.remoteProjectMcpServers,
     personaMarkdown: options.personaMarkdown

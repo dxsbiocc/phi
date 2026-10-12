@@ -5,8 +5,6 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-import * as promptTarget from '../src/preload/promptTarget'
-
 const CHANNELS = [
   'sources:previewGithub',
   'sources:addGithub',
@@ -155,7 +153,6 @@ test('preload exposes the six typed GitHub source methods with unchanged payload
   const ipcRenderer = new IpcRenderer()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
-      if (specifier === './promptTarget') return promptTarget
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

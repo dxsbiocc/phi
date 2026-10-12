@@ -149,6 +149,7 @@ export function buildRemoteJupyterCleanupFunctionLines(
   identity?: RemoteJupyterLeaseIdentity
 ): string[] {
   return [
+    ...liveGroupFunctionLines(),
     'terminate_tree() {',
     '  [ "$cleaned" -eq 0 ] || return 0',
     '  cleaned=1',
@@ -161,8 +162,8 @@ export function buildRemoteJupyterCleanupFunctionLines(
     '    kill -KILL -"$pid" 2>/dev/null || true; kill -KILL "$pid" 2>/dev/null || true; kill -KILL -"$pid" 2>/dev/null || true',
     '    wait "$pid" 2>/dev/null || true',
     '    attempt=0',
-    '    while { kill -0 -"$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null; } && [ "$attempt" -lt 20 ]; do sleep 0.05; attempt=$((attempt + 1)); done',
-    '    if kill -0 -"$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null; then return 1; fi',
+    '    while phi_group_live "$pid" && [ "$attempt" -lt 20 ]; do sleep 0.05; attempt=$((attempt + 1)); done',
+    '    if phi_group_live "$pid"; then return 1; fi',
     '  fi',
     ...buildRemoteJupyterLeaseCleanupLines(identity).map((line) => `  ${line}`),
     `  printf '\\n%s\\n' ${shellQuote(cleanupMarker)}`,
@@ -181,6 +182,7 @@ export function buildRemoteJupyterReconcileScript(
     `lease_record=${shellQuote(identity.recordPath)}`,
     `expected_lease=${shellQuote(identity.leaseId)}`,
     ...identityFunctionLines(),
+    ...liveGroupFunctionLines(),
     ...readRecordLines(marker),
     ...reconcileProcessLines(marker, graceSeconds)
   ].join('\n')
@@ -230,6 +232,23 @@ function buildReconcileSshArgs(config: RemoteConnectionConfig, script: string): 
   ]
 }
 
+/**
+ * Whether process group `$1` still has a running member. `kill -0` alone also answers for
+ * zombies, which stay forever on hosts whose init does not reap orphans (containers without
+ * an init), and would make a finished cleanup look stuck. Without a usable `ps` this falls
+ * back to `kill -0`, so the answer errs toward "still running".
+ */
+function liveGroupFunctionLines(): string[] {
+  return [
+    'phi_group_live() {',
+    '  kill -0 -"$1" 2>/dev/null || kill -0 "$1" 2>/dev/null || return 1',
+    '  phi_members=$(ps -A -o pgid= -o stat= 2>/dev/null) || return 0',
+    '  [ -n "$phi_members" ] || return 0',
+    `  printf '%s\\n' "$phi_members" | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { live = 1 } END { exit live ? 0 : 1 }'`,
+    '}'
+  ]
+}
+
 function identityFunctionLines(): string[] {
   return [
     'inspect_identity() {',
@@ -270,8 +289,8 @@ function reconcileProcessLines(marker: string, graceSeconds: number): string[] {
     `sleep ${graceSeconds}`,
     'if kill -0 -"$record_pgid" 2>/dev/null; then kill -KILL -"$record_pgid" 2>/dev/null || true; fi',
     'attempt=0',
-    'while kill -0 -"$record_pgid" 2>/dev/null && [ "$attempt" -lt 20 ]; do sleep 0.05; attempt=$((attempt + 1)); done',
-    'if kill -0 -"$record_pgid" 2>/dev/null; then exit 77; fi',
+    'while phi_group_live "$record_pgid" && [ "$attempt" -lt 20 ]; do sleep 0.05; attempt=$((attempt + 1)); done',
+    'if phi_group_live "$record_pgid"; then exit 77; fi',
     'rm -f "$lease_record" || exit 78',
     `printf '%s\\n' '${marker}:terminated'`
   ]

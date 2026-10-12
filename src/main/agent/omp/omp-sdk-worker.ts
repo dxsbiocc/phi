@@ -1,10 +1,6 @@
 import { readDirectSkills } from '../runtime/direct-skills'
-import {
-  mergeRemoteProjectSkills,
-  remoteProjectSkillsValue
-} from './remote-project-skills'
+import { mergeRemoteProjectSkills, remoteProjectSkillsValue } from './remote-project-skills'
 import { randomUUID } from 'node:crypto'
-import { editDiffString } from '@oh-my-pi/pi-natives'
 import { cpSync, existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -49,6 +45,14 @@ import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../deliverables/render-blocks-tool'
+import {
+  buildWorkerProjectLearnTool,
+  clearProjectMemory,
+  deleteProjectMemoryLesson,
+  projectMemoryPromptBlock,
+  readProjectMemory
+} from '../memory/project-memory-worker'
+import { normalizeProjectMemorySettings } from '../../../shared/projectMemoryTypes'
 import {
   buildRemoteProjectDownloadTool,
   type RemoteDownloadBackend
@@ -113,15 +117,9 @@ import { contextUsageSnapshot, partitionMcpTools } from './context-usage-snapsho
 import { buildRemoteWorkspaceReadTool } from '../remote-workspace-read-tool'
 import type { RemoteWorkspaceReadResult } from '../remote-workspace-read'
 import {
-  buildRemoteWorkspaceGlobTool,
-  buildRemoteWorkspaceGrepTool
-} from '../remote-workspace-search-tools'
-import type { RemoteGlobResult, RemoteGrepResult } from '../remote-workspace-search'
-import { buildRemoteWorkspaceBashTool } from '../remote-workspace-bash-tool'
-import type { RemoteBashResult } from '../remote-workspace-bash'
-import { buildRemoteWorkspaceWriteTool } from '../remote-workspace-write-tool'
-import type { RemoteMutationResult } from '../remote-workspace-edit'
-import { buildRemoteWorkspaceEditTool } from '../remote-workspace-edit-tool'
+  buildRemoteWorkspaceCustomTools,
+  buildRemoteWorkspaceRead
+} from './remote-workspace-custom-tools'
 import { buildLibraryCustomTools } from '../library/library-tools'
 import { buildPaletteRecommendationTool } from '../palettes/tools'
 import {
@@ -172,11 +170,7 @@ import { resolveRemoteRuntimePromptContext } from '../remote-runtime-context'
 import { buildEnvRequestTool } from '../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../content/skill-tools'
 import type { ScriptToolDescriptor } from '../content/skill-tool-types'
-import {
-  readRemoteSkillResource,
-  type RemoteReadableSkill
-} from '../content/remote-skill-resource'
-import { buildOfficeTools, type OfficeHostRequest } from '../office/office-tools'
+import { readRemoteSkillResource, type RemoteReadableSkill } from '../content/remote-skill-resource'
 import {
   filterEnabledMainSkills,
   filterMainScriptTools,
@@ -429,17 +423,6 @@ function readLoadedSkillResource(
         }
       : {})
   })
-}
-
-function officeHostRequest(sessionId: string): OfficeHostRequest {
-  return (method, params, requestContext) => {
-    const activeHostRunId = sessions.get(sessionId)?.activeHostRunId
-    return requestHost(method, params, {
-      ...requestContext,
-      originSessionId: sessionId,
-      ...(activeHostRunId ? { agentRunId: activeHostRunId } : {})
-    })
-  }
 }
 
 function handleHostResponse(response: HostResponse): void {
@@ -729,8 +712,7 @@ function resourceOptions(params: unknown): DefaultResourceLoaderOptions {
   const remoteProjectSkills = remoteProjectSkillsValue(record.remoteProjectSkills)
 
   return {
-    ...((skillFiles.length > 0 || remoteProjectSkills.length > 0) &&
-    !booleanValue(record.noSkills)
+    ...((skillFiles.length > 0 || remoteProjectSkills.length > 0) && !booleanValue(record.noSkills)
       ? {
           skillsOverride: (base) => {
             const direct = readDirectSkills(skillFiles)
@@ -1792,6 +1774,15 @@ async function createSession(params: unknown): Promise<unknown> {
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
+  // Memory is keyed by the session manager cwd: the project directory, or the remote
+  // project's local anchor. Summaries and lessons stay on this computer.
+  const memoryPolicy = normalizeProjectMemorySettings(record.memory)
+  const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
+  if (memoryTarget) settings.override('memory.backend', 'local')
+  const remoteMemoryBlock =
+    remoteRoot && memoryTarget
+      ? await projectMemoryPromptBlock(memoryTarget).catch(() => undefined)
+      : undefined
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
@@ -1860,9 +1851,7 @@ async function createSession(params: unknown): Promise<unknown> {
               )
               sessionSkillNames = new Set(
                 resolved.skills
-                  .filter(
-                    (skill) => skill.source === 'server-project' || enabled.has(skill.name)
-                  )
+                  .filter((skill) => skill.source === 'server-project' || enabled.has(skill.name))
                   .map((skill) => skill.name)
               )
             }
@@ -1914,13 +1903,12 @@ async function createSession(params: unknown): Promise<unknown> {
     ? filterMainScriptTools(skillTools, enabledMainSkillNames)
     : undefined
   for (const tool of mainSkillTools ?? []) remoteSkillToolNames.add(tool.name)
+  const remoteWorkspaceIdentity = {
+    sessionId: remoteRecord?.phiSessionId,
+    projectId: remoteRecord?.projectId
+  }
   const remoteWorkspaceRead = remoteRoot
-    ? async (path: string): Promise<RemoteWorkspaceReadResult> =>
-        (await requestHost('remoteWorkspace.read', {
-          sessionId: remoteRecord?.phiSessionId,
-          projectId: remoteRecord?.projectId,
-          path
-        })) as RemoteWorkspaceReadResult
+    ? buildRemoteWorkspaceRead(requestHost, remoteWorkspaceIdentity)
     : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
   const agentCustomTools = phiAgents.map((definition) =>
@@ -2026,112 +2014,13 @@ async function createSession(params: unknown): Promise<unknown> {
       allowTypeText: () => parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
-  const officeCustomTools = remoteRoot ? [] : buildOfficeTools(officeHostRequest(sessionId))
-  const remoteWorkspaceCustomTools = (() => {
-    if (!remoteRoot) return []
-    return [
-      buildRemoteWorkspaceEditTool(async (toolCallId, input, signal) => {
-        if (signal?.aborted) throw new Error('远程编辑在提交前已取消')
-        const requestId = randomUUID()
-        const identity = {
-          sessionId: remoteRecord?.phiSessionId,
-          projectId: remoteRecord?.projectId,
-          requestId
-        }
-        const cancel = (): void => {
-          void requestHost('remoteWorkspace.cancelEdit', identity).catch(() => undefined)
-        }
-        const pending = requestHost('remoteWorkspace.edit', {
-          ...identity,
-          toolCallId,
-          ...input
-        })
-        signal?.addEventListener('abort', cancel, { once: true })
-        if (signal?.aborted) cancel()
-        try {
-          const result = (await pending) as RemoteMutationResult
-          if (result.status !== 'updated') return result
-          const preview = editDiffString(result.oldText, result.newText, result.path)
-          return { ...result, ...preview }
-        } finally {
-          signal?.removeEventListener('abort', cancel)
-        }
-      }),
-      buildRemoteWorkspaceWriteTool(async (toolCallId, path, content, signal) => {
-        if (signal?.aborted) throw new Error('远程写入在提交前已取消')
-        const requestId = randomUUID()
-        const identity = {
-          sessionId: remoteRecord?.phiSessionId,
-          projectId: remoteRecord?.projectId,
-          requestId
-        }
-        const cancel = (): void => {
-          void requestHost('remoteWorkspace.cancelWrite', identity).catch(() => undefined)
-        }
-        const pending = requestHost('remoteWorkspace.write', {
-          ...identity,
-          toolCallId,
-          path,
-          content
-        })
-        signal?.addEventListener('abort', cancel, { once: true })
-        if (signal?.aborted) cancel()
-        try {
-          return (await pending) as RemoteMutationResult
-        } finally {
-          signal?.removeEventListener('abort', cancel)
-        }
-      }),
-      buildRemoteWorkspaceReadTool(remoteWorkspaceRead!, {
+  const remoteWorkspaceCustomTools = remoteWorkspaceRead
+    ? buildRemoteWorkspaceCustomTools(requestHost, remoteWorkspaceIdentity, {
+        read: remoteWorkspaceRead,
         readResource: (path) =>
-          readLoadedSkillResource(
-            path,
-            resources?.getSkills().skills ?? [],
-            remoteProjectIdentity
-          )
-      }),
-      buildRemoteWorkspaceGlobTool(
-        async (input) =>
-          (await requestHost('remoteWorkspace.glob', {
-            ...input,
-            sessionId: remoteRecord?.phiSessionId,
-            projectId: remoteRecord?.projectId
-          })) as RemoteGlobResult
-      ),
-      buildRemoteWorkspaceGrepTool(
-        async (input) =>
-          (await requestHost('remoteWorkspace.grep', {
-            ...input,
-            sessionId: remoteRecord?.phiSessionId,
-            projectId: remoteRecord?.projectId
-          })) as RemoteGrepResult
-      ),
-      buildRemoteWorkspaceBashTool(async (toolCallId, input, signal) => {
-        if (signal?.aborted) throw new Error('远程命令在提交前已取消')
-        const requestId = randomUUID()
-        const identity = {
-          sessionId: remoteRecord?.phiSessionId,
-          projectId: remoteRecord?.projectId,
-          requestId
-        }
-        const cancel = (): void => {
-          void requestHost('remoteWorkspace.cancelBash', identity).catch(() => undefined)
-        }
-        const pending = requestHost('remoteWorkspace.bash', {
-          ...input,
-          ...identity,
-          toolCallId
-        })
-        signal?.addEventListener('abort', cancel, { once: true })
-        if (signal?.aborted) cancel()
-        try {
-          return (await pending) as RemoteBashResult
-        } finally {
-          signal?.removeEventListener('abort', cancel)
-        }
+          readLoadedSkillResource(path, resources?.getSkills().skills ?? [], remoteProjectIdentity)
       })
-    ]
-  })()
+    : []
   const customTools = [
     ...remoteWorkspaceCustomTools,
     ...agentCustomTools,
@@ -2152,6 +2041,7 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]),
     buildRenderBlocksTool(),
+    ...(memoryPolicy.learn && memoryTarget ? [buildWorkerProjectLearnTool(memoryTarget)] : []),
     remoteRoot
       ? buildRemoteProjectDownloadTool(
           remoteDownloadBackend({
@@ -2185,7 +2075,6 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]
       : []),
-    ...officeCustomTools,
     browserCustomTool
   ]
 
@@ -2228,7 +2117,8 @@ async function createSession(params: unknown): Promise<unknown> {
         remoteRoot
           ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
               ...(personaMarkdown ? { personaMarkdown } : {}),
-              ...(remoteRuntime ? { runtime: remoteRuntime } : {})
+              ...(remoteRuntime ? { runtime: remoteRuntime } : {}),
+              ...(remoteMemoryBlock ? { memoryBlock: remoteMemoryBlock } : {})
             })
           : buildPhiMainSystemPrompt(defaultPrompt, {
               ...(personaMarkdown ? { personaMarkdown } : {})
@@ -3014,6 +2904,12 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return promptSession(params)
     case 'session.contextUsage':
       return sessionContextUsage(params)
+    case 'memory.read':
+      return readProjectMemory(params)
+    case 'memory.deleteLesson':
+      return deleteProjectMemoryLesson(params)
+    case 'memory.clear':
+      return clearProjectMemory(params)
     case 'settings.autoCompactionDefaults':
       return readAutoCompactionDefaults(params)
     case 'settings.webSearch.get': {

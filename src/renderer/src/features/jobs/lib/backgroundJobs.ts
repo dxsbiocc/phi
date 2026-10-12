@@ -9,6 +9,7 @@ import type {
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
+import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 
 export type UnifiedBackgroundJob =
@@ -36,6 +37,7 @@ export type UnifiedBackgroundJob =
       timestamp: string
       setup: McpConnectorSetupProgress
     }
+  | { kind: 'jupyter'; key: string; active: boolean; timestamp: string; job: RemoteJupyterStartJob }
 
 const ACTIVE_WRAPPER_STATES = new Set<WrapperRun['state']>([
   'created',
@@ -159,7 +161,8 @@ export function selectBackgroundJobs(
   shells: readonly BackgroundShellJob[] = [],
   environments: readonly EnvironmentBuild[] = [],
   connectors: readonly McpConnectorSetupProgress[] = [],
-  uploads: readonly RemoteProjectUploadJob[] = []
+  uploads: readonly RemoteProjectUploadJob[] = [],
+  jupyterJobs: readonly RemoteJupyterStartJob[] = []
 ): { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 8
   const items: UnifiedBackgroundJob[] = [
@@ -211,6 +214,13 @@ export function selectBackgroundJobs(
       active: ['queued', 'uploading', 'verifying'].includes(upload.status),
       timestamp: new Date(upload.updatedAt).toISOString(),
       upload
+    })),
+    ...jupyterJobs.map((job): UnifiedBackgroundJob => ({
+      kind: 'jupyter',
+      key: `jupyter:${job.id}`,
+      active: job.state === 'running',
+      timestamp: job.finishedAt ?? job.startedAt,
+      job
     }))
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
@@ -234,7 +244,9 @@ function belongsInFinishedTray(item: UnifiedBackgroundJob, query: BackgroundJobQ
         ? item.setup.updatedAt
         : item.kind === 'upload'
           ? item.timestamp
-          : item.run.completedAt
+          : item.kind === 'jupyter'
+            ? item.job.finishedAt
+            : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
 }
 

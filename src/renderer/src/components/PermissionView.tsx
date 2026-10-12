@@ -13,7 +13,6 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
-import { toolApprovalLabel } from '../lib/toolActions'
 import { PERMISSION_MODE_ICON_META, PhiIcons } from '../icons'
 import type {
   ModelOption,
@@ -45,8 +44,6 @@ const TOOL_LABELS: Record<string, string> = {
   powershell: 'PowerShell',
   write: '写入文件',
   edit: '修改文件',
-  office_apply: '修改 Office 文档',
-  office_deliver: '交付 Office 文件',
   browser: '浏览器操作'
 }
 const ApproveIcon = PhiIcons.action.approve
@@ -145,9 +142,7 @@ export function PermissionSettingsSection({
                 待审批
               </Typography>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                {toolApprovalLabel(pendingApproval.toolName, pendingApproval.summary) ??
-                  TOOL_LABELS[pendingApproval.toolName] ??
-                  pendingApproval.toolName}
+                {TOOL_LABELS[pendingApproval.toolName] ?? pendingApproval.toolName}
               </Typography>
             </Box>
             <Stack direction="row" spacing={1}>

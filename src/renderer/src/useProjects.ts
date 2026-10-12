@@ -21,6 +21,8 @@ export type ProjectsState = {
   projects: Project[]
   setProjects: (projects: Project[] | ((prev: Project[]) => Project[])) => void
   projectsRef: MutableRefObject<Project[]>
+  /** Replaces one project after a settings panel saved it through its own IPC call. */
+  onProjectUpdated: (project: Project) => void
   updatingPermissionProjectId: string | null
   updatingRemoteProjectId: string | null
   refreshProjects: () => Promise<void>
@@ -161,9 +163,14 @@ export function useProjects(
     [showSnackbarError]
   )
 
+  const onProjectUpdated = useCallback((project: Project): void => {
+    setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
+  }, [])
+
   return {
     projects,
     setProjects,
+    onProjectUpdated,
     projectsRef,
     updatingPermissionProjectId,
     updatingRemoteProjectId,

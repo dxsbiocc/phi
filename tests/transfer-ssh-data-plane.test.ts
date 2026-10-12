@@ -299,7 +299,8 @@ test('pure SSH upload resumes from a validated durable remote offset', async () 
         progressIntervalMs: 0
       },
       onEvent: (event) => {
-        if (event.state === 'transferring' && event.bytesTransferred >= 1024 * 1024) {
+        // Sent bytes can still sit in the pipe; 3 MiB leaves at least one whole chunk durable.
+        if (event.state === 'transferring' && event.bytesTransferred >= 3 * 1024 * 1024) {
           firstHandle.cancel()
         }
       }
