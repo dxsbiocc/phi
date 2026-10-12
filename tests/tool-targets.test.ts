@@ -58,7 +58,10 @@ test('remote write tool card opens its SSH target in the file panel instead of F
         RemoteProjectFileContext.Provider,
         {
           value: {
+            sessionId: 'session-a',
+            projectId: 'project-a',
             hostAlias: 'cluster-a',
+            remoteRoot: '/data/project',
             canonicalRoot: '/data/project',
             openPath: () => undefined
           }

@@ -1,5 +1,10 @@
+import {
+  remotePathInsideRoot,
+  remotePathWithinProjectUri,
+  tokenizeRemoteWorkspaceUris
+} from '../../../shared/remoteWorkspacePath'
 import { fileIconForPath } from '../icons'
-import { resolveLocalPath } from './localPaths'
+import { collectLocalPathTokenPaths, resolveLocalPath } from './localPaths'
 
 export type LocalPathKind = 'file' | 'directory'
 
@@ -8,6 +13,13 @@ export type BareFileReferenceToken =
   | { kind: 'path'; text: string; absolutePath: string; pathKind: LocalPathKind }
 
 export const LOCAL_PATH_STAT_BATCH_LIMIT = 128
+const REMOTE_PATH_STAT_BATCH_LIMIT = 64
+
+export interface RemoteProjectPathReferenceScope {
+  hostAlias: string
+  remoteRoot: string
+  canonicalRoot: string
+}
 
 const FILE_REFERENCE_NAME_PATTERN =
   /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}|[A-Z][A-Za-z0-9_-]*file)$/
@@ -201,6 +213,117 @@ export function tokenizeBareFileReferences(
     cursor = end
   }
 
+  if (cursor < text.length) tokens.push({ kind: 'text', text: text.slice(cursor) })
+  return tokens.length > 0 ? tokens : [{ kind: 'text', text }]
+}
+
+function normalizeRoot(path: string): string {
+  return path === '/' ? '/' : path.replace(/\/+$/, '')
+}
+
+function canonicalRemoteProjectPath(
+  path: string,
+  scope: RemoteProjectPathReferenceScope
+): string | null {
+  if (remotePathInsideRoot(path, scope.canonicalRoot)) return path
+  if (!remotePathInsideRoot(path, scope.remoteRoot)) return null
+
+  const remoteRoot = normalizeRoot(scope.remoteRoot)
+  const canonicalRoot = normalizeRoot(scope.canonicalRoot)
+  const suffix =
+    path === remoteRoot ? '' : path.slice(remoteRoot === '/' ? 1 : remoteRoot.length + 1)
+  const candidate = suffix
+    ? `${canonicalRoot === '/' ? '' : canonicalRoot}/${suffix}`
+    : canonicalRoot
+  return remotePathInsideRoot(candidate, scope.canonicalRoot) ? candidate : null
+}
+
+export function remoteProjectReferenceBases(
+  cwd: string,
+  scope: RemoteProjectPathReferenceScope
+): string[] {
+  const bases: string[] = []
+  const canonicalCwd = canonicalRemoteProjectPath(cwd, scope)
+  for (const path of [canonicalCwd, normalizeRoot(scope.canonicalRoot)]) {
+    if (path && !bases.includes(path)) bases.push(path)
+  }
+  return bases
+}
+
+export function collectRemoteProjectReferencePaths(
+  text: string,
+  cwd: string,
+  scope: RemoteProjectPathReferenceScope
+): string[] {
+  const paths: string[] = []
+  const remember = (path: string): void => {
+    const canonicalPath = canonicalRemoteProjectPath(path, scope)
+    if (
+      paths.length < REMOTE_PATH_STAT_BATCH_LIMIT &&
+      canonicalPath &&
+      !paths.includes(canonicalPath)
+    ) {
+      paths.push(canonicalPath)
+    }
+  }
+  const bases = remoteProjectReferenceBases(cwd, scope)
+  for (const base of bases) collectBareFileReferencePaths(text, base).forEach(remember)
+  for (const base of bases) collectLocalPathTokenPaths(text, base).forEach(remember)
+  for (const token of tokenizeRemoteWorkspaceUris(text, scope.hostAlias, scope.canonicalRoot)) {
+    if (token.kind === 'path') remember(token.path)
+  }
+  return paths
+}
+
+export function matchedRemoteProjectPathReference(
+  text: string,
+  absolutePath: string,
+  cwd: string,
+  scope: RemoteProjectPathReferenceScope,
+  pathKinds: ReadonlyMap<string, LocalPathKind>
+): { absolutePath: string; pathKind: LocalPathKind } | null {
+  const candidates: string[] = []
+  const remember = (path: string | null): void => {
+    if (path && remotePathInsideRoot(path, scope.canonicalRoot) && !candidates.includes(path)) {
+      candidates.push(path)
+    }
+  }
+  remember(remotePathWithinProjectUri(text, scope.hostAlias, scope.canonicalRoot))
+  remember(canonicalRemoteProjectPath(absolutePath, scope))
+  for (const base of remoteProjectReferenceBases(cwd, scope)) {
+    remember(localHrefToPath(text, base))
+  }
+  for (const candidate of candidates) {
+    const pathKind = pathKinds.get(candidate)
+    if (pathKind) return { absolutePath: candidate, pathKind }
+  }
+  return null
+}
+
+export function tokenizeRemoteProjectBareFileReferences(
+  text: string,
+  cwd: string,
+  scope: RemoteProjectPathReferenceScope,
+  pathKinds: ReadonlyMap<string, LocalPathKind>
+): BareFileReferenceToken[] {
+  const tokens: BareFileReferenceToken[] = []
+  let cursor = 0
+  for (const match of text.matchAll(BARE_FILE_REFERENCE_PATTERN)) {
+    const leading = match[1] ?? ''
+    const candidate = match[2] ?? ''
+    const start = (match.index ?? 0) + leading.length
+    const end = start + candidate.length
+    const remotePath = matchedRemoteProjectPathReference(candidate, '', cwd, scope, pathKinds)
+    if (!remotePath) continue
+    if (start > cursor) tokens.push({ kind: 'text', text: text.slice(cursor, start) })
+    tokens.push({
+      kind: 'path',
+      text: candidate,
+      absolutePath: remotePath.absolutePath,
+      pathKind: remotePath.pathKind
+    })
+    cursor = end
+  }
   if (cursor < text.length) tokens.push({ kind: 'text', text: text.slice(cursor) })
   return tokens.length > 0 ? tokens : [{ kind: 'text', text }]
 }

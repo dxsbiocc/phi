@@ -6,6 +6,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider, type Theme } from '@mui/material'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
+import { loadRemotePathStats } from '../src/renderer/src/lib/markdownLocalPathPreview'
 import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
 import { isHttpWebUrl, openWebUrlFromClick } from '../src/renderer/src/lib/markdownWebLinks'
 import { createAppTheme } from '../src/renderer/src/theme'
@@ -630,35 +631,73 @@ test('markdown local file links open as preview links while web links remain ext
   assert.match(markup, /target="_blank"/)
 })
 
-test('remote project markdown links use SSH file panel targets without local hover or reveal', () => {
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme: createTheme() },
+test('remote project markdown links only stat-confirmed paths and keeps missing bare names as code', async () => {
+  const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const scope = {
+    sessionId: 'session-remote-markdown',
+    projectId: 'project-remote-markdown',
+    hostAlias: 'cluster-a',
+    remoteRoot: '/data/project',
+    canonicalRoot: '/data/project'
+  }
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      api: {
+        statRemoteWorkspacePaths: async () => [
+          { path: '/data/project/note.txt', kind: 'file' },
+          { path: '/data/project/result.txt', kind: 'file' },
+          { path: '/data/project/link.txt', kind: 'file' },
+          { path: '/data/project/params.json', kind: 'missing' },
+          { path: '/data/project/wrappers/runs/wrun_1/params.json', kind: 'file' }
+        ]
+      }
+    }
+  })
+
+  try {
+    await loadRemotePathStats(scope, [
+      '/data/project/note.txt',
+      '/data/project/result.txt',
+      '/data/project/link.txt',
+      '/data/project/params.json',
+      '/data/project/wrappers/runs/wrun_1/params.json'
+    ])
+    const markup = renderToStaticMarkup(
       createElement(
-        RemoteProjectFileContext.Provider,
-        {
-          value: {
-            hostAlias: 'cluster-a',
-            canonicalRoot: '/data/project',
-            openPath: () => undefined
-          }
-        },
-        createElement(MarkdownContent, {
-          cwd: '/data/project',
-          text: 'See /data/project/note.txt and ssh://cluster-a/data/project/result.txt. [open](ssh://cluster-a/data/project/link.txt) [other](ssh://cluster-b/data/project/secret.txt)'
-        })
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(
+          RemoteProjectFileContext.Provider,
+          { value: { ...scope, openPath: () => undefined } },
+          createElement(MarkdownContent, {
+            cwd: '/data/project',
+            text: 'See /data/project/note.txt and ssh://cluster-a/data/project/result.txt. [open](ssh://cluster-a/data/project/link.txt) `params.json` `wrappers/runs/wrun_1/params.json` [other](ssh://cluster-b/data/project/secret.txt)'
+          })
+        )
       )
     )
-  )
-  assert.match(markup, /data-phi-slot="remote-file-link"/)
-  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/note\.txt"/)
-  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/result\.txt"/)
-  assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/link\.txt"/)
-  assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-preview"/)
-  assert.doesNotMatch(markup, /href="ssh:\/\/cluster-b/)
-  assert.doesNotMatch(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/secret\.txt"/)
-  assert.doesNotMatch(markup, /remote-project-anchors/)
+    assert.match(markup, /data-phi-slot="remote-file-link"/)
+    assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/note\.txt"/)
+    assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/result\.txt"/)
+    assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/link\.txt"/)
+    assert.match(
+      markup,
+      /data-phi-path="ssh:\/\/cluster-a\/data\/project\/wrappers\/runs\/wrun_1\/params\.json"/
+    )
+    assert.match(markup, /<code[^>]*>params\.json<\/code>/)
+    assert.doesNotMatch(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/params\.json"/)
+    assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-preview"/)
+    assert.doesNotMatch(markup, /href="ssh:\/\/cluster-b/)
+    assert.doesNotMatch(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/secret\.txt"/)
+    assert.doesNotMatch(markup, /remote-project-anchors/)
+  } finally {
+    if (originalWindowDescriptor) {
+      Object.defineProperty(globalThis, 'window', originalWindowDescriptor)
+    } else {
+      Reflect.deleteProperty(globalThis, 'window')
+    }
+  }
 })
 
 test('markdown code blocks do not linkify paths inside code', () => {

@@ -169,3 +169,66 @@ test('remote UI read rejects wrong project, raw SSH URL, escape link and binary 
     f.cleanup()
   }
 })
+
+test('remote UI missing errors name the requested relative file or directory', async () => {
+  const f = fixture()
+  try {
+    await assert.rejects(
+      previewRemoteWorkspaceFile(request('wrappers/runs/wrun_a/params.json'), f.dependencies),
+      /^Error: 远程文件不存在：wrappers\/runs\/wrun_a\/params\.json$/
+    )
+    await assert.rejects(
+      listRemoteWorkspaceDirectory(request('wrappers/runs/wrun_a/missing'), f.dependencies),
+      /^Error: 远程目录不存在：wrappers\/runs\/wrun_a\/missing$/
+    )
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('remote UI missing errors keep the relative path when a target disappears after authorization', async () => {
+  for (const { expectedKind, relativePath } of [
+    { expectedKind: 'file', relativePath: 'wrappers/runs/wrun_race/params.json' },
+    { expectedKind: 'directory', relativePath: 'wrappers/runs/wrun_race' },
+    { expectedKind: 'directory', relativePath: '.' }
+  ] as const) {
+    const f = fixture()
+    try {
+      const target = join(f.root, relativePath)
+      if (expectedKind === 'file') {
+        mkdirSync(join(f.root, 'wrappers', 'runs', 'wrun_race'), { recursive: true })
+        writeFileSync(target, '{}')
+      } else {
+        mkdirSync(target, { recursive: true })
+      }
+      const connect = f.dependencies.connectImpl
+      assert.ok(connect)
+      f.dependencies.connectImpl = async (config) => {
+        const session = await connect(config)
+        let commandCount = 0
+        return {
+          ...session,
+          exec: async (command) => {
+            const result = await session.exec(command)
+            commandCount += 1
+            if (commandCount === 1) rmSync(target, { recursive: true, force: true })
+            return result
+          }
+        }
+      }
+
+      const operation =
+        expectedKind === 'file'
+          ? previewRemoteWorkspaceFile(request(relativePath), f.dependencies)
+          : listRemoteWorkspaceDirectory(request(relativePath), f.dependencies)
+      await assert.rejects(
+        operation,
+        new RegExp(
+          `^Error: 远程${expectedKind === 'file' ? '文件' : '目录'}不存在：${relativePath.replaceAll('.', '\\.')}$`
+        )
+      )
+    } finally {
+      f.cleanup()
+    }
+  }
+})

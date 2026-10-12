@@ -8,7 +8,11 @@ import type {
   OfficeTargetInput
 } from '../shared/officeProtocol'
 import { sanitizePromptTargetForIpc } from './promptTarget'
-import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
+import type {
+  RemoteWorkspaceFileRequest,
+  RemoteWorkspacePathProbeRequest,
+  RemoteWorkspacePathStat
+} from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
   WrapperResultDownloadProgress,
@@ -777,6 +781,9 @@ type RendererAuthApi = {
   previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest) => Promise<FilePreview>
   hoverPreviewFile: (path: string) => Promise<FileHoverPreview>
   statLocalPaths: (cwd: string, paths: string[]) => Promise<LocalPathStat[]>
+  statRemoteWorkspacePaths: (
+    request: RemoteWorkspacePathProbeRequest
+  ) => Promise<RemoteWorkspacePathStat[]>
   listDirectory: (path: string) => Promise<DirectoryListing>
   listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest) => Promise<DirectoryListing>
   listWrapperResultDirectory: (request: WrapperResultDirectoryRequest) => Promise<DirectoryListing>
@@ -1310,6 +1317,9 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('files:hoverPreview', path),
   statLocalPaths: (cwd: string, paths: string[]): Promise<LocalPathStat[]> =>
     ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
+  statRemoteWorkspacePaths: (
+    request: RemoteWorkspacePathProbeRequest
+  ): Promise<RemoteWorkspacePathStat[]> => ipcRenderer.invoke('remoteWorkspace:statPaths', request),
   listDirectory: (path: string): Promise<DirectoryListing> =>
     ipcRenderer.invoke('files:listDirectory', path),
   listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest): Promise<DirectoryListing> =>

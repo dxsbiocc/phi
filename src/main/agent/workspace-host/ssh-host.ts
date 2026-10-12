@@ -138,6 +138,7 @@ export class SshHost implements WorkspaceHost {
       readRange: async (...args) => (await this.selected()).fs.readRange(...args),
       remove: async (...args) => (await this.selected()).fs.remove(...args),
       stat: (path, options = {}) => this.stat(path, options),
+      statMany: (paths) => this.pureFs.statMany!(paths),
       writeAtomic: async (...args) => (await this.selected()).fs.writeAtomic(...args)
     }
   }

@@ -1,7 +1,10 @@
 import { createContext, useContext } from 'react'
 
 export interface RemoteProjectFileContextValue {
+  sessionId: string
+  projectId: string
   hostAlias: string
+  remoteRoot: string
   canonicalRoot: string
   openPath: (uri: string, kind: 'file' | 'directory') => void
 }

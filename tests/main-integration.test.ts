@@ -44,7 +44,10 @@ import { OfficeWriteError } from '../src/main/agent/office/office-write-contract
 import * as browserIpc from '../src/main/browser/browser-ipc'
 import * as browserToolHost from '../src/main/agent/browser/browser-tool-host'
 import * as browserWorkspaceRegistry from '../src/main/browser/browser-workspace-registry'
+import { validRemoteAbsolutePath } from '../src/main/agent/remote-workspace-boundary'
+import { isRemotePathInside } from '../src/main/agent/remote-path-containment'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
+import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
 
 const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
 const pendingStartupWindows = new Set<EventEmitter>()
@@ -3453,6 +3456,50 @@ async function harness(
         connection: { hostAlias: 'cluster-one' }
       })
     },
+    './agent/workspace-host/remote-registry': {
+      remoteWorkspaceHosts: {
+        statPaths: async (input: unknown) => {
+          assert.ok(typeof input === 'object' && input !== null)
+          const record = input as Record<string, unknown>
+          assert.deepEqual(
+            Object.keys(record).sort(),
+            ['paths', 'projectId', 'sessionId'],
+            'path probe input must contain only sessionId, projectId and paths'
+          )
+          assert.equal(typeof record.sessionId, 'string')
+          assert.notEqual(record.sessionId, '')
+          assert.equal(typeof record.projectId, 'string')
+          assert.notEqual(record.projectId, '')
+          assert.ok(Array.isArray(record.paths) && record.paths.length <= 64)
+          assert.ok(record.paths.every((path) => typeof path === 'string'))
+          assert.ok(
+            record.paths.every(
+              (candidate) =>
+                typeof candidate === 'string' &&
+                validRemoteAbsolutePath(candidate) &&
+                path.posix.normalize(candidate) === candidate &&
+                isRemotePathInside('/canonical/project', candidate)
+            ),
+            'path probe paths must stay inside the canonical project root'
+          )
+          assertBoundaryIdentity({
+            sessionId: record.sessionId,
+            projectId: record.projectId
+          })
+          return record.paths.map((path) => ({
+            path,
+            kind:
+              path === '/canonical/project/readme.md'
+                ? 'file'
+                : path === '/canonical/project'
+                  ? 'directory'
+                  : 'missing'
+          }))
+        },
+        releaseSession: async () => undefined,
+        releaseAll: async () => undefined
+      }
+    },
     './agent/remote-runtime/workspace': {
       openRemoteRuntimeWorkspace: async (): Promise<never> => {
         throw new Error('main integration uses the remote notebook backend mock')
@@ -5804,6 +5851,39 @@ test('remote file panel IPC uses the bound project request and never falls throu
   assert.equal(preview.path, 'ssh://cluster-one/canonical/project/readme.md')
   assert.equal(preview.content, 'remote:/canonical/project/readme.md')
   assert.equal(preview.rootPath, 'ssh://cluster-one/canonical/project')
+  const pathStats = await app.invoke('remoteWorkspace:statPaths', {
+    sessionId: request.sessionId,
+    projectId: request.projectId,
+    paths: ['/canonical/project/readme.md', '/canonical/project', '/canonical/project/missing.txt']
+  })
+  assert.deepEqual(pathStats, [
+    { path: '/canonical/project/readme.md', kind: 'file' },
+    { path: '/canonical/project', kind: 'directory' },
+    { path: '/canonical/project/missing.txt', kind: 'missing' }
+  ])
+  await assert.rejects(
+    app.invoke('remoteWorkspace:statPaths', {
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      paths: ['/canonical/project/readme.md'],
+      i: 0
+    }),
+    /path probe input must contain only/
+  )
+  for (const invalidPath of [
+    '/canonical/project-sibling/file.txt',
+    '/canonical/project/dir/../file.txt',
+    `/canonical/project/${'x'.repeat(4097)}`
+  ]) {
+    await assert.rejects(
+      app.invoke('remoteWorkspace:statPaths', {
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        paths: [invalidPath]
+      }),
+      /path probe paths must stay inside the canonical project root/
+    )
+  }
   const listing = (await app.invoke('remoteWorkspace:listDirectory', {
     ...request,
     path: '/canonical/project'

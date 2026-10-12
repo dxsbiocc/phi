@@ -4157,7 +4157,10 @@ function App(): React.JSX.Element {
       value={
         activeProjectLocation?.kind === 'ssh'
           ? {
+              sessionId: activePhiSessionId ?? '',
+              projectId: activeProjectId ?? '',
               hostAlias: activeRemoteFileScope?.hostAlias ?? '',
+              remoteRoot: activeProjectLocation.remoteRoot,
               canonicalRoot: activeProjectLocation.canonicalRoot,
               openPath: openRemoteWorkspacePath
             }

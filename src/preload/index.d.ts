@@ -75,7 +75,11 @@ import type {
   WrapperRunPlan,
   WrapperSubmitConfirmation
 } from '../shared/wrapperTypes'
-import type { RemoteWorkspaceFileRequest } from '../shared/remoteWorkspacePath'
+import type {
+  RemoteWorkspaceFileRequest,
+  RemoteWorkspacePathProbeRequest,
+  RemoteWorkspacePathStat
+} from '../shared/remoteWorkspacePath'
 import type {
   WrapperResultDirectoryRequest,
   WrapperResultDownloadProgress,
@@ -669,6 +673,9 @@ declare global {
       ) => Promise<PreloadFilePreview>
       hoverPreviewFile: (path: string) => Promise<PreloadFileHoverPreview>
       statLocalPaths: (cwd: string, paths: string[]) => Promise<PreloadLocalPathStat[]>
+      statRemoteWorkspacePaths: (
+        request: RemoteWorkspacePathProbeRequest
+      ) => Promise<RemoteWorkspacePathStat[]>
       listDirectory: (path: string) => Promise<PreloadDirectoryListing>
       listRemoteWorkspaceDirectory: (
         request: RemoteWorkspaceFileRequest

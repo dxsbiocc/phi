@@ -2,6 +2,7 @@ import { posix } from 'node:path'
 
 import {
   withAuthorizedRemoteWorkspacePath,
+  RemoteWorkspaceTargetMissingError,
   type AuthorizedRemoteWorkspacePath,
   type RemoteWorkspaceBoundaryDependencies
 } from './remote-workspace-boundary'
@@ -148,12 +149,16 @@ function readError(code: number | null, kind: 'file' | 'directory'): Error {
   )
 }
 
-async function readKind(session: RemoteSshSession, path: string): Promise<'file' | 'directory'> {
+async function readKind(
+  session: RemoteSshSession,
+  path: string,
+  relativePath: string
+): Promise<'file' | 'directory'> {
   const result = await session.exec(buildRemoteReadKindCommand(path))
   if (result.code !== 0) throw new Error('远程目标类型检查失败')
   if (result.stdout === 'file' || result.stdout === 'directory') return result.stdout
   if (result.stdout === 'other') throw new Error('远程目标不是普通文件或目录')
-  if (result.stdout === 'missing') throw new Error('远程目标不存在')
+  if (result.stdout === 'missing') throw new RemoteWorkspaceTargetMissingError(relativePath)
   throw new Error('远程目标类型返回格式无效')
 }
 
@@ -257,7 +262,7 @@ export async function readRemoteWorkspacePath(
     { ...request, mode: 'existing' },
     async (authorized, session) => {
       dependencies.onResolved?.(authorized)
-      const kind = await readKind(session, authorized.path)
+      const kind = await readKind(session, authorized.path, authorized.relativePath || '.')
       if (dependencies.expectedKind && kind !== dependencies.expectedKind) {
         throw new Error(
           dependencies.expectedKind === 'file' ? '远程目标不是普通文本文件' : '远程目标不是目录'

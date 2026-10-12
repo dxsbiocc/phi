@@ -3,9 +3,10 @@ import { posix } from 'node:path'
 import type { RemoteWorkspaceFileRequest } from '../../shared/remoteWorkspacePath'
 import { remoteWorkspaceUri } from '../../shared/remoteWorkspacePath'
 import { readRemoteWorkspacePath, type RemoteWorkspaceReadResult } from './remote-workspace-read'
-import type {
-  AuthorizedRemoteWorkspacePath,
-  RemoteWorkspaceBoundaryDependencies
+import {
+  RemoteWorkspaceTargetMissingError,
+  type AuthorizedRemoteWorkspacePath,
+  type RemoteWorkspaceBoundaryDependencies
 } from './remote-workspace-boundary'
 
 function checkedRequest(value: unknown): RemoteWorkspaceFileRequest {
@@ -34,13 +35,24 @@ async function readForUi(
 ): Promise<{ authorized: AuthorizedRemoteWorkspacePath; result: RemoteWorkspaceReadResult }> {
   const request = checkedRequest(input)
   let authorized: AuthorizedRemoteWorkspacePath | undefined
-  const result = await readRemoteWorkspacePath(request, {
-    ...dependencies,
-    expectedKind,
-    onResolved: (value) => {
-      authorized = value
-    }
-  })
+  let result: RemoteWorkspaceReadResult
+  try {
+    result = await readRemoteWorkspacePath(request, {
+      ...dependencies,
+      expectedKind,
+      onResolved: (value) => {
+        authorized = value
+      }
+    })
+  } catch (error) {
+    if (!(error instanceof RemoteWorkspaceTargetMissingError)) throw error
+    const relativePath = error.relativePath ?? request.path
+    throw new Error(
+      expectedKind === 'file'
+        ? `远程文件不存在：${relativePath}`
+        : `远程目录不存在：${relativePath}`
+    )
+  }
   if (!authorized) throw new Error('远程文件授权结果不可用')
   return { authorized, result }
 }
