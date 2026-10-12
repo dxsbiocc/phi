@@ -1,9 +1,8 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import { hashLocalFile } from '../transfer/ssh-data-plane-local'
 import {
   helperPlatform,
   remoteHelperDevelopmentRoot,
@@ -197,9 +196,7 @@ export function resolveRemoteHelperPreparation(
       if (!prepared || prepared.version !== version || !prepared.localPath) {
         throw new Error('Development remote helper build did not produce the requested artifact')
       }
-      const actual = createHash('sha256')
-        .update(await readFile(prepared.localPath))
-        .digest('hex')
+      const actual = await hashLocalFile(prepared.localPath, 8 * 1024 * 1024, undefined, signal)
       if (actual !== prepared.sha256) throw new Error('Development remote helper sha256 mismatch')
       if (signal?.aborted) throw cancelled()
       return prepared

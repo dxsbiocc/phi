@@ -98,6 +98,33 @@ else printf 'PHI_MANIFEST_HEX=\\n'
 fi`
 }
 
+export function buildReuseUploadDestinationScript(paths: {
+  destination: string
+  parent: string
+  canonicalRoot: string
+  expectedHash: string
+}): string {
+  return `set -eu
+fail() { printf 'PHI_ERROR=%s\\n' "$1"; exit 40; }
+${containmentCheck(paths.parent, paths.canonicalRoot)}
+if [ -L ${shellQuote(paths.destination)} ]; then fail INVALID_DESTINATION
+elif [ -f ${shellQuote(paths.destination)} ]; then
+  [ "$(stat -Lc '%u' ${shellQuote(paths.destination)} 2>/dev/null || stat -f '%u' ${shellQuote(paths.destination)} 2>/dev/null)" = "$(id -u)" ] || fail INVALID_DESTINATION
+elif [ -e ${shellQuote(paths.destination)} ]; then fail INVALID_DESTINATION
+else printf 'PHI_REUSE=missing\\n'; exit 0
+fi
+${hashToolProbe()}
+${hashFunctions()}
+digest=$(hash_file ${shellQuote(paths.destination)}) || fail HASH_UNAVAILABLE
+if [ "$digest" = ${shellQuote(paths.expectedHash)} ]; then
+  printf 'PHI_REUSE=valid\\n'
+else
+  rm -f ${shellQuote(paths.destination)}
+  sync ${shellQuote(paths.parent)} 2>/dev/null || sync
+  printf 'PHI_REUSE=removed\\n'
+fi`
+}
+
 export function buildUploadInitializeScript(paths: {
   destination: string
   partial: string

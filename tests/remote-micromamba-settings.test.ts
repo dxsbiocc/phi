@@ -7,6 +7,7 @@ import {
 } from '../src/main/agent/remote-micromamba-settings'
 import type { RemoteMicromambaResult } from '../src/shared/remoteMicromambaTypes'
 import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
+import { remoteTransferHostKey } from '../src/main/agent/transfer'
 
 const artifact = {
   version: '2.9.0-0',
@@ -85,6 +86,7 @@ describe('remote micromamba settings operation', () => {
         },
         ensure: async (_session, input) => {
           calls.push(`ensure:${input.runtimeRoot}`)
+          assert.equal(input.transferHostKey, remoteTransferHostKey('cluster'))
           return installedResult()
         },
         updateLatestProfile: (_alias, status) => {

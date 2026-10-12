@@ -229,11 +229,28 @@ test('rejects a remote hash mismatch after one retry and cleans staging files', 
   const session = localSession()
 
   try {
-    const result = await installWithCheckedRoot(session, root, artifact)
+    const result = await installWithCheckedRoot(session, root, artifact, {
+      transferHostKey: 'cluster-a'
+    })
 
     assert.equal(result.status, 'failed')
     assert.equal(result.errorCode, 'remote-hash-mismatch')
     assert.equal(session.uploads.length, 2)
+    assert.equal(session.uploads[0]?.remotePath, session.uploads[1]?.remotePath)
+    assert.equal(session.uploads[0]?.options?.transferId, session.uploads[1]?.options?.transferId)
+    assert.equal(session.uploads[0]?.options?.reuseVerifiedDestination, true)
+    const installPath = session.uploads[0]!.remotePath.slice(
+      0,
+      session.uploads[0]!.remotePath.indexOf('.upload-')
+    )
+    const identity = createHash('sha256')
+      .update('cluster-a')
+      .update('\0')
+      .update(installPath)
+      .update('\0')
+      .update(artifact.sha256)
+      .digest('hex')
+    assert.equal(session.uploads[0]?.options?.transferId, `micromamba-${identity.slice(0, 40)}`)
     for (const { remotePath } of session.uploads) {
       await assert.rejects(access(remotePath))
     }
@@ -260,6 +277,9 @@ test('retries one interrupted upload and succeeds on the second attempt', async 
 
     assert.equal(result.status, 'installed')
     assert.equal(attempts, 2)
+    assert.equal(session.uploads.length, 1)
+    assert.equal(session.uploads[0]?.options?.expectedSha256, artifact.sha256)
+    assert.match(session.uploads[0]?.options?.transferId ?? '', /^micromamba-/)
     assert.doesNotMatch(result.message, /private upload failure detail/)
   } finally {
     await session.close()

@@ -32,6 +32,7 @@ export interface SshHostConfig {
   remoteRoot: string
   canonicalRoot: string
   connect: () => Promise<RemoteSshSession>
+  transferHostKey?: string
   platform?: { os: string; arch: string }
   capabilityProfile?: HostCapabilityProfile
   helper?: SshHelperConfig
@@ -56,6 +57,7 @@ function checkedRoot(path: string): string {
 export class SshHostContext {
   readonly remoteRoot: string
   readonly canonicalRoot: string
+  readonly transferHostKey?: string
   readonly platform: { os: string; arch: string }
   readonly helper?: SshHelperConfig
   readonly helperBootstrap?: SshHelperBootstrapConfig
@@ -63,6 +65,7 @@ export class SshHostContext {
   constructor(private readonly config: SshHostConfig) {
     this.remoteRoot = checkedRoot(config.remoteRoot)
     this.canonicalRoot = checkedRoot(config.canonicalRoot)
+    this.transferHostKey = config.transferHostKey
     this.platform = config.platform ?? { os: 'remote', arch: 'unknown' }
     this.helper = config.helper
     this.helperBootstrap = config.helperBootstrap

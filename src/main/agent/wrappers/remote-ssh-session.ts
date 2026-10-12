@@ -1,8 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
-import type { Readable, Writable } from 'node:stream'
+import { basename, isAbsolute, join, posix } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import {
@@ -14,6 +14,13 @@ import {
 import { assertEncryptedIdentityLoaded } from './ssh-agent-identity'
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
 import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
+import type { RemoteUploadFileOptions, TransferStdioProcess } from '../transfer/remote-upload-types'
+import {
+  createInstalledHelperTransferConnect,
+  remoteTransferHostKey,
+  resolveRemoteUploadCanonicalRoot,
+  uploadRemoteFile
+} from '../transfer/remote-upload'
 
 /** OpenSSH host alias resolved by the user's SSH configuration. Never persist credentials here. */
 export interface RemoteConnectionConfig {
@@ -44,13 +51,8 @@ export interface RemoteExecBoundedOptions {
   signal?: AbortSignal
 }
 
-export interface RemoteStdioProcess {
-  stdin: Writable
-  stdout: Readable
-  stderr: Readable
-  closed: Promise<{ code: number | null; signal: string | null }>
-  close(): Promise<void>
-}
+export type RemoteStdioProcess = TransferStdioProcess
+export type { RemoteUploadFileOptions } from '../transfer/remote-upload-types'
 
 /** The POSIX remote operations used by detached and Slurm wrapper runners. */
 export interface RemoteSshSession {
@@ -67,7 +69,11 @@ export interface RemoteSshSession {
   mkdirp(remotePath: string): Promise<void>
   exists(remotePath: string): Promise<boolean>
   /** `timeoutMs` overrides the session's exec timeout, for large files such as container images. */
-  uploadFile(localPath: string, remotePath: string, options?: { timeoutMs?: number }): Promise<void>
+  uploadFile(
+    localPath: string,
+    remotePath: string,
+    options?: RemoteUploadFileOptions
+  ): Promise<void>
   /** Optional raw stdio channel for a connection-scoped remote helper. */
   openStdio?: (command: string) => Promise<RemoteStdioProcess>
   close(): Promise<void>
@@ -647,7 +653,7 @@ export async function connectRemoteSshSession(
     }
 
     authGate.clearSshBlock(hostKey)
-    return {
+    const connectedSession: RemoteSshSession = {
       exec: call,
       async execWithInput(command, input) {
         checkOpen()
@@ -707,26 +713,61 @@ export async function connectRemoteSshSession(
       },
       async uploadFile(localPath, remotePath, options) {
         checkOpen()
-        const batch = `put ${quoteSftpPath(localPath)} ${quoteSftpPath(remotePath)}\n`
-        let result: RemoteExecResult
-        try {
-          result = await runProcess(
-            spawnImpl,
-            'sftp',
-            buildSftpArgs(host, controlPath, config),
-            options?.timeoutMs ?? execTimeout,
-            MAX_CONTROL_OUTPUT_BYTES,
-            batch,
-            operations.signal
+        const remoteRoot = options?.remoteRoot ?? posix.dirname(remotePath)
+        const timeoutSignal = options?.timeoutMs
+          ? AbortSignal.timeout(options.timeoutMs)
+          : undefined
+        const signal = AbortSignal.any(
+          [operations.signal, options?.signal, timeoutSignal].filter(
+            (candidate): candidate is AbortSignal => candidate !== undefined
           )
-        } catch (error) {
-          const diagnosis = diagnoseSshConnectionFailure(error)
-          if (diagnosis.code === 'ssh_missing') throw new RemoteSshConnectionError(diagnosis)
-          throw error
-        }
-        const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
-        if (failure) throw failure
-        if (result.code !== 0) throw new Error(`远程上传文件失败: ${remotePath}`)
+        )
+        const canonicalRoot = await resolveRemoteUploadCanonicalRoot(
+          connectedSession,
+          remoteRoot,
+          signal
+        )
+        const stableHostKey = options?.hostKey ?? remoteTransferHostKey(host)
+        const workspaceId =
+          options?.workspaceId ?? createHash('sha256').update(remoteRoot).digest('hex')
+        const transferId =
+          options?.transferId ??
+          `remote-upload-${createHash('sha256')
+            .update(stableHostKey)
+            .update('\0')
+            .update(remotePath)
+            .update('\0')
+            .update(options?.expectedSha256 ?? '')
+            .digest('hex')
+            .slice(0, 40)}`
+        const helperConnect =
+          options?.helperConnect ??
+          (options?.helperVersion
+            ? createInstalledHelperTransferConnect(
+                connectedSession,
+                canonicalRoot,
+                options.helperVersion
+              )
+            : undefined)
+        await uploadRemoteFile({
+          session: connectedSession,
+          localPath,
+          remotePath,
+          remoteRoot,
+          canonicalRoot,
+          hostKey: stableHostKey,
+          workspaceId,
+          transferId,
+          ...(options?.expectedSha256 ? { expectedSha256: options.expectedSha256 } : {}),
+          signal,
+          ...(options?.onEvent ? { onEvent: options.onEvent } : {}),
+          ...(options?.coordinator ? { coordinator: options.coordinator } : {}),
+          ...(options?.agentDir ? { agentDir: options.agentDir } : {}),
+          ...(helperConnect ? { helperConnect } : {}),
+          ...(options?.forceSsh ? { forceSsh: true } : {}),
+          ...(options?.reuseVerifiedDestination ? { reuseVerifiedDestination: true } : {}),
+          ...(options?.timeoutMs ? { controlTimeoutMs: options.timeoutMs } : {})
+        })
       },
       async openStdio(command) {
         checkOpen()
@@ -747,6 +788,7 @@ export async function connectRemoteSshSession(
       },
       close
     }
+    return connectedSession
   } catch (error) {
     await close()
     throw error

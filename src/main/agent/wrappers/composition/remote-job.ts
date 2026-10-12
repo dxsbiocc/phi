@@ -1,5 +1,6 @@
 import { join, relative, sep } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { createHash } from 'node:crypto'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
 import {
@@ -43,6 +44,12 @@ import {
   type RemoteRunLayout
 } from './remote-config'
 import { resolveOutputPaths } from './validate'
+import {
+  readCapabilityProfile,
+  readLatestCapabilityProfileForHost
+} from '../../workspace-host/capability-profile-store'
+import { getPhiAgentDir } from '../../runtime-paths'
+import { remoteTransferHostKey } from '../../transfer'
 
 /**
  * Runs one composition wrapper on an HPC login host and exposes it as the same
@@ -58,6 +65,8 @@ export interface RemoteTarget {
   connection: RemoteConnectionConfig
   /** Absolute remote directory Phi keeps bundles and run directories under. */
   workspaceRoot: string
+  /** Phi-owned state root for resumable local upload sources and transfer registry state. */
+  agentDir?: string
   hpc?: RemoteHpcSettings
   /** Skip the pre-launch check that Nextflow, `sbatch` and the container runtime exist on the host. */
   skipPreflight?: boolean
@@ -155,6 +164,7 @@ function reported(
 class Control {
   cancelled = false
   detached = false
+  private readonly abortController = new AbortController()
   private wake: (() => void) | undefined
   /** Set once the run is launched; called when cancel is requested. */
   onCancel: (() => void) | undefined
@@ -162,6 +172,7 @@ class Control {
   cancel(): void {
     if (this.cancelled) return
     this.cancelled = true
+    this.abortController.abort()
     this.onCancel?.()
     this.wake?.()
   }
@@ -187,6 +198,34 @@ class Control {
       if (timer) clearTimeout(timer)
       this.wake = undefined
     }
+  }
+
+  get signal(): AbortSignal {
+    return this.abortController.signal
+  }
+}
+
+function transferContext(target: RemoteTarget): Readonly<{
+  hostKey: string
+  workspaceId: string
+  helperVersion?: string
+}> {
+  const agentDir = target.agentDir ?? getPhiAgentDir()
+  const profile =
+    readCapabilityProfile(
+      {
+        hostAlias: target.connection.host,
+        projectRoot: target.workspaceRoot
+      },
+      { agentDir }
+    ) ?? readLatestCapabilityProfileForHost(target.connection.host, { agentDir })
+  const hostKey = remoteTransferHostKey(target.connection.host)
+  return {
+    hostKey,
+    workspaceId: createHash('sha256').update(target.workspaceRoot).digest('hex'),
+    ...(profile?.helperStatus?.state === 'available' && profile.helperVersion
+      ? { helperVersion: profile.helperVersion }
+      : {})
   }
 }
 
@@ -535,15 +574,26 @@ async function runPreflight(
  */
 async function stageImagesForRun(
   session: RemoteSshSession,
-  options: StartRemoteOptions
+  options: StartRemoteOptions,
+  control: Control
 ): Promise<void> {
   const cacheDir = options.target.hpc?.singularityCacheDir
   if (options.profile !== 'singularity' || !cacheDir) return
   const images = collectWrapperSingularityImages(join(options.entry.wrapperDir, 'main.nf'))
   if (images.length === 0) return
   const stage = options.target.stageImagesImpl ?? stageSingularityImages
+  const transfer = transferContext(options.target)
   try {
-    const { failed } = await stage(session, { images, cacheDir, onOutput: options.onOutput })
+    const { failed } = await stage(session, {
+      images,
+      cacheDir,
+      onOutput: options.onOutput,
+      signal: control.signal,
+      transferHostKey: transfer.hostKey,
+      transferWorkspaceId: transfer.workspaceId,
+      helperVersion: transfer.helperVersion,
+      agentDir: options.target.agentDir ?? getPhiAgentDir()
+    })
     for (const { fileName, reason } of failed) {
       options.onOutput?.(
         `警告：镜像 ${fileName} 未能放入缓存 ${cacheDir}（${reason}）。计算节点无法联网时运行会失败，可手动把该文件放入缓存目录后重试。\n`
@@ -641,10 +691,16 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       await observeRemoteLaunch(session, remoteRunDir, options.runId, kind)
     )
     if (prior) return prior
+    const transfer = transferContext(target)
     const bundle = await ensureRemoteBundle(session, {
       localRoot: options.wrappersRoot,
       workspaceRoot: target.workspaceRoot,
-      verifyScope: componentBundleScope(entry.componentDir, options.wrappersRoot)
+      verifyScope: componentBundleScope(entry.componentDir, options.wrappersRoot),
+      signal: control.signal,
+      transferHostKey: transfer.hostKey,
+      transferWorkspaceId: transfer.workspaceId,
+      helperVersion: transfer.helperVersion,
+      agentDir: target.agentDir ?? getPhiAgentDir()
     })
     const layout = remoteRunLayout({
       workspaceRoot: target.workspaceRoot,
@@ -667,7 +723,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
         `服务器 ${target.connection.host} 的输入核验失败：\n${checked.errors.map((line) => `- ${line}`).join('\n')}`
       )
     }
-    await stageImagesForRun(session, options)
+    await stageImagesForRun(session, options, control)
     if (control.cancelled) return failure('', { cancelled: true })
     options.onSnapshot?.({
       runId: options.runId,
@@ -740,10 +796,12 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
 export function startRemoteWrapperComposition(options: StartRemoteOptions): WrapperProcess {
   const control = new Control()
   const done = launch(options, control).catch((error: unknown) =>
-    reported(
-      options,
-      `Remote run could not be started: ${error instanceof Error ? error.message : String(error)}`
-    )
+    control.cancelled
+      ? failure('', { cancelled: true })
+      : reported(
+          options,
+          `Remote run could not be started: ${error instanceof Error ? error.message : String(error)}`
+        )
   )
   return toProcess(control, done)
 }

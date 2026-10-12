@@ -1,11 +1,27 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  chmodSync,
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { RemoteSshSession } from '../remote-ssh-session'
+import type { RemoteSshSession, RemoteStdioProcess } from '../remote-ssh-session'
 import { shellQuote } from '../remote-ssh-session'
+import type { FileTransferCoordinator, TransferEvent } from '../../transfer'
+import { hashLocalFile } from '../../transfer/ssh-data-plane-local'
 
 /**
  * Ships the assembled installed wrapper tree (`~/.phi/wrappers/tree`) to the cluster once per
@@ -156,14 +172,28 @@ function bundleSnapshot(
   const identity = createHash('sha256')
   const entries = files.map((path) => {
     if (/[\r\n\0]/.test(path)) throw new Error(`Wrapper 文件名不能包含换行或 NUL: ${path}`)
-    const bytes = readFileSync(join(root, path))
+    const fileHash = createHash('sha256')
+    const descriptor = openSync(join(root, path), 'r')
+    const buffer = Buffer.allocUnsafe(1024 * 1024)
+    let size = 0
     identity.update(`${path}\0`)
-    identity.update(bytes)
+    try {
+      for (;;) {
+        const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, null)
+        if (bytesRead === 0) break
+        const chunk = buffer.subarray(0, bytesRead)
+        identity.update(chunk)
+        fileHash.update(chunk)
+        size += bytesRead
+      }
+    } finally {
+      closeSync(descriptor)
+    }
     identity.update('\0')
     return {
       path,
-      size: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex')
+      size,
+      sha256: fileHash.digest('hex')
     }
   })
   const hash = identity.digest('hex').slice(0, 12)
@@ -307,6 +337,20 @@ function buildArchive(root: string, files: string[], archivePath: string): Promi
   })
 }
 
+function ensurePrivateCache(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 })
+  const metadata = lstatSync(path)
+  const owner = typeof process.getuid === 'function' ? process.getuid() : null
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (owner !== null && metadata.uid !== owner)
+  ) {
+    throw new Error('Wrapper 上传缓存目录不安全')
+  }
+  chmodSync(path, 0o700)
+}
+
 export interface RemoteBundle {
   hash: string
   bundleDir: string
@@ -324,6 +368,15 @@ export async function ensureRemoteBundle(
      * always checked in full, and a fresh upload is checked against the archive digest.
      */
     verifyScope?: string[]
+    signal?: AbortSignal
+    transferCoordinator?: FileTransferCoordinator
+    transferHostKey?: string
+    transferWorkspaceId?: string
+    helperConnect?: () => Promise<RemoteStdioProcess>
+    helperVersion?: string
+    agentDir?: string
+    onTransferEvent?: (event: TransferEvent) => void
+    transferCacheDir?: string
   }
 ): Promise<RemoteBundle> {
   const scope = (input.verifyScope ?? []).filter(
@@ -376,17 +429,63 @@ export async function ensureRemoteBundle(
   }, LOCK_HEARTBEAT_MS)
   heartbeat.unref()
   let tmp: string | undefined
-  const remoteArchive = `${bundleDir}.archive-${token}.tar.gz`
+  const remoteArchive = `${bundleDir}.archive-${hash}.tar.gz`
   const partial = `${bundleDir}.partial-${token}`
   try {
     if ((await verifyRemoteBundle(session, bundleDir, hash, manifest.digest, scope)) === 'valid') {
       return bundle
     }
-    tmp = mkdtempSync(join(tmpdir(), 'phi-bundle-'))
-    const localArchive = join(tmp, `${hash}.tar.gz`)
-    await buildArchive(input.localRoot, files, localArchive)
-    await session.uploadFile(localArchive, remoteArchive)
-    const archiveDigest = createHash('sha256').update(readFileSync(localArchive)).digest('hex')
+    const currentSnapshot = bundleSnapshot(input.localRoot, files)
+    if (currentSnapshot.hash !== manifest.hash || currentSnapshot.digest !== manifest.digest) {
+      throw new Error('Wrapper 源码在上传前发生变化，内容校验失败')
+    }
+    const cacheDir =
+      input.transferCacheDir ??
+      (input.agentDir
+        ? join(input.agentDir, 'transfers', 'sources', 'bundles')
+        : join(tmpdir(), `phi-bundle-transfer-${process.getuid?.() ?? 'user'}`))
+    ensurePrivateCache(cacheDir)
+    const localArchive = join(cacheDir, `${hash}.tar.gz`)
+    if (!existsSync(localArchive)) {
+      tmp = mkdtempSync(join(cacheDir, '.build-'))
+      const candidate = join(tmp, `${hash}.tar.gz`)
+      await buildArchive(input.localRoot, files, candidate)
+      try {
+        linkSync(candidate, localArchive)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+    }
+    const archiveDigest = await hashLocalFile(
+      localArchive,
+      8 * 1024 * 1024,
+      undefined,
+      input.signal
+    )
+    const transferIdentity = createHash('sha256')
+      .update(input.transferHostKey ?? input.workspaceRoot)
+      .update('\0')
+      .update(bundleDir)
+      .update('\0')
+      .update(archiveDigest)
+      .digest('hex')
+    await session.uploadFile(localArchive, remoteArchive, {
+      transferId: `bundle-${transferIdentity.slice(0, 40)}`,
+      expectedSha256: archiveDigest,
+      remoteRoot: bundlesDir,
+      canonicalRoot: bundlesDir,
+      hostKey: input.transferHostKey ?? `bundle-${transferIdentity.slice(0, 24)}`,
+      workspaceId:
+        input.transferWorkspaceId ?? createHash('sha256').update(input.workspaceRoot).digest('hex'),
+      signal: input.signal,
+      coordinator: input.transferCoordinator,
+      helperConnect: input.helperConnect,
+      helperVersion: input.helperVersion,
+      agentDir: input.agentDir,
+      onEvent: input.onTransferEvent,
+      reuseVerifiedDestination: true,
+      timeoutMs: BUNDLE_COMMAND_TIMEOUT_MS
+    })
     await checkedExec(
       session,
       `test "$(perl -MDigest::SHA -e 'print Digest::SHA->new(256)->addfile($ARGV[0])->hexdigest' ${shellQuote(remoteArchive)})" = ${shellQuote(archiveDigest)}`,

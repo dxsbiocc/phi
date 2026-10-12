@@ -12,9 +12,11 @@ import {
   resolveRemoteHelperArtifact
 } from '../src/main/agent/workspace-host/helper-installer'
 import { readCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
+import { remoteTransferHostKey } from '../src/main/agent/transfer'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import type {
   RemoteExecResult,
+  RemoteUploadFileOptions,
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
 
@@ -61,7 +63,11 @@ interface InstallerSessionOptions {
 
 class InstallerSession implements RemoteSshSession {
   readonly commands: string[] = []
-  readonly uploads: Array<{ localPath: string; remotePath: string }> = []
+  readonly uploads: Array<{
+    localPath: string
+    remotePath: string
+    options: RemoteUploadFileOptions | undefined
+  }> = []
   private uploadFailures: number
 
   constructor(
@@ -100,8 +106,12 @@ class InstallerSession implements RemoteSshSession {
     throw new Error('not used')
   }
 
-  async uploadFile(localPath: string, remotePath: string): Promise<void> {
-    this.uploads.push({ localPath, remotePath })
+  async uploadFile(
+    localPath: string,
+    remotePath: string,
+    options?: RemoteUploadFileOptions
+  ): Promise<void> {
+    this.uploads.push({ localPath, remotePath, options })
     if (this.uploadFailures > 0) {
       this.uploadFailures -= 1
       throw new Error('upload interrupted')
@@ -195,18 +205,29 @@ test('helper installation retries an interrupted upload and activates the verifi
   const agentDir = temporaryDirectory()
   const fixture = artifact()
   const session = new InstallerSession(fixture.artifact.sha256, { uploadFailures: 1 })
+  let helperConnections = 0
   const result = await installRemoteHelper({
     session,
     profile: profile('Linux', 'x86_64'),
     profileKey: { hostAlias: 'cluster', projectRoot: '/work/project' },
     artifact: fixture.artifact,
-    agentDir
+    agentDir,
+    helperConnect: async () => {
+      helperConnections += 1
+      throw new Error('helper is not installed yet')
+    }
   })
 
   assert.equal(result.state, 'available')
   assert.equal(result.remotePath, '/home/test/.phi/remote/0.1.0/phi-helper')
   assert.equal(session.uploads.length, 2)
-  assert.notEqual(session.uploads[0]?.remotePath, session.uploads[1]?.remotePath)
+  assert.equal(session.uploads[0]?.remotePath, session.uploads[1]?.remotePath)
+  assert.equal(session.uploads[0]?.options?.forceSsh, true)
+  assert.equal(session.uploads[0]?.options?.reuseVerifiedDestination, true)
+  assert.equal(session.uploads[0]?.options?.expectedSha256, fixture.artifact.sha256)
+  assert.equal(session.uploads[0]?.options?.hostKey, remoteTransferHostKey('cluster'))
+  assert.equal(session.uploads[0]?.options?.transferId, session.uploads[1]?.options?.transferId)
+  assert.equal(helperConnections, 0)
   assert.ok(session.commands.some((command) => command.includes('sha256sum ')))
   assert.ok(session.commands.some((command) => command.includes('chmod 700 ')))
   assert.ok(session.commands.some((command) => command.includes('--selftest')))
@@ -294,6 +315,27 @@ test('helper selftest failure degrades without replaying the upload', async () =
   assert.equal(session.uploads.length, 1)
   assert.equal(result.state, 'degraded')
   assert.match(result.reason, /selftest failed/)
+})
+
+test('cancelling helper artifact verification does not persist a degraded profile', async () => {
+  const fixture = artifact()
+  const agentDir = temporaryDirectory()
+  const profileKey = { hostAlias: 'cluster', projectRoot: '/work/project' }
+  const controller = new AbortController()
+  controller.abort()
+
+  await assert.rejects(
+    installRemoteHelper({
+      session: unusedSession(),
+      profile: profile('Linux', 'x86_64'),
+      profileKey,
+      artifact: fixture.artifact,
+      agentDir,
+      signal: controller.signal
+    }),
+    (error: unknown) => error instanceof Error && error.name === 'AbortError'
+  )
+  assert.equal(readCapabilityProfile(profileKey, { agentDir }), undefined)
 })
 
 test('helper versions install to distinct paths', async () => {

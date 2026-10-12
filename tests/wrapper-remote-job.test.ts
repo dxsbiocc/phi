@@ -12,6 +12,7 @@ import {
   type RemoteTarget
 } from '../src/main/agent/wrappers/composition/remote-job'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
+import { remoteTransferHostKey } from '../src/main/agent/transfer'
 import { installFakeSlurm, type FakeSlurm } from './helpers/fakeSlurm'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 import {
@@ -52,6 +53,7 @@ async function withHarness(
     target: {
       connection: { host: 'h' },
       workspaceRoot: remoteRoot,
+      agentDir: sb.agentDir,
       hpc: { scheduler: 'local', nextflowBin: process.env.NEXTFLOW_BIN },
       connectImpl: async () => session,
       pollIntervalMs: 30,
@@ -885,7 +887,7 @@ test('sbatch controller: detach leaves the job going and attach finishes it from
 
 test('with singularity and a cache dir, the wrapper images are staged before launch; a failure only warns', async () => {
   await withSandbox(async (sb) => {
-    const calls: Array<{ cacheDir: string; files: string[] }> = []
+    const calls: Array<{ cacheDir: string; files: string[]; hostKey?: string }> = []
     await withHarness(
       sb,
       async (h) => {
@@ -893,6 +895,7 @@ test('with singularity and a cache dir, the wrapper images are staged before lau
         assert.equal(result.success, true, result.output)
         assert.equal(calls.length, 1)
         assert.equal(calls[0].cacheDir, '/shared/singularity')
+        assert.equal(calls[0].hostKey, remoteTransferHostKey('h'))
         assert.ok(calls[0].files.length > 0)
         assert.ok(calls[0].files.every((file) => file.endsWith('.img') || file.endsWith('.sif')))
         const output = h.output.join('')
@@ -910,7 +913,11 @@ test('with singularity and a cache dir, the wrapper images are staged before lau
           singularityCacheDir: '/shared/singularity'
         },
         stageImagesImpl: async (_session, options) => {
-          calls.push({ cacheDir: options.cacheDir, files: options.images.map((i) => i.fileName) })
+          calls.push({
+            cacheDir: options.cacheDir,
+            files: options.images.map((i) => i.fileName),
+            hostKey: options.transferHostKey
+          })
           return {
             staged: [],
             failed: options.images.map((i) => ({

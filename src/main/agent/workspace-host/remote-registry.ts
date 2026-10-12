@@ -3,6 +3,7 @@ import {
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
 import { remoteMicromambaManifestVersion } from '../remote-micromamba-artifact'
+import { remoteTransferHostKey } from '../transfer'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { readCapabilityProfile } from './capability-profile-store'
 import { reconcileRemoteHelperProfile } from './helper-installer'
@@ -62,6 +63,7 @@ function sshHostConfig(
   dependencies: RemoteWorkspaceHostRegistryDependencies
 ): SshHostConfig {
   const profileKey = { hostAlias: binding.hostAlias, projectRoot: binding.remoteRoot }
+  const transferHostKey = remoteTransferHostKey(binding.hostAlias)
   const cached = readCapabilityProfile(profileKey, {
     agentDir: dependencies.agentDir,
     expectedMicromambaVersion: expectedMicromambaVersion(dependencies)
@@ -76,6 +78,7 @@ function sshHostConfig(
   if (!profile || profile.probe?.state === 'degraded') {
     return {
       ...binding.config,
+      transferHostKey,
       capabilityProfile: profile,
       helperBootstrap: helperBootstrapConfig(profileKey, dependencies)
     }
@@ -91,6 +94,7 @@ function sshHostConfig(
     !preparation?.prepareArtifact
   return {
     ...binding.config,
+    transferHostKey,
     ...(artifact && !helperDegraded
       ? {
           helper: {

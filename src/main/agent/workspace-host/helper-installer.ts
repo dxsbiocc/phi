@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path'
@@ -7,8 +7,12 @@ import { fileURLToPath } from 'node:url'
 import {
   shellQuote,
   type RemoteExecResult,
+  type RemoteStdioProcess,
   type RemoteSshSession
 } from '../wrappers/remote-ssh-session'
+import type { FileTransferCoordinator, TransferEvent } from '../transfer'
+import { remoteTransferHostKey } from '../transfer'
+import { hashLocalFile } from '../transfer/ssh-data-plane-local'
 import { saveCapabilityProfile, type CapabilityProfileKey } from './capability-profile-store'
 import type { ProbedHostCapabilityProfile } from './probe-parse'
 
@@ -26,6 +30,10 @@ export interface RemoteHelperInstallOptions {
   profileKey: CapabilityProfileKey
   artifact: RemoteHelperArtifact
   agentDir?: string
+  signal?: AbortSignal
+  onTransferEvent?: (event: TransferEvent) => void
+  transferCoordinator?: FileTransferCoordinator
+  helperConnect?: () => Promise<RemoteStdioProcess>
 }
 
 interface RemoteHelperManifest {
@@ -75,15 +83,19 @@ function unsupportedReason(profile: ProbedHostCapabilityProfile): string | undef
   return undefined
 }
 
-function checkedArtifact(artifact: RemoteHelperArtifact): string | undefined {
+async function checkedArtifact(
+  artifact: RemoteHelperArtifact,
+  signal?: AbortSignal
+): Promise<string | undefined> {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(artifact.version)) {
     return 'remote helper version is invalid'
   }
   if (!/^[a-f0-9]{64}$/.test(artifact.sha256)) return 'remote helper sha256 is invalid'
   try {
-    const actual = createHash('sha256').update(readFileSync(artifact.localPath)).digest('hex')
+    const actual = await hashLocalFile(artifact.localPath, 8 * 1024 * 1024, undefined, signal)
     return actual === artifact.sha256 ? undefined : 'bundled remote helper sha256 mismatch'
   } catch {
+    signal?.throwIfAborted()
     return 'bundled remote helper is unavailable'
   }
 }
@@ -146,11 +158,27 @@ function remoteHash(result: RemoteExecResult): string | undefined {
 
 async function uploadAttempt(
   options: RemoteHelperInstallOptions,
-  remotePath: string
+  remotePath: string,
+  stagingPath: string,
+  transferId: string
 ): Promise<void> {
-  const stagingPath = `${remotePath}.upload-${randomUUID()}`
   try {
-    await options.session.uploadFile(options.artifact.localPath, stagingPath)
+    const remoteRoot = posix.dirname(remotePath)
+    await options.session.uploadFile(options.artifact.localPath, stagingPath, {
+      transferId,
+      expectedSha256: options.artifact.sha256,
+      remoteRoot,
+      canonicalRoot: remoteRoot,
+      hostKey: remoteTransferHostKey(options.profileKey.hostAlias),
+      workspaceId: createHash('sha256').update(options.profileKey.projectRoot).digest('hex'),
+      signal: options.signal,
+      onEvent: options.onTransferEvent,
+      coordinator: options.transferCoordinator,
+      agentDir: options.agentDir,
+      helperConnect: options.helperConnect,
+      reuseVerifiedDestination: true,
+      forceSsh: true
+    })
     const hash = remoteHash(await options.session.exec(`sha256sum ${shellQuote(stagingPath)}`))
     if (hash !== options.artifact.sha256) throw new Error('uploaded remote helper sha256 mismatch')
     const activation = await options.session.exec(
@@ -167,10 +195,21 @@ async function uploadWithRetry(
   options: RemoteHelperInstallOptions,
   remotePath: string
 ): Promise<void> {
+  const identity = createHash('sha256')
+    .update(options.profileKey.hostAlias)
+    .update('\0')
+    .update(options.profileKey.projectRoot)
+    .update('\0')
+    .update(remotePath)
+    .update('\0')
+    .update(options.artifact.sha256)
+    .digest('hex')
+  const stagingPath = `${remotePath}.upload-${identity.slice(0, 24)}`
+  const transferId = `helper-${identity.slice(0, 40)}`
   let failure: unknown
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      await uploadAttempt(options, remotePath)
+      await uploadAttempt(options, remotePath, stagingPath, transferId)
       return
     } catch (error) {
       failure = error
@@ -337,7 +376,8 @@ export function reconcileRemoteHelperProfile(
 export async function installRemoteHelper(
   options: RemoteHelperInstallOptions
 ): Promise<RemoteHelperInstallResult> {
-  const reason = unsupportedReason(options.profile) ?? checkedArtifact(options.artifact)
+  const unsupported = unsupportedReason(options.profile)
+  const reason = unsupported ?? (await checkedArtifact(options.artifact, options.signal))
   if (reason) return recordRemoteHelperFallback(options, reason)
   try {
     const directory = posix.join(await installationBase(options), options.artifact.version)

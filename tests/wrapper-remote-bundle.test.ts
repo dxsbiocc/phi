@@ -150,6 +150,10 @@ test('ensureRemoteBundle uploads once, unpacks the sources, and reuses the bundl
     const session = createLocalShellSession()
     const first = await ensureRemoteBundle(session, { localRoot: src.root, workspaceRoot: remote })
     assert.equal(session.uploads.length, 1)
+    assert.equal(session.uploads[0]?.remotePath, `${first.bundleDir}.archive-${first.hash}.tar.gz`)
+    assert.match(session.uploads[0]?.options?.transferId ?? '', /^bundle-/)
+    assert.match(session.uploads[0]?.options?.expectedSha256 ?? '', /^[a-f0-9]{64}$/)
+    assert.equal(session.uploads[0]?.options?.reuseVerifiedDestination, true)
     assert.equal(first.bundleDir, `${remote}/wrappers/bundles/${first.hash}`)
     assert.equal(
       readFileSync(join(first.bundleDir, 'modules/nf-core/fastqc/wrapper/main.nf'), 'utf-8'),

@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { execSync, spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -322,14 +332,41 @@ test('OpenSSH session uses one private master and executes file operations throu
     assert.equal(inputResult?.stdout.trim(), '5')
     const dir = mkdtempSync(join(tmpdir(), 'phi-remote-session-'))
     try {
-      const remoteDir = join(dir, 'nested')
+      const remoteRealDir = join(dir, 'nested-real')
+      const remoteDir = join(dir, 'nested-link')
+      mkdirSync(remoteRealDir)
+      symlinkSync(remoteRealDir, remoteDir)
       const remoteFile = join(remoteDir, 'params.json')
       await session.mkdirp(remoteDir)
       await session.writeTextFile(remoteFile, '{"value":1}')
       assert.equal(await session.exists(remoteFile), true)
       assert.equal(await session.readTextFile(remoteFile), '{"value":1}')
-      await session.uploadFile(remoteFile, join(remoteDir, 'bundle.tar.gz'))
-      assert.ok(fixture.calls.some((call) => call.binary === 'sftp' && call.args.includes('-b')))
+      const uploaded = join(remoteDir, 'bundle.tar.gz')
+      const uploadOptions = {
+        transferId: 'openssh-adapter-upload',
+        expectedSha256: createHash('sha256').update('{"value":1}').digest('hex'),
+        remoteRoot: remoteDir,
+        canonicalRoot: remoteDir,
+        hostKey: 'lab-hpc',
+        workspaceId: 'test-workspace',
+        agentDir: join(dir, 'agent'),
+        reuseVerifiedDestination: true
+      } as const
+      await session.uploadFile(remoteFile, uploaded, uploadOptions)
+      assert.equal(readFileSync(uploaded, 'utf8'), '{"value":1}')
+      const publishedInode = statSync(uploaded).ino
+      const mismatchedSource = join(dir, 'mismatched.bin')
+      writeFileSync(mismatchedSource, 'different bytes')
+      await assert.rejects(
+        session.uploadFile(mismatchedSource, uploaded, uploadOptions),
+        (error: unknown) => (error as { code?: unknown }).code === 'HASH_MISMATCH'
+      )
+      await session.uploadFile(remoteFile, uploaded, uploadOptions)
+      assert.equal(statSync(uploaded).ino, publishedInode)
+      assert.equal(
+        fixture.calls.some((call) => call.binary === 'sftp'),
+        false
+      )
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

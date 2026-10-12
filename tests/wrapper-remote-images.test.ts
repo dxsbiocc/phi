@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -106,6 +107,7 @@ test('an image the server cannot fetch is downloaded here and uploaded; a total 
     const result = await stageSingularityImages(session, {
       images,
       cacheDir,
+      transferHostKey: 'cluster-a',
       downloadLocally: async (url, target) => {
         if (url.endsWith('d.img')) throw new Error('offline here too')
         mkdirSync(dirname(target), { recursive: true })
@@ -113,16 +115,58 @@ test('an image the server cannot fetch is downloaded here and uploaded; a total 
       }
     })
 
-    assert.deepEqual(result.staged, ['c.img'])
+    assert.deepEqual(result.staged, ['c.img'], JSON.stringify(result))
     assert.equal(result.failed.length, 1)
     assert.equal(result.failed[0].fileName, 'd.img')
     assert.match(result.failed[0].reason, /offline here too/)
     assert.equal(readFileSync(join(cacheDir, 'c.img'), 'utf-8'), 'image C from this machine')
+    assert.equal(session.uploads.length, 1)
+    assert.match(session.uploads[0]?.remotePath ?? '', /c\.img\.upload-[a-f0-9]{24}$/)
+    const localDigest = createHash('sha256').update('image C from this machine').digest('hex')
+    const sourceIdentity = createHash('sha256')
+      .update('cluster-a')
+      .update('\0')
+      .update(images[0].url)
+      .update('\0')
+      .update(images[0].fileName)
+      .digest('hex')
+    const identity = createHash('sha256')
+      .update(sourceIdentity)
+      .update('\0')
+      .update(localDigest)
+      .digest('hex')
+    assert.equal(session.uploads[0]?.options?.transferId, `image-${identity.slice(0, 40)}`)
+    assert.equal(session.uploads[0]?.options?.reuseVerifiedDestination, true)
     assert.equal(existsSync(join(cacheDir, 'd.img')), false)
     // No half-written file is left where Nextflow would take it for a real image.
     assert.deepEqual(
       (await session.exec(`ls ${cacheDir}`)).stdout.trim().split('\n').filter(Boolean),
       ['c.img']
     )
+  })
+})
+
+test('cancelling image staging aborts the local fallback before upload or activation', async () => {
+  await withTempDir(async (dir) => {
+    const cacheDir = join(dir, 'remote/cache')
+    const controller = new AbortController()
+    const session = createLocalShellSession()
+
+    await assert.rejects(
+      stageSingularityImages(session, {
+        images: [{ url: 'file:///nonexistent/phi/cancel.img', fileName: 'cancel.img' }],
+        cacheDir,
+        signal: controller.signal,
+        downloadLocally: async (_url, _target, signal) => {
+          assert.equal(signal, controller.signal)
+          controller.abort()
+          signal?.throwIfAborted()
+        }
+      }),
+      (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
+    )
+
+    assert.equal(session.uploads.length, 0)
+    assert.equal(existsSync(join(cacheDir, 'cancel.img')), false)
   })
 })

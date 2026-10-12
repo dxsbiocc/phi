@@ -1,4 +1,5 @@
 import type { RemoteRuntimeRootCapabilityProfile } from '../../../shared/remoteRuntimeRootTypes'
+import type { RemoteUploadFileOptions } from '../transfer/remote-upload-types'
 
 export type WorkspaceContent = string | Uint8Array
 
@@ -230,6 +231,13 @@ export interface WorkspaceHost {
   pty?: WorkspacePty
   watch?: WorkspaceWatch
   forwardPort?: WorkspacePortForward
+  transfer?: {
+    uploadFile(
+      localPath: string,
+      remotePath: string,
+      options?: RemoteUploadFileOptions
+    ): Promise<void>
+  }
   capabilities(): HostCapabilityProfile
   close?(): Promise<void>
 }

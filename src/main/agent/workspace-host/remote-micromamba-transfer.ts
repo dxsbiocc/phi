@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { posix } from 'node:path'
 
 import type {
   RemoteMicromambaArtifact,
@@ -9,8 +10,10 @@ import type { RemoteMicromambaDownloadCapability } from '../../../shared/remoteR
 import {
   shellQuote,
   type RemoteExecResult,
+  type RemoteStdioProcess,
   type RemoteSshSession
 } from '../wrappers/remote-ssh-session'
+import type { FileTransferCoordinator, TransferEvent } from '../transfer'
 import { runRemoteMicromambaScript } from './remote-micromamba-common'
 import {
   buildActivateScript,
@@ -53,6 +56,13 @@ interface TransferOptions {
   onProgress: (progress: RemoteMicromambaProgress) => void
   signal?: AbortSignal
   randomId?: () => string
+  transferCoordinator?: FileTransferCoordinator
+  transferHostKey?: string
+  transferWorkspaceId?: string
+  helperConnect?: () => Promise<RemoteStdioProcess>
+  helperVersion?: string
+  agentDir?: string
+  onTransferEvent?: (event: TransferEvent) => void
 }
 
 type DirectSourceOutcome = '下载失败' | '校验失败'
@@ -230,9 +240,10 @@ async function obtainRelayArtifact(options: TransferOptions): Promise<RemoteMicr
 async function uploadAttempt(
   options: TransferOptions,
   localPath: string,
-  attempt: number
+  attempt: number,
+  stagingPath: string,
+  transferId: string
 ): Promise<void> {
-  const stagingPath = `${options.installPath}.upload-${(options.randomId ?? randomUUID)()}`
   try {
     options.onProgress({
       stage: 'uploading',
@@ -242,7 +253,35 @@ async function uploadAttempt(
       totalBytes: options.artifact.size
     })
     assertNotAborted(options.signal)
-    await options.session.uploadFile(localPath, stagingPath, { timeoutMs: UPLOAD_TIMEOUT_MS })
+    const remoteRoot = posix.dirname(options.installPath)
+    await options.session.uploadFile(localPath, stagingPath, {
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+      transferId,
+      expectedSha256: options.artifact.sha256,
+      remoteRoot,
+      canonicalRoot: remoteRoot,
+      hostKey: options.transferHostKey ?? `micromamba-${transferId.slice(-24)}`,
+      workspaceId:
+        options.transferWorkspaceId ?? createHash('sha256').update(remoteRoot).digest('hex'),
+      signal: options.signal,
+      coordinator: options.transferCoordinator,
+      helperConnect: options.helperConnect,
+      helperVersion: options.helperVersion,
+      agentDir: options.agentDir,
+      reuseVerifiedDestination: true,
+      onEvent: (event) => {
+        options.onTransferEvent?.(event)
+        if (event.state === 'transferring' && event.bytesTransferred > 0) {
+          options.onProgress({
+            stage: 'uploading',
+            message: '正在上传 micromamba…',
+            attempt,
+            transferredBytes: event.bytesTransferred,
+            totalBytes: event.totalBytes ?? options.artifact.size
+          })
+        }
+      }
+    })
     options.onProgress({
       stage: 'uploading',
       message: 'micromamba 上传完成。',
@@ -272,10 +311,19 @@ async function uploadAttempt(
 }
 
 async function uploadWithRetry(options: TransferOptions, localPath: string): Promise<void> {
+  const identity = createHash('sha256')
+    .update(options.transferHostKey ?? 'unscoped-host')
+    .update('\0')
+    .update(options.installPath)
+    .update('\0')
+    .update(options.artifact.sha256)
+    .digest('hex')
+  const stagingPath = `${options.installPath}.upload-${identity.slice(0, 24)}`
+  const transferId = `micromamba-${identity.slice(0, 40)}`
   let failure: RemoteMicromambaTransferFailure | undefined
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      await uploadAttempt(options, localPath, attempt)
+      await uploadAttempt(options, localPath, attempt, stagingPath, transferId)
       return
     } catch (error) {
       failure =

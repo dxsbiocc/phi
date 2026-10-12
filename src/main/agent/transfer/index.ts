@@ -10,6 +10,13 @@ export type {
   HelperTransferDataPlaneStatus
 } from './helper-data-plane'
 export { TransferError } from './errors'
+export {
+  createInstalledHelperTransferConnect,
+  remoteTransferHostKey,
+  uploadRemoteFile
+} from './remote-upload'
+export type { RemoteFileUploadOptions } from './remote-upload'
+export type { RemoteUploadFileOptions, TransferStdioProcess } from './remote-upload-types'
 export { DEFAULT_TRANSFER_POLICY, GIB, MIB } from './types'
 export type {
   TransferDirection,

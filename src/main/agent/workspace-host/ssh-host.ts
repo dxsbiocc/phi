@@ -1,4 +1,12 @@
-import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
+import { createHash } from 'node:crypto'
+import { posix } from 'node:path'
+
+import {
+  shellQuote,
+  type RemoteSshSession,
+  type RemoteUploadFileOptions
+} from '../wrappers/remote-ssh-session'
+import { uploadRemoteFile } from '../transfer'
 import { refreshCapabilityProfile, saveCapabilityProfile } from './capability-profile-store'
 import { openHelperWorkspaceHost, type HelperWorkspaceHost } from './helper-host'
 import { resolveRemoteHelperPreparation } from './helper-development'
@@ -55,6 +63,7 @@ export class SshHost implements WorkspaceHost {
   readonly pty?: WorkspacePty
   readonly watch?: WorkspaceWatch
   readonly forwardPort?: WorkspacePortForward
+  readonly transfer: NonNullable<WorkspaceHost['transfer']>
   private readonly context: SshHostContext
   private readonly pureFs: WorkspaceHost['fs']
   private readonly pureExec: WorkspaceHost['exec']
@@ -62,6 +71,7 @@ export class SshHost implements WorkspaceHost {
   private helperProfile?: ProbedHostCapabilityProfile
   private helperConfig?: SshHelperConfig
   private helper?: HelperWorkspaceHost
+  private helperRemotePath?: string
   private helperInitialization?: Promise<void>
   private helperDisabled = false
   private disposed = false
@@ -73,6 +83,9 @@ export class SshHost implements WorkspaceHost {
     this.pureExec = createSshExecution(this.context)
     this.fs = this.negotiatedFileSystem()
     this.exec = this.negotiatedExecution()
+    this.transfer = {
+      uploadFile: (local, remote, options) => this.uploadFile(local, remote, options)
+    }
     this.helperProfile = config.helper?.profile
     this.helperConfig = config.helper
     this.profile = workspaceProfile(
@@ -184,7 +197,12 @@ export class SshHost implements WorkspaceHost {
       await session.close()
       return
     }
-    const installed = await installRemoteHelper({ session, ...config, artifact })
+    const installed = await installRemoteHelper({
+      session,
+      ...config,
+      artifact,
+      signal: this.preparation.signal
+    })
     this.helperProfile = installed.profile
     this.profile = workspaceProfile(installed.profile)
     if (installed.state !== 'available' || !installed.remotePath) {
@@ -201,6 +219,7 @@ export class SshHost implements WorkspaceHost {
       glob: this.pureFs.glob,
       onDisconnect: (error) => this.helperDisconnected(error)
     })
+    this.helperRemotePath = installed.remotePath
     if (this.disposed) await this.helper.close()
   }
 
@@ -235,6 +254,74 @@ export class SshHost implements WorkspaceHost {
       agentDir: bootstrap.agentDir
     }
     return this.helperConfig
+  }
+
+  private async uploadFile(
+    localPath: string,
+    remotePath: string,
+    options: RemoteUploadFileOptions = {}
+  ): Promise<void> {
+    await this.selected()
+    const rootIdentity = createHash('sha256').update(this.context.canonicalRoot).digest('hex')
+    const hostKey = options.hostKey ?? this.context.transferHostKey ?? rootIdentity
+    const uploadCanonicalRoot = this.context.canonicalRoot
+    const transferId =
+      options.transferId ??
+      `workspace-${createHash('sha256')
+        .update(hostKey)
+        .update('\0')
+        .update(remotePath)
+        .update('\0')
+        .update(options.expectedSha256 ?? '')
+        .digest('hex')
+        .slice(0, 40)}`
+    await this.context.withSession(async (session) => {
+      const candidate = this.context.candidate(remotePath)
+      let resolvedRemotePath: string
+      if (options.reuseVerifiedDestination) {
+        const resolvedParent = await this.context.resolve(
+          session,
+          posix.dirname(candidate),
+          'existing',
+          options.signal
+        )
+        resolvedRemotePath = posix.join(resolvedParent, posix.basename(candidate))
+      } else {
+        resolvedRemotePath = await this.context.resolve(
+          session,
+          candidate,
+          'create',
+          options.signal
+        )
+      }
+      const helperPath = this.helperRemotePath
+      const helperConnect =
+        !options.forceSsh && helperPath && session.openStdio
+          ? () =>
+              session.openStdio!(
+                `${shellQuote(helperPath)} serve --root ${shellQuote(uploadCanonicalRoot)}`
+              )
+          : options.helperConnect
+      await uploadRemoteFile({
+        session,
+        localPath,
+        remotePath: resolvedRemotePath,
+        remoteRoot: uploadCanonicalRoot,
+        canonicalRoot: uploadCanonicalRoot,
+        hostKey,
+        workspaceId: options.workspaceId ?? rootIdentity,
+        transferId,
+        ...(options.expectedSha256 ? { expectedSha256: options.expectedSha256 } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+        ...(options.coordinator ? { coordinator: options.coordinator } : {}),
+        ...(options.agentDir ? { agentDir: options.agentDir } : {}),
+        ...(helperConnect ? { helperConnect } : {}),
+        ...(options.forceSsh ? { forceSsh: true } : {}),
+        ...(options.reuseVerifiedDestination ? { reuseVerifiedDestination: true } : {}),
+        ...(options.timeoutMs ? { controlTimeoutMs: options.timeoutMs } : {})
+      })
+    })
   }
 
   private helperDisconnected(error: Error): void {

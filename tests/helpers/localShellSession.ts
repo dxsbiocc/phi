@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 
 import type {
   RemoteExecResult,
+  RemoteUploadFileOptions,
   RemoteSshSession,
   RemoteStdioProcess
 } from '../../src/main/agent/wrappers/remote-ssh-session'
@@ -24,7 +25,11 @@ import type {
  */
 export interface LocalShellSession extends RemoteSshSession {
   commands: string[]
-  uploads: Array<{ localPath: string; remotePath: string }>
+  uploads: Array<{
+    localPath: string
+    remotePath: string
+    options: RemoteUploadFileOptions | undefined
+  }>
   closed: boolean
 }
 
@@ -93,8 +98,8 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
     async exists(remotePath) {
       return existsSync(remotePath)
     },
-    async uploadFile(localPath, remotePath) {
-      session.uploads.push({ localPath, remotePath })
+    async uploadFile(localPath, remotePath, options) {
+      session.uploads.push({ localPath, remotePath, options })
       copyFileSync(localPath, remotePath)
     },
     async openStdio(command): Promise<RemoteStdioProcess> {

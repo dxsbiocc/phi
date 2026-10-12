@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -7,6 +8,7 @@ import test from 'node:test'
 import { createWorkspaceHostRemoteSession } from '../src/main/agent/workspace-host/remote-session'
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { HostCommand, WorkspaceHost } from '../src/main/agent/workspace-host/types'
+import { FileTransferCoordinator, FileTransferRegistry } from '../src/main/agent/transfer'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 
 test('remote request sessions execute commands through WorkspaceHost', async () => {
@@ -55,6 +57,39 @@ test('remote request sessions execute commands through WorkspaceHost', async () 
       cwd: '/remote/project',
       timeoutMs: 10_000,
       maxOutputBytes: 8 * 1024 * 1024
+    }
+  ])
+})
+
+test('remote request session uploads delegate to the host streaming transfer adapter', async () => {
+  const uploads: Array<{ localPath: string; remotePath: string; transferId?: string }> = []
+  const host = {
+    fs: {
+      async writeAtomic() {
+        throw new Error('whole-file writes must not be used for uploads')
+      }
+    } as unknown as WorkspaceHost['fs'],
+    exec: {} as WorkspaceHost['exec'],
+    transfer: {
+      async uploadFile(localPath, remotePath, options) {
+        uploads.push({ localPath, remotePath, transferId: options?.transferId })
+      }
+    },
+    capabilities() {
+      throw new Error('not used')
+    }
+  } satisfies WorkspaceHost
+  const session = createWorkspaceHostRemoteSession(host, '/remote/project')
+
+  await session.uploadFile('/local/archive.bin', '/remote/project/archive.bin', {
+    transferId: 'workspace-host-upload'
+  })
+
+  assert.deepEqual(uploads, [
+    {
+      localPath: '/local/archive.bin',
+      remotePath: '/remote/project/archive.bin',
+      transferId: 'workspace-host-upload'
     }
   ])
 })
@@ -164,6 +199,117 @@ test('SshHost carries a legacy remote request without executing in the local anc
   } finally {
     restoreSetsid()
     await rm(shim, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SshHost request sessions stream uploads through the transfer manager', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-'))
+  const local = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-local-'))
+  try {
+    const canonicalRoot = await realpath(root)
+    const source = join(local, 'payload.bin')
+    const destination = join(root, 'payload.bin')
+    const content = Buffer.alloc(2 * 1024 * 1024 + 17, 0x62)
+    await writeFile(source, content)
+    const host = new SshHost({
+      remoteRoot: root,
+      canonicalRoot,
+      connect: async () => createLocalShellSession(canonicalRoot)
+    })
+    const session = createWorkspaceHostRemoteSession(host, canonicalRoot)
+    const coordinator = new FileTransferCoordinator({
+      registry: new FileTransferRegistry(join(local, 'registry.json')),
+      policy: { chunkSizeBytes: 256 * 1024, checkpointBytes: 256 * 1024 }
+    })
+
+    const uploadOptions = {
+      transferId: 'workspace-host-stream-upload',
+      expectedSha256: createHash('sha256').update(content).digest('hex'),
+      hostKey: 'test-host',
+      workspaceId: 'test-workspace',
+      coordinator,
+      reuseVerifiedDestination: true
+    } as const
+    await session.uploadFile(source, destination, uploadOptions)
+
+    assert.deepEqual(await readFile(destination), await readFile(source))
+    const publishedInode = (await stat(destination)).ino
+    await session.uploadFile(source, destination, uploadOptions)
+    assert.equal((await stat(destination)).ino, publishedInode)
+  } finally {
+    await rm(local, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SshHost request sessions reject upload roots outside the workspace', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-root-'))
+  const outside = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-outside-'))
+  const local = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-source-'))
+  try {
+    const canonicalRoot = await realpath(root)
+    const canonicalOutside = await realpath(outside)
+    const source = join(local, 'payload.bin')
+    const destination = join(canonicalOutside, 'escaped.bin')
+    await writeFile(source, 'must stay inside the workspace')
+    const host = new SshHost({
+      remoteRoot: root,
+      canonicalRoot,
+      connect: async () => createLocalShellSession(canonicalRoot)
+    })
+    const session = createWorkspaceHostRemoteSession(host, canonicalRoot)
+
+    await assert.rejects(
+      session.uploadFile(source, destination, {
+        transferId: 'workspace-host-root-escape',
+        remoteRoot: canonicalOutside,
+        canonicalRoot: canonicalOutside,
+        hostKey: 'test-host',
+        workspaceId: 'test-workspace'
+      }),
+      /outside the workspace root/
+    )
+    await assert.rejects(readFile(destination))
+  } finally {
+    await rm(local, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('SshHost upload reuse rejects a staging symlink without touching its target', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-symlink-'))
+  const local = await mkdtemp(join(tmpdir(), 'phi-host-remote-upload-symlink-local-'))
+  try {
+    const canonicalRoot = await realpath(root)
+    const source = join(local, 'payload.bin')
+    const target = join(canonicalRoot, 'other.bin')
+    const staging = join(canonicalRoot, 'staging.bin')
+    const content = 'verified staged bytes'
+    await writeFile(source, content)
+    await writeFile(target, content)
+    await symlink(target, staging)
+    const host = new SshHost({
+      remoteRoot: root,
+      canonicalRoot,
+      connect: async () => createLocalShellSession(canonicalRoot)
+    })
+    const session = createWorkspaceHostRemoteSession(host, canonicalRoot)
+
+    await assert.rejects(
+      session.uploadFile(source, staging, {
+        transferId: 'workspace-host-symlink-reuse',
+        expectedSha256: createHash('sha256').update(content).digest('hex'),
+        hostKey: 'test-host',
+        workspaceId: 'test-workspace',
+        reuseVerifiedDestination: true
+      }),
+      (error: unknown) => (error as { code?: unknown }).code === 'INVALID_REQUEST'
+    )
+    assert.equal(await readFile(target, 'utf8'), content)
+  } finally {
+    await rm(local, { recursive: true, force: true })
     await rm(root, { recursive: true, force: true })
   }
 })

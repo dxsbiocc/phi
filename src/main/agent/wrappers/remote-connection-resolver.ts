@@ -108,6 +108,7 @@ export function resolveProjectRemoteTarget(
       target: {
         connection: remoteConnectionConfigForProfile(hostProfile),
         workspaceRoot: project.location.canonicalRoot,
+        agentDir,
         hpc: withHostEnvironmentPaths(
           configured?.hpc ?? { scheduler: 'local' },
           project.location.hostProfileId,
@@ -142,6 +143,7 @@ export function resolveProjectRemoteTarget(
       target: {
         connection: resolveRemoteConnectionConfig(connection, agentDir),
         workspaceRoot: project.remoteWorkspaceRoot,
+        agentDir,
         hpc: withHostEnvironmentPaths(connection.hpc, connection.hostProfileId, agentDir)
       },
       connectionId: connection.id,

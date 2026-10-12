@@ -17,7 +17,9 @@ import {
   type RemoteMicromambaArtifactPlan
 } from './remote-micromamba-artifact'
 import { getPhiAgentDir } from './runtime-paths'
+import { remoteTransferHostKey } from './transfer'
 import {
+  readLatestCapabilityProfileForHost,
   updateLatestCapabilityProfileMicromambaDownloadForHost,
   updateLatestCapabilityProfileMicromambaForHost
 } from './workspace-host/capability-profile-store'
@@ -160,7 +162,8 @@ function installationInput(
   request: RemoteMicromambaSettingsRequest,
   artifact: RemoteMicromambaArtifact & { url?: string; urls?: readonly string[] },
   obtainLocalArtifact: (() => Promise<RemoteMicromambaArtifact>) | undefined,
-  checkRuntimeRoot: CheckRemoteRuntimeRoot
+  checkRuntimeRoot: CheckRemoteRuntimeRoot,
+  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
 ): Parameters<typeof ensureRemoteMicromamba>[1] {
   return {
     runtimeRoot: request.runtimeRoot,
@@ -168,6 +171,9 @@ function installationInput(
     artifact,
     obtainLocalArtifact,
     checkRuntimeRoot,
+    transferHostKey: transfer.hostKey,
+    helperVersion: transfer.helperVersion,
+    agentDir: transfer.agentDir,
     signal: request.signal,
     onProgress: (progress) =>
       request.onProgress?.({
@@ -204,13 +210,14 @@ async function legacyInstallation(
   platform: Platform,
   request: RemoteMicromambaSettingsRequest,
   dependencies: RemoteMicromambaSettingsDependencies,
-  checkRuntimeRoot: CheckRemoteRuntimeRoot
+  checkRuntimeRoot: CheckRemoteRuntimeRoot,
+  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
 ): Promise<RemoteMicromambaResult> {
   const artifact = await obtainArtifact(platform, request, dependencies.getArtifact!)
   request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
   return (dependencies.ensure ?? ensureRemoteMicromamba)(
     session,
-    installationInput(request, artifact, undefined, checkRuntimeRoot)
+    installationInput(request, artifact, undefined, checkRuntimeRoot, transfer)
   )
 }
 
@@ -220,11 +227,19 @@ async function runInstallation(
   request: RemoteMicromambaSettingsRequest,
   dependencies: RemoteMicromambaSettingsDependencies,
   startedAt: number,
-  checkRuntimeRoot: CheckRemoteRuntimeRoot
+  checkRuntimeRoot: CheckRemoteRuntimeRoot,
+  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
 ): Promise<RemoteMicromambaResult> {
   try {
     if (dependencies.getArtifact && !dependencies.describeArtifact) {
-      return await legacyInstallation(session, platform, request, dependencies, checkRuntimeRoot)
+      return await legacyInstallation(
+        session,
+        platform,
+        request,
+        dependencies,
+        checkRuntimeRoot,
+        transfer
+      )
     }
     const artifact = describedArtifact(platform, request, dependencies)
     const getArtifact = dependencies.getArtifact ?? getRemoteMicromambaArtifact
@@ -235,7 +250,8 @@ async function runInstallation(
         request,
         artifact,
         () => obtainArtifact(platform, request, getArtifact, 'desktop-relay'),
-        checkRuntimeRoot
+        checkRuntimeRoot,
+        transfer
       )
     )
   } catch (error) {
@@ -293,13 +309,21 @@ export async function installRemoteMicromambaForHost(
         configuredRoot,
         dependencies.checkRuntimeRoot
       )
+    const capability = readLatestCapabilityProfileForHost(profile.hostAlias, { agentDir })
     const result = await runInstallation(
       session,
       platform,
       request,
       dependencies,
       startedAt,
-      checkRuntimeRoot
+      checkRuntimeRoot,
+      {
+        hostKey: remoteTransferHostKey(profile.hostAlias),
+        agentDir,
+        ...(capability?.helperStatus?.state === 'available' && capability.helperVersion
+          ? { helperVersion: capability.helperVersion }
+          : {})
+      }
     )
     persistCapabilityResult(profile.hostAlias, result, agentDir, dependencies)
     return result

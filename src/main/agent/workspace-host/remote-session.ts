@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import { posix } from 'node:path'
 
 import type {
@@ -182,9 +181,13 @@ export function createWorkspaceHostRemoteSession(
         return false
       }
     },
-    async uploadFile(localPath, remotePath) {
+    async uploadFile(localPath, remotePath, uploadOptions) {
       await monitored(async () => {
-        await host.fs.writeAtomic(remotePath, await readFile(localPath))
+        if (!host.transfer) throw new Error('远程工作区缺少流式上传后端')
+        await host.transfer.uploadFile(localPath, remotePath, {
+          ...uploadOptions,
+          signal: combinedSignal(controller.signal, uploadOptions?.signal)
+        })
       }, sessionOptions)
     },
     async close() {

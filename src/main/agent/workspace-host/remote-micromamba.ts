@@ -14,6 +14,8 @@ import type {
   RemoteRuntimeRootWarningCode
 } from '../../../shared/remoteRuntimeRootTypes'
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
+import type { RemoteStdioProcess } from '../wrappers/remote-ssh-session'
+import type { FileTransferCoordinator, TransferEvent } from '../transfer'
 import { checkRemoteRuntimeRoot } from './runtime-root-check'
 import {
   expectedRemoteMicromambaInfoPlatform,
@@ -59,6 +61,13 @@ export interface EnsureRemoteMicromambaOptions extends RemoteMicromambaInstallRe
   checkRuntimeRoot?: CheckRuntimeRoot
   now?: () => number
   randomId?: () => string
+  transferCoordinator?: FileTransferCoordinator
+  transferHostKey?: string
+  transferWorkspaceId?: string
+  helperConnect?: () => Promise<RemoteStdioProcess>
+  helperVersion?: string
+  agentDir?: string
+  onTransferEvent?: (event: TransferEvent) => void
 }
 
 interface OperationContext {
@@ -181,7 +190,14 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
     obtainLocalArtifact: context.options.obtainLocalArtifact,
     onProgress: (progress) => emit(context.options, progress),
     signal: context.options.signal,
-    randomId: context.options.randomId
+    randomId: context.options.randomId,
+    transferCoordinator: context.options.transferCoordinator,
+    transferHostKey: context.options.transferHostKey,
+    transferWorkspaceId: context.options.transferWorkspaceId,
+    helperConnect: context.options.helperConnect,
+    helperVersion: context.options.helperVersion,
+    agentDir: context.options.agentDir,
+    onTransferEvent: context.options.onTransferEvent
   })
   emit(context.options, { stage: 'verifying-installation', message: '正在验证远端 micromamba…' })
   const verification = await verifyInstalled(context)
