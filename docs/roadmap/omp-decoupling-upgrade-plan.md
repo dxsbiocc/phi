@@ -360,11 +360,25 @@ T8–T12 只依赖 T1，可以与 T2–T7 并行。如果两条线并行，T7 �
 
 ## 附录 A：基线（阶段 0 填写）
 
+记录于 2026-10-12，提交 `476d4843`，OMP 18.1.10。
+
 | 命令 | 18.1.10 结果 |
 |---|---|
-| `bun run typecheck` | 待填 |
-| `bun run lint` | 待填 |
-| `bun run test` | 待填 |
+| `bun run typecheck` | 通过 |
+| `bun run lint` | 通过；0 个错误，49 个 prettier 警告 |
+| `bun run test` | 5609 个：通过 5517，失败 5，取消 1，跳过 85，todo 1；用时约 6 分钟 |
+
+全套运行中失败或取消的 6 个测试，单独运行对应文件时全部通过，说明它们只在满载时出现超时或竞态，不是稳定复现的失败：
+
+| 文件 | 全套中的表现 | 单独运行 |
+|---|---|---|
+| `jupyter-runtime-backend` | 2 个各约 20 秒超时 | 8/8 通过 |
+| `remote-nextflow-install-flow` | 1 个失败（约 8 秒） | 2/2 通过 |
+| `workspace-host-contract`（`workspace host preserves an external write made while staging`） | 1 个失败（竞态用例） | local 25/25、ssh 27/27 通过 |
+| `workspace-host-runtime-root` | 1 个失败（慢容量探测用例） | 19/19 通过 |
+| `remote-notebook-tools-e2e` | 300 秒超时被取消 | 1/1 通过（约 7.6 秒） |
+
+后续阶段的"无回归"标准：typecheck 与 lint 无错误；全套测试中除上表列出的满载不稳定项外无失败，上表各文件单独运行仍全部通过。
 
 ## 附录 B：升级阻塞记录
 
