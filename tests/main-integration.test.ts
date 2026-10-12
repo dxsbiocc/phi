@@ -50,6 +50,26 @@ import * as electronBrowserEngine from '../src/main/browser/electron-browser-eng
 import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
 
 const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
+
+function assertRemoteWorkspaceFileRequest(
+  input: unknown
+): asserts input is { sessionId: string; projectId: string; path: string } {
+  assert.ok(typeof input === 'object' && input !== null && !Array.isArray(input))
+  const record = input as Record<string, unknown>
+  assert.deepEqual(
+    Object.keys(record).sort(),
+    ['path', 'projectId', 'sessionId'],
+    'remote file request fake must reject undeclared fields'
+  )
+  assertBoundaryIdentity({ sessionId: record.sessionId, projectId: record.projectId })
+  assert.equal(typeof record.sessionId, 'string')
+  assert.notEqual(record.sessionId, '')
+  assert.equal(typeof record.projectId, 'string')
+  assert.notEqual(record.projectId, '')
+  assert.equal(typeof record.path, 'string')
+  assert.notEqual(record.path, '')
+}
+
 const pendingStartupWindows = new Set<EventEmitter>()
 test.after(() => {
   try {
@@ -3506,45 +3526,54 @@ async function harness(
       }
     },
     './agent/remote-workspace-read': {
-      readRemoteWorkspacePath: async (request: Record<string, unknown>) => ({
-        kind: 'file',
-        path: 'ssh://cluster-one/canonical/project/readme.md',
-        content: `remote:${request.path}`,
-        fileSize: 13,
-        contentType: 'text/plain'
-      })
+      readRemoteWorkspacePath: async (request: unknown) => {
+        assertRemoteWorkspaceFileRequest(request)
+        return {
+          kind: 'file',
+          path: 'ssh://cluster-one/canonical/project/readme.md',
+          content: `remote:${request.path}`,
+          fileSize: 13,
+          contentType: 'text/plain'
+        }
+      }
     },
     './agent/remote-workspace-file-ui': {
-      previewRemoteWorkspaceFile: async (request: Record<string, unknown>) => ({
-        path: 'ssh://cluster-one/canonical/project/readme.md',
-        name: 'readme.md',
-        displayPath: 'cluster-one/canonical/project/readme.md',
-        rootPath: 'ssh://cluster-one/canonical/project',
-        rootLabel: 'cluster-one',
-        kind: 'text',
-        mimeType: 'text/plain',
-        bytes: 7,
-        previewBytes: 7,
-        truncated: false,
-        content: `remote:${request.path}`
-      }),
-      listRemoteWorkspaceDirectory: async (request: Record<string, unknown>) => ({
-        path: 'ssh://cluster-one/canonical/project',
-        name: 'project',
-        displayPath: 'cluster-one/canonical/project',
-        rootPath: 'ssh://cluster-one/canonical/project',
-        rootLabel: 'cluster-one',
-        entries: [
-          {
-            path: 'ssh://cluster-one/canonical/project/readme.md',
-            name: 'readme.md',
-            displayPath: 'cluster-one/canonical/project/readme.md',
-            kind: 'file'
-          }
-        ],
-        truncated: false,
-        requestPath: request.path
-      })
+      previewRemoteWorkspaceFile: async (request: unknown) => {
+        assertRemoteWorkspaceFileRequest(request)
+        return {
+          path: 'ssh://cluster-one/canonical/project/readme.md',
+          name: 'readme.md',
+          displayPath: 'cluster-one/canonical/project/readme.md',
+          rootPath: 'ssh://cluster-one/canonical/project',
+          rootLabel: 'cluster-one',
+          kind: 'text',
+          mimeType: 'text/plain',
+          bytes: 7,
+          previewBytes: 7,
+          truncated: false,
+          content: `remote:${request.path}`
+        }
+      },
+      listRemoteWorkspaceDirectory: async (request: unknown) => {
+        assertRemoteWorkspaceFileRequest(request)
+        return {
+          path: 'ssh://cluster-one/canonical/project',
+          name: 'project',
+          displayPath: 'cluster-one/canonical/project',
+          rootPath: 'ssh://cluster-one/canonical/project',
+          rootLabel: 'cluster-one',
+          entries: [
+            {
+              path: 'ssh://cluster-one/canonical/project/readme.md',
+              name: 'readme.md',
+              displayPath: 'cluster-one/canonical/project/readme.md',
+              kind: 'file'
+            }
+          ],
+          truncated: false,
+          requestPath: request.path
+        }
+      }
     },
     './agent/remote-workspace-search': {
       remoteGlob: async (request: Record<string, unknown>) => ({

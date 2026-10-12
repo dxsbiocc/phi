@@ -8569,7 +8569,7 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('remoteWorkspace:preview', async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      previewRemoteWorkspaceFile(request)
+      previewRemoteWorkspaceFile(request, { connectHost: connectRemoteWorkspaceHost })
     )
   )
   ipcMain.handle('remoteWorkspace:listDirectory', async (_, request: unknown) =>
