@@ -67,7 +67,7 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 - 不把智能体运行时搬到服务器（沿用 remote-parity 计划的原则）。
 - 不替换 OMP 的模型层（pi-ai / pi-catalog）、对话循环、上下文压缩、计划模式。这些继续直接跟随 OMP。
-- 不在本计划内做 Skills / MCP / 环境 / Office 的远程收敛，只列入后续清单（第 4 阶段）。
+- 不在本计划内做 Skills / MCP / 环境的远程收敛，只列入后续清单（第 4 阶段）。
 - 不做旧会话数据的迁移层（沿用 beta 路线图原则）。
 
 ---
@@ -172,7 +172,7 @@ bun run test
 
 1. 在 18.1.10 上记录 `typecheck`、`lint`、`test` 的当前结果，写入本文附录 A，作为后续"无回归"的比较对象。
 2. 新增 `scripts/check-engine-boundary.mjs` 与 `scripts/engine-boundary-allowlist.json`。白名单初始内容为当前全部 OMP import（约 40 个文件），接入 `lint`。
-3. 现有未提交改动（`src/preload/index.d.ts` 与 5 个测试文件）先由用户决定提交或搁置，再开始本计划。
+3. ~~现有未提交改动先提交或搁置~~：已完成（2026-10-12，测试改动已提交，`index.d.ts` 中重复的 import 已丢弃）。
 
 验收：`lint` 通过；新增一个引擎目录外的 OMP import 时 `lint` 失败。
 
@@ -180,7 +180,7 @@ bun run test
 
 **1a 目录迁移与 `PhiTool`**
 - `src/main/agent/omp/` → `src/main/agent/engine/`，更新引用。
-- 定义 `PhiTool` 与 `toOmpCustomTool`。把只为类型而 import OMP 的工具文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`office/*-tool(s).ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`agents/*.ts`。
+- 定义 `PhiTool` 与 `toOmpCustomTool`。把只为类型而 import OMP 的工具文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`agents/*.ts`。
 - 每改一个文件，从白名单删去对应条目。
 - 验收：引擎目录外只剩 M1 白名单中的终端例外。
 
@@ -268,7 +268,7 @@ bun run test
 
 **3c `write` / `edit`**
 - 迁移 `remote-workspace-write.ts`、`remote-workspace-edit.ts` 的逻辑（原子写、hash 校验、replace 歧义拒绝）。
-- 文件面板的变更通知、Office 草稿冲突检测（`office-reconcile`）要确认在本地新工具下仍然触发。
+- 文件面板的变更通知要确认在本地新工具下仍然触发。
 
 **3d `bash`**
 - 基于 `exec.run`：超时、输出上限、取消（`AbortSignal`）、退出码与截断提示。
@@ -360,23 +360,26 @@ T8–T12 只依赖 T1，可以与 T2–T7 并行。如果两条线并行，T7 �
 
 ## 附录 A：基线（阶段 0 填写）
 
-记录于 2026-10-12，提交 `476d4843`，OMP 18.1.10。
+记录于 2026-10-12，提交 `63088e84`（合并 `origin/main` 之后，原生 Office 功能已移除），OMP 18.1.10。
 
 | 命令 | 18.1.10 结果 |
 |---|---|
 | `bun run typecheck` | 通过 |
-| `bun run lint` | 通过；0 个错误，49 个 prettier 警告 |
-| `bun run test` | 5609 个：通过 5517，失败 5，取消 1，跳过 85，todo 1；用时约 6 分钟 |
+| `bun run lint` | 通过；0 个错误，2 个警告 |
+| `bun run test` | 4677 个：通过 4657，失败 8，跳过 11，todo 1；用时约 6 分钟 |
 
-全套运行中失败或取消的 6 个测试，单独运行对应文件时全部通过，说明它们只在满载时出现超时或竞态，不是稳定复现的失败：
+全套运行中失败的 8 个测试，单独运行对应文件时全部通过，说明它们只在满载时出现超时或竞态，不是稳定复现的失败：
 
-| 文件 | 全套中的表现 | 单独运行 |
+| 文件 | 全套中的失败数 | 单独运行 |
 |---|---|---|
-| `jupyter-runtime-backend` | 2 个各约 20 秒超时 | 8/8 通过 |
-| `remote-nextflow-install-flow` | 1 个失败（约 8 秒） | 2/2 通过 |
-| `workspace-host-contract`（`workspace host preserves an external write made while staging`） | 1 个失败（竞态用例） | local 25/25、ssh 27/27 通过 |
-| `workspace-host-runtime-root` | 1 个失败（慢容量探测用例） | 19/19 通过 |
-| `remote-notebook-tools-e2e` | 300 秒超时被取消 | 1/1 通过（约 7.6 秒） |
+| `envs-application-bun` | 2（约 5–8 秒超时） | 23/23 通过 |
+| `envs-application-tools` | 1（约 5 秒超时） | 13/13 通过 |
+| `jupyter-runtime-backend` | 2（各约 20 秒超时） | 8/8 通过 |
+| `remote-nextflow-install-flow` | 1 | 2/2 通过 |
+| `remote-notebook-tools-e2e` | 1 | 1/1 通过 |
+| `workspace-host-runtime-root` | 1（慢容量探测用例） | 19/19 通过 |
+
+此前在 `476d4843` 上的一次全套运行中，`workspace-host-contract` 的"暂存期间外部写入"竞态用例也失败过一次（local 25/25、ssh 27/27 单独运行通过），同样视为满载不稳定项。
 
 后续阶段的"无回归"标准：typecheck 与 lint 无错误；全套测试中除上表列出的满载不稳定项外无失败，上表各文件单独运行仍全部通过。
 
