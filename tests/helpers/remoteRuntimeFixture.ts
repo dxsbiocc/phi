@@ -32,6 +32,8 @@ export interface RemoteRuntimeFixture {
   runtimeRoot: string
   localAnchor: string
   remoteHome: string
+  /** PATH the fake server's commands inherit. */
+  serverPath: string
   workspace: RemoteRuntimeWorkspace
   sessions: LocalShellSession[]
   connect(): Promise<LocalShellSession>
@@ -77,6 +79,17 @@ phi:
 Remote test skill.
 `
 
+/**
+ * The fake server is this machine, and the server-Jupyter lookup checks PATH. Drop PATH entries
+ * that hold a `jupyter` executable so a developer's own Jupyter is never picked as the server's.
+ */
+function pathWithoutHostJupyter(path: string | undefined): string {
+  return (path ?? '')
+    .split(delimiter)
+    .filter((dir) => dir && !existsSync(join(dir, 'jupyter')))
+    .join(delimiter)
+}
+
 export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   const root = mkdtempSync(join(tmpdir(), 'phi-remote-runtime-'))
   const projectPath = join(root, 'server-project')
@@ -93,6 +106,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   const restoreSetsid = installSetsidShim(shimDir)
   const inheritedEnv = {
     ...process.env,
+    PATH: pathWithoutHostJupyter(process.env.PATH),
     HOME: remoteHome,
     CONDA_DEFAULT_ENV: 'private',
     CONDA_PREFIX: join(remoteHome, 'miniconda3'),
@@ -121,6 +135,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     runtimeRoot,
     localAnchor,
     remoteHome,
+    serverPath: inheritedEnv.PATH,
     workspace,
     sessions,
     connect,

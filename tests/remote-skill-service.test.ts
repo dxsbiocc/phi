@@ -407,7 +407,7 @@ function assertIsolatedSkillInvocation(
   assert.ok(invocation)
   assert.deepEqual(invocation.argv.slice(0, 3), ['--rc-file', '/dev/null', 'run'])
   assert.equal(invocation.env.HOME, setup.fixture.remoteHome)
-  assert.equal(invocation.env.PATH, process.env.PATH)
+  assert.equal(invocation.env.PATH, setup.fixture.serverPath)
   assert.equal(invocation.env.XDG_CACHE_HOME, join(setup.fixture.runtimeRoot, 'cache'))
   assert.notEqual(invocation.env.XDG_CACHE_HOME, join(setup.fixture.remoteHome, '.cache'))
   assert.equal(invocation.env.MAMBA_ROOT_PREFIX, setup.fixture.runtimeRoot)
