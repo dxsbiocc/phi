@@ -17,6 +17,10 @@ import { ConnectorSetupBusyError, type ConnectorSetupTracker } from './connector
 import { validateName } from './connector-name'
 import type { EnvironmentLookup } from './stdio-environment'
 import { ConfiguredStdioProbeError } from '../omp/configured-stdio-probe-error'
+import {
+  classifyLocalConnectorFailure,
+  type LocalConnectorFailureClassification
+} from './local-connector-failure'
 
 const LOCAL_CONNECTOR_TIMEOUT_MS = 600_000
 
@@ -111,7 +115,7 @@ export class LocalConnectorJobs {
               return tools
             } catch (error) {
               if (job.cancelled) throw new Error('已取消')
-              throw localProbeFailure(error)
+              throw localProbeFailure(error, request.hint)
             } finally {
               job.probeStarted = false
             }
@@ -191,16 +195,43 @@ export class LocalConnectorJobs {
 const EARLY_EXIT_HINT =
   '服务在响应前就退出了，进程输出见详情。若它需要先初始化（例如运行 init），请先在终端完成。'
 
-function localProbeFailure(error: unknown): unknown {
+class LocalConnectorProbeFailure extends ConfiguredStdioProbeError {
+  readonly failureKind: LocalConnectorFailureClassification['kind']
+  readonly failureReason?: string
+  readonly setupHint?: McpConnectorSetupProgress['setupHint']
+
+  constructor(
+    message: string,
+    detail: string | undefined,
+    classification: LocalConnectorFailureClassification,
+    hint: LocalMcpConnectorRequest['hint']
+  ) {
+    super(message, detail)
+    this.failureKind = classification.kind
+    if (classification.reason) this.failureReason = classification.reason
+    if (hint) {
+      this.setupHint = {
+        ...(hint.readmeUrl ? { readmeUrl: hint.readmeUrl } : {}),
+        ...(hint.setupCommands ? { commands: [...hint.setupCommands] } : {})
+      }
+    }
+  }
+}
+
+function localProbeFailure(error: unknown, hint: LocalMcpConnectorRequest['hint']): unknown {
   if (!(error instanceof Error)) return error
   const detail = probeErrorDetail(error)
-  if (
-    !detail ||
-    !/MCP subprocess .*?(?:closed|exited).*?before (?:responding|handshake)/iu.test(error.message)
-  ) {
-    return error
-  }
-  const enhanced = new ConfiguredStdioProbeError(`${error.message}\n${EARLY_EXIT_HINT}`, detail)
+  const classification = classifyLocalConnectorFailure({ error: error.message, detail })
+  const earlyExit = Boolean(
+    detail &&
+    /MCP subprocess .*?(?:closed|exited).*?before (?:responding|handshake)/iu.test(error.message)
+  )
+  const enhanced = new LocalConnectorProbeFailure(
+    earlyExit ? `${error.message}\n${EARLY_EXIT_HINT}` : error.message,
+    detail,
+    classification,
+    hint
+  )
   if (error.stack) enhanced.stack = error.stack
   return enhanced
 }
@@ -219,7 +250,17 @@ function copyRequest(request: LocalMcpConnectorRequest): LocalMcpConnectorReques
     ...request,
     runtime: { ...request.runtime },
     args: [...request.args],
-    env: { ...request.env }
+    env: { ...request.env },
+    ...(request.hint
+      ? {
+          hint: {
+            ...request.hint,
+            ...(request.hint.setupCommands
+              ? { setupCommands: [...request.hint.setupCommands] }
+              : {})
+          }
+        }
+      : {})
   }
 }
 

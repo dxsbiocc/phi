@@ -48,6 +48,8 @@ export interface TerminalPanelProps {
   projects: readonly Project[]
   /** Maximize/close controls supplied by the workspace workbench slot. */
   headerActions?: ReactNode
+  requestedInput?: { id: string; text: string } | null
+  onRequestedInputHandled?: (id: string) => void
 }
 
 interface AvailableTerminalPanelProps extends Omit<TerminalPanelProps, 'bridge'> {
@@ -113,8 +115,10 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
 
 function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.Element {
   const theme = useTheme()
+  const { requestedInput, onRequestedInputHandled } = props
   const workspace = useTerminalWorkspace(props.bridge, props.projects)
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const requestedInputIdRef = useRef<string | null>(null)
   const [pendingPaste, setPendingPaste] = useState<{
     terminalId: string
     text: string
@@ -165,6 +169,33 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
     if (workspaceTarget === 'remote' || !workspaceReady) return
     void ensureWorkspace(estimatedTerminalSize(viewportRef.current))
   }, [ensureWorkspace, workspaceReady, workspaceTarget])
+
+  useEffect(() => {
+    if (
+      !requestedInput ||
+      !activeId ||
+      !activeView ||
+      workspace.activeTerminal?.state !== 'open' ||
+      requestedInputIdRef.current === requestedInput.id
+    ) {
+      return
+    }
+    requestedInputIdRef.current = requestedInput.id
+    void workspace.controller
+      .submitPaste(activeId, requestedInput.text)
+      .then((result) => {
+        if (!result.ok) setNotice(result.message)
+        else activeView.focus()
+      })
+      .finally(() => onRequestedInputHandled?.(requestedInput.id))
+  }, [
+    activeId,
+    activeView,
+    onRequestedInputHandled,
+    requestedInput,
+    workspace.activeTerminal?.state,
+    workspace.controller
+  ])
 
   useEffect(() => {
     const container = viewportRef.current

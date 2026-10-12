@@ -91,7 +91,7 @@ function analyzePythonProject(
     summary: ['Python 项目', name, version].filter(Boolean).join(' '),
     ...(name ? { name } : {}),
     ...(version ? { version } : {}),
-    ...readme(root, repository, sha),
+    ...readme(root, repository, sha, name),
     notices: ['Python 项目暂不支持自动安装；可在终端自行安装后，用 本地 (stdio) 添加']
   }
 }
@@ -130,7 +130,7 @@ function analyzeNodeProject(
     ...(nodeEngine ? { nodeEngine } : {}),
     hasLifecycleScripts,
     hasLockfile,
-    ...readme(root, repository, sha),
+    ...readme(root, repository, sha, name),
     notices
   }
 }
@@ -184,18 +184,68 @@ function nodeEntry(bin: unknown, name: string | undefined): string | undefined {
 function readme(
   root: string,
   repository: GithubRepository,
-  sha: string
-): Pick<GithubProjectHint, 'readmeUrl'> {
+  sha: string,
+  packageName?: string
+): Pick<GithubProjectHint, 'readmeUrl' | 'setupCommands'> {
   try {
     const entry = readdirSync(root, { withFileTypes: true }).find(
       (item) => item.name.toLowerCase() === 'readme.md' && item.isFile() && !item.isSymbolicLink()
     )
-    return entry
-      ? { readmeUrl: `https://github.com/${repository.repo}/blob/${sha}/${entry.name}` }
-      : {}
+    if (!entry) return {}
+    const contents = readRootFile(root, entry.name)
+    const setupCommands = contents ? extractSetupCommands(contents, packageName) : []
+    return {
+      readmeUrl: `https://github.com/${repository.repo}/blob/${sha}/${entry.name}`,
+      ...(setupCommands.length ? { setupCommands } : {})
+    }
   } catch {
     return {}
   }
+}
+
+export function extractSetupCommands(readme: string, packageName?: string): string[] {
+  const commands: string[] = []
+  let fenced = false
+  const packagePrefix = packageName
+    ? new RegExp(`^${escapeRegExp(packageName)}(?:\\s|$)`, 'iu')
+    : null
+  for (const rawLine of readme.split(/\r?\n/u)) {
+    if (/^\s*```/u.test(rawLine)) {
+      fenced = !fenced
+      continue
+    }
+    if (!fenced) continue
+
+    const command = rawLine
+      .trim()
+      .replace(/^(?:\$\s+|>\s+|PS>\s+)/iu, '')
+      .replace(/\s+#.*$/u, '')
+      .trim()
+    if (!command || command.length > 200 || /[|;`<>&]|\$\(/u.test(command)) continue
+    if (/\b[A-Za-z0-9_-]*(?:token|secret|password|key)[A-Za-z0-9_-]*\s*=/iu.test(command)) {
+      continue
+    }
+    if (!/\b(?:init|setup|login|configure|config|auth|authenticate)\b/iu.test(command)) continue
+    if (!allowedSetupCommandPrefix(command, packagePrefix)) continue
+    if (!commands.includes(command)) commands.push(command)
+    if (commands.length === 3) break
+  }
+  return commands
+}
+
+function allowedSetupCommandPrefix(command: string, packagePrefix: RegExp | null): boolean {
+  return (
+    /^(?:npx|bunx|uvx|node|python)\b/iu.test(command) ||
+    /^bun\s+(?:x|run)\b/iu.test(command) ||
+    /^pipx\s+run\b/iu.test(command) ||
+    /^pnpm\s+dlx\b/iu.test(command) ||
+    /^npm\s+exec\b/iu.test(command) ||
+    Boolean(packagePrefix?.test(command))
+  )
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function parseJsonRecord(text: string): Record<string, unknown> | undefined {

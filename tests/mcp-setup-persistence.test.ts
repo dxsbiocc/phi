@@ -79,6 +79,55 @@ test('local stdio failure detail round-trips and is capped at 4096 characters', 
   })
 })
 
+test('classified local failure guidance round-trips while old records remain valid', async () => {
+  await fixture(async (path) => {
+    const tracker = new ConnectorSetupTracker(() => {}, undefined, { path })
+    await assert.rejects(
+      tracker.run('mail', (report) => {
+        report('starting', { kind: 'local-stdio', title: 'mail' })
+        throw Object.assign(new Error('probe failed'), {
+          detail: 'Configuration file not found: /tmp/mail.toml',
+          failureKind: 'needs-setup',
+          failureReason: 'Configuration file not found: /tmp/mail.toml',
+          setupHint: {
+            readmeUrl: 'https://github.com/example/mail/blob/main/README.md',
+            commands: ['mail init']
+          }
+        })
+      }),
+      /probe failed/
+    )
+
+    const restored = new ConnectorSetupTracker(() => {}, undefined, { path }).get('mail')!
+    assert.equal(restored.failureKind, 'needs-setup')
+    assert.equal(restored.failureReason, 'Configuration file not found: /tmp/mail.toml')
+    assert.deepEqual(restored.setupHint, {
+      readmeUrl: 'https://github.com/example/mail/blob/main/README.md',
+      commands: ['mail init']
+    })
+
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        records: [
+          {
+            id: 'old-mail',
+            phase: 'failed',
+            revision: 1,
+            updatedAt: '2026-10-11T08:00:01.000Z',
+            error: 'old failure'
+          }
+        ]
+      })
+    )
+    const old = new ConnectorSetupTracker(() => {}, undefined, { path }).get('old-mail')!
+    assert.equal(old.error, 'old failure')
+    assert.equal(old.failureKind, undefined)
+    assert.equal(old.setupHint, undefined)
+  })
+})
+
 test('invalid persisted detail keeps the existing corrupt-file quarantine behavior', async () => {
   for (const detail of [7, 'x'.repeat(4097)]) {
     await fixture(async (path) => {

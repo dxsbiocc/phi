@@ -8,7 +8,7 @@ import {
 
 export function useLocalConnectorNotices(
   notify: LocalConnectorNoticeNotify,
-  onOpenBackgroundJobs: () => void,
+  onOpenBackgroundJobs: (jobId?: string) => void,
   onReady: () => void | Promise<void>
 ): void {
   const stateRef = useRef<LocalConnectorNoticeListenerState>({

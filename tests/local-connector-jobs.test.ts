@@ -71,6 +71,22 @@ async function waitForTerminal(
   }
 }
 
+async function waitForTerminalAfterRevision(
+  tracker: ConnectorSetupTracker,
+  name: string,
+  revision: number
+): Promise<NonNullable<ReturnType<ConnectorSetupTracker['get']>>> {
+  const deadline = Date.now() + 3_000
+  while (true) {
+    const snapshot = tracker.get(name)
+    if (snapshot && snapshot.revision > revision && ['ready', 'failed'].includes(snapshot.phase)) {
+      return snapshot
+    }
+    assert.ok(Date.now() < deadline, `job ${name} did not finish after revision ${revision}`)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
 test('local connector start returns immediately and only writes after a successful probe', async () => {
   const f = fixture()
   try {
@@ -189,6 +205,8 @@ test('probe failure and cancellation end failed without writing configuration', 
       assert.equal(failed.failedPhase, 'starting')
       assert.equal(failed.error, mode === 'failure' ? 'fixture probe failed' : '已取消')
       assert.equal(failed.detail, undefined)
+      assert.equal(failed.failureKind, mode === 'failure' ? 'generic' : undefined)
+      assert.equal(failed.failureReason, undefined)
       assert.deepEqual(cancelled, mode === 'cancel' ? ['request-cancel'] : [])
       assert.equal(existsSync(join(f.agentDir, 'mcp.json')), false)
     } finally {
@@ -213,7 +231,14 @@ test('pre-handshake probe failure stores stderr detail and adds the initializati
       cancelProbe: () => undefined,
       applyEnabled: () => undefined
     })
-    jobs.startLocalConnectorAdd(f.request)
+    const request = {
+      ...f.request,
+      hint: {
+        readmeUrl: 'https://github.com/xieningqing/qq-email-mcp/blob/abc/README.md',
+        setupCommands: ['npx -y qq-email-mcp init']
+      }
+    }
+    jobs.startLocalConnectorAdd(request)
 
     const failed = await waitForTerminal(tracker, 'mail')
     assert.equal(failed.phase, 'failed')
@@ -222,6 +247,17 @@ test('pre-handshake probe failure stores stderr detail and adds the initializati
       failed.error,
       'MCP subprocess closed stdout before responding\n服务在响应前就退出了，进程输出见详情。若它需要先初始化（例如运行 init），请先在终端完成。'
     )
+    assert.equal(failed.failureKind, 'needs-setup')
+    assert.equal(failed.failureReason, 'Config not found, run init first')
+    assert.deepEqual(failed.setupHint, {
+      readmeUrl: request.hint.readmeUrl,
+      commands: request.hint.setupCommands
+    })
+
+    jobs.retryLocalConnectorAdd('mail')
+    const retried = await waitForTerminalAfterRevision(tracker, 'mail', failed.revision)
+    assert.equal(retried.failureKind, 'needs-setup')
+    assert.deepEqual(retried.setupHint, failed.setupHint)
     assert.equal(existsSync(join(f.agentDir, 'mcp.json')), false)
   } finally {
     f.cleanup()
@@ -247,6 +283,8 @@ test('non-handshake probe failure stores detail without changing the error messa
     const failed = await waitForTerminal(tracker, 'mail')
     assert.equal(failed.error, 'fixture tool-list failure')
     assert.equal(failed.detail, 'server output')
+    assert.equal(failed.failureKind, 'generic')
+    assert.equal(failed.failureReason, undefined)
   } finally {
     f.cleanup()
   }
@@ -341,6 +379,41 @@ test('persisted local job presentation contains no environment values', async ()
     assert.match(ready.summary ?? '', /API_LABEL/)
     assert.doesNotMatch(ready.summary ?? '', /super-secret-value/)
     assert.doesNotMatch(readFileSync(statePath, 'utf8'), /super-secret-value/)
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('persisted setup guidance contains validated hints but never environment values', async () => {
+  const f = fixture()
+  try {
+    const statePath = join(f.root, 'connector-setup.json')
+    const tracker = new ConnectorSetupTracker(() => {}, undefined, { path: statePath })
+    const jobs = createLocalConnectorJobs({
+      tracker,
+      agentDir: f.agentDir,
+      runtimeRoot: join(f.root, 'runtime'),
+      probe: async () => {
+        throw Object.assign(new Error('MCP subprocess closed stdout before responding'), {
+          detail: 'Configuration file not found: /tmp/mail.toml'
+        })
+      },
+      cancelProbe: () => undefined,
+      applyEnabled: () => undefined
+    })
+    jobs.startLocalConnectorAdd({
+      ...f.request,
+      hint: {
+        readmeUrl: 'https://github.com/example/mail/blob/main/README.md',
+        setupCommands: ['mail-server init']
+      }
+    })
+    await waitForTerminal(tracker, 'mail')
+
+    const persisted = readFileSync(statePath, 'utf8')
+    assert.match(persisted, /"failureKind":"needs-setup"/)
+    assert.match(persisted, /"commands":\["mail-server init"\]/)
+    assert.doesNotMatch(persisted, /super-secret-value/)
   } finally {
     f.cleanup()
   }

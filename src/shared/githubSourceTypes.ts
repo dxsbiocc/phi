@@ -32,6 +32,7 @@ export interface GithubProjectHint {
   hasLifecycleScripts?: boolean
   hasLockfile?: boolean
   readmeUrl?: string
+  setupCommands?: string[]
   npm?: GithubProjectHintNpm
   notices: string[]
 }
@@ -41,6 +42,10 @@ export interface GithubLocalConnectorDraft {
   command: 'x'
   args: string[]
   runtimeHint: 'bun'
+  setup?: {
+    readmeUrl?: string
+    commands?: string[]
+  }
 }
 
 export interface GithubSourcePreview {

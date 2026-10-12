@@ -251,7 +251,10 @@ test('previews an ordinary Node repository as a local draft but still rejects so
         })
       )
     },
-    { path: `qq-email-mcp-${sha}/README.md`, data: Buffer.from('# QQ Email MCP\n') }
+    {
+      path: `qq-email-mcp-${sha}/README.md`,
+      data: Buffer.from('# QQ Email MCP\n\n```sh\nnpx -y qq-email-mcp init\n```\n')
+    }
   ])
   const requests: string[] = []
   const fetcher: typeof fetch = async (input) => {
@@ -295,7 +298,11 @@ test('previews an ordinary Node repository as a local draft but still rejects so
     suggestedName: 'qq-email-mcp',
     command: 'x',
     args: ['--bun', 'qq-email-mcp@0.1.1'],
-    runtimeHint: 'bun'
+    runtimeHint: 'bun',
+    setup: {
+      readmeUrl: `https://github.com/xieningqing/qq-email-mcp/blob/${sha}/README.md`,
+      commands: ['npx -y qq-email-mcp init']
+    }
   })
   assert.ok(
     preview.projectHint?.notices.includes(

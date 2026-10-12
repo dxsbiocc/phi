@@ -16,7 +16,7 @@ export function localConnectorNoticeKey(progress: McpConnectorSetupProgress): st
 export function localConnectorNotice(
   progress: McpConnectorSetupProgress,
   announcedKeys: ReadonlySet<string>,
-  onOpenBackgroundJobs: () => void
+  onOpenBackgroundJobs: (jobId?: string) => void
 ): LocalConnectorNotice | null {
   if (progress.kind !== 'local-stdio') return null
   if (announcedKeys.has(localConnectorNoticeKey(progress))) return null
@@ -24,7 +24,7 @@ export function localConnectorNotice(
   const title = progress.title ?? progress.id
   const backgroundJobsAction = {
     label: '查看后台任务',
-    onClick: onOpenBackgroundJobs
+    onClick: () => onOpenBackgroundJobs()
   }
 
   if (progress.phase === 'starting') {
@@ -45,6 +45,13 @@ export function localConnectorNotice(
   if (progress.phase !== 'failed') return null
   if (progress.error === '已取消') {
     return { message: `已取消添加 ${title}`, severity: 'info' }
+  }
+  if (progress.failureKind === 'needs-setup') {
+    return {
+      message: `${title} 需要先完成配置，点击查看怎么做`,
+      severity: 'info',
+      action: { label: '去处理', onClick: () => onOpenBackgroundJobs(progress.id) }
+    }
   }
   return {
     message: `添加 ${title} 失败：${progress.error ?? '未知错误'}${

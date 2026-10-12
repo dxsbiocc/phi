@@ -14,6 +14,7 @@ type LocalRequest = {
   args: string[]
   env: Record<string, string>
   cwd?: string
+  hint?: { readmeUrl?: string; setupCommands?: string[] }
 }
 
 const LOCAL_CHANNELS = [
@@ -76,7 +77,11 @@ test('local connector IPC validates requests and refreshes running sessions afte
     runtime: { kind: 'environment', ref: 'phi:python@1' },
     command: 'fixture-server',
     args: ['--stdio'],
-    env: { FIXTURE_MODE: 'test' }
+    env: { FIXTURE_MODE: 'test' },
+    hint: {
+      readmeUrl: 'https://github.com/example/fixture/blob/main/README.md',
+      setupCommands: ['fixture-server init']
+    }
   }
   const validated = { ...input, name: 'validated-name' }
   const calls: Array<{ operation: string; value?: unknown }> = []

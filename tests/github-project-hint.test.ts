@@ -101,6 +101,53 @@ test('reports lifecycle, lockfile, private-package, and README facts', () => {
   ])
 })
 
+test('extracts only safe setup commands from fenced README blocks', () => {
+  const root = sandbox()
+  writeJson(root, { name: 'qq-email-mcp', version: '0.1.1' })
+  writeFileSync(
+    join(root, 'README.md'),
+    [
+      'npx -y qq-email-mcp init',
+      '```sh',
+      '$ npx -y qq-email-mcp init # initialize once',
+      '> bunx qq-email-mcp configure',
+      'PS> npm exec qq-email-mcp -- login',
+      'uvx qq-email-mcp auth',
+      'npx qq-email-mcp init | tee output',
+      'npx qq-email-mcp init && echo done',
+      'npx qq-email-mcp init & sleep 1',
+      'API_KEY=secret npx qq-email-mcp init',
+      'node setup.js > output',
+      '`npx qq-email-mcp init`',
+      '$ npx -y qq-email-mcp init',
+      '```',
+      '```text',
+      'qq-email-mcp setup',
+      '```'
+    ].join('\n')
+  )
+
+  assert.deepEqual(analyzeProject(root, repository, sha).setupCommands, [
+    'npx -y qq-email-mcp init',
+    'bunx qq-email-mcp configure',
+    'npm exec qq-email-mcp -- login'
+  ])
+})
+
+test('ignores oversized and symlinked README files', () => {
+  const oversized = sandbox()
+  writeJson(oversized, { name: 'qq-email-mcp', version: '0.1.1' })
+  writeFileSync(join(oversized, 'README.md'), Buffer.alloc(1024 * 1024 + 1, 0x20))
+  assert.equal(analyzeProject(oversized, repository, sha).setupCommands, undefined)
+
+  const linked = sandbox()
+  const outside = sandbox()
+  writeJson(linked, { name: 'qq-email-mcp', version: '0.1.1' })
+  writeFileSync(join(outside, 'README.md'), '```\nnpx qq-email-mcp init\n```\n')
+  symlinkSync(join(outside, 'README.md'), join(linked, 'README.md'))
+  assert.equal(analyzeProject(linked, repository, sha).setupCommands, undefined)
+})
+
 test('does not treat entries outside the snapshot or symlinked entries as committed', () => {
   const root = sandbox()
   const outside = sandbox()

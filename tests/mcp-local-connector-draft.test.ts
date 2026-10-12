@@ -157,6 +157,29 @@ test('GitHub local draft prefills exact argv and selects Phi built-in Bun when a
   )
 })
 
+test('GitHub setup hints survive draft conversion and request building unchanged', () => {
+  const setup = {
+    readmeUrl: 'https://github.com/xieningqing/qq-email-mcp/blob/abc/README.md',
+    commands: ['npx -y qq-email-mcp init']
+  }
+  const state = draftToFormState(
+    {
+      tab: 'local',
+      name: 'qq-email-mcp',
+      runtimeHint: 'bun',
+      command: 'x',
+      args: ['--bun', 'qq-email-mcp@0.1.1'],
+      setup
+    },
+    [{ ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }]
+  )
+  assert.deepEqual(state.hint, {
+    readmeUrl: setup.readmeUrl,
+    setupCommands: setup.commands
+  })
+  assert.deepEqual(buildLocalConnectorRequest(state).hint, state.hint)
+})
+
 test('GitHub Bun draft stays prefilled but unselected when built-in Bun is unavailable', () => {
   const state = draftToFormState(
     {

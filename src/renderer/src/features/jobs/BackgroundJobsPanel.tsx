@@ -136,10 +136,18 @@ function upsertConnectorJob(
 
 export function BackgroundJobsPanel({
   onOpenSession,
-  onOpenWrapper
+  onOpenWrapper,
+  requestedConnectorJobId,
+  onRequestedConnectorJobHandled,
+  onOpenSetupAgent,
+  onOpenSetupTerminal
 }: {
   onOpenSession: (path: string) => void
   onOpenWrapper?: (canonicalId: string) => void
+  requestedConnectorJobId?: string | null
+  onRequestedConnectorJobHandled?: (id: string) => void
+  onOpenSetupAgent?: (prompt: string) => void
+  onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
   const [agentJobs, setAgentJobs] = useState<BackgroundAgentJob[]>([])
   const [shellJobs, setShellJobs] = useState<BackgroundShellJob[]>([])
@@ -232,6 +240,16 @@ export function BackgroundJobsPanel({
       }
     })
   }, [])
+
+  useEffect(() => {
+    if (!requestedConnectorJobId) return
+    if (!connectorJobs.some((setup) => setup.id === requestedConnectorJobId)) return
+    const timer = window.setTimeout(() => {
+      setSelectedConnectorId(requestedConnectorJobId)
+      onRequestedConnectorJobHandled?.(requestedConnectorJobId)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [connectorJobs, onRequestedConnectorJobHandled, requestedConnectorJobId])
 
   const clearRecent = (): void => {
     dismissBackgroundJobs(jobs.recent.map((item) => item.key))
@@ -358,7 +376,11 @@ export function BackgroundJobsPanel({
           </Typography>
           <Typography
             variant="caption"
-            color="text.secondary"
+            color={
+              item.kind === 'connector' && item.setup.failureKind === 'needs-setup'
+                ? 'warning.main'
+                : 'text.secondary'
+            }
             noWrap={item.kind !== 'connector'}
             component="div"
             title={detail}
@@ -523,6 +545,14 @@ export function BackgroundJobsPanel({
               setup: selectedConnector
             })
           }
+          onOpenSetupAgent={(prompt) => {
+            setSelectedConnectorId(null)
+            onOpenSetupAgent?.(prompt)
+          }}
+          onOpenSetupTerminal={(command) => {
+            setSelectedConnectorId(null)
+            onOpenSetupTerminal?.(command)
+          }}
           onClose={() => setSelectedConnectorId(null)}
         />
       ) : null}

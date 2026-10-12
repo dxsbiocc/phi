@@ -5,6 +5,7 @@ import test from 'node:test'
 import type { McpConnectorSetupProgress } from '../src/shared/mcpConnectorCatalog'
 import {
   connectorJobDetail,
+  connectorJobStatusLabel,
   selectBackgroundJobs
 } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
 
@@ -68,6 +69,13 @@ test('connector job labels show elapsed time, tools, failures, and cancellation'
     '失败 · fixture failed'
   )
   assert.equal(connectorJobDetail(setup({ phase: 'failed', error: '已取消' }), 0), '已取消')
+  const needsSetup = setup({
+    phase: 'failed',
+    failureKind: 'needs-setup',
+    failureReason: 'Configuration file not found'
+  })
+  assert.equal(connectorJobDetail(needsSetup, 0), '需要先配置 · Configuration file not found')
+  assert.equal(connectorJobStatusLabel(needsSetup), '需要先配置')
 })
 
 test('background jobs panel wires connector polling, events, cancel, retry, and display copy', () => {
@@ -80,6 +88,8 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(source, /连接器/)
   assert.match(source, /重试/)
   assert.match(source, /ConnectorJobDetailDialog/)
+  assert.match(source, /requestedConnectorJobId/)
+  assert.match(source, /onRequestedConnectorJobHandled/)
   assert.match(source, /role=\{item\.kind === 'connector' \? 'button' : undefined\}/)
   assert.match(source, /tabIndex=\{item\.kind === 'connector' \? 0 : undefined\}/)
   assert.match(source, /event\.key === 'Enter' \|\| event\.key === ' '/)
@@ -91,4 +101,5 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(source, /event\.stopPropagation\(\)/)
   assert.match(source, /overflowWrap: 'anywhere'/)
   assert.match(source, /WebkitLineClamp: 2/)
+  assert.match(source, /failureKind === 'needs-setup'[\s\S]*?warning\.main/)
 })

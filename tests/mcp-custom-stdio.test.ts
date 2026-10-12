@@ -129,6 +129,46 @@ test('validates only Bun x and run subcommands with the existing argument and en
   }
 })
 
+test('validates bounded non-secret setup hints without adding them to the launch entry', () => {
+  const agentDir = join(mkdtempSync(join(tmpdir(), 'phi-custom-stdio-hint-')), 'agent')
+  const valid = {
+    name: 'hinted-server',
+    runtime: { kind: 'environment' as const, ref: 'phi:python@1' },
+    command: 'mcp-server',
+    args: ['--stdio'],
+    env: {},
+    hint: {
+      readmeUrl: 'https://github.com/example/hinted-server/blob/main/README.md',
+      setupCommands: ['uvx hinted-server init']
+    }
+  }
+  try {
+    assert.deepEqual(validateLocalConnectorRequest(valid, { agentDir }), valid)
+    for (const hint of [
+      { readmeUrl: 'http://github.com/example/repo' },
+      { readmeUrl: 'https://gitlab.com/example/repo' },
+      { readmeUrl: 'https://user:password@github.com/example/repo' },
+      { readmeUrl: `https://github.com/${'x'.repeat(501)}` },
+      { setupCommands: ['one', 'two', 'three', 'four'] },
+      { setupCommands: ['line one\nline two'] },
+      { setupCommands: ['x'.repeat(201)] },
+      { setupCommands: [7] },
+      { setupCommands: [], unknown: true }
+    ]) {
+      assert.throws(
+        () => validateLocalConnectorRequest({ ...valid, hint }, { agentDir }),
+        /提示|README|命令|未知/
+      )
+    }
+    assert.throws(
+      () => validateLocalConnectorRequest({ ...valid, unexpected: true }, { agentDir }),
+      /未知字段/
+    )
+  } finally {
+    rmSync(dirname(agentDir), { recursive: true, force: true })
+  }
+})
+
 test('validation can use an injected filesystem without touching host paths', () => {
   const fileSystem = {
     access: (): void => undefined,

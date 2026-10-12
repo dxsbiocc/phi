@@ -100,6 +100,32 @@ test('local connector notices map start, ready, cancellation, and failure feedba
     '添加 Literature 失败：MCP subprocess closed stdout before responding（详情见后台任务）'
   )
   assert.equal(failedWithDetail?.action?.label, '查看后台任务')
+
+  const openedIds: string[] = []
+  const needsSetup = localConnectorNotice(
+    progress({
+      phase: 'failed',
+      revision: 7,
+      failureKind: 'needs-setup',
+      failureReason: 'Configuration file not found'
+    }),
+    new Set(),
+    (id) => openedIds.push(id)
+  )
+  assert.deepEqual(
+    {
+      message: needsSetup?.message,
+      severity: needsSetup?.severity,
+      label: needsSetup?.action?.label
+    },
+    {
+      message: 'Literature 需要先完成配置，点击查看怎么做',
+      severity: 'info',
+      label: '去处理'
+    }
+  )
+  needsSetup?.action?.onClick()
+  assert.deepEqual(openedIds, ['local:literature'])
 })
 
 test('local connector notices deduplicate by id and revision', () => {
@@ -164,8 +190,9 @@ test('the app closes connector dialogs before opening jobs from a notice action'
   assert.match(app, /useLocalConnectorNotices\(showSnackbar, onOpenLocalConnectorJobs/)
   assert.match(
     app,
-    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?onOpenBackgroundJobs\(\)/
+    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?setRequestedConnectorJobId[\s\S]*?onOpenBackgroundJobs\(\)/
   )
+  assert.match(app, /requestedConnectorJobId=\{requestedConnectorJobId\}/)
   assert.doesNotMatch(app, /window\.api\.onMcpConnectorSetupChanged/)
   assert.match(view, /onRegisterConnectorDialogCloser\?\.\(closeCatalog\)/)
   assert.match(view, /onClose=\{closeCatalog\}/)

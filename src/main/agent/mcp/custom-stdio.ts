@@ -367,7 +367,7 @@ export function validateLocalConnectorRequest(
   options: LocalConnectorValidationOptions = {}
 ): LocalMcpConnectorRequest {
   if (!isRecord(raw)) throw new Error('本地连接器设置无效')
-  rejectUnknownKeys(raw, new Set(['name', 'runtime', 'command', 'args', 'env', 'cwd']))
+  rejectUnknownKeys(raw, new Set(['name', 'runtime', 'command', 'args', 'env', 'cwd', 'hint']))
   const name = validateName(raw.name as string)
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const catalogIds = options.catalogIds ?? []
@@ -385,7 +385,61 @@ export function validateLocalConnectorRequest(
   const args = validateArgs(raw.args)
   const env = validateEnv(raw.env)
   const cwd = validateCwd(raw.cwd, fileSystem)
-  return { name, runtime, command, args, env, ...(cwd ? { cwd } : {}) }
+  const hint = validateHint(raw.hint)
+  return { name, runtime, command, args, env, ...(cwd ? { cwd } : {}), ...(hint ? { hint } : {}) }
+}
+
+function validateHint(value: unknown): LocalMcpConnectorRequest['hint'] | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) throw new Error('设置提示必须是对象')
+  rejectUnknownKeys(value, new Set(['readmeUrl', 'setupCommands']))
+
+  let readmeUrl: string | undefined
+  if (value.readmeUrl !== undefined) {
+    if (typeof value.readmeUrl !== 'string' || value.readmeUrl.length > 500) {
+      throw new Error('README 提示链接无效')
+    }
+    try {
+      const url = new URL(value.readmeUrl)
+      if (
+        url.protocol !== 'https:' ||
+        url.hostname.toLowerCase() !== 'github.com' ||
+        url.port ||
+        url.username ||
+        url.password ||
+        url.pathname === '/'
+      ) {
+        throw new Error('invalid URL')
+      }
+    } catch {
+      throw new Error('README 提示链接必须是无凭据的 GitHub HTTPS 链接')
+    }
+    readmeUrl = value.readmeUrl
+  }
+
+  let setupCommands: string[] | undefined
+  if (value.setupCommands !== undefined) {
+    if (!Array.isArray(value.setupCommands) || value.setupCommands.length > 3) {
+      throw new Error('设置提示命令不能超过 3 条')
+    }
+    if (
+      !value.setupCommands.every(
+        (command) =>
+          typeof command === 'string' &&
+          command.length > 0 &&
+          command.length <= 200 &&
+          !/[\0\r\n]/u.test(command)
+      )
+    ) {
+      throw new Error('设置提示命令必须是长度不超过 200 的单行字符串')
+    }
+    setupCommands = [...value.setupCommands]
+  }
+
+  return {
+    ...(readmeUrl ? { readmeUrl } : {}),
+    ...(setupCommands ? { setupCommands } : {})
+  }
 }
 
 function validateRuntime(value: unknown): LocalMcpRuntime {

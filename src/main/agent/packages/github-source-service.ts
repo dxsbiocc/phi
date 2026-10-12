@@ -221,7 +221,15 @@ async function previewUnpackagedProject(
           suggestedName,
           command: 'x',
           args: ['--bun', `${resolution.npm.name}@${resolution.npm.version}`],
-          runtimeHint: 'bun'
+          runtimeHint: 'bun',
+          ...(projectHint.readmeUrl || projectHint.setupCommands
+            ? {
+                setup: {
+                  ...(projectHint.readmeUrl ? { readmeUrl: projectHint.readmeUrl } : {}),
+                  ...(projectHint.setupCommands ? { commands: [...projectHint.setupCommands] } : {})
+                }
+              }
+            : {})
         }
       }
       projectHint = { ...projectHint, npm: resolution.npm, notices }

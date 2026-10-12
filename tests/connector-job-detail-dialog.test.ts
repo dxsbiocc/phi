@@ -9,6 +9,7 @@ import {
   ConnectorJobDetailContent,
   ConnectorJobDetailDialog
 } from '../src/renderer/src/features/jobs/components/ConnectorJobDetailDialog'
+import { ConnectorJobSetupGuide } from '../src/renderer/src/features/jobs/components/ConnectorJobSetupGuide'
 import {
   buildConnectorJobDetailText,
   connectorJobStartedAtLabel,
@@ -152,4 +153,63 @@ test('connector detail shows empty output, successful tools, and retry only for 
     ),
     /开始时间：未知[\s\S]*错误：\n没有错误[\s\S]*进程输出：\n没有进程输出/
   )
+})
+
+test('failed connector guide offers Agent and manual setup without executing commands', () => {
+  const events: string[] = []
+  const failed = setup({
+    failureKind: 'needs-setup',
+    failureReason: 'Configuration file not found',
+    setupHint: {
+      readmeUrl: 'https://github.com/example/mail/blob/main/README.md',
+      commands: ['npx -y qq-email-mcp init']
+    }
+  })
+  const guide = ConnectorJobSetupGuide({
+    setup: failed,
+    retrying: false,
+    onOpenAgent: (prompt) => events.push(`agent:${prompt}`),
+    onCopyCommand: (command) => events.push(`copy:${command}`),
+    onOpenTerminal: (command) => events.push(`terminal:${command}`),
+    onRetry: () => events.push('retry')
+  })
+  const markup = renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, guide))
+  assert.match(markup, /怎么处理/)
+  assert.match(markup, /交给 Agent 处理/)
+  assert.match(markup, /自己手动处理/)
+  assert.match(markup, /npx -y qq-email-mcp init/)
+  assert.match(markup, /复制命令/)
+  assert.match(markup, /在终端打开/)
+  assert.match(markup, /我已完成，重试/)
+  assert.match(markup, /target="_blank"/)
+
+  for (const label of ['交给 Agent 处理', '复制命令', '在终端打开', '我已完成，重试']) {
+    const button = findElement(
+      guide,
+      (element) => (element.props as { children?: ReactNode }).children === label
+    )
+    assert.ok(button, `missing ${label}`)
+    ;(button.props as { onClick: () => void }).onClick()
+  }
+  assert.match(events[0] ?? '', /^agent:[\s\S]*QQ 邮箱/)
+  assert.deepEqual(events.slice(1), [
+    'copy:npx -y qq-email-mcp init',
+    'terminal:npx -y qq-email-mcp init',
+    'retry'
+  ])
+})
+
+test('generic failures use the Agent investigation title and manual fallback', () => {
+  const guide = ConnectorJobSetupGuide({
+    setup: setup({ failureKind: 'generic', setupHint: undefined }),
+    retrying: false,
+    onOpenAgent: () => undefined,
+    onCopyCommand: () => undefined,
+    onOpenTerminal: () => undefined,
+    onRetry: () => undefined
+  })
+  const markup = renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, guide))
+  assert.match(markup, /交给 Agent 排查/)
+  assert.match(markup, /运行服务文档里的初始化命令/)
+  assert.doesNotMatch(markup, /复制命令|在终端打开|查看 README/)
 })

@@ -93,6 +93,9 @@ export function environmentBuildPercent(build: EnvironmentBuild): number | undef
 export function connectorJobDetail(setup: McpConnectorSetupProgress, nowMs: number): string {
   if (setup.phase === 'ready') return `已完成 · ${setup.toolNames?.length ?? 0} 个工具`
   if (setup.phase === 'failed') {
+    if (setup.failureKind === 'needs-setup') {
+      return `需要先配置${setup.failureReason ? ` · ${setup.failureReason}` : ''}`
+    }
     return setup.error === '已取消' ? '已取消' : `失败${setup.error ? ` · ${setup.error}` : ''}`
   }
   return `正在启动并验证 · 已用时 ${connectorJobDuration(setup, nowMs)}`
@@ -100,6 +103,7 @@ export function connectorJobDetail(setup: McpConnectorSetupProgress, nowMs: numb
 
 export function connectorJobStatusLabel(setup: McpConnectorSetupProgress): string {
   if (setup.phase === 'ready') return '已完成'
+  if (setup.phase === 'failed' && setup.failureKind === 'needs-setup') return '需要先配置'
   if (setup.phase === 'failed') return setup.error === '已取消' ? '已取消' : '失败'
   return '进行中'
 }

@@ -14,7 +14,7 @@ export type LocalConnectorNoticeNotify = (
 
 export type LocalConnectorNoticeListenerState = {
   notify: LocalConnectorNoticeNotify
-  openJobs: () => void
+  openJobs: (jobId?: string) => void
   onReady: () => void | Promise<void>
   announcedKeys: ReadonlySet<string>
 }

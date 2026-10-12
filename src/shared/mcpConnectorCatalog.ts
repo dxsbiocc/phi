@@ -25,6 +25,10 @@ export interface LocalMcpConnectorRequest {
   args: string[]
   env: Record<string, string>
   cwd?: string
+  hint?: {
+    readmeUrl?: string
+    setupCommands?: string[]
+  }
 }
 
 export type McpConnectorSetupPhase =
@@ -50,6 +54,12 @@ export interface McpConnectorSetupProgress {
   failedPhase?: Exclude<McpConnectorSetupPhase, 'failed'>
   error?: string
   detail?: string
+  failureKind?: 'needs-setup' | 'generic'
+  failureReason?: string
+  setupHint?: {
+    readmeUrl?: string
+    commands?: string[]
+  }
   toolNames?: string[]
 }
 

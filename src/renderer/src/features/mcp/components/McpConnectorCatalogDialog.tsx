@@ -868,7 +868,8 @@ export function McpConnectorCatalogDialog({
               name: draft.suggestedName,
               runtimeHint: draft.runtimeHint,
               command: draft.command,
-              args: draft.args
+              args: draft.args,
+              ...(draft.setup ? { setup: draft.setup } : {})
             })
             setCustomOpen(true)
           }}

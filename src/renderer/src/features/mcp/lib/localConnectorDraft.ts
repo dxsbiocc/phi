@@ -17,6 +17,7 @@ export interface LocalConnectorDraft {
   argsText: string
   envRows: LocalConnectorEnvRow[]
   cwd: string
+  hint?: LocalMcpConnectorRequest['hint']
 }
 
 export interface LocalConnectorInitialDraft {
@@ -25,6 +26,10 @@ export interface LocalConnectorInitialDraft {
   runtimeHint?: 'bun'
   command: string
   args: readonly string[]
+  setup?: {
+    readmeUrl?: string
+    commands?: readonly string[]
+  }
 }
 
 const namePattern = /^[a-z][a-z0-9_-]{1,63}$/i
@@ -60,7 +65,15 @@ export function draftToFormState(
     command: draft.command,
     argsText: draft.args.join('\n'),
     envRows: [],
-    cwd: ''
+    cwd: '',
+    ...(draft.setup
+      ? {
+          hint: {
+            ...(draft.setup.readmeUrl ? { readmeUrl: draft.setup.readmeUrl } : {}),
+            ...(draft.setup.commands ? { setupCommands: [...draft.setup.commands] } : {})
+          }
+        }
+      : {})
   }
 }
 
@@ -143,7 +156,15 @@ export function buildLocalConnectorRequest(draft: LocalConnectorDraft): LocalMcp
     command,
     args,
     env: localConnectorEnvironment(draft.envRows),
-    ...(cwd ? { cwd } : {})
+    ...(cwd ? { cwd } : {}),
+    ...(draft.hint
+      ? {
+          hint: {
+            ...draft.hint,
+            ...(draft.hint.setupCommands ? { setupCommands: [...draft.hint.setupCommands] } : {})
+          }
+        }
+      : {})
   }
 }
 

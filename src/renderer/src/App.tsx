@@ -1206,6 +1206,11 @@ function App(): React.JSX.Element {
   const [workspaceSidePanelState, setWorkspaceSidePanelState] = useState(
     emptyWorkspaceSidePanelState
   )
+  const [requestedConnectorJobId, setRequestedConnectorJobId] = useState<string | null>(null)
+  const [requestedTerminalInput, setRequestedTerminalInput] = useState<{
+    id: string
+    text: string
+  } | null>(null)
   const workspaceSidePanelSlots = workspaceSidePanelState.slots
   const browserSlotVisible =
     workspaceSidePanelSlots.includes('browser') &&
@@ -1247,10 +1252,14 @@ function App(): React.JSX.Element {
     browserLinkOpeningCoordinator.invalidate()
     openWorkspaceSidePanel('jobs')
   }, [browserLinkOpeningCoordinator, openWorkspaceSidePanel])
-  const onOpenLocalConnectorJobs = useCallback((): void => {
-    mcpConnectorDialogCloserRef.current?.()
-    onOpenBackgroundJobs()
-  }, [onOpenBackgroundJobs])
+  const onOpenLocalConnectorJobs = useCallback(
+    (jobId?: string): void => {
+      mcpConnectorDialogCloserRef.current?.()
+      setRequestedConnectorJobId(jobId ?? null)
+      onOpenBackgroundJobs()
+    },
+    [onOpenBackgroundJobs]
+  )
   useLocalConnectorNotices(showSnackbar, onOpenLocalConnectorJobs, refreshMcpServers)
   const onOpenWebUrl = useCallback(
     (url: string): void => {
@@ -1416,49 +1425,81 @@ function App(): React.JSX.Element {
     setIsSendingMessage(false)
   }, [])
 
-  const onNewChat = useCallback(async (): Promise<void> => {
-    projectSidebarSelectionRequestRef.current += 1
-    const request = ++sessionRequestRef.current
-    setIsSessionChanging(true)
-    try {
-      const current = await rendererApi.createSession()
-      if (request !== sessionRequestRef.current) return
-      setWorkspaceSidebarMode('conversations')
-      applyCurrentSession(
-        current,
-        { resetSending: true },
-        {
-          onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
-          onResetSending
+  const openNewChat = useCallback(
+    async (initialInput?: string): Promise<void> => {
+      projectSidebarSelectionRequestRef.current += 1
+      const request = ++sessionRequestRef.current
+      setIsSessionChanging(true)
+      try {
+        const current = await rendererApi.createSession()
+        if (request !== sessionRequestRef.current) return
+        setWorkspaceSidebarMode('conversations')
+        applyCurrentSession(
+          current,
+          { resetSending: true },
+          {
+            onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange,
+            onResetSending
+          }
+        )
+        void refreshCurrentModelControls(request)
+        startFreshChat()
+        if (initialInput) {
+          const createdDraftKey = sessionDraftKey({
+            phiSessionId: current.phiSessionId,
+            path: current.path,
+            cwd: current.cwd,
+            sessionGeneration: current.sessionGeneration
+          })
+          setDraftInputs((previous) => updateSessionDraft(previous, createdDraftKey, initialInput))
         }
-      )
-      void refreshCurrentModelControls(request)
-      startFreshChat()
-      const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
-      setSessionTabWasOpened(true)
-      setClosedWorkspaceSessionTabKeys((keys) => {
-        if (!keys.has(tabKey)) return keys
-        const nextKeys = new Set(keys)
-        nextKeys.delete(tabKey)
-        return nextKeys
-      })
-      setActiveWorkspaceTabKey(tabKey)
-      navigateToView('chat')
-    } finally {
-      if (request === sessionRequestRef.current) {
-        setIsSessionChanging(false)
+        const tabKey = workspaceSessionTabKey(current.path, current.sessionGeneration)
+        setSessionTabWasOpened(true)
+        setClosedWorkspaceSessionTabKeys((keys) => {
+          if (!keys.has(tabKey)) return keys
+          const nextKeys = new Set(keys)
+          nextKeys.delete(tabKey)
+          return nextKeys
+        })
+        setActiveWorkspaceTabKey(tabKey)
+        navigateToView('chat')
+      } finally {
+        if (request === sessionRequestRef.current) {
+          setIsSessionChanging(false)
+        }
       }
-    }
-  }, [
-    applyCurrentSession,
-    navigateToView,
-    onResetSending,
-    refreshCurrentModelControls,
-    rendererApi,
-    resetAnalysisJupyterRuntimeForCwdChange,
-    setIsSessionChanging,
-    startFreshChat
-  ])
+    },
+    [
+      applyCurrentSession,
+      navigateToView,
+      onResetSending,
+      refreshCurrentModelControls,
+      rendererApi,
+      resetAnalysisJupyterRuntimeForCwdChange,
+      setIsSessionChanging,
+      setDraftInputs,
+      startFreshChat
+    ]
+  )
+
+  const onNewChat = useCallback((): Promise<void> => openNewChat(), [openNewChat])
+  const onOpenConnectorSetupAgent = useCallback(
+    (prompt: string): void => {
+      void openNewChat(prompt)
+    },
+    [openNewChat]
+  )
+  const onOpenConnectorSetupTerminal = useCallback(
+    (command: string): void => {
+      if (!command || command.length > 200 || /[\0\r\n]/u.test(command)) {
+        showSnackbar('初始化命令无效，请复制后手动检查。', 'error')
+        return
+      }
+      setRequestedTerminalInput({ id: globalThis.crypto.randomUUID(), text: command })
+      openWorkspaceSidePanel('terminal')
+    },
+    [openWorkspaceSidePanel, showSnackbar]
+  )
 
   const onSelectSession = useCallback(
     async (path: string): Promise<void> => {
@@ -4882,6 +4923,12 @@ function App(): React.JSX.Element {
                       <BackgroundJobsPanel
                         onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
                         onOpenWrapper={onOpenWrapperRunFromJobs}
+                        requestedConnectorJobId={requestedConnectorJobId}
+                        onRequestedConnectorJobHandled={(id) =>
+                          setRequestedConnectorJobId((current) => (current === id ? null : current))
+                        }
+                        onOpenSetupAgent={onOpenConnectorSetupAgent}
+                        onOpenSetupTerminal={onOpenConnectorSetupTerminal}
                       />
                     )
                   }
@@ -4913,6 +4960,12 @@ function App(): React.JSX.Element {
                       bridge={rendererApi.terminal}
                       projects={projects}
                       headerActions={slotContext.headerActions}
+                      requestedInput={requestedTerminalInput}
+                      onRequestedInputHandled={(id) =>
+                        setRequestedTerminalInput((current) =>
+                          current?.id === id ? null : current
+                        )
+                      }
                     />
                   )
                 }}

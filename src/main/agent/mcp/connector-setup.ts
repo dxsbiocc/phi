@@ -88,6 +88,7 @@ export class ConnectorSetupTracker {
       return result
     } catch (error) {
       const detail = errorDetail(error)
+      const failure = errorFailureMetadata(error)
       this.update({
         id,
         phase: 'failed',
@@ -95,7 +96,8 @@ export class ConnectorSetupTracker {
         ...(operationId ? { operationId } : {}),
         ...(phase ? { failedPhase: phase } : {}),
         error: error instanceof Error ? error.message : String(error),
-        ...(detail ? { detail } : {})
+        ...(detail ? { detail } : {}),
+        ...failure
       })
       throw error
     } finally {
@@ -125,6 +127,57 @@ function errorDetail(error: unknown): string | undefined {
   return typeof detail === 'string' && detail ? detail.slice(0, 4096) : undefined
 }
 
+function errorFailureMetadata(
+  error: unknown
+): Pick<McpConnectorSetupProgress, 'failureKind' | 'failureReason' | 'setupHint'> {
+  if (typeof error !== 'object' || error === null || Array.isArray(error)) return {}
+  const metadata = error as {
+    failureKind?: unknown
+    failureReason?: unknown
+    setupHint?: unknown
+  }
+  const failureKind =
+    metadata.failureKind === 'needs-setup' || metadata.failureKind === 'generic'
+      ? metadata.failureKind
+      : undefined
+  const failureReason =
+    typeof metadata.failureReason === 'string' && metadata.failureReason
+      ? metadata.failureReason.slice(0, 200)
+      : undefined
+  const setupHint = copySetupHint(metadata.setupHint)
+  return {
+    ...(failureKind ? { failureKind } : {}),
+    ...(failureReason ? { failureReason } : {}),
+    ...(setupHint ? { setupHint } : {})
+  }
+}
+
+function copySetupHint(value: unknown): McpConnectorSetupProgress['setupHint'] | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const hint = value as { readmeUrl?: unknown; commands?: unknown }
+  const readmeUrl =
+    typeof hint.readmeUrl === 'string' && hint.readmeUrl ? hint.readmeUrl.slice(0, 500) : undefined
+  const commands = Array.isArray(hint.commands)
+    ? hint.commands
+        .filter((command): command is string => typeof command === 'string' && Boolean(command))
+        .slice(0, 3)
+        .map((command) => command.slice(0, 200))
+    : undefined
+  if (!readmeUrl && commands === undefined) return undefined
+  return { ...(readmeUrl ? { readmeUrl } : {}), ...(commands ? { commands } : {}) }
+}
+
 function copyProgress(progress: McpConnectorSetupProgress): McpConnectorSetupProgress {
-  return { ...progress, ...(progress.toolNames ? { toolNames: [...progress.toolNames] } : {}) }
+  return {
+    ...progress,
+    ...(progress.toolNames ? { toolNames: [...progress.toolNames] } : {}),
+    ...(progress.setupHint
+      ? {
+          setupHint: {
+            ...progress.setupHint,
+            ...(progress.setupHint.commands ? { commands: [...progress.setupHint.commands] } : {})
+          }
+        }
+      : {})
+  }
 }

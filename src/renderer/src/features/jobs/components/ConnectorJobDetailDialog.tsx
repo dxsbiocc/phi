@@ -17,6 +17,7 @@ import {
   connectorJobStartedAtLabel,
   connectorJobToolsLabel
 } from '../lib/connectorJobDetails'
+import { ConnectorJobSetupGuide } from './ConnectorJobSetupGuide'
 
 type DetailContentProps = {
   setup: McpConnectorSetupProgress
@@ -26,6 +27,9 @@ type DetailContentProps = {
   onCopy: () => void
   onRetry: () => void
   onClose: () => void
+  onOpenSetupAgent?: (prompt: string) => void
+  onCopySetupCommand?: (command: string) => void
+  onOpenSetupTerminal?: (command: string) => void
 }
 
 function DetailField({
@@ -71,7 +75,10 @@ export function ConnectorJobDetailContent({
   retrying = false,
   onCopy,
   onRetry,
-  onClose
+  onClose,
+  onOpenSetupAgent = () => undefined,
+  onCopySetupCommand = () => undefined,
+  onOpenSetupTerminal = () => undefined
 }: DetailContentProps): React.JSX.Element {
   return (
     <>
@@ -89,6 +96,16 @@ export function ConnectorJobDetailContent({
           <DetailField label="进程输出" value={setup.detail ?? '没有进程输出'} mono scroll />
           {setup.phase === 'ready' ? (
             <DetailField label="工具列表" value={connectorJobToolsLabel(setup)} />
+          ) : null}
+          {setup.phase === 'failed' && setup.error !== '已取消' ? (
+            <ConnectorJobSetupGuide
+              setup={setup}
+              retrying={retrying}
+              onOpenAgent={onOpenSetupAgent}
+              onCopyCommand={onCopySetupCommand}
+              onOpenTerminal={onOpenSetupTerminal}
+              onRetry={onRetry}
+            />
           ) : null}
         </Stack>
       </DialogContent>
@@ -113,7 +130,9 @@ export function ConnectorJobDetailDialog({
   retrying = false,
   nowMs,
   onRetry,
-  onClose
+  onClose,
+  onOpenSetupAgent,
+  onOpenSetupTerminal
 }: {
   open: boolean
   setup: McpConnectorSetupProgress
@@ -121,6 +140,8 @@ export function ConnectorJobDetailDialog({
   nowMs?: number
   onRetry: () => void
   onClose: () => void
+  onOpenSetupAgent?: (prompt: string) => void
+  onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
   const [liveNowMs, setLiveNowMs] = useState(() => nowMs ?? Date.now())
   const [copied, setCopied] = useState(false)
@@ -147,6 +168,11 @@ export function ConnectorJobDetailDialog({
         retrying={retrying}
         onCopy={() => void copyDetails().catch(() => undefined)}
         onRetry={onRetry}
+        onOpenSetupAgent={onOpenSetupAgent}
+        onCopySetupCommand={(command) => {
+          void navigator.clipboard.writeText(command).catch(() => undefined)
+        }}
+        onOpenSetupTerminal={onOpenSetupTerminal}
         onClose={onClose}
       />
     </Dialog>

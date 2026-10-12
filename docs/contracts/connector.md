@@ -1,6 +1,6 @@
 # Connector contract
 
-contractVersion: 1.6.0
+contractVersion: 1.7.0
 
 A **connector** gives Phi an MCP server: a remote HTTP server (most catalog entries) or
 a local stdio server that runs in a managed environment. Connectors are distributed as
@@ -110,6 +110,14 @@ package contract:
   names only; environment values are never persisted. Active records restored after an
   app restart become failed and require the connector to be added again because the full
   request remains in memory only.
+- A local request may include an optional non-secret `hint` with a bounded GitHub HTTPS
+  `readmeUrl` and up to three bounded `setupCommands`. Hints are display guidance only:
+  they are never added to the launch entry, logged, or executed by Phi.
+- Failed local setup records may add `failureKind` (`needs-setup` or `generic`), a bounded
+  `failureReason`, and `setupHint` (`readmeUrl` plus `commands`). These additive fields let
+  the renderer explain one-time initialization failures while old records and requests
+  without hints remain valid. Suggested commands may only be copied or inserted into the
+  user-owned terminal without Enter; the user decides whether to run them.
 
 ## 5. Catalog
 
@@ -138,6 +146,10 @@ additive only (for example allowing `secrets`); anything else needs a decision r
 and a deprecation window.
 
 ## Changes
+
+- **1.7.0** (2026-10-12): add conservative local setup-failure classification,
+  non-secret setup hints, and user-controlled Agent/manual recovery guidance. Phi never
+  executes suggested initialization commands.
 
 - **1.6.0** (2026-10-11): make user-defined local stdio addition a cancellable
   background setup job with a 10-minute probe deadline and privacy-safe persisted

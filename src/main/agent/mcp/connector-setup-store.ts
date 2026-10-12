@@ -98,6 +98,21 @@ export function saveConnectorSetups(
       delete saved.toolNames
       if (saved.error) saved.error = saved.error.slice(0, 1024)
       if (saved.detail) saved.detail = saved.detail.slice(0, 4096)
+      if (saved.failureReason) saved.failureReason = saved.failureReason.slice(0, 200)
+      if (saved.setupHint) {
+        saved.setupHint = {
+          ...(saved.setupHint.readmeUrl
+            ? { readmeUrl: saved.setupHint.readmeUrl.slice(0, 500) }
+            : {}),
+          ...(saved.setupHint.commands
+            ? {
+                commands: saved.setupHint.commands
+                  .slice(0, 3)
+                  .map((command) => command.slice(0, 200))
+              }
+            : {})
+        }
+      }
       return saved
     })
   const bytes = JSON.stringify({ version: 1, records: selected })
@@ -127,6 +142,12 @@ function parseProgress(value: unknown): McpConnectorSetupProgress | undefined {
       (typeof value.error === 'string' && value.error.length <= 1024)) &&
     (value.detail === undefined ||
       (typeof value.detail === 'string' && value.detail.length <= 4096)) &&
+    (value.failureKind === undefined ||
+      value.failureKind === 'needs-setup' ||
+      value.failureKind === 'generic') &&
+    (value.failureReason === undefined ||
+      (typeof value.failureReason === 'string' && value.failureReason.length <= 200)) &&
+    (value.setupHint === undefined || isSetupHint(value.setupHint)) &&
     (value.operationId === undefined ||
       (typeof value.operationId === 'string' && /^[0-9a-f-]{36}$/.test(value.operationId)))
   if (!valid) return undefined
@@ -142,6 +163,13 @@ function parseProgress(value: unknown): McpConnectorSetupProgress | undefined {
         }),
     ...(value.error === undefined ? {} : { error: value.error as string }),
     ...(value.detail === undefined ? {} : { detail: value.detail as string }),
+    ...(value.failureKind === undefined
+      ? {}
+      : { failureKind: value.failureKind as 'needs-setup' | 'generic' }),
+    ...(value.failureReason === undefined ? {} : { failureReason: value.failureReason as string }),
+    ...(value.setupHint === undefined
+      ? {}
+      : { setupHint: copySetupHint(value.setupHint as Record<string, unknown>) }),
     ...(value.operationId === undefined ? {} : { operationId: value.operationId as string })
   }
   if (value.kind === 'local-stdio') progress.kind = value.kind
@@ -152,6 +180,54 @@ function parseProgress(value: unknown): McpConnectorSetupProgress | undefined {
   if (typeof value.summary === 'string' && value.summary.length <= 4096)
     progress.summary = value.summary
   return progress
+}
+
+function isSetupHint(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false
+  if (Object.keys(value).some((key) => key !== 'readmeUrl' && key !== 'commands')) return false
+  if (
+    value.readmeUrl !== undefined &&
+    (typeof value.readmeUrl !== 'string' ||
+      value.readmeUrl.length > 500 ||
+      !validGithubReadmeUrl(value.readmeUrl))
+  ) {
+    return false
+  }
+  return (
+    value.commands === undefined ||
+    (Array.isArray(value.commands) &&
+      value.commands.length <= 3 &&
+      value.commands.every(
+        (command) =>
+          typeof command === 'string' &&
+          command.length > 0 &&
+          command.length <= 200 &&
+          !/[\0\r\n]/u.test(command)
+      ))
+  )
+}
+
+function validGithubReadmeUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'https:' &&
+      url.hostname.toLowerCase() === 'github.com' &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      url.pathname !== '/'
+    )
+  } catch {
+    return false
+  }
+}
+
+function copySetupHint(value: Record<string, unknown>): McpConnectorSetupProgress['setupHint'] {
+  return {
+    ...(typeof value.readmeUrl === 'string' ? { readmeUrl: value.readmeUrl } : {}),
+    ...(Array.isArray(value.commands) ? { commands: [...(value.commands as string[])] } : {})
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -164,6 +164,7 @@ test('GitHub Bun drafts keep their runtime hint through catalog and missing-runt
   const dialog = readFileSync(dialogPath, 'utf8')
 
   assert.match(catalog, /runtimeHint:\s*draft\.runtimeHint/)
+  assert.match(catalog, /draft\.setup \? \{ setup: draft\.setup \} : \{\}/)
   assert.match(dialog, /initialDraft\.runtimeHint === 'bun'/)
   assert.match(dialog, /未找到 Phi 内置 Bun，请检查应用安装是否完整/)
 })
