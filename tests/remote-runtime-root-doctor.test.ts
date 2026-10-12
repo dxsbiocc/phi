@@ -96,6 +96,8 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
           agentDir,
           sftpAvailable: () => true,
           connectImpl: async () => followupSession,
+          // A probe that cannot tell keeps the stored status (as on a platform it cannot check).
+          micromambaProfile: async () => undefined,
           now: () => new Date('2026-10-09T05:05:00.000Z')
         }
       )

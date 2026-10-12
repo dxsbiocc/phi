@@ -379,7 +379,8 @@ test('buildDetachedLaunchCommand is valid bash and actually launches a detached,
   await withDetachedCommandHarness(async ({ runDir, run }) => {
     writeFileSync(
       join(runDir, 'launch.sh'),
-      wrapWithExitCodeTrap('echo hello-from-real-launch; sleep 1')
+      // Output only after the sleep, so the empty-log check below cannot race the echo.
+      wrapWithExitCodeTrap('sleep 1; echo hello-from-real-launch')
     )
 
     // bash -n first: pure syntax check, would have caught the `& &&` bug
