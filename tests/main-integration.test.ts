@@ -7606,7 +7606,9 @@ test('main IPC exposes additive plugin details with global skill enablement', as
   await app.invoke('enablement:set', 'skill:detail-skill', false, { type: 'global' })
 
   const plugins = (await app.invoke('phiPlugins:list')) as Array<Record<string, unknown>>
-  assert.deepEqual(plugins, [
+  const [{ icon, ...plugin }] = plugins
+  assert.match((icon as { key?: string } | undefined)?.key ?? '', /^[a-f0-9]{64}$/)
+  assert.deepEqual([plugin], [
     {
       id: 'detail-plugin',
       version: '1.0.0',

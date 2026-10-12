@@ -14,6 +14,7 @@ const syntax = ts.createSourceFile(
 
 function serverListHandler(): string {
   let handler: ts.Expression | undefined
+  let listedServers: ts.VariableStatement | undefined
   const visit = (node: ts.Node): void => {
     if (
       ts.isCallExpression(node) &&
@@ -24,13 +25,23 @@ function serverListHandler(): string {
     ) {
       handler = node.arguments[1]
     }
+    if (
+      ts.isVariableStatement(node) &&
+      node.declarationList.declarations.some(
+        (declaration) => declaration.name.getText(syntax) === 'listedMcpServers'
+      )
+    ) {
+      listedServers = node
+    }
     ts.forEachChild(node, visit)
   }
   visit(syntax)
   assert.ok(handler, 'MCP server list IPC handler exists')
-  return ts.transpileModule(`(${handler.getText(syntax)})`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022 }
-  }).outputText
+  assert.ok(listedServers, 'MCP server list helper exists')
+  return ts.transpileModule(
+    `(() => { ${listedServers.getText(syntax)}\nreturn (${handler.getText(syntax)}) })()`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
+  ).outputText
 }
 
 test('configured legacy connectors inherit their verified catalog icons without package installation', async () => {
@@ -70,6 +81,8 @@ test('installed connector icons take precedence over catalog previews', async ()
     currentCwd: '/project',
     isRemoteResourceScope: () => true,
     listGlobalMcpServers: async () => configured,
+    remoteMcpProjectContext: (cwd: string) => ({ cwd }),
+    loadRemoteProjectMcpCatalog: async () => ({ summaries: [] }),
     connectorCatalog: async () => [{ id: 'cbioportal', icon: { key: 'preview-icon' } }],
     withConnectorMetadata
   }) as (_: unknown) => Promise<typeof configured>
