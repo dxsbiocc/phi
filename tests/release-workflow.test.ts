@@ -65,6 +65,8 @@ test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on bo
   assert.match(smoke?.run ?? '', /dist\/linux-unpacked\/resources/)
   const packageStep = steps.find((step) => step.name === 'Package')
   assert.match(packageStep?.run ?? '', /--publish never/)
+  // Empty secrets would be read as a certificate path.
+  assert.match(packageStep?.run ?? '', /\[ -n "\$\{!name\}" \] \|\| unset "\$name"/)
 })
 
 test('macOS signing uses a certificate when configured and ad-hoc signing otherwise', () => {

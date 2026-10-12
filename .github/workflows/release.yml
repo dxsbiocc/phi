@@ -115,8 +115,14 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
-        # SIGNING_ARGS is unquoted on purpose: it holds separate builder flags.
-        run: npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
+        # An unset secret arrives as an empty string, which electron-builder reads as a
+        # certificate path; unset those so it sees them as absent. SIGNING_ARGS is
+        # unquoted on purpose: it holds separate builder flags.
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || unset "$name"
+          done
+          npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
       - name: Smoke-test the packaged worker without system bun
         shell: bash
         run: |
