@@ -597,6 +597,7 @@ export interface AnalysisKernelSummary {
   rawLanguage: string
   resourceDir?: string
   executable?: string
+  source?: 'managed' | 'host'
 }
 
 export interface AnalysisKernelDiagnostics {

@@ -429,6 +429,39 @@ export function notebookKernelName(document: NotebookDocument): string {
   return stringFromMetadata(kernelSpec ?? {}, 'name') ?? ''
 }
 
+/** Mirrors the main-process kernel selection rules for renderer labels and auto-connect. */
+export function resolveNotebookKernel(
+  document: NotebookDocument,
+  diagnostics: AnalysisKernelDiagnostics
+): AnalysisKernelSummary | undefined {
+  const kernelSpec = objectFromMetadata(document.metadata, 'kernelspec')
+  const requestedName = stringFromMetadata(kernelSpec ?? {}, 'name')
+  if (requestedName) {
+    const exact = diagnostics.kernels.find((kernel) => kernel.name === requestedName)
+    if (exact) return exact
+  }
+
+  const defaults = diagnostics.kernels.filter((kernel) => kernel.source !== 'host')
+  const requestedDisplayName = stringFromMetadata(kernelSpec ?? {}, 'display_name')
+  if (requestedDisplayName) {
+    const exactDisplay = defaults.find(
+      (kernel) =>
+        kernel.displayName.toLocaleLowerCase() === requestedDisplayName.toLocaleLowerCase()
+    )
+    if (exactDisplay) return exactDisplay
+  }
+
+  const preferred = diagnostics.preferredKernelName
+    ? defaults.find((kernel) => kernel.name === diagnostics.preferredKernelName)
+    : undefined
+  const language = notebookKernelLanguage(document)
+  if (language) {
+    if (preferred?.language === language) return preferred
+    return defaults.find((kernel) => kernel.language === language)
+  }
+  return preferred ?? defaults[0]
+}
+
 export function withNotebookKernel(
   document: NotebookDocument,
   kernel: AnalysisKernelSummary

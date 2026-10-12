@@ -448,6 +448,7 @@ type HarnessResult = {
     language?: string
     cursorPosition?: number
   }>
+  setNotebookExecutionState: (state: 'idle' | 'error') => void
   notebookFormatCalls: Array<{
     projectCwd: string
     source: string
@@ -663,6 +664,7 @@ async function harness(
     language?: string
     cursorPosition?: number
   }> = []
+  let notebookExecutionState: 'idle' | 'error' = 'idle'
   const notebookFormatCalls: Array<{
     projectCwd: string
     source: string
@@ -1260,7 +1262,7 @@ async function harness(
             extra: {}
           }
         ],
-        state: 'idle',
+        state: notebookExecutionState,
         startedAt: '2026-09-09T00:00:00.000Z',
         completedAt: '2026-09-09T00:00:01.000Z'
       }
@@ -4200,6 +4202,9 @@ async function harness(
     notebookSessionCalls,
     remoteNotebookCalls,
     notebookExecutionCalls,
+    setNotebookExecutionState: (state): void => {
+      notebookExecutionState = state
+    },
     notebookFormatCalls,
     managedEnvironmentBuildCalls,
     openDialogOptions,
@@ -8865,6 +8870,53 @@ test('main IPC: analysis notebook cell execution updates the returned document',
       cwd: '/projects/research',
       path: '/projects/research/notebooks/demo.ipynb'
     },
+    {
+      action: 'state:busy',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    },
+    {
+      action: 'state:idle',
+      cwd: '/projects/research',
+      path: '/projects/research/notebooks/demo.ipynb'
+    }
+  ])
+})
+
+test('main IPC: a cell error keeps the notebook kernel session usable', async () => {
+  const app = await harness()
+  app.setNotebookExecutionState('error')
+  const document = notebookDocument.parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: { kernelspec: { display_name: 'R', language: 'R', name: 'ir' } },
+    cells: [
+      {
+        id: 'cell-1',
+        cell_type: 'code',
+        metadata: {},
+        execution_count: null,
+        outputs: [],
+        source: 'ggplot(data)'
+      }
+    ]
+  })
+
+  const result = (await app.invoke(
+    'analysis:executeNotebookCell',
+    '/projects/research',
+    'notebooks/demo.ipynb',
+    document,
+    'cell-1'
+  )) as {
+    state: string
+    sessionStatus: { state: string; message: string }
+  }
+
+  assert.equal(result.state, 'error')
+  assert.equal(result.sessionStatus.state, 'idle')
+  assert.equal(result.sessionStatus.message, 'Cell 执行出错，kernel 仍可继续使用')
+  assert.deepEqual(app.notebookSessionCalls.slice(-2), [
     {
       action: 'state:busy',
       cwd: '/projects/research',

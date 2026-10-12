@@ -286,7 +286,7 @@ export function useAnalysisNotebookRuntime({
     async (
       file: AnalysisNotebookFile,
       document: AnalysisNotebookFile['document']
-    ): Promise<void> => {
+    ): Promise<boolean> => {
       const cwd = getActiveCwd()
       setAnalysisNotebookContentError(null)
       try {
@@ -299,8 +299,10 @@ export function useAnalysisNotebookRuntime({
         setActiveAnalysisNotebook(saved)
         void refreshAnalysisNotebookSessionStatus(saved)
         await refreshAnalysisNotebooks()
+        return true
       } catch (error) {
         setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
+        return false
       }
     },
     [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
@@ -619,7 +621,7 @@ export function useAnalysisNotebookRuntime({
             projectCwd: cwd,
             notebookPath: file.path,
             document,
-            kernels: analysisKernelDiagnostics?.kernels
+            kernelDiagnostics: analysisKernelDiagnostics
           }),
           analysisJupyterStatus
         )

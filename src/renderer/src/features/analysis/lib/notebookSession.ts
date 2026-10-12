@@ -1,10 +1,11 @@
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 import type {
   AnalysisJupyterRuntimeStatus,
-  AnalysisKernelSummary,
+  AnalysisKernelDiagnostics,
   AnalysisNotebookSessionStatus,
   JupyterServerStatus
 } from '../../../types'
+import { resolveNotebookKernel } from './notebookViewModel'
 
 export function hasLiveNotebookSession(
   status: AnalysisNotebookSessionStatus | null | undefined
@@ -68,15 +69,15 @@ export function pendingNotebookKernelSession({
   projectCwd,
   notebookPath,
   document,
-  kernels
+  kernelDiagnostics
 }: {
   projectCwd: string
   notebookPath: string
   document: NotebookDocument
-  kernels?: AnalysisKernelSummary[]
+  kernelDiagnostics?: AnalysisKernelDiagnostics | null
 }): AnalysisNotebookSessionStatus {
   const spec = kernelspecLabel(document)
-  const match = spec.name ? kernels?.find((kernel) => kernel.name === spec.name) : undefined
+  const match = kernelDiagnostics ? resolveNotebookKernel(document, kernelDiagnostics) : undefined
   return {
     projectCwd,
     notebookPath,

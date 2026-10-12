@@ -52,6 +52,7 @@ import {
   notebookKernelName,
   notebookLanguage,
   notebookOutline,
+  resolveNotebookKernel,
   notebookSessionStateColor,
   notebookSessionStateLabel,
   notebookSyntaxLanguage,
@@ -669,7 +670,12 @@ export default function NotebookCanvas({
     onCompleteNotebookCell,
     onFormatNotebookCell
   })
-  const selectedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
+  const selectedKernel =
+    draftDocument && kernelDiagnostics
+      ? resolveNotebookKernel(draftDocument, kernelDiagnostics)
+      : undefined
+  const selectedKernelName =
+    selectedKernel?.name ?? (draftDocument ? notebookKernelName(draftDocument) : '')
   const draftMatchesOpenNotebook = Boolean(notebookFile && draftNotebookPath === notebookFile.path)
   const autoConnectKey =
     notebookFile && draftDocument && draftMatchesOpenNotebook
@@ -1209,15 +1215,14 @@ export default function NotebookCanvas({
     [notebookFile, onStopNotebookCell]
   )
   const onKernelChange = async (kernelName: string): Promise<void> => {
-    const kernel = kernelDiagnostics?.kernels.find((candidate) => candidate.name === kernelName)
-    if (!kernel || !draftDocument || !notebookFile) return
-    const currentKernelName = notebookKernelName(draftDocument)
+    if (!kernelDiagnostics || !draftDocument || !notebookFile) return
+    const kernel = kernelDiagnostics.kernels.find((candidate) => candidate.name === kernelName)
+    if (!kernel) return
+    const currentKernel = resolveNotebookKernel(draftDocument, kernelDiagnostics)
+    const currentKernelName = currentKernel?.name ?? notebookKernelName(draftDocument)
     if (kernel.name === currentKernelName) return
 
     const hasCurrentLiveSession = hasLiveNotebookSession(notebookSessionStatus)
-    const currentKernel = kernelDiagnostics?.kernels.find(
-      (candidate) => candidate.name === currentKernelName
-    )
     const nextDocument = withNotebookKernel(draftDocument, kernel)
     setPendingKernelSwitch({
       file: notebookFile,
@@ -1232,6 +1237,9 @@ export default function NotebookCanvas({
   const confirmKernelSwitch = async (): Promise<void> => {
     const pending = pendingKernelSwitch
     if (!pending) return
+
+    const saved = await onSaveNotebook?.(pending.file, pending.nextDocument)
+    if (saved === false) return
 
     setPendingKernelSwitch(null)
     autoConnectKeyRef.current = pending.nextAutoConnectKey

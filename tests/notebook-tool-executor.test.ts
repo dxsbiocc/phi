@@ -408,3 +408,78 @@ test('notebook tool executor resolves kernels from the routed backend', async ()
     assert.equal(selectedKernel, 'phi-python')
   })
 })
+
+test('notebook tool executor keeps the kernel usable after a cell error', async () => {
+  await withProjectDir(async (root) => {
+    mkdirSync(join(root, 'notebooks'))
+    writeNotebook(join(root, 'notebooks', 'analysis.ipynb'), 'ggplot(data)')
+    const sessionStates: Array<{ state: string; message?: string }> = []
+    const kernels = {
+      jupyterServer: { available: true, command: 'jupyter' as const, version: 'test' },
+      kernels: [
+        {
+          name: 'phi-r',
+          displayName: 'R 4.4 (phi-r)',
+          language: 'r' as const,
+          rawLanguage: 'R'
+        }
+      ],
+      preferredKernelName: 'phi-r',
+      hasPythonKernel: false,
+      hasRKernel: true,
+      messages: []
+    }
+    const sessions = {
+      ensureSession: async () => ({ state: 'idle', kernelDisplayName: 'R 4.4 (phi-r)' }),
+      executionTarget: () => ({
+        connection: { url: 'http://127.0.0.1:30000/', runtimeId: 'runtime-1' },
+        sessionId: 'session-1',
+        kernelId: 'kernel-1',
+        kernelName: 'phi-r'
+      }),
+      updateSessionState: (_cwd: string, _path: string, state: string, message?: string) => {
+        sessionStates.push({ state, message })
+        return { state, message, kernelDisplayName: 'R 4.4 (phi-r)' }
+      }
+    }
+    const executor = new AnalysisNotebookToolExecutor({
+      resolveWorkspaceByCwd: () => ({ workingDirectory: root }),
+      resolveKernelsByCwd: () => kernels,
+      ensureJupyterServerReady: async () => undefined,
+      notebookSessionRegistry: sessions as never,
+      notebookExecutor: {
+        executeCell: async () => ({
+          cellId: 'cell-1',
+          executionCount: 1,
+          outputs: [
+            {
+              outputType: 'error',
+              data: {},
+              metadata: {},
+              ename: 'simpleError',
+              evalue: "could not find function 'ggplot'",
+              traceback: [],
+              extra: {}
+            }
+          ],
+          state: 'error',
+          startedAt: '2026-10-12T09:00:00.000Z',
+          completedAt: '2026-10-12T09:00:01.000Z'
+        })
+      } as never
+    })
+
+    const result = await executor.execute({
+      action: 'run_cell',
+      cwd: root,
+      params: { path: 'notebooks/analysis.ipynb', cellId: 'cell-1' }
+    })
+
+    assert.equal(result.kind, 'notebook_cell_executed')
+    assert.equal((result.execution as { state: string }).state, 'error')
+    assert.deepEqual(sessionStates, [
+      { state: 'busy', message: 'Notebook kernel 正在执行' },
+      { state: 'idle', message: 'Cell 执行出错，kernel 仍可继续使用' }
+    ])
+  })
+})

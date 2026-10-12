@@ -4455,9 +4455,7 @@ function App(): React.JSX.Element {
           closeActiveNotebook()
           navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
         }}
-        onSaveNotebook={(file, document) => {
-          void onSaveAnalysisNotebook(file, document)
-        }}
+        onSaveNotebook={onSaveAnalysisNotebook}
         onCreateNotebook={(cwd) => {
           void onCreateAnalysisNotebook(cwd)
         }}
