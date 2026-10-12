@@ -188,6 +188,9 @@ appImage:
 npmRebuild: false
 # Restores worker assets the node_modules copier strips (*.d.ts, CHANGELOG.md).
 afterPack: ./scripts/build/after-pack.mjs
+# Releases are drafted by .github/workflows/release.yml and published by hand.
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: dxsbiocc
+  repo: phi
+  releaseType: draft

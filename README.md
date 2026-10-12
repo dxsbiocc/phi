@@ -223,9 +223,31 @@ bun run build:mac
 bun run build:linux
 ```
 
-The packaging configuration still contains development identifiers and a placeholder
-update URL. Production signing, macOS notarization, and update hosting must be
-configured for the intended publisher before distributing a release.
+Releases are built by `.github/workflows/release.yml` when a `v*` tag is pushed (the
+tag must match `package.json`'s version). It packages macOS Apple Silicon (dmg, zip)
+and Linux x64 (AppImage, deb) and attaches them to a **draft** GitHub release that a
+maintainer reviews and publishes. macOS builds are signed with a Developer ID and
+notarized when the `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` secrets are set; without them they are
+ad-hoc signed. Settings → General → 检查更新 compares the running version with the latest
+published release; installing a new version is manual.
+
+## Installing a Preview Build
+
+Download the package for your system from the
+[latest release](https://github.com/dxsbiocc/phi/releases/latest). Your settings and
+conversations in `~/.phi` are kept when you install a newer version.
+
+- **macOS (Apple Silicon)**: open the `.dmg` and drag Phi to Applications. Preview builds
+  are not yet notarized by Apple, so the first launch is blocked with "Apple could not
+  verify Phi". Open **System Settings → Privacy & Security**, scroll down, and click
+  **Open Anyway** next to the Phi message, then confirm. You only do this once per
+  installed version. Alternatively run
+  `xattr -dr com.apple.quarantine /Applications/Phi.app` in Terminal.
+- **Linux (x64)**: install the `.deb` with `sudo apt install ./phi_*.deb`, or make the
+  AppImage executable (`chmod +x Phi-*.AppImage`) and run it.
+- **Updates**: Settings → General → 检查更新 tells you when a newer release is available;
+  download and install it the same way.
 
 ## License
 

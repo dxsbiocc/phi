@@ -46,6 +46,7 @@
     "smoke:terminal-stress": "bun scripts/terminal-stress-smoke.ts",
     "smoke:terminal-packaged": "bun scripts/terminal-packaged-smoke.ts",
     "smoke:packaged-quit": "node scripts/smoke-packaged-quit.mjs",
+    "smoke:packaged-worker": "node scripts/smoke-packaged-worker.mjs",
     "runtime:fetch": "node scripts/runtime/fetch-micromamba.mjs",
     "bun:fetch": "node scripts/runtime/fetch-bun.mjs",
     "helper:fetch-go": "node scripts/runtime/fetch-go.mjs",

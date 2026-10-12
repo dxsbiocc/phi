@@ -1,0 +1,177 @@
+name: Release
+
+# Builds macOS (Apple Silicon) and Linux x64 packages and attaches them to a
+# **draft** GitHub release, so a person reviews and publishes it by hand.
+#
+# macOS signing is optional. With the CSC_LINK / CSC_KEY_PASSWORD secrets the
+# app is signed with that certificate, and with APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+# APPLE_TEAM_ID it is also notarized. Without them it is ad-hoc signed: it opens on
+# Apple Silicon, but Gatekeeper asks the user to allow it once (see README).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Packages (without drafting a release) when the packaging setup itself changes.
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'electron-builder.yml'
+      - 'build/**'
+      - 'scripts/build/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.0.2
+        with:
+          bun-version: '1.3.14'
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22.15.0'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+
+  package:
+    name: Package (${{ matrix.name }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-14
+            builder: --mac dmg zip --arm64
+            artifact: Phi-macos-arm64
+          - name: Linux x64
+            os: ubuntu-22.04
+            builder: --linux AppImage deb --x64
+            artifact: Phi-linux-x64
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2.0.2
+        with:
+          bun-version: '1.3.14'
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22.15.0'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build app
+        run: bun run build
+      - name: Choose macOS signing
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+        shell: bash
+        run: |
+          if [ -n "$CSC_LINK" ]; then
+            echo "Signing with the configured Developer ID certificate."
+            if [ -n "$APPLE_ID" ]; then
+              echo "SIGNING_ARGS=-c.mac.notarize=true" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "No certificate configured: ad-hoc signing (Gatekeeper will ask users to allow the app)."
+            echo "SIGNING_ARGS=-c.mac.identity=- -c.mac.hardenedRuntime=false" >> "$GITHUB_ENV"
+          fi
+      - name: Package
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        # SIGNING_ARGS is unquoted on purpose: it holds separate builder flags.
+        run: npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
+      - name: Smoke-test the packaged worker without system bun
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            resources=dist/mac-arm64/Phi.app/Contents/Resources
+          else
+            resources=dist/linux-unpacked/resources
+          fi
+          node scripts/smoke-packaged-worker.mjs --resources "$resources"
+      - name: Check macOS signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find dist -maxdepth 3 -name 'Phi.app' -type d | head -n 1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          for binary in "$app"/Contents/Resources/runtime/bun/*/bun "$app"/Contents/Resources/runtime/micromamba/*/micromamba; do
+            codesign --verify --verbose=2 "$binary"
+          done
+      - name: List artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/latest*.yml)
+          (( ${#files[@]} > 0 )) || { echo "No package artifacts in dist/" >&2; exit 1; }
+          for file in "${files[@]}"; do
+            if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi
+          done
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest*.yml
+          if-no-files-found: error
+
+  draft-release:
+    name: Draft GitHub release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          path: release
+          merge-multiple: true
+      - name: Checksums
+        working-directory: release
+        run: sha256sum * > SHA256SUMS.txt
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --draft \
+            --title "Phi $GITHUB_REF_NAME" \
+            --generate-notes
