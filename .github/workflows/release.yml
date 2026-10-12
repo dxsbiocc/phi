@@ -83,6 +83,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Build app
+        env:
+          # The renderer bundle needs more than Node's default ~2 GB heap on the
+          # 7 GB macOS runners.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: bun run build
       - name: Choose macOS signing
         if: runner.os == 'macOS'

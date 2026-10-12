@@ -93,3 +93,8 @@ test('local packaging scripts never publish, even on CI', () => {
     assert.match(scripts[name] ?? '', /electron-builder .*--publish never$/, name)
   }
 })
+
+test('the app build gets enough heap for the macOS runners', () => {
+  const build = workflow.jobs?.package?.steps?.find((step) => step.name === 'Build app')
+  assert.equal(build?.env?.NODE_OPTIONS, '--max-old-space-size=4096')
+})
