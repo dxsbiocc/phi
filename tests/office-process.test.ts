@@ -14,6 +14,9 @@ import {
   releaseTransientOfficeResident
 } from '../src/main/agent/office/office-process'
 
+// OfficeCLI ships for macOS only, and Office finds its processes with /usr/sbin/lsof there.
+const OFFICE_HOST = process.platform === 'darwin'
+
 test('workbook inspection finds the largest used row and column across sheets', () => {
   assert.deepEqual(
     parseWorkbookDimensions({
@@ -53,35 +56,39 @@ test('DOCX inspection accepts a structurally empty document whose total includes
   )
 })
 
-test('PPTX inspection uses get root, validates, and releases its transient resident', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'office process pptx inspect '))
-  const binaryPath = join(root, 'officecli')
-  const callsPath = join(root, 'calls.txt')
-  const draftPath = join(root, 'slides.pptx')
-  writeFileSync(
-    binaryPath,
-    [
-      '#!/bin/sh',
-      `printf '%s\n' "$*" >> '${callsPath}'`,
-      'if [ "$1" = "get" ]; then',
-      '  printf \'%s\\n\' \'{"success":true,"data":{"results":[{"path":"/","type":"presentation","childCount":0,"children":[]}]}}\'',
-      'else',
-      "  printf '%s\\n' '{\"success\":true}'",
-      'fi'
-    ].join('\n')
-  )
-  chmodSync(binaryPath, 0o755)
-  try {
-    assert.deepEqual(await inspectOfficeDocument(binaryPath, draftPath, 'pptx'), { slides: 0 })
-    assert.deepEqual(readFileSync(callsPath, 'utf8').trim().split('\n'), [
-      `get ${draftPath} / --json`,
-      `validate ${draftPath} --json`,
-      `close ${draftPath} --json`
-    ])
-  } finally {
-    rmSync(root, { recursive: true, force: true })
+test(
+  'PPTX inspection uses get root, validates, and releases its transient resident',
+  { skip: !OFFICE_HOST && 'Office runs on macOS only' },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'office process pptx inspect '))
+    const binaryPath = join(root, 'officecli')
+    const callsPath = join(root, 'calls.txt')
+    const draftPath = join(root, 'slides.pptx')
+    writeFileSync(
+      binaryPath,
+      [
+        '#!/bin/sh',
+        `printf '%s\n' "$*" >> '${callsPath}'`,
+        'if [ "$1" = "get" ]; then',
+        '  printf \'%s\\n\' \'{"success":true,"data":{"results":[{"path":"/","type":"presentation","childCount":0,"children":[]}]}}\'',
+        'else',
+        "  printf '%s\\n' '{\"success\":true}'",
+        'fi'
+      ].join('\n')
+    )
+    chmodSync(binaryPath, 0o755)
+    try {
+      assert.deepEqual(await inspectOfficeDocument(binaryPath, draftPath, 'pptx'), { slides: 0 })
+      assert.deepEqual(readFileSync(callsPath, 'utf8').trim().split('\n'), [
+        `get ${draftPath} / --json`,
+        `validate ${draftPath} --json`,
+        `close ${draftPath} --json`
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }
-})
+)
 
 test('blank workbook creation uses the controlled create command and resident flush environment', async () => {
   const root = mkdtempSync(join(tmpdir(), 'office process create '))

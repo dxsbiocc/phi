@@ -11,6 +11,9 @@ import {
 } from '../src/main/agent/office/office-watch'
 import { holdEventLoopForTests } from './helpers/holdEventLoop'
 
+// OfficeCLI ships for macOS only, and Office finds its processes with /usr/sbin/lsof there.
+const OFFICE_HOST = process.platform === 'darwin'
+
 holdEventLoopForTests()
 
 test('gateway startup cleanup retains a partial watch for retry', async () => {
@@ -62,21 +65,25 @@ test('unwatch failures stay explicit so ownership can be retried', () => {
   )
 })
 
-test('readiness rejects a loopback port owned by a competing process', async () => {
-  const competitor = createServer()
-  await new Promise<void>((resolve, reject) => {
-    competitor.once('error', reject)
-    competitor.listen(0, '127.0.0.1', () => resolve())
-  })
-  try {
-    const address = competitor.address()
-    if (!address || typeof address === 'string') throw new Error('missing competitor port')
-    assert.equal(await isOwnedLoopbackListener(process.pid, address.port), true)
-    assert.equal(await isOwnedLoopbackListener(process.pid + 1, address.port), false)
-  } finally {
-    await new Promise<void>((resolve) => competitor.close(() => resolve()))
+test(
+  'readiness rejects a loopback port owned by a competing process',
+  { skip: !OFFICE_HOST && 'Office runs on macOS only' },
+  async () => {
+    const competitor = createServer()
+    await new Promise<void>((resolve, reject) => {
+      competitor.once('error', reject)
+      competitor.listen(0, '127.0.0.1', () => resolve())
+    })
+    try {
+      const address = competitor.address()
+      if (!address || typeof address === 'string') throw new Error('missing competitor port')
+      assert.equal(await isOwnedLoopbackListener(process.pid, address.port), true)
+      assert.equal(await isOwnedLoopbackListener(process.pid + 1, address.port), false)
+    } finally {
+      await new Promise<void>((resolve) => competitor.close(() => resolve()))
+    }
   }
-})
+)
 
 test('watch selections stay bound to their artifact and stop after cleanup', async () => {
   const selections: unknown[] = []

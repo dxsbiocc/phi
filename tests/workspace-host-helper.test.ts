@@ -110,24 +110,34 @@ async function createHelperHost(root: string): Promise<SshHost> {
   return host
 }
 
-runWorkspaceHostContract(createHelperHost)
+// The helper ships for Linux servers only, and its installer uses GNU tools (stat -c,
+// sha256sum); this machine can stand in for such a server only when it runs Linux itself.
+const LINUX_SERVER_STAND_IN = process.platform === 'linux'
 
-test('legacy remote session reads text through the helper-backed WorkspaceHost', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'phi-helper-remote-session-'))
-  try {
-    const canonicalRoot = await realpath(root)
-    const host = await createHelperHost(root)
-    await host.fs.writeAtomic('message.txt', 'helper adapter')
-    const session = createWorkspaceHostRemoteSession(host, canonicalRoot)
+if (LINUX_SERVER_STAND_IN) runWorkspaceHostContract(createHelperHost)
 
-    assert.equal(await session.readTextFile('message.txt'), 'helper adapter')
-    await session.close()
-    await host.close()
-    hosts.delete(host)
-  } finally {
-    await rm(root, { recursive: true, force: true })
+test(
+  'legacy remote session reads text through the helper-backed WorkspaceHost',
+  {
+    skip: !LINUX_SERVER_STAND_IN && 'the helper installs on Linux servers only'
+  },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-helper-remote-session-'))
+    try {
+      const canonicalRoot = await realpath(root)
+      const host = await createHelperHost(root)
+      await host.fs.writeAtomic('message.txt', 'helper adapter')
+      const session = createWorkspaceHostRemoteSession(host, canonicalRoot)
+
+      assert.equal(await session.readTextFile('message.txt'), 'helper adapter')
+      await session.close()
+      await host.close()
+      hosts.delete(host)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   }
-})
+)
 
 test('TS helper data plane interoperates with the Go helper for upload and download', async () => {
   const localRoot = await mkdtemp(join(tmpdir(), 'phi-helper-data-plane-local-'))

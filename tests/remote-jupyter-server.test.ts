@@ -117,7 +117,8 @@ test('token stays off argv, files, status, and logs; stop reaps the process grou
   assert.equal(endpoint.hostname, '127.0.0.1')
   assert.ok(Number(endpoint.port) >= 41001)
   assert.equal(connection.authorizationHeader(), authorization)
-  await waitFor(() => logs.some((line) => line.includes('<redacted>')))
+  // The fake prints the token split across a 20 ms pause; wait for that line itself.
+  await waitFor(() => logs.includes('split=<redacted>'))
 
   assert.doesNotMatch(await readFile(fixture.sshArgsPath, 'utf8'), new RegExp(token))
   assert.doesNotMatch(await readFile(fixture.jupyterArgsPath, 'utf8'), new RegExp(token))
