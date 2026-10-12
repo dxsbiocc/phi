@@ -18,7 +18,11 @@ import {
   type RemoteSshSession
 } from './wrappers/remote-ssh-session'
 
-export type RemoteWorkspacePathMode = 'existing' | 'create'
+/**
+ * `create` needs the new file's parent directory to exist. `create-parents` also accepts
+ * missing parent directories, which the caller must then create inside the project root.
+ */
+export type RemoteWorkspacePathMode = 'existing' | 'create' | 'create-parents'
 
 /** Worker requests identify a Phi session/project, never an arbitrary SSH host. */
 export interface RemoteWorkspacePathRequest {
@@ -122,7 +126,7 @@ function candidatePath(
   if (!isRemotePathInside(remoteRoot, candidate) && !isRemotePathInside(canonicalRoot, candidate)) {
     throw new Error('远程路径不属于当前项目')
   }
-  if (mode === 'create' && (candidate === remoteRoot || candidate === canonicalRoot)) {
+  if (mode !== 'existing' && (candidate === remoteRoot || candidate === canonicalRoot)) {
     throw new Error('不能将项目根目录作为新文件')
   }
   return candidate
@@ -154,10 +158,22 @@ export function buildRemoteWorkspaceResolveCommand(
           'parent=${candidate%/*}',
           'leaf=${candidate##*/}',
           '[ -n "$leaf" ] || exit 35',
+          ...(mode === 'create-parents'
+            ? [
+                // Missing directories are only names to append to the nearest existing
+                // ancestor; that ancestor is canonicalized like an ordinary parent.
+                'missing=',
+                'while [ -n "$parent" ] && [ ! -e "$parent" ] && [ ! -L "$parent" ]; do',
+                '  missing=/${parent##*/}$missing',
+                '  parent=${parent%/*}',
+                'done',
+                '[ -n "$parent" ] || parent=/'
+              ]
+            : ['missing=']),
           'cd -P -- "$parent" || exit 35',
           'parent_real=$PWD',
           '[ "$parent" -ef "$parent_real" ] || exit 35',
-          `if [ "$parent_real" = / ]; then printf '/%s\\0' "$leaf"; else printf '%s/%s\\0' "$parent_real" "$leaf"; fi`
+          `if [ "$parent_real" = / ]; then printf '%s/%s\\0' "$missing" "$leaf"; else printf '%s%s/%s\\0' "$parent_real" "$missing" "$leaf"; fi`
         ])
   ].join('\n')
   return `bash -c ${shellQuote(script)}`
@@ -175,7 +191,7 @@ function checkedRequest(value: unknown): RemoteWorkspacePathRequest {
     typeof record.projectId !== 'string' ||
     !record.projectId ||
     typeof record.path !== 'string' ||
-    (record.mode !== 'existing' && record.mode !== 'create')
+    (record.mode !== 'existing' && record.mode !== 'create' && record.mode !== 'create-parents')
   ) {
     throw new Error('远程工作区请求只能包含会话、项目、路径和操作类型')
   }
