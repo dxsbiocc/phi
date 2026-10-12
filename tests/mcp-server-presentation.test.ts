@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { withConnectorMetadata } from '../src/main/agent/mcp-server-view'
 
 const syntax = ts.createSourceFile(
   'src/main/index.ts',
@@ -51,12 +52,14 @@ test('configured legacy connectors inherit their verified catalog icons without 
     currentCwd: '/project',
     isRemoteResourceScope: () => false,
     listMcpServers: async () => configured,
-    connectorCatalog: async () => catalog
+    connectorCatalog: async () => catalog,
+    withConnectorMetadata
   }) as (_: unknown) => Promise<Array<(typeof configured)[number] & { icon?: { key: string } }>>
   const result = await handler(undefined)
   assert.equal(result[0].icon?.key, 'verified-composio')
   assert.equal(result[1].icon?.key, 'verified-notion')
-  assert.equal(result[2], configured[2])
+  assert.notEqual(result[2], configured[2])
+  assert.match(result[2].icon?.key ?? '', /^[a-f0-9]{64}$/)
 })
 
 test('installed connector icons take precedence over catalog previews', async () => {
@@ -67,7 +70,8 @@ test('installed connector icons take precedence over catalog previews', async ()
     currentCwd: '/project',
     isRemoteResourceScope: () => true,
     listGlobalMcpServers: async () => configured,
-    connectorCatalog: async () => [{ id: 'cbioportal', icon: { key: 'preview-icon' } }]
+    connectorCatalog: async () => [{ id: 'cbioportal', icon: { key: 'preview-icon' } }],
+    withConnectorMetadata
   }) as (_: unknown) => Promise<typeof configured>
   assert.equal((await handler(undefined))[0].icon.key, 'installed-icon')
 })

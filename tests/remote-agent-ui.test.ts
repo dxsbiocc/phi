@@ -32,8 +32,25 @@ function remoteAgent(
   }
 }
 
-function renderInvocationMenu(pending: PromptAgentSummary): string {
-  return renderToStaticMarkup(
+test('agent menus show server trust badges, diagnostics and disable untrusted selection', () => {
+  const pending = remoteAgent('pending')
+  const addMarkup = renderToStaticMarkup(
+    createElement(InputAddPanel, {
+      panelId: 'add-panel',
+      panelRef: createRef<HTMLDivElement>(),
+      skills: [],
+      promptAgents: [pending],
+      cwd: '/local/anchor',
+      onInsertReference: () => assert.fail('pending agent must not be selected'),
+      onClose: () => undefined
+    })
+  )
+  assert.match(addMarkup, /服务器项目/)
+  assert.match(addMarkup, /未信任/)
+  assert.match(addMarkup, />信任</)
+  assert.match(addMarkup, /disabled/)
+
+  const shortcutMarkup = renderToStaticMarkup(
     createElement(InputInvocationReferenceMenu, {
       state: {
         kind: 'agent',
@@ -60,27 +77,6 @@ function renderInvocationMenu(pending: PromptAgentSummary): string {
       onSelect: () => assert.fail('pending agent must not be selected')
     })
   )
-}
-
-test('agent menus show server trust badges, diagnostics and disable untrusted selection', () => {
-  const pending = remoteAgent('pending')
-  const addMarkup = renderToStaticMarkup(
-    createElement(InputAddPanel, {
-      panelId: 'add-panel',
-      panelRef: createRef<HTMLDivElement>(),
-      skills: [],
-      promptAgents: [pending],
-      cwd: '/local/anchor',
-      onInsertReference: () => assert.fail('pending agent must not be selected'),
-      onClose: () => undefined
-    })
-  )
-  assert.match(addMarkup, /服务器项目/)
-  assert.match(addMarkup, /未信任/)
-  assert.match(addMarkup, />信任</)
-  assert.match(addMarkup, /disabled/)
-
-  const shortcutMarkup = renderInvocationMenu(pending)
   assert.match(shortcutMarkup, /未信任/)
   assert.match(shortcutMarkup, /来自服务器项目/)
   assert.match(shortcutMarkup, />信任</)

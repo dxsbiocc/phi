@@ -2565,29 +2565,33 @@ async function harness(
     './agent/packages/icon-views': {
       packageRegistryIconView: (registry: unknown): unknown => registry
     },
-    './agent/packages/skill-detail': {
-      readSkillPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
-        id,
-        markdown: ''
-      })
-    },
-    './agent/packages/wrapper-detail': {
-      readWrapperPackageDetail: async (_registry: unknown, id: string): Promise<unknown> => ({
-        id,
-        wrappers: []
-      })
-    },
-    './agent/mcp-server-view': {
-      withConnectorMetadata: (servers: readonly unknown[]): unknown[] => [...servers]
-    },
-    './agent/packages/mutation-queue': {
-      runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
-    },
-    './agent/packages/wrapper-removal': {
-      removeWrapperPackage: async (): Promise<unknown> => ({
-        kind: 'deselected',
-        id: ''
-      })
+    './agent/packages/github-source': {
+      previewGithubSource: async (): Promise<unknown> => ({
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        packages: [],
+        skipped: [],
+        warnings: []
+      }),
+      addGithubSource: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      checkGithubSourceUpdate: async (): Promise<unknown> => ({ changed: false }),
+      applyGithubSourceUpdate: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      removeGithubSource: async (): Promise<boolean> => true,
+      listGithubSources: (): unknown => ({ version: 1, sources: [] })
     },
     './agent/resource-icons': { readResourceIcon: (): null => null },
     './agent/packages/installer': {
@@ -2722,6 +2726,12 @@ async function harness(
           }
         }
       }
+    },
+    './agent/mcp/custom-stdio': {
+      addLocalMcpConnector: async (): Promise<{ tools: string[] }> => ({ tools: [] }),
+      listLocalMcpRuntimes: async (): Promise<unknown[]> => [],
+      removeLocalMcpConnector: noop,
+      validateLocalConnectorRequest: (value: unknown): unknown => value
     },
     './agent/mcp-connectors': {
       addRemoteMcpConnector: (
@@ -3125,6 +3135,35 @@ async function harness(
       revokeRemoteProjectSkillTrust: async (_context: unknown, input: Record<string, unknown>) => {
         remoteSkillMutations.push({ operation: 'revoke', input })
       }
+    },
+    './agent/packages/skill-detail': {
+      readSkillPackageDetail: async (): Promise<Record<string, never>> => ({})
+    },
+    './agent/packages/wrapper-detail': {
+      readWrapperPackageDetail: async (): Promise<Record<string, never>> => ({})
+    },
+    './agent/mcp-server-view': {
+      withConnectorMetadata: (servers: unknown[]): unknown[] => servers
+    },
+    './agent/mcp/local-connector-jobs': {
+      createLocalConnectorJobs: () => ({
+        startLocalConnectorAdd: (request: { name?: string }) => ({
+          started: true,
+          name: request.name ?? 'local'
+        }),
+        cancelLocalConnectorAdd: async (): Promise<void> => undefined,
+        retryLocalConnectorAdd: (name: string) => ({ started: true, name }),
+        listLocalConnectorJobs: (): unknown[] => []
+      })
+    },
+    './agent/packages/mutation-queue': {
+      runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
+    },
+    './agent/packages/wrapper-removal': {
+      removeWrapperPackage: (id: string): { kind: 'uninstalled'; id: string } => ({
+        kind: 'uninstalled',
+        id
+      })
     },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },

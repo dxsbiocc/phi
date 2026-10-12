@@ -27,18 +27,6 @@ Use only the remote project tools.
 `
 }
 
-function discoverReviewer(
-  fixture: ReturnType<typeof createRemoteRuntimeFixture>,
-  agentDir: string,
-  identity: { hostAlias: string; projectRoot: string; relativePath: string }
-): ReturnType<typeof discoverRemoteProjectAgents> {
-  return discoverRemoteProjectAgents({
-    host: fixture.workspace.projectHost,
-    ...identity,
-    agentDir
-  })
-}
-
 test('server project Phi and compatibility agents are listed pending without becoming runnable', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
@@ -92,11 +80,19 @@ test('trust enables the current content while changes and revoke remove it from 
   try {
     mkdirSync(join(fixture.projectRoot, '.phi', 'agents'), { recursive: true })
     writeFileSync(filePath, agentMarkdown('Reviewer'))
-    const pending = await discoverReviewer(fixture, agentDir, identityBase)
+    const pending = await discoverRemoteProjectAgents({
+      host: fixture.workspace.projectHost,
+      ...identityBase,
+      agentDir
+    })
     const originalHash = pending.entries[0]?.contentHash ?? ''
 
     trustRemoteProjectAgent({ ...identityBase, contentHash: originalHash }, agentDir)
-    const trusted = await discoverReviewer(fixture, agentDir, identityBase)
+    const trusted = await discoverRemoteProjectAgents({
+      host: fixture.workspace.projectHost,
+      ...identityBase,
+      agentDir
+    })
     assert.equal(trusted.entries[0]?.trustState, 'trusted')
     assert.deepEqual(
       trusted.agents.map((agent) => agent.name),
@@ -104,7 +100,11 @@ test('trust enables the current content while changes and revoke remove it from 
     )
 
     writeFileSync(filePath, `${agentMarkdown('Reviewer')}\nChanged.\n`)
-    const changed = await discoverReviewer(fixture, agentDir, identityBase)
+    const changed = await discoverRemoteProjectAgents({
+      host: fixture.workspace.projectHost,
+      ...identityBase,
+      agentDir
+    })
     assert.equal(changed.entries[0]?.trustState, 'changed')
     assert.match(changed.entries[0]?.diagnostics.join('\n') ?? '', /内容已变化/)
     assert.deepEqual(changed.agents, [])
@@ -113,7 +113,11 @@ test('trust enables the current content while changes and revoke remove it from 
       { ...identityBase, contentHash: changed.entries[0]?.contentHash ?? '' },
       agentDir
     )
-    const revoked = await discoverReviewer(fixture, agentDir, identityBase)
+    const revoked = await discoverRemoteProjectAgents({
+      host: fixture.workspace.projectHost,
+      ...identityBase,
+      agentDir
+    })
     assert.equal(revoked.entries[0]?.trustState, 'pending')
   } finally {
     await fixture.workspace.projectHost.close?.()
