@@ -24,6 +24,7 @@ import * as notebookDocument from '../src/shared/notebookDocument'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
+import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
 import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
@@ -1349,6 +1350,7 @@ async function harness(
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
     '../shared/phiPluginProblems': phiPluginProblems,
+    '../shared/projectMemoryTypes': projectMemoryTypes,
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
@@ -4756,6 +4758,49 @@ test('main IPC: web search settings are routed to the OMP worker', async () => {
       params: { agentDir: '/isolated', providerId: 'brave' }
     }
   ])
+})
+
+test('main IPC: project memory is read and cleared by the worker under its session cwd', async () => {
+  const app = await harness()
+
+  const local = (await app.invoke('memory:snapshot', 'project-/projects/demo')) as {
+    projectId: string
+    settings: unknown
+  }
+  assert.equal(local.projectId, 'project-/projects/demo')
+  assert.deepEqual(local.settings, { enabled: false, learn: false })
+  await app.invoke('memory:deleteLesson', 'remote-project-1', 2, 'lesson')
+  await app.invoke('memory:clear', 'remote-project-1')
+  await assert.rejects(app.invoke('memory:snapshot', 'missing'), /项目不存在/)
+
+  // Local projects key memory by their directory; remote ones by their local anchor.
+  assert.deepEqual(
+    app.bridgeRequests.filter((request) => request.method.startsWith('memory.')),
+    [
+      { method: 'memory.read', params: { agentDir: '/isolated', cwd: '/projects/demo' } },
+      {
+        method: 'memory.deleteLesson',
+        params: {
+          agentDir: '/isolated',
+          cwd: '/isolated/remote-project-anchors/remote-project-1',
+          index: 2,
+          text: 'lesson'
+        }
+      },
+      {
+        method: 'memory.read',
+        params: { agentDir: '/isolated', cwd: '/isolated/remote-project-anchors/remote-project-1' }
+      },
+      {
+        method: 'memory.clear',
+        params: { agentDir: '/isolated', cwd: '/isolated/remote-project-anchors/remote-project-1' }
+      },
+      {
+        method: 'memory.read',
+        params: { agentDir: '/isolated', cwd: '/isolated/remote-project-anchors/remote-project-1' }
+      }
+    ]
+  )
 })
 
 test('main IPC: reveal path is limited to Phi-owned files', async () => {

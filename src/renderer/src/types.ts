@@ -4,6 +4,7 @@ import type {
   NotebookOutput
 } from '../../shared/notebookDocument'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { TerminalRendererBridge } from '../../shared/terminalTypes'
 import type {
@@ -823,6 +824,14 @@ export interface RendererApi
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<Project>
+  getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ) => Promise<ProjectMemorySnapshot>
+  clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
   listRemoteProjectDirectories: (
     request: RemoteDirectoryListRequest

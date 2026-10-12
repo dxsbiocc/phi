@@ -9,6 +9,10 @@ import type {
 } from '../../shared/projectLocation'
 import type { RemoteHpcSettings } from '../../shared/wrapperRemoteTypes'
 import type { WrapperInputPathMapping } from '../../shared/wrapperTypes'
+import {
+  normalizeProjectMemorySettings,
+  type ProjectMemorySettings
+} from '../../shared/projectMemoryTypes'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import { normalizeRemoteRuntimeRoot } from './remote-runtime-root'
 import { getPhiAgentDir } from './runtime-paths'
@@ -87,6 +91,8 @@ export interface Project {
   defaultRemoteConnectionId?: string
   /** Remote root Phi run directories are created under, e.g. `/data/lab/.phi`. */
   remoteWorkspaceRoot?: string
+  /** Absent means both memory switches are off. */
+  memory?: ProjectMemorySettings
 }
 
 function getProjectsPath(): string {
@@ -290,6 +296,19 @@ export function updateProjectPermissionMode(id: string, permissionMode: Permissi
   }
 
   const project = { ...projects[index], permissionMode }
+  projects[index] = project
+  writeProjects(projects)
+  return normalizeProjectAvailability(project)
+}
+
+export function updateProjectMemory(id: string, settings: unknown): Project {
+  const projects = readProjects()
+  const index = projects.findIndex((project) => project.id === id)
+  if (index < 0) {
+    throw new Error('项目不存在')
+  }
+
+  const project = { ...projects[index], memory: normalizeProjectMemorySettings(settings) }
   projects[index] = project
   writeProjects(projects)
   return normalizeProjectAvailability(project)

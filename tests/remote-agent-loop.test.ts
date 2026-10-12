@@ -6,7 +6,7 @@ import test from 'node:test'
 const bunAvailable = spawnSync('bun', ['--version'], { encoding: 'utf8' }).status === 0
 
 test(
-  'a real agent loop runs remote file, command, skill, plugin skill and MCP tools',
+  'a real agent loop runs remote file, command, skill, plugin skill, MCP and memory tools',
   { skip: !bunAvailable },
   () => {
     const result = spawnSync(
@@ -25,6 +25,8 @@ test(
       requests: string[]
       file: string | null
       modelCalls: number
+      memoryLessons: string[]
+      lessonsAfterClear: number
     }
     const failures = output.toolResults.filter((entry) => entry.isError)
     assert.deepEqual(failures, [], 'every scripted tool call succeeds')
@@ -33,6 +35,7 @@ test(
       'edit',
       'glob',
       'grep',
+      'learn',
       'mcp__fixture_first',
       'plg_json',
       'read',
@@ -70,6 +73,9 @@ test(
       tool: 'fixture_first',
       arguments: { query: 'from-mcp' }
     })
-    assert.equal(output.modelCalls, 8)
+    // A lesson lands in this computer's project memory; no server request carries it.
+    assert.deepEqual(output.memoryLessons, ['Notes live under notes/ in this project.'])
+    assert.equal(output.lessonsAfterClear, 0)
+    assert.equal(output.modelCalls, 9)
   }
 )

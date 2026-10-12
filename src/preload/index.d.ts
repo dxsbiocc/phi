@@ -1,6 +1,7 @@
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
 import type { TerminalRendererBridge } from '../shared/terminalTypes'
 import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
@@ -216,6 +217,7 @@ type PreloadProject = {
   remoteConnections?: PreloadProjectRemoteConnection[]
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
+  memory?: ProjectMemorySettings
   createdAt: string
 }
 
@@ -925,6 +927,14 @@ declare global {
           defaultThinkingLevel?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
         }
       ) => Promise<PreloadProject>
+      updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<PreloadProject>
+      getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+      deleteProjectMemoryLesson: (
+        id: string,
+        index: number,
+        text: string
+      ) => Promise<ProjectMemorySnapshot>
+      clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
       listRemoteHosts: () => Promise<PreloadRemoteHostProfile[]>
       listRemoteProjectDirectories: (
         request: RemoteDirectoryListRequest

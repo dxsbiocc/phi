@@ -114,6 +114,7 @@ import {
   subscribeRemoteProjectConnection,
   updateProjectPermissionMode,
   updateProjectDefaults,
+  updateProjectMemory,
   updateProjectRemoteDefaults,
   type PermissionMode,
   type ModelSelection,
@@ -468,6 +469,10 @@ import {
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import { getOmpBridge } from './agent/omp/omp-bridge'
+import {
+  normalizeProjectMemorySettings,
+  type ProjectMemorySnapshot
+} from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
@@ -6877,6 +6882,38 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
   ).length
 }
 
+function requireProject(id: string): Project {
+  const project = getProject(id)
+  if (!project) throw new Error('项目不存在')
+  return project
+}
+
+/** The session manager cwd memory is keyed by: the project directory or the remote anchor. */
+function projectMemoryTarget(project: Project): { agentDir: string; cwd: string } {
+  return {
+    agentDir: AGENT_DIR,
+    cwd:
+      project.location.kind === 'ssh'
+        ? ensureRemoteProjectAnchor(project.id)
+        : project.workingDirectory
+  }
+}
+
+async function projectMemorySnapshot(id: string): Promise<ProjectMemorySnapshot> {
+  const project = requireProject(id)
+  const files = await getOmpBridge().request<Omit<ProjectMemorySnapshot, 'projectId' | 'settings'>>(
+    'memory.read',
+    projectMemoryTarget(project)
+  )
+  return {
+    projectId: id,
+    settings: normalizeProjectMemorySettings(project.memory),
+    summary: files.summary,
+    summaryUpdatedAt: files.summaryUpdatedAt,
+    lessons: files.lessons
+  }
+}
+
 async function invalidateAgentSession(): Promise<void> {
   const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
@@ -7398,6 +7435,7 @@ async function getAgentSession(
           ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
           : {}),
         projectBound: Boolean(project),
+        ...(project?.memory?.enabled ? { memory: project.memory } : {}),
         ...(remoteProject
           ? {
               ...(project ? { remoteRuntimeRoot: projectRemoteRuntimeRoot(project) } : {}),
@@ -8557,6 +8595,13 @@ app.whenReady().then(async () => {
       writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
     })
     await disposeRemoteNotebookBackend(id)
+    const project = getProject(id)
+    if (project?.memory) {
+      // Memory lives under Phi's own directory, so it would outlive the project otherwise.
+      await getOmpBridge()
+        .request('memory.clear', projectMemoryTarget(project))
+        .catch(() => writeAppLog({ level: 'error', event: 'project_memory_clear_failed' }))
+    }
     deleteProject(id)
   })
   ipcMain.handle(
@@ -8609,6 +8654,24 @@ app.whenReady().then(async () => {
       return updateProjectDefaults(id, defaults)
     }
   )
+  // Memory settings reach the worker at session creation, so they apply to new conversations.
+  ipcMain.handle('projects:updateMemory', async (_, id: string, settings: unknown) =>
+    updateProjectMemory(id, settings)
+  )
+  ipcMain.handle('memory:snapshot', async (_, id: string) => projectMemorySnapshot(id))
+  ipcMain.handle('memory:deleteLesson', async (_, id: string, index: unknown, text: unknown) => {
+    const project = requireProject(id)
+    await getOmpBridge().request('memory.deleteLesson', {
+      ...projectMemoryTarget(project),
+      index,
+      text
+    })
+    return projectMemorySnapshot(id)
+  })
+  ipcMain.handle('memory:clear', async (_, id: string) => {
+    await getOmpBridge().request('memory.clear', projectMemoryTarget(requireProject(id)))
+    return projectMemorySnapshot(id)
+  })
   ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
   ipcMain.handle('projects:listRemoteDirectories', async (_, input: unknown) =>
     listRemoteProjectDirectories(input)

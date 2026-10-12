@@ -20,6 +20,7 @@ import type {
   RemoteProjectReachability
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
+import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
@@ -332,6 +333,7 @@ type Project = {
   remoteConnections?: ProjectRemoteConnection[]
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
+  memory?: ProjectMemorySettings
   createdAt: string
 }
 
@@ -879,6 +881,14 @@ type RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ) => Promise<Project>
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings) => Promise<Project>
+  getProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ) => Promise<ProjectMemorySnapshot>
+  clearProjectMemory: (id: string) => Promise<ProjectMemorySnapshot>
   listRemoteHosts: () => Promise<RemoteHostProfile[]>
   listRemoteProjectDirectories: (
     request: RemoteDirectoryListRequest
@@ -1449,6 +1459,17 @@ const api: RendererAuthApi = {
       defaultThinkingLevel?: ThinkingLevel | null
     }
   ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
+  updateProjectMemory: (id: string, settings: ProjectMemorySettings): Promise<Project> =>
+    ipcRenderer.invoke('projects:updateMemory', id, settings),
+  getProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
+    ipcRenderer.invoke('memory:snapshot', id),
+  deleteProjectMemoryLesson: (
+    id: string,
+    index: number,
+    text: string
+  ): Promise<ProjectMemorySnapshot> => ipcRenderer.invoke('memory:deleteLesson', id, index, text),
+  clearProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
+    ipcRenderer.invoke('memory:clear', id),
   listRemoteHosts: (): Promise<RemoteHostProfile[]> =>
     ipcRenderer.invoke('projects:listRemoteHosts'),
   listRemoteProjectDirectories: (

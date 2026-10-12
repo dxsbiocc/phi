@@ -142,6 +142,7 @@ import {
   TbBrain,
   TbFolderOpen,
   TbGauge,
+  TbHistory,
   TbListTree,
   TbNetwork,
   TbPalette,
@@ -762,6 +763,7 @@ export const PhiIcons = {
   },
   settings: {
     appearance: createPhiIcon('Appearance', TbPalette),
+    memory: createPhiIcon('Memory', TbHistory),
     permissions: createPhiIcon('Permissions', FiShield),
     persona: createPhiIcon('Persona', TbBrain),
     providers: createPhiIcon('Providers', TbNetwork),

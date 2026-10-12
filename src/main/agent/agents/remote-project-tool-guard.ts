@@ -13,6 +13,7 @@ import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../deliverables/remote-pre
 import { PHI_ENV_REQUEST_DESCRIPTION } from '../content/env-request-tool'
 import { PHI_SKILL_RUN_DESCRIPTION } from '../content/skill-tools'
 import { NOTEBOOK_TOOL_DESCRIPTIONS } from '../notebook/notebook-tools'
+import { PHI_LEARN_DESCRIPTION } from '../memory/learn-tool'
 import {
   REMOTE_MCP_UNVERIFIED_REASON,
   remoteMcpToolCallReason,
@@ -80,7 +81,9 @@ const VERIFIED_REMOTE_TOOL_DESCRIPTIONS = new Map([
   ['download_file', PHI_REMOTE_DOWNLOAD_DESCRIPTION],
   ['present_files', PHI_REMOTE_PRESENT_FILES_DESCRIPTION],
   ['skill_run', PHI_SKILL_RUN_DESCRIPTION],
-  ['env_request', PHI_ENV_REQUEST_DESCRIPTION]
+  ['env_request', PHI_ENV_REQUEST_DESCRIPTION],
+  // Phi's own lesson tool writes only to this computer's project memory, never the server.
+  ['learn', PHI_LEARN_DESCRIPTION]
 ])
 
 const MAIN_SESSION_ONLY_REMOTE_TOOLS = new Set([
@@ -95,7 +98,8 @@ const REMOTE_AGENT_SUPPORTED_TOOL_NAMES = new Set<string>([
   ...REMOTE_WORKSPACE_TOOL_DESCRIPTIONS.map(([name]) => name),
   ...[...SAFE_PHI_REMOTE_TOOLS].filter((name) => !MAIN_SESSION_ONLY_REMOTE_TOOLS.has(name)),
   ...SAFE_REMOTE_BUILTINS,
-  ...VERIFIED_REMOTE_TOOL_DESCRIPTIONS.keys(),
+  // Lessons are recorded by the main session only.
+  ...[...VERIFIED_REMOTE_TOOL_DESCRIPTIONS.keys()].filter((name) => name !== 'learn'),
   ...NOTEBOOK_TOOL_DESCRIPTIONS.keys()
 ])
 
@@ -188,7 +192,10 @@ function remoteToolBlockedReason(toolName: string): string {
   ) {
     return `${toolName}：该 SDK 工具仍绑定本机文件或进程；请使用远程 read/grep/edit/bash 或 browser/web_search。${noFallback}`
   }
-  if (['memory_edit', 'retain', 'recall', 'reflect', 'learn', 'manage_skill'].includes(toolName)) {
+  if (toolName === 'learn') {
+    return `${toolName}：只有开启项目记忆和“允许 agent 记录经验”后，Phi 自己注册的 learn 工具才可用。${noFallback}`
+  }
+  if (['memory_edit', 'retain', 'recall', 'reflect', 'manage_skill'].includes(toolName)) {
     return `${toolName}：该工具会访问本机全局内容存储，尚未声明远程安全边界。${noFallback}`
   }
   return `${toolName}：${REMOTE_TOOLS_PENDING_REASON}`
@@ -261,6 +268,7 @@ export function remoteAgentToolRegistrationVerified(
     return verifiedRemoteRuntimeTool(toolName, registered)
   }
   if (NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName)) return verifiedNotebookTool(toolName, registered)
+  if (toolName === 'learn') return false
   return VERIFIED_REMOTE_TOOL_DESCRIPTIONS.has(toolName) && verifiedCustomTool(toolName, registered)
 }
 

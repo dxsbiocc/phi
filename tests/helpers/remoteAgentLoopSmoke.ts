@@ -38,6 +38,11 @@ import {
   buildRemoteWorkspaceCustomTools,
   buildRemoteWorkspaceRead
 } from '../../src/main/agent/omp/remote-workspace-custom-tools'
+import {
+  buildWorkerProjectLearnTool,
+  clearProjectMemory,
+  readProjectMemory
+} from '../../src/main/agent/memory/project-memory-worker'
 import type { Project } from '../../src/main/agent/projects'
 import { ensureRemoteProjectAnchor } from '../../src/main/agent/remote-project-anchor'
 import { RemoteRuntimeController } from '../../src/main/agent/remote-runtime/controller'
@@ -258,6 +263,7 @@ try {
       ]
     },
     { content: [call('mcp__fixture_first', { query: 'from-mcp' })] },
+    { content: [call('learn', { memory: 'Notes live under notes/ in this project.' })] },
     { content: ['done'] }
   ]
   registerMockApi()
@@ -266,6 +272,10 @@ try {
   const authStorage = await discoverAuthStorage(agentDir)
   authStorage.setRuntimeApiKey('mock', 'test')
   const settings = await Settings.init({ cwd: agentDir, agentDir })
+  // Project memory with lesson recording on, keyed by the project anchor like the worker does.
+  settings.override('memory.backend', 'local')
+  const memoryTarget = { agentDir, cwd: anchor }
+  customTools.push(buildWorkerProjectLearnTool(memoryTarget))
   // Remote MCP: only the application mcp.json, loaded from agentDir, guarded by its policy.
   const mcpPlan = remoteMcpLoadPlan({
     projectCwd: anchor,
@@ -344,6 +354,9 @@ try {
   await result.session.prompt('exercise every remote tool')
   await result.session.dispose()
   await mcpManager.disconnectAll?.()
+  const memoryLessons = (await readProjectMemory(memoryTarget)).lessons.map((lesson) => lesson.text)
+  await clearProjectMemory(memoryTarget)
+  const lessonsAfterClear = (await readProjectMemory(memoryTarget)).lessons.length
 
   process.stdout.write(
     JSON.stringify({
@@ -356,7 +369,9 @@ try {
       file: existsSync(join(fixture.projectRoot, 'notes', 'a.txt'))
         ? readFileSync(join(fixture.projectRoot, 'notes', 'a.txt'), 'utf8')
         : null,
-      modelCalls: mock.calls.length
+      modelCalls: mock.calls.length,
+      memoryLessons,
+      lessonsAfterClear
     }) + '\n'
   )
 } finally {

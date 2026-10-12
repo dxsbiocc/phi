@@ -46,6 +46,14 @@ import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../deliverables/render-blocks-tool'
 import {
+  buildWorkerProjectLearnTool,
+  clearProjectMemory,
+  deleteProjectMemoryLesson,
+  projectMemoryPromptBlock,
+  readProjectMemory
+} from '../memory/project-memory-worker'
+import { normalizeProjectMemorySettings } from '../../../shared/projectMemoryTypes'
+import {
   buildRemoteProjectDownloadTool,
   type RemoteDownloadBackend
 } from '../download/remote-project-download-tool'
@@ -1766,6 +1774,15 @@ async function createSession(params: unknown): Promise<unknown> {
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
+  // Memory is keyed by the session manager cwd: the project directory, or the remote
+  // project's local anchor. Summaries and lessons stay on this computer.
+  const memoryPolicy = normalizeProjectMemorySettings(record.memory)
+  const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
+  if (memoryTarget) settings.override('memory.backend', 'local')
+  const remoteMemoryBlock =
+    remoteRoot && memoryTarget
+      ? await projectMemoryPromptBlock(memoryTarget).catch(() => undefined)
+      : undefined
   const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
@@ -2024,6 +2041,7 @@ async function createSession(params: unknown): Promise<unknown> {
           )
         ]),
     buildRenderBlocksTool(),
+    ...(memoryPolicy.learn && memoryTarget ? [buildWorkerProjectLearnTool(memoryTarget)] : []),
     remoteRoot
       ? buildRemoteProjectDownloadTool(
           remoteDownloadBackend({
@@ -2099,7 +2117,8 @@ async function createSession(params: unknown): Promise<unknown> {
         remoteRoot
           ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
               ...(personaMarkdown ? { personaMarkdown } : {}),
-              ...(remoteRuntime ? { runtime: remoteRuntime } : {})
+              ...(remoteRuntime ? { runtime: remoteRuntime } : {}),
+              ...(remoteMemoryBlock ? { memoryBlock: remoteMemoryBlock } : {})
             })
           : buildPhiMainSystemPrompt(defaultPrompt, {
               ...(personaMarkdown ? { personaMarkdown } : {})
@@ -2885,6 +2904,12 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return promptSession(params)
     case 'session.contextUsage':
       return sessionContextUsage(params)
+    case 'memory.read':
+      return readProjectMemory(params)
+    case 'memory.deleteLesson':
+      return deleteProjectMemoryLesson(params)
+    case 'memory.clear':
+      return clearProjectMemory(params)
     case 'settings.autoCompactionDefaults':
       return readAutoCompactionDefaults(params)
     case 'settings.webSearch.get': {

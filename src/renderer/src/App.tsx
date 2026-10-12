@@ -1035,6 +1035,7 @@ function App(): React.JSX.Element {
     refreshProjects,
     onUpdateProjectPermissionMode,
     onUpdateProjectDefaults,
+    onProjectUpdated,
     onUpdateProjectRemoteConnection,
     onUpdateProjectRemoteDefaults
   } = useProjects(showSnackbarError)
@@ -5031,6 +5032,7 @@ function App(): React.JSX.Element {
           updatingPermissionProjectId={updatingPermissionProjectId}
           onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
           onUpdateProjectDefaults={onUpdateProjectDefaults}
+          onProjectUpdated={onProjectUpdated}
           onOpenApprovalSession={onOpenApprovalSession}
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
