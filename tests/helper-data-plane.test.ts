@@ -91,6 +91,8 @@ function capableUploadHelper(state: {
   binaryChunkSizes: number[]
   maxJsonBytes: number
   ackDelayMs?: number
+  /** Hold acks until this many chunks are in flight, so a slow runner still fills the window. */
+  ackWhenInFlight?: number
   inFlight?: number
   maxInFlight?: number
   breakBinaryFrameOnce?: boolean
@@ -128,6 +130,13 @@ function capableUploadHelper(state: {
   const stdout = new PassThrough()
   const stderr = new PassThrough()
   let buffered = Buffer.alloc(0)
+  const heldAcks: Array<() => void> = []
+  let heldAckTimer: ReturnType<typeof setTimeout> | undefined
+  const releaseHeldAcks = (): void => {
+    if (heldAckTimer) clearTimeout(heldAckTimer)
+    heldAckTimer = undefined
+    for (const release of heldAcks.splice(0)) release()
+  }
   let uploadPath = ''
   let downloadPath = ''
   let downloadOffset = 0
@@ -239,8 +248,18 @@ function capableUploadHelper(state: {
           state.inFlight = Math.max(0, (state.inFlight ?? 1) - 1)
           stdout.write(Buffer.concat([header, ack]))
         }
-        if (state.ackDelayMs) setTimeout(acknowledge, state.ackDelayMs)
-        else acknowledge()
+        const send = (): void => {
+          if (state.ackDelayMs) setTimeout(acknowledge, state.ackDelayMs)
+          else acknowledge()
+        }
+        if (state.ackWhenInFlight) {
+          heldAcks.push(send)
+          // The last chunk may never have company; release it after a short wait.
+          if (state.inFlight >= state.ackWhenInFlight) releaseHeldAcks()
+          else heldAckTimer ??= setTimeout(releaseHeldAcks, 200)
+        } else {
+          send()
+        }
         continue
       }
       state.maxJsonBytes = Math.max(state.maxJsonBytes, payload.byteLength)
@@ -743,6 +762,7 @@ test('helper upload keeps a bounded two-chunk window while honoring stream backp
     binaryChunkSizes: [] as number[],
     maxJsonBytes: 0,
     ackDelayMs: 25,
+    ackWhenInFlight: 2,
     inFlight: 0,
     maxInFlight: 0,
     forceBackpressure: true,
