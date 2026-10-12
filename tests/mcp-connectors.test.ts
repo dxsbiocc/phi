@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
   addRemoteMcpConnector,
+  installCatalogConnector,
   isInjectedMcpServer,
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
@@ -13,6 +22,9 @@ import {
   removeRemoteMcpConnector,
   setMcpConnectorEnabled
 } from '../src/main/agent/mcp-connectors'
+import { listInstalledPackages } from '../src/main/agent/packages/installer'
+import { materializeRegistry } from '../src/main/agent/packages/materialize-registry'
+import { OFFICIAL_REGISTRY_ID } from '../src/main/agent/packages/official-registry'
 import type { RemoteMcpConnectorOptions } from '../src/shared/mcpConnectorCatalog'
 import { writeMcpRegistryFixture } from './helpers/mcpRegistryFixture'
 
@@ -48,6 +60,108 @@ connector:
     assert.equal(connectors[0].signIn, '无需登录')
     assert.equal(connectors[0].added, false)
     assert.equal(connectors[0].unavailableReason, '需要 Phi 2.0.0 或更高版本')
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('catalog identifies GitHub sources, keeps official precedence, and keeps the first GitHub duplicate', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-github-catalog-'))
+  const manifest = (version: string, title: string): string => `schemaVersion: 1
+id: github-fixture
+type: mcp
+version: ${version}
+title: ${title}
+summary: GitHub registry fixture.
+connector:
+  transport: http
+  publisher: Fixture
+  category: 科研数据
+  url: https://fixture.example/mcp
+  auth: none
+`
+  try {
+    const first = writeMcpRegistryFixture(join(agentDir, 'first'), [manifest('1.0.0', 'First')])
+    first.id = 'first-github'
+    first.source = {
+      kind: 'github',
+      id: 'first-github',
+      repo: 'acme/first',
+      sha: 'a'.repeat(40)
+    }
+    const later = writeMcpRegistryFixture(join(agentDir, 'later'), [manifest('9.0.0', 'Later')])
+    later.id = 'later-github'
+    later.source = {
+      kind: 'github',
+      id: 'later-github',
+      repo: 'acme/later',
+      sha: 'b'.repeat(40)
+    }
+
+    let connectors = listConnectorCatalog({
+      agentDir,
+      appVersion: '1.0.0',
+      registries: [first, later]
+    })
+    assert.equal(connectors[0]?.name, 'First')
+    assert.deepEqual(connectors[0]?.source, {
+      kind: 'github',
+      label: `GitHub · acme/first@${'a'.repeat(7)}`,
+      trust: 'imported',
+      sourceId: 'first-github',
+      sha: 'a'.repeat(40)
+    })
+    assert.match(connectors[0]?.notice ?? '', /同名|忽略/)
+
+    const official = writeMcpRegistryFixture(join(agentDir, 'official'), [
+      manifest('0.5.0', 'Official')
+    ])
+    official.id = OFFICIAL_REGISTRY_ID
+    official.trust = 'official'
+    connectors = listConnectorCatalog({
+      agentDir,
+      appVersion: '1.0.0',
+      registries: [first, official, later]
+    })
+    assert.equal(connectors[0]?.name, 'Official')
+    assert.equal(connectors[0]?.source?.kind, 'official')
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('a materialized GitHub registry installs through the existing imported-trust installer', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-github-install-'))
+  try {
+    const packageDir = join(agentDir, 'source', 'github-install')
+    mkdirSync(packageDir, { recursive: true })
+    writeFileSync(
+      join(packageDir, 'phi-package.yaml'),
+      `schemaVersion: 1
+id: github-install
+type: mcp
+version: 1.0.0
+title: GitHub install
+summary: Installer path fixture.
+connector:
+  transport: http
+  publisher: Fixture
+  category: 科研数据
+  url: https://install.example/mcp
+  auth: none
+`
+    )
+    const registryDir = join(agentDir, 'github-registry')
+    materializeRegistry([packageDir], registryDir, { id: 'github-source', trust: 'imported' })
+
+    await installCatalogConnector(registryDir, 'github-install', '1.0.0', {
+      agentDir,
+      appVersion: '1.0.0'
+    })
+    assert.equal(
+      listInstalledPackages({ agentDir }).find((entry) => entry.id === 'github-install')?.trust,
+      'imported'
+    )
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }

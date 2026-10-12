@@ -29,6 +29,7 @@ export interface RegistryPackageEntry {
 
 export interface LocalRegistry {
   kind?: 'official' | 'directory'
+  source?: { kind: 'github'; repo: string; sha: string; ref?: string; id: string }
   label?: string
   status?: 'ready' | 'cached'
   notice?: string

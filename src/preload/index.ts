@@ -53,6 +53,11 @@ import type {
 } from '../shared/remoteRipgrepTypes'
 import type { PromptAgentSummary, RemoteProjectAgentTrustRequest } from '../shared/promptAgentTypes'
 import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
+import type {
+  GithubSourcePreview,
+  GithubSourceSummary,
+  GithubSourceUpdateCheck
+} from '../shared/githubSourceTypes'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -1070,6 +1075,12 @@ type RendererAuthApi = {
   trustRemoteProjectMcp: (input: RemoteProjectMcpTrustRequest) => Promise<McpServerSummary[]>
   revokeRemoteProjectMcpTrust: (input: RemoteProjectMcpTrustRequest) => Promise<McpServerSummary[]>
   listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+  previewGithubSource: (url: string) => Promise<GithubSourcePreview>
+  addGithubSource: (input: { url: string; sha: string }) => Promise<GithubSourceSummary>
+  checkGithubSourceUpdate: (id: string) => Promise<GithubSourceUpdateCheck>
+  applyGithubSourceUpdate: (input: { id: string; sha: string }) => Promise<GithubSourceSummary>
+  removeGithubSource: (id: string) => Promise<boolean>
+  listGithubSources: () => Promise<GithubSourceSummary[]>
   installMcpConnector: (
     id: string,
     version?: string,
@@ -1844,6 +1855,17 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('mcp:revokeRemoteProjectTrust', input),
   listMcpConnectorCatalog: (): Promise<FeaturedMcpConnector[]> =>
     ipcRenderer.invoke('mcp:listConnectorCatalog'),
+  previewGithubSource: (url: string): Promise<GithubSourcePreview> =>
+    ipcRenderer.invoke('sources:previewGithub', url),
+  addGithubSource: (input: { url: string; sha: string }): Promise<GithubSourceSummary> =>
+    ipcRenderer.invoke('sources:addGithub', input),
+  checkGithubSourceUpdate: (id: string): Promise<GithubSourceUpdateCheck> =>
+    ipcRenderer.invoke('sources:checkGithubUpdate', id),
+  applyGithubSourceUpdate: (input: { id: string; sha: string }): Promise<GithubSourceSummary> =>
+    ipcRenderer.invoke('sources:applyGithubUpdate', input),
+  removeGithubSource: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('sources:removeGithub', id),
+  listGithubSources: (): Promise<GithubSourceSummary[]> => ipcRenderer.invoke('sources:listGithub'),
   installMcpConnector: (
     id: string,
     version?: string,

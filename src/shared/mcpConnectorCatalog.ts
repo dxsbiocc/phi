@@ -53,6 +53,14 @@ export interface McpConnectorSetupProgress {
   toolNames?: string[]
 }
 
+export interface McpConnectorCatalogSource {
+  kind: 'official' | 'github' | 'directory' | 'installed'
+  label: string
+  trust: 'official' | 'imported' | 'builtin'
+  sourceId?: string
+  sha?: string
+}
+
 export interface FeaturedMcpConnector {
   icon?: ResourceIconRef
   id: string
@@ -74,6 +82,8 @@ export interface FeaturedMcpConnector {
   added: boolean
   unavailableReason?: string
   environmentState?: 'ready' | 'not-built'
+  source?: McpConnectorCatalogSource
+  notice?: string
   /** App-owned latest setup snapshot, retained independently of an open dialog. */
   setup?: McpConnectorSetupProgress
   /** App-owned presentation copy; connector contract v1 has no long-description field. */

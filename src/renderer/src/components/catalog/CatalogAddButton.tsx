@@ -8,7 +8,7 @@ export function CatalogAddButton({
 }: {
   label: string
   disabled?: boolean
-  onClick: () => void
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void
 }): React.JSX.Element {
   return (
     <IconButton

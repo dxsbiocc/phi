@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSyn
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { readGithubSources, type GithubSourceRecord } from './github-source-store'
 import type { LocalRegistry, RegistryTrustTier } from './installer-types'
 import { errorMessage, isRecord } from './installer-utils'
 import { readRegistry } from './registry'
@@ -36,7 +37,7 @@ export interface KnownRegistryListOptions extends Pick<KnownRegistryMutationOpti
 
 export interface KnownRegistryDetails {
   id: string
-  kind: 'official' | 'directory'
+  kind: 'official' | 'directory' | 'github'
   path: string
   addedAt?: string
   removable: boolean
@@ -46,6 +47,8 @@ export interface KnownRegistryDetails {
   status?: 'ready' | 'cached' | 'unavailable'
   notice?: string
   refreshedAt?: string
+  sha?: string
+  ref?: string
   error?: string
 }
 
@@ -85,6 +88,7 @@ export async function listKnownRegistries(
   options: KnownRegistryListOptions = {}
 ): Promise<KnownRegistryListResult> {
   const state = readKnownRegistries(options.agentDir)
+  const github = readGithubSources(options.agentDir)
   let official: KnownRegistryDetails
   try {
     const registry = await loadOfficialRegistry(options)
@@ -113,15 +117,18 @@ export async function listKnownRegistries(
   }
   const registries = [
     official,
-    ...state.registries.map((entry) => registryDetails({ ...entry, removable: true }))
+    ...state.registries.map((entry) => registryDetails({ ...entry, removable: true })),
+    ...github.sources.map(githubRegistryDetails)
   ]
-  return state.error ? { registries, error: state.error } : { registries }
+  const error = [state.error, github.error].filter(Boolean).join('\n')
+  return error ? { registries, error } : { registries }
 }
 
 export async function loadKnownRegistryIndexes(
   options: KnownRegistryListOptions = {}
 ): Promise<LoadedKnownRegistries> {
   const state = readKnownRegistries(options.agentDir)
+  const github = readGithubSources(options.agentDir)
   const registries: LocalRegistry[] = []
   const errors: string[] = []
   try {
@@ -136,10 +143,30 @@ export async function loadKnownRegistryIndexes(
       errors.push(`${source.path}：${errorMessage(error)}`)
     }
   }
+  for (const source of github.sources) {
+    try {
+      const registry = readRegistry(source.registryPath)
+      registries.push({
+        ...registry,
+        id: source.id,
+        trust: 'imported',
+        source: {
+          kind: 'github',
+          id: source.id,
+          repo: source.repo,
+          ...(source.ref ? { ref: source.ref } : {}),
+          sha: source.sha
+        }
+      })
+    } catch (error) {
+      errors.push(`GitHub · ${source.repo}@${source.sha.slice(0, 7)}：${errorMessage(error)}`)
+    }
+  }
+  const stateError = [state.error, github.error].filter(Boolean).join('\n')
   return {
     registries,
     errors,
-    ...(state.error ? { stateError: state.error } : {})
+    ...(stateError ? { stateError } : {})
   }
 }
 
@@ -211,6 +238,26 @@ function registryDetails(
       ...details,
       error: errorMessage(error)
     }
+  }
+}
+
+function githubRegistryDetails(source: GithubSourceRecord): KnownRegistryDetails {
+  const details = {
+    id: source.id,
+    kind: 'github' as const,
+    label: `GitHub · ${source.repo}@${source.sha.slice(0, 7)}`,
+    path: source.registryPath,
+    addedAt: source.addedAt,
+    removable: true,
+    trust: 'imported' as const,
+    sha: source.sha,
+    ...(source.ref ? { ref: source.ref } : {})
+  }
+  try {
+    const registry = readRegistry(source.registryPath)
+    return { ...details, packageCount: registry.packages.length }
+  } catch (error) {
+    return { ...details, error: errorMessage(error) }
   }
 }
 

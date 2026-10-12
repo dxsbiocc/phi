@@ -4,6 +4,7 @@ import { GoCheck, GoKey, GoLock, GoPlay, GoPlus, GoSync } from 'react-icons/go'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { ConnectorIcon } from './ConnectorIcon'
 import { connectorSetupActive, connectorSetupLabel } from '../lib/connectorSetupPresentation'
+import { McpConnectorSourceBadges } from './McpConnectorSourceBadges'
 
 export type ConnectorAuthStatus = 'checking' | 'authenticated' | 'unauthenticated' | 'unavailable'
 
@@ -177,6 +178,11 @@ export function McpFeaturedConnectorCard({
             <Chip size="small" variant="outlined" label="环境未构建" />
           )}
         </Stack>
+        {connector.source && (
+          <Box sx={{ mt: 0.75 }}>
+            <McpConnectorSourceBadges connector={connector} />
+          </Box>
+        )}
       </Box>
       {settingUp ? (
         <Box

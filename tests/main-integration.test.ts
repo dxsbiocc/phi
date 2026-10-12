@@ -2654,6 +2654,34 @@ async function harness(
         listLocalConnectorJobs: (): unknown[] => []
       })
     },
+    './agent/packages/github-source': {
+      previewGithubSource: async (): Promise<unknown> => ({
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        packages: [],
+        skipped: [],
+        warnings: []
+      }),
+      addGithubSource: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      checkGithubSourceUpdate: async (): Promise<unknown> => ({ changed: false }),
+      applyGithubSourceUpdate: async (): Promise<unknown> => ({
+        id: 'a'.repeat(16),
+        repo: 'acme/connectors',
+        sha: 'a'.repeat(40),
+        registryPath: '/isolated/github/registry',
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      }),
+      removeGithubSource: async (): Promise<boolean> => true,
+      listGithubSources: (): unknown => ({ version: 1, sources: [] })
+    },
     './agent/mcp/connector-setup': {
       ...connectorSetup,
       ConnectorSetupTracker: class extends connectorSetup.ConnectorSetupTracker {

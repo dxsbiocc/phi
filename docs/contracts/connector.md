@@ -121,6 +121,16 @@ app version remain visible but cannot be added. Raw directory imports retain
 imported trust, regardless of their directory name or location. See the
 [official content source decision](../decisions/official-content-source.md).
 
+Users may also import a public `github.com` repository as a catalog source. Phi resolves
+the requested branch or ref once and pins the source to its 40-character commit SHA.
+Import only validates and materializes `type: mcp` packages; it does not execute package
+code, build an environment, or install a connector. GitHub sources are recorded separately
+in `~/.phi/state/github-sources.json`, remain `imported`/unsigned, and show their repository
+plus short SHA in the catalog. Installing one requires an explicit confirmation of its HTTP
+URL or exact stdio command, arguments, and environment reference. Manual source updates
+show a package-version diff before switching; removing a source does not remove connectors
+already installed from it. See the [GitHub sources decision](../decisions/github-sources.md).
+
 ## 6. Versioning
 
 `contractVersion` follows the content distribution design §4.4: minor versions are
@@ -135,6 +145,9 @@ and a deprecation window.
 
 - **1.5.0** (2026-10-11): add the Phi-bundled Bun runtime for user-defined stdio
   connectors and document the host/Bun environment allowlist and Bun subcommand policy.
+
+- **1.4.0** (2026-10-11): add SHA-pinned public GitHub repositories as unsigned,
+  preview-only MCP catalog sources with explicit install confirmation.
 
 - **1.3.0** (2026-10-11): add the application-owned `phiOrigin: 'user-stdio'` and
   `phiUser` contract for user-defined local stdio connectors; secrets remain reserved.

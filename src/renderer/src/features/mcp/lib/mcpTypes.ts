@@ -7,6 +7,11 @@ import type {
   RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { InstalledPackageView } from '../../../../../shared/packageManagerTypes'
+import type {
+  GithubSourcePreview,
+  GithubSourceSummary,
+  GithubSourceUpdateCheck
+} from '../../../../../shared/githubSourceTypes'
 
 export interface McpServerSummary {
   icon?: ResourceIconRef
@@ -33,6 +38,12 @@ export interface McpServerSummary {
 export interface McpRendererApi {
   listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
   listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+  previewGithubSource: (url: string) => Promise<GithubSourcePreview>
+  addGithubSource: (input: { url: string; sha: string }) => Promise<GithubSourceSummary>
+  checkGithubSourceUpdate: (id: string) => Promise<GithubSourceUpdateCheck>
+  applyGithubSourceUpdate: (input: { id: string; sha: string }) => Promise<GithubSourceSummary>
+  removeGithubSource: (id: string) => Promise<boolean>
+  listGithubSources: () => Promise<GithubSourceSummary[]>
   installMcpConnector: (
     id: string,
     version?: string,

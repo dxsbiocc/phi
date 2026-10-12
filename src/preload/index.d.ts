@@ -43,6 +43,11 @@ import type {
 } from '../shared/promptAgentTypes'
 import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
 import type {
+  GithubSourcePreview,
+  GithubSourceSummary,
+  GithubSourceUpdateCheck
+} from '../shared/githubSourceTypes'
+import type {
   RemoteDirectoryListRequest,
   RemoteDirectoryListing
 } from '../shared/remoteDirectoryBrowser'
@@ -1163,6 +1168,12 @@ declare global {
         input: RemoteProjectMcpTrustRequest
       ) => Promise<PreloadMcpServerSummary[]>
       listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
+      previewGithubSource: (url: string) => Promise<GithubSourcePreview>
+      addGithubSource: (input: { url: string; sha: string }) => Promise<GithubSourceSummary>
+      checkGithubSourceUpdate: (id: string) => Promise<GithubSourceUpdateCheck>
+      applyGithubSourceUpdate: (input: { id: string; sha: string }) => Promise<GithubSourceSummary>
+      removeGithubSource: (id: string) => Promise<boolean>
+      listGithubSources: () => Promise<GithubSourceSummary[]>
       installMcpConnector: (
         id: string,
         version?: string,

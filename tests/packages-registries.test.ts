@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import type { LocalRegistry } from '../src/main/agent/packages/installer-types'
+import { githubSourceId, saveGithubSource } from '../src/main/agent/packages/github-source-store'
 import { OFFICIAL_REGISTRY_ID } from '../src/main/agent/packages/official-registry'
 import {
   addKnownRegistry,
@@ -187,6 +188,83 @@ test('lists the official source before user directories without persisting the d
       () => removeKnownRegistry(BUNDLED_REGISTRY_ID, { agentDir }),
       /内置软件源不能移除/
     )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('loads GitHub registries from their separate state with imported source metadata', async () => {
+  const { root, agentDir } = sandbox()
+  try {
+    const sha = 'a'.repeat(40)
+    const registryPath = join(
+      agentDir,
+      'cache',
+      'sources',
+      'github',
+      'acme',
+      'connectors',
+      sha,
+      'registry'
+    )
+    mkdirSync(registryPath, { recursive: true })
+    writeFileSync(
+      join(registryPath, 'index.json'),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: '2026-10-11T00:00:00.000Z',
+        packages: []
+      })}\n`
+    )
+    const source = saveGithubSource(
+      {
+        id: githubSourceId('acme/connectors'),
+        repo: 'acme/connectors',
+        ref: 'main',
+        sha,
+        registryPath,
+        addedAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-11T00:00:00.000Z'
+      },
+      { agentDir }
+    )
+
+    const listed = await listKnownRegistries({
+      agentDir,
+      loadOfficialRegistry: async () => officialRegistry(agentDir)
+    })
+    assert.deepEqual(listed.registries.at(-1), {
+      id: source.id,
+      kind: 'github',
+      label: `GitHub · acme/connectors@${sha.slice(0, 7)}`,
+      path: registryPath,
+      addedAt: source.addedAt,
+      removable: true,
+      trust: 'imported',
+      packageCount: 0,
+      sha,
+      ref: 'main'
+    })
+
+    const loaded = await loadKnownRegistryIndexes({
+      agentDir,
+      loadOfficialRegistry: async () => officialRegistry(agentDir)
+    })
+    assert.deepEqual(loaded.registries.at(-1)?.source, {
+      kind: 'github',
+      id: source.id,
+      repo: source.repo,
+      ref: 'main',
+      sha
+    })
+    assert.equal(loaded.registries.at(-1)?.trust, 'imported')
+
+    writeFileSync(join(registryPath, 'index.json'), '{broken')
+    const unavailable = await loadKnownRegistryIndexes({
+      agentDir,
+      loadOfficialRegistry: async () => officialRegistry(agentDir)
+    })
+    assert.match(unavailable.errors.join('\n'), /acme\/connectors/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

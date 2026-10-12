@@ -352,6 +352,14 @@ import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncOfficialRegistry } from './agent/packages/official-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
+import {
+  addGithubSource,
+  applyGithubSourceUpdate,
+  checkGithubSourceUpdate,
+  listGithubSources,
+  previewGithubSource,
+  removeGithubSource
+} from './agent/packages/github-source'
 import { readResourceIcon } from './agent/resource-icons'
 import type { RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
 import {
@@ -1062,6 +1070,13 @@ async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
     appVersion: app.getVersion()
   })
   return cachedPackageUpdates
+}
+
+async function refreshGithubSourceDependants(): Promise<void> {
+  cachedPackageUpdates = []
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('packages:updatesAvailable', [])
+  }
 }
 
 function scheduleStartupPackageUpdateCheck(): void {
@@ -9926,6 +9941,86 @@ app.whenReady().then(async () => {
     if (typeof id !== 'string') throw new Error('软件源标识无效')
     removeKnownRegistry(id, { agentDir: AGENT_DIR })
     return (await listKnownRegistries(knownContentSourceOptions())).registries
+  })
+  ipcMain.handle('sources:previewGithub', async (_, url: unknown) => {
+    if (typeof url !== 'string' || url.length < 1 || url.length > 2048) {
+      throw new Error('GitHub 仓库地址无效')
+    }
+    return previewGithubSource(url, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
+  })
+  ipcMain.handle('sources:addGithub', async (_, input: unknown) => {
+    if (
+      !isRecord(input) ||
+      Object.keys(input).some((key) => key !== 'url' && key !== 'sha') ||
+      typeof input.url !== 'string' ||
+      input.url.length < 1 ||
+      input.url.length > 2048 ||
+      typeof input.sha !== 'string' ||
+      !/^[a-f0-9]{40}$/i.test(input.sha)
+    ) {
+      throw new Error('GitHub 软件源添加参数无效')
+    }
+    const source = await addGithubSource(
+      { url: input.url, sha: input.sha },
+      { agentDir: AGENT_DIR, fetch: officialRegistryFetch }
+    )
+    await refreshGithubSourceDependants()
+    writeAppLog({ event: 'github_source_added', metadata: { repo: source.repo, sha: source.sha } })
+    return source
+  })
+  ipcMain.handle('sources:checkGithubUpdate', async (_, id: unknown) => {
+    if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
+      throw new Error('GitHub 软件源标识无效')
+    }
+    return checkGithubSourceUpdate(id, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
+  })
+  ipcMain.handle('sources:applyGithubUpdate', async (_, input: unknown) => {
+    if (
+      !isRecord(input) ||
+      Object.keys(input).some((key) => key !== 'id' && key !== 'sha') ||
+      typeof input.id !== 'string' ||
+      !/^[a-f0-9]{16}$/.test(input.id) ||
+      typeof input.sha !== 'string' ||
+      !/^[a-f0-9]{40}$/i.test(input.sha)
+    ) {
+      throw new Error('GitHub 软件源更新参数无效')
+    }
+    const source = await applyGithubSourceUpdate(input.id, input.sha, {
+      agentDir: AGENT_DIR,
+      fetch: officialRegistryFetch
+    })
+    await refreshGithubSourceDependants()
+    writeAppLog({
+      event: 'github_source_updated',
+      metadata: { repo: source.repo, sha: source.sha }
+    })
+    return source
+  })
+  ipcMain.handle('sources:removeGithub', async (_, id: unknown) => {
+    if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
+      throw new Error('GitHub 软件源标识无效')
+    }
+    const source = listGithubSources({ agentDir: AGENT_DIR }).sources.find(
+      (entry) => entry.id === id
+    )
+    const removed = await removeGithubSource(id, { agentDir: AGENT_DIR })
+    if (removed) {
+      await refreshGithubSourceDependants()
+      if (source) {
+        writeAppLog({
+          event: 'github_source_removed',
+          metadata: { repo: source.repo, sha: source.sha }
+        })
+      }
+    }
+    return removed
+  })
+  ipcMain.handle('sources:listGithub', async () => {
+    const state = listGithubSources({ agentDir: AGENT_DIR })
+    if (state.error) {
+      writeAppLog({ level: 'warn', event: 'github_sources_invalid' })
+    }
+    return state.sources
   })
   ipcMain.handle('packages:registry', async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {

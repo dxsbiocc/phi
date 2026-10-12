@@ -17,7 +17,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import semver from 'semver'
@@ -34,7 +34,7 @@ import { resolveCuratedResourceIcon } from './curated-icons'
 import { findResourceIcon, registerResourceIconAsset } from './resource-icons'
 import type { RegistryIconAsset } from '../../shared/resourceIconTypes'
 import { listActiveMcpPackages } from './packages/mcp-store'
-import { createDeterministicTarGz, parseTarGz, type ArchiveFile } from './packages/archive'
+import { parseTarGz } from './packages/archive'
 import {
   installPackages,
   listInstalledPackages,
@@ -46,8 +46,7 @@ import type {
   InstalledPackage,
   InstallerOptions,
   LocalRegistry,
-  RegistryPackageEntry,
-  RegistryTrustTier
+  RegistryPackageEntry
 } from './packages/installer-types'
 import {
   parsePackageManifestText,
@@ -56,6 +55,7 @@ import {
   type McpPackageManifest
 } from './packages/manifest'
 import { localArchivePath, sha256 } from './packages/installer-utils'
+import { materializeConnectorRegistry } from './packages/materialize-registry'
 import { getPhiAgentDir } from './runtime-paths'
 import { API_KEY_CONNECTOR_IDS, apiKeyConnector } from './mcp-key-credentials'
 import {
@@ -129,6 +129,8 @@ interface CatalogSource {
   registryDir: string
   packageDir?: string
   iconAsset?: RegistryIconAsset
+  source?: FeaturedMcpConnector['source']
+  notice?: string
 }
 
 /** Catalog data from supplied verified indexes and installed connectors. */
@@ -143,6 +145,11 @@ export function listConnectorCatalog(
   const sources: CatalogSource[] = []
   const installed = listActiveMcpPackages(agentDir)
   const installedRoots = new Map(installed.map((entry) => [entry.id, entry.dir]))
+  const installedTrust = new Map(
+    listInstalledPackages({ agentDir })
+      .filter((entry) => entry.type === 'mcp')
+      .map((entry) => [entry.id, entry.trust])
+  )
 
   for (const registry of options.registries ?? []) {
     sources.push(...catalogSourcesFromRegistryIndex(registry))
@@ -166,7 +173,16 @@ export function listConnectorCatalog(
         manifest.id === entry.id &&
         manifest.version === entry.version
       ) {
-        sources.push({ manifest, registryDir: entry.dir, packageDir: entry.dir })
+        sources.push({
+          manifest,
+          registryDir: entry.dir,
+          packageDir: entry.dir,
+          source: {
+            kind: 'installed',
+            label: '已安装',
+            trust: installedTrust.get(entry.id) ?? 'imported'
+          }
+        })
       }
     } catch {
       // A broken installation must not hide the other catalog entries.
@@ -176,6 +192,10 @@ export function listConnectorCatalog(
   const selected = new Map<string, CatalogSource>()
   for (const source of sources) {
     const current = selected.get(source.manifest.id)
+    if (current?.source?.kind === 'github' && source.source?.kind === 'github') {
+      current.notice ??= `已忽略来自 ${source.source.label} 的同名连接器`
+      continue
+    }
     if (
       !current ||
       (source.official === true && current.official !== true) ||
@@ -187,7 +207,7 @@ export function listConnectorCatalog(
   }
 
   return [...selected.values()]
-    .map(({ manifest, registryDir, packageDir, iconAsset }) => {
+    .map(({ manifest, registryDir, packageDir, iconAsset, source, notice }) => {
       const connector = manifest.connector
       const entry = servers[manifest.id]
       const marker = readManagedMarker(entry)
@@ -222,7 +242,9 @@ export function listConnectorCatalog(
         minAppVersion: manifest.minAppVersion,
         registryDir,
         added: entry !== undefined,
-        unavailableReason
+        unavailableReason,
+        ...(source ? { source } : {}),
+        ...(notice ? { notice } : {})
       }
       if (connector.transport === 'http') {
         result.auth = connector.auth
@@ -556,6 +578,21 @@ function catalogSourcesFromRegistry(dir: string): CatalogSource[] {
 }
 
 function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource[] {
+  const source: FeaturedMcpConnector['source'] = registry.source
+    ? {
+        kind: 'github',
+        label: `GitHub · ${registry.source.repo}@${registry.source.sha.slice(0, 7)}`,
+        trust: 'imported',
+        sourceId: registry.source.id,
+        sha: registry.source.sha
+      }
+    : registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
+      ? { kind: 'official', label: 'Phi Packages', trust: 'official' }
+      : {
+          kind: 'directory',
+          label: registry.label ?? '用户软件源',
+          trust: registry.trust
+        }
   return registry.packages
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({
@@ -564,6 +601,7 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
         : {}),
       manifest: manifestFromRegistryEntry(registry, entry),
       registryDir: registry.dir,
+      source,
       ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
     }))
 }
@@ -590,68 +628,6 @@ function manifestFromRegistryEntry(
     throw new Error(`MCP 软件包清单与注册表不匹配: ${entry.id}@${entry.version}`)
   }
   return manifest
-}
-
-function materializeConnectorRegistry(
-  packageDir: string,
-  outDir: string,
-  registryId: string,
-  trust: RegistryTrustTier
-): LocalRegistry {
-  const manifest = readPackageManifest(packageDir)
-  if (manifest.type !== 'mcp') throw new Error(`连接器源不是 MCP 软件包: ${packageDir}`)
-  const files = regularPackageFiles(packageDir)
-  const fileList = files.map(({ path, data }) => ({
-    path,
-    sha256: sha256(data),
-    size: data.length
-  }))
-  const filesJson = Buffer.from(`${JSON.stringify({ version: 1, files: fileList }, null, 2)}\n`)
-  const archive = createDeterministicTarGz([...files, { path: 'files.json', data: filesJson }])
-  const archiveName = `mcp-${manifest.id}-${manifest.version}.tar.gz`
-  mkdirSync(outDir, { recursive: true })
-  writeFileSync(join(outDir, archiveName), archive)
-  const entry: RegistryPackageEntry = {
-    id: manifest.id,
-    type: 'mcp',
-    version: manifest.version,
-    title: manifest.title,
-    summary: manifest.summary,
-    archive: archiveName,
-    sha256: sha256(archive),
-    size: archive.length,
-    dependsOn: manifest.dependsOn ?? [],
-    ...(manifest.minAppVersion ? { minAppVersion: manifest.minAppVersion } : {}),
-    ...(manifest.requires ? { requires: manifest.requires } : {})
-  }
-  return {
-    id: registryId,
-    dir: outDir,
-    trust,
-    schemaVersion: 1,
-    generatedAt: new Date(0).toISOString(),
-    packages: [entry]
-  }
-}
-
-function regularPackageFiles(root: string): ArchiveFile[] {
-  const files: ArchiveFile[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name)
-      const stat = lstatSync(path)
-      const relativePath = relative(root, path).split('\\').join('/')
-      if (stat.isSymbolicLink()) throw new Error(`连接器软件包不允许符号链接: ${relativePath}`)
-      if (stat.isDirectory()) walk(path)
-      else if (stat.isFile() && relativePath !== 'files.json') {
-        files.push({ path: relativePath, data: readFileSync(path), mode: stat.mode & 0o777 })
-      } else if (!stat.isFile()) {
-        throw new Error(`连接器软件包包含非普通文件: ${relativePath}`)
-      }
-    }
-  }
-  walk(root)
-  return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
 function connectorSourceDir(source: string, id: string): string {

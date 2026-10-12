@@ -159,6 +159,15 @@ test('remote custom connector submission keeps its existing OAuth request shape'
   ])
 })
 
+test('GitHub Bun drafts keep their runtime hint through catalog and missing-runtime helper wiring', () => {
+  const catalog = readFileSync(catalogPath, 'utf8')
+  const dialog = readFileSync(dialogPath, 'utf8')
+
+  assert.match(catalog, /runtimeHint:\s*draft\.runtimeHint/)
+  assert.match(dialog, /initialDraft\.runtimeHint === 'bun'/)
+  assert.match(dialog, /未找到 Phi 内置 Bun，请检查应用安装是否完整/)
+})
+
 test('local submit busy copy describes only the brief background start request', () => {
   const dialog = readFileSync(dialogPath, 'utf8')
   assert.doesNotMatch(dialog, /正在启动并验证…/)

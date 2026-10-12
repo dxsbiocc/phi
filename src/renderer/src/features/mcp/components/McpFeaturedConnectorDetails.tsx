@@ -6,6 +6,7 @@ import type { ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpToolList } from './McpToolList'
 import { McpConnectorSetupStatus } from './McpConnectorSetupStatus'
 import { localConnectorToolsPrerequisite } from '../lib/connectorSetupPresentation'
+import { McpConnectorSourceBadges } from './McpConnectorSourceBadges'
 
 export function McpFeaturedConnectorDetails({
   connector,
@@ -155,6 +156,11 @@ export function McpFeaturedConnectorDetails({
             {connector.name}
           </Typography>
           <Typography color="text.secondary">{connector.description}</Typography>
+          {connector.source && (
+            <Box sx={{ mt: 1 }}>
+              <McpConnectorSourceBadges connector={connector} />
+            </Box>
+          )}
           {server && (
             <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
               <Chip size="small" variant="outlined" label="已配置" />

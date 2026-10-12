@@ -19,7 +19,6 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
-import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
@@ -36,9 +35,13 @@ import {
 } from '../lib/featuredToolCache'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
 import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
+import { McpCatalogAddMenu } from './McpCatalogAddMenu'
 import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
+import { McpGithubImportDialog } from './McpGithubImportDialog'
+import { McpImportedInstallDialog } from './McpImportedInstallDialog'
+import { McpSourcesPanel } from './McpSourcesPanel'
 import { useConnectorSetupProgress } from '../hooks/useConnectorSetupProgress'
 import {
   connectorSetupActive,
@@ -48,6 +51,7 @@ import type { LocalConnectorInitialDraft } from '../lib/localConnectorDraft'
 
 type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number]
+type ImportedConnectorAction = 'install' | 'oauth' | 'api-key'
 
 function ipcErrorMessage(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause)
@@ -103,6 +107,12 @@ export function McpConnectorCatalogDialog({
   const [sort, setSort] = useState<ConnectorSort>('default')
   const [customOpen, setCustomOpen] = useState(false)
   const [customInitialDraft, setCustomInitialDraft] = useState<LocalConnectorInitialDraft>()
+  const [githubImportOpen, setGithubImportOpen] = useState(false)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [pendingImportedAction, setPendingImportedAction] = useState<{
+    connector: FeaturedMcpConnector
+    action: ImportedConnectorAction
+  } | null>(null)
   const [customError, setCustomError] = useState<string | null>(null)
   const [customAuthorizingName, setCustomAuthorizingName] = useState<string | null>(null)
   const savedCustomAuthRef = useRef<{
@@ -259,6 +269,26 @@ export function McpConnectorCatalogDialog({
     } finally {
       setBusy(null)
     }
+  }
+
+  function runConnectorAction(
+    connector: FeaturedMcpConnector,
+    action: ImportedConnectorAction
+  ): void {
+    if (action === 'api-key') openApiKeyDialog(connector)
+    else if (action === 'oauth') void connectOAuth(connector)
+    else void addConnector(connector)
+  }
+
+  function requestConnectorAction(
+    connector: FeaturedMcpConnector,
+    action: ImportedConnectorAction
+  ): void {
+    if (connector.source?.trust === 'imported') {
+      setPendingImportedAction({ connector, action })
+      return
+    }
+    runConnectorAction(connector, action)
   }
 
   async function buildEnvironment(connector: FeaturedMcpConnector): Promise<void> {
@@ -505,6 +535,9 @@ export function McpConnectorCatalogDialog({
     setApiKeyError(null)
     setCustomOpen(false)
     setCustomInitialDraft(undefined)
+    setGithubImportOpen(false)
+    setSourcesOpen(false)
+    setPendingImportedAction(null)
     savedCustomAuthRef.current = null
     setCustomError(null)
     setCustomAuthorizingName(null)
@@ -593,11 +626,9 @@ export function McpConnectorCatalogDialog({
         onOpen={() => openDetail(connector)}
         onRetry={() => openDetail(connector, true)}
         onCancel={() => cancelOAuth(connector)}
-        onAdd={() =>
-          connector.apiKey ? openApiKeyDialog(connector) : void addConnector(connector)
-        }
+        onAdd={() => requestConnectorAction(connector, connector.apiKey ? 'api-key' : 'install')}
         onAuthorize={() =>
-          connector.apiKey ? openApiKeyDialog(connector) : void connectOAuth(connector)
+          requestConnectorAction(connector, connector.apiKey ? 'api-key' : 'oauth')
         }
         onBuildEnvironment={() => void buildEnvironment(connector)}
         onEnable={server ? () => void setConnectorEnabled(server, true) : undefined}
@@ -658,14 +689,15 @@ export function McpConnectorCatalogDialog({
             </>
           )}
           {page === 'list' && (
-            <CatalogAddButton
-              label="添加连接器"
-              onClick={() => {
+            <McpCatalogAddMenu
+              onCustom={() => {
                 savedCustomAuthRef.current = null
                 setCustomError(null)
                 setCustomInitialDraft(undefined)
                 setCustomOpen(true)
               }}
+              onGithub={() => setGithubImportOpen(true)}
+              onManageSources={() => setSourcesOpen(true)}
             />
           )}
           <IconButton
@@ -742,13 +774,13 @@ export function McpConnectorCatalogDialog({
                 toolNames={toolNames}
                 toolsLoading={toolsLoading}
                 toolsError={toolsError}
-                onAdd={() => void addConnector(selected)}
+                onAdd={() => requestConnectorAction(selected, 'install')}
                 onRemove={() => {
                   const server = matchingServer(selected, servers)
                   if (server) void remove(server)
                 }}
-                onAuthorize={() => void connectOAuth(selected)}
-                onApiKey={() => openApiKeyDialog(selected)}
+                onAuthorize={() => requestConnectorAction(selected, 'oauth')}
+                onApiKey={() => requestConnectorAction(selected, 'api-key')}
                 onBuildEnvironment={() => void buildEnvironment(selected)}
                 onEnabledChange={(enabled) => {
                   const server = matchingServer(selected, servers)
@@ -820,6 +852,43 @@ export function McpConnectorCatalogDialog({
           onSubmitLocal={addLocal}
         />
       )}
+      {githubImportOpen && (
+        <McpGithubImportDialog
+          open
+          onClose={() => setGithubImportOpen(false)}
+          onImported={async (source) => {
+            await refreshCatalog()
+            setSourceNotice(`已导入 GitHub 软件源 ${source.repo}@${source.sha.slice(0, 7)}`)
+          }}
+          onUseLocalDraft={(draft) => {
+            setGithubImportOpen(false)
+            setCustomError(null)
+            setCustomInitialDraft({
+              tab: 'local',
+              name: draft.suggestedName,
+              runtimeHint: draft.runtimeHint,
+              command: draft.command,
+              args: draft.args
+            })
+            setCustomOpen(true)
+          }}
+        />
+      )}
+      {sourcesOpen && (
+        <McpSourcesPanel open onClose={() => setSourcesOpen(false)} onChanged={refreshCatalog} />
+      )}
+      <McpImportedInstallDialog
+        connector={pendingImportedAction?.connector ?? null}
+        open={Boolean(pendingImportedAction)}
+        busy={busy !== null}
+        onCancel={() => setPendingImportedAction(null)}
+        onConfirm={() => {
+          if (!pendingImportedAction) return
+          const pending = pendingImportedAction
+          setPendingImportedAction(null)
+          runConnectorAction(pending.connector, pending.action)
+        }}
+      />
       <McpApiKeyDialog
         connector={apiKeyDialogConnector}
         value={apiKeyInput}
