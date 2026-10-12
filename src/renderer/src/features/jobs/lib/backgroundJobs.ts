@@ -7,6 +7,7 @@ import type {
   EnvironmentBuildState
 } from '../../../../../shared/environmentBuildTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
+import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 
 export type UnifiedBackgroundJob =
@@ -19,6 +20,13 @@ export type UnifiedBackgroundJob =
       active: boolean
       timestamp: string
       build: EnvironmentBuild
+    }
+  | {
+      kind: 'connector'
+      key: string
+      active: boolean
+      timestamp: string
+      setup: McpConnectorSetupProgress
     }
 
 const ACTIVE_WRAPPER_STATES = new Set<WrapperRun['state']>([
@@ -82,6 +90,27 @@ export function environmentBuildPercent(build: EnvironmentBuild): number | undef
   return ratioPercent(build.progress.packagesDone, build.progress.packages)
 }
 
+export function connectorJobDetail(setup: McpConnectorSetupProgress, nowMs: number): string {
+  if (setup.phase === 'ready') return `已完成 · ${setup.toolNames?.length ?? 0} 个工具`
+  if (setup.phase === 'failed') {
+    return setup.error === '已取消' ? '已取消' : `失败${setup.error ? ` · ${setup.error}` : ''}`
+  }
+  return `正在启动并验证 · 已用时 ${connectorJobDuration(setup, nowMs)}`
+}
+
+export function connectorJobStatusLabel(setup: McpConnectorSetupProgress): string {
+  if (setup.phase === 'ready') return '已完成'
+  if (setup.phase === 'failed') return setup.error === '已取消' ? '已取消' : '失败'
+  return '进行中'
+}
+
+export function connectorJobDuration(setup: McpConnectorSetupProgress, nowMs: number): string {
+  const startedAtMs = setup.startedAt ? Date.parse(setup.startedAt) : Number.NaN
+  if (!Number.isFinite(startedAtMs)) return '00:00'
+  const endMs = setup.phase === 'starting' ? nowMs : Date.parse(setup.updatedAt)
+  return formatClockDuration(Math.max(0, (Number.isFinite(endMs) ? endMs : nowMs) - startedAtMs))
+}
+
 export type BackgroundJobQuery = {
   maxRecent?: number
   /** Finished jobs that ended before this ISO time stay out of the tray. */
@@ -116,7 +145,8 @@ export function selectBackgroundJobs(
   wrappers: readonly WrapperRun[],
   query: BackgroundJobQuery = {},
   shells: readonly BackgroundShellJob[] = [],
-  environments: readonly EnvironmentBuild[] = []
+  environments: readonly EnvironmentBuild[] = [],
+  connectors: readonly McpConnectorSetupProgress[] = []
 ): { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 8
   const items: UnifiedBackgroundJob[] = [
@@ -149,7 +179,19 @@ export function selectBackgroundJobs(
       active: build.state === 'building',
       timestamp: build.finishedAt ?? build.startedAt,
       build
-    }))
+    })),
+    ...connectors
+      .filter((setup) => setup.kind === 'local-stdio')
+      .map((setup): UnifiedBackgroundJob => {
+        const active = setup.phase === 'starting'
+        return {
+          kind: 'connector',
+          key: `connector:${setup.id}`,
+          active,
+          timestamp: active ? (setup.startedAt ?? setup.updatedAt) : setup.updatedAt,
+          setup
+        }
+      })
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
     right.timestamp.localeCompare(left.timestamp)
@@ -165,8 +207,20 @@ export function selectBackgroundJobs(
 function belongsInFinishedTray(item: UnifiedBackgroundJob, query: BackgroundJobQuery): boolean {
   if (query.dismissedKeys?.has(item.key)) return false
   if (!query.finishedAfter) return true
-  const endedAt = item.kind === 'environment' ? item.build.finishedAt : item.run.completedAt
+  const endedAt =
+    item.kind === 'environment'
+      ? item.build.finishedAt
+      : item.kind === 'connector'
+        ? item.setup.updatedAt
+        : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
+}
+
+function formatClockDuration(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 function knownByteProgress(build: EnvironmentBuild): { done: number; total: number } | undefined {

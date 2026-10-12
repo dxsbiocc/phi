@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
 import { McpDetail, McpSidebar } from '../src/renderer/src/features/mcp/McpView'
+import { McpLocalConnectorForm } from '../src/renderer/src/features/mcp/components/McpLocalConnectorForm'
+import { resolveCustomConnectorTab } from '../src/renderer/src/features/mcp/lib/customConnectorTabs'
 import type { McpServerSummary } from '../src/renderer/src/features/mcp/lib/mcpTypes'
 
 test('connector sidebar groups installed services and toggles them with a switch', () => {
@@ -142,4 +144,138 @@ test('installed connector detail centers content and retains its catalog introdu
   assert.match(markup, /\/tmp\/mcp\.json/)
   assert.match(markup, /移除/)
   assert.match(markup, /服务端工具/)
+})
+
+test('local connector form shows host warning and exact argv preview without inline confirmation', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpLocalConnectorForm, {
+        busy: false,
+        runtimes: [{ ref: 'phi:python@1', label: 'Python 1' }],
+        runtimesLoading: false,
+        draft: {
+          name: 'literature',
+          runtime: { kind: 'host' },
+          command: '/opt/My Server/bin/mcp',
+          argsText: '--title\nvalue with spaces',
+          envRows: [],
+          cwd: ''
+        },
+        onDraftChange: () => undefined
+      })
+    )
+  )
+
+  assert.match(markup, /将直接在本机运行，不使用 Phi 隔离环境/)
+  assert.match(
+    markup,
+    /&#x27;\/opt\/My Server\/bin\/mcp&#x27; --title &#x27;value with spaces&#x27;/
+  )
+  assert.doesNotMatch(markup, /确认启动并验证|返回修改/)
+})
+
+test('custom connector tabs allow local selection only in a local resource scope', () => {
+  assert.equal(resolveCustomConnectorTab('local', true), 'local')
+  assert.equal(resolveCustomConnectorTab('remote', true), 'remote')
+  assert.equal(resolveCustomConnectorTab('local', false), 'remote')
+})
+
+test('local Bun draft explains why its runtime is unselected when built-in Bun is unavailable', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpLocalConnectorForm, {
+        busy: false,
+        runtimes: [{ ref: 'phi:r@1', label: 'R' }],
+        runtimesLoading: false,
+        draft: {
+          name: 'qq-email-mcp',
+          runtime: { kind: 'environment', ref: '' },
+          command: 'x',
+          argsText: '--bun\nqq-email-mcp@0.1.1',
+          envRows: [],
+          cwd: ''
+        },
+        runtimeHelperText: '未找到 Phi 内置 Bun，请检查应用安装是否完整',
+        onDraftChange: () => undefined
+      })
+    )
+  )
+  assert.match(markup, /未找到 Phi 内置 Bun，请检查应用安装是否完整/)
+})
+
+test('local connector form presents Bun subcommands, compatibility warning, and preview', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpLocalConnectorForm, {
+        busy: false,
+        runtimes: [{ ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }],
+        runtimesLoading: false,
+        draft: {
+          name: 'qq-email-mcp',
+          runtime: { kind: 'bun' },
+          command: 'x',
+          argsText: '--bun\nqq-email-mcp@0.1.1',
+          envRows: [],
+          cwd: ''
+        },
+        onDraftChange: () => undefined
+      })
+    )
+  )
+
+  assert.match(markup, /Phi 内置 Bun/)
+  assert.match(markup, /运行 npm 包/)
+  assert.match(markup, /运行脚本/)
+  assert.match(markup, /由 Phi 内置 Bun 以 Node 兼容模式运行；个别依赖可能不兼容。/)
+  assert.match(markup, /x 方式每次启动会联网解析依赖，版本不锁定。/)
+  assert.match(markup, /例如 --bun 加 包名@版本，每行一个/)
+  assert.match(markup, /bun x --bun qq-email-mcp@0.1.1/)
+})
+
+test('user stdio detail alone exposes its ownership badge and removal action', () => {
+  const owned = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpDetail, {
+        initialCatalog: [],
+        selectedServer: {
+          id: 'literature',
+          name: 'literature',
+          command: 'uvx',
+          args: ['mcp-server'],
+          userStdio: true,
+          status: 'configured'
+        },
+        onRemoveServer: async () => undefined
+      })
+    )
+  )
+  const unowned = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(McpDetail, {
+        initialCatalog: [],
+        selectedServer: {
+          id: 'hand-written',
+          name: 'hand-written',
+          command: 'server',
+          status: 'configured'
+        },
+        onRemoveServer: async () => undefined
+      })
+    )
+  )
+
+  assert.match(owned, /自建·本地/)
+  assert.match(owned, /移除/)
+  assert.doesNotMatch(unowned, /自建·本地/)
+  assert.doesNotMatch(unowned, />移除</)
 })

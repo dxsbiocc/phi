@@ -125,6 +125,25 @@ test('the worker is restarted on demand after it exited', async () => {
   })
 })
 
+test('worker error detail survives bridge rejection', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    try {
+      await assert.rejects(
+        bridge.request('test.errorDetail'),
+        (error: Error & { detail?: string }) => {
+          assert.equal(error.message, 'probe failed')
+          assert.equal(error.detail, 'server stderr detail')
+          assert.equal(error.stack, 'fixture stack')
+          return true
+        }
+      )
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
 test('sanity: the fake worker really forgets sessions across restarts', async () => {
   await withAgentDir(async () => {
     const bridge = newBridge()

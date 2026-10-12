@@ -2637,6 +2637,23 @@ async function harness(
     './agent/content/skill': {
       validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
     },
+    './agent/mcp/custom-stdio': {
+      addLocalMcpConnector: async (): Promise<{ tools: string[] }> => ({ tools: [] }),
+      listLocalMcpRuntimes: async (): Promise<unknown[]> => [],
+      removeLocalMcpConnector: noop,
+      validateLocalConnectorRequest: (value: unknown): unknown => value
+    },
+    './agent/mcp/local-connector-jobs': {
+      createLocalConnectorJobs: () => ({
+        startLocalConnectorAdd: (request: { name?: string }) => ({
+          started: true,
+          name: request.name ?? 'local'
+        }),
+        cancelLocalConnectorAdd: async (): Promise<void> => undefined,
+        retryLocalConnectorAdd: (name: string) => ({ started: true, name }),
+        listLocalConnectorJobs: (): unknown[] => []
+      })
+    },
     './agent/mcp/connector-setup': {
       ...connectorSetup,
       ConnectorSetupTracker: class extends connectorSetup.ConnectorSetupTracker {
@@ -2708,7 +2725,8 @@ async function harness(
         return { config: {}, refreshed: [], failures: [], written: false }
       },
       setMcpConnectorEnabled: noop,
-      setMcpPackageEnabled: (): boolean => true
+      setMcpPackageEnabled: (): boolean => true,
+      validateName: (name: string): string => name.trim()
     },
     './agent/mcp-key-credentials': {
       API_KEY_CONNECTOR_IDS: ['tavily', 'serpapi', 'firecrawl', 'browser-use'],

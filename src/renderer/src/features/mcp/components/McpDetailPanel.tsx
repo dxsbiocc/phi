@@ -97,6 +97,7 @@ export function McpDetailPanel({
   const toolsLoading = canReadTools && toolNames === null && toolsError === null
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [removeConfirmationServerId, setRemoveConfirmationServerId] = useState<string | null>(null)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeyError, setApiKeyError] = useState<string | null>(null)
@@ -172,6 +173,7 @@ export function McpDetailPanel({
     setError(null)
     try {
       await onRemoveServer(selectedServer)
+      setRemoveConfirmationServerId(null)
       if (connector) clearFeaturedToolNames(connector.id)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -283,6 +285,15 @@ export function McpDetailPanel({
                     }
                     sx={{ mt: 1.5 }}
                   />
+                  {selectedServer.userStdio ? (
+                    <Chip
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      label="自建·本地"
+                      sx={{ ml: 1 }}
+                    />
+                  ) : null}
                   {onRefreshServers && !remoteProjectServer && (
                     <Button
                       variant="outlined"
@@ -293,17 +304,40 @@ export function McpDetailPanel({
                     </Button>
                   )}
                 </Box>
-                {selectedServer.managed && selectedServer.url && onRemoveServer && (
-                  <Button
-                    color="error"
-                    variant="outlined"
-                    disabled={busy}
-                    onClick={() => void remove()}
-                  >
-                    移除
-                  </Button>
-                )}
+                {(selectedServer.userStdio || (selectedServer.managed && selectedServer.url)) &&
+                  onRemoveServer && (
+                    <Button
+                      color="error"
+                      variant="outlined"
+                      disabled={busy}
+                      onClick={() => {
+                        if (selectedServer.userStdio) {
+                          setRemoveConfirmationServerId(selectedServer.id)
+                        } else void remove()
+                      }}
+                    >
+                      移除
+                    </Button>
+                  )}
               </Stack>
+              {selectedServer.userStdio && removeConfirmationServerId === selectedServer.id ? (
+                <Alert
+                  severity="warning"
+                  sx={{ mt: 2 }}
+                  action={
+                    <Stack direction="row" spacing={1}>
+                      <Button disabled={busy} onClick={() => setRemoveConfirmationServerId(null)}>
+                        取消
+                      </Button>
+                      <Button color="error" disabled={busy} onClick={() => void remove()}>
+                        确认移除
+                      </Button>
+                    </Stack>
+                  }
+                >
+                  确认移除这个本地 stdio 连接器？
+                </Alert>
+              ) : null}
               <Divider sx={{ my: 4 }} />
               <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
                 {selectedServer.url ? 'MCP 地址' : '命令'}

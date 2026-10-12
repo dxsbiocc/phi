@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -12,6 +21,12 @@ import { collectGarbage } from '../src/main/agent/envs/gc'
 import { managedStdioServer } from '../src/main/agent/mcp'
 import { findBunExecutable } from '../src/main/agent/omp/bun-executable'
 import { OmpBridge } from '../src/main/agent/omp/omp-bridge'
+import {
+  ConfiguredStdioRequestRegistry,
+  configuredStdioRequestKey,
+  configuredStdioTimeoutMessage,
+  resolveConfiguredStdioTimeoutMs
+} from '../src/main/agent/omp/configured-stdio-request-control'
 import { copyMinimal, installReady, shQuote } from './helpers/fakeEnvironment'
 
 const bunPath = findBunExecutable()
@@ -21,6 +36,50 @@ const WORKER = join(process.cwd(), 'src/main/agent/omp/omp-sdk-worker.ts')
 const SERVER_REQUEST_TIMEOUT_MS = 8_000
 const FIXTURE_STARTUP_TIMEOUT_MS = 15_000
 const FIXTURE_TEST_TIMEOUT_MS = 45_000
+
+test('configured stdio discovery defaults and clamps only integer main-process deadlines', () => {
+  assert.equal(resolveConfiguredStdioTimeoutMs(undefined), 90_000)
+  assert.equal(resolveConfiguredStdioTimeoutMs(1), 5_000)
+  assert.equal(resolveConfiguredStdioTimeoutMs(600_000), 600_000)
+  assert.equal(resolveConfiguredStdioTimeoutMs(1_000_000), 900_000)
+  assert.throws(() => resolveConfiguredStdioTimeoutMs(1.5), /timeout/i)
+  assert.throws(() => resolveConfiguredStdioTimeoutMs('600000'), /timeout/i)
+  assert.equal(
+    configuredStdioTimeoutMessage(600_000),
+    '启动验证超时（已等待 10 分钟）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+  )
+  assert.equal(
+    configuredStdioTimeoutMessage(5_000),
+    '启动验证超时（已等待 5 秒）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+  )
+  assert.equal(
+    configuredStdioTimeoutMessage(90_000),
+    '启动验证超时（已等待 1.5 分钟）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+  )
+  assert.equal(configuredStdioRequestKey(undefined), undefined)
+  assert.equal(configuredStdioRequestKey('request_1:key'), 'request_1:key')
+  for (const value of ['', 'space key', 'x'.repeat(129), 7]) {
+    assert.throws(() => configuredStdioRequestKey(value), /requestKey/)
+  }
+})
+
+test('configured stdio cancellation registry aborts known keys and forgets completed requests', () => {
+  const registry = new ConfiguredStdioRequestRegistry()
+  const controller = new AbortController()
+  registry.register(undefined, new AbortController())
+  registry.register('request-1', controller)
+  assert.throws(() => registry.register('request-1', new AbortController()), /already active/)
+  assert.equal(registry.has('request-1'), true)
+  assert.equal(registry.cancel('unknown'), false)
+  assert.equal(controller.signal.aborted, false)
+  assert.equal(registry.cancel('request-1'), true)
+  assert.equal(controller.signal.aborted, true)
+  assert.equal((controller.signal.reason as Error).message, '已取消')
+  registry.delete('request-1', new AbortController())
+  assert.equal(registry.has('request-1'), true)
+  registry.delete('request-1', controller)
+  assert.equal(registry.has('request-1'), false)
+})
 
 type ServerSnapshot = {
   pid: number
@@ -63,7 +122,7 @@ async function fixture(
     ...environment,
     ref: REF,
     command: 'fixture-mcp',
-    args: [snapshotPath, mode, 'a b; $(never-run)'],
+    args: [snapshotPath, mode, `a b; 'quoted' "$(never-run)"`],
     cwd: root
   }).entry
   const bridge = new OmpBridge(() =>
@@ -149,6 +208,13 @@ test(
   { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
   async () => {
     await fixture('success', async ({ bridge, params, snapshotPath }) => {
+      Object.assign(params.entry, {
+        phiOrigin: 'user-stdio',
+        phiUser: {
+          runtime: { kind: 'environment', ref: params.entry.phiManaged.ref },
+          env: { LOG_LEVEL: 'debug' }
+        }
+      })
       // Never execute cached/stale wrapper arguments, even when the marker's envId is unchanged.
       params.entry.args = ['-i', '/usr/bin/false']
       assert.deepEqual(await bridge.request('mcp.configuredStdioTools', params), [
@@ -157,8 +223,9 @@ test(
       ])
       const seen = snapshot(snapshotPath)
       assert.equal(seen.cwd, realpathSync(params.entry.cwd!))
-      assert.deepEqual(seen.args, [snapshotPath, 'success', 'a b; $(never-run)'])
+      assert.deepEqual(seen.args, [snapshotPath, 'success', `a b; 'quoted' "$(never-run)"`])
       assert.equal(seen.env.PHI_ENV_ID, params.entry.phiManaged.envId)
+      assert.equal(seen.env.LOG_LEVEL, 'debug')
       assert.equal(seen.env.PHI_PROBE_HOST_SENTINEL, undefined)
       assert.equal(seen.env.PYTHONPATH, undefined)
       assert.equal(seen.env.CONDA_PREFIX, undefined)
@@ -174,6 +241,233 @@ test(
         false
       )
     })
+  }
+)
+
+function probeLogDir(runtimeRoot: string): string {
+  return join(runtimeRoot, 'tmp', 'mcp-probe')
+}
+
+test(
+  'configured stdio capture preserves argv and exposes sanitized stderr from a pre-handshake exit',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('stderr-exit', async ({ bridge, params, snapshotPath }) => {
+      await assert.rejects(
+        bridge.request('mcp.configuredStdioTools', { ...params, captureStderr: true }),
+        (error: Error & { detail?: string }) => {
+          assert.match(error.message, /closed stdout|before responding|exited/i)
+          assert.equal(error.detail, 'Config not found\nrun init first')
+          return true
+        }
+      )
+      assert.deepEqual(snapshot(snapshotPath).args, [
+        snapshotPath,
+        'stderr-exit',
+        `a b; 'quoted' "$(never-run)"`
+      ])
+      assert.deepEqual(readdirSync(probeLogDir(params.environment.root)), [])
+    })
+  }
+)
+
+test(
+  'configured stdio capture exposes only the last 4096 bytes and removes successful logs',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('stderr-large', async ({ bridge, params }) => {
+      await assert.rejects(
+        bridge.request('mcp.configuredStdioTools', { ...params, captureStderr: true }),
+        (error: Error & { detail?: string }) => {
+          assert.ok(error.detail)
+          assert.ok(Buffer.byteLength(error.detail, 'utf8') <= 4096)
+          assert.doesNotMatch(error.detail, /BEGIN-MUST-BE-TRUNCATED/)
+          assert.match(error.detail, /-TAIL-MARKER$/)
+          return true
+        }
+      )
+    })
+    await fixture('success', async ({ bridge, params }) => {
+      assert.deepEqual(
+        await bridge.request('mcp.configuredStdioTools', { ...params, captureStderr: true }),
+        ['fixture_first', 'fixture_second']
+      )
+      assert.deepEqual(readdirSync(probeLogDir(params.environment.root)), [])
+    })
+  }
+)
+
+test(
+  'configured stdio capture uses private permissions and removes logs after cancel and timeout',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('stderr-timeout', async ({ bridge, params, snapshotPath }) => {
+      const requestKey = 'captured-cancel-fixture'
+      const discovery = bridge.request('mcp.configuredStdioTools', {
+        ...params,
+        captureStderr: true,
+        requestKey,
+        timeoutMs: 600_000
+      })
+      void discovery.catch(() => undefined)
+      await waitForServerMethod(snapshotPath, 'initialize')
+      const logDir = probeLogDir(params.environment.root)
+      const [logName] = readdirSync(logDir)
+      assert.ok(logName)
+      assert.equal(statSync(logDir).mode & 0o777, 0o700)
+      assert.equal(statSync(join(logDir, logName)).mode & 0o777, 0o600)
+      assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), true)
+      await assert.rejects(discovery, (error: Error & { detail?: string }) => {
+        assert.equal(error.message, '已取消')
+        assert.match(error.detail ?? '', /waiting for configuration/)
+        return true
+      })
+      assert.deepEqual(readdirSync(logDir), [])
+    })
+
+    await fixture('stderr-timeout', async ({ bridge, params }) => {
+      await assert.rejects(
+        bridge.request('mcp.configuredStdioTools', {
+          ...params,
+          captureStderr: true,
+          requestKey: 'captured-timeout-fixture',
+          timeoutMs: 1
+        }),
+        (error: Error & { detail?: string }) => {
+          assert.match(error.message, /启动验证超时/)
+          assert.match(error.detail ?? '', /waiting for configuration/)
+          return true
+        }
+      )
+      assert.deepEqual(readdirSync(probeLogDir(params.environment.root)), [])
+    })
+  }
+)
+
+test(
+  'configured stdio leaves the original launch path untouched when capture is absent',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('success', async ({ bridge, params }) => {
+      assert.deepEqual(await bridge.request('mcp.configuredStdioTools', params), [
+        'fixture_first',
+        'fixture_second'
+      ])
+      assert.equal(existsSync(probeLogDir(params.environment.root)), false)
+    })
+  }
+)
+
+test(
+  'configured stdio discovery accepts an app-owned host entry without a managed lease',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'phi-mcp-host-tool-probe-'))
+    const snapshotPath = join(root, 'server.json')
+    const bridge = new OmpBridge(() =>
+      spawn(bunPath!, [WORKER], {
+        cwd: process.cwd(),
+        env: { ...process.env, PHI_PROBE_HOST_SENTINEL: 'must-not-reach-server' },
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    )
+    const entry = {
+      type: 'stdio',
+      command: '/usr/bin/env',
+      args: [
+        '-i',
+        'PATH=/usr/bin:/bin',
+        `HOME=${root}`,
+        'LANG=en_US.UTF-8',
+        `TMPDIR=${root}`,
+        process.execPath,
+        SERVER,
+        snapshotPath,
+        'success',
+        'a b; $(never-run)'
+      ],
+      env: {},
+      cwd: root,
+      timeout: SERVER_REQUEST_TIMEOUT_MS,
+      phiOrigin: 'user-stdio',
+      phiUser: { runtime: { kind: 'host' }, env: {} }
+    }
+    try {
+      assert.deepEqual(
+        await bridge.request('mcp.configuredStdioTools', { name: 'host-fixture', entry }),
+        ['fixture_first', 'fixture_second']
+      )
+      const seen = snapshot(snapshotPath)
+      assert.deepEqual(seen.args, [snapshotPath, 'success', 'a b; $(never-run)'])
+      assert.equal(seen.env.PHI_PROBE_HOST_SENTINEL, undefined)
+      assertDeadAtReturn(snapshotPath)
+    } finally {
+      await bridge.stop()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+test(
+  'configured stdio discovery accepts Bun user entries and rejects tampered variants',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'phi-mcp-bun-tool-probe-'))
+    const snapshotPath = join(root, 'server.json')
+    const bridge = new OmpBridge(() =>
+      spawn(bunPath!, [WORKER], {
+        cwd: process.cwd(),
+        env: { ...process.env, PHI_PROBE_HOST_SENTINEL: 'must-not-reach-server' },
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    )
+    const entry = {
+      type: 'stdio',
+      command: '/usr/bin/env',
+      args: [
+        '-i',
+        `PATH=${dirname(bunPath!)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+        `HOME=${root}`,
+        'LANG=en_US.UTF-8',
+        `TMPDIR=${root}`,
+        `BUN_INSTALL_CACHE_DIR=${join(root, 'cache', 'bun-user')}`,
+        bunPath!,
+        'run',
+        SERVER,
+        snapshotPath,
+        'success',
+        'a b; $(never-run)'
+      ],
+      env: {},
+      cwd: root,
+      timeout: SERVER_REQUEST_TIMEOUT_MS,
+      phiOrigin: 'user-stdio',
+      phiUser: { runtime: { kind: 'bun' }, env: {} }
+    }
+    try {
+      assert.deepEqual(
+        await bridge.request('mcp.configuredStdioTools', { name: 'bun-fixture', entry }),
+        ['fixture_first', 'fixture_second']
+      )
+      const seen = snapshot(snapshotPath)
+      assert.deepEqual(seen.args, [snapshotPath, 'success', 'a b; $(never-run)'])
+      assert.equal(seen.env.PHI_PROBE_HOST_SENTINEL, undefined)
+      assertDeadAtReturn(snapshotPath)
+
+      for (const tampered of [
+        { ...entry, command: '/bin/sh' },
+        { ...entry, phiOrigin: undefined },
+        { ...entry, phiManaged: { ref: 'phi:python@1' } }
+      ]) {
+        await assert.rejects(
+          bridge.request('mcp.configuredStdioTools', { name: 'tampered-bun', entry: tampered }),
+          /managed|metadata/i
+        )
+      }
+    } finally {
+      await bridge.stop()
+      rmSync(root, { recursive: true, force: true })
+    }
   }
 )
 
@@ -242,6 +536,21 @@ test(
       await bridge.request('mcp.applyConnectorEnabled', { name: 'fixture' })
       await waitForServerMethod(snapshotPath, 'tools/list')
       assert.equal(snapshot(snapshotPath).cwd, realpathSync(params.entry.cwd!))
+      assert.equal(
+        hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
+        true
+      )
+      writeFileSync(profilePath, JSON.stringify({ mcpServers: {} }))
+      await bridge.request('mcp.applyConnectorEnabled', { name: 'fixture' })
+      assertDeadAtReturn(snapshotPath)
+      assert.equal(
+        hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
+        false
+      )
+      rmSync(snapshotPath)
+      writeFileSync(profilePath, JSON.stringify({ mcpServers: { fixture: params.entry } }))
+      await bridge.request('mcp.applyConnectorEnabled', { name: 'fixture' })
+      await waitForServerMethod(snapshotPath, 'tools/list')
       assert.equal(
         hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
         true
@@ -384,6 +693,58 @@ for (const mode of ['timeout', 'init-error', 'list-timeout', 'list-error']) {
     }
   )
 }
+
+test(
+  'configured stdio discovery cancellation aborts by request key and drains the child and lease',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('timeout', async ({ bridge, params, snapshotPath }) => {
+      const requestKey = 'cancel-fixture'
+      const discovery = bridge.request('mcp.configuredStdioTools', {
+        ...params,
+        requestKey,
+        timeoutMs: 600_000
+      })
+      void discovery.catch(() => undefined)
+      const seen = await waitForServerMethod(snapshotPath, 'initialize')
+      assert.equal(processAlive(seen.pid), true)
+      assert.equal(
+        await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey: 'unknown' }),
+        false
+      )
+      assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), true)
+      await assert.rejects(discovery, /已取消/)
+      assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), false)
+      assertDeadAtReturn(snapshotPath)
+      assert.equal(
+        hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
+        false
+      )
+    })
+  }
+)
+
+test(
+  'configured stdio discovery reports a clamped deadline in Chinese',
+  { skip: !bunPath, timeout: FIXTURE_TEST_TIMEOUT_MS },
+  async () => {
+    await fixture('timeout', async ({ bridge, params, snapshotPath }) => {
+      await assert.rejects(
+        bridge.request('mcp.configuredStdioTools', {
+          ...params,
+          requestKey: 'short-timeout-fixture',
+          timeoutMs: 1
+        }),
+        /启动验证超时（已等待 5 秒）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。/
+      )
+      if (existsSync(snapshotPath)) assertDeadAtReturn(snapshotPath)
+      assert.equal(
+        hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
+        false
+      )
+    })
+  }
+)
 
 test(
   'configured stdio discovery rejects unsupported, pending, or unavailable managed state before spawning',

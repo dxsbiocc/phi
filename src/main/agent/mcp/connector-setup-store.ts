@@ -41,14 +41,15 @@ export function loadConnectorSetups(path: string, now: () => string): McpConnect
       throw new Error('invalid setup state')
     const ids = new Set<string>()
     return document.records.map((value: unknown): McpConnectorSetupProgress => {
-      if (!validProgress(value) || ids.has(value.id)) throw new Error('invalid setup record')
-      ids.add(value.id)
-      if (!isActivePhase(value.phase)) return value
+      const progress = parseProgress(value)
+      if (!progress || ids.has(progress.id)) throw new Error('invalid setup record')
+      ids.add(progress.id)
+      if (!isActivePhase(progress.phase)) return progress
       return {
-        ...value,
-        failedPhase: value.phase,
+        ...progress,
+        failedPhase: progress.phase,
         phase: 'failed',
-        revision: value.revision + 1,
+        revision: progress.revision + 1,
         updatedAt: now(),
         error: '上次设置已中断，请重试。'
       }
@@ -96,6 +97,7 @@ export function saveConnectorSetups(
       const saved = { ...record }
       delete saved.toolNames
       if (saved.error) saved.error = saved.error.slice(0, 1024)
+      if (saved.detail) saved.detail = saved.detail.slice(0, 4096)
       return saved
     })
   const bytes = JSON.stringify({ version: 1, records: selected })
@@ -106,11 +108,9 @@ export function saveConnectorSetups(
   renameSync(temporary, path)
 }
 
-function validProgress(value: unknown): value is McpConnectorSetupProgress {
-  if (!isRecord(value)) return false
-  const keys = ['id', 'phase', 'revision', 'updatedAt', 'failedPhase', 'error', 'operationId']
-  return (
-    Object.keys(value).every((key) => keys.includes(key)) &&
+function parseProgress(value: unknown): McpConnectorSetupProgress | undefined {
+  if (!isRecord(value)) return undefined
+  const valid =
     typeof value.id === 'string' &&
     /^[a-z][a-z0-9-]{1,63}$/.test(value.id) &&
     typeof value.phase === 'string' &&
@@ -125,9 +125,33 @@ function validProgress(value: unknown): value is McpConnectorSetupProgress {
         value.failedPhase !== 'failed')) &&
     (value.error === undefined ||
       (typeof value.error === 'string' && value.error.length <= 1024)) &&
+    (value.detail === undefined ||
+      (typeof value.detail === 'string' && value.detail.length <= 4096)) &&
     (value.operationId === undefined ||
       (typeof value.operationId === 'string' && /^[0-9a-f-]{36}$/.test(value.operationId)))
-  )
+  if (!valid) return undefined
+  const progress: McpConnectorSetupProgress = {
+    id: value.id as string,
+    phase: value.phase as McpConnectorSetupProgress['phase'],
+    revision: value.revision as number,
+    updatedAt: value.updatedAt as string,
+    ...(value.failedPhase === undefined
+      ? {}
+      : {
+          failedPhase: value.failedPhase as Exclude<McpConnectorSetupProgress['phase'], 'failed'>
+        }),
+    ...(value.error === undefined ? {} : { error: value.error as string }),
+    ...(value.detail === undefined ? {} : { detail: value.detail as string }),
+    ...(value.operationId === undefined ? {} : { operationId: value.operationId as string })
+  }
+  if (value.kind === 'local-stdio') progress.kind = value.kind
+  if (typeof value.title === 'string' && value.title.length > 0 && value.title.length <= 128)
+    progress.title = value.title
+  if (typeof value.startedAt === 'string' && Number.isFinite(Date.parse(value.startedAt)))
+    progress.startedAt = value.startedAt
+  if (typeof value.summary === 'string' && value.summary.length <= 4096)
+    progress.summary = value.summary
+  return progress
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

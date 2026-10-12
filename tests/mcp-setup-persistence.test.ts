@@ -29,6 +29,116 @@ test('setup state restores operation identity and validated phase without persis
   })
 })
 
+test('local stdio setup metadata round-trips without persisting environment values', async () => {
+  await fixture(async (path) => {
+    const tracker = new ConnectorSetupTracker(() => {}, undefined, { path })
+    await tracker.run('mail', (report) => {
+      report('starting', {
+        kind: 'local-stdio',
+        title: 'mail',
+        startedAt: '2026-10-11T08:00:00.000Z',
+        summary: 'bun x --bun qq-email-mcp@0.1.1 · env: QQ_EMAIL_AUTH'
+      })
+      report('ready', { toolNames: ['send_mail'] })
+    })
+
+    const restored = new ConnectorSetupTracker(() => {}, undefined, { path }).get('mail')!
+    assert.deepEqual(restored, {
+      id: 'mail',
+      phase: 'ready',
+      revision: 2,
+      updatedAt: restored.updatedAt,
+      operationId: restored.operationId,
+      kind: 'local-stdio',
+      title: 'mail',
+      startedAt: '2026-10-11T08:00:00.000Z',
+      summary: 'bun x --bun qq-email-mcp@0.1.1 · env: QQ_EMAIL_AUTH'
+    })
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /super-secret-value/)
+  })
+})
+
+test('local stdio failure detail round-trips and is capped at 4096 characters', async () => {
+  await fixture(async (path) => {
+    const tracker = new ConnectorSetupTracker(() => {}, undefined, { path })
+    const failure = Object.assign(new Error('fixture failed'), { detail: 'x'.repeat(5000) })
+    await assert.rejects(
+      tracker.run('mail', (report) => {
+        report('starting', { kind: 'local-stdio', title: 'mail' })
+        throw failure
+      }),
+      /fixture failed/
+    )
+
+    const current = tracker.get('mail')!
+    assert.equal(current.detail?.length, 4096)
+    assert.equal(current.detail, 'x'.repeat(4096))
+    const restored = new ConnectorSetupTracker(() => {}, undefined, { path }).get('mail')!
+    assert.equal(restored.detail, 'x'.repeat(4096))
+    assert.match(readFileSync(path, 'utf8'), /"detail":"x+/)
+  })
+})
+
+test('invalid persisted detail keeps the existing corrupt-file quarantine behavior', async () => {
+  for (const detail of [7, 'x'.repeat(4097)]) {
+    await fixture(async (path) => {
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          records: [
+            {
+              id: 'mail',
+              phase: 'failed',
+              revision: 1,
+              updatedAt: '2026-10-11T08:00:01.000Z',
+              error: 'fixture failed',
+              detail
+            }
+          ]
+        })
+      )
+      assert.equal(new ConnectorSetupTracker(() => {}, undefined, { path }).get('mail'), undefined)
+      assert.equal(
+        readdirSync(join(path, '..')).filter((name) => name.includes('.corrupt-')).length,
+        1
+      )
+    })
+  }
+})
+
+test('an interrupted local stdio job restores as failed with its presentation metadata', async () => {
+  await fixture(async (path) => {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        records: [
+          {
+            id: 'mail',
+            phase: 'starting',
+            revision: 1,
+            updatedAt: '2026-10-11T08:00:01.000Z',
+            kind: 'local-stdio',
+            title: 'mail',
+            startedAt: '2026-10-11T08:00:00.000Z',
+            summary: 'bun x --bun qq-email-mcp@0.1.1',
+            futurePresentationField: { ignored: true }
+          }
+        ]
+      })
+    )
+
+    const restored = new ConnectorSetupTracker(() => {}, undefined, { path }).get('mail')!
+    assert.equal(restored.phase, 'failed')
+    assert.equal(restored.failedPhase, 'starting')
+    assert.equal(restored.kind, 'local-stdio')
+    assert.equal(restored.title, 'mail')
+    assert.equal(restored.startedAt, '2026-10-11T08:00:00.000Z')
+    assert.equal(restored.summary, 'bun x --bun qq-email-mcp@0.1.1')
+  })
+})
+
 test('an interrupted install restores as failed and permits a fresh explicit retry', async () => {
   await fixture(async (path) => {
     writeFileSync(

@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -6,7 +7,7 @@ import {
   type MouseEvent,
   type ReactNode
 } from 'react'
-import { Box, List, Tooltip, Typography } from '@mui/material'
+import { Box, Chip, List, Tooltip, Typography } from '@mui/material'
 import type { McpServerSummary } from '../../types'
 import { mcpConnectorCategories } from '../../../../shared/mcpConnectorCatalog'
 import { McpConnectorCatalogDialog } from './components/McpConnectorCatalogDialog'
@@ -42,7 +43,9 @@ export type McpSidebarProps = {
   requestTrustedOverlay?: TrustedOverlayRequest
   cancelTrustedOverlay?: (key: string) => void
   onPreviewInteractionChange?: (active: boolean) => void
+  localConnectorsAllowed?: boolean
   notice?: string
+  onRegisterConnectorDialogCloser?: (close: () => void) => () => void
 }
 
 export type McpDetailProps = McpDetailPanelProps
@@ -145,7 +148,9 @@ export function McpSidebar({
   requestTrustedOverlay,
   cancelTrustedOverlay,
   onPreviewInteractionChange,
-  notice
+  localConnectorsAllowed = true,
+  notice,
+  onRegisterConnectorDialogCloser
 }: McpSidebarProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -162,7 +167,16 @@ export function McpSidebar({
       }),
     [requestTrustedOverlay, cancelTrustedOverlay, onPreviewInteractionChange]
   )
+  const closeCatalog = useCallback((): void => {
+    catalogDialogs.cancel('mcp-sidebar-catalog')
+    setCatalogPending(false)
+    setCatalogOpen(false)
+  }, [catalogDialogs])
   useEffect(() => () => catalogDialogs.dispose(), [catalogDialogs])
+  useEffect(
+    () => onRegisterConnectorDialogCloser?.(closeCatalog),
+    [closeCatalog, onRegisterConnectorDialogCloser]
+  )
   if (!visible && (catalogOpen || catalogPending)) {
     setCatalogOpen(false)
     setCatalogPending(false)
@@ -304,22 +318,29 @@ export function McpSidebar({
                       title={`${label} · 已配置 · ${active ? '已启用' : '已停用'}`}
                       enterDelay={450}
                     >
-                      <Typography
-                        component="span"
-                        noWrap
-                        sx={{
-                          display: 'block',
-                          fontSize: '0.875rem',
-                          fontWeight: isSelected ? 600 : 500,
-                          color: isSelected
-                            ? 'primary.main'
-                            : active
-                              ? 'text.primary'
-                              : 'text.secondary'
-                        }}
-                      >
-                        {label}
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                        <Typography
+                          component="span"
+                          noWrap
+                          sx={{
+                            display: 'block',
+                            minWidth: 0,
+                            flex: 1,
+                            fontSize: '0.875rem',
+                            fontWeight: isSelected ? 600 : 500,
+                            color: isSelected
+                              ? 'primary.main'
+                              : active
+                                ? 'text.primary'
+                                : 'text.secondary'
+                          }}
+                        >
+                          {label}
+                        </Typography>
+                        {server.userStdio ? (
+                          <Chip size="small" variant="outlined" label="自建·本地" />
+                        ) : null}
+                      </Box>
                     </Tooltip>
                   </CatalogResourceRow>
                 )
@@ -332,11 +353,8 @@ export function McpSidebar({
         <McpConnectorCatalogDialog
           open={catalogOpen}
           servers={servers}
-          onClose={() => {
-            catalogDialogs.cancel('mcp-sidebar-catalog')
-            setCatalogPending(false)
-            setCatalogOpen(false)
-          }}
+          localConnectorsAllowed={localConnectorsAllowed}
+          onClose={closeCatalog}
           onRefresh={onRefreshServers}
         />
       )}

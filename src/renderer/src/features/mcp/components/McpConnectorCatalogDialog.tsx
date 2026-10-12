@@ -14,6 +14,7 @@ import {
   mcpConnectorCategories,
   type McpConnectorSetupProgress,
   type FeaturedMcpConnector,
+  type LocalMcpConnectorRequest,
   type RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
@@ -43,6 +44,7 @@ import {
   connectorSetupActive,
   localConnectorToolsPrerequisite
 } from '../lib/connectorSetupPresentation'
+import type { LocalConnectorInitialDraft } from '../lib/localConnectorDraft'
 
 type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number]
@@ -63,6 +65,7 @@ function apiKeyErrorMessage(cause: unknown): string {
 export interface McpConnectorCatalogDialogProps {
   open: boolean
   servers: McpServerSummary[]
+  localConnectorsAllowed?: boolean
   onClose: () => void
   onRefresh: () => Promise<void>
 }
@@ -84,6 +87,7 @@ function matchingServer(
 export function McpConnectorCatalogDialog({
   open,
   servers,
+  localConnectorsAllowed = true,
   onClose,
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
@@ -98,6 +102,7 @@ export function McpConnectorCatalogDialog({
   const [installFilter, setInstallFilter] = useState<ConnectorInstallFilter>('all')
   const [sort, setSort] = useState<ConnectorSort>('default')
   const [customOpen, setCustomOpen] = useState(false)
+  const [customInitialDraft, setCustomInitialDraft] = useState<LocalConnectorInitialDraft>()
   const [customError, setCustomError] = useState<string | null>(null)
   const [customAuthorizingName, setCustomAuthorizingName] = useState<string | null>(null)
   const savedCustomAuthRef = useRef<{
@@ -499,6 +504,7 @@ export function McpConnectorCatalogDialog({
     setApiKeyDialogId(null)
     setApiKeyError(null)
     setCustomOpen(false)
+    setCustomInitialDraft(undefined)
     savedCustomAuthRef.current = null
     setCustomError(null)
     setCustomAuthorizingName(null)
@@ -543,6 +549,19 @@ export function McpConnectorCatalogDialog({
       setCustomError(featuredAuthFailureNotice(ipcErrorMessage(cause)))
     } finally {
       setCustomAuthorizingName(null)
+      setBusy(null)
+    }
+  }
+
+  async function addLocal(request: LocalMcpConnectorRequest): Promise<void> {
+    setBusy(request.name)
+    setCustomError(null)
+    try {
+      await window.api.startLocalConnectorAdd(request)
+      setCustomOpen(false)
+    } catch (cause) {
+      setCustomError(ipcErrorMessage(cause))
+    } finally {
       setBusy(null)
     }
   }
@@ -644,6 +663,7 @@ export function McpConnectorCatalogDialog({
               onClick={() => {
                 savedCustomAuthRef.current = null
                 setCustomError(null)
+                setCustomInitialDraft(undefined)
                 setCustomOpen(true)
               }}
             />
@@ -781,6 +801,8 @@ export function McpConnectorCatalogDialog({
           busy={busy !== null}
           authorizing={customAuthorizingName !== null}
           error={customError}
+          localAvailable={localConnectorsAllowed}
+          initialDraft={customInitialDraft}
           onClose={() => {
             if (customAuthorizingName) {
               void window.api.cancelRemoteMcpAuth(customAuthorizingName).catch((cause: unknown) => {
@@ -790,10 +812,12 @@ export function McpConnectorCatalogDialog({
             }
             if (busy !== null) return
             savedCustomAuthRef.current = null
+            setCustomInitialDraft(undefined)
             setCustomOpen(false)
             setCustomError(null)
           }}
           onSubmit={(name, url, options) => void addCustom(name, url, options)}
+          onSubmitLocal={addLocal}
         />
       )}
       <McpApiKeyDialog

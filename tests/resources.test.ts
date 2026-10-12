@@ -171,6 +171,78 @@ test('listMcpServers includes remote URL-only servers', async () => {
   }
 })
 
+test('listMcpServers presents user stdio argv and environment names without wrapper values', async () => {
+  const { listGlobalMcpServers } = await import('../src/main/agent/resources')
+  const path = join(agentDir, 'mcp.json')
+  const original = readFileSync(path, 'utf8')
+  try {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        mcpServers: {
+          managed: {
+            type: 'stdio',
+            command: '/usr/bin/env',
+            args: [
+              '-i',
+              'PATH=/private/runtime/bin',
+              'LOG_LEVEL=secret',
+              '/private/runtime/bin/server',
+              '--stdio'
+            ],
+            env: {},
+            phiManaged: {
+              version: 1,
+              ref: 'phi:python@1',
+              effectiveRef: 'phi:python@1',
+              envId: 'fixture',
+              command: 'mcp-server',
+              args: ['--stdio']
+            },
+            phiOrigin: 'user-stdio',
+            phiUser: {
+              runtime: { kind: 'environment', ref: 'phi:python@1' },
+              env: { LOG_LEVEL: 'secret' }
+            }
+          },
+          host: {
+            type: 'stdio',
+            command: '/usr/bin/env',
+            args: [
+              '-i',
+              'PATH=/usr/bin:/bin',
+              'HOME=/Users/tester',
+              'LANG=en_US.UTF-8',
+              'TMPDIR=/tmp',
+              'MODE=secret',
+              '/opt/local/bin/server',
+              '--host'
+            ],
+            env: {},
+            phiOrigin: 'user-stdio',
+            phiUser: { runtime: { kind: 'host' }, env: { MODE: 'secret' } }
+          }
+        }
+      })
+    )
+    const servers = await listGlobalMcpServers()
+    const managed = servers.find((server) => server.name === 'managed')
+    const host = servers.find((server) => server.name === 'host')
+
+    assert.equal(managed?.userStdio, true)
+    assert.equal(managed?.command, 'mcp-server')
+    assert.deepEqual(managed?.args, ['--stdio'])
+    assert.deepEqual(managed?.envKeys, ['LOG_LEVEL'])
+    assert.equal(host?.userStdio, true)
+    assert.equal(host?.command, '/opt/local/bin/server')
+    assert.deepEqual(host?.args, ['--host'])
+    assert.deepEqual(host?.envKeys, ['MODE'])
+    assert.doesNotMatch(JSON.stringify([managed, host]), /secret|\/usr\/bin\/env/)
+  } finally {
+    writeFileSync(path, original)
+  }
+})
+
 test('remote resource catalog keeps global Skills and MCP without reading an anchor project', async () => {
   const { listGlobalMcpServers, listGlobalSkills, readGlobalSkillContent } =
     await import('../src/main/agent/resources')

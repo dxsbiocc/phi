@@ -54,6 +54,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'crash':
       process.stderr.write('fake worker crashed\n')
       return process.exit(3)
+    case 'test.errorDetail':
+      return send({
+        id,
+        ok: false,
+        error: 'probe failed',
+        stack: 'fixture stack',
+        detail: 'server stderr detail'
+      })
     default:
       return ok(null)
   }

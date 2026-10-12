@@ -86,6 +86,8 @@ export interface ManagedStdioServerOptions extends EnvironmentLookup {
   desiredEnabled?: boolean
   /** Host environment to sanitize. Defaults to `process.env`. */
   baseEnv?: NodeJS.ProcessEnv
+  /** Validated non-secret variables appended after the execution contract assignments. */
+  userEnv?: Readonly<Record<string, string>>
 }
 
 export interface ManagedStdioServer {
@@ -130,6 +132,7 @@ interface EntrySpec {
   packageId?: string
   packageDir?: string
   desiredEnabled?: boolean
+  userEnv?: Readonly<Record<string, string>>
 }
 
 /** `applyOverrides` (with a project), then `describeEnvironment` and `readyEnvironment`. */
@@ -304,6 +307,7 @@ function refreshEntry(
       : typeof entry.enabled === 'boolean'
         ? entry.enabled
         : marker.desiredEnabled
+  const userEnv = readUserEnvironment(entry, marker)
   const spec: EntrySpec = {
     ref: marker.ref,
     command: marker.command,
@@ -312,12 +316,65 @@ function refreshEntry(
     projectDir: marker.projectDir,
     packageId: marker.packageId,
     packageDir: marker.packageDir,
-    desiredEnabled
+    desiredEnabled,
+    ...(userEnv ? { userEnv } : {})
   }
   // Keep the user's own settings on the entry (enabled, timeout, ...); replace ours.
   const regenerated = { ...entry, ...buildEntry(spec, resolved, baseEnv) }
   if (desiredEnabled !== undefined) regenerated.enabled = desiredEnabled
   return regenerated
+}
+
+function readUserEnvironment(
+  entry: Record<string, unknown>,
+  marker: ManagedStdioMarker
+): Record<string, string> | undefined {
+  if (entry.phiOrigin !== 'user-stdio') return undefined
+  const metadata = entry.phiUser
+  if (!isRecord(metadata) || !isRecord(metadata.runtime) || !isRecord(metadata.env)) {
+    throw new Error('invalid user stdio metadata')
+  }
+  if (metadata.runtime.kind !== 'environment' || metadata.runtime.ref !== marker.ref) {
+    throw new Error('user stdio runtime does not match its managed marker')
+  }
+  const values = Object.entries(metadata.env)
+  if (
+    values.length > 32 ||
+    !values.every(
+      ([name, value]) =>
+        validUserEnvironmentName(name) &&
+        typeof value === 'string' &&
+        value.length <= 4096 &&
+        !/[\0\r\n]/u.test(value)
+    )
+  ) {
+    throw new Error('invalid user stdio environment metadata')
+  }
+  return Object.fromEntries(values) as Record<string, string>
+}
+
+function validUserEnvironmentName(name: string): boolean {
+  return (
+    /^[A-Z_][A-Z0-9_]*$/.test(name) &&
+    name !== 'PATH' &&
+    name !== 'HOME' &&
+    name !== 'LANG' &&
+    name !== 'TMPDIR' &&
+    !name.startsWith('PHI_') &&
+    !name.startsWith('LD_') &&
+    !name.startsWith('DYLD_') &&
+    name !== 'PYTHONPATH' &&
+    name !== 'PYTHONHOME' &&
+    name !== 'NODE_OPTIONS' &&
+    name !== 'NODE_PATH' &&
+    !name.startsWith('BUN_') &&
+    !name.startsWith('CONDA_') &&
+    !name.startsWith('R_LIBS') &&
+    name !== 'JAVA_TOOL_OPTIONS' &&
+    name !== 'BASH_ENV' &&
+    name !== 'ENV' &&
+    name !== 'IFS'
+  )
 }
 
 /**
@@ -342,10 +399,24 @@ function buildEntry(
   const assignments = Object.keys(variables)
     .sort()
     .map((name) => `${name}=${variables[name]}`)
+  const userAssignments = Object.keys(spec.userEnv ?? {})
+    .sort()
+    .map((name) => {
+      if (Object.hasOwn(variables, name)) {
+        throw new Error(`MCP stdio user environment cannot override ${name}`)
+      }
+      return `${name}=${spec.userEnv![name]}`
+    })
   const entry: ManagedStdioEntry = {
     type: 'stdio',
     command: ENV_EXECUTABLE,
-    args: ['-i', ...assignments, command, ...expandedArgs(spec.args, spec.packageDir)],
+    args: [
+      '-i',
+      ...assignments,
+      ...userAssignments,
+      command,
+      ...expandedArgs(spec.args, spec.packageDir)
+    ],
     env: {},
     phiManaged: marker
   }
@@ -388,6 +459,18 @@ function validateSpec(options: ManagedStdioServerOptions): EntrySpec {
     spec.packageDir = options.packageDir
   }
   if (options.desiredEnabled !== undefined) spec.desiredEnabled = options.desiredEnabled
+  if (options.userEnv !== undefined) {
+    if (
+      !isRecord(options.userEnv) ||
+      !Object.entries(options.userEnv).every(
+        ([name, value]) =>
+          /^[A-Z_][A-Z0-9_]*$/.test(name) && typeof value === 'string' && !/[\0\r\n]/u.test(value)
+      )
+    ) {
+      throw new Error('MCP stdio user environment is invalid')
+    }
+    spec.userEnv = { ...options.userEnv }
+  }
   return spec
 }
 

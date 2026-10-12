@@ -20,6 +20,7 @@ import { findResourceIcon, findResourceIconSidecar } from './resource-icons'
 import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { listActiveMcpPackages } from './packages/mcp-store'
 import { listInstalledPlugins } from './plugins/loader'
+import { readManagedMarker } from './mcp/stdio-environment'
 
 const AGENT_DIR = getPhiAgentDir()
 
@@ -44,6 +45,7 @@ export interface McpServerSummary {
   managed?: boolean
   enabled?: boolean
   userDisabled?: boolean
+  userStdio?: boolean
   status: 'configured'
 }
 
@@ -250,9 +252,19 @@ function toMcpServerSummary(
 ): McpServerSummary | null {
   if (!isRecord(value)) return null
 
-  const command = typeof value.command === 'string' ? value.command : undefined
-  const args = toStringArray(value.args)
-  const envKeys = isRecord(value.env) ? Object.keys(value.env).sort() : undefined
+  const userStdio = value.phiOrigin === 'user-stdio'
+  const userPresentation = userStdio ? userStdioPresentation(value) : undefined
+  const command = userStdio
+    ? userPresentation?.command
+    : typeof value.command === 'string'
+      ? value.command
+      : undefined
+  const args = userStdio ? userPresentation?.args : toStringArray(value.args)
+  const envKeys = userStdio
+    ? userPresentation?.envKeys
+    : isRecord(value.env)
+      ? Object.keys(value.env).sort()
+      : undefined
   const url = stringValue(value.url)
   const transport = stringValue(value.type)
   const packageId = stringValue(value.phiPackage)
@@ -272,8 +284,61 @@ function toMcpServerSummary(
     managed: sourcePath === getGlobalMcpConfigPaths(AGENT_DIR)[0],
     enabled: isInjectedMcpServer(name, value, userDisabled),
     userDisabled,
+    ...(userStdio ? { userStdio: true } : {}),
     status: 'configured'
   }
+}
+
+function userStdioPresentation(value: UnknownRecord): {
+  command?: string
+  args?: string[]
+  envKeys?: string[]
+} {
+  const metadata = isRecord(value.phiUser) ? value.phiUser : undefined
+  const userEnv = metadata && isRecord(metadata.env) ? metadata.env : undefined
+  const envKeys = userEnv
+    ? Object.entries(userEnv)
+        .filter(([, entry]) => typeof entry === 'string')
+        .map(([name]) => name)
+        .sort()
+    : undefined
+  const marker = readManagedMarker(value)
+  if (marker && metadata && isRecord(metadata.runtime) && metadata.runtime.kind === 'environment') {
+    return {
+      command: marker.command,
+      args: [...marker.args],
+      ...(envKeys?.length ? { envKeys } : {})
+    }
+  }
+  if (
+    value.command === '/usr/bin/env' &&
+    Array.isArray(value.args) &&
+    value.args.every((entry) => typeof entry === 'string') &&
+    value.args[0] === '-i' &&
+    metadata &&
+    isRecord(metadata.runtime) &&
+    (metadata.runtime.kind === 'host' || metadata.runtime.kind === 'bun')
+  ) {
+    let commandIndex = 1
+    while (/^[A-Z_][A-Z0-9_]*=/u.test(value.args[commandIndex] ?? '')) commandIndex += 1
+    const command = value.args[commandIndex]
+    if (metadata.runtime.kind === 'bun') {
+      const subcommand = value.args[commandIndex + 1]
+      return {
+        ...(subcommand === 'x' || subcommand === 'run' ? { command: 'bun' } : {}),
+        ...(subcommand === 'x' || subcommand === 'run'
+          ? { args: value.args.slice(commandIndex + 1) }
+          : {}),
+        ...(envKeys?.length ? { envKeys } : {})
+      }
+    }
+    return {
+      ...(command ? { command } : {}),
+      ...(command ? { args: value.args.slice(commandIndex + 1) } : {}),
+      ...(envKeys?.length ? { envKeys } : {})
+    }
+  }
+  return envKeys?.length ? { envKeys } : {}
 }
 
 function configLineValue(content: string, key: string): string | undefined {

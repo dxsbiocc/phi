@@ -1,9 +1,6 @@
 import { useState } from 'react'
 import { Snackbar } from '@mui/material'
-import AppSnackbarCard, {
-  type SnackbarNotice,
-  type SnackbarSeverity
-} from './components/AppSnackbarCard'
+import AppSnackbarCard, { type SnackbarNotice } from './components/AppSnackbarCard'
 import SettingsDialog, { type SettingsCategory } from './components/SettingsDialog'
 import AddProviderDialog from './components/AddProviderDialog'
 import OnboardingDialog from './components/OnboardingDialog'
@@ -27,17 +24,11 @@ import type {
   ToolApprovalRequest
 } from './types'
 import { EnvironmentSummaryDialog } from './features/environment/components/EnvironmentSummaryDialog'
+import { snackbarAutoHideDuration } from './lib/snackbarDuration'
 
 export type { SnackbarNotice, SnackbarSeverity } from './components/AppSnackbarCard'
 
 const emptySnackbarNotice: SnackbarNotice = { id: 0, severity: 'info', message: '' }
-const snackbarDurationMs: Record<SnackbarSeverity, number> = {
-  success: 4000,
-  info: 5000,
-  warning: 8000,
-  error: 10000
-}
-
 export type AppDialogsProps = {
   rendererApi: RendererApi
 
@@ -307,11 +298,7 @@ export default function AppDialogs({
       <Snackbar
         key={snackbarNotice?.id}
         open={Boolean(snackbarNotice)}
-        autoHideDuration={
-          snackbarNotice && !snackbarNotice.persistent
-            ? snackbarDurationMs[snackbarNotice.severity]
-            : null
-        }
+        autoHideDuration={snackbarAutoHideDuration(snackbarNotice)}
         onClose={(_, reason) => {
           if (reason === 'clickaway') return
           setSnackbarNotice(null)

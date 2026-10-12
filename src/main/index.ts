@@ -367,9 +367,17 @@ import {
   removeRemoteMcpConnector,
   setMcpConnectorEnabled,
   setMcpPackageEnabled,
-  uninstallCatalogConnector
+  uninstallCatalogConnector,
+  validateName
 } from './agent/mcp-connectors'
+import {
+  addLocalMcpConnector,
+  listLocalMcpRuntimes,
+  removeLocalMcpConnector,
+  validateLocalConnectorRequest
+} from './agent/mcp/custom-stdio'
 import { ConnectorSetupTracker, type ConnectorSetupReporter } from './agent/mcp/connector-setup'
+import { createLocalConnectorJobs } from './agent/mcp/local-connector-jobs'
 import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
@@ -10354,6 +10362,17 @@ app.whenReady().then(async () => {
       runtimeRoot: getRuntimeRoot(),
       registries: (await loadPackageRegistries()).registries
     }).map((connector) => ({ ...connector, setup: connectorSetups.get(connector.id) }))
+  const localConnectorJobs = createLocalConnectorJobs({
+    tracker: connectorSetups,
+    agentDir: AGENT_DIR,
+    runtimeRoot: getRuntimeRoot(),
+    probe: (request) => getOmpBridge().request<string[]>('mcp.configuredStdioTools', request),
+    cancelProbe: (requestKey) =>
+      getOmpBridge().request('mcp.cancelConfiguredStdioTools', { requestKey }),
+    applyEnabled: (name) => getOmpBridge().request('mcp.applyConnectorEnabled', { name }),
+    onEvent: (event, metadata) =>
+      writeAppLog({ event: `mcp_local_connector_add_${event}`, metadata })
+  })
 
   async function prepareStdioEnvironment(
     id: string,
@@ -10518,6 +10537,43 @@ app.whenReady().then(async () => {
       await syncFeaturedMcpApiKeySessions(name)
     }
   )
+  ipcMain.handle('mcp:addLocalConnector', async (_, raw: unknown) => {
+    const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
+    const request = validateLocalConnectorRequest(raw, { catalogIds })
+    // The MCP client only loads under the omp worker's Bun runtime, so probe through the bridge
+    // exactly like the package installer does; the Electron main process cannot import it.
+    const result = await addLocalMcpConnector(request, {
+      agentDir: AGENT_DIR,
+      catalogIds,
+      probe: (probeRequest) =>
+        getOmpBridge().request<string[]>('mcp.configuredStdioTools', probeRequest)
+    })
+    await getOmpBridge().request('mcp.applyConnectorEnabled', { name: request.name })
+    return result
+  })
+  ipcMain.handle('mcp:startLocalConnectorAdd', async (_, raw: unknown) => {
+    const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
+    const request = validateLocalConnectorRequest(raw, { catalogIds })
+    return localConnectorJobs.startLocalConnectorAdd(request)
+  })
+  ipcMain.handle('mcp:cancelLocalConnectorAdd', async (_, name: unknown) => {
+    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    await localConnectorJobs.cancelLocalConnectorAdd(validateName(name))
+  })
+  ipcMain.handle('mcp:retryLocalConnectorAdd', async (_, name: unknown) => {
+    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    return localConnectorJobs.retryLocalConnectorAdd(validateName(name))
+  })
+  ipcMain.handle('mcp:listLocalConnectorJobs', async () =>
+    localConnectorJobs.listLocalConnectorJobs()
+  )
+  ipcMain.handle('mcp:removeLocalConnector', async (_, name: unknown) => {
+    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    const validatedName = validateName(name)
+    await removeLocalMcpConnector(validatedName)
+    await getOmpBridge().request('mcp.applyConnectorEnabled', { name: validatedName })
+  })
+  ipcMain.handle('mcp:listLocalRuntimes', async () => listLocalMcpRuntimes())
   ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
     removeRemoteMcpConnector(name, url)
     if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {

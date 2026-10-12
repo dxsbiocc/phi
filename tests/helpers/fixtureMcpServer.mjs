@@ -16,6 +16,17 @@ function saveSnapshot() {
   renameSync(temporary, snapshotPath)
 }
 saveSnapshot()
+if (mode === 'stderr-exit') {
+  process.stderr.write('\u001b[31mConfig not found\u001b[0m\r\nrun init first\u0000\u0007\n')
+  process.exit(1)
+}
+if (mode === 'stderr-large') {
+  process.stderr.write(`BEGIN-MUST-BE-TRUNCATED-${'x'.repeat(12_000)}-TAIL-MARKER`)
+  process.exit(1)
+}
+if (mode === 'stderr-timeout') {
+  process.stderr.write('waiting for configuration before handshake\n')
+}
 // Exercise the SDK's bounded SIGKILL escalation on failure and timeout.
 if (mode !== 'success') process.on('SIGTERM', () => {})
 
@@ -26,7 +37,7 @@ input.on('line', (line) => {
   saveSnapshot()
   if (request.id === undefined) return
   if (request.method === 'initialize') {
-    if (mode === 'timeout') return
+    if (mode === 'timeout' || mode === 'stderr-timeout') return
     if (mode === 'init-error') {
       process.stdout.write(
         `${JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'fixture initialize failure' } })}\n`

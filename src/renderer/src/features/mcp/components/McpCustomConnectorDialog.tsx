@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   Alert,
   Box,
@@ -8,130 +8,292 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Tab,
+  Tabs,
   TextField
 } from '@mui/material'
-import type { RemoteMcpConnectorOptions } from '../../../../../shared/mcpConnectorCatalog'
+import type {
+  LocalMcpConnectorRequest,
+  RemoteMcpConnectorOptions
+} from '../../../../../shared/mcpConnectorCatalog'
 import { PhiIcons } from '../../../icons'
+import {
+  buildLocalConnectorRequest,
+  draftToFormState,
+  emptyLocalConnectorDraft,
+  localConnectorDraftError,
+  type LocalConnectorDraft,
+  type LocalConnectorInitialDraft
+} from '../lib/localConnectorDraft'
+import { resolveCustomConnectorTab, type ConnectorTab } from '../lib/customConnectorTabs'
+import { McpLocalConnectConfirmDialog } from './McpLocalConnectConfirmDialog'
+import { McpLocalConnectorForm, type LocalMcpRuntimeOption } from './McpLocalConnectorForm'
+
+export interface McpCustomConnectorDialogProps {
+  open: boolean
+  busy: boolean
+  authorizing?: boolean
+  error: string | null
+  localAvailable?: boolean
+  initialDraft?: LocalConnectorInitialDraft
+  onClose: () => void
+  onSubmit: (name: string, url: string, options?: RemoteMcpConnectorOptions) => void
+  onSubmitLocal?: (request: LocalMcpConnectorRequest) => void | Promise<void>
+}
 
 export function McpCustomConnectorDialog({
   open,
   busy,
   authorizing = false,
   error,
+  localAvailable = true,
+  initialDraft,
   onClose,
-  onSubmit
-}: {
-  open: boolean
-  busy: boolean
-  authorizing?: boolean
-  error: string | null
-  onClose: () => void
-  onSubmit: (name: string, url: string, options?: RemoteMcpConnectorOptions) => void
-}): React.JSX.Element {
+  onSubmit,
+  onSubmitLocal
+}: McpCustomConnectorDialogProps): React.JSX.Element {
+  const [tab, setTab] = useState<ConnectorTab>(initialDraft?.tab ?? 'remote')
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
+  const [localDraft, setLocalDraft] = useState<LocalConnectorDraft>(() =>
+    initialDraft ? draftToFormState(initialDraft, []) : emptyLocalConnectorDraft()
+  )
+  const [localConfirmRequest, setLocalConfirmRequest] = useState<LocalMcpConnectorRequest | null>(
+    null
+  )
+  const [localSubmitting, setLocalSubmitting] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [runtimes, setRuntimes] = useState<LocalMcpRuntimeOption[]>([])
+  const [runtimesLoading, setRuntimesLoading] = useState(localAvailable)
   const authenticationId = useId()
   const missingClientId = Boolean(clientSecret.trim() && !clientId.trim())
-  const canSubmit = Boolean(name.trim() && url.trim() && !missingClientId)
+  const remoteCanSubmit = Boolean(name.trim() && url.trim() && !missingClientId)
+  const localCanSubmit = localConnectorDraftError(localDraft) === null
 
-  function submit(): void {
-    if (!canSubmit || busy) return
+  useEffect(() => {
+    if (!open || !localAvailable) return undefined
+    let active = true
+    void window.api
+      .listLocalMcpRuntimes()
+      .then((entries) => {
+        if (!active) return
+        setRuntimes(entries)
+        setLocalDraft((current) => {
+          if (initialDraft) {
+            return { ...current, runtime: draftToFormState(initialDraft, entries).runtime }
+          }
+          return current.runtime.kind === 'environment' && !current.runtime.ref && entries[0]
+            ? { ...current, runtime: { kind: 'environment', ref: entries[0].ref } }
+            : current
+        })
+      })
+      .catch((cause: unknown) => {
+        if (active) setLocalError(cause instanceof Error ? cause.message : String(cause))
+      })
+      .finally(() => {
+        if (active) setRuntimesLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [initialDraft, localAvailable, open])
+  function submitRemote(): void {
+    if (!remoteCanSubmit || busy) return
     const oauth = {
       ...(clientId.trim() ? { clientId: clientId.trim() } : {}),
       ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {})
     }
     onSubmit(name.trim(), url.trim(), Object.keys(oauth).length ? { oauth } : undefined)
   }
+  function submitLocal(): void {
+    if (busy || !onSubmitLocal) return
+    setLocalError(null)
+    try {
+      const request = buildLocalConnectorRequest(localDraft)
+      setLocalConfirmRequest(request)
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  async function confirmLocal(): Promise<void> {
+    if (!localConfirmRequest || localSubmitting || !onSubmitLocal) return
+    setLocalSubmitting(true)
+    try {
+      await onSubmitLocal(localConfirmRequest)
+    } finally {
+      setLocalSubmitting(false)
+      setLocalConfirmRequest(null)
+    }
+  }
+
+  function cancelLocalConfirm(): void {
+    if (!localSubmitting) setLocalConfirmRequest(null)
+  }
+
+  function updateLocalDraft(next: LocalConnectorDraft): void {
+    setLocalDraft(next)
+    setLocalConfirmRequest(null)
+    setLocalError(null)
+  }
+
+  const resolvedTab = resolveCustomConnectorTab(tab, localAvailable)
+  const localTab = resolvedTab === 'local'
+  const currentError = localTab ? (localError ?? error) : error
 
   return (
     <Dialog
       open={open}
       onClose={busy && !authorizing ? undefined : onClose}
-      maxWidth="xs"
+      maxWidth={localTab ? 'sm' : 'xs'}
       fullWidth
     >
       <Box
         component="form"
         onSubmit={(event) => {
           event.preventDefault()
-          submit()
+          if (localTab) submitLocal()
+          else submitRemote()
         }}
       >
         <DialogTitle>添加自定义连接器</DialogTitle>
+        <Tabs
+          value={resolvedTab}
+          onChange={(_event, value: ConnectorTab) => {
+            setTab(resolveCustomConnectorTab(value, localAvailable))
+            setLocalConfirmRequest(null)
+            setLocalError(null)
+          }}
+          aria-label="连接器类型"
+          sx={{ px: 3 }}
+        >
+          <Tab value="remote" label="远程 (HTTPS)" disabled={busy} />
+          {localAvailable ? <Tab value="local" label="本地 (stdio)" disabled={busy} /> : null}
+        </Tabs>
         <DialogContent>
-          <TextField
-            autoFocus
-            disabled={busy}
-            fullWidth
-            label="名称"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            helperText="使用字母、数字、下划线或连字符"
-            sx={{ mt: 1, mb: 2 }}
-          />
-          <TextField
-            fullWidth
-            disabled={busy}
-            label="服务器地址"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="https://example.com/mcp"
-          />
-          <Button
-            type="button"
-            disabled={busy}
-            aria-expanded={advancedOpen}
-            aria-controls={authenticationId}
-            onClick={() => setAdvancedOpen((value) => !value)}
-            startIcon={
-              <Box sx={{ display: 'flex', transform: advancedOpen ? 'rotate(180deg)' : undefined }}>
-                <PhiIcons.action.expand size={16} />
-              </Box>
-            }
-            sx={{ mt: 2, mb: advancedOpen ? 1 : 0, color: 'text.primary' }}
-          >
-            高级设置
-          </Button>
-          <Collapse in={advancedOpen} id={authenticationId}>
-            <TextField
-              fullWidth
-              disabled={busy}
-              label="OAuth Client ID（可选）"
-              value={clientId}
-              onChange={(event) => setClientId(event.target.value)}
-              autoComplete="off"
-              error={missingClientId}
-              helperText={missingClientId ? '使用 Client Secret 时需要填写 Client ID' : undefined}
-              sx={{ mt: 1, mb: 2 }}
+          {localTab ? (
+            <McpLocalConnectorForm
+              busy={busy}
+              runtimes={runtimes}
+              runtimesLoading={runtimesLoading}
+              draft={localDraft}
+              onDraftChange={updateLocalDraft}
+              runtimeHelperText={
+                initialDraft &&
+                !runtimesLoading &&
+                localDraft.runtime.kind === 'environment' &&
+                !localDraft.runtime.ref
+                  ? initialDraft.runtimeHint === 'bun'
+                    ? '未找到 Phi 内置 Bun，请检查应用安装是否完整'
+                    : '请选择已就绪的 Phi 运行环境'
+                  : undefined
+              }
             />
-            <TextField
-              fullWidth
-              disabled={busy}
-              label="OAuth Client Secret（可选）"
-              type="password"
-              value={clientSecret}
-              onChange={(event) => setClientSecret(event.target.value)}
-              autoComplete="new-password"
-            />
-          </Collapse>
-          {error && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {error}
-            </Alert>
+          ) : (
+            <>
+              <TextField
+                autoFocus
+                disabled={busy}
+                fullWidth
+                label="名称"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                helperText="使用字母、数字、下划线或连字符"
+                sx={{ mt: 1, mb: 2 }}
+              />
+              <TextField
+                fullWidth
+                disabled={busy}
+                label="服务器地址"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="https://example.com/mcp"
+              />
+              <Button
+                type="button"
+                disabled={busy}
+                aria-expanded={advancedOpen}
+                aria-controls={authenticationId}
+                onClick={() => setAdvancedOpen((value) => !value)}
+                startIcon={
+                  <Box
+                    sx={{ display: 'flex', transform: advancedOpen ? 'rotate(180deg)' : undefined }}
+                  >
+                    <PhiIcons.action.expand size={16} />
+                  </Box>
+                }
+                sx={{ mt: 2, mb: advancedOpen ? 1 : 0, color: 'text.primary' }}
+              >
+                高级设置
+              </Button>
+              <Collapse in={advancedOpen} id={authenticationId}>
+                <TextField
+                  fullWidth
+                  disabled={busy}
+                  label="OAuth Client ID（可选）"
+                  value={clientId}
+                  onChange={(event) => setClientId(event.target.value)}
+                  autoComplete="off"
+                  error={missingClientId}
+                  helperText={
+                    missingClientId ? '使用 Client Secret 时需要填写 Client ID' : undefined
+                  }
+                  sx={{ mt: 1, mb: 2 }}
+                />
+                <TextField
+                  fullWidth
+                  disabled={busy}
+                  label="OAuth Client Secret（可选）"
+                  type="password"
+                  value={clientSecret}
+                  onChange={(event) => setClientSecret(event.target.value)}
+                  autoComplete="new-password"
+                />
+              </Collapse>
+            </>
           )}
+          {currentError ? (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {currentError}
+            </Alert>
+          ) : null}
         </DialogContent>
         <DialogActions>
           <Button type="button" onClick={onClose} disabled={busy && !authorizing}>
             {authorizing ? '取消授权' : '取消'}
           </Button>
-          <Button variant="contained" type="submit" disabled={busy || !canSubmit}>
-            {authorizing ? '正在授权…' : busy ? '正在添加…' : '添加'}
+          <Button
+            variant="contained"
+            type="submit"
+            disabled={
+              busy ||
+              (localTab ? !localCanSubmit || runtimesLoading || !onSubmitLocal : !remoteCanSubmit)
+            }
+          >
+            {localTab
+              ? busy
+                ? '正在开始…'
+                : '添加'
+              : authorizing
+                ? '正在授权…'
+                : busy
+                  ? '正在添加…'
+                  : '添加'}
           </Button>
         </DialogActions>
       </Box>
+      {localConfirmRequest ? (
+        <McpLocalConnectConfirmDialog
+          open
+          submitting={localSubmitting}
+          request={localConfirmRequest}
+          runtimes={runtimes}
+          onCancel={cancelLocalConfirm}
+          onConfirm={() => void confirmLocal()}
+        />
+      ) : null}
     </Dialog>
   )
 }

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
+import { ConfiguredStdioProbeError } from './configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
 
 type PendingRequest = {
@@ -29,6 +30,7 @@ type BridgeResponse =
       ok: false
       error: string
       stack?: string
+      detail?: string
     }
 
 type BridgeEvent = {
@@ -150,8 +152,10 @@ function resolveWorkerPath(): string {
   return candidates[0]
 }
 
-function createBridgeError(message: string, stack?: string): Error {
-  const error = new Error(message)
+function createBridgeError(message: string, stack?: string, detail?: string): Error {
+  const error = detail
+    ? new ConfiguredStdioProbeError(message, detail.slice(0, 4096))
+    : new Error(message)
   if (stack) error.stack = stack
   return error
 }
@@ -373,7 +377,13 @@ export class OmpBridge extends EventEmitter {
         this.recordSuccessfulRequest(pending, message.result)
         pending.resolve(message.result)
       } else {
-        pending.reject(createBridgeError(message.error, message.stack))
+        pending.reject(
+          createBridgeError(
+            message.error,
+            message.stack,
+            typeof message.detail === 'string' ? message.detail : undefined
+          )
+        )
       }
       this.scheduleIdleStop()
       return

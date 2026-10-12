@@ -1,6 +1,6 @@
 # Connector contract
 
-contractVersion: 1.2.0
+contractVersion: 1.6.0
 
 A **connector** gives Phi an MCP server: a remote HTTP server (most catalog entries) or
 a local stdio server that runs in a managed environment. Connectors are distributed as
@@ -68,7 +68,50 @@ failed with an explicit retry. Active stdio consumers lease their original envir
 upgrades/uninstall do not delete their prefix, cache or old package source until leases
 are released. Cleanup validates owned runtime paths under the environment lock.
 
-## 4. Catalog
+## 4. User-defined local stdio connectors
+
+The custom-connector UI may also add a local stdio server without installing a
+connector package. These entries are application-owned configuration, not part of the
+package contract:
+
+- `phiOrigin: 'user-stdio'` is the ownership proof used for removal. Phi never removes
+  a hand-written or package-owned entry through this flow.
+- `phiUser` records the selected runtime: `{ kind: 'environment', ref }` for a ready
+  managed environment, `{ kind: 'host' }` for an absolute host executable, or
+  `{ kind: 'bun' }` for Phi's bundled Bun. It also records the user-provided non-secret
+  environment variables. Managed-environment entries retain their version-1
+  `phiManaged` marker without package fields; host and Bun entries have no `phiManaged`
+  marker.
+- All three runtime modes launch an explicit argv through `/usr/bin/env -i`; no shell parses
+  the command or arguments. Presentation surfaces show the original command and argv
+  plus environment-variable names, never their values or the `env -i` wrapper.
+- Host and Bun runtimes inherit only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TERM`, `TZ`,
+  `LANG`, proxy variables, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `SSH_AUTH_SOCK`, and
+  `LC_*`; malformed values and other host variables are dropped. Host mode retains the
+  user's `PATH`. Bun mode instead uses only the bundled Bun directory and system paths,
+  and keeps its package cache under Phi's runtime root.
+- Bun accepts only the `x` and `run` subcommands. The executable path is selected by
+  Phi, never by connector input; arguments remain an argv array and never pass through a
+  shell.
+- `connector.secrets` remains reserved. Custom environment variables are for
+  non-sensitive configuration only and cannot override Phi's execution-contract
+  variables.
+- Adding a local stdio connector is a cancellable background setup job. Input,
+  runtime readiness, executable availability, and name collisions are validated before
+  the dialog closes. The enabled `mcp.json` entry is written only after a successful
+  initialize/tools probe, then applied to running sessions. Failure or cancellation
+  writes no entry.
+- User-initiated local probes have a bounded 10-minute deadline. Cancellation aborts the
+  worker request, closes its owned stdio transport, terminates the child process tree,
+  and releases any environment lease. Package-install verification keeps its existing
+  90-second default.
+- Local setup records add optional presentation fields `kind: 'local-stdio'`, `title`,
+  `startedAt`, and `summary`. The summary contains display argv and environment-variable
+  names only; environment values are never persisted. Active records restored after an
+  app restart become failed and require the connector to be added again because the full
+  request remains in memory only.
+
+## 5. Catalog
 
 The connector catalog shows `type: mcp` packages from the verified official Phi
 Packages registry, user-imported registries, and installed connectors. The official
@@ -78,13 +121,23 @@ app version remain visible but cannot be added. Raw directory imports retain
 imported trust, regardless of their directory name or location. See the
 [official content source decision](../decisions/official-content-source.md).
 
-## 5. Versioning
+## 6. Versioning
 
 `contractVersion` follows the content distribution design §4.4: minor versions are
 additive only (for example allowing `secrets`); anything else needs a decision record
 and a deprecation window.
 
 ## Changes
+
+- **1.6.0** (2026-10-11): make user-defined local stdio addition a cancellable
+  background setup job with a 10-minute probe deadline and privacy-safe persisted
+  presentation metadata.
+
+- **1.5.0** (2026-10-11): add the Phi-bundled Bun runtime for user-defined stdio
+  connectors and document the host/Bun environment allowlist and Bun subcommand policy.
+
+- **1.3.0** (2026-10-11): add the application-owned `phiOrigin: 'user-stdio'` and
+  `phiUser` contract for user-defined local stdio connectors; secrets remain reserved.
 
 - **1.2.0** (2026-10-09): document pre-activation managed installation/probing, persistent setup recovery, and lease-protected cleanup with environment contract 1.4.0.
 

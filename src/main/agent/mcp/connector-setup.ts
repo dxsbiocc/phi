@@ -7,7 +7,13 @@ import { loadConnectorSetups, saveConnectorSetups } from './connector-setup-stor
 
 export type ConnectorSetupReporter = (
   phase: Exclude<McpConnectorSetupPhase, 'failed'>,
-  details?: { toolNames?: string[] }
+  details?: {
+    toolNames?: string[]
+    kind?: 'local-stdio'
+    title?: string
+    startedAt?: string
+    summary?: string
+  }
 ) => void
 
 export class ConnectorSetupBusyError extends Error {
@@ -39,6 +45,14 @@ export class ConnectorSetupTracker {
     return snapshot ? copyProgress(snapshot) : undefined
   }
 
+  list(): McpConnectorSetupProgress[] {
+    return [...this.snapshots.values()].map(copyProgress)
+  }
+
+  isActive(id: string): boolean {
+    return this.active.has(id)
+  }
+
   async run<T>(
     id: string,
     task: (report: ConnectorSetupReporter) => T | Promise<T>,
@@ -50,14 +64,20 @@ export class ConnectorSetupTracker {
     this.active.set(id, token)
     let phase: Exclude<McpConnectorSetupPhase, 'failed'> | undefined
     let toolNames: string[] | undefined
+    const metadata: Pick<McpConnectorSetupProgress, 'kind' | 'title' | 'startedAt' | 'summary'> = {}
     const report: ConnectorSetupReporter = (nextPhase, details) => {
       // An asynchronous producer from an ended attempt must not replace a retry's snapshot.
       if (this.active.get(id) !== token) return
       phase = nextPhase
       if (details?.toolNames !== undefined) toolNames = [...details.toolNames]
+      if (details?.kind !== undefined) metadata.kind = details.kind
+      if (details?.title !== undefined) metadata.title = details.title
+      if (details?.startedAt !== undefined) metadata.startedAt = details.startedAt
+      if (details?.summary !== undefined) metadata.summary = details.summary
       this.update({
         id,
         phase,
+        ...metadata,
         ...(operationId ? { operationId } : {}),
         ...(toolNames ? { toolNames } : {})
       })
@@ -67,12 +87,15 @@ export class ConnectorSetupTracker {
       if (phase !== finalPhase) report(finalPhase)
       return result
     } catch (error) {
+      const detail = errorDetail(error)
       this.update({
         id,
         phase: 'failed',
+        ...metadata,
         ...(operationId ? { operationId } : {}),
         ...(phase ? { failedPhase: phase } : {}),
-        error: error instanceof Error ? error.message : String(error)
+        error: error instanceof Error ? error.message : String(error),
+        ...(detail ? { detail } : {})
       })
       throw error
     } finally {
@@ -94,6 +117,12 @@ export class ConnectorSetupTracker {
       // A closed window or failed observer cannot interrupt installation or erase its state.
     }
   }
+}
+
+function errorDetail(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || Array.isArray(error)) return undefined
+  const detail = (error as { detail?: unknown }).detail
+  return typeof detail === 'string' && detail ? detail.slice(0, 4096) : undefined
 }
 
 function copyProgress(progress: McpConnectorSetupProgress): McpConnectorSetupProgress {

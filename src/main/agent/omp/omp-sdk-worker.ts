@@ -62,7 +62,10 @@ import {
   discoverCustomMcpOAuthEndpoints,
   listFeaturedMcpTools
 } from './featured-mcp-auth'
-import { listConfiguredStdioMcpTools } from './configured-stdio-tools'
+import {
+  cancelConfiguredStdioMcpTools,
+  listConfiguredStdioMcpTools
+} from './configured-stdio-tools'
 import { loadAllMCPConfigs } from '@oh-my-pi/pi-coding-agent/mcp/config'
 import { MCPManager } from '@oh-my-pi/pi-coding-agent/mcp/manager'
 import { OwnedStdioTransportScope } from './owned-stdio-transports'
@@ -1491,9 +1494,9 @@ async function applyConnectorEnabledForSession(session: SessionEntry, name: stri
   }
   const entry = readMcpServerEntry(name, agentDir)
   const disabled = isMcpConnectorUserDisabled(name, agentDir) || entry?.enabled === false
-  if (disabled) {
+  if (disabled || !entry) {
     await disconnectSessionMcpServer(session, name, manager)
-  } else if (entry) {
+  } else {
     const prepared = connectorConfigForSession(session, entry, manager)
     if (prepared.reason) {
       await disconnectSessionMcpServer(session, name, manager)
@@ -2832,6 +2835,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
   switch (method) {
     case 'mcp.configuredStdioTools':
       return listConfiguredStdioMcpTools(params)
+    case 'mcp.cancelConfiguredStdioTools':
+      return cancelConfiguredStdioMcpTools(params)
     case 'mcp.featuredTools': {
       const record = isRecord(params) ? params : {}
       const id = stringValue(record.id)
@@ -3184,7 +3189,11 @@ input.on('line', (line) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const stack = error instanceof Error ? error.stack : undefined
-      send({ id: request?.id ?? '', ok: false, error: message, stack })
+      const detail =
+        isRecord(error) && typeof error.detail === 'string'
+          ? error.detail.slice(0, 4096)
+          : undefined
+      send({ id: request?.id ?? '', ok: false, error: message, stack, detail })
     }
   })()
 })

@@ -3,10 +3,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { BackgroundAgentJob, BackgroundShellJob } from '../../../../shared/backgroundJobTypes'
 import type { EnvironmentBuild } from '../../../../shared/environmentBuildTypes'
+import type { McpConnectorSetupProgress } from '../../../../shared/mcpConnectorCatalog'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
 import { PhiIcons } from '../../icons'
 import { formatAgentDuration } from '../../lib/agentRunsOverview'
 import { runProgressLabel, runStateLabel } from '../wrapper/lib/wrapperView'
+import { ConnectorJobDetailDialog } from './components/ConnectorJobDetailDialog'
 import {
   backgroundJobTrayStartedAt,
   canStopUnifiedWrapperRun,
@@ -15,6 +17,7 @@ import {
   environmentBuildDetail,
   environmentBuildPercent,
   environmentBuildTitle,
+  connectorJobDetail,
   selectBackgroundJobs,
   type UnifiedBackgroundJob
 } from './lib/backgroundJobs'
@@ -46,6 +49,7 @@ function shellStateLabel(state: BackgroundShellJob['state']): string {
 }
 
 function jobTitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
@@ -53,12 +57,14 @@ function jobTitle(item: UnifiedBackgroundJob): string {
 }
 
 function jobSource(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'connector') return '连接器'
   if (item.kind === 'environment') return '环境'
   if (item.kind === 'wrapper') return 'Wrapper'
   return item.run.sessionTitle
 }
 
 function jobSubtitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'connector') return item.setup.summary ?? item.setup.id
   if (item.kind === 'environment') return item.build.envId
   if (item.kind === 'agent') return item.run.task
   if (item.kind === 'shell') return '后台命令'
@@ -66,6 +72,7 @@ function jobSubtitle(item: UnifiedBackgroundJob): string {
 }
 
 function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
+  if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'wrapper') {
     return [runStateLabel(item.run.state), runProgressLabel(item.run)].filter(Boolean).join(' · ')
@@ -97,6 +104,7 @@ function canStopJob(item: UnifiedBackgroundJob): boolean {
 }
 
 function stopTooltip(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'connector') return '取消添加'
   if (item.kind === 'environment') return '取消构建'
   if (item.kind === 'agent') return '停止这个 Agent'
   if (item.kind === 'shell') return '停止这个后台命令'
@@ -114,6 +122,18 @@ function upsertEnvironmentBuild(
   return next
 }
 
+function upsertConnectorJob(
+  current: readonly McpConnectorSetupProgress[],
+  setup: McpConnectorSetupProgress
+): McpConnectorSetupProgress[] {
+  if (setup.kind !== 'local-stdio') return [...current]
+  const index = current.findIndex((item) => item.id === setup.id)
+  if (index === -1) return [setup, ...current]
+  const next = current.slice()
+  next[index] = setup
+  return next
+}
+
 export function BackgroundJobsPanel({
   onOpenSession,
   onOpenWrapper
@@ -125,9 +145,11 @@ export function BackgroundJobsPanel({
   const [shellJobs, setShellJobs] = useState<BackgroundShellJob[]>([])
   const [wrapperRuns, setWrapperRuns] = useState<WrapperRun[]>([])
   const [environmentBuilds, setEnvironmentBuilds] = useState<EnvironmentBuild[]>([])
+  const [connectorJobs, setConnectorJobs] = useState<McpConnectorSetupProgress[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [stoppingKey, setStoppingKey] = useState<string | null>(null)
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(
     () => new Set(dismissedBackgroundJobKeys())
@@ -141,8 +163,10 @@ export function BackgroundJobsPanel({
       dismissedKeys
     },
     shellJobs,
-    environmentBuilds
+    environmentBuilds,
+    connectorJobs
   )
+  const selectedConnector = connectorJobs.find((setup) => setup.id === selectedConnectorId)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (refreshingRef.current) return
@@ -153,7 +177,7 @@ export function BackgroundJobsPanel({
         setLoaded(true)
         return
       }
-      const [agents, shells, wrappers, builds] = await Promise.allSettled([
+      const [agents, shells, wrappers, builds, connectors] = await Promise.allSettled([
         window.api.listAgentJobs(),
         typeof window.api.listShellJobs === 'function'
           ? window.api.listShellJobs()
@@ -161,17 +185,22 @@ export function BackgroundJobsPanel({
         window.api.listWrapperRuns(),
         typeof window.api.listEnvironmentBuilds === 'function'
           ? window.api.listEnvironmentBuilds()
-          : Promise.resolve<EnvironmentBuild[]>([])
+          : Promise.resolve<EnvironmentBuild[]>([]),
+        typeof window.api.listLocalConnectorJobs === 'function'
+          ? window.api.listLocalConnectorJobs()
+          : Promise.resolve<McpConnectorSetupProgress[]>([])
       ])
       if (agents.status === 'fulfilled') setAgentJobs(agents.value)
       if (shells.status === 'fulfilled') setShellJobs(shells.value)
       if (wrappers.status === 'fulfilled') setWrapperRuns(wrappers.value)
       if (builds.status === 'fulfilled') setEnvironmentBuilds(builds.value)
+      if (connectors.status === 'fulfilled') setConnectorJobs(connectors.value)
       setError(
         agents.status === 'rejected' ||
           shells.status === 'rejected' ||
           wrappers.status === 'rejected' ||
-          builds.status === 'rejected'
+          builds.status === 'rejected' ||
+          connectors.status === 'rejected'
           ? '部分任务状态暂时无法读取，稍后会自动重试。'
           : ''
       )
@@ -195,13 +224,24 @@ export function BackgroundJobsPanel({
     })
   }, [])
 
+  useEffect(() => {
+    if (typeof window.api.onMcpConnectorSetupChanged !== 'function') return undefined
+    return window.api.onMcpConnectorSetupChanged((setup) => {
+      if (setup.kind === 'local-stdio') {
+        setConnectorJobs((current) => upsertConnectorJob(current, setup))
+      }
+    })
+  }, [])
+
   const clearRecent = (): void => {
     dismissBackgroundJobs(jobs.recent.map((item) => item.key))
     setDismissedKeys(new Set(dismissedBackgroundJobKeys()))
   }
 
   const openJob = (item: UnifiedBackgroundJob): void => {
-    if (item.kind === 'agent' || item.kind === 'shell') {
+    if (item.kind === 'connector') {
+      setSelectedConnectorId(item.setup.id)
+    } else if (item.kind === 'agent' || item.kind === 'shell') {
       onOpenSession(item.run.sessionPath)
     } else if (item.kind === 'wrapper') {
       onOpenWrapper?.(item.run.wrapper.canonicalId)
@@ -218,8 +258,10 @@ export function BackgroundJobsPanel({
         await window.api.stopShellJob(item.run.agentSessionId, item.run.jobId)
       } else if (item.kind === 'wrapper') {
         await window.api.cancelWrapperRun(item.run.runId)
-      } else {
+      } else if (item.kind === 'environment') {
         await window.api.cancelEnvironmentBuild(item.build.envId)
+      } else {
+        await window.api.cancelLocalConnectorAdd(item.setup.id)
       }
       await refresh()
     } catch (cause) {
@@ -229,10 +271,25 @@ export function BackgroundJobsPanel({
     }
   }
 
+  const retryJob = async (item: UnifiedBackgroundJob): Promise<void> => {
+    if (item.kind !== 'connector') return
+    setStoppingKey(item.key)
+    setError('')
+    try {
+      await window.api.retryLocalConnectorAdd(item.setup.id)
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '重试失败')
+    } finally {
+      setStoppingKey(null)
+    }
+  }
+
   const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => {
     const canStop = canStopJob(item)
     const canOpen =
       item.kind === 'agent' || item.kind === 'shell' || (item.kind === 'wrapper' && onOpenWrapper)
+    const canRetry = item.kind === 'connector' && item.setup.phase === 'failed'
     const title = jobTitle(item)
     const subtitle = jobSubtitle(item)
     const detail = jobDetail(item, nowMs)
@@ -240,7 +297,39 @@ export function BackgroundJobsPanel({
     return (
       <Box
         key={item.key}
-        sx={{ border: 1, borderColor: 'divider', borderRadius: 1.5, p: 1, mb: 1 }}
+        role={item.kind === 'connector' ? 'button' : undefined}
+        tabIndex={item.kind === 'connector' ? 0 : undefined}
+        aria-label={item.kind === 'connector' ? `查看 ${title} 详情` : undefined}
+        onClick={item.kind === 'connector' ? () => openJob(item) : undefined}
+        onKeyDown={
+          item.kind === 'connector'
+            ? (event) => {
+                if (event.currentTarget !== event.target) return
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  openJob(item)
+                }
+              }
+            : undefined
+        }
+        sx={{
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1.5,
+          p: 1,
+          mb: 1,
+          minWidth: 0,
+          ...(item.kind === 'connector'
+            ? {
+                cursor: 'pointer',
+                '&:focus-visible': {
+                  outline: '2px solid',
+                  outlineColor: 'primary.main',
+                  outlineOffset: 1
+                }
+              }
+            : {})
+        }}
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body2" noWrap sx={{ fontWeight: 700 }} title={title}>
@@ -249,18 +338,42 @@ export function BackgroundJobsPanel({
           <Typography
             variant="caption"
             color="text.secondary"
-            noWrap
+            noWrap={item.kind !== 'connector'}
             component="div"
             title={`${jobSource(item)} · ${subtitle}`}
+            sx={
+              item.kind === 'connector'
+                ? {
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    overflowWrap: 'anywhere',
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: 2
+                  }
+                : undefined
+            }
           >
             {jobSource(item)} · {subtitle}
           </Typography>
           <Typography
             variant="caption"
             color="text.secondary"
-            noWrap
+            noWrap={item.kind !== 'connector'}
             component="div"
             title={detail}
+            sx={
+              item.kind === 'connector'
+                ? {
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    overflowWrap: 'anywhere',
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: 2
+                  }
+                : undefined
+            }
           >
             {detail}
           </Typography>
@@ -273,7 +386,7 @@ export function BackgroundJobsPanel({
             />
           )}
         </Box>
-        {(canOpen || canStop) && (
+        {(canOpen || canStop || canRetry) && (
           <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
             {canOpen && (
               <Button
@@ -293,14 +406,35 @@ export function BackgroundJobsPanel({
                 <span>
                   <IconButton
                     size="small"
-                    aria-label={item.kind === 'environment' ? '取消构建' : `停止 ${title}`}
+                    aria-label={
+                      item.kind === 'environment'
+                        ? '取消构建'
+                        : item.kind === 'connector'
+                          ? `取消添加 ${title}`
+                          : `停止 ${title}`
+                    }
                     disabled={stoppingKey === item.key}
-                    onClick={() => void stopJob(item)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void stopJob(item)
+                    }}
                   >
                     <StopIcon size={15} />
                   </IconButton>
                 </span>
               </Tooltip>
+            )}
+            {canRetry && (
+              <Button
+                size="small"
+                disabled={stoppingKey === item.key}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void retryJob(item)
+                }}
+              >
+                重试
+              </Button>
             )}
           </Stack>
         )}
@@ -315,21 +449,23 @@ export function BackgroundJobsPanel({
       data-phi-background-jobs-panel="true"
       sx={{
         flex: 1,
+        width: '100%',
+        minWidth: 0,
         minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
         bgcolor: 'background.paper'
       }}
     >
-      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: 'center' }}>
-        <Typography variant="subtitle2" sx={{ flex: 1, fontWeight: 700 }}>
+      <Stack direction="row" spacing={1} sx={{ mb: 1, minWidth: 0, alignItems: 'center' }}>
+        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }}>
           后台任务 · {jobs.active.length} 个进行中
         </Typography>
-        <Button size="small" onClick={() => void refresh()}>
+        <Button size="small" onClick={() => void refresh()} sx={{ flexShrink: 0 }}>
           刷新
         </Button>
       </Stack>
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}>
         {error && (
           <Typography variant="caption" color="error.main">
             {error}
@@ -357,7 +493,14 @@ export function BackgroundJobsPanel({
                 最近结束
               </Typography>
               <Tooltip title="从这里清掉，运行记录仍留在工具页">
-                <IconButton size="small" aria-label="清除最近结束" onClick={clearRecent}>
+                <IconButton
+                  size="small"
+                  aria-label="清除最近结束"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    clearRecent()
+                  }}
+                >
                   <ClearIcon size={15} />
                 </IconButton>
               </Tooltip>
@@ -366,6 +509,23 @@ export function BackgroundJobsPanel({
           </>
         )}
       </Box>
+      {selectedConnector ? (
+        <ConnectorJobDetailDialog
+          open
+          setup={selectedConnector}
+          retrying={stoppingKey === `connector:${selectedConnector.id}`}
+          onRetry={() =>
+            void retryJob({
+              kind: 'connector',
+              key: `connector:${selectedConnector.id}`,
+              active: false,
+              timestamp: selectedConnector.updatedAt,
+              setup: selectedConnector
+            })
+          }
+          onClose={() => setSelectedConnectorId(null)}
+        />
+      ) : null}
     </Box>
   )
 }

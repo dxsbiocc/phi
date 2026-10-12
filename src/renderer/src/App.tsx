@@ -83,6 +83,7 @@ import { McpDetail } from './features/mcp/McpView'
 import { ConnectorIcon } from './features/mcp/components/ConnectorIcon'
 import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
+import { useLocalConnectorNotices } from './features/mcp/hooks/useLocalConnectorNotices'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
 import AppActivityBar from './AppActivityBar'
@@ -834,13 +835,28 @@ function App(): React.JSX.Element {
     (
       message: string,
       severity: SnackbarNotice['severity'] = 'error',
-      options?: { persistent?: boolean }
+      options?: Pick<SnackbarNotice, 'persistent' | 'action'>
     ): void => {
-      setSnackbarNotice({ id: Date.now(), message, severity, persistent: options?.persistent })
+      setSnackbarNotice({
+        id: Date.now(),
+        message,
+        severity,
+        persistent: options?.persistent,
+        action: options?.action
+      })
     },
     []
   )
   useEnvironmentBuildNotices(showSnackbar)
+  const mcpConnectorDialogCloserRef = useRef<(() => void) | null>(null)
+  const registerMcpConnectorDialogCloser = useCallback((close: () => void): (() => void) => {
+    mcpConnectorDialogCloserRef.current = close
+    return () => {
+      if (mcpConnectorDialogCloserRef.current === close) {
+        mcpConnectorDialogCloserRef.current = null
+      }
+    }
+  }, [])
 
   const showSnackbarError = useCallback(
     (error: unknown, fallback: string): void => {
@@ -1227,6 +1243,15 @@ function App(): React.JSX.Element {
       showFailure: showBrowserLinkFailure
     })
   }, [openWorkspaceSidePanel, rendererApi, showBrowserLinkFailure])
+  const onOpenBackgroundJobs = useCallback((): void => {
+    browserLinkOpeningCoordinator.invalidate()
+    openWorkspaceSidePanel('jobs')
+  }, [browserLinkOpeningCoordinator, openWorkspaceSidePanel])
+  const onOpenLocalConnectorJobs = useCallback((): void => {
+    mcpConnectorDialogCloserRef.current?.()
+    onOpenBackgroundJobs()
+  }, [onOpenBackgroundJobs])
+  useLocalConnectorNotices(showSnackbar, onOpenLocalConnectorJobs, refreshMcpServers)
   const onOpenWebUrl = useCallback(
     (url: string): void => {
       void browserLinkOpeningCoordinator.open(url)
@@ -2826,10 +2851,6 @@ function App(): React.JSX.Element {
     },
     [browserLinkOpeningCoordinator, workspaceSidePanelCanSplit]
   )
-  const onOpenBackgroundJobs = useCallback((): void => {
-    browserLinkOpeningCoordinator.invalidate()
-    openWorkspaceSidePanel('jobs')
-  }, [browserLinkOpeningCoordinator, openWorkspaceSidePanel])
   const onCloseWorkspaceSidePanelSlot = useCallback((mode: WorkspaceSidePanelMode): void => {
     setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, mode))
     window.requestAnimationFrame(() => {
@@ -3817,8 +3838,12 @@ function App(): React.JSX.Element {
 
   const onRemoveMcpServer = useCallback(
     async (server: McpServerSummary): Promise<void> => {
-      if (!server.managed || !server.url) throw new Error('此连接器不能从 Phi 中移除')
-      await window.api.removeRemoteMcpConnector(server.name, server.url)
+      if (server.userStdio) {
+        await window.api.removeLocalMcpConnector(server.name)
+      } else {
+        if (!server.managed || !server.url) throw new Error('此连接器不能从 Phi 中移除')
+        await window.api.removeRemoteMcpConnector(server.name, server.url)
+      }
       await refreshMcpServers()
       showSnackbar('已移除连接器', 'success')
       if (
@@ -4444,6 +4469,7 @@ function App(): React.JSX.Element {
       activeMcpServerId: activeMcpServerId,
       onOpenMcpServer: onOpenMcpServerTab,
       onRefreshMcpServers: refreshMcpServers,
+      onRegisterMcpConnectorDialogCloser: registerMcpConnectorDialogCloser,
       wrapperCatalog: wrapperCatalog,
       selectedWrapperId: selectedWrapperId,
       isLoadingWrappers: isLoadingWrappers,
@@ -4514,6 +4540,7 @@ function App(): React.JSX.Element {
       activeMcpServerId,
       onOpenMcpServerTab,
       refreshMcpServers,
+      registerMcpConnectorDialogCloser,
       wrapperCatalog,
       selectedWrapperId,
       isLoadingWrappers,

@@ -74,8 +74,10 @@ import {
   type McpEnvironmentLookupOptions
 } from './mcp/package-environment'
 import { readManagedMarker } from './mcp/stdio-environment'
+import { validateName } from './mcp/connector-name'
 
 export { MCP_PACKAGE_MARKER_FIELD, refreshPersistedManagedStdioServers }
+export { validateName } from './mcp/connector-name'
 
 const MCP_SERVER_NAME = /^[a-zA-Z0-9_.-]{1,100}$/
 
@@ -676,15 +678,6 @@ function isRegistryDirectory(dir: string): boolean {
 
 function uniquePaths(paths: readonly string[]): string[] {
   return [...new Set(paths.map((path) => resolve(path)))]
-}
-
-function validateName(name: string): string {
-  if (typeof name !== 'string') throw new Error('连接器名称无效')
-  const trimmed = name.trim()
-  if (!/^[a-z][a-z0-9_-]{1,63}$/i.test(trimmed)) {
-    throw new Error('连接器名称需为 2–64 位字母、数字、下划线或连字符，并以字母开头')
-  }
-  return trimmed
 }
 
 function validateRemoteConnectorOptions(options: unknown): RemoteMcpConnectorOptions {

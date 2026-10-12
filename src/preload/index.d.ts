@@ -124,6 +124,8 @@ import type {
 } from '../shared/skillTypes'
 import type {
   FeaturedMcpConnector,
+  LocalMcpConnectorRequest,
+  LocalMcpRuntimeOption,
   McpConnectorSetupProgress,
   RemoteMcpConnectorOptions
 } from '../shared/mcpConnectorCatalog'
@@ -248,6 +250,7 @@ type PreloadMcpServerSummary = {
   transport?: string
   sourcePath?: string
   managed?: boolean
+  userStdio?: boolean
   enabled?: boolean
   userDisabled?: boolean
   status: 'configured'
@@ -1173,6 +1176,15 @@ declare global {
         url: string,
         options?: RemoteMcpConnectorOptions
       ) => Promise<void>
+      addLocalMcpConnector: (request: LocalMcpConnectorRequest) => Promise<{ tools: string[] }>
+      startLocalConnectorAdd: (
+        request: LocalMcpConnectorRequest
+      ) => Promise<{ started: true; name: string }>
+      cancelLocalConnectorAdd: (name: string) => Promise<void>
+      retryLocalConnectorAdd: (name: string) => Promise<{ started: true; name: string }>
+      listLocalConnectorJobs: () => Promise<McpConnectorSetupProgress[]>
+      removeLocalMcpConnector: (name: string) => Promise<void>
+      listLocalMcpRuntimes: () => Promise<LocalMcpRuntimeOption[]>
       authorizeRemoteMcpConnector: (name: string) => Promise<void>
       cancelRemoteMcpAuth: (name: string) => Promise<void>
       removeRemoteMcpConnector: (name: string, url: string) => Promise<void>

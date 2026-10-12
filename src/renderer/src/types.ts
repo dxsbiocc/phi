@@ -40,13 +40,8 @@ import type {
   RemoteProjectAgentTrustRequest
 } from '../../shared/promptAgentTypes'
 export type { PromptAgentSummary } from '../../shared/promptAgentTypes'
-import type { McpServerSummary } from './features/mcp/lib/mcpTypes'
+import type { McpRendererApi } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
-import type {
-  FeaturedMcpConnector,
-  McpConnectorSetupProgress,
-  RemoteMcpConnectorOptions
-} from '../../shared/mcpConnectorCatalog'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
@@ -715,7 +710,8 @@ export interface AnalysisNotebookFormatResult {
   message?: string
 }
 
-type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi
+type RendererApiFoundation = AutoCompactionApi & ManagedEnvironmentRendererApi & McpRendererApi
+
 export type RendererApi = RendererApiFoundation & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
@@ -968,32 +964,6 @@ export type RendererApi = RendererApiFoundation & {
   revokeRemoteProjectAgentTrust: (
     input: RemoteProjectAgentTrustRequest
   ) => Promise<PromptAgentSummary[]>
-  listMcpServers: (cwd?: string) => Promise<McpServerSummary[]>
-  listMcpConnectorCatalog: () => Promise<FeaturedMcpConnector[]>
-  installMcpConnector: (
-    id: string,
-    version?: string,
-    registryDir?: string
-  ) => Promise<InstalledPackageView[]>
-  uninstallMcpConnector: (id: string) => Promise<InstalledPackageView[]>
-  buildMcpConnectorEnvironment: (id: string) => Promise<{ envId: string }>
-  onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void) => () => void
-  addRemoteMcpConnector: (
-    name: string,
-    url: string,
-    options?: RemoteMcpConnectorOptions
-  ) => Promise<void>
-  authorizeRemoteMcpConnector: (name: string) => Promise<void>
-  cancelRemoteMcpAuth: (name: string) => Promise<void>
-  removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
-  setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string) => Promise<void>
-  listFeaturedMcpTools: (id: string) => Promise<string[]>
-  getFeaturedMcpAuthStatus: (id: string) => Promise<boolean>
-  authorizeFeaturedMcp: (id: string) => Promise<void>
-  cancelFeaturedMcpAuth: (id: string) => Promise<void>
-  getFeaturedMcpApiKeyStatus: (id: string) => Promise<boolean>
-  setFeaturedMcpApiKey: (id: string, key: string) => Promise<void>
-  clearFeaturedMcpApiKey: (id: string) => Promise<void>
 }
 
 export type { AgentMessage, AgentEventSummary } from './features/chat/lib/agentEventTypes'

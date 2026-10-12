@@ -128,6 +128,8 @@ import type {
 } from '../shared/skillTypes'
 import type {
   FeaturedMcpConnector,
+  LocalMcpConnectorRequest,
+  LocalMcpRuntimeOption,
   McpConnectorSetupProgress,
   RemoteMcpConnectorOptions
 } from '../shared/mcpConnectorCatalog'
@@ -360,6 +362,7 @@ type McpServerSummary = {
   transport?: string
   sourcePath?: string
   managed?: boolean
+  userStdio?: boolean
   enabled?: boolean
   userDisabled?: boolean
   status: 'configured'
@@ -1080,6 +1083,15 @@ type RendererAuthApi = {
     url: string,
     options?: RemoteMcpConnectorOptions
   ) => Promise<void>
+  addLocalMcpConnector: (request: LocalMcpConnectorRequest) => Promise<{ tools: string[] }>
+  startLocalConnectorAdd: (
+    request: LocalMcpConnectorRequest
+  ) => Promise<{ started: true; name: string }>
+  cancelLocalConnectorAdd: (name: string) => Promise<void>
+  retryLocalConnectorAdd: (name: string) => Promise<{ started: true; name: string }>
+  listLocalConnectorJobs: () => Promise<McpConnectorSetupProgress[]>
+  removeLocalMcpConnector: (name: string) => Promise<void>
+  listLocalMcpRuntimes: () => Promise<LocalMcpRuntimeOption[]>
   authorizeRemoteMcpConnector: (name: string) => Promise<void>
   cancelRemoteMcpAuth: (name: string) => Promise<void>
   removeRemoteMcpConnector: (name: string, url: string) => Promise<void>
@@ -1857,6 +1869,22 @@ const api: RendererAuthApi = {
     url: string,
     options?: RemoteMcpConnectorOptions
   ): Promise<void> => ipcRenderer.invoke('mcp:addRemoteConnector', name, url, options),
+  addLocalMcpConnector: (request: LocalMcpConnectorRequest): Promise<{ tools: string[] }> =>
+    ipcRenderer.invoke('mcp:addLocalConnector', request),
+  startLocalConnectorAdd: (
+    request: LocalMcpConnectorRequest
+  ): Promise<{ started: true; name: string }> =>
+    ipcRenderer.invoke('mcp:startLocalConnectorAdd', request),
+  cancelLocalConnectorAdd: (name: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:cancelLocalConnectorAdd', name),
+  retryLocalConnectorAdd: (name: string): Promise<{ started: true; name: string }> =>
+    ipcRenderer.invoke('mcp:retryLocalConnectorAdd', name),
+  listLocalConnectorJobs: (): Promise<McpConnectorSetupProgress[]> =>
+    ipcRenderer.invoke('mcp:listLocalConnectorJobs'),
+  removeLocalMcpConnector: (name: string): Promise<void> =>
+    ipcRenderer.invoke('mcp:removeLocalConnector', name),
+  listLocalMcpRuntimes: (): Promise<LocalMcpRuntimeOption[]> =>
+    ipcRenderer.invoke('mcp:listLocalRuntimes'),
   authorizeRemoteMcpConnector: (name: string): Promise<void> =>
     ipcRenderer.invoke('mcp:authorizeRemoteConnector', name),
   cancelRemoteMcpAuth: (name: string): Promise<void> =>

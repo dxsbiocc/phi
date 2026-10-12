@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
@@ -163,4 +166,54 @@ test('removed local connectors do not retain successful validation feedback', ()
   })
   assert.doesNotMatch(renderDetails(value), /连接已验证|设置失败/)
   assert.doesNotMatch(renderCard(value), /data-phi-connector-state="added"/)
+})
+
+test('Bun user stdio presentation hides the env wrapper and absolute runtime path', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bun-stdio-presentation-'))
+  const agentDir = join(root, 'agent')
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR
+  process.env.PI_CODING_AGENT_DIR = agentDir
+  mkdirSync(agentDir)
+  writeFileSync(
+    join(agentDir, 'mcp.json'),
+    JSON.stringify({
+      mcpServers: {
+        mail: {
+          type: 'stdio',
+          command: '/usr/bin/env',
+          args: [
+            '-i',
+            'PATH=/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64:/usr/bin:/bin',
+            'HTTPS_PROXY=https://secret-proxy.example',
+            'BUN_INSTALL_CACHE_DIR=/Users/tester/.phi/runtime/cache/bun-user',
+            '/Applications/Phi.app/Contents/Resources/runtime/bun/darwin-arm64/bun',
+            'x',
+            '--bun',
+            'qq-email-mcp@0.1.1'
+          ],
+          env: {},
+          phiOrigin: 'user-stdio',
+          phiUser: {
+            runtime: { kind: 'bun' },
+            env: { HTTPS_PROXY: 'https://secret-proxy.example', MODE: 'secret-mode' }
+          }
+        }
+      }
+    })
+  )
+  try {
+    const { listGlobalMcpServers } = await import('../src/main/agent/resources')
+    const server = (await listGlobalMcpServers()).find((entry) => entry.name === 'mail')
+    assert.equal(server?.command, 'bun')
+    assert.deepEqual(server?.args, ['x', '--bun', 'qq-email-mcp@0.1.1'])
+    assert.deepEqual(server?.envKeys, ['HTTPS_PROXY', 'MODE'])
+    assert.doesNotMatch(
+      JSON.stringify(server),
+      /\/usr\/bin\/env|Applications\/Phi|secret-proxy|secret-mode/
+    )
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -89,6 +89,7 @@ export type AppWorkspaceSidebarProps = {
   activeMcpServerId: string | null
   onOpenMcpServer: (server: McpServerSummary) => void
   onRefreshMcpServers: () => Promise<void>
+  onRegisterMcpConnectorDialogCloser: (close: () => void) => () => void
 
   wrapperCatalog: WrapperCompositionCatalogItem[]
   selectedWrapperId: string | null
@@ -192,6 +193,7 @@ function AppWorkspaceSidebarImpl({
   activeMcpServerId,
   onOpenMcpServer,
   onRefreshMcpServers,
+  onRegisterMcpConnectorDialogCloser,
   wrapperCatalog,
   selectedWrapperId,
   isLoadingWrappers,
@@ -410,14 +412,12 @@ function AppWorkspaceSidebarImpl({
         activeServerId={activeMcpServerId}
         onSelectServer={(server) => navigate(() => onOpenMcpServer(server))}
         onRefreshServers={onRefreshMcpServers}
+        onRegisterConnectorDialogCloser={onRegisterMcpConnectorDialogCloser}
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
         onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}
-        notice={
-          isRemoteProject
-            ? '服务器项目 MCP 需逐项信任；HTTPS 在桌面端连接，stdio 在所选服务器运行。'
-            : undefined
-        }
+        localConnectorsAllowed={!isRemoteProject}
+        notice={isRemoteProject ? '远程项目级 MCP 暂未接通；当前仅显示全局配置。' : undefined}
       />
     ) : mode === 'wrappers' ? (
       <WrapperSidebar

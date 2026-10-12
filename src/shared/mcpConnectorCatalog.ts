@@ -9,6 +9,24 @@ export interface RemoteMcpConnectorOptions {
   expectedOAuth?: RemoteMcpOAuthCredentials | null
 }
 
+export type LocalMcpRuntime =
+  { kind: 'environment'; ref: string } | { kind: 'host' } | { kind: 'bun' }
+
+export interface LocalMcpRuntimeOption {
+  ref: string
+  label: string
+  kind?: 'environment' | 'bun'
+}
+
+export interface LocalMcpConnectorRequest {
+  name: string
+  runtime: LocalMcpRuntime
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd?: string
+}
+
 export type McpConnectorSetupPhase =
   | 'downloading'
   | 'installing'
@@ -24,9 +42,14 @@ export interface McpConnectorSetupProgress {
   phase: McpConnectorSetupPhase
   revision: number
   updatedAt: string
+  kind?: 'local-stdio'
+  title?: string
+  startedAt?: string
+  summary?: string
   operationId?: string
   failedPhase?: Exclude<McpConnectorSetupPhase, 'failed'>
   error?: string
+  detail?: string
   toolNames?: string[]
 }
 

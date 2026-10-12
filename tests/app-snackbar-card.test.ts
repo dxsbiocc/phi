@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { Button } from '@mui/material'
 import { createTheme, ThemeProvider } from '@mui/material/styles'
 
 import AppSnackbarCard, {
+  AppSnackbarCardContent,
   type SnackbarSeverity
 } from '../src/renderer/src/components/AppSnackbarCard'
+import { snackbarAutoHideDuration } from '../src/renderer/src/lib/snackbarDuration'
 
 function render(severity: SnackbarSeverity, message: string): string {
   return renderToStaticMarkup(
@@ -26,6 +29,12 @@ const LABELS: Record<SnackbarSeverity, string> = {
   error: '错误',
   warning: '警告',
   info: '提示'
+}
+
+function descendants(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(descendants)
+  if (!isValidElement(node)) return []
+  return [node, ...descendants((node.props as { children?: ReactNode }).children)]
 }
 
 for (const severity of Object.keys(LABELS) as SnackbarSeverity[]) {
@@ -49,4 +58,52 @@ test('the card is compact', () => {
   const markup = render('success', 'x')
   const minHeight = /min-height:(\d+)px/.exec(markup)?.[1]
   assert.ok(minHeight && Number(minHeight) <= 48, `min-height was ${minHeight}`)
+})
+
+test('an action renders as an accessible text button and closes after firing', () => {
+  const events: string[] = []
+  const tree = AppSnackbarCardContent({
+    notice: {
+      id: 2,
+      severity: 'info',
+      message: '后台任务已开始',
+      action: {
+        label: '查看后台任务',
+        onClick: () => events.push('action')
+      }
+    },
+    onClose: () => events.push('close')
+  })
+  const action = descendants(tree).find(
+    (element) =>
+      element.type === Button &&
+      (element.props as { children?: ReactNode }).children === '查看后台任务'
+  )
+  assert.ok(action)
+  ;(action.props as { onClick: () => void }).onClick()
+  assert.deepEqual(events, ['close', 'action'])
+})
+
+test('action notices last at least eight seconds without changing existing durations', () => {
+  assert.equal(
+    snackbarAutoHideDuration({
+      id: 1,
+      severity: 'success',
+      message: 'done',
+      action: { label: '查看', onClick: () => undefined }
+    }),
+    8000
+  )
+  assert.equal(snackbarAutoHideDuration({ id: 2, severity: 'success', message: 'done' }), 4000)
+  assert.equal(snackbarAutoHideDuration({ id: 3, severity: 'error', message: 'failed' }), 10000)
+  assert.equal(
+    snackbarAutoHideDuration({
+      id: 4,
+      severity: 'info',
+      message: 'running',
+      persistent: true,
+      action: { label: '查看', onClick: () => undefined }
+    }),
+    null
+  )
 })

@@ -1,5 +1,5 @@
-import { forwardRef, type CSSProperties } from 'react'
-import { Box, IconButton, Typography } from '@mui/material'
+import { forwardRef, type CSSProperties, type ForwardedRef } from 'react'
+import { Box, Button, IconButton, Typography } from '@mui/material'
 import { FiAlertTriangle, FiCheckCircle, FiInfo, FiX, FiXCircle } from 'react-icons/fi'
 
 export type SnackbarSeverity = 'error' | 'info' | 'success' | 'warning'
@@ -8,6 +8,10 @@ export type SnackbarNotice = {
   severity: SnackbarSeverity
   message: string
   persistent?: boolean
+  action?: {
+    label: string
+    onClick: () => void
+  }
 }
 
 const appearance = {
@@ -44,15 +48,15 @@ const appearance = {
   { label: string; color: string; softColor: string; backgroundColor: string; Icon: typeof FiInfo }
 >
 
-type AppSnackbarCardProps = {
+export type AppSnackbarCardProps = {
   notice: SnackbarNotice
   onClose: () => void
   style?: CSSProperties
 }
 
-const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(function AppSnackbarCard(
-  { notice, onClose, style },
-  ref
+export function AppSnackbarCardContent(
+  { notice, onClose, style }: AppSnackbarCardProps,
+  ref?: ForwardedRef<HTMLDivElement>
 ): React.JSX.Element {
   const { label, color, softColor, backgroundColor, Icon } = appearance[notice.severity]
 
@@ -125,6 +129,19 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
       >
         {notice.message}
       </Typography>
+      {notice.action ? (
+        <Button
+          variant="text"
+          size="small"
+          onClick={() => {
+            onClose()
+            notice.action?.onClick()
+          }}
+          sx={{ flexShrink: 0, textTransform: 'none' }}
+        >
+          {notice.action.label}
+        </Button>
+      ) : null}
       <IconButton
         aria-label="关闭通知"
         onClick={onClose}
@@ -135,6 +152,8 @@ const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(functio
       </IconButton>
     </Box>
   )
-})
+}
+
+const AppSnackbarCard = forwardRef<HTMLDivElement, AppSnackbarCardProps>(AppSnackbarCardContent)
 
 export default AppSnackbarCard
