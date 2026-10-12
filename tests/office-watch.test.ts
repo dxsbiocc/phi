@@ -9,6 +9,9 @@ import {
   OfficeWatchError,
   previewHtmlHasSheetTab
 } from '../src/main/agent/office/office-watch'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 test('gateway startup cleanup retains a partial watch for retry', async () => {
   let stopAttempts = 0

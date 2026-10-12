@@ -33,6 +33,9 @@ import type {
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { updateNotebookCell } from '../src/shared/notebookDocument'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 type Backend = {
   name: string

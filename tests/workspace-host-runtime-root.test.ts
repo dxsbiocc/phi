@@ -14,6 +14,9 @@ import {
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import { createLocalShellSession, type LocalShellSession } from './helpers/localShellSession'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 function runWithInput(command: string, input: string, home?: string): Promise<RemoteExecResult> {
   return new Promise((resolve) => {

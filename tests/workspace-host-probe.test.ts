@@ -9,6 +9,9 @@ import {
 } from '../src/main/agent/workspace-host/probe'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 function execWithInput(command: string, input: string): Promise<RemoteExecResult> {
   return new Promise((resolve) => {

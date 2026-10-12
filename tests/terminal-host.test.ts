@@ -4,6 +4,9 @@ import { PassThrough } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import test from 'node:test'
 import { TerminalHost, type TerminalCreateOptions } from '../src/main/terminal/terminal-host'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 type Frame = Record<string, unknown>
 type RequestHandler = (request: Frame, endpoint: FakeEndpoint) => void

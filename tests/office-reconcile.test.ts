@@ -11,6 +11,9 @@ import {
   officeOperationDigest,
   type OfficeOperationLogState
 } from '../src/main/agent/office/office-operation-log'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 const openRequest = {
   sessionId: 'session-1',

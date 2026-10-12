@@ -11,6 +11,9 @@ import {
   fetchGithubSnapshot,
   previewGithubSource
 } from '../src/main/agent/packages/github-source'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 const roots: string[] = []
 const sha = 'b'.repeat(40)

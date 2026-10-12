@@ -23,6 +23,9 @@ import {
   installRemoteJupyterSetsid,
   writeRemoteJupyterTestExecutables
 } from './helpers/remoteJupyterScripts'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 const cleanups: Array<() => Promise<void> | void> = []
 

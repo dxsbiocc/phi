@@ -20,6 +20,9 @@ import {
   remoteMicromambaSourceUrls
 } from '../src/main/agent/remote-micromamba-artifact'
 import { MICROMAMBA_PLATFORM_IDS } from '../scripts/runtime/fetch-micromamba.mjs'
+import { holdEventLoopForTests } from './helpers/holdEventLoop'
+
+holdEventLoopForTests()
 
 const bytes = Buffer.from('fake micromamba executable')
 const sha256 = createHash('sha256').update(bytes).digest('hex')
