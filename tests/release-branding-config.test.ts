@@ -24,7 +24,7 @@ const builder = parse(builderText) as Record<string, unknown> & {
     extendInfo?: Record<string, string | null>
     extraResources?: Array<{ from?: string; to?: string }>
   }
-  publish?: { provider?: string; url?: string }
+  publish?: { provider?: string; url?: string; owner?: string; repo?: string; releaseType?: string }
 }
 const packageText = readFileSync('package.json', 'utf8')
 const packageJson = JSON.parse(packageText) as {
@@ -35,7 +35,7 @@ const packageJson = JSON.parse(packageText) as {
   homepage?: string
 }
 
-test('release branding freezes the Phi identity while preserving the future update URL', () => {
+test('release branding freezes the Phi identity and publishes to draft GitHub releases', () => {
   assert.equal(builder.appId, 'cn.phiscience.phi')
   assert.equal(builder.productName, 'Phi')
   assert.equal(builder.linux?.maintainer, 'Phi Science')
@@ -49,11 +49,13 @@ test('release branding freezes the Phi identity while preserving the future upda
     homepage: 'https://phiscience.cn'
   })
 
-  assert.equal(builder.publish?.url, 'https://example.com/auto-updates')
-  const builderWithoutPublish = Object.fromEntries(
-    Object.entries(builder).filter(([key]) => key !== 'publish')
-  )
-  const brandedMetadata = JSON.stringify({ builder: builderWithoutPublish, package: packageJson })
+  assert.deepEqual(builder.publish, {
+    provider: 'github',
+    owner: 'dxsbiocc',
+    repo: 'phi',
+    releaseType: 'draft'
+  })
+  const brandedMetadata = JSON.stringify({ builder, package: packageJson })
   for (const templateValue of [
     'com.electron.app',
     'electronjs.org',
@@ -69,11 +71,7 @@ test('release branding freezes the Phi identity while preserving the future upda
 
   assert.notEqual(builder.productName, 'pi-desktop')
   assert.notEqual(packageJson.name, 'pi-desktop')
-  assert.equal(
-    builderText.match(/example\.com/g)?.length,
-    1,
-    'publish.url is the sole example.com exception'
-  )
+  assert.equal(builderText.includes('example.com'), false)
   assert.equal(packageText.includes('example.com'), false)
 })
 

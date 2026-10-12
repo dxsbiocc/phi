@@ -36,6 +36,9 @@ jobs:
       - name: Build Linux packages
         run: bun run build:linux
 
+      - name: Smoke-test the packaged worker without system bun
+        run: node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources
+
       - name: Check package artifacts
         shell: bash
         run: |

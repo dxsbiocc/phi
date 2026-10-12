@@ -4,6 +4,7 @@ import type {
   NotebookOutput
 } from '../../shared/notebookDocument'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
+import type { AppUpdateCheck } from '../../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { TerminalRendererBridge } from '../../shared/terminalTypes'
@@ -773,6 +774,8 @@ export interface RendererApi
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
+  checkForAppUpdates: () => Promise<AppUpdateCheck>
+  openAppReleasesPage: (url?: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
