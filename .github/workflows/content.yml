@@ -67,7 +67,11 @@ jobs:
       - name: Production typecheck
         run: bun run typecheck
       - name: Independent core regressions
-        run: node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit tests/*.test.ts
+        # TAP stays on stdout; a spec copy keeps one list of failures for the next step.
+        run: node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit --test-reporter=tap --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination="$RUNNER_TEMP/core-tests.txt" tests/*.test.ts
+      - name: Failing tests
+        if: failure()
+        run: sed -n '/failing tests:/,$p' "$RUNNER_TEMP/core-tests.txt" | grep -E '^(test at |✖ )' || true
 
   packages:
     name: Pinned package content
