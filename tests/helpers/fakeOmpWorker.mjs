@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// A stand-in for omp-sdk-worker.ts: speaks the bridge's JSON-lines protocol, keeps its
+// A stand-in for the in-process worker: speaks the bridge's JSON-lines protocol, keeps its
 // sessions in memory like the real worker, and can be told to exit (method `crash`).
 import { createInterface } from 'node:readline'
 

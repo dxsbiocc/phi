@@ -310,13 +310,13 @@ function customWorkerRpc(
 ): (method: string, params: unknown) => Promise<unknown> {
   const source = ts.createSourceFile(
     'worker.ts',
-    readFileSync(resolve('src/main/agent/engine/omp-sdk-worker.ts'), 'utf8'),
+    readFileSync(resolve('src/main/agent/engine/in-process/mcp-runtime.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )
   const handler = source.statements.find(
     (node): node is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(node) && node.name?.text === 'handleRequest'
+      ts.isFunctionDeclaration(node) && node.name?.text === 'handleMcpRequest'
   )
   const dispatch = handler?.body?.statements.find(ts.isSwitchStatement)
   assert.ok(dispatch)

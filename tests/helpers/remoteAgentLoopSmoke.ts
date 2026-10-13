@@ -171,7 +171,7 @@ try {
   if (!('envId' in prepared))
     throw new Error(`environment not prepared: ${JSON.stringify(prepared)}`)
 
-  // The worker-to-main bridge: the same method names omp-sdk-worker sends.
+  // The worker-to-main bridge: the same method names the in-process worker sends.
   const requests: Array<{ method: string; params: unknown }> = []
   const handlers: Record<string, (params: unknown) => unknown> = {
     'remoteWorkspace.read': (params) =>
@@ -205,7 +205,7 @@ try {
     return handler(params)
   }
 
-  // Agent worker: the remote main session's tools and guards, as omp-sdk-worker builds them.
+  // Agent worker: the remote main session's tools and guards, as the in-process worker builds them.
   const identity = { sessionId: SESSION_ID, projectId: PROJECT_ID }
   const remoteProject = { sessionId: SESSION_ID, projectId: PROJECT_ID }
   const listed = await runtime.scriptTools({

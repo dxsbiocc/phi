@@ -144,12 +144,12 @@
       "plan": "keep"
     },
     {
-      "file": "src/main/agent/engine/omp-sdk-worker.ts",
+      "file": "src/main/agent/engine/in-process/session-factory.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
         "@oh-my-pi/pi-coding-agent/modes/runtime-init"
       ],
-      "purpose": "T5 exception for legacy session construction and extension initialization pending worker split",
+      "purpose": "Legacy session construction and extension initialization isolated in the in-process session factory",
       "plan": "remove"
     },
     {

@@ -32,7 +32,7 @@ import { copyMinimal, installReady, shQuote } from './helpers/fakeEnvironment'
 const bunPath = findBunExecutable()
 const REF = 'phi:python@1'
 const SERVER = join(process.cwd(), 'tests/helpers/fixtureMcpServer.mjs')
-const WORKER = join(process.cwd(), 'src/main/agent/engine/omp-sdk-worker.ts')
+const WORKER = join(process.cwd(), 'src/main/agent/engine/in-process/main.ts')
 const SERVER_REQUEST_TIMEOUT_MS = 8_000
 const FIXTURE_STARTUP_TIMEOUT_MS = 15_000
 const FIXTURE_TEST_TIMEOUT_MS = 45_000

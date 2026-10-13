@@ -16,7 +16,7 @@ import { rankWrapperEntries } from './search'
  * resources/skills/create-wrapper/references/guide.md section 4 — search,
  * inspect, then run. Supersedes the older one-tool-per-bundled-wrapper
  * model in `../tools.ts` (`buildDefaultWrapperCustomTools`), which this
- * build's `omp-sdk-worker.ts` no longer wires in, to avoid two `wrapper_*`
+ * in-process worker no longer wires in, to avoid two `wrapper_*`
  * tool sets registering the same names.
  *
  * `wrapper_run` executes directly (no separate plan/submit step) — the
