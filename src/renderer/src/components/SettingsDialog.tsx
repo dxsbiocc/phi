@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  alpha,
   Alert,
   Box,
   Button,
@@ -97,8 +98,8 @@ function CategoryIcon({
         justifyContent: 'center',
         mr: 1.5,
         flexShrink: 0,
-        bgcolor: selected ? 'rgba(255,255,255,0.22)' : `${accent}26`,
-        color: selected ? '#FFFFFF' : accent
+        bgcolor: (theme) => (selected ? alpha(theme.palette.primary.main, 0.12) : `${accent}26`),
+        color: selected ? 'inherit' : accent
       }}
     >
       {children}
@@ -651,11 +652,11 @@ function SettingsDialog({
                     borderRadius: 1,
                     px: 1.5,
                     '&.Mui-selected': {
-                      bgcolor: 'primary.main',
-                      color: 'primary.contrastText'
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.14),
+                      color: 'text.primary'
                     },
                     '&.Mui-selected:hover': {
-                      bgcolor: 'primary.dark'
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.2)
                     }
                   }}
                 >
