@@ -284,6 +284,12 @@
       ],
       "purpose": "T11b private Bun harness uses the canonical public event-stream class and erased SDK types to exercise selective native adapter parser, repair, bounds and cancellation before actual vendor/CLI oracles",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcNativeTaskExtension.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/internal-urls"],
+      "purpose": "T14 actual native task/private CLI oracle uses ExtensionAPI types and the exact public compiled-host InternalUrlRouter module for child identity, cancellation and host URI protocol tests",
+      "plan": "keep"
     }
   ]
 }
