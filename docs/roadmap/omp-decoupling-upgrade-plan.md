@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**实施中**，阶段 0 与 T1–T4 已完成；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
+状态：**实施中**，阶段 0 与 T1–T5 已完成；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
 创建日期：2026-10-12
 执行者：Codex（gpt-5.6-sol xhigh）；所有验证命令使用 `bun run`
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -275,6 +275,8 @@ bun run test
 | `engine/in-process/subagents.ts` | Phi 子智能体会话 |
 
 只搬代码、不改逻辑；每搬一块跑一次完整测试。
+
+实施记录（T5）：分两步提交。T5a 只搬代码，worker 入口改为 `engine/in-process/main.ts`；表外的处理函数按领域另建文件（`session-creation`、`session-runtime`、`session-history`、`runtime-context`、`resources`、`mcp-profile`、`web-search`、`tool-support`、`ipc`、`common`），共享可变状态集中在 `in-process/state.ts`，最大文件 442 行。T5b 在 `engine/types.ts` 定义 `PhiEngine`（按领域分组，共 55 个操作），由 `engine/in-process-engine.ts` 转发给 `OmpBridge`；`index.ts` 与 `runtime-adapter.ts` 只通过 `getPhiEngine()` 调用，引擎目录外不再 import `omp-bridge`。
 
 **1f Phi 扩展包**
 - 把现有以扩展形式注入的逻辑（审批、项目边界、下一步建议等）整理成一个扩展包目录（入口加 `agents/`），本地进程内改为从这个包加载。行为不变。

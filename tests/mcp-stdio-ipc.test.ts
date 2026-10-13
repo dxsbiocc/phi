@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
+import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import {
   ConnectorSetupTracker,
   type ConnectorSetupReporter
@@ -77,7 +79,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     IPC_CHANNELS.toSorted(),
     'extract every exercised IPC registration'
   )
-  const program = `const { ConnectorSetupTracker, sendToAllWindows, listConnectorCatalog, AGENT_DIR, app, getRuntimeRoot, loadPackageRegistries, connectorEnvironmentBuildAction, environmentBuilds, refreshPersistedManagedStdioServers, readMcpServerEntry, getOmpBridge, installCatalogConnector, uninstallCatalogConnector, officialContentSourceOptions, setEnabled, setMcpPackageEnabled, invalidateAgentSession } = dependencies;
+  const program = `const { ConnectorSetupTracker, sendToAllWindows, listConnectorCatalog, AGENT_DIR, app, getRuntimeRoot, loadPackageRegistries, connectorEnvironmentBuildAction, environmentBuilds, refreshPersistedManagedStdioServers, readMcpServerEntry, getPhiEngine, installCatalogConnector, uninstallCatalogConnector, officialContentSourceOptions, setEnabled, setMcpPackageEnabled, invalidateAgentSession } = dependencies;
   const join = (...parts) => parts.join('/');
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
@@ -260,18 +262,19 @@ function harness(installed = true): {
       assert.equal(agentDir, AGENT_DIR)
       calls.push('enablement:package')
     },
-    getOmpBridge: () => ({
-      request: async (method: string, params: Record<string, unknown>) => {
-        requests.push({ method, params })
-        calls.push(`worker:${method}`)
-        if (method === 'mcp.configuredStdioTools') {
-          probeStarted.resolve()
-          await state.probeGate
-          if (state.probeError) throw state.probeError
+    getPhiEngine: () =>
+      createInProcessEngine({
+        request: async (method: string, params: Record<string, unknown>) => {
+          requests.push({ method, params })
+          calls.push(`worker:${method}`)
+          if (method === 'mcp.configuredStdioTools') {
+            probeStarted.resolve()
+            await state.probeGate
+            if (state.probeError) throw state.probeError
+          }
+          return ['fixture_first', 'fixture_second']
         }
-        return ['fixture_first', 'fixture_second']
-      }
-    }),
+      } as unknown as OmpBridge),
     invalidateAgentSession: async () => {
       calls.push('invalidate:start')
       invalidationStarted.resolve()

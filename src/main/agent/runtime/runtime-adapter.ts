@@ -14,7 +14,22 @@ import type {
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
-import { getOmpBridge, type OmpBridge } from '../engine/omp-bridge'
+import { getPhiEngine } from '../engine/in-process-engine'
+import type {
+  PhiEngine,
+  ResourceDiagnostic,
+  RuntimeCredential,
+  RuntimeModel,
+  RuntimeProvider,
+  RuntimeProviderAuthStatus,
+  RuntimeResourceBundle,
+  RuntimeSnapshot,
+  SessionInfo,
+  Skill,
+  ThinkingLevel,
+  ToolApprovalRequest,
+  WorkerSessionState
+} from '../engine/types'
 import { listActiveSkillPackages } from '../packages/store'
 import { loadedPlugins } from '../plugins/loader'
 import {
@@ -28,9 +43,17 @@ export const AGENT_RUNTIME_ID = 'omp-sdk'
 export const AGENT_RUNTIME_PACKAGE = '@oh-my-pi/pi-coding-agent'
 const nodeRequire = createRequire(import.meta.url)
 
-export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type RuntimeAuthSource =
-  'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
+export type {
+  ResourceDiagnostic,
+  RuntimeAuthSource,
+  RuntimeCredential,
+  RuntimeModel,
+  RuntimeProvider,
+  RuntimeProviderAuthStatus,
+  SessionInfo,
+  Skill,
+  ThinkingLevel
+} from '../engine/types'
 
 export type AuthPrompt =
   | {
@@ -87,37 +110,6 @@ export type AuthInteraction = {
   notify(event: AuthEvent): void
 }
 
-export interface RuntimeProvider {
-  id: string
-  name: string
-  auth?: {
-    apiKey?: boolean
-    oauth?: boolean
-  }
-}
-
-export interface RuntimeCredential {
-  id?: string
-  providerId: string
-  type?: string
-  label?: string
-}
-
-export interface RuntimeProviderAuthStatus {
-  configured: boolean
-  source?: RuntimeAuthSource
-  label?: string
-}
-
-export interface RuntimeModel {
-  provider: string
-  id: string
-  name: string
-  reasoning: boolean
-  supportsImages?: boolean
-  thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
-}
-
 export interface ModelRuntime {
   getProviders(): RuntimeProvider[]
   getModels(): RuntimeModel[]
@@ -138,45 +130,6 @@ export type RuntimePromptOptions = {
   userInitiated?: boolean
   skipCompactionCheck?: boolean
 }
-export type ResourceDiagnostic = {
-  type: 'error' | 'warning' | 'info'
-  message: string
-  path?: string
-}
-
-export interface Skill {
-  name: string
-  description: string
-  filePath: string
-  disableModelInvocation?: boolean
-  sourceInfo: {
-    source: string
-    scope: 'user' | 'project' | 'temporary'
-    origin?: string
-    path?: string
-    baseDir?: string
-  }
-  remoteProject?: {
-    relativePath: string
-    contentHash: string
-  }
-}
-
-export interface SessionInfo {
-  path: string
-  id: string
-  name?: string
-  title?: string
-  created: Date
-  modified: Date
-  messageCount: number
-  firstMessage: string
-  allMessagesText?: string
-  cwd?: string
-  size?: number
-  status?: string
-}
-
 type ToolCallEvent = {
   type?: 'tool_call'
   toolCallId?: string
@@ -205,19 +158,6 @@ export type InlineExtension =
       factory(api: ExtensionApiLike): void | Promise<void>
     }
   | ((api: ExtensionApiLike) => void | Promise<void>)
-
-type RuntimeResourceBundle = {
-  extensions?: unknown
-  skills: {
-    skills: Skill[]
-    diagnostics: ResourceDiagnostic[]
-  }
-  prompts?: unknown
-  themes?: unknown
-  agentsFiles?: unknown
-  systemPrompt?: string
-  appendSystemPrompt?: string[]
-}
 
 export type RuntimeSettingsManager = {
   cwd?: string
@@ -332,33 +272,6 @@ export type CreateAgentSessionOptions = {
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
-}
-
-type RuntimeSnapshot = {
-  providers: Array<RuntimeProvider & { status?: RuntimeProviderAuthStatus }>
-  models: RuntimeModel[]
-  credentials: RuntimeCredential[]
-}
-
-type WorkerSessionState = {
-  sessionFile?: string
-  messages?: unknown[]
-  model?: RuntimeModel
-  thinkingLevel?: ThinkingLevel
-  cwd?: string
-}
-
-type WorkerCreateSessionResult = {
-  sessionId: string
-  state: WorkerSessionState
-}
-
-type ToolApprovalRequest = {
-  requestId: string
-  toolCallId?: string
-  toolName?: string
-  input?: Record<string, unknown>
-  agentRunId?: string
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -688,7 +601,7 @@ class OmpModelRuntimeFacade implements ModelRuntime {
   private credentials: RuntimeCredential[]
 
   constructor(
-    private readonly bridge: OmpBridge,
+    private readonly engine: PhiEngine,
     private readonly agentDir: string,
     snapshot: RuntimeSnapshot
   ) {
@@ -698,9 +611,9 @@ class OmpModelRuntimeFacade implements ModelRuntime {
   }
 
   static async create(agentDir = getPhiAgentDir()): Promise<OmpModelRuntimeFacade> {
-    const bridge = getOmpBridge()
-    const snapshot = await bridge.request<RuntimeSnapshot>('modelRuntime.snapshot', { agentDir })
-    return new OmpModelRuntimeFacade(bridge, agentDir, snapshot)
+    const engine = getPhiEngine()
+    const snapshot = await engine.models.snapshot({ agentDir })
+    return new OmpModelRuntimeFacade(engine, agentDir, snapshot)
   }
 
   getProviders(): RuntimeProvider[] {
@@ -734,25 +647,25 @@ class OmpModelRuntimeFacade implements ModelRuntime {
   ): Promise<void> {
     const cleanups: Array<() => void> = []
     cleanups.push(
-      this.bridge.onAuthNotify(({ providerId: notifiedProviderId, event }) => {
+      this.engine.models.onAuthNotify(({ providerId: notifiedProviderId, event }) => {
         if (notifiedProviderId !== providerId) return
         interaction.notify(event as AuthEvent)
       })
     )
     cleanups.push(
-      this.bridge.onAuthPrompt(({ providerId: promptProviderId, requestId, prompt }) => {
+      this.engine.models.onAuthPrompt(({ providerId: promptProviderId, requestId, prompt }) => {
         if (promptProviderId !== providerId) return
         void interaction
           .prompt(prompt as AuthPrompt)
-          .then((value) => this.bridge.sendAuthPromptResult(requestId, value))
-          .catch((error: unknown) => this.bridge.sendAuthPromptError(requestId, error))
+          .then((value) => this.engine.models.respondAuthPrompt(requestId, value))
+          .catch((error: unknown) => this.engine.models.rejectAuthPrompt(requestId, error))
       })
     )
 
     try {
       const key =
         type === 'api_key' ? await interaction.prompt({ type: 'secret', message: '' }) : undefined
-      const snapshot = await this.bridge.request<RuntimeSnapshot>('modelRuntime.login', {
+      const snapshot = await this.engine.models.login({
         agentDir: this.agentDir,
         providerId,
         type,
@@ -765,7 +678,7 @@ class OmpModelRuntimeFacade implements ModelRuntime {
   }
 
   async logout(providerId: string): Promise<void> {
-    const snapshot = await this.bridge.request<RuntimeSnapshot>('modelRuntime.logout', {
+    const snapshot = await this.engine.models.logout({
       agentDir: this.agentDir,
       providerId
     })
@@ -782,7 +695,7 @@ class OmpModelRuntimeFacade implements ModelRuntime {
 class RuntimeResourceLoaderProxy implements RuntimeResourceLoader {
   readonly __phiResourceLoader = true
   readonly options: ResourceLoaderOptions
-  private readonly bridge = getOmpBridge()
+  private readonly engine = getPhiEngine()
   private bundle: RuntimeResourceBundle = {
     skills: {
       skills: [],
@@ -796,10 +709,7 @@ class RuntimeResourceLoaderProxy implements RuntimeResourceLoader {
   }
 
   async reload(): Promise<void> {
-    const bundle = await this.bridge.request<RuntimeResourceBundle>(
-      'resources.reload',
-      serializableResourceOptions(this.options)
-    )
+    const bundle = await this.engine.resources.reload(serializableResourceOptions(this.options))
     this.bundle = {
       ...bundle,
       skills: this.options.skillsOverride
@@ -863,7 +773,7 @@ class RuntimeSessionManagerProxy implements RuntimeSessionManager {
 
   async setSessionName(name: string): Promise<boolean> {
     if (!this.path) return false
-    await getOmpBridge().request('sessions.rename', {
+    await getPhiEngine().history.rename({
       agentDir: getPhiAgentDir(),
       path: this.path,
       name
@@ -875,7 +785,7 @@ class RuntimeSessionManagerProxy implements RuntimeSessionManager {
 class ActiveRuntimeSessionManagerProxy extends RuntimeSessionManagerProxy {
   constructor(
     base: RuntimeSessionManager,
-    private readonly bridge: OmpBridge,
+    private readonly engine: PhiEngine,
     private readonly sessionId: string
   ) {
     super(base.kind, base.cwd, base.path)
@@ -886,7 +796,7 @@ class ActiveRuntimeSessionManagerProxy extends RuntimeSessionManagerProxy {
   }
 
   override async setSessionName(name: string): Promise<boolean> {
-    const state = await this.bridge.request<WorkerSessionState>('session.rename', {
+    const state = await this.engine.sessions.rename({
       sessionId: this.sessionId,
       name
     })
@@ -909,7 +819,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   readonly sessionManager: RuntimeSessionManager
 
   constructor(
-    private readonly bridge: OmpBridge,
+    private readonly engine: PhiEngine,
     private readonly sessionId: string,
     sessionManager: RuntimeSessionManager,
     state: WorkerSessionState,
@@ -917,22 +827,22 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     private readonly recreate?: (current: RuntimeAgentSessionProxy) => Promise<WorkerSessionState>
   ) {
     this.runtimeSessionId = sessionId
-    this.sessionManager = new ActiveRuntimeSessionManagerProxy(sessionManager, bridge, sessionId)
+    this.sessionManager = new ActiveRuntimeSessionManagerProxy(sessionManager, engine, sessionId)
     applySessionState(this, state)
     this.cleanupFns.push(
-      bridge.onSessionEvent(sessionId, (event) => {
+      engine.events.onSessionEvent(sessionId, (event) => {
         for (const listener of this.listeners) {
           listener(event as AgentSessionEvent)
         }
       })
     )
     this.cleanupFns.push(
-      bridge.onSessionState(sessionId, (nextState) => {
+      engine.events.onSessionState(sessionId, (nextState) => {
         applySessionState(this, nextState as WorkerSessionState)
       })
     )
     this.cleanupFns.push(
-      bridge.onSessionToolApproval(sessionId, (request) => {
+      engine.events.onToolApproval(sessionId, (request) => {
         void this.resolveToolApproval(request as ToolApprovalRequest)
       })
     )
@@ -950,7 +860,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
    * "Unknown session".
    */
   private async ensureLive(): Promise<void> {
-    if (!this.recreate || this.bridge.hasSession(this.sessionId)) return
+    if (!this.recreate || this.engine.sessions.has(this.sessionId)) return
     this.recovery ??= this.recreate(this)
       .then((state) => applySessionState(this, state))
       .finally(() => {
@@ -962,7 +872,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   async prompt(text: string, options?: RuntimePromptOptions): Promise<void> {
     await this.ensureLive()
     options?.preflightResult?.(true)
-    const state = await this.bridge.request<WorkerSessionState>('session.prompt', {
+    const state = await this.engine.sessions.prompt({
       sessionId: this.sessionId,
       text,
       options: runtimePromptOptionsForWorker(options)
@@ -972,24 +882,21 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
 
   async getContextUsage(): Promise<ContextUsageSnapshot | null> {
     await this.ensureLive()
-    return this.bridge.request<ContextUsageSnapshot | null>('session.contextUsage', {
+    return this.engine.sessions.contextUsage({
       sessionId: this.sessionId
     })
   }
 
   async compact(): Promise<ContextCompactionSummary> {
     await this.ensureLive()
-    const result = await this.bridge.request<{
-      summary: ContextCompactionSummary
-      state: WorkerSessionState
-    }>('session.compact', { sessionId: this.sessionId })
+    const result = await this.engine.sessions.compact({ sessionId: this.sessionId })
     applySessionState(this, result.state)
     return result.summary
   }
 
   async setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void> {
     await this.ensureLive()
-    await this.bridge.request('session.setAutoCompactionSettings', {
+    await this.engine.sessions.setAutoCompactionSettings({
       sessionId: this.sessionId,
       overrides
     })
@@ -998,8 +905,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   async abort(): Promise<void> {
     this.approvalAbortController.abort()
     // A session the worker no longer holds has nothing running to abort.
-    if (this.recreate && !this.bridge.hasSession(this.sessionId)) return
-    const state = await this.bridge.request<WorkerSessionState>('session.abort', {
+    if (this.recreate && !this.engine.sessions.has(this.sessionId)) return
+    const state = await this.engine.sessions.abort({
       sessionId: this.sessionId
     })
     applySessionState(this, state)
@@ -1010,15 +917,15 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     for (const cleanup of this.cleanupFns.splice(0)) {
       cleanup()
     }
-    if (this.recreate && !this.bridge.hasSession(this.sessionId)) return
-    await this.bridge.request('session.dispose', {
+    if (this.recreate && !this.engine.sessions.has(this.sessionId)) return
+    await this.engine.sessions.dispose({
       sessionId: this.sessionId
     })
   }
 
   async setModel(model: RuntimeModel): Promise<void> {
     await this.ensureLive()
-    const state = await this.bridge.request<WorkerSessionState>('session.setModel', {
+    const state = await this.engine.sessions.setModel({
       sessionId: this.sessionId,
       agentDir: getPhiAgentDir(),
       model
@@ -1030,7 +937,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     this.thinkingLevel = level
     void this.ensureLive()
       .then(() =>
-        this.bridge.request<WorkerSessionState>('session.setThinkingLevel', {
+        this.engine.sessions.setThinkingLevel({
           sessionId: this.sessionId,
           level
         })
@@ -1066,7 +973,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       }
     }
 
-    await this.bridge.sendToolApprovalResult(request.requestId, result)
+    await this.engine.events.respondToolApproval(request.requestId, result)
   }
 }
 
@@ -1100,7 +1007,7 @@ export function readAutoCompactionDefaults(
   cwd: string,
   agentDir = getPhiAgentDir()
 ): Promise<AutoCompactionDefaults> {
-  return getOmpBridge().request('settings.autoCompactionDefaults', { cwd, agentDir })
+  return getPhiEngine().settings.autoCompactionDefaults({ cwd, agentDir })
 }
 
 export async function createRuntimeAgentSession(
@@ -1108,7 +1015,7 @@ export async function createRuntimeAgentSession(
 ): Promise<CreateAgentSessionResult> {
   const cwd = options.cwd ?? process.cwd()
   const agentDir = options.agentDir ?? getPhiAgentDir()
-  const bridge = getOmpBridge()
+  const engine = getPhiEngine()
   const resourceLoader = isRuntimeResourceLoader(options.resourceLoader)
     ? options.resourceLoader
     : undefined
@@ -1139,13 +1046,13 @@ export async function createRuntimeAgentSession(
     remoteProjectMcpServers: options.remoteProjectMcpServers,
     personaMarkdown: options.personaMarkdown
   }
-  const created = await bridge.request<WorkerCreateSessionResult>('session.create', createParams)
+  const created = await engine.sessions.create(createParams)
   // Same params with the session's current model/thinking level, reopening its file when
   // one exists so the conversation carries over into a replacement worker.
   const recreate = async (current: RuntimeAgentSession): Promise<WorkerSessionState> => {
     const file = current.sessionFile
     const resumable = sessionManager.kind !== 'memory' && file && existsSync(file)
-    const result = await bridge.request<WorkerCreateSessionResult>('session.create', {
+    const result = await engine.sessions.create({
       ...createParams,
       model: current.model ?? createParams.model,
       thinkingLevel: current.thinkingLevel ?? createParams.thinkingLevel,
@@ -1156,7 +1063,7 @@ export async function createRuntimeAgentSession(
     return result.state
   }
   const session = new RuntimeAgentSessionProxy(
-    bridge,
+    engine,
     created.sessionId,
     sessionManager,
     created.state,
@@ -1198,14 +1105,11 @@ export async function openRuntimeSessionManager(
   path: string,
   cwd?: string
 ): Promise<RuntimeSessionManager> {
-  const result = await getOmpBridge().request<{ cwd?: string; sessionFile?: string }>(
-    'sessions.open',
-    {
-      agentDir: getPhiAgentDir(),
-      path,
-      cwd
-    }
-  )
+  const result = await getPhiEngine().history.open({
+    agentDir: getPhiAgentDir(),
+    path,
+    cwd
+  })
   return new RuntimeSessionManagerProxy(
     'open',
     result.cwd ?? cwd ?? process.cwd(),
@@ -1214,7 +1118,7 @@ export async function openRuntimeSessionManager(
 }
 
 export async function listRuntimeSessions(cwd: string): Promise<SessionInfo[]> {
-  const infos = await getOmpBridge().request<SessionInfo[]>('sessions.list', {
+  const infos = await getPhiEngine().history.list({
     agentDir: getPhiAgentDir(),
     cwd
   })
