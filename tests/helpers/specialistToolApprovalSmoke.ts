@@ -15,8 +15,13 @@ import {
   SettingsManager
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 
-import { installSpecialistToolCallExtensions } from '../../src/main/agent/agents/specialist-tool-call-extensions'
-import { specialistToolCallFactories } from '../../src/main/agent/omp/omp-sdk-worker'
+import {
+  createSpecialistExtensions,
+  type PhiExtensionConfig
+} from '../../src/main/agent/engine/phi-extension'
+import { createInProcessExtensionHost } from '../../src/main/agent/engine/in-process/extension-host'
+import { installSpecialistToolCallExtensions } from '../../src/main/agent/engine/in-process/specialist-tool-call-extensions'
+import '../../src/main/agent/engine/in-process/main'
 
 type ActiveTool = {
   name: string
@@ -29,12 +34,20 @@ async function main(): Promise<void> {
   try {
     const authStorage = await discoverAuthStorage(root)
     const settings = await Settings.init({ cwd: root, agentDir: root })
-    const factories = specialistToolCallFactories({
+    const config: PhiExtensionConfig = {
+      cwd: root,
+      projectBound: false,
+      remote: false,
+      enableToolApproval: true,
       sessionId: 'parent-session',
       agentRunId: 'specialist-run',
-      enableToolApproval: true,
-      parent: () => undefined
-    })
+      useBrowserTextVault: false,
+      phiAgents: []
+    }
+    const factories = createSpecialistExtensions(
+      config,
+      createInProcessExtensionHost({ cwd: root })
+    )
     const loader = new DefaultResourceLoader({
       cwd: root,
       agentDir: root,

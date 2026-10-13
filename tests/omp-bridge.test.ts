@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { OmpBridge } from '../src/main/agent/omp/omp-bridge'
+import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 
 const FAKE_WORKER = join(process.cwd(), 'tests/helpers/fakeOmpWorker.mjs')
 

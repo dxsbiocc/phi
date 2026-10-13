@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 
 import { AgentRunRegistry } from '../src/main/agent/agents/registry'
@@ -15,10 +15,14 @@ import { buildRemoteWorkspaceWriteTool } from '../src/main/agent/remote-workspac
 
 test('SSH password bootstrap is absent from the agent-visible tool registries', () => {
   const runToolNames = buildAgentRunTools(new AgentRunRegistry()).map((tool) => tool.name)
-  const workerSource = readFileSync(
-    new URL('../src/main/agent/omp/omp-sdk-worker.ts', import.meta.url),
-    'utf8'
-  )
+  const inProcessDir = new URL('../src/main/agent/engine/in-process/', import.meta.url)
+  const workerSource = [
+    readFileSync(new URL('../src/main/agent/engine/events.ts', import.meta.url), 'utf8'),
+    ...readdirSync(inProcessDir)
+      .filter((name) => name.endsWith('.ts'))
+      .sort()
+      .map((name) => readFileSync(new URL(name, inProcessDir), 'utf8'))
+  ].join('\n')
 
   assert.deepEqual(runToolNames, ['agent_status', 'agent_wait', 'agent_steer', 'agent_stop'])
   assert.doesNotMatch(workerSource, /ssh[_-]?bootstrap|password[_-]?bootstrap/i)

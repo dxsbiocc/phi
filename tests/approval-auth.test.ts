@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { registerHooks } from 'node:module'
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { planModeToolDecision } from '../src/main/agent/plan/plan-tool-policy'
+import { planModeToolDecision } from '../src/main/agent/engine/phi-extension'
 
 const electronMockUrl = 'phi-test:electron'
 

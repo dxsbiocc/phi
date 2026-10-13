@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 import { copyOmpWorkerClosure } from './scripts/build/omp-worker-closure.mjs'
 
 /**
- * `omp-sdk-worker.ts` runs as a standalone script (omp-bridge.ts spawns
+ * `engine/in-process/main.ts` runs as a standalone script (omp-bridge.ts spawns
  * `bun <worker>.ts`), so rollup never bundles it: bun resolves its relative
  * imports at runtime against whatever sits next to the copy in `out/`. This
  * plugin copies the worker plus its full relative-import closure, derived from
@@ -15,7 +15,7 @@ import { copyOmpWorkerClosure } from './scripts/build/omp-worker-closure.mjs'
  */
 function copyOmpWorkerPlugin(): { name: string; closeBundle(): void } {
   return {
-    name: 'copy-omp-sdk-worker',
+    name: 'copy-omp-in-process-worker',
     closeBundle(): void {
       copyOmpWorkerClosure(resolve('.'))
     }

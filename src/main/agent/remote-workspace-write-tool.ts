@@ -1,10 +1,10 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
+import { PHI_REMOTE_WRITE_DESCRIPTION } from './engine/phi-extension'
+
+export { PHI_REMOTE_WRITE_DESCRIPTION } from './engine/phi-extension'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
-
-export const PHI_REMOTE_WRITE_DESCRIPTION =
-  'Phi remote project write: create a UTF-8 file, or replace an existing file that this conversation already read and that has not changed. Pass path and content. Existing directories and special files are refused.'
 
 export function buildRemoteWorkspaceWriteTool(
   create: (
@@ -13,11 +13,12 @@ export function buildRemoteWorkspaceWriteTool(
     content: string,
     signal?: AbortSignal
   ) => Promise<RemoteMutationResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'write',
     label: 'Write',
     description: PHI_REMOTE_WRITE_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: {

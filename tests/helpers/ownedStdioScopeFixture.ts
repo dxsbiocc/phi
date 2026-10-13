@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { connectToServer, disconnectServer } from '@oh-my-pi/pi-coding-agent/mcp/client'
 import { StdioTransport } from '@oh-my-pi/pi-coding-agent/mcp/transports/stdio'
-import { OwnedStdioTransportScope } from '../../src/main/agent/omp/owned-stdio-transports'
+import { OwnedStdioTransportScope } from '../../src/main/agent/engine/mcp/owned-stdio-transports'
 
 const [root, node, server] = process.argv.slice(2)
 function config(name: string): { type: 'stdio'; command: string; args: string[]; timeout: number } {

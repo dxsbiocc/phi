@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 /**
  * Splits an agent's declared tool names into what the SDK session needs:
@@ -8,21 +8,21 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
  */
 export function resolveAgentTools(
   declared: readonly string[],
-  phiTools: ReadonlyMap<string, CustomTool>
-): { toolNames: string[]; customTools: CustomTool[] } {
+  phiTools: ReadonlyMap<string, PhiTool>
+): { toolNames: string[]; customTools: PhiTool[] } {
   const toolNames = [...new Set(declared)]
   const customTools = toolNames
     .map((name) => phiTools.get(name))
-    .filter((tool): tool is CustomTool => tool !== undefined)
+    .filter((tool): tool is PhiTool => tool !== undefined)
   return { toolNames, customTools }
 }
 
 export function buildScopedPhiToolMap(
   agentName: string,
   groups: {
-    wrapper: readonly CustomTool[]
+    wrapper: readonly PhiTool[]
   }
-): Map<string, CustomTool> {
+): Map<string, PhiTool> {
   const tools = agentName === 'Wrapper' ? groups.wrapper : []
   return new Map(tools.map((tool) => [tool.name, tool]))
 }

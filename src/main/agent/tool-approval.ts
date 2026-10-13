@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { InlineExtension } from './runtime/runtime-adapter'
-import { planModeToolDecision } from './plan/plan-tool-policy'
+import { planModeToolDecision } from './engine/phi-extension'
 
 export interface ToolApprovalRequest {
   requestId: string

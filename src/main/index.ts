@@ -1,4 +1,6 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
+import type { PhiAgentEvent, PhiAgentEventSummary } from './agent/engine/types'
+import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionOverrides,
@@ -476,7 +478,7 @@ import {
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
-import { getOmpBridge } from './agent/omp/omp-bridge'
+import { getPhiEngine } from './agent/engine/in-process-engine'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
   normalizeProjectMemorySettings,
@@ -948,8 +950,7 @@ function officialContentSourceOptions(): {
         ref: descriptor.ref,
         requestedBy: { mcp: descriptor.owner ?? descriptor.spec.name }
       }),
-    verifyMcpStdio: (request) =>
-      getOmpBridge().request<string[]>('mcp.configuredStdioTools', request)
+    verifyMcpStdio: (request) => getPhiEngine().mcp.configuredStdioTools(request)
   }
 }
 
@@ -1507,7 +1508,7 @@ const notebookToolHostRouter = new NotebookToolHostRouter({
   isRemoteCwd: isRemoteAnalysisCwd,
   resolveRemote: resolveRemoteNotebookToolBackend
 })
-getOmpBridge().registerHostHandler('notebookTool.execute', (params) =>
+getPhiEngine().host.register('notebookTool.execute', (params) =>
   notebookToolHostRouter.execute(params as Parameters<typeof notebookToolHostRouter.execute>[0])
 )
 const skillHost = createSkillHost({
@@ -1778,26 +1779,26 @@ async function installedPluginNamespace(projectDir?: string): Promise<PluginName
     toolPrefixes
   }
 }
-getOmpBridge().registerHostHandler('skills.scriptTools', (params) =>
+getPhiEngine().host.register('skills.scriptTools', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.scriptTools(params)
     : skillHost.scriptTools(params)
 )
-getOmpBridge().registerHostHandler('skills.run', (params) =>
+getPhiEngine().host.register('skills.run', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.runSkill(params)
     : skillHost.run(params)
 )
-getOmpBridge().registerHostHandler('skills.scriptTool', (params) =>
+getPhiEngine().host.register('skills.scriptTool', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.runScriptTool(params)
     : skillHost.scriptTool(params)
 )
-getOmpBridge().registerHostHandler('skills.cancel', (params) => {
+getPhiEngine().host.register('skills.cancel', (params) => {
   if (remoteRuntimeController.owns(params)) return remoteRuntimeController.skills.cancel(params)
   return skillHost.cancel(params)
 })
-getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
+getPhiEngine().host.register('environments.bindSession', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.bindEnvironment(params)
     : bindAgentSession(params, {
@@ -1805,7 +1806,7 @@ getOmpBridge().registerHostHandler('environments.bindSession', (params) =>
         confirmBuild: (request) => confirmEnvironmentBuild(request)
       })
 )
-getOmpBridge().registerHostHandler('environments.request', (params) =>
+getPhiEngine().host.register('environments.request', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.requestEnvironment(params)
     : requestProjectEnvironment(params, {
@@ -1814,23 +1815,23 @@ getOmpBridge().registerHostHandler('environments.request', (params) =>
         confirm: (request) => confirmEnvironmentRequest(request)
       })
 )
-getOmpBridge().registerHostHandler('environments.cancel', (params) =>
+getPhiEngine().host.register('environments.cancel', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.environments.cancel(params)
     : undefined
 )
-getOmpBridge().registerHostHandler('agentInteraction.request', handleAgentInteractionRequest)
-getOmpBridge().registerHostHandler(
+getPhiEngine().host.register('agentInteraction.request', handleAgentInteractionRequest)
+getPhiEngine().host.register(
   'settings.nextActionSuggestionsEnabled',
   () => readAppSettings().nextActionSuggestionsEnabled
 )
 const cursorH2Bridge = createCursorH2Bridge()
-getOmpBridge().registerHostHandler('cursorBridge.ensure', async () => ({
+getPhiEngine().host.register('cursorBridge.ensure', async () => ({
   baseUrl: await cursorH2Bridge.ensure()
 }))
-getOmpBridge().registerHostHandler('planReview.request', handlePlanReviewRequest)
-getOmpBridge().registerHostHandler('deliverables.present', handlePresentFilesRequest)
-getOmpBridge().registerHostHandler('mcp.openAuthUrl', async (params) => {
+getPhiEngine().host.register('planReview.request', handlePlanReviewRequest)
+getPhiEngine().host.register('deliverables.present', handlePresentFilesRequest)
+getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   const request = params as { id?: unknown; url?: unknown } | null
   if (typeof request?.id !== 'string' || typeof request.url !== 'string') {
     throw new Error('授权地址无效')
@@ -1877,7 +1878,7 @@ function customMcpConfigDigest(connector: ReturnType<typeof readCustomRemoteMcpC
   return createHash('sha256').update(JSON.stringify(connector)).digest('hex')
 }
 
-getOmpBridge().registerHostHandler('mcp.openCustomAuthUrl', async (params) => {
+getPhiEngine().host.register('mcp.openCustomAuthUrl', async (params) => {
   const request = params as { name?: unknown; attemptId?: unknown; url?: unknown } | null
   if (typeof request?.name !== 'string' || typeof request.attemptId !== 'string') {
     throw new Error('连接器授权请求无效')
@@ -1904,7 +1905,7 @@ getOmpBridge().registerHostHandler('mcp.openCustomAuthUrl', async (params) => {
   }
   await shell.openExternal(url.toString())
 })
-getOmpBridge().registerHostHandler('mcp.featuredApiKey', (params) => {
+getPhiEngine().host.register('mcp.featuredApiKey', (params) => {
   const id = (params as { id?: unknown } | null)?.id
   if (typeof id !== 'string') throw new Error('连接器标识无效')
   apiKeyConnector(id)
@@ -1943,12 +1944,12 @@ async function featuredMcpApiKeyVerifiedStatus(id: string): Promise<boolean> {
 async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
   if (!API_KEY_CONNECTOR_IDS.some((connectorId) => connectorId === id)) return
   try {
-    await getOmpBridge().request('mcp.syncFeaturedApiKeys', { id })
+    await getPhiEngine().mcp.syncFeaturedApiKeys({ id })
   } catch {
     // The worker may still hold the previous key. Stop it so a failed sync cannot
     // leave a revoked or rotated credential usable in an existing session.
     writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: id } })
-    await getOmpBridge().stop()
+    await getPhiEngine().stop()
     throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
   }
 }
@@ -2043,12 +2044,12 @@ function scheduleRemoteProjectCheck(sessionId: string, projectId: string): void 
     })
   })
 }
-getOmpBridge().registerHostHandler('remoteWorkspace.resolvePath', (params) =>
+getPhiEngine().host.register('remoteWorkspace.resolvePath', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     resolveRemoteWorkspacePath(params)
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.resolveBashContext', (params) =>
+getPhiEngine().host.register('remoteWorkspace.resolveBashContext', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     resolveRemoteBashContext(params)
   )
@@ -2070,7 +2071,7 @@ const releaseAllRemoteWorkspaceHosts = (): void => {
   )
 }
 const remoteReadBasis = new RemoteWorkspaceReadBasis()
-getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
+getPhiEngine().host.register('remoteWorkspace.read', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     readRemoteWorkspacePath(params, {
       connectHost: connectRemoteWorkspaceHost,
@@ -2085,7 +2086,7 @@ getOmpBridge().registerHostHandler('remoteWorkspace.read', (params) =>
     })
   )
 )
-getOmpBridge().registerHostHandler('remoteSkills.readResource', (params) => {
+getPhiEngine().host.register('remoteSkills.readResource', (params) => {
   if (!isRecord(params) || typeof params.path !== 'string') {
     throw new Error('远程项目 Skill 读取请求无效')
   }
@@ -2094,12 +2095,12 @@ getOmpBridge().registerHostHandler('remoteSkills.readResource', (params) => {
     readRemoteProjectSkillResource(context, params.path as string)
   )
 })
-getOmpBridge().registerHostHandler('remoteWorkspace.glob', (params) =>
+getPhiEngine().host.register('remoteWorkspace.glob', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteGlob(params, { connectHost: connectRemoteWorkspaceHost })
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.grep', (params) =>
+getPhiEngine().host.register('remoteWorkspace.grep', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteGrep(params, { connectHost: connectRemoteWorkspaceHost })
   )
@@ -2119,36 +2120,36 @@ const remoteMutationManager = new RemoteWorkspaceMutationManager({
 const remoteProjectDownloadManager = new RemoteProjectDownloadManager({
   agentDir: AGENT_DIR
 })
-getOmpBridge().registerHostHandler('remoteWorkspace.write', (params) =>
+getPhiEngine().host.register('remoteWorkspace.write', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteMutationManager.write(params)
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.cancelWrite', (params) =>
+getPhiEngine().host.register('remoteWorkspace.cancelWrite', (params) =>
   remoteMutationManager.cancel(params)
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.edit', (params) =>
+getPhiEngine().host.register('remoteWorkspace.edit', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteMutationManager.edit(params)
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.cancelEdit', (params) =>
+getPhiEngine().host.register('remoteWorkspace.cancelEdit', (params) =>
   remoteMutationManager.cancel(params)
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.bash', (params) =>
+getPhiEngine().host.register('remoteWorkspace.bash', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteBashManager.run(params)
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.cancelBash', (params) =>
+getPhiEngine().host.register('remoteWorkspace.cancelBash', (params) =>
   remoteBashManager.cancel(params)
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.download', (params) =>
+getPhiEngine().host.register('remoteWorkspace.download', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
     remoteProjectDownloadManager.run(params)
   )
 )
-getOmpBridge().registerHostHandler('remoteWorkspace.cancelDownload', (params) =>
+getPhiEngine().host.register('remoteWorkspace.cancelDownload', (params) =>
   remoteProjectDownloadManager.cancel(params)
 )
 
@@ -2222,7 +2223,7 @@ const wrapperJobs = new WrapperJobManager({
   }
 })
 for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
-  getOmpBridge().registerHostHandler(method, handler)
+  getPhiEngine().host.register(method, handler)
 }
 wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId }))
 
@@ -2264,14 +2265,14 @@ async function cleanupBrowserRunTabs(run: PromptRun): Promise<void> {
   }
 }
 
-getOmpBridge().registerHostHandler('browser.execute', (params) =>
+getPhiEngine().host.register('browser.execute', (params) =>
   browserToolHostCoordinator.execute(params)
 )
-getOmpBridge().registerHostHandler('browser.cancel', (params) =>
+getPhiEngine().host.register('browser.cancel', (params) =>
   browserToolHostCoordinator.cancel(params)
 )
 async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
-  const raw = await getOmpBridge().request<unknown>('agentRuns.list', {})
+  const raw = await getPhiEngine().agentRuns.list({})
   if (!Array.isArray(raw)) return []
   return raw
     .flatMap((value): BackgroundAgentJob[] => {
@@ -2332,7 +2333,7 @@ async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
 const SHELL_JOB_STATES = new Set(['queued', 'running', 'completed', 'failed', 'cancelled'])
 
 async function listBackgroundShellJobs(): Promise<BackgroundShellJob[]> {
-  const raw = await getOmpBridge().request<unknown>('shellJobs.list', {})
+  const raw = await getPhiEngine().shellJobs.list({})
   if (!Array.isArray(raw)) return []
   return raw
     .flatMap((value): BackgroundShellJob[] => {
@@ -2380,7 +2381,7 @@ async function listBackgroundShellJobs(): Promise<BackgroundShellJob[]> {
 async function stopBackgroundShellJob(agentSessionId: unknown, jobId: unknown): Promise<void> {
   if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少会话')
   if (typeof jobId !== 'string' || !jobId) throw new Error('缺少后台命令编号')
-  const result = await getOmpBridge().request<{ ok?: boolean }>('shellJobs.cancel', {
+  const result = await getPhiEngine().shellJobs.cancel({
     sessionId: agentSessionId,
     jobId
   })
@@ -2444,7 +2445,7 @@ for (const [method, handler] of Object.entries(
     clearReported: (phiSessionId, agentRunId) => clearAgentRunReported(phiSessionId, agentRunId)
   })
 )) {
-  getOmpBridge().registerHostHandler(method, handler)
+  getPhiEngine().host.register(method, handler)
 }
 
 const MAX_AGENT_STEER_LENGTH = 4000
@@ -2489,11 +2490,13 @@ async function requestAgentRunControl(
 ): Promise<void> {
   if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少 Agent 会话')
   if (typeof agentRunId !== 'string' || !agentRunId) throw new Error('缺少 Agent 运行编号')
-  await getOmpBridge().request(method, {
+  const params = {
     sessionId: agentSessionId,
     runId: agentRunId,
     ...(message !== undefined ? { message } : {})
-  })
+  }
+  if (method === 'agentRun.steer') await getPhiEngine().agentRuns.steer(params)
+  else await getPhiEngine().agentRuns.stop(params)
 }
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
@@ -3195,21 +3198,11 @@ function extractMessageText(content: unknown): string {
     .join('')
 }
 
-function assistantTextFromEventSummary(
-  summary: Record<string, unknown>,
-  currentText: string
-): string {
-  const message = summary.message as { role?: string } | undefined
-  const assistantMessageEvent = summary.assistantMessageEvent as
-    | {
-        type?: unknown
-        delta?: unknown
-        message?: unknown
-        partial?: unknown
-        error?: unknown
-        content?: unknown
-      }
-    | undefined
+function assistantTextFromEventSummary(summary: PhiAgentEventSummary, currentText: string): string {
+  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
+  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
+    ? summary.assistantMessageEvent
+    : undefined
 
   if (
     summary.type === 'message_update' &&
@@ -3253,17 +3246,17 @@ function assistantTextFromEventSummary(
   return currentText
 }
 
-function assistantErrorMessageFromEventSummary(summary: Record<string, unknown>): string | null {
-  const assistantMessageEvent = summary.assistantMessageEvent as
-    { type?: unknown; error?: unknown } | undefined
+function assistantErrorMessageFromEventSummary(summary: PhiAgentEventSummary): string | null {
+  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
+    ? summary.assistantMessageEvent
+    : undefined
   if (summary.type === 'message_update' && assistantMessageEvent?.type === 'error') {
     const error = assistantMessageEvent.error
     const message = assistantErrorText(error, { allowContent: true })
     return message ? redactSensitiveText(message) : '请求失败'
   }
 
-  const message = summary.message as
-    { role?: string; stopReason?: unknown; errorMessage?: unknown } | undefined
+  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
   if (
     summary.type === 'message_end' &&
     message?.role === 'assistant' &&
@@ -3291,23 +3284,11 @@ function isPermanentProviderRegionError(message: unknown): message is string {
   )
 }
 
-function notebookCompletionCandidatesFromEventSummary(summary: Record<string, unknown>): unknown[] {
+function notebookCompletionCandidatesFromEventSummary(summary: PhiAgentEventSummary): unknown[] {
   const candidates: unknown[] = []
-  const assistantMessageEvent = summary.assistantMessageEvent as
-    | {
-        type?: unknown
-        data?: unknown
-        value?: unknown
-        content?: unknown
-        delta?: unknown
-        result?: unknown
-        output?: unknown
-        outputs?: unknown
-        message?: unknown
-        partial?: unknown
-        error?: unknown
-      }
-    | undefined
+  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
+    ? summary.assistantMessageEvent
+    : undefined
   if (summary.type === 'message_update' && assistantMessageEvent) {
     candidates.push(assistantMessageEvent)
     if (assistantMessageEvent.message) candidates.push(assistantMessageEvent.message)
@@ -3322,7 +3303,7 @@ function notebookCompletionCandidatesFromEventSummary(summary: Record<string, un
     if (assistantMessageEvent.outputs) candidates.push(assistantMessageEvent.outputs)
   }
 
-  const message = summary.message as { role?: string } | undefined
+  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
   if (summary.type === 'message_end' && message?.role === 'assistant') {
     candidates.push(message)
   }
@@ -3399,7 +3380,7 @@ function summaryTimestampMs(summary: Record<string, unknown>): number {
  * conversation's store stamps its own copy when it writes, but the live event sent to the window is
  * the one before that, so it gets its time here. An event that already has one keeps it.
  */
-function withEventTimestamp(summary: Record<string, unknown>): Record<string, unknown> {
+function withEventTimestamp(summary: PhiAgentEvent): PhiAgentEvent {
   return Object.keys(createdAtFromSummary(summary)).length > 0
     ? summary
     : { ...summary, createdAt: new Date().toISOString() }
@@ -3909,10 +3890,7 @@ function persistSdkShakeEvent(
   return { source: 'phi', ...stored }
 }
 
-function persistSessionEvent(
-  run: PromptRun,
-  summary: Record<string, unknown>
-): Record<string, unknown> {
+function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<string, unknown> {
   const withRunId = (event: Record<string, unknown>): Record<string, unknown> =>
     typeof event.runId === 'string' ? event : { ...event, runId: run.runId }
 
@@ -3926,7 +3904,7 @@ function persistSessionEvent(
     return withRunId(summary)
   }
 
-  if (summary.type === 'auto_compaction_end' && typeof summary.action === 'string') {
+  if (isPhiEventType(summary, 'auto_compaction_end')) {
     const reason = run.compactionReasons.get(summary.action)
     run.compactionReasons.delete(summary.action)
     if (summary.action === 'shake') {
@@ -3946,8 +3924,7 @@ function persistSessionEvent(
       })
       return { source: 'phi', ...stored }
     }
-    const result = summary.result as
-      { summary?: unknown; shortSummary?: unknown; tokensBefore?: unknown } | undefined
+    const result = summary.result
     const stored = appendSessionEvent(run.phiSessionId, {
       type: 'context_compacted',
       runId: run.runId,
@@ -3966,21 +3943,14 @@ function persistSessionEvent(
     return { source: 'phi', ...stored }
   }
 
-  if (
-    summary.type === 'message_start' &&
-    (summary.message as { role?: string } | undefined)?.role === 'assistant'
-  ) {
+  if (isPhiEventType(summary, 'message_start') && summary.message.role === 'assistant') {
     run.thinkingBlocks.clear()
     run.thinkingBlockStartedAtMs.clear()
     return withRunId(summary)
   }
 
-  if (
-    summary.type === 'message_update' &&
-    (summary.message as { role?: string } | undefined)?.role === 'assistant'
-  ) {
-    const assistantMessageEvent = summary.assistantMessageEvent as
-      { type?: string; delta?: unknown; contentIndex?: unknown } | undefined
+  if (isPhiEventType(summary, 'message_update') && summary.message.role === 'assistant') {
+    const assistantMessageEvent = summary.assistantMessageEvent
     if (
       assistantMessageEvent?.type === 'thinking_delta' &&
       typeof assistantMessageEvent.delta === 'string'
@@ -4000,11 +3970,8 @@ function persistSessionEvent(
     return withRunId(summary)
   }
 
-  if (
-    summary.type === 'message_end' &&
-    (summary.message as { role?: string } | undefined)?.role === 'assistant'
-  ) {
-    const assistantMessage = summary.message as { stopReason?: unknown; errorMessage?: unknown }
+  if (isPhiEventType(summary, 'message_end') && summary.message.role === 'assistant') {
+    const assistantMessage = summary.message
     if (assistantMessage?.stopReason === 'error') {
       const errorMessage =
         typeof assistantMessage.errorMessage === 'string'
@@ -4019,15 +3986,8 @@ function persistSessionEvent(
     return withRunId({ ...summary, message: browserSafeAssistantMessage(summary.message) })
   }
 
-  if (
-    summary.type === 'message_end' &&
-    (summary.message as { role?: string } | undefined)?.role === 'toolResult'
-  ) {
-    const result = summary.message as {
-      toolCallId?: unknown
-      content?: unknown
-      isError?: unknown
-    }
+  if (isPhiEventType(summary, 'message_end') && summary.message.role === 'toolResult') {
+    const result = summary.message
     const toolCallId = result.toolCallId
     if (typeof toolCallId !== 'string') return withRunId(summary)
     const pending = run.pendingProviderToolCalls.get(toolCallId)
@@ -4810,7 +4770,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
 
         await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
         if (input.planMode) {
-          await getOmpBridge().request('session.plan.enter', {
+          await getPhiEngine().sessions.enterPlanMode({
             sessionId: session.runtimeSessionId
           })
         }
@@ -6954,10 +6914,7 @@ function projectMemoryTarget(project: Project): { agentDir: string; cwd: string 
 
 async function projectMemorySnapshot(id: string): Promise<ProjectMemorySnapshot> {
   const project = requireProject(id)
-  const files = await getOmpBridge().request<Omit<ProjectMemorySnapshot, 'projectId' | 'settings'>>(
-    'memory.read',
-    projectMemoryTarget(project)
-  )
+  const files = await getPhiEngine().memory.read(projectMemoryTarget(project))
   return {
     projectId: id,
     settings: normalizeProjectMemorySettings(project.memory),
@@ -8224,23 +8181,23 @@ app.whenReady().then(async () => {
     return settings
   })
   ipcMain.handle('settings:webSearch:get', async () =>
-    getOmpBridge().request('settings.webSearch.get', { agentDir: AGENT_DIR })
+    getPhiEngine().settings.webSearch.get({ agentDir: AGENT_DIR })
   )
   ipcMain.handle('settings:webSearch:update', async (_, patch: unknown) =>
-    getOmpBridge().request('settings.webSearch.update', { agentDir: AGENT_DIR, patch })
+    getPhiEngine().settings.webSearch.update({ agentDir: AGENT_DIR, patch })
   )
   ipcMain.handle('settings:webSearch:searxngEngines', async () =>
-    getOmpBridge().request('settings.webSearch.searxngEngines', { agentDir: AGENT_DIR })
+    getPhiEngine().settings.webSearch.searxngEngines({ agentDir: AGENT_DIR })
   )
   ipcMain.handle('settings:webSearch:apiKey:set', async (_, providerId: unknown, key: unknown) =>
-    getOmpBridge().request('settings.webSearch.apiKey.set', {
+    getPhiEngine().settings.webSearch.setApiKey({
       agentDir: AGENT_DIR,
       providerId,
       key
     })
   )
   ipcMain.handle('settings:webSearch:apiKey:clear', async (_, providerId: unknown) =>
-    getOmpBridge().request('settings.webSearch.apiKey.clear', { agentDir: AGENT_DIR, providerId })
+    getPhiEngine().settings.webSearch.clearApiKey({ agentDir: AGENT_DIR, providerId })
   )
 
   ipcMain.handle('environment:get', () => backgroundEnvironment.get())
@@ -8452,7 +8409,7 @@ app.whenReady().then(async () => {
     const userMessages = events.filter((event) => event.type === 'user_message')
     const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
     if (selectedIndex < 0) throw new Error('分叉消息不存在')
-    const result = await getOmpBridge().request<{ path: string }>('sessions.fork', {
+    const result = await getPhiEngine().history.fork({
       path: source.runtimeSessionPath,
       cwd: source.cwd,
       userMessages: userMessages
@@ -8682,8 +8639,8 @@ app.whenReady().then(async () => {
     const project = getProject(id)
     if (project?.memory) {
       // Memory lives under Phi's own directory, so it would outlive the project otherwise.
-      await getOmpBridge()
-        .request('memory.clear', projectMemoryTarget(project))
+      await getPhiEngine()
+        .memory.clear(projectMemoryTarget(project))
         .catch(() => writeAppLog({ level: 'error', event: 'project_memory_clear_failed' }))
     }
     deleteProject(id)
@@ -8745,7 +8702,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('memory:snapshot', async (_, id: string) => projectMemorySnapshot(id))
   ipcMain.handle('memory:deleteLesson', async (_, id: string, index: unknown, text: unknown) => {
     const project = requireProject(id)
-    await getOmpBridge().request('memory.deleteLesson', {
+    await getPhiEngine().memory.deleteLesson({
       ...projectMemoryTarget(project),
       index,
       text
@@ -8753,7 +8710,7 @@ app.whenReady().then(async () => {
     return projectMemorySnapshot(id)
   })
   ipcMain.handle('memory:clear', async (_, id: string) => {
-    await getOmpBridge().request('memory.clear', projectMemoryTarget(requireProject(id)))
+    await getPhiEngine().memory.clear(projectMemoryTarget(requireProject(id)))
     return projectMemorySnapshot(id)
   })
   ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
@@ -10090,10 +10047,9 @@ app.whenReady().then(async () => {
     tracker: connectorSetups,
     agentDir: AGENT_DIR,
     runtimeRoot: getRuntimeRoot(),
-    probe: (request) => getOmpBridge().request<string[]>('mcp.configuredStdioTools', request),
-    cancelProbe: (requestKey) =>
-      getOmpBridge().request('mcp.cancelConfiguredStdioTools', { requestKey }),
-    applyEnabled: (name) => getOmpBridge().request('mcp.applyConnectorEnabled', { name }),
+    probe: (request) => getPhiEngine().mcp.configuredStdioTools(request),
+    cancelProbe: (requestKey) => getPhiEngine().mcp.cancelConfiguredStdioTools({ requestKey }),
+    applyEnabled: (name) => getPhiEngine().mcp.applyConnectorEnabled({ name }),
     onEvent: (event, metadata) =>
       writeAppLog({ event: `mcp_local_connector_add_${event}`, metadata })
   })
@@ -10118,7 +10074,7 @@ app.whenReady().then(async () => {
     const entry = readMcpServerEntry(id, AGENT_DIR)
     if (!entry || entry.phiPackage !== id) throw new Error('请先安装这个本地连接器')
     report('starting')
-    const toolNames = await getOmpBridge().request<string[]>('mcp.configuredStdioTools', {
+    const toolNames = await getPhiEngine().mcp.configuredStdioTools({
       name: id,
       entry,
       environment: { agentDir: AGENT_DIR, root: getRuntimeRoot() }
@@ -10269,10 +10225,9 @@ app.whenReady().then(async () => {
     const result = await addLocalMcpConnector(request, {
       agentDir: AGENT_DIR,
       catalogIds,
-      probe: (probeRequest) =>
-        getOmpBridge().request<string[]>('mcp.configuredStdioTools', probeRequest)
+      probe: (probeRequest) => getPhiEngine().mcp.configuredStdioTools(probeRequest)
     })
-    await getOmpBridge().request('mcp.applyConnectorEnabled', { name: request.name })
+    await getPhiEngine().mcp.applyConnectorEnabled({ name: request.name })
     return result
   })
   ipcMain.handle('mcp:startLocalConnectorAdd', async (_, raw: unknown) => {
@@ -10295,7 +10250,7 @@ app.whenReady().then(async () => {
     if (typeof name !== 'string') throw new Error('连接器名称无效')
     const validatedName = validateName(name)
     await removeLocalMcpConnector(validatedName)
-    await getOmpBridge().request('mcp.applyConnectorEnabled', { name: validatedName })
+    await getPhiEngine().mcp.applyConnectorEnabled({ name: validatedName })
   })
   ipcMain.handle('mcp:listLocalRuntimes', async () => listLocalMcpRuntimes())
   ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
@@ -10318,11 +10273,11 @@ app.whenReady().then(async () => {
         typeof sourcePath === 'string' ? sourcePath : undefined
       )
       try {
-        await getOmpBridge().request('mcp.applyConnectorEnabled', { name })
+        await getPhiEngine().mcp.applyConnectorEnabled({ name })
       } catch (error) {
         if (!API_KEY_CONNECTOR_IDS.some((id) => id === name)) throw error
         writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: name } })
-        await getOmpBridge().stop()
+        await getPhiEngine().stop()
         throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
       }
     }
@@ -10358,7 +10313,7 @@ app.whenReady().then(async () => {
       })
     }
     if (!connector.url) throw new Error('连接器的服务地址无效')
-    return getOmpBridge().request<string[]>('mcp.featuredTools', {
+    return getPhiEngine().mcp.featuredTools({
       id,
       url: connector.url,
       auth: connector.auth
@@ -10369,18 +10324,18 @@ app.whenReady().then(async () => {
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持登录状态查询')
     }
-    return getOmpBridge().request<boolean>('mcp.featuredAuthStatus', { id, url: connector.url })
+    return getPhiEngine().mcp.featuredAuthStatus({ id, url: connector.url })
   })
   ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('该连接器尚不支持 OAuth 授权')
     }
-    await getOmpBridge().request('mcp.authorizeFeatured', { id, url: connector.url })
+    await getPhiEngine().mcp.authorizeFeatured({ id, url: connector.url })
   })
   ipcMain.handle('mcp:cancelFeaturedAuth', async (_, id: string) => {
     if (typeof id !== 'string' || !id) return
-    await getOmpBridge().request('mcp.cancelFeaturedAuth', { id })
+    await getPhiEngine().mcp.cancelFeaturedAuth({ id })
   })
 
   ipcMain.handle('mcp:authorizeRemoteConnector', async (_, name: string) => {
@@ -10396,10 +10351,10 @@ app.whenReady().then(async () => {
     pendingCustomMcpAuthorizations.set(connector.name, pending)
     let authorizationStarted = false
     try {
-      const prepared = await getOmpBridge().request<{
-        serverUrl?: unknown
-        authorizationUrl?: unknown
-      }>('mcp.prepareRemoteAuth', { name: connector.name, attemptId: pending.attemptId })
+      const prepared = await getPhiEngine().mcp.prepareRemoteAuth({
+        name: connector.name,
+        attemptId: pending.attemptId
+      })
       if (pending.cancelled) throw new Error('授权已取消')
       const current = readCustomRemoteMcpConnector(connector.name, AGENT_DIR)
       if (
@@ -10413,7 +10368,7 @@ app.whenReady().then(async () => {
       pending.authorizationOrigin = authorizationUrl.origin
       pending.authorizationPath = authorizationUrl.pathname
       authorizationStarted = true
-      await getOmpBridge().request('mcp.authorizeRemote', {
+      await getPhiEngine().mcp.authorizeRemote({
         name: connector.name,
         attemptId: pending.attemptId,
         serverUrl: pending.serverUrl
@@ -10422,8 +10377,8 @@ app.whenReady().then(async () => {
       if (pendingCustomMcpAuthorizations.get(connector.name) === pending)
         pendingCustomMcpAuthorizations.delete(connector.name)
       if (!authorizationStarted) {
-        await getOmpBridge()
-          .request('mcp.cancelRemoteAuth', { name: connector.name, attemptId: pending.attemptId })
+        await getPhiEngine()
+          .mcp.cancelRemoteAuth({ name: connector.name, attemptId: pending.attemptId })
           .catch(() => undefined)
       }
     }
@@ -10434,7 +10389,7 @@ app.whenReady().then(async () => {
     const pending = pendingCustomMcpAuthorizations.get(key)
     if (!pending) return
     pending.cancelled = true
-    await getOmpBridge().request('mcp.cancelRemoteAuth', {
+    await getPhiEngine().mcp.cancelRemoteAuth({
       name: key,
       attemptId: pending.attemptId
     })

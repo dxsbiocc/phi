@@ -1,10 +1,14 @@
 import { rm } from 'node:fs/promises'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
-import { getMemoryRoot, saveLearnedLesson } from '@oh-my-pi/pi-coding-agent/memories'
-import { closeMemoryDb, openMemoryDb } from '@oh-my-pi/pi-coding-agent/memories/storage'
-import { getAgentDbPath } from '@oh-my-pi/pi-utils'
+import {
+  closeMemoryDb,
+  getAgentDbPath,
+  getMemoryRoot,
+  openMemoryDb,
+  saveLearnedLesson
+} from '../engine/omp-internals'
 
 import { buildProjectLearnTool } from './learn-tool'
 import {
@@ -70,7 +74,7 @@ export async function clearProjectMemory(params: unknown): Promise<void> {
   await rm(getMemoryRoot(target.agentDir, target.cwd), { recursive: true, force: true })
 }
 
-export function buildWorkerProjectLearnTool(target: ProjectMemoryTarget): CustomTool {
+export function buildWorkerProjectLearnTool(target: ProjectMemoryTarget): PhiTool {
   return buildProjectLearnTool((input) =>
     saveLearnedLesson(target.agentDir, target.cwd, {
       content: input.content,

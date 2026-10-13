@@ -13,7 +13,7 @@ import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
 import {
   remoteAgentSupportedToolNames,
   remoteWorkspaceToolsVerified
-} from '../src/main/agent/agents/remote-project-tool-guard'
+} from '../src/main/agent/engine/phi-extension'
 import { writeEnablementState } from '../src/main/agent/enablement'
 import { NOTEBOOK_TOOL_NAMES } from '../src/main/agent/notebook/notebook-tools'
 import { installPlugin } from '../src/main/agent/plugins/loader'

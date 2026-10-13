@@ -2,7 +2,7 @@ import type { PhiAgentDefinition } from './definition'
 import {
   remoteAgentToolRegistrationVerified,
   type RemoteProjectToolInfo
-} from './remote-project-tool-guard'
+} from '../engine/phi-extension'
 
 export interface RemoteAgentToolResolution {
   agent: PhiAgentDefinition

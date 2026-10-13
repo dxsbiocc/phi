@@ -5,6 +5,9 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
+import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
+
 type LocalRequest = {
   name: string
   runtime: { kind: 'environment'; ref: string } | { kind: 'host' }
@@ -58,7 +61,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     LOCAL_CHANNELS.toSorted(),
     'extract every local-connector IPC registration'
   )
-  const program = `const { addLocalMcpConnector, localConnectorJobs, removeLocalMcpConnector, listLocalMcpRuntimes, validateLocalConnectorRequest, validateName, connectorCatalog, getOmpBridge, AGENT_DIR, getRuntimeRoot } = dependencies;
+  const program = `const { addLocalMcpConnector, localConnectorJobs, removeLocalMcpConnector, listLocalMcpRuntimes, validateLocalConnectorRequest, validateName, connectorCatalog, getPhiEngine, AGENT_DIR, getRuntimeRoot } = dependencies;
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
   ${LOCAL_CHANNELS.map((channel) => registrations.get(channel)!.getText(source)).join('\n')}
@@ -135,11 +138,12 @@ test('local connector IPC validates requests and refreshes running sessions afte
       calls.push({ operation: 'list' })
       return [{ ref: 'phi:python@1', label: 'Python 1' }]
     },
-    getOmpBridge: () => ({
-      request: async (method: string, params: unknown) => {
-        calls.push({ operation: method, value: params })
-      }
-    })
+    getPhiEngine: () =>
+      createInProcessEngine({
+        request: async (method: string, params: unknown) => {
+          calls.push({ operation: method, value: params })
+        }
+      } as unknown as OmpBridge)
   })
   const invoke = (channel: string, ...args: unknown[]): Promise<unknown> => {
     const callback = callbacks.get(channel)

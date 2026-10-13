@@ -1,4 +1,7 @@
-import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool, PhiToolContext } from '../engine/types'
+import { NOTEBOOK_TOOL_DESCRIPTIONS } from '../engine/phi-extension'
+
+export { NOTEBOOK_TOOL_DESCRIPTIONS } from '../engine/phi-extension'
 
 export type NotebookToolAction =
   'list' | 'read' | 'insert_cell' | 'update_cell' | 'delete_cell' | 'run_cell' | 'save'
@@ -14,40 +17,6 @@ export const NOTEBOOK_TOOL_NAMES = [
 ] as const
 
 export type NotebookToolName = (typeof NOTEBOOK_TOOL_NAMES)[number]
-
-export const NOTEBOOK_TOOL_DESCRIPTIONS: ReadonlyMap<string, string> = new Map<
-  NotebookToolName,
-  string
->([
-  [
-    'notebook.list',
-    'List .ipynb notebooks in the current project or ordinary workspace. Use this before opening or modifying a notebook when the path is unknown.'
-  ],
-  [
-    'notebook.read',
-    'Read the current in-memory notebook draft for a workspace notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.'
-  ],
-  [
-    'notebook.insert_cell',
-    'Insert a code, markdown, or raw cell into the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
-  ],
-  [
-    'notebook.update_cell',
-    'Replace the source and optionally type of an existing cell in the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
-  ],
-  [
-    'notebook.delete_cell',
-    'Delete a cell from the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
-  ],
-  [
-    'notebook.run_cell',
-    'Run one code cell through the Phi app-managed Jupyter server for the current project or ordinary workspace and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct workspace server.'
-  ],
-  [
-    'notebook.save',
-    'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the workspace.'
-  ]
-])
 
 export type NotebookRemoteProjectIdentity = {
   runtimeSessionId: string
@@ -88,17 +57,18 @@ function resultDetails(result: unknown): Record<string, unknown> {
 
 function buildNotebookTool(
   action: NotebookToolAction,
-  definition: Omit<CustomTool, 'execute'>,
+  definition: Omit<PhiTool, 'execute' | 'site'>,
   executeHost: NotebookToolHostExecutor,
   options: NotebookToolBuildOptions
-): CustomTool {
+): PhiTool {
   return {
     ...definition,
-    async execute(_toolCallId, params, _onUpdate, ctx: CustomToolContext) {
+    site: 'host',
+    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
       try {
         const result = await executeHost({
           action,
-          cwd: ctx.sessionManager.getCwd(),
+          cwd: ctx.cwd,
           params: recordValue(params),
           ...(options.remoteProject ? { remoteProject: options.remoteProject } : {})
         })
@@ -119,7 +89,7 @@ function buildNotebookTool(
 export function buildNotebookCustomTools(
   executeHost: NotebookToolHostExecutor,
   options: NotebookToolBuildOptions = {}
-): CustomTool[] {
+): PhiTool[] {
   return [
     buildNotebookTool(
       'list',

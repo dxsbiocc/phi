@@ -19,20 +19,20 @@ import { currentPlatform } from '../src/main/agent/envs'
 import { hasLiveEnvironmentLeases } from '../src/main/agent/envs/leases'
 import { collectGarbage } from '../src/main/agent/envs/gc'
 import { managedStdioServer } from '../src/main/agent/mcp'
-import { findBunExecutable } from '../src/main/agent/omp/bun-executable'
-import { OmpBridge } from '../src/main/agent/omp/omp-bridge'
+import { findBunExecutable } from '../src/main/agent/engine/bun-executable'
+import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import {
   ConfiguredStdioRequestRegistry,
   configuredStdioRequestKey,
   configuredStdioTimeoutMessage,
   resolveConfiguredStdioTimeoutMs
-} from '../src/main/agent/omp/configured-stdio-request-control'
+} from '../src/main/agent/engine/mcp/configured-stdio-request-control'
 import { copyMinimal, installReady, shQuote } from './helpers/fakeEnvironment'
 
 const bunPath = findBunExecutable()
 const REF = 'phi:python@1'
 const SERVER = join(process.cwd(), 'tests/helpers/fixtureMcpServer.mjs')
-const WORKER = join(process.cwd(), 'src/main/agent/omp/omp-sdk-worker.ts')
+const WORKER = join(process.cwd(), 'src/main/agent/engine/in-process/main.ts')
 const SERVER_REQUEST_TIMEOUT_MS = 8_000
 const FIXTURE_STARTUP_TIMEOUT_MS = 15_000
 const FIXTURE_TEST_TIMEOUT_MS = 45_000

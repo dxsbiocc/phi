@@ -9,7 +9,7 @@ import type { Project } from '../src/main/agent/projects'
 import type { RemoteHostProfile } from '../src/main/agent/remote-hosts'
 import { ensureRemoteProjectAnchor } from '../src/main/agent/remote-project-anchor'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
-import { remoteUrlGuardDecision } from '../src/main/agent/agents/remote-url-guard'
+import { remoteUrlGuardDecision } from '../src/main/agent/engine/phi-extension'
 import {
   resolveRemoteBashContext,
   resolveAuthorizedRemoteConnectionConfig,

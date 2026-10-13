@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// The OMP worker (`src/main/agent/omp/omp-sdk-worker.ts`) is not bundled by
+// The OMP worker (`src/main/agent/engine/in-process/main.ts`) is not bundled by
 // rollup: omp-bridge.ts spawns `bun <worker>.ts` and bun resolves its imports
 // from disk at runtime. bun cannot read inside `app.asar`, so in a packaged
 // app the worker, every source file it reaches through relative imports, the
@@ -12,7 +12,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
-export const OMP_WORKER_ENTRY = 'src/main/agent/omp/omp-sdk-worker.ts'
+export const OMP_WORKER_ENTRY = 'src/main/agent/engine/in-process/main.ts'
 
 // Static `import ... from`, `export ... from`, side-effect `import '...'`, and
 // literal dynamic `import('...')`. Type-only imports are included on purpose:

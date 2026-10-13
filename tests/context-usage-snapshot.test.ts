@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   contextUsageSnapshot,
   partitionMcpTools
-} from '../src/main/agent/omp/context-usage-snapshot'
+} from '../src/main/agent/engine/context-usage-snapshot'
 
 const usage = { tokens: 10000, contextWindow: 20000, percent: 50 }
 const breakdown = {

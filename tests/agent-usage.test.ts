@@ -1,3 +1,4 @@
+import type { PhiAgentEvent } from '../src/main/agent/engine/types'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -129,7 +130,7 @@ test('a very long run keeps the total tool count but caps the per-call list', ()
 
 // ── runner ────────────────────────────────────────────────────────────────
 
-type Listener = (event: unknown) => void
+type Listener = (event: PhiAgentEvent) => void
 
 function fakeSession(options: {
   onPrompt: (emit: Listener) => Promise<void> | void

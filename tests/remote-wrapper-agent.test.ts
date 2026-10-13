@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
-import { remoteProjectToolDecision } from '../src/main/agent/agents/remote-project-tool-guard'
+import { remoteProjectToolDecision } from '../src/main/agent/engine/phi-extension'
 
 test('only bundled Wrapper is enabled for an SSH project with a remote-safe toolbox', () => {
   const definition = loadRemoteWrapperAgent(join(process.cwd(), 'resources', 'agents'))

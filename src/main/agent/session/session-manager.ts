@@ -5,10 +5,10 @@ import {
   createRuntimeAgentSession
 } from '../runtime/runtime-adapter'
 
-export type AgentEventSummary = Record<string, unknown>
+export type AgentEventSummary = import('../engine/types').PhiAgentEventSummary
 
-export function summarizeEvent(event: AgentSessionEvent): Record<string, unknown> {
-  const summary: Record<string, unknown> = {
+export function summarizeEvent(event: AgentSessionEvent): AgentEventSummary {
+  const summary: AgentEventSummary = {
     type: event.type
   }
 

@@ -15,11 +15,12 @@ import {
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 
+import { toOmpCustomTool } from '../../src/main/agent/engine/tool-adapter'
 import {
   createRemoteProjectToolGuardExtension,
   remoteWorkspaceToolsVerified
-} from '../../src/main/agent/agents/remote-project-tool-guard'
-import { createRemoteUrlGuardExtension } from '../../src/main/agent/agents/remote-url-guard'
+} from '../../src/main/agent/engine/phi-extension'
+import { createRemoteUrlGuardExtension } from '../../src/main/agent/engine/phi-extension'
 import { buildRemoteWorkspaceReadTool } from '../../src/main/agent/remote-workspace-read-tool'
 import { buildRemoteWorkspaceWriteTool } from '../../src/main/agent/remote-workspace-write-tool'
 import { buildRemoteWorkspaceEditTool } from '../../src/main/agent/remote-workspace-edit-tool'
@@ -97,7 +98,7 @@ try {
     authStorage,
     modelRegistry: new ModelRegistry(authStorage),
     sessionManager: SessionManager.inMemory(agentDir),
-    customTools: tools,
+    customTools: tools.map(toOmpCustomTool),
     toolNames: tools.map((tool) => tool.name),
     restrictToolNames: true,
     allowRestrictedCustomTools: true,
@@ -205,7 +206,7 @@ try {
     authStorage,
     modelRegistry: new ModelRegistry(authStorage),
     sessionManager: SessionManager.inMemory(agentDir),
-    customTools: [...tools, ...specialistControlTools],
+    customTools: [...tools.map(toOmpCustomTool), ...specialistControlTools],
     resourceLoader: specialistLoader,
     toolNames: [...names, ...specialistControlTools.map((tool) => tool.name)],
     restrictToolNames: true,

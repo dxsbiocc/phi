@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.node.json",
+  "include": [
+    "./*.ts",
+    "../engine-contract.test.ts"
+  ],
+  "compilerOptions": {
+    "composite": false,
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node",
+      "electron-vite/node",
+      "electron"
+    ]
+  }
+}

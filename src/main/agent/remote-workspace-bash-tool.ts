@@ -1,11 +1,11 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
+import { PHI_REMOTE_BASH_DESCRIPTION } from './engine/phi-extension'
+
+export { PHI_REMOTE_BASH_DESCRIPTION } from './engine/phi-extension'
 
 import type { RemoteBashRequest, RemoteBashResult } from './remote-workspace-bash'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 import { pickDeclaredToolInput } from './remote-workspace-tool-input'
-
-export const PHI_REMOTE_BASH_DESCRIPTION =
-  'Phi remote project bash: execute a bounded non-interactive Bash command on the selected SSH server with cwd fixed to the project root. A shell command can access paths outside that root. Use Wrapper for long-running Nextflow or Slurm jobs. PTY and async mode are unavailable.'
 
 type BashInput = Pick<RemoteBashRequest, 'command' | 'timeout' | 'cwd' | 'env' | 'pty' | 'async'>
 
@@ -39,11 +39,12 @@ function formatResult(result: RemoteBashResult): string {
 
 export function buildRemoteWorkspaceBashTool(
   run: (toolCallId: string, input: BashInput, signal?: AbortSignal) => Promise<RemoteBashResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'bash',
     label: 'Bash',
     description: PHI_REMOTE_BASH_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: BASH_PARAMETERS,

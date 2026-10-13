@@ -72,7 +72,7 @@ test('saved client fields reach the installed SDK authorization and token exchan
   }
   const flowConfigs: FlowConfig[] = []
   let discoveryCalls = 0
-  const module = loadSource('src/main/agent/omp/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/mcp/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery')
       return {
         discoverOAuthEndpoints: async () => {
@@ -94,12 +94,14 @@ test('saved client fields reach the installed SDK authorization and token exchan
     }
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/client') return {}
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/manager') return {}
-    if (specifier === '../mcp-key-credentials') return { API_KEY_CONNECTOR_IDS: [] }
+    if (specifier === '../../mcp-key-credentials') return { API_KEY_CONNECTOR_IDS: [] }
     throw new Error(`Unexpected auth dependency: ${specifier}`)
   })
   const authorize = module.authorizeFeaturedMcp as (
     url: string,
-    storage: { set: (id: string, credential: Record<string, unknown>) => Promise<void> },
+    auth: {
+      setMcpOAuth: (url: string, credential: Record<string, unknown>) => Promise<void>
+    },
     open: (url: string) => Promise<void>,
     signal?: AbortSignal,
     oauth?: RemoteMcpConnectorOptions['oauth'],
@@ -111,8 +113,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
   await authorize(
     'https://mcp.example.test/mcp',
     {
-      set: async (id, credential) => {
-        stored.push({ id, credential })
+      setMcpOAuth: async (url, credential) => {
+        stored.push({ id: `mcp_oauth:${url}`, credential })
       }
     },
     async (url) => {
@@ -146,8 +148,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
   await authorize(
     'https://public.example.test/mcp',
     {
-      set: async (id, credential) => {
-        stored.push({ id, credential })
+      setMcpOAuth: async (url, credential) => {
+        stored.push({ id: `mcp_oauth:${url}`, credential })
       }
     },
     async (url) => {
@@ -163,8 +165,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
     authorize(
       'https://mcp.example.test/mcp',
       {
-        set: async (id, credential) => {
-          stored.push({ id, credential })
+        setMcpOAuth: async (url, credential) => {
+          stored.push({ id: `mcp_oauth:${url}`, credential })
         }
       },
       async () => undefined,
@@ -189,8 +191,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
       authorize(
         'https://mcp.example.test/mcp',
         {
-          set: async (id, credential) => {
-            stored.push({ id, credential })
+          setMcpOAuth: async (url, credential) => {
+            stored.push({ id: `mcp_oauth:${url}`, credential })
           }
         },
         async () => undefined,
@@ -263,7 +265,7 @@ test('preload preserves optional connector authentication fields across IPC', as
 test('custom OAuth discovery permits only secure endpoints and does not echo provider errors', async () => {
   let result: { authorizationUrl: string; tokenUrl: string } | null = null
   let failure: Error | undefined
-  const module = loadSource('src/main/agent/omp/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/mcp/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery') {
       return {
         discoverOAuthEndpoints: async () => {
@@ -308,13 +310,13 @@ function customWorkerRpc(
 ): (method: string, params: unknown) => Promise<unknown> {
   const source = ts.createSourceFile(
     'worker.ts',
-    readFileSync(resolve('src/main/agent/omp/omp-sdk-worker.ts'), 'utf8'),
+    readFileSync(resolve('src/main/agent/engine/in-process/mcp-runtime.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )
   const handler = source.statements.find(
     (node): node is ts.FunctionDeclaration =>
-      ts.isFunctionDeclaration(node) && node.name?.text === 'handleRequest'
+      ts.isFunctionDeclaration(node) && node.name?.text === 'handleMcpRequest'
   )
   const dispatch = handler?.body?.statements.find(ts.isSwitchStatement)
   assert.ok(dispatch)
@@ -356,7 +358,7 @@ test('worker custom OAuth RPC reaches the helper with exact saved credentials an
         assert.equal(savedUrl, url)
         return endpoints
       },
-      getContext: async () => ({ authStorage: 'private-store' }),
+      getContext: async () => ({ auth: 'private-store' }),
       requestHost: async (method: string, params: unknown) => {
         hostRequests.push({ method, params })
       },

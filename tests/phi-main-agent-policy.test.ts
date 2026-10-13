@@ -7,12 +7,14 @@ import {
   filterPersonaContextFile
 } from '../src/main/agent/main-system-prompt'
 import { parseAgentReport } from '../src/main/agent/agents/report'
-import { projectToolBoundaryDecision } from '../src/main/agent/agents/project-tool-boundary'
-import { remoteUrlGuardDecision } from '../src/main/agent/agents/remote-url-guard'
+import {
+  projectToolBoundaryDecision,
+  remoteUrlGuardDecision
+} from '../src/main/agent/engine/phi-extension'
 import {
   createRemoteProjectToolGuardExtension,
   remoteProjectToolDecision
-} from '../src/main/agent/agents/remote-project-tool-guard'
+} from '../src/main/agent/engine/phi-extension'
 import { PHI_REMOTE_READ_DESCRIPTION } from '../src/main/agent/remote-workspace-read-tool'
 import { PHI_REMOTE_BASH_DESCRIPTION } from '../src/main/agent/remote-workspace-bash-tool'
 import { PHI_REMOTE_WRITE_DESCRIPTION } from '../src/main/agent/remote-workspace-write-tool'

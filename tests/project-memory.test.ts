@@ -8,7 +8,7 @@ import {
   remoteAgentSupportedToolNames,
   remoteAgentToolRegistrationVerified,
   remoteProjectToolDecision
-} from '../src/main/agent/agents/remote-project-tool-guard'
+} from '../src/main/agent/engine/phi-extension'
 import { buildPhiRemoteProjectSystemPrompt } from '../src/main/agent/main-system-prompt'
 import { buildProjectLearnTool, PHI_LEARN_DESCRIPTION } from '../src/main/agent/memory/learn-tool'
 import {

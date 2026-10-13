@@ -1,4 +1,4 @@
-import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool, PhiToolContext } from '../engine/types'
 
 import {
   auditLibrary,
@@ -127,17 +127,14 @@ function executeLibraryAction(
 
 function buildLibraryTool(
   action: LibraryToolAction,
-  definition: Omit<CustomTool, 'execute'>
-): CustomTool {
+  definition: Omit<PhiTool, 'execute' | 'site'>
+): PhiTool {
   return {
     ...definition,
-    async execute(_toolCallId, params, _onUpdate, ctx: CustomToolContext) {
+    site: 'host',
+    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
       try {
-        const result = executeLibraryAction(
-          action,
-          ctx.sessionManager.getCwd(),
-          recordValue(params)
-        )
+        const result = executeLibraryAction(action, ctx.cwd, recordValue(params))
         return toolResult(result.summary, result.details)
       } catch (error) {
         return toolResult(error instanceof Error ? error.message : String(error), {}, true)
@@ -146,7 +143,7 @@ function buildLibraryTool(
   }
 }
 
-export function buildLibraryCustomTools(): CustomTool[] {
+export function buildLibraryCustomTools(): PhiTool[] {
   const paperProperties = {
     source: { type: 'string', description: 'Literature source, e.g. pubmed, europepmc, arxiv.' },
     sourceId: { type: 'string', description: 'Source-specific paper id.' },

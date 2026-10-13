@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   createRemoteProjectToolGuardExtension,
   remoteProjectToolDecision
-} from '../src/main/agent/agents/remote-project-tool-guard'
+} from '../src/main/agent/engine/phi-extension'
 import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../src/main/agent/download/remote-project-download-tool'
 import { PHI_REMOTE_PRESENT_FILES_DESCRIPTION } from '../src/main/agent/deliverables/remote-present-tool'
 import { PHI_ENV_REQUEST_DESCRIPTION } from '../src/main/agent/content/env-request-tool'

@@ -1,10 +1,10 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
+import { PHI_REMOTE_READ_DESCRIPTION } from './engine/phi-extension'
+
+export { PHI_REMOTE_READ_DESCRIPTION } from './engine/phi-extension'
 
 import type { RemoteWorkspaceReadResult } from './remote-workspace-read'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
-
-export const PHI_REMOTE_READ_DESCRIPTION =
-  'Phi remote project read: read one UTF-8 file or list one directory on the selected SSH server, or read an enabled global Skill through skill://. Project paths run on the server; Skill resources are restricted to the loaded Skill root. Raw ssh:// URLs are not supported; line selectors such as path:10-50 match local read syntax.'
 
 type RemoteReadOptions = {
   readResource?: (path: string) => RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
@@ -13,11 +13,12 @@ type RemoteReadOptions = {
 export function buildRemoteWorkspaceReadTool(
   read: (path: string) => Promise<RemoteWorkspaceReadResult>,
   options: RemoteReadOptions = {}
-): CustomTool {
+): PhiTool {
   return {
     name: 'read',
     label: 'Read',
     description: PHI_REMOTE_READ_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: {

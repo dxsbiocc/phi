@@ -1,5 +1,8 @@
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
+import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
+import * as engineEvents from '../src/main/agent/engine/events'
+import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import * as windowStartup from '../src/main/window-startup'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
@@ -1366,6 +1369,29 @@ async function harness(
       this.values.delete(sessionId)
     }
   }
+  const fakeOmpBridge = {
+    registerHostHandler: (method: string, handler: HostHandler) => {
+      hostHandlers.set(method, handler)
+      return () => hostHandlers.delete(method)
+    },
+    request: async (method: string, params: unknown) => {
+      bridgeRequests.push({ method, params })
+      if (bridgeFailure) throw bridgeFailure
+      if (
+        customMcpBridgeRequest &&
+        ['mcp.prepareRemoteAuth', 'mcp.authorizeRemote', 'mcp.cancelRemoteAuth'].includes(method)
+      )
+        return customMcpBridgeRequest(method, params)
+      if (method === 'agentRuns.list') return bridgeAgentJobs
+      if (method === 'mcp.featuredTools') return ['search_articles']
+      if (method === 'mcp.featuredAuthStatus') return true
+      return { ok: true }
+    },
+    stop: async () => {
+      bridgeStops += 1
+    }
+  } as unknown as OmpBridge
+  const phiEngine = createInProcessEngine(fakeOmpBridge)
   const modules: Record<string, unknown> = {
     './window-startup': windowStartup,
     './startup-splash': {
@@ -2345,36 +2371,9 @@ async function harness(
         projectCwd
       })
     },
-    './agent/omp/omp-bridge': {
-      getOmpBridge: (): {
-        registerHostHandler: (method: string, handler: HostHandler) => () => void
-        request: (method: string, params: unknown) => Promise<unknown>
-        stop: () => Promise<void>
-      } => ({
-        registerHostHandler: (method, handler) => {
-          hostHandlers.set(method, handler)
-          return () => hostHandlers.delete(method)
-        },
-        request: async (method, params) => {
-          bridgeRequests.push({ method, params })
-          if (bridgeFailure) throw bridgeFailure
-          if (
-            customMcpBridgeRequest &&
-            ['mcp.prepareRemoteAuth', 'mcp.authorizeRemote', 'mcp.cancelRemoteAuth'].includes(
-              method
-            )
-          )
-            return customMcpBridgeRequest(method, params)
-          if (method === 'agentRuns.list') return bridgeAgentJobs
-          if (method === 'mcp.featuredTools') return ['search_articles']
-          if (method === 'mcp.featuredAuthStatus') return true
-          return { ok: true }
-        },
-        stop: async () => {
-          bridgeStops += 1
-        }
-      })
-    },
+    './agent/engine/omp-bridge': { getOmpBridge: () => fakeOmpBridge },
+    './agent/engine/in-process-engine': { getPhiEngine: () => phiEngine },
+    './agent/engine/events': engineEvents,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     './agent/notebook/notebook-output-protocol': {
       registerNotebookOutputScheme: noop,
@@ -10434,6 +10433,7 @@ test('main IPC: context compaction events are persisted as timeline notices', as
         result: {
           summary: 'Full compaction summary.',
           shortSummary: 'Short compaction summary.',
+          firstKeptEntryId: 'compacted-entry',
           tokensBefore: 12345
         },
         tokensAfter: 4200,

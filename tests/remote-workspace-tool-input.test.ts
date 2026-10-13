@@ -36,6 +36,35 @@ test('pickDeclaredToolInput keeps declared keys only and tolerates non-objects',
   assert.deepEqual(pickDeclaredToolInput(['path'], schema), {})
 })
 
+test('declared input combines object schema branches without filtering nested values', () => {
+  const schema = {
+    properties: { root: {} },
+    allOf: [
+      {
+        properties: { shared: {} },
+        anyOf: [
+          { properties: { first: { properties: { nested: {} } } } },
+          { oneOf: [{ properties: { second: {} } }] }
+        ]
+      }
+    ]
+  }
+  const first = { nested: 'keep', i: 'nested data' }
+  assert.deepEqual(
+    pickDeclaredToolInput(
+      { root: 1, shared: 2, first, second: 3, i: 'drop', nested: 'drop' },
+      schema
+    ),
+    {
+      root: 1,
+      shared: 2,
+      first,
+      second: 3
+    }
+  )
+  assert.deepEqual(pickDeclaredToolInput({ i: 'drop' }, { type: 'object' }), {})
+})
+
 test('remote glob forwards only its declared fields', async () => {
   let received: Record<string, unknown> | undefined
   const tool = buildRemoteWorkspaceGlobTool(async (input) => {

@@ -1,13 +1,37 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**计划，未开始**；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
+状态：**阶段 1 恢复与验收中**；T0 已合入 `main`，T1–T5 已在迁移分支提交、待本轮验收；T6 恢复稿待修复复核，T7 契约测试实施中。2026-10-13 由 Codex 接替 Claude 管理与审查。
 创建日期：2026-10-12
-执行者：Codex（gpt-5.6-sol xhigh）；所有验证命令使用 `bun run`
+执行：Codex 原生 subagents；负责人：当前 Codex 主会话（任务拆分、进度管理、独立质量审查与最终验收）。所有项目验证命令使用 `bun run`；限定测试采用同一脚本的 Node runner，避免参数附加后误跑全套。
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
 
 > 路线图说明：internal beta 路线图要求"把 SDK 会话文件视为实现细节"，本计划沿同一方向把 OMP 收敛为可替换的引擎。远程/HPC 在 beta 路线图里排在 beta 之后，但用户已在 2026-10-08 把远程能力对齐提到当前优先级；本计划第 3 阶段是该工作的结构性收尾，不夹带新功能。
 >
 > 架构决定（用户 2026-10-13 确认）：远程项目改为**在服务器上运行 OMP**，桌面端通过 SSH 以 RPC 方式驱动它；本地项目继续在本机进程内运行 OMP。这推翻了 `remote-parity-implementation.md` 中"不把智能体运行时搬到服务器"的非目标。依据见第 0.4 节。
+
+---
+
+## 接管核对（2026-10-13）
+
+用户此前要求“等阶段 1 做完再合并”。下表区分已提交成果和本轮已验收成果；历史验证报告不替代本轮验收。
+
+| 任务 | 已保存成果 | 当前状态 |
+|---|---|---|
+| T0 基线与边界检查 | `70aa7cb9` | 已合入 `main` |
+| T1 `PhiTool` 与目录迁移 | `f66875fe` | 已提交；审查发现 M2 参数过滤缺口，修复中 |
+| T2 `PhiSettings` | `571b20c1` | 已提交；本轮针对性审查通过 |
+| T3 `PhiAuth` | `049ac371`（由 `9084f84a` 合入 T2） | 已提交；本轮针对性审查通过 |
+| T4 内部函数/MCP 收口 | `99845de2` | 已提交；本轮针对性审查通过 |
+| T5 worker 拆分、`PhiEngine` | `5f6e22ca`、`d422a51b` | 已提交；审查发现 M2 事件契约仍未闭合，补齐中 |
+| T6 Phi 扩展包 | 原 `t6-extension-package` 工作区的未提交成果已保留 | 在隔离副本恢复；修复远程 guard 行为偏移、独立旧行为对照和模块引用扫描 |
+| T7 引擎契约测试 | 基于 T5 的独立副本 | 真实 worker + 回环假模型服务实施中 |
+| T8 OMP 升级与阶段 3 RPC | 无本轮实施成果 | 未开始；仍锁定 18.1.10 |
+
+本轮边界：先完成并审查阶段 1，不顺带升级 OMP、不连接真实服务器、不扩展 UI。继续保留本计划已注明的测试辅助/评测白名单例外；边界检查通过不代表这些过渡例外已经删除。
+
+T6 沿用原任务的明确范围：本次只整理自包含扩展包、注入 host 与进程内 builder；`-e` 默认入口留 R4/R5，`agents/*.md` 留 D4/R6。它们是待实施能力，不计为本次 T6 已完成的功能。
+
+当前审查结论：**阶段 1 尚未达到合并条件**。工具参数过滤、事件契约、远程 guard 和测试有效性问题全部闭环后，统一运行类型检查、lint、全套测试及构建/asar 检查。测试失败必须逐项定位并记录，不能仅凭超时归入已知不稳定项。
 
 ---
 
@@ -227,27 +251,36 @@ bun run test
 
 **1a 目录迁移与 `PhiTool`**
 - `src/main/agent/omp/` → `src/main/agent/engine/`，更新引用。
-- 定义 `PhiTool` 与 `toOmpCustomTool`。把只为类型而 import OMP 的工具文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`agents/*.ts`。
+- 定义 `PhiTool` 与 `toOmpCustomTool`。把从 OMP 引用 `CustomTool` / `CustomToolContext` 的文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`memory/learn-tool.ts`、`memory/project-memory-worker.ts` 中的 `CustomTool`、`agents/` 下引用 `CustomTool` 的文件（`run-tools.ts`、`tool-resolution.ts`、`tool.ts`），以及只引用 `CustomTool` 类型的测试 `tests/content-skill-tools.test.ts`、`tests/phi-agent-runs.test.ts`。
 - 每个 `PhiTool` 标明执行位置（宿主工具 / 运行时扩展，见 M4）。
 - 每改一个文件，从白名单删去对应条目。
-- 验收：引擎目录外只剩 M1 白名单中的终端例外。
+- **T1 不处理**（2026-10-13 用户确认，按性质归到后续任务）：
+  - `agents/` 下引用 `ExtensionFactory` 的守卫与策略文件（`environment-binding.ts`、`fallback-policy.ts`、`project-tool-boundary.ts`、`remote-project-tool-guard.ts`、`remote-url-guard.ts`）和扩展加载 `specialist-tool-call-extensions.ts`：属于运行时扩展，归 T6（1f）。
+  - `memory/project-memory-worker.ts` 中的记忆存储 API、`mcp-key-credentials.ts` 的 MCP 配置类型、`web-search-settings.ts` 的搜索提供方列表：归 T4（1d）。
+- 验收：引擎目录外不再有 `CustomTool` / `CustomToolContext` 引用；白名单中引擎目录外剩下的条目只有终端例外、上面列出的 T4/T6 文件，以及直接用 OMP 驱动真实会话的程序（测试辅助程序与 `scripts/eval/db-vs-fetch.ts`，见阶段 1 完成标准）。
 
 **1b `PhiSettings`**
 - 当前用到的设置键（`omp-sdk-worker.ts`），按领域分组成类型化接口：
   - 上下文压缩：`compaction.enabled`、`compaction.thresholdPercent`、`compaction.thresholdTokens`、`compaction.methodOrder`（读与 override）
   - 网页搜索：`providers.webSearchOrder`、`providers.webSearchExclude`、`searxng.endpoint`、`searxng.engines`、`searxng.token`、`searxng.basicUsername`、`searxng.basicPassword`
-  - MCP 与扩展：`mcp.enableProjectConfig`、`mcp.notifications`、`extensions`
+  - MCP 与扩展：`mcp.enableProjectConfig`、`mcp.notifications`、`extensions`，以及 `extensionsSourceLevel()`
+  - 记忆：`memory.backend`（override 为 `local`；计划写成时还没有记忆功能，2026-10-13 补记）
+  - 写盘：`flush()`；会话自带的设置对象（`session.settings`）的读取同样经 `PhiSettings`
+- 打开设置的方式（`Settings.init` / `Settings.loadReadOnly`）和交给 OMP 的原始 `Settings` 对象留在引擎内部，`PhiSettings` 包装它，不替代它。
 - 引擎外不出现设置键字符串。
 - 验收：worker 内不再直接调用 `settings.get/set/override`；新增单元测试覆盖每个分组的读写。
 
 **1c `PhiAuth`**
 - 封装当前 15 处调用（`omp-sdk-worker.ts` 中的模型登录、登出、凭据列举/删除、来源描述，以及 `featured-mcp-auth.ts` 的 MCP OAuth 凭据读写）。
 - 对外方法草案：`listProviders()`、`credentialStatus(providerId)`、`setApiKey(providerId, key)`、`login(providerId, controller)`、`logout(providerId)`、`listApiKeys(authId)`、`removeApiKey(authId, entryId)`、`getMcpOAuth(url)`、`setMcpOAuth(url, credential)`。
-- 验收：引擎外不出现 `AuthStorage`；单元测试覆盖各方法。
+- 2026-10-13 核对：T1 之后所有 `authStorage` 调用都已在引擎目录内，"引擎外不出现 `AuthStorage`"已经满足；1c 的实际目标是让 worker 不再直接调用 `authStorage` 的方法，全部经 `engine/in-process/auth.ts`。`ModelRegistry`、`createAgentSession`、MCP 管理器与 OAuth 流程仍拿原始 `AuthStorage` 对象，`PhiAuth` 包装它，不替代它。
+- 必须保留的现有语义：网页搜索服务保存 API key 时保留同一 authId 下已有的非 API key 凭据、只替换 API key；清除时只删 API key；模型 provider 的"已配置"判断为 `hasAuth || hasConcreteAuth || 有已存凭据`。
+- 验收：worker 内不再直接调用 `authStorage` 的方法；单元测试覆盖各方法。
 
 **1d 零散内部工具函数收口**
 - `estimateToolSchemaTokens`、`parseConfiguredThinkingLevel`、`applyProviderGlobalsFromSettings`、`authPolicyFor`、`getCatalogProviderEntry`、`SEARCH_PROVIDER_CHOICES`、`resolveCompactionMethodOrder` 等，每个在引擎里包成一个 Phi 函数，统一放在 `engine/omp-internals.ts`。升级时只看这一个文件。
 - MCP 内部模块（`mcp/manager`、`mcp/client`、`mcp/oauth-*`、`mcp/transports/stdio`、`mcp/config`）先集中到 `engine/mcp/`。
+- 实施记录（T4）：`SEARCH_PROVIDER_CHOICES` 单独放在 `engine/omp-web-search.ts`。`omp-internals.ts` 会加载带 JSON import 的 `pi-catalog`，Node 直接运行的测试加载不了，而 `web-search-settings.ts` 会被这些测试加载。`omp-sdk-worker.ts` 中创建会话用的 `legacy-pi-coding-agent-shim` 与 `modes/runtime-init` 留到 T5 的 `session-factory.ts`；`agents/*` 留到 T6。
 
 **1e 拆分 `omp-sdk-worker.ts`，抽出 `PhiEngine`**
 
@@ -267,6 +300,8 @@ bun run test
 
 只搬代码、不改逻辑；每搬一块跑一次完整测试。
 
+实施记录（T5）：分两步提交。T5a 只搬代码，worker 入口改为 `engine/in-process/main.ts`；表外的处理函数按领域另建文件（`session-creation`、`session-runtime`、`session-history`、`runtime-context`、`resources`、`mcp-profile`、`web-search`、`tool-support`、`ipc`、`common`），共享可变状态集中在 `in-process/state.ts`，最大文件 442 行。T5b 在 `engine/types.ts` 定义 `PhiEngine`（按领域分组，共 55 个操作），由 `engine/in-process-engine.ts` 转发给 `OmpBridge`；`index.ts` 与 `runtime-adapter.ts` 只通过 `getPhiEngine()` 调用，引擎目录外不再 import `omp-bridge`。
+
 **1f Phi 扩展包**
 - 把现有以扩展形式注入的逻辑（审批、项目边界、下一步建议等）整理成一个扩展包目录（入口加 `agents/`），本地进程内改为从这个包加载。行为不变。
 
@@ -274,7 +309,7 @@ bun run test
 - 按 M8 实现 `tests/engine-contract/`，本阶段先只对 `InProcessEngine` 跑。
 - 验收：在 18.1.10 上全部通过。
 
-阶段 1 完成标准：白名单中只剩 `engine/` 内的条目加上终端例外；三项验证命令结果与附录 A 基线一致或更好。
+阶段 1 完成标准：白名单中只剩 `engine/` 内的条目、终端例外，以及直接用 OMP 驱动真实会话的程序：测试辅助程序（`tests/helpers/` 下的 `*Smoke.ts`、`ownedStdioScopeFixture.ts`）与评测脚本 `scripts/eval/db-vs-fetch.ts`。它们的用途注明由 T7 引擎契约测试或 R9 清理取代（2026-10-13 用户确认测试辅助程序按此处理；评测脚本性质相同，按同一决定处理）。三项验证命令结果与附录 A 基线一致或更好。
 
 ### 阶段 2：升级 OMP 到 18.10.x（只改 `engine/`）
 
@@ -400,12 +435,12 @@ bun run test
 | 编号 | 任务 | 依赖 | 验收 |
 |---|---|---|---|
 | T0 | 引擎边界检查脚本与白名单 | 无 | 阶段 0 验收 |
-| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有工具文件 | T0 | 引擎外只剩终端例外 |
+| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有 `CustomTool` 引用 | T0 | 1a 验收 |
 | T2 | `PhiSettings` | T1 | 1b 验收 |
 | T3 | `PhiAuth` | T1 | 1c 验收 |
-| T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/` | T1 | 1d 完成，白名单收敛 |
+| T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/`；含记忆存储 API、`mcp-key-credentials.ts`、`web-search-settings.ts` | T1 | 1d 完成，白名单收敛 |
 | T5 | 拆分 worker，抽出 `PhiEngine` 与 `InProcessEngine` | T2–T4 | 1e 完成，测试无回归 |
-| T6 | Phi 扩展包，本地改为从包加载 | T5 | 1f 完成，行为不变 |
+| T6 | Phi 扩展包，本地改为从包加载；含 `agents/` 下的守卫、策略与扩展加载文件 | T5 | 1f 完成，行为不变 |
 | T7 | 引擎契约测试（`InProcessEngine`）与假模型服务 | T5 | 1g 验收 |
 | T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
 | T9 | R1 分发与部署 | T8 | R1 测试通过 |

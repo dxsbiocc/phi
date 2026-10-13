@@ -1,4 +1,7 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
+import { PHI_REMOTE_GLOB_DESCRIPTION, PHI_REMOTE_GREP_DESCRIPTION } from './engine/phi-extension'
+
+export { PHI_REMOTE_GLOB_DESCRIPTION, PHI_REMOTE_GREP_DESCRIPTION } from './engine/phi-extension'
 
 import type {
   RemoteGlobRequest,
@@ -8,12 +11,6 @@ import type {
 } from './remote-workspace-search'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 import { pickDeclaredToolInput } from './remote-workspace-tool-input'
-
-export const PHI_REMOTE_GLOB_DESCRIPTION =
-  'Phi remote project glob: find files on the selected SSH server within the project root. Pass path, hidden, gitignore, and limit as in the local glob tool. Raw ssh:// URLs are not accepted.'
-
-export const PHI_REMOTE_GREP_DESCRIPTION =
-  'Phi remote project grep: search file contents on the selected SSH server within the project root. Pass pattern, path, case, gitignore, and skip as in the local grep tool. Raw ssh:// URLs are not accepted.'
 
 type GlobInput = Pick<RemoteGlobRequest, 'path' | 'hidden' | 'gitignore' | 'limit'>
 type GrepInput = Pick<RemoteGrepRequest, 'pattern' | 'path' | 'case' | 'gitignore' | 'skip'>
@@ -44,11 +41,12 @@ const GREP_PARAMETERS = {
 
 export function buildRemoteWorkspaceGlobTool(
   run: (input: GlobInput) => Promise<RemoteGlobResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'glob',
     label: 'Glob',
     description: PHI_REMOTE_GLOB_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: GLOB_PARAMETERS,
@@ -80,11 +78,12 @@ export function buildRemoteWorkspaceGlobTool(
 
 export function buildRemoteWorkspaceGrepTool(
   run: (input: GrepInput) => Promise<RemoteGrepResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'grep',
     label: 'Grep',
     description: PHI_REMOTE_GREP_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: GREP_PARAMETERS,

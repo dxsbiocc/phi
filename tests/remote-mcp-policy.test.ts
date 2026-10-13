@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createRemoteProjectToolGuardExtension } from '../src/main/agent/agents/remote-project-tool-guard'
+import { createRemoteProjectToolGuardExtension } from '../src/main/agent/engine/phi-extension'
 import {
   REMOTE_MCP_PROJECT_DEPENDENCY_REASON,
   buildRemoteMcpGuardState,

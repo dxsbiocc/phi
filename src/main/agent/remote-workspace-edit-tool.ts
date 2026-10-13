@@ -1,11 +1,11 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
+import { PHI_REMOTE_EDIT_DESCRIPTION } from './engine/phi-extension'
+
+export { PHI_REMOTE_EDIT_DESCRIPTION } from './engine/phi-extension'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
 import { pickDeclaredToolInput } from './remote-workspace-tool-input'
-
-export const PHI_REMOTE_EDIT_DESCRIPTION =
-  'Phi remote project edit (OMP replace mode): change an existing UTF-8 file on the selected SSH server. Read the file first, then pass path, old_string, new_string, and optional replace_all. A changed or unread file is refused.'
 
 export type RemoteEditToolResult = RemoteMutationResult & {
   diff?: string
@@ -30,11 +30,12 @@ export function buildRemoteWorkspaceEditTool(
     input: { path: string; old_string: string; new_string: string; replace_all?: boolean },
     signal?: AbortSignal
   ) => Promise<RemoteEditToolResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'edit',
     label: 'Edit',
     description: PHI_REMOTE_EDIT_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: EDIT_PARAMETERS,

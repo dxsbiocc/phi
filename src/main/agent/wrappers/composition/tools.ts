@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../../engine/types'
 
 import {
   findWrapperCompositionEntry,
@@ -16,7 +16,7 @@ import { rankWrapperEntries } from './search'
  * resources/skills/create-wrapper/references/guide.md section 4 — search,
  * inspect, then run. Supersedes the older one-tool-per-bundled-wrapper
  * model in `../tools.ts` (`buildDefaultWrapperCustomTools`), which this
- * build's `omp-sdk-worker.ts` no longer wires in, to avoid two `wrapper_*`
+ * in-process worker no longer wires in, to avoid two `wrapper_*`
  * tool sets registering the same names.
  *
  * `wrapper_run` executes directly (no separate plan/submit step) — the
@@ -30,12 +30,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function buildWrapperCompositionSearchTool(
   discovery: WrapperCompositionDiscoveryOptions = {}
-): CustomTool {
+): PhiTool {
   return {
     name: 'wrapper_search',
     label: 'Search Wrappers',
     description:
       'Search available Nextflow module/subworkflow wrappers by keyword. Returns id, name, and summary. Use before wrapper_inspect.',
+    site: 'host',
     parameters: {
       type: 'object',
       properties: {
@@ -78,12 +79,13 @@ export function buildWrapperCompositionSearchTool(
 
 export function buildWrapperCompositionInspectTool(
   discovery: WrapperCompositionDiscoveryOptions = {}
-): CustomTool {
+): PhiTool {
   return {
     name: 'wrapper_inspect',
     label: 'Inspect Wrapper',
     description:
       'Get the params/outputs contract and default run parameters for one wrapper by id (from wrapper_search), so you know what to override before calling wrapper_run.',
+    site: 'host',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -135,12 +137,13 @@ function runIdParam(params: unknown): string | undefined {
 }
 
 /** Starts a run in the background and returns at once with its run id. */
-export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTool {
+export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: 'wrapper_run',
     label: 'Run Wrapper',
     description:
       'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
+    site: 'host',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -227,12 +230,13 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): CustomTo
 }
 
 /** One run in detail, or the list of recent runs when no run id is given. */
-export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): CustomTool {
+export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: 'wrapper_status',
     label: 'Wrapper Run Status',
     description:
       'Report on a wrapper run started with wrapper_run: its state (running, completed, failed, cancelled, lost), progress, output locations, and the tail of its Nextflow log. Without run_id, lists the most recent runs so you can find one.',
+    site: 'host',
     parameters: {
       type: 'object',
       properties: {
@@ -257,11 +261,12 @@ export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): Custo
 }
 
 /** Blocks (up to a limit) until a run ends. Aborting the call stops the wait, never the run. */
-export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): CustomTool {
+export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: 'wrapper_wait',
     label: 'Wait For Wrapper Run',
     description: `Block until a wrapper run ends or up to timeout_seconds (default ${DEFAULT_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}), then report its status. If the run is still going when the time is up you get its current status and can call this again. Use it only when the task needs the run's results before the next step; otherwise start the run and finish.`,
+    site: 'host',
     parameters: {
       type: 'object',
       required: ['run_id'],
@@ -303,12 +308,13 @@ export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): CustomT
   }
 }
 
-export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): CustomTool {
+export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: 'wrapper_cancel',
     label: 'Cancel Wrapper Run',
     description:
       'Stop a running wrapper run: Nextflow and everything it spawned are terminated and the run is recorded as cancelled. Only cancel when the user asked for it or the run is clearly wrong.',
+    site: 'host',
     parameters: {
       type: 'object',
       required: ['run_id'],
@@ -333,7 +339,7 @@ export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): Custo
 export function buildWrapperCompositionTools(
   jobs: WrapperJobClient,
   discovery: WrapperCompositionDiscoveryOptions = {}
-): CustomTool[] {
+): PhiTool[] {
   return [
     buildWrapperCompositionSearchTool(discovery),
     buildWrapperCompositionInspectTool(discovery),

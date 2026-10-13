@@ -14,7 +14,7 @@ import { StringDecoder } from 'node:string_decoder'
 import Ajv from 'ajv'
 
 import { type EnvMetadata } from './contract'
-import { isReservedExecutionName } from './reserved-names'
+import { isReservedExecutionName } from '../engine/phi-extension'
 import { envMetadataSchema } from './schemas'
 import { ownedRuntimeDirectory } from './ownership'
 

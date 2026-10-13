@@ -1,9 +1,9 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
+import { PHI_LEARN_DESCRIPTION } from '../engine/phi-extension'
+
+export { PHI_LEARN_DESCRIPTION } from '../engine/phi-extension'
 
 /** The remote guard releases `learn` only for a registration carrying this exact text. */
-export const PHI_LEARN_DESCRIPTION =
-  "Record one durable lesson in this project's memory so later sessions start with it: a non-obvious fix, a project convention, or a user preference you confirmed. Write it self-contained (what, when, why). Capture sparingly; one specific lesson beats several vague ones. Never record secrets, credentials, or personal data. The user can review and delete every lesson in Phi's settings. Lessons are stored on this computer only, never on a remote server."
-
 const MAX_LESSON_CHARS = 2000
 const MAX_CONTEXT_CHARS = 400
 
@@ -18,11 +18,12 @@ export type SaveLearnedLesson = (input: LearnedLessonInput) => Promise<{ stored:
  * Phi's own `learn`: the SDK's autolearn variant would also expose `manage_skill` and
  * write global managed skills, which Phi does not offer.
  */
-export function buildProjectLearnTool(save: SaveLearnedLesson): CustomTool {
+export function buildProjectLearnTool(save: SaveLearnedLesson): PhiTool {
   return {
     name: 'learn',
     label: '记录经验',
     description: PHI_LEARN_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     parameters: {
       type: 'object',

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { MCPHttpServerConfig } from '@oh-my-pi/pi-coding-agent/mcp/types'
+import type { MCPHttpServerConfig } from './engine/mcp/types'
 import {
   clearCredentialSecret,
   readCredentialSecret,

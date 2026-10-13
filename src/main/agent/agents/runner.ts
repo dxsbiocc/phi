@@ -4,11 +4,13 @@
  * testable with a fake — see tests/phi-agents.test.ts.
  */
 
+import { isPhiEventType } from '../engine/events'
+import type { PhiAgentEvent } from '../engine/types'
 import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
-/** The slice of the SDK's AgentSession this runner relies on. */
+/** The Phi session contract used to drive a specialist. */
 export interface AgentSessionLike {
-  subscribe(listener: (event: unknown) => void): () => void
-  prompt(text: string, options?: { images?: AgentImage[] }): Promise<void>
+  subscribe(listener: (event: PhiAgentEvent) => void): () => void
+  prompt(text: string, options?: { images?: AgentImage[] }): Promise<boolean | void>
   /** Queues a message that reaches the agent mid-run, after its current tool call. */
   steer?(text: string): Promise<void>
   abort(): Promise<void>
@@ -150,7 +152,7 @@ function eventString(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
 
-function eventToolCallId(event: Record<string, unknown>, fallback: string): string {
+function eventToolCallId(event: { toolCallId?: string; id?: string }, fallback: string): string {
   return eventString(event.toolCallId) ?? eventString(event.id) ?? fallback
 }
 
@@ -203,12 +205,11 @@ export function createAgentRunner(deps: {
     const startedAtByToolCallId = new Map<string, string | undefined>()
 
     const unsubscribe = session.subscribe((event) => {
-      if (!isRecord(event)) return
-      if (event.type === 'message_end') {
+      if (isPhiEventType(event, 'message_end')) {
         usage.assistantMessage(event.message)
         return
       }
-      if (event.type === 'tool_execution_start') {
+      if (isPhiEventType(event, 'tool_execution_start')) {
         toolCalls += 1
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls}`)
@@ -229,7 +230,7 @@ export function createAgentRunner(deps: {
         return
       }
 
-      if (event.type === 'tool_execution_update') {
+      if (isPhiEventType(event, 'tool_execution_update')) {
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
         const output = extractToolText(event.partialResult)
@@ -244,7 +245,7 @@ export function createAgentRunner(deps: {
         return
       }
 
-      if (event.type === 'tool_execution_end') {
+      if (isPhiEventType(event, 'tool_execution_end')) {
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
         const output = extractToolText(event.result)

@@ -25,7 +25,7 @@ import type {
   JavaScriptBunInstallation
 } from '../src/main/agent/envs/applications/types'
 import { currentPlatform } from '../src/main/agent/envs/platform'
-import { findBunExecutable } from '../src/main/agent/omp/bun-executable'
+import { findBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { createDeterministicTarGz } from '../src/main/agent/packages/archive'
 
 const PACKAGE = 'phi-published-js-fixture'

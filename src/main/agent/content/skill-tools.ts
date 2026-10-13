@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
+import { PHI_SKILL_RUN_DESCRIPTION } from '../engine/phi-extension'
+
+export { PHI_SKILL_RUN_DESCRIPTION } from '../engine/phi-extension'
 
 import type { ScriptToolResult } from './script-tools'
 import type { SkillNotReady } from './skill-host'
@@ -42,9 +45,6 @@ const SKILL_RUN_PARAMETERS = {
     }
   }
 } as const
-
-export const PHI_SKILL_RUN_DESCRIPTION =
-  "Run one program from an installed skill's scripts/ directory inside that skill's environment. The interpreter is chosen from the script extension. args are passed after the script path. cwd is a project-relative working directory."
 
 const STRICT_FORBIDDEN = new Set([
   'format',
@@ -88,16 +88,17 @@ export interface SkillToolHostOptions {
 export function buildSkillRunTool(
   request: SkillHostRequest,
   runtimeSessionIdOrOptions?: string | SkillToolHostOptions
-): CustomTool {
+): PhiTool {
   const options = skillHostOptions(runtimeSessionIdOrOptions)
   return {
     name: 'skill_run',
     label: 'Run Skill Script',
     description: PHI_SKILL_RUN_DESCRIPTION,
+    site: 'host',
     approval: 'exec',
     parameters: SKILL_RUN_PARAMETERS,
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
-      return runSkillTool(request, params, ctx.sessionManager.getCwd(), signal, options)
+      return runSkillTool(request, params, ctx.cwd, signal, options)
     }
   }
 }
@@ -117,21 +118,22 @@ export function buildScriptTools(
   descriptors: readonly ScriptToolDescriptor[],
   request: SkillHostRequest,
   runtimeSessionIdOrOptions?: string | SkillToolHostOptions
-): CustomTool[] {
+): PhiTool[] {
   const options = skillHostOptions(runtimeSessionIdOrOptions)
   return descriptors.map((descriptor) => {
-    const tool: CustomTool = {
+    const tool: PhiTool = {
       name: descriptor.name,
       label: descriptor.name,
       description: descriptor.description,
-      parameters: descriptor.parameters as CustomTool['parameters'],
+      site: 'host',
+      parameters: descriptor.parameters as PhiTool['parameters'],
       approval: descriptor.approval,
       async execute(toolCallId, params, _onUpdate, ctx, signal) {
         return runScriptToolCall(
           request,
           descriptor.name,
           params,
-          ctx.sessionManager.getCwd(),
+          ctx.cwd,
           signal,
           options,
           toolCallId

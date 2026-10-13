@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool, PhiToolContext } from '../src/main/agent/engine/types'
 
 import {
   buildScriptTools,
@@ -12,12 +12,12 @@ import type { ScriptToolDescriptor } from '../src/main/agent/content/skill-tool-
 
 const cwd = '/proj'
 
-function ctx(): { sessionManager: { getCwd: () => string } } {
-  return { sessionManager: { getCwd: () => cwd } }
+function ctx(): PhiToolContext {
+  return { cwd, recentUserImages: () => [] }
 }
 
 async function execute(
-  tool: CustomTool,
+  tool: PhiTool,
   params: unknown,
   signal?: AbortSignal
 ): Promise<{
@@ -232,7 +232,7 @@ test('script tools copy the descriptor and set strict only for a compatible sche
   )
   assert.deepEqual(tools[0]?.parameters, descriptor().parameters)
 
-  const ok = await execute(tools[0] as CustomTool, { message: 'hi' })
+  const ok = await execute(tools[0] as PhiTool, { message: 'hi' })
   assert.equal(ok.isError, undefined)
   assert.equal(textOf(ok), '{\n  "value": 1\n}\n\nwarnings:\n- kept the host')
   const sent = (calls[0] as { params: Record<string, unknown> }).params
@@ -247,7 +247,7 @@ test('script tools copy the descriptor and set strict only for a compatible sche
     envId: 'env-1',
     warnings: []
   })
-  const error = await execute(buildScriptTools([descriptor()], failing)[0] as CustomTool, {})
+  const error = await execute(buildScriptTools([descriptor()], failing)[0] as PhiTool, {})
   assert.equal(error.isError, true)
   assert.equal(textOf(error), 'disk full')
 })
@@ -268,7 +268,7 @@ test('skill tools send the worker runtimeSessionId', async () => {
     }),
     { skill: 'echo', script: 'run.py' }
   )
-  await execute(buildScriptTools([descriptor()], request, 'runtime-1')[0] as CustomTool, {
+  await execute(buildScriptTools([descriptor()], request, 'runtime-1')[0] as PhiTool, {
     message: 'hi'
   })
   assert.equal(calls[0]?.method, 'skills.run')
@@ -291,7 +291,7 @@ test('script tools send toolCallId and list presented artifacts after the JSON',
       presentedArtifacts: [{ title: 'Volcano plot', path: 'figures/plot.png' }]
     }
   }
-  const result = await execute(buildScriptTools([descriptor()], request)[0] as CustomTool, {
+  const result = await execute(buildScriptTools([descriptor()], request)[0] as PhiTool, {
     message: 'hi'
   })
   assert.equal(calls[0]?.params.toolCallId, 'call-1')

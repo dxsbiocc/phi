@@ -1,3 +1,4 @@
+import type { PhiAgentEvent } from '../src/main/agent/engine/types'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -883,21 +884,9 @@ test('include_attached_images forwards the latest user image for any local speci
     return { text: 'Seen.', toolCalls: 0 }
   })
   const ctx = {
-    sessionManager: {
-      getBranch: () => [
-        {
-          type: 'message',
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: '参考这张图' },
-              { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }
-            ]
-          }
-        }
-      ]
-    }
-  } as never
+    cwd: '/project/root',
+    recentUserImages: () => [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
+  }
   const result = await tool.execute(
     'attached',
     { task: 'Use the attached image.', include_attached_images: true },
@@ -1069,7 +1058,7 @@ test('the tool turns failures, cancellation, timeouts and empty reports into err
 
 // ── runner ────────────────────────────────────────────────────────────────
 
-type Listener = (event: unknown) => void
+type Listener = (event: PhiAgentEvent) => void
 
 function fakeSession(
   options: {

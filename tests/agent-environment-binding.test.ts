@@ -10,7 +10,7 @@ import {
   reduceToolCallResults,
   rewriteBoundBashInput,
   type ToolCallRewrite
-} from '../src/main/agent/agents/environment-binding'
+} from '../src/main/agent/engine/phi-extension'
 import { buildEnvironment, describeEnvironment, readyEnvironment } from '../src/main/agent/content'
 import { currentPlatform, environmentVariables, removeTree } from '../src/main/agent/envs'
 import { getMicromambaPath } from '../src/main/agent/envs/paths'

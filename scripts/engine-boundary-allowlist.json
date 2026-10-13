@@ -6,7 +6,7 @@
         "@oh-my-pi/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim"
       ],
-      "purpose": "Agent session, settings, and authentication setup for the database-versus-fetch evaluation",
+      "purpose": "Agent session, settings, and authentication setup for the database-versus-fetch evaluation; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     },
     {
@@ -34,263 +34,92 @@
       "plan": "keep"
     },
     {
-      "file": "src/main/agent/agents/environment-binding.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for specialist environment binding",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/fallback-policy.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for the agent fallback policy",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/project-tool-boundary.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for project tool boundary enforcement",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/remote-project-tool-guard.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for the remote project tool guard",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/remote-url-guard.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for the remote URL guard",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/run-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for agent run-control tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/specialist-tool-call-extensions.ts",
+      "file": "src/main/agent/engine/in-process/specialist-tool-call-extensions.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader",
         "@oh-my-pi/pi-coding-agent/utils/event-bus"
       ],
-      "purpose": "Extension runtime loading and event dispatch for specialist tool calls",
+      "purpose": "In-process extension runtime loading and event dispatch for specialist tool calls",
       "plan": "remove"
     },
     {
-      "file": "src/main/agent/agents/tool-resolution.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for resolving specialist tool sets",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/agents/tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for agent tool definitions",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/browser/browser-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the browser tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/content/env-request-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for environment requests",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/content/skill-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for skill execution tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/deliverables/present-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for presenting local deliverables",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/deliverables/remote-present-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for presenting remote deliverables",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/deliverables/render-blocks-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for rendering deliverable blocks",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/download/project-download-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for local project downloads",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/download/remote-project-download-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for remote project downloads",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/library/library-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool and execution context types for library tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/mcp-key-credentials.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/types"],
-      "purpose": "MCP HTTP server configuration type for key credentials",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/memory/learn-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the memory learning tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/memory/project-memory-worker.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent",
-        "@oh-my-pi/pi-coding-agent/memories",
-        "@oh-my-pi/pi-coding-agent/memories/storage",
-        "@oh-my-pi/pi-utils"
-      ],
-      "purpose": "CustomTool, memory persistence, and agent database APIs for the project memory worker",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/notebook/notebook-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool and execution context types for notebook tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/omp/configured-stdio-tools.ts",
+      "file": "src/main/agent/engine/mcp/configured-stdio-tools.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/client", "@oh-my-pi/pi-coding-agent/mcp/types"],
-      "purpose": "MCP connection APIs and configuration types for configured stdio tools",
-      "plan": "remove"
+      "purpose": "Long-term MCP boundary for configured stdio connection APIs and configuration types",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/omp/featured-mcp-auth.ts",
+      "file": "src/main/agent/engine/mcp/featured-mcp-auth.ts",
       "specifiers": [
-        "@oh-my-pi/pi-ai",
         "@oh-my-pi/pi-coding-agent/mcp/client",
         "@oh-my-pi/pi-coding-agent/mcp/manager",
         "@oh-my-pi/pi-coding-agent/mcp/oauth-discovery",
         "@oh-my-pi/pi-coding-agent/mcp/oauth-flow"
       ],
-      "purpose": "Authentication storage, MCP connections, and OAuth flow APIs for featured MCP servers",
-      "plan": "remove"
+      "purpose": "Long-term MCP boundary for featured-server connections, manager access, and OAuth flows",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/omp/next-action-extension.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "ExtensionFactory type for the next-action extension",
-      "plan": "remove"
+      "file": "src/main/agent/engine/mcp/oauth.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/oauth-flow"],
+      "purpose": "Long-term MCP boundary for OAuth credential ID mapping",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/omp/omp-sdk-worker.ts",
+      "file": "src/main/agent/engine/mcp/omp-mcp.ts",
       "specifiers": [
-        "@oh-my-pi/pi-ai",
+        "@oh-my-pi/pi-coding-agent/mcp/config",
+        "@oh-my-pi/pi-coding-agent/mcp/manager",
+        "@oh-my-pi/pi-coding-agent/mcp/types"
+      ],
+      "purpose": "Long-term MCP boundary for configuration loading and manager construction",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/mcp/owned-stdio-transports.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/transports/stdio"],
+      "purpose": "Long-term MCP boundary for tracking Phi-owned stdio transports",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/mcp/types.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/types"],
+      "purpose": "Long-term MCP boundary for compile-time validation of Phi-owned MCP configuration types",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/omp-internals.ts",
+      "specifiers": [
         "@oh-my-pi/pi-ai/types",
         "@oh-my-pi/pi-catalog/compat/auth",
         "@oh-my-pi/pi-catalog/provider-models/descriptors",
-        "@oh-my-pi/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent/config/provider-globals",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
-        "@oh-my-pi/pi-coding-agent/mcp/config",
-        "@oh-my-pi/pi-coding-agent/mcp/manager",
-        "@oh-my-pi/pi-coding-agent/mcp/oauth-flow",
-        "@oh-my-pi/pi-coding-agent/modes/runtime-init",
+        "@oh-my-pi/pi-coding-agent/memories",
+        "@oh-my-pi/pi-coding-agent/memories/storage",
         "@oh-my-pi/pi-coding-agent/modes/utils/context-usage",
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",
         "@oh-my-pi/pi-coding-agent/plan-mode/plan-files",
         "@oh-my-pi/pi-coding-agent/session/compaction-methods",
-        "@oh-my-pi/pi-coding-agent/thinking"
+        "@oh-my-pi/pi-coding-agent/thinking",
+        "@oh-my-pi/pi-utils"
       ],
-      "purpose": "Agent sessions, settings, authentication, MCP, planning, compaction, thinking, and model integration for the OMP worker",
-      "plan": "remove"
+      "purpose": "Long-term non-MCP boundary for OMP internal functions and compatibility checks",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/omp/owned-stdio-transports.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/mcp/transports/stdio"],
-      "purpose": "OMP version and StdioTransport APIs for tracking owned MCP transports",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/omp/remote-workspace-custom-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-natives"],
-      "purpose": "CustomTool type and native diff editing for remote workspace tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/palettes/tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for palette tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/remote-workspace-bash-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the remote workspace shell tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/remote-workspace-edit-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the remote workspace edit tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/remote-workspace-read-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the remote workspace read tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/remote-workspace-search-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for remote workspace search tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/remote-workspace-write-tool.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for the remote workspace write tool",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/user-interaction-tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for user interaction tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/web-search-settings.ts",
+      "file": "src/main/agent/engine/omp-web-search.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/web/search/types"],
-      "purpose": "Search provider choices and identifier type for web search settings",
-      "plan": "remove"
+      "purpose": "Web search provider choices kept apart from omp-internals.ts so Node-run settings code does not load OMP modules that need JSON import attributes",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/wrappers/composition/tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for wrapper composition tools",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/wrappers/tools.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool and execution context types for wrapper tools",
+      "file": "src/main/agent/engine/in-process/session-factory.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
+        "@oh-my-pi/pi-coding-agent/modes/runtime-init"
+      ],
+      "purpose": "Legacy session construction and extension initialization isolated in the in-process session factory",
       "plan": "remove"
     },
     {
@@ -306,18 +135,12 @@
       "plan": "keep"
     },
     {
-      "file": "tests/content-skill-tools.test.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for skill tool test fixtures",
-      "plan": "remove"
-    },
-    {
       "file": "tests/helpers/ownedStdioScopeFixture.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/mcp/client",
         "@oh-my-pi/pi-coding-agent/mcp/transports/stdio"
       ],
-      "purpose": "MCP client and StdioTransport APIs for owned transport test fixtures",
+      "purpose": "MCP client and StdioTransport APIs for owned transport test fixtures; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     },
     {
@@ -331,7 +154,7 @@
         "@oh-my-pi/pi-coding-agent/modes/runtime-init",
         "@oh-my-pi/pi-utils"
       ],
-      "purpose": "Mock model, agent session, MCP, extension, and agent-directory APIs for the remote loop smoke fixture",
+      "purpose": "Mock model, agent session, MCP, extension, and agent-directory APIs for the remote loop smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     },
     {
@@ -341,7 +164,7 @@
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
         "@oh-my-pi/pi-coding-agent/modes/runtime-init"
       ],
-      "purpose": "Agent session, resource loader, settings, and extension APIs for the remote OMP tool smoke fixture",
+      "purpose": "Agent session, resource loader, settings, and extension APIs for the remote OMP tool smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     },
     {
@@ -351,7 +174,7 @@
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
         "@oh-my-pi/pi-coding-agent/modes/runtime-init"
       ],
-      "purpose": "Agent session, custom tool, settings, and extension APIs for the remote parity smoke fixture",
+      "purpose": "Agent session, custom tool, settings, and extension APIs for the remote parity smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     },
     {
@@ -360,13 +183,7 @@
         "@oh-my-pi/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim"
       ],
-      "purpose": "Agent session, resource loader, and settings APIs for the specialist approval smoke fixture",
-      "plan": "remove"
-    },
-    {
-      "file": "tests/phi-agent-runs.test.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent"],
-      "purpose": "CustomTool type for agent run test fixtures",
+      "purpose": "Agent session, resource loader, and settings APIs for the specialist approval smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
     }
   ]

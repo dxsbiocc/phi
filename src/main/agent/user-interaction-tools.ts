@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
 
 import type {
   AgentUserInteractionAnswer,
@@ -289,12 +289,13 @@ Rules:
 export function buildAskUserQuestionCustomTools(
   runtimeSessionId: string,
   executeHost: UserInteractionToolHostExecutor
-): CustomTool[] {
+): PhiTool[] {
   return [
     {
       name: ASK_USER_QUESTION_TOOL_NAME,
       label: 'Ask User Question',
       description: TOOL_DESCRIPTION,
+      site: 'host',
       loadMode: 'essential',
       strict: true,
       parameters: {

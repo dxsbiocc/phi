@@ -1,13 +1,13 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 import { posix } from 'node:path'
+import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../engine/phi-extension'
+
+export { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../engine/phi-extension'
 
 import { suggestedFilename, validateDownloadUrl } from './project-download-tool'
 
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
-
-export const PHI_REMOTE_DOWNLOAD_DESCRIPTION =
-  'Download one public HTTPS file directly from the server into the current SSH project. The server performs the request and write; Phi never downloads through or writes to the local session anchor.'
 
 export type RemoteDownloadResult = { path: string; displayPath: string; bytes: number }
 export type RemoteDownloadBackend = (
@@ -21,11 +21,12 @@ export type RemoteDownloadBackend = (
   signal?: AbortSignal
 ) => Promise<RemoteDownloadResult>
 
-export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): CustomTool {
+export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): PhiTool {
   return {
     name: 'download_file',
     label: 'Download File',
     description: PHI_REMOTE_DOWNLOAD_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     approval: 'write',
     parameters: parameters(),
@@ -44,7 +45,7 @@ export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): 
   }
 }
 
-function parameters(): CustomTool['parameters'] {
+function parameters(): PhiTool['parameters'] {
   return {
     type: 'object',
     required: ['url'],

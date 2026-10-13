@@ -1,7 +1,7 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import { readFileSync, statSync } from 'node:fs'
 import { extname, isAbsolute } from 'node:path'
 
+import type { PhiTool } from '../engine/types'
 import type { PhiAgentDefinition } from './definition'
 import { AgentRunLimitError, AgentRunRegistry, type AgentRunSnapshot } from './registry'
 import {
@@ -60,36 +60,6 @@ function reportForMain(run: AgentRunSnapshot): string {
   if (run.nextAgent) metadata.push(`Suggested next agent: ${run.nextAgent}.`)
   if (run.fallbackReason) metadata.push(`Fallback reason: ${run.fallbackReason}.`)
   return `${metadata.join('\n')}\n\n${report}`.trim()
-}
-
-function latestUserImages(context: unknown): AgentImage[] {
-  if (!isRecord(context) || !isRecord(context.sessionManager)) return []
-  const getBranch = context.sessionManager.getBranch
-  if (typeof getBranch !== 'function') return []
-  const branch: unknown = getBranch.call(context.sessionManager)
-  if (!Array.isArray(branch)) return []
-  let userMessages = 0
-  for (let index = branch.length - 1; index >= 0 && userMessages < 3; index -= 1) {
-    const entry = branch[index]
-    if (!isRecord(entry) || entry.type !== 'message' || !isRecord(entry.message)) continue
-    if (entry.message.role !== 'user') continue
-    userMessages += 1
-    const content = entry.message.content
-    if (!Array.isArray(content)) continue
-    const images = content
-      .filter(
-        (part): part is AgentImage =>
-          isRecord(part) &&
-          part.type === 'image' &&
-          typeof part.data === 'string' &&
-          part.data.length > 0 &&
-          typeof part.mimeType === 'string' &&
-          ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(part.mimeType)
-      )
-      .slice(0, 5)
-    if (images.length > 0) return images
-  }
-  return []
 }
 
 function imagePathsFrom(params: Record<string, unknown>): string[] | string {
@@ -172,7 +142,7 @@ export function buildAgentTool(
   runner: AgentRunner,
   registry: AgentRunRegistry = new AgentRunRegistry(),
   options: AgentToolOptions = {}
-): CustomTool {
+): PhiTool {
   const { name } = definition
   const local = options.remote !== true
   const cwd = options.cwd?.trim()
@@ -180,6 +150,7 @@ export function buildAgentTool(
     name,
     label: name,
     description: agentDelegationToolDescription(definition, options),
+    site: 'runtime',
     parameters: {
       type: 'object',
       required: ['task'],
@@ -236,7 +207,7 @@ export function buildAgentTool(
           loaded.push(image)
         }
         const includeAttached = record.include_attached_images === true
-        const attached = includeAttached ? latestUserImages(ctx) : []
+        const attached = includeAttached ? (ctx?.recentUserImages() ?? []) : []
         if (includeAttached && attached.length === 0 && paths.length === 0) {
           return errorResult(
             'The reference image is missing. Attach it or provide an image file path.'

@@ -1,7 +1,8 @@
+import type { PhiAgentEvent } from '../src/main/agent/engine/types'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../src/main/agent/engine/types'
 
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import {
@@ -441,7 +442,7 @@ test('the delegation tool reports a run limit as an error instead of throwing', 
 
 // ── run management tools ─────────────────────────────────────────────────
 
-function toolByName(registry: AgentRunRegistry, name: string): CustomTool {
+function toolByName(registry: AgentRunRegistry, name: string): PhiTool {
   const tool = buildAgentRunTools(registry).find((candidate) => candidate.name === name)
   assert.ok(tool, `missing tool ${name}`)
   return tool
@@ -556,7 +557,7 @@ test('agent_stop cancels a running agent', async () => {
 // ── runner control channel ───────────────────────────────────────────────
 
 function steerableSession(): AgentSessionLike & { steered: string[] } {
-  const listeners = new Set<(event: unknown) => void>()
+  const listeners = new Set<(event: PhiAgentEvent) => void>()
   const steered: string[] = []
   return {
     steered,
@@ -825,8 +826,8 @@ test('controlAgentRun explains why a run cannot be controlled', async () => {
 
 // ── timing steps: the SDK's events carry no time ─────────────────────────
 
-function emittingSession(script: (emit: (event: unknown) => void) => void): AgentSessionLike {
-  const listeners = new Set<(event: unknown) => void>()
+function emittingSession(script: (emit: (event: PhiAgentEvent) => void) => void): AgentSessionLike {
+  const listeners = new Set<(event: PhiAgentEvent) => void>()
   return {
     subscribe(listener) {
       listeners.add(listener)

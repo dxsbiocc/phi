@@ -5,7 +5,7 @@ import {
   enterPlanReviewMode,
   type PlanReviewSession
 } from '../src/main/agent/plan/plan-review-mode'
-import { planModeToolDecision } from '../src/main/agent/plan/plan-tool-policy'
+import { planModeToolDecision } from '../src/main/agent/engine/phi-extension'
 
 function fakeSession(): PlanReviewSession & {
   activeTools: string[]

@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   mergeRemoteProjectSkills,
   remoteProjectSkillsValue
-} from '../src/main/agent/omp/remote-project-skills'
+} from '../src/main/agent/engine/remote-project-skills'
 
 test('worker accepts only pinned trusted remote Skill metadata and gives it project precedence', () => {
   const remote = remoteProjectSkillsValue([

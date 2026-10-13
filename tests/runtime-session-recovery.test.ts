@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { getOmpBridge } from '../src/main/agent/omp/omp-bridge'
+import { getOmpBridge } from '../src/main/agent/engine/omp-bridge'
 import {
   createRuntimeAgentSession,
   createRuntimeSessionManager

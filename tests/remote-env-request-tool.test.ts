@@ -31,7 +31,7 @@ test('remote env_request forwards verified identity and cancels by request id', 
     'call-1',
     { packages: ['six'], reason: 'need six', environment: 'phi:python@1' },
     undefined,
-    { sessionManager: { getCwd: () => '/local/anchor' } } as never,
+    { cwd: '/local/anchor', recentUserImages: () => [] } as never,
     controller.signal
   )
   await new Promise((resolve) => setImmediate(resolve))
@@ -74,7 +74,7 @@ test('remote env_request surfaces a successful local-cache retry notice', async 
     'call-1',
     { packages: ['six'], reason: 'need six', environment: 'phi:python@1' },
     undefined,
-    { sessionManager: { getCwd: () => '/local/anchor' } } as never,
+    { cwd: '/local/anchor', recentUserImages: () => [] } as never,
     undefined
   )
 

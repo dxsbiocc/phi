@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { createEnvironmentBindingExtension } from '../src/main/agent/agents/environment-binding'
+import { createEnvironmentBindingExtension } from '../src/main/agent/engine/phi-extension'
 import { createEnvironmentBuilds } from '../src/main/agent/content/environment-builds'
 import { bindAgentSession } from '../src/main/agent/content/environment-gate'
 import {
@@ -469,7 +469,7 @@ test('a bound env_request swaps the live bash variables and skill environment', 
     }
     throw new Error(`unexpected ${method}`)
   }
-  const ctx = { sessionManager: { getCwd: () => '/proj' } }
+  const ctx = { cwd: '/proj', recentUserImages: () => [] }
   const skillRun = buildSkillRunTool(requestHost, {
     runtimeSessionId: 'runtime-1',
     environmentBinding: binding

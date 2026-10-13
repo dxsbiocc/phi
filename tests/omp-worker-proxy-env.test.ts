@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { clearLoginShellEnvCache, readLoginShellEnv } from '../src/main/agent/omp/login-shell-env'
+import {
+  clearLoginShellEnvCache,
+  readLoginShellEnv
+} from '../src/main/agent/engine/login-shell-env'
 import {
   proxyEnvFromScutil,
   resolveWorkerProxyEnv,
   type WorkerProxyOptions
-} from '../src/main/agent/omp/worker-proxy-env'
+} from '../src/main/agent/engine/worker-proxy-env'
 
 const SCUTIL_ON = `<dictionary> {
   ExceptionsList : <array> {
