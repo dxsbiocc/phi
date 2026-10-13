@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。T9 部署已实现并修复审查问题，等待最终复验；T10 按基础 RPC 与扩展 bootstrap 分步推进。2026-10-13 由 Codex 接替 Claude 管理与审查。
+状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 定向验收通过、整组确认进行中，T10b 扩展 bootstrap 准备接续；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
 创建日期：2026-10-12
 执行：Codex 原生 subagents；负责人：当前 Codex 主会话（任务拆分、进度管理、独立质量审查与最终验收）。所有项目验证命令使用 `bun run`；限定测试采用同一脚本的 Node runner，避免参数附加后误跑全套。
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -26,8 +26,10 @@
 | T6 Phi 扩展包 | 原 `t6-extension-package` 工作区的未提交成果已保留 | 恢复完成并通过独立审查、构建及全套测试；原工作区保留 |
 | T7 引擎契约测试 | 基于 T5 的独立副本 | 13 个真实 worker 契约通过，含审批、中断、子会话、恢复、API key/OAuth 存储状态 |
 | T8 OMP 升级 | `codex/omp-upgrade-18-10-3`，精确锁定 18.10.3 | 实现、独立审查及自动化验收通过；人工清单待验证 |
-| T9 R1 分发部署 | 独立 `codex/remote-omp-deployment` 副本 | 已实现，27 项定向测试通过；两项缓存修复待最终复验 |
-| T10 R2 RPC | 基础协议与扩展 bootstrap 的实施边界已核实 | T10a 先实现真实 stdio 与基础会话契约；T10b 再实现扩展加载与哈希部署 |
+| T9 R1 分发部署 | `3e8462a8`；候选分支整合为 `46df9dc8` | 独立 APPROVE；两项缓存缺陷红绿修复；18.10.3 下复跑 27/27 和专用测试类型检查通过 |
+| T10a 基础 RPC | `codex/omp-rpc-foundation` | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产整合确认进行中 |
+| T10b 扩展启动与部署 | 前置协议已实现，实施计划已写 | 实际默认入口、安全加载确认、完整文件哈希部署及现有 SSH stdio 工厂；完成前不宣称整个 R2 完成 |
+| T17 升级手册 | [操作手册](../runtime/omp-upgrade-runbook.md) | 已记录本次实际升级步骤、验证证据和人工缺口；T8 合入权限单独记录 |
 | T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
 | T9 | R1 分发与部署 | T8 | R1 测试通过 |
 | T10 | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例 | T9 | M8 基础用例通过 |
@@ -381,6 +383,11 @@ bun run test
 - 测试：用 `localShellSession` 假服务器覆盖部署、重用、版本不一致、校验失败。
 
 **R2 启动与连接**
+
+实施拆分（2026-10-13）：T10a 使用 Node-only 协议与窄 `RpcSessionBackend`，真实本地 CLI 和 InProcess 运行同一基础契约，不伪装完整 55 操作 `PhiEngine`。`response` 仅代表 prompt 接收，完成依赖 same-id `prompt_result` 并读取真实状态/历史。两路独立审查已修复 turn lock、同 ID 换代、同步/异步 observer、旧 cleanup 错误污染和 wire metadata 校验；协议 26/26、基础及回归新增 20/20、原丰富契约 18/18 全部通过，含真实 >1 MiB 多字节流/历史和 64 MiB 分块上限。整组确认结果另行记录。
+
+T10b 才完成真实 `-e` 默认入口、加载安全确认、完整扩展文件内容哈希部署和复用现有 SSH stdio 的启动工厂。扩展 loader 报错可能仅记录诊断，必须在启动阶段证明预期守卫已加载；审批桥接前写入/执行保持拒绝。模型代理、宿主工具、审批、子会话和远程恢复仍按 R3–R7 推进；当前不接产品 UI，不连接真实服务器。
+
 - `RpcEngine`：建立 SSH 连接（复用现有 SSH 会话管理与主机密钥校验），启动 `omp --mode rpc`，设置 `HOME`、`PI_CODING_AGENT_DIR`、工作目录、`-e <Phi 扩展包>`。
 - 处理就绪、协议版本协商（`negotiate_protocol`）、进程退出、SSH 断开（第一版：标记会话中断，可重新连接并恢复会话）。
 - Phi 扩展包按内容哈希上传与复用（复用 Skill 包上传的做法）。
@@ -428,7 +435,7 @@ bun run test
 
 ### 阶段 5：常态化升级流程
 
-写成 `docs/runtime/omp-upgrade-runbook.md`，每次升级照做：
+已交付 [OMP 升级操作手册](../runtime/omp-upgrade-runbook.md)。本次已按记录完成本地自动化部分，人工与远程清单仍待验证；每次升级照做：
 
 1. 新分支 `chore/omp-<version>`；在 `package.json` 中锁精确版本，同时检查 `pi-ai`、`pi-catalog`、`pi-tui`、`pi-natives` 版本一致。
 2. 更新远程运行时清单：同版本的 `omp-linux-x64` / `omp-linux-arm64` 地址与 SHA256。

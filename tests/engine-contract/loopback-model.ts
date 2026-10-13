@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net'
 
 export type ModelReply = {
   text?: string
+  /** Optional bounded SSE deltas for large RPC framing contracts; ordinary replies keep two chunks. */
+  textChunkChars?: number
   tool?: { name: string; args: Record<string, unknown>; id?: string }
   hold?: boolean
 }
@@ -48,9 +50,18 @@ export async function startLoopbackModel(): Promise<{
       }
       chunk({ role: 'assistant', content: '' })
       if (reply.text) {
-        const split = Math.max(1, Math.floor(reply.text.length / 2))
-        chunk({ content: reply.text.slice(0, split) })
-        chunk({ content: reply.text.slice(split) })
+        if (reply.textChunkChars === undefined) {
+          const split = Math.max(1, Math.floor(reply.text.length / 2))
+          chunk({ content: reply.text.slice(0, split) })
+          chunk({ content: reply.text.slice(split) })
+        } else {
+          if (!Number.isInteger(reply.textChunkChars) || reply.textChunkChars <= 0) {
+            throw new Error('textChunkChars must be a positive integer')
+          }
+          for (let offset = 0; offset < reply.text.length; offset += reply.textChunkChars) {
+            chunk({ content: reply.text.slice(offset, offset + reply.textChunkChars) })
+          }
+        }
       }
       if (reply.tool) {
         chunk({
