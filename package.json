@@ -10,6 +10,7 @@
   "scripts": {
     "format": "prettier --write .",
     "check:architecture": "node scripts/check-frontend-boundaries.mjs",
+    "check:engine-boundary": "node scripts/check-engine-boundary.mjs",
     "check:resources": "node scripts/check-resources.mjs",
     "check:asar-unpack": "node scripts/check-asar-unpack.mjs",
     "check:connectors": "node --import ./scripts/test-loader.mjs scripts/content/check-connectors.ts",
@@ -17,7 +18,7 @@
     "check:agents": "node --import ./scripts/test-loader.mjs scripts/content/check-agents.ts",
     "check:plugins": "node --import ./scripts/test-loader.mjs scripts/content/check-plugins.ts",
     "check:package-content": "node scripts/content/check-package-content.mjs",
-    "lint": "bun run check:architecture && bun run check:resources && bun run check:asar-unpack && bun run check:plugins && bun run check:skills && bun run check:agents && eslint --cache .",
+    "lint": "bun run check:architecture && bun run check:engine-boundary && bun run check:resources && bun run check:asar-unpack && bun run check:plugins && bun run check:skills && bun run check:agents && eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json --composite false",

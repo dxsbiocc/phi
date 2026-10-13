@@ -104,9 +104,12 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 - 新建 `src/main/agent/engine/`。现有 `src/main/agent/omp/` 整体迁入，作为**唯一**允许 import `@oh-my-pi/*` 的目录。
 - 例外（白名单，带理由）：
   - `src/main/terminal/terminal-worker.ts`、`terminal-supervisor.ts` 使用 `@oh-my-pi/pi-natives` 的 `PtySession` / `Process`。这是原生进程能力，不属于 agent 引擎；保留，但只允许 `pi-natives` 包根。
+  - `scripts/` 下只使用 `@oh-my-pi/pi-natives` 包根的终端测试与试验脚本（`terminal-host-smoke.ts`、`terminal-pty-spike.ts`、`terminal-pty-spike/helpers.ts`、`terminal-stress-smoke.ts`），理由同上。
 - 新增检查脚本 `scripts/check-engine-boundary.mjs`，接入 `bun run lint`：
-  - 引擎目录外出现 `@oh-my-pi/*`（白名单除外）即失败。
-  - 引擎目录内的内部子路径 import 必须列在 `scripts/engine-boundary-allowlist.json` 中；每条记录写明用途和"计划移除/长期保留"。列表**只减不增**，新增需要在 PR 中说明。
+  - 扫描 `src/`、`tests/`、`scripts/` 下的源码文件；检查的是模块引用（`import`、`import type`、`export ... from`、动态 `import()`、`require()`、`import x = require()`），只用作字符串的包名或 `node_modules/...` 路径不算引用。
+  - 引擎目录外出现 `@oh-my-pi/*`（白名单除外）即失败。白名单按"文件 + 具体引用路径"记录，已在白名单里的文件新增一个引用路径同样失败。
+  - 引擎目录内可以直接引用包根；内部子路径 import 必须列在 `scripts/engine-boundary-allowlist.json` 中。每条记录写明用途和"计划移除/长期保留"。
+  - 白名单里的过期条目（文件已删除，或文件已不再引用该路径）同样失败，因此列表**只减不增**；新增条目需要在 PR 中说明。
 
 ### M2 Phi 自有类型
 
@@ -215,7 +218,7 @@ bun run test
 ### 阶段 0：基线（约 0.5 天）
 
 1. 在 18.1.10 上记录 `typecheck`、`lint`、`test` 的当前结果，写入本文附录 A，作为后续"无回归"的比较对象。（已完成）
-2. 新增 `scripts/check-engine-boundary.mjs` 与 `scripts/engine-boundary-allowlist.json`。白名单初始内容为当前全部 OMP import（约 40 个文件），接入 `lint`。
+2. 新增 `scripts/check-engine-boundary.mjs` 与 `scripts/engine-boundary-allowlist.json`。白名单初始内容为当前全部 OMP import，接入 `lint`。2026-10-13 实际为 52 个文件（`src/` 40、`tests/` 7、`scripts/` 5）：其中 46 条计划移除，6 条长期保留（M1 列出的终端例外）。
 3. ~~现有未提交改动先提交或搁置~~：已完成（2026-10-12）。
 
 验收：`lint` 通过；新增一个引擎目录外的 OMP import 时 `lint` 失败。
