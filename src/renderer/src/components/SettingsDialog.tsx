@@ -27,7 +27,7 @@ import type { FileOpenConversationLayout } from '../../../shared/appSettingsType
 import type { PermissionMode, Project, ThinkingLevel, ToolApprovalRequest } from '../types'
 import type { ThemeMode } from '../theme'
 import { accentAt } from '../theme'
-import type { ThemeFamily } from '../useThemeMode'
+import type { ThemePaletteId } from '../themePalettes'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
@@ -537,8 +537,8 @@ type SettingsDialogProps = {
   onSetEnvironmentToolPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
   themeMode: ThemeMode
   onSelectThemeMode: (mode: ThemeMode) => void
-  themeFamily: ThemeFamily
-  onSelectThemeFamily: (family: ThemeFamily) => void
+  themePalette: ThemePaletteId
+  onSelectThemePalette: (palette: ThemePaletteId) => void
   category: SettingsCategory
   onCategoryChange: (category: SettingsCategory) => void
 }
@@ -581,8 +581,8 @@ function SettingsDialog({
   onSetEnvironmentToolPath,
   themeMode,
   onSelectThemeMode,
-  themeFamily,
-  onSelectThemeFamily,
+  themePalette,
+  onSelectThemePalette,
   category,
   onCategoryChange
 }: SettingsDialogProps): React.JSX.Element {
@@ -743,8 +743,8 @@ function SettingsDialog({
             <AppearanceSettingsSection
               mode={themeMode}
               onSelectMode={onSelectThemeMode}
-              family={themeFamily}
-              onSelectFamily={onSelectThemeFamily}
+              palette={themePalette}
+              onSelectPalette={onSelectThemePalette}
             />
           )}
         </Box>

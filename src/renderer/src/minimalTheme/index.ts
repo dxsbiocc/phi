@@ -1,6 +1,7 @@
 import {
   alpha,
   createTheme,
+  getContrastRatio,
   type PaletteColorOptions,
   type Theme,
   type ThemeOptions
@@ -48,13 +49,15 @@ declare module '@mui/material/Chip' {
 
 function semanticPalette(color: SemanticColor, isDark: boolean): PaletteColorOptions {
   const scale = SEMANTIC_SCALES[color]
+  const contrastText =
+    getContrastRatio(scale.main, '#FFFFFF') >= 4.5 ? '#FFFFFF' : MINIMAL_GREY[800]
   return {
     lighter: scale.lighter,
     light: scale.light,
     main: scale.main,
     dark: scale.dark,
     darker: scale.darker,
-    contrastText: isDark || color === 'warning' ? MINIMAL_GREY[800] : '#FFFFFF'
+    contrastText: isDark || color === 'warning' ? MINIMAL_GREY[800] : contrastText
   }
 }
 

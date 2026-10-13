@@ -37,6 +37,14 @@ import type {
 } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
+import {
+  createStartupSplashWindow,
+  dismissStartupSplashWindow,
+  type StartupSplashWindow
+} from './startup-splash'
+import { createMacMenuBar } from './menu-bar'
+import type { MenuBarController } from './menu-bar-controller'
+import type { MenuBarAction } from '../shared/menuBarTypes'
 import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -604,6 +612,9 @@ function applyDockIcon(): void {
 
 const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMainWindowStartup>>()
 let mainWindow: BrowserWindow | null = null
+let startupSplashWindow: StartupSplashWindow | null = null
+let menuBarController: MenuBarController | null = null
+let pendingMenuBarAction: MenuBarAction | null = null
 let mainWindowCleanupStarted = false
 type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
 let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
@@ -612,6 +623,25 @@ let browserWorkspaceRegistryDisposal: Promise<void> | null = null
 let terminalManager: TerminalManager | null = null
 let terminalDraftService: TerminalDraftService | null = null
 let mainWindowCleanupPromise: Promise<void> | null = null
+
+function showMainWindowFromMenuBar(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+  const window = mainWindow
+  if (!window || window.isDestroyed()) return
+  if (startupSplashWindow && !startupSplashWindow.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  if (!window.isVisible()) window.show()
+  window.focus()
+}
+
+function queueMenuBarAction(action: MenuBarAction): void {
+  pendingMenuBarAction = action
+  showMainWindowFromMenuBar()
+}
+
+function hideMainWindowFromMenuBar(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide()
+}
 
 function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
   const window = mainWindow
@@ -625,6 +655,16 @@ function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
     throw new Error('Window renderer is not authorized')
   }
   return window
+}
+
+function finishStartupSplash(window: BrowserWindow | null): void {
+  const splash = startupSplashWindow
+  startupSplashWindow = null
+  if (!window) {
+    if (splash && !splash.isDestroyed()) splash.close()
+    return
+  }
+  dismissStartupSplashWindow(splash, window)
 }
 
 function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolean): void {
@@ -7583,31 +7623,37 @@ function createWindow(): void {
   })
   mainWindow = window
 
-  const startup = createMainWindowStartup(window, (reason) => {
-    writeAppLog({ level: 'error', event: 'window_startup_failed', metadata: { reason } })
-    void dialog
-      .showMessageBox({
-        type: 'error',
-        title: APP_NAME,
-        message: 'Phi 界面未能完成加载',
-        detail: '可以重新加载窗口，或关闭后再次启动。',
-        buttons: ['重新加载', '关闭'],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true
-      })
-      .then(({ response }) => {
-        if (window.isDestroyed()) return
-        if (response === 0) {
-          if (startup.retry()) window.webContents.reload()
-        } else {
-          window.close()
-        }
-      })
-      .catch(() => {
-        if (!window.isDestroyed()) window.close()
-      })
-  })
+  const startup = createMainWindowStartup(
+    window,
+    (reason) => {
+      finishStartupSplash(window)
+      writeAppLog({ level: 'error', event: 'window_startup_failed', metadata: { reason } })
+      void dialog
+        .showMessageBox({
+          type: 'error',
+          title: APP_NAME,
+          message: 'Phi 界面未能完成加载',
+          detail: '可以重新加载窗口，或关闭后再次启动。',
+          buttons: ['重新加载', '关闭'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true
+        })
+        .then(({ response }) => {
+          if (window.isDestroyed()) return
+          if (response === 0) {
+            if (startup.retry()) window.webContents.reload()
+          } else {
+            window.close()
+          }
+        })
+        .catch(() => {
+          if (!window.isDestroyed()) window.close()
+        })
+    },
+    15_000,
+    () => finishStartupSplash(window)
+  )
   mainWindowStartups.set(window, startup)
   window.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
     if (isMainFrame && errorCode !== -3) startup.fail('main-frame-load-failed')
@@ -7687,6 +7733,17 @@ registerNotebookOutputScheme()
 app.whenReady().then(async () => {
   installNotebookOutputProtocol()
   applyDockIcon()
+  menuBarController = createMacMenuBar({
+    openWindow: showMainWindowFromMenuBar,
+    queueAction: queueMenuBarAction,
+    hideWindow: hideMainWindowFromMenuBar,
+    canHideWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
+    quit: () => app.quit()
+  })
+  startupSplashWindow = await createStartupSplashWindow(
+    (options) => new BrowserWindow(options),
+    appIcon.isEmpty() ? '' : appIcon.toDataURL()
+  )
 
   const removedLogs = cleanupOldLogs()
   try {
@@ -7855,6 +7912,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:renderer-ready', (event, background: unknown) => {
     const window = requireMainWindowRenderer(event)
     mainWindowStartups.get(window)?.rendererReady(background)
+  })
+  ipcMain.handle('menu-bar:consume-action', (event): MenuBarAction | null => {
+    requireMainWindowRenderer(event)
+    const action = pendingMenuBarAction
+    pendingMenuBarAction = null
+    return action
   })
   ipcMain.handle('files:reveal', async (_, filePath: string) => {
     shell.showItemInFolder(assertRevealPathAllowed(filePath))
@@ -10611,6 +10674,9 @@ app.on(
   'before-quit',
   createBeforeQuitHandler({
     beginShutdown: () => {
+      finishStartupSplash(null)
+      menuBarController?.destroy()
+      menuBarController = null
       // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
       try {
         wrapperJobs.shutdown()

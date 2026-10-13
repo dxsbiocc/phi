@@ -79,8 +79,7 @@ import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
-import { createAppTheme } from './theme'
-import { createMinimalTheme } from './minimalTheme'
+import { createPaletteTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { syncWindowBackground } from './lib/windowStartup'
 import { useProviderAuth } from './useProviderAuth'
@@ -649,13 +648,12 @@ function App(): React.JSX.Element {
     mode: themeMode,
     effectiveMode,
     setMode: setThemeMode,
-    family: themeFamily,
-    setFamily: setThemeFamily
+    palette: themePalette,
+    setPalette: setThemePalette
   } = useThemeMode()
   const theme = useMemo(
-    () =>
-      themeFamily === 'minimal' ? createMinimalTheme(effectiveMode) : createAppTheme(effectiveMode),
-    [themeFamily, effectiveMode]
+    () => createPaletteTheme(effectiveMode, themePalette),
+    [themePalette, effectiveMode]
   )
   useEffect(() => {
     syncWindowBackground(theme.palette.background.default)
@@ -1878,6 +1876,39 @@ function App(): React.JSX.Element {
     onNewChat,
     navigateToView
   ])
+
+  useEffect(() => {
+    let active = true
+    let consuming = false
+    const consumeMenuBarAction = async (): Promise<void> => {
+      if (consuming) return
+      consuming = true
+      try {
+        const action = await rendererApi.consumeMenuBarAction()
+        if (!active || !action) return
+        if (action === 'new-chat') {
+          navigateToView('chat')
+          await onNewChat()
+        } else if (action === 'open-settings') {
+          openSettings()
+        }
+      } catch {
+        // The main process may be shutting down while a focus event is being handled.
+      } finally {
+        consuming = false
+      }
+    }
+    const onWindowFocus = (): void => {
+      void consumeMenuBarAction()
+    }
+
+    window.addEventListener('focus', onWindowFocus)
+    void consumeMenuBarAction()
+    return () => {
+      active = false
+      window.removeEventListener('focus', onWindowFocus)
+    }
+  }, [navigateToView, onNewChat, openSettings, rendererApi])
 
   useEffect(() => {
     const unsubscribe = rendererApi.onAgentEvent((event: AgentEventSummary) => {
@@ -5054,8 +5085,8 @@ function App(): React.JSX.Element {
           onRespondToolApproval={onRespondToolApproval}
           themeMode={themeMode}
           setThemeMode={setThemeMode}
-          themeFamily={themeFamily}
-          setThemeFamily={setThemeFamily}
+          themePalette={themePalette}
+          setThemePalette={setThemePalette}
           noProjectTaskFolder={noProjectTaskFolder}
           allowExternalFileRead={allowExternalFileRead}
           preventSleepDuringRuns={preventSleepDuringRuns}

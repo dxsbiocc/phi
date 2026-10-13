@@ -7,6 +7,7 @@ import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettin
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { TerminalRendererBridge } from '../../shared/terminalTypes'
+import type { MenuBarAction } from '../../shared/menuBarTypes'
 import type {
   EnvironmentGetResult,
   EnvironmentHostDependency,
@@ -730,6 +731,7 @@ export interface RendererApi
   toggleWindowFullscreen: () => Promise<void>
   getWindowFullscreen: () => Promise<boolean>
   onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void
+  consumeMenuBarAction: () => Promise<MenuBarAction | null>
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   getFileIcon: (path: string) => Promise<string | null>

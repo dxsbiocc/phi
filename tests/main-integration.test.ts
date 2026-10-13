@@ -1368,6 +1368,19 @@ async function harness(
   }
   const modules: Record<string, unknown> = {
     './window-startup': windowStartup,
+    './startup-splash': {
+      createStartupSplashWindow: async () => {
+        operationLog.push({ type: 'splash.create' })
+        return null
+      },
+      dismissStartupSplashWindow: (_splash: unknown, window: { show: () => void }) => {
+        operationLog.push({ type: 'splash.dismiss' })
+        window.show()
+      }
+    },
+    './menu-bar': {
+      createMacMenuBar: () => null
+    },
     'node:crypto': { createHash, randomUUID },
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
@@ -1611,7 +1624,12 @@ async function harness(
           osNotifications.push(this.options)
         }
       },
-      nativeImage: { createFromPath: () => ({ isEmpty: () => false }) },
+      nativeImage: {
+        createFromPath: () => ({
+          isEmpty: () => false,
+          toDataURL: () => 'data:image/png;base64,aWNvbg=='
+        })
+      },
       nativeTheme: { shouldUseDarkColors: false }
     },
     './browser/browser-ipc': browserIpc,
@@ -11125,7 +11143,19 @@ test('main IPC: fullscreen state is available only to the trusted main renderer'
   )
 })
 
-test('main IPC: the saved renderer background is applied before the only initial window reveal', async () => {
+test('main startup creates the standalone splash before the main window', async () => {
+  const app = await harness()
+  const splashIndex = app.operationLog.findIndex((entry) => entry.type === 'splash.create')
+  const mainWindowIndex = app.operationLog.findIndex(
+    (entry) => entry.type === 'window.create' && entry.width === 1280
+  )
+
+  assert.ok(splashIndex >= 0)
+  assert.ok(mainWindowIndex > splashIndex)
+  assert.ok(app.operationLog.some((entry) => entry.type === 'splash.dismiss'))
+})
+
+test('main IPC: the splash stays up until the themed main window is ready', async () => {
   const app = await harness(undefined, { holdRendererReady: true })
   assert.equal(app.operationLog.find((entry) => entry.type === 'window.create')?.show, false)
   assert.equal(

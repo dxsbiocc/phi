@@ -13,12 +13,13 @@ function isOpaqueBackground(input: unknown): input is string {
   return Boolean(rgb && rgb.slice(1).every((channel) => Number(channel) <= 255))
 }
 
-// Chromium's first HTML paint may precede React. Both readiness signals are
-// required, and only the initial reveal may change native window visibility.
+// Keep the main window hidden behind the standalone splash until Chromium has
+// painted and React reports its first usable frame and selected theme.
 export function createMainWindowStartup(
   window: StartupWindow,
   onFailure: (reason: string) => void,
-  timeoutMs = 15_000
+  timeoutMs = 15_000,
+  onReady?: () => void
 ): {
   painted: () => void
   rendererReady: (background: unknown) => void
@@ -31,17 +32,24 @@ export function createMainWindowStartup(
   let shown = false
   let failed = false
   let disposed = false
+  let completed = false
   let timer: ReturnType<typeof setTimeout>
 
   const clearTimer = (): void => clearTimeout(timer)
   const reveal = (): void => {
     if (disposed || failed || shown || window.isDestroyed() || !painted || !rendererReady) return
     shown = true
-    clearTimer()
     window.show()
   }
+  const completeIfReady = (): void => {
+    if (!painted || !rendererReady || completed) return
+    completed = true
+    clearTimer()
+    if (onReady) onReady()
+    else reveal()
+  }
   const fail = (reason: string): void => {
-    if (disposed || shown || failed || window.isDestroyed()) return
+    if (disposed || (rendererReady && painted) || failed || window.isDestroyed()) return
     failed = true
     clearTimer()
     onFailure(reason)
@@ -55,18 +63,18 @@ export function createMainWindowStartup(
   return {
     painted: () => {
       painted = true
-      reveal()
+      completeIfReady()
     },
     rendererReady: (background) => {
       if (!isOpaqueBackground(background)) throw new Error('Invalid window background')
       if (disposed || failed || window.isDestroyed()) return
       window.setBackgroundColor(background)
       rendererReady = true
-      reveal()
+      completeIfReady()
     },
     fail,
     retry: () => {
-      if (disposed || shown || window.isDestroyed()) return false
+      if (disposed || !failed || window.isDestroyed()) return false
       failed = false
       rendererReady = false
       clearTimer()

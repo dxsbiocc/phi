@@ -9,7 +9,7 @@ import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
 import type { FileOpenConversationLayout } from '../../shared/appSettingsTypes'
 import type { ThemeMode } from './theme'
-import type { ThemeFamily } from './useThemeMode'
+import type { ThemePaletteId } from './themePalettes'
 import type {
   ActiveAuthPrompt,
   EnvironmentSnapshot,
@@ -60,8 +60,8 @@ export type AppDialogsProps = {
   onRespondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
-  themeFamily: ThemeFamily
-  setThemeFamily: (family: ThemeFamily) => void
+  themePalette: ThemePaletteId
+  setThemePalette: (palette: ThemePaletteId) => void
   noProjectTaskFolder: string
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
@@ -139,8 +139,8 @@ export default function AppDialogs({
   onRespondToolApproval,
   themeMode,
   setThemeMode,
-  themeFamily,
-  setThemeFamily,
+  themePalette,
+  setThemePalette,
   noProjectTaskFolder,
   allowExternalFileRead,
   preventSleepDuringRuns,
@@ -241,8 +241,8 @@ export default function AppDialogs({
         onSetEnvironmentToolPath={onSetEnvironmentToolPath}
         themeMode={themeMode}
         onSelectThemeMode={setThemeMode}
-        themeFamily={themeFamily}
-        onSelectThemeFamily={setThemeFamily}
+        themePalette={themePalette}
+        onSelectThemePalette={setThemePalette}
       />
 
       <EnvironmentSummaryDialog

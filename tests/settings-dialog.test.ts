@@ -80,8 +80,8 @@ function renderSettingsDialog(overrides: Partial<SettingsDialogProps> = {}): str
     onSetEnvironmentToolPath: async () => undefined,
     themeMode: 'system',
     onSelectThemeMode: () => undefined,
-    themeFamily: 'minimal',
-    onSelectThemeFamily: () => undefined,
+    themePalette: 'minimal',
+    onSelectThemePalette: () => undefined,
     ...overrides
   }
 
@@ -162,13 +162,14 @@ test('settings dialog omits internal diagnostics and legacy developer extensions
   assert.doesNotMatch(markup, /开发者扩展/)
 })
 
-test('settings dialog integrates theme family radio rows under appearance', () => {
-  const markup = renderSettingsDialog({ category: 'appearance', themeFamily: 'default' })
+test('settings dialog integrates palette and brightness radio rows under appearance', () => {
+  const markup = renderSettingsDialog({ category: 'appearance', themePalette: 'asana' })
   assert.match(markup, /role="radiogroup"/)
-  assert.match(markup, /主题风格/)
-  assert.match(markup, /Minimal 风格/)
+  assert.match(markup, /配色/)
+  assert.match(markup, /Minimal（默认）/)
+  assert.match(markup, /君の名は/)
   const checkedRadio = markup.match(/<input[^>]*type="radio"[^>]*checked=""[^>]*>/)?.[0]
-  assert.ok(checkedRadio?.includes('value="default"'))
+  assert.ok(checkedRadio?.includes('value="asana"'))
 })
 
 test('settings dialog exposes general application settings', () => {

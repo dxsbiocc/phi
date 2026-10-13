@@ -1,6 +1,7 @@
-import { createTheme, darken, lighten, type Theme } from '@mui/material'
+import { alpha, createTheme, darken, getContrastRatio, lighten, type Theme } from '@mui/material'
 
 import { createMinimalTheme, type SemanticScale } from './minimalTheme'
+import { themePaletteDefinition, type ThemePaletteId } from './themePalettes'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type EffectiveMode = 'light' | 'dark'
@@ -44,6 +45,23 @@ function accentScale(main: string): SemanticScale {
   }
 }
 
+function accessibleMain(main: string, background: string, isDark: boolean): string {
+  return isDark && getContrastRatio(main, background) < 3 ? lighten(main, 0.24) : main
+}
+
+function paletteColor(main: string): SemanticScale & { contrastText: string } {
+  const contrastText =
+    getContrastRatio(main, '#FFFFFF') >= 4.5
+      ? '#FFFFFF'
+      : getContrastRatio(main, '#1C252E') >= 4.5
+        ? '#1C252E'
+        : '#000000'
+  return {
+    ...accentScale(main),
+    contrastText
+  }
+}
+
 // The default family is a color-only variant: Minimal provides the typography,
 // shadows, shape, and component styles; this family swaps in the accent palette,
 // teal-tinted neutrals, and its dark teal chrome.
@@ -76,6 +94,49 @@ export function createAppTheme(mode: EffectiveMode): Theme {
       action: {
         hover: isDark ? 'rgba(241, 246, 246, 0.06)' : 'rgba(46, 159, 179, 0.06)',
         selected: isDark ? 'rgba(46, 159, 179, 0.22)' : 'rgba(46, 159, 179, 0.10)'
+      }
+    }
+  })
+}
+
+export function createPaletteTheme(mode: EffectiveMode, paletteId: ThemePaletteId): Theme {
+  const base = createMinimalTheme(mode)
+  if (paletteId === 'minimal') return base
+
+  const definition = themePaletteDefinition(paletteId)
+  const isDark = mode === 'dark'
+  const backgroundDefault = isDark ? definition.darkBackground : '#FFFFFF'
+  const backgroundPaper = isDark ? definition.darkPaper : '#FFFFFF'
+  const primary = accessibleMain(definition.primary, backgroundDefault, isDark)
+  const secondary = accessibleMain(definition.secondary, backgroundDefault, isDark)
+  const info = accessibleMain(definition.info, backgroundDefault, isDark)
+  const success = accessibleMain(definition.success, backgroundDefault, isDark)
+  const warning = accessibleMain(definition.warning, backgroundDefault, isDark)
+  const error = accessibleMain(definition.error, backgroundDefault, isDark)
+  const textPrimary = isDark ? '#FFFFFF' : '#1C252E'
+  const textSecondary = isDark ? '#AEB9C2' : '#637381'
+
+  return createTheme(base, {
+    palette: {
+      primary: paletteColor(primary),
+      secondary: paletteColor(secondary),
+      info: paletteColor(info),
+      success: paletteColor(success),
+      warning: paletteColor(warning),
+      error: paletteColor(error),
+      background: {
+        default: backgroundDefault,
+        paper: backgroundPaper
+      },
+      text: {
+        primary: textPrimary,
+        secondary: textSecondary
+      },
+      divider: alpha(textPrimary, 0.14),
+      action: {
+        hover: alpha(primary, 0.08),
+        selected: alpha(primary, isDark ? 0.22 : 0.12),
+        focus: alpha(primary, 0.24)
       }
     }
   })

@@ -93,6 +93,7 @@ import type {
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
+import type { MenuBarAction } from '../shared/menuBarTypes'
 import type {
   SearxngEngineOption,
   WebSearchKeyStatus,
@@ -762,6 +763,7 @@ type RendererAuthApi = {
   toggleWindowFullscreen: () => Promise<void>
   getWindowFullscreen: () => Promise<boolean>
   onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => Unsubscribe
+  consumeMenuBarAction: () => Promise<MenuBarAction | null>
   revealPath: (path: string) => Promise<void>
   openPath: (path: string) => Promise<void>
   getFileIcon: (path: string) => Promise<string | null>
@@ -1266,6 +1268,8 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener('window:fullscreen-changed', handler)
     }
   },
+  consumeMenuBarAction: (): Promise<MenuBarAction | null> =>
+    ipcRenderer.invoke('menu-bar:consume-action'),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
   openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
   getFileIcon: (path: string): Promise<string | null> => ipcRenderer.invoke('files:getIcon', path),

@@ -75,18 +75,14 @@ class FakeWindow extends EventEmitter {
   }
 }
 
-test('the real app window stays hidden instead of displaying the system-dark default color before React', () => {
+test('the real main window stays hidden behind the standalone splash until React is ready', () => {
   const window = createMainWindowFixture()
   assert.equal(window.visible, false, 'startup must not expose the native default-color window')
   window.emit('ready-to-show')
-  assert.equal(
-    window.visible,
-    false,
-    'HTML paint alone is not proof the saved React theme is ready'
-  )
+  assert.equal(window.visible, false, 'the standalone splash owns the startup wait')
 })
 
-test('saved theme background precedes the initial show in either readiness order', () => {
+test('saved theme background precedes the main-window reveal in either readiness order', () => {
   for (const family of ['default', 'minimal'] as const) {
     for (const mode of ['light', 'dark'] as const) {
       for (const rendererFirst of [true, false]) {
@@ -104,6 +100,7 @@ test('saved theme background precedes the initial show in either readiness order
         if (rendererFirst) startup.painted()
         else startup.rendererReady(theme.palette.background.default)
         assert.deepEqual(showBackgrounds, [theme.palette.background.default])
+        assert.equal(window.background, theme.palette.background.default)
         // A later theme update, a StrictMode effect, or renderer reload does not
         // reopen, restore or refocus a window the user has hidden/minimized.
         window.visible = false
@@ -117,8 +114,8 @@ test('saved theme background precedes the initial show in either readiness order
   }
 })
 
-test('invalid/transparent backgrounds cannot reveal the native default color', () => {
-  const window = new FakeWindow({ show: false })
+test('invalid/transparent renderer backgrounds cannot reveal the hidden main window', () => {
+  const window = new FakeWindow({ show: false, backgroundColor: '#0D1218' })
   const startup = createMainWindowStartup(window, () => undefined)
   startup.painted()
   for (const color of [
@@ -132,6 +129,7 @@ test('invalid/transparent backgrounds cannot reveal the native default color', (
     assert.throws(() => startup.rendererReady(color), /Invalid window background/)
   }
   assert.equal(window.visible, false)
+  assert.equal(window.background, '#0D1218')
   startup.rendererReady('rgb(13, 18, 24)')
   assert.equal(window.background, 'rgb(13, 18, 24)')
   assert.equal(window.visible, true)
@@ -144,6 +142,7 @@ test('missing renderer readiness gets bounded recovery and retry without showing
   const window = new FakeWindow({ show: false })
   const startup = createMainWindowStartup(window, (reason) => failures.push(reason), 100)
   startup.painted()
+  assert.equal(window.visible, false, 'the standalone splash remains visible while React loads')
   context.mock.timers.tick(100)
   assert.deepEqual(failures, ['renderer-ready-timeout'])
   assert.equal(window.visible, false)
@@ -155,6 +154,62 @@ test('missing renderer readiness gets bounded recovery and retry without showing
   context.mock.timers.tick(100)
   assert.equal(failures.length, 1)
   assert.equal(startup.retry(), false)
+  startup.dispose()
+})
+
+test('renderer readiness without a painted shell still keeps the recovery deadline', (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const failures: string[] = []
+  const window = new FakeWindow({ show: false })
+  const startup = createMainWindowStartup(window, (reason) => failures.push(reason), 100)
+
+  startup.rendererReady('#0D1218')
+  assert.equal(window.visible, false)
+  context.mock.timers.tick(100)
+  assert.deepEqual(failures, ['renderer-ready-timeout'])
+  startup.dispose()
+})
+
+test('startup completion fires once after both the shell and React have painted', () => {
+  const window = new FakeWindow({ show: false })
+  let completions = 0
+  const startup = createMainWindowStartup(
+    window,
+    () => assert.fail('unexpected failure'),
+    15_000,
+    () => {
+      completions += 1
+    }
+  )
+
+  startup.painted()
+  assert.equal(completions, 0)
+  startup.rendererReady('#0D1218')
+  assert.equal(completions, 1)
+  startup.rendererReady('#FFFFFF')
+  startup.painted()
+  assert.equal(completions, 1)
+  startup.dispose()
+})
+
+test('an owner-managed completion keeps the main window hidden until the owner reveals it', () => {
+  const window = new FakeWindow({ show: false })
+  let completions = 0
+  const startup = createMainWindowStartup(
+    window,
+    () => assert.fail('unexpected failure'),
+    15_000,
+    () => {
+      completions += 1
+    }
+  )
+
+  startup.painted()
+  startup.rendererReady('#0D1218')
+
+  assert.equal(completions, 1)
+  assert.equal(window.visible, false)
+  assert.equal(window.showCount, 0)
   startup.dispose()
 })
 

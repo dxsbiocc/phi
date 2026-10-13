@@ -91,6 +91,7 @@ import type {
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
+import type { MenuBarAction } from '../shared/menuBarTypes'
 import type {
   SearxngEngineOption,
   WebSearchKeyStatus,
@@ -648,6 +649,7 @@ declare global {
       toggleWindowFullscreen: () => Promise<void>
       getWindowFullscreen: () => Promise<boolean>
       onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void
+      consumeMenuBarAction: () => Promise<MenuBarAction | null>
       revealPath: (path: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       getFileIcon: (path: string) => Promise<string | null>
