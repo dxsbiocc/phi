@@ -42,7 +42,7 @@ export function registeredHostTools(tools: readonly PhiTool[]): Map<string, Regi
     if (
       !tool ||
       tool.site !== 'host' ||
-      !/^[a-zA-Z0-9_-]{1,128}$/.test(tool.name) ||
+      !/^[a-zA-Z0-9_.-]{1,128}$/.test(tool.name) ||
       registered.has(tool.name) ||
       SERVER_TOOLS.has(tool.name) ||
       typeof tool.label !== 'string' ||

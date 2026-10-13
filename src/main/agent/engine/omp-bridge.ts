@@ -13,6 +13,7 @@ import { ConfiguredStdioProbeError } from './mcp/configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
 import { phiEventFromWire } from './events'
 import type { PhiAgentEvent } from './types'
+import { HostServiceRegistry } from './host-service-registry'
 import {
   parseModelGatewayLease,
   type CreateModelGatewayLeaseParams,
@@ -199,7 +200,6 @@ export class OmpBridge extends EventEmitter {
   // Workers we stopped on purpose, so their exit is not reported as a crash.
   private readonly stoppedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly pending = new Map<string, PendingRequest>()
-  private readonly hostHandlers = new Map<string, HostRequestHandler>()
   private readonly activeSessions = new Set<string>()
   private readonly gatewayLeases = new Map<
     string,
@@ -208,7 +208,10 @@ export class OmpBridge extends EventEmitter {
   private idleTimer: NodeJS.Timeout | null = null
   private stderrTail = ''
 
-  constructor(private readonly spawnWorker: WorkerSpawner = spawnBunWorker) {
+  constructor(
+    private readonly spawnWorker: WorkerSpawner = spawnBunWorker,
+    readonly hostServices = new HostServiceRegistry()
+  ) {
     super()
   }
 
@@ -355,12 +358,7 @@ export class OmpBridge extends EventEmitter {
   }
 
   registerHostHandler(method: string, handler: HostRequestHandler): () => void {
-    this.hostHandlers.set(method, handler)
-    return () => {
-      if (this.hostHandlers.get(method) === handler) {
-        this.hostHandlers.delete(method)
-      }
-    }
+    return this.hostServices.register(method, handler)
   }
 
   onSessionEvent(sessionId: string, listener: (event: PhiAgentEvent) => void): () => void {
@@ -566,14 +564,15 @@ export class OmpBridge extends EventEmitter {
     const child = this.child
     if (!child || child.killed) return
     const respond = (payload: BridgeHostResponse): void => {
+      if (this.child !== child || child.killed || child.stdin.destroyed) return
       child.stdin.write(`${JSON.stringify(payload)}\n`)
     }
     try {
-      const handler = this.hostHandlers.get(request.method)
-      if (!handler) {
-        throw new Error(`Unknown host request method: ${request.method}`)
-      }
-      const result = await handler(request.params, hostRequestContext(request.context))
+      const result = await this.hostServices.invoke(
+        request.method,
+        request.params,
+        hostRequestContext(request.context)
+      )
       respond({ type: 'hostResponse', id: request.id, ok: true, result })
     } catch (error) {
       respond({
