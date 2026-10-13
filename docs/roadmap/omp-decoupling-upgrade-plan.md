@@ -1,11 +1,13 @@
-# OMP 解耦、本地/远程统一与 OMP 升级计划
+# OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**计划，未开始**
+状态：**计划，未开始**；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
 创建日期：2026-10-12
 执行者：Codex（gpt-5.6-sol xhigh）；所有验证命令使用 `bun run`
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
 
 > 路线图说明：internal beta 路线图要求"把 SDK 会话文件视为实现细节"，本计划沿同一方向把 OMP 收敛为可替换的引擎。远程/HPC 在 beta 路线图里排在 beta 之后，但用户已在 2026-10-08 把远程能力对齐提到当前优先级；本计划第 3 阶段是该工作的结构性收尾，不夹带新功能。
+>
+> 架构决定（用户 2026-10-13 确认）：远程项目改为**在服务器上运行 OMP**，桌面端通过 SSH 以 RPC 方式驱动它；本地项目继续在本机进程内运行 OMP。这推翻了 `remote-parity-implementation.md` 中"不把智能体运行时搬到服务器"的非目标。依据见第 0.4 节。
 
 ---
 
@@ -53,21 +55,44 @@ changelog 中编译期发现不了的行为变化（18.2.2 起；更早的条目
 
 OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次发版常见。
 
+### 0.4 远程运行时原型测试（2026-10-13，yzhang 集群 node3）
+
+目的：验证"在服务器上运行 OMP、桌面端通过 SSH 以 RPC 驱动"是否可行。测试用本机的假模型服务（OpenAI 兼容接口，按固定剧本返回工具调用），不涉及真实密钥。测试脚本保留在会话临时目录，结论记录在此。
+
+环境：node3，CentOS 7.9，内核 3.10.0-1160，glibc 2.17，x86_64。没有 tmux/screen，有 setsid。家目录 `mkdir` 报"磁盘配额已满"（`quota` 却显示没有配额），测试改放 `/tmp`。
+
+| 测试项 | 结果 |
+|---|---|
+| OMP 官方 Linux 单文件可执行程序（GitHub release `omp-linux-x64`，18.1.10，约 200 MB，SHA256 与 release 一致） | ✅ 在内核 3.10、glibc 2.17 上运行，`--version` 0.7 秒。原生模块依赖的最高 glibc 版本是 2.17 |
+| `omp-linux-musl-x64` | ❌ 启动报"No such file"：需要系统里有 musl 动态加载器 |
+| 上传两个可执行文件（约 350 MB） | 34 秒 |
+| `ssh … omp --mode rpc`，JSON 行协议走 SSH 标准输入输出 | ✅ 2.7–4.4 秒就绪（含 SSH 连接），之后每次工具调用往返 0.1–0.35 秒 |
+| OMP 原生 `bash`、`read` 在服务器上执行 | ✅ 主机名 node3、内核 3.10、工作目录在服务器上 |
+| 模型经 SSH 反向隧道（`-R`）调用本机服务 | ✅ 密钥不需要离开本机 |
+| 宿主工具（RPC `set_host_tools` / `host_tool_call` / `host_tool_result`） | ✅ 服务器上的智能体调用、桌面端执行并返回 |
+| 主会话审批（扩展在 `tool_call` 中调用 `ctx.ui.confirm`，经 RPC `extension_ui_request` / `extension_ui_response`） | ✅ 拒绝后命令被拦下，未产生副作用 |
+| TypeScript 扩展直接加载（`-e <目录>`） | ✅ 服务器上不需要构建工具 |
+| 子智能体：扩展目录下的 `agents/*.md` 被发现，OMP `task` 在服务器上创建子会话 | ✅ 子会话只拿到声明的工具（另加 `yield`、`hub`）；`subagent_event` / `subagent_progress` / `subagent_lifecycle` 实时转发；结果异步送回主会话 |
+| 子会话里的审批 | ❌ 确认请求没有送到桌面端，被直接按"拒绝"处理（安全，但需要设计） |
+| SSH 断开后进程是否保留、登录节点是否清理常驻进程 | 未测 |
+
+
 ---
 
 ## 1. 目标与非目标
 
 **目标**
 
-1. 本地与远程项目的工作区工具只有**一份实现**，差异只存在于 `WorkspaceHost` 实现与能力档案声明的降级项。
-2. OMP 升级时，需要修改的代码**只在引擎适配层**（`src/main/agent/engine/`）内。
-3. 升级到 OMP 18.10.1，并建立可重复的升级流程。
+1. 本地与远程项目运行**同一份 OMP**：本地在桌面进程内，远程在服务器上经 RPC 驱动。OMP 原生工具在两边都是"本地工具"，Phi 不再维护远程版本的 `read` / `write` / `edit` / `glob` / `grep` / `bash`。
+2. OMP 升级时，需要修改的代码**只在引擎适配层**（`src/main/agent/engine/`）内；服务器端只需换成同版本的 OMP 可执行文件。
+3. 升级到 OMP 18.10.x，并建立可重复的升级流程（桌面端与服务器端同步）。
 
 **非目标**
 
-- 不把智能体运行时搬到服务器（沿用 remote-parity 计划的原则）。
-- 不替换 OMP 的模型层（pi-ai / pi-catalog）、对话循环、上下文压缩、计划模式。这些继续直接跟随 OMP。
-- 不在本计划内做 Skills / MCP / 环境的远程收敛，只列入后续清单（第 4 阶段）。
+- 本地项目不改运行方式，继续在本机进程内运行 OMP。
+- 不替换 OMP 的模型层（pi-ai / pi-catalog）、对话循环、上下文压缩、计划模式。
+- 模型密钥不上传到服务器；服务器上的 OMP 通过隧道调用桌面端的模型代理。
+- 第一版不做断线后继续运行（服务器上的 OMP 随 SSH 连接存在）。断线续跑等登录节点常驻进程政策确认后再做。
 - 不做旧会话数据的迁移层（沿用 beta 路线图原则）。
 
 ---
@@ -81,74 +106,93 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
   - `src/main/terminal/terminal-worker.ts`、`terminal-supervisor.ts` 使用 `@oh-my-pi/pi-natives` 的 `PtySession` / `Process`。这是原生进程能力，不属于 agent 引擎；保留，但只允许 `pi-natives` 包根。
 - 新增检查脚本 `scripts/check-engine-boundary.mjs`，接入 `bun run lint`：
   - 引擎目录外出现 `@oh-my-pi/*`（白名单除外）即失败。
-  - 引擎目录内的内部子路径 import 必须列在 `scripts/engine-boundary-allowlist.json` 中；文件里每条记录写明用途和"计划移除/长期保留"。列表**只减不增**，新增需要在 PR 中说明。
+  - 引擎目录内的内部子路径 import 必须列在 `scripts/engine-boundary-allowlist.json` 中；每条记录写明用途和"计划移除/长期保留"。列表**只减不增**，新增需要在 PR 中说明。
 
 ### M2 Phi 自有类型
 
 引擎外的代码只依赖下列 Phi 类型（放在 `src/main/agent/engine/types.ts`，不 re-export 任何 OMP 类型）：
 
-| 类型 | 用途 | 适配函数 |
+| 类型 | 用途 | 适配 |
 |---|---|---|
-| `PhiTool` / `PhiToolResult` / `PhiToolContext` | 所有 Phi 自定义工具 | `toOmpCustomTool(tool)` |
-| `PhiAgentEvent` | worker → main → renderer 的事件流 | `translateOmpEvent(event)` |
+| `PhiTool` / `PhiToolResult` / `PhiToolContext` | 所有 Phi 自定义工具 | 进程内：`toOmpCustomTool(tool)`；RPC：`toRpcHostTool(tool)` |
+| `PhiAgentEvent` | 引擎 → main → renderer 的事件流 | `translateOmpEvent(event)`，进程内事件与 RPC 事件共用 |
 | `PhiSettings` | Phi 用到的 OMP 设置项（类型化，按领域分组） | `createPhiSettings(ompSettings)` |
 | `PhiAuth` | 模型登录、凭据列举与删除、MCP OAuth 凭据 | `createPhiAuth(ompAuth)` |
 | `PhiThinkingLevel`、`PhiModelRef` | 思考级别、模型引用 | 引擎内转换 |
 
-规则：`PhiTool` 的 `parameters` 由 Phi 定义，入参统一经 `pickDeclaredToolInput` 过滤（沿用 `8dc5de03` 的修复），不依赖 OMP 的参数行为。
+规则：`PhiTool` 的 `parameters` 由 Phi 定义，入参统一经 `pickDeclaredToolInput` 过滤（沿用 `8dc5de03` 的修复）。
 
-### M3 工作区工具 = 工具定义 × WorkspaceHost
+### M3 引擎的两种运行方式
 
-- 6 个工作区工具（`read`、`write`、`edit`、`glob`、`grep`、`bash`）各实现一次，签名形如 `buildReadTool(host: WorkspaceHost, scope: WorkspaceScope): PhiTool`。`WorkspaceScope` 包含项目根、路径约束、Skill 资源读取器等。
-- 本地项目注入 LocalHost，远程项目注入 SshHost（经 helper 或直连），工具代码中**禁止**出现 `remote` 判断。
-- 注册时关闭 OMP 内建的同名工具；`remote-project-tool-guard` / `project-tool-boundary` 的"注册来源 + 描述签名"校验对本地同样生效（本地也只接受 Phi 注册的这 6 个工具）。
-- 参数契约写入 `docs/contracts/workspace-tools.md`，作为唯一依据：
+定义 `PhiEngine` 接口（创建会话、发送、中断、steer、订阅事件、注册宿主工具、回答界面请求、子智能体查询），两种实现：
 
-| 工具 | 参数（草案） | 说明 |
+| 实现 | 用于 | 做法 |
 |---|---|---|
-| `read` | `path`；可选 `offset`、`limit` | 兼容现有 `path:10-50` 行选择语法；支持文本、目录列表、图片；`skill://` 由 scope 中的资源读取器处理 |
-| `write` | `path`、`content` | 经 `fs.writeAtomic`，可选 `expectedHash` |
-| `edit` | `path`、`old_string`、`new_string`；可选 `replace_all` | replace 模式，歧义替换拒绝（沿用 `remote-workspace-edit.ts` 现有语义） |
-| `glob` | `pattern`；可选 `path` | 经 `fs.glob` |
-| `grep` | `pattern`；可选 `path`、`glob`、`ignoreCase`、`literal`、`context`、`limit` | 经 M4 的 `search` 能力 |
-| `bash` | `command`；可选 `timeout` | 经 `exec.run`，有输出上限、超时与取消 |
+| `InProcessEngine` | 本地项目 | 现有 worker：OMP SDK 进程内运行 |
+| `RpcEngine` | 远程项目 | `ssh <host> <runtimeRoot>/omp/<version>/omp --mode rpc …`，JSON 行协议走 SSH 标准输入输出（第 0.4 节已验证） |
 
-### M4 WorkspaceHost 新增搜索能力
+引擎外的代码（main、IPC、renderer）只依赖 `PhiEngine`，不知道背后是哪一种。
 
-- 在 `WorkspaceHost` 上新增可选的 `search.grep(options)`，返回结构化匹配结果。
-- SshHost：沿用 `remote-ripgrep` 的托管 ripgrep。
-- LocalHost：使用与远程同一分发渠道的 ripgrep 二进制（打包进应用，按平台），不直接调用 OMP natives（否则又把 OMP 带出了引擎边界）。
-- 能力档案增加 `search` 项；不可用时 `grep` 返回明确的降级原因，不回退到本机。
-- `tests/workspace-host-contract.ts` 增加 grep 用例，两种 host 共用。
+### M4 Phi 工具按执行位置分两类
 
-### M5 引擎契约测试
+现有 Phi 工具的 `execute` 大多只是调用 `requestHost(method, payload)`，真正的工作在桌面端主进程里。这正好对应 OMP RPC 的宿主工具。
 
-`tests/engine-contract/` 只通过 `engine/` 的对外接口测试，不 import OMP：
+| 类别 | 例子 | 本地（进程内） | 远程（RPC） |
+|---|---|---|---|
+| **宿主工具**：在桌面端执行 | browser、ask_user、present_files、render_blocks、palette、library、notebook、wrapper_*、skill_run 与脚本工具、env_request、HTTPS MCP 工具 | `toOmpCustomTool`，`execute` 调 `requestHost` | `set_host_tools` 注册；`host_tool_call` 由桌面端执行同一个处理函数 |
+| **运行时扩展**：在 OMP 所在机器上执行 | 审批（`tool_call` 拦截）、项目边界检查、下一步建议等扩展，以及 Phi 智能体定义 | 作为扩展加载 | 打成一个 **Phi 扩展包**（目录：入口 `index.ts` + `agents/*.md`），按内容哈希上传到服务器，启动时 `-e <目录>` 加载 |
+
+同一个 Phi 扩展包在本地和远程都加载，本地进程内也改为从这个包加载，保证两边行为一致。
+
+### M5 远程运行时的部署与启动
+
+- **分发**：Phi 维护一份清单（类似 `resources/remote-helper/manifest.json`），记录每个支持版本的 `omp-linux-x64` / `omp-linux-arm64` 的下载地址与 SHA256（取自 OMP release 的 `SHA256SUMS.txt`）。桌面端下载并缓存，校验后经 helper 的断点续传上传到 `<runtimeRoot>/omp/<version>/omp`，在服务器上再校验一次。不支持 musl 版本。
+- **安装位置**：必须在 Phi 已有的"服务器运行时根目录"下，不默认放家目录（node3 家目录有配额问题）。
+- **配置目录**：`HOME` 与 `PI_CODING_AGENT_DIR` 都指向 `<runtimeRoot>/omp-home/` 下的 Phi 专用目录，不读写用户自己的 `~/.omp`。
+- **版本一致**：每次启动先执行 `omp --version`，与桌面端 OMP 版本不一致就重新部署。
+- **工作目录**：服务器上的项目根目录。
+
+### M6 模型调用经隧道走桌面端
+
+- 桌面端起一个只监听 `127.0.0.1` 的模型代理，按 provider 转发请求，由桌面端加上凭据。
+- SSH 反向转发：服务器端口随机，避免多人共用登录节点时冲突。
+- **共享登录节点上其他用户也能连 `127.0.0.1` 的端口**，所以代理必须校验每个会话独立的随机令牌（写在服务器端 `models.yml` 的 `apiKey` 里，文件权限 600），没有令牌一律拒绝。
+- 服务器端的 `models.yml` 由 Phi 生成，列出桌面端当前可用的模型，`baseUrl` 指向隧道端口。
+
+### M7 审批
+
+- **主会话**：Phi 扩展包里的审批扩展在 `tool_call` 中调用 `ctx.ui.confirm`；RPC 的 `extension_ui_request` 由桌面端交给现有审批界面（`tool-approval.ts`），结果用 `extension_ui_response` 返回。已验证。
+- **子会话**：原型测试中子会话的确认请求没有送到桌面端，被直接拒绝。候选方案（第 3 阶段 R6 内先做技术调查再定）：
+  1. 子会话里的审批扩展改为调用一个宿主工具或宿主 URI 请求桌面端审批；
+  2. 桌面端在派生子会话前下发规则（例如按项目或命令前缀自动批准），子会话里只按规则判断；
+  3. 使用 OMP 自带的审批机制（`tools/approval.ts`），确认它在 RPC 模式下是否会把子会话的审批转给宿主。
+
+### M8 引擎契约测试
+
+`tests/engine-contract/` 只通过 `PhiEngine` 测试，不 import OMP。**同一组用例对 `InProcessEngine` 和 `RpcEngine`（RPC 端用本机 OMP 进程 + 本地 stdio，不需要 SSH）各跑一遍**：
 
 - 创建会话、发送一轮、收到 `PhiAgentEvent` 序列（开始、文本增量、工具调用、工具结果、结束）。
-- `PhiTool` 注册后能被调用，参数过滤、`isError` 结果正确传递。
+- 宿主工具注册与回调，参数过滤、`isError` 结果正确传递。
 - 中断进行中的一轮。
+- 主会话审批：批准与拒绝。
+- 子智能体：派生、事件转发、结果送回。
 - 上下文压缩开关与阈值经 `PhiSettings` 生效。
 - 恢复会话：模型可用、模型不可用（覆盖 18.6.3 的抛错行为）。
-- `PhiAuth`：API key 写入、列举、删除；OAuth 状态判断（用假 provider）。
-- MCP：stdio 服务器注册与工具出现在会话中。
+- `PhiAuth`：API key 写入、列举、删除；OAuth 状态判断。
 
-模型调用使用 OMP 支持的假/回放 provider；如果没有，就在引擎里加一个仅测试用的 provider。
+模型调用用假模型服务（OpenAI 兼容、按剧本返回，第 0.4 节的测试已经实现过一版）。
 
 ---
 
 ## 3. 需要用户确认的决策
 
-| 编号 | 决策 | 推荐 | 代价 |
+| 编号 | 决策 | 状态 / 推荐 | 说明 |
 |---|---|---|---|
-| D1 | 本地项目放弃 OMP 内建文件工具，改用 Phi 的统一工具 | 是 | 本地失去 hashline/补丁式 edit、ast-grep、读 PDF/SQLite/压缩包、LSP 联动，以及 OMP 后续对这些工具的改进 |
-| D2 | `edit` 统一为 replace 模式（`old_string`/`new_string`） | 是 | 不跟随 OMP 18.3.0 的新补丁语法 |
-| D3 | 本地 `grep` 使用打包的 ripgrep，而不是 OMP natives | 是 | 安装包增加一个 ripgrep 二进制（约 5 MB/平台） |
-| D4 | URL 读取改由 OMP 的 `fetch` 工具提供（不碰工作区，本地远程都可用） | 是 | 提示词中"用 read 读 URL"的说法要改 |
-| D5 | 升级节奏：锁精确版本，每 2–4 周集中升级一次 | 是 | 新功能最多延后一个周期 |
-| D6 | 阶段顺序：先阶段 1（适配层），再阶段 2（升级），再阶段 3（统一工具） | 是 | 18.10.1 的新功能要等阶段 1 完成后才能用 |
-
-D1 如果不接受，替代方案是：本地保留 OMP 内建工具，远程实现严格对齐 OMP 参数，并对每次升级跑"本地/远程参数一致"契约测试。这种方式每次升级都要追 OMP 的工具变化，不推荐。
+| D1 | 远程项目在服务器上运行 OMP（RPC），本地项目不变 | **已确认（2026-10-13）** | 取代原来"Phi 自己维护 6 个工作区工具"的方案；原 D2（edit 统一 replace 模式）、D3（本地打包 ripgrep）、D4（URL 读取改用 fetch）随之取消 |
+| D2 | 升级节奏：锁精确版本，每 2–4 周集中升级一次，桌面端与服务器端同步 | 推荐：是 | 新功能最多延后一个周期 |
+| D3 | 阶段顺序：阶段 1（适配层）→ 阶段 2（升级）→ 阶段 3（远程运行时） | 推荐：是 | 远程运行时要求两端同版本，先升级可以避免在旧版本上做完再迁一次 |
+| D4 | Phi 智能体改为 OMP 智能体定义（放在 Phi 扩展包的 `agents/` 下），由 OMP `task` 派生；Phi 的 `agent_status` / `agent_wait` / `agent_steer` / `agent_stop` 映射到 OMP 的子智能体接口 | 推荐：先在 R6 中调查映射是否完整，再定 | 原型测试证明派生、事件和结果都可行；steer、停止、并发上限、后台唤醒的对应关系还没核对 |
+| D5 | 远程会话以服务器上的 OMP 会话文件为准，桌面端照常保存 Phi 自己的时间线（`~/.phi/sessions`）。服务器会话丢失时，用桌面端时间线摘要开新会话 | 推荐：是 | 服务器不可达时不能恢复原会话，只能延续摘要 |
 
 ---
 
@@ -170,9 +214,9 @@ bun run test
 
 ### 阶段 0：基线（约 0.5 天）
 
-1. 在 18.1.10 上记录 `typecheck`、`lint`、`test` 的当前结果，写入本文附录 A，作为后续"无回归"的比较对象。
+1. 在 18.1.10 上记录 `typecheck`、`lint`、`test` 的当前结果，写入本文附录 A，作为后续"无回归"的比较对象。（已完成）
 2. 新增 `scripts/check-engine-boundary.mjs` 与 `scripts/engine-boundary-allowlist.json`。白名单初始内容为当前全部 OMP import（约 40 个文件），接入 `lint`。
-3. ~~现有未提交改动先提交或搁置~~：已完成（2026-10-12，测试改动已提交，`index.d.ts` 中重复的 import 已丢弃）。
+3. ~~现有未提交改动先提交或搁置~~：已完成（2026-10-12）。
 
 验收：`lint` 通过；新增一个引擎目录外的 OMP import 时 `lint` 失败。
 
@@ -181,6 +225,7 @@ bun run test
 **1a 目录迁移与 `PhiTool`**
 - `src/main/agent/omp/` → `src/main/agent/engine/`，更新引用。
 - 定义 `PhiTool` 与 `toOmpCustomTool`。把只为类型而 import OMP 的工具文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`agents/*.ts`。
+- 每个 `PhiTool` 标明执行位置（宿主工具 / 运行时扩展，见 M4）。
 - 每改一个文件，从白名单删去对应条目。
 - 验收：引擎目录外只剩 M1 白名单中的终端例外。
 
@@ -199,103 +244,119 @@ bun run test
 
 **1d 零散内部工具函数收口**
 - `estimateToolSchemaTokens`、`parseConfiguredThinkingLevel`、`applyProviderGlobalsFromSettings`、`authPolicyFor`、`getCatalogProviderEntry`、`SEARCH_PROVIDER_CHOICES`、`resolveCompactionMethodOrder` 等，每个在引擎里包成一个 Phi 函数，统一放在 `engine/omp-internals.ts`。升级时只看这一个文件。
-- MCP 内部模块（`mcp/manager`、`mcp/client`、`mcp/oauth-*`、`mcp/transports/stdio`、`mcp/config`）先集中到 `engine/mcp/`。是否改用官方 `@modelcontextprotocol/sdk` 留待第 4 阶段评估，本阶段不改。
+- MCP 内部模块（`mcp/manager`、`mcp/client`、`mcp/oauth-*`、`mcp/transports/stdio`、`mcp/config`）先集中到 `engine/mcp/`。
 
-**1e 拆分 `omp-sdk-worker.ts`**
+**1e 拆分 `omp-sdk-worker.ts`，抽出 `PhiEngine`**
 
 按职责拆分，每个文件尽量控制在 600 行以内（AGENTS.md 要求）：
 
 | 新文件 | 内容 |
 |---|---|
-| `engine/worker/main.ts` | worker 入口、消息分发 |
-| `engine/worker/session-factory.ts` | `createAgentSession` 调用、系统提示词组装 |
-| `engine/worker/tool-registry.ts` | 工具集合解析与注册（本地/远程差异在第 3 阶段消除） |
-| `engine/worker/mcp-runtime.ts` | MCP 加载、通知、OAuth |
-| `engine/worker/auth.ts` | `PhiAuth` 实现 |
-| `engine/worker/settings.ts` | `PhiSettings` 实现 |
-| `engine/worker/events.ts` | `translateOmpEvent` |
-| `engine/worker/subagents.ts` | Phi 子智能体会话 |
+| `engine/types.ts` | `PhiEngine` 与 M2 类型 |
+| `engine/in-process/main.ts` | worker 入口、消息分发 |
+| `engine/in-process/session-factory.ts` | `createAgentSession` 调用、系统提示词组装 |
+| `engine/in-process/tool-registry.ts` | 工具集合解析与注册 |
+| `engine/in-process/mcp-runtime.ts` | MCP 加载、通知、OAuth |
+| `engine/in-process/auth.ts` | `PhiAuth` 实现 |
+| `engine/in-process/settings.ts` | `PhiSettings` 实现 |
+| `engine/events.ts` | `translateOmpEvent`（两种引擎共用） |
+| `engine/in-process/subagents.ts` | Phi 子智能体会话 |
 
 只搬代码、不改逻辑；每搬一块跑一次完整测试。
 
-**1f 引擎契约测试**
-- 按 M5 实现 `tests/engine-contract/`。
+**1f Phi 扩展包**
+- 把现有以扩展形式注入的逻辑（审批、项目边界、下一步建议等）整理成一个扩展包目录（入口加 `agents/`），本地进程内改为从这个包加载。行为不变。
+
+**1g 引擎契约测试**
+- 按 M8 实现 `tests/engine-contract/`，本阶段先只对 `InProcessEngine` 跑。
 - 验收：在 18.1.10 上全部通过。
 
-阶段 1 完成标准：`check-engine-boundary` 白名单中只剩 `engine/omp-internals.ts`、`engine/mcp/*`、`engine/worker/*` 内的条目，加上终端例外；三项验证命令结果与附录 A 基线一致或更好。
+阶段 1 完成标准：白名单中只剩 `engine/` 内的条目加上终端例外；三项验证命令结果与附录 A 基线一致或更好。
 
-### 阶段 2：升级 OMP 到 18.10.1（只改 `engine/`）
+### 阶段 2：升级 OMP 到 18.10.x（只改 `engine/`）
 
-1. 新分支 `chore/omp-18.10.1`，同时升级 `@oh-my-pi/pi-coding-agent` 与 `@oh-my-pi/pi-natives`，并检查锁文件中 `pi-ai`、`pi-catalog`、`pi-tui` 是否跟随到同一版本。
+1. 新分支 `chore/omp-<version>`，同时升级 `@oh-my-pi/pi-coding-agent` 与 `@oh-my-pi/pi-natives`，并检查锁文件中 `pi-ai`、`pi-catalog`、`pi-tui` 是否跟随到同一版本。以开始升级当天的最新 18.10.x 为准。
 2. 按第 0.3 节的清单修改：
 
 | 问题 | 改法 |
 |---|---|
-| `Settings` 字符串键 | `engine/worker/settings.ts` 改为 OMP 的注册设置对象；`PhiSettings` 接口不变 |
-| `AuthStorage` 方法 | `engine/worker/auth.ts` 改接 `pi-ai` 新的 auth、OAuth、pool 接口；`PhiAuth` 接口不变 |
+| `Settings` 字符串键 | `engine/in-process/settings.ts` 改为 OMP 的注册设置对象；`PhiSettings` 接口不变 |
+| `AuthStorage` 方法 | `engine/in-process/auth.ts` 改接 `pi-ai` 新的 auth、OAuth、pool 接口；`PhiAuth` 接口不变 |
 | `thinking` | 改为从包根导入 |
-| `context-usage` | 改为从 `@oh-my-pi/pi-tui/status-line/context-usage` 导入，或在引擎内自行估算（推荐自行估算：Phi 只用它估算工具 schema 的 token 数，不值得为此依赖 TUI 包） |
-| `provider-globals` | 查清 18.10.1 中对应的初始化方式（可能已并入 `Settings.init` 或 `createAgentSession`）；找不到替代就删除这次调用，并用契约测试确认 provider 配置仍然生效 |
+| `context-usage` | 在引擎内自行估算工具 schema 的 token 数，不为此依赖 TUI 包 |
+| `provider-globals` | 查清新版对应的初始化方式；找不到替代就删除这次调用，并用契约测试确认 provider 配置仍然生效 |
 | `getCatalogProviderEntry` | 在 `pi-catalog` 中找到新名字或改用包根 API |
 | `SEARCH_PROVIDER_CHOICES` | 改用新导出；如果新版只有显示名，就在 Phi 侧维护可选列表 |
 
 3. 行为变化逐项确认：
-   - 18.6.3 会话恢复抛错：在 `session-factory.ts` 捕获 `Could not restore model`，转成 Phi 现有的 unavailable-model 状态（beta 路线图 P0 要求）。契约测试覆盖。
+   - 18.6.3 会话恢复抛错：在 `session-factory.ts` 捕获 `Could not restore model`，转成 Phi 现有的 unavailable-model 状态。契约测试覆盖。
    - 18.8.5 子智能体同进程：确认 Phi 未设置 `PI_SUBPROCESS_CMD`；跑 `phi-agent-runs`、`phi-agent-run-wake`、`agent-runs-overview` 测试。
    - 18.5.0 `claimSession`：确认 Phi 没有自定义 SessionStorage。
-   - 18.2.7 / 18.2.9 / 18.3.0 工具行为：如果阶段 3 已完成，这几项不影响 Phi；如果没有完成，本地 bash/read/edit 的提示词和测试需要按新行为调整。**这是 D6 推荐先做阶段 1、再做阶段 3 的原因之一：两者都完成后再升级，工具层就不受影响。**
+   - 18.2.7 / 18.2.9 / 18.3.0 工具行为变化（bash 无 `env`、read 图片参数、edit 新补丁语法）：本地直接跟随 OMP；检查 Phi 的系统提示词和测试里有没有写死旧用法。
 4. 运行时验证（实机，按清单记录结果）：
    - 本地项目：一轮对话、工具调用、中断、上下文压缩、恢复旧会话。
    - 模型登录：API key 与 OAuth 各一个 provider。
    - MCP：一个 HTTPS 连接器（含 OAuth）、一个本地 stdio 连接器。
    - 子智能体：并行、后台、steer。
-   - 远程项目：一轮带 read/edit/bash 的对话（GPU 单机即可）。
+   - 远程项目（仍是旧实现）：一轮带 read/edit/bash 的对话。
    - 打包版：`asar` 解包、Finder 启动下的 worker 代理（参考 `482c7aea`、`b340b2e9`）。
-5. 验收：三项验证命令通过，引擎契约测试通过，运行时清单全部通过；`git diff --stat` 中改动只在 `engine/`、`package.json`、锁文件以及与行为变化对应的测试里。
+5. 验收：三项验证命令通过，引擎契约测试通过，运行时清单全部通过；改动只在 `engine/`、`package.json`、锁文件以及与行为变化对应的测试里。
 
 如果第 4 步发现阻塞问题，回滚到 18.1.10，问题记入附录 B，等 OMP 修复或 Phi 侧绕过后再升级。
 
-### 阶段 3：统一工作区工具（Phi 拥有，可在阶段 2 之前或之后做）
+### 阶段 3：远程运行时（`RpcEngine`）
 
-**3a 契约文档**：写 `docs/contracts/workspace-tools.md`（M3 表格的定稿），包括参数、错误信息格式、输出上限、截断提示、路径规则。
+远程项目由一个设置项决定走旧实现还是 `RpcEngine`，默认旧实现；R1–R8 全部通过并完成实机验证后再切换默认值，R9 再删除旧实现。
 
-**3b `read` / `glob` / `grep`**（只读，风险最低）
-- 新建 `src/main/agent/workspace-tools/{read,glob,grep}.ts`，依赖 `WorkspaceHost` 与 `WorkspaceScope`。
-- 远程现有逻辑（`remote-workspace-read.ts`、`remote-workspace-search.ts`）改造成 host 无关的实现，迁入上述文件。
-- 实现 M4（`search` 能力，LocalHost 接入打包的 ripgrep）。
-- 本地项目注册新工具、关闭 OMP 同名内建工具；远程项目改用同一实现。
-- 测试：新增 `tests/workspace-tools-*.test.ts`，用 LocalHost 和假 SSH host 各跑一遍同一组用例。
+**R1 分发与部署**（M5）
+- 版本清单、下载缓存、SHA256 校验、经 helper 断点续传上传到 `<runtimeRoot>/omp/<version>/`，服务器端校验，`--version` 检查与版本不一致时重新部署。
+- 安装位置不可写或空间不足时，给出明确原因，指向"服务器运行时根目录"设置。
+- 测试：用 `localShellSession` 假服务器覆盖部署、重用、版本不一致、校验失败。
 
-**3c `write` / `edit`**
-- 迁移 `remote-workspace-write.ts`、`remote-workspace-edit.ts` 的逻辑（原子写、hash 校验、replace 歧义拒绝）。
-- 文件面板的变更通知要确认在本地新工具下仍然触发。
+**R2 启动与连接**
+- `RpcEngine`：建立 SSH 连接（复用现有 SSH 会话管理与主机密钥校验），启动 `omp --mode rpc`，设置 `HOME`、`PI_CODING_AGENT_DIR`、工作目录、`-e <Phi 扩展包>`。
+- 处理就绪、协议版本协商（`negotiate_protocol`）、进程退出、SSH 断开（第一版：标记会话中断，可重新连接并恢复会话）。
+- Phi 扩展包按内容哈希上传与复用（复用 Skill 包上传的做法）。
 
-**3d `bash`**
-- 基于 `exec.run`：超时、输出上限、取消（`AbortSignal`）、退出码与截断提示。
-- 本地 bash 原来由 OMP 提供的能力要逐项确认：登录 shell 环境（`login-shell-env.ts`）、受管环境注入（`agents/environment-binding.ts`）、审批（`tool-approval.ts`）、工作目录约束。缺一项就不切换。
-- 长时间运行的进程：先只支持前台加超时；后台任务继续使用 Wrapper/作业系统。如果 OMP 本地 bash 的后台作业被用户实际使用，就在切换前补上 `spawnBackground` 支持（另列任务）。
+**R3 模型代理与隧道**（M6）
+- 桌面端模型代理、随机端口反向转发、每会话随机令牌、生成服务器端 `models.yml`。
+- 安全测试：没有令牌或令牌错误的请求一律拒绝；令牌文件权限 600。
 
-**3e 清理**
-- 删除 `remote-workspace-{read,write,edit,bash}-tool.ts`、`remote-workspace-search-tools.ts` 以及 worker 中对应的 `remoteRoot` 分支。
-- `remote-project-tool-guard.ts`、`project-tool-boundary.ts`、`agents/tool-resolution.ts` 改为按统一工具的注册来源校验；子智能体的"声明工具 ∩ 远程支持集合"逻辑简化为"声明工具 ∩ host 能力"。
-- 系统提示词与工具说明（`remote-workspace-tool-guidance`、`buildPhiRemoteProjectSystemPrompt`）合并为一份，按 host 能力生成差异说明。
+**R4 宿主工具桥接**（M4）
+- `toRpcHostTool`：把宿主类 `PhiTool` 注册为 RPC 宿主工具，`host_tool_call` 交给桌面端同一个处理函数，支持 `host_tool_update`（进度）和 `host_tool_cancel`（取消）。
+- 逐个接入：browser、ask_user、present_files（远程版本）、render_blocks、palette、library、notebook、wrapper_*、skill_run 与脚本工具、env_request、HTTPS MCP 工具。
+- 契约测试：M8 的宿主工具用例对 `RpcEngine` 通过。
 
-**3f 验收**
-- 本地与远程跑同一组工具测试，全部通过。
-- worker 中与 6 个工作区工具相关的 `remoteRoot` 分支为 0。
-- 实机：本地项目和远程项目各完成一轮"搜索 → 阅读 → 修改 → 运行"的对话。
+**R5 主会话审批**（M7）
+- `extension_ui_request`（confirm / select / input）接到现有审批界面；超时与取消按现有规则处理。
+- 契约测试：批准、拒绝、取消。
+
+**R6 子智能体与子会话审批**（M7、D4）
+- 调查并确定 D4：Phi 智能体到 OMP 智能体定义的转换、`agent_*` 工具到 OMP 子智能体接口的映射、并发上限、后台唤醒。
+- 解决子会话审批（M7 的三个候选方案中选一个），补契约测试。
+
+**R7 会话存储与恢复**（D5）
+- 服务器会话文件路径记入 Phi 会话清单；重新连接时用 `switch_session` 恢复；服务器会话不可用时按 D5 处理。
+
+**R8 实机验证**（yzhang node3 与 GPU 单机各一遍）
+- 一轮"搜索 → 阅读 → 修改 → 运行"对话；审批批准与拒绝；一个宿主工具（notebook 或 wrapper）；一个子智能体；断线后重连恢复。
+- 记录启动耗时、工具往返耗时、部署耗时。
+
+**R9 清理**（切换默认值并稳定一个升级周期之后）
+- 删除 `remote-workspace-{read,write,edit,bash}-tool.ts`、`remote-workspace-search-tools.ts` 及其实现文件、worker 中对应的 `remoteRoot` 分支。
+- `remote-project-tool-guard.ts` 中针对同名远程工具的签名校验随之删除；保留对宿主工具和 MCP 来源的校验。
 
 ### 阶段 4：后续收敛清单（本计划不实施）
 
-按同一原则（"服务只写一份，host 作为参数"），在 remote-parity 后续步骤中逐项处理：
+远程运行时上线后，以下服务可以从"桌面端远程操作服务器"改为"在服务器上的 OMP 里直接执行"，逐项评估：
 
 | 能力 | 现状 | 方向 |
 |---|---|---|
-| Skills / `skill_run` | 本地与远程两套服务（`content/skill-host.ts`、`remote-runtime/skill-service.ts`） | 合并为一个服务，Skill 包上传由 host 能力决定 |
-| 受管环境 / `env_request` | 本地 `envs/*`，远程 `remote-runtime/environment-service.ts` | 统一为 host 上的 micromamba 操作 |
-| MCP stdio | 本地 `mcp/custom-stdio.ts`，远程 `mcp/remote-project-mcp-service.ts` | stdio 传输统一基于 `exec.spawnBackground` |
-| `present_files` / `download_file` | 本地与远程各一个工具 | 统一为 host 实现 |
-| Notebook | 本地与远程两个 Jupyter 后端 | 统一为 host 上的 Jupyter 运行时 |
+| Skills / `skill_run` | 桌面端上传 Skill 包、经 helper 远程执行（`remote-runtime/skill-service.ts`） | 改为运行时扩展，在服务器上直接执行 |
+| 受管环境 / `env_request` | 桌面端远程操作 micromamba（`remote-runtime/environment-service.ts`） | 评估改为服务器端直接执行 |
+| MCP stdio | 经 SSH 在服务器上启动（`mcp/remote-project-mcp-service.ts`） | 由服务器上的 OMP 直接启动 |
+| Notebook | 桌面端经端口转发连接服务器上的 Jupyter | 保持宿主工具，或评估由服务器端直接连接 |
+| 断线续跑 | 第一版随 SSH 连接存在 | 确认登录节点常驻进程政策后，评估 `setsid` 加重新接管 |
 | MCP 客户端 | 依赖 OMP 内部 `mcp/*` | 评估改用官方 `@modelcontextprotocol/sdk`，以缩小白名单 |
 
 ### 阶段 5：常态化升级流程
@@ -303,11 +364,12 @@ bun run test
 写成 `docs/runtime/omp-upgrade-runbook.md`，每次升级照做：
 
 1. 新分支 `chore/omp-<version>`；在 `package.json` 中锁精确版本，同时检查 `pi-ai`、`pi-catalog`、`pi-tui`、`pi-natives` 版本一致。
-2. 读上次升级版本到目标版本之间的 changelog，摘出 Breaking Changes、Removed，以及涉及 tool、session、settings、auth、MCP、extension、subagent 的条目，写进 PR 描述。
-3. 跑 `typecheck`、`lint`、`test` 与引擎契约测试。修改范围应该只在 `engine/`；如果引擎外的代码需要改，说明适配层漏了什么，先补适配层。
-4. 跑阶段 2 第 4 步的运行时清单。
-5. 白名单中如果出现新的内部路径，必须在 PR 里说明理由。
-6. 合并后更新本文附录 C 的"已验证版本"表。
+2. 更新远程运行时清单：同版本的 `omp-linux-x64` / `omp-linux-arm64` 地址与 SHA256。
+3. 读上次升级版本到目标版本之间的 changelog，摘出 Breaking Changes、Removed，以及涉及 tool、session、settings、auth、MCP、extension、subagent、RPC 的条目，写进 PR 描述。
+4. 跑 `typecheck`、`lint`、`test` 与引擎契约测试（两种引擎）。修改范围应该只在 `engine/`；如果引擎外的代码需要改，说明适配层漏了什么，先补适配层。
+5. 跑阶段 2 第 4 步的运行时清单，加上 R8 的远程实机清单。
+6. 白名单中如果出现新的内部路径，必须在 PR 里说明理由。
+7. 合并后更新本文附录 C 的"已验证版本"表。
 
 ---
 
@@ -315,9 +377,13 @@ bun run test
 
 | 风险 | 影响 | 应对 |
 |---|---|---|
-| 统一工具后，本地模型效果不如 OMP 内建工具（OMP 的提示词针对其内建工具调过） | 本地编辑成功率下降 | 3b–3d 每步切换后，用固定任务集对比切换前后的工具调用成功率；明显下降就暂停切换，先改工具说明 |
-| OMP 内建工具的某些能力被隐式依赖（如 `read` 读 URL、读 PDF） | 功能缺失 | D4 用 `fetch` 替代 URL 读取；PDF 等格式按需求补到 `read`，或单独做工具 |
-| 引擎契约测试找不到合适的假 provider | 契约测试写不出来 | 在引擎内实现一个回放 provider（读取预录的事件序列），只在测试中注册 |
+| 服务器无法运行 OMP 可执行文件（更老的 glibc、非 x86_64/arm64、noexec 挂载） | 远程项目不可用 | R1 启动检查给出明确原因；在切换默认值前保留旧实现作为退路 |
+| 共享登录节点上其他用户访问模型代理端口 | 用户的模型额度被盗用 | M6 每会话令牌，没有令牌一律拒绝 |
+| 登录节点清理长时间运行的进程 | 会话中途被杀 | 第一版随 SSH 连接存在；R7 支持重连恢复；断线续跑放到阶段 4 |
+| 子会话审批无法送到桌面端 | 子智能体无法执行需要审批的命令 | R6 先调查再选方案；方案确定前，远程子智能体只开放只读工具 |
+| 部署体积（约 200 MB/版本） | 慢网络下首次使用要等 | 断点续传、后台进度、同版本复用；只在升级时重新上传 |
+| OMP RPC 协议在新版本中变化 | `RpcEngine` 失效 | 启动时做协议协商；契约测试对 `RpcEngine` 覆盖；升级 runbook 检查 RPC 相关 changelog |
+| 引擎契约测试找不到合适的假 provider | 契约测试写不出来 | 用第 0.4 节的假模型服务（OpenAI 兼容、按剧本返回） |
 | `Settings` 新接口中找不到某个旧设置项 | 升级阻塞 | 阶段 2 回滚；在 `PhiSettings` 中先把该项改为 Phi 自管 |
 | OMP 发版太快，升级窗口内又出新版本 | 升级不收敛 | 以开始升级当天的版本为准，过程中不追新版本 |
 | 打包环境差异（asar、Finder 启动） | 开发环境正常、打包版失败 | 运行时清单强制包含打包版验证 |
@@ -330,30 +396,36 @@ bun run test
 
 | 编号 | 任务 | 依赖 | 验收 |
 |---|---|---|---|
-| T0 | 基线记录，加引擎边界检查脚本与白名单 | 无 | 阶段 0 验收 |
-| T1 | `omp/` → `engine/`，引入 `PhiTool`，迁移所有工具文件 | T0 | 引擎外只剩终端例外 |
+| T0 | 引擎边界检查脚本与白名单 | 无 | 阶段 0 验收 |
+| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有工具文件 | T0 | 引擎外只剩终端例外 |
 | T2 | `PhiSettings` | T1 | 1b 验收 |
 | T3 | `PhiAuth` | T1 | 1c 验收 |
 | T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/` | T1 | 1d 完成，白名单收敛 |
-| T5 | 拆分 worker | T2–T4 | 1e 完成，测试无回归 |
-| T6 | 引擎契约测试 | T5 | 1f 验收 |
-| T7 | 升级到 18.10.1 | T6 | 阶段 2 验收 |
-| T8 | 工作区工具契约文档与 `search` 能力 | T1 | 3a 与 M4 完成 |
-| T9 | 统一 `read`、`glob`、`grep` | T8 | 3b 验收 |
-| T10 | 统一 `write`、`edit` | T9 | 3c 验收 |
-| T11 | 统一 `bash` | T10 | 3d 验收 |
-| T12 | 清理远程同名实现与 guard | T11 | 3f 验收 |
-| T13 | 升级 runbook | T7 | 阶段 5 文档完成 |
+| T5 | 拆分 worker，抽出 `PhiEngine` 与 `InProcessEngine` | T2–T4 | 1e 完成，测试无回归 |
+| T6 | Phi 扩展包，本地改为从包加载 | T5 | 1f 完成，行为不变 |
+| T7 | 引擎契约测试（`InProcessEngine`）与假模型服务 | T5 | 1g 验收 |
+| T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
+| T9 | R1 分发与部署 | T8 | R1 测试通过 |
+| T10 | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例 | T9 | M8 基础用例通过 |
+| T11 | R3 模型代理与隧道 | T10 | R3 安全测试通过 |
+| T12 | R4 宿主工具桥接 | T10 | R4 验收 |
+| T13 | R5 主会话审批 | T10 | R5 验收 |
+| T14 | R6 子智能体与子会话审批（先调查，D4 定稿后实施） | T12、T13 | R6 验收 |
+| T15 | R7 会话存储与恢复 | T10 | R7 验收 |
+| T16 | R8 实机验证（需要用户确认后连接服务器） | T11–T15 | R8 清单通过 |
+| T17 | 升级 runbook | T8 | 阶段 5 文档完成 |
+| T18 | R9 清理旧远程工具实现 | T16 之后一个升级周期 | R9 完成 |
 
-T8–T12 只依赖 T1，可以与 T2–T7 并行。如果两条线并行，T7 和 T9–T11 都会改 worker 里的工具注册，需要先合并的一方解决冲突。
+T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）。T12、T13、T15 都只依赖 T10，可以并行。
 
 ---
 
 ## 7. 完成定义
 
 - 引擎目录外没有 `@oh-my-pi/*` import（终端例外除外），白名单只包含已说明理由的条目。
-- 6 个工作区工具只有一份实现；本地与远程跑同一组测试。
-- OMP 运行在 18.10.1，引擎契约测试与运行时清单全部通过。
+- 远程项目通过 `RpcEngine` 在服务器上运行 OMP；引擎契约测试对两种引擎都通过；R8 实机清单在 node3 与 GPU 单机上通过。
+- 远程同名工具实现已删除（R9）。
+- OMP 运行在 18.10.x，桌面端与服务器端版本一致。
 - 升级 runbook 已写好，并至少按它完成过一次升级（即本次）。
 
 ---
