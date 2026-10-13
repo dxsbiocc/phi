@@ -4,6 +4,8 @@ import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 
 import { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
+import { createRpcModelSelectionExtension } from './extensions/rpc-model-selection'
+import { loadRpcModelMetadata } from './lib/rpc-model-metadata'
 import { resolveInsideProject } from './lib/project-path'
 import {
   loadRpcBootstrapConfig,
@@ -83,6 +85,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
   const config = loadRpcBootstrapConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV])
   if (realpathSync(process.cwd()) !== config.projectRoot)
     throw new Error('Phi RPC bootstrap cwd does not match its project')
+  const modelMetadata = loadRpcModelMetadata(process.env.PI_CODING_AGENT_DIR, config)
 
   // Refuse unsupported native spellings before the shared guard's realpath.
   pi.on('tool_call', async (event) => {
@@ -124,6 +127,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
 
   await createProjectToolBoundaryExtension(config.projectRoot)(pi)
   await createRemoteUrlGuardExtension()(pi)
+  if (modelMetadata) await createRpcModelSelectionExtension(modelMetadata)(pi)
 
   // Registration is last: the Node attester must prove this exact command exists first.
   pi.registerCommand(RPC_BOOTSTRAP_COMMAND, {
