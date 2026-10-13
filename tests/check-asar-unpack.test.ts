@@ -119,16 +119,14 @@ test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => 
   }
 })
 
-test('worker closure follows relative imports beyond the old hand-maintained list', () => {
+test('runtime worker closure follows value imports beyond the old hand-maintained list', () => {
   const { files, packages } = collectOmpWorkerSources(repoRoot)
   for (const expected of [
     'src/main/agent/engine/in-process/main.ts',
     'src/main/agent/engine/phi-extension/index.ts',
     'src/main/agent/engine/phi-extension/extensions/next-action.ts',
     'src/main/agent/engine/tool-adapter.ts',
-    'src/main/agent/engine/types.ts',
-    'src/main/agent/runtime-paths.ts',
-    'src/shared/presentedFileTypes.ts'
+    'src/main/agent/runtime-paths.ts'
   ]) {
     assert.ok(files.includes(expected), `${expected} missing from worker closure`)
   }
@@ -169,8 +167,7 @@ test('copy plugin emits exactly the closure files under out/', () => {
       'out/main/agent/a.ts',
       'out/main/agent/engine/in-process/main.ts',
       'out/main/agent/nested/b.ts',
-      'out/main/agent/nested/c.ts',
-      'out/shared/t.ts'
+      'out/main/agent/nested/c.ts'
     ])
     assert.deepEqual(collectOmpWorkerSources(root).packages, ['yaml'])
   } finally {
@@ -197,5 +194,108 @@ test('worker package assets include files electron-builder strips from node_modu
     'node_modules/@oh-my-pi/pi-coding-agent/src/tools/computer/declarations.d.ts'
   ]) {
     assert.ok(assets.includes(expected), `${expected} missing from worker assets`)
+  }
+})
+
+test('the mandatory worker entry and runtime dependency/assets fail explicitly when missing', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-runtime-assets-'))
+  const write = (relative: string, body: string): void => {
+    mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
+    writeFileSync(path.join(root, relative), body)
+  }
+  try {
+    assert.throws(() => collectOmpWorkerSources(root), /ENOENT/u)
+    write('src/main/agent/engine/in-process/main.ts', "import 'runtime-package'")
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /runtime-package/u)
+    write(
+      'node_modules/runtime-package/package.json',
+      JSON.stringify({ dependencies: { 'runtime-dependency': '1' } })
+    )
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /runtime-dependency/u)
+    write('node_modules/runtime-dependency/package.json', '{}')
+    write(
+      'node_modules/runtime-package/index.ts',
+      "import prompt from './prompt.md' with { type: 'text' }"
+    )
+    write(
+      'node_modules/runtime-package/multiline.ts',
+      `const n = 1; import asset from './prompt.md' with\n{ type: 'text' };`
+    )
+    write('node_modules/runtime-package/prompt.md', 'owned runtime prompt')
+    write(
+      'node_modules/runtime-package/comment.ts',
+      '/**\n * import example from "./missing-example.json" with { type: "json" }\n */'
+    )
+    assert.deepEqual(collectOmpWorkerPackageAssets(root), [
+      'node_modules/runtime-package/prompt.md'
+    ])
+    assert.deepEqual(collectOmpWorkerPackageDirs(root), [
+      'node_modules/runtime-dependency',
+      'node_modules/runtime-package'
+    ])
+    rmSync(path.join(root, 'node_modules/runtime-package/prompt.md'))
+    assert.throws(() => collectOmpWorkerPackageAssets(root), /prompt.md/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime closure erases only explicit type edges and keeps value, mixed, side-effect and dynamic imports', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-runtime-closure-'))
+  const write = (relative: string, source: string): void => {
+    mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
+    writeFileSync(path.join(root, relative), source)
+  }
+  try {
+    write(
+      'src/main/agent/engine/in-process/main.ts',
+      `
+      import type { Approval } from './missing-types'
+      import type from 'default-type-value'
+      import { type A, type B } from 'erased-named'
+      import { type A, live } from 'mixed-value'
+      import Default, { type A } from 'default-plus-types'
+      import {} from 'empty-side-effect'
+      import 'side-effect'
+      import {
+ live
+} from 'multiline-value'
+      export type { Type } from 'erased-export'
+      export { type Type } from 'erased-export-named'
+      export { type Type, live } from 'mixed-export'
+      export * from 'export-star'
+      type T = typeof import('erased-import-type')
+      const dynamic = import('dynamic-runtime')
+      const template = import(\`dynamic-template-runtime\`)
+      import required = require('required-runtime')
+      import type ErasedRequired = require('erased-required')
+      /* import bad from './missing-comment' */
+      // import 'missing-comment-sideeffect'
+    `
+    )
+    write('src/main/agent/engine/in-process/runtime-value.ts', 'export const live = true')
+    write(
+      'src/main/agent/engine/in-process/main.ts',
+      readFileSync(path.join(root, 'src/main/agent/engine/in-process/main.ts'), 'utf8') +
+        "\nimport './runtime-value'"
+    )
+    const closure = collectOmpWorkerSources(root)
+    assert.deepEqual(closure.packages, [
+      'default-plus-types',
+      'default-type-value',
+      'dynamic-runtime',
+      'dynamic-template-runtime',
+      'empty-side-effect',
+      'export-star',
+      'mixed-export',
+      'mixed-value',
+      'multiline-value',
+      'required-runtime',
+      'side-effect'
+    ])
+    assert.equal(closure.files.includes('src/main/agent/engine/in-process/runtime-value.ts'), true)
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /default-type-value/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
