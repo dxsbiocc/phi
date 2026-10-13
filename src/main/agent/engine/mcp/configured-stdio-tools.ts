@@ -14,13 +14,13 @@ import { isAbsolute, join } from 'node:path'
 import { connectToServer, disconnectServer, listTools } from '@oh-my-pi/pi-coding-agent/mcp/client'
 import type { MCPServerConnection, MCPStdioServerConfig } from '@oh-my-pi/pi-coding-agent/mcp/types'
 
-import { PHI_PLATFORMS } from '../envs/platform'
-import { acquireEnvironmentLease, type EnvironmentLease } from '../envs/leases'
+import { PHI_PLATFORMS } from '../../envs/platform'
+import { acquireEnvironmentLease, type EnvironmentLease } from '../../envs/leases'
 import {
   managedStdioServer,
   readManagedMarker,
   type EnvironmentLookup
-} from '../mcp/stdio-environment'
+} from '../../mcp/stdio-environment'
 import { OwnedStdioTransportScope } from './owned-stdio-transports'
 import { ConfiguredStdioProbeError } from './configured-stdio-probe-error'
 import {

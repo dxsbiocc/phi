@@ -72,7 +72,7 @@ test('saved client fields reach the installed SDK authorization and token exchan
   }
   const flowConfigs: FlowConfig[] = []
   let discoveryCalls = 0
-  const module = loadSource('src/main/agent/engine/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/mcp/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery')
       return {
         discoverOAuthEndpoints: async () => {
@@ -94,7 +94,7 @@ test('saved client fields reach the installed SDK authorization and token exchan
     }
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/client') return {}
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/manager') return {}
-    if (specifier === '../mcp-key-credentials') return { API_KEY_CONNECTOR_IDS: [] }
+    if (specifier === '../../mcp-key-credentials') return { API_KEY_CONNECTOR_IDS: [] }
     throw new Error(`Unexpected auth dependency: ${specifier}`)
   })
   const authorize = module.authorizeFeaturedMcp as (
@@ -265,7 +265,7 @@ test('preload preserves optional connector authentication fields across IPC', as
 test('custom OAuth discovery permits only secure endpoints and does not echo provider errors', async () => {
   let result: { authorizationUrl: string; tokenUrl: string } | null = null
   let failure: Error | undefined
-  const module = loadSource('src/main/agent/engine/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/mcp/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery') {
       return {
         discoverOAuthEndpoints: async () => {

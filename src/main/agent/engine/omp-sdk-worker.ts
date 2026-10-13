@@ -22,24 +22,25 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
-import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
-import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
-import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
-import { applyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
 import type { AuthStorage } from '@oh-my-pi/pi-ai'
-import type { Model } from '@oh-my-pi/pi-ai/types'
 import {
+  applyProviderGlobalsFromSettings,
+  authPolicyFor,
+  estimateToolSchemaTokens,
+  getCatalogProviderEntry,
+  listPlanFiles,
   parseConfiguredThinkingLevel,
-  type ConfiguredThinkingLevel
-} from '@oh-my-pi/pi-coding-agent/thinking'
-import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
+  readPlanFile,
+  resolveApprovedPlan,
+  type ConfiguredThinkingLevel,
+  type PhiModel
+} from './omp-internals'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { toOmpCustomTool } from './tool-adapter'
 import { createPhiAuth } from './in-process/auth'
 import { applyAutoCompactionOverrides, createPhiSettings } from './in-process/settings'
 import type { PhiAuth, PhiTool } from './types'
-import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
 import { buildPresentFilesTool } from '../deliverables/present-tool'
@@ -64,14 +65,13 @@ import {
   authorizeFeaturedMcp,
   discoverCustomMcpOAuthEndpoints,
   listFeaturedMcpTools
-} from './featured-mcp-auth'
+} from './mcp/featured-mcp-auth'
 import {
   cancelConfiguredStdioMcpTools,
   listConfiguredStdioMcpTools
-} from './configured-stdio-tools'
-import { loadAllMCPConfigs } from '@oh-my-pi/pi-coding-agent/mcp/config'
-import { MCPManager } from '@oh-my-pi/pi-coding-agent/mcp/manager'
-import { OwnedStdioTransportScope } from './owned-stdio-transports'
+} from './mcp/configured-stdio-tools'
+import { loadAllMCPConfigs, MCPManager } from './mcp/omp-mcp'
+import { OwnedStdioTransportScope } from './mcp/owned-stdio-transports'
 import { acquireEnvironmentLease, type EnvironmentLease } from '../envs/leases'
 import { getRuntimeRoot } from '../envs/runtime'
 import { readMcpConfig } from '../mcp/package-config'
@@ -189,6 +189,8 @@ type RuntimeContext = {
   modelRegistry: ModelRegistry
 }
 
+type RuntimeModel = NonNullable<ReturnType<ModelRegistry['find']>>
+
 type RemoteMcpAccess = {
   localProjectAnchor: string
   projectPolicy?: RemoteMcpProfilePolicy
@@ -262,6 +264,7 @@ const LEGACY_PROJECT_CONFIG_DIR_NAMES = ['.omp', '.pi'] as const
 const contexts = new Map<string, Promise<RuntimeContext>>()
 const sessions = new Map<string, SessionEntry>()
 type WorkerAgentSession = CreateAgentSessionResult['session']
+type RuntimeThinkingLevel = Parameters<WorkerAgentSession['setThinkingLevel']>[0]
 type ToolSchema = WorkerAgentSession['agent']['state']['tools'][number]
 const mcpUsageCache = new WeakMap<
   WorkerAgentSession,
@@ -489,7 +492,7 @@ function webSearchAuthStatus(auth: PhiAuth): Record<
 }
 
 function serializeThinkingMap(
-  model: Model
+  model: PhiModel
 ): Partial<Record<ThinkingLevel, string | null>> | undefined {
   const thinking = model.thinking as { efforts?: unknown } | undefined
   const efforts = stringArrayValue(thinking?.efforts)
@@ -500,7 +503,7 @@ function serializeThinkingMap(
   ) as Partial<Record<ThinkingLevel, string | null>>
 }
 
-function serializeModel(model: Model): RuntimeModelSummary {
+function serializeModel(model: PhiModel): RuntimeModelSummary {
   return {
     provider: model.provider,
     id: model.id,
@@ -513,6 +516,10 @@ function serializeModel(model: Model): RuntimeModelSummary {
 
 function configuredThinkingLevel(value: unknown): ConfiguredThinkingLevel | undefined {
   return typeof value === 'string' ? parseConfiguredThinkingLevel(value) : undefined
+}
+
+function runtimeThinkingLevel(value: unknown): RuntimeThinkingLevel {
+  return configuredThinkingLevel(value) as RuntimeThinkingLevel
 }
 
 function hasOAuth(policy: ReturnType<typeof authPolicyFor>): boolean {
@@ -784,7 +791,7 @@ async function reloadResources(params: unknown): Promise<unknown> {
 async function modelBySelector(
   ctx: RuntimeContext,
   modelLike: unknown
-): Promise<Model | undefined> {
+): Promise<RuntimeModel | undefined> {
   if (!isRecord(modelLike)) return undefined
   const provider = stringValue(modelLike.provider)
   const modelId = stringValue(modelLike.id)
@@ -1251,7 +1258,7 @@ async function createPhiAgentSession(
     model = selection.model
   }
   const thinkingLevel = runtimeDefinition.thinkingLevel
-    ? (runtimeDefinition.thinkingLevel as ConfiguredThinkingLevel)
+    ? runtimeThinkingLevel(runtimeDefinition.thinkingLevel)
     : parentSession?.thinkingLevel
   const result = await createLegacyAgentSession({
     agentId: `phi-agent-${sessionId}-${randomUUID()}`,
@@ -2094,7 +2101,7 @@ async function createSession(params: unknown): Promise<unknown> {
       modelRegistry: ctx.modelRegistry,
       sessionManager,
       ...(leasedMcp ? { mcpManager: leasedMcp.manager } : {}),
-      thinkingLevel: configuredThinkingLevel(record.thinkingLevel),
+      thinkingLevel: runtimeThinkingLevel(record.thinkingLevel),
       systemPrompt: (defaultPrompt) =>
         remoteRoot
           ? buildPhiRemoteProjectSystemPrompt(defaultPrompt, cwd, remoteRoot, {
@@ -2563,7 +2570,7 @@ async function setSessionThinkingLevel(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const result = getSession(record.sessionId)
   const level = stringValue(record.level)
-  result.session.setThinkingLevel(configuredThinkingLevel(level))
+  result.session.setThinkingLevel(runtimeThinkingLevel(level))
   return serializeSessionState(result)
 }
 

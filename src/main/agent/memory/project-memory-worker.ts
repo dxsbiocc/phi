@@ -2,9 +2,13 @@ import { rm } from 'node:fs/promises'
 
 import type { PhiTool } from '../engine/types'
 
-import { getMemoryRoot, saveLearnedLesson } from '@oh-my-pi/pi-coding-agent/memories'
-import { closeMemoryDb, openMemoryDb } from '@oh-my-pi/pi-coding-agent/memories/storage'
-import { getAgentDbPath } from '@oh-my-pi/pi-utils'
+import {
+  closeMemoryDb,
+  getAgentDbPath,
+  getMemoryRoot,
+  openMemoryDb,
+  saveLearnedLesson
+} from '../engine/omp-internals'
 
 import { buildProjectLearnTool } from './learn-tool'
 import {

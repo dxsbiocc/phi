@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**计划，未开始**；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
+状态：**实施中**，阶段 0 与 T1–T4 已完成；2026-10-13 按原型测试结果改为远程运行时方案（远程项目在服务器上运行 OMP）
 创建日期：2026-10-12
 执行者：Codex（gpt-5.6-sol xhigh）；所有验证命令使用 `bun run`
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -256,6 +256,7 @@ bun run test
 **1d 零散内部工具函数收口**
 - `estimateToolSchemaTokens`、`parseConfiguredThinkingLevel`、`applyProviderGlobalsFromSettings`、`authPolicyFor`、`getCatalogProviderEntry`、`SEARCH_PROVIDER_CHOICES`、`resolveCompactionMethodOrder` 等，每个在引擎里包成一个 Phi 函数，统一放在 `engine/omp-internals.ts`。升级时只看这一个文件。
 - MCP 内部模块（`mcp/manager`、`mcp/client`、`mcp/oauth-*`、`mcp/transports/stdio`、`mcp/config`）先集中到 `engine/mcp/`。
+- 实施记录（T4）：`SEARCH_PROVIDER_CHOICES` 单独放在 `engine/omp-web-search.ts`。`omp-internals.ts` 会加载带 JSON import 的 `pi-catalog`，Node 直接运行的测试加载不了，而 `web-search-settings.ts` 会被这些测试加载。`omp-sdk-worker.ts` 中创建会话用的 `legacy-pi-coding-agent-shim` 与 `modes/runtime-init` 留到 T5 的 `session-factory.ts`；`agents/*` 留到 T6。
 
 **1e 拆分 `omp-sdk-worker.ts`，抽出 `PhiEngine`**
 

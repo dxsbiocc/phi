@@ -1,7 +1,4 @@
-import {
-  SEARCH_PROVIDER_CHOICES,
-  type SearchProviderId
-} from '@oh-my-pi/pi-coding-agent/web/search/types'
+import { SEARCH_PROVIDER_CHOICES, type SearchProviderId } from './engine/omp-web-search'
 import type {
   SearxngEngineOption,
   WebSearchProviderOption,

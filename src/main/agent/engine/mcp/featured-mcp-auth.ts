@@ -13,9 +13,9 @@ import {
   API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
   featuredApiKeyMcpConfig
-} from '../mcp-key-credentials'
-import type { RemoteMcpConnectorOptions } from '../../../shared/mcpConnectorCatalog'
-import type { PhiAuth } from './types'
+} from '../../mcp-key-credentials'
+import type { RemoteMcpConnectorOptions } from '../../../../shared/mcpConnectorCatalog'
+import type { PhiAuth } from '../types'
 
 const FEATURED_MCP_AUTH_TIMEOUT_MS = 2 * 60_000
 

@@ -16,7 +16,7 @@ import {
 import { ConnectorSetupBusyError, type ConnectorSetupTracker } from './connector-setup'
 import { validateName } from './connector-name'
 import type { EnvironmentLookup } from './stdio-environment'
-import { ConfiguredStdioProbeError } from '../engine/configured-stdio-probe-error'
+import { ConfiguredStdioProbeError } from '../engine/mcp/configured-stdio-probe-error'
 import {
   classifyLocalConnectorFailure,
   type LocalConnectorFailureClassification

@@ -1,6 +1,6 @@
 import type { AuthStorage, CredentialOrigin } from '@oh-my-pi/pi-ai'
-import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 
+import { mcpOAuthCredentialId } from '../mcp/oauth'
 import type {
   PhiAuth,
   PhiCredentialOrigin,

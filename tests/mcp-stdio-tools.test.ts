@@ -26,7 +26,7 @@ import {
   configuredStdioRequestKey,
   configuredStdioTimeoutMessage,
   resolveConfiguredStdioTimeoutMs
-} from '../src/main/agent/engine/configured-stdio-request-control'
+} from '../src/main/agent/engine/mcp/configured-stdio-request-control'
 import { copyMinimal, installReady, shQuote } from './helpers/fakeEnvironment'
 
 const bunPath = findBunExecutable()

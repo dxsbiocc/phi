@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
-import { ConfiguredStdioProbeError } from './configured-stdio-probe-error'
+import { ConfiguredStdioProbeError } from './mcp/configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
 
 type PendingRequest = {

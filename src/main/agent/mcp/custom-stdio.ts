@@ -26,7 +26,7 @@ import { API_KEY_CONNECTOR_IDS } from '../mcp-key-credentials'
 import { sanitizeHostEnvironment } from '../envs/execution'
 import { getPhiAgentDir } from '../runtime-paths'
 import { resolveBunExecutable, workerPathWithBun } from '../engine/bun-executable'
-import type { ConfiguredStdioMcpToolsDependencies } from '../engine/configured-stdio-tools'
+import type { ConfiguredStdioMcpToolsDependencies } from '../engine/mcp/configured-stdio-tools'
 import { readMcpConfig, writeMcpConfig, type McpConfig } from './package-config'
 import { validateName } from './connector-name'
 import {
@@ -194,7 +194,7 @@ async function addLocalMcpConnectorUnlocked(
   const probe =
     deps.probe ??
     (async (probeRequest) => {
-      const { listConfiguredStdioMcpTools } = await import('../engine/configured-stdio-tools')
+      const { listConfiguredStdioMcpTools } = await import('../engine/mcp/configured-stdio-tools')
       return listConfiguredStdioMcpTools(probeRequest, { clock: deps.clock })
     })
   const tools = await probe({ name: request.name, entry, environment })

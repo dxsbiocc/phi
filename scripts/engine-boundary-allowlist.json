@@ -74,79 +74,82 @@
       "plan": "remove"
     },
     {
-      "file": "src/main/agent/engine/configured-stdio-tools.ts",
+      "file": "src/main/agent/engine/mcp/configured-stdio-tools.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/client", "@oh-my-pi/pi-coding-agent/mcp/types"],
-      "purpose": "MCP connection APIs and configuration types for configured stdio tools",
-      "plan": "remove"
+      "purpose": "Long-term MCP boundary for configured stdio connection APIs and configuration types",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/engine/featured-mcp-auth.ts",
+      "file": "src/main/agent/engine/mcp/featured-mcp-auth.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/mcp/client",
         "@oh-my-pi/pi-coding-agent/mcp/manager",
         "@oh-my-pi/pi-coding-agent/mcp/oauth-discovery",
         "@oh-my-pi/pi-coding-agent/mcp/oauth-flow"
       ],
-      "purpose": "Authentication storage, MCP connections, and OAuth flow APIs for featured MCP servers",
-      "plan": "remove"
+      "purpose": "Long-term MCP boundary for featured-server connections, manager access, and OAuth flows",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/engine/in-process/auth.ts",
+      "file": "src/main/agent/engine/mcp/oauth.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/oauth-flow"],
-      "purpose": "MCP OAuth credential ID mapping inside the PhiAuth adapter",
-      "plan": "remove"
+      "purpose": "Long-term MCP boundary for OAuth credential ID mapping",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/engine/omp-sdk-worker.ts",
+      "file": "src/main/agent/engine/mcp/omp-mcp.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/mcp/config",
+        "@oh-my-pi/pi-coding-agent/mcp/manager",
+        "@oh-my-pi/pi-coding-agent/mcp/types"
+      ],
+      "purpose": "Long-term MCP boundary for configuration loading and manager construction",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/mcp/owned-stdio-transports.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/transports/stdio"],
+      "purpose": "Long-term MCP boundary for tracking Phi-owned stdio transports",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/mcp/types.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/types"],
+      "purpose": "Long-term MCP boundary for compile-time validation of Phi-owned MCP configuration types",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/omp-internals.ts",
       "specifiers": [
         "@oh-my-pi/pi-ai/types",
         "@oh-my-pi/pi-catalog/compat/auth",
         "@oh-my-pi/pi-catalog/provider-models/descriptors",
         "@oh-my-pi/pi-coding-agent/config/provider-globals",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
-        "@oh-my-pi/pi-coding-agent/mcp/config",
-        "@oh-my-pi/pi-coding-agent/mcp/manager",
-        "@oh-my-pi/pi-coding-agent/modes/runtime-init",
+        "@oh-my-pi/pi-coding-agent/memories",
+        "@oh-my-pi/pi-coding-agent/memories/storage",
         "@oh-my-pi/pi-coding-agent/modes/utils/context-usage",
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",
         "@oh-my-pi/pi-coding-agent/plan-mode/plan-files",
-        "@oh-my-pi/pi-coding-agent/thinking"
-      ],
-      "purpose": "Agent sessions, settings, authentication, MCP, planning, compaction, thinking, and model integration for the OMP worker",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/engine/in-process/settings.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent/session/compaction-methods"],
-      "purpose": "OMP compaction defaults and method validation behind the PhiSettings adapter",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/engine/owned-stdio-transports.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/transports/stdio"],
-      "purpose": "OMP version and StdioTransport APIs for tracking owned MCP transports",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/mcp-key-credentials.ts",
-      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/types"],
-      "purpose": "MCP HTTP server configuration type for key credentials",
-      "plan": "remove"
-    },
-    {
-      "file": "src/main/agent/memory/project-memory-worker.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent/memories",
-        "@oh-my-pi/pi-coding-agent/memories/storage",
+        "@oh-my-pi/pi-coding-agent/session/compaction-methods",
+        "@oh-my-pi/pi-coding-agent/thinking",
         "@oh-my-pi/pi-utils"
       ],
-      "purpose": "Memory persistence and agent database APIs for the project memory worker",
-      "plan": "remove"
+      "purpose": "Long-term non-MCP boundary for OMP internal functions and compatibility checks",
+      "plan": "keep"
     },
     {
-      "file": "src/main/agent/web-search-settings.ts",
+      "file": "src/main/agent/engine/omp-web-search.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/web/search/types"],
-      "purpose": "Search provider choices and identifier type for web search settings",
+      "purpose": "Web search provider choices kept apart from omp-internals.ts so Node-run settings code does not load OMP modules that need JSON import attributes",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/omp-sdk-worker.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
+        "@oh-my-pi/pi-coding-agent/modes/runtime-init"
+      ],
+      "purpose": "T5 exception for legacy session construction and extension initialization pending worker split",
       "plan": "remove"
     },
     {

@@ -1,8 +1,5 @@
 import { Settings } from '@oh-my-pi/pi-coding-agent'
-import {
-  DEFAULT_COMPACTION_METHOD_ORDER,
-  resolveCompactionMethodOrder
-} from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
+import { DEFAULT_COMPACTION_METHOD_ORDER, resolveCompactionMethodOrder } from '../omp-internals'
 
 import type { PhiCompactionSettings, PhiSettings } from '../types'
 
