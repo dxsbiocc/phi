@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 已通过独立审查和完整自动化验收（`053c3f88`），T10b 扩展 bootstrap 三路独立审查和整合核心验收通过，完整回归待最终记录；T11 模型代理进入实施；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
+状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 已通过独立审查和完整自动化验收（`053c3f88`），T10b 扩展 bootstrap 三路独立审查和整合核心验收通过，完整串行回归 4930 项、0 失败/取消；T11 模型代理进入实施；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
 创建日期：2026-10-12
 执行：Codex 原生 subagents；负责人：当前 Codex 主会话（任务拆分、进度管理、独立质量审查与最终验收）。所有项目验证命令使用 `bun run`；限定测试采用同一脚本的 Node runner，避免参数附加后误跑全套。
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -15,25 +15,25 @@
 
 用户此前要求“等阶段 1 做完再合并”。下表区分已提交成果和本轮已验收成果；历史验证报告不替代本轮验收。
 
-| 任务                        | 已保存成果                                                     | 当前状态                                                                                                                                     |
-| --------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| T0 基线与边界检查           | `70aa7cb9`                                                     | 已合入 `main`                                                                                                                                |
-| T1 `PhiTool` 与目录迁移     | `f66875fe`                                                     | 已实现并通过集成验收；M2 参数过滤及 browser union schema 已补齐                                                                              |
-| T2 `PhiSettings`            | `571b20c1`                                                     | 已实现并通过本轮审查及集成验收                                                                                                               |
-| T3 `PhiAuth`                | `049ac371`（由 `9084f84a` 合入 T2）                            | 已实现并通过本轮审查及集成验收                                                                                                               |
-| T4 内部函数/MCP 收口        | `99845de2`                                                     | 已实现并通过本轮审查及集成验收                                                                                                               |
-| T5 worker 拆分、`PhiEngine` | `5f6e22ca`、`d422a51b`                                         | 已实现并通过集成验收；Phi 自有事件/摘要契约已补齐                                                                                            |
-| T6 Phi 扩展包               | 原 `t6-extension-package` 工作区的未提交成果已保留             | 恢复完成并通过独立审查、构建及全套测试；原工作区保留                                                                                         |
-| T7 引擎契约测试             | 基于 T5 的独立副本                                             | 13 个真实 worker 契约通过，含审批、中断、子会话、恢复、API key/OAuth 存储状态                                                                |
-| T8 OMP 升级                 | `codex/omp-upgrade-18-10-3`，精确锁定 18.10.3                  | 实现、独立审查及自动化验收通过；人工清单待验证                                                                                               |
-| T9 R1 分发部署              | `3e8462a8`；候选分支整合为 `46df9dc8`                          | 独立 APPROVE；两项缓存缺陷红绿修复；18.10.3 下复跑 27/27 和专用测试类型检查通过                                                              |
-| T10a 基础 RPC               | `codex/omp-rpc-foundation`                                     | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产 typecheck/lint/build/asar 通过；全量 4862 项、0 失败/取消 |
-| T10b 扩展启动与部署         | `codex/omp-rpc-bootstrap`                                      | 三路独立 APPROVE；整合核心 159/159 自然退出；生产 typecheck/lint/build/asar 通过，完整回归待最终记录                                         |
+| 任务 | 已保存成果 | 当前状态 |
+|---|---|---|
+| T0 基线与边界检查 | `70aa7cb9` | 已合入 `main` |
+| T1 `PhiTool` 与目录迁移 | `f66875fe` | 已实现并通过集成验收；M2 参数过滤及 browser union schema 已补齐 |
+| T2 `PhiSettings` | `571b20c1` | 已实现并通过本轮审查及集成验收 |
+| T3 `PhiAuth` | `049ac371`（由 `9084f84a` 合入 T2） | 已实现并通过本轮审查及集成验收 |
+| T4 内部函数/MCP 收口 | `99845de2` | 已实现并通过本轮审查及集成验收 |
+| T5 worker 拆分、`PhiEngine` | `5f6e22ca`、`d422a51b` | 已实现并通过集成验收；Phi 自有事件/摘要契约已补齐 |
+| T6 Phi 扩展包 | 原 `t6-extension-package` 工作区的未提交成果已保留 | 恢复完成并通过独立审查、构建及全套测试；原工作区保留 |
+| T7 引擎契约测试 | 基于 T5 的独立副本 | 13 个真实 worker 契约通过，含审批、中断、子会话、恢复、API key/OAuth 存储状态 |
+| T8 OMP 升级 | `codex/omp-upgrade-18-10-3`，精确锁定 18.10.3 | 实现、独立审查及自动化验收通过；人工清单待验证 |
+| T9 R1 分发部署 | `3e8462a8`；候选分支整合为 `46df9dc8` | 独立 APPROVE；两项缓存缺陷红绿修复；18.10.3 下复跑 27/27 和专用测试类型检查通过 |
+| T10a 基础 RPC | `codex/omp-rpc-foundation` | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产 typecheck/lint/build/asar 通过；全量 4862 项、0 失败/取消 |
+| T10b 扩展启动与部署         | `codex/omp-rpc-bootstrap`                                      | 三路独立 APPROVE；整合核心 159/159 自然退出；生产 typecheck/lint/build/asar 通过，完整串行回归 4930 项、0 失败/取消                                         |
 | T11 模型代理与隧道          | SDK native router 方案已收敛                                   | 按网关、SSH 隧道与私有配置、worker/生命周期三路实施；真实 provider/SSH 验证仍待 R8                                                           |
-| T17 升级手册                | [操作手册](../runtime/omp-upgrade-runbook.md)                  | 已记录本次实际升级步骤、验证证据和人工缺口；T8 合入权限单独记录                                                                              |
-| T8                          | 升级到 18.10.x                                                 | T6、T7                                                                                                                                       | 阶段 2 验收     |
-| T9                          | R1 分发与部署                                                  | T8                                                                                                                                           | R1 测试通过     |
-| T10                         | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例 | T9                                                                                                                                           | M8 基础用例通过 |
+| T17 升级手册 | [操作手册](../runtime/omp-upgrade-runbook.md) | 已记录本次实际升级步骤、验证证据和人工缺口；T8 合入权限单独记录 |
+| T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
+| T9 | R1 分发与部署 | T8 | R1 测试通过 |
+| T10 | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例 | T9 | M8 基础用例通过 |
 
 阶段 1 接管边界：先完成并审查阶段 1。后续 T8 与 T9 在独立副本推进，不连接真实服务器、不扩展 UI。继续保留本计划已注明的测试辅助/评测白名单例外；边界检查通过不代表这些过渡例外已经删除。
 
@@ -43,14 +43,14 @@ T6 沿用原任务的明确范围：本次只整理自包含扩展包、注入 h
 
 本轮验收（集成当前 `main` 的 `28793618` 主题改动）：
 
-| 项目                                                                      | 结果                                                                    |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 生产 typecheck（node/web/scripts）                                        | 通过                                                                    |
-| lint / architecture / engine boundary / resources / asar / content checks | 通过；2 条既有 prettier 警告                                            |
-| 集成核心测试                                                              | 40/40 通过                                                              |
-| 主进程 VM 集成补测                                                        | 221/221 通过；补齐真实事件模块映射与 SDK 合法压缩事件夹具，业务断言不变 |
-| 完整测试（Node runner，并发 4）                                           | 4771 项：4746 通过、0 失败、24 既有跳过、1 既有 todo；288 秒            |
-| 生产构建 / asar closure                                                   | 通过；已在最终整合代码上复核                                            |
+| 项目 | 结果 |
+|---|---|
+| 生产 typecheck（node/web/scripts） | 通过 |
+| lint / architecture / engine boundary / resources / asar / content checks | 通过；2 条既有 prettier 警告 |
+| 集成核心测试 | 40/40 通过 |
+| 主进程 VM 集成补测 | 221/221 通过；补齐真实事件模块映射与 SDK 合法压缩事件夹具，业务断言不变 |
+| 完整测试（Node runner，并发 4） | 4771 项：4746 通过、0 失败、24 既有跳过、1 既有 todo；288 秒 |
+| 生产构建 / asar closure | 通过；已在最终整合代码上复核 |
 
 首轮默认并发运行有 4770 项、236 个失败：222 个由新增事件模块未登记到 VM 测试夹具导致，已经修复；另 14 个在进程/环境探测的时间限制下失败。固定文件并发为 4 后全套零失败；与 `.github/workflows/content.yml` 的现有 CI 配置一致，因此标准 `test` 脚本也固定为 4，保持全部断言、超时和跳过条件。第二轮多出的 1 项来自并入的主题主按钮测试，未删除测试。
 
@@ -80,27 +80,27 @@ T6 沿用原任务的明确范围：本次只整理自包含扩展包、注入 h
 
 在临时 worktree 中把 `@oh-my-pi/pi-coding-agent`、`@oh-my-pi/pi-natives` 从 18.1.10 改为 18.10.1，`bun run typecheck:node` 得到 **58 个错误、3 个文件**（`omp-sdk-worker.ts` 55、`web-search-settings.ts` 2、`featured-mcp-auth.ts` 1）。`typecheck:web`、`typecheck:scripts`、测试与运行时**未验证**。
 
-| 类别                    | 数量 | 内容                                                                                                                                                                                                             |
-| ----------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Settings` 读写方式变化 | 34   | 字符串键 `settings.get('x.y')` / `set` / `override` 被移除，改为每个设置项一个注册对象（`cfgXxx.get(settings)`）。**`Settings` 是包根导出，照样不兼容**                                                          |
-| `AuthStorage` 方法变化  | 18   | `login`、`logout`、`listStoredCredentials`、`getCredentialOrigin`、`describeCredentialSource`、`hasOAuth`、`hasAuth`、`hasConcreteAuth`、`removeCredential`、`get`、`set` 挪到 `pi-ai` 新的 auth/oauth/pool 接口 |
-| 内部路径被删            | 3    | `pi-coding-agent/thinking`（改为包根导出）、`modes/utils/context-usage`（`estimateToolSchemaTokens` 迁到 `@oh-my-pi/pi-tui/status-line/context-usage`）、`config/provider-globals`（移除）                       |
-| 内部导出改名            | 2    | `pi-catalog/provider-models/descriptors` 不再导出 `getCatalogProviderEntry`；`web/search/types` 不再导出 `SEARCH_PROVIDER_CHOICES`                                                                               |
-| 连带类型错误            | 1    | `web-search-settings.ts` 的 `satisfies` 断言                                                                                                                                                                     |
+| 类别 | 数量 | 内容 |
+|---|---|---|
+| `Settings` 读写方式变化 | 34 | 字符串键 `settings.get('x.y')` / `set` / `override` 被移除，改为每个设置项一个注册对象（`cfgXxx.get(settings)`）。**`Settings` 是包根导出，照样不兼容** |
+| `AuthStorage` 方法变化 | 18 | `login`、`logout`、`listStoredCredentials`、`getCredentialOrigin`、`describeCredentialSource`、`hasOAuth`、`hasAuth`、`hasConcreteAuth`、`removeCredential`、`get`、`set` 挪到 `pi-ai` 新的 auth/oauth/pool 接口 |
+| 内部路径被删 | 3 | `pi-coding-agent/thinking`（改为包根导出）、`modes/utils/context-usage`（`estimateToolSchemaTokens` 迁到 `@oh-my-pi/pi-tui/status-line/context-usage`）、`config/provider-globals`（移除） |
+| 内部导出改名 | 2 | `pi-catalog/provider-models/descriptors` 不再导出 `getCatalogProviderEntry`；`web/search/types` 不再导出 `SEARCH_PROVIDER_CHOICES` |
+| 连带类型错误 | 1 | `web-search-settings.ts` 的 `satisfies` 断言 |
 
 changelog 中编译期发现不了的行为变化（18.2.2 起；更早的条目新版 changelog 已截断）：
 
-| 版本            | 变化                                                                  | 对 Phi 的影响                                            |
-| --------------- | --------------------------------------------------------------------- | -------------------------------------------------------- |
-| 18.2.5          | TUI 模块迁到 `@oh-my-pi/pi-tui`，原子路径失效；**包根导出名保持不变** | 解释了 `context-usage` 失效                              |
-| 18.2.7 / 18.4.4 | bash 去掉 `env` 参数                                                  | 本地 bash 行为变化                                       |
-| 18.2.9          | read 不再支持图片 `?q=` 和裸图片路径                                  | 本地 read 行为变化                                       |
-| 18.3.0          | edit 补丁语法改为 `*** Edit File / Find / Replace`；`hub` 工具弃用    | 本地 edit 提示词/行为变化                                |
-| 18.3.4          | `task` 的 `complexity` 改为 `solutionSpace`                           | Phi 未使用（已 grep 确认），远程 guard 已拒绝内建 `task` |
-| 18.5.0          | `SessionStorage.claimSessionFile` 改为 `claimSession`                 | Phi 未实现自定义 SessionStorage，需确认                  |
-| 18.6.3          | 恢复会话时模型不可用，`createAgentSession` 直接抛错                   | 影响会话恢复与 unavailable-model 处理                    |
-| 18.8.2          | `task` 等去掉单次调用的 `model` 覆盖                                  | Phi 未使用                                               |
-| 18.8.5          | 子智能体改为同进程运行，移除 `PI_SUBPROCESS_CMD`                      | 需确认 Phi 是否设置过该变量                              |
+| 版本 | 变化 | 对 Phi 的影响 |
+|---|---|---|
+| 18.2.5 | TUI 模块迁到 `@oh-my-pi/pi-tui`，原子路径失效；**包根导出名保持不变** | 解释了 `context-usage` 失效 |
+| 18.2.7 / 18.4.4 | bash 去掉 `env` 参数 | 本地 bash 行为变化 |
+| 18.2.9 | read 不再支持图片 `?q=` 和裸图片路径 | 本地 read 行为变化 |
+| 18.3.0 | edit 补丁语法改为 `*** Edit File / Find / Replace`；`hub` 工具弃用 | 本地 edit 提示词/行为变化 |
+| 18.3.4 | `task` 的 `complexity` 改为 `solutionSpace` | Phi 未使用（已 grep 确认），远程 guard 已拒绝内建 `task` |
+| 18.5.0 | `SessionStorage.claimSessionFile` 改为 `claimSession` | Phi 未实现自定义 SessionStorage，需确认 |
+| 18.6.3 | 恢复会话时模型不可用，`createAgentSession` 直接抛错 | 影响会话恢复与 unavailable-model 处理 |
+| 18.8.2 | `task` 等去掉单次调用的 `model` 覆盖 | Phi 未使用 |
+| 18.8.5 | 子智能体改为同进程运行，移除 `PI_SUBPROCESS_CMD` | 需确认 Phi 是否设置过该变量 |
 
 OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次发版常见。
 
@@ -110,20 +110,20 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 环境：node3，CentOS 7.9，内核 3.10.0-1160，glibc 2.17，x86_64。没有 tmux/screen，有 setsid。家目录 `mkdir` 报"磁盘配额已满"（`quota` 却显示没有配额），测试改放 `/tmp`。
 
-| 测试项                                                                                                            | 结果                                                                                                                                         |
-| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| OMP 官方 Linux 单文件可执行程序（GitHub release `omp-linux-x64`，18.1.10，约 200 MB，SHA256 与 release 一致）     | ✅ 在内核 3.10、glibc 2.17 上运行，`--version` 0.7 秒。原生模块依赖的最高 glibc 版本是 2.17                                                  |
-| `omp-linux-musl-x64`                                                                                              | ❌ 启动报"No such file"：需要系统里有 musl 动态加载器                                                                                        |
-| 上传两个可执行文件（约 350 MB）                                                                                   | 34 秒                                                                                                                                        |
-| `ssh … omp --mode rpc`，JSON 行协议走 SSH 标准输入输出                                                            | ✅ 2.7–4.4 秒就绪（含 SSH 连接），之后每次工具调用往返 0.1–0.35 秒                                                                           |
-| OMP 原生 `bash`、`read` 在服务器上执行                                                                            | ✅ 主机名 node3、内核 3.10、工作目录在服务器上                                                                                               |
-| 模型经 SSH 反向隧道（`-R`）调用本机服务                                                                           | ✅ 密钥不需要离开本机                                                                                                                        |
-| 宿主工具（RPC `set_host_tools` / `host_tool_call` / `host_tool_result`）                                          | ✅ 服务器上的智能体调用、桌面端执行并返回                                                                                                    |
-| 主会话审批（扩展在 `tool_call` 中调用 `ctx.ui.confirm`，经 RPC `extension_ui_request` / `extension_ui_response`） | ✅ 拒绝后命令被拦下，未产生副作用                                                                                                            |
-| TypeScript 扩展直接加载（`-e <目录>`）                                                                            | ✅ 服务器上不需要构建工具                                                                                                                    |
-| 子智能体：扩展目录下的 `agents/*.md` 被发现，OMP `task` 在服务器上创建子会话                                      | ✅ 子会话只拿到声明的工具（另加 `yield`、`hub`）；`subagent_event` / `subagent_progress` / `subagent_lifecycle` 实时转发；结果异步送回主会话 |
-| 子会话里的审批                                                                                                    | ❌ 确认请求没有送到桌面端，被直接按"拒绝"处理（安全，但需要设计）                                                                            |
-| SSH 断开后进程是否保留、登录节点是否清理常驻进程                                                                  | 未测                                                                                                                                         |
+| 测试项 | 结果 |
+|---|---|
+| OMP 官方 Linux 单文件可执行程序（GitHub release `omp-linux-x64`，18.1.10，约 200 MB，SHA256 与 release 一致） | ✅ 在内核 3.10、glibc 2.17 上运行，`--version` 0.7 秒。原生模块依赖的最高 glibc 版本是 2.17 |
+| `omp-linux-musl-x64` | ❌ 启动报"No such file"：需要系统里有 musl 动态加载器 |
+| 上传两个可执行文件（约 350 MB） | 34 秒 |
+| `ssh … omp --mode rpc`，JSON 行协议走 SSH 标准输入输出 | ✅ 2.7–4.4 秒就绪（含 SSH 连接），之后每次工具调用往返 0.1–0.35 秒 |
+| OMP 原生 `bash`、`read` 在服务器上执行 | ✅ 主机名 node3、内核 3.10、工作目录在服务器上 |
+| 模型经 SSH 反向隧道（`-R`）调用本机服务 | ✅ 密钥不需要离开本机 |
+| 宿主工具（RPC `set_host_tools` / `host_tool_call` / `host_tool_result`） | ✅ 服务器上的智能体调用、桌面端执行并返回 |
+| 主会话审批（扩展在 `tool_call` 中调用 `ctx.ui.confirm`，经 RPC `extension_ui_request` / `extension_ui_response`） | ✅ 拒绝后命令被拦下，未产生副作用 |
+| TypeScript 扩展直接加载（`-e <目录>`） | ✅ 服务器上不需要构建工具 |
+| 子智能体：扩展目录下的 `agents/*.md` 被发现，OMP `task` 在服务器上创建子会话 | ✅ 子会话只拿到声明的工具（另加 `yield`、`hub`）；`subagent_event` / `subagent_progress` / `subagent_lifecycle` 实时转发；结果异步送回主会话 |
+| 子会话里的审批 | ❌ 确认请求没有送到桌面端，被直接按"拒绝"处理（安全，但需要设计） |
+| SSH 断开后进程是否保留、登录节点是否清理常驻进程 | 未测 |
 
 ---
 
@@ -163,13 +163,13 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 引擎外的代码只依赖下列 Phi 类型（放在 `src/main/agent/engine/types.ts`，不 re-export 任何 OMP 类型）：
 
-| 类型                                           | 用途                                        | 适配                                                        |
-| ---------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| `PhiTool` / `PhiToolResult` / `PhiToolContext` | 所有 Phi 自定义工具                         | 进程内：`toOmpCustomTool(tool)`；RPC：`toRpcHostTool(tool)` |
-| `PhiAgentEvent`                                | 引擎 → main → renderer 的事件流             | `translateOmpEvent(event)`，进程内事件与 RPC 事件共用       |
-| `PhiSettings`                                  | Phi 用到的 OMP 设置项（类型化，按领域分组） | `createPhiSettings(ompSettings)`                            |
-| `PhiAuth`                                      | 模型登录、凭据列举与删除、MCP OAuth 凭据    | `createPhiAuth(ompAuth)`                                    |
-| `PhiThinkingLevel`、`PhiModelRef`              | 思考级别、模型引用                          | 引擎内转换                                                  |
+| 类型 | 用途 | 适配 |
+|---|---|---|
+| `PhiTool` / `PhiToolResult` / `PhiToolContext` | 所有 Phi 自定义工具 | 进程内：`toOmpCustomTool(tool)`；RPC：`toRpcHostTool(tool)` |
+| `PhiAgentEvent` | 引擎 → main → renderer 的事件流 | `translateOmpEvent(event)`，进程内事件与 RPC 事件共用 |
+| `PhiSettings` | Phi 用到的 OMP 设置项（类型化，按领域分组） | `createPhiSettings(ompSettings)` |
+| `PhiAuth` | 模型登录、凭据列举与删除、MCP OAuth 凭据 | `createPhiAuth(ompAuth)` |
+| `PhiThinkingLevel`、`PhiModelRef` | 思考级别、模型引用 | 引擎内转换 |
 
 规则：`PhiTool` 的 `parameters` 由 Phi 定义，入参统一经 `pickDeclaredToolInput` 过滤（沿用 `8dc5de03` 的修复）。
 
@@ -177,10 +177,10 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 定义 `PhiEngine` 接口（创建会话、发送、中断、steer、订阅事件、注册宿主工具、回答界面请求、子智能体查询），两种实现：
 
-| 实现              | 用于     | 做法                                                                                                         |
-| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `InProcessEngine` | 本地项目 | 现有 worker：OMP SDK 进程内运行                                                                              |
-| `RpcEngine`       | 远程项目 | `ssh <host> <runtimeRoot>/omp/<version>/omp --mode rpc …`，JSON 行协议走 SSH 标准输入输出（第 0.4 节已验证） |
+| 实现 | 用于 | 做法 |
+|---|---|---|
+| `InProcessEngine` | 本地项目 | 现有 worker：OMP SDK 进程内运行 |
+| `RpcEngine` | 远程项目 | `ssh <host> <runtimeRoot>/omp/<version>/omp --mode rpc …`，JSON 行协议走 SSH 标准输入输出（第 0.4 节已验证） |
 
 引擎外的代码（main、IPC、renderer）只依赖 `PhiEngine`，不知道背后是哪一种。
 
@@ -188,10 +188,10 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 现有 Phi 工具的 `execute` 大多只是调用 `requestHost(method, payload)`，真正的工作在桌面端主进程里。这正好对应 OMP RPC 的宿主工具。
 
-| 类别                                  | 例子                                                                                                                                      | 本地（进程内）                                | 远程（RPC）                                                                                                       |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **宿主工具**：在桌面端执行            | browser、ask_user、present_files、render_blocks、palette、library、notebook、wrapper_*、skill_run 与脚本工具、env_request、HTTPS MCP 工具 | `toOmpCustomTool`，`execute` 调 `requestHost` | `set_host_tools` 注册；`host_tool_call` 由桌面端执行同一个处理函数                                                |
-| **运行时扩展**：在 OMP 所在机器上执行 | 审批（`tool_call` 拦截）、项目边界检查、下一步建议等扩展，以及 Phi 智能体定义                                                             | 作为扩展加载                                  | 打成一个 **Phi 扩展包**（目录：入口 `index.ts` + `agents/*.md`），按内容哈希上传到服务器，启动时 `-e <目录>` 加载 |
+| 类别 | 例子 | 本地（进程内） | 远程（RPC） |
+|---|---|---|---|
+| **宿主工具**：在桌面端执行 | browser、ask_user、present_files、render_blocks、palette、library、notebook、wrapper_*、skill_run 与脚本工具、env_request、HTTPS MCP 工具 | `toOmpCustomTool`，`execute` 调 `requestHost` | `set_host_tools` 注册；`host_tool_call` 由桌面端执行同一个处理函数 |
+| **运行时扩展**：在 OMP 所在机器上执行 | 审批（`tool_call` 拦截）、项目边界检查、下一步建议等扩展，以及 Phi 智能体定义 | 作为扩展加载 | 打成一个 **Phi 扩展包**（目录：入口 `index.ts` + `agents/*.md`），按内容哈希上传到服务器，启动时 `-e <目录>` 加载 |
 
 同一个 Phi 扩展包在本地和远程都加载，本地进程内也改为从这个包加载，保证两边行为一致。
 
@@ -237,13 +237,13 @@ OMP 发版频率：2026-09-23 至 2026-10-12 约 40 个版本，同一天多次�
 
 ## 3. 需要用户确认的决策
 
-| 编号 | 决策                                                                                                                                                                               | 状态 / 推荐                            | 说明                                                                                                                                   |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| D1   | 远程项目在服务器上运行 OMP（RPC），本地项目不变                                                                                                                                    | **已确认（2026-10-13）**               | 取代原来"Phi 自己维护 6 个工作区工具"的方案；原 D2（edit 统一 replace 模式）、D3（本地打包 ripgrep）、D4（URL 读取改用 fetch）随之取消 |
-| D2   | 升级节奏：锁精确版本，每 2–4 周集中升级一次，桌面端与服务器端同步                                                                                                                  | 推荐：是                               | 新功能最多延后一个周期                                                                                                                 |
-| D3   | 阶段顺序：阶段 1（适配层）→ 阶段 2（升级）→ 阶段 3（远程运行时）                                                                                                                   | 推荐：是                               | 远程运行时要求两端同版本，先升级可以避免在旧版本上做完再迁一次                                                                         |
-| D4   | Phi 智能体改为 OMP 智能体定义（放在 Phi 扩展包的 `agents/` 下），由 OMP `task` 派生；Phi 的 `agent_status` / `agent_wait` / `agent_steer` / `agent_stop` 映射到 OMP 的子智能体接口 | 推荐：先在 R6 中调查映射是否完整，再定 | 原型测试证明派生、事件和结果都可行；steer、停止、并发上限、后台唤醒的对应关系还没核对                                                  |
-| D5   | 远程会话以服务器上的 OMP 会话文件为准，桌面端照常保存 Phi 自己的时间线（`~/.phi/sessions`）。服务器会话丢失时，用桌面端时间线摘要开新会话                                          | 推荐：是                               | 服务器不可达时不能恢复原会话，只能延续摘要                                                                                             |
+| 编号 | 决策 | 状态 / 推荐 | 说明 |
+|---|---|---|---|
+| D1 | 远程项目在服务器上运行 OMP（RPC），本地项目不变 | **已确认（2026-10-13）** | 取代原来"Phi 自己维护 6 个工作区工具"的方案；原 D2（edit 统一 replace 模式）、D3（本地打包 ripgrep）、D4（URL 读取改用 fetch）随之取消 |
+| D2 | 升级节奏：锁精确版本，每 2–4 周集中升级一次，桌面端与服务器端同步 | 推荐：是 | 新功能最多延后一个周期 |
+| D3 | 阶段顺序：阶段 1（适配层）→ 阶段 2（升级）→ 阶段 3（远程运行时） | 推荐：是 | 远程运行时要求两端同版本，先升级可以避免在旧版本上做完再迁一次 |
+| D4 | Phi 智能体改为 OMP 智能体定义（放在 Phi 扩展包的 `agents/` 下），由 OMP `task` 派生；Phi 的 `agent_status` / `agent_wait` / `agent_steer` / `agent_stop` 映射到 OMP 的子智能体接口 | 推荐：先在 R6 中调查映射是否完整，再定 | 原型测试证明派生、事件和结果都可行；steer、停止、并发上限、后台唤醒的对应关系还没核对 |
+| D5 | 远程会话以服务器上的 OMP 会话文件为准，桌面端照常保存 Phi 自己的时间线（`~/.phi/sessions`）。服务器会话丢失时，用桌面端时间线摘要开新会话 | 推荐：是 | 服务器不可达时不能恢复原会话，只能延续摘要 |
 
 ---
 
@@ -314,17 +314,17 @@ bun run test
 
 按职责拆分，每个文件尽量控制在 600 行以内（AGENTS.md 要求）：
 
-| 新文件                                 | 内容                                      |
-| -------------------------------------- | ----------------------------------------- |
-| `engine/types.ts`                      | `PhiEngine` 与 M2 类型                    |
-| `engine/in-process/main.ts`            | worker 入口、消息分发                     |
+| 新文件 | 内容 |
+|---|---|
+| `engine/types.ts` | `PhiEngine` 与 M2 类型 |
+| `engine/in-process/main.ts` | worker 入口、消息分发 |
 | `engine/in-process/session-factory.ts` | `createAgentSession` 调用、系统提示词组装 |
-| `engine/in-process/tool-registry.ts`   | 工具集合解析与注册                        |
-| `engine/in-process/mcp-runtime.ts`     | MCP 加载、通知、OAuth                     |
-| `engine/in-process/auth.ts`            | `PhiAuth` 实现                            |
-| `engine/in-process/settings.ts`        | `PhiSettings` 实现                        |
-| `engine/events.ts`                     | `translateOmpEvent`（两种引擎共用）       |
-| `engine/in-process/subagents.ts`       | Phi 子智能体会话                          |
+| `engine/in-process/tool-registry.ts` | 工具集合解析与注册 |
+| `engine/in-process/mcp-runtime.ts` | MCP 加载、通知、OAuth |
+| `engine/in-process/auth.ts` | `PhiAuth` 实现 |
+| `engine/in-process/settings.ts` | `PhiSettings` 实现 |
+| `engine/events.ts` | `translateOmpEvent`（两种引擎共用） |
+| `engine/in-process/subagents.ts` | Phi 子智能体会话 |
 
 只搬代码、不改逻辑；每搬一块跑一次完整测试。
 
@@ -352,15 +352,15 @@ bun run test
 1. 新分支 `chore/omp-<version>`，同时升级 `@oh-my-pi/pi-coding-agent` 与 `@oh-my-pi/pi-natives`，并检查锁文件中 `pi-ai`、`pi-catalog`、`pi-tui` 是否跟随到同一版本。以开始升级当天的最新 18.10.x 为准。
 2. 按第 0.3 节的清单修改：
 
-| 问题                      | 改法                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------ |
-| `Settings` 字符串键       | `engine/in-process/settings.ts` 改为 OMP 的注册设置对象；`PhiSettings` 接口不变            |
-| `AuthStorage` 方法        | `engine/in-process/auth.ts` 改接 `pi-ai` 新的 auth、OAuth、pool 接口；`PhiAuth` 接口不变   |
-| `thinking`                | 改为从包根导入                                                                             |
-| `context-usage`           | 在引擎内自行估算工具 schema 的 token 数，不为此依赖 TUI 包                                 |
-| `provider-globals`        | 查清新版对应的初始化方式；找不到替代就删除这次调用，并用契约测试确认 provider 配置仍然生效 |
-| `getCatalogProviderEntry` | 在 `pi-catalog` 中找到新名字或改用包根 API                                                 |
-| `SEARCH_PROVIDER_CHOICES` | 改用新导出；如果新版只有显示名，就在 Phi 侧维护可选列表                                    |
+| 问题 | 改法 |
+|---|---|
+| `Settings` 字符串键 | `engine/in-process/settings.ts` 改为 OMP 的注册设置对象；`PhiSettings` 接口不变 |
+| `AuthStorage` 方法 | `engine/in-process/auth.ts` 改接 `pi-ai` 新的 auth、OAuth、pool 接口；`PhiAuth` 接口不变 |
+| `thinking` | 改为从包根导入 |
+| `context-usage` | 在引擎内自行估算工具 schema 的 token 数，不为此依赖 TUI 包 |
+| `provider-globals` | 查清新版对应的初始化方式；找不到替代就删除这次调用，并用契约测试确认 provider 配置仍然生效 |
+| `getCatalogProviderEntry` | 在 `pi-catalog` 中找到新名字或改用包根 API |
+| `SEARCH_PROVIDER_CHOICES` | 改用新导出；如果新版只有显示名，就在 Phi 侧维护可选列表 |
 
 3. 行为变化逐项确认：
    - 18.6.3 会话恢复抛错：在 `session-factory.ts` 捕获 `Could not restore model`，转成 Phi 现有的 unavailable-model 状态。契约测试覆盖。
@@ -394,7 +394,7 @@ bun run test
 
 T10b 已完成真实默认 ExtensionFactory、安全加载确认、完整扩展内容哈希部署和现有 SSH stdio 启动工厂。锁定 18.10.3 的 CLI 使用 `--trusted-extension <rpc-entry.ts>`；它与 `-e` 不能同时使用。只有明确列出的扩展命令通过 nonce、会话、项目、版本、内容哈希和守卫状态验证，才将会话标为就绪，加载失败不会回落到模型。完整源码单份随应用打包；稳定缓存与 staging 保留续传身份，内核 `flock` 在断线时释放，锁丢失立即取消发布，服务器必须预装该工具。私有 CLI 配置阻断项目 MCP 和环境扩展在守卫之前执行。
 
-审批桥接前只放行项目内已有普通文本的 native read，写入、执行和其他工具保持拒绝；Unicode 空格改写、反斜杠及 `:raw` 字面路径替代冲突明确拒绝。这是 pre-R5 限定范围。A/B/C 三路独立 APPROVE，实际 CLI、部署、协议、初始化、原引擎契约合并测试 159/159、0 失败/取消、自然退出 64.98 秒；生产 typecheck/lint/build/asar 通过。审查发现的 1 HIGH、5 MEDIUM 及文件名绑定 P2 已关闭。完整回归待最终记录。模型代理、宿主工具、审批、子会话、持久会话和远程恢复仍按 R3–R7 推进；窄后端尚不代表完整 PhiEngine 或产品可用远程功能。当前不接新 UI，不连接真实服务器。
+审批桥接前只放行项目内已有普通文本的 native read，写入、执行和其他工具保持拒绝；Unicode 空格改写、反斜杠及 `:raw` 字面路径替代冲突明确拒绝。这是 pre-R5 限定范围。A/B/C 三路独立 APPROVE，实际 CLI、部署、协议、初始化、原引擎契约合并测试 159/159、0 失败/取消、自然退出 64.98 秒；生产 typecheck/lint/build/asar 通过。审查发现的 1 HIGH、5 MEDIUM 及文件名绑定 P2 已关闭。完整串行回归 4930 项、0 失败/取消。模型代理、宿主工具、审批、子会话、持久会话和远程恢复仍按 R3–R7 推进；窄后端尚不代表完整 PhiEngine 或产品可用远程功能。当前不接新 UI，不连接真实服务器。
 
 - `RpcEngine`：建立 SSH 连接（复用现有 SSH 会话管理与主机密钥校验），启动 `omp --mode rpc`，设置 `HOME`、`PI_CODING_AGENT_DIR`、工作目录、`--trusted-extension <Phi 扩展包>/rpc-entry.ts`。
 - 处理就绪、协议版本协商（`negotiate_protocol`）、进程退出、SSH 断开（第一版：标记会话中断，可重新连接并恢复会话）。
@@ -439,14 +439,14 @@ T10b 已完成真实默认 ExtensionFactory、安全加载确认、完整扩展�
 
 远程运行时上线后，以下服务可以从"桌面端远程操作服务器"改为"在服务器上的 OMP 里直接执行"，逐项评估：
 
-| 能力                     | 现状                                                                         | 方向                                                   |
-| ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Skills / `skill_run`     | 桌面端上传 Skill 包、经 helper 远程执行（`remote-runtime/skill-service.ts`） | 改为运行时扩展，在服务器上直接执行                     |
-| 受管环境 / `env_request` | 桌面端远程操作 micromamba（`remote-runtime/environment-service.ts`）         | 评估改为服务器端直接执行                               |
-| MCP stdio                | 经 SSH 在服务器上启动（`mcp/remote-project-mcp-service.ts`）                 | 由服务器上的 OMP 直接启动                              |
-| Notebook                 | 桌面端经端口转发连接服务器上的 Jupyter                                       | 保持宿主工具，或评估由服务器端直接连接                 |
-| 断线续跑                 | 第一版随 SSH 连接存在                                                        | 确认登录节点常驻进程政策后，评估 `setsid` 加重新接管   |
-| MCP 客户端               | 依赖 OMP 内部 `mcp/*`                                                        | 评估改用官方 `@modelcontextprotocol/sdk`，以缩小白名单 |
+| 能力 | 现状 | 方向 |
+|---|---|---|
+| Skills / `skill_run` | 桌面端上传 Skill 包、经 helper 远程执行（`remote-runtime/skill-service.ts`） | 改为运行时扩展，在服务器上直接执行 |
+| 受管环境 / `env_request` | 桌面端远程操作 micromamba（`remote-runtime/environment-service.ts`） | 评估改为服务器端直接执行 |
+| MCP stdio | 经 SSH 在服务器上启动（`mcp/remote-project-mcp-service.ts`） | 由服务器上的 OMP 直接启动 |
+| Notebook | 桌面端经端口转发连接服务器上的 Jupyter | 保持宿主工具，或评估由服务器端直接连接 |
+| 断线续跑 | 第一版随 SSH 连接存在 | 确认登录节点常驻进程政策后，评估 `setsid` 加重新接管 |
+| MCP 客户端 | 依赖 OMP 内部 `mcp/*` | 评估改用官方 `@modelcontextprotocol/sdk`，以缩小白名单 |
 
 ### 阶段 5：常态化升级流程
 
@@ -464,18 +464,18 @@ T10b 已完成真实默认 ExtensionFactory、安全加载确认、完整扩展�
 
 ## 5. 风险与应对
 
-| 风险                                                                        | 影响                           | 应对                                                                                |
-| --------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| 服务器无法运行 OMP 可执行文件（更老的 glibc、非 x86_64/arm64、noexec 挂载） | 远程项目不可用                 | R1 启动检查给出明确原因；在切换默认值前保留旧实现作为退路                           |
-| 共享登录节点上其他用户访问模型代理端口                                      | 用户的模型额度被盗用           | M6 每会话令牌，没有令牌一律拒绝                                                     |
-| 登录节点清理长时间运行的进程                                                | 会话中途被杀                   | 第一版随 SSH 连接存在；R7 支持重连恢复；断线续跑放到阶段 4                          |
-| 子会话审批无法送到桌面端                                                    | 子智能体无法执行需要审批的命令 | R6 先调查再选方案；方案确定前，远程子智能体只开放只读工具                           |
-| 部署体积（约 200 MB/版本）                                                  | 慢网络下首次使用要等           | 断点续传、后台进度、同版本复用；只在升级时重新上传                                  |
-| OMP RPC 协议在新版本中变化                                                  | `RpcEngine` 失效               | 启动时做协议协商；契约测试对 `RpcEngine` 覆盖；升级 runbook 检查 RPC 相关 changelog |
-| 引擎契约测试找不到合适的假 provider                                         | 契约测试写不出来               | 用第 0.4 节的假模型服务（OpenAI 兼容、按剧本返回）                                  |
-| `Settings` 新接口中找不到某个旧设置项                                       | 升级阻塞                       | 阶段 2 回滚；在 `PhiSettings` 中先把该项改为 Phi 自管                               |
-| OMP 发版太快，升级窗口内又出新版本                                          | 升级不收敛                     | 以开始升级当天的版本为准，过程中不追新版本                                          |
-| 打包环境差异（asar、Finder 启动）                                           | 开发环境正常、打包版失败       | 运行时清单强制包含打包版验证                                                        |
+| 风险 | 影响 | 应对 |
+|---|---|---|
+| 服务器无法运行 OMP 可执行文件（更老的 glibc、非 x86_64/arm64、noexec 挂载） | 远程项目不可用 | R1 启动检查给出明确原因；在切换默认值前保留旧实现作为退路 |
+| 共享登录节点上其他用户访问模型代理端口 | 用户的模型额度被盗用 | M6 每会话令牌，没有令牌一律拒绝 |
+| 登录节点清理长时间运行的进程 | 会话中途被杀 | 第一版随 SSH 连接存在；R7 支持重连恢复；断线续跑放到阶段 4 |
+| 子会话审批无法送到桌面端 | 子智能体无法执行需要审批的命令 | R6 先调查再选方案；方案确定前，远程子智能体只开放只读工具 |
+| 部署体积（约 200 MB/版本） | 慢网络下首次使用要等 | 断点续传、后台进度、同版本复用；只在升级时重新上传 |
+| OMP RPC 协议在新版本中变化 | `RpcEngine` 失效 | 启动时做协议协商；契约测试对 `RpcEngine` 覆盖；升级 runbook 检查 RPC 相关 changelog |
+| 引擎契约测试找不到合适的假 provider | 契约测试写不出来 | 用第 0.4 节的假模型服务（OpenAI 兼容、按剧本返回） |
+| `Settings` 新接口中找不到某个旧设置项 | 升级阻塞 | 阶段 2 回滚；在 `PhiSettings` 中先把该项改为 Phi 自管 |
+| OMP 发版太快，升级窗口内又出新版本 | 升级不收敛 | 以开始升级当天的版本为准，过程中不追新版本 |
+| 打包环境差异（asar、Finder 启动） | 开发环境正常、打包版失败 | 运行时清单强制包含打包版验证 |
 
 ---
 
@@ -483,27 +483,27 @@ T10b 已完成真实默认 ExtensionFactory、安全加载确认、完整扩展�
 
 每个任务独立提交，验证命令使用 `bun run`。
 
-| 编号 | 任务                                                                                                                                | 依赖                 | 验收                |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------- |
-| T0   | 引擎边界检查脚本与白名单                                                                                                            | 无                   | 阶段 0 验收         |
-| T1   | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有 `CustomTool` 引用                                                      | T0                   | 1a 验收             |
-| T2   | `PhiSettings`                                                                                                                       | T1                   | 1b 验收             |
-| T3   | `PhiAuth`                                                                                                                           | T1                   | 1c 验收             |
-| T4   | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/`；含记忆存储 API、`mcp-key-credentials.ts`、`web-search-settings.ts` | T1                   | 1d 完成，白名单收敛 |
-| T5   | 拆分 worker，抽出 `PhiEngine` 与 `InProcessEngine`                                                                                  | T2–T4                | 1e 完成，测试无回归 |
-| T6   | Phi 扩展包，本地改为从包加载；含 `agents/` 下的守卫、策略与扩展加载文件                                                             | T5                   | 1f 完成，行为不变   |
-| T7   | 引擎契约测试（`InProcessEngine`）与假模型服务                                                                                       | T5                   | 1g 验收             |
-| T8   | 升级到 18.10.x                                                                                                                      | T6、T7               | 阶段 2 验收         |
-| T9   | R1 分发与部署                                                                                                                       | T8                   | R1 测试通过         |
-| T10  | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例                                                                      | T9                   | M8 基础用例通过     |
-| T11  | R3 模型代理与隧道                                                                                                                   | T10                  | R3 安全测试通过     |
-| T12  | R4 宿主工具桥接                                                                                                                     | T10                  | R4 验收             |
-| T13  | R5 主会话审批                                                                                                                       | T10                  | R5 验收             |
-| T14  | R6 子智能体与子会话审批（先调查，D4 定稿后实施）                                                                                    | T12、T13             | R6 验收             |
-| T15  | R7 会话存储与恢复                                                                                                                   | T10                  | R7 验收             |
-| T16  | R8 实机验证（需要用户确认后连接服务器）                                                                                             | T11–T15              | R8 清单通过         |
-| T17  | 升级 runbook                                                                                                                        | T8                   | 阶段 5 文档完成     |
-| T18  | R9 清理旧远程工具实现                                                                                                               | T16 之后一个升级周期 | R9 完成             |
+| 编号 | 任务 | 依赖 | 验收 |
+|---|---|---|---|
+| T0 | 引擎边界检查脚本与白名单 | 无 | 阶段 0 验收 |
+| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有 `CustomTool` 引用 | T0 | 1a 验收 |
+| T2 | `PhiSettings` | T1 | 1b 验收 |
+| T3 | `PhiAuth` | T1 | 1c 验收 |
+| T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/`；含记忆存储 API、`mcp-key-credentials.ts`、`web-search-settings.ts` | T1 | 1d 完成，白名单收敛 |
+| T5 | 拆分 worker，抽出 `PhiEngine` 与 `InProcessEngine` | T2–T4 | 1e 完成，测试无回归 |
+| T6 | Phi 扩展包，本地改为从包加载；含 `agents/` 下的守卫、策略与扩展加载文件 | T5 | 1f 完成，行为不变 |
+| T7 | 引擎契约测试（`InProcessEngine`）与假模型服务 | T5 | 1g 验收 |
+| T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
+| T9 | R1 分发与部署 | T8 | R1 测试通过 |
+| T10 | R2 `RpcEngine` 启动与连接，契约测试对 `RpcEngine` 跑通基础用例 | T9 | M8 基础用例通过 |
+| T11 | R3 模型代理与隧道 | T10 | R3 安全测试通过 |
+| T12 | R4 宿主工具桥接 | T10 | R4 验收 |
+| T13 | R5 主会话审批 | T10 | R5 验收 |
+| T14 | R6 子智能体与子会话审批（先调查，D4 定稿后实施） | T12、T13 | R6 验收 |
+| T15 | R7 会话存储与恢复 | T10 | R7 验收 |
+| T16 | R8 实机验证（需要用户确认后连接服务器） | T11–T15 | R8 清单通过 |
+| T17 | 升级 runbook | T8 | 阶段 5 文档完成 |
+| T18 | R9 清理旧远程工具实现 | T16 之后一个升级周期 | R9 完成 |
 
 T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）。T12、T13、T15 都只依赖 T10，可以并行。
 
@@ -523,22 +523,22 @@ T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）
 
 记录于 2026-10-12，提交 `63088e84`（合并 `origin/main` 之后，原生 Office 功能已移除），OMP 18.1.10。
 
-| 命令                | 18.1.10 结果                                               |
-| ------------------- | ---------------------------------------------------------- |
-| `bun run typecheck` | 通过                                                       |
-| `bun run lint`      | 通过；0 个错误，2 个警告                                   |
-| `bun run test`      | 4677 个：通过 4657，失败 8，跳过 11，todo 1；用时约 6 分钟 |
+| 命令 | 18.1.10 结果 |
+|---|---|
+| `bun run typecheck` | 通过 |
+| `bun run lint` | 通过；0 个错误，2 个警告 |
+| `bun run test` | 4677 个：通过 4657，失败 8，跳过 11，todo 1；用时约 6 分钟 |
 
 全套运行中失败的 8 个测试，单独运行对应文件时全部通过，说明它们只在满载时出现超时或竞态，不是稳定复现的失败：
 
-| 文件                           | 全套中的失败数      | 单独运行   |
-| ------------------------------ | ------------------- | ---------- |
-| `envs-application-bun`         | 2（约 5–8 秒超时）  | 23/23 通过 |
-| `envs-application-tools`       | 1（约 5 秒超时）    | 13/13 通过 |
-| `jupyter-runtime-backend`      | 2（各约 20 秒超时） | 8/8 通过   |
-| `remote-nextflow-install-flow` | 1                   | 2/2 通过   |
-| `remote-notebook-tools-e2e`    | 1                   | 1/1 通过   |
-| `workspace-host-runtime-root`  | 1（慢容量探测用例） | 19/19 通过 |
+| 文件 | 全套中的失败数 | 单独运行 |
+|---|---|---|
+| `envs-application-bun` | 2（约 5–8 秒超时） | 23/23 通过 |
+| `envs-application-tools` | 1（约 5 秒超时） | 13/13 通过 |
+| `jupyter-runtime-backend` | 2（各约 20 秒超时） | 8/8 通过 |
+| `remote-nextflow-install-flow` | 1 | 2/2 通过 |
+| `remote-notebook-tools-e2e` | 1 | 1/1 通过 |
+| `workspace-host-runtime-root` | 1（慢容量探测用例） | 19/19 通过 |
 
 此前在 `476d4843` 上的一次全套运行中，`workspace-host-contract` 的"暂存期间外部写入"竞态用例也失败过一次（local 25/25、ssh 27/27 单独运行通过），同样视为满载不稳定项。
 
@@ -550,7 +550,9 @@ T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）
 
 ## 附录 C：已验证的 OMP 版本
 
-| 版本    | 日期       | 验证人                     | 说明                                                     |
-| ------- | ---------- | -------------------------- | -------------------------------------------------------- |
-| 18.1.10 | 2026-10-13 | Codex                      | 阶段 1 main 基线；4771 项全量零失败                      |
+| 版本 | 日期 | 验证人 | 说明 |
+|---|---|---|---|
+| 18.1.10 | 2026-10-13 | Codex | 阶段 1 main 基线；4771 项全量零失败 |
 | 18.10.3 | 2026-10-13 | Codex + 独立 subagent 审查 | T8 分支自动化验收通过，4789 项全量零失败；人工清单待验证 |
+
+T10b 冻结提交 `e4447c5d` 的全套串行验收：4930 项，4905 通过、0 失败、0 取消、24 既有跳过、1 todo，1096.00 秒。23 个生产/测试/打包文件哈希及运行前后 HEAD 完全一致。此前标准并发 4 两轮分别有 3 项与 2 项不同的既有失败；Bun 5 秒版本探测、容量探测和 Jupyter readiness 用例按原断言/期限单独复现均通过，相关源码和测试与 main 一致。未放宽期限/断言、未新增跳过、未改标准并发脚本；并行稳定性波动仍作为验证限制保留，不将串行结果表述为标准并发全量通过。后续 T11/T12 在另一副本实施，不再重开 T1–T7 审查。
