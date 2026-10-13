@@ -178,6 +178,7 @@ test('self-containment checker rejects runtime OMP, every external reference for
       "import type { AssistantMessageEvent } from '@oh-my-pi/pi-ai'",
       "import type { StreamFn } from '@oh-my-pi/pi-agent-core'",
       "import { AssistantMessageEventStream } from '@oh-my-pi/pi-ai/utils/event-stream'",
+      "import { InternalUrlRouter } from '@oh-my-pi/pi-coding-agent/internal-urls'",
       "import type { Valid } from './lib/valid.js'",
       "import { resolve } from 'node:path'",
       "import test from 'node:test'"
@@ -199,6 +200,17 @@ test('self-containment checker rejects runtime OMP, every external reference for
       ['dynamic-host.ts', "import('@oh-my-pi/pi-ai/utils/event-stream')"],
       ['require-host.ts', "require('@oh-my-pi/pi-ai/utils/event-stream')"],
       ['host-subpath.ts', "import * as stream from '@oh-my-pi/pi-ai/utils/event-stream/other'"],
+      ['dynamic-router.ts', "import('@oh-my-pi/pi-coding-agent/internal-urls')"],
+      ['require-router.ts', "require('@oh-my-pi/pi-coding-agent/internal-urls')"],
+      [
+        'router-subpath.ts',
+        "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/router'"
+      ],
+      [
+        'router-alias.ts',
+        "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/../internal-urls'"
+      ],
+      ['router-suffix.ts', "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls.ts'"],
       ['type.mjs', "/** @type {import('outside')} */ let value"],
       ['external.cjs', "require.resolve('outside')"],
       ['type.ts', "type T = import('outside').Type"],

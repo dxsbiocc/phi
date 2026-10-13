@@ -127,13 +127,13 @@ test('source symlinks, hard links and unexpected assets cannot enter the content
   await assert.rejects(createPhiExtensionBundle(rootAlias), /Unsafe extension source directory/)
 })
 
-test('only the pinned host event-stream module is accepted as a runtime SDK dependency', async (t) => {
+test('only the exact pinned event-stream and internal-URL host modules are runtime SDK dependencies', async (t) => {
   const fixture = await createPhiExtensionDeploymentFixture()
   t.after(fixture.cleanup)
   const entry = join(fixture.sourceRoot, 'rpc-entry.ts')
   await writeFile(
     entry,
-    "import { AssistantMessageEventStream } from '@oh-my-pi/pi-ai/utils/event-stream'\nimport type { AssistantMessageEvent } from '@oh-my-pi/pi-ai'\nimport type { StreamFn } from '@oh-my-pi/pi-agent-core'\nexport const stream = new AssistantMessageEventStream()\n"
+    "import { AssistantMessageEventStream } from '@oh-my-pi/pi-ai/utils/event-stream'\nimport { InternalUrlRouter } from '@oh-my-pi/pi-coding-agent/internal-urls'\nimport type { AssistantMessageEvent } from '@oh-my-pi/pi-ai'\nimport type { StreamFn } from '@oh-my-pi/pi-agent-core'\nexport const stream = new AssistantMessageEventStream()\nexport const router = InternalUrlRouter.instance()\n"
   )
   await createPhiExtensionBundle(fixture.sourceRoot)
   for (const source of [
@@ -152,7 +152,12 @@ test('only the pinned host event-stream module is accepted as a runtime SDK depe
     "import * as stream from '@oh-my-pi/pi-ai/utils/../utils/event-stream'",
     "import * as stream from '@oh-my-pi/pi-ai/utils/event-stream.ts'",
     "import('@oh-my-pi/pi-ai/utils/event-stream')",
-    "require('@oh-my-pi/pi-ai/utils/event-stream')"
+    "require('@oh-my-pi/pi-ai/utils/event-stream')",
+    "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/router'",
+    "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/../internal-urls'",
+    "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls.ts'",
+    "import('@oh-my-pi/pi-coding-agent/internal-urls')",
+    "require('@oh-my-pi/pi-coding-agent/internal-urls')"
   ]) {
     await writeFile(entry, source)
     await assert.rejects(createPhiExtensionBundle(fixture.sourceRoot), /dependency|import|loader/)

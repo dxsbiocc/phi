@@ -132,6 +132,9 @@ export function validatePhiExtensionBundle(bundle: PhiExtensionBundle): void {
       // OMP18.10.3 exposes this exact module through its compiled extension host.
       // Native stream integrity uses the host's canonical event stream class.
       if (specifier === '@oh-my-pi/pi-ai/utils/event-stream') continue
+      // Child approvals use the host's shared router, not a bundled second SDK.
+      // Keep the named export exact; neighboring paths are not part of this contract.
+      if (specifier === '@oh-my-pi/pi-coding-agent/internal-urls') continue
       if (!specifier.startsWith('.') || /[\\\0\r\n]/.test(specifier)) {
         throw new Error(`Non-self-contained extension import in ${file.path}: ${specifier}`)
       }

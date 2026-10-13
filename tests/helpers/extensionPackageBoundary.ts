@@ -133,6 +133,11 @@ export function extensionPackageFailures(packageRoot: string): string[] {
         continue
       } else if (specifier === '@oh-my-pi/pi-ai/utils/event-stream' && reference.staticImport) {
         continue
+      } else if (
+        specifier === '@oh-my-pi/pi-coding-agent/internal-urls' &&
+        reference.staticImport
+      ) {
+        continue
       } else {
         failures.push(label)
       }
