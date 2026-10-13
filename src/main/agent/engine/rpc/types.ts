@@ -1,3 +1,4 @@
+import type { PhiToolResult } from '../types'
 import type { RemoteStdioProcess } from '../../wrappers/remote-ssh-session'
 
 export type RpcTransport = RemoteStdioProcess
@@ -61,4 +62,49 @@ export interface RpcDisconnect {
   error: Error
   generation: number
   expected: boolean
+}
+
+/** Explicit desktop tool metadata only; credentials and execution authority stay local. */
+export interface RpcHostToolDefinition {
+  name: string
+  label?: string
+  description: string
+  parameters: Record<string, unknown>
+  hidden?: boolean
+  loadMode?: 'essential' | 'discoverable'
+  readsSkillUris?: boolean
+}
+
+export interface RpcHostToolCall extends RpcFrame {
+  type: 'host_tool_call'
+  id: string
+  toolCallId: string
+  toolName: string
+  arguments: Record<string, unknown>
+}
+
+export interface RpcHostToolCancel extends RpcFrame {
+  type: 'host_tool_cancel'
+  id: string
+  targetId: string
+}
+
+export type RpcControlFrame =
+  | { type: 'host_tool_update'; id: string; partialResult: PhiToolResult }
+  | { type: 'host_tool_result'; id: string; result: PhiToolResult; isError?: boolean }
+  | { type: 'extension_ui_response'; id: string; value: string }
+  | { type: 'extension_ui_response'; id: string; confirmed: boolean }
+  | { type: 'extension_ui_response'; id: string; cancelled: true; timedOut?: boolean }
+  | {
+      type: 'extension_ui_response'
+      id: string
+      answers: Array<{ id: string; selectedOptions: string[]; customInput?: string }>
+    }
+
+/** Captures one ready generation; it cannot write to or observe a replacement channel. */
+export interface RpcControlChannel {
+  readonly generation: number
+  readonly signal: AbortSignal
+  sendControl(frame: RpcControlFrame): Promise<void>
+  onFrame(listener: (frame: RpcFrame) => void): () => void
 }

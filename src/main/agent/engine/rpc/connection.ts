@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { validateControlFrame } from './control-frame'
 import {
   MAX_RPC_FRAME_BYTES,
   MAX_RPC_REASSEMBLED_BYTES,
@@ -8,6 +9,7 @@ import {
 import type {
   RpcCommand,
   RpcConnectionOptions,
+  RpcControlChannel,
   RpcDisconnect,
   RpcFrame,
   RpcPromptOptions,
@@ -46,6 +48,7 @@ interface Generation {
   prompts: Map<string, PendingPrompt>
   writes: Promise<void>
   writing: number
+  queuedBytes: number
   detach?: () => void
   cleanup?: Promise<void>
 }
@@ -143,7 +146,8 @@ export class RpcConnection {
       responses: new Map(),
       prompts: new Map(),
       writes: Promise.resolve(),
-      writing: 0
+      writing: 0,
+      queuedBytes: 0
     }
     this.current = state
     if (this.startupMs)
@@ -174,6 +178,32 @@ export class RpcConnection {
     const state = this.readyState()
     const response = await this.send(state, command, timeout(options.timeoutMs, this.requestMs))
     return response.data as T
+  }
+
+  bindControl(): RpcControlChannel {
+    const state = this.readyState()
+    return Object.freeze({
+      generation: state.id,
+      signal: state.controller.signal,
+      sendControl: async (frame) => {
+        if (!this.active(state)) throw new Error('RPC control generation is closed')
+        validateControlFrame(frame)
+        await this.write(state, encodeRpcCommand(frame))
+        if (!this.active(state)) throw new Error('RPC control generation is closed')
+      },
+      onFrame: (listener) => {
+        if (!this.active(state)) throw new Error('RPC control generation is closed')
+        const off = this.onEvent((frame) => {
+          if (this.active(state)) return listener(frame)
+        })
+        const detach = (): void => {
+          off()
+          state.controller.signal.removeEventListener('abort', detach)
+        }
+        state.controller.signal.addEventListener('abort', detach, { once: true })
+        return detach
+      }
+    } satisfies RpcControlChannel)
   }
 
   async prompt(message: string, options: RpcPromptOptions = {}): Promise<RpcPromptResult> {
@@ -387,33 +417,56 @@ export class RpcConnection {
           () => this.fail(state, new Error(`RPC ${command.type} response timed out`)),
           ms
         )
-      state.writes = state.writes.then(
-        () =>
-          new Promise<void>((written, failed) => {
-            if (!this.active(state) || !state.process) {
-              failed(new Error('RPC channel is closed'))
-              return
-            }
-            state.writing++
-            let completed = false
-            const finish = (error?: Error | null): void => {
-              if (completed) return
-              completed = true
-              state.writing--
-              // Writable emits its error after this callback. A retired
-              // generation retains its guard through that emission only.
-              if (state.phase === 'closed') setImmediate(() => state.detach?.())
-              if (error) failed(error)
-              else written()
-            }
-            try {
-              state.process.stdin.write(bytes, finish)
-            } catch (error) {
-              finish(asError(error))
-            }
-          })
-      )
-      void state.writes.catch((error: unknown) => this.fail(state, asError(error)))
+      void this.write(state, bytes).catch((error: unknown) => this.fail(state, asError(error)))
+    })
+  }
+
+  private write(state: Generation, bytes: Buffer): Promise<void> {
+    if (!this.active(state)) return Promise.reject(new Error('RPC channel is closed'))
+    // Bound queued client memory independently from the server's chunk reassembly budget.
+    if (state.queuedBytes + bytes.length > 8 * MAX_RPC_FRAME_BYTES) {
+      const error = new Error('RPC write queue exceeds the supported byte limit')
+      this.fail(state, error)
+      return Promise.reject(error)
+    }
+    state.queuedBytes += bytes.length
+    const queued = state.writes.then(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          if (!this.active(state) || !state.process) {
+            reject(new Error('RPC channel is closed'))
+            return
+          }
+          state.writing++
+          let completed = false
+          const finish = (error?: Error | null): void => {
+            if (completed) return
+            completed = true
+            state.writing--
+            if (state.phase === 'closed') setImmediate(() => state.detach?.())
+            if (error) reject(error)
+            else resolve()
+          }
+          try {
+            state.process.stdin.write(bytes, finish)
+          } catch (error) {
+            finish(asError(error))
+          }
+        })
+    )
+    state.writes = queued
+    void queued
+      .finally(() => {
+        state.queuedBytes -= bytes.length
+      })
+      .catch(() => undefined)
+    void queued.catch((error: unknown) => this.fail(state, asError(error)))
+    return new Promise<void>((resolve, reject) => {
+      const signal = state.controller.signal
+      const abort = (): void => reject(asError(signal.reason))
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+      void queued.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
     })
   }
 
