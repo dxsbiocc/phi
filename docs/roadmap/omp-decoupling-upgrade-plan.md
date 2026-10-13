@@ -249,7 +249,9 @@ bun run test
 **1c `PhiAuth`**
 - 封装当前 15 处调用（`omp-sdk-worker.ts` 中的模型登录、登出、凭据列举/删除、来源描述，以及 `featured-mcp-auth.ts` 的 MCP OAuth 凭据读写）。
 - 对外方法草案：`listProviders()`、`credentialStatus(providerId)`、`setApiKey(providerId, key)`、`login(providerId, controller)`、`logout(providerId)`、`listApiKeys(authId)`、`removeApiKey(authId, entryId)`、`getMcpOAuth(url)`、`setMcpOAuth(url, credential)`。
-- 验收：引擎外不出现 `AuthStorage`；单元测试覆盖各方法。
+- 2026-10-13 核对：T1 之后所有 `authStorage` 调用都已在引擎目录内，"引擎外不出现 `AuthStorage`"已经满足；1c 的实际目标是让 worker 不再直接调用 `authStorage` 的方法，全部经 `engine/in-process/auth.ts`。`ModelRegistry`、`createAgentSession`、MCP 管理器与 OAuth 流程仍拿原始 `AuthStorage` 对象，`PhiAuth` 包装它，不替代它。
+- 必须保留的现有语义：网页搜索服务保存 API key 时保留同一 authId 下已有的非 API key 凭据、只替换 API key；清除时只删 API key；模型 provider 的"已配置"判断为 `hasAuth || hasConcreteAuth || 有已存凭据`。
+- 验收：worker 内不再直接调用 `authStorage` 的方法；单元测试覆盖各方法。
 
 **1d 零散内部工具函数收口**
 - `estimateToolSchemaTokens`、`parseConfiguredThinkingLevel`、`applyProviderGlobalsFromSettings`、`authPolicyFor`、`getCatalogProviderEntry`、`SEARCH_PROVIDER_CHOICES`、`resolveCompactionMethodOrder` 等，每个在引擎里包成一个 Phi 函数，统一放在 `engine/omp-internals.ts`。升级时只看这一个文件。
