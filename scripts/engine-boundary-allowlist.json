@@ -258,6 +258,12 @@
       "plan": "keep"
     },
     {
+      "file": "tests/helpers/rpcSessionVerificationExtension.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-agent-core/compaction"],
+      "purpose": "R7 private actual CLI oracle uses ExtensionFactory types and the public pinned compaction preserve-data serializer to prove production verification against SDK-created native compaction journals",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/phi-extension/lib/rpc-native-stream-adapter.ts",
       "specifiers": ["@oh-my-pi/pi-ai/utils/event-stream"],
       "purpose": "Pinned OMP 18.10.3 compiled extension host supplies its canonical event-stream class for selective lossless native gateway adaptation; this single public runtime subpath is verified by actual private CLI oracle",
