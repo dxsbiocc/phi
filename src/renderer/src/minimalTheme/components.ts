@@ -1,4 +1,4 @@
-import { alpha, type Theme, type ThemeOptions } from '@mui/material'
+import { alpha, getContrastRatio, lighten, type Theme, type ThemeOptions } from '@mui/material'
 
 import { pxToRem } from './typography'
 import { MINIMAL_GREY, SEMANTIC_SCALES, type SemanticColor } from './tokens'
@@ -128,6 +128,27 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
         sizeLarge: { padding: '10px 20px', fontSize: pxToRem(15) }
       },
       variants: [
+        {
+          props: { variant: 'contained', color: 'primary' },
+          style: ({ theme }: { theme: Theme }) => {
+            const background = lighten(theme.palette.primary.main, isDark ? 0.24 : 0.48)
+            const hoverBackground = lighten(theme.palette.primary.main, isDark ? 0.16 : 0.38)
+            const textColor = (surface: string): string =>
+              getContrastRatio(surface, MINIMAL_GREY[800]) >= 4.5
+                ? MINIMAL_GREY[800]
+                : getContrastRatio(surface, '#FFFFFF') >= 4.5
+                  ? '#FFFFFF'
+                  : '#000000'
+            return {
+              backgroundColor: background,
+              color: textColor(background),
+              '&:hover': {
+                backgroundColor: hoverBackground,
+                color: textColor(hoverBackground)
+              }
+            }
+          }
+        },
         // The style's default "primary action" is a dark charcoal button,
         // not a colored one — colored contained buttons are used sparingly.
         {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getContrastRatio } from '@mui/material'
+import { getContrastRatio, getLuminance, type Theme } from '@mui/material'
 
 import { createPaletteTheme } from '../src/renderer/src/theme'
 import {
@@ -98,6 +98,30 @@ test('palette themes retain readable primary controls and body text in both mode
         getContrastRatio(theme.palette.background.default, theme.palette.text.primary) >= 4.5,
         `${id}/${mode} body contrast`
       )
+    }
+  }
+})
+
+test('filled primary buttons use lighter surfaces with readable default and hover text', () => {
+  type ButtonColors = { backgroundColor: string; color: string }
+  type ButtonStyle = ButtonColors & { '&:hover': ButtonColors }
+
+  for (const mode of ['light', 'dark'] as const) {
+    for (const id of THEME_PALETTE_IDS) {
+      const theme = createPaletteTheme(mode, id)
+      const variant = theme.components?.MuiButton?.variants?.find(
+        ({ props }) =>
+          typeof props !== 'function' && props.variant === 'contained' && props.color === 'primary'
+      )
+      assert.ok(variant)
+      const style = (variant.style as (props: { theme: Theme }) => ButtonStyle)({ theme })
+      assert.ok(getLuminance(style.backgroundColor) > getLuminance(theme.palette.primary.main))
+      for (const state of [style, style['&:hover']]) {
+        assert.ok(
+          getContrastRatio(state.backgroundColor, state.color) >= 4.5,
+          `${id}/${mode} filled button contrast`
+        )
+      }
     }
   }
 })
