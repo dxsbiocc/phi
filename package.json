@@ -37,7 +37,7 @@
     "build:win": "bun run build && electron-builder --win",
     "build:mac": "bun run build && electron-builder --mac",
     "build:linux": "bun run build && electron-builder --linux",
-    "test": "node --import ./scripts/test-loader.mjs --test --test-timeout=300000 --test-force-exit tests/*.test.ts",
+    "test": "node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit tests/*.test.ts",
     "test:packages": "node --import ./scripts/test-loader.mjs --test --test-timeout=300000 --test-force-exit tests/package-content/*.test.ts",
     "test:runtime": "PHI_RUNTIME_INTEGRATION=1 node --import ./scripts/test-loader.mjs --test tests/runtime/*.test.ts tests/envs-*.test.ts",
     "test:helper": "bun run helper:fetch-go && node scripts/helper-toolchain.mjs test ./... && node scripts/helper-toolchain.mjs vet ./...",
