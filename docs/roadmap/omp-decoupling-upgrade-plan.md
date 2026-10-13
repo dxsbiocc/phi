@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 已通过独立审查和完整自动化验收（`053c3f88`），T10b 扩展 bootstrap 三路独立审查和整合核心验收通过，完整串行回归 4930 项、0 失败/取消；T11 模型代理进入实施；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
+状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。用户要求 T8 暂留分支并继续后续任务；main 未再修改。T8–T10 已完成各自的代码审查与自动化验收，人工清单仍待验证。T11 网关、隧道与生命周期基础、T12 宿主桥基础、T13 主审批基础、T15 存储与恢复基础均已通过独立审查并保存分支提交；完整产品接入继续实施。提供商矩阵发现 Anthropic opaque thinking 与仅终态注册 API 的兼容缺口，保留失败证据并实施适配。进度及验收边界见 [远程运行时验收记录](../runtime/omp-remote-acceptance.md)。2026-10-14 更新；Codex 负责接替 Claude 管理与审查。
 创建日期：2026-10-12
 执行：Codex 原生 subagents；负责人：当前 Codex 主会话（任务拆分、进度管理、独立质量审查与最终验收）。所有项目验证命令使用 `bun run`；限定测试采用同一脚本的 Node runner，避免参数附加后误跑全套。
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -29,7 +29,11 @@
 | T9 R1 分发部署 | `3e8462a8`；候选分支整合为 `46df9dc8` | 独立 APPROVE；两项缓存缺陷红绿修复；18.10.3 下复跑 27/27 和专用测试类型检查通过 |
 | T10a 基础 RPC | `codex/omp-rpc-foundation` | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产 typecheck/lint/build/asar 通过；全量 4862 项、0 失败/取消 |
 | T10b 扩展启动与部署         | `codex/omp-rpc-bootstrap`                                      | 三路独立 APPROVE；整合核心 159/159 自然退出；生产 typecheck/lint/build/asar 通过，完整串行回归 4930 项、0 失败/取消                                         |
-| T11 模型代理与隧道          | SDK native router 方案已收敛                                   | 按网关、SSH 隧道与私有配置、worker/生命周期三路实施；真实 provider/SSH 验证仍待 R8                                                           |
+| T11 模型代理与隧道 | `eaabd7b9`，nullable selection `e9a1b77e` | 基础独立 APPROVE；提供商矩阵存在真实兼容失败，完整 R3 未验收 |
+| T12 宿主工具桥 | `16e9a23f`，typed errors `18e13c4b` | 基础独立 APPROVE；大结果无损传输与实际服务接入继续实施 |
+| T13 主会话审批 | `c237d2b6` | 基础独立 APPROVE；真实运行归属与 bridge-ready 接入实施中，产品入口仍只读 |
+| T14 子智能体 | 原生 task / 子会话权限设计已完成 | 公开 SDK 接缝调查完成；尚未实施完整 R6 |
+| T15 会话存储与恢复 | `ee2cb6e7`、`5e5fc292`、`8801a1ca` | 三块基础独立 APPROVE；持久化启动、严格服务端验证及产品路由继续实施 |
 | T17 升级手册 | [操作手册](../runtime/omp-upgrade-runbook.md) | 已记录本次实际升级步骤、验证证据和人工缺口；T8 合入权限单独记录 |
 | T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
 | T9 | R1 分发与部署 | T8 | R1 测试通过 |
