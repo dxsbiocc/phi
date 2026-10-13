@@ -17,6 +17,12 @@ import {
 import { assertRemoteRoot, privateRemotePrefix } from './extension-deployment/remote-commands'
 import { ensureRemoteOmpDeployment, type RemoteOmpDeploymentOptions } from './runtime-deployment'
 import type { RpcSessionCreateParams, RpcSessionInitializationContext } from './rpc-session-backend'
+import {
+  acquirePersistentLaunchStorage,
+  type PreparePersistentLaunchStorage
+} from './persistent-launch-storage'
+import { storagePrefix } from './session-storage/remote-preflight'
+import type { RemoteSessionStoragePreparation } from './session-storage/types'
 
 export interface SshRpcSessionTransportOptions {
   /** The selected, already connected session: the factory never owns its SSH master. */
@@ -25,6 +31,8 @@ export interface SshRpcSessionTransportOptions {
   bundle: PhiExtensionBundle
   projectId: string
   onExtensionProgress?: ExtensionDeploymentOptions['onProgress']
+  /** Factory owns the returned writer lease until this generation closes, including failed/late opens. */
+  preparePersistentStorage?: PreparePersistentLaunchStorage
   /** R3 may write proxy model configuration here. Desktop credentials are never copied. */
   prepareSession?: (context: {
     readonly params: Readonly<RpcSessionCreateParams>
@@ -97,22 +105,33 @@ export async function prepareSshRpcSessionTransport(
   preparationSignal?.throwIfAborted()
   const prepared = new WeakMap<Readonly<RpcSessionCreateParams>, RpcBootstrapConfig>()
   return {
-    async open(params, signal) {
+    async open(params, callerSignal) {
+      const controller = new AbortController()
+      const signal = controller.signal
+      const cancel = (): void => controller.abort(callerSignal.reason)
       identity(params.sessionId, 'session identity')
       assertRemoteRoot(params.cwd)
-      signal.throwIfAborted()
+      callerSignal.throwIfAborted()
       const { runtimeHost: host, runtimeRoot: root } = options.runtime
       if (!host.transfer) throw new Error('Runtime host has no streaming file transfer transport')
       const nonce = randomUUID()
       const sessionBase = posix.join(root, 'rpc-sessions')
       const sessionDirectory = posix.join(sessionBase, nonce)
       const homePath = posix.join(sessionDirectory, 'home')
-      const agentDir = posix.join(homePath, 'agent')
+      const agentDir = posix.join(
+        homePath,
+        options.preparePersistentStorage ? '.omp/agent' : 'agent'
+      )
+      const statePath = posix.join(sessionDirectory, 'state')
+      const cachePath = posix.join(sessionDirectory, 'cache')
+      const tempPath = posix.join(sessionDirectory, 'tmp')
       const configPath = posix.join(sessionDirectory, 'config.json')
       const startupPolicyPath = posix.join(sessionDirectory, 'startup-policy.json')
       const prefix = privateRemotePrefix(root)
       let local: string | undefined
       let channel: RemoteStdioProcess | undefined
+      let storage: RemoteSessionStoragePreparation | undefined
+      const loseLease = (): void => controller.abort(storage?.lease.signal.reason)
       let cleanupPromise: Promise<void> | undefined
       const run = async (command: string, operationSignal?: AbortSignal): Promise<void> => {
         operationSignal?.throwIfAborted()
@@ -132,24 +151,45 @@ export async function prepareSshRpcSessionTransport(
         if (!cleanupPromise)
           cleanupPromise = (async () => {
             signal.removeEventListener('abort', abort)
+            callerSignal.removeEventListener('abort', cancel)
+            storage?.lease.signal.removeEventListener('abort', loseLease)
             prepared.delete(params)
             await run(
               `if [ -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ]; then owned ${q(sessionBase)}; owned ${q(sessionDirectory)}; rm -rf -- ${q(sessionDirectory)}; fi`
             ).catch(() => undefined)
+            await storage?.lease.release().catch(() => undefined)
           })()
         return cleanupPromise
       }
       const abort = (): void => {
         void channel?.close().catch(() => undefined)
       }
+      callerSignal.addEventListener('abort', cancel, { once: true })
+      if (callerSignal.aborted) cancel()
       signal.addEventListener('abort', abort, { once: true })
       try {
+        if (options.preparePersistentStorage) {
+          storage = await acquirePersistentLaunchStorage(
+            options.preparePersistentStorage,
+            { params, signal },
+            {
+              host,
+              projectId: options.projectId,
+              runtimeRoot: root
+            }
+          )
+          storage.lease.signal.addEventListener('abort', loseLease, { once: true })
+          if (storage.lease.signal.aborted) loseLease()
+          storage.lease.assertActive()
+          await run(storagePrefix(storage.scope, storage.paths), signal)
+        }
         await run(
           `[ "$(cd -- ${q(params.cwd)} && pwd -P)" = ${q(params.cwd)} ] || fail 'Project root must be a canonical existing directory'
 private_dir ${q(sessionBase)}
 [ ! -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ] || fail 'Session generation already exists'
 private_dir ${q(sessionDirectory)}
 private_dir ${q(homePath)}
+${storage ? `private_dir ${q(posix.join(homePath, '.omp'))}\nprivate_dir ${q(statePath)}\nprivate_dir ${q(posix.join(statePath, 'omp'))}\nprivate_dir ${q(cachePath)}\nprivate_dir ${q(posix.join(cachePath, 'omp'))}\nprivate_dir ${q(tempPath)}` : ''}
 private_dir ${q(agentDir)}`,
           signal
         )
@@ -188,7 +228,8 @@ private_dir ${q(agentDir)}`,
             extensions: [],
             skills: [],
             lsp: { enabled: false },
-            memory: { enabled: false }
+            memory: { enabled: false },
+            ...(storage ? { goal: { continuationModes: [] } } : {})
           })
         )
         const policySource = join(local, 'startup-policy.json')
@@ -219,12 +260,16 @@ private_dir ${q(agentDir)}`,
           '--no-title',
           '--no-prewalk',
           '--no-pty',
-          '--no-session'
+          ...(storage ? ['--session-dir', storage.paths.journals] : ['--no-session'])
         ]
         // pi-utils eagerly loads cwd/.env during module import, before OMP
         // applies --cwd. Start in the owned HOME, then let the official CLI
         // switch the real process and session cwd after that startup phase.
-        const command = `cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
+        storage?.lease.assertActive()
+        const persistentEnv = storage
+          ? ` XDG_DATA_HOME=${q(storage.paths.data)} XDG_STATE_HOME=${q(statePath)} XDG_CACHE_HOME=${q(cachePath)} TMPDIR=${q(tempPath)} TEMP=${q(tempPath)} TMP=${q(tempPath)}`
+          : ''
+        const command = `umask 077 && cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
         const opening = options.session.openStdio!(command)
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.

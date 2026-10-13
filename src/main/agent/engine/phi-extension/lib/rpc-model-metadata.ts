@@ -3,9 +3,9 @@ import {
   constants,
   fstatSync,
   openSync,
+  lstatSync,
   readSync,
-  realpathSync,
-  statSync
+  realpathSync
 } from 'node:fs'
 import { isAbsolute, join, posix, resolve } from 'node:path'
 import type { RpcBootstrapConfig } from './rpc-config'
@@ -193,14 +193,32 @@ export function loadRpcModelMetadata(
     throw new Error('Phi RPC model metadata could not be opened safely')
   }
   try {
-    const directory = statSync(agentDir)
+    const suffix = `/rpc-sessions/${config.nonce}/home/`
+    const index = agentDir.lastIndexOf(suffix)
+    const layout = agentDir.slice(index + suffix.length)
+    const generation = index < 0 ? '' : agentDir.slice(0, index) + `/rpc-sessions/${config.nonce}`
+    const directories = [
+      posix.dirname(generation),
+      generation,
+      join(generation, 'home'),
+      ...(layout === '.omp/agent' ? [join(generation, 'home', '.omp')] : []),
+      agentDir
+    ]
     const metadata = fstatSync(descriptor)
     if (
-      !agentDir.endsWith(`/rpc-sessions/${config.nonce}/home/agent`) ||
-      !directory.isDirectory() ||
-      (directory.mode & 0o077) !== 0 ||
-      (process.getuid && directory.uid !== process.getuid()) ||
+      index < 0 ||
+      (layout !== 'agent' && layout !== '.omp/agent') ||
+      directories.some((path) => {
+        const directory = lstatSync(path)
+        return (
+          !directory.isDirectory() ||
+          directory.isSymbolicLink() ||
+          (directory.mode & 0o777) !== 0o700 ||
+          (process.getuid && directory.uid !== process.getuid())
+        )
+      }) ||
       !metadata.isFile() ||
+      metadata.nlink !== 1 ||
       metadata.size > RPC_MODEL_METADATA_MAX_BYTES ||
       (metadata.mode & 0o777) !== 0o600 ||
       (process.getuid && metadata.uid !== process.getuid())

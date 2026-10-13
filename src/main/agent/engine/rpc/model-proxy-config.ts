@@ -82,7 +82,9 @@ function generationPaths(agentDir: string): { root: string; nonce: string; direc
     /[\0\r\n]/.test(agentDir)
   )
     throw new Error('Model proxy config requires a canonical private generation directory')
-  const match = /^(.*)\/rpc-sessions\/([A-Za-z0-9_-]{16,128})\/home\/agent$/.exec(agentDir)
+  const match = /^(.*)\/rpc-sessions\/([A-Za-z0-9_-]{16,128})\/home\/(\.omp\/)?agent$/.exec(
+    agentDir
+  )
   if (!match) throw new Error('Model proxy config cannot use a shared or user agent directory')
   const root = match[1]
   privateRemotePrefix(root)
@@ -90,7 +92,13 @@ function generationPaths(agentDir: string): { root: string; nonce: string; direc
   return {
     root,
     nonce: match[2],
-    directories: [posix.join(root, 'rpc-sessions'), session, posix.join(session, 'home'), agentDir]
+    directories: [
+      posix.join(root, 'rpc-sessions'),
+      session,
+      posix.join(session, 'home'),
+      ...(match[3] ? [posix.join(session, 'home', '.omp')] : []),
+      agentDir
+    ]
   }
 }
 
