@@ -22,6 +22,8 @@ export interface RpcResponse extends RpcFrame {
   success: boolean
   data?: unknown
   error?: string
+  /** Optional machine-readable failure reason from the official RPC response. */
+  code?: string
 }
 
 export interface RpcPromptResult extends RpcFrame {

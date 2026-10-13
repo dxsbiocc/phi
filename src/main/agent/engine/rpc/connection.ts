@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { validateControlFrame } from './control-frame'
+import { RpcRequestError, validRpcErrorCode } from './errors'
 import {
   MAX_RPC_FRAME_BYTES,
   MAX_RPC_REASSEMBLED_BYTES,
@@ -355,7 +356,8 @@ export class RpcConnection {
         typeof value.id !== 'string' ||
         typeof value.command !== 'string' ||
         typeof value.success !== 'boolean' ||
-        (!value.success && typeof value.error !== 'string')
+        (!value.success && typeof value.error !== 'string') ||
+        (value.code !== undefined && !validRpcErrorCode(value.code))
       )
         throw new Error('Invalid RPC response')
       const pending = state.responses.get(value.id)
@@ -375,7 +377,15 @@ export class RpcConnection {
       state.responses.delete(value.id)
       if (pending.timer) clearTimeout(pending.timer)
       if (value.success) pending.resolve(value as RpcResponse)
-      else pending.reject(new Error(String(value.error)))
+      else
+        pending.reject(
+          new RpcRequestError({
+            id: value.id,
+            command: value.command,
+            error: String(value.error),
+            ...(value.code === undefined ? {} : { code: value.code as string })
+          })
+        )
       return
     }
     if (value.type === 'prompt_result') {

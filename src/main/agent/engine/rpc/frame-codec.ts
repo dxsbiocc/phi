@@ -1,4 +1,5 @@
 import { TextDecoder } from 'node:util'
+import { RpcByteLimitError } from './errors'
 import type { RpcFrame } from './types'
 
 /** Official OMP 18.10.3 limits, measured in UTF-8 bytes (physical line includes LF). */
@@ -29,8 +30,14 @@ function frame(value: unknown): RpcFrame {
 /** Server commands have no chunk decoder; do not send client-side rpc_chunk frames. */
 export function encodeRpcCommand(command: Readonly<Record<string, unknown>>): Buffer {
   const json = JSON.stringify(command)
-  if (Buffer.byteLength(json, 'utf8') + 1 > MAX_RPC_FRAME_BYTES)
-    throw new Error('RPC command exceeds the frame limit')
+  const byteLength = Buffer.byteLength(json, 'utf8') + 1
+  if (byteLength > MAX_RPC_FRAME_BYTES)
+    throw new RpcByteLimitError(
+      'RPC command exceeds the frame limit',
+      'command-frame',
+      MAX_RPC_FRAME_BYTES,
+      byteLength
+    )
   return Buffer.from(`${json}\n`, 'utf8')
 }
 
@@ -62,7 +69,12 @@ export class RpcFrameCodec {
       const length = end - offset
       // An unfinished line still needs room for its terminating LF.
       if (this.lineBytes + length + 1 > MAX_RPC_FRAME_BYTES) {
-        throw new Error('RPC physical frame exceeds the frame limit')
+        throw new RpcByteLimitError(
+          'RPC physical frame exceeds the frame limit',
+          'physical-frame',
+          MAX_RPC_FRAME_BYTES,
+          this.lineBytes + length + 1
+        )
       }
       if (length) this.parts.push(Buffer.from(bytes.subarray(offset, end)))
       this.lineBytes += length
@@ -108,8 +120,7 @@ export class RpcFrameCodec {
       index >= count ||
       typeof byteLength !== 'number' ||
       !Number.isSafeInteger(byteLength) ||
-      byteLength < MAX_RPC_FRAME_BYTES ||
-      byteLength > MAX_RPC_REASSEMBLED_BYTES
+      byteLength < MAX_RPC_FRAME_BYTES
     )
       throw new Error('Invalid RPC chunk metadata')
     if (
@@ -124,19 +135,28 @@ export class RpcFrameCodec {
     if (payload.toString('base64') !== data || payload.length > RPC_CHUNK_PAYLOAD_BYTES) {
       throw new Error('Invalid RPC chunk payload')
     }
-    if (!this.pending) {
-      if (index !== 0) throw new Error('RPC chunk sequence must start at index zero')
-      this.pending = { id: chunkId, count, bytes: byteLength, next: 0, received: 0, parts: [] }
-    }
-    const pending = this.pending
     if (
-      pending.id !== chunkId ||
-      pending.count !== count ||
-      pending.bytes !== byteLength ||
-      pending.next !== index
+      this.pending &&
+      (this.pending.id !== chunkId ||
+        this.pending.count !== count ||
+        this.pending.bytes !== byteLength ||
+        this.pending.next !== index)
     ) {
       throw new Error('RPC chunk sequence mismatch')
     }
+    if (!this.pending && index !== 0) throw new Error('RPC chunk sequence must start at index zero')
+    if (byteLength > MAX_RPC_REASSEMBLED_BYTES) {
+      throw new RpcByteLimitError(
+        'RPC reassembled frame exceeds the frame limit',
+        'reassembled-frame',
+        MAX_RPC_REASSEMBLED_BYTES,
+        byteLength
+      )
+    }
+    if (!this.pending) {
+      this.pending = { id: chunkId, count, bytes: byteLength, next: 0, received: 0, parts: [] }
+    }
+    const pending = this.pending
     pending.parts.push(payload)
     pending.received += payload.length
     pending.next++
