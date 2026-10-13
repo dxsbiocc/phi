@@ -126,3 +126,35 @@ test('source symlinks, hard links and unexpected assets cannot enter the content
   await symlink(fixture.sourceRoot, rootAlias)
   await assert.rejects(createPhiExtensionBundle(rootAlias), /Unsafe extension source directory/)
 })
+
+test('only the pinned host event-stream module is accepted as a runtime SDK dependency', async (t) => {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  t.after(fixture.cleanup)
+  const entry = join(fixture.sourceRoot, 'rpc-entry.ts')
+  await writeFile(
+    entry,
+    "import { AssistantMessageEventStream } from '@oh-my-pi/pi-ai/utils/event-stream'\nimport type { AssistantMessageEvent } from '@oh-my-pi/pi-ai'\nimport type { StreamFn } from '@oh-my-pi/pi-agent-core'\nexport const stream = new AssistantMessageEventStream()\n"
+  )
+  await createPhiExtensionBundle(fixture.sourceRoot)
+  for (const source of [
+    "import type from '@oh-my-pi/pi-coding-agent'",
+    "import type, { createAgentSession } from '@oh-my-pi/pi-coding-agent'",
+    "import type, * as coding from '@oh-my-pi/pi-coding-agent'",
+    "import type from '@oh-my-pi/pi-ai'",
+    "import type, { streamSimple } from '@oh-my-pi/pi-ai'",
+    "import type, * as ai from '@oh-my-pi/pi-ai'",
+    "import type from '@oh-my-pi/pi-agent-core'",
+    "import type, { Agent } from '@oh-my-pi/pi-agent-core'",
+    "import type, * as core from '@oh-my-pi/pi-agent-core'",
+    "import { streamSimple } from '@oh-my-pi/pi-ai'",
+    "import { Agent } from '@oh-my-pi/pi-agent-core'",
+    "import * as stream from '@oh-my-pi/pi-ai/utils/event-stream/other'",
+    "import * as stream from '@oh-my-pi/pi-ai/utils/../utils/event-stream'",
+    "import * as stream from '@oh-my-pi/pi-ai/utils/event-stream.ts'",
+    "import('@oh-my-pi/pi-ai/utils/event-stream')",
+    "require('@oh-my-pi/pi-ai/utils/event-stream')"
+  ]) {
+    await writeFile(entry, source)
+    await assert.rejects(createPhiExtensionBundle(fixture.sourceRoot), /dependency|import|loader/)
+  }
+})

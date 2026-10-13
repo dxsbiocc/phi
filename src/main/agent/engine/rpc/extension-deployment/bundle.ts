@@ -53,7 +53,10 @@ function moduleReferences(source: string): Array<{ path: string; typeOnly: boole
     }
     if (token.text !== 'import' && token.text !== 'export') continue
     if (tokens[i + 1]?.text === '(') throw new Error('Dynamic extension imports are unsupported')
-    const typeOnly = tokens[i + 1]?.text === 'type'
+    // `import type from ...` names a runtime default binding "type".
+    // A comma (or import-equals) after that name also retains a runtime import.
+    const typeOnly =
+      tokens[i + 1]?.text === 'type' && !['from', ',', '='].includes(tokens[i + 2]?.text ?? '')
     if (tokens[i + 1]?.string) {
       result.push({ path: tokens[i + 1].text, typeOnly })
       continue
@@ -119,7 +122,16 @@ export function validatePhiExtensionBundle(bundle: PhiExtensionBundle): void {
         throw new Error(`Extension module loader dependency is unsupported: ${specifier}`)
       }
       if (isBuiltin(specifier)) continue
-      if (reference.typeOnly && specifier === '@oh-my-pi/pi-coding-agent') continue
+      if (
+        reference.typeOnly &&
+        ['@oh-my-pi/pi-coding-agent', '@oh-my-pi/pi-ai', '@oh-my-pi/pi-agent-core'].includes(
+          specifier
+        )
+      )
+        continue
+      // OMP18.10.3 exposes this exact module through its compiled extension host.
+      // Native stream integrity uses the host's canonical event stream class.
+      if (specifier === '@oh-my-pi/pi-ai/utils/event-stream') continue
       if (!specifier.startsWith('.') || /[\\\0\r\n]/.test(specifier)) {
         throw new Error(`Non-self-contained extension import in ${file.path}: ${specifier}`)
       }
