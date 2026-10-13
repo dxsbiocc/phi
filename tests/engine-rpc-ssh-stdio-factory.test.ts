@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import {
+  access,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -15,13 +25,19 @@ import {
 import { shellQuote } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createPhiExtensionDeploymentFixture } from './helpers/phiExtensionDeploymentFixture'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { attestBootstrap } from '../src/main/agent/engine/rpc/bootstrap-attestation'
+import { RpcConnection } from '../src/main/agent/engine/rpc/connection'
+import type { RpcBootstrapConfig } from '../src/main/agent/engine/phi-extension/lib/rpc-config'
 import { startLoopbackModel } from './engine-contract/loopback-model'
 
 function runtimePayload(body: string): string {
   return `#!/bin/sh\nif [ "$1" = --version ]; then printf 'omp/18.10.3\\n'; exit 0; fi\n${body}\n`
 }
 
-async function fixtureWithFactory(payload = runtimePayload('cat')): Promise<
+async function fixtureWithFactory(
+  payload = runtimePayload('cat'),
+  projectContainsRuntime = false
+): Promise<
   Awaited<ReturnType<typeof createPhiExtensionDeploymentFixture>> & {
     session: ReturnType<typeof createLocalShellSession>
     cwd: string
@@ -30,8 +46,10 @@ async function fixtureWithFactory(payload = runtimePayload('cat')): Promise<
   }
 > {
   const fixture = await createPhiExtensionDeploymentFixture(payload)
-  const cwd = join(fixture.root, "project user's $(touch MUST_NOT_EXIST)")
-  await mkdir(cwd)
+  const cwd = projectContainsRuntime
+    ? fixture.root
+    : join(fixture.root, "project user's $(touch MUST_NOT_EXIST)")
+  if (!projectContainsRuntime) await mkdir(cwd)
   const params = { sessionId: 'session-1', cwd, agentDir: 'desktop-agent-dir-must-not-be-copied' }
   // WorkspaceHost owns short command connections separately from the existing
   // persistent RPC connection supplied to this factory.
@@ -80,7 +98,8 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
     assert.equal((await stat(path)).mode & 0o777, 0o700)
   assert.deepEqual(await readdir(join(privateRoot, 'home/agent')), [])
   const command = fixture.session.commands.find((value) => value.includes('exec env -i'))!
-  assert.ok(command.includes(`cd -- ${shellQuote(fixture.cwd)}`))
+  assert.ok(command.includes(`cd -- ${shellQuote(join(privateRoot, 'home'))}`))
+  assert.ok(command.includes(`'--cwd' ${shellQuote(fixture.cwd)}`))
   assert.ok(command.includes(`PHI_RPC_CONFIG=${shellQuote(configPath)}`))
   assert.ok(command.includes("'--no-extensions' '--trusted-extension'"))
   assert.ok(command.includes("'--trusted-extension'"))
@@ -258,7 +277,7 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
   const networkGuard = join(process.cwd(), 'tests/engine-contract/network-guard.ts')
   const fixture = await fixtureWithFactory(
     runtimePayload(
-      `exec ${shellQuote(bun)} --preload ${shellQuote(networkGuard)} ${shellQuote(cli)} "$@"`
+      `exec ${shellQuote(bun)} --no-env-file --preload ${shellQuote(networkGuard)} ${shellQuote(cli)} "$@"`
     )
   )
   t.after(fixture.cleanup)
@@ -419,4 +438,173 @@ test('shared preparation has independent cancellation and never opens a session 
   assert.equal(session.closed, false)
   await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   assert.deepEqual(await readdir(join(fixture.options.cacheDir, 'omp/18.10.3/linux-x64')), [])
+})
+
+async function environmentProbe(connection: RpcConnection): Promise<Record<string, unknown>> {
+  const available = (await connection.request({ type: 'get_available_commands' })) as {
+    commands: Array<{ name: string; source: string }>
+  }
+  assert.equal(
+    available.commands.filter(
+      (command) => command.name === 'phi-rpc-env-probe' && command.source === 'extension'
+    ).length,
+    1
+  )
+  const nonce = 'synthetic-env-challenge'
+  let received!: (value: Record<string, unknown>) => void
+  const notification = new Promise<Record<string, unknown>>((resolve) => {
+    received = resolve
+  })
+  const detach = connection.onEvent((frame) => {
+    if (
+      frame.type !== 'extension_ui_request' ||
+      frame.method !== 'notify' ||
+      typeof frame.message !== 'string'
+    )
+      return
+    const value = JSON.parse(frame.message) as Record<string, unknown>
+    if (value.type === 'phi_rpc_environment_probe' && value.nonce === nonce) received(value)
+  })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const [result, value] = await Promise.all([
+      connection.prompt(`/phi-rpc-env-probe ${nonce}`),
+      Promise.race([
+        notification,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Synthetic environment probe timed out')), 1000)
+        })
+      ])
+    ])
+    assert.equal(result.agentInvoked, false)
+    assert.equal(result.status, 'completed')
+    return value
+  } finally {
+    if (timer) clearTimeout(timer)
+    detach()
+  }
+}
+
+test('neutral private startup prevents SDK dotenv injection even with runtime inside project and keeps real project cwd', async (t) => {
+  const bun = join(process.env.HOME!, '.bun/bin/bun')
+  const cli = join(process.cwd(), 'node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js')
+  const guard = join(process.cwd(), 'tests/engine-contract/network-guard.ts')
+  // Official binaries compile with autoloadDotenv:false. This source CLI fixture
+  // disables only Bun's loader; the real SDK eager reader remains untouched.
+  const fixture = await fixtureWithFactory(
+    runtimePayload(
+      `exec ${shellQuote(bun)} --no-env-file --preload ${shellQuote(guard)} ${shellQuote(cli)} "$@"`
+    ),
+    true
+  )
+  t.after(fixture.cleanup)
+  assert.ok(fixture.runtimeRoot.startsWith(`${fixture.cwd}/`))
+  await writeFile(
+    join(fixture.cwd, '.env'),
+    'PHI_RPC_DOTENV_TEST_MARKER=SYNTHETIC_PROJECT_VALUE\nPI_REQ_DEBUG=1\n'
+  )
+  const source = join(fixture.root, 'phi-environment-probe')
+  await cp(join(process.cwd(), 'src/main/agent/engine/phi-extension'), source, { recursive: true })
+  await rename(join(source, 'rpc-entry.ts'), join(source, 'phi-entry.ts'))
+  await cp(
+    join(process.cwd(), 'tests/engine-contract/rpc-environment-probe.ts'),
+    join(source, 'environment-probe.ts')
+  )
+  await writeFile(
+    join(source, 'rpc-entry.ts'),
+    "import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'\nimport original from './phi-entry'\nimport probe from './environment-probe'\nconst entry: ExtensionFactory = async pi => { await probe(pi); await original(pi) }\nexport default entry\n"
+  )
+  const provider = await startLoopbackModel()
+  t.after(provider.close)
+  const factory = await prepareSshRpcSessionTransport({
+    session: fixture.session,
+    runtime: fixture.options,
+    bundle: await createPhiExtensionBundle(source),
+    projectId: 'project-1',
+    prepareSession: async ({ agentDir }) => {
+      await writeFile(
+        join(agentDir, 'models.yml'),
+        JSON.stringify({
+          providers: {
+            'phi-env-fixture': {
+              baseUrl: provider.url,
+              api: 'openai-completions',
+              apiKey: 'synthetic-only-key',
+              models: [
+                {
+                  id: 'no-call',
+                  name: 'No-call fixture',
+                  reasoning: false,
+                  input: ['text'],
+                  contextWindow: 32768,
+                  maxTokens: 256,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+                }
+              ]
+            }
+          }
+        }),
+        { mode: 0o600 }
+      )
+      await writeFile(
+        join(agentDir, 'config.yml'),
+        JSON.stringify({
+          defaultProvider: 'phi-env-fixture',
+          defaultModel: 'no-call',
+          compaction: { enabled: false },
+          memory: { enabled: false },
+          extensions: [],
+          skills: []
+        }),
+        { mode: 0o600 }
+      )
+    }
+  })
+  const params = Object.freeze({ ...fixture.params })
+  const owned = await factory.open(params, new AbortController().signal)
+  const connection = new RpcConnection(() => owned, { startupTimeoutMs: 5000 })
+  t.after(() => connection.close())
+  await connection.start()
+  await factory.initialize({ connection, params, signal: new AbortController().signal })
+  const neutral = await environmentProbe(connection)
+  assert.equal(neutral.marker, null)
+  assert.equal(neutral.debug, '0')
+  assert.equal(await realpath(String(neutral.processCwd)), fixture.cwd)
+  assert.equal(await realpath(String(neutral.contextCwd)), fixture.cwd)
+  const shell = (await connection.request({ type: 'bash', command: 'pwd' })) as {
+    output: string
+    exitCode: number
+  }
+  assert.equal(shell.exitCode, 0)
+  assert.equal(await realpath(shell.output.trim()), fixture.cwd)
+  const [generation] = await readdir(join(fixture.runtimeRoot, 'rpc-sessions'))
+  const privateRoot = join(fixture.runtimeRoot, 'rpc-sessions', generation)
+  const launch = fixture.session.commands.find(
+    (command) =>
+      command.includes('exec env -i') &&
+      command.includes(`HOME=${shellQuote(join(privateRoot, 'home'))}`)
+  )!
+  const direct = launch.replace(
+    `cd -- ${shellQuote(join(privateRoot, 'home'))}`,
+    `cd -- ${shellQuote(fixture.cwd)}`
+  )
+  assert.notEqual(direct, launch)
+  const positiveChannel = await fixture.session.openStdio!(direct)
+  const positive = new RpcConnection(() => positiveChannel, { startupTimeoutMs: 5000 })
+  t.after(() => positive.close())
+  await positive.start()
+  const config = JSON.parse(
+    await readFile(join(privateRoot, 'config.json'), 'utf8')
+  ) as RpcBootstrapConfig
+  await attestBootstrap(positive, config, new AbortController().signal)
+  const control = await environmentProbe(positive)
+  assert.equal(control.marker, 'SYNTHETIC_PROJECT_VALUE')
+  assert.equal(control.debug, '0')
+  assert.equal(await realpath(String(control.processCwd)), fixture.cwd)
+  assert.equal(await realpath(String(control.contextCwd)), fixture.cwd)
+  assert.equal(provider.requests.length, 0)
+  await positive.close()
+  await connection.close()
+  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+  assert.equal(fixture.session.closed, false)
 })

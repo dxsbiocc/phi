@@ -204,6 +204,8 @@ private_dir ${q(agentDir)}`,
           signal
         )
         const args = [
+          '--cwd',
+          params.cwd,
           '--mode',
           'rpc',
           '--no-extensions',
@@ -219,7 +221,10 @@ private_dir ${q(agentDir)}`,
           '--no-pty',
           '--no-session'
         ]
-        const command = `cd -- ${q(params.cwd)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
+        // pi-utils eagerly loads cwd/.env during module import, before OMP
+        // applies --cwd. Start in the owned HOME, then let the official CLI
+        // switch the real process and session cwd after that startup phase.
+        const command = `cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
         const opening = options.session.openStdio!(command)
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.

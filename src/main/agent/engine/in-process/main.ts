@@ -29,9 +29,18 @@ import {
 import { pendingAuthPrompts, pendingToolApprovals } from './state'
 import { controlSessionAgentRun, listSessionAgentRuns } from './subagents'
 import { handleWebSearchRequest } from './web-search'
+import {
+  createModelGatewayLease,
+  revokeModelGatewayLease,
+  closeAllModelGatewayLeases
+} from './model-gateway'
 
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'modelGateway.create':
+      return createModelGatewayLease(params as Parameters<typeof createModelGatewayLease>[0])
+    case 'modelGateway.revoke':
+      return revokeModelGatewayLease(params as Parameters<typeof revokeModelGatewayLease>[0])
     case 'mcp.configuredStdioTools':
     case 'mcp.cancelConfiguredStdioTools':
     case 'mcp.featuredTools':
@@ -136,6 +145,9 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
 }
 
 const input = createInterface({ input: process.stdin })
+input.once('close', () => {
+  void closeAllModelGatewayLeases().catch(() => undefined)
+})
 input.on('line', (line) => {
   void (async () => {
     let request: IncomingRequest | undefined

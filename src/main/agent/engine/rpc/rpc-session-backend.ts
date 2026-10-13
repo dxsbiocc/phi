@@ -30,6 +30,18 @@ export interface RpcSessionInitializationContext {
 }
 
 export interface RpcSessionBackendOptions extends RpcConnectionOptions {
+  /** Per-generation resources are acquired before the unchanged RPC handshake deadline. */
+  prepare?: (
+    params: Readonly<RpcSessionCreateParams>,
+    signal: AbortSignal
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
+  preparationTimeoutMs?: number
+  /** Proxy transports select through their trusted local command instead of native set_model. */
+  selectModel?: (
+    context: RpcSessionInitializationContext,
+    model: Readonly<RuntimeModel>
+  ) => void | Promise<void>
+  modelSelectionTimeoutMs?: number
   initialize?: (context: RpcSessionInitializationContext) => void | Promise<void>
   initializationTimeoutMs?: number
 }
@@ -49,9 +61,12 @@ type Session = {
   controller: AbortController
   ready: boolean
   cwd: string
+  params: Readonly<RpcSessionCreateParams>
   state: WorkerSessionState
   activePrompt?: Promise<WorkerSessionState>
   unsubscribe: Array<() => void>
+  preparationCleanup?: () => void | Promise<void>
+  preparationCleanupPromise?: Promise<void>
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
@@ -119,9 +134,13 @@ export class RpcSessionBackend {
     private readonly open: RpcSessionTransportFactory,
     private readonly options: RpcSessionBackendOptions = {}
   ) {
-    const timeout = options.initializationTimeoutMs ?? 30_000
-    if (!Number.isFinite(timeout) || timeout <= 0) {
-      throw new Error('RPC initialization timeout must be positive and finite')
+    for (const [name, timeout] of [
+      ['preparation', options.preparationTimeoutMs ?? 30_000],
+      ['initialization', options.initializationTimeoutMs ?? 30_000],
+      ['model selection', options.modelSelectionTimeoutMs ?? 10_000]
+    ] as const) {
+      if (!Number.isFinite(timeout) || timeout <= 0)
+        throw new Error(`RPC ${name} timeout must be positive and finite`)
     }
   }
 
@@ -145,6 +164,7 @@ export class RpcSessionBackend {
       controller: new AbortController(),
       ready: false,
       cwd: params.cwd,
+      params,
       state: { cwd: params.cwd },
       unsubscribe: []
     }
@@ -158,22 +178,21 @@ export class RpcSessionBackend {
       connection.onDisconnect(({ error, expected }) => {
         entry.ready = false
         entry.controller.abort(error)
+        void this.cleanupPreparation(entry)
         if (!expected && this.sessions.get(params.sessionId) === entry) {
           this.emit(this.statusListeners, params.sessionId, { phase: 'interrupted', error })
         }
       })
     )
     try {
+      await this.prepare(params, entry)
+      this.requireCurrent(params.sessionId, entry)
       await connection.start()
       this.requireCurrent(params.sessionId, entry)
       await this.initialize(params, entry)
       this.requireCurrent(params.sessionId, entry)
       if (params.model) {
-        await connection.request({
-          type: 'set_model',
-          provider: params.model.provider,
-          modelId: params.model.id
-        })
+        await this.selectModel(entry, params.model)
         this.requireCurrent(params.sessionId, entry)
       }
       if (params.thinkingLevel) {
@@ -190,6 +209,7 @@ export class RpcSessionBackend {
       entry.controller.abort(error)
       if (this.sessions.get(params.sessionId) === entry) this.sessions.delete(params.sessionId)
       for (const unsubscribe of entry.unsubscribe) unsubscribe()
+      await this.cleanupPreparation(entry)
       await connection.close()
       throw error
     }
@@ -236,6 +256,38 @@ export class RpcSessionBackend {
     }
   }
 
+  /** All explicit changes share the same transport-specific selection adapter. */
+  async setModel(params: { sessionId: string; model: RuntimeModel }): Promise<WorkerSessionState> {
+    const entry = this.session(params.sessionId)
+    if (entry.activePrompt)
+      throw new Error(`Cannot change a running RPC session model: ${params.sessionId}`)
+    entry.ready = false
+    try {
+      await this.selectModel(entry, Object.freeze({ ...params.model }))
+      this.requireCurrent(params.sessionId, entry)
+      const state = await this.refresh(params.sessionId, entry)
+      entry.ready = true
+      this.emit(this.statusListeners, params.sessionId, { phase: 'ready' })
+      this.requireCurrent(params.sessionId, entry)
+      return state
+    } catch (error) {
+      entry.ready = false
+      entry.controller.abort(error)
+      // Own secondary cleanup rejection immediately while retaining selection's
+      // original failure, even when independent prepared cleanup uses its budget.
+      const closing = entry.connection.close().catch(() => undefined)
+      if (this.sessions.get(params.sessionId) === entry) {
+        this.emit(this.statusListeners, params.sessionId, {
+          phase: 'interrupted',
+          error: error instanceof Error ? error : new Error('RPC model selection failed')
+        })
+      }
+      await this.cleanupPreparation(entry)
+      await closing
+      throw error
+    }
+  }
+
   async abort(params: { sessionId: string }): Promise<WorkerSessionState> {
     const entry = this.session(params.sessionId)
     const pending = entry.activePrompt
@@ -258,6 +310,7 @@ export class RpcSessionBackend {
     entry.ready = false
     entry.controller.abort(new Error(`RPC session disposed: ${params.sessionId}`))
     for (const unsubscribe of entry.unsubscribe) unsubscribe()
+    await this.cleanupPreparation(entry)
     await entry.connection.close()
   }
 
@@ -287,6 +340,108 @@ export class RpcSessionBackend {
     if (entry.controller.signal.aborted) {
       throw entry.controller.signal.reason
     }
+  }
+
+  private async selectModel(entry: Session, model: Readonly<RuntimeModel>): Promise<void> {
+    const select = this.options.selectModel
+    if (!select) {
+      await entry.connection.request({
+        type: 'set_model',
+        provider: model.provider,
+        modelId: model.id
+      })
+      return
+    }
+    const { signal } = entry.controller
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let cancel: (() => void) | undefined
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => {
+          this.requireCurrent(entry.params.sessionId, entry)
+          return select({ connection: entry.connection, params: entry.params, signal }, model)
+        }),
+        new Promise<never>((_, reject) => {
+          cancel = () => reject(signal.reason)
+          signal.addEventListener('abort', cancel, { once: true })
+          if (signal.aborted) cancel()
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('RPC model selection timed out')),
+            this.options.modelSelectionTimeoutMs ?? 10_000
+          )
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (cancel) signal.removeEventListener('abort', cancel)
+    }
+  }
+
+  private async prepare(params: RpcSessionCreateParams, entry: Session): Promise<void> {
+    const prepare = this.options.prepare
+    if (!prepare) return
+    const { signal } = entry.controller
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let cancel: (() => void) | undefined
+    const operation = Promise.resolve()
+      .then(() => {
+        this.requireCurrent(params.sessionId, entry)
+        return prepare(params, signal)
+      })
+      .then(async (cleanup) => {
+        if (typeof cleanup !== 'function') return
+        if (signal.aborted || this.sessions.get(params.sessionId) !== entry) {
+          await Promise.resolve()
+            .then(cleanup)
+            .catch(() => undefined)
+        } else entry.preparationCleanup = cleanup
+      })
+    try {
+      await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          cancel = () => reject(signal.reason)
+          signal.addEventListener('abort', cancel, { once: true })
+          if (signal.aborted) cancel()
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error('RPC preparation timed out')
+            entry.controller.abort(error)
+            reject(error)
+          }, this.options.preparationTimeoutMs ?? 30_000)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (cancel) signal.removeEventListener('abort', cancel)
+    }
+  }
+
+  private cleanupPreparation(entry: Session): Promise<void> {
+    if (!entry.preparationCleanupPromise) {
+      const cleanup = entry.preparationCleanup
+      entry.preparationCleanup = undefined
+      entry.preparationCleanupPromise = (async () => {
+        if (!cleanup) return
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          await Promise.race([
+            Promise.resolve()
+              .then(cleanup)
+              .catch(() => undefined),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, this.options.closeTimeoutMs ?? 5_000)
+            })
+          ])
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+      })()
+    }
+    return entry.preparationCleanupPromise
   }
 
   private async initialize(params: RpcSessionCreateParams, entry: Session): Promise<void> {

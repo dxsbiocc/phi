@@ -207,6 +207,27 @@
       ],
       "purpose": "Agent session, resource loader, and settings APIs for the specialist approval smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
       "plan": "remove"
+    },
+    {
+      "file": "src/main/agent/engine/in-process/model-gateway.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-ai/auth-gateway/server",
+        "@oh-my-pi/pi-ai/utils/transport-fetch"
+      ],
+      "purpose": "T11 desktop-only SDK native gateway router retains existing credential/OAuth dispatch; selected transportFetch preserves provider proxy and CA behavior behind the Phi lease boundary",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/model-gateway-sdk-child.ts",
+      "specifiers": ["@oh-my-pi/pi-ai", "@oh-my-pi/pi-coding-agent"],
+      "purpose": "T11 private Bun SDK oracle uses real AuthStorage and ModelRegistry for synthetic loopback API-key, auth-none and OAuth-refresh parity; no production import outside the engine",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/engine-contract/rpc-environment-probe.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "Private actual-RPC ExtensionFactory environment and cwd oracle for neutral startup; synthetic project dotenv only, no production SDK import outside engine",
+      "plan": "keep"
     }
   ]
 }
