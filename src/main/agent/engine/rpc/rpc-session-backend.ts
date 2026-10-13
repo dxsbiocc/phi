@@ -29,6 +29,11 @@ export interface RpcSessionInitializationContext {
   readonly signal: AbortSignal
 }
 
+export interface RpcSessionInitializationResult {
+  /** Recovery already verified the attached target's model and thinking selection. */
+  readonly selectionHandled: true
+}
+
 export interface RpcSessionBackendOptions extends RpcConnectionOptions {
   /** Per-generation resources are acquired before the unchanged RPC handshake deadline. */
   prepare?: (
@@ -42,7 +47,9 @@ export interface RpcSessionBackendOptions extends RpcConnectionOptions {
     model: Readonly<RuntimeModel>
   ) => void | Promise<void>
   modelSelectionTimeoutMs?: number
-  initialize?: (context: RpcSessionInitializationContext) => void | Promise<void>
+  initialize?: (
+    context: RpcSessionInitializationContext
+  ) => void | RpcSessionInitializationResult | Promise<void | RpcSessionInitializationResult>
   initializationTimeoutMs?: number
 }
 
@@ -189,13 +196,13 @@ export class RpcSessionBackend {
       this.requireCurrent(params.sessionId, entry)
       await connection.start()
       this.requireCurrent(params.sessionId, entry)
-      await this.initialize(params, entry)
+      const initialized = await this.initialize(params, entry)
       this.requireCurrent(params.sessionId, entry)
-      if (params.model) {
+      if (!initialized?.selectionHandled && params.model) {
         await this.selectModel(entry, params.model)
         this.requireCurrent(params.sessionId, entry)
       }
-      if (params.thinkingLevel) {
+      if (!initialized?.selectionHandled && params.thinkingLevel) {
         await connection.request({ type: 'set_thinking_level', level: params.thinkingLevel })
         this.requireCurrent(params.sessionId, entry)
       }
@@ -444,14 +451,17 @@ export class RpcSessionBackend {
     return entry.preparationCleanupPromise
   }
 
-  private async initialize(params: RpcSessionCreateParams, entry: Session): Promise<void> {
+  private async initialize(
+    params: RpcSessionCreateParams,
+    entry: Session
+  ): Promise<void | RpcSessionInitializationResult> {
     const initialize = this.options.initialize
     if (!initialize) return
     const { signal } = entry.controller
     let timer: ReturnType<typeof setTimeout> | undefined
     let cancelled: (() => void) | undefined
     try {
-      await Promise.race([
+      return await Promise.race([
         Promise.resolve().then(() => {
           this.requireCurrent(params.sessionId, entry)
           return initialize({ connection: entry.connection, params, signal })
