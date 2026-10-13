@@ -2,7 +2,10 @@ import type { PhiToolResult } from '../types'
 import type { RemoteStdioProcess } from '../../wrappers/remote-ssh-session'
 
 export type RpcTransport = RemoteStdioProcess
-export type RpcTransportFactory = (signal: AbortSignal) => RpcTransport | Promise<RpcTransport>
+export type RpcTransportFactory = (
+  signal: AbortSignal,
+  generation: number
+) => RpcTransport | Promise<RpcTransport>
 
 export interface RpcFrame {
   type: string

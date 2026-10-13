@@ -286,6 +286,12 @@
       "plan": "keep"
     },
     {
+      "file": "tests/helpers/rpcRuntimeCompositionGatewayChild.ts",
+      "specifiers": ["@oh-my-pi/pi-ai", "@oh-my-pi/pi-coding-agent"],
+      "purpose": "Private production-runtime composition oracle uses real desktop AuthStorage and ModelRegistry with image-capable synthetic loopback provider; no real user credentials",
+      "plan": "keep"
+    },
+    {
       "file": "tests/helpers/rpcNativeTaskExtension.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/internal-urls"],
       "purpose": "T14 actual native task/private CLI oracle uses ExtensionAPI types and the exact public compiled-host InternalUrlRouter module for child identity, cancellation and host URI protocol tests",

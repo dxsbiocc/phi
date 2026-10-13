@@ -40,12 +40,34 @@ export interface SshRpcSessionTransportOptions {
     readonly agentDir: string
     readonly signal: AbortSignal
   }) => Promise<void>
+  /** Composes capabilities after model publication; the factory retains launch/storage ownership. */
+  prepareRuntime?: (
+    context: RpcRuntimePreparationContext
+  ) => Promise<void | RpcRuntimePreparationResult>
+}
+
+export interface RpcRuntimePreparationResult {
+  readonly nativeTools: readonly (
+    'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep'
+  )[]
+}
+
+export interface RpcRuntimePreparationContext {
+  readonly params: Readonly<RpcSessionCreateParams>
+  readonly bootstrap: Readonly<RpcBootstrapConfig>
+  readonly generation: number
+  readonly generationDirectory: string
+  readonly homePath: string
+  readonly agentDir: string
+  readonly storage: RemoteSessionStoragePreparation | undefined
+  readonly signal: AbortSignal
 }
 
 export interface SshRpcSessionTransport {
   readonly open: (
     params: RpcSessionCreateParams,
-    signal: AbortSignal
+    signal: AbortSignal,
+    generation?: number
   ) => Promise<RemoteStdioProcess>
   readonly initialize: (context: RpcSessionInitializationContext) => Promise<void>
 }
@@ -104,8 +126,11 @@ export async function prepareSshRpcSessionTransport(
   })
   preparationSignal?.throwIfAborted()
   const prepared = new WeakMap<Readonly<RpcSessionCreateParams>, RpcBootstrapConfig>()
+  const preparedGenerations = new WeakMap<Readonly<RpcSessionCreateParams>, number>()
   return {
-    async open(params, callerSignal) {
+    async open(params, callerSignal, generation = 1) {
+      if (!Number.isSafeInteger(generation) || generation < 1)
+        throw new Error('Invalid RPC channel generation')
       const controller = new AbortController()
       const signal = controller.signal
       const cancel = (): void => controller.abort(callerSignal.reason)
@@ -154,6 +179,7 @@ export async function prepareSshRpcSessionTransport(
             callerSignal.removeEventListener('abort', cancel)
             storage?.lease.signal.removeEventListener('abort', loseLease)
             prepared.delete(params)
+            preparedGenerations.delete(params)
             await run(
               `if [ -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ]; then owned ${q(sessionBase)}; owned ${q(sessionDirectory)}; rm -rf -- ${q(sessionDirectory)}; fi`
             ).catch(() => undefined)
@@ -218,6 +244,34 @@ private_dir ${q(agentDir)}`,
         )
         if (options.prepareSession)
           await cancelled(options.prepareSession({ params, homePath, agentDir, signal }), signal)
+        const runtimePreparation = options.prepareRuntime
+          ? await cancelled(
+              options.prepareRuntime(
+                Object.freeze({
+                  params,
+                  bootstrap: Object.freeze({ ...config }),
+                  generation,
+                  generationDirectory: sessionDirectory,
+                  homePath,
+                  agentDir,
+                  storage,
+                  signal
+                })
+              ),
+              signal
+            )
+          : undefined
+        if (
+          runtimePreparation &&
+          (!Array.isArray(runtimePreparation.nativeTools) ||
+            new Set(runtimePreparation.nativeTools).size !==
+              runtimePreparation.nativeTools.length ||
+            runtimePreparation.nativeTools.some(
+              (name) =>
+                !['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep'].includes(name)
+            ))
+        )
+          throw new Error('Invalid composed native tool roster')
         signal.throwIfAborted()
         // Explicit CLI overlays outrank global/project settings in 18.10.3.
         // Write this after the model-only preparation hook; startup MCP spawning
@@ -229,6 +283,7 @@ private_dir ${q(agentDir)}`,
             skills: [],
             lsp: { enabled: false },
             memory: { enabled: false },
+            ...(options.prepareRuntime ? { tools: { xdev: false } } : {}),
             ...(storage ? { goal: { continuationModes: [] } } : {})
           })
         )
@@ -260,6 +315,11 @@ private_dir ${q(agentDir)}`,
           '--no-title',
           '--no-prewalk',
           '--no-pty',
+          ...(runtimePreparation
+            ? runtimePreparation.nativeTools.length
+              ? ['--tools', runtimePreparation.nativeTools.join(',')]
+              : ['--no-tools']
+            : []),
           ...(storage ? ['--session-dir', storage.paths.journals] : ['--no-session'])
         ]
         // pi-utils eagerly loads cwd/.env during module import, before OMP
@@ -269,7 +329,7 @@ private_dir ${q(agentDir)}`,
         const persistentEnv = storage
           ? ` XDG_DATA_HOME=${q(storage.paths.data)} XDG_STATE_HOME=${q(statePath)} XDG_CACHE_HOME=${q(cachePath)} TMPDIR=${q(tempPath)} TEMP=${q(tempPath)} TMP=${q(tempPath)}`
           : ''
-        const command = `umask 077 && cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
+        const command = `umask 077 && cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
         const opening = options.session.openStdio!(command)
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.
@@ -282,6 +342,7 @@ private_dir ${q(agentDir)}`,
         channel = await cancelled(opening, signal)
         signal.throwIfAborted()
         prepared.set(params, Object.freeze(config))
+        preparedGenerations.set(params, generation)
         const owned = channel
         void owned.closed.then(cleanup, cleanup)
         return {
@@ -309,6 +370,8 @@ private_dir ${q(agentDir)}`,
     async initialize({ connection, params, signal }) {
       const config = prepared.get(params)
       if (!config) throw new Error('Missing prepared Phi RPC bootstrap generation')
+      if (preparedGenerations.get(params) !== connection.bindControl().generation)
+        throw new Error('Prepared RPC channel generation does not match')
       await attestBootstrap(connection, config, signal)
     }
   }

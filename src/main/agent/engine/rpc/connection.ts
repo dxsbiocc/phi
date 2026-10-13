@@ -159,7 +159,7 @@ export class RpcConnection {
     // result is separately closed and cannot attach to a newer generation.
     void this.lastCleanup
       .catch(() => undefined)
-      .then(() => (this.active(state) ? this.open(state.controller.signal) : undefined))
+      .then(() => (this.active(state) ? this.open(state.controller.signal, state.id) : undefined))
       .then(
         (process) => {
           if (!process) return

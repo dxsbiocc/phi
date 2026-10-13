@@ -1,5 +1,5 @@
 import type { OmpBridge, OwnedModelGatewayLease } from '../omp-bridge'
-import type { ModelGatewayModelRef } from '../model-gateway-types'
+import type { ModelGatewayModelRef, SafeModelDescriptor } from '../model-gateway-types'
 import type { RpcModelMetadata } from '../phi-extension/lib/rpc-model-metadata'
 import { selectRemoteModel } from './model-selection'
 import type {
@@ -11,13 +11,15 @@ import { writeRemoteModelProxyConfig } from './model-proxy-config'
 import {
   prepareSshRpcSessionTransport,
   type SshRpcSessionTransport,
-  type SshRpcSessionTransportOptions
+  type SshRpcSessionTransportOptions,
+  type RpcRuntimePreparationContext,
+  type RpcRuntimePreparationResult
 } from './ssh-stdio-factory'
 import type { RpcSessionBackendOptions, RpcSessionCreateParams } from './rpc-session-backend'
 
 export interface ModelProxyRpcTransportOptions extends Omit<
   SshRpcSessionTransportOptions,
-  'session' | 'prepareSession'
+  'session' | 'prepareSession' | 'prepareRuntime'
 > {
   readonly gateway: Pick<OmpBridge, 'createModelGatewayLease'>
   readonly session: Pick<
@@ -25,6 +27,15 @@ export interface ModelProxyRpcTransportOptions extends Omit<
     'openStdio' | 'openReverseTunnel' | 'execWithInput' | 'execBounded'
   >
   readonly models: readonly ModelGatewayModelRef[]
+  readonly prepareRuntime?: (
+    context: RpcRuntimePreparationContext & {
+      readonly modelDescriptors: readonly SafeModelDescriptor[]
+      readonly native: {
+        readonly endpoint: string
+        readonly models: readonly ModelGatewayModelRef[]
+      }
+    }
+  ) => Promise<void | RpcRuntimePreparationResult>
 }
 
 export interface ModelProxyRpcSessionTransport extends SshRpcSessionTransport {
@@ -88,6 +99,40 @@ export async function prepareModelProxyRpcSessionTransport(
   const transport = await prepareSshRpcSessionTransport(
     {
       ...options,
+      prepareRuntime: options.prepareRuntime
+        ? async (context) => {
+            const owned = generations.get(context.params)
+            if (!owned?.gateway || !owned.tunnel || !owned.publication)
+              throw new Error('Missing published model proxy generation')
+            owned.controller.signal.throwIfAborted()
+            const result = await options.prepareRuntime!(
+              Object.freeze({
+                ...context,
+                modelDescriptors: Object.freeze(
+                  owned.gateway.models.map(
+                    ({ provider, id, name, reasoning, input, contextWindow, maxTokens, cost }) =>
+                      Object.freeze({
+                        provider,
+                        id,
+                        name,
+                        reasoning,
+                        input: Object.freeze([...input]),
+                        contextWindow,
+                        maxTokens,
+                        ...(cost ? { cost: Object.freeze({ ...cost }) } : {})
+                      })
+                  )
+                ),
+                native: Object.freeze({
+                  endpoint: `http://127.0.0.1:${owned.tunnel.remotePort}/v1/pi/stream`,
+                  models
+                })
+              })
+            )
+            owned.controller.signal.throwIfAborted()
+            return result
+          }
+        : undefined,
       prepareSession: async ({ params, agentDir, signal }) => {
         const owned = generations.get(params)
         if (!owned?.gateway || !owned.tunnel)
@@ -211,7 +256,7 @@ export async function prepareModelProxyRpcSessionTransport(
         throw error
       }
     },
-    async open(params, signal) {
+    async open(params, signal, generation) {
       const owned = generations.get(params)
       if (!owned) throw new Error('Missing prepared model proxy generation')
       const abort = (): void => {
@@ -222,7 +267,7 @@ export async function prepareModelProxyRpcSessionTransport(
       try {
         owned.controller.signal.throwIfAborted()
         const channel = await acquire(
-          transport.open(params, owned.controller.signal),
+          transport.open(params, owned.controller.signal, generation),
           owned.controller.signal,
           (late) => late.close()
         )

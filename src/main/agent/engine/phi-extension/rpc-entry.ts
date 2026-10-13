@@ -5,6 +5,21 @@ import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 import { createRpcModelSelectionExtension } from './extensions/rpc-model-selection'
+import { createRpcExecutionAuthorityExtension } from './extensions/rpc-execution-authority'
+import { createRpcToolApprovalExtension } from './extensions/rpc-tool-approval'
+import {
+  createRpcHostResultExtension,
+  type RpcHostResultReadiness
+} from './extensions/rpc-host-result'
+import { createRpcNativeStreamExtension } from './extensions/rpc-native-stream'
+import { registerRpcSessionVerification } from './extensions/rpc-session-verification'
+import { executionRoster } from './lib/rpc-execution-protocol'
+import {
+  loadRpcRuntimeConfig,
+  RPC_RUNTIME_COMMAND,
+  RPC_RUNTIME_DESCRIPTION,
+  rpcRuntimeConfigDigest
+} from './lib/rpc-runtime-config'
 import { loadRpcModelMetadata } from './lib/rpc-model-metadata'
 import { resolveInsideProject } from './lib/project-path'
 import {
@@ -86,9 +101,16 @@ const rpcExtension: ExtensionFactory = async (pi) => {
   if (realpathSync(process.cwd()) !== config.projectRoot)
     throw new Error('Phi RPC bootstrap cwd does not match its project')
   const modelMetadata = loadRpcModelMetadata(process.env.PI_CODING_AGENT_DIR, config)
+  const runtime = loadRpcRuntimeConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV]!, config)
+  if (
+    process.env.PHI_RPC_RUNTIME !== undefined &&
+    (process.env.PHI_RPC_RUNTIME !== '1' || !runtime || !modelMetadata)
+  )
+    throw new Error('Phi composed RPC runtime configuration is missing')
 
   // Refuse unsupported native spellings before the shared guard's realpath.
   pi.on('tool_call', async (event) => {
+    if (runtime && event.toolName !== 'read') return undefined
     const deny = {
       block: true as const,
       reason: 'Phi RPC bootstrap denies unbridged tools before R5'
@@ -128,6 +150,119 @@ const rpcExtension: ExtensionFactory = async (pi) => {
   await createProjectToolBoundaryExtension(config.projectRoot)(pi)
   await createRemoteUrlGuardExtension()(pi)
   if (modelMetadata) await createRpcModelSelectionExtension(modelMetadata)(pi)
+
+  if (runtime) {
+    const lifetime = new AbortController()
+    const execution = createRpcExecutionAuthorityExtension({
+      identity: {
+        nonce: config.nonce,
+        phiSessionId: config.sessionId,
+        projectId: config.projectId,
+        cwd: config.projectRoot,
+        generation: runtime.generation
+      },
+      capability: runtime.execution.capability,
+      roster: runtime.execution.tools
+    })
+    const roster = executionRoster(runtime.execution.tools)
+    const hostNames = new Set(
+      roster.tools.filter((tool) => tool.site === 'host').map((tool) => tool.name)
+    )
+    const native = createRpcNativeStreamExtension({
+      generation: runtime.generation,
+      endpoint: runtime.native.endpoint,
+      models: runtime.native.models,
+      signal: lifetime.signal,
+      isActive: () => !lifetime.signal.aborted
+    })
+    await native.extension(pi)
+    // All input rewriting and both project/URL guards precede the signed origin.
+    await execution.extension(pi)
+    await createRpcToolApprovalExtension({
+      readiness: execution.readiness,
+      classifyTool: (name) =>
+        hostNames.has(name)
+          ? 'host'
+          : ['write', 'edit'].includes(name)
+            ? 'write'
+            : ['bash', 'powershell'].includes(name)
+              ? 'exec'
+              : roster.tools.some((tool) => tool.name === name && tool.site === 'native')
+                ? 'read'
+                : undefined
+    })(pi)
+    let cached: Readonly<RpcHostResultReadiness> | undefined
+    const readiness = (): Readonly<RpcHostResultReadiness> | undefined => {
+      const current = execution.readiness()
+      if (!current) {
+        cached = undefined
+        return undefined
+      }
+      if (
+        !cached ||
+        cached.runId !== current.runId ||
+        cached.signal !== current.signal ||
+        cached.ompSessionId !== current.ompSessionId
+      )
+        cached = Object.freeze({ ...current, leaseId: runtime.result.leaseId })
+      return cached
+    }
+    await createRpcHostResultExtension({
+      generationDirectory: runtime.generationDirectory,
+      directory: runtime.result.directory,
+      capability: runtime.result.capability,
+      readiness,
+      isHostTool: (name) => hostNames.has(name)
+    })(pi)
+    registerRpcSessionVerification(pi, {
+      nonce: config.nonce,
+      phiSessionId: config.sessionId,
+      generation: runtime.generation,
+      projectRoot: config.projectRoot,
+      directory: runtime.directory,
+      journals: runtime.journals,
+      blobs: runtime.blobs,
+      signal: lifetime.signal,
+      assertActive: () => {
+        if (lifetime.signal.aborted || execution.readiness())
+          throw new Error('RPC verification requires exclusive idle authority')
+      }
+    })
+    pi.registerCommand(RPC_RUNTIME_COMMAND, {
+      description: RPC_RUNTIME_DESCRIPTION,
+      handler: async (args, ctx) => {
+        if (
+          args !== config.nonce ||
+          ctx.agent.kind !== 'main' ||
+          realpathSync(ctx.cwd) !== config.projectRoot ||
+          !ctx.isIdle()
+        )
+          throw new Error('Phi RPC runtime challenge refused')
+        await pi.setActiveTools([...runtime.activeTools])
+        if (
+          JSON.stringify([...pi.getActiveTools()].sort()) !==
+          JSON.stringify([...runtime.activeTools].sort())
+        )
+          throw new Error('Phi RPC exact tool roster is not active')
+        native.assertInstalled(ctx)
+        ctx.ui.notify(
+          JSON.stringify({
+            type: 'phi_rpc_runtime_attestation',
+            nonce: config.nonce,
+            phiSessionId: config.sessionId,
+            projectId: config.projectId,
+            projectRoot: config.projectRoot,
+            generation: runtime.generation,
+            ompSessionId: ctx.sessionManager.getSessionId(),
+            rosterHash: roster.hash,
+            configHash: rpcRuntimeConfigDigest(runtime),
+            components: ['execution', 'approval', 'host-result', 'verification', 'native-stream']
+          }),
+          'info'
+        )
+      }
+    })
+  }
 
   // Registration is last: the Node attester must prove this exact command exists first.
   pi.registerCommand(RPC_BOOTSTRAP_COMMAND, {

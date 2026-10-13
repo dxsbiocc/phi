@@ -20,7 +20,8 @@ export interface RpcSessionCreateParams {
 
 export type RpcSessionTransportFactory = (
   params: RpcSessionCreateParams,
-  signal: AbortSignal
+  signal: AbortSignal,
+  generation?: number
 ) => RpcTransport | Promise<RpcTransport>
 
 export interface RpcSessionInitializationContext {
@@ -165,7 +166,10 @@ export class RpcSessionBackend {
     if (!params.sessionId || this.sessions.has(params.sessionId)) {
       throw new Error(`RPC session already exists or has an empty id: ${params.sessionId}`)
     }
-    const connection = new RpcConnection((signal) => this.open(params, signal), this.options)
+    const connection = new RpcConnection(
+      (signal, generation) => this.open(params, signal, generation),
+      this.options
+    )
     const entry: Session = {
       connection,
       controller: new AbortController(),
