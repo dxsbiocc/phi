@@ -60,6 +60,8 @@ export interface RemoteSessionRuntimeOptions {
   > & { projectName?: string }
   /** Actual Phi manifest adoption. Caller must check its Phi generation/anchor and cancellation before committing. */
   readonly adopt: (snapshot: RemoteRuntimeSnapshot, signal: AbortSignal) => Promise<void>
+  /** Acquire real Phi adoption authority before asynchronous proof; release on every exit. */
+  readonly beforeCheckpoint?: (signal: AbortSignal) => () => void | Promise<void>
   readonly signal?: AbortSignal
   readonly connectionOptions?: RpcConnectionOptions
   readonly onInterrupted?: (error: Error) => void
@@ -150,7 +152,40 @@ export class RemoteSessionRuntime {
     if (!this.gate || this.authority?.currentRun())
       throw new Error('Remote runtime checkpoint requires an exclusive idle gate')
   }
+  private async withCheckpoint<T>(operation: () => Promise<T>): Promise<T> {
+    this.active()
+    const release = this.options.beforeCheckpoint?.(this.lifetime.signal)
+    let result!: T
+    let failed = false,
+      primary: unknown
+    let cleanupFailed = false,
+      cleanupError: unknown
+    try {
+      this.active()
+      result = await operation()
+    } catch (error) {
+      failed = true
+      primary = error
+    } finally {
+      try {
+        await release?.()
+      } catch (error) {
+        cleanupFailed = true
+        cleanupError = error
+      }
+    }
+    if (failed) throw primary
+    if (cleanupFailed) throw cleanupError
+    return result
+  }
+
   private async initialize(): Promise<void> {
+    await this.withCheckpoint(() => this.initializeCheckpoint())
+    this.active()
+    this.ready = true
+    this.gate = false
+  }
+  private async initializeCheckpoint(): Promise<void> {
     const { options } = this
     this.hostPolicy = createRpcRuntimeHostPolicy({
       tools: options.tools,
@@ -373,8 +408,6 @@ export class RemoteSessionRuntime {
       throw new Error('Remote initialization checkpoint changed during adoption')
     this.verifier.commitAttachment()
     this.snapshot = result
-    this.ready = true
-    this.gate = false
   }
   private async verifyCurrent(snapshot: RemoteRuntimeSnapshot): Promise<RemoteHistoryCheckpoint> {
     this.active()
@@ -458,7 +491,10 @@ export class RemoteSessionRuntime {
       if (this.promptController === controller) this.promptController = undefined
     }
   }
-  private async checkpoint(): Promise<RemoteRuntimeSnapshot> {
+  private checkpoint(): Promise<RemoteRuntimeSnapshot> {
+    return this.withCheckpoint(() => this.checkpointUnderGate())
+  }
+  private async checkpointUnderGate(): Promise<RemoteRuntimeSnapshot> {
     this.active()
     const old = this.snapshot!
     const checkpoint = await this.verifyCurrent(old)

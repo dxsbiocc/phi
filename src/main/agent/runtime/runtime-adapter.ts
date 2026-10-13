@@ -1,3 +1,5 @@
+import { RemoteSessionCapabilityError } from '../engine/session-routing-engine'
+import { RuntimeReferenceError } from '../session/runtime-reference'
 import type { PhiAgentDefinition } from '../agents/definition'
 import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
 import { randomUUID } from 'node:crypto'
@@ -14,7 +16,7 @@ import type {
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
-import { getPhiEngine } from '../engine/in-process-engine'
+import { getPhiEngine, ownsRemoteRuntimeSession } from '../engine/in-process-engine'
 import type {
   PhiEngine,
   PhiAgentEvent,
@@ -862,6 +864,11 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
    */
   private async ensureLive(): Promise<void> {
     if (!this.recreate || this.engine.sessions.has(this.sessionId)) return
+    if (ownsRemoteRuntimeSession(this.sessionId))
+      throw new RuntimeReferenceError(
+        'REMOTE_OPERATION_REQUIRED',
+        '远程运行已中断，需要显式恢复原会话'
+      )
     this.recovery ??= this.recreate(this)
       .then((state) => applySessionState(this, state))
       .finally(() => {
@@ -906,7 +913,12 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   async abort(): Promise<void> {
     this.approvalAbortController.abort()
     // A session the worker no longer holds has nothing running to abort.
-    if (this.recreate && !this.engine.sessions.has(this.sessionId)) return
+    if (
+      this.recreate &&
+      !this.engine.sessions.has(this.sessionId) &&
+      !ownsRemoteRuntimeSession(this.sessionId)
+    )
+      return
     const state = await this.engine.sessions.abort({
       sessionId: this.sessionId
     })
@@ -918,7 +930,12 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     for (const cleanup of this.cleanupFns.splice(0)) {
       cleanup()
     }
-    if (this.recreate && !this.engine.sessions.has(this.sessionId)) return
+    if (
+      this.recreate &&
+      !this.engine.sessions.has(this.sessionId) &&
+      !ownsRemoteRuntimeSession(this.sessionId)
+    )
+      return
     await this.engine.sessions.dispose({
       sessionId: this.sessionId
     })
@@ -935,6 +952,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
   }
 
   setThinkingLevel(level: ThinkingLevel | undefined): void {
+    if (ownsRemoteRuntimeSession(this.sessionId))
+      throw new RemoteSessionCapabilityError('setThinkingLevel')
     this.thinkingLevel = level
     void this.ensureLive()
       .then(() =>
