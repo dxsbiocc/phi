@@ -105,10 +105,15 @@
         "@oh-my-pi/pi-coding-agent/modes/utils/context-usage",
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",
         "@oh-my-pi/pi-coding-agent/plan-mode/plan-files",
-        "@oh-my-pi/pi-coding-agent/session/compaction-methods",
         "@oh-my-pi/pi-coding-agent/thinking"
       ],
       "purpose": "Agent sessions, settings, authentication, MCP, planning, compaction, thinking, and model integration for the OMP worker",
+      "plan": "remove"
+    },
+    {
+      "file": "src/main/agent/engine/in-process/settings.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/session/compaction-methods"],
+      "purpose": "OMP compaction defaults and method validation behind the PhiSettings adapter",
       "plan": "remove"
     },
     {

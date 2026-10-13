@@ -24,10 +24,6 @@ import {
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
-import {
-  DEFAULT_COMPACTION_METHOD_ORDER,
-  resolveCompactionMethodOrder
-} from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
 import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
 import { applyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
@@ -42,6 +38,7 @@ import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { toOmpCustomTool } from './tool-adapter'
 import type { PhiTool } from './types'
+import { applyAutoCompactionOverrides, createPhiSettings } from './in-process/settings'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
@@ -182,13 +179,6 @@ import { createHostJobClient } from '../wrappers/composition/job-host-client'
 import { buildWrapperCompositionTools } from '../wrappers/composition/tools'
 
 type UnknownRecord = Record<string, unknown>
-type AutoCompactionBaseline = {
-  enabled: boolean
-  thresholdPercent: number
-  thresholdTokens: number
-  methodOrder: Array<(typeof DEFAULT_COMPACTION_METHOD_ORDER)[number]>
-}
-const autoCompactionBaselines = new WeakMap<Settings, AutoCompactionBaseline>()
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type ProjectResourceName = 'extensions' | 'prompts' | 'skills' | 'themes'
 
@@ -1574,10 +1564,13 @@ async function leasedProfileMcpManager(
   projectPolicy?: RemoteMcpProfilePolicy
 }> {
   const profile = readMcpConfig(agentDir)
+  const phiSettings = createPhiSettings(settings)
+  const mcpSettings = phiSettings.mcp.read()
+  const extensionSettings = phiSettings.extensions.read()
   const plan = remoteMcpLoadPlan({
     projectCwd,
     agentDir,
-    enableProjectConfig: settings.get('mcp.enableProjectConfig') ?? true,
+    enableProjectConfig: mcpSettings.enableProjectConfig,
     remote: remoteProjectAnchor !== undefined
   })
   const discoveryOptions = {
@@ -1585,8 +1578,8 @@ async function leasedProfileMcpManager(
     extensionRoots: {
       explicit: [],
       mode: 'merge' as const,
-      configured: settings.get('extensions') ?? [],
-      configuredLevel: settings.extensionsSourceLevel()
+      configured: extensionSettings.configured,
+      configuredLevel: extensionSettings.sourceLevel
     }
   }
   let snapshot: Awaited<ReturnType<typeof loadAllMCPConfigs>>
@@ -1651,7 +1644,7 @@ async function leasedProfileMcpManager(
     const manager = new MCPManager(plan.cwd, null, async () => snapshot)
     const transports = trackOwnedStdioTransports(manager)
     manager.setAuthStorage(authStorage)
-    if (settings.get('mcp.notifications')) manager.setNotificationsEnabled(true)
+    if (mcpSettings.notifications) manager.setNotificationsEnabled(true)
     const projectPolicy = remoteProjectMcpPolicy(remoteProjectMcpServers)
     return {
       manager,
@@ -1797,7 +1790,7 @@ async function createSession(params: unknown): Promise<unknown> {
   // project's local anchor. Summaries and lessons stay on this computer.
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
-  if (memoryTarget) settings.override('memory.backend', 'local')
+  if (memoryTarget) createPhiSettings(settings).memory.useLocalBackend()
   const remoteMemoryBlock =
     remoteRoot && memoryTarget
       ? await projectMemoryPromptBlock(memoryTarget).catch(() => undefined)
@@ -2384,52 +2377,17 @@ function autoCompactionOverrides(value: unknown): AutoCompactionOverrides {
   }
 }
 
-function applyAutoCompactionOverrides(
-  settings: Settings,
-  overrides: AutoCompactionOverrides
-): void {
-  let baseline = autoCompactionBaselines.get(settings)
-  if (!baseline) {
-    baseline = {
-      enabled: settings.get('compaction.enabled'),
-      thresholdPercent: settings.get('compaction.thresholdPercent'),
-      thresholdTokens: settings.get('compaction.thresholdTokens'),
-      methodOrder: [...settings.get('compaction.methodOrder')]
-    }
-    autoCompactionBaselines.set(settings, baseline)
-  }
-  settings.override('compaction.enabled', overrides.enabled ?? baseline.enabled)
-  settings.override(
-    'compaction.thresholdPercent',
-    overrides.thresholdPercent ?? baseline.thresholdPercent
-  )
-  // The SDK gives a fixed token limit precedence over a percentage preset.
-  settings.override(
-    'compaction.thresholdTokens',
-    overrides.thresholdPercent === undefined ? baseline.thresholdTokens : -1
-  )
-  if (
-    overrides.enabled === true &&
-    resolveCompactionMethodOrder(baseline.methodOrder).length === 0
-  ) {
-    settings.override('compaction.methodOrder', [...DEFAULT_COMPACTION_METHOD_ORDER])
-  } else {
-    settings.override('compaction.methodOrder', [...baseline.methodOrder])
-  }
-}
-
 async function readAutoCompactionDefaults(params: unknown): Promise<AutoCompactionDefaults> {
   const record = isRecord(params) ? params : {}
   const settings = await Settings.loadReadOnly({
     cwd: stringValue(record.cwd, process.cwd()),
     agentDir: stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   })
+  const compaction = createPhiSettings(settings).compaction.read()
   return {
-    enabled:
-      settings.get('compaction.enabled') &&
-      resolveCompactionMethodOrder(settings.get('compaction.methodOrder')).length > 0,
-    thresholdPercent: settings.get('compaction.thresholdPercent'),
-    thresholdTokens: settings.get('compaction.thresholdTokens')
+    enabled: compaction.enabled && compaction.methodOrder.length > 0,
+    thresholdPercent: compaction.thresholdPercent,
+    thresholdTokens: compaction.thresholdTokens
   }
 }
 
@@ -2437,10 +2395,11 @@ function setSessionAutoCompactionSettings(params: unknown): AutoCompactionDefaul
   const record = isRecord(params) ? params : {}
   const session = getSession(record.sessionId).session
   applyAutoCompactionOverrides(session.settings, autoCompactionOverrides(record.overrides))
+  const compaction = createPhiSettings(session.settings).compaction.read()
   return {
     enabled: session.autoCompactionEnabled,
-    thresholdPercent: session.settings.get('compaction.thresholdPercent'),
-    thresholdTokens: session.settings.get('compaction.thresholdTokens')
+    thresholdPercent: compaction.thresholdPercent,
+    thresholdTokens: compaction.thresholdTokens
   }
 }
 
@@ -2938,12 +2897,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
       const { authStorage } = await getContext(agentDir)
       return webSearchSettingsFromValues(
-        {
-          order: settings.get('providers.webSearchOrder'),
-          excluded: settings.get('providers.webSearchExclude'),
-          endpoint: settings.get('searxng.endpoint'),
-          engines: settings.get('searxng.engines')
-        },
+        createPhiSettings(settings).webSearch.read(),
         webSearchAuthStatus(authStorage)
       )
     }
@@ -2952,21 +2906,14 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
       const next = normalizeWebSearchSettingsPatch(record.patch)
       const settings = await Settings.init({ cwd: agentDir, agentDir })
-      settings.set('providers.webSearchOrder', next.order)
-      settings.set('providers.webSearchExclude', next.excluded)
-      settings.set('searxng.endpoint', next.endpoint)
-      settings.set('searxng.engines', next.engines)
-      await settings.flush()
+      const phiSettings = createPhiSettings(settings)
+      phiSettings.webSearch.write(next)
+      await phiSettings.flush()
       applyProviderGlobalsFromSettings(settings)
       const persisted = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
       const { authStorage } = await getContext(agentDir)
       return webSearchSettingsFromValues(
-        {
-          order: persisted.get('providers.webSearchOrder'),
-          excluded: persisted.get('providers.webSearchExclude'),
-          endpoint: persisted.get('searxng.endpoint'),
-          engines: persisted.get('searxng.engines')
-        },
+        createPhiSettings(persisted).webSearch.read(),
         webSearchAuthStatus(authStorage)
       )
     }
@@ -3018,12 +2965,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
         ? stringValue(params.agentDir, process.env.PI_CODING_AGENT_DIR)
         : stringValue(process.env.PI_CODING_AGENT_DIR)
       const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
-      return listSearxngEngines({
-        endpoint: settings.get('searxng.endpoint'),
-        token: settings.get('searxng.token'),
-        basicUsername: settings.get('searxng.basicUsername'),
-        basicPassword: settings.get('searxng.basicPassword')
-      })
+      return listSearxngEngines(createPhiSettings(settings).webSearch.readSearxngCredentials())
     }
     case 'session.setAutoCompactionSettings':
       return setSessionAutoCompactionSettings(params)

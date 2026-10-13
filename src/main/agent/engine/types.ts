@@ -2,6 +2,78 @@ export type PhiToolSite = 'host' | 'runtime'
 export type PhiToolApproval = 'read' | 'write' | 'exec'
 export type PhiToolLoadMode = 'essential' | 'discoverable'
 
+export type PhiCompactionMethod = 'remote' | 'snapcompact' | 'handoff' | 'soft' | 'shake'
+
+export interface PhiCompactionSettings {
+  enabled: boolean
+  thresholdPercent: number
+  thresholdTokens: number
+  methodOrder: PhiCompactionMethod[]
+}
+
+export type PhiWebSearchProvider =
+  | 'perplexity'
+  | 'gemini'
+  | 'anthropic'
+  | 'codex'
+  | 'xai'
+  | 'zai'
+  | 'exa'
+  | 'tinyfish'
+  | 'jina'
+  | 'kagi'
+  | 'tavily'
+  | 'firecrawl'
+  | 'brave'
+  | 'kimi'
+  | 'parallel'
+  | 'synthetic'
+  | 'searxng'
+  | 'startpage'
+  | 'duckduckgo'
+  | 'ecosia'
+  | 'google'
+  | 'mojeek'
+  | 'public'
+
+export interface PhiWebSearchSettings {
+  order: PhiWebSearchProvider[]
+  excluded: PhiWebSearchProvider[]
+  endpoint: string | undefined
+  engines: string | undefined
+}
+
+export interface PhiSearxngCredentials {
+  endpoint: string | undefined
+  token: string | undefined
+  basicUsername: string | undefined
+  basicPassword: string | undefined
+}
+
+export type PhiExtensionsSourceLevel = 'user' | 'project'
+
+export interface PhiSettings {
+  compaction: {
+    read(): PhiCompactionSettings
+    override(values: PhiCompactionSettings): void
+  }
+  webSearch: {
+    read(): PhiWebSearchSettings
+    write(values: PhiWebSearchSettings): void
+    readSearxngCredentials(): PhiSearxngCredentials
+  }
+  mcp: {
+    read(): { enableProjectConfig: boolean; notifications: boolean }
+  }
+  extensions: {
+    read(): { configured: string[]; sourceLevel: PhiExtensionsSourceLevel }
+  }
+  memory: {
+    useLocalBackend(): void
+  }
+  flush(): Promise<void>
+}
+
 export type PhiToolContent =
   { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
 

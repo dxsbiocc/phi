@@ -239,7 +239,10 @@ bun run test
 - 当前用到的设置键（`omp-sdk-worker.ts`），按领域分组成类型化接口：
   - 上下文压缩：`compaction.enabled`、`compaction.thresholdPercent`、`compaction.thresholdTokens`、`compaction.methodOrder`（读与 override）
   - 网页搜索：`providers.webSearchOrder`、`providers.webSearchExclude`、`searxng.endpoint`、`searxng.engines`、`searxng.token`、`searxng.basicUsername`、`searxng.basicPassword`
-  - MCP 与扩展：`mcp.enableProjectConfig`、`mcp.notifications`、`extensions`
+  - MCP 与扩展：`mcp.enableProjectConfig`、`mcp.notifications`、`extensions`，以及 `extensionsSourceLevel()`
+  - 记忆：`memory.backend`（override 为 `local`；计划写成时还没有记忆功能，2026-10-13 补记）
+  - 写盘：`flush()`；会话自带的设置对象（`session.settings`）的读取同样经 `PhiSettings`
+- 打开设置的方式（`Settings.init` / `Settings.loadReadOnly`）和交给 OMP 的原始 `Settings` 对象留在引擎内部，`PhiSettings` 包装它，不替代它。
 - 引擎外不出现设置键字符串。
 - 验收：worker 内不再直接调用 `settings.get/set/override`；新增单元测试覆盖每个分组的读写。
 
