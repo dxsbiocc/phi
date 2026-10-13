@@ -22,22 +22,29 @@
 | T15 服务端持久存储                | `5e5fc292`                  | 32 项                                      | 私有路径、连接持有的 writer lease、真实 SDK title/header、串行发布       |
 | T15 显式恢复与历史分页            | `8801a1ca`                  | 46 项                                      | 实际 CLI 跨进程恢复与图片 blob；生产严格 verifier/路由尚待接入           |
 | T13 主审批桥                      | `c237d2b6`                  | 38 项                                      | 实际 native write/edit/bash 批准、拒绝、取消；产品入口尚未开放           |
+| T15 持久化启动                    | `adcf60f0`                  | 70 项                                      | 私有临时 HOME、持久 journal/data 与实际进程权限检查                      |
+| T14 原生智能体定义编译            | `106a7428`                  | 18 项                                      | 实际 SDK 发现、模型和工具声明；尚不授予子会话执行权限                    |
+| SDK 模块边界合同                  | `3777d60f`                  | 18 项                                      | 区分实际运行时模块与已擦除类型引用，独立扫描器同步验证                   |
+| T12 完整最终结果                  | `250be9f4`                  | 66 项                                      | 私有 receipt、图片与大结果 hydration；失败结果不泄漏内部凭证             |
+| T11 原生 stream 兼容适配          | `bbdd9ff0`                  | 29 项，另含 46 个内部场景                  | 修复已复现 opaque/sparse 丢失；side/advisor 通道未纳入                   |
+| T13 运行权限                      | `86c771fe`                  | 32 项                                      | 主运行身份、签名来源与取消终态；完整子运行权限另行实现                   |
+| T15 严格保存状态验证              | `86555985`                  | 48 项                                      | 真实 SDK、全分支与已知资产验证、显式 adoption 后提交基线                 |
 
 审查中发现并闭环的问题包括：网关取消导致 worker 未处理拒绝、流背压误判、私有配置发布队列越序、模型选择清理覆盖原始错误、授权输入 TOCTOU、重复 Ajv schema ID、SDK title slot 误解析、远端清单并发改绑、损坏 remote ref 触发桌面文件操作，以及审批终态重入、容量耗尽悬挂、跨运行 tool-call ID 误去重。相关原码失败断言和修复后的独立验证均保留。
 
 ## 冻结整合验收
 
-冻结整合提交 `c237d2b6` 在独立副本执行标准并发 4 全套测试：**5243 项，5217 通过，1 失败，0 取消，24 既有跳过，1 todo，378.20 秒**。运行前后 HEAD 与全部已跟踪文件哈希一致。生产 node/web/scripts 类型检查、构建及 lint 通过；lint 只有两条既有格式警告。
+最新冻结整合提交 `86555985` 在独立副本执行标准并发 4 全套测试：**5422 项，5397 通过，0 失败，0 取消，24 既有跳过，1 todo，439.47 秒**。运行前后 HEAD 与全部已跟踪文件哈希一致。生产 node/web/scripts 类型检查、构建及 lint 通过；lint 只有两条既有格式警告。该结果仅覆盖已提交的上述代码，不包含下列尚待独立验收的新改动。
 
-唯一失败来自旧 worker 派发契约未包含新增的 `modelGateway.create` 与 `modelGateway.revoke` 私有命令。两个命令属于桌面桥的 lease 管理，不属于公开 PhiEngine session facade。修复保留完整集合的精确相等断言，只补入这两个明确命令；修复及新的恢复初始化合同正接受独立审查。此轮完整结果仍记为失败，不用局部回归替代全套通过。
+此前 `c237d2b6` 全套 5243 项的唯一失败是旧 worker 派发合同未登记两个新增私有模型代理命令；已在 `1ee9e0b1` 修复并独立验证，完整集合的精确相等断言保留。随后 `3a084a30` 标准并发全套 5246 项出现 1 项既有容量探测时间失败，同一断言单独通过；完整串行复跑 5246 项、0 失败/取消。历史失败保留，不改写为通过，也没有放宽期限、增加跳过或修改标准并发设置。
 
 ## 当前未通过或未完成的项目
 
-- **T11b 提供商无损兼容：** 真实 SDK 对照的 vendor 组 12 项中 10 通过、2 失败。Anthropic API key 与 OAuth 都在远端 native 客户端丢失 `redactedThinking`，桌面网关原始 SSE 保留完整 opaque 数据。cloud 组 15 项通过，但仅发 start/done 的注册 API 另有 thinking 文本丢失复现。公开会话 stream 接缝的适配实施与独立复验完成前，不能宣称完整 R3。Cursor KV/history replay 与部分云凭据变体也未验收。
-- **T12/R4：** 正实施完整最终结果的私有 receipt 与真实 `tool_result` hydration；继续保留 1 MiB 输入帧预算。实际 browser、notebook、skills、MCP 等服务路由及大进度事件尚未全部接入。
-- **T13/R5：** 正实施可信主运行归属与 bridge-ready 握手。现有生产 bootstrap 仍只读；不能用测试 fixture 的 readiness 当成产品接入完成。
-- **T14/R6：** 原生 task、child authority、子审批及后台唤醒设计已完成，完整实现和真实 CLI 接缝验收尚未完成。子调用仍不得通过主会话审批权限。
-- **T15/R7：** 正接入持久化启动、私有临时 HOME 与 durable journal/data 分离、严格服务端全分支与资产验证、恢复后能力重绑和 Phi facade。header preflight 不能替代完整 transcript/blob 验证；公开 switch 的同 UID 外部文件替换残余不作消除声明。
+- **T11/R3：** 已复现的 Anthropic opaque thinking 与仅终态注册 API 缺口经公开 stream 适配修复并通过独立验证。完整工具列表的出站 DTO 新增范围已冻结，正独立审查；保留完整 schema、本地执行器和推测执行。side/advisor 通道、Cursor KV/history replay 与剩余提供商矩阵尚未全部验收。
+- **T12/R4：** 完整最终结果传输已验收，继续保留 1 MiB 输入帧预算。共享真实桌面服务注册表及 browser、notebook、skills、环境、wrapper 等适配已冻结，正独立审查。远程 library、session-private websearch/MCP、browser 输入在签名前的隐私处理及大进度事件尚未全部接入。
+- **T13/R5：** 主运行权限已验收。私有配置、生产扩展入口、启动、审批、完整检查点和桌面 adoption 的组合正在独立审查；实际 CLI 已覆盖写入、拒绝、取消及恢复。完整 PhiEngine facade、产品入口与运行时间线尚未接入；未配置新组合的旧启动路径保持只读。
+- **T14/R6：** 原生定义编译已验收。真实 CLI 已证明子会话注册、激活和后台任务合同，测试探针的激活异常放行问题修复后正独立复验。生产 child authority、子审批、服务代理与后台唤醒尚未实现；不能以主会话已结束或 SDK settled 状态替代子任务登记和运行状态。
+- **T15/R7：** 持久化启动和严格全分支验证已验收。真实 SDK 默认 tool-output shake 产生的机器标记与 `.shake.log` 资产验证新增范围正在收尾，随后独立审查；完整 facade adoption 待接入。header preflight 不替代完整 transcript/blob 验证；公开 switch 的同 UID 外部文件替换残余及首次验证前非内容寻址 shake 文件的历史真实性不作消除声明。
 - **T16/R8：** 真实 SSH、服务器、真实 provider/OAuth、人工 UI 与 Finder 打包启动未执行。官方 Linux x64 资产完整性与主 ELF GLIBC 版本静态检查通过，不能据此声称服务器兼容通过。
 
 ## 后续门槛
