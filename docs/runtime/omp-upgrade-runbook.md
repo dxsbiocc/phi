@@ -89,7 +89,7 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 - 保留旧版本创建的真实会话，在新版本恢复并继续，验证旧消息进入 provider history。
 - 保留 API key／合成 OAuth 存储测试、Settings live reload、未知事件字段、原生工具、stdio 取消与释放等受影响回归。
 - 原生模块升级后运行适合当前机器的终端 smoke；实际脚本包括 `smoke:terminal-host`、`smoke:terminal-manager`、`smoke:terminal-stress`。`smoke:terminal-packaged` 需要仓库外的真实 `.app` 路径，开发态 smoke 不能代替它。
-- RpcEngine 基础实现验收后，应让两种引擎运行共同的基础会话契约，并单独覆盖协议协商、请求关联、分块边界、退出、取消与重连。当前 T10 在实施中，不能将尚未交付的 RPC 契约列为已通过，也不能删除本地完整契约来缩小验收。
+- RpcEngine 基础实现验收后，应让两种引擎运行共同的基础会话契约，并单独覆盖协议协商、请求关联、分块边界、退出、取消与重连。T10a 基础契约已通过，T10b bootstrap 的独立与核心集成验证见下方记录；未交付的模型代理、宿主工具、审批和恢复契约仍须逐项补齐，也不能删除本地完整契约来缩小验收。
 
 ## 5. 对失败先取证再归因
 
@@ -152,6 +152,8 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 | 分支保存       | T8 `cf2303ce`；用户要求暂留分支；没有由此宣称 T8 已合入 main                                                                                          |
 | 后续 R1        | T9 独立审查 APPROVE，提交 `3e8462a8`；T10 候选分支整合提交 `46df9dc8`，在 18.10.3 依赖下复跑部署测试 27／27；真实资产／Linux／SSH／RPC 启用未据此验收 |
 
-T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 项、新增会话回归 20 项（19 真实引擎、1 wire metadata）、原丰富契约 18 项通过。完整候选分支 4862 项：4837 通过、0 失败/取消、24 既有跳过、1 todo，296.71 秒；生产 typecheck/lint/build/asar 通过。T10b 扩展启动、安全加载确认和哈希部署仍在实施；此结果不能视为完整 R2 或真实服务器验收。
+T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 项、新增会话回归 20 项（19 真实引擎、1 wire metadata）、原丰富契约 18 项通过。完整候选分支 4862 项：4837 通过、0 失败/取消、24 既有跳过、1 todo，296.71 秒；生产 typecheck/lint/build/asar 通过。T10b 后续三路独立 APPROVE；合并核心 159/159 自然退出，生产 typecheck/lint/build/asar 通过，完整回归待最终记录。实际 CLI 用 `--trusted-extension` 加载默认入口，nonce 身份与守卫确认后才就绪；项目启动命令被私有策略阻断。完整扩展单份打包、逐文件校验、原子部署，预装 `flock` 的内核锁断线释放。审批桥接前仅开放已有普通文本读取，尚不代表完整 PhiEngine、R3–R7 或真实服务器验收。
 
 本地证据归档位于恢复工作区，属于执行记录，不是随仓库交付的产品资源：T8 副本的 `.omx/t8-upgrade-report.md`、`.omx/t8-full-test-awake.log`／`.exit`、`.omx/t8-contract-final.log`、`.omx/t8-mcp-stdio-regression.log`、`.omx/t8-cross-version-history.log`、`.omx/t8-native-terminal-smoke.log`；T9 副本的 `.omx/t9-deployment-report.md` 与缓存修复前后日志。审查或合入时应把必要结论写入可持久追踪的提交／审查说明，不能只依赖本地临时文件。
+
+公开发布物离线补证：18.10.3 Linux x64 资产 276,170,720 字节，完整 SHA256 与清单、官方 API 和官方摘要一致；主 ELF 最高版本需求为 GLIBC_2.17，384 个 GLIBC 未定义动态符号与系统 LLVM 逐项相符。Bun 内嵌原生模块闭包尚未完整证明，未执行该二进制；不能据此认定目标服务器可运行或 R8 已通过。

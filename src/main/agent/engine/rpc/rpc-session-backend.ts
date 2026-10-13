@@ -23,6 +23,17 @@ export type RpcSessionTransportFactory = (
   signal: AbortSignal
 ) => RpcTransport | Promise<RpcTransport>
 
+export interface RpcSessionInitializationContext {
+  readonly connection: RpcConnection
+  readonly params: Readonly<RpcSessionCreateParams>
+  readonly signal: AbortSignal
+}
+
+export interface RpcSessionBackendOptions extends RpcConnectionOptions {
+  initialize?: (context: RpcSessionInitializationContext) => void | Promise<void>
+  initializationTimeoutMs?: number
+}
+
 export type RpcSessionStatus =
   { phase: 'ready' | 'running' } | { phase: 'interrupted'; error: Error }
 
@@ -35,6 +46,8 @@ export class RpcPromptError extends Error {
 
 type Session = {
   connection: RpcConnection
+  controller: AbortController
+  ready: boolean
   cwd: string
   state: WorkerSessionState
   activePrompt?: Promise<WorkerSessionState>
@@ -104,20 +117,33 @@ export class RpcSessionBackend {
 
   constructor(
     private readonly open: RpcSessionTransportFactory,
-    private readonly options: RpcConnectionOptions = {}
-  ) {}
+    private readonly options: RpcSessionBackendOptions = {}
+  ) {
+    const timeout = options.initializationTimeoutMs ?? 30_000
+    if (!Number.isFinite(timeout) || timeout <= 0) {
+      throw new Error('RPC initialization timeout must be positive and finite')
+    }
+  }
 
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId)
   }
 
-  async create(params: RpcSessionCreateParams): Promise<WorkerCreateSessionResult> {
+  async create(input: RpcSessionCreateParams): Promise<WorkerCreateSessionResult> {
+    // One stable object also lets transport factories associate their launch
+    // metadata with this exact initialization, rather than a reused session id.
+    const params = Object.freeze({
+      ...input,
+      ...(input.model ? { model: Object.freeze({ ...input.model }) } : {})
+    })
     if (!params.sessionId || this.sessions.has(params.sessionId)) {
       throw new Error(`RPC session already exists or has an empty id: ${params.sessionId}`)
     }
     const connection = new RpcConnection((signal) => this.open(params, signal), this.options)
     const entry: Session = {
       connection,
+      controller: new AbortController(),
+      ready: false,
       cwd: params.cwd,
       state: { cwd: params.cwd },
       unsubscribe: []
@@ -125,11 +151,13 @@ export class RpcSessionBackend {
     this.sessions.set(params.sessionId, entry)
     entry.unsubscribe.push(
       connection.onEvent((frame) => {
-        if (this.sessions.get(params.sessionId) !== entry) return
+        if (!entry.ready || this.sessions.get(params.sessionId) !== entry) return
         const event = phiEventFromWire(frame)
         if (event) this.emit(this.eventListeners, params.sessionId, event)
       }),
       connection.onDisconnect(({ error, expected }) => {
+        entry.ready = false
+        entry.controller.abort(error)
         if (!expected && this.sessions.get(params.sessionId) === entry) {
           this.emit(this.statusListeners, params.sessionId, { phase: 'interrupted', error })
         }
@@ -137,6 +165,8 @@ export class RpcSessionBackend {
     )
     try {
       await connection.start()
+      this.requireCurrent(params.sessionId, entry)
+      await this.initialize(params, entry)
       this.requireCurrent(params.sessionId, entry)
       if (params.model) {
         await connection.request({
@@ -151,10 +181,13 @@ export class RpcSessionBackend {
         this.requireCurrent(params.sessionId, entry)
       }
       const state = await this.refresh(params.sessionId, entry)
+      entry.ready = true
       this.emit(this.statusListeners, params.sessionId, { phase: 'ready' })
       this.requireCurrent(params.sessionId, entry)
       return { sessionId: params.sessionId, state }
     } catch (error) {
+      entry.ready = false
+      entry.controller.abort(error)
       if (this.sessions.get(params.sessionId) === entry) this.sessions.delete(params.sessionId)
       for (const unsubscribe of entry.unsubscribe) unsubscribe()
       await connection.close()
@@ -222,6 +255,8 @@ export class RpcSessionBackend {
     this.statusListeners.delete(params.sessionId)
     if (!entry) return
     this.sessions.delete(params.sessionId)
+    entry.ready = false
+    entry.controller.abort(new Error(`RPC session disposed: ${params.sessionId}`))
     for (const unsubscribe of entry.unsubscribe) unsubscribe()
     await entry.connection.close()
   }
@@ -240,13 +275,49 @@ export class RpcSessionBackend {
 
   private session(sessionId: string): Session {
     const entry = this.sessions.get(sessionId)
-    if (!entry?.connection.isReady) throw new Error(`RPC session is unavailable: ${sessionId}`)
+    if (!entry?.ready || !entry.connection.isReady) {
+      throw new Error(`RPC session is unavailable: ${sessionId}`)
+    }
     return entry
   }
 
   private requireCurrent(sessionId: string, entry: Session): void {
     if (this.sessions.get(sessionId) !== entry)
       throw new Error(`RPC session disposed: ${sessionId}`)
+    if (entry.controller.signal.aborted) {
+      throw entry.controller.signal.reason
+    }
+  }
+
+  private async initialize(params: RpcSessionCreateParams, entry: Session): Promise<void> {
+    const initialize = this.options.initialize
+    if (!initialize) return
+    const { signal } = entry.controller
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let cancelled: (() => void) | undefined
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => {
+          this.requireCurrent(params.sessionId, entry)
+          return initialize({ connection: entry.connection, params, signal })
+        }),
+        new Promise<never>((_, reject) => {
+          cancelled = () => reject(signal.reason)
+          if (signal.aborted) cancelled()
+          else signal.addEventListener('abort', cancelled, { once: true })
+        }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new Error('RPC initialization timed out')
+            entry.controller.abort(error)
+            reject(error)
+          }, this.options.initializationTimeoutMs ?? 30_000)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (cancelled) signal.removeEventListener('abort', cancelled)
+    }
   }
 
   private async refresh(sessionId: string, entry: Session): Promise<WorkerSessionState> {

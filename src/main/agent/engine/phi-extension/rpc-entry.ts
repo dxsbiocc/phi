@@ -1,0 +1,150 @@
+import { lstatSync, realpathSync, statSync } from 'node:fs'
+import { extname, resolve } from 'node:path'
+import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+
+import { createProjectToolBoundaryExtension } from './extensions/project-boundary'
+import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
+import { resolveInsideProject } from './lib/project-path'
+import {
+  loadRpcBootstrapConfig,
+  RPC_BOOTSTRAP_COMMAND,
+  RPC_BOOTSTRAP_CONFIG_ENV,
+  RPC_BOOTSTRAP_DESCRIPTION,
+  type RpcBootstrapAttestation
+} from './lib/rpc-config'
+
+// Native read can invoke format converters, model summaries and URL/internal handlers.
+// Until R5 bridges those capabilities, only explicit existing text files are admitted.
+const textExtensions = new Set([
+  '.txt',
+  '.md',
+  '.json',
+  '.jsonl',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.py',
+  '.r',
+  '.sh',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.csv',
+  '.tsv',
+  '.log',
+  '.html',
+  '.css',
+  '.scss',
+  '.sql',
+  '.xml',
+  '.ini',
+  '.cfg',
+  '.rst',
+  '.tex'
+])
+
+function unsupportedPath(path: string): boolean {
+  return (
+    // SDK18.10.3 expandPath rewrites these Unicode spaces before resolving reads.
+    // Reject altered spellings in both requested and canonical paths. Literal
+    // backslashes are also unsupported: Bun1.3.14 realpath cannot bind them,
+    // and rejecting them removes the SDK's entire shell-unescaped base family.
+    /[:;?\\\u00A0\u2000-\u200A\u202F\u205F\u3000]/u.test(path) ||
+    [...path].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  )
+}
+
+/** Fixed18.10.3 sync/async resolvers try these variants before parsing :raw. */
+function rawLiteralCollision(rawPath: string): boolean {
+  const nfd = rawPath.normalize('NFD')
+  const candidates = new Set([
+    rawPath,
+    rawPath.replace(/ (AM|PM)\./gu, '\u202f$1.'),
+    nfd,
+    rawPath.replace(/'/gu, '\u2019'),
+    nfd.replace(/'/gu, '\u2019')
+  ])
+  for (const candidate of candidates) {
+    try {
+      lstatSync(candidate)
+      return true
+    } catch (error) {
+      // SDK literal probes preserve ambiguous POSIX errors; refuse those too.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true
+    }
+  }
+  return false
+}
+
+const rpcExtension: ExtensionFactory = async (pi) => {
+  const config = loadRpcBootstrapConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV])
+  if (realpathSync(process.cwd()) !== config.projectRoot)
+    throw new Error('Phi RPC bootstrap cwd does not match its project')
+
+  // Refuse unsupported native spellings before the shared guard's realpath.
+  pi.on('tool_call', async (event) => {
+    const deny = {
+      block: true as const,
+      reason: 'Phi RPC bootstrap denies unbridged tools before R5'
+    }
+    if (event.toolName !== 'read') return deny
+    const input = event.input as Record<string, unknown>
+    if (
+      !input ||
+      typeof input.path !== 'string' ||
+      Object.keys(input).some((key) => key !== 'path')
+    )
+      return deny
+    const requested = input.path
+    // Avoid native selector/list/URI parsing, tilde expansion and missing-file fuzzy recovery.
+    if (!requested || unsupportedPath(requested) || requested.startsWith('~')) return deny
+    try {
+      const decision = resolveInsideProject(config.projectRoot, requested, 'RPC read')
+      if (!decision.ok) return { block: true, reason: decision.error }
+      const path = realpathSync(resolve(config.projectRoot, requested))
+      if (
+        unsupportedPath(path) ||
+        !statSync(path).isFile() ||
+        !textExtensions.has(extname(path).toLowerCase())
+      )
+        return deny
+      const rawPath = `${path}:raw`
+      // The SDK probes fallback spellings as literal names before interpreting
+      // :raw. No candidate may substitute for the exact authorized file.
+      if (rawLiteralCollision(rawPath)) return deny
+      // Raw suppresses native media sniffing, IDA, summarization and Markdown rendering.
+      return { input: { path: rawPath } }
+    } catch {
+      return deny
+    }
+  })
+
+  await createProjectToolBoundaryExtension(config.projectRoot)(pi)
+  await createRemoteUrlGuardExtension()(pi)
+
+  // Registration is last: the Node attester must prove this exact command exists first.
+  pi.registerCommand(RPC_BOOTSTRAP_COMMAND, {
+    description: RPC_BOOTSTRAP_DESCRIPTION,
+    handler: async (args, ctx) => {
+      if (args !== config.nonce || realpathSync(ctx.cwd) !== config.projectRoot)
+        throw new Error('Phi RPC bootstrap challenge or project does not match')
+      const attestation: RpcBootstrapAttestation = {
+        type: 'phi_rpc_bootstrap_attestation',
+        protocolVersion: 1,
+        nonce: config.nonce,
+        sessionId: config.sessionId,
+        projectId: config.projectId,
+        projectRoot: config.projectRoot,
+        ompVersion: config.ompVersion,
+        contentHash: config.contentHash,
+        guards: { projectBoundary: true, remoteUrl: true, writes: 'deny' }
+      }
+      ctx.ui.notify(JSON.stringify(attestation), 'info')
+    }
+  })
+}
+
+export default rpcExtension
