@@ -1,31 +1,79 @@
 import { posix } from 'node:path'
 import type { RemoteStdioProcess } from '../../../wrappers/remote-ssh-session'
 import { shellQuote as q } from '../../../wrappers/remote-ssh-session'
-import { privateRemotePrefix } from './remote-commands'
+import { assertRemoteRoot, privateRemotePrefix } from './remote-commands'
 
 export interface ExtensionLock {
   readonly lost: Promise<never>
   release(): Promise<void>
 }
 
-/** A server kernel lock lives exactly as long as this owned stdio process's fd. */
-export async function acquireExtensionLock(options: {
+export class RemoteLockBusyError extends Error {
+  constructor() {
+    super('Another active writer holds the server lock')
+    this.name = 'RemoteLockBusyError'
+  }
+}
+
+export interface OwnedRemoteLockOptions {
+  root: string
+  directory: string
+  basename: string
+  openStdio: (command: string) => Promise<RemoteStdioProcess>
+  signal: AbortSignal
+  waitMs?: number
+}
+
+/** Preserve extension deployment's accepted location and acquisition defaults. */
+export function acquireExtensionLock(options: {
   root: string
   contentHash: string
   openStdio: (command: string) => Promise<RemoteStdioProcess>
   signal: AbortSignal
 }): Promise<ExtensionLock> {
-  const { signal } = options
+  return acquireOwnedRemoteLock({
+    ...options,
+    directory: posix.join(options.root, 'extension-locks'),
+    basename: options.contentHash
+  })
+}
+
+/** A server kernel lock lives exactly as long as this owned stdio process's fd. */
+export async function acquireOwnedRemoteLock(
+  options: OwnedRemoteLockOptions
+): Promise<ExtensionLock> {
+  const { signal, directory, basename } = options
+  const waitMs = options.waitMs ?? 30_000
+  assertRemoteRoot(options.root)
+  const relative = posix.relative(options.root, directory)
+  if (
+    !posix.isAbsolute(directory) ||
+    posix.normalize(directory) !== directory ||
+    directory.endsWith('/') ||
+    options.root.endsWith('/') ||
+    !relative ||
+    relative === '..' ||
+    relative.startsWith('../') ||
+    /[\0\r\n]/.test(directory) ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/.test(basename) ||
+    basename.includes('..') ||
+    !Number.isSafeInteger(waitMs) ||
+    waitMs < 0 ||
+    waitMs > 30_000
+  )
+    throw new Error('Invalid owned remote lock location or wait budget')
   signal.throwIfAborted()
-  const directory = posix.join(options.root, 'extension-locks')
-  const path = posix.join(directory, options.contentHash)
+  const directories = relative
+    .split('/')
+    .map((_, index, segments) => posix.join(options.root, ...segments.slice(0, index + 1)))
+  const path = posix.join(directory, basename)
   const command = `cd -- ${q(options.root)} || exit 1\n${privateRemotePrefix(options.root)}
-private_dir ${q(directory)}
+${directories.map((managed) => `private_dir ${q(managed)}`).join('\n')}
 command -v flock >/dev/null 2>&1 || fail 'Server requires the flock utility for connection-owned extension deployment locks'
 if [ ! -e ${q(path)} ] && [ ! -L ${q(path)} ]; then (set -C; : > ${q(path)}) 2>/dev/null || true; fi
 private_file ${q(path)}
 exec 9<>${q(path)}
-deadline=$(($(date +%s) + 30))
+deadline=$(($(date +%s) + ${Math.ceil(waitMs / 1000)}))
 while ! flock -x -n 9; do
   [ "$(date +%s)" -lt "$deadline" ] || fail 'Another active extension deployment holds the server lock'
   sleep 0.05
@@ -119,6 +167,8 @@ while IFS= read -r _line; do :; done`
   } catch (error) {
     await release().catch(() => undefined)
     signal.throwIfAborted()
+    if (stderr.includes('Another active extension deployment holds the server lock'))
+      throw new RemoteLockBusyError()
     throw new Error(`Could not acquire server extension lock: ${stderr}`, { cause: error })
   } finally {
     if (timer) clearTimeout(timer)

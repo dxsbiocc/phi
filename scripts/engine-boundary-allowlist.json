@@ -228,6 +228,12 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent"],
       "purpose": "Private actual-RPC ExtensionFactory environment and cwd oracle for neutral startup; synthetic project dotenv only, no production SDK import outside engine",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/remoteSessionStorageFixture.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/session/session-title-slot"],
+      "purpose": "R7 test-only physical journal format oracle uses the pinned SDK pure title-slot serializer so strict preflight is checked against real title/header layout",
+      "plan": "keep"
     }
   ]
 }
