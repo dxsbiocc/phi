@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import {
   acknowledgeSession,
+  createSessionManager,
+  deleteSession,
+  renameSession,
   mergePhiSessionState,
   phiOnlySessionPath
 } from '../src/main/agent/session/sessions'
+import {
+  remoteOmpDurableSessionKey,
+  remoteOmpJournalPath
+} from '../src/main/agent/session/runtime-reference'
+import { remoteReference, remoteReferenceScope } from './helpers/sessionRuntimeReferenceFixture'
 import type { SessionInfo } from '../src/main/agent/runtime/runtime-adapter'
 import {
   appendSessionEvent,
+  beginRuntimeReferenceAdoption,
+  findPhiSessionById,
   createPhiSession,
   listPhiSessions,
   updateSessionManifest,
@@ -30,6 +40,19 @@ function withPhiDir<T>(callback: () => T): T {
     } else {
       process.env.PI_CODING_AGENT_DIR = previous
     }
+    rmSync(phiDir, { recursive: true, force: true })
+  }
+}
+
+async function withAsyncPhiDir(callback: () => Promise<void>): Promise<void> {
+  const previous = process.env.PI_CODING_AGENT_DIR
+  const phiDir = mkdtempSync(join(tmpdir(), 'phi-sessions-async-'))
+  process.env.PI_CODING_AGENT_DIR = phiDir
+  try {
+    await callback()
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = previous
     rmSync(phiDir, { recursive: true, force: true })
   }
 }
@@ -448,5 +471,141 @@ test('acknowledgeSession keeps active approval attention visible', () => {
     const [manifest] = listPhiSessions()
     assert.equal(manifest.status, 'needs_approval')
     assert.equal(manifest.unreadKind, 'approval')
+  })
+})
+
+test('remote OMP sessions list offline with stable Phi identity, title, model and local anchor', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'project',
+      projectId: remoteReferenceScope.projectId,
+      projectLocation: {
+        kind: 'ssh',
+        hostProfileId: remoteReferenceScope.hostProfileId,
+        remoteRoot: remoteReferenceScope.projectRoot,
+        canonicalRoot: remoteReferenceScope.projectRoot
+      },
+      cwd: '/desktop/remote-anchor',
+      cwdRealPath: '/desktop/remote-anchor',
+      title: '离线任务',
+      permissionMode: 'ask',
+      model: { providerId: 'fixture', modelId: 'selected' }
+    })
+    appendSessionEvent(session.sessionId, { type: 'user_message', content: '离线内容' })
+    beginRuntimeReferenceAdoption(session.sessionId, remoteReferenceScope, 'online-proof').adopt(
+      remoteReference(session.sessionId)
+    )
+    const [summary] = mergePhiSessionState([], listPhiSessions(), '/desktop/remote-anchor')
+    assert.equal(summary.path, phiOnlySessionPath(session.sessionId))
+    assert.equal(summary.id, session.sessionId)
+    assert.equal(summary.name, '离线任务')
+    assert.equal(summary.messageCount, 1)
+    assert.deepEqual(findPhiSessionById(session.sessionId)?.model, {
+      providerId: 'fixture',
+      modelId: 'selected'
+    })
+    assert.throws(() => createSessionManager('/desktop/remote-anchor', summary.path), /服务器操作/)
+    assert.throws(() => deleteSession(summary.path), /服务器操作/)
+    assert.ok(findPhiSessionById(session.sessionId))
+  })
+})
+
+test('malformed remote reference exposes recovery error offline and never unlinks a same-text desktop path', async () => {
+  await withAsyncPhiDir(async () => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    const unrelated = join(session.dir, 'unrelated-desktop.jsonl')
+    writeFileSync(unrelated, 'must survive')
+    writeFileSync(
+      join(session.dir, 'manifest.json'),
+      JSON.stringify({
+        ...session.manifest,
+        runtimeSessionPath: unrelated,
+        runtimeRef: { kind: 'remote-omp', version: 999 }
+      })
+    )
+    const [summary] = mergePhiSessionState([], listPhiSessions(), '/workspace')
+    assert.equal(summary.phiSessionId, session.sessionId)
+    assert.equal(summary.runtimeRecoveryError?.code, 'INVALID_RUNTIME_REFERENCE')
+    await renameSession(summary.path, 'Visible despite corrupt locator')
+    assert.equal(findPhiSessionById(session.sessionId)?.title, 'Visible despite corrupt locator')
+    assert.throws(() => deleteSession(summary.path), /需要显式恢复/)
+    assert.equal(readFileSync(unrelated, 'utf8'), 'must survive')
+  })
+})
+
+test('legacy SSH-project desktop SDK history keeps local listing and deletion behavior', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'project',
+      projectId: 'legacy-project',
+      projectLocation: {
+        kind: 'ssh',
+        hostProfileId: 'legacy-host',
+        remoteRoot: '/srv/legacy',
+        canonicalRoot: '/srv/legacy'
+      },
+      cwd: '/desktop/legacy-anchor',
+      cwdRealPath: '/desktop/legacy-anchor',
+      permissionMode: 'ask'
+    })
+    const localHistory = join(session.dir, 'legacy-local.jsonl')
+    writeFileSync(localHistory, 'local SDK history')
+    updateSessionManifest(session.sessionId, { runtimeSessionPath: localHistory })
+    assert.equal(mergePhiSessionState([], listPhiSessions(), '/desktop/legacy-anchor').length, 0)
+    const [summary] = mergePhiSessionState(
+      [sessionInfo(localHistory, '2026-10-13T12:00:00.000Z')],
+      listPhiSessions(),
+      '/desktop/legacy-anchor'
+    )
+    assert.equal(summary.phiSessionId, session.sessionId)
+    deleteSession(summary.path)
+    assert.equal(existsSync(localHistory), false)
+    assert.equal(findPhiSessionById(session.sessionId), null)
+  })
+})
+
+test('valid remote locator paths cannot reach legacy local delete, rename or manager APIs', async () => {
+  await withAsyncPhiDir(async () => {
+    const session = createPhiSession({
+      kind: 'project',
+      projectId: remoteReferenceScope.projectId,
+      projectLocation: {
+        kind: 'ssh',
+        hostProfileId: remoteReferenceScope.hostProfileId,
+        remoteRoot: remoteReferenceScope.projectRoot,
+        canonicalRoot: remoteReferenceScope.projectRoot
+      },
+      cwd: '/desktop/anchor',
+      cwdRealPath: '/desktop/anchor',
+      permissionMode: 'ask'
+    })
+    // Identical textual paths on desktop/server must not make a remote reference locally actionable.
+    const scope = {
+      ...remoteReferenceScope,
+      runtimeRoot: join(session.dir, 'server-looking-runtime')
+    }
+    const ref = {
+      ...remoteReference(session.sessionId),
+      ...scope,
+      durableSessionKey: remoteOmpDurableSessionKey(scope, session.sessionId)
+    }
+    beginRuntimeReferenceAdoption(session.sessionId, scope, 'proof').adopt(ref)
+    const unrelatedDesktopFile = remoteOmpJournalPath(ref)
+    mkdirSync(dirname(unrelatedDesktopFile), { recursive: true })
+    writeFileSync(unrelatedDesktopFile, 'unrelated desktop file with same server path')
+    assert.throws(() => deleteSession(unrelatedDesktopFile), /服务器操作/)
+    assert.throws(() => createSessionManager('/desktop/anchor', unrelatedDesktopFile), /服务器操作/)
+    await assert.rejects(renameSession(unrelatedDesktopFile, 'must not reach SDK'), /服务器操作/)
+    await renameSession(phiOnlySessionPath(session.sessionId), 'offline rename')
+    assert.equal(findPhiSessionById(session.sessionId)?.title, 'offline rename')
+    assert.equal(
+      readFileSync(unrelatedDesktopFile, 'utf8'),
+      'unrelated desktop file with same server path'
+    )
   })
 })

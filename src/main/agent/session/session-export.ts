@@ -17,6 +17,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { SessionExportResult } from '../../../shared/sessionExportTypes'
 import { getPhiAgentDir } from '../runtime-paths'
 import { findPhiSessionById, getSessionDir } from './session-store'
+import { assertLocalRuntimeAccess } from './runtime-reference'
 
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const BLOB_REFERENCE = /blob:sha256:([0-9a-f]{64})/g
@@ -128,6 +129,8 @@ export async function exportPhiSession(
   if (!SESSION_ID.test(sessionId)) throw new Error('会话编号无效')
   const manifest = findPhiSessionById(sessionId)
   if (!manifest) throw new Error('会话不存在')
+  // A full export must include server journal/blobs; offline Phi timeline alone is incomplete.
+  assertLocalRuntimeAccess(manifest)
   if (
     manifest.status === 'running' ||
     manifest.status === 'needs_approval' ||

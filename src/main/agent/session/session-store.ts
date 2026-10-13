@@ -16,6 +16,18 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
 import { getPhiAgentDir } from '../runtime-paths'
+import { readManifestFile, writeManifestFile } from './manifest-file'
+import {
+  createRuntimeReferenceAdoption,
+  type RuntimeReferenceAdoption,
+  type RuntimeReferenceAdoptionOptions
+} from './runtime-reference-adoption'
+import {
+  assertLocalRuntimeAccess,
+  type PhiRuntimeRef,
+  type RemoteOmpScope,
+  type RuntimeRecoveryDiagnostic
+} from './runtime-reference'
 
 export { toolResultDetailsForSession } from './tool-result-details'
 
@@ -43,6 +55,8 @@ export interface PhiSessionManifest {
   title?: string
   forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
+  runtimeRef?: PhiRuntimeRef
+  readonly runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   permissionMode: PermissionMode
   model?: ModelSelection
   thinkingLevel?: ThinkingLevel
@@ -159,13 +173,13 @@ function readManifest(sessionId: string): PhiSessionManifest {
   if (!existsSync(manifestPath)) {
     throw new Error(`Session manifest not found: ${sessionId}`)
   }
-  return JSON.parse(readFileSync(manifestPath, 'utf-8')) as PhiSessionManifest
+  return readManifestFile(manifestPath, sessionId)
 }
 
 function writeManifest(manifest: PhiSessionManifest): void {
   const dir = getSessionDir(manifest.sessionId)
   ensureDir(dir)
-  writeFileSync(join(dir, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8')
+  writeManifestFile(dir, manifest)
 }
 
 function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessionManifest {
@@ -274,8 +288,16 @@ export function persistToolOutput(
 
 export function updateSessionManifest(
   sessionId: string,
-  patch: Partial<Omit<PhiSessionManifest, 'schemaVersion' | 'sessionId' | 'createdAt'>>
+  patch: Partial<
+    Omit<
+      PhiSessionManifest,
+      'schemaVersion' | 'sessionId' | 'createdAt' | 'runtimeRef' | 'runtimeRecoveryError'
+    >
+  >
 ): PhiSessionManifest {
+  if (Object.hasOwn(patch, 'runtimeRef') || Object.hasOwn(patch, 'runtimeRecoveryError')) {
+    throw new Error('Runtime reference requires verified adoption')
+  }
   const manifest = readManifest(sessionId)
   const updated: PhiSessionManifest = {
     ...manifest,
@@ -288,6 +310,26 @@ export function updateSessionManifest(
   const normalized = withoutUndefinedOptionalFields(updated)
   writeManifest(normalized)
   return normalized
+}
+
+/** Server publication and desktop adoption are separate commits, not a distributed transaction. */
+export function beginRuntimeReferenceAdoption(
+  sessionId: string,
+  trustedScope: RemoteOmpScope,
+  generation: string,
+  options?: RuntimeReferenceAdoptionOptions
+): RuntimeReferenceAdoption {
+  return createRuntimeReferenceAdoption(
+    getManifestPath(sessionId),
+    sessionId,
+    trustedScope,
+    generation,
+    {
+      read: () => readManifest(sessionId),
+      write: writeManifest
+    },
+    options
+  )
 }
 
 export function appendSessionEvent(
@@ -385,6 +427,7 @@ export function forkPhiSession(
 ): PhiSessionRecord {
   const source = findPhiSessionById(sourceId)
   if (!source) throw new Error('来源会话不存在')
+  assertLocalRuntimeAccess(source)
   const events = readSessionEvents(sourceId)
   const selected = events.findIndex(
     (event) => event.eventId === eventId && event.type === 'user_message'
@@ -532,6 +575,8 @@ export function findPhiSessionByRuntimePath(
   return (
     listPhiSessions().find(
       (manifest) =>
+        !manifest.runtimeRef &&
+        !manifest.runtimeRecoveryError &&
         manifest.runtimeSessionPath === runtimeSessionPath &&
         (cwd === undefined || manifest.cwd === cwd)
     ) ?? null
