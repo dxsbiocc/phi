@@ -7,6 +7,7 @@ import {
   verificationFailure,
   verificationRecord,
   SESSION_VERIFICATION_DEFAULT_BUDGETS,
+  verificationText,
   type SessionVerificationCapability
 } from './rpc-session-verification-protocol'
 
@@ -95,6 +96,64 @@ export interface VerifiedFile {
   readonly identity: string
   readonly size: number
 }
+
+export interface SessionShakeReference {
+  readonly artifactId: string
+  readonly region: number
+  readonly tokens: number
+  readonly toolName: string
+}
+
+/** Match only explicitly referenced SDK region headers, retaining a bounded line prefix. */
+function shakeHeaderReader(regions: readonly SessionShakeReference[]): {
+  write(text: string): void
+  finish(): void
+} {
+  const expected = new Set(
+    regions.map(
+      (region) =>
+        '### region ' + region.region + ' (' + region.toolName + ', ~' + region.tokens + ' tok)'
+    )
+  )
+  let prefix = '',
+    oversized = false
+  let first = true,
+    pending: string | undefined
+  const endLine = (): void => {
+    if (first) {
+      first = false
+      if (oversized || !/^### region 1 \(.+, ~(0|[1-9][0-9]{0,15}) tok\)$/u.test(prefix))
+        verificationFailure('FILE_INVALID')
+    }
+    if (pending !== undefined) {
+      if (!oversized && prefix === '') expected.delete(pending)
+      pending = undefined
+    }
+    if (!oversized && expected.has(prefix)) pending = prefix
+    prefix = ''
+    oversized = false
+  }
+  return {
+    write(text) {
+      let start = 0
+      for (;;) {
+        const newline = text.indexOf('\n', start)
+        const segment = text.slice(start, newline < 0 ? text.length : newline)
+        if (!oversized) {
+          if (prefix.length + segment.length > 8192) oversized = true
+          else prefix += segment
+        }
+        if (newline < 0) break
+        endLine()
+        start = newline + 1
+      }
+    },
+    finish() {
+      if (prefix.length || oversized) endLine()
+      if (expected.size) verificationFailure('FILE_INVALID')
+    }
+  }
+}
 /** Streams arbitrary asset sizes; the journal has an independent parse-work bound. */
 export async function hashPrivateFile(
   path: string,
@@ -104,6 +163,7 @@ export async function hashPrivateFile(
     missingAsset?: boolean
     blobNames?: readonly string[]
     utf8?: boolean
+    shakeRegions?: readonly SessionShakeReference[]
   } = {}
 ): Promise<VerifiedFile> {
   assertVerificationActive(capability)
@@ -123,7 +183,13 @@ export async function hashPrivateFile(
     if (options.maxBytes !== undefined && before.size > options.maxBytes)
       verificationFailure('VERIFICATION_LIMIT')
     const hash = createHash('sha256')
-    const decoder = options.utf8 ? new TextDecoder('utf-8', { fatal: true }) : undefined
+    const decoder =
+      options.utf8 || options.shakeRegions?.length
+        ? new TextDecoder('utf-8', { fatal: true })
+        : undefined
+    const headers = options.shakeRegions?.length
+      ? shakeHeaderReader(options.shakeRegions)
+      : undefined
     const buffer = Buffer.alloc(64 * 1024)
     let length = 0
     for (;;) {
@@ -135,16 +201,19 @@ export async function hashPrivateFile(
         verificationFailure('VERIFICATION_LIMIT')
       hash.update(buffer.subarray(0, bytesRead))
       try {
-        decoder?.decode(buffer.subarray(0, bytesRead), { stream: true })
+        const decoded = decoder?.decode(buffer.subarray(0, bytesRead), { stream: true })
+        if (decoded !== undefined) headers?.write(decoded)
       } catch {
         verificationFailure('FILE_INVALID')
       }
     }
     try {
-      decoder?.decode()
+      const decoded = decoder?.decode()
+      if (decoded !== undefined) headers?.write(decoded)
     } catch {
       verificationFailure('FILE_INVALID')
     }
+    headers?.finish()
     assertVerificationActive(capability)
     const after = await handle.stat()
     if (options.blobNames) await verifyBlobAliases(path, after, options.blobNames)
@@ -164,6 +233,7 @@ export interface SessionAssetReferences {
   readonly blobs: readonly string[]
   readonly artifacts: readonly string[]
   readonly hydration: readonly string[]
+  readonly shake?: readonly SessionShakeReference[]
 }
 /** Only actual persistence carriers confer dependency authority, never free-form prose. */
 export function collectSessionAssetReferences(
@@ -174,6 +244,7 @@ export function collectSessionAssetReferences(
   const blobs = new Set<string>(),
     artifacts = new Set<string>()
   const hydration = new Set<string>()
+  const shake: SessionShakeReference[] = []
   const stack: Array<{ value: unknown; key?: string }> = [{ value: entries }]
   let nodes = 0,
     references = 0
@@ -201,6 +272,62 @@ export function collectSessionAssetReferences(
       /^artifact:\/\/(0|[1-9][0-9]{0,15})(?::(?:raw:)?[1-9][0-9]*(?:-[1-9][0-9]*)?)?$/u.exec(value)
     if (!match) verificationFailure('FILE_INVALID')
     artifact(match[1])
+  }
+  // SDK applyShakeRegion stamps this flag only on the real message; nested
+  // role-shaped custom/user objects and ordinary URI prose grant no authority.
+  for (const entry of entries) {
+    assertVerificationActive(capability)
+    if (++nodes > budgets.nodes) verificationFailure('VERIFICATION_LIMIT')
+    if (
+      !verificationRecord(entry) ||
+      entry.type !== 'message' ||
+      !verificationRecord(entry.message)
+    )
+      continue
+    const message = entry.message
+    if (message.role !== 'toolResult' || !Object.hasOwn(message, 'prunedAt')) continue
+    if (typeof message.content === 'string' && message.content.startsWith('[shaken'))
+      verificationFailure('FILE_INVALID')
+    if (!Array.isArray(message.content)) continue
+    const texts = message.content.filter(
+      (block) => verificationRecord(block) && block.type === 'text'
+    )
+    if (!texts.some((block) => typeof block.text === 'string' && block.text.startsWith('[shaken')))
+      continue
+    if (
+      !Number.isSafeInteger(message.prunedAt) ||
+      (message.prunedAt as number) < 0 ||
+      texts.length !== 1 ||
+      typeof texts[0].text !== 'string' ||
+      !verificationText(message.toolName, 1024)
+    )
+      verificationFailure('FILE_INVALID')
+    const text = texts[0].text
+    // This is the SDK's legitimate no-artifact fallback, with no recovery URI.
+    const fallback = /^\[shaken ~(0|[1-9][0-9]{0,15}) tokens\]$/u.exec(text)
+    if (fallback) {
+      if (!Number.isSafeInteger(Number(fallback[1]))) verificationFailure('FILE_INVALID')
+      continue
+    }
+    const match =
+      /^\[shaken ~(0|[1-9][0-9]{0,15}) tokens — recover: artifact:\/\/(0|[1-9][0-9]{0,15}) \(region ([1-9][0-9]{0,15})\)\]$/u.exec(
+        text
+      )
+    if (
+      !match ||
+      !Number.isSafeInteger(Number(match[1])) ||
+      !Number.isSafeInteger(Number(match[3]))
+    )
+      verificationFailure('FILE_INVALID')
+    artifact(match[2])
+    shake.push(
+      Object.freeze({
+        artifactId: match[2],
+        tokens: Number(match[1]),
+        region: Number(match[3]),
+        toolName: message.toolName
+      })
+    )
   }
   while (stack.length) {
     assertVerificationActive(capability)
@@ -241,7 +368,8 @@ export function collectSessionAssetReferences(
   return Object.freeze({
     blobs: Object.freeze([...blobs].sort()),
     artifacts: Object.freeze([...artifacts].sort()),
-    hydration: Object.freeze([...hydration].sort())
+    hydration: Object.freeze([...hydration].sort()),
+    ...(shake.length ? { shake: Object.freeze(shake) } : {})
   })
 }
 
@@ -282,6 +410,12 @@ export async function verifySessionAssets(
     revision.update(JSON.stringify(['blob', hash, file]))
   }
   if (refs.artifacts.length) {
+    const shakeById = new Map<string, SessionShakeReference[]>()
+    for (const region of refs.shake ?? []) {
+      const regions = shakeById.get(region.artifactId) ?? []
+      regions.push(region)
+      shakeById.set(region.artifactId, regions)
+    }
     const directory = journalPath.slice(0, -'.jsonl'.length)
     let files: string[]
     try {
@@ -306,8 +440,11 @@ export async function verifySessionAssets(
       const matches = byId.get(id) ?? []
       if (!matches.length) verificationFailure('ASSET_MISSING')
       if (matches.length !== 1) verificationFailure('FILE_INVALID')
+      const shakeRegions = shakeById.get(id)
+      if (shakeRegions && matches[0] !== id + '.shake.log') verificationFailure('FILE_INVALID')
       const file = await hashPrivateFile(posix.join(directory, matches[0]), capability, {
-        missingAsset: true
+        missingAsset: true,
+        ...(shakeRegions ? { shakeRegions } : {})
       })
       inventory.update(JSON.stringify(['artifact', id, matches[0], file.digest]))
       revision.update(JSON.stringify(['artifact', id, matches[0], file]))
