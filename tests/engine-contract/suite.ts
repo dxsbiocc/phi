@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
+import type { PhiAgentDefinition } from '../../src/main/agent/agents/definition'
 import type { PhiSessionCreateParams, WorkerSessionState } from '../../src/main/agent/engine/types'
 import type { EngineFactory, EngineFixture } from './in-process-factory'
 
@@ -82,14 +83,67 @@ function completedTool(items: Record<string, unknown>[], name: string): Record<s
   return event
 }
 
+function shellLiteral(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'"
+}
+function boundSpecialist(f: EngineFixture, name: string): PhiAgentDefinition {
+  return {
+    name,
+    description: 'Inspect the native bash contract.',
+    tools: ['bash'],
+    skills: [],
+    environment: name,
+    systemPrompt: 'Run the requested bash command.',
+    source: 'phi',
+    filePath: join(f.cwd, `${name}.md`),
+    visibility: 'entry',
+    warnings: []
+  }
+}
+function approveTools(f: EngineFixture, sessionId = 'contract'): Record<string, unknown>[] {
+  const approvals: Record<string, unknown>[] = []
+  f.engine.events.onToolApproval(sessionId, (value) => {
+    const approval = record(value)
+    approvals.push(approval)
+    void f.engine.events.respondToolApproval(String(approval.requestId), null)
+  })
+  return approvals
+}
+function modelToolOutput(f: EngineFixture, id: string): string {
+  const message = f.provider.requests
+    .flatMap((request) => request.messages)
+    .find((item) => item.role === 'tool' && item.tool_call_id === id)
+  assert.ok(message, `Missing model-visible native tool result ${id}`)
+  return typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+}
+function childSteps(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  return items
+    .filter((item) => item.type === 'tool_execution_update')
+    .map((item) => record(record(item.partialResult).details))
+    .filter((details) => details.kind === 'agent_step')
+    .map((details) => record(details.step))
+}
+function outputFields(output: string): Record<string, string> {
+  return Object.fromEntries(
+    output
+      .split('\n')
+      .filter((line) => /^[a-z]+=/.test(line))
+      .map((line) => {
+        const index = line.indexOf('=')
+        return [line.slice(0, index), line.slice(index + 1)]
+      })
+  )
+}
+
 /** The factory is the only engine-specific seam; these cases never import OMP. */
 export function engineContract(name: string, factory: EngineFactory): void {
   const contract = (
     title: string,
-    run: (f: EngineFixture, t: TestContext) => Promise<void>
+    run: (f: EngineFixture, t: TestContext) => Promise<void>,
+    modelId?: string
   ): void => {
     test(`${name}: ${title}`, { timeout: 30000 }, async (t) => {
-      const f = await factory()
+      const f = await factory(modelId)
       t.after(() => f.close())
       try {
         await run(f, t)
@@ -342,6 +396,239 @@ export function engineContract(name: string, factory: EngineFactory): void {
     }
   )
 
+  contract(
+    'isolates native bash in bound specialists and preserves baseline shell state',
+    async (f) => {
+      const bindings: string[] = []
+      const injected = join(f.cwd, 'injected.txt')
+      const malicious = `quote'value;$(printf injected > ${shellLiteral(injected)})`
+      f.engine.host.register('environments.bindSession', (request) => {
+        const body = record(request)
+        const name = String(body.agent)
+        const ref = String(body.ref)
+        bindings.push(ref)
+        return {
+          ref,
+          variables: {
+            PATH: `${join(f.cwd, name, 'bin')}:/usr/bin:/bin`,
+            HOME: f.cwd,
+            PHI_CONTRACT_BOUND: ref === 'BoundOne-v2' ? 'two' : 'one',
+            PHI_CONTRACT_QUOTED: malicious,
+            ...(ref === 'BoundOne' ? { PHI_CONTRACT_OVERLAY: 'first' } : {})
+          }
+        }
+      })
+      f.engine.host.register('environments.request', (request) => {
+        assert.equal(record(request).environment, 'BoundOne')
+        return {
+          ref: 'BoundOne-v2',
+          envId: 'fixture-v2',
+          name: 'Fixture',
+          added: ['fixture-package']
+        }
+      })
+      const approvals = approveTools(f)
+      const observed = events(f)
+      await f.engine.sessions.create(
+        params(f, 'contract', {
+          enableToolApproval: true,
+          phiAgents: ['BoundOne', 'BoundTwo'].map((name) => boundSpecialist(f, name))
+        })
+      )
+      mkdirSync(join(f.cwd, 'nested'))
+      const inspect =
+        'printf "cwd=%s\\npath=%s\\nbound=%s\\noverlay=%s\\nquoted=%s\\nsecret=%s\\npythonpath=%s\\nuser=%s\\n" "$PWD" "$PATH" "$PHI_CONTRACT_BOUND" "${PHI_CONTRACT_OVERLAY-missing}" "$PHI_CONTRACT_QUOTED" "${PHI_CONTRACT_HOST_SECRET-missing}" "${PYTHONPATH-missing}" "${PHI_USER_EXPORT-missing}"'
+      const first = `cd nested; export PHI_USER_EXPORT=persisted; ${inspect}`
+      f.provider.enqueue(
+        { tool: { name: 'BoundOne', args: { task: 'Inspect, rebind, then inspect again.' } } },
+        { tool: { name: 'bash', id: 'bound-first', args: { command: first } } },
+        { tool: { name: 'bash', id: 'bound-same', args: { command: inspect } } },
+        {
+          tool: {
+            name: 'env_request',
+            args: { packages: ['fixture-package'], reason: 'Contract rebind' }
+          }
+        },
+        { tool: { name: 'bash', id: 'bound-rebound', args: { command: inspect } } },
+        { text: 'First binding verified.' },
+        { tool: { name: 'BoundTwo', args: { task: 'Inspect isolated second child.' } } },
+        { tool: { name: 'bash', id: 'bound-second-child', args: { command: inspect } } },
+        { text: 'Second binding verified.' },
+        { text: 'Bound specialists complete.' }
+      )
+      const state = await f.engine.sessions.prompt({
+        sessionId: 'contract',
+        text: 'Inspect both bindings.'
+      })
+      assert.equal(text(state.messages!.at(-1)), 'Bound specialists complete.')
+      assert.deepEqual(bindings, ['BoundOne', 'BoundOne-v2', 'BoundTwo'])
+      assert.deepEqual(
+        approvals
+          .filter((item) => item.toolName === 'bash')
+          .map((item) => record(item.input).command),
+        [first, inspect, inspect, inspect]
+      )
+      const [one, same, rebound, two] = [
+        'bound-first',
+        'bound-same',
+        'bound-rebound',
+        'bound-second-child'
+      ].map((id) => outputFields(modelToolOutput(f, id)))
+      assert.equal(realpathSync(one.cwd), realpathSync(join(f.cwd, 'nested')))
+      assert.equal(
+        realpathSync(rebound.cwd),
+        realpathSync(f.cwd),
+        'Each native call resets cwd to the project root'
+      )
+      assert.equal(one.user, 'persisted')
+      assert.equal(same.user, 'persisted', 'User exports must persist before rebinding too')
+      assert.equal(realpathSync(same.cwd), realpathSync(f.cwd))
+      assert.equal(same.bound, 'one')
+      assert.equal(same.overlay, 'first')
+      assert.equal(rebound.user, 'persisted', 'User exports must persist across native calls')
+      assert.equal(one.bound, 'one')
+      assert.equal(one.overlay, 'first')
+      assert.equal(rebound.bound, 'two', 'Rebinding must affect the next native call')
+      assert.equal(rebound.overlay, 'missing', 'The previous binding overlay must be revoked')
+      assert.equal(two.user, 'missing', 'Another child session must not inherit a user export')
+      assert.equal(two.bound, 'one')
+      for (const fields of [one, same, rebound, two]) {
+        assert.equal(fields.quoted, malicious)
+        assert.equal(fields.secret, 'missing')
+        assert.equal(fields.pythonpath, 'missing')
+        assert.ok(
+          fields.path.startsWith(join(f.cwd, fields === two ? 'BoundTwo' : 'BoundOne', 'bin'))
+        )
+      }
+      assert.equal(existsSync(injected), false, 'Quoted binding values must never execute')
+      const completed = childSteps(observed).filter(
+        (step) => step.toolName === 'bash' && step.status === 'done'
+      )
+      assert.equal(completed.length, 4)
+    }
+  )
+
+  contract('keeps native shell state isolated between two parent sessions', async (f) => {
+    f.engine.host.register('environments.bindSession', (request) => ({
+      ref: String(record(request).ref),
+      variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
+    }))
+    for (const sessionId of ['parent-one', 'parent-two']) {
+      await f.engine.sessions.create(
+        params(f, sessionId, { phiAgents: [boundSpecialist(f, 'BoundCheck')] })
+      )
+    }
+    const commands = [
+      'export PHI_USER_SESSION=first; printf "session=%s\\n" "$PHI_USER_SESSION"',
+      'printf "session=%s\\n" "${PHI_USER_SESSION-missing}"'
+    ]
+    for (const [index, sessionId] of ['parent-one', 'parent-two'].entries()) {
+      f.provider.enqueue(
+        { tool: { name: 'BoundCheck', args: { task: 'Inspect your shell state.' } } },
+        { tool: { name: 'bash', id: `parent-bash-${index}`, args: { command: commands[index] } } },
+        { text: 'Child inspected.' },
+        { text: 'Parent complete.' }
+      )
+      await f.engine.sessions.prompt({ sessionId, text: 'Run the native check.' })
+    }
+    assert.equal(outputFields(modelToolOutput(f, 'parent-bash-0')).session, 'first')
+    assert.equal(outputFields(modelToolOutput(f, 'parent-bash-1')).session, 'missing')
+  })
+
+  contract(
+    'forwards native stdout stderr and nonzero exit without changing the command',
+    async (f) => {
+      f.engine.host.register('environments.bindSession', () => ({
+        ref: 'BoundExit',
+        variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
+      }))
+      const observed = events(f)
+      const approvals = approveTools(f)
+      await f.engine.sessions.create(
+        params(f, 'contract', {
+          enableToolApproval: true,
+          phiAgents: [boundSpecialist(f, 'BoundExit')]
+        })
+      )
+      const command = 'printf "native-stdout\\n"; printf "native-stderr\\n" >&2; exit 7'
+      f.provider.enqueue(
+        { tool: { name: 'BoundExit', args: { task: 'Report the nonzero native command.' } } },
+        { tool: { name: 'bash', id: 'native-exit', args: { command } } },
+        { text: 'Exit observed.' },
+        { text: 'Native exit reported.' }
+      )
+      const state = await f.engine.sessions.prompt({
+        sessionId: 'contract',
+        text: 'Run exit contract.'
+      })
+      assert.equal(text(state.messages!.at(-1)), 'Native exit reported.')
+      const output = modelToolOutput(f, 'native-exit')
+      assert.match(output, /native-stdout/)
+      assert.match(output, /native-stderr/)
+      assert.match(output, /(?:exit|code)[^\n]*7/i)
+      assert.deepEqual(
+        approvals
+          .filter((item) => item.toolName === 'bash')
+          .map((item) => record(item.input).command),
+        [command]
+      )
+      const step = childSteps(observed).find(
+        (item) => item.id === 'native-exit' && item.status === 'error'
+      )
+      assert.ok(step, 'Nonzero native exit must be forwarded as an error step')
+    }
+  )
+
+  contract('cancels active native bound bash without delayed side effects', async (f) => {
+    f.engine.host.register('environments.bindSession', () => ({
+      ref: 'BoundCancel',
+      variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
+    }))
+    const approvals = approveTools(f)
+    const observed = events(f)
+    await f.engine.sessions.create(
+      params(f, 'contract', {
+        enableToolApproval: true,
+        phiAgents: [boundSpecialist(f, 'BoundCancel')]
+      })
+    )
+    const started = join(f.cwd, 'native-started')
+    const cancelled = join(f.cwd, 'native-should-not-write')
+    const command = `printf started > ${shellLiteral(started)}; printf native-running; sleep 3; printf late > ${shellLiteral(cancelled)}`
+    f.provider.enqueue(
+      { tool: { name: 'BoundCancel', args: { task: 'Run until cancelled.' } } },
+      { tool: { name: 'bash', id: 'native-cancel', args: { command } } }
+    )
+    const prompt = f.engine.sessions.prompt({
+      sessionId: 'contract',
+      text: 'Start native command.'
+    })
+    void prompt.catch(() => undefined)
+    await until(() => existsSync(started), 'native bash started')
+    await within(f.engine.sessions.abort({ sessionId: 'contract' }), 'abort native bash')
+    const state = await within(prompt, 'cancelled native prompt')
+    assert.ok(
+      state.messages
+        ?.map(record)
+        .some((item) => item.role === 'assistant' && item.stopReason === 'aborted')
+    )
+    assert.ok(observed.some((item) => item.type === 'agent_end'))
+    assert.deepEqual(
+      approvals
+        .filter((item) => item.toolName === 'bash')
+        .map((item) => record(item.input).command),
+      [command]
+    )
+    await new Promise((resolve) => setTimeout(resolve, 3200))
+    assert.equal(existsSync(cancelled), false, 'Cancelled native command must not resume and write')
+    f.provider.enqueue({ text: 'After native cancellation.' })
+    const next = await f.engine.sessions.prompt({
+      sessionId: 'contract',
+      text: 'Continue after native cancellation.'
+    })
+    assert.equal(text(next.messages!.at(-1)), 'After native cancellation.')
+  })
+
   contract('reads compaction defaults and applies and resets session overrides', async (f) => {
     const defaults = await f.engine.settings.autoCompactionDefaults({
       cwd: f.cwd,
@@ -378,9 +665,13 @@ export function engineContract(name: string, factory: EngineFactory): void {
     )
   })
 
-  for (const available of [true, false]) {
+  for (const [available, modelId] of [
+    [true, 'contract-model'],
+    [false, 'contract-model'],
+    [false, 'contract[model]*']
+  ] as const) {
     contract(
-      `restores history when its saved model is ${available ? 'available' : 'unavailable'}`,
+      `restores history when its saved model is ${available ? 'available' : 'unavailable'}${modelId.includes('[') ? ' (literal glob id)' : ''}`,
       async (f) => {
         const created = await f.engine.sessions.create(
           params(f, 'before', {
@@ -394,8 +685,27 @@ export function engineContract(name: string, factory: EngineFactory): void {
           text: 'Remember this history.'
         })
         const path = previous.sessionFile ?? created.state.sessionFile
-        assert.ok(path?.startsWith(f.agentDir), `History must be isolated: ${path}`)
+        assert.ok(path, 'Persistent session must return its history path')
+        assert.ok(path.startsWith(f.agentDir), `History must be isolated: ${path}`)
+        assert.equal(
+          previous.model?.id,
+          modelId,
+          'The initial session must use this literal fixture ID'
+        )
         await f.engine.stop()
+        const selector = `${f.model.provider}/${modelId}`
+        const saved = readFileSync(path, 'utf8')
+          .split('\n')
+          .filter(Boolean)
+          .map((line) => record(JSON.parse(line)))
+        assert.ok(
+          saved.some(
+            (entry) =>
+              (entry.type === 'model_change' && entry.model === selector) ||
+              (entry.type === 'session_init' && entry.resolvedModel === selector)
+          ),
+          `History must persist the exact selector ${selector}`
+        )
         if (!available) f.removeModel()
         const restored = await f.engine.sessions.create(
           params(f, 'restored', {
@@ -427,8 +737,29 @@ export function engineContract(name: string, factory: EngineFactory): void {
             f.engine.sessions.prompt({ sessionId: 'restored', text: 'Cannot send.' }),
             /model|available/i
           )
+          const replacement = (
+            await f.engine.models.snapshot({ agentDir: f.agentDir })
+          ).models.find(
+            (model) => model.provider === f.model.provider && model.id === f.replacementModel.id
+          )
+          assert.ok(replacement, 'Fixture replacement model must be available')
+          const selected = await f.engine.sessions.setModel({
+            sessionId: 'restored',
+            agentDir: f.agentDir,
+            model: replacement
+          })
+          assert.equal(selected.model?.id, replacement.id)
+          f.provider.enqueue({ text: 'Recovered with replacement model.' })
+          const resumed = await f.engine.sessions.prompt({
+            sessionId: 'restored',
+            text: 'Resume with valid model.'
+          })
+          assert.equal(text(resumed.messages!.at(-1)), 'Recovered with replacement model.')
+          assert.equal(f.provider.requests.at(-1)?.model, replacement.id)
+          assert.ok(resumed.messages?.some((item) => text(item) === 'Saved evidence.'))
         }
-      }
+      },
+      modelId
     )
   }
 

@@ -56,6 +56,7 @@ asarUnpack:
   - node_modules/@types/**
   - node_modules/adm-zip/**
   - node_modules/ajv/**
+  - node_modules/axe-core/**
   - node_modules/boolean/**
   - node_modules/buffer-crc32/**
   - node_modules/chart.js/**

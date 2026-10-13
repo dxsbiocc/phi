@@ -10,7 +10,8 @@ interface OwnedChild {
 
 const owners = new AsyncLocalStorage<OwnedStdioTransportScope>()
 const spawning = new AsyncLocalStorage<{ owner: OwnedStdioTransportScope; active: boolean }>()
-const SDK_VERSION = '18.1.10'
+// Revalidated against 18.10.3: connect/close and Bun.spawn ownership are unchanged.
+const SDK_VERSION = '18.10.3'
 const CLEANUP_TIMEOUT_MS = 10_000
 let hooksInstalled = false
 let connectHook: StdioTransport['connect'] | undefined

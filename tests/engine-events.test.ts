@@ -391,3 +391,36 @@ test('no-tools event summaries preserve text and thinking streaming through the 
   }
   assert.equal(text, 'streamstream')
 })
+
+test('new cache warming and queue events preserve payloads and validate Phi fields', () => {
+  const valid = [
+    { type: 'cache_warming_start', phase: 'streaming', provider: 'contract', model: 'model' },
+    {
+      type: 'cache_warming_end',
+      phase: 'idle',
+      provider: 'contract',
+      model: 'model',
+      outcome: 'hit',
+      usage: { input: 1 },
+      warmingStopReason: 'stopped'
+    },
+    { type: 'queue_update', steering: ['one'], followUp: ['two'], liveSteered: 1 }
+  ] as const
+  for (const event of valid) {
+    assert.deepEqual(translate(event), event)
+    const decoded = phiEventFromWire(event)!
+    assert.equal(isPhiEventType(decoded, event.type), true)
+    if (isPhiEventType(decoded, 'cache_warming_start')) assert.equal(decoded.phase, 'streaming')
+    if (isPhiEventType(decoded, 'cache_warming_end')) assert.equal(decoded.outcome, 'hit')
+  }
+  for (const event of [
+    { ...valid[0], phase: 'future' },
+    { ...valid[1], outcome: undefined },
+    { ...valid[2], steering: [1] },
+    { ...valid[2], liveSteered: -1 }
+  ]) {
+    const decoded = phiEventFromWire(event)!
+    assert.deepEqual(decoded, event)
+    assert.equal(isPhiEventType(decoded, event.type), false)
+  }
+})

@@ -9,6 +9,7 @@ import {
   discoverAuthStorage
 } from '@oh-my-pi/pi-coding-agent'
 import { createAgentSession } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import { cfgWebSearchEnabled } from '@oh-my-pi/pi-coding-agent/tools/settings'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 
 import { createRemoteProjectToolGuardExtension } from '../../src/main/agent/engine/phi-extension'
@@ -29,7 +30,7 @@ writeFileSync(join(anchor, 'sentinel.txt'), 'untouched')
 try {
   const authStorage = await discoverAuthStorage(agentDir)
   const settings = await Settings.init({ cwd: agentDir, agentDir })
-  settings.override('web_search.enabled', true)
+  cfgWebSearchEnabled.override(settings, true)
   const hostRequests: unknown[] = []
   const tools: PhiTool[] = [
     buildBrowserTool('runtime-1', async (request) => {
@@ -132,13 +133,7 @@ async function execute(
 ): Promise<void> {
   const tool = tools.find((candidate) => candidate.name === name)
   if (!tool) throw new Error(`Missing active tool ${name}`)
-  const result = await tool.execute(
-    `${name}-call`,
-    input,
-    undefined,
-    {},
-    new AbortController().signal
-  )
+  const result = await tool.execute(`${name}-call`, input, new AbortController().signal, undefined)
   if (result.isError && name !== 'ask_user_question') throw new Error(`${name} failed`)
 }
 

@@ -14,12 +14,11 @@ function normalizeCredentialOrigin(origin: CredentialOrigin | undefined): PhiCre
   if (origin.kind === 'runtime') return 'runtime'
   if (origin.kind === 'env') return 'environment'
   if (origin.kind === 'oauth' || origin.kind === 'api_key') return 'stored'
-  if (origin.kind === 'fallback') return 'fallback'
   return undefined
 }
 
 function storedCredentialLabel(
-  entry: ReturnType<AuthStorage['listStoredCredentials']>[number]
+  entry: ReturnType<AuthStorage['credentials']['list']>[number]
 ): string {
   return entry.credential.type === 'oauth'
     ? (entry.credential.email ?? entry.credential.accountId ?? entry.provider)
@@ -29,7 +28,7 @@ function storedCredentialLabel(
 export function createPhiAuth(authStorage: AuthStorage): PhiAuth {
   return {
     listCredentials(authId?: string): PhiStoredCredential[] {
-      return authStorage.listStoredCredentials(authId).map((entry) => ({
+      return authStorage.credentials.list(authId).map((entry) => ({
         id: String(entry.id),
         providerId: entry.provider,
         type: entry.credential.type,
@@ -38,43 +37,44 @@ export function createPhiAuth(authStorage: AuthStorage): PhiAuth {
     },
 
     credentialStatus(providerId) {
+      const source = authStorage.keys.source(providerId)
       return {
-        available: authStorage.hasAuth(providerId) || authStorage.hasConcreteAuth(providerId),
-        origin: normalizeCredentialOrigin(authStorage.getCredentialOrigin(providerId)),
-        label: authStorage.describeCredentialSource(providerId)
+        available: source !== undefined,
+        origin: normalizeCredentialOrigin(source),
+        label: authStorage.keys.describe(providerId)
       }
     },
 
     hasOAuth(providerId) {
-      return authStorage.hasOAuth(providerId)
+      return authStorage.credentials.hasOAuth(providerId)
     },
 
     isFromEnvironment(authId) {
-      return authStorage.getCredentialOrigin(authId)?.kind === 'env'
+      return authStorage.keys.source(authId)?.kind === 'env'
     },
 
     async setApiKey(providerId, key) {
-      await authStorage.set(providerId, { type: 'api_key', key, source: 'login' })
+      await authStorage.credentials.set(providerId, { type: 'api_key', key, source: 'login' })
     },
 
     async replaceApiKey(authId, key) {
-      const existing = authStorage
-        .listStoredCredentials(authId)
+      const existing = authStorage.credentials
+        .list(authId)
         .filter((entry) => entry.credential.type !== 'api_key')
         .map((entry) => entry.credential)
-      await authStorage.set(authId, [...existing, { type: 'api_key', key: key.trim() }])
+      await authStorage.credentials.set(authId, [...existing, { type: 'api_key', key: key.trim() }])
     },
 
     async clearApiKeys(authId) {
-      for (const entry of authStorage.listStoredCredentials(authId)) {
+      for (const entry of authStorage.credentials.list(authId)) {
         if (entry.credential.type === 'api_key') {
-          await authStorage.removeCredential(authId, entry.id)
+          await authStorage.credentials.removeById(authId, entry.id)
         }
       }
     },
 
     async login(providerId, callbacks) {
-      await authStorage.login(providerId, {
+      await authStorage.oauth.login(providerId, {
         signal: callbacks.signal,
         onAuth: (info) => {
           callbacks.onAuth({
@@ -93,19 +93,19 @@ export function createPhiAuth(authStorage: AuthStorage): PhiAuth {
     },
 
     async logout(providerId) {
-      await authStorage.logout(providerId)
+      await authStorage.credentials.remove(providerId)
     },
 
     hasMcpOAuth(url) {
-      return authStorage.get(mcpOAuthCredentialId(url)) !== undefined
+      return authStorage.credentials.get(mcpOAuthCredentialId(url)) !== undefined
     },
 
     hasMcpOAuthToken(url) {
-      return authStorage.get(mcpOAuthCredentialId(url))?.type === 'oauth'
+      return authStorage.credentials.get(mcpOAuthCredentialId(url))?.type === 'oauth'
     },
 
     async setMcpOAuth(url, credential: PhiMcpOAuthCredential) {
-      await authStorage.set(mcpOAuthCredentialId(url), credential)
+      await authStorage.credentials.set(mcpOAuthCredentialId(url), credential)
     }
   }
 }

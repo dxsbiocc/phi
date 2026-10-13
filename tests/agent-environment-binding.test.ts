@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -81,7 +81,10 @@ test('bash rewrites keep explicit extras, force reserved names, and drop host le
   assert.equal(env.FOO, 'kept')
   assert.equal(env.HOME, '/Users/tester')
   assert.equal(rewritten.cwd, '/work')
-  assert.equal(rewritten.command, 'unset -v PHI_TEST_HOST_SECRET PYTHONPATH; echo hi')
+  assert.match(
+    String(rewritten.command),
+    /local -x PATH='\/tmp\/phi-env\/bin:[^']+' HOME='\/Users\/tester' PYTHONNOUSERSITE='1' FOO='kept'; local PHI_TEST_HOST_SECRET PYTHONPATH; unset -v PHI_TEST_HOST_SECRET PYTHONPATH;/
+  )
 })
 
 test('pty and async bash calls use the same rewrite', () => {
@@ -96,7 +99,10 @@ test('pty and async bash calls use the same rewrite', () => {
   assert.ok(rewritten)
   assert.equal(rewritten.pty, true)
   assert.equal(rewritten.async, true)
-  assert.equal(rewritten.command, 'unset -v PHI_TEST_HOST_SECRET; echo hi')
+  assert.match(
+    String(rewritten.command),
+    /local -x PATH='\/env\/bin:\/usr\/bin:\/bin'; local PHI_TEST_HOST_SECRET; unset -v PHI_TEST_HOST_SECRET;/
+  )
 })
 
 test('non-bash tool calls are left untouched', () => {
@@ -130,7 +136,11 @@ test('approval and the plan guard see the original command; the binding result i
   ])
   assert.deepEqual(seen, ['plan:echo original', 'approval:echo original', 'binding:echo original'])
   const input = result?.input as { command: string; env: Record<string, string> }
-  assert.equal(input.command, 'echo original')
+  assert.match(
+    input.command,
+    /local -x PATH='\/env\/bin:\/usr\/bin:\/bin' HOME='\/Users\/tester' FOO='1';/
+  )
+  assert.match(input.command, /; eval -- 'echo original'\n}; __phi_bound_bash_[a-f0-9]+$/)
   assert.equal(input.env.FOO, '1')
   assert.equal(input.env.PATH, '/env/bin:/usr/bin:/bin')
   assert.notEqual(input.command, 'echo approved-display')
@@ -190,10 +200,9 @@ test('the rewritten command runs with the environment and without host leaks', (
     )
     assert.ok(rewritten)
     assert.equal((rewritten.env as Record<string, string>).PATH, variables.PATH)
-    // omp Shell.run merges `env` over the process environment, so the spawn
-    // env is the host plus the overlay. The unset prefix removes the rest.
+    // Native bash ignores env overlays; the command prefix establishes the binding.
     const ran = spawnSync('/bin/bash', ['-c', String(rewritten.command)], {
-      env: { ...hostEnv, ...(rewritten.env as Record<string, string>) },
+      env: hostEnv,
       encoding: 'utf8'
     })
     assert.equal(ran.status, 0, ran.stderr)
@@ -259,7 +268,7 @@ test(
       )
       assert.ok(rewritten)
       const ran = spawnSync('/bin/bash', ['-c', String(rewritten.command)], {
-        env: { ...hostEnv, ...(rewritten.env as Record<string, string>) },
+        env: hostEnv,
         encoding: 'utf8'
       })
       assert.equal(ran.status, 0, ran.stderr)
@@ -269,3 +278,47 @@ test(
     }
   }
 )
+
+test('bound bash quotes values and command syntax, preserves exit status, and removes its function', () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-bound-bash-quote-'))
+  try {
+    const marker = join(root, 'escaped')
+    const binding = {
+      ref: REF,
+      variables: { PATH: '/usr/bin:/bin', VALUE: `quoted'$(touch ${marker})` },
+      hostEnv: {}
+    }
+    const input = rewriteBoundBashInput(
+      { command: 'printf "%s\\n" "$VALUE"; declare -F; exit 17' },
+      binding
+    )!
+    const ran = spawnSync('/bin/bash', ['-c', String(input.command)], {
+      env: { PATH: '/usr/bin:/bin' },
+      encoding: 'utf8'
+    })
+    assert.equal(ran.status, 17)
+    assert.equal(ran.stdout.trim(), binding.variables.VALUE)
+    assert.equal(existsSync(marker), false)
+    const escaped = rewriteBoundBashInput({ command: `}; touch '${marker}'; #` }, binding)!
+    const malformed = spawnSync('/bin/bash', ['-c', String(escaped.command)], {
+      env: { PATH: '/usr/bin:/bin' },
+      encoding: 'utf8'
+    })
+    assert.notEqual(malformed.status, 0)
+    assert.equal(
+      existsSync(marker),
+      false,
+      'original command syntax must not escape the binding wrapper'
+    )
+    assert.throws(
+      () =>
+        rewriteBoundBashInput(
+          { command: 'true' },
+          { ref: REF, variables: { 'BAD;NAME': 'value' } }
+        ),
+      /invalid variable name/
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

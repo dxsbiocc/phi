@@ -40,6 +40,7 @@ import {
   buildRemoteWorkspaceCustomTools,
   buildRemoteWorkspaceRead
 } from '../../src/main/agent/engine/remote-workspace-custom-tools'
+import { createPhiSettings } from '../../src/main/agent/engine/in-process/settings'
 import { toOmpCustomTool } from '../../src/main/agent/engine/tool-adapter'
 import {
   buildWorkerProjectLearnTool,
@@ -273,10 +274,10 @@ try {
   const mock = createMockModel({ responses: turns })
 
   const authStorage = await discoverAuthStorage(agentDir)
-  authStorage.setRuntimeApiKey('mock', 'test')
+  authStorage.keys.setRuntime('mock', 'test')
   const settings = await Settings.init({ cwd: agentDir, agentDir })
   // Project memory with lesson recording on, keyed by the project anchor like the worker does.
-  settings.override('memory.backend', 'local')
+  createPhiSettings(settings).memory.useLocalBackend()
   const memoryTarget = { agentDir, cwd: anchor }
   customTools.push(buildWorkerProjectLearnTool(memoryTarget))
   // Remote MCP: only the application mcp.json, loaded from agentDir, guarded by its policy.
@@ -295,8 +296,8 @@ try {
       extensionRoots: {
         explicit: [],
         mode: 'merge',
-        configured: settings.get('extensions') ?? [],
-        configuredLevel: settings.extensionsSourceLevel()
+        configured: createPhiSettings(settings).extensions.read().configured,
+        configuredLevel: createPhiSettings(settings).extensions.read().sourceLevel
       }
     },
     load: async (loadCwd, options) =>

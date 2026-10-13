@@ -1,3 +1,4 @@
+import { cfgBashAutoBackgroundEnabled } from '@oh-my-pi/pi-coding-agent/exec/settings'
 import { randomUUID } from 'node:crypto'
 import {
   SessionManager,
@@ -183,7 +184,11 @@ export async function createPhiAgentSession(
         remoteProject: deps.remoteProject
       }
     : skillHost
-  const settings = await Settings.init({ cwd: sessionCwd, agentDir })
+  const settings = (await Settings.init({ cwd: sessionCwd, agentDir })).overlay()
+  // OMP 18.10 gives every specialist an async manager. Automatic backgrounding
+  // would turn ordinary calls into disposable job shells, losing the persistent
+  // shell exports Phi specialists had on 18.1. Explicit async remains available.
+  cfgBashAutoBackgroundEnabled.override(settings, false)
   const loader =
     isRecord(deps.resourceOptions) || deps.remoteRoot
       ? new DefaultResourceLoader({

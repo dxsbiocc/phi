@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { PhiExtensionEnvironmentBinding } from '../host'
 import { isRecord } from './common'
 
@@ -44,8 +45,24 @@ export function rewriteBoundBashInput(
     drop.push(name)
   }
   drop.sort()
-  const prefix = drop.length > 0 ? `unset -v ${drop.join(' ')}; ` : ''
-  return { ...input, command: `${prefix}${input.command}`, env: desired }
+  // OMP 18.10 native bash removed its env overlay. Function-local exported
+  // variables reproduce that overlay without leaking a binding into the next
+  // call, while user-created shell variables keep the native persistent behavior.
+  const functionName = `__phi_bound_bash_${randomUUID().replaceAll('-', '')}`
+  const assignments = Object.entries(desired).map(([name, value]) => {
+    if (!SHELL_NAME.test(name))
+      throw new Error('environment binding contains an invalid variable name')
+    return `${name}=${shellQuote(value)}`
+  })
+  const exports = assignments.length > 0 ? `local -x ${assignments.join(' ')}; ` : ''
+  const hide = drop.length > 0 ? `local ${drop.join(' ')}; unset -v ${drop.join(' ')}; ` : ''
+  // Remove the temporary function before the command, including early return,
+  // failure, exit and exec paths. The call remains last to preserve exit status.
+  return {
+    ...input,
+    command: `${functionName}() { ${exports}${hide}unset -f ${functionName}; eval -- ${shellQuote(input.command)}\n}; ${functionName}`,
+    env: desired
+  }
 }
 
 export async function reduceToolCallResults(
@@ -72,4 +89,8 @@ function explicitEnv(value: unknown): Record<string, string> {
     if (typeof item === 'string') env[name] = item
   }
   return env
+}
+
+function shellQuote(value: string): string {
+  return "'" + value.replaceAll("'", "'\\''") + "'"
 }

@@ -34,6 +34,28 @@
       "plan": "keep"
     },
     {
+      "file": "src/main/agent/engine/in-process/settings.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/config/registry",
+        "@oh-my-pi/pi-coding-agent/config/model-resolver",
+        "@oh-my-pi/pi-coding-agent/extensibility/settings",
+        "@oh-my-pi/pi-coding-agent/mcp/settings",
+        "@oh-my-pi/pi-coding-agent/memory-backend/settings",
+        "@oh-my-pi/pi-coding-agent/session/context-settings",
+        "@oh-my-pi/pi-coding-agent/session/settings",
+        "@oh-my-pi/pi-coding-agent/web/search/provider",
+        "@oh-my-pi/pi-coding-agent/web/settings"
+      ],
+      "purpose": "OMP 18.10 registered setting handles and native web role chains behind the Phi-owned settings contract",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/in-process/subagents.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/exec/settings"],
+      "purpose": "Keep specialist ordinary Bash calls on the persistent foreground path after OMP 18.10 per-session async manager changes",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/in-process/specialist-tool-call-extensions.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent",
@@ -93,15 +115,14 @@
       "specifiers": [
         "@oh-my-pi/pi-ai/types",
         "@oh-my-pi/pi-catalog/compat/auth",
-        "@oh-my-pi/pi-catalog/provider-models/descriptors",
-        "@oh-my-pi/pi-coding-agent/config/provider-globals",
+        "@oh-my-pi/pi-catalog/compat/providers",
+        "@oh-my-pi/pi-ai/utils/schema",
+        "@oh-my-pi/pi-ai/dialect",
         "@oh-my-pi/pi-coding-agent/memories",
         "@oh-my-pi/pi-coding-agent/memories/storage",
-        "@oh-my-pi/pi-coding-agent/modes/utils/context-usage",
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",
         "@oh-my-pi/pi-coding-agent/plan-mode/plan-files",
         "@oh-my-pi/pi-coding-agent/session/compaction-methods",
-        "@oh-my-pi/pi-coding-agent/thinking",
         "@oh-my-pi/pi-utils"
       ],
       "purpose": "Long-term non-MCP boundary for OMP internal functions and compatibility checks",
@@ -170,6 +191,7 @@
     {
       "file": "tests/helpers/remoteParityToolSmoke.ts",
       "specifiers": [
+        "@oh-my-pi/pi-coding-agent/tools/settings",
         "@oh-my-pi/pi-coding-agent",
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
         "@oh-my-pi/pi-coding-agent/modes/runtime-init"

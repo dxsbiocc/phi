@@ -109,17 +109,16 @@ const request = (path: string): { sessionId: string; projectId: string; path: st
 
 function localOmpSelectorOutput(content: string, selector: string): string {
   const script = `
+    import { Settings } from '@oh-my-pi/pi-coding-agent'
     import { buildInMemorySelectorResult } from './node_modules/@oh-my-pi/pi-coding-agent/src/tools/read-format.ts'
     import { parseSel } from './node_modules/@oh-my-pi/pi-coding-agent/src/tools/read-selector.ts'
     const content = Buffer.from(process.env.PHI_SELECTOR_CONTENT, 'base64').toString('utf8')
     const session = {
       cwd: process.cwd(),
       hasEditTool: true,
-      settings: {
-        get: (key) => key === 'edit.mode' ? 'replace' : key === 'readLineNumbers' ? true : undefined
-      }
+      settings: Settings.isolated({ 'edit.mode': 'replace', readLineNumbers: true })
     }
-    const result = buildInMemorySelectorResult(
+    const result = await buildInMemorySelectorResult(
       session,
       content,
       parseSel(process.env.PHI_SELECTOR),
