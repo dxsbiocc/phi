@@ -97,6 +97,8 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 如果怀疑 macOS 睡眠，使用 `pmset -g log` 的具体 sleep／wake 时间与失败窗口对照，不能仅凭耗时很长就归因。确认供电与机器清醒后，可用临时 `caffeinate -is -- bun run test` 重跑；该命令在本次已执行通过。核实临时进程断言生效，并在进程结束后释放，不永久修改系统电源设置。
 
+后续 T10a 的首轮全量有 50 个 `listen EPERM 127.0.0.1` 失败，均为沙箱禁止本地监听；在允许隔离回环服务的环境重跑同一冻结代码，4862 项全量零失败。测试监听权限与代码正确性分别取证，不放宽业务断言、超时或跳过条件。
+
 本次两次未通过运行的停顿窗口与系统 Idle／Maintenance Sleep 记录吻合。此前仅使用 `-i` 没有覆盖维护睡眠；最终 `-is` 冻结代码运行才取得完整通过结果。早先失败日志保留，未放宽断言、超时或跳过条件。后续故障仍须重新取证，不能套用这个原因。
 
 ## 6. 人工清单与远程启用门槛
@@ -149,5 +151,7 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 | 全量代码稳定性 | 运行前后差异 SHA256 均为 `0343b3162bb661377aed2ba780322eea478b8ece4e4f0a04dfd11b173839b363`；此前失败日志保留                                         |
 | 分支保存       | T8 `cf2303ce`；用户要求暂留分支；没有由此宣称 T8 已合入 main                                                                                          |
 | 后续 R1        | T9 独立审查 APPROVE，提交 `3e8462a8`；T10 候选分支整合提交 `46df9dc8`，在 18.10.3 依赖下复跑部署测试 27／27；真实资产／Linux／SSH／RPC 启用未据此验收 |
+
+T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 项、新增会话回归 20 项（19 真实引擎、1 wire metadata）、原丰富契约 18 项通过。完整候选分支 4862 项：4837 通过、0 失败/取消、24 既有跳过、1 todo，296.71 秒；生产 typecheck/lint/build/asar 通过。T10b 扩展启动、安全加载确认和哈希部署仍在实施；此结果不能视为完整 R2 或真实服务器验收。
 
 本地证据归档位于恢复工作区，属于执行记录，不是随仓库交付的产品资源：T8 副本的 `.omx/t8-upgrade-report.md`、`.omx/t8-full-test-awake.log`／`.exit`、`.omx/t8-contract-final.log`、`.omx/t8-mcp-stdio-regression.log`、`.omx/t8-cross-version-history.log`、`.omx/t8-native-terminal-smoke.log`；T9 副本的 `.omx/t9-deployment-report.md` 与缓存修复前后日志。审查或合入时应把必要结论写入可持久追踪的提交／审查说明，不能只依赖本地临时文件。

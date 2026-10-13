@@ -1,6 +1,6 @@
 # OMP 解耦、远程运行时与 OMP 升级计划
 
-状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 定向验收通过、整组确认进行中，T10b 扩展 bootstrap 准备接续；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
+状态：**阶段 1（T0–T7）已验收并经用户授权合入 main（`6d9d9ef3`）**。T8 的 18.10.3 升级已完成独立代码审查和自动化验收，保存在 `codex/omp-upgrade-18-10-3`；人工运行时清单仍待验证。用户明确要求 T8 暂留分支继续后续任务。T9 部署已通过最终独立复验；T10a 基础 RPC 已通过独立审查和完整自动化验收（`053c3f88`），T10b 扩展 bootstrap 正在实施；T17 升级手册已交付。2026-10-13 由 Codex 接替 Claude 管理与审查。
 创建日期：2026-10-12
 执行：Codex 原生 subagents；负责人：当前 Codex 主会话（任务拆分、进度管理、独立质量审查与最终验收）。所有项目验证命令使用 `bun run`；限定测试采用同一脚本的 Node runner，避免参数附加后误跑全套。
 关联文档：`docs/roadmap/remote-parity-implementation.md`、`docs/roadmap/internal-beta-implementation.md`、`docs/architecture/frontend-feature-boundaries.md`
@@ -27,7 +27,7 @@
 | T7 引擎契约测试 | 基于 T5 的独立副本 | 13 个真实 worker 契约通过，含审批、中断、子会话、恢复、API key/OAuth 存储状态 |
 | T8 OMP 升级 | `codex/omp-upgrade-18-10-3`，精确锁定 18.10.3 | 实现、独立审查及自动化验收通过；人工清单待验证 |
 | T9 R1 分发部署 | `3e8462a8`；候选分支整合为 `46df9dc8` | 独立 APPROVE；两项缓存缺陷红绿修复；18.10.3 下复跑 27/27 和专用测试类型检查通过 |
-| T10a 基础 RPC | `codex/omp-rpc-foundation` | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产整合确认进行中 |
+| T10a 基础 RPC | `codex/omp-rpc-foundation` | 两路独立 APPROVE；协议 26/26，真实基础及回归新增 20/20，原 18 条契约保留通过；生产 typecheck/lint/build/asar 通过；全量 4862 项、0 失败/取消 |
 | T10b 扩展启动与部署 | 前置协议已实现，实施计划已写 | 实际默认入口、安全加载确认、完整文件哈希部署及现有 SSH stdio 工厂；完成前不宣称整个 R2 完成 |
 | T17 升级手册 | [操作手册](../runtime/omp-upgrade-runbook.md) | 已记录本次实际升级步骤、验证证据和人工缺口；T8 合入权限单独记录 |
 | T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
@@ -384,7 +384,7 @@ bun run test
 
 **R2 启动与连接**
 
-实施拆分（2026-10-13）：T10a 使用 Node-only 协议与窄 `RpcSessionBackend`，真实本地 CLI 和 InProcess 运行同一基础契约，不伪装完整 55 操作 `PhiEngine`。`response` 仅代表 prompt 接收，完成依赖 same-id `prompt_result` 并读取真实状态/历史。两路独立审查已修复 turn lock、同 ID 换代、同步/异步 observer、旧 cleanup 错误污染和 wire metadata 校验；协议 26/26、基础及回归新增 20/20、原丰富契约 18/18 全部通过，含真实 >1 MiB 多字节流/历史和 64 MiB 分块上限。整组确认结果另行记录。
+实施拆分（2026-10-13）：T10a 使用 Node-only 协议与窄 `RpcSessionBackend`，真实本地 CLI 和 InProcess 运行同一基础契约，不伪装完整 55 操作 `PhiEngine`。`response` 仅代表 prompt 接收，完成依赖 same-id `prompt_result` 并读取真实状态/历史。两路独立审查已修复 turn lock、同 ID 换代、同步/异步 observer、旧 cleanup 错误污染和 wire metadata 校验；协议 26/26、基础及回归新增 20/20、原丰富契约 18/18 全部通过，含真实 >1 MiB 多字节流/历史和 64 MiB 分块上限。候选分支冻结提交 `053c3f88` 的完整测试共 4862 项：4837 通过、0 失败、0 取消、24 既有跳过、1 既有 todo，296.71 秒；生产 node/web/scripts 类型检查、lint、构建与 asar 闭包通过。首轮相同代码的 50 个失败全部为沙箱禁止回环端口监听（EPERM），允许隔离本地监听后整组通过；代码、断言、超时与跳过条件均未变。
 
 T10b 才完成真实 `-e` 默认入口、加载安全确认、完整扩展文件内容哈希部署和复用现有 SSH stdio 的启动工厂。扩展 loader 报错可能仅记录诊断，必须在启动阶段证明预期守卫已加载；审批桥接前写入/执行保持拒绝。模型代理、宿主工具、审批、子会话和远程恢复仍按 R3–R7 推进；当前不接产品 UI，不连接真实服务器。
 
