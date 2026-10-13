@@ -236,9 +236,47 @@
       "plan": "keep"
     },
     {
+      "file": "tests/helpers/model-gateway-vendor-child.ts",
+      "specifiers": ["@oh-my-pi/pi-ai", "@oh-my-pi/pi-coding-agent"],
+      "purpose": "T11b private real-SDK provider native-hop parity oracle with synthetic credentials and loopback transport only; no production SDK import outside engine",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/model-gateway-cloud-child.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-ai",
+        "@oh-my-pi/pi-coding-agent",
+        "@oh-my-pi/pi-ai/utils/event-stream"
+      ],
+      "purpose": "T11b private real-SDK cloud/bridge native-hop parity oracle with synthetic credentials and loopback transport; public event-stream subpath supplies matching runtime/declarations omitted by the root type index",
+      "plan": "keep"
+    },
+    {
       "file": "tests/helpers/rpcAgentDefinitionProbe.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/task/discovery"],
       "purpose": "T14 test-only actual private CLI ExtensionFactory and pinned native discovery oracle for generated definitions; no production SDK dependency outside engine",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/phi-extension/lib/rpc-native-stream-adapter.ts",
+      "specifiers": ["@oh-my-pi/pi-ai/utils/event-stream"],
+      "purpose": "Pinned OMP 18.10.3 compiled extension host supplies its canonical event-stream class for selective lossless native gateway adaptation; this single public runtime subpath is verified by actual private CLI oracle",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcNativeStreamCli.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "T11b test-only ExtensionFactory type for actual private CLI native stream installer and lifecycle oracle through the public host registry",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcNativeStreamUnit.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-ai/utils/event-stream",
+        "@oh-my-pi/pi-ai",
+        "@oh-my-pi/pi-agent-core"
+      ],
+      "purpose": "T11b private Bun harness uses the canonical public event-stream class and erased SDK types to exercise selective native adapter parser, repair, bounds and cancellation before actual vendor/CLI oracles",
       "plan": "keep"
     }
   ]
