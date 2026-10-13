@@ -3,6 +3,8 @@ import type { PhiTool, PhiToolContext, PhiToolImage, PhiToolResult } from '../ty
 import { RpcConnection } from './connection'
 import { rpcIdentifier, rpcRecord, validToolResult } from './control-frame'
 import { encodeRpcCommand, MAX_RPC_FRAME_BYTES } from './frame-codec'
+import { encodeHostResult } from '../phi-extension/lib/rpc-host-result-protocol'
+import type { RpcHostResultDelivery } from './host-result-delivery'
 import { registeredHostTools, type RegisteredHostTool } from './host-tool-validation'
 import type { RpcControlChannel, RpcControlFrame, RpcFrame } from './types'
 
@@ -30,11 +32,15 @@ export interface RpcHostToolBridgeOptions {
   tools: readonly PhiTool[]
   scope: RpcHostToolScope
   signal?: AbortSignal
+  /** Owned by this bridge; root injects the matching private server hydration extension. */
+  resultDelivery?: RpcHostResultDelivery
   onError?(error: Error): void
 }
 interface Invocation {
   id: string
   toolCallId: string
+  toolName: string
+  finishing: boolean
   run: RpcHostToolRun
   runId: string
   runSignal: AbortSignal
@@ -56,11 +62,12 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
-/** Small-result foundation only. R5 must provide main-call authority before production activation. */
+/** R5 must provide main-call authority before production activation. */
 export class RpcHostToolBridge {
   private readonly channel: RpcControlChannel
   private readonly roster: Map<string, RegisteredHostTool>
   private readonly calls = new Map<string, Invocation>()
+  private readonly delivered = new Map<string, string>()
   private readonly seen = new Set<string>()
   private readonly seenToolCalls = new Set<string>()
   private readonly scope: RpcHostToolScope
@@ -85,6 +92,16 @@ export class RpcHostToolBridge {
     }
     this.roster = registeredHostTools(options.tools)
     this.channel = options.connection.bindControl()
+    if (
+      options.resultDelivery &&
+      !options.resultDelivery.matchesScope({
+        generation: this.channel.generation,
+        phiSessionId: this.scope.sessionId,
+        projectId: this.scope.projectId,
+        cwd: this.scope.cwd
+      })
+    )
+      throw new Error('Host result delivery does not match the current generation scope')
     if (generations.get(options.connection) === this.channel.generation) {
       throw new Error('RPC host tools already bound in this generation')
     }
@@ -164,6 +181,8 @@ export class RpcHostToolBridge {
       }
     }
     this.calls.clear()
+    this.delivered.clear()
+    void this.options.resultDelivery?.dispose().catch((error: unknown) => this.fail(asError(error)))
   }
 
   private untilRetired<T>(operation: Promise<T>): Promise<T> {
@@ -182,6 +201,14 @@ export class RpcHostToolBridge {
 
   private receive(frame: RpcFrame): void {
     if (this.disposed) return
+    if (frame.type === 'tool_execution_end' && typeof frame.toolCallId === 'string') {
+      const runId = this.delivered.get(frame.toolCallId)
+      if (runId) {
+        this.delivered.delete(frame.toolCallId)
+        this.options.resultDelivery?.consumed(runId, frame.toolCallId)
+      }
+      return
+    }
     if (frame.type === 'host_tool_cancel') {
       if (!rpcIdentifier(frame.id) || !rpcIdentifier(frame.targetId)) return
       const call = this.calls.get(frame.targetId)
@@ -205,7 +232,8 @@ export class RpcHostToolBridge {
       !run ||
       !rpcIdentifier(run.id) ||
       run.signal.aborted ||
-      this.seenToolCalls.has(frame.toolCallId) ||
+      this.seenToolCalls.has(JSON.stringify([run.id, frame.toolCallId])) ||
+      this.delivered.has(frame.toolCallId) ||
       this.calls.size >= MAX_ACTIVE_CALLS ||
       this.disposed
     ) {
@@ -217,13 +245,15 @@ export class RpcHostToolBridge {
       this.reject(frame.id, 'Host tool input does not match its declared schema')
       return
     }
-    this.seenToolCalls.add(frame.toolCallId)
+    this.seenToolCalls.add(JSON.stringify([run.id, frame.toolCallId]))
     const controller = new AbortController()
     const runSignal = run.signal
     const cancel = (): void => this.finish(call, errorResult('Host tool execution cancelled'), true)
     const call: Invocation = {
       id: frame.id,
       toolCallId: frame.toolCallId,
+      toolName: tool.definition.name,
+      finishing: false,
       run,
       runId: run.id,
       runSignal,
@@ -329,7 +359,7 @@ export class RpcHostToolBridge {
   }
 
   private update(call: Invocation, partial: PhiToolResult): void {
-    if (!this.live(call)) return
+    if (!this.live(call) || call.finishing) return
     try {
       this.enqueue(call, { type: 'host_tool_update', id: call.id, partialResult: partial })
     } catch {
@@ -347,6 +377,79 @@ export class RpcHostToolBridge {
       result = errorResult('Host tool execution cancelled')
       abort = true
     }
+    if (!abort && call.finishing) return
+    if (!abort && this.options.resultDelivery) {
+      try {
+        if (!validToolResult(result)) throw new Error('Invalid host tool result')
+        let smallFrame: Buffer | undefined
+        try {
+          smallFrame = encodeRpcCommand({
+            type: 'host_tool_result',
+            id: call.id,
+            result,
+            isError: result.isError === true
+          })
+        } catch {
+          /* A complete large result uses the private file transport. */
+        }
+        const structuredError =
+          result.isError === true &&
+          (result.details !== undefined || result.content.some((part) => part.type === 'image'))
+        if (!smallFrame || structuredError) {
+          const snapshot = JSON.parse(encodeHostResult(result).toString('utf8')) as PhiToolResult
+          call.finishing = true
+          // Reserve the complete payload now, before waiting behind prior writes.
+          // Upload activation itself waits on this call's existing progress sequence.
+          const publication = this.options.resultDelivery.publish(
+            snapshot,
+            {
+              runId: call.runId,
+              invocationId: call.id,
+              toolCallId: call.toolCallId,
+              toolName: call.toolName
+            },
+            call.controller.signal,
+            call.serial
+          )
+          void publication.catch(() => undefined)
+          call.serial = call.serial.then(async () => {
+            try {
+              const receipt = await publication
+              if (!this.live(call)) return
+              this.complete(call, receipt, false, false, true)
+            } catch {
+              if (this.live(call))
+                this.complete(
+                  call,
+                  errorResult(
+                    'Host tool result delivery failed or exceeds its supported logical/file/byte budget'
+                  ),
+                  true
+                )
+            }
+          })
+          void call.serial.catch((error: unknown) => this.fail(asError(error)))
+          return
+        }
+        // Preserve the existing small-result JSON serialization contract.
+        result = (JSON.parse(smallFrame!.toString('utf8')) as { result: PhiToolResult }).result
+      } catch {
+        result = errorResult(
+          'Host tool result exceeds its supported logical limit or has invalid JSON content'
+        )
+      }
+    }
+    this.complete(call, result, result.isError === true, abort)
+  }
+
+  private complete(
+    call: Invocation,
+    result: PhiToolResult,
+    frameError: boolean,
+    abort = false,
+    receipt = false
+  ): void {
+    if (receipt) this.delivered.set(call.toolCallId, call.runId)
     call.settled = true
     call.detach()
     this.calls.delete(call.id)
@@ -356,7 +459,7 @@ export class RpcHostToolBridge {
         type: 'host_tool_result',
         id: call.id,
         result,
-        isError: result.isError === true
+        isError: frameError
       })
     } catch {
       try {
@@ -397,7 +500,23 @@ export class RpcHostToolBridge {
           (snapshot.type !== 'host_tool_update' ||
             (current === call.run && current.signal === call.run.signal && !current.signal.aborted))
         ) {
-          await this.channel.sendControl(snapshot)
+          const staleFinal =
+            snapshot.type === 'host_tool_result' &&
+            snapshot.isError !== true &&
+            (this.disposed ||
+              current !== call.run ||
+              current.signal.aborted ||
+              current.authorizeCall !== call.authority)
+          await this.channel.sendControl(
+            staleFinal
+              ? {
+                  type: 'host_tool_result',
+                  id: call.id,
+                  result: errorResult('Host tool execution cancelled'),
+                  isError: true
+                }
+              : snapshot
+          )
         }
       })
       .finally(() => {
