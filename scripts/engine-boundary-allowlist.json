@@ -290,6 +290,12 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/internal-urls"],
       "purpose": "T14 actual native task/private CLI oracle uses ExtensionAPI types and the exact public compiled-host InternalUrlRouter module for child identity, cancellation and host URI protocol tests",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcNativeWireCli.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "T11c private actual CLI ExtensionFactory type for native wire DTO projection; real SDK tools/speculative execution remain local while synthetic loopback captures the official transport surface",
+      "plan": "keep"
     }
   ]
 }

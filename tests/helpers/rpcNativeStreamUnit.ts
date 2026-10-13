@@ -79,6 +79,7 @@ const model = {
   baseUrl: 'http://127.0.0.1:34567'
 } as Model<'openai-completions'>
 const context: Context = { messages: [{ role: 'user', content: 'private fixture', timestamp: 1 }] }
+const nativeBody = JSON.stringify({ modelId: 'fixture/one', context, options: {}, stream: true })
 const drain = async (stream: Awaited<ReturnType<StreamFn>>): Promise<AssistantMessage> => {
   for await (const event of stream) {
     assert.equal(typeof event.type, 'string')
@@ -280,6 +281,7 @@ function originalFor(
       try {
         const response = await options!.fetch!(endpoint, {
           method: 'POST',
+          body: nativeBody,
           signal: options?.signal
         })
         await options?.onResponse?.({
@@ -506,7 +508,7 @@ await check('sequential original SDK retries observe only the final attempt', as
     void (async () => {
       try {
         for (let i = 0; i < 2; i++)
-          await (await options!.fetch!(endpoint, { method: 'POST' })).text()
+          await (await options!.fetch!(endpoint, { method: 'POST', body: nativeBody })).text()
         stream.push(done([thinking, text]))
       } catch (error) {
         stream.fail(error)
@@ -533,7 +535,7 @@ await check('original nested fetch abort signal is combined rather than overwrit
     const stream = new AssistantMessageEventStream()
     void (async () => {
       try {
-        await options!.fetch!(endpoint, { method: 'POST', signal: nested.signal })
+        await options!.fetch!(endpoint, { method: 'POST', body: nativeBody, signal: nested.signal })
         stream.end(message())
       } catch (error) {
         stream.fail(error)

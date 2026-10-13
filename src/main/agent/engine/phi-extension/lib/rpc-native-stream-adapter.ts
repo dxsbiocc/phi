@@ -8,6 +8,7 @@ import {
   NATIVE_EVENT_BYTES
 } from './rpc-native-sse'
 import { repairNativeTerminal } from './rpc-native-repair'
+import { projectNativeWireBody } from './rpc-native-wire'
 
 export interface TrustedNativeStreamScope {
   readonly generation: number
@@ -139,6 +140,17 @@ export function createNativeStreamIntegrityAdapter(
                 'POST' &&
               !fetching
           )
+          const requestBody = projectNativeWireBody(init?.body, `${model.provider}/${model.id}`)
+          let requestHeaders = init?.headers
+          const declaredHeaders = new Headers(
+            init?.headers ?? (input instanceof Request ? input.headers : undefined)
+          )
+          if (declaredHeaders.has('content-length')) {
+            // Derive the projected body's length without changing ordinary
+            // header objects or the gateway's actual Authorization header.
+            declaredHeaders.delete('content-length')
+            requestHeaders = declaredHeaders
+          }
           fetching = true
           const requestCapture = new NativeSseCapture()
           capture.clear()
@@ -156,7 +168,13 @@ export function createNativeStreamIntegrityAdapter(
             const acquisition = Promise.resolve(
               Reflect.apply(target, receiver, [
                 input,
-                { ...init, redirect: 'manual', signal: requestSignal }
+                {
+                  ...init,
+                  body: requestBody,
+                  headers: requestHeaders,
+                  redirect: 'manual',
+                  signal: requestSignal
+                }
               ]) as Promise<Response>
             )
             void acquisition.then(
