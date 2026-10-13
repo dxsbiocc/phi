@@ -17,12 +17,14 @@ import {
 import { buildNotebookCustomTools } from '../../notebook/notebook-tools'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
+import { buildLibraryCustomTools } from '../../library/library-tools'
 import { createHostJobClient } from '../../wrappers/composition/job-host-client'
 import { WRAPPER_JOB_HOST_METHODS } from '../../wrappers/composition/job-types'
 import { buildWrapperCompositionTools } from '../../wrappers/composition/tools'
 import { HostServiceRegistry } from '../host-service-registry'
 import type { PhiHostRequestContext, PhiTool, PhiToolImage, PhiToolApproval } from '../types'
 import { rpcIdentifier } from './control-frame'
+import { remoteLibraryToolStore } from './remote-library-service'
 
 export interface RpcDesktopToolIdentity {
   readonly runtimeSessionId: string
@@ -52,6 +54,8 @@ export interface RpcDesktopToolScopeOptions {
   readonly paletteCatalogPath?: string
   readonly allowedSkills: readonly string[]
   readonly scriptTools: readonly ScriptToolDescriptor[]
+  /** Enable after the genuine selected-workspace library.execute/cancel service is registered. */
+  readonly remoteLibrary?: true
   /** The actual RemoteRuntimeController.approvalFor; required when script tools are enabled. */
   readonly scriptApprovalFor?: (toolName: string, input: unknown) => PhiToolApproval | undefined
 }
@@ -80,7 +84,8 @@ const CANCELLATIONS = new Set([
   'browser.cancel',
   'skills.cancel',
   'environments.cancel',
-  'remoteWorkspace.cancelDownload'
+  'remoteWorkspace.cancelDownload',
+  'library.cancel'
 ])
 const coordinatedTools = new WeakSet<PhiTool>()
 
@@ -181,6 +186,7 @@ export function createRpcDesktopToolScope(
   const skillRequest = requestFor(['skills.run', 'skills.scriptTool', 'skills.cancel'])
   const environmentRequest = requestFor(['environments.request', 'environments.cancel'])
   const wrapperRequest = requestFor(Object.values(WRAPPER_JOB_HOST_METHODS))
+  const libraryRequest = requestFor(['library.execute', 'library.cancel'])
   const download: RemoteDownloadBackend = async (request, signal) => {
     signal?.throwIfAborted()
     const requestId = randomUUID()
@@ -212,6 +218,15 @@ export function createRpcDesktopToolScope(
       interactionRequest('agentInteraction.request', request)
     ),
     buildRenderBlocksTool(),
+    ...(options.remoteLibrary
+      ? buildLibraryCustomTools(
+          remoteLibraryToolStore(libraryRequest, identity, () => {
+            const call = calls.getStore()
+            if (!call) throw new Error('Library call has no trusted tool identity')
+            return call.toolCallId
+          })
+        )
+      : []),
     buildPaletteRecommendationTool(options.paletteCatalogPath),
     ...buildNotebookCustomTools((request) => notebookRequest('notebookTool.execute', request), {
       remoteProject: { runtimeSessionId: identity.runtimeSessionId, ...remoteProject }
@@ -331,7 +346,9 @@ export function createRpcDesktopToolScope(
   return {
     identity,
     tools,
-    unavailable: UNAVAILABLE,
+    unavailable: options.remoteLibrary
+      ? UNAVAILABLE.filter(({ capability }) => capability !== 'library')
+      : UNAVAILABLE,
     recentUserImages: recentImages,
     approvalFor(toolName, input) {
       if (lifetime.signal.aborted) return undefined
