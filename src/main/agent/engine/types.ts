@@ -49,3 +49,72 @@ export interface PhiTool<TParams = Record<string, unknown>, TDetails = unknown> 
     signal?: AbortSignal
   ): Promise<PhiToolResult<TDetails>>
 }
+
+export type PhiCredentialType = 'api_key' | 'oauth'
+
+export interface PhiStoredCredential {
+  id: string
+  providerId: string
+  type: PhiCredentialType
+  /** OAuth: email, else accountId, else providerId. API key: providerId. */
+  label: string
+}
+
+export type PhiCredentialOrigin =
+  | 'stored'
+  | 'runtime'
+  | 'environment'
+  | 'fallback'
+  | 'models_json_key'
+  | 'models_json_command'
+  | undefined
+
+export interface PhiCredentialStatus {
+  /** hasAuth || hasConcreteAuth (the stored-credential part stays with the caller). */
+  available: boolean
+  origin: PhiCredentialOrigin
+  label: string | undefined
+}
+
+export interface PhiLoginCallbacks {
+  signal?: AbortSignal
+  onAuth(info: { url: string; instructions?: string }): void
+  onProgress(message: string): void
+  onManualCodeInput(): Promise<string>
+  onPrompt(prompt: { message: string; placeholder?: string }): Promise<string>
+}
+
+export interface PhiMcpOAuthCredential {
+  type: 'oauth'
+  refresh: string
+  access: string
+  expires: number
+  enterpriseUrl?: string
+  projectId?: string
+  email?: string
+  accountId?: string
+  apiEndpoint?: string
+  orgId?: string
+  orgName?: string
+  authorizedAt?: number
+  tokenUrl?: string
+  clientId?: string
+  clientSecret?: string
+  resource?: string
+  authorizationUrl?: string
+}
+
+export interface PhiAuth {
+  listCredentials(authId?: string): PhiStoredCredential[]
+  credentialStatus(providerId: string): PhiCredentialStatus
+  hasOAuth(providerId: string): boolean
+  isFromEnvironment(authId: string): boolean
+  setApiKey(providerId: string, key: string): Promise<void>
+  replaceApiKey(authId: string, key: string): Promise<void>
+  clearApiKeys(authId: string): Promise<void>
+  login(providerId: string, callbacks: PhiLoginCallbacks): Promise<void>
+  logout(providerId: string): Promise<void>
+  hasMcpOAuth(url: string): boolean
+  hasMcpOAuthToken(url: string): boolean
+  setMcpOAuth(url: string, credential: PhiMcpOAuthCredential): Promise<void>
+}

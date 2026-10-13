@@ -22,7 +22,6 @@ import {
   type ResourceDiagnostic
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
-import { mcpOAuthCredentialId } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import { estimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import {
   DEFAULT_COMPACTION_METHOD_ORDER,
@@ -31,7 +30,7 @@ import {
 import { resolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import { listPlanFiles, readPlanFile } from '@oh-my-pi/pi-coding-agent/plan-mode/plan-files'
 import { applyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
-import type { AuthStorage, CredentialOrigin, StoredAuthCredential } from '@oh-my-pi/pi-ai'
+import type { AuthStorage } from '@oh-my-pi/pi-ai'
 import type { Model } from '@oh-my-pi/pi-ai/types'
 import {
   parseConfiguredThinkingLevel,
@@ -41,7 +40,8 @@ import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
 import { toOmpCustomTool } from './tool-adapter'
-import type { PhiTool } from './types'
+import { createPhiAuth } from './in-process/auth'
+import type { PhiAuth, PhiTool } from './types'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
@@ -194,6 +194,7 @@ type ProjectResourceName = 'extensions' | 'prompts' | 'skills' | 'themes'
 
 type RuntimeContext = {
   agentDir: string
+  auth: PhiAuth
   authStorage: AuthStorage
   modelRegistry: ModelRegistry
 }
@@ -449,15 +450,16 @@ async function getContext(agentDirParam?: unknown): Promise<RuntimeContext> {
   const promise = (async (): Promise<RuntimeContext> => {
     if (agentDir) process.env.PI_CODING_AGENT_DIR = agentDir
     const authStorage = await discoverAuthStorage(agentDir || undefined)
+    const auth = createPhiAuth(authStorage)
     const modelRegistry = new ModelRegistry(authStorage)
     await modelRegistry.hydrateCredentialScopedModelCaches().catch(() => undefined)
-    return { agentDir, authStorage, modelRegistry }
+    return { agentDir, auth, authStorage, modelRegistry }
   })()
   contexts.set(key, promise)
   return promise
 }
 
-function webSearchAuthStatus(authStorage: AuthStorage): Record<
+function webSearchAuthStatus(auth: PhiAuth): Record<
   string,
   {
     apiKeyConfigured: boolean
@@ -470,9 +472,7 @@ function webSearchAuthStatus(authStorage: AuthStorage): Record<
       const keyId = 'apiKeyAuthId' in detail ? detail.apiKeyAuthId : undefined
       const oauthIds = 'oauthAuthIds' in detail ? detail.oauthAuthIds : []
       const storedKey = keyId
-        ? authStorage
-            .listStoredCredentials(keyId)
-            .some((entry) => entry.credential.type === 'api_key')
+        ? auth.listCredentials(keyId).some((entry) => entry.type === 'api_key')
         : false
       const envNames =
         'apiKeyEnv' in detail
@@ -483,7 +483,7 @@ function webSearchAuthStatus(authStorage: AuthStorage): Record<
             ]
           : []
       const envKey = Boolean(
-        (keyId && authStorage.getCredentialOrigin(keyId)?.kind === 'env') ||
+        (keyId && auth.isFromEnvironment(keyId)) ||
         envNames.some((name) => Boolean(process.env[name]?.trim()))
       )
       return [
@@ -491,7 +491,7 @@ function webSearchAuthStatus(authStorage: AuthStorage): Record<
         {
           apiKeyConfigured: storedKey || envKey,
           apiKeyStored: storedKey,
-          oauthConfigured: oauthIds.some((provider) => authStorage.hasOAuth(provider))
+          oauthConfigured: oauthIds.some((provider) => auth.hasOAuth(provider))
         }
       ]
     })
@@ -519,25 +519,6 @@ function serializeModel(model: Model): RuntimeModelSummary {
     supportsImages: model.input.includes('image'),
     ...(serializeThinkingMap(model) ? { thinkingLevelMap: serializeThinkingMap(model) } : {})
   }
-}
-
-function normalizeCredentialOrigin(
-  origin: CredentialOrigin | undefined
-):
-  | 'stored'
-  | 'runtime'
-  | 'environment'
-  | 'fallback'
-  | 'models_json_key'
-  | 'models_json_command'
-  | undefined {
-  if (!origin) return undefined
-  if (origin.kind === 'config') return 'models_json_key'
-  if (origin.kind === 'runtime') return 'runtime'
-  if (origin.kind === 'env') return 'environment'
-  if (origin.kind === 'oauth' || origin.kind === 'api_key') return 'stored'
-  if (origin.kind === 'fallback') return 'fallback'
-  return undefined
 }
 
 function configuredThinkingLevel(value: unknown): ConfiguredThinkingLevel | undefined {
@@ -571,25 +552,14 @@ async function modelRuntimeSnapshot(params: unknown): Promise<unknown> {
   const ctx = await getContext(record.agentDir)
   const models = ctx.modelRegistry.getAll().map(serializeModel)
   const providerIds = [...new Set(models.map((model) => model.provider))].sort()
-  const credentials = ctx.authStorage
-    .listStoredCredentials()
-    .map((credential: StoredAuthCredential) => ({
-      id: String(credential.id),
-      providerId: credential.provider,
-      type: credential.credential.type,
-      label:
-        credential.credential.type === 'oauth'
-          ? (credential.credential.email ?? credential.credential.accountId ?? credential.provider)
-          : credential.provider
-    }))
+  const credentials = ctx.auth.listCredentials()
 
   return {
     providers: providerIds.map((id) => {
       const policy = authPolicyFor(id)
+      const status = ctx.auth.credentialStatus(id)
       const configured =
-        ctx.authStorage.hasAuth(id) ||
-        ctx.authStorage.hasConcreteAuth(id) ||
-        credentials.some((credential) => credential.providerId === id)
+        status.available || credentials.some((credential) => credential.providerId === id)
 
       return {
         id,
@@ -600,8 +570,8 @@ async function modelRuntimeSnapshot(params: unknown): Promise<unknown> {
         },
         status: {
           configured,
-          source: normalizeCredentialOrigin(ctx.authStorage.getCredentialOrigin(id)),
-          label: ctx.authStorage.describeCredentialSource(id)
+          source: status.origin,
+          label: status.label
         }
       }
     }),
@@ -620,7 +590,7 @@ async function loginModelRuntime(params: unknown): Promise<unknown> {
   if (type === 'api_key') {
     const key = stringValue(record.key)
     if (!key) throw new Error('Missing API key')
-    await ctx.authStorage.set(providerId, { type: 'api_key', key, source: 'login' })
+    await ctx.auth.setApiKey(providerId, key)
     await ctx.modelRegistry.refresh('offline').catch(() => undefined)
     return modelRuntimeSnapshot(record)
   }
@@ -629,14 +599,14 @@ async function loginModelRuntime(params: unknown): Promise<unknown> {
     throw new Error(`Unsupported auth type: ${type}`)
   }
 
-  await ctx.authStorage.login(providerId, {
+  await ctx.auth.login(providerId, {
     signal: undefined,
     onAuth: (info) => {
       sendEvent('authNotify', {
         providerId,
         event: {
           type: 'auth_url',
-          url: info.launchUrl ?? info.url,
+          url: info.url,
           instructions: info.instructions
         }
       })
@@ -671,7 +641,7 @@ async function logoutModelRuntime(params: unknown): Promise<unknown> {
   const providerId = stringValue(record.providerId)
   const ctx = await getContext(record.agentDir)
   if (!providerId) throw new Error('Missing providerId')
-  await ctx.authStorage.logout(providerId)
+  await ctx.auth.logout(providerId)
   await ctx.modelRegistry.refresh('offline').catch(() => undefined)
   return modelRuntimeSnapshot(record)
 }
@@ -2757,8 +2727,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       if (auth === 'oauth' && !mcpOAuthAuthorizationOrigin(id, url)) {
         throw new Error('该连接器尚不支持登录状态查询')
       }
-      const authStorage = auth === 'oauth' ? (await getContext()).authStorage : undefined
-      if (authStorage && !authStorage.get(mcpOAuthCredentialId(url))) {
+      const context = auth === 'oauth' ? await getContext() : undefined
+      if (context && !context.auth.hasMcpOAuth(url)) {
         throw new Error(`请先授权登录 ${id}`)
       }
       const apiKey = auth === 'header' ? await requestHost('mcp.featuredApiKey', { id }) : undefined
@@ -2768,7 +2738,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return listFeaturedMcpTools(
         id,
         url,
-        authStorage,
+        context?.authStorage,
         typeof apiKey === 'string' ? apiKey : undefined
       )
     }
@@ -2838,7 +2808,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
         const ctx = await getContext()
         await authorizeFeaturedMcp(
           connector.url,
-          ctx.authStorage,
+          ctx.auth,
           (url) =>
             requestHost('mcp.openCustomAuthUrl', {
               name,
@@ -2878,8 +2848,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       if (!mcpOAuthAuthorizationOrigin(id, url)) {
         throw new Error('该连接器尚不支持登录状态查询')
       }
-      const { authStorage } = await getContext()
-      return authStorage.get(mcpOAuthCredentialId(url))?.type === 'oauth'
+      const { auth } = await getContext()
+      return auth.hasMcpOAuthToken(url)
     }
     case 'mcp.cancelFeaturedAuth': {
       const id = isRecord(params) ? stringValue(params.id) : ''
@@ -2899,7 +2869,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       try {
         await authorizeFeaturedMcp(
           url,
-          ctx.authStorage,
+          ctx.auth,
           (url) => requestHost('mcp.openAuthUrl', { id, url }) as Promise<void>,
           cancel.signal,
           readRemoteMcpOAuthCredentials(id, url, ctx.agentDir || undefined)
@@ -2936,7 +2906,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
         ? stringValue(params.agentDir, process.env.PI_CODING_AGENT_DIR)
         : stringValue(process.env.PI_CODING_AGENT_DIR)
       const settings = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
-      const { authStorage } = await getContext(agentDir)
+      const { auth } = await getContext(agentDir)
       return webSearchSettingsFromValues(
         {
           order: settings.get('providers.webSearchOrder'),
@@ -2944,7 +2914,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
           endpoint: settings.get('searxng.endpoint'),
           engines: settings.get('searxng.engines')
         },
-        webSearchAuthStatus(authStorage)
+        webSearchAuthStatus(auth)
       )
     }
     case 'settings.webSearch.update': {
@@ -2959,7 +2929,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       await settings.flush()
       applyProviderGlobalsFromSettings(settings)
       const persisted = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
-      const { authStorage } = await getContext(agentDir)
+      const { auth } = await getContext(agentDir)
       return webSearchSettingsFromValues(
         {
           order: persisted.get('providers.webSearchOrder'),
@@ -2967,7 +2937,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
           endpoint: persisted.get('searxng.endpoint'),
           engines: persisted.get('searxng.engines')
         },
-        webSearchAuthStatus(authStorage)
+        webSearchAuthStatus(auth)
       )
     }
     case 'settings.webSearch.apiKey.set': {
@@ -2982,18 +2952,9 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       if (typeof key !== 'string' || !key.trim() || key.length > 4096 || /[\r\n]/.test(key)) {
         throw new Error('请输入有效的 API Key')
       }
-      const { authStorage } = await getContext(record.agentDir)
-      const existing = authStorage
-        .listStoredCredentials(detail.apiKeyAuthId)
-        .filter((entry) => entry.credential.type !== 'api_key')
-        .map((entry) => entry.credential)
-      await authStorage.set(detail.apiKeyAuthId, [
-        ...existing,
-        { type: 'api_key', key: key.trim() }
-      ])
-      return webSearchAuthStatus(authStorage)[
-        providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS
-      ]
+      const { auth } = await getContext(record.agentDir)
+      await auth.replaceApiKey(detail.apiKeyAuthId, key)
+      return webSearchAuthStatus(auth)[providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS]
     }
     case 'settings.webSearch.apiKey.clear': {
       const record = isRecord(params) ? params : {}
@@ -3003,15 +2964,9 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
           ? WEB_SEARCH_PROVIDER_DETAILS[providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS]
           : undefined
       if (!detail || !('apiKeyAuthId' in detail)) throw new Error('该搜索服务没有 API Key')
-      const { authStorage } = await getContext(record.agentDir)
-      for (const entry of authStorage.listStoredCredentials(detail.apiKeyAuthId)) {
-        if (entry.credential.type === 'api_key') {
-          await authStorage.removeCredential(detail.apiKeyAuthId, entry.id)
-        }
-      }
-      return webSearchAuthStatus(authStorage)[
-        providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS
-      ]
+      const { auth } = await getContext(record.agentDir)
+      await auth.clearApiKeys(detail.apiKeyAuthId)
+      return webSearchAuthStatus(auth)[providerId as keyof typeof WEB_SEARCH_PROVIDER_DETAILS]
     }
     case 'settings.webSearch.searxngEngines': {
       const agentDir = isRecord(params)

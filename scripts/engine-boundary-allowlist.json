@@ -91,6 +91,12 @@
       "plan": "remove"
     },
     {
+      "file": "src/main/agent/engine/in-process/auth.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/mcp/oauth-flow"],
+      "purpose": "MCP OAuth credential ID mapping inside the PhiAuth adapter",
+      "plan": "remove"
+    },
+    {
       "file": "src/main/agent/engine/omp-sdk-worker.ts",
       "specifiers": [
         "@oh-my-pi/pi-ai/types",
@@ -100,7 +106,6 @@
         "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
         "@oh-my-pi/pi-coding-agent/mcp/config",
         "@oh-my-pi/pi-coding-agent/mcp/manager",
-        "@oh-my-pi/pi-coding-agent/mcp/oauth-flow",
         "@oh-my-pi/pi-coding-agent/modes/runtime-init",
         "@oh-my-pi/pi-coding-agent/modes/utils/context-usage",
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",

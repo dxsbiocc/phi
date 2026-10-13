@@ -7,7 +7,6 @@ import {
 } from '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery'
 import {
   MCPOAuthFlow,
-  mcpOAuthCredentialId,
   type MCPStoredOAuthCredential
 } from '@oh-my-pi/pi-coding-agent/mcp/oauth-flow'
 import {
@@ -16,6 +15,7 @@ import {
   featuredApiKeyMcpConfig
 } from '../mcp-key-credentials'
 import type { RemoteMcpConnectorOptions } from '../../../shared/mcpConnectorCatalog'
+import type { PhiAuth } from './types'
 
 const FEATURED_MCP_AUTH_TIMEOUT_MS = 2 * 60_000
 
@@ -48,7 +48,7 @@ export async function discoverCustomMcpOAuthEndpoints(
 
 export async function authorizeFeaturedMcp(
   url: string,
-  authStorage: AuthStorage,
+  auth: Pick<PhiAuth, 'setMcpOAuth'>,
   openAuthUrl: (url: string) => Promise<void>,
   signal?: AbortSignal,
   oauth?: RemoteMcpConnectorOptions['oauth'],
@@ -94,7 +94,7 @@ export async function authorizeFeaturedMcp(
       resource: flow.resource,
       authorizationUrl: flow.authorizationUrl
     }
-    await authStorage.set(mcpOAuthCredentialId(url), stored)
+    await auth.setMcpOAuth(url, stored)
   } catch (error) {
     if (timeout.signal.aborted) throw new Error('授权已超时')
     if (signal?.aborted) throw new Error('授权已取消')

@@ -99,7 +99,9 @@ test('saved client fields reach the installed SDK authorization and token exchan
   })
   const authorize = module.authorizeFeaturedMcp as (
     url: string,
-    storage: { set: (id: string, credential: Record<string, unknown>) => Promise<void> },
+    auth: {
+      setMcpOAuth: (url: string, credential: Record<string, unknown>) => Promise<void>
+    },
     open: (url: string) => Promise<void>,
     signal?: AbortSignal,
     oauth?: RemoteMcpConnectorOptions['oauth'],
@@ -111,8 +113,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
   await authorize(
     'https://mcp.example.test/mcp',
     {
-      set: async (id, credential) => {
-        stored.push({ id, credential })
+      setMcpOAuth: async (url, credential) => {
+        stored.push({ id: `mcp_oauth:${url}`, credential })
       }
     },
     async (url) => {
@@ -146,8 +148,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
   await authorize(
     'https://public.example.test/mcp',
     {
-      set: async (id, credential) => {
-        stored.push({ id, credential })
+      setMcpOAuth: async (url, credential) => {
+        stored.push({ id: `mcp_oauth:${url}`, credential })
       }
     },
     async (url) => {
@@ -163,8 +165,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
     authorize(
       'https://mcp.example.test/mcp',
       {
-        set: async (id, credential) => {
-          stored.push({ id, credential })
+        setMcpOAuth: async (url, credential) => {
+          stored.push({ id: `mcp_oauth:${url}`, credential })
         }
       },
       async () => undefined,
@@ -189,8 +191,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
       authorize(
         'https://mcp.example.test/mcp',
         {
-          set: async (id, credential) => {
-            stored.push({ id, credential })
+          setMcpOAuth: async (url, credential) => {
+            stored.push({ id: `mcp_oauth:${url}`, credential })
           }
         },
         async () => undefined,
@@ -356,7 +358,7 @@ test('worker custom OAuth RPC reaches the helper with exact saved credentials an
         assert.equal(savedUrl, url)
         return endpoints
       },
-      getContext: async () => ({ authStorage: 'private-store' }),
+      getContext: async () => ({ auth: 'private-store' }),
       requestHost: async (method: string, params: unknown) => {
         hostRequests.push({ method, params })
       },
