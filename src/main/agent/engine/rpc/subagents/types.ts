@@ -1,0 +1,66 @@
+import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../../agents/definition'
+import type { ModelGatewayModelRef, SafeModelDescriptor } from '../../model-gateway-types'
+import type { PhiExtensionFile } from '../extension-deployment/types'
+
+/** Trusted desktop binding, never inferred from agent frontmatter or a remote URL. */
+export interface RpcAgentServerBinding {
+  readonly serverId: string
+  readonly serverIdentitySha256: string
+  readonly projectId: string
+  readonly projectRoot: string
+}
+
+/** A ready environment already resolved by the desktop environment service. */
+export interface RpcAgentEnvironmentDescriptor {
+  readonly ref: string
+  readonly pluginId?: string
+  readonly environmentId: string
+  readonly lockSha256: string
+  readonly status: 'ready'
+  readonly binding: RpcAgentServerBinding
+}
+
+export interface RpcAgentToolDescriptor {
+  readonly name: string
+  readonly site: 'native' | 'host'
+}
+
+export interface RpcAgentDefinitionProfile {
+  readonly definitionHash: string
+  readonly phiName: string
+  readonly nativeName: string
+  readonly blocking: boolean
+  readonly tools: readonly RpcAgentToolDescriptor[]
+  readonly skills: readonly string[]
+  readonly model: ModelGatewayModelRef
+  readonly thinkingLevel?: PhiAgentThinkingLevel
+  readonly environment?: RpcAgentEnvironmentDescriptor
+}
+
+export interface RpcAgentDefinitionManifest {
+  readonly schema: 1
+  readonly binding: RpcAgentServerBinding
+  readonly entries: readonly RpcAgentDefinitionProfile[]
+}
+
+export interface RpcAgentDefinitionCompilation {
+  /** Relative agents/*.md and the sidecar; root owns private atomic publication. */
+  readonly files: readonly PhiExtensionFile[]
+  readonly manifest: RpcAgentDefinitionManifest
+  readonly manifestHash: string
+  readonly warnings: readonly string[]
+}
+
+export interface CompileRpcAgentDefinitionsOptions {
+  readonly definitions: readonly PhiAgentDefinition[]
+  readonly binding: RpcAgentServerBinding
+  readonly availableModels: readonly SafeModelDescriptor[]
+  readonly parentModel: ModelGatewayModelRef
+  readonly parentThinkingLevel?: PhiAgentThinkingLevel
+  readonly availableTools: readonly RpcAgentToolDescriptor[]
+  readonly availableSkills: readonly string[]
+  /** Receives a detached safe snapshot, without desktop file paths or plugin objects. */
+  readonly resolveEnvironment?: (
+    agent: Readonly<Pick<PhiAgentDefinition, 'name' | 'environment' | 'pluginId'>>
+  ) => RpcAgentEnvironmentDescriptor | Promise<RpcAgentEnvironmentDescriptor>
+}

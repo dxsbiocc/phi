@@ -234,6 +234,12 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent/session/session-title-slot"],
       "purpose": "R7 test-only physical journal format oracle uses the pinned SDK pure title-slot serializer so strict preflight is checked against real title/header layout",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcAgentDefinitionProbe.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-coding-agent/task/discovery"],
+      "purpose": "T14 test-only actual private CLI ExtensionFactory and pinned native discovery oracle for generated definitions; no production SDK dependency outside engine",
+      "plan": "keep"
     }
   ]
 }
