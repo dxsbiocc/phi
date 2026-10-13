@@ -308,6 +308,18 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent", "@oh-my-pi/pi-agent-core/compaction"],
       "purpose": "R7 private actual CLI oracle uses ExtensionAPI types and public DEFAULT_SHAKE_CONFIG to create genuine SDK-pruned messages and shake artifacts for strict restoration validation",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcChildServerExtension.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "R6a test-only ExtensionFactory type for an actual private CLI using production child registration and native approval modules; no production SDK import outside engine",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/phi-extension/extensions/rpc-subagents.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/internal-urls"],
+      "purpose": "R6a native child authority uses the exact shared host InternalUrlRouter export; verified against pinned source and the official18.10.3 macOS single-file runtime in an isolated no-node_modules private extension tree",
+      "plan": "keep"
     }
   ]
 }

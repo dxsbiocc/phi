@@ -95,6 +95,16 @@ export interface RpcHostToolCancel extends RpcFrame {
 }
 
 export type RpcControlFrame =
+  | {
+      type: 'host_uri_result'
+      id: string
+      content?: string
+      contentType?: 'text/markdown' | 'application/json' | 'text/plain'
+      notes?: string[]
+      immutable?: boolean
+      isError?: boolean
+      error?: string
+    }
   | { type: 'host_tool_update'; id: string; partialResult: PhiToolResult }
   | { type: 'host_tool_result'; id: string; result: PhiToolResult; isError?: boolean }
   | { type: 'extension_ui_response'; id: string; value: string }
@@ -106,10 +116,17 @@ export type RpcControlFrame =
       answers: Array<{ id: string; selectedOptions: string[]; customInput?: string }>
     }
 
+/** Trusted, synchronous commit hooks; never constructs or changes admitted control bytes. */
+export interface RpcControlCommit {
+  canSubmit(): boolean
+  /** Marks the synchronous stdin.write submission boundary; no await or observer notification. */
+  onSubmit(): void
+}
+
 /** Captures one ready generation; it cannot write to or observe a replacement channel. */
 export interface RpcControlChannel {
   readonly generation: number
   readonly signal: AbortSignal
-  sendControl(frame: RpcControlFrame): Promise<void>
+  sendControl(frame: RpcControlFrame, commit?: RpcControlCommit): Promise<void>
   onFrame(listener: (frame: RpcFrame) => void): () => void
 }

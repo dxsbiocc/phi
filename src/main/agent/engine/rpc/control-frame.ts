@@ -1,5 +1,6 @@
 import type { PhiToolResult } from '../types'
 import type { RpcControlFrame } from './types'
+import { MAX_RPC_FRAME_BYTES } from './frame-codec'
 
 export function rpcRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -50,6 +51,34 @@ export function validateControlFrame(value: unknown): asserts value is RpcContro
     only(value, ['type', 'id', 'result', 'isError']) &&
     validToolResult(value.result) &&
     (value.isError === undefined || typeof value.isError === 'boolean')
+  )
+    return
+  if (
+    value.type === 'host_uri_result' &&
+    only(value, [
+      'type',
+      'id',
+      'content',
+      'contentType',
+      'notes',
+      'immutable',
+      'isError',
+      'error'
+    ]) &&
+    (value.content === undefined ||
+      (typeof value.content === 'string' &&
+        Buffer.byteLength(value.content) <= MAX_RPC_FRAME_BYTES)) &&
+    (value.error === undefined ||
+      (typeof value.error === 'string' && Buffer.byteLength(value.error) <= 4096)) &&
+    (value.contentType === undefined ||
+      (typeof value.contentType === 'string' &&
+        ['text/markdown', 'application/json', 'text/plain'].includes(value.contentType))) &&
+    (value.immutable === undefined || typeof value.immutable === 'boolean') &&
+    (value.isError === undefined || typeof value.isError === 'boolean') &&
+    (value.notes === undefined ||
+      (Array.isArray(value.notes) &&
+        value.notes.length <= 32 &&
+        value.notes.every((note) => typeof note === 'string' && Buffer.byteLength(note) <= 4096)))
   )
     return
   if (value.type === 'extension_ui_response') {

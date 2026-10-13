@@ -198,19 +198,11 @@ export function createRpcRuntimeHostPolicy(options: RpcRuntimeHostPolicyOptions)
               await notify(decision === 'cancelled' ? 'approval_cancelled' : 'approval_denied')
               return undefined
             }
-            await notify('approval_approved')
-            // Terminal observers may synchronously stop/dispose/change live policy.
-            if (
-              !live() ||
-              classify() !== initial ||
-              options.approval.shouldGate(request) !== currentGate ||
-              !live()
-            ) {
-              if (!joined.aborted) options.onDenied(original.id)
-              await notify('approval_cancelled')
-              return undefined
-            }
-            return 'main'
+            // Authorization commits after the final trusted checks above. Observers
+            // may stop execution, but cannot roll this decision into a second terminal.
+            const committed = 'main' as const
+            notify('approval_approved')
+            return committed
           } catch {
             if (request) await notify(joined.aborted ? 'approval_cancelled' : 'approval_denied')
             if (!joined.aborted) options.onDenied(original.id)

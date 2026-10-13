@@ -11,6 +11,7 @@ import type {
   RpcCommand,
   RpcConnectionOptions,
   RpcControlChannel,
+  RpcControlCommit,
   RpcDisconnect,
   RpcFrame,
   RpcPromptOptions,
@@ -186,10 +187,18 @@ export class RpcConnection {
     return Object.freeze({
       generation: state.id,
       signal: state.controller.signal,
-      sendControl: async (frame) => {
+      sendControl: async (frame, commit) => {
         if (!this.active(state)) throw new Error('RPC control generation is closed')
         validateControlFrame(frame)
-        await this.write(state, encodeRpcCommand(frame))
+        if (
+          commit &&
+          (typeof commit.canSubmit !== 'function' || typeof commit.onSubmit !== 'function')
+        )
+          throw new Error('Invalid RPC control commit hooks')
+        const hooks = commit
+          ? { canSubmit: commit.canSubmit, onSubmit: commit.onSubmit }
+          : undefined
+        await this.write(state, encodeRpcCommand(frame), hooks)
         if (!this.active(state)) throw new Error('RPC control generation is closed')
       },
       onFrame: (listener) => {
@@ -431,7 +440,8 @@ export class RpcConnection {
     })
   }
 
-  private write(state: Generation, bytes: Buffer): Promise<void> {
+  private write(state: Generation, bytes: Buffer, commit?: RpcControlCommit): Promise<void> {
+    let skipped = false
     if (!this.active(state)) return Promise.reject(new Error('RPC channel is closed'))
     // Bound queued client memory independently from the server's chunk reassembly budget.
     if (state.queuedBytes + bytes.length > 8 * MAX_RPC_FRAME_BYTES) {
@@ -447,12 +457,49 @@ export class RpcConnection {
             reject(new Error('RPC channel is closed'))
             return
           }
+          if (commit) {
+            let current = false
+            try {
+              current = commit.canSubmit() === true
+            } catch {
+              /* A retired control is local to this queue entry. */
+            }
+            if (!current) {
+              skipped = true
+              resolve()
+              return
+            }
+            if (!this.active(state) || !state.process) {
+              reject(new Error('RPC channel is closed'))
+              return
+            }
+            try {
+              commit.onSubmit()
+              if (!this.active(state) || !state.process) {
+                reject(new Error('RPC channel is closed'))
+                return
+              }
+            } catch {
+              skipped = true
+              resolve()
+              return
+            }
+          }
           state.writing++
           let completed = false
           const finish = (error?: Error | null): void => {
             if (completed) return
             completed = true
             state.writing--
+            if (error) {
+              // Writable emits its error after invoking this callback. Keep the
+              // retired generation's listener through that drain turn.
+              state.writing++
+              setImmediate(() => {
+                state.writing--
+                if (state.phase === 'closed') state.detach?.()
+              })
+            }
             if (state.phase === 'closed') setImmediate(() => state.detach?.())
             if (error) reject(error)
             else resolve()
@@ -476,7 +523,12 @@ export class RpcConnection {
       const abort = (): void => reject(asError(signal.reason))
       if (signal.aborted) abort()
       else signal.addEventListener('abort', abort, { once: true })
-      void queued.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+      void queued
+        .then(
+          () => (skipped ? reject(new Error('RPC control retired before submission')) : resolve()),
+          reject
+        )
+        .finally(() => signal.removeEventListener('abort', abort))
     })
   }
 
