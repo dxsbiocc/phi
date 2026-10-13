@@ -118,7 +118,8 @@ async function callNotebookTool(
   const tool = tools.get(name)
   assert.ok(tool, `missing ${name}`)
   const result = await tool.execute(`call-${name}`, params, undefined, {
-    sessionManager: { getCwd: () => cwd }
+    cwd,
+    recentUserImages: () => []
   } as never)
   assert.equal(
     result.isError,

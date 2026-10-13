@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 import {
   BROWSER_MAX_SCREENSHOT_COORDINATE,
@@ -199,11 +199,12 @@ export function buildBrowserTool(
   originSessionId: string,
   executeHost: BrowserToolHostExecutor,
   options: BrowserToolOptions = {}
-): CustomTool {
+): PhiTool {
   const tool = {
     lenientArgValidation: true,
     name: 'browser',
     label: 'Browser',
+    site: 'host' as const,
     description:
       'Open or inspect a page in Phi, or click, type, scroll, and use safe navigation keys on the active page. Input must use the active tab and document revision from the latest screenshot. Each external-site input asks the user to allow that exact action once; sensitive or unsafe targets require user takeover.',
     loadMode: 'essential',
@@ -492,5 +493,5 @@ export function buildBrowserTool(
       }
     }
   }
-  return tool as CustomTool
+  return tool as PhiTool
 }

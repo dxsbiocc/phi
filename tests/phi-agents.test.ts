@@ -883,21 +883,9 @@ test('include_attached_images forwards the latest user image for any local speci
     return { text: 'Seen.', toolCalls: 0 }
   })
   const ctx = {
-    sessionManager: {
-      getBranch: () => [
-        {
-          type: 'message',
-          message: {
-            role: 'user',
-            content: [
-              { type: 'text', text: '参考这张图' },
-              { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }
-            ]
-          }
-        }
-      ]
-    }
-  } as never
+    cwd: '/project/root',
+    recentUserImages: () => [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
+  }
   const result = await tool.execute(
     'attached',
     { task: 'Use the attached image.', include_attached_images: true },

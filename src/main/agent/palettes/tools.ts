@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 import { parse as parseYaml } from 'yaml'
 
 import { getBundledPalettesDir } from '../runtime/runtime-adapter'
@@ -112,12 +112,13 @@ export function suggestPalettes(
 
 export function buildPaletteRecommendationTool(
   catalogPath = join(getBundledPalettesDir(), 'palettes.yaml')
-): CustomTool {
+): PhiTool {
   return {
     name: 'palette_suggest',
     label: 'Suggest Built-in Color Palettes',
     description:
       'Recommend named Phi-bundled palettes for color-scheme requests without delegating a figure task. Choose use= categorical for groups, heatmap for continuous cool values, diverging for signed values, sequential_warm for warm magnitudes, or product for OmicsAgent branding. Return each palette ID and ordered hex colors to the user so the chat can show swatches. Do not invent colors or claim that a palette alone guarantees readable UI contrast. Use id to retrieve one exact recommended palette.',
+    site: 'host',
     parameters: {
       type: 'object',
       properties: {

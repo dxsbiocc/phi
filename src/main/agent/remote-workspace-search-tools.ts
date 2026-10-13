@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
 
 import type {
   RemoteGlobRequest,
@@ -44,11 +44,12 @@ const GREP_PARAMETERS = {
 
 export function buildRemoteWorkspaceGlobTool(
   run: (input: GlobInput) => Promise<RemoteGlobResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'glob',
     label: 'Glob',
     description: PHI_REMOTE_GLOB_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: GLOB_PARAMETERS,
@@ -80,11 +81,12 @@ export function buildRemoteWorkspaceGlobTool(
 
 export function buildRemoteWorkspaceGrepTool(
   run: (input: GrepInput) => Promise<RemoteGrepResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'grep',
     label: 'Grep',
     description: PHI_REMOTE_GREP_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: GREP_PARAMETERS,

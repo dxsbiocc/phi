@@ -469,7 +469,7 @@ test('a bound env_request swaps the live bash variables and skill environment', 
     }
     throw new Error(`unexpected ${method}`)
   }
-  const ctx = { sessionManager: { getCwd: () => '/proj' } }
+  const ctx = { cwd: '/proj', recentUserImages: () => [] }
   const skillRun = buildSkillRunTool(requestHost, {
     runtimeSessionId: 'runtime-1',
     environmentBinding: binding

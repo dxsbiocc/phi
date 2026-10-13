@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../src/main/agent/engine/types'
 
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import {
@@ -441,7 +441,7 @@ test('the delegation tool reports a run limit as an error instead of throwing', 
 
 // ── run management tools ─────────────────────────────────────────────────
 
-function toolByName(registry: AgentRunRegistry, name: string): CustomTool {
+function toolByName(registry: AgentRunRegistry, name: string): PhiTool {
   const tool = buildAgentRunTools(registry).find((candidate) => candidate.name === name)
   assert.ok(tool, `missing tool ${name}`)
   return tool

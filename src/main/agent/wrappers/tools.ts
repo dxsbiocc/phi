@@ -1,4 +1,4 @@
-import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool, PhiToolContext } from '../engine/types'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import {
@@ -14,11 +14,9 @@ import type { WrapperRunPlan } from './types'
  * Builds the LLM-callable `wrapper_*` tools — see docs/design/phi-wrapper-
  * technical-design.md, "Agent Tool Registration" and the Milestone P1.0
  * correction ("Integration With The Existing Runtime"). These are plain
- * `CustomTool` objects passed via the SDK's `customTools` option, not
+ * `PhiTool` objects converted only at the engine boundary, not
  * `runtime-adapter.ts`'s approval-interception extensions — kept pure and
- * framework-adjacent-only so they're testable without a live SDK session
- * (only `execute()` touches the SDK's `CustomToolContext` shape, and even
- * that's a narrow slice: just `sessionManager.getCwd()`).
+ * framework-adjacent-only so they're testable without a live SDK session.
  */
 
 const TOOL_NAME_PREFIX = 'wrapper_'
@@ -56,12 +54,13 @@ function catalogSearchItem(entry: WrapperCatalogEntry): WrapperSearchResultItem 
  * wrapper exists, even though only bundled ones become their own callable
  * tool by default (see technical design's Agent Tool Registration).
  */
-export function buildWrapperSearchTool(agentDir: string = getPhiAgentDir()): CustomTool {
+export function buildWrapperSearchTool(agentDir: string = getPhiAgentDir()): PhiTool {
   return {
     name: 'wrapper_search',
     label: 'Search Wrappers',
     description:
       'Search installed Phi wrapper definitions (reproducible bioinformatics/heavy-CLI tools) by keyword. Returns id, name, version, trust tier, and summary. Use this before wrapper_inspect or a specific wrapper_<id> tool to find the right wrapper.',
+    site: 'host',
     parameters: {
       type: 'object',
       properties: {
@@ -106,12 +105,13 @@ export function buildWrapperSearchTool(agentDir: string = getPhiAgentDir()): Cus
  * canonical id, so the agent can decide what params to pass before calling
  * the wrapper's own execute tool.
  */
-export function buildWrapperInspectTool(agentDir: string = getPhiAgentDir()): CustomTool {
+export function buildWrapperInspectTool(agentDir: string = getPhiAgentDir()): PhiTool {
   return {
     name: 'wrapper_inspect',
     label: 'Inspect Wrapper',
     description:
       'Get full manifest detail for one installed wrapper by its canonical id (from wrapper_search) — inputs, parameter schema, declared outputs, resource class, and available profiles.',
+    site: 'host',
     parameters: {
       type: 'object',
       required: ['id'],
@@ -182,7 +182,7 @@ export function wrapperPlanNeedsUploadSelection(plan: WrapperRunPlan): boolean {
 export function buildWrapperExecuteTool(
   entry: WrapperCatalogEntry,
   agentDir: string = getPhiAgentDir()
-): CustomTool {
+): PhiTool {
   const { manifest, trustTier } = entry
   const sourceProperties = manifest.parameters.schema.properties
   const properties =
@@ -219,11 +219,12 @@ export function buildWrapperExecuteTool(
     name: wrapperToolName(manifest.id),
     label: manifest.name,
     description: `${manifest.summary} (${manifest.id}@${manifest.version}, ${trustTier}). Creates a run plan — it does not submit or execute anything. The user reviews and submits the resulting plan card themselves.`,
+    site: 'host',
     parameters: { ...manifest.parameters.schema, properties },
     approval: 'write',
-    async execute(_toolCallId, params, _onUpdate, ctx: CustomToolContext) {
+    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
       try {
-        const cwd = ctx.sessionManager.getCwd()
+        const cwd = ctx.cwd
         const freshEntry = findWrapperCatalogEntry(manifest.id, manifest.version, agentDir) ?? entry
         const plan = createWrapperRunPlan({
           actor: 'agent',
@@ -262,7 +263,7 @@ export function buildWrapperExecuteTool(
  * Registration; "top-N" is trivial with today's single-wrapper catalog but
  * this is shaped for more).
  */
-export function buildDefaultWrapperCustomTools(agentDir: string = getPhiAgentDir()): CustomTool[] {
+export function buildDefaultWrapperCustomTools(agentDir: string = getPhiAgentDir()): PhiTool[] {
   return [
     buildWrapperSearchTool(agentDir),
     buildWrapperInspectTool(agentDir),

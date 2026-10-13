@@ -227,10 +227,13 @@ bun run test
 
 **1a 目录迁移与 `PhiTool`**
 - `src/main/agent/omp/` → `src/main/agent/engine/`，更新引用。
-- 定义 `PhiTool` 与 `toOmpCustomTool`。把只为类型而 import OMP 的工具文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`agents/*.ts`。
+- 定义 `PhiTool` 与 `toOmpCustomTool`。把从 OMP 引用 `CustomTool` / `CustomToolContext` 的文件改为依赖 `PhiTool`：`remote-workspace-*-tool.ts`、`notebook/notebook-tools.ts`、`library/library-tools.ts`、`download/*-tool.ts`、`deliverables/*-tool.ts`、`content/skill-tools.ts`、`content/env-request-tool.ts`、`browser/browser-tool.ts`、`palettes/tools.ts`、`user-interaction-tools.ts`、`wrappers/tools.ts`、`wrappers/composition/tools.ts`、`memory/learn-tool.ts`、`memory/project-memory-worker.ts` 中的 `CustomTool`、`agents/` 下引用 `CustomTool` 的文件（`run-tools.ts`、`tool-resolution.ts`、`tool.ts`），以及只引用 `CustomTool` 类型的测试 `tests/content-skill-tools.test.ts`、`tests/phi-agent-runs.test.ts`。
 - 每个 `PhiTool` 标明执行位置（宿主工具 / 运行时扩展，见 M4）。
 - 每改一个文件，从白名单删去对应条目。
-- 验收：引擎目录外只剩 M1 白名单中的终端例外。
+- **T1 不处理**（2026-10-13 用户确认，按性质归到后续任务）：
+  - `agents/` 下引用 `ExtensionFactory` 的守卫与策略文件（`environment-binding.ts`、`fallback-policy.ts`、`project-tool-boundary.ts`、`remote-project-tool-guard.ts`、`remote-url-guard.ts`）和扩展加载 `specialist-tool-call-extensions.ts`：属于运行时扩展，归 T6（1f）。
+  - `memory/project-memory-worker.ts` 中的记忆存储 API、`mcp-key-credentials.ts` 的 MCP 配置类型、`web-search-settings.ts` 的搜索提供方列表：归 T4（1d）。
+- 验收：引擎目录外不再有 `CustomTool` / `CustomToolContext` 引用；白名单中引擎目录外剩下的条目只有终端例外、上面列出的 T4/T6 文件，以及直接用 OMP 驱动真实会话的程序（测试辅助程序与 `scripts/eval/db-vs-fetch.ts`，见阶段 1 完成标准）。
 
 **1b `PhiSettings`**
 - 当前用到的设置键（`omp-sdk-worker.ts`），按领域分组成类型化接口：
@@ -274,7 +277,7 @@ bun run test
 - 按 M8 实现 `tests/engine-contract/`，本阶段先只对 `InProcessEngine` 跑。
 - 验收：在 18.1.10 上全部通过。
 
-阶段 1 完成标准：白名单中只剩 `engine/` 内的条目加上终端例外；三项验证命令结果与附录 A 基线一致或更好。
+阶段 1 完成标准：白名单中只剩 `engine/` 内的条目、终端例外，以及直接用 OMP 驱动真实会话的程序：测试辅助程序（`tests/helpers/` 下的 `*Smoke.ts`、`ownedStdioScopeFixture.ts`）与评测脚本 `scripts/eval/db-vs-fetch.ts`。它们的用途注明由 T7 引擎契约测试或 R9 清理取代（2026-10-13 用户确认测试辅助程序按此处理；评测脚本性质相同，按同一决定处理）。三项验证命令结果与附录 A 基线一致或更好。
 
 ### 阶段 2：升级 OMP 到 18.10.x（只改 `engine/`）
 
@@ -400,12 +403,12 @@ bun run test
 | 编号 | 任务 | 依赖 | 验收 |
 |---|---|---|---|
 | T0 | 引擎边界检查脚本与白名单 | 无 | 阶段 0 验收 |
-| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有工具文件 | T0 | 引擎外只剩终端例外 |
+| T1 | `omp/` → `engine/`，引入 `PhiTool`（标明执行位置），迁移所有 `CustomTool` 引用 | T0 | 1a 验收 |
 | T2 | `PhiSettings` | T1 | 1b 验收 |
 | T3 | `PhiAuth` | T1 | 1c 验收 |
-| T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/` | T1 | 1d 完成，白名单收敛 |
+| T4 | 零散内部函数收口到 `omp-internals.ts`，MCP 收口到 `engine/mcp/`；含记忆存储 API、`mcp-key-credentials.ts`、`web-search-settings.ts` | T1 | 1d 完成，白名单收敛 |
 | T5 | 拆分 worker，抽出 `PhiEngine` 与 `InProcessEngine` | T2–T4 | 1e 完成，测试无回归 |
-| T6 | Phi 扩展包，本地改为从包加载 | T5 | 1f 完成，行为不变 |
+| T6 | Phi 扩展包，本地改为从包加载；含 `agents/` 下的守卫、策略与扩展加载文件 | T5 | 1f 完成，行为不变 |
 | T7 | 引擎契约测试（`InProcessEngine`）与假模型服务 | T5 | 1g 验收 |
 | T8 | 升级到 18.10.x | T6、T7 | 阶段 2 验收 |
 | T9 | R1 分发与部署 | T8 | R1 测试通过 |

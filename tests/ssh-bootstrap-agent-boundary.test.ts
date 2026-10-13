@@ -16,7 +16,7 @@ import { buildRemoteWorkspaceWriteTool } from '../src/main/agent/remote-workspac
 test('SSH password bootstrap is absent from the agent-visible tool registries', () => {
   const runToolNames = buildAgentRunTools(new AgentRunRegistry()).map((tool) => tool.name)
   const workerSource = readFileSync(
-    new URL('../src/main/agent/omp/omp-sdk-worker.ts', import.meta.url),
+    new URL('../src/main/agent/engine/omp-sdk-worker.ts', import.meta.url),
     'utf8'
   )
 

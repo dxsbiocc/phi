@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 import { isFinalAgentRunState, type AgentRunRegistry, type AgentRunSnapshot } from './registry'
 
@@ -83,14 +83,15 @@ function waitSeconds(params: unknown): number {
 function tool(
   name: string,
   description: string,
-  parameters: CustomTool['parameters'],
+  parameters: PhiTool['parameters'],
   execute: (params: unknown, signal: AbortSignal | undefined) => Promise<ToolResult>
-): CustomTool {
+): PhiTool {
   return {
     name,
     label: name,
     description,
     parameters,
+    site: 'runtime',
     // The leader has to see these at all times, and they only manage runs it already started.
     loadMode: 'essential',
     approval: 'read',
@@ -105,7 +106,7 @@ function tool(
  * them, redirect one mid-flight, or cancel it. They only ever act on runs that
  * this conversation started through a delegation tool.
  */
-export function buildAgentRunTools(registry: AgentRunRegistry): CustomTool[] {
+export function buildAgentRunTools(registry: AgentRunRegistry): PhiTool[] {
   const status = tool(
     'agent_status',
     'Shows the agent runs of this conversation (id, agent, state, what each is doing). Pass `id` to see one run in full, including its report once it has finished.',

@@ -1,4 +1,4 @@
-import { findBunExecutable, type BunLookupOptions } from '../agent/omp/bun-executable'
+import { findBunExecutable, type BunLookupOptions } from '../agent/engine/bun-executable'
 
 export type BunExecutableFileExists = (path: string) => boolean
 

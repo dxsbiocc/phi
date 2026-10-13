@@ -133,13 +133,13 @@ function resolveWorkerPath(): string {
   const explicit = process.env.PHI_OMP_WORKER_PATH
   if (explicit) return explicit
 
-  const sourcePath = resolve(process.cwd(), 'src/main/agent/omp/omp-sdk-worker.ts')
+  const sourcePath = resolve(process.cwd(), 'src/main/agent/engine/omp-sdk-worker.ts')
   if (existsSync(sourcePath)) return sourcePath
 
   const bundleDir = dirname(fileURLToPath(import.meta.url))
   const candidates = [
-    join(bundleDir, 'agent', 'omp', 'omp-sdk-worker.ts'),
-    join(bundleDir, 'omp', 'omp-sdk-worker.ts')
+    join(bundleDir, 'agent', 'engine', 'omp-sdk-worker.ts'),
+    join(bundleDir, 'engine', 'omp-sdk-worker.ts')
   ]
   for (const candidate of candidates) {
     // Unpacked first: Electron's fs reports in-asar paths as existing, but the

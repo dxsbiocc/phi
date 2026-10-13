@@ -14,7 +14,7 @@ import type {
   ContextCompactionSummary,
   ContextUsageSnapshot
 } from '../../../shared/contextUsageTypes'
-import { getOmpBridge, type OmpBridge } from '../omp/omp-bridge'
+import { getOmpBridge, type OmpBridge } from '../engine/omp-bridge'
 import { listActiveSkillPackages } from '../packages/store'
 import { loadedPlugins } from '../plugins/loader'
 import {

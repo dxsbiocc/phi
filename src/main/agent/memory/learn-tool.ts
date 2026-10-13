@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 /** The remote guard releases `learn` only for a registration carrying this exact text. */
 export const PHI_LEARN_DESCRIPTION =
@@ -18,11 +18,12 @@ export type SaveLearnedLesson = (input: LearnedLessonInput) => Promise<{ stored:
  * Phi's own `learn`: the SDK's autolearn variant would also expose `manage_skill` and
  * write global managed skills, which Phi does not offer.
  */
-export function buildProjectLearnTool(save: SaveLearnedLesson): CustomTool {
+export function buildProjectLearnTool(save: SaveLearnedLesson): PhiTool {
   return {
     name: 'learn',
     label: '记录经验',
     description: PHI_LEARN_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     parameters: {
       type: 'object',

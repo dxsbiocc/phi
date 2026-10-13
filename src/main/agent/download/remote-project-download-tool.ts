@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 import { posix } from 'node:path'
 
 import { suggestedFilename, validateDownloadUrl } from './project-download-tool'
@@ -21,11 +21,12 @@ export type RemoteDownloadBackend = (
   signal?: AbortSignal
 ) => Promise<RemoteDownloadResult>
 
-export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): CustomTool {
+export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): PhiTool {
   return {
     name: 'download_file',
     label: 'Download File',
     description: PHI_REMOTE_DOWNLOAD_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     approval: 'write',
     parameters: parameters(),
@@ -44,7 +45,7 @@ export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): 
   }
 }
 
-function parameters(): CustomTool['parameters'] {
+function parameters(): PhiTool['parameters'] {
   return {
     type: 'object',
     required: ['url'],

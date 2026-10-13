@@ -468,7 +468,7 @@ import {
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
-import { getOmpBridge } from './agent/omp/omp-bridge'
+import { getOmpBridge } from './agent/engine/omp-bridge'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
   normalizeProjectMemorySettings,

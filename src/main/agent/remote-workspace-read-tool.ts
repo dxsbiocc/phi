@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
 
 import type { RemoteWorkspaceReadResult } from './remote-workspace-read'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
@@ -13,11 +13,12 @@ type RemoteReadOptions = {
 export function buildRemoteWorkspaceReadTool(
   read: (path: string) => Promise<RemoteWorkspaceReadResult>,
   options: RemoteReadOptions = {}
-): CustomTool {
+): PhiTool {
   return {
     name: 'read',
     label: 'Read',
     description: PHI_REMOTE_READ_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: {

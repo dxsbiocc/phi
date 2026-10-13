@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createNextActionInstructionExtension } from '../src/main/agent/omp/next-action-extension'
+import { createNextActionInstructionExtension } from '../src/main/agent/engine/next-action-extension'
 
 function handlerFor(
   isEnabled: () => Promise<boolean>

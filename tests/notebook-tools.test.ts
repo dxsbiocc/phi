@@ -8,8 +8,8 @@ import {
   type NotebookToolRequest
 } from '../src/main/agent/notebook/notebook-tools'
 
-function fakeCtx(cwd: string): { sessionManager: { getCwd: () => string } } {
-  return { sessionManager: { getCwd: () => cwd } }
+function fakeCtx(cwd: string): { cwd: string; recentUserImages: () => [] } {
+  return { cwd, recentUserImages: () => [] }
 }
 
 test('buildNotebookCustomTools exposes live notebook operations', () => {

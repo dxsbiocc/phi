@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 import type { SkillHostRequest } from './skill-tools'
 
@@ -53,7 +53,7 @@ export const PHI_ENV_REQUEST_DESCRIPTION =
 export function buildEnvRequestTool(
   request: SkillHostRequest,
   options: EnvRequestToolOptions
-): CustomTool {
+): PhiTool {
   const required = options.requireEnvironment
     ? ['packages', 'reason', 'environment']
     : ['packages', 'reason']
@@ -61,6 +61,7 @@ export function buildEnvRequestTool(
     name: 'env_request',
     label: 'Request Environment Packages',
     description: PHI_ENV_REQUEST_DESCRIPTION,
+    site: 'host',
     // The in-chat \u6dfb\u52a0/\u53d6\u6d88 question is the confirmation. `read` keeps this off the exec approval path; omitting approval is treated as exec.
     approval: 'read',
     parameters: {
@@ -70,7 +71,7 @@ export function buildEnvRequestTool(
       properties: PROPERTIES
     },
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
-      return runEnvRequest(request, params, ctx.sessionManager.getCwd(), signal, options)
+      return runEnvRequest(request, params, ctx.cwd, signal, options)
     }
   }
 }

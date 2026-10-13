@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 import { basename } from 'node:path'
 
 import { resolveInsideProject } from '../project-path'
@@ -142,12 +142,13 @@ export function buildProjectDownloadTool(
   cwd: string,
   _agentDir: string,
   options: { remoteProject?: boolean; transport?: DownloadTransport } = {}
-): CustomTool {
+): PhiTool {
   return {
     name: 'download_file',
     label: 'Download File',
     description:
       'Download one public HTTPS file, including a database file, directly into the current project with retries, streaming, and resume. Use only when the user asked to fetch a file. The destination must stay inside the project.',
+    site: 'host',
     loadMode: 'essential',
     parameters: {
       type: 'object',

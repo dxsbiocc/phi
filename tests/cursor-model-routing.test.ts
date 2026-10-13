@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { cursorModelWithBridge } from '../src/main/agent/omp/cursor-model-routing'
+import { cursorModelWithBridge } from '../src/main/agent/engine/cursor-model-routing'
 
 test('bundled Cursor models use the local HTTP/2 bridge without mutating the catalog', async () => {
   const model = { provider: 'cursor', id: 'grok-4.6-fast', baseUrl: 'https://api2.cursor.sh' }

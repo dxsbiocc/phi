@@ -122,8 +122,10 @@ test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => 
 test('worker closure follows relative imports beyond the old hand-maintained list', () => {
   const { files, packages } = collectOmpWorkerSources(repoRoot)
   for (const expected of [
-    'src/main/agent/omp/omp-sdk-worker.ts',
-    'src/main/agent/omp/next-action-extension.ts',
+    'src/main/agent/engine/omp-sdk-worker.ts',
+    'src/main/agent/engine/next-action-extension.ts',
+    'src/main/agent/engine/tool-adapter.ts',
+    'src/main/agent/engine/types.ts',
     'src/main/agent/runtime-paths.ts',
     'src/shared/presentedFileTypes.ts'
   ]) {
@@ -144,7 +146,7 @@ test('copy plugin emits exactly the closure files under out/', () => {
       writeFileSync(path.join(root, relative), body)
     }
     write(
-      'src/main/agent/omp/omp-sdk-worker.ts',
+      'src/main/agent/engine/omp-sdk-worker.ts',
       "import { a } from '../a'\nimport type { T } from '../../../shared/t'\nimport 'yaml'\n"
     )
     write('src/main/agent/a.ts', "export { b } from './nested/b'\nexport const a = 1\n")
@@ -164,9 +166,9 @@ test('copy plugin emits exactly the closure files under out/', () => {
     assert.deepEqual(emitted, ompWorkerOutputFiles(root))
     assert.deepEqual(emitted, [
       'out/main/agent/a.ts',
+      'out/main/agent/engine/omp-sdk-worker.ts',
       'out/main/agent/nested/b.ts',
       'out/main/agent/nested/c.ts',
-      'out/main/agent/omp/omp-sdk-worker.ts',
       'out/shared/t.ts'
     ])
     assert.deepEqual(collectOmpWorkerSources(root).packages, ['yaml'])
@@ -180,10 +182,10 @@ test('glob matching flags the old single-file worker glob as insufficient', () =
   assert.ok(!globToRegExp('out/*.ts').test('out/main/x.ts'))
   assert.deepEqual(
     uncoveredPaths(
-      ['out/main/agent/omp-sdk-worker.ts'],
-      ['out/main/agent/omp/omp-sdk-worker.ts', 'out/main/agent/runtime-paths.ts']
+      ['out/main/omp-sdk-worker.ts'],
+      ['out/main/agent/engine/omp-sdk-worker.ts', 'out/main/agent/runtime-paths.ts']
     ),
-    ['out/main/agent/omp/omp-sdk-worker.ts', 'out/main/agent/runtime-paths.ts']
+    ['out/main/agent/engine/omp-sdk-worker.ts', 'out/main/agent/runtime-paths.ts']
   )
 })
 

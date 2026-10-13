@@ -10,7 +10,7 @@ import {
   readLoginShellPath,
   resolveBunExecutable,
   workerPathWithBun
-} from '../src/main/agent/omp/bun-executable'
+} from '../src/main/agent/engine/bun-executable'
 
 // Finder/Dock launches inherit launchd's PATH, which never contains bun.
 const FINDER_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'

@@ -46,7 +46,8 @@ test('remote skill reader exposes only loaded skill files without leaking local 
       { readResource: (uri) => readRemoteSkillResource(uri, skills) }
     )
     const result = await tool.execute('skill-read', { path: 'skill://demo' }, undefined, {
-      sessionManager: { getCwd: () => anchor }
+      cwd: anchor,
+      recentUserImages: () => []
     } as never)
     assert.equal(result.isError, undefined)
     assert.equal(remoteProjectReads, 0)

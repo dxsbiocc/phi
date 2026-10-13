@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from './engine/types'
 
 import type { RemoteMutationResult } from './remote-workspace-edit'
 import { remoteWorkspaceToolErrorMessage } from './remote-workspace-tool-error'
@@ -30,11 +30,12 @@ export function buildRemoteWorkspaceEditTool(
     input: { path: string; old_string: string; new_string: string; replace_all?: boolean },
     signal?: AbortSignal
   ) => Promise<RemoteEditToolResult>
-): CustomTool {
+): PhiTool {
   return {
     name: 'edit',
     label: 'Edit',
     description: PHI_REMOTE_EDIT_DESCRIPTION,
+    site: 'host',
     loadMode: 'essential',
     strict: true,
     parameters: EDIT_PARAMETERS,

@@ -1,4 +1,4 @@
-import type { CustomTool, CustomToolContext } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool, PhiToolContext } from '../engine/types'
 
 export type NotebookToolAction =
   'list' | 'read' | 'insert_cell' | 'update_cell' | 'delete_cell' | 'run_cell' | 'save'
@@ -88,17 +88,18 @@ function resultDetails(result: unknown): Record<string, unknown> {
 
 function buildNotebookTool(
   action: NotebookToolAction,
-  definition: Omit<CustomTool, 'execute'>,
+  definition: Omit<PhiTool, 'execute' | 'site'>,
   executeHost: NotebookToolHostExecutor,
   options: NotebookToolBuildOptions
-): CustomTool {
+): PhiTool {
   return {
     ...definition,
-    async execute(_toolCallId, params, _onUpdate, ctx: CustomToolContext) {
+    site: 'host',
+    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
       try {
         const result = await executeHost({
           action,
-          cwd: ctx.sessionManager.getCwd(),
+          cwd: ctx.cwd,
           params: recordValue(params),
           ...(options.remoteProject ? { remoteProject: options.remoteProject } : {})
         })
@@ -119,7 +120,7 @@ function buildNotebookTool(
 export function buildNotebookCustomTools(
   executeHost: NotebookToolHostExecutor,
   options: NotebookToolBuildOptions = {}
-): CustomTool[] {
+): PhiTool[] {
   return [
     buildNotebookTool(
       'list',

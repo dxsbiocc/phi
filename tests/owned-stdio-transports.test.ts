@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { promisify } from 'node:util'
-import { findBunExecutable } from '../src/main/agent/omp/bun-executable'
+import { findBunExecutable } from '../src/main/agent/engine/bun-executable'
 
 const bun = findBunExecutable()
 test(

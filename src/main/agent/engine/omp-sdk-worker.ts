@@ -40,6 +40,8 @@ import {
 import { authPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { createNextActionInstructionExtension } from './next-action-extension'
 import { cursorModelWithBridge } from './cursor-model-routing'
+import { toOmpCustomTool } from './tool-adapter'
+import type { PhiTool } from './types'
 import { getCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
 import { mainSkillEnablementOptions } from './main-skill-enablement'
 import { buildProjectDownloadTool } from '../download/project-download-tool'
@@ -992,9 +994,9 @@ function phiToolFunctions(
   agentDir: string,
   cwd: string,
   agentName: string,
-  skillRun?: CustomTool
-): Map<string, CustomTool> {
-  let wrapperTools: CustomTool[] = []
+  skillRun?: PhiTool
+): Map<string, PhiTool> {
+  let wrapperTools: PhiTool[] = []
   if (agentName === 'Wrapper') {
     // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
     // Each run is stamped with the session that started it, so its end can be reported there.
@@ -1122,7 +1124,7 @@ async function createPhiAgentSession(
     remoteRoot?: string
     remoteProject?: { sessionId: string; projectId: string }
     remoteContextFiles?: Array<{ path: string; content: string }>
-    remoteTools?: () => CustomTool[]
+    remoteTools?: () => PhiTool[]
     remoteMcpTools?: () => CustomTool[]
     remoteMcpToolState?: () => RemoteMcpGuardState | undefined
     remoteRead?: (path: string) => Promise<RemoteWorkspaceReadResult>
@@ -1208,7 +1210,10 @@ async function createPhiAgentSession(
     if (tool.name !== 'read' || !deps.remoteRead) availableTools.set(tool.name, tool)
   }
   const remoteMcpTools = deps.remoteMcpTools?.() ?? []
-  for (const tool of remoteMcpTools) availableTools.set(tool.name, tool)
+  const remoteMcpToolsByName = new Map(remoteMcpTools.map((tool) => [tool.name, tool]))
+  // MCP tools were inserted here before T1. Remove same-named earlier Phi tools so MCP keeps
+  // winning those collisions; the Phi tools registered below may then override MCP as before.
+  for (const tool of remoteMcpTools) availableTools.delete(tool.name)
   if (deps.remoteRead) {
     availableTools.set(
       'read',
@@ -1244,7 +1249,21 @@ async function createPhiAgentSession(
     if (!declaredTools.includes(tool.name)) declaredTools.push(tool.name)
   }
   if (holder && !declaredTools.includes('env_request')) declaredTools.push('env_request')
-  const { toolNames, customTools } = resolveAgentTools(declaredTools, availableTools)
+  const { toolNames, customTools: phiCustomTools } = resolveAgentTools(
+    declaredTools,
+    availableTools
+  )
+  const phiCustomToolsByName = new Map(phiCustomTools.map((tool) => [tool.name, tool]))
+  const customTools: CustomTool[] = []
+  for (const name of toolNames) {
+    const phiTool = phiCustomToolsByName.get(name)
+    if (phiTool) {
+      customTools.push(toOmpCustomTool(phiTool))
+      continue
+    }
+    const ompTool = remoteMcpToolsByName.get(name)
+    if (ompTool) customTools.push(ompTool)
+  }
   const parentSession = deps.parent()?.session
   const parentModel = parentSession?.model || undefined
   let model = parentModel
@@ -2125,7 +2144,7 @@ async function createSession(params: unknown): Promise<unknown> {
             }),
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(resources ? { resourceLoader: resources } : {}),
-      ...(customTools.length > 0 ? { customTools } : {}),
+      ...(customTools.length > 0 ? { customTools: customTools.map(toOmpCustomTool) } : {}),
       ...(remoteRoot
         ? {
             enableMCP: true,

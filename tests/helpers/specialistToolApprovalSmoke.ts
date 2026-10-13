@@ -16,7 +16,7 @@ import {
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 
 import { installSpecialistToolCallExtensions } from '../../src/main/agent/agents/specialist-tool-call-extensions'
-import { specialistToolCallFactories } from '../../src/main/agent/omp/omp-sdk-worker'
+import { specialistToolCallFactories } from '../../src/main/agent/engine/omp-sdk-worker'
 
 type ActiveTool = {
   name: string

@@ -15,10 +15,11 @@ test('remote A tools execute without reading or forwarding the local project anc
   writeFileSync(sentinel, 'untouched')
   const hostRequests: unknown[] = []
   const ctx = {
-    sessionManager: {
-      getCwd(): never {
-        throw new Error(`local anchor must not be read: ${anchor}`)
-      }
+    get cwd(): never {
+      throw new Error(`local anchor must not be read: ${anchor}`)
+    },
+    recentUserImages(): never {
+      throw new Error(`local images must not be read: ${anchor}`)
     }
   } as never
   try {

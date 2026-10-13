@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 import {
   MAX_UI_BLOCKS,
@@ -15,12 +15,13 @@ const valueSchema = {
   anyOf: [textSchema, { type: 'number' }, { type: 'null' }]
 } as const
 
-export function buildRenderBlocksTool(): CustomTool {
+export function buildRenderBlocksTool(): PhiTool {
   return {
     name: 'render_blocks',
     label: '结构化结果',
     description:
       'Show structured, read-only results inline in chat. Use only for tabular results, QC metrics, or progress that the user would otherwise read as a wall of text. Provide at most 6 blocks. You cannot define layout, HTML, scripts, or new component types. Otherwise write Markdown.',
+    site: 'host',
     loadMode: 'essential',
     parameters: {
       type: 'object',

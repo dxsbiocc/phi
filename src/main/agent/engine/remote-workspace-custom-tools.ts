@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import { editDiffString } from '@oh-my-pi/pi-natives'
 
 import { buildRemoteWorkspaceBashTool } from '../remote-workspace-bash-tool'
@@ -14,6 +13,7 @@ import {
   buildRemoteWorkspaceGrepTool
 } from '../remote-workspace-search-tools'
 import { buildRemoteWorkspaceWriteTool } from '../remote-workspace-write-tool'
+import type { PhiTool } from './types'
 
 export type RemoteWorkspaceHostRequest = (method: string, params: unknown) => Promise<unknown>
 
@@ -49,7 +49,7 @@ export function buildRemoteWorkspaceCustomTools(
     read: (path: string) => Promise<RemoteWorkspaceReadResult>
     readResource: (path: string) => RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult>
   }
-): CustomTool[] {
+): PhiTool[] {
   const requestIdentity = (): RemoteWorkspaceIdentity & { requestId: string } => ({
     sessionId: identity.sessionId,
     projectId: identity.projectId,

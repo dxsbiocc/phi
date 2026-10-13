@@ -37,7 +37,8 @@ import {
 import {
   buildRemoteWorkspaceCustomTools,
   buildRemoteWorkspaceRead
-} from '../../src/main/agent/omp/remote-workspace-custom-tools'
+} from '../../src/main/agent/engine/remote-workspace-custom-tools'
+import { toOmpCustomTool } from '../../src/main/agent/engine/tool-adapter'
 import {
   buildWorkerProjectLearnTool,
   clearProjectMemory,
@@ -323,7 +324,7 @@ try {
     modelRegistry: new ModelRegistry(authStorage),
     sessionManager: SessionManager.inMemory(agentDir),
     model: mock.model,
-    customTools,
+    customTools: customTools.map(toOmpCustomTool),
     mcpManager,
     enableMCP: true,
     enableLsp: false,

@@ -2327,7 +2327,7 @@ async function harness(
         projectCwd
       })
     },
-    './agent/omp/omp-bridge': {
+    './agent/engine/omp-bridge': {
       getOmpBridge: (): {
         registerHostHandler: (method: string, handler: HostHandler) => () => void
         request: (method: string, params: unknown) => Promise<unknown>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { mainSkillEnablementOptions } from '../src/main/agent/omp/main-skill-enablement'
+import { mainSkillEnablementOptions } from '../src/main/agent/engine/main-skill-enablement'
 
 test('remote skill enablement omits the local SDK anchor project scope', () => {
   const anchor = '/local/private/remote-project-anchors/project-1'

@@ -72,7 +72,7 @@ test('saved client fields reach the installed SDK authorization and token exchan
   }
   const flowConfigs: FlowConfig[] = []
   let discoveryCalls = 0
-  const module = loadSource('src/main/agent/omp/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery')
       return {
         discoverOAuthEndpoints: async () => {
@@ -263,7 +263,7 @@ test('preload preserves optional connector authentication fields across IPC', as
 test('custom OAuth discovery permits only secure endpoints and does not echo provider errors', async () => {
   let result: { authorizationUrl: string; tokenUrl: string } | null = null
   let failure: Error | undefined
-  const module = loadSource('src/main/agent/omp/featured-mcp-auth.ts', (specifier) => {
+  const module = loadSource('src/main/agent/engine/featured-mcp-auth.ts', (specifier) => {
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/oauth-discovery') {
       return {
         discoverOAuthEndpoints: async () => {
@@ -308,7 +308,7 @@ function customWorkerRpc(
 ): (method: string, params: unknown) => Promise<unknown> {
   const source = ts.createSourceFile(
     'worker.ts',
-    readFileSync(resolve('src/main/agent/omp/omp-sdk-worker.ts'), 'utf8'),
+    readFileSync(resolve('src/main/agent/engine/omp-sdk-worker.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )

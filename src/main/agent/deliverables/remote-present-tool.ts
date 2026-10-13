@@ -1,4 +1,4 @@
-import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
+import type { PhiTool } from '../engine/types'
 
 import { buildPresentFilesTool, type PresentFilesRequest } from './present-tool'
 
@@ -10,7 +10,7 @@ export function buildRemotePresentFilesTool(
   deliver: (
     request: PresentFilesRequest
   ) => Promise<{ files: import('../../../shared/presentedFileTypes').PresentedFile[] }>
-): CustomTool {
+): PhiTool {
   return {
     ...buildPresentFilesTool(runtimeSessionId, deliver),
     description: PHI_REMOTE_PRESENT_FILES_DESCRIPTION

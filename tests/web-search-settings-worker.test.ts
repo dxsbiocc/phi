@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { parse as parseYaml } from 'yaml'
 
-import { OmpBridge } from '../src/main/agent/omp/omp-bridge'
+import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 
 test(

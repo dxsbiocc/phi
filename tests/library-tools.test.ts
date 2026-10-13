@@ -6,8 +6,8 @@ import test from 'node:test'
 
 import { buildLibraryCustomTools } from '../src/main/agent/library/library-tools'
 
-function fakeCtx(cwd: string): { sessionManager: { getCwd: () => string } } {
-  return { sessionManager: { getCwd: () => cwd } }
+function fakeCtx(cwd: string): { cwd: string; recentUserImages: () => [] } {
+  return { cwd, recentUserImages: () => [] }
 }
 
 function withProject<T>(callback: (projectDir: string) => T | Promise<T>): Promise<T> {

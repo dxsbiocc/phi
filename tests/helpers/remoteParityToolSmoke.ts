@@ -6,13 +6,14 @@ import {
   ModelRegistry,
   SessionManager,
   Settings,
-  discoverAuthStorage,
-  type CustomTool
+  discoverAuthStorage
 } from '@oh-my-pi/pi-coding-agent'
 import { createAgentSession } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 
 import { createRemoteProjectToolGuardExtension } from '../../src/main/agent/agents/remote-project-tool-guard'
+import { toOmpCustomTool } from '../../src/main/agent/engine/tool-adapter'
+import type { PhiTool } from '../../src/main/agent/engine/types'
 import { buildBrowserTool } from '../../src/main/agent/browser/browser-tool'
 import { buildRemotePresentFilesTool } from '../../src/main/agent/deliverables/remote-present-tool'
 import { buildRemoteProjectDownloadTool } from '../../src/main/agent/download/remote-project-download-tool'
@@ -30,7 +31,7 @@ try {
   const settings = await Settings.init({ cwd: agentDir, agentDir })
   settings.override('web_search.enabled', true)
   const hostRequests: unknown[] = []
-  const tools: CustomTool[] = [
+  const tools: PhiTool[] = [
     buildBrowserTool('runtime-1', async (request) => {
       hostRequests.push(request)
       return browserOutcome()
@@ -65,7 +66,7 @@ try {
     authStorage,
     modelRegistry: new ModelRegistry(authStorage),
     sessionManager: SessionManager.inMemory(agentDir),
-    customTools: tools,
+    customTools: tools.map(toOmpCustomTool),
     toolNames: names,
     restrictToolNames: true,
     allowRestrictedCustomTools: true,
