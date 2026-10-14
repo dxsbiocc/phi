@@ -53,6 +53,18 @@
 
 子会话运输另补精确静态宿主模块 `@oh-my-pi/pi-coding-agent/internal-urls`，部署扫描器和独立 AST 合同均拒绝邻接路径、别名、后缀及动态加载。独立 18 项验证通过。官方 18.10.3 macOS arm64 单文件发布物已按 GitHub digest 和官方 SHA256SUMS 校验：217142304 字节，SHA-256 `985c70cbcd264f6c6313de45ee81df6734664ec8ed8e72fa39fc644df625f0ce`。实际发布物在 `/private/tmp` 的独立扩展副本中完成 1 项真实原生子任务、同一根 RPC router 与原生写入验证，2.434 秒自然退出；所有 SDK importer 的祖先均无 `node_modules`，没有使用 npm CLI 替代发布物。前两次仍可见仓库祖先依赖的初步结果已排除。该证据仅证明此模块与子任务接缝，不代表 Linux、完整子权限或 R8 通过。
 
+## T12 Notebook 实际应用增量（2026-10-14）
+
+基于已合入 main 的 `eaf33f7e` 继续原 T12，仅改 5 个生产文件和 7 个测试/fixture 文件。复用既有 `NOTEBOOK_TOOL_NAMES`、desktop adapter、HostServiceRegistry、NotebookToolHostRouter、RemoteAnalysisNotebookBackend 和 AnalysisNotebookToolExecutor，实际 RPC 应用入口登记 6 个 Notebook 编写工具：`list/read/insert_cell/update_cell/delete_cell/save`。审批及持久 writer 沿原实现，未新增 schema、后端、依赖或开关，RPC 默认仍关闭。
+
+原失败回归证明：等待异步后端查找时取消，旧 router 仍会进入 dispatch。修复在桌面宿主 context 中传递私有 AbortSignal，在查找后复核取消、原始 runtime/Phi 会话及当前 SSH 绑定；信号不进入工具参数、wire 或公开事件。旧 worker 提供 origin 而没有 signal 的请求保持兼容，远程失败不回落到本机。
+
+执行者最终冻结验证：实际应用安装器＋runtime-adapter＋真实官方 CLI 的 5/5 场景自然退出，91.38 秒；main Notebook 32/32；selector/router/executor 18/18；既有 desktop 接点 13/13。真实场景使用隔离的 SshHost workspace 与实际 Notebook backend/executor，核对 draft 和磁盘：批准 update 后仅改 draft，批准 save 后落盘；拒绝 save、待批停止及 lookup 中停止/重绑定不执行目标保存；另一项目的 cwd/draft/disk 独立。同 journal 新代恢复无隐式模型请求或工具重放，随后显式 read 进入同一后端。独立差异审查 APPROVE：真实应用关键 3/3（52.49 秒，编写保存/恢复、lookup 停止、重绑定）；main 入口、旧 worker 兼容和 router/roster 5/5（1.48 秒），12 文件 lint、定向类型通过，无确认缺陷。上述范围有交集，不相加作为全库数量。
+
+生产 node/web/scripts 类型、构建、asar、完整 lint 通过，保留两条未改文件的既有格式警告。新 helper 与定向测试类型诊断为零；含旧 main VM harness 的定向类型对照为基线 90、当前 90、新增 0，不宣称全体测试类型无债。构建时仅临时复制 clone 的 runtime 符号链接，结束后恢复；共享目标哈希未变。按当前规划的小批节奏未重复 5864 项全库，之前 main 全量证据仍只对应其固定 tree。
+
+范围边界：本批只开放 Notebook 编写。`run_cell` 现有链路尚未拥有实际 kernel 中断，因此不登记；取消保证覆盖待审批及异步查找到 dispatch 前，已经开始的磁盘 I/O 不承诺回滚，已批准的 draft 修改不因后续 save 被拒绝而撤销。真实 SSH/provider/OAuth/Finder 未执行，T12 其他工具族及完整 R4 继续实施。既有万行 main 入口本轮只改原服务注册接缝，作为已有架构债保留；新 Notebook 场景放入独立 412 行 helper，未机械拆分旧 fixture。
+
 ## 冻结整合验收
 
 最新 main 整合验收（2026-10-14）：迁移 `0c5d6753` 与 main `acbbb6b8` 的组合 tree `a4a43a8daf43fb57174a8789921a550386794822` 标准并发 4 全量 **5864 项：5839 通过、0 失败、0 取消、24 既有跳过、1 todo，879.08 秒**。前后 2478 个跟踪文件及 tree 完全一致；实际 main 合并 `631671e6` 的 tree 与此候选相同，保留 main 聊天布局逐字一致。独立聊天回归 71/71。合并后主工作区依赖按 frozen lockfile 同步，coding-agent/natives/ai/catalog/tui/utils/wire 均核对为 18.10.3；主工作区生产类型、完整 lint、构建、asar 和真实终端 4 项 smoke 通过，保留两条既有格式警告。本轮标准全量已通过，不抹去下列历史计时失败，也不据此声称真实 SSH/provider/OAuth/Finder 或默认远程启用已验收。

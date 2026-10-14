@@ -80,3 +80,43 @@ test('notebook host router fails closed for missing or invalid remote backends',
   )
   assert.equal(localCalls, 0)
 })
+
+test('notebook remote lookup rechecks cancellation and trusted binding before dispatch', async () => {
+  for (const change of ['cancel', 'binding'] as const) {
+    let release!: () => void
+    let effects = 0
+    let binding = 'selected-host'
+    const controller = new AbortController()
+    const router = new NotebookToolHostRouter({
+      local: async () => {
+        throw new Error('local fallback forbidden')
+      },
+      isRemoteCwd: () => true,
+      resolveRemote: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+        return {
+          projectCwd: '/server/project',
+          execute: async () => {
+            effects++
+          }
+        }
+      }
+    })
+    const pending = router.execute(
+      { ...localRequest, action: 'save', remoteProject: remoteIdentity },
+      {
+        signal: controller.signal,
+        beforeDispatch: () => {
+          assert.equal(binding, 'selected-host', 'Notebook host binding changed')
+        }
+      }
+    )
+    if (change === 'cancel') controller.abort(new Error('Notebook run stopped during lookup'))
+    else binding = 'replacement-host'
+    release()
+    await assert.rejects(pending, change === 'cancel' ? /stopped during lookup/ : /binding changed/)
+    assert.equal(effects, 0)
+  }
+})

@@ -118,7 +118,9 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 `3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
 
-本阶段只开放原生工具范围；persona/context/memory/MCP/skills/compaction 等未接入配置会明确报错，不能静默丢弃或回退本机。已有原生审批界面处理批准、拒绝和停止；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。具名专家、停止及恢复经过实际应用安装器/runtime-adapter/CLI 回归，但不是线上 SSH/provider 或默认开放验收。
+本阶段开放原生主工具和 6 个 Notebook 编写工具（`list/read/insert_cell/update_cell/delete_cell/save`），复用既有 adapter 和远程 Notebook 服务。`notebook.run_cell` 尚无实际 kernel 中断所有权，暂不登记。persona/context/memory/MCP/skills/compaction 等未接入配置仍明确报错，不能静默丢弃或回退本机。已有原生审批界面处理批准、拒绝和停止；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。具名专家、停止及恢复经过实际应用安装器/runtime-adapter/CLI 回归，但不是线上 SSH/provider 或默认开放验收。
+
+Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 [Notebook 增量验收记录](omp-remote-acceptance.md#t12-notebook-实际应用增量2026-10-14)。
 
 升级时增加 `app-remote-session-routing.test.ts`、`engine-facade-selected-cleanup.test.ts` 与 `engine-facade-child-composition.test.ts` 的相关回归。关闭失败仍须释放本阶段持有的连接，保留原始失败；不能因为清理错误跳过释放，也不能以关闭成功替代原生取消确认。
 

@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import type { PhiAgentDefinition } from './agents/definition'
@@ -15,6 +16,11 @@ import {
 } from './engine/rpc/extension-deployment'
 import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment'
 import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
+
+// Authoring uses the existing Notebook service. Kernel execution needs owned physical interruption.
+export const APP_RPC_NOTEBOOK_TOOL_NAMES = Object.freeze(
+  NOTEBOOK_TOOL_NAMES.filter((name) => name !== 'notebook.run_cell')
+)
 
 /** Phi locators describe remote recovery; they are never opened as desktop journal files. */
 export function createAppRemoteSessionManager(
@@ -164,7 +170,7 @@ export function installAppRemoteSessionRouting(
           bundle,
           recovery: manifest.runtimeRef ? 'resume' : 'new',
           approval: { ...options.approval, projectName: project.name },
-          desktopToolNames: [],
+          desktopToolNames: APP_RPC_NOTEBOOK_TOOL_NAMES,
           recentUserImages: () => [],
           ...(definitions.length
             ? { foregroundChildren: { definitions, onApprovalEvent: options.onChildApprovalEvent } }

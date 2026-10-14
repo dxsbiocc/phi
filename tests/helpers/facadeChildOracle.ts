@@ -1,3 +1,4 @@
+import { runApplicationNotebookScenario } from './facadeNotebookOracle'
 import assert from 'node:assert/strict'
 import { readFile, readdir, rm, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -52,8 +53,8 @@ const f = await facadeMetadataFixture({
   ...(applicationRouting
     ? {
         applicationRouting: {
-          foregroundAgentNames: 'Checker',
-          agents: [definition],
+          foregroundAgentNames: mode.startsWith('notebook-') ? undefined : 'Checker',
+          agents: mode.startsWith('notebook-') ? [] : [definition],
           beforeConnect: async (phiSessionId) => {
             if (mode === 'selection-stale')
               updateSessionManifest(phiSessionId, { title: 'Changed during remote selection' })
@@ -139,7 +140,9 @@ try {
     }
   })
   let id = 'actual-child-facade'
-  if (mode === 'selection-stale') {
+  if (mode.startsWith('notebook-')) {
+    await runApplicationNotebookScenario(f, mode)
+  } else if (mode === 'selection-stale') {
     await assert.rejects(f.createApplicationSession(), /远程选择期间会话或项目策略已改变/)
     assert.equal(f.channels.length, 0)
     assert.equal(f.provider.requests.length, 0)

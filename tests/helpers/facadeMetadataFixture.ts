@@ -54,6 +54,7 @@ export interface FacadeMetadataFixture {
   phi: ReturnType<typeof createPhiSession>
   model(id: string): RuntimeModel
   channels: RemoteStdioProcess[]
+  hostSession: SelectedFacadeRuntime['session']
   rawRetryEvents: RpcFrame[]
   tunnels: Array<{ closed: Promise<void>; close(): Promise<void> }>
   leases: OwnedModelGatewayLease[]
@@ -374,6 +375,7 @@ export async function facadeMetadataFixture(
     phi,
     model,
     channels,
+    hostSession: session,
     rawRetryEvents,
     tunnels,
     leases,

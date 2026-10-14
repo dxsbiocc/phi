@@ -188,7 +188,11 @@ export function createRpcDesktopToolScope(
       ) {
         throw new Error('An SSH project cannot run a wrapper on the desktop')
       }
-      return services.invoke(method, params, call.context)
+      return services.invoke(
+        method,
+        params,
+        method === 'notebookTool.execute' ? { ...call.context, signal: call.signal } : call.context
+      )
     }
   }
   const browserRequest = requestFor(['browser.execute', 'browser.cancel'])

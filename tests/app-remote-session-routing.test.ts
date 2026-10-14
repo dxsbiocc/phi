@@ -1,6 +1,11 @@
+import {
+  NOTEBOOK_TOOL_NAMES,
+  buildNotebookCustomTools
+} from '../src/main/agent/notebook/notebook-tools'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  APP_RPC_NOTEBOOK_TOOL_NAMES,
   createAppRemoteSessionManager,
   installAppRemoteSessionRouting,
   selectAppForegroundAgents,
@@ -83,4 +88,29 @@ test('application recovery manager keeps the Phi locator out of local journal op
   assert.equal(resumed.kind, 'open')
   assert.equal(resumed.getSessionFile(), 'phi-session:phi-session-id')
   assert.equal(resumed.getCwd(), '/local/anchor')
+})
+
+test('application RPC Notebook roster reuses all existing authoring tools with read/write classifications', () => {
+  assert.deepEqual(
+    APP_RPC_NOTEBOOK_TOOL_NAMES,
+    NOTEBOOK_TOOL_NAMES.filter((name) => name !== 'notebook.run_cell')
+  )
+  const tools = buildNotebookCustomTools(async () => undefined)
+  assert.deepEqual(
+    tools
+      .filter((tool) =>
+        APP_RPC_NOTEBOOK_TOOL_NAMES.includes(
+          tool.name as (typeof APP_RPC_NOTEBOOK_TOOL_NAMES)[number]
+        )
+      )
+      .map((tool) => [tool.name, tool.approval]),
+    [
+      ['notebook.list', 'read'],
+      ['notebook.read', 'read'],
+      ['notebook.insert_cell', 'write'],
+      ['notebook.update_cell', 'write'],
+      ['notebook.delete_cell', 'write'],
+      ['notebook.save', 'write']
+    ]
+  )
 })

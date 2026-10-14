@@ -1,3 +1,4 @@
+import { NotebookToolHostRouter } from '../src/main/agent/notebook/notebook-tool-host-router'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
 import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
@@ -338,13 +339,19 @@ class FakeSession {
 }
 
 type Handler = (_event: unknown, ...args: unknown[]) => unknown
-type HostContext = { originSessionId?: string; agentRunId?: string; toolCallId?: string }
+type HostContext = {
+  originSessionId?: string
+  agentRunId?: string
+  toolCallId?: string
+  signal?: AbortSignal
+}
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
   holdRendererReady?: boolean
   environmentGet?: () => Promise<unknown>
   remoteRpc?: boolean
   remoteRpcResources?: boolean
+  remoteNotebookBinding?: () => string
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -2211,31 +2218,7 @@ async function harness(
         }
       }
     },
-    './agent/notebook/notebook-tool-host-router': {
-      NotebookToolHostRouter: class {
-        constructor(
-          private readonly options: {
-            local: (request: unknown) => Promise<unknown>
-            isRemoteCwd: (cwd: string) => boolean
-            resolveRemote: (identity: unknown) => Promise<{
-              projectCwd: string
-              execute: (request: unknown) => Promise<unknown>
-            } | null>
-          }
-        ) {}
-        async execute(request: Record<string, unknown>): Promise<unknown> {
-          if (request.remoteProject) {
-            const remote = await this.options.resolveRemote(request.remoteProject)
-            if (!remote) throw new Error('远程 Notebook 后端不可用')
-            return remote.execute({ ...request, cwd: remote.projectCwd })
-          }
-          if (this.options.isRemoteCwd(String(request.cwd ?? ''))) {
-            throw new Error('远程 Notebook 请求缺少经过验证的远程 Notebook 后端')
-          }
-          return this.options.local(request)
-        }
-      }
-    },
+    './agent/notebook/notebook-tool-host-router': { NotebookToolHostRouter },
     './agent/notebook/remote-analysis-notebook-backend': {
       createRemoteAnalysisNotebookBackend: () => {
         const sessions = new TestAnalysisNotebookSessionRegistry()
@@ -3539,7 +3522,7 @@ async function harness(
         hostAlias: 'cluster-one',
         remoteRoot: '/cluster/project',
         canonicalRoot: '/canonical/project',
-        cacheKey: 'remote-project-1',
+        cacheKey: options.remoteNotebookBinding?.() ?? 'remote-project-1',
         config: {
           remoteRoot: '/cluster/project',
           canonicalRoot: '/canonical/project',
@@ -12590,4 +12573,75 @@ test('main IPC: opted-in unsupported remote resources fail before creating a wor
     /RPC.*(persona|context|resources)/i
   )
   assert.equal(app.createdAgentOptions.length, 0)
+})
+
+for (const boundary of ['cancel', 'rebind'] as const)
+  test(`main host: Notebook ${boundary} after backend lookup blocks dispatch`, async () => {
+    let binding = 'selected-Notebook-host'
+    const app = await harness(undefined, { remoteNotebookBinding: () => binding })
+    const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+      phiSessionId: string
+      cwd: string
+    }
+    await app.invoke('agent:prompt', 'initialize the trusted runtime origin')
+    const runtimeSessionId = app.sessions[0].runtimeSessionId
+    const execute = app.hostHandlers.get('notebookTool.execute')!
+    const controller = new AbortController()
+    const pending = execute(
+      {
+        action: 'save',
+        cwd: current.cwd,
+        params: { path: 'notebooks/analysis.ipynb' },
+        remoteProject: {
+          runtimeSessionId,
+          sessionId: current.phiSessionId,
+          projectId: 'remote-project-1'
+        }
+      },
+      { originSessionId: runtimeSessionId, signal: controller.signal }
+    )
+    if (boundary === 'cancel') controller.abort(new Error('Notebook lookup cancelled'))
+    else binding = 'replacement-Notebook-host'
+    await assert.rejects(
+      pending,
+      boundary === 'cancel' ? /Notebook lookup cancelled/ : /运行或项目绑定已改变/
+    )
+    assert.equal(
+      app.remoteNotebookCalls.some((call) => call.action === 'save'),
+      false
+    )
+    assert.deepEqual(app.jupyterServerCalls, [])
+  })
+
+test('main host: owned remote worker Notebook context remains compatible without a cancellation signal', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+    cwd: string
+  }
+  await app.invoke('agent:prompt', 'initialize legacy remote worker origin')
+  const runtimeSessionId = app.sessions[0].runtimeSessionId
+  const execute = app.hostHandlers.get('notebookTool.execute')!
+  const result = await execute(
+    {
+      action: 'list',
+      cwd: current.cwd,
+      params: {},
+      remoteProject: {
+        runtimeSessionId,
+        sessionId: current.phiSessionId,
+        projectId: 'remote-project-1'
+      }
+    },
+    { originSessionId: runtimeSessionId }
+  )
+  assert.deepEqual(result, { summary: 'remote notebook tool ok', cwd: '/canonical/project' })
+  assert.equal(
+    app.remoteNotebookCalls.some((call) => call.action === 'tool:list'),
+    true
+  )
+  assert.equal(
+    app.remoteNotebookCalls.some((call) => call.path?.includes('remote-project-anchors')),
+    false
+  )
 })

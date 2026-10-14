@@ -1562,9 +1562,32 @@ const notebookToolHostRouter = new NotebookToolHostRouter({
   isRemoteCwd: isRemoteAnalysisCwd,
   resolveRemote: resolveRemoteNotebookToolBackend
 })
-getPhiEngine().host.register('notebookTool.execute', (params) =>
-  notebookToolHostRouter.execute(params as Parameters<typeof notebookToolHostRouter.execute>[0])
-)
+getPhiEngine().host.register('notebookTool.execute', async (params, context) => {
+  const request = params as Parameters<typeof notebookToolHostRouter.execute>[0]
+  const identity = request.remoteProject
+  const binding = identity
+    ? resolveRemoteWorkspaceHostBinding({
+        sessionId: identity.sessionId,
+        projectId: identity.projectId
+      })
+    : undefined
+  const beforeDispatch = (): void => {
+    if (!identity) return
+    const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
+    if (
+      context?.originSessionId !== identity.runtimeSessionId ||
+      !origin ||
+      getPhiSessionIdForKey(origin.sessionKey) !== identity.sessionId ||
+      resolveRemoteWorkspaceHostBinding({
+        sessionId: identity.sessionId,
+        projectId: identity.projectId
+      }).cacheKey !== binding?.cacheKey
+    )
+      throw new Error('远程 Notebook 后端不可用：运行或项目绑定已改变；没有回退到本机执行。')
+  }
+  beforeDispatch()
+  return notebookToolHostRouter.execute(request, { signal: context?.signal, beforeDispatch })
+})
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
     const skills = await listSkills(cwd)

@@ -7,6 +7,11 @@ import { join } from 'node:path'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 
 for (const mode of [
+  'app-notebook-approved',
+  'app-notebook-denied',
+  'app-notebook-pending-stop',
+  'app-notebook-lookup-stop',
+  'app-notebook-lookup-rebind',
   'app-selection-stale',
   'app-selection-abort',
   'app-approved',
