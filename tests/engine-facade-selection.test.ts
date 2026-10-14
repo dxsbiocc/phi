@@ -9,6 +9,7 @@ import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 for (const mode of [
   'model',
   'thinking',
+  'fallback',
   'restore',
   'busy',
   'approval',

@@ -41,6 +41,7 @@ import { createPhiExtensionBundle } from '../../src/main/agent/engine/rpc/extens
 import type { RemoteStdioProcess } from '../../src/main/agent/wrappers/remote-ssh-session'
 import type {
   RuntimeModel,
+  ThinkingLevel,
   PhiEngine,
   PhiSessionCreateParams
 } from '../../src/main/agent/engine/types'
@@ -74,6 +75,7 @@ export async function facadeMetadataFixture(
     providerFactory?: typeof startHostResultModel
     isolatedProject?: boolean
     nonReasoningModel?: string
+    thinkingEfforts?: Readonly<Record<string, readonly ThinkingLevel[]>>
     applicationRouting?: Pick<
       AppRemoteSessionRoutingOptions,
       'foregroundAgentNames' | 'onChildApprovalEvent' | 'loadDesktopTools'
@@ -111,6 +113,9 @@ export async function facadeMetadataFixture(
             id,
             name: id,
             reasoning: id !== options.nonReasoningModel,
+            ...(options.thinkingEfforts?.[id]
+              ? { thinking: { mode: 'effort', efforts: options.thinkingEfforts[id] } }
+              : {}),
             input: ['text'],
             contextWindow: 32768,
             maxTokens: 1024,

@@ -27,7 +27,8 @@ const definition: PhiAgentDefinition = {
 }
 const f = await facadeMetadataFixture({
   isolatedProject: true,
-  nonReasoningModel: 'model-b',
+  nonReasoningModel: mode === 'fallback' ? undefined : 'model-b',
+  thinkingEfforts: mode === 'fallback' ? { 'model-b': ['low', 'xhigh'] } : undefined,
   applicationRouting:
     mode === 'resource-child'
       ? { agents: [definition], foregroundAgentNames: 'Checker' }
@@ -60,7 +61,7 @@ async function prompt(text: string): Promise<void> {
   await run.done
 }
 try {
-  if (mode === 'model' || mode === 'thinking' || mode === 'restore') {
+  if (mode === 'model' || mode === 'thinking' || mode === 'restore' || mode === 'fallback') {
     f.provider.enqueue({ text: 'Original history remains' })
     await prompt('Before selection')
     const original = history()
@@ -77,14 +78,17 @@ try {
         name: 'Renderer cannot grant metadata'
       })
       assert.equal(proxy.model?.id, 'model-b')
-      assert.equal(proxy.thinkingLevel, undefined)
-      assert.equal(proxy.model?.reasoning, false)
+      assert.equal(proxy.thinkingLevel, mode === 'fallback' ? 'low' : undefined)
+      assert.equal(proxy.model?.reasoning, mode === 'fallback')
       assert.notEqual(proxy.model?.name, 'Renderer cannot grant metadata')
       assert.deepEqual(findPhiSessionById(f.phi.sessionId)!.model, {
         providerId: f.model('model-b').provider,
         modelId: 'model-b'
       })
-      assert.equal(proxy.thinkingLevel, undefined)
+      assert.equal(
+        findPhiSessionById(f.phi.sessionId)!.thinkingLevel,
+        mode === 'fallback' ? 'low' : undefined
+      )
     }
     assert.equal(
       f.provider.requests.length,
