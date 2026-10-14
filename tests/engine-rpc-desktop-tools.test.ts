@@ -1,15 +1,41 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
 import test from 'node:test'
 import { NotebookToolHostRouter } from '../src/main/agent/notebook/notebook-tool-host-router'
 import type { NotebookToolRequest } from '../src/main/agent/notebook/notebook-tools'
 import { desktopToolsFixture, PNG, browserOutcome } from './helpers/rpcDesktopToolsFixture'
 import { registeredHostTools } from '../src/main/agent/engine/rpc/host-tool-validation'
-import { isRpcDesktopCoordinatedTool } from '../src/main/agent/engine/rpc/desktop-tool-scope'
+import {
+  createRpcDesktopToolScope,
+  isRpcDesktopCoordinatedTool
+} from '../src/main/agent/engine/rpc/desktop-tool-scope'
 
 function text(result: { content: Array<{ type: string; text?: string }> }): string {
   return result.content.map((part) => part.text ?? '').join('\n')
 }
+
+test('empty trusted skill catalog registers the other real schemas without exposing skill_run', (t) => {
+  const f = desktopToolsFixture()
+  t.after(() => f.close())
+  const scope = createRpcDesktopToolScope({
+    identity: f.scope.identity,
+    services: f.services,
+    currentRun: () => undefined,
+    recentUserImages: () => [],
+    allowBrowserTypeText: () => false,
+    browserTextVault: f.vault,
+    agentDir: join(f.root, 'agent'),
+    allowedSkills: [],
+    scriptTools: [],
+    remoteLibrary: true
+  })
+  t.after(() => scope.dispose())
+  const roster = registeredHostTools(scope.tools)
+  assert.equal(roster.has('skill_run'), false)
+  assert.equal(roster.get('lib.save')?.validate({ title: 'Selected remote paper' }), true)
+  assert.equal(roster.get('lib.save')?.validate({}), false)
+})
 
 test('actual existing dotted notebook names register without widening name policy to controls or arbitrary methods', (t) => {
   const f = desktopToolsFixture()

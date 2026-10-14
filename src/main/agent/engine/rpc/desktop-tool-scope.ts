@@ -320,7 +320,7 @@ export function createRpcDesktopToolScope(
         (await presentRequest('deliverables.present', request)) as { files: PresentedFile[] }
     ),
     buildRemoteProjectDownloadTool(download),
-    skillTool,
+    ...(skills.length ? [skillTool] : []),
     ...buildScriptTools(descriptors, skillRequest, {
       runtimeSessionId: identity.runtimeSessionId,
       remoteProject

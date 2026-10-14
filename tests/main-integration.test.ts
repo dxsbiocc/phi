@@ -1,4 +1,5 @@
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
+import { createWebLinkPreviewService } from '../src/main/web-link-preview'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
 import * as remoteLibrary from '../src/main/agent/engine/rpc/remote-library-service'
@@ -2383,6 +2384,14 @@ async function harness(
       }
     },
     './agent/engine/events': engineEvents,
+    './web-link-preview': {
+      createWebLinkPreviewService: (): ReturnType<typeof createWebLinkPreviewService> =>
+        createWebLinkPreviewService({
+          fetch: async () => {
+            throw new Error('Preview networking is disabled in the main integration fixture')
+          }
+        })
+    },
     './agent/engine/rpc/desktop-websearch-adapter': desktopWebSearch,
     './agent/engine/rpc/desktop-mcp-adapter': desktopMcp,
     './agent/engine/rpc/remote-library-service': remoteLibrary,
