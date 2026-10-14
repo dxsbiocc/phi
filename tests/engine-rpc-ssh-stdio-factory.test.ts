@@ -108,6 +108,7 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.ok(!command.includes('--no-ui'))
   assert.ok(!command.includes(fixture.params.agentDir))
   assert.deepEqual(JSON.parse(await readFile(join(privateRoot, 'startup-policy.json'), 'utf8')), {
+    disabledProviders: ['native', 'claude', 'codex', 'omp-plugins', 'claude-plugins'],
     mcp: { enableProjectConfig: false },
     extensions: [],
     skills: [],
@@ -119,6 +120,107 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.deepEqual(await readdir(sessionBase), [])
   assert.equal(fixture.session.closed, false)
   assert.equal((await fixture.session.exec('printf still-connected')).stdout, 'still-connected')
+})
+
+test('project plugin tools are refused before the OMP stdio process starts', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  const plugins = join(fixture.cwd, '.omp/plugins')
+  const plugin = join(plugins, 'node_modules/project-tool-plugin')
+  await mkdir(plugin, { recursive: true })
+  await writeFile(
+    join(plugins, 'package.json'),
+    JSON.stringify({ dependencies: { 'project-tool-plugin': '1.0.0' } })
+  )
+  await writeFile(
+    join(plugins, 'omp-plugins.lock.json'),
+    JSON.stringify({
+      plugins: {
+        'project-tool-plugin': {
+          version: '1.0.0',
+          enabled: true,
+          enabledFeatures: null
+        }
+      },
+      settings: {}
+    })
+  )
+  await writeFile(
+    join(plugin, 'package.json'),
+    JSON.stringify({ version: '1.0.0', omp: { tools: './tool.js' } })
+  )
+  await writeFile(join(plugin, 'tool.js'), 'export default function projectTool() {}\n')
+
+  await assert.rejects(
+    async () => {
+      const channel = await fixture.factory.open(fixture.params, new AbortController().signal)
+      await channel.close()
+    },
+    (error: unknown) => {
+      assert.match(String(error), /project plugin tools/i)
+      assert.match(String(error), /project-tool-plugin/)
+      assert.match(String(error), /tool\.js/)
+      return true
+    }
+  )
+  assert.equal(
+    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    0
+  )
+})
+
+test('enabled project plugin feature tools are refused after directory resolution', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  const plugins = join(fixture.cwd, '.omp/plugins')
+  const plugin = join(plugins, 'node_modules/feature-tool-plugin')
+  await mkdir(join(plugin, 'feature-tools'), { recursive: true })
+  await writeFile(
+    join(plugins, 'package.json'),
+    JSON.stringify({ dependencies: { 'feature-tool-plugin': '1.0.0' } })
+  )
+  await writeFile(
+    join(plugins, 'omp-plugins.lock.json'),
+    JSON.stringify({
+      plugins: {
+        'feature-tool-plugin': {
+          version: '1.0.0',
+          enabled: true,
+          enabledFeatures: ['optional-tools']
+        }
+      },
+      settings: {}
+    })
+  )
+  await writeFile(
+    join(plugin, 'package.json'),
+    JSON.stringify({
+      version: '1.0.0',
+      omp: {
+        features: {
+          'optional-tools': { default: false, tools: ['./feature-tools'] }
+        }
+      }
+    })
+  )
+  await writeFile(
+    join(plugin, 'feature-tools/index.mjs'),
+    'export default function featureTool() {}\n'
+  )
+
+  await assert.rejects(
+    fixture.factory.open(fixture.params, new AbortController().signal),
+    (error: unknown) => {
+      assert.match(String(error), /project plugin tools/i)
+      assert.match(String(error), /feature-tool-plugin/)
+      assert.match(String(error), /feature-tools\/index\.mjs/)
+      return true
+    }
+  )
+  assert.equal(
+    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    0
+  )
 })
 
 test('multiple generations have separate HOME and config and closing one preserves the other and master', async (t) => {
@@ -249,6 +351,7 @@ test('foreground native name preparation is strict and paired, while disabled po
   const base = join(fixture.runtimeRoot, 'rpc-sessions')
   const [nonce] = await readdir(base)
   assert.deepEqual(JSON.parse(await readFile(join(base, nonce, 'startup-policy.json'), 'utf8')), {
+    disabledProviders: ['native', 'claude', 'codex', 'omp-plugins', 'claude-plugins'],
     mcp: { enableProjectConfig: false },
     extensions: [],
     skills: [],
@@ -389,6 +492,31 @@ test('invalid identities and missing persistent stdio fail before deploying or c
     /session identity/
   )
   assert.equal(fixture.session.commands.length, commands)
+})
+
+test('reserved discovery provider names cannot silently disable the selected Phi model', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  await assert.rejects(
+    fixture.factory.open(
+      {
+        ...fixture.params,
+        model: {
+          provider: 'native',
+          id: 'contract-model',
+          name: 'Conflicting model',
+          reasoning: false,
+          supportsImages: false
+        }
+      },
+      new AbortController().signal
+    ),
+    /model provider "native" conflicts with Phi's disabled capability providers/i
+  )
+  assert.equal(
+    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    0
+  )
 })
 
 test('slow shared deployment precedes the short connection deadline; actual CLI attests and closes only its owned channel', async (t) => {

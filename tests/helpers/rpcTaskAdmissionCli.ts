@@ -205,6 +205,9 @@ export async function taskAdmissionCli(
     await writeFile(
       policy,
       JSON.stringify({
+        disabledProviders: options.ambient
+          ? []
+          : ['native', 'claude', 'codex', 'omp-plugins', 'claude-plugins'],
         mcp: { enableProjectConfig: options.ambient === true },
         extensions: options.ambient
           ? [

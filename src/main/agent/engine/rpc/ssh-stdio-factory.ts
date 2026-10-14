@@ -23,6 +23,11 @@ import {
 } from './persistent-launch-storage'
 import { storagePrefix } from './session-storage/remote-preflight'
 import type { RemoteSessionStoragePreparation } from './session-storage/types'
+import { assertNoProjectPluginTools } from './project-plugin-tool-admission'
+import {
+  assertPhiModelProviderCompatible,
+  PHI_DISABLED_CAPABILITY_PROVIDERS
+} from './rpc-startup-policy'
 
 export interface SshRpcSessionTransportOptions {
   /** The selected, already connected session: the factory never owns its SSH master. */
@@ -195,9 +200,11 @@ export async function prepareSshRpcSessionTransport(
       const cancel = (): void => controller.abort(callerSignal.reason)
       identity(params.sessionId, 'session identity')
       assertRemoteRoot(params.cwd)
+      if (params.model) assertPhiModelProviderCompatible(params.model.provider)
       callerSignal.throwIfAborted()
       const { runtimeHost: host, runtimeRoot: root } = options.runtime
       if (!host.transfer) throw new Error('Runtime host has no streaming file transfer transport')
+      await assertNoProjectPluginTools({ host, cwd: params.cwd, runtimeRoot: root, signal })
       const nonce = randomUUID()
       const sessionBase = posix.join(root, 'rpc-sessions')
       const sessionDirectory = posix.join(sessionBase, nonce)
@@ -328,6 +335,7 @@ private_dir ${q(agentDir)}`,
         // precedes tool_call guards and must never inherit repository commands.
         const policyBytes = Buffer.from(
           JSON.stringify({
+            disabledProviders: PHI_DISABLED_CAPABILITY_PROVIDERS,
             mcp: { enableProjectConfig: false },
             extensions: [],
             skills: [],

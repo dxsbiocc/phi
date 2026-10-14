@@ -15,6 +15,7 @@ import {
   type RpcRuntimePreparationContext,
   type RpcRuntimePreparationResult
 } from './ssh-stdio-factory'
+import { assertPhiModelProviderCompatible } from './rpc-startup-policy'
 import type { RpcSessionBackendOptions, RpcSessionCreateParams } from './rpc-session-backend'
 
 export interface ModelProxyRpcTransportOptions extends Omit<
@@ -92,6 +93,7 @@ export async function prepareModelProxyRpcSessionTransport(
 ): Promise<ModelProxyRpcSessionTransport> {
   if (!options.session.openReverseTunnel)
     throw new Error('Connected SSH session cannot forward the model gateway')
+  for (const model of options.models) assertPhiModelProviderCompatible(model.provider)
   const models = Object.freeze(
     options.models.map(({ provider, id }) => Object.freeze({ provider, id }))
   )

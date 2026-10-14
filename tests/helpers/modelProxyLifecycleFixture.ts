@@ -9,6 +9,7 @@ import type {
 } from '../../src/main/agent/engine/rpc/model-proxy-lease'
 import type { RpcSessionCreateParams } from '../../src/main/agent/engine/rpc/rpc-session-backend'
 import type { SshRpcSessionTransportOptions } from '../../src/main/agent/engine/rpc/ssh-stdio-factory'
+import { assertPhiModelProviderCompatible } from '../../src/main/agent/engine/rpc/rpc-startup-policy'
 import type {
   RemoteReverseTunnel,
   ReverseTunnelOptions
@@ -122,6 +123,7 @@ export async function modelProxyLifecycleFixture(): Promise<LifecycleFixture> {
             }
           }
         }
+      if (specifier === './rpc-startup-policy') return { assertPhiModelProviderCompatible }
       throw new Error(`Unexpected lifecycle dependency ${specifier}`)
     }
   })

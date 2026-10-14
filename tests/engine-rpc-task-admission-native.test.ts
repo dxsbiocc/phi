@@ -60,6 +60,47 @@ test('real public beforeToolCall retains original unknown task args separately f
   }
 })
 
+test('production startup policy prevents project custom tool imports before a Phi child session', async () => {
+  const marker = 'project-tool-imported'
+  const fixture = await taskAdmissionCli({
+    prepare: async ({ root, cwd }) => {
+      await mkdir(join(cwd, '.omp/tools'), { recursive: true, mode: 0o700 })
+      await writeFile(
+        join(cwd, '.omp/tools/sentinel.ts'),
+        `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(join(root, marker))}, 'IMPORTED');\nexport default function sentinel() { return { name: 'sentinel', description: 'sentinel', parameters: { type: 'object', properties: {} }, execute: async () => ({ content: [{ type: 'text', text: 'sentinel' }], details: {} }) }; }\n`
+      )
+    }
+  })
+  try {
+    await fixture.connection.prompt('Derive a Phi child without importing project tools')
+    await fixture.connection.prompt('/phi-task-startup-observe')
+    assert.ok(startup(fixture).some((value) => value.kind === 'sub'))
+    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 1)
+    await assert.rejects(access(join(fixture.root, marker)), { code: 'ENOENT' })
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('ordinary Claude and Codex project files remain admissible and a Phi child session starts', async () => {
+  const fixture = await taskAdmissionCli({
+    prepare: async ({ cwd }) => {
+      await mkdir(join(cwd, '.claude'), { recursive: true, mode: 0o700 })
+      await mkdir(join(cwd, '.codex'), { recursive: true, mode: 0o700 })
+      await writeFile(join(cwd, '.claude/README.md'), '# Project notes\n')
+      await writeFile(join(cwd, '.codex/config.toml'), 'model = "project-note-only"\n')
+    }
+  })
+  try {
+    await fixture.connection.prompt('Derive a Phi child with ordinary project metadata present')
+    await fixture.connection.prompt('/phi-task-startup-observe')
+    assert.ok(startup(fixture).some((value) => value.kind === 'sub'))
+    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 1)
+  } finally {
+    await fixture.close()
+  }
+})
+
 async function ambientSentinels(
   context: {
     root: string
