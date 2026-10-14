@@ -1,6 +1,6 @@
 # OMP 升级操作手册
 
-更新日期：2026-10-13。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
+更新日期：2026-10-14。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
 
 本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
@@ -52,6 +52,15 @@
 | 打包            | 检查 Bun worker 的磁盘依赖闭包和 natives 平台文件。Bun 无法从 `app.asar` 内加载这些资源；本次新传递依赖 axe-core 需要完整包进入 `asarUnpack`。                                                                                                              |
 
 **已知 Bash 差异必须保留在审查记录中**：环境包装使用函数作用域后，顶层 `return`／`local` 获得函数内语义；旧 native 直接执行将其视为无效顶层命令。普通命令的环境、export、cwd、输出、退出及取消已对照旧／新真实 worker 验证，不能据此宣称所有 shell 语法完全等价。
+
+### RPC 启动与恢复的升级检查
+
+- 私有 `startup-policy.json` 固定禁用 `native`、`claude`、`codex`、`omp-plugins`、`claude-plugins` 五个 capability provider。升级时确认官方发现流程仍读取该设置，根会话与子会话均不自动导入项目工具。这里也会过滤同名模型 provider，必须保留明确冲突报错。
+- 项目 `.omp/plugins` 的工具发现不经过上述 provider 过滤。启动前的只读预检必须与目标 SDK 的 lockfile、overrides、manifest、feature-tools 及符号链接语义对齐，并在 `openStdio` 前拒绝可加载工具模块。普通 `.claude`／`.codex` 配置目录应继续可用。
+- 保留真实 CLI sentinel 回归，确认项目工具在 Phi 守卫前没有被导入；配置字段存在或 shell 预检通过本身不等于这一行为通过。检查完成到启动之间的同 UID 文件替换竞态仍是已记录残余风险，不宣称已消除。
+- Cursor 的原生断流恢复会随 SDK 变化。本地 18.10.3 已验证纯文本错误分类可能使原生重试与 Phi 续答叠加；RPC 路径必须单独验证纯文本截断、已完成工具后的截断、完整答案后断连和主动停止，不能仅因为扩展随包上传就假定已加载或行为相同。
+
+对应回归为 `engine-rpc-ssh-stdio-factory.test.ts`、`engine-rpc-task-admission-native.test.ts`、`cursor-stream-recovery.test.ts` 与 `engine-rpc-cursor-stream-recovery.test.ts`。PM-3 已保存为 `044bac9b`：模型网关只为可信 Cursor API 保留精确的固定截断分类，RPC 恢复绑定实际 session registry；专项 23 项、独立真实 RPC 5 项及错误隐私 2 项通过。Cursor 子任务、真实 SSH/provider 仍待验证，不能从此限定结果推定。
 
 更新 [引擎白名单](../../scripts/engine-boundary-allowlist.json) 时，对新增内部路径说明用途和保留／删除计划。终端 natives、测试辅助及评测脚本仍有既定例外；检查通过不代表这些过渡条目已经消除。不要为了消除检查报错直接扩充白名单而不修边界。
 
@@ -105,6 +114,14 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 逐项记录目标提交、机器／系统、操作、结果和证据。没有执行的项目写“待验证”，不要用自动化结果推定通过。真实凭据只经现有产品登录流程使用，不写入测试、日志、命令或服务器部署包。
 
+### 当前受控应用入口
+
+`3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
+
+本阶段只开放原生工具范围；persona/context/memory/MCP/skills/compaction 等未接入配置会明确报错，不能静默丢弃或回退本机。已有原生审批界面处理批准、拒绝和停止；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。具名专家、停止及恢复经过实际应用安装器/runtime-adapter/CLI 回归，但不是线上 SSH/provider 或默认开放验收。
+
+升级时增加 `app-remote-session-routing.test.ts`、`engine-facade-selected-cleanup.test.ts` 与 `engine-facade-child-composition.test.ts` 的相关回归。关闭失败仍须释放本阶段持有的连接，保留原始失败；不能因为清理错误跳过释放，也不能以关闭成功替代原生取消确认。
+
 | 项目                 | 必须观察的结果                                                                                            | 本次状态                                                      |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | 本地真实 provider    | 一轮对话、read／edit／bash 等工具、中断、旧会话恢复                                                       | 待人工验证；隔离 loopback 契约已通过                          |
@@ -139,6 +156,8 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 ## 8. 本次按流程完成的记录
 
 本手册根据本次升级的实际记录整理，已走过版本冻结、完整性核对、适配、独立审查和本地自动化验收；人工及远程启用步骤仍未完成。
+
+2026-10-14 后续阶段已保存：`044bac9b`（PM-3 RPC 恢复）、`3423a650`（PM-5 后续实际应用接线）和 `2016f286`（旧离线标题测试契约校正，生产代码不变）。实际应用阶段的生产类型、lint、构建和 asar 检查通过。固定 `3423a650` 的标准全量首轮 5864 项有 8 项失败：7 项旧改名预期在校正后两文件独立 59/59 通过，1 项历史容量计时失败同文件独立 19/19 通过。原全量及计时失败日志保留，未重跑全库、未放宽期限；当前标准并发稳定性仍须在 T16 候选确认。详细结果和版本边界见 [远程验收记录](omp-remote-acceptance.md)。
 
 | 步骤           | 实际结果                                                                                                                                              |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
