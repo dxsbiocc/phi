@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { RpcConnection } from '../../src/main/agent/engine/rpc/connection'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
@@ -13,7 +14,8 @@ import { createRpcSessionVerifier } from '../../src/main/agent/engine/rpc/sessio
 import type { RemoteSessionReference } from '../../src/main/agent/engine/rpc/session-storage/types'
 
 export async function createSessionVerificationFixture(
-  budgets?: SessionVerificationBudgets
+  budgets?: SessionVerificationBudgets,
+  options: { isolatedProject?: boolean } = {}
 ): Promise<{
   root: string
   identity: SessionVerificationIdentity
@@ -31,7 +33,9 @@ export async function createSessionVerificationFixture(
     await mkdtemp(fileURLToPath(new URL('../../.omx/t15-verifier-fixture-', import.meta.url)))
   )
   const home = join(root, 'home'),
-    projectRoot = join(root, 'project'),
+    projectRoot = options.isolatedProject
+      ? await realpath(await mkdtemp(join(tmpdir(), 'phi-session-proof-project-')))
+      : join(root, 'project'),
     directory = join(root, 'durable')
   const journals = join(directory, 'journals'),
     blobs = join(directory, 'data/omp/blobs')
@@ -56,7 +60,7 @@ export async function createSessionVerificationFixture(
     join(home, '.omp/agent'),
     join(root, 'tmp')
   ])
-    await mkdir(path, { mode: 0o700 })
+    if (path !== projectRoot || !options.isolatedProject) await mkdir(path, { mode: 0o700 })
   const agent = join(home, '.omp/agent'),
     config = join(root, 'capability.json')
   await writeFile(config, JSON.stringify({ ...identity, ...(budgets ? { budgets } : {}) }), {
@@ -193,6 +197,7 @@ export async function createSessionVerificationFixture(
     await connection.start()
   } catch (error) {
     await transport?.close()
+    if (options.isolatedProject) await rm(projectRoot, { recursive: true, force: true })
     await rm(root, { recursive: true, force: true })
     throw new Error(stderr, { cause: error })
   }
@@ -257,6 +262,7 @@ export async function createSessionVerificationFixture(
         try {
           await transport?.close()
         } finally {
+          if (options.isolatedProject) await rm(projectRoot, { recursive: true, force: true })
           await rm(root, { recursive: true, force: true })
         }
       }

@@ -252,12 +252,49 @@ storage_file ${q(journalPath)}`,
     !Number.isFinite(Date.parse(header.timestamp))
   )
     throw new RemoteSessionStorageError('FILE_INVALID', 'Invalid journal header schema')
-  if (header.id !== reference.ompSessionId || header.cwd !== scope.projectRoot)
+  if (header.id !== reference.ompSessionId)
     throw new RemoteSessionStorageError('IDENTITY_MISMATCH', 'Journal session or project differs')
+  if (header.cwd !== scope.projectRoot) {
+    // Pinned SDK macOS spelling only; the desktop cannot resolve remote paths.
+    if (
+      !scope.projectRoot.startsWith('/private/') ||
+      header.cwd !== scope.projectRoot.slice('/private'.length)
+    )
+      throw new RemoteSessionStorageError('IDENTITY_MISMATCH', 'Journal project differs')
+    const verified = await runStorageCommand(
+      host,
+      scope,
+      `${storagePrefix(scope, paths)}
+storage_project_identity() {
+  [ -d "$1" ] && [ ! -L "$1" ] || storage_fail IDENTITY_MISMATCH
+  [ "$(cd -- "$1" && pwd -P)" = ${q(scope.projectRoot)} ] || storage_fail IDENTITY_MISMATCH
+  stat -c '%d:%i' -- "$1" 2>/dev/null || stat -f '%d:%i' "$1" || storage_fail IDENTITY_MISMATCH
+}
+storage_journal_prefix() {
+  [ "$(head -c ${prefixBytes.byteLength} -- ${q(journalPath)} | base64 | tr -d '\\r\\n')" = ${q(prefixBytes.toString('base64'))} ] || storage_fail FILE_INVALID
+}
+[ "$(uname -s)" = Darwin ] || storage_fail IDENTITY_MISMATCH
+storage_file ${q(journalPath)}
+[ "$(storage_stat ${q(journalPath)})" = ${q(metadata)} ] || storage_fail FILE_INVALID
+storage_journal_prefix
+project_before=$(storage_project_identity ${q(scope.projectRoot)}) || storage_fail IDENTITY_MISMATCH
+[ "$(storage_project_identity ${q(header.cwd)})" = "$project_before" ] || storage_fail IDENTITY_MISMATCH
+[ "$(storage_project_identity ${q(scope.projectRoot)})" = "$project_before" ] || storage_fail IDENTITY_MISMATCH
+storage_file ${q(journalPath)}
+[ "$(storage_stat ${q(journalPath)})" = ${q(metadata)} ] || storage_fail FILE_INVALID
+storage_journal_prefix
+printf 'PHI_STORAGE_PROJECT_ALIAS_V1\\n'`,
+      lease.signal,
+      64
+    )
+    lease.assertActive()
+    if (verified !== 'PHI_STORAGE_PROJECT_ALIAS_V1\n')
+      throw new RemoteSessionStorageError('IDENTITY_MISMATCH', 'Invalid remote project proof')
+  }
   return Object.freeze({
     journalPath,
     ompSessionId: header.id,
-    cwd: header.cwd,
+    cwd: scope.projectRoot,
     headerVersion: 3,
     fileIdentity: createHash('sha256')
       .update(metadata.split(':').slice(0, 2).join(':'))

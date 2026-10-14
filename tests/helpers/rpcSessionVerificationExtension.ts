@@ -140,6 +140,14 @@ export default function fixture(pi: ExtensionAPI): void {
         mutateAt = activeChecks + 50
         return
       }
+      if (args === 'arm-project-replace') {
+        mutate = async () => {
+          renameSync(identity.projectRoot, identity.projectRoot + '.replaced')
+          mkdirSync(identity.projectRoot, { mode: 0o700 })
+        }
+        mutateAt = activeChecks + 50
+        return
+      }
       const manager = pi.pi.SessionManager.create(ctx.cwd, identity.journals)
       const image = {
         type: 'image' as const,

@@ -1,3 +1,4 @@
+import { lstat, realpath } from 'node:fs/promises'
 import { posix } from 'node:path'
 import type { ExtensionAPI, SessionManager } from '@oh-my-pi/pi-coding-agent'
 import {
@@ -132,13 +133,50 @@ export function verifySessionGraph(
   return entries.length > 1 ? (entries[entries.length - 1] as { id: string }).id : null
 }
 
-function verifyManager(
+/** The pinned SDK uses this exact macOS alias, after confirming real directory identity. */
+async function verifyProjectCwd(
+  cwd: unknown,
+  capability: SessionVerificationCapability,
+  expectedIdentity?: string
+): Promise<string> {
+  assertVerificationActive(capability)
+  if (
+    cwd !== capability.projectRoot &&
+    !(
+      process.platform === 'darwin' &&
+      capability.projectRoot.startsWith('/private/') &&
+      cwd === capability.projectRoot.slice('/private'.length)
+    )
+  )
+    verificationFailure('IDENTITY_MISMATCH')
+  let identity: string
+  try {
+    const stat = await lstat(cwd as string)
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      (await realpath(cwd as string)) !== capability.projectRoot
+    )
+      verificationFailure('IDENTITY_MISMATCH')
+    identity = `${stat.dev}:${stat.ino}`
+  } catch {
+    assertVerificationActive(capability)
+    verificationFailure('IDENTITY_MISMATCH')
+  }
+  assertVerificationActive(capability)
+  if (expectedIdentity !== undefined && identity !== expectedIdentity)
+    verificationFailure('IDENTITY_MISMATCH')
+  return identity
+}
+
+async function verifyManager(
   manager: SessionManager,
   path: string,
   request: SessionVerificationRequest,
   capability: SessionVerificationCapability,
-  leaf: string | null
-): void {
+  leaf: string | null,
+  projectIdentity: string
+): Promise<void> {
   assertVerificationActive(capability)
   const header = manager.getHeader()
   if (
@@ -147,12 +185,11 @@ function verifyManager(
     manager.getSessionId() !== request.ompSessionId ||
     header?.id !== request.ompSessionId ||
     header.version !== 3 ||
-    header.cwd !== capability.projectRoot ||
-    manager.getRecordedCwd() !== capability.projectRoot ||
-    manager.getCwd() !== capability.projectRoot ||
     manager.getLeafId() !== leaf
   )
     verificationFailure('IDENTITY_MISMATCH')
+  for (const cwd of [header.cwd, manager.getRecordedCwd(), manager.getCwd()])
+    await verifyProjectCwd(cwd, capability, projectIdentity)
   let previous: string | null = null
   for (const entry of manager.getBranch()) {
     if (entry.parentId !== previous) verificationFailure('FILE_INVALID')
@@ -171,6 +208,7 @@ export async function proveSavedSession(
   const path = posix.join(capability.journals, request.journalBasename)
   const budgets = capability.budgets ?? SESSION_VERIFICATION_DEFAULT_BUDGETS
   await verifyManagedDirectories(capability)
+  const projectIdentity = await verifyProjectCwd(capability.projectRoot, capability)
   const before = await hashPrivateFile(path, capability, {
     maxBytes: budgets.journalBytes,
     utf8: true
@@ -182,13 +220,9 @@ export async function proveSavedSession(
     verificationFailure('FILE_INVALID')
   const leaf = verifySessionGraph(loaded.entries, capability)
   const header = loaded.entries[0]
-  if (
-    header.type !== 'session' ||
-    header.version !== 3 ||
-    header.id !== request.ompSessionId ||
-    header.cwd !== capability.projectRoot
-  )
+  if (header.type !== 'session' || header.version !== 3 || header.id !== request.ompSessionId)
     verificationFailure('IDENTITY_MISMATCH')
+  await verifyProjectCwd(header.cwd, capability, projectIdentity)
   const refs = collectSessionAssetReferences(loaded.entries, capability)
   const assets = await verifySessionAssets(refs, path, capability)
   let inspected: SessionManager | undefined
@@ -199,8 +233,9 @@ export async function proveSavedSession(
       suppressBreadcrumb: true,
       initialCwd: capability.projectRoot
     })
-    verifyManager(inspected, path, request, capability, leaf)
-    if (liveManager) verifyManager(liveManager, path, request, capability, leaf)
+    await verifyManager(inspected, path, request, capability, leaf, projectIdentity)
+    if (liveManager)
+      await verifyManager(liveManager, path, request, capability, leaf, projectIdentity)
     const candidates = sdk.getRestorableSessionModels(
       // Models do not require materializing snapcompact frames. Assets have
       // already been verified independently; this does not change live context.
@@ -231,6 +266,7 @@ export async function proveSavedSession(
   )
     verificationFailure('FILE_INVALID')
   await verifyManagedDirectories(capability)
+  await verifyProjectCwd(capability.projectRoot, capability, projectIdentity)
   return Object.freeze({
     ompSessionId: request.ompSessionId,
     phiSessionId: capability.phiSessionId,
