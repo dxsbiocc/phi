@@ -16,7 +16,8 @@ import {
   createRunId,
   createPhiSession,
   findPhiSessionById,
-  readSessionEvents
+  readSessionEvents,
+  updateSessionManifest
 } from '../../src/main/agent/session/session-store'
 import type { SessionRun } from '../../src/main/agent/session/session-runner-registry'
 import type { ToolApprovalRequest } from '../../src/main/agent/tool-approval'
@@ -24,7 +25,8 @@ import type { RpcApprovalEvent } from '../../src/main/agent/engine/rpc/approval-
 import { holdChildCancellationAck } from './facadeChildControlProbe'
 import type { RpcChildRuntimeConfig } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 
-const mode = process.env.PHI_FACADE_CHILD_MODE ?? 'approved'
+const applicationRouting = process.env.PHI_FACADE_CHILD_MODE?.startsWith('app-') === true
+const mode = (process.env.PHI_FACADE_CHILD_MODE ?? 'approved').replace(/^app-/, '')
 const definition: PhiAgentDefinition = {
   name: 'Checker',
   description: 'Check one bounded foreground task',
@@ -39,9 +41,36 @@ const definition: PhiAgentDefinition = {
 const childEvents: RpcApprovalEvent[] = [],
   childParents: SessionRun[] = [],
   mainEvents: RpcApprovalEvent[] = []
+let releaseSelection: (() => void) | undefined
+let selectionStarted: (() => void) | undefined
+const selectionReached = new Promise<void>((resolve) => {
+  selectionStarted = resolve
+})
 let parallelProvider: ParallelChildProvider | undefined
 const f = await facadeMetadataFixture({
   isolatedProject: true,
+  ...(applicationRouting
+    ? {
+        applicationRouting: {
+          foregroundAgentNames: 'Checker',
+          agents: [definition],
+          beforeConnect: async (phiSessionId) => {
+            if (mode === 'selection-stale')
+              updateSessionManifest(phiSessionId, { title: 'Changed during remote selection' })
+            if (mode === 'selection-abort') {
+              selectionStarted!()
+              await new Promise<void>((resolve) => {
+                releaseSelection = resolve
+              })
+            }
+          },
+          onChildApprovalEvent(event: RpcApprovalEvent, parent: SessionRun) {
+            childEvents.push(event)
+            childParents.push(parent)
+          }
+        }
+      }
+    : {}),
   providerFactory: mode.startsWith('parallel-')
     ? async () => {
         parallelProvider = await startParallelChildProvider()
@@ -109,8 +138,24 @@ try {
       mainEvents.push(event)
     }
   })
-  const id = 'actual-child-facade'
-  if (mode === 'host-stop') {
+  let id = 'actual-child-facade'
+  if (mode === 'selection-stale') {
+    await assert.rejects(f.createApplicationSession(), /远程选择期间会话或项目策略已改变/)
+    assert.equal(f.channels.length, 0)
+    assert.equal(f.provider.requests.length, 0)
+    assert.equal(findPhiSessionById(f.phi.sessionId)!.runtimeRef, undefined)
+  } else if (mode === 'selection-abort') {
+    const pending = f.engine.sessions.create(f.params(id))
+    void pending.catch(() => undefined)
+    await selectionReached
+    const stopping = f.engine.sessions.dispose({ sessionId: id })
+    releaseSelection!()
+    await assert.rejects(pending)
+    await stopping
+    assert.equal(f.channels.length, 0)
+    assert.equal(f.provider.requests.length, 0)
+    assert.equal(findPhiSessionById(f.phi.sessionId)!.runtimeRef, undefined)
+  } else if (mode === 'host-stop') {
     await runForegroundHostStop(f)
   } else if (mode === 'reentrant-close') {
     await runReentrantChildClose(f)
@@ -144,9 +189,20 @@ try {
   } else {
     const publicEvents: unknown[] = [],
       publicStates: unknown[] = []
+
+    if (applicationRouting) {
+      await assert.rejects(
+        f.engine.sessions.create({ ...f.params('renderer-spoof'), phiAgents: [definition] }),
+        /child\/context configuration/
+      )
+      assert.equal(f.provider.requests.length, 0)
+    }
+    if (applicationRouting) {
+      const created = await f.createApplicationSession()
+      id = created.session.runtimeSessionId
+    } else await f.engine.sessions.create(f.params(id))
     f.engine.events.onSessionEvent(id, (event) => publicEvents.push(event))
     f.engine.events.onSessionState(id, (state) => publicStates.push(state))
-    await f.engine.sessions.create(f.params(id))
     assert.equal(f.provider.requests.length, 0)
     const directories = await f.privateDirectories()
     assert.equal(directories.length, 1)
@@ -470,8 +526,10 @@ try {
         await f.engine.sessions.dispose({ sessionId: id })
         assert.equal(f.engine.sessions.has(id), false)
         f.resume()
-        const resumed = 'fresh-child-facade'
-        await f.engine.sessions.create(f.params(resumed))
+        let resumed = 'fresh-child-facade'
+        if (applicationRouting)
+          resumed = (await f.createApplicationSession()).session.runtimeSessionId
+        else await f.engine.sessions.create(f.params(resumed))
         const restored = findPhiSessionById(f.phi.sessionId)!.runtimeRef!
         assert.equal(restored.ompSessionId, reference.ompSessionId)
         assert.equal(restored.journalBasename, reference.journalBasename)

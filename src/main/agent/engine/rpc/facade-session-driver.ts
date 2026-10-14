@@ -67,6 +67,8 @@ export interface SelectedFacadeRuntime {
     readonly onApprovalEvent?: (event: RpcApprovalEvent, parent: SessionRun) => void | Promise<void>
   }
   readonly onInterrupted?: (error: Error) => void
+  /** Application-owned SSH/runtime workspace, released after its last runtime channel. */
+  readonly dispose?: () => void | Promise<void>
 }
 export interface FacadeSessionFactoryOptions {
   /** The real singleton whose host registry is populated by engine.host.register. */
@@ -74,12 +76,15 @@ export interface FacadeSessionFactoryOptions {
   readonly models: (agentDir: string) => Promise<readonly RuntimeModel[]>
   /** Actual application SessionRunnerRegistry, not a run identifier from prompt options. */
   readonly runners: SessionRunnerRegistry
-  /** Main-only, synchronous snapshot of the already selected SSH runtime. */
-  readonly selected: (identity: {
-    runtimeSessionId: string
-    phiSessionId: string
-    projectId: string
-  }) => SelectedFacadeRuntime
+  /** Main-only selection; async preparation is rechecked before any runtime or adoption. */
+  readonly selected: (
+    identity: {
+      runtimeSessionId: string
+      phiSessionId: string
+      projectId: string
+    },
+    signal: AbortSignal
+  ) => SelectedFacadeRuntime | Promise<SelectedFacadeRuntime>
 }
 export function facadeBindingHash(binding: RemoteWorkspaceHostBinding): string {
   return createHash('sha256').update(binding.cacheKey).digest('hex')
@@ -209,378 +214,450 @@ export function createFacadeSessionFactory(
       const initial = findPhiSessionById(phiSessionId)
       if (!initial) throw new Error('Phi session does not exist')
       const selected = captureSelection(
-        options.selected({
-          runtimeSessionId: params.sessionId,
-          phiSessionId,
+        await options.selected(
+          {
+            runtimeSessionId: params.sessionId,
+            phiSessionId,
+            projectId
+          },
+          signal
+        )
+      )
+      let selectedCleanup: Promise<void> | undefined
+      const disposeSelected = (): Promise<void> =>
+        (selectedCleanup ??= Promise.resolve().then(() => selected.dispose?.()))
+      try {
+        signal.throwIfAborted()
+        const afterSelection = findPhiSessionById(phiSessionId)
+        const afterBinding = resolveRemoteWorkspaceHostBinding({
+          sessionId: phiSessionId,
           projectId
         })
-      )
-      const scope: RemoteSessionScope = Object.freeze({
-        hostProfileId: selected.hostProfileId,
-        bindingHash: facadeBindingHash(binding),
-        projectId,
-        projectRoot: binding.canonicalRoot,
-        runtimeRoot: selected.runtime.runtimeRoot,
-        phiSessionId
-      })
-      if (
-        params.agentDir !== getPhiAgentDir() ||
-        params.cwd !== initial.cwd ||
-        params.sessionManager.cwd !== initial.cwd ||
-        params.projectBound !== true ||
-        initial.projectLocation?.kind !== 'ssh' ||
-        selected.hostProfileId !== initial.projectLocation.hostProfileId ||
-        selected.bindingHash !== scope.bindingHash ||
-        selected.projectId !== projectId ||
-        selected.projectRoot !== binding.canonicalRoot ||
-        JSON.stringify(location) !== JSON.stringify(initial.projectLocation)
-      )
-        throw new RuntimeReferenceError(
-          'HOST_IDENTITY_CHANGED',
-          '所选远程运行与 Phi 项目绑定不一致'
-        )
-      if (initial.runtimeRecoveryError)
-        throw new RuntimeReferenceError(
-          initial.runtimeRecoveryError.code,
-          initial.runtimeRecoveryError.message
-        )
-      const reference = initial.runtimeRef
-        ? parseRuntimeReference(initial.runtimeRef, phiSessionId)
-        : undefined
-      if (reference) assertRuntimeScope(reference, scope)
-      if ((reference ? 'resume' : 'new') !== selected.recovery)
-        throw new RuntimeReferenceError(
-          'REMOTE_OPERATION_REQUIRED',
-          '必须显式选择新建或恢复远程会话'
-        )
-      const savedModel = initial.model && {
-        provider: initial.model.providerId,
-        id: initial.model.modelId
-      }
-      const chosenModel = reference
-        ? savedModel
-        : params.model && { provider: params.model.provider, id: params.model.id }
-      if (
-        !chosenModel ||
-        (params.model &&
-          (params.model.provider !== chosenModel.provider || params.model.id !== chosenModel.id))
-      )
-        throw new Error('Explicit remote model policy is required')
-      if (
-        !savedModel ||
-        chosenModel.provider !== savedModel.provider ||
-        chosenModel.id !== savedModel.id ||
-        (reference === undefined && params.thinkingLevel !== initial.thinkingLevel)
-      )
-        throw new Error('Phi model/thinking policy must be saved before remote creation')
-      let expectedTitle = initial.title
-      if (
-        expectedTitle !== undefined &&
-        canonicalRemoteSessionName(expectedTitle) !== expectedTitle
-      )
-        throw new Error('Saved Phi title requires explicit canonical policy')
-      // Capture anchor/reference/generation BEFORE registry/deployment/gateway awaits.
-      const generation = randomUUID()
-      let adoption: RuntimeReferenceAdoption | undefined = beginRuntimeReferenceAdoption(
-        phiSessionId,
-        scope,
-        generation,
-        { signal }
-      )
-      const initialAdoption = adoption
-      let attachedReference = reference
-      let firstCheckpoint = true
-      let runtime: RemoteSessionRuntime | undefined
-      let detach: (() => void) | undefined
-      let closing: Promise<void> | undefined
-      let interrupted = false
-      let metadataPending = false
-      let submittedRun: SessionRun | undefined
-      const stopSubmittedRun = (): void => {
-        const run = submittedRun
-        if (run && options.runners.getActiveRun(phiSessionId) === run)
-          options.runners.stopRun(phiSessionId)
-      }
-      const vault = new BrowserTextVault()
-      let tools: ReturnType<typeof createRpcDesktopToolScope> | undefined
-      try {
-        tools = createRpcDesktopToolScope({
-          identity: {
-            runtimeSessionId: params.sessionId,
-            sessionId: phiSessionId,
-            projectId,
-            cwd: binding.canonicalRoot
-          },
-          services: options.bridge.hostServices,
-          currentRun: () => runtime?.currentRun(),
-          recentUserImages: selected.recentUserImages,
-          allowBrowserTypeText: () => false,
-          browserTextVault: vault,
-          agentDir: params.agentDir,
-          allowedSkills: selected.desktopTools?.allowedSkills ?? [],
-          scriptTools: selected.desktopTools?.scriptTools ?? [],
-          scriptApprovalFor: selected.desktopTools?.scriptApprovalFor,
-          paletteCatalogPath: selected.desktopTools?.paletteCatalogPath
-        })
-        const projector = new RpcFacadeEventProjector()
-        const scopeTools = tools
-        const names = new Set(selected.desktopToolNames)
         if (
-          names.size !== selected.desktopToolNames.length ||
-          names.has('browser') ||
-          [...names].some((name) => !scopeTools.tools.some((tool) => tool.name === name))
+          !afterSelection ||
+          JSON.stringify([
+            afterSelection.cwd,
+            afterSelection.cwdRealPath,
+            afterSelection.projectLocation,
+            afterSelection.model,
+            afterSelection.thinkingLevel,
+            afterSelection.title,
+            afterSelection.runtimeRef,
+            afterSelection.runtimeRecoveryError
+          ]) !==
+            JSON.stringify([
+              initial.cwd,
+              initial.cwdRealPath,
+              initial.projectLocation,
+              initial.model,
+              initial.thinkingLevel,
+              initial.title,
+              initial.runtimeRef,
+              initial.runtimeRecoveryError
+            ]) ||
+          facadeBindingHash(afterBinding) !== facadeBindingHash(binding)
         )
-          throw new RemoteSessionCapabilityError('desktop tool roster/browser privacy')
-        const models = await options.models(params.agentDir)
-        signal.throwIfAborted()
-        const model = models.find(
-          (candidate) =>
-            candidate.provider === chosenModel.provider && candidate.id === chosenModel.id
+          throw new RuntimeReferenceError('STALE_GENERATION', '远程选择期间会话或项目策略已改变')
+        const scope: RemoteSessionScope = Object.freeze({
+          hostProfileId: selected.hostProfileId,
+          bindingHash: facadeBindingHash(binding),
+          projectId,
+          projectRoot: binding.canonicalRoot,
+          runtimeRoot: selected.runtime.runtimeRoot,
+          phiSessionId
+        })
+        if (
+          params.agentDir !== getPhiAgentDir() ||
+          params.cwd !== initial.cwd ||
+          params.sessionManager.cwd !== initial.cwd ||
+          params.projectBound !== true ||
+          initial.projectLocation?.kind !== 'ssh' ||
+          selected.hostProfileId !== initial.projectLocation.hostProfileId ||
+          selected.bindingHash !== scope.bindingHash ||
+          selected.projectId !== projectId ||
+          selected.projectRoot !== binding.canonicalRoot ||
+          JSON.stringify(location) !== JSON.stringify(initial.projectLocation)
         )
-        if (!model)
-          throw new Error('Selected remote model is unavailable in the real desktop registry')
-        const stateFrom = (snapshot: RemoteRuntimeSnapshot): WorkerSessionState =>
-          workerState(snapshot, initial.cwd, phiSessionId, models, projector)
-        let state: WorkerSessionState | undefined
-        const assertAdoptionPolicy = (): void => {
-          const latest = findPhiSessionById(phiSessionId)
-          if (
-            !latest ||
-            JSON.stringify(latest.model) !== JSON.stringify(initial.model) ||
-            latest.thinkingLevel !== initial.thinkingLevel
+          throw new RuntimeReferenceError(
+            'HOST_IDENTITY_CHANGED',
+            '所选远程运行与 Phi 项目绑定不一致'
           )
-            throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
-          if (latest.title !== expectedTitle)
-            throw new RuntimeReferenceError('STALE_GENERATION', '远程会话名称策略已改变')
-          const latestBinding = resolveRemoteWorkspaceHostBinding({
-            sessionId: phiSessionId,
-            projectId
-          })
-          if (latest.cwd !== initial.cwd || latest.cwdRealPath !== initial.cwdRealPath)
-            throw new RuntimeReferenceError('STALE_GENERATION', '远程会话锚点已改变')
-          if (facadeBindingHash(latestBinding) !== scope.bindingHash)
-            throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程证明期间主机绑定已改变')
+        if (initial.runtimeRecoveryError)
+          throw new RuntimeReferenceError(
+            initial.runtimeRecoveryError.code,
+            initial.runtimeRecoveryError.message
+          )
+        const reference = initial.runtimeRef
+          ? parseRuntimeReference(initial.runtimeRef, phiSessionId)
+          : undefined
+        if (reference) assertRuntimeScope(reference, scope)
+        if ((reference ? 'resume' : 'new') !== selected.recovery)
+          throw new RuntimeReferenceError(
+            'REMOTE_OPERATION_REQUIRED',
+            '必须显式选择新建或恢复远程会话'
+          )
+        const savedModel = initial.model && {
+          provider: initial.model.providerId,
+          id: initial.model.modelId
         }
-        runtime = await RemoteSessionRuntime.create({
-          transport: {
-            projectId,
-            runtime: selected.runtime,
-            session: selected.session,
-            bundle: selected.bundle,
-            gateway: options.bridge,
-            models: [{ provider: model.provider, id: model.id }],
-            preparePersistentStorage: ({ signal: storageSignal }) =>
-              prepareRemoteSessionStorage({
-                runtimeHost: selected.runtime.runtimeHost,
-                scope,
-                signal: storageSignal,
-                openLockStdio: (command) => selected.session.openStdio!(command)
-              })
-          },
-          params: {
-            sessionId: phiSessionId,
-            cwd: binding.canonicalRoot,
-            agentDir: params.agentDir,
-            model,
-            thinkingLevel: reference ? undefined : params.thinkingLevel
-          },
-          sessionName: expectedTitle,
-          action: reference
-            ? { type: 'resume', reference: { ...reference, phiSessionId }, savedModel: chosenModel }
-            : { type: 'new', model: chosenModel },
-          tools: tools.tools.filter((tool) => names.has(tool.name)),
-          hostApprovalFor: tools.approvalFor,
-          nativeTools: selected.nativeTools,
-          foregroundChildren: selected.foregroundChildren && {
-            binding: deriveProductionChildBinding(binding, selected),
-            definitions: selected.foregroundChildren.definitions,
-            parentThinkingLevel: childThinkingLevel(initial.thinkingLevel, model.reasoning),
-            currentParentRun: () => {
-              const run = submittedRun
-              return run && options.runners.getActiveRun(phiSessionId) === run ? run : undefined
+        const chosenModel = reference
+          ? savedModel
+          : params.model && { provider: params.model.provider, id: params.model.id }
+        if (
+          !chosenModel ||
+          (params.model &&
+            (params.model.provider !== chosenModel.provider || params.model.id !== chosenModel.id))
+        )
+          throw new Error('Explicit remote model policy is required')
+        if (
+          !savedModel ||
+          chosenModel.provider !== savedModel.provider ||
+          chosenModel.id !== savedModel.id ||
+          (reference === undefined && params.thinkingLevel !== initial.thinkingLevel)
+        )
+          throw new Error('Phi model/thinking policy must be saved before remote creation')
+        let expectedTitle = initial.title
+        if (
+          expectedTitle !== undefined &&
+          canonicalRemoteSessionName(expectedTitle) !== expectedTitle
+        )
+          throw new Error('Saved Phi title requires explicit canonical policy')
+        // Capture anchor/reference/generation BEFORE registry/deployment/gateway awaits.
+        const generation = randomUUID()
+        let adoption: RuntimeReferenceAdoption | undefined = beginRuntimeReferenceAdoption(
+          phiSessionId,
+          scope,
+          generation,
+          { signal }
+        )
+        const initialAdoption = adoption
+        let attachedReference = reference
+        let firstCheckpoint = true
+        let runtime: RemoteSessionRuntime | undefined
+        let detach: (() => void) | undefined
+        let closing: Promise<void> | undefined
+        let interrupted = false
+        let metadataPending = false
+        let submittedRun: SessionRun | undefined
+        const stopSubmittedRun = (): void => {
+          const run = submittedRun
+          if (run && options.runners.getActiveRun(phiSessionId) === run)
+            options.runners.stopRun(phiSessionId)
+        }
+        const vault = new BrowserTextVault()
+        let tools: ReturnType<typeof createRpcDesktopToolScope> | undefined
+        try {
+          tools = createRpcDesktopToolScope({
+            identity: {
+              runtimeSessionId: params.sessionId,
+              sessionId: phiSessionId,
+              projectId,
+              cwd: binding.canonicalRoot
             },
-            onApprovalEvent: createFacadeChildApprovalWriter({
-              phiSessionId,
+            services: options.bridge.hostServices,
+            currentRun: () => runtime?.currentRun(),
+            recentUserImages: selected.recentUserImages,
+            allowBrowserTypeText: () => false,
+            browserTextVault: vault,
+            agentDir: params.agentDir,
+            allowedSkills: selected.desktopTools?.allowedSkills ?? [],
+            scriptTools: selected.desktopTools?.scriptTools ?? [],
+            scriptApprovalFor: selected.desktopTools?.scriptApprovalFor,
+            paletteCatalogPath: selected.desktopTools?.paletteCatalogPath
+          })
+          const projector = new RpcFacadeEventProjector()
+          const scopeTools = tools
+          const names = new Set(selected.desktopToolNames)
+          if (
+            names.size !== selected.desktopToolNames.length ||
+            names.has('browser') ||
+            [...names].some((name) => !scopeTools.tools.some((tool) => tool.name === name))
+          )
+            throw new RemoteSessionCapabilityError('desktop tool roster/browser privacy')
+          const models = await options.models(params.agentDir)
+          signal.throwIfAborted()
+          const model = models.find(
+            (candidate) =>
+              candidate.provider === chosenModel.provider && candidate.id === chosenModel.id
+          )
+          if (!model)
+            throw new Error('Selected remote model is unavailable in the real desktop registry')
+          const stateFrom = (snapshot: RemoteRuntimeSnapshot): WorkerSessionState =>
+            workerState(snapshot, initial.cwd, phiSessionId, models, projector)
+          let state: WorkerSessionState | undefined
+          const assertAdoptionPolicy = (): void => {
+            const latest = findPhiSessionById(phiSessionId)
+            if (
+              !latest ||
+              JSON.stringify(latest.model) !== JSON.stringify(initial.model) ||
+              latest.thinkingLevel !== initial.thinkingLevel
+            )
+              throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
+            if (latest.title !== expectedTitle)
+              throw new RuntimeReferenceError('STALE_GENERATION', '远程会话名称策略已改变')
+            const latestBinding = resolveRemoteWorkspaceHostBinding({
+              sessionId: phiSessionId,
+              projectId
+            })
+            if (latest.cwd !== initial.cwd || latest.cwdRealPath !== initial.cwdRealPath)
+              throw new RuntimeReferenceError('STALE_GENERATION', '远程会话锚点已改变')
+            if (facadeBindingHash(latestBinding) !== scope.bindingHash)
+              throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程证明期间主机绑定已改变')
+          }
+          runtime = await RemoteSessionRuntime.create({
+            transport: {
+              projectId,
+              runtime: selected.runtime,
+              session: selected.session,
+              bundle: selected.bundle,
+              gateway: options.bridge,
+              models: [{ provider: model.provider, id: model.id }],
+              preparePersistentStorage: ({ signal: storageSignal }) =>
+                prepareRemoteSessionStorage({
+                  runtimeHost: selected.runtime.runtimeHost,
+                  scope,
+                  signal: storageSignal,
+                  openLockStdio: (command) => selected.session.openStdio!(command)
+                })
+            },
+            params: {
+              sessionId: phiSessionId,
               cwd: binding.canonicalRoot,
-              runners: options.runners,
-              notify: selected.foregroundChildren.onApprovalEvent
-            })
-          },
-          recentUserImages: tools.recentUserImages,
-          approval: selected.approval,
-          signal,
-          beforeCheckpoint: (checkpointSignal) => {
-            if (firstCheckpoint) firstCheckpoint = false
-            else {
-              const expected = attachedReference
-              adoption = beginRuntimeReferenceAdoption(phiSessionId, scope, generation, {
-                signal: checkpointSignal,
-                expectedOmpSessionId: expected?.ompSessionId,
-                expectedJournalBasename: expected?.journalBasename
+              agentDir: params.agentDir,
+              model,
+              thinkingLevel: reference ? undefined : params.thinkingLevel
+            },
+            sessionName: expectedTitle,
+            action: reference
+              ? {
+                  type: 'resume',
+                  reference: { ...reference, phiSessionId },
+                  savedModel: chosenModel
+                }
+              : { type: 'new', model: chosenModel },
+            tools: tools.tools.filter((tool) => names.has(tool.name)),
+            hostApprovalFor: tools.approvalFor,
+            nativeTools: selected.nativeTools,
+            foregroundChildren: selected.foregroundChildren && {
+              binding: deriveProductionChildBinding(binding, selected),
+              definitions: selected.foregroundChildren.definitions,
+              parentThinkingLevel: childThinkingLevel(initial.thinkingLevel, model.reasoning),
+              currentParentRun: () => {
+                const run = submittedRun
+                return run && options.runners.getActiveRun(phiSessionId) === run ? run : undefined
+              },
+              onApprovalEvent: createFacadeChildApprovalWriter({
+                phiSessionId,
+                cwd: binding.canonicalRoot,
+                runners: options.runners,
+                notify: selected.foregroundChildren.onApprovalEvent
               })
-            }
-            const lease = adoption
-            if (!lease) throw new Error('Phi adoption authority is unavailable')
-            return () => {
-              lease.release()
-              if (adoption === lease) adoption = undefined
-            }
-          },
-          adopt: async (snapshot, adoptionSignal) => {
-            adoptionSignal.throwIfAborted()
-            signal.throwIfAborted()
-            assertAdoptionPolicy()
-            // Project first, so an unsupported public shape cannot commit an unrenderable attachment.
-            state = stateFrom(snapshot)
-            if (!adoption) throw new Error('Phi adoption lease was retired')
-            const { phiSessionId: adoptedPhiId, ...publicReference } = snapshot.reference
-            if (adoptedPhiId !== phiSessionId) throw new Error('Verified Phi identity changed')
-            const adopted = adoption.adopt({
-              ...publicReference,
-              checkpoint: {
-                leafId: snapshot.checkpoint.leafId,
-                verifiedAt: new Date().toISOString()
+            },
+            recentUserImages: tools.recentUserImages,
+            approval: selected.approval,
+            signal,
+            beforeCheckpoint: (checkpointSignal) => {
+              if (firstCheckpoint) firstCheckpoint = false
+              else {
+                const expected = attachedReference
+                adoption = beginRuntimeReferenceAdoption(phiSessionId, scope, generation, {
+                  signal: checkpointSignal,
+                  expectedOmpSessionId: expected?.ompSessionId,
+                  expectedJournalBasename: expected?.journalBasename
+                })
               }
-            })
-            attachedReference = adopted.runtimeRef
-          },
-          onInterrupted: (error) => {
-            interrupted = true
-            tools?.dispose()
-            adoption?.release()
-            detach?.()
-            selected.onInterrupted?.(error)
-          }
-        })
-        state ??= stateFrom(runtime.currentSnapshot())
-        const currentState = (): WorkerSessionState => structuredClone(state!)
-        detach = runtime.onEvent((frame) => {
-          try {
-            const event = projector.event(frame)
-            if (event) sink.event(event)
-          } catch (error) {
-            void runtime!.close(error)
-          }
-        })
-        return {
-          get isLive() {
-            return (
-              !closing &&
-              !interrupted &&
-              !signal.aborted &&
-              (runtime!.isReady || submittedRun !== undefined || metadataPending)
-            )
-          },
-          state: currentState,
-          async prompt(text, raw) {
-            const run = options.runners.getActiveRun(phiSessionId)
-            if (!run || run.sessionId !== phiSessionId || run.signal.aborted)
-              throw new Error('Remote prompt requires the actual active Phi run')
-            const prompt = promptOptions(raw)
-            if (submittedRun || closing || interrupted || !runtime!.isReady)
-              throw new Error('Remote runtime cannot admit this prompt')
-            submittedRun = run
-            try {
-              let result
-              try {
-                result = await runtime!.prompt(run.runId, text, prompt, run.signal)
-              } catch (error) {
-                interrupted = true
-                tools?.dispose()
-                adoption?.release()
-                throw error
+              const lease = adoption
+              if (!lease) throw new Error('Phi adoption authority is unavailable')
+              return () => {
+                lease.release()
+                if (adoption === lease) adoption = undefined
               }
-              if (options.runners.getActiveRun(phiSessionId) !== run)
-                throw new RuntimeReferenceError('STALE_GENERATION', 'Phi 运行已被替换')
-              state = stateFrom(result.snapshot)
-              sink.state(currentState())
-              if (result.outcome === 'failed')
-                throw new Error('Remote turn failed or approval was denied')
-              return currentState()
-            } finally {
-              if (submittedRun === run) submittedRun = undefined
-            }
-          },
-          async contextUsage() {
-            if (
-              closing ||
-              submittedRun ||
-              metadataPending ||
-              options.runners.getActiveRun(phiSessionId) ||
-              !runtime!.isReady
-            )
-              throw new Error('Remote metadata requires an idle Phi session')
-            metadataPending = true
-            try {
-              return await runtime!.readContextUsage()
-            } finally {
-              metadataPending = false
-            }
-          },
-          async rename(rawName) {
-            const name = canonicalRemoteSessionName(rawName)
-            if (
-              closing ||
-              submittedRun ||
-              metadataPending ||
-              options.runners.getActiveRun(phiSessionId) ||
-              !runtime!.isReady
-            )
-              throw new Error('Remote metadata requires an idle Phi session')
-            assertAdoptionPolicy()
-            const assertCurrent = (): void => {
+            },
+            adopt: async (snapshot, adoptionSignal) => {
+              adoptionSignal.throwIfAborted()
+              signal.throwIfAborted()
               assertAdoptionPolicy()
-              if (
-                JSON.stringify(findPhiSessionById(phiSessionId)?.runtimeRef) !==
-                JSON.stringify(attachedReference)
-              )
-                throw new RuntimeReferenceError(
-                  'STALE_GENERATION',
-                  'Phi metadata reference changed'
-                )
-            }
-            metadataPending = true
-            try {
-              const snapshot = await runtime!.rename(name, {
-                assertCurrent,
-                beforeWrite() {
-                  assertCurrent()
-                  updateSessionManifest(phiSessionId, { title: name })
-                  expectedTitle = name
+              // Project first, so an unsupported public shape cannot commit an unrenderable attachment.
+              state = stateFrom(snapshot)
+              if (!adoption) throw new Error('Phi adoption lease was retired')
+              const { phiSessionId: adoptedPhiId, ...publicReference } = snapshot.reference
+              if (adoptedPhiId !== phiSessionId) throw new Error('Verified Phi identity changed')
+              const adopted = adoption.adopt({
+                ...publicReference,
+                checkpoint: {
+                  leafId: snapshot.checkpoint.leafId,
+                  verifiedAt: new Date().toISOString()
                 }
               })
-              state = stateFrom(snapshot)
-              sink.state(currentState())
-              return currentState()
-            } finally {
-              metadataPending = false
+              attachedReference = adopted.runtimeRef
+            },
+            onInterrupted: (error) => {
+              interrupted = true
+              tools?.dispose()
+              adoption?.release()
+              detach?.()
+              if (runtime)
+                void runtime
+                  .close(error)
+                  .finally(disposeSelected)
+                  .catch(() => undefined)
+              selected.onInterrupted?.(error)
             }
-          },
-          async abort() {
-            stopSubmittedRun()
-            if (submittedRun) await runtime!.stop()
-            return currentState()
-          },
-          dispose() {
-            return (closing ??= (async () => {
-              stopSubmittedRun()
+          })
+          state ??= stateFrom(runtime.currentSnapshot())
+          const currentState = (): WorkerSessionState => structuredClone(state!)
+          detach = runtime.onEvent((frame) => {
+            try {
+              const event = projector.event(frame)
+              if (event) sink.event(event)
+            } catch (error) {
+              void runtime!.close(error)
+            }
+          })
+          return {
+            get isLive() {
+              return (
+                !closing &&
+                !interrupted &&
+                !signal.aborted &&
+                (runtime!.isReady || submittedRun !== undefined || metadataPending)
+              )
+            },
+            state: currentState,
+            async prompt(text, raw) {
+              const run = options.runners.getActiveRun(phiSessionId)
+              if (!run || run.sessionId !== phiSessionId || run.signal.aborted)
+                throw new Error('Remote prompt requires the actual active Phi run')
+              const prompt = promptOptions(raw)
+              if (submittedRun || closing || interrupted || !runtime!.isReady)
+                throw new Error('Remote runtime cannot admit this prompt')
+              submittedRun = run
               try {
-                if (submittedRun) await runtime!.stop()
+                let result
+                try {
+                  result = await runtime!.prompt(run.runId, text, prompt, run.signal)
+                } catch (error) {
+                  interrupted = true
+                  tools?.dispose()
+                  adoption?.release()
+                  throw error
+                }
+                if (options.runners.getActiveRun(phiSessionId) !== run)
+                  throw new RuntimeReferenceError('STALE_GENERATION', 'Phi 运行已被替换')
+                state = stateFrom(result.snapshot)
+                sink.state(currentState())
+                if (result.outcome === 'failed')
+                  throw new Error('Remote turn failed or approval was denied')
+                return currentState()
               } finally {
-                await runtime!.close()
-                detach?.()
-                adoption?.release()
-                tools?.dispose()
+                if (submittedRun === run) submittedRun = undefined
               }
-            })())
+            },
+            async contextUsage() {
+              if (
+                closing ||
+                submittedRun ||
+                metadataPending ||
+                options.runners.getActiveRun(phiSessionId) ||
+                !runtime!.isReady
+              )
+                throw new Error('Remote metadata requires an idle Phi session')
+              metadataPending = true
+              try {
+                return await runtime!.readContextUsage()
+              } finally {
+                metadataPending = false
+              }
+            },
+            async rename(rawName) {
+              const name = canonicalRemoteSessionName(rawName)
+              if (
+                closing ||
+                submittedRun ||
+                metadataPending ||
+                options.runners.getActiveRun(phiSessionId) ||
+                !runtime!.isReady
+              )
+                throw new Error('Remote metadata requires an idle Phi session')
+              assertAdoptionPolicy()
+              const assertCurrent = (): void => {
+                assertAdoptionPolicy()
+                if (
+                  JSON.stringify(findPhiSessionById(phiSessionId)?.runtimeRef) !==
+                  JSON.stringify(attachedReference)
+                )
+                  throw new RuntimeReferenceError(
+                    'STALE_GENERATION',
+                    'Phi metadata reference changed'
+                  )
+              }
+              metadataPending = true
+              try {
+                const snapshot = await runtime!.rename(name, {
+                  assertCurrent,
+                  beforeWrite() {
+                    assertCurrent()
+                    updateSessionManifest(phiSessionId, { title: name })
+                    expectedTitle = name
+                  }
+                })
+                state = stateFrom(snapshot)
+                sink.state(currentState())
+                return currentState()
+              } finally {
+                metadataPending = false
+              }
+            },
+            async abort() {
+              stopSubmittedRun()
+              if (submittedRun) await runtime!.stop()
+              return currentState()
+            },
+            dispose() {
+              return (closing ??= (async () => {
+                stopSubmittedRun()
+                let failed = false
+                let failure: unknown
+                try {
+                  if (submittedRun) await runtime!.stop()
+                } catch (error) {
+                  failed = true
+                  failure = error
+                }
+                try {
+                  await runtime!.close()
+                } catch (error) {
+                  if (!failed) {
+                    failed = true
+                    failure = error
+                  }
+                } finally {
+                  detach?.()
+                  adoption?.release()
+                  tools?.dispose()
+                  try {
+                    await disposeSelected()
+                  } catch (error) {
+                    if (!failed) {
+                      failed = true
+                      failure = error
+                    }
+                  }
+                }
+                if (failed) throw failure
+              })())
+            }
           }
+        } catch (error) {
+          await runtime?.close(error)
+          initialAdoption.release()
+          adoption?.release()
+          tools?.dispose()
+          detach?.()
+          throw error
         }
       } catch (error) {
-        await runtime?.close(error)
-        initialAdoption.release()
-        adoption?.release()
-        tools?.dispose()
-        detach?.()
+        await disposeSelected().catch(() => undefined)
         throw error
       }
     }

@@ -154,6 +154,7 @@ const {
   cancelToolApprovals,
   createApprovalExtension,
   requestToolApproval,
+  requestRuntimeToolApproval,
   resolveToolApproval
 } = await import('../src/main/agent/tool-approval')
 
@@ -766,4 +767,56 @@ test('plan mode blocks skill_run and script tools', () => {
     planModeToolDecision(false, 'skill_run', { skill: 'echo', script: 'run.py' }).allowed,
     true
   )
+})
+
+test('RPC approval preserves the background session identity and rejects foreign or late responses', async () => {
+  const window = new FakeWindow()
+  const focused = new FakeWindow()
+  __electronMock.setFocusedWindow(focused)
+  const controller = new AbortController()
+  const request = {
+    requestId: 'rpc-native-1',
+    sessionId: 'background-session',
+    runId: 'background-run',
+    toolCallId: 'native-call',
+    toolName: 'bash',
+    command: 'echo bounded',
+    cwd: '/server/project',
+    summary: 'echo bounded'
+  }
+  const pending = requestRuntimeToolApproval(request, controller.signal, () => window as never)
+  assert.equal(focused.webContents.sent.length, 0)
+  assert.deepEqual(window.webContents.sent[0].payload, request)
+  assert.equal(resolveToolApproval(request.requestId, true, focused.webContents), false)
+  controller.abort()
+  assert.equal(await pending, 'cancelled')
+  assert.equal(resolveToolApproval(request.requestId, true, window.webContents), false)
+  assert.equal(window.listenerCount('closed'), 0)
+  assert.equal(window.webContents.listenerCount('destroyed'), 0)
+})
+
+test('RPC approval uses the existing native decision UI and cancels on window loss', async () => {
+  const window = new FakeWindow()
+  const request = {
+    requestId: 'rpc-native-2',
+    sessionId: 'session',
+    runId: 'run',
+    toolName: 'write',
+    summary: 'write /server/project/result.txt'
+  }
+  const pending = requestRuntimeToolApproval(
+    request,
+    new AbortController().signal,
+    () => window as never
+  )
+  assert.equal(resolveToolApproval(request.requestId, true, window.webContents), true)
+  assert.equal(await pending, 'approved')
+  const lost = requestRuntimeToolApproval(
+    { ...request, requestId: 'rpc-native-3' },
+    new AbortController().signal,
+    () => window as never
+  )
+  window.close()
+  assert.equal(await lost, 'cancelled')
+  assert.equal(resolveToolApproval('rpc-native-3', true, window.webContents), false)
 })

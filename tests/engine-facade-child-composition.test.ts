@@ -7,6 +7,10 @@ import { join } from 'node:path'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 
 for (const mode of [
+  'app-selection-stale',
+  'app-selection-abort',
+  'app-approved',
+  'app-pending-stop',
   'approved',
   'parallel-stop',
   'parallel-main-stop',

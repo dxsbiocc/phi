@@ -340,6 +340,27 @@ export async function requestToolApproval(
   return decision.cancelled ? 'cancelled' : decision.approved ? 'approved' : 'denied'
 }
 
+/** Main-owned RPC requests retain their attested session/run identity in the existing UI. */
+export async function requestRuntimeToolApproval(
+  request: Readonly<ToolApprovalRequest>,
+  signal: AbortSignal,
+  getWindow: () => ApprovalWindow | null = getActiveWindow
+): Promise<'approved' | 'denied' | 'cancelled'> {
+  if (
+    signal.aborted ||
+    !request.requestId ||
+    request.requestId.length > 256 ||
+    !request.sessionId ||
+    !request.runId ||
+    pendingApprovals.has(request.requestId)
+  )
+    return 'cancelled'
+  const window = getWindow()
+  if (!isUsableWindow(window)) return 'cancelled'
+  const decision = await waitForApproval({ ...request }, window, [signal])
+  return decision.cancelled ? 'cancelled' : decision.approved ? 'approved' : 'denied'
+}
+
 function addWindowUnavailableListener(window: ApprovalWindow, callback: () => void): () => void {
   const webContents = window.webContents
   const onUnavailable = (): void => callback()

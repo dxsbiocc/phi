@@ -343,6 +343,8 @@ type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
   holdRendererReady?: boolean
   environmentGet?: () => Promise<unknown>
+  remoteRpc?: boolean
+  remoteRpcResources?: boolean
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -1816,7 +1818,8 @@ async function harness(
     },
     './agent/persona-manager': {
       setPersonaMarkdown: noop,
-      getPersonaMarkdown: (): string => 'persona'
+      getPersonaMarkdown: (): string =>
+        options.remoteRpc && !options.remoteRpcResources ? '' : 'persona'
     },
     './agent/session/sessions': {
       WORKSPACE_DIR: '/workspace',
@@ -2372,7 +2375,21 @@ async function harness(
       })
     },
     './agent/engine/omp-bridge': { getOmpBridge: () => fakeOmpBridge },
-    './agent/engine/in-process-engine': { getPhiEngine: () => phiEngine },
+    './agent/engine/in-process-engine': {
+      getPhiEngine: () => phiEngine,
+      ownsRemoteRuntimeSession: () => false
+    },
+    './agent/remote-session-routing': {
+      createAppRemoteSessionManager: (cwd: string, phiSessionId: string, resume: boolean) => ({
+        kind: resume ? 'open' : 'persistent',
+        cwd,
+        ...(resume ? { path: `phi-session:${phiSessionId}` } : {})
+      }),
+      installAppRemoteSessionRouting: (input: { enabled: boolean }): (() => void) => {
+        operationLog.push({ type: 'installRemoteRouting', enabled: input.enabled })
+        return () => undefined
+      }
+    },
     './agent/engine/events': engineEvents,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     './agent/notebook/notebook-output-protocol': {
@@ -2454,6 +2471,7 @@ async function harness(
       getRuntimeRoot: (): string => '/isolated/runtime'
     },
     './agent/tool-approval': {
+      requestRuntimeToolApproval: async () => 'cancelled',
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,
       editApprovalDigest: fakeEditApprovalDigest,
@@ -3400,9 +3418,15 @@ async function harness(
       })
     },
     './agent/remote-project-instructions': {
-      loadRemoteProjectInstructions: async (): Promise<unknown[]> => [
-        { path: 'ssh://cluster-one/cluster/project/AGENTS.md', content: 'Remote instructions v1' }
-      ]
+      loadRemoteProjectInstructions: async (): Promise<unknown[]> =>
+        options.remoteRpc && !options.remoteRpcResources
+          ? []
+          : [
+              {
+                path: 'ssh://cluster-one/cluster/project/AGENTS.md',
+                content: 'Remote instructions v1'
+              }
+            ]
     },
     './agent/remote-project-connection': {
       RemoteProjectConnectionTracker: class {
@@ -4031,7 +4055,8 @@ async function harness(
       platform: process.platform,
       env: {
         PI_CODING_AGENT_DIR: '/isolated',
-        ELECTRON_RENDERER_URL: 'https://phi.internal'
+        ELECTRON_RENDERER_URL: 'https://phi.internal',
+        ...(options.remoteRpc ? { PHI_REMOTE_OMP_RPC: '1' } : {})
       },
       versions: { node: '22.0.0', electron: '39.0.0' }
     }
@@ -12538,4 +12563,31 @@ test('main IPC: an event that already carries a time keeps it', async () => {
     .map((entry) => entry.data as { type?: string; createdAt?: string })
     .find((data) => data.type === 'agent_execution_started')
   assert.equal(started?.createdAt, '2026-09-20T01:02:03.000Z')
+})
+
+test('main IPC: opted-in empty-resource remote project reaches RPC-compatible creation', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'controlled RPC path')
+  const created = app.createdAgentOptions.at(-1)!
+  assert.equal(created.resourceLoader, undefined)
+  assert.equal(created.phiAgents, undefined)
+  assert.equal(created.personaMarkdown, undefined)
+  assert.deepEqual((created.remoteProject as { contextFiles: unknown[] }).contextFiles, [])
+  assert.deepEqual(app.sessions[0].promptTexts, ['controlled RPC path'])
+  assert.ok(
+    app.operationLog.some(
+      (entry) => entry.type === 'installRemoteRouting' && entry.enabled === true
+    )
+  )
+})
+
+test('main IPC: opted-in unsupported remote resources fail before creating a worker', async () => {
+  const app = await harness(undefined, { remoteRpc: true, remoteRpcResources: true })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await assert.rejects(
+    app.invoke('agent:prompt', 'do not fall back'),
+    /RPC.*(persona|context|resources)/i
+  )
+  assert.equal(app.createdAgentOptions.length, 0)
 })

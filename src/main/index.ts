@@ -219,6 +219,7 @@ import {
   cancelToolApprovals,
   createApprovalExtension,
   requestToolApproval,
+  requestRuntimeToolApproval,
   resolveToolApproval,
   writeApprovalDigest
 } from './agent/tool-approval'
@@ -478,7 +479,11 @@ import {
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
-import { getPhiEngine } from './agent/engine/in-process-engine'
+import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
+import {
+  installAppRemoteSessionRouting,
+  createAppRemoteSessionManager
+} from './agent/remote-session-routing'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
   normalizeProjectMemorySettings,
@@ -1439,6 +1444,55 @@ const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent,
   onRunSettled: (sessionId) => backgroundAgentApprovals.afterParentRunSettled(sessionId)
+})
+
+// Main-only internal migration gate; renderer session input cannot enable this route.
+const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
+installAppRemoteSessionRouting({
+  enabled: remoteOmpRpcEnabled,
+  foregroundAgentNames: process.env.PHI_REMOTE_OMP_AGENTS,
+  agentDir: AGENT_DIR,
+  runners: runnerRegistry,
+  appPaths: () => ({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged
+  }),
+  configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,
+  loadAgents: async (identity) =>
+    (
+      await loadRemoteAgentCatalog({
+        ...identity,
+        agentDir: AGENT_DIR,
+        bundledDir: getBundledAgentsDir()
+      })
+    ).agents,
+  approval: {
+    shouldGate: (request) => {
+      const manifest = request.sessionId ? findPhiSessionById(request.sessionId) : null
+      if (!manifest) throw new Error('RPC approval session is unavailable')
+      return manifest.permissionMode === 'ask'
+    },
+    requestToolApproval: (request, signal) =>
+      requestRuntimeToolApproval(request, signal, () => {
+        const window = mainWindow
+        return window && !window.isDestroyed() ? window : null
+      }),
+    onEvent: (event) => {
+      const run = runnerRegistry.getActiveRun(event.sessionId)
+      if (!run || run.runId !== event.runId) return
+      if (event.type === 'approval_requested')
+        runnerRegistry.markNeedsApproval(event.sessionId, event.approvalId, {
+          toolName: event.request.toolName,
+          summary: event.request.summary
+        })
+      else if (event.type === 'approval_approved')
+        runnerRegistry.markApprovalApproved(event.sessionId, event.approvalId)
+      else if (event.type === 'approval_denied')
+        runnerRegistry.markApprovalDenied(event.sessionId, event.approvalId)
+      else runnerRegistry.markApprovalCancelled(event.sessionId, event.approvalId)
+    }
+  }
 })
 
 function syncPreventSleepBlocker(): void {
@@ -7172,6 +7226,7 @@ async function getAgentSession(
       ) {
         throw new Error('远程项目会话归属无效，请重新选择项目')
       }
+      const useRpc = remoteOmpRpcEnabled && remoteProject !== null
       const remoteContextFiles = remoteProject
         ? await loadRemoteProjectInstructions(remoteProject.location)
         : null
@@ -7225,19 +7280,21 @@ async function getAgentSession(
       // Phi scans its own agent definitions (plus legacy layouts for compatibility).
       // The same scan feeds the leader prompt here and the delegation tools the
       // worker builds, so the two can never disagree.
-      const agentScan = remoteProject
-        ? await loadRemoteAgentCatalog({
-            sessionId: sessionManifest?.sessionId ?? '',
-            projectId: remoteProject.projectId,
-            cwd: creationSnapshot.cwd,
-            agentDir: AGENT_DIR,
-            bundledDir: getBundledAgentsDir()
-          })
-        : discoverPhiAgents({
-            cwd: creationSnapshot.cwd,
-            agentDir: AGENT_DIR,
-            bundledDir: getBundledAgentsDir()
-          })
+      const agentScan = useRpc
+        ? { agents: [], diagnostics: [] }
+        : remoteProject
+          ? await loadRemoteAgentCatalog({
+              sessionId: sessionManifest?.sessionId ?? '',
+              projectId: remoteProject.projectId,
+              cwd: creationSnapshot.cwd,
+              agentDir: AGENT_DIR,
+              bundledDir: getBundledAgentsDir()
+            })
+          : discoverPhiAgents({
+              cwd: creationSnapshot.cwd,
+              agentDir: AGENT_DIR,
+              bundledDir: getBundledAgentsDir()
+            })
       const remoteSkillCatalog = remoteProject
         ? await loadRemoteProjectSkillCatalog({
             sessionId: sessionManifest?.sessionId ?? '',
@@ -7254,6 +7311,20 @@ async function getAgentSession(
             agentDir: AGENT_DIR
           })
         : undefined
+      const personaMarkdown = getPersonaMarkdown()
+      if (
+        useRpc &&
+        (remoteContextFiles?.length ||
+          personaMarkdown ||
+          project?.memory?.enabled ||
+          Object.keys(sessionManifest?.autoCompaction ?? {}).length ||
+          remoteSkillCatalog?.sources.length ||
+          remoteMcpCatalog?.runtimeServers.length)
+      ) {
+        throw new Error(
+          'RPC resources/persona/context/MCP/memory are not supported in this controlled stage'
+        )
+      }
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
           event:
@@ -7270,7 +7341,7 @@ async function getAgentSession(
       ]
       const shouldLoadCoreSkill = !remoteProject && existsSync(getCoreAuthoringSkillDir())
       const extensionFactories =
-        remoteProject || creationSnapshot.permissionMode === 'ask'
+        !useRpc && (remoteProject || creationSnapshot.permissionMode === 'ask')
           ? [
               createApprovalExtension({
                 signal: sessionAbortController.signal,
@@ -7425,10 +7496,11 @@ async function getAgentSession(
             ]
           : []
       if (
-        remoteProject ||
-        shouldLoadCoreSkill ||
-        appendSystemPrompt.length > 0 ||
-        extensionFactories.length > 0
+        !useRpc &&
+        (remoteProject ||
+          shouldLoadCoreSkill ||
+          appendSystemPrompt.length > 0 ||
+          extensionFactories.length > 0)
       ) {
         resourceLoader = createRuntimeResourceLoader({
           cwd: remoteProject ? AGENT_DIR : creationSnapshot.cwd,
@@ -7456,14 +7528,20 @@ async function getAgentSession(
       const result = await createAgentSession({
         modelRuntime: runtime,
         thinkingLevel,
-        ...(sessionManifest?.autoCompaction
+        ...(!useRpc && sessionManifest?.autoCompaction
           ? { autoCompaction: sessionManifest.autoCompaction }
           : {}),
         cwd: creationSnapshot.cwd,
-        sessionManager: createSessionManager(
-          creationSnapshot.cwd,
-          runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
-        ),
+        sessionManager: useRpc
+          ? createAppRemoteSessionManager(
+              creationSnapshot.cwd,
+              sessionManifest!.sessionId,
+              Boolean(sessionManifest?.runtimeRef)
+            )
+          : createSessionManager(
+              creationSnapshot.cwd,
+              runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
+            ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
         ...(remoteMcpCatalog?.runtimeServers.length
@@ -7481,7 +7559,7 @@ async function getAgentSession(
               }
             }
           : {}),
-        personaMarkdown: getPersonaMarkdown(),
+        ...(!useRpc ? { personaMarkdown } : {}),
         ...(model ? { model } : {})
       })
       if (typeof result.session.runtimeSessionId === 'string') {
@@ -7563,6 +7641,21 @@ async function applyNextRunConfiguration(
   snapshot: SessionSnapshot
 ): Promise<void> {
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  if (session.runtimeSessionId && ownsRemoteRuntimeSession(session.runtimeSessionId)) {
+    // The selected RPC generation already owns this saved policy. Unsupported changes are explicit.
+    const selection = resolveSessionModelSelection(sessionKey, snapshot)
+    if (
+      Object.keys(manifest?.autoCompaction ?? {}).length ||
+      !selection ||
+      selection.providerId !== session.model?.provider ||
+      selection.modelId !== session.model?.id ||
+      resolveSessionThinkingLevel(sessionKey, snapshot) !== session.thinkingLevel
+    )
+      throw new Error(
+        'RPC model/thinking/compaction changes require a supported remote control path'
+      )
+    return
+  }
   await session.setAutoCompactionSettings(manifest?.autoCompaction ?? {})
   const runtime = await getAuthManager().getRuntime()
   const modelSelection = resolveSessionModelSelection(sessionKey, snapshot)

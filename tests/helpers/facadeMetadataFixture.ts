@@ -1,4 +1,13 @@
+import {
+  createRuntimeAgentSession,
+  type CreateAgentSessionResult
+} from '../../src/main/agent/runtime/runtime-adapter'
 import assert from 'node:assert/strict'
+import {
+  createAppRemoteSessionManager,
+  installAppRemoteSessionRouting,
+  type AppRemoteSessionRoutingOptions
+} from '../../src/main/agent/remote-session-routing'
 import { StringDecoder } from 'node:string_decoder'
 import type { RpcFrame } from '../../src/main/agent/engine/rpc/types'
 import { spawn } from 'node:child_process'
@@ -49,6 +58,7 @@ export interface FacadeMetadataFixture {
   tunnels: Array<{ closed: Promise<void>; close(): Promise<void> }>
   leases: OwnedModelGatewayLease[]
   params(id: string, selectedModel?: string): PhiSessionCreateParams
+  createApplicationSession(): Promise<CreateAgentSessionResult>
   configureApproval(approval: RemoteSessionRuntimeOptions['approval']): void
   resume(): void
   disableRouting(): void
@@ -62,6 +72,13 @@ export async function facadeMetadataFixture(
     select?: (selected: SelectedFacadeRuntime) => SelectedFacadeRuntime
     providerFactory?: typeof startHostResultModel
     isolatedProject?: boolean
+    applicationRouting?: Pick<
+      AppRemoteSessionRoutingOptions,
+      'foregroundAgentNames' | 'onChildApprovalEvent'
+    > & {
+      agents: import('../../src/main/agent/agents/definition').PhiAgentDefinition[]
+      beforeConnect?: (phiSessionId: string) => Promise<void>
+    }
   } = {}
 ): Promise<FacadeMetadataFixture> {
   const agentDir = process.env.PI_CODING_AGENT_DIR!,
@@ -275,28 +292,79 @@ export async function facadeMetadataFixture(
     shouldGate: () => true,
     requestToolApproval: () => 'denied'
   }
-  const uninstall = installRemoteSessionRouting({
-    enabled: true,
-    runners,
-    selected: ({ phiSessionId, projectId }) => {
-      const selected: SelectedFacadeRuntime = {
-        hostProfileId: profile.id,
-        bindingHash: facadeBindingHash(
-          resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
-        ),
-        projectId,
-        projectRoot: f.scope.projectRoot,
-        runtime: f.options,
-        session,
-        bundle,
-        recovery,
-        recentUserImages: () => [],
-        desktopToolNames: [],
-        approval
-      }
-      return options.select ? options.select(selected) : selected
-    }
-  })
+  const uninstall = options.applicationRouting
+    ? installAppRemoteSessionRouting(
+        {
+          enabled: true,
+          agentDir,
+          runners,
+          appPaths: () => ({
+            appPath: repo,
+            resourcesPath: join(repo, 'resources'),
+            isPackaged: false
+          }),
+          configuredRoot: () => f.runtimeRoot,
+          loadAgents: async () => options.applicationRouting!.agents,
+          foregroundAgentNames: options.applicationRouting.foregroundAgentNames,
+          onChildApprovalEvent: options.applicationRouting.onChildApprovalEvent,
+          approval: {
+            shouldGate: (request) => approval.shouldGate(request),
+            requestToolApproval: (request, signal) => approval.requestToolApproval(request, signal),
+            onEvent: (event) => approval.onEvent?.(event)
+          }
+        },
+        {
+          resolveBinding: (identity) => {
+            const binding = resolveRemoteWorkspaceHostBinding(identity)
+            return {
+              ...binding,
+              config: {
+                ...binding.config,
+                connect: async () => {
+                  await options.applicationRouting?.beforeConnect?.(identity.sessionId)
+                  return { ...f.session, ...session, close: async () => undefined }
+                }
+              }
+            }
+          },
+          openWorkspace: async () => ({
+            projectHost: f.host,
+            runtimeHost: f.host,
+            projectRoot: f.scope.projectRoot,
+            runtimeRoot: f.runtimeRoot,
+            execWithInput: async () => {
+              throw new Error('unexpected raw workspace input')
+            }
+          }),
+          deployment: {
+            manifest: f.options.manifest,
+            fetchImpl: f.options.fetchImpl,
+            uploadOptions: f.options.uploadOptions
+          }
+        }
+      )
+    : installRemoteSessionRouting({
+        enabled: true,
+        runners,
+        selected: ({ phiSessionId, projectId }) => {
+          const selected: SelectedFacadeRuntime = {
+            hostProfileId: profile.id,
+            bindingHash: facadeBindingHash(
+              resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
+            ),
+            projectId,
+            projectRoot: f.scope.projectRoot,
+            runtime: f.options,
+            session,
+            bundle,
+            recovery,
+            recentUserImages: () => [],
+            desktopToolNames: [],
+            approval
+          }
+          return options.select ? options.select(selected) : selected
+        }
+      })
   return {
     f,
     engine,
@@ -309,6 +377,22 @@ export async function facadeMetadataFixture(
     rawRetryEvents,
     tunnels,
     leases,
+    createApplicationSession() {
+      return createRuntimeAgentSession({
+        cwd: anchor,
+        agentDir,
+        model: model('model-a'),
+        thinkingLevel: 'high',
+        projectBound: true,
+        sessionManager: createAppRemoteSessionManager(anchor, phi.sessionId, recovery === 'resume'),
+        remoteProject: {
+          phiSessionId: phi.sessionId,
+          projectId: project.id,
+          location,
+          contextFiles: []
+        }
+      })
+    },
     params(id: string, selectedModel = 'model-a') {
       return {
         sessionId: id,
