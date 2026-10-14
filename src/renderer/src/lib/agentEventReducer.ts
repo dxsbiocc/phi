@@ -577,6 +577,7 @@ export function reduceAgentEventState(
       id: createBlockId(event.aborted || event.errorMessage ? 'error' : 'warning', 0, nextId),
       role: event.aborted || event.errorMessage ? 'error' : 'warning',
       content,
+      contextCompaction: { action: typeof event.action === 'string' ? event.action : 'unknown' },
       ...createdAtField(event.createdAt)
     })
     nextId += 1

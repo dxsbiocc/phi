@@ -580,7 +580,8 @@ test('auto compaction end becomes a visible timeline item', () => {
     {
       id: 'warning-0-0',
       role: 'warning',
-      content: '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。'
+      content: '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。',
+      contextCompaction: { action: 'remote' }
     }
   ])
 })

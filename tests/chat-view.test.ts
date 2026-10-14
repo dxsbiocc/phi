@@ -1747,7 +1747,7 @@ test('finished background jobs render as one clickable line without the stored d
   assert.doesNotMatch(markup, /\/data\/qc|wrun_abc/)
 })
 
-test('chat timeline shows compaction method, token counts and expandable full summary', () => {
+test('chat timeline shows successful compaction as one concise status row', () => {
   const markup = renderChat([
     {
       id: 'compact-1',
@@ -1760,22 +1760,29 @@ test('chat timeline shows compaction method, token counts and expandable full su
         shortSummary: '简短摘要',
         summary: '完整摘要保留所有关键决策。'
       }
-    },
+    }
+  ])
+
+  assert.match(markup, /role="status"[^>]*>/)
+  assert.match(markup, />上下文已压缩<\/span>/)
+  assert.doesNotMatch(markup, /MuiAlert|<details|查看完整摘要/)
+  assert.doesNotMatch(markup, /自动压缩|服务端|tokens|24,000|5,000/)
+  assert.doesNotMatch(markup, /较早内容|可见历史|简短摘要|完整摘要保留所有关键决策/)
+})
+
+test('chat timeline reports failed compaction in a concise error row', () => {
+  const markup = renderChat([
     {
       id: 'compact-2',
       role: 'error',
       content: '上下文压缩失败：provider rejected summary',
-      contextCompaction: { action: 'manual' }
+      contextCompaction: { action: 'manual', summary: '内部摘要' }
     }
   ])
 
-  assert.match(markup, /自动压缩 · 服务端/)
-  assert.match(markup, /压缩前 24,000 tokens → 压缩后 约 5,000 tokens/)
-  assert.match(markup, /<details/)
-  assert.match(markup, /查看完整摘要/)
-  assert.match(markup, /完整摘要保留所有关键决策。/)
-  assert.match(markup, /手动压缩/)
-  assert.match(markup, /provider rejected summary/)
+  assert.match(markup, /role="alert"[^>]*>/)
+  assert.match(markup, />上下文压缩失败<\/span>/)
+  assert.doesNotMatch(markup, /MuiAlert|<details|手动压缩|provider rejected summary|内部摘要/)
 })
 
 test('chat view does not reuse the previous user action when the assistant only reports completion', () => {
