@@ -450,7 +450,14 @@ for (const damage of ['version', 'project', 'host', 'binding', 'secret'] as cons
       assert.equal(publicManifest?.runtimeRef, undefined)
       assert.ok(publicManifest?.runtimeRecoveryError)
       assert.equal(JSON.stringify(publicManifest).includes('synthetic-private-value'), false)
-      await renameSession(phiOnlySessionPath(session.sessionId), 'offline title after damage')
+      await assert.rejects(
+        renameSession(phiOnlySessionPath(session.sessionId), 'offline title after damage'),
+        {
+          code: 'REMOTE_OPERATION_REQUIRED',
+          message: 'Remote title requires an exact live attachment'
+        }
+      )
+      assert.equal(findPhiSessionById(session.sessionId)?.title, publicManifest?.title)
       appendSessionEvent(session.sessionId, {
         type: 'user_message',
         content: 'retained offline timeline'

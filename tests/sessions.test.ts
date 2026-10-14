@@ -531,8 +531,13 @@ test('malformed remote reference exposes recovery error offline and never unlink
     const [summary] = mergePhiSessionState([], listPhiSessions(), '/workspace')
     assert.equal(summary.phiSessionId, session.sessionId)
     assert.equal(summary.runtimeRecoveryError?.code, 'INVALID_RUNTIME_REFERENCE')
-    await renameSession(summary.path, 'Visible despite corrupt locator')
-    assert.equal(findPhiSessionById(session.sessionId)?.title, 'Visible despite corrupt locator')
+    const offlineRename = renameSession(summary.path, 'Visible despite corrupt locator')
+    assert.ok(offlineRename instanceof Promise)
+    await assert.rejects(offlineRename, {
+      code: 'REMOTE_OPERATION_REQUIRED',
+      message: 'Remote title requires an exact live attachment'
+    })
+    assert.equal(findPhiSessionById(session.sessionId)?.title, session.manifest.title)
     assert.throws(() => deleteSession(summary.path), /需要显式恢复/)
     assert.equal(readFileSync(unrelated, 'utf8'), 'must survive')
   })
@@ -601,8 +606,11 @@ test('valid remote locator paths cannot reach legacy local delete, rename or man
     assert.throws(() => deleteSession(unrelatedDesktopFile), /服务器操作/)
     assert.throws(() => createSessionManager('/desktop/anchor', unrelatedDesktopFile), /服务器操作/)
     await assert.rejects(renameSession(unrelatedDesktopFile, 'must not reach SDK'), /服务器操作/)
-    await renameSession(phiOnlySessionPath(session.sessionId), 'offline rename')
-    assert.equal(findPhiSessionById(session.sessionId)?.title, 'offline rename')
+    await assert.rejects(renameSession(phiOnlySessionPath(session.sessionId), 'offline rename'), {
+      code: 'REMOTE_OPERATION_REQUIRED',
+      message: 'Remote title requires an exact live attachment'
+    })
+    assert.equal(findPhiSessionById(session.sessionId)?.title, session.manifest.title)
     assert.equal(
       readFileSync(unrelatedDesktopFile, 'utf8'),
       'unrelated desktop file with same server path'
