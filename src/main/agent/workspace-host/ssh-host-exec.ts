@@ -250,35 +250,69 @@ class SshExecution {
   }
 
   private async run(command: HostCommand, options: RunCommandOptions): Promise<CommandResult> {
-    const process = await this.spawnBackground(command, options)
-    return (process as SshProcess).wait()
+    const submission = { started: false }
+    try {
+      const process = await this.spawnBackground(command, options, submission)
+      return await (process as SshProcess).wait()
+    } catch (error) {
+      if (!submission.started && options.signal?.aborted && error === options.signal.reason)
+        return {
+          stdout: '',
+          stderr: '',
+          code: null,
+          signal: 'SIGTERM',
+          truncated: false,
+          terminationReason: 'cancelled'
+        }
+      throw error
+    }
   }
 
   private async spawnBackground(
     command: HostCommand,
-    options: RunCommandOptions
+    options: RunCommandOptions,
+    submission = { started: false }
   ): Promise<BackgroundProcessHandle> {
     const maxBytes = validate(command, options)
     const runId = `workspace-host-${randomUUID()}`
     const runDir = posix.join(this.context.canonicalRoot, 'wrappers', 'runs', runId)
-    await this.context.mkdirp(runDir)
-    const process = await this.context.withPath(options.cwd, 'existing', async (session, cwd) => {
-      const claimDir = posix.join(runDir, '.phi-launch-claim')
-      await session.mkdirp(claimDir)
-      await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
-      const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
-      await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
+    let prepared = false
+    try {
       options.signal?.throwIfAborted()
-      options.beforeExec?.()
-      const launched = await session.exec(buildDetachedLaunchCommand(runDir))
-      if (launched.code !== 0) {
-        throw new Error(launched.stderr || launched.stdout || '启动命令未返回 PID')
-      }
-      const handle = { runId, remoteRunDir: runDir, pid: parsePid(launched.stdout) }
-      return new SshProcess(this.context, handle, maxBytes)
-    })
-    process.attach(options)
-    return process
+      await this.context.mkdirp(runDir)
+      prepared = true
+      const process = await this.context.withPath(options.cwd, 'existing', async (session, cwd) => {
+        const claimDir = posix.join(runDir, '.phi-launch-claim')
+        await session.mkdirp(claimDir)
+        await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
+        const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
+        await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
+        options.signal?.throwIfAborted()
+        options.beforeExec?.()
+        options.signal?.throwIfAborted()
+        const launch = buildDetachedLaunchCommand(runDir)
+        // Once submitted, a lost reply cannot prove that the command never ran.
+        submission.started = true
+        const launched = await session.exec(launch)
+        if (launched.code !== 0) {
+          throw new Error(launched.stderr || launched.stdout || '启动命令未返回 PID')
+        }
+        const handle = { runId, remoteRunDir: runDir, pid: parsePid(launched.stdout) }
+        return new SshProcess(this.context, handle, maxBytes)
+      })
+      process.attach(options)
+      return process
+    } catch (error) {
+      if (prepared && !submission.started)
+        await this.context
+          .withPath(runDir, 'existing', async (session, path) => {
+            // Never follow a replaced run directory to another workspace target.
+            if (path !== runDir) return
+            await session.exec(`rm -rf -- ${shellQuote(path)}`)
+          })
+          .catch(() => undefined)
+      throw error
+    }
   }
 }
 
