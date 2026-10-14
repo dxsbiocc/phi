@@ -1,6 +1,7 @@
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
+import { LIBRARY_TOOL_NAMES } from './library/library-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import type { PhiAgentDefinition } from './agents/definition'
@@ -18,10 +19,44 @@ import {
 import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment'
 import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
 
-// Authoring uses the existing Notebook service. Kernel execution needs owned physical interruption.
-export const APP_RPC_NOTEBOOK_TOOL_NAMES = Object.freeze(
-  NOTEBOOK_TOOL_NAMES.filter((name) => name !== 'notebook.run_cell')
-)
+// The existing executor owns interruption through the captured kernel runtime and terminal ACK.
+export const APP_RPC_NOTEBOOK_TOOL_NAMES = NOTEBOOK_TOOL_NAMES
+
+export interface AppRemoteDesktopResources {
+  readonly tools: NonNullable<SelectedFacadeRuntime['desktopTools']>
+  /** Retire/drain owned desktop adapters before releasing the selected SSH/workspace. */
+  close?(): void | Promise<void>
+}
+
+export function appRpcDesktopToolNames(
+  resources?: NonNullable<SelectedFacadeRuntime['desktopTools']>
+): readonly string[] {
+  return Object.freeze([
+    ...APP_RPC_NOTEBOOK_TOOL_NAMES,
+    ...WRAPPER_COMPOSITION_TOOL_NAMES,
+    'present_files',
+    ...(resources
+      ? [
+          'ask_user_question',
+          'render_blocks',
+          'palette_suggest',
+          'download_file',
+          'env_request',
+          'browser',
+          ...(resources.allowedSkills.length ? ['skill_run'] : []),
+          ...resources.scriptTools
+            .filter(
+              (tool) =>
+                tool.attachTo.includes('main') && resources.allowedSkills.includes(tool.skill)
+            )
+            .map((tool) => tool.name),
+          ...(resources.remoteLibrary ? LIBRARY_TOOL_NAMES : []),
+          ...(resources.desktopWebSearch ? [resources.desktopWebSearch.tool.name] : []),
+          ...(resources.desktopMcp?.tools.map((tool) => tool.name) ?? [])
+        ]
+      : [])
+  ])
+}
 
 /** Phi locators describe remote recovery; they are never opened as desktop journal files. */
 export function createAppRemoteSessionManager(
@@ -50,6 +85,17 @@ export interface AppRemoteSessionRoutingOptions {
     projectId: string
     cwd: string
   }): Promise<readonly PhiAgentDefinition[]>
+  /** Main catalog authority; renderer create parameters never supply this resource snapshot. */
+  loadDesktopTools?(
+    identity: {
+      runtimeSessionId: string
+      sessionId: string
+      projectId: string
+      cwd: string
+      resourceCwd: string
+    },
+    signal: AbortSignal
+  ): Promise<AppRemoteDesktopResources>
   approval: SelectedFacadeRuntime['approval']
   onChildApprovalEvent?: NonNullable<SelectedFacadeRuntime['foregroundChildren']>['onApprovalEvent']
 }
@@ -144,7 +190,18 @@ export function installAppRemoteSessionRouting(
         signal
       )
       let session: Awaited<ReturnType<typeof binding.config.connect>> | undefined
+      let resources: AppRemoteDesktopResources | undefined
       try {
+        resources = await options.loadDesktopTools?.(
+          {
+            runtimeSessionId,
+            sessionId: phiSessionId,
+            projectId,
+            cwd: binding.canonicalRoot,
+            resourceCwd: manifest.cwd
+          },
+          signal
+        )
         signal.throwIfAborted()
         session = await binding.config.connect()
         signal.throwIfAborted()
@@ -171,20 +228,23 @@ export function installAppRemoteSessionRouting(
           bundle,
           recovery: manifest.runtimeRef ? 'resume' : 'new',
           approval: { ...options.approval, projectName: project.name },
-          desktopToolNames: [
-            ...APP_RPC_NOTEBOOK_TOOL_NAMES,
-            ...WRAPPER_COMPOSITION_TOOL_NAMES,
-            'present_files'
-          ],
+          desktopToolNames: appRpcDesktopToolNames(resources?.tools),
+          desktopTools: resources?.tools,
           recentUserImages: () => [],
           ...(definitions.length
             ? { foregroundChildren: { definitions, onApprovalEvent: options.onChildApprovalEvent } }
             : {}),
           dispose: async () => {
+            await Promise.resolve()
+              .then(() => resources?.close?.())
+              .catch(() => undefined)
             await Promise.allSettled([session!.close(), workspace.close?.()])
           }
         }
       } catch (error) {
+        await Promise.resolve()
+          .then(() => resources?.close?.())
+          .catch(() => undefined)
         await Promise.allSettled([session?.close(), workspace.close?.()])
         throw error
       }

@@ -316,6 +316,58 @@ test('remote dynamic skill tool cannot execute after its trusted source disappea
   }
 })
 
+for (const change of ['disabled', 'declaration', 'script'] as const)
+  test(`remembered desktop skill rejects ${change} after selection before server execution`, async () => {
+    const setup = await services()
+    try {
+      await setup.skillService.scriptTools({ runtimeSessionId: 'runtime-1' })
+      const before = readFakeMicromambaInvocations(setup.fixture)
+      if (change === 'disabled') setup.setSkillsEnabled(false)
+      else if (change === 'declaration') {
+        const path = join(setup.skill.dir, 'SKILL.md')
+        writeFileSync(path, readFileSync(path, 'utf8').replace('approval: read', 'approval: write'))
+      } else writeFileSync(join(setup.skill.dir, 'scripts/json.sh'), 'echo changed-source')
+      const result = await setup.skillService.scriptTool({
+        requestId: `revoked-desktop-${change}`,
+        runtimeSessionId: 'runtime-1',
+        tool: 'remotedemo_json',
+        args: { message: 'must-not-run' }
+      })
+      assert.equal(result.ok, false)
+      if (!result.ok) assert.match(result.error, /不再受信任|内容已变化/u)
+      assert.deepEqual(readFakeMicromambaInvocations(setup.fixture), before)
+    } finally {
+      setup.fixture.cleanup()
+    }
+  })
+
+test('remote catalog without a file snapshot never reads same-text desktop skill files', async () => {
+  const setup = await services()
+  try {
+    const service = new RemoteSkillService({
+      openWorkspace: async () => {
+        throw new Error('missing remote snapshot cannot open execution workspace')
+      },
+      environments: setup.environments,
+      listSkills: async () => [{ ...setup.skill, insidePlugin: false, remoteProject: true }]
+    })
+    const before = readFakeMicromambaInvocations(setup.fixture)
+    const listed = await service.scriptTools({ runtimeSessionId: 'runtime-1' })
+    assert.deepEqual(listed.tools, [])
+    assert.match(listed.problems.join('\n'), /缺少已发现的文件快照/)
+    const result = await service.scriptTool({
+      requestId: 'missing-snapshot',
+      runtimeSessionId: 'runtime-1',
+      tool: 'remotedemo_json',
+      args: { message: 'must-not-run' }
+    })
+    assert.equal(result.ok, false)
+    assert.deepEqual(readFakeMicromambaInvocations(setup.fixture), before)
+  } finally {
+    setup.fixture.cleanup()
+  }
+})
+
 test('remote skill micromamba run preserves HOME and PATH without conda contamination', async () => {
   const setup = await services()
   try {

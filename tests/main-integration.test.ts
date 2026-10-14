@@ -1,4 +1,8 @@
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
+import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
+import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
+import * as remoteLibrary from '../src/main/agent/engine/rpc/remote-library-service'
+import { controlRemoteRuntimeWorkspace } from '../src/main/agent/remote-runtime/controller'
 import { NotebookToolHostRouter } from '../src/main/agent/notebook/notebook-tool-host-router'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
@@ -2379,6 +2383,9 @@ async function harness(
       }
     },
     './agent/engine/events': engineEvents,
+    './agent/engine/rpc/desktop-websearch-adapter': desktopWebSearch,
+    './agent/engine/rpc/desktop-mcp-adapter': desktopMcp,
+    './agent/engine/rpc/remote-library-service': remoteLibrary,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
     './agent/notebook/notebook-output-protocol': {
       registerNotebookOutputScheme: noop,
@@ -3332,6 +3339,7 @@ async function harness(
       })
     },
     './agent/remote-runtime/controller': {
+      controlRemoteRuntimeWorkspace,
       RemoteRuntimeController: class {
         readonly environments = { cancel: (): void => {} }
         readonly skills = { cancel: (): void => {} }

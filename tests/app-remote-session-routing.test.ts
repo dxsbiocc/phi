@@ -95,11 +95,8 @@ test('application recovery manager keeps the Phi locator out of local journal op
   assert.equal(resumed.getCwd(), '/local/anchor')
 })
 
-test('application RPC Notebook roster reuses all existing authoring tools with read/write classifications', () => {
-  assert.deepEqual(
-    APP_RPC_NOTEBOOK_TOOL_NAMES,
-    NOTEBOOK_TOOL_NAMES.filter((name) => name !== 'notebook.run_cell')
-  )
+test('application RPC Notebook roster reuses existing authoring and owned execution classifications', () => {
+  assert.deepEqual(APP_RPC_NOTEBOOK_TOOL_NAMES, NOTEBOOK_TOOL_NAMES)
   const tools = buildNotebookCustomTools(async () => undefined)
   assert.deepEqual(
     tools
@@ -115,6 +112,7 @@ test('application RPC Notebook roster reuses all existing authoring tools with r
       ['notebook.insert_cell', 'write'],
       ['notebook.update_cell', 'write'],
       ['notebook.delete_cell', 'write'],
+      ['notebook.run_cell', 'write'],
       ['notebook.save', 'write']
     ]
   )
@@ -141,6 +139,6 @@ test('application Wrapper roster reuses the six existing tools and their approva
       ['wrapper_cancel', 'write']
     ]
   )
-  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.length, 6)
-  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook.run_cell' as never), false)
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.length, 7)
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook.run_cell'), true)
 })

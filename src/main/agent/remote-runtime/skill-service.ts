@@ -17,6 +17,7 @@ import { remoteScriptArguments } from './script-arguments'
 import {
   prepareRemoteSkillBundle,
   prepareRemoteSkillBundleFiles,
+  collectRemoteSkillBundleFiles,
   validateRemoteSkillBundleFiles
 } from './skill-bundle'
 import { diagnoseRemoteCommandFailure, type RemoteWriteDiagnosis } from './write-diagnostics'
@@ -79,7 +80,20 @@ export class RemoteSkillService {
     const problems: string[] = []
     const seen = new Set<string>()
     const runtimeSessionId = field(params, 'runtimeSessionId')
-    for (const source of await this.options.listSkills(runtimeSessionId)) {
+    for (const listed of await this.options.listSkills(runtimeSessionId)) {
+      // The executable bytes and declaration share one trusted selection snapshot.
+      let source: RemoteSkillSource
+      try {
+        source = {
+          ...listed,
+          files:
+            listed.files ??
+            (!listed.remoteProject ? collectRemoteSkillBundleFiles(listed.dir) : undefined)
+        }
+      } catch (error) {
+        problems.push(`${listed.name}: ${errorText(error)}`)
+        continue
+      }
       const prepared = this.withValidatedSource(source, problems, (skill) => {
         const prefix = source.toolPrefix ?? skill.phi?.toolPrefix
         return { skill, tools: prefix ? scriptToolsOf(skill, { prefix }) : [] }
@@ -273,13 +287,23 @@ export class RemoteSkillService {
     runtimeSessionId: string,
     remembered: RememberedTool
   ): Promise<RememberedTool> {
-    if (!remembered.source.remoteProject) return remembered
-    const source = (await this.options.listSkills(runtimeSessionId)).find(
-      (candidate) => candidate.remoteProject && candidate.name === remembered.source.name
+    const current = (await this.options.listSkills(runtimeSessionId)).find(
+      (candidate) =>
+        candidate.name === remembered.source.name &&
+        candidate.filePath === remembered.source.filePath &&
+        candidate.remoteProject === remembered.source.remoteProject &&
+        candidate.pluginId === remembered.source.pluginId &&
+        candidate.toolPrefix === remembered.source.toolPrefix
     )
+    const source = current && {
+      ...current,
+      files:
+        current.files ??
+        (!current.remoteProject ? collectRemoteSkillBundleFiles(current.dir) : undefined)
+    }
     if (!source?.files || !sameSkillSnapshot(remembered.source.files, source.files)) {
       throw new Error(
-        `服务器项目 Skill '${remembered.source.name}' 不再受信任或内容已变化；请刷新并重新信任后再运行。`
+        `Skill '${remembered.source.name}' 不再受信任或内容已变化；请刷新并重新信任后再运行。`
       )
     }
     return { ...remembered, source }

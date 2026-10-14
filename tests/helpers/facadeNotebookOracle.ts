@@ -332,7 +332,7 @@ export async function runApplicationNotebookScenario(
     )
     for (const name of APP_RPC_NOTEBOOK_TOOL_NAMES)
       assert.ok(roster.includes(name), `application did not expose ${name}`)
-    assert.equal(roster.includes('notebook.run_cell'), false)
+    assert.equal(roster.includes('notebook.run_cell'), true)
     assert.deepEqual(
       effects,
       mode === 'notebook-approved'

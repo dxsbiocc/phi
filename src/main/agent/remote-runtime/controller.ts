@@ -6,6 +6,13 @@ import {
 } from './environment-service'
 import { RemoteSkillService } from './skill-service'
 import { openRemoteRuntimeWorkspace, type RemoteRuntimeTarget } from './workspace'
+import { AsyncLocalStorage } from 'node:async_hooks'
+
+/** Desktop-only call authority, never a wire argument or part of a saved resource. */
+export interface RemoteRuntimeDispatchControl {
+  signal?: AbortSignal
+  beforeDispatch(): void
+}
 
 export interface RemoteRuntimeControllerOptions {
   micromambaVersion: string
@@ -24,6 +31,7 @@ export class RemoteRuntimeController {
   readonly environments: RemoteEnvironmentService
   readonly skills: RemoteSkillService
   private readonly targets = new Map<string, RemoteRuntimeTarget>()
+  private readonly controls = new AsyncLocalStorage<RemoteRuntimeDispatchControl>()
 
   constructor(private readonly options: RemoteRuntimeControllerOptions) {
     const openWorkspace = async (
@@ -32,7 +40,22 @@ export class RemoteRuntimeController {
     ): Promise<RemoteRuntimeWorkspace> => {
       const target = this.targets.get(runtimeSessionId)
       if (!target) throw new Error('远程运行时会话归属无效；没有回退到本机执行。')
-      return (options.openWorkspace ?? openRemoteRuntimeWorkspace)(target, signal)
+      const control = this.controls.getStore()
+      const assertLive = (): void => {
+        signal?.throwIfAborted()
+        control?.signal?.throwIfAborted()
+        control?.beforeDispatch()
+      }
+      assertLive()
+      const workspace = await (options.openWorkspace ?? openRemoteRuntimeWorkspace)(target, signal)
+      try {
+        assertLive()
+        if (!control) return workspace
+        return controlRemoteRuntimeWorkspace(workspace, assertLive)
+      } catch (error) {
+        await workspace.close?.().catch(() => undefined)
+        throw error
+      }
     }
     this.environments = new RemoteEnvironmentService({
       openWorkspace,
@@ -63,24 +86,44 @@ export class RemoteRuntimeController {
     return this.skills.scriptTools({ runtimeSessionId: target.runtimeSessionId })
   }
 
-  runSkill(params: unknown): ReturnType<RemoteSkillService['run']> {
+  runSkill(
+    params: unknown,
+    control?: RemoteRuntimeDispatchControl
+  ): ReturnType<RemoteSkillService['run']> {
     this.requireTarget(params)
-    return this.skills.run(params)
+    return control
+      ? this.controls.run(control, () => this.skills.run(params))
+      : this.skills.run(params)
   }
 
-  runScriptTool(params: unknown): ReturnType<RemoteSkillService['scriptTool']> {
+  runScriptTool(
+    params: unknown,
+    control?: RemoteRuntimeDispatchControl
+  ): ReturnType<RemoteSkillService['scriptTool']> {
     this.requireTarget(params)
-    return this.skills.scriptTool(params)
+    return control
+      ? this.controls.run(control, () => this.skills.scriptTool(params))
+      : this.skills.scriptTool(params)
   }
 
-  requestEnvironment(params: unknown): ReturnType<RemoteEnvironmentService['request']> {
+  requestEnvironment(
+    params: unknown,
+    control?: RemoteRuntimeDispatchControl
+  ): ReturnType<RemoteEnvironmentService['request']> {
     this.requireTarget(params)
-    return this.environments.request(params)
+    return control
+      ? this.controls.run(control, () => this.environments.request(params))
+      : this.environments.request(params)
   }
 
-  bindEnvironment(params: unknown): ReturnType<RemoteEnvironmentService['bindSession']> {
+  bindEnvironment(
+    params: unknown,
+    control?: RemoteRuntimeDispatchControl
+  ): ReturnType<RemoteEnvironmentService['bindSession']> {
     this.requireTarget(params)
-    return this.environments.bindSession(params)
+    return control
+      ? this.controls.run(control, () => this.environments.bindSession(params))
+      : this.environments.bindSession(params)
   }
 
   approvalFor(toolName: string, input: unknown): 'exec' | 'read' | 'write' | undefined {
@@ -111,6 +154,70 @@ export class RemoteRuntimeController {
     const runtimeSessionId = field(params, 'runtimeSessionId')
     return direct ?? (runtimeSessionId ? this.targets.get(runtimeSessionId) : undefined)
   }
+}
+
+/** Check each new IO/submit against the same captured target; cleanup remains owned. */
+export function controlRemoteRuntimeWorkspace(
+  workspace: RemoteRuntimeWorkspace,
+  assertLive: () => void
+): RemoteRuntimeWorkspace {
+  const host = (value: RemoteRuntimeWorkspace['projectHost']): typeof value => ({
+    ...value,
+    capabilities: value.capabilities.bind(value),
+    close: value.close?.bind(value),
+    fs: guardOperations(value.fs, assertLive),
+    exec: {
+      run: (command, options) => {
+        assertLive()
+        return value.exec.run(command, {
+          ...options,
+          beforeExec: () => {
+            assertLive()
+            options.beforeExec?.()
+          }
+        })
+      },
+      spawnBackground: (command, options) => {
+        assertLive()
+        return value.exec.spawnBackground(command, {
+          ...options,
+          beforeExec: () => {
+            assertLive()
+            options.beforeExec?.()
+          }
+        })
+      }
+    }
+  })
+  return {
+    ...workspace,
+    projectHost: host(workspace.projectHost),
+    runtimeHost: host(workspace.runtimeHost),
+    execWithInput: (script, options) => {
+      assertLive()
+      return workspace.execWithInput(script, {
+        ...options,
+        beforeExec: () => {
+          assertLive()
+          options.beforeExec?.()
+        }
+      })
+    }
+  }
+}
+
+function guardOperations<T extends object>(operations: T, assertLive: () => void): T {
+  return new Proxy(operations, {
+    get(target, key) {
+      const value = Reflect.get(target, key)
+      return typeof value === 'function'
+        ? (...args: unknown[]): unknown => {
+            assertLive()
+            return value.apply(target, args)
+          }
+        : value
+    }
+  })
 }
 
 function hasRemoteIdentity(value: unknown): boolean {

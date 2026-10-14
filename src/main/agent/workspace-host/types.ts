@@ -73,6 +73,8 @@ export interface RemoveOptions {
 export type HostCommand = readonly [executable: string, ...args: string[]]
 
 export interface RunCommandOptions {
+  /** Desktop-only admission check immediately before execution; never serialized. */
+  beforeExec?: () => void
   cwd: string
   env?: Readonly<Record<string, string>>
   timeoutMs?: number

@@ -268,6 +268,8 @@ class SshExecution {
       await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
       const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
       await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
+      options.signal?.throwIfAborted()
+      options.beforeExec?.()
       const launched = await session.exec(buildDetachedLaunchCommand(runDir))
       if (launched.code !== 0) {
         throw new Error(launched.stderr || launched.stdout || '启动命令未返回 PID')

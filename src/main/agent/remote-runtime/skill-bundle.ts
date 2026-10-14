@@ -24,7 +24,7 @@ export async function prepareRemoteSkillBundle(
   workspace: RemoteRuntimeWorkspace,
   signal?: AbortSignal
 ): Promise<RemoteSkillBundle> {
-  const files = collectFiles(skillDir)
+  const files = collectRemoteSkillBundleFiles(skillDir)
   return prepareRemoteSkillBundleFiles(files, workspace, signal)
 }
 
@@ -94,7 +94,7 @@ export function validateRemoteSkillBundleFiles(
   return checked
 }
 
-function collectFiles(root: string): RemoteSkillBundleFile[] {
+export function collectRemoteSkillBundleFiles(root: string): RemoteSkillBundleFile[] {
   const files: RemoteSkillBundleFile[] = []
   let bytes = 0
   const walk = (directory: string): void => {

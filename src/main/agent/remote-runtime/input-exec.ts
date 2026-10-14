@@ -28,6 +28,7 @@ export function createRemoteRuntimeInputExec(
     const session = await connect()
     try {
       options.signal?.throwIfAborted()
+      options.beforeExec?.()
       if (session.openStdio) return await runStdio(session, script, options)
       if (session.execWithInput) return await runLegacyInput(session, script, options)
       throw new Error('当前 SSH 连接不支持安全 stdin 脚本')
@@ -52,6 +53,8 @@ async function runLegacyInput(
   const timer = setTimeout(() => stop('timeout'), options.timeoutMs)
   if (options.signal?.aborted) abort()
   try {
+    options.signal?.throwIfAborted()
+    options.beforeExec?.()
     const result = bounded(await session.execWithInput!('sh -s', script), options)
     return { ...result, ...(reason ? { terminationReason: reason } : {}) }
   } catch (error) {
@@ -69,6 +72,13 @@ async function runStdio(
   options: RemoteRuntimeInputOptions
 ): Promise<CommandResult> {
   const process = await session.openStdio!('sh -s')
+  try {
+    options.signal?.throwIfAborted()
+    options.beforeExec?.()
+  } catch (error) {
+    await process.close().catch(() => undefined)
+    throw error
+  }
   const capture = captureOutput(process, options.maxOutputBytes)
   let reason: CommandResult['terminationReason']
   const stop = (next: CommandResult['terminationReason']): void => {

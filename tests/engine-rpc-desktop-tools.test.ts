@@ -226,7 +226,11 @@ test('download cancellation reaches the original selected remote request and nev
     projectId: 'project',
     requestId: run.requestId
   })
-  assert.deepEqual(seen[0].context, {
+  const { signal: downloadSignal, ...downloadContext } = seen[0]
+    .context as import('../src/main/agent/engine/types').PhiHostRequestContext
+  assert.ok(downloadSignal instanceof AbortSignal)
+  assert.equal(downloadSignal.aborted, true)
+  assert.deepEqual(downloadContext, {
     originSessionId: 'runtime-session',
     toolCallId: 'download-call'
   })
@@ -318,7 +322,10 @@ test('ask_user uses the trusted session UI interface and unavailable UI is an ex
   ]
   f.services.register('agentInteraction.request', (params, context) => {
     assert.deepEqual(params, { runtimeSessionId: 'runtime-session', questions })
-    assert.deepEqual(context, { originSessionId: 'runtime-session', toolCallId: 'question-call' })
+    const { signal, ...identity } = context
+    assert.ok(signal instanceof AbortSignal)
+    assert.equal(signal.aborted, false)
+    assert.deepEqual(identity, { originSessionId: 'runtime-session', toolCallId: 'question-call' })
     return {
       answers: [{ questionIndex: 0, question: questions[0].question, kind: 'option', answer: 'A' }]
     }

@@ -75,7 +75,7 @@ export async function facadeMetadataFixture(
     isolatedProject?: boolean
     applicationRouting?: Pick<
       AppRemoteSessionRoutingOptions,
-      'foregroundAgentNames' | 'onChildApprovalEvent'
+      'foregroundAgentNames' | 'onChildApprovalEvent' | 'loadDesktopTools'
     > & {
       agents: import('../../src/main/agent/agents/definition').PhiAgentDefinition[]
       beforeConnect?: (phiSessionId: string) => Promise<void>
@@ -306,6 +306,7 @@ export async function facadeMetadataFixture(
           }),
           configuredRoot: () => f.runtimeRoot,
           loadAgents: async () => options.applicationRouting!.agents,
+          loadDesktopTools: options.applicationRouting.loadDesktopTools,
           foregroundAgentNames: options.applicationRouting.foregroundAgentNames,
           onChildApprovalEvent: options.applicationRouting.onChildApprovalEvent,
           approval: {
