@@ -119,16 +119,15 @@ test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => 
   }
 })
 
-test('worker closure follows relative imports beyond the old hand-maintained list', () => {
+test('runtime worker closure follows value imports beyond the old hand-maintained list', () => {
   const { files, packages } = collectOmpWorkerSources(repoRoot)
   for (const expected of [
     'src/main/agent/engine/in-process/main.ts',
+    'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
     'src/main/agent/engine/phi-extension/index.ts',
     'src/main/agent/engine/phi-extension/extensions/next-action.ts',
     'src/main/agent/engine/tool-adapter.ts',
-    'src/main/agent/engine/types.ts',
-    'src/main/agent/runtime-paths.ts',
-    'src/shared/presentedFileTypes.ts'
+    'src/main/agent/runtime-paths.ts'
   ]) {
     assert.ok(files.includes(expected), `${expected} missing from worker closure`)
   }
@@ -150,6 +149,11 @@ test('copy plugin emits exactly the closure files under out/', () => {
       'src/main/agent/engine/in-process/main.ts',
       "import { a } from '../../a'\nimport type { T } from '../../../../shared/t'\nimport 'yaml'\n"
     )
+    write(
+      'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
+      "import { search } from './desktop-websearch-owned'\nimport 'search-package'\n"
+    )
+    write('src/main/agent/engine/rpc/desktop-websearch-owned.ts', 'export const search = 1\n')
     write('src/main/agent/a.ts', "export { b } from './nested/b'\nexport const a = 1\n")
     write('src/main/agent/nested/b.ts', "const c = await import('./c')\nexport const b = c\n")
     write('src/main/agent/nested/c.ts', 'export {}\n')
@@ -168,11 +172,12 @@ test('copy plugin emits exactly the closure files under out/', () => {
     assert.deepEqual(emitted, [
       'out/main/agent/a.ts',
       'out/main/agent/engine/in-process/main.ts',
+      'out/main/agent/engine/rpc/desktop-websearch-owned.ts',
+      'out/main/agent/engine/rpc/desktop-websearch-worker.ts',
       'out/main/agent/nested/b.ts',
-      'out/main/agent/nested/c.ts',
-      'out/shared/t.ts'
+      'out/main/agent/nested/c.ts'
     ])
-    assert.deepEqual(collectOmpWorkerSources(root).packages, ['yaml'])
+    assert.deepEqual(collectOmpWorkerSources(root).packages, ['search-package', 'yaml'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -197,5 +202,103 @@ test('worker package assets include files electron-builder strips from node_modu
     'node_modules/@oh-my-pi/pi-coding-agent/src/tools/computer/declarations.d.ts'
   ]) {
     assert.ok(assets.includes(expected), `${expected} missing from worker assets`)
+  }
+})
+
+test('every worker entry is mandatory and second-entry dependencies/assets share the same closure', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-search-closure-'))
+  const write = (relative: string, body: string): void => {
+    mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
+    writeFileSync(path.join(root, relative), body)
+  }
+  try {
+    write('src/main/agent/engine/in-process/main.ts', 'export {}')
+    assert.throws(() => collectOmpWorkerSources(root), /desktop-websearch-worker/u)
+    write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', "import 'search-package'")
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /search-package/u)
+    write(
+      'node_modules/search-package/package.json',
+      JSON.stringify({ dependencies: { 'search-dependency': '1' } })
+    )
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /search-dependency/u)
+    write('node_modules/search-dependency/package.json', '{}')
+    write(
+      'node_modules/search-package/index.ts',
+      "import prompt from './prompt.md' with { type: 'text' }"
+    )
+    write(
+      'node_modules/search-package/multiline.ts',
+      `const n = 1; import asset from './prompt.md' with\n{ type: 'text' };`
+    )
+    write('node_modules/search-package/prompt.md', 'owned search prompt')
+    write(
+      'node_modules/search-package/comment.ts',
+      '/**\n * import example from "./missing-example.json" with { type: "json" }\n */'
+    )
+    assert.deepEqual(collectOmpWorkerPackageAssets(root), ['node_modules/search-package/prompt.md'])
+    assert.deepEqual(collectOmpWorkerPackageDirs(root), [
+      'node_modules/search-dependency',
+      'node_modules/search-package'
+    ])
+    rmSync(path.join(root, 'node_modules/search-package/prompt.md'))
+    assert.throws(() => collectOmpWorkerPackageAssets(root), /prompt.md/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('runtime closure erases only explicit type edges and keeps value, mixed, side-effect and dynamic imports', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-runtime-closure-'))
+  const write = (relative: string, source: string): void => {
+    mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
+    writeFileSync(path.join(root, relative), source)
+  }
+  try {
+    write(
+      'src/main/agent/engine/in-process/main.ts',
+      `
+      import type { Approval } from './missing-types'
+      import type from 'default-type-value'
+      import { type A, type B } from 'erased-named'
+      import { type A, live } from 'mixed-value'
+      import Default, { type A } from 'default-plus-types'
+      import {} from 'empty-side-effect'
+      import 'side-effect'
+      import {
+ live
+} from 'multiline-value'
+      export type { Type } from 'erased-export'
+      export { type Type } from 'erased-export-named'
+      export { type Type, live } from 'mixed-export'
+      export * from 'export-star'
+      type T = typeof import('erased-import-type')
+      const dynamic = import('dynamic-runtime')
+      const template = import(\`dynamic-template-runtime\`)
+      import required = require('required-runtime')
+      import type ErasedRequired = require('erased-required')
+      /* import bad from './missing-comment' */
+      // import 'missing-comment-sideeffect'
+    `
+    )
+    write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', `import './runtime-value'`)
+    write('src/main/agent/engine/rpc/runtime-value.ts', 'export const live = true')
+    const closure = collectOmpWorkerSources(root)
+    assert.deepEqual(closure.packages, [
+      'default-plus-types',
+      'default-type-value',
+      'dynamic-runtime',
+      'dynamic-template-runtime',
+      'empty-side-effect',
+      'export-star',
+      'mixed-export',
+      'mixed-value',
+      'multiline-value',
+      'required-runtime',
+      'side-effect'
+    ])
+    assert.equal(closure.files.includes('src/main/agent/engine/rpc/runtime-value.ts'), true)
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /default-type-value/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })

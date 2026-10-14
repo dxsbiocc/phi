@@ -12,6 +12,27 @@ import type { LibraryListFilters, SavePaperInput, UpdatePaperInput } from './lib
 
 export type LibraryToolAction = 'save' | 'update' | 'remove' | 'list' | 'find' | 'audit'
 
+export interface LibraryToolStore {
+  save(input: SavePaperInput): ReturnType<typeof savePaper> | Promise<ReturnType<typeof savePaper>>
+  update(
+    id: string,
+    patch: UpdatePaperInput
+  ): ReturnType<typeof updatePaper> | Promise<ReturnType<typeof updatePaper>>
+  remove(id: string): ReturnType<typeof removePaper> | Promise<ReturnType<typeof removePaper>>
+  list(
+    filters: LibraryListFilters
+  ): ReturnType<typeof listPapers> | Promise<ReturnType<typeof listPapers>>
+  find(
+    query: string,
+    filters: LibraryListFilters
+  ): ReturnType<typeof findPapers> | Promise<ReturnType<typeof findPapers>>
+  audit(): ReturnType<typeof auditLibrary> | Promise<ReturnType<typeof auditLibrary>>
+}
+export type LibraryToolStoreFactory = (
+  context: PhiToolContext,
+  signal?: AbortSignal
+) => LibraryToolStore
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -63,14 +84,14 @@ function toolResult(
   }
 }
 
-function executeLibraryAction(
+async function executeLibraryAction(
   action: LibraryToolAction,
-  cwd: string,
+  store: LibraryToolStore,
   params: Record<string, unknown>
-): { summary: string; details: Record<string, unknown> } {
+): Promise<{ summary: string; details: Record<string, unknown> }> {
   switch (action) {
     case 'save': {
-      const result = savePaper(cwd, params as SavePaperInput)
+      const result = await store.save(params as SavePaperInput)
       return {
         summary:
           result.action === 'created'
@@ -81,7 +102,7 @@ function executeLibraryAction(
     }
     case 'update': {
       const id = stringValue(params.id, 'id')
-      const paper = updatePaper(cwd, id, params as UpdatePaperInput)
+      const paper = await store.update(id, params as UpdatePaperInput)
       return {
         summary: `已更新文献：${paper.title}`,
         details: { kind: 'library_paper', paper }
@@ -89,14 +110,14 @@ function executeLibraryAction(
     }
     case 'remove': {
       const id = stringValue(params.id, 'id')
-      const result = removePaper(cwd, id)
+      const result = await store.remove(id)
       return {
         summary: result.removed ? `已移除文献：${result.paper?.title}` : `未找到文献：${id}`,
         details: { kind: 'library_remove_result', ...result }
       }
     }
     case 'list': {
-      const papers = listPapers(cwd, filtersFrom(params))
+      const papers = await store.list(filtersFrom(params))
       return {
         summary: summarizePaperList(papers.length),
         details: { kind: 'library_paper_list', papers }
@@ -104,14 +125,14 @@ function executeLibraryAction(
     }
     case 'find': {
       const query = typeof params.query === 'string' ? params.query : ''
-      const papers = findPapers(cwd, query, filtersFrom(params))
+      const papers = await store.find(query, filtersFrom(params))
       return {
         summary: summarizePaperList(papers.length),
         details: { kind: 'library_paper_list', query, papers }
       }
     }
     case 'audit': {
-      const report = auditLibrary(cwd)
+      const report = await store.audit()
       return {
         summary:
           report.issueCount === 0
@@ -127,14 +148,19 @@ function executeLibraryAction(
 
 function buildLibraryTool(
   action: LibraryToolAction,
-  definition: Omit<PhiTool, 'execute' | 'site'>
+  definition: Omit<PhiTool, 'execute' | 'site'>,
+  storeFactory: LibraryToolStoreFactory
 ): PhiTool {
   return {
     ...definition,
     site: 'host',
-    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
+    async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext, signal) {
       try {
-        const result = executeLibraryAction(action, ctx.cwd, recordValue(params))
+        const result = await executeLibraryAction(
+          action,
+          storeFactory(ctx, signal),
+          recordValue(params)
+        )
         return toolResult(result.summary, result.details)
       } catch (error) {
         return toolResult(error instanceof Error ? error.message : String(error), {}, true)
@@ -143,7 +169,13 @@ function buildLibraryTool(
   }
 }
 
-export function buildLibraryCustomTools(): PhiTool[] {
+export function buildLibraryCustomTools(
+  storeFactory: LibraryToolStoreFactory = localLibraryStore
+): PhiTool[] {
+  const tool = (
+    action: LibraryToolAction,
+    definition: Omit<PhiTool, 'execute' | 'site'>
+  ): PhiTool => buildLibraryTool(action, definition, storeFactory)
   const paperProperties = {
     source: { type: 'string', description: 'Literature source, e.g. pubmed, europepmc, arxiv.' },
     sourceId: { type: 'string', description: 'Source-specific paper id.' },
@@ -177,7 +209,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
   }
 
   return [
-    buildLibraryTool('save', {
+    tool('save', {
       name: 'lib.save',
       label: 'Save Paper',
       description:
@@ -189,7 +221,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
       },
       approval: 'write'
     }),
-    buildLibraryTool('update', {
+    tool('update', {
       name: 'lib.update',
       label: 'Update Paper',
       description:
@@ -209,7 +241,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
       },
       approval: 'write'
     }),
-    buildLibraryTool('remove', {
+    tool('remove', {
       name: 'lib.remove',
       label: 'Remove Paper',
       description: 'Remove one paper from the current project literature library.',
@@ -222,7 +254,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
       },
       approval: 'write'
     }),
-    buildLibraryTool('list', {
+    tool('list', {
       name: 'lib.list',
       label: 'List Library Papers',
       description:
@@ -233,7 +265,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
       },
       approval: 'read'
     }),
-    buildLibraryTool('find', {
+    tool('find', {
       name: 'lib.find',
       label: 'Find Library Papers',
       description:
@@ -247,7 +279,7 @@ export function buildLibraryCustomTools(): PhiTool[] {
       },
       approval: 'read'
     }),
-    buildLibraryTool('audit', {
+    tool('audit', {
       name: 'lib.audit',
       label: 'Audit Literature Library',
       description:
@@ -263,4 +295,16 @@ export function buildLibraryCustomTools(): PhiTool[] {
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected library tool action: ${value}`)
+}
+
+function localLibraryStore(context: PhiToolContext): LibraryToolStore {
+  const cwd = context.cwd
+  return {
+    save: (input) => savePaper(cwd, input),
+    update: (id, patch) => updatePaper(cwd, id, patch),
+    remove: (id) => removePaper(cwd, id),
+    list: (filters) => listPapers(cwd, filters),
+    find: (query, filters) => findPapers(cwd, query, filters),
+    audit: () => auditLibrary(cwd)
+  }
 }

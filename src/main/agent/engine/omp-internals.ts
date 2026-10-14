@@ -2,8 +2,7 @@
 
 import type { Model as OmpModel } from '@oh-my-pi/pi-ai/types'
 import { authPolicyFor as ompAuthPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
-import { getCatalogProviderEntry as ompGetCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
-import { applyProviderGlobalsFromSettings as ompApplyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
+import { providerEntry as ompGetCatalogProviderEntry } from '@oh-my-pi/pi-catalog/compat/providers'
 import {
   getMemoryRoot as ompGetMemoryRoot,
   saveLearnedLesson as ompSaveLearnedLesson
@@ -12,7 +11,9 @@ import {
   closeMemoryDb as ompCloseMemoryDb,
   openMemoryDb as ompOpenMemoryDb
 } from '@oh-my-pi/pi-coding-agent/memories/storage'
-import { estimateToolSchemaTokens as ompEstimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
+import { toolWireSchema } from '@oh-my-pi/pi-ai/utils/schema'
+import { renderToolExamples } from '@oh-my-pi/pi-ai/dialect'
+import type { Tool as OmpTool } from '@oh-my-pi/pi-ai'
 import { resolveApprovedPlan as ompResolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import {
   listPlanFiles as ompListPlanFiles,
@@ -22,10 +23,6 @@ import {
   DEFAULT_COMPACTION_METHOD_ORDER as OMP_DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder as ompResolveCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
-import {
-  parseConfiguredThinkingLevel as ompParseConfiguredThinkingLevel,
-  type ConfiguredThinkingLevel as OmpConfiguredThinkingLevel
-} from '@oh-my-pi/pi-coding-agent/thinking'
 import { getAgentDbPath as ompGetAgentDbPath } from '@oh-my-pi/pi-utils'
 
 import type { PhiCompactionMethod } from './types'
@@ -36,6 +33,7 @@ export interface PhiToolSchemaForTokenEstimate {
   name: string
   description: string
   parameters: unknown
+  examples?: OmpTool['examples']
 }
 
 export interface PhiTokenizer {
@@ -46,10 +44,24 @@ export function estimateToolSchemaTokens(
   tools: readonly PhiToolSchemaForTokenEstimate[],
   tokenizer: PhiTokenizer
 ): number {
-  return ompEstimateToolSchemaTokens(
-    tools as Parameters<typeof ompEstimateToolSchemaTokens>[0],
-    tokenizer as Parameters<typeof ompEstimateToolSchemaTokens>[1]
-  )
+  // Count the provider-visible wire representation without loading the terminal UI.
+  // A roster may contain extension getters or malformed schemas; one bad tool must
+  // not hide the context usage of every other tool.
+  const fragments: string[] = []
+  for (const tool of tools) {
+    if (typeof tool.name === 'string') fragments.push(tool.name)
+    if (typeof tool.description === 'string') fragments.push(tool.description)
+    try {
+      const wireTool = tool as OmpTool
+      const schema = JSON.stringify(toolWireSchema(wireTool) ?? {})
+      if (typeof schema === 'string') fragments.push(schema)
+      const examples = renderToolExamples(wireTool)
+      if (examples) fragments.push(examples)
+    } catch {
+      // Cyclic or callable extension schemas are not serializable.
+    }
+  }
+  return tokenizer.countTokens(fragments)
 }
 
 export type ConfiguredThinkingLevel =
@@ -58,17 +70,22 @@ export type ConfiguredThinkingLevel =
 export function parseConfiguredThinkingLevel(
   value: string | null | undefined
 ): ConfiguredThinkingLevel | undefined {
-  return ompParseConfiguredThinkingLevel(value)
-}
-
-export interface PhiProviderGlobalSettings {
-  get(
-    path: 'providers.webSearchOrder' | 'providers.webSearchExclude' | 'providers.imageOrder'
-  ): unknown
-}
-
-export function applyProviderGlobalsFromSettings(settings: PhiProviderGlobalSettings): void {
-  ompApplyProviderGlobalsFromSettings(settings)
+  if (value === undefined || value === null) return undefined
+  const levels: readonly ConfiguredThinkingLevel[] = [
+    'inherit',
+    'off',
+    'auto',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max'
+  ]
+  if (levels.includes(value as ConfiguredThinkingLevel)) return value as ConfiguredThinkingLevel
+  if (value.length < 2 || 'auto'.startsWith(value)) return undefined
+  const matches = levels.filter((level) => level !== 'auto' && level.startsWith(value))
+  return matches.length === 1 ? matches[0] : undefined
 }
 
 export type PhiAuthLoginKind = 'api-key' | 'oauth-code' | 'device-code' | 'custom'
@@ -187,10 +204,7 @@ export interface PhiMemoryDatabase {
 }
 
 type OmpMemoryDatabase = ReturnType<typeof ompOpenMemoryDb>
-type OmpConfiguredThinkingLevelValue = `${OmpConfiguredThinkingLevel}`
 type OmpTypeCompatibilityChecks = [
-  AssertAssignable<OmpConfiguredThinkingLevelValue, ConfiguredThinkingLevel>,
-  AssertAssignable<ConfiguredThinkingLevel, OmpConfiguredThinkingLevelValue>,
   AssertAssignable<OmpAuthPolicy, PhiAuthPolicy>,
   AssertAssignable<OmpCatalogProviderEntry, PhiCatalogProviderEntry>,
   AssertAssignable<PhiResolveApprovedPlanInput, OmpResolveApprovedPlanInput>,

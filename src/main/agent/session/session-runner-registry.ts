@@ -35,6 +35,12 @@ interface MutableSessionRun extends SessionRun {
   controller: AbortController
   done: Promise<void>
 }
+interface RunApprovalState {
+  pending: Set<string>
+  terminal: Set<string>
+  mainPending: Set<string>
+  denied: boolean
+}
 
 export interface SessionRunnerRegistryOptions {
   maxActiveRuns?: number
@@ -62,6 +68,7 @@ function runDurationMs(run: SessionRun, endedAt: string): number {
 export class SessionRunnerRegistry {
   private readonly maxActiveRuns: number
   private readonly activeRuns = new Map<string, MutableSessionRun>()
+  private readonly approvalStates = new WeakMap<SessionRun, RunApprovalState>()
   private readonly onSessionEvent?: (sessionId: string, event: StoredSessionEvent) => void
   private readonly onRunSettled?: (sessionId: string) => void
 
@@ -87,6 +94,47 @@ export class SessionRunnerRegistry {
 
   getActiveRuns(): SessionRun[] {
     return [...this.activeRuns.values()]
+  }
+
+  /** State only: the foreground facade owns the single durable child approval record. */
+  setChildApprovalState(
+    parent: SessionRun,
+    approvalId: string,
+    type: 'approval_requested' | 'approval_approved' | 'approval_denied' | 'approval_cancelled'
+  ): void {
+    if (this.activeRuns.get(parent.sessionId) !== parent || parent.signal.aborted) return
+    let state = this.approvalStates.get(parent)
+    if (type === 'approval_requested') {
+      if (!state) {
+        state = this.approvalState(parent)
+      }
+      if (state.terminal.has(approvalId)) return
+      state.pending.add(approvalId)
+    } else {
+      if (!state?.pending.delete(approvalId)) return
+      state.terminal.add(approvalId)
+      if (type === 'approval_denied') state.denied = true
+    }
+    this.applyApprovalState(parent, state)
+  }
+  private approvalState(parent: SessionRun): RunApprovalState {
+    let state = this.approvalStates.get(parent)
+    if (!state) {
+      state = { pending: new Set(), terminal: new Set(), mainPending: new Set(), denied: false }
+      this.approvalStates.set(parent, state)
+    }
+    return state
+  }
+  private applyApprovalState(parent: SessionRun, state: RunApprovalState): void {
+    if (this.activeRuns.get(parent.sessionId) !== parent || parent.signal.aborted) return
+    const pending = state.pending.size + state.mainPending.size > 0
+    parent.status = pending ? 'needs_approval' : 'running'
+    updateSessionManifest(
+      parent.sessionId,
+      state.denied
+        ? { status: 'failed', unreadKind: 'failed', lastRunOutcome: 'failed' }
+        : { status: parent.status, unreadKind: pending ? 'approval' : null }
+    )
   }
 
   startRun(input: StartSessionRunInput): SessionRun {
@@ -227,7 +275,8 @@ export class SessionRunnerRegistry {
     const run = this.activeRuns.get(sessionId)
     if (!run) return
 
-    run.status = 'needs_approval'
+    const state = this.approvalState(run)
+    state.mainPending.add(approvalId)
     this.appendEvent(sessionId, {
       type: 'approval_requested',
       runId: run.runId,
@@ -244,17 +293,15 @@ export class SessionRunnerRegistry {
         summary: metadata.summary
       }
     })
-    updateSessionManifest(sessionId, {
-      status: 'needs_approval',
-      unreadKind: 'approval'
-    })
+    this.applyApprovalState(run, state)
   }
 
   markApprovalApproved(sessionId: string, approvalId: string): void {
     const run = this.activeRuns.get(sessionId)
     if (!run) return
 
-    run.status = 'running'
+    const state = this.approvalState(run)
+    state.mainPending.delete(approvalId)
     this.appendEvent(sessionId, {
       type: 'approval_approved',
       runId: run.runId,
@@ -266,15 +313,15 @@ export class SessionRunnerRegistry {
       runId: run.runId,
       metadata: { approvalId }
     })
-    updateSessionManifest(sessionId, {
-      status: 'running',
-      unreadKind: null
-    })
+    this.applyApprovalState(run, state)
   }
 
   markApprovalDenied(sessionId: string, approvalId: string): void {
     const run = this.activeRuns.get(sessionId)
     if (!run) return
+    const state = this.approvalState(run)
+    state.mainPending.delete(approvalId)
+    state.denied = true
 
     this.appendEvent(sessionId, {
       type: 'approval_denied',
@@ -288,16 +335,14 @@ export class SessionRunnerRegistry {
       runId: run.runId,
       metadata: { approvalId }
     })
-    updateSessionManifest(sessionId, {
-      status: 'failed',
-      unreadKind: 'failed',
-      lastRunOutcome: 'failed'
-    })
+    this.applyApprovalState(run, state)
   }
 
   markApprovalCancelled(sessionId: string, approvalId: string): void {
     const run = this.activeRuns.get(sessionId)
     if (!run) return
+    const state = this.approvalState(run)
+    state.mainPending.delete(approvalId)
 
     this.appendEvent(sessionId, {
       type: 'approval_cancelled',
@@ -310,6 +355,7 @@ export class SessionRunnerRegistry {
       runId: run.runId,
       metadata: { approvalId }
     })
+    this.applyApprovalState(run, state)
   }
 
   markNeedsInput(

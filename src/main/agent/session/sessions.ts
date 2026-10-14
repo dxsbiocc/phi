@@ -1,3 +1,6 @@
+import { getPhiEngine } from '../engine/in-process-engine'
+import { hasRoutedPhiOwner } from '../engine/session-routing-engine'
+import { getPhiAgentDir } from '../runtime-paths'
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import {
   createRuntimeSessionManager,
@@ -21,6 +24,8 @@ import {
 } from './session-store'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { remoteWorkspaceHosts } from '../workspace-host/remote-registry'
+import { excludesManifestLocalJournalPath } from './manifest-file'
+import { assertLocalRuntimeAccess, type RuntimeRecoveryDiagnostic } from './runtime-reference'
 
 // Fixed cwd for ad-hoc conversations (not tied to a project) — independent of how
 // Electron happens to be launched (double-clicked vs `electron-vite dev` from some
@@ -65,6 +70,7 @@ export interface SessionSummary {
   currentRunId?: string
   currentRunStartedAt?: string
   lastActivityAt?: string
+  runtimeRecoveryError?: RuntimeRecoveryDiagnostic
 }
 
 function toSummary(info: SessionInfo): SessionSummary {
@@ -119,7 +125,10 @@ function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {
     lastRunOutcome: manifest.lastRunOutcome,
     currentRunId: manifest.currentRunId,
     currentRunStartedAt: manifest.currentRunStartedAt,
-    lastActivityAt: manifest.lastActivityAt
+    lastActivityAt: manifest.lastActivityAt,
+    ...(manifest.runtimeRecoveryError
+      ? { runtimeRecoveryError: manifest.runtimeRecoveryError }
+      : {})
   }
 }
 
@@ -138,7 +147,13 @@ function runtimeManifestGroups(
 ): Map<string, PhiSessionManifest[]> {
   const groups = new Map<string, PhiSessionManifest[]>()
   for (const manifest of manifests) {
-    if (manifest.cwd !== cwd || !manifest.runtimeSessionPath) continue
+    if (
+      manifest.cwd !== cwd ||
+      !manifest.runtimeSessionPath ||
+      manifest.runtimeRef ||
+      manifest.runtimeRecoveryError
+    )
+      continue
     const group = groups.get(manifest.runtimeSessionPath) ?? []
     group.push(manifest)
     groups.set(manifest.runtimeSessionPath, group)
@@ -220,7 +235,7 @@ export function mergePhiSessionState(
     .filter(
       (manifest) =>
         manifest.cwd === cwd &&
-        !manifest.runtimeSessionPath &&
+        (!manifest.runtimeSessionPath || manifest.runtimeRef || manifest.runtimeRecoveryError) &&
         !runtimeManifestIds.has(manifest.sessionId)
     )
     .map(phiOnlySummary)
@@ -269,7 +284,25 @@ export function acknowledgeSession(path: string, cwd: string): SessionSummary | 
   }
 }
 
+function assertLocalSessionOperation(path: string): void {
+  const phiId = phiSessionIdFromPath(path)
+  if (phiId) {
+    const manifest = findPhiSessionById(phiId)
+    if (manifest) assertLocalRuntimeAccess(manifest)
+    return
+  }
+  // Legacy callers accept raw local journal paths. A known remote locator must never take that route.
+  for (const manifest of listPhiSessions()) {
+    if (
+      excludesManifestLocalJournalPath(manifest, path) ||
+      (manifest.runtimeRecoveryError && manifest.runtimeSessionPath === path)
+    )
+      assertLocalRuntimeAccess(manifest)
+  }
+}
+
 export function createSessionManager(cwd: string, path?: string): RuntimeSessionManager {
+  if (path) assertLocalSessionOperation(path)
   ensureDirExists(cwd)
   return path
     ? {
@@ -290,9 +323,11 @@ export function createSessionManager(cwd: string, path?: string): RuntimeSession
 }
 
 export function deleteSession(path: string): void {
+  assertLocalSessionOperation(path)
   const phiSessionId = phiSessionIdFromPath(path)
   if (phiSessionId) {
     const manifest = findPhiSessionById(phiSessionId)
+    if (manifest) assertLocalRuntimeAccess(manifest)
     if (manifest?.runtimeSessionPath && existsSync(manifest.runtimeSessionPath)) {
       unlinkSync(manifest.runtimeSessionPath)
     }
@@ -306,8 +341,19 @@ export function deleteSession(path: string): void {
 }
 
 export async function renameSession(path: string, name: string): Promise<void> {
+  if (!phiSessionIdFromPath(path)) assertLocalSessionOperation(path)
   const phiSessionId = phiSessionIdFromPath(path)
   if (phiSessionId) {
+    const manifest = findPhiSessionById(phiSessionId)
+    const engine = getPhiEngine()
+    if (
+      manifest?.runtimeRef ||
+      manifest?.runtimeRecoveryError ||
+      (manifest?.projectLocation?.kind === 'ssh' && hasRoutedPhiOwner(engine, phiSessionId))
+    ) {
+      await engine.history.rename({ agentDir: getPhiAgentDir(), path, name })
+      return
+    }
     updateSessionManifest(phiSessionId, { title: name })
     return
   }

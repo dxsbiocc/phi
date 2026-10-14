@@ -13,8 +13,21 @@ import { ConfiguredStdioProbeError } from './mcp/configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
 import { phiEventFromWire } from './events'
 import type { PhiAgentEvent } from './types'
+import { HostServiceRegistry } from './host-service-registry'
+import {
+  parseModelGatewayLease,
+  type CreateModelGatewayLeaseParams,
+  type ModelGatewayLease
+} from './model-gateway-types'
+
+export interface OwnedModelGatewayLease extends ModelGatewayLease {
+  readonly closed: Promise<void>
+  close(): Promise<void>
+}
 
 type PendingRequest = {
+  child: ChildProcessWithoutNullStreams
+  keepsWorkerAlive: boolean
   method: string
   params?: unknown
   resolve: (value: unknown) => void
@@ -187,12 +200,18 @@ export class OmpBridge extends EventEmitter {
   // Workers we stopped on purpose, so their exit is not reported as a crash.
   private readonly stoppedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly pending = new Map<string, PendingRequest>()
-  private readonly hostHandlers = new Map<string, HostRequestHandler>()
   private readonly activeSessions = new Set<string>()
+  private readonly gatewayLeases = new Map<
+    string,
+    { child: ChildProcessWithoutNullStreams; invalidate(): void }
+  >()
   private idleTimer: NodeJS.Timeout | null = null
   private stderrTail = ''
 
-  constructor(private readonly spawnWorker: WorkerSpawner = spawnBunWorker) {
+  constructor(
+    private readonly spawnWorker: WorkerSpawner = spawnBunWorker,
+    readonly hostServices = new HostServiceRegistry()
+  ) {
     super()
   }
 
@@ -217,6 +236,8 @@ export class OmpBridge extends EventEmitter {
 
     const promise = new Promise<T>((resolve, reject) => {
       this.pending.set(id, {
+        child,
+        keepsWorkerAlive: true,
         method,
         params,
         resolve: (value) => resolve(value as T),
@@ -224,17 +245,120 @@ export class OmpBridge extends EventEmitter {
       })
     })
 
-    child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+    try {
+      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+    } catch (error) {
+      const pending = this.pending.get(id)
+      this.pending.delete(id)
+      pending?.reject(error instanceof Error ? error : new Error('OMP worker input failed'))
+      this.scheduleIdleStop()
+    }
     return promise
   }
 
-  registerHostHandler(method: string, handler: HostRequestHandler): () => void {
-    this.hostHandlers.set(method, handler)
-    return () => {
-      if (this.hostHandlers.get(method) === handler) {
-        this.hostHandlers.delete(method)
+  /** The bearer stays inside the main process and its owning remote generation. */
+  async createModelGatewayLease(
+    params: CreateModelGatewayLeaseParams,
+    signal?: AbortSignal
+  ): Promise<OwnedModelGatewayLease> {
+    signal?.throwIfAborted()
+    const request = Object.freeze({
+      sessionId: params.sessionId,
+      generation: params.generation,
+      models: Object.freeze(
+        params.models.map(({ provider, id }) => Object.freeze({ provider, id }))
+      )
+    })
+    const acquiring = this.request<unknown>('modelGateway.create', request)
+    const child = this.child
+    let abort: (() => void) | undefined
+    let owned: OwnedModelGatewayLease | undefined
+    const acquisition = acquiring.then((raw): OwnedModelGatewayLease => {
+      if (!child || this.child !== child || child.killed) {
+        throw new Error('Model gateway worker changed during preparation')
       }
+      let lease: ModelGatewayLease
+      try {
+        lease = parseModelGatewayLease(raw, request)
+      } catch (error) {
+        // A malformed successful result must not leave its worker-owned listener alive.
+        const leaseId =
+          typeof raw === 'object' &&
+          raw !== null &&
+          'leaseId' in raw &&
+          typeof raw.leaseId === 'string'
+            ? raw.leaseId
+            : undefined
+        if (leaseId) void this.request('modelGateway.revoke', { leaseId }).catch(() => undefined)
+        throw error
+      }
+      let finish!: () => void
+      const closed = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      let closing: Promise<void> | undefined
+      const invalidate = (): void => {
+        if (this.gatewayLeases.get(lease.leaseId)?.invalidate !== invalidate) return
+        this.gatewayLeases.delete(lease.leaseId)
+        signal?.removeEventListener('abort', onAbort)
+        finish()
+        this.scheduleIdleStop()
+      }
+      const onAbort = (): void => {
+        void result.close().catch(() => undefined)
+      }
+      const result: OwnedModelGatewayLease = {
+        ...lease,
+        closed,
+        close: () => {
+          if (!closing) {
+            // Detach before awaiting the worker: tunnel and RPC owners react at once.
+            invalidate()
+            closing =
+              this.child === child && !child.killed
+                ? this.request<void>('modelGateway.revoke', { leaseId: lease.leaseId })
+                : Promise.resolve()
+          }
+          return closing
+        }
+      }
+      this.gatewayLeases.set(lease.leaseId, { child, invalidate })
+      this.cancelIdleStop()
+      signal?.addEventListener('abort', onAbort, { once: true })
+      owned = result
+      if (signal?.aborted) onAbort()
+      return result
+    })
+    // Cancellation settles now; a late successful worker result is still owned
+    // by this acquisition and is immediately revoked in the continuation above.
+    try {
+      return await (signal
+        ? Promise.race([
+            acquisition,
+            new Promise<never>((_, reject) => {
+              abort = () => {
+                // Keep the result continuation for late revocation, but a
+                // cancelled acquisition alone must not retain an idle worker.
+                for (const pending of this.pending.values()) {
+                  if (pending.method === 'modelGateway.create' && pending.params === request)
+                    pending.keepsWorkerAlive = false
+                }
+                this.scheduleIdleStop()
+                reject(signal.reason)
+              }
+              signal.addEventListener('abort', abort, { once: true })
+              if (signal.aborted) abort()
+            })
+          ])
+        : acquisition)
+    } finally {
+      if (abort) signal?.removeEventListener('abort', abort)
+      if (signal?.aborted) void owned?.close().catch(() => undefined)
     }
+  }
+
+  registerHostHandler(method: string, handler: HostRequestHandler): () => void {
+    return this.hostServices.register(method, handler)
   }
 
   onSessionEvent(sessionId: string, listener: (event: PhiAgentEvent) => void): () => void {
@@ -295,6 +419,9 @@ export class OmpBridge extends EventEmitter {
     if (!child) return
 
     this.stoppedChildren.add(child)
+    this.activeSessions.clear()
+    this.invalidateGateways(child)
+    this.rejectAll(new Error('OMP worker stopped'), child)
     child.kill()
     await new Promise<void>((resolve) => {
       child.once('exit', () => resolve())
@@ -314,7 +441,9 @@ export class OmpBridge extends EventEmitter {
     this.child = child
 
     const stdout = createInterface({ input: child.stdout })
-    stdout.on('line', (line) => this.handleLine(line))
+    stdout.on('line', (line) => {
+      if (this.child === child) this.handleLine(line)
+    })
 
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
@@ -322,7 +451,8 @@ export class OmpBridge extends EventEmitter {
     })
 
     child.on('error', (error) => {
-      this.rejectAll(error)
+      this.invalidateGateways(child)
+      this.rejectAll(error, child)
     })
 
     child.on('exit', (code, signal) => {
@@ -341,7 +471,11 @@ export class OmpBridge extends EventEmitter {
           }
         })
       }
-      if (superseded) return
+      this.invalidateGateways(child)
+      if (superseded) {
+        this.rejectAll(new Error('OMP worker replaced'), child)
+        return
+      }
       if (this.child === child) {
         this.child = null
       }
@@ -349,7 +483,8 @@ export class OmpBridge extends EventEmitter {
       this.rejectAll(
         createBridgeError(
           `OMP worker exited (${reason})${this.stderrTail ? `: ${this.stderrTail}` : ''}`
-        )
+        ),
+        child
       )
     })
 
@@ -429,14 +564,15 @@ export class OmpBridge extends EventEmitter {
     const child = this.child
     if (!child || child.killed) return
     const respond = (payload: BridgeHostResponse): void => {
+      if (this.child !== child || child.killed || child.stdin.destroyed) return
       child.stdin.write(`${JSON.stringify(payload)}\n`)
     }
     try {
-      const handler = this.hostHandlers.get(request.method)
-      if (!handler) {
-        throw new Error(`Unknown host request method: ${request.method}`)
-      }
-      const result = await handler(request.params, hostRequestContext(request.context))
+      const result = await this.hostServices.invoke(
+        request.method,
+        request.params,
+        hostRequestContext(request.context)
+      )
       respond({ type: 'hostResponse', id: request.id, ok: true, result })
     } catch (error) {
       respond({
@@ -449,11 +585,18 @@ export class OmpBridge extends EventEmitter {
     }
   }
 
-  private rejectAll(error: Error): void {
-    for (const pending of this.pending.values()) {
+  private invalidateGateways(child: ChildProcessWithoutNullStreams): void {
+    for (const lease of this.gatewayLeases.values()) {
+      if (lease.child === child) lease.invalidate()
+    }
+  }
+
+  private rejectAll(error: Error, child: ChildProcessWithoutNullStreams): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.child !== child) continue
+      this.pending.delete(id)
       pending.reject(error)
     }
-    this.pending.clear()
   }
 
   private recordSuccessfulRequest(pending: PendingRequest, result: unknown): void {
@@ -478,7 +621,13 @@ export class OmpBridge extends EventEmitter {
   }
 
   private scheduleIdleStop(): void {
-    if (this.pending.size > 0 || this.activeSessions.size > 0 || !this.child) return
+    if (
+      Array.from(this.pending.values()).some((request) => request.keepsWorkerAlive) ||
+      this.activeSessions.size > 0 ||
+      this.gatewayLeases.size > 0 ||
+      !this.child
+    )
+      return
     this.cancelIdleStop()
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null

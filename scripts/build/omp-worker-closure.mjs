@@ -11,14 +11,64 @@
 // cannot drift from what the worker actually imports.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 
 export const OMP_WORKER_ENTRY = 'src/main/agent/engine/in-process/main.ts'
+export const OMP_WORKER_ENTRIES = Object.freeze([
+  OMP_WORKER_ENTRY,
+  'src/main/agent/engine/rpc/desktop-websearch-worker.ts'
+])
 
-// Static `import ... from`, `export ... from`, side-effect `import '...'`, and
-// literal dynamic `import('...')`. Type-only imports are included on purpose:
-// copying an extra type file is harmless, missing a value import is not.
-const IMPORT_PATTERN =
-  /(?:^|[\s;])(?:import|export)\s[^'"`;]*?\sfrom\s*['"]([^'"]+)['"]|(?:^|[\s;])import\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)/gm
+/** Runtime edges only: Bun erases explicit type declarations before executing the worker. */
+function runtimeImports(source, fileName) {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
+  const imports = []
+  const allNamedTypes = (clause) =>
+    clause?.elements.length > 0 && clause.elements.every((element) => element.isTypeOnly)
+  const visit = (node) => {
+    if (ts.isImportTypeNode(node)) return
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const clause = ts.isImportDeclaration(node) ? node.importClause : node.exportClause
+      const erased = ts.isImportDeclaration(node)
+        ? clause?.isTypeOnly ||
+          (!clause?.name &&
+            clause?.namedBindings &&
+            ts.isNamedImports(clause.namedBindings) &&
+            allNamedTypes(clause.namedBindings))
+        : node.isTypeOnly || (clause && ts.isNamedExports(clause) && allNamedTypes(clause))
+      if (!erased && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        const asset = node.attributes?.elements.some(
+          (attribute) =>
+            attribute.name.text === 'type' &&
+            ts.isStringLiteral(attribute.value) &&
+            ['text', 'file', 'json'].includes(attribute.value.text)
+        )
+        imports.push({ specifier: node.moduleSpecifier.text, asset: !!asset })
+      }
+      return
+    }
+    if (ts.isImportEqualsDeclaration(node)) {
+      if (
+        !node.isTypeOnly &&
+        ts.isExternalModuleReference(node.moduleReference) &&
+        node.moduleReference.expression &&
+        ts.isStringLiteral(node.moduleReference.expression)
+      )
+        imports.push({ specifier: node.moduleReference.expression.text, asset: false })
+      return
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    )
+      imports.push({ specifier: node.arguments[0].text, asset: false })
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return imports
+}
 
 const SOURCE_EXTENSIONS = ['', '.ts', '.tsx', '.mts', '.js', '.mjs']
 
@@ -60,13 +110,12 @@ function isBuiltin(specifier) {
 export function collectOmpWorkerSources(repoRoot) {
   const files = new Set()
   const packages = new Set()
-  const pending = [path.resolve(repoRoot, OMP_WORKER_ENTRY)]
+  const pending = OMP_WORKER_ENTRIES.map((entry) => path.resolve(repoRoot, entry))
   while (pending.length > 0) {
     const file = pending.pop()
     if (files.has(file)) continue
     files.add(file)
-    for (const match of readFileSync(file, 'utf8').matchAll(IMPORT_PATTERN)) {
-      const specifier = match[1] ?? match[2] ?? match[3]
+    for (const { specifier } of runtimeImports(readFileSync(file, 'utf8'), file)) {
       if (specifier.startsWith('.')) pending.push(resolveRelativeImport(file, specifier))
       else if (!isBuiltin(specifier)) packages.add(packageNameOf(specifier))
     }
@@ -152,9 +201,6 @@ export function collectOmpWorkerPackageDirs(repoRoot) {
 // loads these targets at runtime, but electron-builder's node_modules copier
 // drops some of them unconditionally (`*.d.ts`, `CHANGELOG.md`, top-level
 // README/test dirs). The afterPack hook restores them from this list.
-const ASSET_IMPORT_PATTERN =
-  /(?:import|export)\s[^'"`;]*?\sfrom\s*['"](\.{1,2}\/[^'"]+)['"]\s*with\s*\{[^}]*\btype\s*:\s*['"](?:text|file|json)['"]/g
-
 const PACKAGE_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.js', '.mjs', '.cjs'])
 
 function listPackageSources(dir) {
@@ -174,10 +220,13 @@ export function collectOmpWorkerPackageAssets(repoRoot) {
   for (const packageDir of collectOmpWorkerPackageDirs(repoRoot)) {
     for (const file of listPackageSources(path.resolve(repoRoot, packageDir))) {
       const source = readFileSync(file, 'utf8')
-      if (!source.includes(' with ')) continue
-      for (const match of source.matchAll(ASSET_IMPORT_PATTERN)) {
-        const target = path.resolve(path.dirname(file), match[1])
-        if (existsSync(target)) assets.add(toPosix(path.relative(repoRoot, target)))
+      if (!source.includes('with')) continue
+      for (const { specifier, asset } of runtimeImports(source, file)) {
+        if (!asset || !specifier.startsWith('.')) continue
+        const target = path.resolve(path.dirname(file), specifier)
+        if (!existsSync(target))
+          throw new Error(`OMP worker closure: missing runtime asset ${target}`)
+        assets.add(toPosix(path.relative(repoRoot, target)))
       }
     }
   }

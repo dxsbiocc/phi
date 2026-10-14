@@ -255,6 +255,26 @@ export function isPhiEventType<T extends PhiKnownAgentEvent['type']>(
         optionalString(event.finalError) &&
         (event.retryErrors === undefined || Array.isArray(event.retryErrors))
       )
+    case 'cache_warming_start':
+    case 'cache_warming_end':
+      return (
+        oneOf(event.phase, ['streaming', 'idle']) &&
+        typeof event.provider === 'string' &&
+        typeof event.model === 'string' &&
+        (type === 'cache_warming_start' ||
+          oneOf(event.outcome, ['hit', 'miss', 'error', 'aborted'])) &&
+        optionalString(event.warmingStopReason)
+      )
+    case 'queue_update':
+      return (
+        Array.isArray(event.steering) &&
+        event.steering.every((item) => typeof item === 'string') &&
+        Array.isArray(event.followUp) &&
+        event.followUp.every((item) => typeof item === 'string') &&
+        typeof event.liveSteered === 'number' &&
+        Number.isInteger(event.liveSteered) &&
+        event.liveSteered >= 0
+      )
     case 'retry_fallback_applied':
       return (
         typeof event.from === 'string' &&
@@ -352,6 +372,9 @@ export function translateOmpEvent(
     case 'auto_compaction_start':
     case 'auto_retry_start':
     case 'auto_retry_end':
+    case 'cache_warming_start':
+    case 'cache_warming_end':
+    case 'queue_update':
     case 'retry_fallback_applied':
     case 'retry_fallback_succeeded':
     case 'model_changed':

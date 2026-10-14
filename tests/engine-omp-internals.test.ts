@@ -26,8 +26,7 @@ import { join } from 'node:path'
 import { Tokenizer } from '@oh-my-pi/pi-agent-core'
 import { Settings } from '@oh-my-pi/pi-coding-agent'
 import { authPolicyFor as ompAuthPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
-import { getCatalogProviderEntry as ompGetCatalogProviderEntry } from '@oh-my-pi/pi-catalog/provider-models/descriptors'
-import { applyProviderGlobalsFromSettings as ompApplyProviderGlobalsFromSettings } from '@oh-my-pi/pi-coding-agent/config/provider-globals'
+import { providerEntry as ompGetCatalogProviderEntry } from '@oh-my-pi/pi-catalog/compat/providers'
 import {
   buildMemoryToolDeveloperInstructions,
   getMemoryRoot as ompGetMemoryRoot,
@@ -37,7 +36,6 @@ import {
   closeMemoryDb as ompCloseMemoryDb,
   openMemoryDb as ompOpenMemoryDb
 } from '@oh-my-pi/pi-coding-agent/memories/storage'
-import { estimateToolSchemaTokens as ompEstimateToolSchemaTokens } from '@oh-my-pi/pi-coding-agent/modes/utils/context-usage'
 import { resolveApprovedPlan as ompResolveApprovedPlan } from '@oh-my-pi/pi-coding-agent/plan-mode/approved-plan'
 import {
   listPlanFiles as ompListPlanFiles,
@@ -47,9 +45,8 @@ import {
   DEFAULT_COMPACTION_METHOD_ORDER as OMP_DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder as ompResolveCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
-import { parseConfiguredThinkingLevel as ompParseConfiguredThinkingLevel } from '@oh-my-pi/pi-coding-agent/thinking'
-import { resolveProviderCandidates } from '@oh-my-pi/pi-coding-agent/web/search/provider'
-import { SEARCH_PROVIDER_CHOICES as OMP_SEARCH_PROVIDER_CHOICES } from '@oh-my-pi/pi-coding-agent/web/search/types'
+import { SEARCH_PROVIDER_LABELS } from '@oh-my-pi/pi-coding-agent/web/search/types'
+import { cfgMemoryBackend } from '@oh-my-pi/pi-coding-agent/memory-backend/settings'
 import { getAgentDbPath as ompGetAgentDbPath } from '@oh-my-pi/pi-utils'
 import * as phi from ${JSON.stringify(PHI_INTERNALS_URL)}
 import { SEARCH_PROVIDER_CHOICES as PHI_SEARCH_PROVIDER_CHOICES } from ${JSON.stringify(PHI_WEB_SEARCH_URL)}
@@ -70,25 +67,19 @@ const tools = [
 ]
 assert.equal(
   phi.estimateToolSchemaTokens(tools, tokenizer),
-  ompEstimateToolSchemaTokens(tools, tokenizer)
+  tokenizer.countTokens(['lookup', 'Look up one record', JSON.stringify(tools[0].parameters)])
 )
+assert.equal(phi.estimateToolSchemaTokens([], tokenizer), 0)
+const cyclic = {}; cyclic.self = cyclic
+assert.ok(phi.estimateToolSchemaTokens([{ name: 'bad', description: 'cyclic', parameters: cyclic }], tokenizer) > 0)
 
-for (const value of ['auto', 'inherit', 'off', 'min', 'medium', 'xhigh', 'invalid', null]) {
-  assert.equal(phi.parseConfiguredThinkingLevel(value), ompParseConfiguredThinkingLevel(value))
+for (const [value, expected] of [
+  ['auto', 'auto'], ['inherit', 'inherit'], ['off', 'off'], ['min', 'minimal'],
+  ['med', 'medium'], ['xhi', 'xhigh'], ['max', 'max'], ['m', undefined],
+  ['au', undefined], ['invalid', undefined], [null, undefined]
+]) {
+  assert.equal(phi.parseConfiguredThinkingLevel(value), expected)
 }
-
-const settingsDir = join(root, 'settings')
-await mkdir(settingsDir, { recursive: true })
-const settings = await Settings.loadIsolated({ cwd: settingsDir, agentDir: settingsDir })
-settings.override('providers.webSearchOrder', ['searxng', 'exa'])
-settings.override('providers.webSearchExclude', ['google'])
-settings.override('providers.imageOrder', [])
-const directProviderGlobals = ompApplyProviderGlobalsFromSettings(settings)
-const directCandidates = resolveProviderCandidates()
-const wrappedProviderGlobals = phi.applyProviderGlobalsFromSettings(settings)
-const wrappedCandidates = resolveProviderCandidates()
-assert.equal(wrappedProviderGlobals, directProviderGlobals)
-assert.deepEqual(wrappedCandidates, directCandidates)
 
 for (const providerId of ['anthropic', 'cursor', 'does-not-exist']) {
   assert.deepEqual(phi.authPolicyFor(providerId), ompAuthPolicyFor(providerId))
@@ -136,7 +127,12 @@ for (const value of [
   )
 }
 assert.deepEqual(phi.DEFAULT_COMPACTION_METHOD_ORDER, OMP_DEFAULT_COMPACTION_METHOD_ORDER)
-assert.equal(PHI_SEARCH_PROVIDER_CHOICES, OMP_SEARCH_PROVIDER_CHOICES)
+assert.equal(PHI_SEARCH_PROVIDER_CHOICES.length, 23)
+for (const choice of PHI_SEARCH_PROVIDER_CHOICES) {
+  assert.equal(choice.label, SEARCH_PROVIDER_LABELS[choice.value])
+  assert.ok(choice.description.length > 0)
+}
+assert.ok(!PHI_SEARCH_PROVIDER_CHOICES.some(({ value }) => ['openai', 'openrouter', 'ollama'].includes(value)))
 
 const agentDir = join(root, 'agent')
 const wrappedCwd = join(root, 'wrapped-project')
@@ -158,7 +154,7 @@ assert.deepEqual(
   await ompSaveLearnedLesson(agentDir, directCwd, memoryInput)
 )
 const memorySettings = await Settings.loadIsolated({ cwd: wrappedCwd, agentDir })
-memorySettings.override('memory.backend', 'local')
+cfgMemoryBackend.override(memorySettings, 'local')
 const memoryBlock = await buildMemoryToolDeveloperInstructions(agentDir, memorySettings)
 assert.match(memoryBlock ?? '', /Store results under results\\//)
 

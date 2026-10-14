@@ -190,7 +190,7 @@ function mergeIdentifiers(current: PaperIdentifier[], next: PaperIdentifier[]): 
   })
 }
 
-function createEmptyIndex(timestamp = nowIso()): LibraryIndex {
+export function createEmptyLibraryIndex(timestamp = nowIso()): LibraryIndex {
   return {
     schemaVersion: LIBRARY_SCHEMA_VERSION,
     createdAt: timestamp,
@@ -209,7 +209,7 @@ function getPaperDir(projectCwd: string, paper: Pick<SavedPaper, 'storageKey'>):
 
 function readIndex(projectCwd: string): LibraryIndex {
   const indexPath = getIndexPath(projectCwd)
-  if (!existsSync(indexPath)) return createEmptyIndex()
+  if (!existsSync(indexPath)) return createEmptyLibraryIndex()
   const parsed = JSON.parse(readFileSync(indexPath, 'utf-8')) as LibraryIndex
   if (parsed.schemaVersion !== LIBRARY_SCHEMA_VERSION || !Array.isArray(parsed.papers)) {
     throw new Error('Unsupported literature library index schema')
@@ -227,10 +227,10 @@ function writePaperProjection(projectCwd: string, paper: SavedPaper): void {
   const paperDir = getPaperDir(projectCwd, paper)
   ensureDir(paperDir)
   writeJsonFile(join(paperDir, META_FILE), paper)
-  writeFileSync(join(paperDir, NOTE_FILE), noteMarkdown(paper), 'utf-8')
+  writeFileSync(join(paperDir, NOTE_FILE), libraryNoteMarkdown(paper), 'utf-8')
 }
 
-function noteMarkdown(paper: SavedPaper): string {
+export function libraryNoteMarkdown(paper: SavedPaper): string {
   const lines = [
     '---',
     `canonicalId: ${JSON.stringify(paper.canonicalId)}`,
@@ -392,7 +392,7 @@ export function getProjectLibraryDir(projectCwd: string): string {
 }
 
 export function listPapers(projectCwd: string, filters: LibraryListFilters = {}): SavedPaper[] {
-  return readIndex(projectCwd).papers.filter((paper) => matchesFilters(paper, filters))
+  return listPapersInIndex(readIndex(projectCwd), filters)
 }
 
 export function findPapers(
@@ -400,8 +400,23 @@ export function findPapers(
   query: string,
   filters: LibraryListFilters = {}
 ): SavedPaper[] {
+  return findPapersInIndex(readIndex(projectCwd), query, filters)
+}
+
+export function listPapersInIndex(
+  index: LibraryIndex,
+  filters: LibraryListFilters = {}
+): SavedPaper[] {
+  return index.papers.filter((paper) => matchesFilters(paper, filters))
+}
+
+export function findPapersInIndex(
+  index: LibraryIndex,
+  query: string,
+  filters: LibraryListFilters = {}
+): SavedPaper[] {
   const needle = query.trim().toLowerCase()
-  return listPapers(projectCwd, filters).filter((paper) => {
+  return listPapersInIndex(index, filters).filter((paper) => {
     if (!needle) return true
     return searchableText(paper).includes(needle)
   })
@@ -409,7 +424,17 @@ export function findPapers(
 
 export function savePaper(projectCwd: string, input: SavePaperInput): SavePaperResult {
   const timestamp = nowIso()
-  const index = readIndex(projectCwd)
+  const change = savePaperInIndex(readIndex(projectCwd), input, timestamp)
+  writeIndex(projectCwd, change.index)
+  writePaperProjection(projectCwd, change.result.paper)
+  return change.result
+}
+
+export function savePaperInIndex(
+  index: LibraryIndex,
+  input: SavePaperInput,
+  timestamp = nowIso()
+): { index: LibraryIndex; result: SavePaperResult } {
   const canonicalId = canonicalIdFor(input)
   const existing = findExactDuplicate(index, input, canonicalId)
   const paper = existing
@@ -420,14 +445,23 @@ export function savePaper(projectCwd: string, input: SavePaperInput): SavePaperR
     ? index.papers.map((item) => (item.canonicalId === existing.canonicalId ? paper : item))
     : [...index.papers, paper]
 
-  writeIndex(projectCwd, { ...index, updatedAt: timestamp, papers })
-  writePaperProjection(projectCwd, paper)
-  return { action, paper }
+  return { index: { ...index, updatedAt: timestamp, papers }, result: { action, paper } }
 }
 
 export function updatePaper(projectCwd: string, id: string, patch: UpdatePaperInput): SavedPaper {
   const timestamp = nowIso()
-  const index = readIndex(projectCwd)
+  const change = updatePaperInIndex(readIndex(projectCwd), id, patch, timestamp)
+  writeIndex(projectCwd, change.index)
+  writePaperProjection(projectCwd, change.result)
+  return change.result
+}
+
+export function updatePaperInIndex(
+  index: LibraryIndex,
+  id: string,
+  patch: UpdatePaperInput,
+  timestamp = nowIso()
+): { index: LibraryIndex; result: SavedPaper } {
   const existing = index.papers.find((paper) => matchesPaperId(paper, id))
   if (!existing) throw new Error(`Paper not found: ${id}`)
 
@@ -447,31 +481,49 @@ export function updatePaper(projectCwd: string, id: string, patch: UpdatePaperIn
     revision: existing.revision + 1
   }
 
-  writeIndex(projectCwd, {
-    ...index,
-    updatedAt: timestamp,
-    papers: index.papers.map((paper) => (paper.canonicalId === existing.canonicalId ? next : paper))
-  })
-  writePaperProjection(projectCwd, next)
-  return next
+  return {
+    index: {
+      ...index,
+      updatedAt: timestamp,
+      papers: index.papers.map((paper) =>
+        paper.canonicalId === existing.canonicalId ? next : paper
+      )
+    },
+    result: next
+  }
 }
 
 export function removePaper(projectCwd: string, id: string): RemovePaperResult {
   const timestamp = nowIso()
-  const index = readIndex(projectCwd)
+  const change = removePaperInIndex(readIndex(projectCwd), id, timestamp)
+  if (!change.result.removed) return change.result
+  writeIndex(projectCwd, change.index)
+  rmSync(getPaperDir(projectCwd, change.result.paper!), { recursive: true, force: true })
+  return change.result
+}
+
+export function removePaperInIndex(
+  index: LibraryIndex,
+  id: string,
+  timestamp = nowIso()
+): { index: LibraryIndex; result: RemovePaperResult } {
   const existing = index.papers.find((paper) => matchesPaperId(paper, id))
-  if (!existing) return { removed: false }
-  writeIndex(projectCwd, {
-    ...index,
-    updatedAt: timestamp,
-    papers: index.papers.filter((paper) => paper.canonicalId !== existing.canonicalId)
-  })
-  rmSync(getPaperDir(projectCwd, existing), { recursive: true, force: true })
-  return { removed: true, paper: existing }
+  if (!existing) return { index, result: { removed: false } }
+  return {
+    index: {
+      ...index,
+      updatedAt: timestamp,
+      papers: index.papers.filter((paper) => paper.canonicalId !== existing.canonicalId)
+    },
+    result: { removed: true, paper: existing }
+  }
 }
 
 export function auditLibrary(projectCwd: string): LibraryAuditReport {
-  const index = readIndex(projectCwd)
+  return auditLibraryIndex(readIndex(projectCwd))
+}
+
+export function auditLibraryIndex(index: LibraryIndex): LibraryAuditReport {
   const issues: LibraryAuditIssue[] = []
   const ids = new Map<string, number>()
   const validIds = new Set<string>()

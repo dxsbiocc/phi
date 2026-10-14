@@ -1,0 +1,269 @@
+import { createHash, randomBytes } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, posix } from 'node:path'
+import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../../agents/definition'
+import { AGENT_REPORT_PROTOCOL } from '../../../agents/report'
+import type { RemoteWorkspaceHostBinding } from '../../../remote-workspace-boundary'
+import type { WorkspaceHost } from '../../../workspace-host/types'
+import type { RemoteUploadFileOptions } from '../../../transfer/remote-upload-types'
+import { shellQuote as q } from '../../../wrappers/remote-ssh-session'
+import type { ModelGatewayModelRef, SafeModelDescriptor } from '../../model-gateway-types'
+import {
+  MAX_RPC_CHILD_CONFIG_BYTES,
+  RPC_CHILD_RUNTIME_FILE,
+  validateRpcChildRuntimeConfig,
+  type RpcChildConfigIdentity,
+  type RpcChildRuntimeConfig
+} from '../../phi-extension/lib/rpc-child-config'
+import { validateRpcChildRoute } from '../../phi-extension/lib/rpc-child-protocol'
+import { privateRemotePrefix } from '../extension-deployment/remote-commands'
+import type { PhiExtensionFile } from '../extension-deployment/types'
+import { storageHost } from '../session-storage/remote-preflight'
+import type { RpcRuntimePreparationContext } from '../ssh-stdio-factory'
+import { compileRpcAgentDefinitions } from './definition-compiler'
+import { snapshotBinding } from './definition-validation'
+import { rpcChildProfileFromDefinition } from './run-registry'
+import type { RpcAgentServerBinding } from './types'
+
+export interface SelectedChildDeploymentBinding {
+  readonly hostProfileId: string
+  readonly bindingHash: string
+  readonly projectId: string
+  readonly projectRoot: string
+}
+/** Profile/project deployment configuration binding; this is not a machine/SSH host-key fingerprint. */
+export function deriveProductionChildBinding(
+  actual: RemoteWorkspaceHostBinding,
+  selected: SelectedChildDeploymentBinding
+): Readonly<RpcAgentServerBinding> {
+  const key: unknown = JSON.parse(actual.cacheKey)
+  const digest = createHash('sha256').update(actual.cacheKey).digest('hex')
+  if (
+    !Array.isArray(key) ||
+    key.length !== 4 ||
+    key[0] !== selected.hostProfileId ||
+    key[1] !== actual.remoteRoot ||
+    key[2] !== actual.canonicalRoot ||
+    digest !== selected.bindingHash ||
+    actual.projectId !== selected.projectId ||
+    actual.canonicalRoot !== selected.projectRoot
+  )
+    throw new Error('Selected child SSH deployment binding differs from the resolved project')
+  return Object.freeze(
+    snapshotBinding({
+      serverId: selected.hostProfileId,
+      serverIdentitySha256: digest,
+      projectId: actual.projectId,
+      projectRoot: actual.canonicalRoot
+    })
+  )
+}
+
+export interface PreparedProductionChildConfig {
+  /** Private capability material: never forward to the facade's public event/state stream. */
+  readonly config: Readonly<RpcChildRuntimeConfig>
+}
+const issued = new WeakMap<PreparedProductionChildConfig, readonly PhiExtensionFile[]>()
+export function assertPreparedProductionChildConfig(prepared: PreparedProductionChildConfig): void {
+  if (!issued.has(prepared))
+    throw new Error('Child configuration was not issued by the trusted compiler')
+}
+export interface CreateProductionChildConfigOptions {
+  readonly identity: RpcChildConfigIdentity
+  readonly binding: RpcAgentServerBinding
+  readonly definitions: readonly PhiAgentDefinition[]
+  readonly modelDescriptors: readonly SafeModelDescriptor[]
+  readonly parentModel: ModelGatewayModelRef
+  readonly parentThinkingLevel: PhiAgentThinkingLevel
+  /** Supplied by the currently owned model-gateway/reverse-tunnel generation. */
+  readonly native: { readonly endpoint: string; readonly models: readonly ModelGatewayModelRef[] }
+  readonly otherCapabilities: readonly string[]
+}
+
+/** Compile trusted Phi definitions, refusing the whole unsupported profile instead of dropping fields. */
+export async function createProductionChildConfig(
+  options: CreateProductionChildConfigOptions
+): Promise<PreparedProductionChildConfig> {
+  const identity = Object.freeze({ ...options.identity })
+  const binding = snapshotBinding(options.binding)
+  if (
+    binding.projectId !== identity.projectId ||
+    binding.projectRoot !== identity.projectRoot ||
+    !options.definitions.length ||
+    options.definitions.length > 32
+  )
+    throw new Error('Child compiler lacks its owned project binding')
+  const definitions = structuredClone(options.definitions)
+  const models = structuredClone(options.modelDescriptors)
+  const parent = Object.freeze({ ...options.parentModel })
+  const otherCapabilities = [...options.otherCapabilities]
+  const endpoint = new URL(options.native.endpoint)
+  if (
+    endpoint.href !== options.native.endpoint ||
+    endpoint.pathname !== '/v1/pi/stream' ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash ||
+    !options.native.models.some(
+      (model) => model.provider === parent.provider && model.id === parent.id
+    )
+  )
+    throw new Error('Child compiler lacks the owned parent model route')
+  const route = validateRpcChildRoute({
+    api: 'openai-completions',
+    baseUrl: endpoint.origin,
+    transport: 'pi-native'
+  })
+  for (const definition of definitions)
+    if (
+      definition.environment !== undefined ||
+      definition.skills.length ||
+      definition.tools.some((name) => !['read', 'write', 'bash'].includes(name)) ||
+      definition.warnings.length
+    )
+      throw new Error('Unsupported foreground child definition')
+  const compiled = await compileRpcAgentDefinitions({
+    definitions,
+    binding,
+    availableModels: models,
+    parentModel: parent,
+    parentThinkingLevel: options.parentThinkingLevel,
+    availableTools: ['read', 'write', 'bash'].map((name) => ({ name, site: 'native' })),
+    availableSkills: []
+  })
+  if (compiled.warnings.length) throw new Error('Child model fallback is not supported')
+  const profiles = compiled.manifest.entries
+    .filter((entry) => entry.blocking)
+    .map((entry) => {
+      const definition = definitions.find((source) => source.name === entry.phiName)
+      const model = models.find(
+        (candidate) => candidate.provider === parent.provider && candidate.id === parent.id
+      )
+      if (
+        !definition ||
+        !model ||
+        entry.model.provider !== parent.provider ||
+        entry.model.id !== parent.id
+      )
+        throw new Error('Child model differs from its owned parent model')
+      return rpcChildProfileFromDefinition(
+        entry,
+        [definition.systemPrompt, AGENT_REPORT_PROTOCOL],
+        model,
+        route
+      )
+    })
+  const files = compiled.files.filter(
+    (file) =>
+      file.path === 'phi-agent-definitions.json' ||
+      profiles.some((profile) => file.path === `agents/${profile.definition.nativeName}.md`)
+  )
+  const config = validateRpcChildRuntimeConfig(
+    {
+      schema: 1,
+      ...identity,
+      manifestHash: compiled.manifestHash,
+      manifestBinding: binding,
+      capability: randomBytes(32).toString('hex'),
+      profiles,
+      files: files.map(({ path, sha256 }) => ({ path, sha256 })),
+      policy: { mode: 'foreground-native', taskShape: 'single' }
+    },
+    identity,
+    otherCapabilities
+  )
+  const prepared = Object.freeze({ config })
+  issued.set(
+    prepared,
+    files.map((file) => ({ ...file, bytes: Buffer.from(file.bytes) }))
+  )
+  return prepared
+}
+
+/** Registered writer-owned publication, complete before the official CLI may start. */
+export async function publishProductionChildConfig(options: {
+  readonly prepared: PreparedProductionChildConfig
+  readonly context: RpcRuntimePreparationContext
+  readonly host: WorkspaceHost
+  readonly uploadOptions?: RemoteUploadFileOptions
+}): Promise<void> {
+  const { prepared, context, host } = options
+  const files = issued.get(prepared)
+  const storage = context.storage
+  const config = prepared.config
+  if (!files || !storage || storageHost(storage) !== host || !host.transfer)
+    throw new Error('Child publication requires its compiler output and registered writer host')
+  storage.lease.assertActive()
+  context.signal.throwIfAborted()
+  if (
+    config.nonce !== context.bootstrap.nonce ||
+    config.phiSessionId !== context.params.sessionId ||
+    config.phiSessionId !== context.bootstrap.sessionId ||
+    config.phiSessionId !== storage.scope.phiSessionId ||
+    config.projectId !== storage.scope.projectId ||
+    config.projectId !== context.bootstrap.projectId ||
+    config.projectRoot !== storage.scope.projectRoot ||
+    config.projectRoot !== context.params.cwd ||
+    config.projectRoot !== context.bootstrap.projectRoot ||
+    config.manifestBinding.serverId !== storage.scope.hostProfileId ||
+    config.manifestBinding.serverIdentitySha256 !== storage.scope.bindingHash ||
+    config.generation !== context.generation ||
+    context.agentDir !== posix.join(context.generationDirectory, 'home/.omp/agent') ||
+    context.generationDirectory !==
+      posix.join(storage.scope.runtimeRoot, 'rpc-sessions', config.nonce)
+  )
+    throw new Error('Child publication differs from its private launch generation')
+  const sidecar = Buffer.from(JSON.stringify(config))
+  if (sidecar.length > MAX_RPC_CHILD_CONFIG_BYTES)
+    throw new Error('Child configuration exceeds its supported byte limit')
+  const prefix = privateRemotePrefix(storage.scope.runtimeRoot)
+  const run = async (command: string): Promise<void> => {
+    storage.lease.assertActive()
+    context.signal.throwIfAborted()
+    const result = await host.exec.run(['sh', '-c', `${prefix}\n${command}`], {
+      cwd: storage.scope.runtimeRoot,
+      signal: context.signal,
+      timeoutMs: 30000,
+      maxOutputBytes: 1024
+    })
+    if (result.code !== 0 || result.truncated || result.terminationReason)
+      throw new Error('Cannot publish private child runtime configuration')
+    storage.lease.assertActive()
+    context.signal.throwIfAborted()
+  }
+  const agentDirectory = posix.join(context.agentDir, 'agents')
+  await run(
+    `private_dir ${q(context.generationDirectory)}\n[ "$(cd -- ${q(context.generationDirectory)} && pwd -P)" = ${q(context.generationDirectory)} ] || fail 'Child generation directory is not canonical'\nprivate_dir ${q(context.agentDir)}\n[ "$(cd -- ${q(context.agentDir)} && pwd -P)" = ${q(context.agentDir)} ] || fail 'Child agent directory is not canonical'\n[ ! -e ${q(agentDirectory)} ] && [ ! -L ${q(agentDirectory)} ] || fail 'Child generation directory already exists'\nprivate_dir ${q(agentDirectory)}`
+  )
+  const local = await mkdtemp(join(tmpdir(), 'phi-child-publication-'))
+  try {
+    const publication = [
+      ...files.map((file) => ({ ...file, destination: posix.join(context.agentDir, file.path) })),
+      {
+        path: RPC_CHILD_RUNTIME_FILE,
+        bytes: sidecar,
+        sha256: createHash('sha256').update(sidecar).digest('hex'),
+        destination: posix.join(context.generationDirectory, RPC_CHILD_RUNTIME_FILE)
+      }
+    ]
+    for (const [index, file] of publication.entries()) {
+      await run(
+        `[ ! -e ${q(file.destination)} ] && [ ! -L ${q(file.destination)} ] || fail 'Child generation file already exists'`
+      )
+      const source = join(local, String(index))
+      await writeFile(source, file.bytes, { mode: 0o600, flag: 'wx' })
+      await host.transfer.uploadFile(source, file.destination, {
+        ...options.uploadOptions,
+        signal: context.signal,
+        expectedSha256: file.sha256
+      })
+      await run(
+        `private_file ${q(file.destination)}\n[ "$(hash_file ${q(file.destination)})" = ${q(file.sha256)} ] || fail 'Private child artifact was corrupted'`
+      )
+    }
+  } finally {
+    await rm(local, { recursive: true, force: true })
+  }
+}

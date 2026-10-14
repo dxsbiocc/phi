@@ -25,6 +25,13 @@ files:
   - '!resources/runtime/bun/**'
   - '!resources/remote-helper/**'
 extraResources:
+  # The remote OMP loader needs the self-contained TypeScript extension on disk.
+  # Copy the canonical source once; deployment hashes this exact complete file set.
+  - from: src/main/agent/engine/phi-extension
+    to: phi-extension
+    filter:
+      - '**/*.ts'
+      - package.json
   # Both Linux helpers ship on every desktop platform because the connected
   # remote host, rather than the desktop host, determines the selected binary.
   - from: resources/remote-helper
@@ -56,6 +63,7 @@ asarUnpack:
   - node_modules/@types/**
   - node_modules/adm-zip/**
   - node_modules/ajv/**
+  - node_modules/axe-core/**
   - node_modules/boolean/**
   - node_modules/buffer-crc32/**
   - node_modules/chart.js/**

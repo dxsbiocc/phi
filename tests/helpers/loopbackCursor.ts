@@ -1,8 +1,20 @@
 import http2 from 'node:http2'
 import type { ModelReply, ModelRequest } from '../engine-contract/loopback-model'
 
+export type CursorReply = ModelReply & {
+  /** Complete answer step, followed by EOF before the usage-only turnEnded frame. */
+  stepCompleted?: boolean
+  /** Leave the response readable until caller abort, instead of simulating EOF. */
+  keepOpen?: boolean
+}
+
 function message(field: number, value: Uint8Array): Buffer {
-  const bytes = [field * 8 + 2]
+  const bytes: number[] = []
+  let tag = field * 8 + 2
+  do {
+    bytes.push((tag & 127) | (tag > 127 ? 128 : 0))
+    tag >>>= 7
+  } while (tag)
   let length = value.length
   do {
     bytes.push((length & 127) | (length > 127 ? 128 : 0))
@@ -21,11 +33,11 @@ function frame(value: Uint8Array): Buffer {
 export async function startLoopbackCursor(): Promise<{
   url: string
   requests: ModelRequest[]
-  enqueue(...replies: ModelReply[]): void
+  enqueue(...replies: CursorReply[]): void
   close(): Promise<void>
 }> {
   const requests: ModelRequest[] = []
-  const replies: ModelReply[] = []
+  const replies: CursorReply[] = []
   const clients = new Set<http2.ServerHttp2Session>()
   const server = http2.createServer()
   server.on('session', (session) => {
@@ -63,8 +75,9 @@ export async function startLoopbackCursor(): Promise<{
         )
         stream.write(frame(message(1, message(3, Buffer.concat([id, message(2, completed)])))))
       }
+      if (reply.stepCompleted) stream.write(frame(message(1, message(17, Buffer.alloc(0)))))
       if (!reply.hold) stream.write(frame(message(1, message(14, Buffer.alloc(0)))))
-      stream.end()
+      if (!reply.keepOpen) stream.end()
     })
     stream.on('error', () => undefined)
   })

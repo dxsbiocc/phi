@@ -1,4 +1,10 @@
 import { getOmpBridge, type OmpBridge } from './omp-bridge'
+import { SessionRoutingEngine } from './session-routing-engine'
+import {
+  createFacadeSessionFactory,
+  type FacadeSessionFactoryOptions
+} from './rpc/facade-session-driver'
+import type { RoutedSessionFactory } from './session-routing-engine'
 import type { PhiEngine } from './types'
 
 export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
@@ -87,9 +93,31 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
   }
 }
 
-let engine: PhiEngine | null = null
+let engine: SessionRoutingEngine | null = null
+let remoteFactory: RoutedSessionFactory | undefined
+
+/** Main-process opt-in only. Existing sessions retain their captured driver and authority. */
+export function installRemoteSessionRouting(
+  options: Omit<FacadeSessionFactoryOptions, 'bridge' | 'models'> & { enabled: true }
+): () => void {
+  if (options.enabled !== true) throw new Error('Remote session routing must be explicitly enabled')
+  const bridge = getOmpBridge()
+  const factory = createFacadeSessionFactory({
+    ...options,
+    bridge,
+    models: async (agentDir) => (await getPhiEngine().models.snapshot({ agentDir })).models
+  })
+  remoteFactory = factory
+  return () => {
+    if (remoteFactory === factory) remoteFactory = undefined
+  }
+}
+
+export function ownsRemoteRuntimeSession(sessionId: string): boolean {
+  return engine?.owns(sessionId) ?? false
+}
 
 export function getPhiEngine(): PhiEngine {
-  engine ??= createInProcessEngine(getOmpBridge())
+  engine ??= new SessionRoutingEngine(createInProcessEngine(getOmpBridge()), () => remoteFactory)
   return engine
 }

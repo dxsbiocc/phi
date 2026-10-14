@@ -1,16 +1,140 @@
 import { Settings } from '@oh-my-pi/pi-coding-agent'
+import { register } from '@oh-my-pi/pi-coding-agent/config/registry'
+import {
+  resolveConfiguredModelPatterns,
+  rolePriorityDefaults
+} from '@oh-my-pi/pi-coding-agent/config/model-resolver'
+import { cfgExtensions } from '@oh-my-pi/pi-coding-agent/extensibility/settings'
+import {
+  cfgMcpEnableProjectConfig,
+  cfgMcpNotifications
+} from '@oh-my-pi/pi-coding-agent/mcp/settings'
+import { cfgMemoryBackend } from '@oh-my-pi/pi-coding-agent/memory-backend/settings'
+import {
+  cfgCompactionEnabled,
+  cfgCompactionMethodOrder,
+  cfgCompactionThresholdPercent,
+  cfgCompactionThresholdTokens
+} from '@oh-my-pi/pi-coding-agent/session/context-settings'
+import { cfgRetryFallbackChains } from '@oh-my-pi/pi-coding-agent/session/settings'
+import { isRegisteredSearchEngine } from '@oh-my-pi/pi-coding-agent/web/search/provider'
+import {
+  cfgSearxngBasicPassword,
+  cfgSearxngBasicUsername,
+  cfgSearxngEndpoint,
+  cfgSearxngEngines,
+  cfgSearxngToken
+} from '@oh-my-pi/pi-coding-agent/web/settings'
 import { DEFAULT_COMPACTION_METHOD_ORDER, resolveCompactionMethodOrder } from '../omp-internals'
+import { SEARCH_PROVIDER_CHOICES } from '../omp-web-search'
 
-import type { PhiCompactionSettings, PhiSettings } from '../types'
+import type { PhiCompactionSettings, PhiSettings, PhiWebSearchProvider } from '../types'
 
 const autoCompactionBaselines = new WeakMap<Settings, PhiCompactionSettings>()
+const providerIds = SEARCH_PROVIDER_CHOICES.map(({ value }) => value)
+const providerIdSet = new Set<string>(providerIds)
+
+// OMP's role chain stores effective candidates, losing Phi's preferred prefix
+// and explicit exclusions. Keep their exact shape only while that chain matches.
+const cfgPhiWebSearch = register({
+  id: 'phi.webSearch',
+  type: 'record',
+  default: {} as Record<string, string[]>
+})
+
+function providerSelectors(provider: PhiWebSearchProvider): string[] {
+  switch (provider) {
+    case 'gemini':
+      return [
+        'google-gemini-cli/gemini-2.5-flash',
+        'google-antigravity/gemini-2.5-flash',
+        'google/gemini-2.5-flash'
+      ]
+    case 'anthropic':
+      return ['anthropic/claude-haiku-4-5']
+    case 'codex':
+      return ['openai-codex/gpt-5.6-luna']
+    case 'xai':
+      return ['xai/grok-4.5']
+    default:
+      return isRegisteredSearchEngine(provider) ? [`web/${provider}`] : []
+  }
+}
+
+function selectorProvider(selector: string): PhiWebSearchProvider | undefined {
+  const [provider, modelWithThinking] = selector.split('/')
+  const model = modelWithThinking?.split(':')[0]
+  if (provider === 'web' && model && providerIdSet.has(model)) return model as PhiWebSearchProvider
+  if (
+    provider === 'google-gemini-cli' ||
+    provider === 'google-antigravity' ||
+    provider === 'google'
+  )
+    return 'gemini'
+  if (provider === 'anthropic') return 'anthropic'
+  if (provider === 'openai-codex') return 'codex'
+  if (provider === 'xai' || provider === 'xai-oauth') return 'xai'
+  return undefined
+}
+
+function webSelectors(settings: Settings): string[] {
+  const role = settings.getModelRole('web')
+  const fallbacks = cfgRetryFallbackChains.get(settings).web ?? rolePriorityDefaults('web')
+  // Each comma list is one SDK attempt's availability alternatives, not a
+  // retry sequence. Phi displays all configured providers before auth filtering.
+  return resolveConfiguredModelPatterns([...(role ? [role] : []), ...fallbacks], settings)
+}
+
+function knownProviders(value: unknown): value is PhiWebSearchProvider[] {
+  return (
+    Array.isArray(value) && value.every((id) => typeof id === 'string' && providerIdSet.has(id))
+  )
+}
+
+function readWebSearchProviders(settings: Settings): {
+  order: PhiWebSearchProvider[]
+  excluded: PhiWebSearchProvider[]
+} {
+  const selectors = webSelectors(settings)
+  const saved = cfgPhiWebSearch.get(settings)
+  if (
+    knownProviders(saved.order) &&
+    knownProviders(saved.excluded) &&
+    Array.isArray(saved.selectors) &&
+    saved.selectors.length === selectors.length &&
+    saved.selectors.every((selector, index) => selector === selectors[index])
+  ) {
+    return { order: [...saved.order], excluded: [...saved.excluded] }
+  }
+  if (
+    !settings.getModelRole('web') &&
+    !Object.hasOwn(cfgRetryFallbackChains.get(settings), 'web')
+  ) {
+    return { order: [], excluded: [] }
+  }
+  // The SDK has already migrated legacy keys by this point. Reflect the
+  // surviving configured candidates (including alias/comma alternatives); the
+  // original prefix cannot be recovered without the retired source values.
+  const order = [...new Set(selectors.flatMap((selector) => selectorProvider(selector) ?? []))]
+  return { order, excluded: providerIds.filter((provider) => !order.includes(provider)) }
+}
+
+function globalFallbackChains(settings: Settings): Record<string, string[]> {
+  const retry = settings.getGlobalSettings().retry
+  if (!retry || typeof retry !== 'object' || Array.isArray(retry) || !('fallbackChains' in retry))
+    return {}
+  const chains = retry.fallbackChains
+  return chains && typeof chains === 'object' && !Array.isArray(chains)
+    ? (chains as Record<string, string[]>)
+    : {}
+}
 
 function readRawCompactionSettings(settings: Settings): PhiCompactionSettings {
   return {
-    enabled: settings.get('compaction.enabled'),
-    thresholdPercent: settings.get('compaction.thresholdPercent'),
-    thresholdTokens: settings.get('compaction.thresholdTokens'),
-    methodOrder: [...settings.get('compaction.methodOrder')]
+    enabled: cfgCompactionEnabled.get(settings),
+    thresholdPercent: cfgCompactionThresholdPercent.get(settings),
+    thresholdTokens: cfgCompactionThresholdTokens.get(settings),
+    methodOrder: [...cfgCompactionMethodOrder.get(settings)]
   }
 }
 
@@ -19,53 +143,61 @@ export function createPhiSettings(settings: Settings): PhiSettings {
     compaction: {
       read: () => {
         const values = readRawCompactionSettings(settings)
-        return {
-          ...values,
-          methodOrder: resolveCompactionMethodOrder(values.methodOrder)
-        }
+        return { ...values, methodOrder: resolveCompactionMethodOrder(values.methodOrder) }
       },
       override: (values) => {
-        settings.override('compaction.enabled', values.enabled)
-        settings.override('compaction.thresholdPercent', values.thresholdPercent)
-        settings.override('compaction.thresholdTokens', values.thresholdTokens)
-        settings.override('compaction.methodOrder', [...values.methodOrder])
+        cfgCompactionEnabled.override(settings, values.enabled)
+        cfgCompactionThresholdPercent.override(settings, values.thresholdPercent)
+        cfgCompactionThresholdTokens.override(settings, values.thresholdTokens)
+        cfgCompactionMethodOrder.override(settings, [...values.methodOrder])
       }
     },
     webSearch: {
       read: () => ({
-        order: [...settings.get('providers.webSearchOrder')],
-        excluded: [...settings.get('providers.webSearchExclude')],
-        endpoint: settings.get('searxng.endpoint'),
-        engines: settings.get('searxng.engines')
+        ...readWebSearchProviders(settings),
+        endpoint: cfgSearxngEndpoint.get(settings),
+        engines: cfgSearxngEngines.get(settings)
       }),
       write: (values) => {
-        settings.set('providers.webSearchOrder', [...values.order])
-        settings.set('providers.webSearchExclude', [...values.excluded])
-        settings.set('searxng.endpoint', values.endpoint)
-        settings.set('searxng.engines', values.engines)
+        const excluded = new Set(values.excluded)
+        const allowed = [...new Set([...values.order, ...providerIds])].filter(
+          (id) => !excluded.has(id)
+        )
+        const selectors = allowed.flatMap(providerSelectors)
+        if (!selectors.length) throw new Error('Select at least one web search provider')
+        settings.setModelRole('web', selectors[0])
+        cfgRetryFallbackChains.set(settings, {
+          ...globalFallbackChains(settings),
+          web: selectors.slice(1)
+        })
+        cfgPhiWebSearch.set(settings, {
+          order: [...values.order],
+          excluded: [...values.excluded],
+          selectors
+        })
+        cfgSearxngEndpoint.set(settings, values.endpoint)
+        cfgSearxngEngines.set(settings, values.engines)
       },
       readSearxngCredentials: () => ({
-        endpoint: settings.get('searxng.endpoint'),
-        token: settings.get('searxng.token'),
-        basicUsername: settings.get('searxng.basicUsername'),
-        basicPassword: settings.get('searxng.basicPassword')
+        endpoint: cfgSearxngEndpoint.get(settings),
+        token: cfgSearxngToken.get(settings),
+        basicUsername: cfgSearxngBasicUsername.get(settings),
+        basicPassword: cfgSearxngBasicPassword.get(settings)
       })
     },
     mcp: {
       read: () => ({
-        enableProjectConfig: settings.get('mcp.enableProjectConfig') ?? true,
-        notifications: settings.get('mcp.notifications')
+        enableProjectConfig: cfgMcpEnableProjectConfig.get(settings) ?? true,
+        notifications: cfgMcpNotifications.get(settings)
       })
     },
     extensions: {
       read: () => ({
-        configured: [...(settings.get('extensions') ?? [])],
+        configured: [...cfgExtensions.get(settings)],
         sourceLevel: settings.extensionsSourceLevel()
       })
     },
-    memory: {
-      useLocalBackend: () => settings.override('memory.backend', 'local')
-    },
+    memory: { useLocalBackend: () => cfgMemoryBackend.override(settings, 'local') },
     flush: () => settings.flush()
   }
 }

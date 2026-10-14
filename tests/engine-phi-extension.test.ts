@@ -82,11 +82,32 @@ async function assertBuilderParity(
         ? [{ systemPrompt: ['base'] }]
         : FIXED_TOOL_EVENTS
     for (const event of events) {
-      assert.deepEqual(
-        await actualRecord.handlers[index]?.(structuredClone(event)),
-        await previousRecord.handlers[index]?.(structuredClone(event)),
-        `factory ${index} diverged for ${JSON.stringify(event)}`
-      )
+      const actualResult = await actualRecord.handlers[index]?.(structuredClone(event))
+      const previousResult = await previousRecord.handlers[index]?.(structuredClone(event))
+      // T8 changes only the environment transport: OMP 18.10 removed native
+      // bash's env overlay. Keep the frozen oracle for every other decision,
+      // field and handler order; verify the new shell transport separately.
+      const previousInput = (previousResult as { input?: Record<string, unknown> } | undefined)
+        ?.input
+      const actualInput = (actualResult as { input?: Record<string, unknown> } | undefined)?.input
+      if (event.toolName === 'bash' && previousInput?.env && actualInput) {
+        assert.deepEqual(
+          {
+            ...(actualResult as object),
+            input: { ...actualInput, command: previousInput.command }
+          },
+          previousResult,
+          `factory ${index} changed more than environment transport`
+        )
+        assert.match(String(actualInput.command), /^__phi_bound_bash_[a-f0-9]+\(\) \{ local -x /)
+        assert.match(String(actualInput.command), /; eval -- '/)
+      } else {
+        assert.deepEqual(
+          actualResult,
+          previousResult,
+          `factory ${index} diverged for ${JSON.stringify(event)}`
+        )
+      }
     }
   }
 }
@@ -154,6 +175,10 @@ test('self-containment checker rejects runtime OMP, every external reference for
       "export { type ExtensionFactory } from '@oh-my-pi/pi-coding-agent'",
       "type T = import('@oh-my-pi/pi-coding-agent').ExtensionFactory",
       "import type Agent = require('@oh-my-pi/pi-coding-agent')",
+      "import type { AssistantMessageEvent } from '@oh-my-pi/pi-ai'",
+      "import type { StreamFn } from '@oh-my-pi/pi-agent-core'",
+      "import { AssistantMessageEventStream } from '@oh-my-pi/pi-ai/utils/event-stream'",
+      "import { InternalUrlRouter } from '@oh-my-pi/pi-coding-agent/internal-urls'",
       "import type { Valid } from './lib/valid.js'",
       "import { resolve } from 'node:path'",
       "import test from 'node:test'"
@@ -167,6 +192,25 @@ test('self-containment checker rejects runtime OMP, every external reference for
       ['require.cts', "import Agent = require('@oh-my-pi/pi-coding-agent')"],
       ['dynamic.js', "import('@oh-my-pi/pi-coding-agent', { with: {} })"],
       ['require.jsx', "require('@oh-my-pi/pi-coding-agent')"],
+      ['runtime-ai.ts', "import { streamSimple } from '@oh-my-pi/pi-ai'"],
+      ['runtime-core.ts', "import { Agent } from '@oh-my-pi/pi-agent-core'"],
+      ['named-type-coding.ts', "import type from '@oh-my-pi/pi-coding-agent'"],
+      ['named-type-ai.ts', "import type, { streamSimple } from '@oh-my-pi/pi-ai'"],
+      ['named-type-core.ts', "import type, * as core from '@oh-my-pi/pi-agent-core'"],
+      ['dynamic-host.ts', "import('@oh-my-pi/pi-ai/utils/event-stream')"],
+      ['require-host.ts', "require('@oh-my-pi/pi-ai/utils/event-stream')"],
+      ['host-subpath.ts', "import * as stream from '@oh-my-pi/pi-ai/utils/event-stream/other'"],
+      ['dynamic-router.ts', "import('@oh-my-pi/pi-coding-agent/internal-urls')"],
+      ['require-router.ts', "require('@oh-my-pi/pi-coding-agent/internal-urls')"],
+      [
+        'router-subpath.ts',
+        "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/router'"
+      ],
+      [
+        'router-alias.ts',
+        "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls/../internal-urls'"
+      ],
+      ['router-suffix.ts', "import * as router from '@oh-my-pi/pi-coding-agent/internal-urls.ts'"],
       ['type.mjs', "/** @type {import('outside')} */ let value"],
       ['external.cjs', "require.resolve('outside')"],
       ['type.ts', "type T = import('outside').Type"],
@@ -242,7 +286,7 @@ test('PhiExtensionConfig survives a JSON round trip unchanged', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(original)), original)
 })
 
-test('main and specialist builder matrix matches d422a51b factory bodies, order, and decisions', async () => {
+test('main and specialist builders preserve prior decisions except the OMP 18.10 environment transport', async () => {
   const tools: RemoteProjectToolInfo[] = [
     { name: 'plot_save', description: 'plot', sourceInfo: { source: 'extension' } },
     { name: 'Analyst', description: 'remote analyst', sourceInfo: { source: 'extension' } },

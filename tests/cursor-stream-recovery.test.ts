@@ -42,9 +42,13 @@ function interrupted(overrides: Record<string, unknown> = {}): Record<string, un
   }
 }
 
-test('a truncated Cursor answer continues from retained output once instead of replaying the prompt', () => {
+test('a truncated Cursor answer continues from retained output once instead of replaying the prompt', async () => {
   const policy = recovery()
   const event = interrupted()
+  const message = event.last_assistant_message as { errorId?: number }
+  message.errorId = 0x21000
+  await policy.end({ message })
+  assert.equal(message.errorId, 0, 'Phi continuation must own the OMP 18.10 retry classification')
   const original = structuredClone(event.messages)
   const result = policy.stop(event) as
     { continue?: boolean; additionalContext?: string } | undefined

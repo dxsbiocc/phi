@@ -570,13 +570,19 @@ test('non-request PhiEngine methods forward subscriptions, host handlers, presen
   assert.equal(recording.child.killed, true)
 })
 
-test('every InProcessEngine worker method exists in the worker dispatch', () => {
+test('worker dispatch matches the PhiEngine facade and private model gateway commands', () => {
   const workerSource = readFileSync(
     join(process.cwd(), 'src/main/agent/engine/in-process/main.ts'),
     'utf8'
   )
   const workerMethods = [...workerSource.matchAll(/case '([^']+)'/g)].map((match) => match[1])
-  const engineMethods = requestCases.map((entry) => entry.method)
+  // Gateway leases belong to the desktop bridge, rather than the public session facade.
+  // Their real worker lifecycle is exercised by the gateway/lease contract suites.
+  const engineMethods = [
+    ...requestCases.map((entry) => entry.method),
+    'modelGateway.create',
+    'modelGateway.revoke'
+  ]
   assert.deepEqual([...new Set(engineMethods)].sort(), [...new Set(workerMethods)].sort())
 })
 

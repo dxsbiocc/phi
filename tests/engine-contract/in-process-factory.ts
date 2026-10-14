@@ -15,24 +15,48 @@ export type EngineFixture = {
   agentDir: string
   cwd: string
   model: RuntimeModel
+  replacementModel: RuntimeModel
   provider: Awaited<ReturnType<typeof startLoopbackModel>>
   removeModel(): void
   seedOAuth(): Promise<void>
   close(): Promise<void>
 }
-export type EngineFactory = () => Promise<EngineFixture>
+export type EngineFactory = (modelId?: string) => Promise<EngineFixture>
 
-export const createInProcessFixture = async (options?: {
+type InProcessFixtureOptions = {
   providerFactory?: typeof startLoopbackModel
   api?: 'cursor-agent'
-}): Promise<EngineFixture> => {
+}
+
+export function createInProcessFixture(modelId?: string): Promise<EngineFixture>
+export function createInProcessFixture(options?: InProcessFixtureOptions): Promise<EngineFixture>
+export async function createInProcessFixture(
+  input: string | InProcessFixtureOptions = 'contract-model'
+): Promise<EngineFixture> {
+  const options = typeof input === 'string' ? undefined : input
   const root = mkdtempSync(join(tmpdir(), 'phi-engine-contract-'))
   const agentDir = join(root, 'agent')
   const cwd = join(root, 'project')
   const home = join(root, 'home')
   const temp = join(root, 'tmp')
   const providerId = options?.api === 'cursor-agent' ? 'cursor' : 'phi-contract'
-  const modelId = options?.api === 'cursor-agent' ? 'cursor-grok-4.6-fast' : 'contract-model'
+  const modelId =
+    options?.api === 'cursor-agent'
+      ? 'cursor-grok-4.6-fast'
+      : typeof input === 'string'
+        ? input
+        : 'contract-model'
+  const model: RuntimeModel = {
+    provider: providerId,
+    id: modelId,
+    name: 'Contract Model',
+    reasoning: false
+  }
+  const replacementModel: RuntimeModel = {
+    ...model,
+    id: modelId.includes('[') ? 'contractm-replacement' : `${modelId}-v2`,
+    name: 'Replacement Model'
+  }
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR
   let provider: Awaited<ReturnType<typeof startLoopbackModel>> | undefined
   let engine: PhiEngine | undefined
@@ -75,7 +99,7 @@ export const createInProcessFixture = async (options?: {
                   api: 'openai-completions',
                   models: [
                     {
-                      id: 'contract-model',
+                      id: modelId,
                       name: 'Contract Model',
                       reasoning: false,
                       input: ['text'],
@@ -126,7 +150,9 @@ export const createInProcessFixture = async (options?: {
             TEMP: temp,
             PI_CODING_AGENT_DIR: agentDir,
             OMP_APP_NAME: 'Phi',
-            NO_PROXY: '127.0.0.1,localhost'
+            NO_PROXY: '127.0.0.1,localhost',
+            PHI_CONTRACT_HOST_SECRET: join(root, 'host-only-secret'),
+            PYTHONPATH: join(root, 'host-pythonpath')
           },
           stdio: ['pipe', 'pipe', 'pipe']
         }
@@ -141,13 +167,35 @@ export const createInProcessFixture = async (options?: {
       agentDir,
       cwd,
       provider,
-      model: {
-        provider: providerId,
-        id: modelId,
-        name: 'Contract Model',
-        reasoning: false
-      },
-      removeModel: () => writeFileSync(configPath, JSON.stringify({ providers: {} })),
+      model,
+      replacementModel,
+      removeModel: () =>
+        writeFileSync(
+          configPath,
+          JSON.stringify({
+            providers:
+              options?.api === 'cursor-agent'
+                ? {}
+                : {
+                    'phi-contract': {
+                      baseUrl: provider!.url,
+                      api: 'openai-completions',
+                      apiKey: 'contract-only-key',
+                      models: [
+                        {
+                          id: replacementModel.id,
+                          name: 'Replacement Model',
+                          reasoning: false,
+                          input: ['text'],
+                          contextWindow: 32768,
+                          maxTokens: 256,
+                          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+                        }
+                      ]
+                    }
+                  }
+          })
+        ),
       async seedOAuth(): Promise<void> {
         // Let the actual worker create its schema, then release its connection.
         await engine!.models.snapshot({ agentDir })
@@ -156,7 +204,7 @@ export const createInProcessFixture = async (options?: {
         if (!existsSync(databasePath)) throw new Error('Contract auth database was not created')
         const database = new DatabaseSync(databasePath)
         try {
-          // Fixture-only persistence seam, verified against pinned 18.1.10's
+          // Fixture-only persistence seam, verified against pinned 18.10.3's
           // pi-ai/auth/sqlite-credential-store.ts serializeCredential and table.
           // OAuth data excludes `type`; credential_type carries it separately.
           database

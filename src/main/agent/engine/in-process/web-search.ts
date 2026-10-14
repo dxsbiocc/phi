@@ -1,5 +1,4 @@
 import { Settings } from '@oh-my-pi/pi-coding-agent'
-import { applyProviderGlobalsFromSettings } from '../omp-internals'
 import { createPhiSettings } from './settings'
 import {
   listSearxngEngines,
@@ -9,6 +8,7 @@ import {
 } from '../../web-search-settings'
 import { isRecord, stringValue } from './common'
 import { getContext, webSearchAuthStatus } from './runtime-context'
+import { sessions } from './state'
 
 export async function handleWebSearchRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
@@ -31,7 +31,13 @@ export async function handleWebSearchRequest(method: string, params: unknown): P
       const phiSettings = createPhiSettings(settings)
       phiSettings.webSearch.write(next)
       await phiSettings.flush()
-      applyProviderGlobalsFromSettings(settings)
+      // Search roles are session-scoped in OMP 18.10. Refresh current sessions
+      // without discarding compaction or other runtime overrides.
+      await Promise.all(
+        [...sessions.values()]
+          .filter((entry) => entry.agentDir === agentDir)
+          .map((entry) => entry.result.session.settings.reloadFromDisk())
+      )
       const persisted = await Settings.loadReadOnly({ cwd: agentDir, agentDir })
       const { auth } = await getContext(agentDir)
       return webSearchSettingsFromValues(

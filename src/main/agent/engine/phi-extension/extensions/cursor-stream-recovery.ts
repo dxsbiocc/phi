@@ -1,4 +1,8 @@
-import type { CreateAgentSessionResult, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import type {
+  CreateAgentSessionResult,
+  ExtensionContext,
+  ExtensionFactory
+} from '@oh-my-pi/pi-coding-agent'
 
 const CURSOR_INCOMPLETE_STREAM = 'Cursor stream ended before turnEnded'
 
@@ -8,28 +12,31 @@ export type CursorRecoveryAgent = Pick<
 >
 
 export function createCursorStreamRecoveryExtension(
-  getAgent: () => CursorRecoveryAgent | undefined = () => undefined
+  getAgent: (ctx: ExtensionContext) => CursorRecoveryAgent | undefined = () => undefined
 ): ExtensionFactory {
   return (pi) => {
     let attempted = false
     let installedAgent: CursorRecoveryAgent | undefined
-    pi.on('before_agent_start', () => {
+    pi.on('before_agent_start', (_event, ctx) => {
       attempted = false
-      const agent = getAgent()
+      const agent = getAgent(ctx)
       if (!agent || installedAgent === agent) return
       installedAgent = agent
       const previous = agent.transformAssistantMessage
       agent.transformAssistantMessage = async (message, signal) => {
         await previous?.call(agent, message, signal)
-        if (
-          attempted ||
-          signal?.aborted ||
-          message.api !== 'cursor-agent' ||
-          message.stopReason !== 'error' ||
-          message.errorMessage?.trim() !== CURSOR_INCOMPLETE_STREAM ||
-          !message.content.some((block) => block.type === 'toolCall')
-        )
-          return
+        const cursorStreamEnded =
+          !signal?.aborted &&
+          message.api === 'cursor-agent' &&
+          message.stopReason === 'error' &&
+          message.errorMessage?.trim() === CURSOR_INCOMPLETE_STREAM
+        const hasToolCall = message.content.some((block) => block.type === 'toolCall')
+        if (cursorStreamEnded && !hasToolCall) {
+          // OMP 18.10 classifies this provider error as retryable before session_stop.
+          // Keep the partial text and let Phi's single bounded continuation own recovery.
+          message.errorId = 0
+        }
+        if (attempted || !cursorStreamEnded || !hasToolCall) return
         // The SDK already resumes interrupted tool turns only after every call is paired.
         // Normalize this equivalent provider error so that path can preserve completed work.
         attempted = true

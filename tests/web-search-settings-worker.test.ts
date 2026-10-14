@@ -3,6 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { createInProcessFixture } from './engine-contract/in-process-factory'
 import { parse as parseYaml } from 'yaml'
 
 import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
@@ -44,12 +47,19 @@ test(
       assert.equal(saved.searxngEngines, patch.searxngEngines)
 
       const config = parseYaml(readFileSync(join(agentDir, 'config.yml'), 'utf8')) as {
-        providers: { fetch: string; webSearchOrder: string[]; webSearchExclude: string[] }
+        providers: { fetch: string; webSearchOrder?: string[]; webSearchExclude?: string[] }
+        modelRoles: { web: string }
+        retry: { fallbackChains: { web: string[] } }
+        phi: { webSearch: { order: string[]; excluded: string[] } }
         searxng: { endpoint: string; engines: string }
       }
-      assert.deepEqual(config.providers.webSearchOrder, ['searxng'])
+      assert.deepEqual(config.phi.webSearch.order, ['searxng'])
+      assert.equal(config.modelRoles.web, 'web/searxng')
+      assert.deepEqual(config.retry.fallbackChains.web, ['web/exa'])
+      assert.equal(config.providers.webSearchOrder, undefined)
       assert.equal(config.providers.fetch, 'native')
-      assert.ok(config.providers.webSearchExclude.includes('google'))
+      assert.ok(config.phi.webSearch.excluded.includes('google'))
+      assert.equal(config.providers.webSearchExclude, undefined)
       assert.equal(config.searxng.endpoint, patch.searxngEndpoint)
       assert.equal(config.searxng.engines, patch.searxngEngines)
 
@@ -96,6 +106,83 @@ test(
       if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
       else process.env.PI_CODING_AGENT_DIR = previous
       rmSync(agentDir, { recursive: true, force: true })
+    }
+  }
+)
+
+test(
+  'search settings update reaches the native web tool of an existing session',
+  { timeout: 20000 },
+  async () => {
+    const f = await createInProcessFixture()
+    const requests: string[] = []
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          results: [
+            {
+              title: 'Contract search evidence',
+              url: 'https://example.invalid/contract',
+              content: 'Disposable loopback search result'
+            }
+          ]
+        })
+      )
+    })
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+      await f.engine.sessions.create({
+        sessionId: 'web-contract',
+        cwd: f.cwd,
+        agentDir: f.agentDir,
+        model: f.model,
+        sessionManager: { kind: 'memory', cwd: f.cwd },
+        resourceOptions: {
+          noExtensions: true,
+          noSkills: true,
+          noContextFiles: true,
+          noPromptTemplates: true,
+          noThemes: true
+        },
+        autoCompaction: { enabled: false },
+        enableToolApproval: false
+      })
+      await f.engine.settings.webSearch.update({
+        agentDir: f.agentDir,
+        patch: {
+          orderedEnabledIds: ['searxng'],
+          searxngEndpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+          searxngEngines: ''
+        }
+      })
+      f.provider.enqueue(
+        { tool: { name: 'web_search', args: { query: 'contract search evidence' } } },
+        { text: 'Search configuration reached the live session.' }
+      )
+      await f.engine.sessions.prompt({
+        sessionId: 'web-contract',
+        text: 'Search the disposable fixture.'
+      })
+      assert.equal(requests.length, 1)
+      assert.match(requests[0], /q=contract/)
+      assert.ok(
+        f.provider.requests
+          .at(-1)
+          ?.messages.some(
+            (message) =>
+              message.role === 'tool' &&
+              String(message.content).includes('Contract search evidence')
+          )
+      )
+    } finally {
+      await f.close()
+      server.closeAllConnections()
+      if (server.listening)
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve()))
+        )
     }
   }
 )

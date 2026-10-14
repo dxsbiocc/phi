@@ -15,9 +15,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { remoteReference, remoteReferenceScope } from './helpers/sessionRuntimeReferenceFixture'
 import { exportPhiSession } from '../src/main/agent/session/session-export'
 import {
   appendSessionEvent,
+  beginRuntimeReferenceAdoption,
   createPhiSession,
   updateSessionManifest
 } from '../src/main/agent/session/session-store'
@@ -166,6 +168,36 @@ test('full export refuses a missing referenced runtime history', async () => {
   await withFixture(async ({ destination, runtimePath, sessionId }) => {
     rmSync(runtimePath)
     await assert.rejects(exportPhiSession(sessionId, destination), /已不存在/)
+    assert.deepEqual(readdirSync(destination), [])
+  })
+})
+
+test('remote full export reports missing server capability before touching a same-text desktop journal', async () => {
+  await withFixture(async ({ destination, sessionId, sessionDir, runtimePath }) => {
+    updateSessionManifest(sessionId, {
+      runtimeSessionPath: undefined,
+      projectLocation: {
+        kind: 'ssh',
+        hostProfileId: remoteReferenceScope.hostProfileId,
+        remoteRoot: remoteReferenceScope.projectRoot,
+        canonicalRoot: remoteReferenceScope.projectRoot
+      }
+    })
+    beginRuntimeReferenceAdoption(sessionId, remoteReferenceScope, 'server-proof').adopt(
+      remoteReference(sessionId)
+    )
+    const raw = JSON.parse(readFileSync(join(sessionDir, 'manifest.json'), 'utf8'))
+    // A damaged mixed manifest must never route the retained remote identity through legacy local IO.
+    writeFileSync(
+      join(sessionDir, 'manifest.json'),
+      JSON.stringify({ ...raw, runtimeSessionPath: runtimePath })
+    )
+    const before = readFileSync(runtimePath)
+    await assert.rejects(exportPhiSession(sessionId, destination), /需要显式恢复/)
+    assert.deepEqual(readFileSync(runtimePath), before)
+    assert.deepEqual(readdirSync(destination), [])
+    writeFileSync(join(sessionDir, 'manifest.json'), JSON.stringify(raw))
+    await assert.rejects(exportPhiSession(sessionId, destination), /服务器操作/)
     assert.deepEqual(readdirSync(destination), [])
   })
 })

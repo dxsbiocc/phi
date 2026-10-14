@@ -21,6 +21,14 @@ import {
   resolveRemoteUploadCanonicalRoot,
   uploadRemoteFile
 } from '../transfer/remote-upload'
+import {
+  INSPECT_REVERSE_TUNNEL_COMMAND,
+  openReverseTunnelLease,
+  reverseTunnelSpecification,
+  type RemoteReverseTunnel,
+  type ReverseTunnelOptions
+} from './remote-ssh-reverse-tunnel'
+export type { RemoteReverseTunnel, ReverseTunnelOptions } from './remote-ssh-reverse-tunnel'
 
 /** OpenSSH host alias resolved by the user's SSH configuration. Never persist credentials here. */
 export interface RemoteConnectionConfig {
@@ -51,6 +59,12 @@ export interface RemoteExecBoundedOptions {
   signal?: AbortSignal
 }
 
+export interface RemoteExecWithInputOptions {
+  readonly signal?: AbortSignal
+  readonly timeoutMs?: number
+  readonly maxOutputBytes?: number
+}
+
 export type RemoteStdioProcess = TransferStdioProcess
 export type { RemoteUploadFileOptions } from '../transfer/remote-upload-types'
 
@@ -59,7 +73,11 @@ export interface RemoteSshSession {
   exec(command: string): Promise<RemoteExecResult>
   /** Optional transport-native page reader; the shared SSH log reader has a bounded exec fallback. */
   readFileChunk?: (path: string, options: RemoteFileChunkOptions) => Promise<RemoteFileChunk>
-  execWithInput?: (command: string, input: string) => Promise<RemoteExecResult>
+  execWithInput?: (
+    command: string,
+    input: string,
+    options?: RemoteExecWithInputOptions
+  ) => Promise<RemoteExecResult>
   execBounded?: (
     command: string,
     options: RemoteExecBoundedOptions
@@ -76,6 +94,7 @@ export interface RemoteSshSession {
   ): Promise<void>
   /** Optional raw stdio channel for a connection-scoped remote helper. */
   openStdio?: (command: string) => Promise<RemoteStdioProcess>
+  openReverseTunnel?: (options: ReverseTunnelOptions) => Promise<RemoteReverseTunnel>
   close(): Promise<void>
 }
 
@@ -268,6 +287,35 @@ export function buildControlArgs(
     action,
     ...connectionArgs(config, 'ssh'),
     ...SSH_OPTIONS,
+    validateHostAlias(host)
+  ]
+}
+
+/** Forward requests must survive the normal command channel's ClearAllForwardings policy. */
+export function buildReverseTunnelArgs(
+  host: string,
+  controlPath: string,
+  action: 'forward' | 'cancel',
+  localPort: number,
+  config: RemoteConnectionConfig = { host }
+): string[] {
+  return [
+    // Mux forwarding iterates every configured forward. This command must send
+    // only its one owned -R, while -O/-S require the already connected master.
+    '-F',
+    '/dev/null',
+    '-S',
+    controlPath,
+    '-O',
+    action,
+    ...connectionArgs(config, 'ssh'),
+    ...SSH_OPTIONS.map((option) =>
+      option === 'ClearAllForwardings=yes' ? 'ClearAllForwardings=no' : option
+    ),
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-R',
+    reverseTunnelSpecification(localPort),
     validateHostAlias(host)
   ]
 }
@@ -575,6 +623,7 @@ export async function connectRemoteSshSession(
 
   const execTimeout = config.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS
   const stdioChannels = new Set<RemoteStdioProcess>()
+  const reversePorts = new Set<number>()
   let closed = false
   let closing: Promise<void> | undefined
   const checkOpen = (): void => {
@@ -655,16 +704,16 @@ export async function connectRemoteSshSession(
     authGate.clearSshBlock(hostKey)
     const connectedSession: RemoteSshSession = {
       exec: call,
-      async execWithInput(command, input) {
+      async execWithInput(command, input, options) {
         checkOpen()
         const result = await runProcess(
           spawnImpl,
           'ssh',
           buildExecArgs(host, controlPath, command, config),
-          execTimeout,
-          MAX_CONTROL_OUTPUT_BYTES,
+          options?.timeoutMs ?? execTimeout,
+          options?.maxOutputBytes ?? MAX_CONTROL_OUTPUT_BYTES,
           input,
-          operations.signal
+          options?.signal ? AbortSignal.any([operations.signal, options.signal]) : operations.signal
         )
         const failure = connectionFailureFromResult(result.stderr, result.code, authGate, hostKey)
         if (failure) throw failure
@@ -785,6 +834,43 @@ export async function connectRemoteSshSession(
         stdioChannels.add(channel)
         void channel.closed.finally(() => stdioChannels.delete(channel)).catch(() => undefined)
         return channel
+      },
+      async openReverseTunnel(options) {
+        checkOpen()
+        reverseTunnelSpecification(options.localPort)
+        if (reversePorts.has(options.localPort))
+          throw new Error('This local gateway already has a reverse tunnel on the SSH master')
+        reversePorts.add(options.localPort)
+        const control = (
+          action: 'forward' | 'cancel',
+          signal?: AbortSignal
+        ): Promise<RemoteExecResult> =>
+          runProcess(
+            spawnImpl,
+            'ssh',
+            buildReverseTunnelArgs(host, controlPath, action, options.localPort, config),
+            action === 'cancel' ? Math.min(execTimeout, 2000) : execTimeout,
+            MAX_CONTROL_OUTPUT_BYTES,
+            undefined,
+            signal
+          )
+        return openReverseTunnelLease({
+          ...options,
+          connectionSignal: operations.signal,
+          forward: (signal) => control('forward', signal),
+          cancel: () => control('cancel', operations.signal),
+          inspect: async (signal) => {
+            const result = await connectedSession.execBounded!(INSPECT_REVERSE_TUNNEL_COMMAND, {
+              timeoutMs: 5000,
+              maxOutputBytes: 512 * 1024,
+              signal
+            })
+            if (result.stdoutTruncated || result.stderrTruncated)
+              throw new Error('SSH reverse tunnel socket inspection was truncated')
+            return result
+          },
+          onCleanupComplete: () => reversePorts.delete(options.localPort)
+        })
       },
       close
     }

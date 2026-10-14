@@ -5,20 +5,29 @@ import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
 
 const sourceExtension = /\.(?:[cm]?[jt]s|[jt]sx)$/u
-const ompRoot = '@oh-my-pi/pi-coding-agent'
-type Reference = { specifier?: string; typeOnly: boolean }
+const ompTypeRoots = new Set([
+  '@oh-my-pi/pi-coding-agent',
+  '@oh-my-pi/pi-ai',
+  '@oh-my-pi/pi-agent-core'
+])
+type Reference = { specifier?: string; typeOnly: boolean; staticImport: boolean }
 
 function references(file: string): Reference[] {
   const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
   const result: Reference[] = []
-  const record = (expression: ts.Node | undefined, typeOnly: boolean): void => {
+  const record = (
+    expression: ts.Node | undefined,
+    typeOnly: boolean,
+    staticImport = false
+  ): void => {
     result.push({
       specifier:
         expression &&
         (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression))
           ? expression.text
           : undefined,
-      typeOnly
+      typeOnly,
+      staticImport
     })
   }
   const visit = (node: ts.Node): void => {
@@ -33,7 +42,8 @@ function references(file: string): Reference[] {
             !!bindings &&
             ts.isNamedImports(bindings) &&
             bindings.elements.length > 0 &&
-            bindings.elements.every((binding) => binding.isTypeOnly))
+            bindings.elements.every((binding) => binding.isTypeOnly)),
+        true
       )
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
       record(
@@ -42,7 +52,8 @@ function references(file: string): Reference[] {
           (!!node.exportClause &&
             ts.isNamedExports(node.exportClause) &&
             node.exportClause.elements.length > 0 &&
-            node.exportClause.elements.every((binding) => binding.isTypeOnly))
+            node.exportClause.elements.every((binding) => binding.isTypeOnly)),
+        true
       )
     } else if (
       ts.isImportEqualsDeclaration(node) &&
@@ -118,7 +129,14 @@ export function extensionPackageFailures(packageRoot: string): string[] {
           failures.push(label)
       } else if (specifier?.startsWith('node:') && isBuiltin(specifier)) {
         continue
-      } else if (specifier === ompRoot && reference.typeOnly) {
+      } else if (specifier && ompTypeRoots.has(specifier) && reference.typeOnly) {
+        continue
+      } else if (specifier === '@oh-my-pi/pi-ai/utils/event-stream' && reference.staticImport) {
+        continue
+      } else if (
+        specifier === '@oh-my-pi/pi-coding-agent/internal-urls' &&
+        reference.staticImport
+      ) {
         continue
       } else {
         failures.push(label)

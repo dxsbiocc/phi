@@ -207,6 +207,22 @@ export type PhiKnownAgentEvent = PhiEventFields &
         finalError?: string
         retryErrors?: unknown[]
       }
+    | {
+        type: 'cache_warming_start'
+        phase: 'streaming' | 'idle'
+        provider: string
+        model: string
+      }
+    | {
+        type: 'cache_warming_end'
+        phase: 'streaming' | 'idle'
+        provider: string
+        model: string
+        outcome: 'hit' | 'miss' | 'error' | 'aborted'
+        usage?: unknown
+        warmingStopReason?: string
+      }
+    | { type: 'queue_update'; steering: string[]; followUp: string[]; liveSteered: number }
     | { type: 'retry_fallback_applied'; from: string; to: string; role: string }
     | { type: 'retry_fallback_succeeded'; model: string; role: string }
     | { type: 'model_changed' }
