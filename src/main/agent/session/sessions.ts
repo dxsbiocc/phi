@@ -1,3 +1,6 @@
+import { getPhiEngine } from '../engine/in-process-engine'
+import { hasRoutedPhiOwner } from '../engine/session-routing-engine'
+import { getPhiAgentDir } from '../runtime-paths'
 import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import {
   createRuntimeSessionManager,
@@ -341,6 +344,16 @@ export async function renameSession(path: string, name: string): Promise<void> {
   if (!phiSessionIdFromPath(path)) assertLocalSessionOperation(path)
   const phiSessionId = phiSessionIdFromPath(path)
   if (phiSessionId) {
+    const manifest = findPhiSessionById(phiSessionId)
+    const engine = getPhiEngine()
+    if (
+      manifest?.runtimeRef ||
+      manifest?.runtimeRecoveryError ||
+      (manifest?.projectLocation?.kind === 'ssh' && hasRoutedPhiOwner(engine, phiSessionId))
+    ) {
+      await engine.history.rename({ agentDir: getPhiAgentDir(), path, name })
+      return
+    }
     updateSessionManifest(phiSessionId, { title: name })
     return
   }

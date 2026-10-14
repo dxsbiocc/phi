@@ -1,4 +1,6 @@
+import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
+import { createRuntimeMetadataControl, type RuntimeRenamePolicy } from './runtime-metadata-control'
 import type { PhiTool, PhiToolImage, PhiToolApproval } from '../types'
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
@@ -33,6 +35,7 @@ import type { SafeModelDescriptor } from '../model-gateway-types'
 
 export interface RemoteRuntimeSnapshot extends Omit<RemoteSessionRecoveryResult, 'modelPolicy'> {
   readonly modelPolicy: RemoteSessionRecoveryResult['modelPolicy'] | 'maintained'
+  readonly sessionName?: string
 }
 export interface RemoteRuntimeTurnResult {
   readonly result: RpcPromptResult
@@ -44,6 +47,7 @@ export interface RemoteSessionRuntimeOptions {
   readonly transport: Omit<ModelProxyRpcTransportOptions, 'prepareRuntime'>
   readonly params: RpcSessionCreateParams
   readonly action: RemoteRecoveryAction
+  readonly sessionName?: string
   /** Genuine curated PhiTool instances supplied by the trusted facade. */
   readonly tools: readonly PhiTool[]
   readonly hostApprovalFor?: (
@@ -91,6 +95,33 @@ export class RemoteSessionRuntime {
   private promptController?: AbortController
   private deniedRun?: string
   private readonly detach: Array<() => void> = []
+  private readonly metadata = createRuntimeMetadataControl({
+    signal: () => AbortSignal.any([this.lifetime.signal, this.connection.bindControl().signal]),
+    claim: () => {
+      if (!this.isReady || this.pending || this.authority?.currentRun())
+        throw new Error('Remote metadata requires an idle runtime')
+      this.ready = false
+      this.gate = true
+      return () => {
+        this.active()
+        this.ready = true
+        this.gate = false
+      }
+    },
+    active: () => this.active(),
+    snapshot: () => this.snapshot!,
+    readState: () => this.connection.request({ type: 'get_state' }),
+    setName: (name) => this.connection.request({ type: 'set_session_name', name }),
+    checkpoint: (name) => this.checkpointUnderGate(name),
+    withCheckpoint: (operation) => this.withCheckpoint(operation),
+    close: (error) => this.close(error)
+  })
+  readContextUsage(): Promise<ContextUsageSnapshot | null> {
+    return this.metadata.readContextUsage()
+  }
+  rename(name: string, policy?: RuntimeRenamePolicy): Promise<RemoteRuntimeSnapshot> {
+    return this.metadata.rename(name, policy)
+  }
   private constructor(private readonly options: RemoteSessionRuntimeOptions) {
     this.params = Object.freeze({
       ...options.params,
@@ -392,6 +423,12 @@ export class RemoteSessionRuntime {
       interrupt: (error) => this.close(error)
     })
     this.active()
+    if (options.sessionName !== undefined) {
+      await this.metadata.reconcileInitialName(options.sessionName, result)
+      this.snapshot = result
+      await this.checkpointUnderGate(options.sessionName)
+      return
+    }
     await withRemoteSignal(
       Promise.resolve().then(() => {
         this.active()
@@ -423,6 +460,7 @@ export class RemoteSessionRuntime {
         maxTokens: number | null
       }
       thinkingLevel?: string
+      sessionName?: string
     }>({ type: 'get_state' })
     this.active()
     const expected = this.modelDescriptors.find(
@@ -437,6 +475,7 @@ export class RemoteSessionRuntime {
       state.model.contextWindow !== expected.contextWindow ||
       state.model.maxTokens !== expected.maxTokens ||
       state.thinkingLevel !== snapshot.thinkingLevel ||
+      (snapshot.sessionName !== undefined && state.sessionName !== snapshot.sessionName) ||
       !Number.isSafeInteger(state.messageCount) ||
       state.messageCount < 0
     )
@@ -494,9 +533,9 @@ export class RemoteSessionRuntime {
   private checkpoint(): Promise<RemoteRuntimeSnapshot> {
     return this.withCheckpoint(() => this.checkpointUnderGate())
   }
-  private async checkpointUnderGate(): Promise<RemoteRuntimeSnapshot> {
+  private async checkpointUnderGate(sessionName?: string): Promise<RemoteRuntimeSnapshot> {
     this.active()
-    const old = this.snapshot!
+    const old = sessionName === undefined ? this.snapshot! : { ...this.snapshot!, sessionName }
     const checkpoint = await this.verifyCurrent(old)
     const before = await preflightRemoteJournal(this.storage!, old.reference)
     const messages = await readRemoteHistory({

@@ -5,7 +5,11 @@ import {
   resolveRemoteWorkspaceHostBinding,
   type RemoteWorkspaceHostBinding
 } from '../../remote-workspace-boundary'
-import { beginRuntimeReferenceAdoption, findPhiSessionById } from '../../session/session-store'
+import {
+  beginRuntimeReferenceAdoption,
+  updateSessionManifest,
+  findPhiSessionById
+} from '../../session/session-store'
 import type { RuntimeReferenceAdoption } from '../../session/runtime-reference-adoption'
 import {
   assertRuntimeScope,
@@ -29,6 +33,7 @@ import {
 } from './remote-session-runtime'
 import { prepareRemoteSessionStorage } from './session-storage/writer-lease'
 import type { RemoteSessionScope } from './session-storage/types'
+import { canonicalRemoteSessionName } from './runtime-metadata-control'
 import { RpcFacadeEventProjector } from './facade-event-projection'
 import type { RpcPromptOptions } from './types'
 
@@ -244,6 +249,12 @@ export function createFacadeSessionFactory(
         (reference === undefined && params.thinkingLevel !== initial.thinkingLevel)
       )
         throw new Error('Phi model/thinking policy must be saved before remote creation')
+      let expectedTitle = initial.title
+      if (
+        expectedTitle !== undefined &&
+        canonicalRemoteSessionName(expectedTitle) !== expectedTitle
+      )
+        throw new Error('Saved Phi title requires explicit canonical policy')
       // Capture anchor/reference/generation BEFORE registry/deployment/gateway awaits.
       const generation = randomUUID()
       let adoption: RuntimeReferenceAdoption | undefined = beginRuntimeReferenceAdoption(
@@ -259,6 +270,7 @@ export function createFacadeSessionFactory(
       let detach: (() => void) | undefined
       let closing: Promise<void> | undefined
       let interrupted = false
+      let metadataPending = false
       let submittedRun: SessionRun | undefined
       const stopSubmittedRun = (): void => {
         const run = submittedRun
@@ -314,10 +326,14 @@ export function createFacadeSessionFactory(
             latest.thinkingLevel !== initial.thinkingLevel
           )
             throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
+          if (latest.title !== expectedTitle)
+            throw new RuntimeReferenceError('STALE_GENERATION', '远程会话名称策略已改变')
           const latestBinding = resolveRemoteWorkspaceHostBinding({
             sessionId: phiSessionId,
             projectId
           })
+          if (latest.cwd !== initial.cwd || latest.cwdRealPath !== initial.cwdRealPath)
+            throw new RuntimeReferenceError('STALE_GENERATION', '远程会话锚点已改变')
           if (facadeBindingHash(latestBinding) !== scope.bindingHash)
             throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程证明期间主机绑定已改变')
         }
@@ -344,6 +360,7 @@ export function createFacadeSessionFactory(
             model,
             thinkingLevel: reference ? undefined : params.thinkingLevel
           },
+          sessionName: expectedTitle,
           action: reference
             ? { type: 'resume', reference: { ...reference, phiSessionId }, savedModel: chosenModel }
             : { type: 'new', model: chosenModel },
@@ -412,7 +429,7 @@ export function createFacadeSessionFactory(
               !closing &&
               !interrupted &&
               !signal.aborted &&
-              (runtime!.isReady || submittedRun !== undefined)
+              (runtime!.isReady || submittedRun !== undefined || metadataPending)
             )
           },
           state: currentState,
@@ -443,6 +460,61 @@ export function createFacadeSessionFactory(
               return currentState()
             } finally {
               if (submittedRun === run) submittedRun = undefined
+            }
+          },
+          async contextUsage() {
+            if (
+              closing ||
+              submittedRun ||
+              metadataPending ||
+              options.runners.getActiveRun(phiSessionId) ||
+              !runtime!.isReady
+            )
+              throw new Error('Remote metadata requires an idle Phi session')
+            metadataPending = true
+            try {
+              return await runtime!.readContextUsage()
+            } finally {
+              metadataPending = false
+            }
+          },
+          async rename(rawName) {
+            const name = canonicalRemoteSessionName(rawName)
+            if (
+              closing ||
+              submittedRun ||
+              metadataPending ||
+              options.runners.getActiveRun(phiSessionId) ||
+              !runtime!.isReady
+            )
+              throw new Error('Remote metadata requires an idle Phi session')
+            assertAdoptionPolicy()
+            const assertCurrent = (): void => {
+              assertAdoptionPolicy()
+              if (
+                JSON.stringify(findPhiSessionById(phiSessionId)?.runtimeRef) !==
+                JSON.stringify(attachedReference)
+              )
+                throw new RuntimeReferenceError(
+                  'STALE_GENERATION',
+                  'Phi metadata reference changed'
+                )
+            }
+            metadataPending = true
+            try {
+              const snapshot = await runtime!.rename(name, {
+                assertCurrent,
+                beforeWrite() {
+                  assertCurrent()
+                  updateSessionManifest(phiSessionId, { title: name })
+                  expectedTitle = name
+                }
+              })
+              state = stateFrom(snapshot)
+              sink.state(currentState())
+              return currentState()
+            } finally {
+              metadataPending = false
             }
           },
           async abort() {

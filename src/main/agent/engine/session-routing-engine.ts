@@ -1,3 +1,4 @@
+import type { ContextUsageSnapshot } from '../../../shared/contextUsageTypes'
 import type { PhiAgentEvent } from './event-types'
 import type { PhiEngine, PhiSessionCreateParams, WorkerSessionState } from './types'
 import { findPhiSessionById, listPhiSessions } from '../session/session-store'
@@ -15,6 +16,8 @@ export interface RoutedSessionDriver {
   readonly isLive: boolean
   state(): WorkerSessionState
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
+  contextUsage(): Promise<ContextUsageSnapshot | null>
+  rename(name: string): Promise<WorkerSessionState>
   abort(): Promise<WorkerSessionState>
   dispose(): Promise<void>
 }
@@ -68,6 +71,9 @@ export class SessionRoutingEngine implements PhiEngine {
     this.memory = legacy.memory
     this.settings = legacy.settings
     this.host = legacy.host
+  }
+  ownsPhi(phiSessionId: string): boolean {
+    return [...this.owners.values()].some((owner) => owner.phiSessionId === phiSessionId)
   }
   owns(sessionId: string): boolean {
     return this.owners.has(sessionId)
@@ -225,11 +231,11 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.legacy.sessions.setThinkingLevel(params)
     },
     rename: async (params) => {
-      this.unsupported(params.sessionId, 'rename')
+      if (this.owns(params.sessionId)) return this.driver(params.sessionId).rename(params.name)
       return this.legacy.sessions.rename(params)
     },
     contextUsage: async (params) => {
-      this.unsupported(params.sessionId, 'contextUsage')
+      if (this.owns(params.sessionId)) return this.driver(params.sessionId).contextUsage()
       return this.legacy.sessions.contextUsage(params)
     },
     compact: async (params) => {
@@ -259,6 +265,23 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.legacy.history.fork(params)
     },
     rename: async (params) => {
+      const phiId = phiSessionIdFromPath(params.path)
+      if (
+        phiId &&
+        (this.ownsPhi(phiId) ||
+          findPhiSessionById(phiId)?.runtimeRef ||
+          findPhiSessionById(phiId)?.runtimeRecoveryError)
+      ) {
+        const current = [...this.owners.values()].filter(
+          (owner) => owner.phiSessionId === phiId && !owner.retired && owner.driver?.isLive
+        )
+        if (current.length !== 1)
+          throw new RuntimeReferenceError(
+            'REMOTE_OPERATION_REQUIRED',
+            'Remote title requires an exact live attachment'
+          )
+        return current[0].driver!.rename(params.name)
+      }
       this.historyGuard(params.path)
       return this.legacy.history.rename(params)
     }
@@ -324,4 +347,8 @@ export class SessionRoutingEngine implements PhiEngine {
     const failed = results.find((result) => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason
   }
+}
+
+export function hasRoutedPhiOwner(engine: PhiEngine, phiSessionId: string): boolean {
+  return engine instanceof SessionRoutingEngine && engine.ownsPhi(phiSessionId)
 }
