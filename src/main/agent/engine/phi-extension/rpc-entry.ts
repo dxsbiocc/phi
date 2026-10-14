@@ -14,6 +14,7 @@ import {
 import { createRpcNativeStreamExtension } from './extensions/rpc-native-stream'
 import { registerRpcSessionVerification } from './extensions/rpc-session-verification'
 import { createRpcSubagentsExtension } from './extensions/rpc-subagents'
+import { createCursorStreamRecoveryExtension } from './extensions/cursor-stream-recovery'
 import {
   createRpcTaskAdmissionExtension,
   type RpcVerifiedChildDispatch
@@ -189,6 +190,13 @@ const rpcExtension: ExtensionFactory = async (pi) => {
 
   await createProjectToolBoundaryExtension(config.projectRoot)(pi)
   await createRemoteUrlGuardExtension()(pi)
+  await createCursorStreamRecoveryExtension((ctx) => {
+    const ref = pi.pi.AgentRegistry.global().get(ctx.agent.id)
+    const current = ref?.session
+    return ref?.kind === ctx.agent.kind && current?.sessionManager === ctx.sessionManager
+      ? current.agent
+      : undefined
+  })(pi)
   if (modelMetadata) await createRpcModelSelectionExtension(modelMetadata)(pi)
 
   if (runtime) {

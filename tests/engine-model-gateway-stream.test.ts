@@ -113,6 +113,48 @@ test('SDK raw provider errors and fallback credits never leave native stream err
   assert.match(result, /tool-signature/)
 })
 
+test('only the exact trusted Cursor incomplete-stream diagnostic crosses the gateway', async () => {
+  const diagnostic = 'Cursor stream ended before turnEnded'
+  for (const [api, reason, errorMessage, expected] of [
+    ['cursor-agent', 'error', diagnostic, diagnostic],
+    ['cursor-agent', 'aborted', diagnostic, 'Model request aborted'],
+    ['openai-completions', 'error', diagnostic, 'Model request failed'],
+    ['cursor-agent', 'error', `${diagnostic}: SYNTHETIC_PROVIDER_SECRET`, 'Model request failed'],
+    ['cursor-agent', 'error', ` ${diagnostic}`, 'Model request failed'],
+    [
+      'cursor-agent',
+      'error',
+      'Authorization: Bearer SYNTHETIC_PROVIDER_SECRET',
+      'Model request failed'
+    ]
+  ]) {
+    const output = await text(
+      boundedGatewayStream(
+        source([
+          frame({
+            type: 'error',
+            reason,
+            error: {
+              errorMessage,
+              errorClassificationMessage: 'SYNTHETIC_PROVIDER_SECRET',
+              headers: { authorization: 'SYNTHETIC_PROVIDER_SECRET' },
+              errorId: 135168
+            }
+          }),
+          done
+        ]),
+        new AbortController(),
+        { ...identity, api: api! },
+        () => undefined
+      )
+    )
+    assert.doesNotMatch(output, /SYNTHETIC_PROVIDER_SECRET|errorClassificationMessage|headers/)
+    const event = JSON.parse(output.split('\n')[0].slice(6))
+    assert.equal(event.error.errorMessage, expected)
+    assert.equal(event.error.errorId, 135168)
+  }
+})
+
 test('continuous draining bounds slow-consumer queues and cancels the upstream producer', async () => {
   let upstream!: ReadableStreamDefaultController<Uint8Array>
   let cancellations = 0

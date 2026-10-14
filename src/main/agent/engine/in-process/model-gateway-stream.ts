@@ -126,7 +126,15 @@ function safeEvent(
       usage: safeUsage(original.usage),
       ...safeReplayMetadata(original),
       stopReason: reason,
-      errorMessage: reason === 'aborted' ? 'Model request aborted' : 'Model request failed',
+      // Preserve this fixed SDK diagnostic so the remote session can continue
+      // retained Cursor output. Arbitrary provider text stays private.
+      errorMessage:
+        reason === 'aborted'
+          ? 'Model request aborted'
+          : identity.api === 'cursor-agent' &&
+              original.errorMessage === 'Cursor stream ended before turnEnded'
+            ? 'Cursor stream ended before turnEnded'
+            : 'Model request failed',
       timestamp:
         typeof original.timestamp === 'number' && Number.isFinite(original.timestamp)
           ? original.timestamp

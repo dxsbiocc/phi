@@ -1,4 +1,8 @@
-import type { CreateAgentSessionResult, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import type {
+  CreateAgentSessionResult,
+  ExtensionContext,
+  ExtensionFactory
+} from '@oh-my-pi/pi-coding-agent'
 
 const CURSOR_INCOMPLETE_STREAM = 'Cursor stream ended before turnEnded'
 
@@ -8,14 +12,14 @@ export type CursorRecoveryAgent = Pick<
 >
 
 export function createCursorStreamRecoveryExtension(
-  getAgent: () => CursorRecoveryAgent | undefined = () => undefined
+  getAgent: (ctx: ExtensionContext) => CursorRecoveryAgent | undefined = () => undefined
 ): ExtensionFactory {
   return (pi) => {
     let attempted = false
     let installedAgent: CursorRecoveryAgent | undefined
-    pi.on('before_agent_start', () => {
+    pi.on('before_agent_start', (_event, ctx) => {
       attempted = false
-      const agent = getAgent()
+      const agent = getAgent(ctx)
       if (!agent || installedAgent === agent) return
       installedAgent = agent
       const previous = agent.transformAssistantMessage
