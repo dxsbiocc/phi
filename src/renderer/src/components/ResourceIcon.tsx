@@ -5,6 +5,7 @@ import { PhiIcons } from '../icons'
 import { observeResourceIconVisibility, resourceIconCache } from '../lib/resourceIcons'
 
 export type ResourceIconProps = {
+  component?: 'div' | 'span'
   icon?: ResourceIconRef
   kind: 'agent' | 'mcp' | 'plugin' | 'skill' | 'wrapper'
   size?: number
@@ -14,6 +15,7 @@ export type ResourceIconProps = {
 
 /** Resource-owned images remain decorative beside the resource's accessible name. */
 export function ResourceIcon({
+  component = 'div',
   icon,
   kind,
   size = 32,
@@ -46,6 +48,7 @@ export function ResourceIcon({
 
   return (
     <Box
+      component={component}
       ref={node}
       aria-hidden="true"
       data-phi-resource-icon={kind}

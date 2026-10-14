@@ -4,6 +4,7 @@ import { parseInputFileReferences } from '../../lib/inputReferences'
 import type { ChatMessage } from '../../types'
 import { FileReferenceCards } from './FileReferenceCards'
 import { ChatUserImage } from '../../features/chat/components/ChatUserImage'
+import { ResourceMentionText } from '../ResourceMention'
 
 const CopyIcon = PhiIcons.action.copy
 const EditIcon = PhiIcons.action.edit
@@ -101,7 +102,7 @@ export function ChatUserMessage({
                   fontSize: '0.95rem'
                 }}
               >
-                {parsedMessage.body}
+                <ResourceMentionText text={parsedMessage.body} inheritColor protectCode />
               </Typography>
             )}
           </Box>

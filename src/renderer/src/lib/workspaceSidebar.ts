@@ -2,6 +2,7 @@ export type WorkspaceSidebarMode =
   'conversations' | 'projects' | 'files' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 
 export function workspaceSidebarModeIsExpanded({
+  activeView,
   isSidebarOpen,
   workspaceSidebarMode,
   mode
@@ -11,5 +12,10 @@ export function workspaceSidebarModeIsExpanded({
   workspaceSidebarMode: WorkspaceSidebarMode
   mode: WorkspaceSidebarMode
 }): boolean {
-  return isSidebarOpen && workspaceSidebarMode === mode
+  // A docked chat occupies the sidebar, but its conversation list is still collapsed.
+  return (
+    isSidebarOpen &&
+    workspaceSidebarMode === mode &&
+    !(activeView === 'analysis' && mode === 'conversations')
+  )
 }

@@ -3890,6 +3890,14 @@ function persistSdkShakeEvent(
   return { source: 'phi', ...stored }
 }
 
+function isCursorStreamEndError(message: string | undefined): boolean {
+  return (
+    message === 'Cursor stream ended before turnEnded' ||
+    message ===
+      'stream closed before a terminal response event: Cursor stream ended before turnEnded'
+  )
+}
+
 function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<string, unknown> {
   const withRunId = (event: Record<string, unknown>): Record<string, unknown> =>
     typeof event.runId === 'string' ? event : { ...event, runId: run.runId }
@@ -3978,11 +3986,28 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
           ? redactSensitiveText(assistantMessage.errorMessage)
           : '请求失败'
       persistCompletedThinkingBlocks(run, summary)
-      if (!run.stoppingPermanentProviderError) run.recordedFailureMessage = errorMessage
+      const cursorStreamFailure =
+        assistantMessage.api === 'cursor-agent' && isCursorStreamEndError(errorMessage)
+      if (
+        !run.stoppingPermanentProviderError &&
+        (!cursorStreamFailure ||
+          !run.recordedFailureMessage ||
+          isCursorStreamEndError(run.recordedFailureMessage))
+      ) {
+        run.recordedFailureMessage = errorMessage
+      }
       return withRunId(summary)
     }
 
     persistAssistantContentInOrder(run, summary)
+    if (
+      !run.stoppingPermanentProviderError &&
+      assistantMessage.api === 'cursor-agent' &&
+      assistantMessage.stopReason === 'stop' &&
+      isCursorStreamEndError(run.recordedFailureMessage)
+    ) {
+      delete run.recordedFailureMessage
+    }
     return withRunId({ ...summary, message: browserSafeAssistantMessage(summary.message) })
   }
 

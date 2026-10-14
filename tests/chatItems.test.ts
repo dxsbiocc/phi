@@ -1310,7 +1310,7 @@ test('chatItemsFromSessionMessages restores context compaction notices', () => {
   })
 })
 
-test('session history distinguishes automatic tool cleanup from image rescue', () => {
+test('session history keeps context cleanup concise and hides informational maintenance mechanics', () => {
   const items = chatItemsFromSessionMessages([
     {
       source: 'phi',
@@ -1318,6 +1318,15 @@ test('session history distinguishes automatic tool cleanup from image rescue', (
       eventId: 'shake-1',
       runId: 'run-1',
       tokensAfter: 12000
+    },
+    {
+      source: 'phi',
+      type: 'context_maintenance_notice',
+      eventId: 'archive-info',
+      runId: 'run-1',
+      noticeLevel: 'info',
+      noticeText:
+        'Compaction dead-end recovery: elided 103 heavy blocks (~173,720 tokens) to an artifact'
     },
     {
       source: 'phi',
@@ -1335,11 +1344,13 @@ test('session history distinguishes automatic tool cleanup from image rescue', (
     }
   ])
 
-  assert.equal(items.length, 3)
-  assert.match(items[0].content, /自动精简大型工具结果/)
-  assert.doesNotMatch(items[0].content, /上下文已压缩/)
-  assert.match(items[1].content, /移除了 2 张历史图片/)
-  assert.equal(items[2].role, 'error')
+  assert.equal(items.length, 2)
+  assert.ok('role' in items[0])
+  assert.ok('role' in items[1])
+  assert.equal(items[0].content, '上下文已压缩')
+  assert.equal(items[0].contextCompaction?.action, 'shake')
+  assert.doesNotMatch(JSON.stringify(items), /elided|173,720|移除了 2 张历史图片/)
+  assert.equal(items[1].role, 'error')
 })
 
 test('chatItemsFromSessionMessages restores model selection migration notices', () => {

@@ -483,21 +483,18 @@ export function chatItemFromPhiTimelineEvent(event: {
     }
   }
   if (event.type === 'context_shaken') {
-    const after =
-      typeof event.tokensAfter === 'number' &&
-      Number.isFinite(event.tokensAfter) &&
-      event.tokensAfter >= 0
-        ? `，当前上下文约 ${Math.round(event.tokensAfter).toLocaleString('zh-CN')} tokens`
-        : ''
     return {
       id,
       role: 'warning',
-      content: `SDK 已自动精简大型工具结果或文本块${after}。原文由 SDK 归档，聊天时间线仍保留可见历史。`,
+      content: '上下文已压缩',
+      contextCompaction: { action: 'shake' },
       ...runIdField(event.runId),
       ...createdAtField(event.createdAt)
     }
   }
   if (event.type === 'context_maintenance_notice') {
+    // Successful maintenance has its own compacted status; its process diagnostics stay in storage.
+    if (event.noticeLevel !== 'warning' && event.noticeLevel !== 'error') return null
     const raw = typeof event.noticeText === 'string' ? event.noticeText : ''
     const images = raw.match(/dropped (\d+) attached images?/i)
     const content = images

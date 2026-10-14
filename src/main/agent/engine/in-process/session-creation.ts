@@ -25,6 +25,7 @@ import {
 } from '../../main-system-prompt'
 import { resolveRemoteRuntimePromptContext } from '../../remote-runtime-context'
 import { translateOmpEvent } from '../events'
+import { createCursorStreamRecoveryExtension } from '../phi-extension/extensions/cursor-stream-recovery'
 import { isRecord, stringValue } from './common'
 import { createInProcessExtensionHost, phiExtensionAgents } from './extension-host'
 import { requestHost, sendEvent } from './ipc'
@@ -158,7 +159,10 @@ export async function createSession(params: unknown): Promise<unknown> {
     remoteAgentDefinitions: () => phiAgents,
     remoteMcpToolState: () => remoteMcpAccess?.state
   })
-  const extensionFactories = createMainSessionExtensions(extensionConfig, extensionHost)
+  const extensionFactories = [
+    ...createMainSessionExtensions(extensionConfig, extensionHost),
+    createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent)
+  ]
   const { resources, customTools, stopAgentRunNotices } = await createSessionToolRegistry({
     record,
     sessionId,

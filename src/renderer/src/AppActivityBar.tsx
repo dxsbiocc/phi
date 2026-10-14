@@ -5,7 +5,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type FocusEvent
+  type FocusEvent,
+  type MouseEvent
 } from 'react'
 import { Box, Fade, IconButton, Paper, Popper, Tooltip, useMediaQuery } from '@mui/material'
 import type { SxProps, Theme } from '@mui/material/styles'
@@ -146,7 +147,7 @@ function WorkspaceSidebarNavButton({
   useContentPreview: boolean
   onPreviewOpen: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
   onPreviewClose: () => void
-  onClick: () => void
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void
   previewOpen: boolean
   onFocusPreview: () => void
 }): React.JSX.Element {
@@ -181,12 +182,12 @@ function WorkspaceSidebarNavButton({
   // Keep the same button mounted while its content preview fades out.
   return (
     <Tooltip
-      title={useContentPreview ? '' : label}
+      title={active || useContentPreview ? '' : label}
       placement="right"
       describeChild
-      disableHoverListener={useContentPreview}
-      disableFocusListener={useContentPreview}
-      disableTouchListener={useContentPreview}
+      disableHoverListener={active || useContentPreview}
+      disableFocusListener={active || useContentPreview}
+      disableTouchListener={active || useContentPreview}
     >
       {button}
     </Tooltip>
@@ -198,7 +199,7 @@ export type AppActivityBarProps = {
   shouldUseWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode) => boolean
   openWorkspaceSidebarPreview: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
   scheduleWorkspaceSidebarPreviewClose: () => void
-  onSelectWorkspaceView: (view: 'chat' | 'projects') => void
+  onSelectWorkspaceView: (view: 'chat' | 'projects', anchorEl: HTMLElement) => void
   onSelectWorkspaceSidebarMode: (mode: WorkspaceSidebarMode) => void
   refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
   refreshPhiPlugins: () => Promise<void>
@@ -452,10 +453,13 @@ function AppActivityBarImpl({
             onPreviewOpen={handlePreviewOpen}
             onPreviewClose={requestWorkspaceSidebarPreviewClose}
             onFocusPreview={focusPreview}
-            onClick={() => {
+            onClick={(event) => {
               closeWorkspaceSidebarPreview()
               if (mode === 'conversations' || mode === 'projects') {
-                onSelectWorkspaceView(mode === 'conversations' ? 'chat' : 'projects')
+                onSelectWorkspaceView(
+                  mode === 'conversations' ? 'chat' : 'projects',
+                  event.currentTarget
+                )
               } else {
                 onSelectWorkspaceSidebarMode(mode)
               }
@@ -606,6 +610,7 @@ function appActivityBarPropsEqual(prev: AppActivityBarProps, next: AppActivityBa
   return (
     prev.isWorkspaceSidebarModeExpanded === next.isWorkspaceSidebarModeExpanded &&
     prev.shouldUseWorkspaceSidebarPreview === next.shouldUseWorkspaceSidebarPreview &&
+    prev.onSelectWorkspaceView === next.onSelectWorkspaceView &&
     prev.isWorkspaceSidebarPreviewOpen === next.isWorkspaceSidebarPreviewOpen &&
     prev.isWorkspaceSidebarPreviewBlocked === next.isWorkspaceSidebarPreviewBlocked &&
     prev.visibleWorkspaceSidebarPreview?.mode === next.visibleWorkspaceSidebarPreview?.mode &&
