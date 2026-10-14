@@ -1,4 +1,4 @@
-import { Box, Button, Chip, Typography } from '@mui/material'
+import { Box, Button, Chip, Skeleton, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
 import { ResourceIcon, type ResourceIconProps } from '../../../components/ResourceIcon'
@@ -6,11 +6,18 @@ import { PhiIcons } from '../../../icons'
 import { sessionDisplayTitle } from '../../../lib/sessionTitles'
 import type { SessionStatus, SessionSummary } from '../../../types'
 import { formatSessionActivity } from '../lib/homeActivity'
-import type { HomeRecentWorkItem, HomeResourceCounts, RankedWrapper } from '../lib/homeOverview'
+import {
+  HOME_RECENT_WORK_LIMIT,
+  type HomeRecentWorkItem,
+  type HomeResourceCounts,
+  type RankedWrapper
+} from '../lib/homeOverview'
 import { HomeResourceCategoryIcon } from './HomeResourceCategoryIcon'
 import { HomeWrapperRanking } from './HomeWrapperRanking'
 
 interface HomeOverviewCardsProps {
+  sessionsLoading?: boolean
+  resourcesLoading?: boolean
   projectCount: number
   ordinaryConversationCount: number
   projectConversationCount: number
@@ -71,7 +78,9 @@ function ResourcePreview({
       data-phi-home-resource-icon={kind}
       sx={{ width: 42, height: 34, flexShrink: 0, display: 'flex', alignItems: 'center' }}
     >
-      {icons.length > 0 ? (
+      {resource.loading && icons.length === 0 ? (
+        <Skeleton variant="rounded" width={32} height={32} />
+      ) : icons.length > 0 ? (
         icons.map((icon, index) => (
           <Box
             key={icon.key}
@@ -118,6 +127,8 @@ function ResourcePreview({
 }
 
 export function HomeOverviewCards({
+  sessionsLoading = false,
+  resourcesLoading = false,
   projectCount,
   ordinaryConversationCount,
   projectConversationCount,
@@ -131,155 +142,209 @@ export function HomeOverviewCards({
   wrapperRunCount,
   onOpenSession
 }: HomeOverviewCardsProps): React.JSX.Element {
-  const showContinuation = recentWork.length > 0 || projectConversationsLoading
+  const conversationsLoading = sessionsLoading || projectConversationsLoading
 
   return (
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: showContinuation
-          ? { xs: '1fr', md: 'minmax(0, 1.55fr) minmax(290px, 0.85fr)' }
-          : '1fr',
+        gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.75fr) minmax(290px, 0.85fr)' },
         gap: 2,
         mt: 2,
         alignItems: 'start'
       }}
     >
-      {showContinuation ? (
+      <Box
+        data-phi-home-primary-card="true"
+        sx={{
+          minWidth: 0,
+          border: 1,
+          borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
+          borderRadius: 3,
+          p: { xs: 2.25, md: 2.75 },
+          background: (theme) =>
+            `linear-gradient(135deg, ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.11)} 0%, ${theme.palette.background.paper} 76%)`
+        }}
+      >
+        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
+          继续最近的工作
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+          对话与所属项目放在一起，直接接着做。
+        </Typography>
         <Box
-          data-phi-home-primary-card="true"
           sx={{
-            minWidth: 0,
-            border: 1,
-            borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
-            borderRadius: 3,
-            p: { xs: 2.25, md: 2.75 },
-            background: (theme) =>
-              `linear-gradient(135deg, ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.11)} 0%, ${theme.palette.background.paper} 76%)`
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 0.75,
+            mt: 1.5,
+            minHeight: { xs: 84, sm: 24 }
           }}
         >
-          <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
-            继续最近的工作
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            对话与所属项目放在一起，直接接着做。
-          </Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.5 }}>
-            <Chip size="small" variant="outlined" label={`${projectCount} 个项目`} />
+          <Chip size="small" variant="outlined" label={`${projectCount} 个项目`} />
+          <Chip
+            size="small"
+            variant="outlined"
+            aria-label={sessionsLoading ? '正在读取普通对话' : undefined}
+            label={`${sessionsLoading ? '—' : ordinaryConversationCount} 条普通对话`}
+          />
+          <Chip
+            size="small"
+            variant="outlined"
+            aria-label={projectConversationsLoading ? '正在读取项目对话' : undefined}
+            label={
+              projectConversationsLoading
+                ? '— 条项目对话'
+                : projectConversationsIncomplete
+                  ? projectConversationCount > 0
+                    ? `至少 ${projectConversationCount} 条项目对话`
+                    : '项目对话暂不可用'
+                  : `${projectConversationCount} 条项目对话`
+            }
+          />
+          {runningCount > 0 ? (
+            <Chip size="small" color="info" variant="soft" label={`${runningCount} 项运行中`} />
+          ) : null}
+          {attentionCount > 0 ? (
             <Chip
               size="small"
-              variant="outlined"
-              label={`${ordinaryConversationCount} 条普通对话`}
+              color="warning"
+              variant="soft"
+              label={`${attentionCount} 项需关注`}
             />
-            <Chip
-              size="small"
-              variant="outlined"
-              label={
-                projectConversationsLoading
-                  ? '正在读取项目对话'
-                  : projectConversationsIncomplete
-                    ? projectConversationCount > 0
-                      ? `至少 ${projectConversationCount} 条项目对话`
-                      : '项目对话暂不可用'
-                    : `${projectConversationCount} 条项目对话`
-              }
-            />
-            {runningCount > 0 ? (
-              <Chip size="small" color="info" variant="soft" label={`${runningCount} 项运行中`} />
-            ) : null}
-            {attentionCount > 0 ? (
-              <Chip
-                size="small"
-                color="warning"
-                variant="soft"
-                label={`${attentionCount} 项需关注`}
-              />
-            ) : null}
-          </Box>
-
-          {recentWork.length > 0 ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 1.75 }}>
-              {recentWork.map(({ session, project }) => {
-                const title = sessionDisplayTitle(session)
-                const status = recentSessionStatus(session)
-                const scope = project
-                  ? `${project.name} · ${project.location.kind === 'ssh' ? '远程' : '本地'}`
-                  : '普通对话'
-                return (
-                  <Button
-                    key={session.path}
-                    aria-label={`继续 ${title}，${scope}`}
-                    onClick={() => onOpenSession(session.path)}
-                    sx={{
-                      minWidth: 0,
-                      minHeight: 62,
-                      px: 1.25,
-                      py: 0.75,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 1.25,
-                      border: 1,
-                      borderColor: 'divider',
-                      borderRadius: 2,
-                      bgcolor: 'background.paper',
-                      color: 'text.primary',
-                      textAlign: 'left',
-                      textTransform: 'none',
-                      '&:hover, &.Mui-focusVisible': {
-                        borderColor: 'primary.main',
-                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06)
-                      }
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: 32,
-                        height: 32,
-                        flexShrink: 0,
-                        display: 'grid',
-                        placeItems: 'center',
-                        borderRadius: 1.5,
-                        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
-                        color: 'primary.main'
-                      }}
-                    >
-                      <PhiIcons.nav.chat sx={{ fontSize: 17 }} />
-                    </Box>
-                    <Box data-phi-home-session-content="true" sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography noWrap sx={{ fontWeight: 700 }}>
-                        {title}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" noWrap title={scope}>
-                        {scope} · {formatSessionActivity(session)} · {session.messageCount} 条消息
-                      </Typography>
-                    </Box>
-                    <Chip
-                      data-phi-home-session-status="true"
-                      size="small"
-                      color={status.color}
-                      variant="soft"
-                      label={status.label}
-                      sx={{
-                        width: 88,
-                        flexShrink: 0,
-                        alignSelf: 'center',
-                        '& .MuiChip-label': { width: '100%', textAlign: 'center' }
-                      }}
-                    />
-                    <PhiIcons.action.back sx={{ fontSize: 17, color: 'text.secondary' }} />
-                  </Button>
-                )
-              })}
-            </Box>
-          ) : (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 3, mt: 1.5 }}>
-              {projectConversationsLoading
-                ? '正在读取最近的工作…'
-                : '还没有可继续的对话，选择项目或新建对话开始。'}
-            </Typography>
-          )}
+          ) : null}
         </Box>
-      ) : null}
+
+        <Box
+          data-phi-home-recent-state={
+            conversationsLoading ? 'loading' : recentWork.length > 0 ? 'ready' : 'empty'
+          }
+          aria-busy={conversationsLoading}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0.75,
+            mt: 1.75,
+            // Keep space for the same four rows while loading or showing an empty state.
+            minHeight: HOME_RECENT_WORK_LIMIT * 62 + (HOME_RECENT_WORK_LIMIT - 1) * 6
+          }}
+        >
+          {recentWork.map(({ session, project }) => {
+            const title = sessionDisplayTitle(session)
+            const status = recentSessionStatus(session)
+            const scope = project
+              ? `${project.name} · ${project.location.kind === 'ssh' ? '远程' : '本地'}`
+              : '普通对话'
+            return (
+              <Button
+                key={session.path}
+                aria-label={`继续 ${title}，${scope}`}
+                onClick={() => onOpenSession(session.path)}
+                sx={{
+                  minWidth: 0,
+                  minHeight: 62,
+                  px: 1.25,
+                  py: 0.75,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.25,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  bgcolor: 'background.paper',
+                  color: 'text.primary',
+                  textAlign: 'left',
+                  textTransform: 'none',
+                  '&:hover, &.Mui-focusVisible': {
+                    borderColor: 'primary.main',
+                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06)
+                  }
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    flexShrink: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    borderRadius: 1.5,
+                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                    color: 'primary.main'
+                  }}
+                >
+                  <PhiIcons.nav.chat sx={{ fontSize: 17 }} />
+                </Box>
+                <Box data-phi-home-session-content="true" sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography noWrap sx={{ fontWeight: 700 }}>
+                    {title}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap title={scope}>
+                    {scope} · {formatSessionActivity(session)} · {session.messageCount} 条消息
+                  </Typography>
+                </Box>
+                <Chip
+                  data-phi-home-session-status="true"
+                  size="small"
+                  color={status.color}
+                  variant="soft"
+                  label={status.label}
+                  sx={{
+                    width: 88,
+                    flexShrink: 0,
+                    alignSelf: 'center',
+                    '& .MuiChip-label': { width: '100%', textAlign: 'center' }
+                  }}
+                />
+                <PhiIcons.action.back sx={{ fontSize: 17, color: 'text.secondary' }} />
+              </Button>
+            )
+          })}
+          {conversationsLoading ? (
+            Array.from(
+              { length: Math.max(0, HOME_RECENT_WORK_LIMIT - recentWork.length) },
+              (_, index) => (
+                <Box
+                  key={`loading-${index}`}
+                  data-phi-home-session-skeleton="true"
+                  aria-hidden="true"
+                  sx={{
+                    minHeight: 62,
+                    px: 1.25,
+                    py: 0.75,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.25,
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    bgcolor: 'background.paper'
+                  }}
+                >
+                  <Skeleton variant="rounded" width={32} height={32} sx={{ flexShrink: 0 }} />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Skeleton width="70%" height={24} />
+                    <Skeleton width="50%" height={18} />
+                  </Box>
+                  <Skeleton variant="rounded" width={88} height={24} sx={{ flexShrink: 0 }} />
+                  <Skeleton variant="circular" width={17} height={17} sx={{ flexShrink: 0 }} />
+                </Box>
+              )
+            )
+          ) : recentWork.length === 0 ? (
+            <Box
+              sx={{ flex: 1, display: 'grid', placeContent: 'center', textAlign: 'center', p: 2 }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                暂无可继续的对话
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                选择项目或新建对话开始。
+              </Typography>
+            </Box>
+          ) : null}
+        </Box>
+      </Box>
 
       <Box
         data-phi-home-resources-card="true"
@@ -302,19 +367,19 @@ export function HomeOverviewCards({
         <Box
           sx={{
             mt: 0.75,
-            display: showContinuation ? 'block' : 'grid',
-            gridTemplateColumns: showContinuation
-              ? undefined
-              : { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-            columnGap: showContinuation ? 0 : 2
+            display: 'block'
           }}
         >
           {resourceRows.map(({ key, label, activeLabel, kind }, index) => {
-            const resource = resources[key]
+            const resource = {
+              ...resources[key],
+              loading: resourcesLoading || resources[key].loading
+            }
             return (
               <Box
                 key={key}
                 data-phi-home-resource={key}
+                data-phi-home-resource-loading={resource.loading ? 'true' : undefined}
                 sx={{
                   display: 'flex',
                   alignItems: 'center',
@@ -330,11 +395,24 @@ export function HomeOverviewCards({
                     {label}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    共 {resource.total} 个
+                    {resource.loading ? (
+                      <Skeleton
+                        component="span"
+                        width={48}
+                        height={18}
+                        sx={{ display: 'inline-block', verticalAlign: 'top' }}
+                      />
+                    ) : (
+                      `共 ${resource.total} 个`
+                    )}
                   </Typography>
                 </Box>
                 <Box
-                  aria-label={`${label} ${resource.active} ${activeLabel}，共 ${resource.total} 个`}
+                  aria-label={
+                    resource.loading
+                      ? `${label} 正在加载`
+                      : `${label} ${resource.active} ${activeLabel}，共 ${resource.total} 个`
+                  }
                   sx={{
                     width: 112,
                     display: 'grid',
@@ -355,7 +433,16 @@ export function HomeOverviewCards({
                       whiteSpace: 'nowrap'
                     }}
                   >
-                    {resource.loading ? '—' : resource.active}
+                    {resource.loading ? (
+                      <Skeleton
+                        component="span"
+                        width={28}
+                        height={23}
+                        sx={{ display: 'inline-block', verticalAlign: 'top', justifySelf: 'end' }}
+                      />
+                    ) : (
+                      resource.active
+                    )}
                   </Typography>
                   <Box
                     component="span"

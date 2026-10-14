@@ -332,9 +332,18 @@ export const SessionRow = memo(function SessionRow({
             ) : (
               <Box data-phi-session-hover-details="true">
                 <Typography
-                  sx={{ fontSize: ROW_LABEL_FONT_SIZE, fontWeight: 600, overflowWrap: 'anywhere' }}
+                  data-phi-session-hover-title="true"
+                  sx={{
+                    fontSize: ROW_LABEL_FONT_SIZE,
+                    fontWeight: 600,
+                    overflowWrap: 'anywhere',
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: 3,
+                    overflow: 'hidden'
+                  }}
                 >
-                  {fullTitle}
+                  {sessionTitle(displaySession)}
                 </Typography>
                 <Box sx={{ mt: 1, fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}>
                   <Box>最近活动：{formatDateTime(sessionActivityTime(displaySession) || NaN)}</Box>

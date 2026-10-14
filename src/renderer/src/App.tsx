@@ -755,6 +755,7 @@ function App(): React.JSX.Element {
   )
   const [environmentSnapshot, setEnvironmentSnapshot] = useState<EnvironmentSnapshot | null>(null)
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
+  const [isLoadingHomeSessions, setIsLoadingHomeSessions] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
@@ -2166,6 +2167,8 @@ function App(): React.JSX.Element {
       setProjects(projectList)
       projectsRef.current = projectList
     })()
+      .catch((error: unknown) => showSnackbarError(error, '读取对话记录失败'))
+      .finally(() => setIsLoadingHomeSessions(false))
   }, [
     applyCurrentSession,
     mergeSessionSummariesRuntimeState,
@@ -2174,7 +2177,8 @@ function App(): React.JSX.Element {
     replaceMessages,
     resetAnalysisJupyterRuntimeForCwdChange,
     setProjects,
-    setSessions
+    setSessions,
+    showSnackbarError
   ])
 
   useEffect(() => {
@@ -4280,6 +4284,11 @@ function App(): React.JSX.Element {
             onOpenWebUrl={onOpenWebUrl}
             onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
             compactComposerControls={activeView === 'analysis'}
+            placement={
+              activeView === 'analysis' && workspaceSidebarMode === 'conversations'
+                ? 'sidebar'
+                : 'tab'
+            }
             cwd={activeDisplayCwd}
           />
         </Suspense>
@@ -4325,9 +4334,8 @@ function App(): React.JSX.Element {
     </>
   )
 
-  const loadHomeResources = useCallback((): void => {
-    void refreshSkillsForNavigation()
-    void refreshMcpServersForNavigation()
+  const loadHomeResources = useCallback(async (): Promise<void> => {
+    await Promise.allSettled([refreshSkillsForNavigation(), refreshMcpServersForNavigation()])
   }, [refreshSkillsForNavigation, refreshMcpServersForNavigation])
 
   const fetchHomeProjectSessions = useCallback(
@@ -4344,6 +4352,7 @@ function App(): React.JSX.Element {
   const emptyWorkspaceContent = (
     <HomeView
       sessions={sessions}
+      sessionsLoading={isLoadingHomeSessions}
       projects={projects}
       projectSessionRefreshKey={projectSessionRefreshKey}
       onFetchProjectSessions={fetchHomeProjectSessions}

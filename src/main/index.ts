@@ -83,6 +83,7 @@ import {
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
+import { createWebLinkPreviewService } from './web-link-preview'
 import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { TerminalIpcCoordinator, registerTerminalRendererIpc } from './terminal/terminal-ipc'
@@ -674,6 +675,8 @@ function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
   }
   return window
 }
+
+const webLinkPreviews = createWebLinkPreviewService()
 
 function finishStartupSplash(window: BrowserWindow | null): void {
   const splash = startupSplashWindow
@@ -8370,6 +8373,10 @@ app.whenReady().then(async () => {
     return getLocalFileIconDataUrl(filePath)
   })
   ipcMain.handle('resources:readIcon', (_, key: unknown) => readResourceIcon(key))
+  ipcMain.handle('web-link:preview', (event, url: unknown) => {
+    requireMainWindowRenderer(event)
+    return webLinkPreviews.get(url)
+  })
   ipcMain.handle('files:pickInput', async () => {
     if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
       throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')

@@ -17,12 +17,14 @@ const periodLabels = [
 
 function PeriodRow({
   label,
-  period
+  period,
+  loading
 }: {
   label: string
-  period: HomeActivityPeriodSummary
+  period: HomeActivityPeriodSummary | undefined
+  loading: boolean
 }): React.JSX.Element {
-  const rate = completionRate(period)
+  const rate = period ? completionRate(period) : 0
 
   return (
     <Box
@@ -36,25 +38,64 @@ function PeriodRow({
           {label}
         </Typography>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-            {formatActivityDuration(period.durationMs)}
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', minHeight: '1lh' }}
+          >
+            {loading ? (
+              <Skeleton
+                component="span"
+                width={72}
+                height="1em"
+                sx={{ display: 'inline-block', verticalAlign: 'top' }}
+              />
+            ) : period ? (
+              formatActivityDuration(period.durationMs)
+            ) : (
+              '暂无'
+            )}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {period.activeDays} 个活跃日 · {period.totalRuns} 次运行
+          <Typography
+            component="div"
+            variant="caption"
+            color="text.secondary"
+            sx={{ minHeight: '1lh' }}
+          >
+            {loading ? (
+              <Skeleton
+                component="span"
+                width="100%"
+                height="1em"
+                sx={{ display: 'inline-block', verticalAlign: 'top', maxWidth: 156 }}
+              />
+            ) : period ? (
+              `${period.activeDays} 个活跃日 · ${period.totalRuns} 次运行`
+            ) : (
+              '暂无活动记录'
+            )}
           </Typography>
         </Box>
         <Typography
           variant="body2"
-          color={period.totalRuns > 0 ? 'text.primary' : 'text.secondary'}
+          color={period && period.totalRuns > 0 ? 'text.primary' : 'text.secondary'}
           sx={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
         >
-          {rate}%
+          {loading ? (
+            <Skeleton
+              component="span"
+              width={28}
+              height="1em"
+              sx={{ display: 'inline-block', verticalAlign: 'top' }}
+            />
+          ) : (
+            `${rate}%`
+          )}
         </Typography>
       </Box>
       <LinearProgress
         variant="determinate"
         value={rate}
-        aria-label={`${label}运行完成率 ${rate}%`}
+        aria-label={loading ? `${label}活动数据正在加载` : `${label}运行完成率 ${rate}%`}
         sx={{
           mt: 1,
           ml: '59px',
@@ -90,22 +131,11 @@ export function HomePeriodSummary({
         任务历时、活跃天数与完成率
       </Typography>
 
-      {loading || !activity ? (
-        <Box sx={{ mt: 2 }}>
-          {[0, 1, 2].map((key) => (
-            <Box key={key} sx={{ py: 1.5 }}>
-              <Skeleton width="72%" />
-              <Skeleton width="100%" height={12} />
-            </Box>
-          ))}
-        </Box>
-      ) : (
-        <Box sx={{ mt: 0.75 }}>
-          {periodLabels.map(({ key, label }) => (
-            <PeriodRow key={key} label={label} period={activity.periods[key]} />
-          ))}
-        </Box>
-      )}
+      <Box sx={{ mt: 0.75 }}>
+        {periodLabels.map(({ key, label }) => (
+          <PeriodRow key={key} label={label} period={activity?.periods[key]} loading={loading} />
+        ))}
+      </Box>
     </Box>
   )
 }

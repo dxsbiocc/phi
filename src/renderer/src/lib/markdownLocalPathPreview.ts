@@ -1,8 +1,4 @@
-// Non-component helpers shared by MarkdownContent and MarkdownHoverPreview:
-// the local-path stat cache/hook backing file-vs-directory icon resolution,
-// and the tooltip styling both use for local-file hover previews. Kept out
-// of MarkdownHoverPreview.tsx (a component file) because react-refresh only
-// supports fast-refreshing files that export components alone.
+// Local-path stat caches and hooks backing file-vs-directory icon resolution.
 import { useEffect, useMemo, useState } from 'react'
 import type { LocalPathKind } from './markdownLocalPathReferences'
 import type { LocalPathStat } from '../types'
@@ -10,68 +6,8 @@ import type { RemoteProjectFileContextValue } from './remoteProjectFileContext'
 
 export const HOVER_PREVIEW_OPEN_DELAY_MS = 350
 
-export type LocalFileHoverErrorDescription = {
-  title: string
-  message: string
-  action?: string
-}
-
-function hoverPreviewErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error || '无法预览文件')
-  return raw
-    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '')
-    .replace(/^Error:\s*/, '')
-    .trim()
-}
-
-export function describeLocalFileHoverError(error: unknown): LocalFileHoverErrorDescription {
-  const message = hoverPreviewErrorMessage(error)
-  if (
-    message.includes('允许读取项目外文件') ||
-    message.includes('Phi 保存的文件或当前项目内的文件')
-  ) {
-    return {
-      title: '无法预览项目外文件',
-      message: '为保护本地文件，Phi 默认只读取当前项目或 Phi 保存的文件。',
-      action: '前往“设置 → 通用”，开启“允许读取项目外文件”后重试。'
-    }
-  }
-
-  return {
-    title: '无法预览文件',
-    message: message || '文件暂时无法读取'
-  }
-}
-
 const LOCAL_PATH_STAT_CACHE_LIMIT = 512
 const LOCAL_PATH_STAT_MISSING_TTL_MS = 30_000
-
-export const localPathTooltipSlotProps = {
-  tooltip: {
-    sx: {
-      bgcolor: 'background.paper',
-      border: 1,
-      borderColor: 'divider',
-      boxShadow: 3,
-      color: 'text.primary',
-      fontFamily: 'var(--font-mono)',
-      fontSize: '0.75rem',
-      lineHeight: 1.45,
-      maxWidth: 420,
-      overflowWrap: 'anywhere'
-    }
-  },
-  arrow: {
-    sx: {
-      color: 'background.paper',
-      '&::before': {
-        border: '1px solid',
-        borderColor: 'divider',
-        boxSizing: 'border-box'
-      }
-    }
-  }
-} as const
 
 const localPathStatCache = new Map<string, { kind: LocalPathStat['kind']; checkedAt: number }>()
 

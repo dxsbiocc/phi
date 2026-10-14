@@ -6,6 +6,7 @@ import type {
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
+import type { WebLinkPreview } from '../../shared/webLinkPreviewTypes'
 import type { TerminalRendererBridge } from '../../shared/terminalTypes'
 import type { MenuBarAction } from '../../shared/menuBarTypes'
 import type {
@@ -736,6 +737,7 @@ export interface RendererApi
   openPath: (path: string) => Promise<void>
   getFileIcon: (path: string) => Promise<string | null>
   readResourceIcon: (key: string) => Promise<string | null>
+  getWebLinkPreview: (url: string) => Promise<WebLinkPreview>
   pickInputFiles: () => Promise<string[]>
   getPathForFile: (file: File) => string
   previewFile: (path: string) => Promise<FilePreview>

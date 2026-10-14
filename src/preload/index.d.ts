@@ -4,6 +4,7 @@ import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
+import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
 import type { TerminalRendererBridge } from '../shared/terminalTypes'
 import type { WrapperCompositionCatalogItem } from '../shared/wrapperCompositionManifestTypes'
 import type { WrapperModuleDetails } from '../shared/wrapperModuleDetailsTypes'
@@ -654,6 +655,7 @@ declare global {
       openPath: (path: string) => Promise<void>
       getFileIcon: (path: string) => Promise<string | null>
       readResourceIcon: (key: string) => Promise<string | null>
+      getWebLinkPreview: (url: string) => Promise<WebLinkPreview>
       pickInputFiles: () => Promise<string[]>
       pickLocalUploadFiles: () => Promise<string[]>
       getPathForFile: (file: File) => string

@@ -19,6 +19,7 @@ import {
 
 interface HomeViewProps {
   sessions: SessionSummary[]
+  sessionsLoading: boolean
   projects: Project[]
   projectSessionRefreshKey: number
   onFetchProjectSessions: (project: Project) => Promise<SessionSummary[]>
@@ -26,7 +27,7 @@ interface HomeViewProps {
   wrapperRuns: WrapperRun[]
   wrapperCatalog: WrapperCompositionCatalogItem[]
   lastClosedSessionPath: string | null
-  onLoadResources: () => void
+  onLoadResources: () => Promise<void>
   onNewChat: () => void
   onShowProjects: () => void
   onOpenSession: (path: string) => void
@@ -34,6 +35,7 @@ interface HomeViewProps {
 
 export function HomeView({
   sessions,
+  sessionsLoading,
   projects,
   projectSessionRefreshKey,
   onFetchProjectSessions,
@@ -57,7 +59,17 @@ export function HomeView({
   const projectConversationsLoading = projects.length > 0 && !projectResultIsCurrent
   const projectConversationsIncomplete = projectResultIsCurrent ? projectResult.incomplete : false
 
-  useEffect(() => onLoadResources(), [onLoadResources])
+  const [resourcesLoaded, setResourcesLoaded] = useState(false)
+  useEffect(() => {
+    let active = true
+    const finish = (): void => {
+      if (active) setResourcesLoaded(true)
+    }
+    void onLoadResources().then(finish, finish)
+    return () => {
+      active = false
+    }
+  }, [onLoadResources])
 
   useEffect(() => {
     let active = true
@@ -113,6 +125,7 @@ export function HomeView({
         minWidth: 0,
         minHeight: 0,
         overflowY: 'auto',
+        scrollbarGutter: 'stable both-edges',
         bgcolor: (theme) =>
           theme.palette.mode === 'dark'
             ? alpha(theme.palette.background.default, 0.96)
@@ -188,6 +201,7 @@ export function HomeView({
 
         <HomeOverviewCards
           projectCount={projects.length}
+          sessionsLoading={sessionsLoading}
           ordinaryConversationCount={sessions.length}
           projectConversationCount={projectWork.length}
           projectConversationsLoading={projectConversationsLoading}
@@ -196,6 +210,7 @@ export function HomeView({
           attentionCount={attentionCount}
           recentWork={recentWork}
           resources={resources}
+          resourcesLoading={!resourcesLoaded}
           wrapperRanking={wrapperRanking}
           wrapperRunCount={wrapperRuns.length}
           onOpenSession={onOpenSession}

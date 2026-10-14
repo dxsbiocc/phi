@@ -10,6 +10,7 @@ export type HomeResourceCounts = Record<
 
 export type RankedWrapper = { id: string; name: string; count: number }
 export type HomeRecentWorkItem = { session: SessionSummary; project: Project | null }
+export const HOME_RECENT_WORK_LIMIT = 4
 
 export function homeResourceIcons(
   entries: readonly { icon?: ResourceIconRef }[],
@@ -29,7 +30,7 @@ export function selectHomeRecentWork(
   ordinarySessions: readonly SessionSummary[],
   projectWork: readonly HomeRecentWorkItem[],
   lastClosedSessionPath: string | null,
-  limit = 4
+  limit = HOME_RECENT_WORK_LIMIT
 ): HomeRecentWorkItem[] {
   const byPath = new Map<string, HomeRecentWorkItem>()
   for (const session of ordinarySessions) byPath.set(session.path, { session, project: null })
