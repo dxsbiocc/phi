@@ -367,3 +367,43 @@ test('selection primary survives rejected, timed-out and gated cleanup with stri
     )
   }
 })
+
+test('trusted selection guard rechecks awaited command discovery before sending any model command', async (t) => {
+  const f = await fixture(t, { holdDiscovery: true })
+  const pending = selectRemoteModel(f.connection, metadata, ref, new AbortController().signal, {
+    beforeDispatch: () => {
+      throw new Error('selected Phi generation changed')
+    }
+  })
+  const rejected = assert.rejects(pending, /selected Phi generation changed/)
+  await delay(1)
+  const discovery = f.wire.commands.find((command) => command.type === 'get_available_commands')!
+  f.wire.emit({
+    type: 'response',
+    id: discovery.id,
+    command: discovery.type,
+    success: true,
+    data: { commands: [declaration] }
+  })
+  await rejected
+  assert.equal(f.selections.length, 0)
+  assert.equal(
+    f.wire.commands.some((command) => command.type === 'prompt'),
+    false
+  )
+})
+
+test('trusted selection guard is checked again immediately before the local command dispatch', async (t) => {
+  const f = await fixture(t)
+  let checks = 0
+  await assert.rejects(
+    selectRemoteModel(f.connection, metadata, ref, new AbortController().signal, {
+      beforeDispatch: () => {
+        if (++checks === 2) throw new Error('selected host binding changed')
+      }
+    }),
+    /selected host binding changed/
+  )
+  assert.equal(checks, 2)
+  assert.equal(f.selections.length, 0)
+})

@@ -505,6 +505,9 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     assertInstalled: (ctx) => {
       const session = actual(ctx)
       resources(session)
+      // Recovery may initially bind the saved model before the controlled target is confirmed.
+      // The private idle attestation can install only a missing, fully validated session hook.
+      if (!installations.has(session)) install(ctx)
       if (session.agent.beforeToolCall !== installations.get(session)?.wrapper)
         throw new Error('Native task admission is not installed')
     },

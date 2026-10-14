@@ -83,7 +83,7 @@ import { createPaletteTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { syncWindowBackground } from './lib/windowStartup'
 import { useProviderAuth } from './useProviderAuth'
-import { modelOptionFromSelection, useModelSelection } from './useModelSelection'
+import { isThinkingLevel, modelOptionFromSelection, useModelSelection } from './useModelSelection'
 import { useProjects } from './useProjects'
 import {
   upsertReusableWorkspaceFileTab,
@@ -765,6 +765,15 @@ function App(): React.JSX.Element {
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
+  const getModelSelectionSessionKey = useCallback(() => {
+    const state = useSessionStore.getState()
+    return sessionStateKey({
+      phiSessionId: state.activePhiSessionId,
+      path: state.activeSessionPath,
+      cwd: state.activeCwd,
+      sessionGeneration: state.activeSessionGeneration
+    })
+  }, [])
   const sendRequestRef = useRef(0)
   const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
@@ -1025,7 +1034,7 @@ function App(): React.JSX.Element {
     setThinkingLevel,
     onSelectModel,
     onSelectThinkingLevel
-  } = useModelSelection(providerStatuses, showSnackbarError)
+  } = useModelSelection(providerStatuses, showSnackbarError, getModelSelectionSessionKey)
   const {
     projects,
     setProjects,
@@ -1382,7 +1391,7 @@ function App(): React.JSX.Element {
       ])
       if (request !== sessionRequestRef.current) return
       setSelectedModel(modelOptionFromSelection(selected, models))
-      setThinkingLevel(level)
+      if (isThinkingLevel(level)) setThinkingLevel(level)
     },
     [models, rendererApi, setSelectedModel, setThinkingLevel]
   )

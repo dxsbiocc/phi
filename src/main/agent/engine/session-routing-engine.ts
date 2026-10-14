@@ -1,6 +1,13 @@
 import type { ContextUsageSnapshot } from '../../../shared/contextUsageTypes'
 import type { PhiAgentEvent } from './event-types'
-import type { PhiEngine, PhiSessionCreateParams, WorkerSessionState } from './types'
+import type {
+  PhiEngine,
+  PhiSessionCreateParams,
+  WorkerSessionState,
+  RuntimeModel,
+  RuntimeSelectionControl,
+  ThinkingLevel
+} from './types'
 import { findPhiSessionById, listPhiSessions } from '../session/session-store'
 import { phiSessionIdFromPath } from '../session/sessions'
 import { excludesManifestLocalJournalPath } from '../session/manifest-file'
@@ -18,6 +25,11 @@ export interface RoutedSessionDriver {
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
   contextUsage(): Promise<ContextUsageSnapshot | null>
   rename(name: string): Promise<WorkerSessionState>
+  setModel?(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<WorkerSessionState>
+  setThinkingLevel?(
+    level: ThinkingLevel | undefined,
+    control?: RuntimeSelectionControl
+  ): Promise<WorkerSessionState>
   abort(): Promise<WorkerSessionState>
   dispose(): Promise<void>
 }
@@ -222,12 +234,20 @@ export class SessionRoutingEngine implements PhiEngine {
         ? !owner.retired && owner.driver?.isLive === true
         : this.legacy.sessions.has(sessionId)
     },
-    setModel: async (params) => {
-      this.unsupported(params.sessionId, 'setModel')
+    setModel: async (params, control) => {
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.setModel) throw new RemoteSessionCapabilityError('setModel')
+        return driver.setModel(params.model, control)
+      }
       return this.legacy.sessions.setModel(params)
     },
-    setThinkingLevel: async (params) => {
-      this.unsupported(params.sessionId, 'setThinkingLevel')
+    setThinkingLevel: async (params, control) => {
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.setThinkingLevel) throw new RemoteSessionCapabilityError('setThinkingLevel')
+        return driver.setThinkingLevel(params.level, control)
+      }
       return this.legacy.sessions.setThinkingLevel(params)
     },
     rename: async (params) => {

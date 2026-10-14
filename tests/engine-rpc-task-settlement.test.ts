@@ -34,11 +34,15 @@ interface Fixture {
   spawn(): Promise<unknown>
   changeActualScope(field: 'journal' | 'omp'): void
   forbidCurrentReads(): void
+  assertInstalled(): void
+  hook(): unknown
+  setWrongModel(wrong: boolean): void
+  replaceHook(): void
   close(): Promise<void>
 }
 
 /** Synthetic public-hook identity fixture; actual SDK/UI-stop proof belongs to composer. */
-async function fixture(): Promise<Fixture> {
+async function fixture(startup = true): Promise<Fixture> {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), 'phi-task-settlement-')))
   const root: RpcChildRootScope = {
     phiSessionId: 'phi-session',
@@ -152,7 +156,7 @@ async function fixture(): Promise<Fixture> {
     for (const handler of handlers.get(type) ?? []) result = await handler(event, ctx)
     return result
   }
-  await emit('session_start', {})
+  if (startup) await emit('session_start', {})
   return {
     admission,
     config,
@@ -191,12 +195,47 @@ async function fixture(): Promise<Fixture> {
     forbidCurrentReads: () => {
       forbidReads = true
     },
+    assertInstalled: () =>
+      admission.assertInstalled(ctx as unknown as Parameters<Admission['assertInstalled']>[0]),
+    hook: () => session.agent.beforeToolCall,
+    setWrongModel: (wrong) => {
+      model.id = wrong ? 'wrong-parent-model' : childProfile.model.id
+    },
+    replaceHook: () => {
+      session.agent.beforeToolCall = async () => undefined
+    },
     close: async () => {
       admission.dispose()
       await rm(cwd, { recursive: true, force: true })
     }
   }
 }
+
+test('private attestation installs a missing hook after the exact parent model is confirmed', async (t) => {
+  const f = await fixture(false)
+  t.after(() => f.close())
+  const original = f.hook()
+  f.assertInstalled()
+  assert.notEqual(f.hook(), original)
+  const installed = f.hook()
+  f.assertInstalled()
+  assert.equal(f.hook(), installed, 'repeat attestation cannot double-wrap')
+})
+
+test('private attestation never repairs a wrong parent model or a replaced installed hook', async (t) => {
+  const f = await fixture(false)
+  t.after(() => f.close())
+  const original = f.hook()
+  f.setWrongModel(true)
+  assert.throws(() => f.assertInstalled(), /parent model or route differs/)
+  assert.equal(f.hook(), original)
+  f.setWrongModel(false)
+  f.assertInstalled()
+  f.replaceHook()
+  const replaced = f.hook()
+  assert.throws(() => f.assertInstalled(), /admission is not installed/)
+  assert.equal(f.hook(), replaced, 'an existing installation cannot be overwritten')
+})
 
 test('settlement wire authenticates exact bounded original config/root/call with child capability', async (t) => {
   const f = await fixture()

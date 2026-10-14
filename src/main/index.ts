@@ -1,5 +1,6 @@
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { PhiAgentEvent, PhiAgentEventSummary } from './agent/engine/types'
+import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
@@ -7639,7 +7640,9 @@ async function getAgentSession(
           })
         }
       }
-      const thinkingLevel = resolveSessionThinkingLevel(sessionKey, creationSnapshot)
+      const desiredThinking = resolveSessionThinkingLevel(sessionKey, creationSnapshot)
+      const thinkingLevel =
+        useRpc && model ? selectionThinking(model, desiredThinking).phi : desiredThinking
       const sessionAbortController = new AbortController()
       sessionAbortControllers.set(
         getSessionControllerKey(creationSnapshot, generation),
@@ -7894,6 +7897,18 @@ async function getAgentSession(
         throw new StaleSessionError()
       }
 
+      if (useRpc && sessionManifest && !sessionManifest.runtimeRef && model) {
+        const latest = findPhiSessionById(sessionManifest.sessionId)
+        if (
+          !latest ||
+          latest?.runtimeRef ||
+          JSON.stringify(latest?.model) !== JSON.stringify(sessionManifest.model) ||
+          latest?.thinkingLevel !== sessionManifest.thinkingLevel
+        )
+          throw new StaleSessionError()
+        if (latest.thinkingLevel !== thinkingLevel)
+          updateSessionManifest(sessionManifest.sessionId, { thinkingLevel })
+      }
       const result = await createAgentSession({
         modelRuntime: runtime,
         thinkingLevel,
@@ -8018,7 +8033,8 @@ async function applyNextRunConfiguration(
       !selection ||
       selection.providerId !== session.model?.provider ||
       selection.modelId !== session.model?.id ||
-      resolveSessionThinkingLevel(sessionKey, snapshot) !== session.thinkingLevel
+      selectionThinking(session.model!, resolveSessionThinkingLevel(sessionKey, snapshot)).phi !==
+        session.thinkingLevel
     )
       throw new Error(
         'RPC model/thinking/compaction changes require a supported remote control path'
@@ -8035,7 +8051,66 @@ async function applyNextRunConfiguration(
     }
     await session.setModel(resolvedModel.model)
   }
-  session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
+  await session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
+}
+
+function captureCurrentSelectionTarget(): {
+  key: string
+  phiSessionId: string | undefined
+  rpc: boolean
+  assertCurrent(): void
+  resolved(): Promise<AgentSessionResult | null>
+} {
+  const key = resolveSessionKeyAlias(currentSessionKey)
+  const cwd = currentCwd
+  const phiSessionId = getPhiSessionIdForKey(key)
+  const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
+  const lifecycle = getCurrentLifecycle()
+  const generation = lifecycle.currentGeneration
+  const record = lifecycle.currentRecord
+  const rpc = Boolean(
+    manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh')
+  )
+  const identity = (value: typeof manifest): string =>
+    JSON.stringify([
+      value?.projectId,
+      value?.cwd,
+      value?.cwdRealPath,
+      value?.projectLocation,
+      value?.runtimeRef?.ompSessionId,
+      value?.runtimeRef?.journalBasename
+    ])
+  const initialIdentity = identity(manifest)
+  const assertCurrent = (): void => {
+    const latest = phiSessionId ? findPhiSessionById(phiSessionId) : null
+    if (
+      !sameCanonicalSessionKey(key, currentSessionKey) ||
+      currentCwd !== cwd ||
+      getPhiSessionIdForKey(currentSessionKey) !== phiSessionId ||
+      getCurrentLifecycle() !== lifecycle ||
+      !lifecycle.isCurrentGeneration(generation) ||
+      lifecycle.currentRecord !== record ||
+      identity(latest) !== initialIdentity
+    )
+      throw new StaleSessionError()
+    if (
+      rpc &&
+      (hasActivePromptRun(key) || (phiSessionId && runnerRegistry.getActiveRun(phiSessionId)))
+    )
+      throw new Error('Remote selection requires an idle Phi session')
+  }
+  assertCurrent()
+  return {
+    key,
+    phiSessionId,
+    rpc,
+    assertCurrent,
+    resolved: async () => {
+      const result = record ? await record.promise : null
+      assertCurrent()
+      return result
+    }
+  }
 }
 
 function createWindow(): void {
@@ -8774,27 +8849,56 @@ app.whenReady().then(async () => {
     }))
   })
   ipcMain.handle('models:select', async (_, providerId: string, modelId: string) => {
+    const target = captureCurrentSelectionTarget()
     const runtime = await getAuthManager().getRuntime()
+    target.assertCurrent()
     const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
-    if (!resolved || resolved.migratedFrom) {
-      throw new Error(`未知模型: ${providerId}/${modelId}`)
-    }
+    if (!resolved || resolved.migratedFrom) throw new Error(`未知模型: ${providerId}/${modelId}`)
     const model = resolved.model
-
-    const nextModel = { providerId, modelId }
-    sessionModelSelections.set(resolveSessionKeyAlias(currentSessionKey), nextModel)
-    const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
-    if (phiSessionId) {
-      updateSessionManifest(phiSessionId, { model: nextModel })
-    }
-    if (hasActivePromptRun(currentSessionKey)) {
+    if (target.rpc) {
+      const current = await target.resolved()
+      target.assertCurrent()
+      const snapshot = {
+        path: currentSessionPath,
+        cwd: currentCwd,
+        permissionMode: currentPermissionMode
+      }
+      const preferred = selectionThinking(
+        model,
+        resolveSessionThinkingLevel(target.key, snapshot)
+      ).phi
+      if (current) {
+        if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
+          throw new Error('Remote selection requires an exact live attachment')
+        await current.session.setModel(model, {
+          assertCurrent: target.assertCurrent,
+          preferredThinkingLevel: preferred
+        })
+        target.assertCurrent()
+      } else {
+        if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
+          throw new Error('Remote selection requires an exact live attachment')
+        if (target.phiSessionId)
+          updateSessionManifest(target.phiSessionId, {
+            model: { providerId, modelId },
+            thinkingLevel: preferred
+          })
+      }
+      const key = resolveSessionKeyAlias(target.key)
+      sessionModelSelections.set(key, { providerId, modelId })
+      const confirmed = target.phiSessionId
+        ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
+        : preferred
+      if (confirmed === undefined) sessionThinkingLevels.delete(key)
+      else sessionThinkingLevels.set(key, confirmed)
       return
     }
-    const current = await getCurrentResolvedSession()
-    if (current) {
-      const { session } = current
-      await session.setModel(model)
-    }
+    const nextModel = { providerId, modelId }
+    sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
+    if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
+    if (hasActivePromptRun(target.key)) return
+    const current = await target.resolved()
+    if (current) await current.session.setModel(model)
   })
   ipcMain.handle('models:selected', async () => {
     const snapshot: SessionSnapshot = {
@@ -8817,19 +8921,41 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle('thinking:select', async (_, level: ThinkingLevel) => {
-    sessionThinkingLevels.set(resolveSessionKeyAlias(currentSessionKey), level)
-    const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
-    if (phiSessionId) {
-      updateSessionManifest(phiSessionId, { thinkingLevel: level })
-    }
-    if (hasActivePromptRun(currentSessionKey)) {
+    const target = captureCurrentSelectionTarget()
+    if (target.rpc) {
+      const current = await target.resolved()
+      target.assertCurrent()
+      if (current) {
+        if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
+          throw new Error('Remote selection requires an exact live attachment')
+        await current.session.setThinkingLevel(level, target)
+        target.assertCurrent()
+      } else {
+        if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
+          throw new Error('Remote selection requires an exact live attachment')
+        const runtime = await getAuthManager().getRuntime()
+        target.assertCurrent()
+        const manifest = target.phiSessionId ? findPhiSessionById(target.phiSessionId) : null
+        const selected =
+          manifest?.model && resolveRuntimeModelSelection(runtime, manifest.model)?.model
+        if (!selected) throw new Error('Remote thinking selection requires a trusted model')
+        const normalized = selectionThinking(selected, level, true).phi
+        if (target.phiSessionId)
+          updateSessionManifest(target.phiSessionId, { thinkingLevel: normalized })
+      }
+      const key = resolveSessionKeyAlias(target.key)
+      const confirmed = target.phiSessionId
+        ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
+        : level
+      if (confirmed === undefined) sessionThinkingLevels.delete(key)
+      else sessionThinkingLevels.set(key, confirmed)
       return
     }
-    const current = await getCurrentResolvedSession()
-    if (current) {
-      const { session } = current
-      session.setThinkingLevel(level)
-    }
+    sessionThinkingLevels.set(resolveSessionKeyAlias(target.key), level)
+    if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { thinkingLevel: level })
+    if (hasActivePromptRun(target.key)) return
+    const current = await target.resolved()
+    if (current) await current.session.setThinkingLevel(level)
   })
   ipcMain.handle('thinking:selected', async () => {
     const resolved = sessionThinkingLevels.get(resolveSessionKeyAlias(currentSessionKey))

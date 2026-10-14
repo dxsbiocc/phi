@@ -27,6 +27,8 @@ export interface ModelProxyRpcTransportOptions extends Omit<
   readonly gateway: Pick<OmpBridge, 'createModelGatewayLease'>
   readonly browserTextVault?: BrowserTextVault
   readonly currentBrowserRunSignal?: () => AbortSignal | undefined
+  /** Main-only generation/selection check, including the last awaited command lookup. */
+  readonly assertSelectionCurrent?: () => void
   readonly session: Pick<
     RemoteSshSession,
     'openStdio' | 'openReverseTunnel' | 'execWithInput' | 'execBounded'
@@ -178,7 +180,8 @@ export async function prepareModelProxyRpcSessionTransport(
         connection,
         Object.freeze({ schema: 1, ...owned.publication, models: owned.gateway.models }),
         model,
-        signal
+        signal,
+        { beforeDispatch: options.assertSelectionCurrent }
       )
       owned.controller.signal.throwIfAborted()
     },

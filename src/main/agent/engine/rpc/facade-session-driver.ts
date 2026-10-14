@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { BrowserTextVault } from '../../browser/browser-text-vault'
 import { assertSafeBrowserHistory } from './browser-tool-stream'
+import { selectionThinking, type RuntimeInitialSelection } from './runtime-selection-control'
 import { getPhiAgentDir } from '../../runtime-paths'
 import {
   resolveRemoteWorkspaceHostBinding,
@@ -20,7 +21,13 @@ import {
 import { phiOnlySessionPath } from '../../session/sessions'
 import type { SessionRunnerRegistry, SessionRun } from '../../session/session-runner-registry'
 import type { OmpBridge } from '../omp-bridge'
-import type { PhiSessionCreateParams, RuntimeModel, WorkerSessionState } from '../types'
+import type {
+  PhiSessionCreateParams,
+  RuntimeModel,
+  WorkerSessionState,
+  RuntimeSelectionControl,
+  ThinkingLevel
+} from '../types'
 import {
   RemoteSessionCapabilityError,
   type RoutedSessionDriver,
@@ -351,6 +358,8 @@ export function createFacadeSessionFactory(
         let closing: Promise<void> | undefined
         let interrupted = false
         let metadataPending = false
+        let selectionAbort: AbortController | undefined
+        let selectionPending: Promise<WorkerSessionState> | undefined
         let submittedRun: SessionRun | undefined
         const stopSubmittedRun = (): void => {
           const run = submittedRun
@@ -392,7 +401,7 @@ export function createFacadeSessionFactory(
             [...names].some((name) => !scopeTools.tools.some((tool) => tool.name === name))
           )
             throw new RemoteSessionCapabilityError('desktop tool roster/browser privacy')
-          const models = await options.models(params.agentDir)
+          let models = await options.models(params.agentDir)
           signal.throwIfAborted()
           const model = models.find(
             (candidate) =>
@@ -403,12 +412,17 @@ export function createFacadeSessionFactory(
           const stateFrom = (snapshot: RemoteRuntimeSnapshot): WorkerSessionState =>
             workerState(snapshot, initial.cwd, phiSessionId, models, projector)
           let state: WorkerSessionState | undefined
+          let expectedModel = initial.model
+          let expectedThinking = initial.thinkingLevel
+          let rotating = false
+          let runtimeEpoch = 0
+          let selectionState: WorkerSessionState | undefined
           const assertAdoptionPolicy = (): void => {
             const latest = findPhiSessionById(phiSessionId)
             if (
               !latest ||
-              JSON.stringify(latest.model) !== JSON.stringify(initial.model) ||
-              latest.thinkingLevel !== initial.thinkingLevel
+              JSON.stringify(latest.model) !== JSON.stringify(expectedModel) ||
+              latest.thinkingLevel !== expectedThinking
             )
               throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
             if (latest.title !== expectedTitle)
@@ -422,117 +436,297 @@ export function createFacadeSessionFactory(
             if (facadeBindingHash(latestBinding) !== scope.bindingHash)
               throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程证明期间主机绑定已改变')
           }
-          runtime = await RemoteSessionRuntime.create({
-            transport: {
-              projectId,
-              runtime: selected.runtime,
-              session: selected.session,
-              bundle: selected.bundle,
-              gateway: options.bridge,
-              models: [{ provider: model.provider, id: model.id }],
-              preparePersistentStorage: ({ signal: storageSignal }) =>
-                prepareRemoteSessionStorage({
-                  runtimeHost: selected.runtime.runtimeHost,
-                  scope,
-                  signal: storageSignal,
-                  openLockStdio: (command) => selected.session.openStdio!(command)
+          const startRuntime = async (
+            bootModel: RuntimeModel,
+            action: RemoteSessionRuntimeOptions['action'],
+            selection?: RuntimeInitialSelection
+          ): Promise<RemoteSessionRuntime> => {
+            const epoch = ++runtimeEpoch
+            const refs = [bootModel, ...(selection ? [selection.model] : [])]
+              .filter(
+                (value, index, all) =>
+                  all.findIndex(
+                    (item) => item.provider === value.provider && item.id === value.id
+                  ) === index
+              )
+              .map(({ provider, id }) => ({ provider, id }))
+            return RemoteSessionRuntime.create({
+              transport: {
+                projectId,
+                runtime: selected.runtime,
+                session: selected.session,
+                bundle: selected.bundle,
+                gateway: options.bridge,
+                models: refs,
+                preparePersistentStorage: ({ signal: storageSignal }) =>
+                  prepareRemoteSessionStorage({
+                    runtimeHost: selected.runtime.runtimeHost,
+                    scope,
+                    signal: storageSignal,
+                    openLockStdio: (command) => selected.session.openStdio!(command)
+                  })
+              },
+              params: {
+                sessionId: phiSessionId,
+                cwd: binding.canonicalRoot,
+                agentDir: params.agentDir,
+                model: bootModel,
+                thinkingLevel: action.type === 'new' ? params.thinkingLevel : undefined
+              },
+              sessionName: expectedTitle,
+              action,
+              initialSelection: selection,
+              tools: scopeTools.tools.filter((tool) => names.has(tool.name)),
+              hostApprovalFor: scopeTools.approvalFor,
+              nativeTools: selected.nativeTools,
+              foregroundChildren: selected.foregroundChildren && {
+                binding: deriveProductionChildBinding(binding, selected),
+                definitions: selected.foregroundChildren.definitions,
+                parentThinkingLevel: childThinkingLevel(
+                  selection
+                    ? selection.thinkingLevel === 'off'
+                      ? undefined
+                      : selection.thinkingLevel
+                    : expectedThinking,
+                  (selection?.model ?? bootModel).reasoning
+                ),
+                currentParentRun: () => {
+                  const run = submittedRun
+                  return run && options.runners.getActiveRun(phiSessionId) === run ? run : undefined
+                },
+                onApprovalEvent: createFacadeChildApprovalWriter({
+                  phiSessionId,
+                  cwd: binding.canonicalRoot,
+                  runners: options.runners,
+                  notify: selected.foregroundChildren.onApprovalEvent
                 })
-            },
-            params: {
-              sessionId: phiSessionId,
-              cwd: binding.canonicalRoot,
-              agentDir: params.agentDir,
-              model,
-              thinkingLevel: reference ? undefined : params.thinkingLevel
-            },
-            sessionName: expectedTitle,
-            action: reference
+              },
+              recentUserImages: scopeTools.recentUserImages,
+              browserTextVault: vault,
+              approval: selected.approval,
+              signal: selection?.signal ?? signal,
+              beforeCheckpoint: (checkpointSignal) => {
+                if (firstCheckpoint) firstCheckpoint = false
+                else {
+                  const expected = attachedReference
+                  adoption = beginRuntimeReferenceAdoption(phiSessionId, scope, generation, {
+                    signal: checkpointSignal,
+                    expectedOmpSessionId: expected?.ompSessionId,
+                    expectedJournalBasename: expected?.journalBasename
+                  })
+                }
+                const lease = adoption
+                if (!lease) throw new Error('Phi adoption authority is unavailable')
+                return () => {
+                  lease.release()
+                  if (adoption === lease) adoption = undefined
+                }
+              },
+              adopt: async (snapshot, adoptionSignal) => {
+                adoptionSignal.throwIfAborted()
+                signal.throwIfAborted()
+                assertAdoptionPolicy()
+                // Project first, so an unsupported public shape cannot commit an unrenderable attachment.
+                if (epoch !== runtimeEpoch)
+                  throw new RuntimeReferenceError('STALE_GENERATION', '旧远程代次不能采用新状态')
+                const projected = stateFrom(snapshot)
+                if (rotating) selectionState = projected
+                else state = projected
+                if (!adoption) throw new Error('Phi adoption lease was retired')
+                const { phiSessionId: adoptedPhiId, ...publicReference } = snapshot.reference
+                if (adoptedPhiId !== phiSessionId) throw new Error('Verified Phi identity changed')
+                const adopted = adoption.adopt({
+                  ...publicReference,
+                  checkpoint: {
+                    leafId: snapshot.checkpoint.leafId,
+                    verifiedAt: new Date().toISOString()
+                  }
+                })
+                attachedReference = adopted.runtimeRef
+              },
+              onInterrupted: (error) => {
+                if (epoch !== runtimeEpoch) return
+                interrupted = true
+                tools?.dispose()
+                adoption?.release()
+                detach?.()
+                if (runtime && !rotating)
+                  void runtime
+                    .close(error)
+                    .finally(disposeSelected)
+                    .catch(() => undefined)
+                selected.onInterrupted?.(error)
+              }
+            })
+          }
+          runtime = await startRuntime(
+            model,
+            reference
               ? {
                   type: 'resume',
                   reference: { ...reference, phiSessionId },
                   savedModel: chosenModel
                 }
               : { type: 'new', model: chosenModel },
-            tools: tools.tools.filter((tool) => names.has(tool.name)),
-            hostApprovalFor: tools.approvalFor,
-            nativeTools: selected.nativeTools,
-            foregroundChildren: selected.foregroundChildren && {
-              binding: deriveProductionChildBinding(binding, selected),
-              definitions: selected.foregroundChildren.definitions,
-              parentThinkingLevel: childThinkingLevel(initial.thinkingLevel, model.reasoning),
-              currentParentRun: () => {
-                const run = submittedRun
-                return run && options.runners.getActiveRun(phiSessionId) === run ? run : undefined
-              },
-              onApprovalEvent: createFacadeChildApprovalWriter({
-                phiSessionId,
-                cwd: binding.canonicalRoot,
-                runners: options.runners,
-                notify: selected.foregroundChildren.onApprovalEvent
-              })
-            },
-            recentUserImages: tools.recentUserImages,
-            browserTextVault: vault,
-            approval: selected.approval,
-            signal,
-            beforeCheckpoint: (checkpointSignal) => {
-              if (firstCheckpoint) firstCheckpoint = false
-              else {
-                const expected = attachedReference
-                adoption = beginRuntimeReferenceAdoption(phiSessionId, scope, generation, {
-                  signal: checkpointSignal,
-                  expectedOmpSessionId: expected?.ompSessionId,
-                  expectedJournalBasename: expected?.journalBasename
-                })
-              }
-              const lease = adoption
-              if (!lease) throw new Error('Phi adoption authority is unavailable')
-              return () => {
-                lease.release()
-                if (adoption === lease) adoption = undefined
-              }
-            },
-            adopt: async (snapshot, adoptionSignal) => {
-              adoptionSignal.throwIfAborted()
-              signal.throwIfAborted()
-              assertAdoptionPolicy()
-              // Project first, so an unsupported public shape cannot commit an unrenderable attachment.
-              state = stateFrom(snapshot)
-              if (!adoption) throw new Error('Phi adoption lease was retired')
-              const { phiSessionId: adoptedPhiId, ...publicReference } = snapshot.reference
-              if (adoptedPhiId !== phiSessionId) throw new Error('Verified Phi identity changed')
-              const adopted = adoption.adopt({
-                ...publicReference,
-                checkpoint: {
-                  leafId: snapshot.checkpoint.leafId,
-                  verifiedAt: new Date().toISOString()
+            reference
+              ? {
+                  model,
+                  thinkingLevel: expectedThinking ?? 'off',
+                  assertCurrent: assertAdoptionPolicy,
+                  signal
                 }
-              })
-              attachedReference = adopted.runtimeRef
-            },
-            onInterrupted: (error) => {
-              interrupted = true
-              tools?.dispose()
-              adoption?.release()
-              detach?.()
-              if (runtime)
-                void runtime
-                  .close(error)
-                  .finally(disposeSelected)
-                  .catch(() => undefined)
-              selected.onInterrupted?.(error)
-            }
-          })
+              : undefined
+          )
           state ??= stateFrom(runtime.currentSnapshot())
           const currentState = (): WorkerSessionState => structuredClone(state!)
-          detach = runtime.onEvent((frame) => {
-            try {
-              const event = projector.event(frame)
-              if (event) sink.event(event)
-            } catch (error) {
-              void runtime!.close(error)
+          const attachEvents = (owner: RemoteSessionRuntime): void => {
+            detach = owner.onEvent((frame) => {
+              if (runtime !== owner || rotating) return
+              try {
+                const event = projector.event(frame)
+                if (event) sink.event(event)
+              } catch (error) {
+                void owner.close(error)
+              }
+            })
+          }
+          attachEvents(runtime)
+          const changeSelection = async (
+            requestedModel: RuntimeModel | undefined,
+            requestedThinking: ThinkingLevel | undefined,
+            thinkingOnly: boolean,
+            control?: RuntimeSelectionControl
+          ): Promise<WorkerSessionState> => {
+            if (
+              closing ||
+              interrupted ||
+              submittedRun ||
+              metadataPending ||
+              options.runners.getActiveRun(phiSessionId) ||
+              !runtime!.isReady
+            )
+              throw new Error('Remote selection requires an idle Phi session')
+            const oldRuntime = runtime!
+            const oldReference = attachedReference
+            const controller = new AbortController()
+            const assertCurrent = (): void => {
+              signal.throwIfAborted()
+              controller.signal.throwIfAborted()
+              control?.assertCurrent()
+              assertAdoptionPolicy()
+              if (
+                closing ||
+                options.runners.getActiveRun(phiSessionId) ||
+                JSON.stringify(findPhiSessionById(phiSessionId)?.runtimeRef) !==
+                  JSON.stringify(attachedReference)
+              )
+                throw new RuntimeReferenceError('STALE_GENERATION', '远程选择的会话或代次已改变')
             }
-          })
+            assertCurrent()
+            metadataPending = true
+            selectionAbort = controller
+            let retired = false
+            let candidate: RemoteSessionRuntime | undefined
+            try {
+              const catalog = await options.models(params.agentDir)
+              assertCurrent()
+              const target = requestedModel ?? currentState().model
+              const trusted = catalog.find(
+                (item) => item.provider === target?.provider && item.id === target?.id
+              )
+              const bootModel = catalog.find(
+                (item) =>
+                  item.provider === expectedModel?.providerId && item.id === expectedModel?.modelId
+              )
+              if (!trusted || !bootModel || !oldReference)
+                throw new Error('Selected model is unavailable in the trusted desktop registry')
+              const thinking = selectionThinking(
+                trusted,
+                thinkingOnly
+                  ? requestedThinking
+                  : (control?.preferredThinkingLevel ?? expectedThinking),
+                thinkingOnly
+              )
+              if (thinkingOnly) {
+                const levels = await oldRuntime.readThinkingLevels()
+                assertCurrent()
+                if (!levels.includes(thinking.rpc))
+                  throw new Error('Remote SDK does not support the requested thinking level')
+              }
+              if (selected.foregroundChildren) childThinkingLevel(thinking.phi, trusted.reasoning)
+              if (
+                expectedModel?.providerId === trusted.provider &&
+                expectedModel.modelId === trusted.id &&
+                expectedThinking === thinking.phi
+              )
+                return currentState()
+              models = catalog
+              rotating = true
+              retired = true
+              ++runtimeEpoch // A retiring channel cannot close or publish through the replacement.
+              detach?.()
+              detach = undefined
+              await oldRuntime.close()
+              assertCurrent()
+              candidate = await startRuntime(
+                bootModel,
+                {
+                  type: 'resume',
+                  reference: { ...oldReference, phiSessionId },
+                  savedModel: { provider: bootModel.provider, id: bootModel.id }
+                },
+                {
+                  model: trusted,
+                  thinkingLevel: thinking.rpc,
+                  assertCurrent,
+                  signal: AbortSignal.any([signal, controller.signal])
+                }
+              )
+              assertCurrent()
+              if (!candidate.isReady || !selectionState)
+                throw new Error('Remote selection did not produce a verified checkpoint')
+              const next = { providerId: trusted.provider, modelId: trusted.id }
+              updateSessionManifest(phiSessionId, { model: next, thinkingLevel: thinking.phi })
+              expectedModel = next
+              expectedThinking = thinking.phi
+              runtime = candidate
+              state = selectionState
+              selectionState = undefined
+              rotating = false
+              attachEvents(candidate)
+              sink.state(currentState())
+              return currentState()
+            } catch (error) {
+              if (retired) {
+                interrupted = true
+                tools?.dispose()
+                adoption?.release()
+                await candidate?.close(error).catch(() => undefined)
+                await oldRuntime.close(error).catch(() => undefined)
+                await disposeSelected().catch(() => undefined)
+              }
+              throw error
+            } finally {
+              rotating = false
+              metadataPending = false
+              if (selectionAbort === controller) selectionAbort = undefined
+            }
+          }
+          const beginSelection = (
+            ...args: Parameters<typeof changeSelection>
+          ): Promise<WorkerSessionState> => {
+            const wasPending = metadataPending
+            const operation = changeSelection(...args)
+            if (!wasPending && metadataPending) {
+              selectionPending = operation
+              void operation
+                .finally(() => {
+                  if (selectionPending === operation) selectionPending = undefined
+                })
+                .catch(() => undefined)
+            }
+            return operation
+          }
           return {
             get isLive() {
               return (
@@ -576,6 +770,8 @@ export function createFacadeSessionFactory(
                 }
               }
             },
+            setModel: (next, control) => beginSelection(next, undefined, false, control),
+            setThinkingLevel: (level, control) => beginSelection(undefined, level, true, control),
             async contextUsage() {
               if (
                 closing ||
@@ -632,6 +828,9 @@ export function createFacadeSessionFactory(
               }
             },
             async abort() {
+              const pendingSelection = selectionPending
+              selectionAbort?.abort(new Error('Remote selection cancelled'))
+              if (pendingSelection) await pendingSelection
               const run = submittedRun
               const drain = run && tools?.captureNotebookExecutionDrain(run.runId)
               stopSubmittedRun()
@@ -656,6 +855,9 @@ export function createFacadeSessionFactory(
             },
             dispose() {
               return (closing ??= (async () => {
+                const pendingSelection = selectionPending
+                selectionAbort?.abort(new Error('Remote selection disposed'))
+                await pendingSelection?.catch(() => undefined)
                 const drain = tools?.captureNotebookExecutionDrain()
                 stopSubmittedRun()
                 let failed = false
