@@ -83,6 +83,32 @@
 
 本轮 main 大入口仅修改原服务注册/发布接缝，作为既有架构债保留。JobManager 为 919 行，保留现有接受、持久化、进度和结束的同一所有者，避免在取消修复中机械拆分；host scope 和 remote controller 已分离。新实际流程与边界场景 helper 分别 349/372 行。真实 SSH/provider/OAuth、Slurm/Nextflow 环境和跨应用冷 origin 恢复尚未验证，沿 T16/T15 继续；默认 RPC 和 `run_cell` 门槛未变。
 
+## T12 完整宿主工具交付（2026-10-14）
+
+用户要求完成原 T12 全部功能后合并。本轮沿 `719dada3`/`5977c2dc` 复用已验收的 Notebook 编写、Wrapper 与交付物，补齐原 R4 工具清单；没有更换任务编号、重建服务、增加依赖或默认启用 RPC。全部模块和中央装配已分别定向验证及独立 APPROVE，固定候选全量及本地合并收尾中；最终 tree、统计及本地合并以本节后续整合记录为准。
+
+| 原 T12 能力 | 实现及实际应用证据 | 状态与边界 |
+|---|---|---|
+| Notebook 七工具 | 六个编写工具沿 `719dada3`；`dd2b7b25` 复用真实 Jupyter HTTP/WebSocket，补执行取消、interrupt ACK/对应终态、旧 owner token、内核隔离和显式 retire；真实应用调用、保存、同 journal 新代无重放、拒绝与停止通过。 | 模块独立 APPROVE；取消未确认不释放 kernel，已开始磁盘写入不承诺回滚。 |
+| Wrapper 六工具、`present_files` | `5977c2dc` 已验收的真实 JobManager/CLI 与远端产物路径继续复用，接受后后台作业独立于聊天停止。 | 模块独立 APPROVE；跨应用重启后无法证明 origin 的旧作业拒绝接管，完整冷恢复属 T15。 |
+| `skill_run`、声明脚本、`env_request` | main 可信资源快照、远程 SkillService/环境/controller 与实际 SSH dispatch 守卫；声明撤销、禁用、源变更和取消后不提交；实际成功、拒绝及待批停止场景通过。 | 主进程决定执行位置；远程快照缺失明确拒绝，不读取本机同名脚本。 |
+| Library 六动作、搜索 | 复用 `d94f10cd`/`a29e0ce2` 的真实服务；实际 app 六动作、审批、同 journal 恢复和异步查找期间停止/改绑通过，搜索实际流程与停止通过。 | 来源和权限由 main 选定，结果仍遵守既有 SDK 冷恢复字段上限。 |
+| `ask_user_question`、`render_blocks`、`palette` | 实际应用/CLI 调用原交互服务与工具，批准/停止/peer 场景及公开消息中的 block、palette 内容通过。 | 原请求身份和公共结果路径，未增加界面占位实现。 |
+| 下载 | `18f33bec` 复用下载 data plane、原 SSH 句柄、保留/发布流程；实际 app、取消/改绑、迟到清理及新代续传验证通过。 | 独立 APPROVE；旧取消不能停新传输。已发出的原子发布记录真实产物，不承诺回滚。 |
+| HTTPS MCP 及既有 stdio 策略 | `89ab6fd8` 复用实际 OmpBridge 资源 worker、MCPManager、AuthStorage 和只读设置；真实 HTTPS、存储 OAuth、stdio、schema/撤销、取消、图片和完整大结构结果通过。 | 独立 APPROVE；401/403 不自动重放工具调用，私有认证同时从字段名和值隔离。真实外部 OAuth 仍属 T16。 |
+| browser（含 typeText） | 同一 vault 及真实 HostCoordinator/IPC/WorkspaceRegistry；服务端 SDK 产生公共事件、签名、journal 前安全投影，原文仅由私有 vault 送实际宿主。实际批准/拒绝/停止通过。 | 不安全 replay 元数据、rawBlock 和 Cursor tool-call 别名必须投影或在历史 adoption 前拒绝；`ff960e71` 独立 APPROVE：原两项 P1 修后 CLI 2/2、单测 19/19；最后四组合别名回归及原遮盖 probe 通过，14 文件哈希无漂移。 |
+| 大 `host_tool_update` | 复用既有私有结果文件、receipt、顺序队列与 hydration，真实注册 SDK 工具在公开 update 前消费完整结果；终态等待进度完成，取消中上传保留原 controller。 | 保留 1 MiB 输入帧、既有私有文件及逻辑结果预算；没有以扩大协议上限规避限制。 |
+
+Notebook 物理执行模块的首次复审发现：interrupt 失败/没有终态时 finally 仍释放 kernel，迟到旧 interrupt 可能影响新执行。修复复用 owner token，不新增 kernel registry；失败确认保持隔离直到显式 retire，成功 ACK 缺终态等待对应终态，旧清理不能释放新 owner。执行者真实 HTTP/WebSocket 及故障回归通过，独立真实 5 项、原 WebSocket 7 项、取消/超时/旧 owner 7 项和原两故障负例通过，8 文件冻结后保存为 `dd2b7b25`。各组有交集，不相加作为全库数量。
+
+下载复审复现：原 transfer 完成但 SSH close 仍挂起时保留旧 handle，迟到取消会误停复用 transferId 的新续传。修复在原 handle 的 completion settle 时按引用清空，原 SSH 清理继续执行。独立关键 11 项、held-close 新回归及原故障 probe 通过，新会话继续完成 8193 字节。6 文件冻结后保存为 `18f33bec`；实际 app 使用同一 manager/control 接缝。
+
+MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动压缩和额外模型请求，原日志保留；最终仅让测试模型声明真实 1M context，未禁用维护/压缩、未提高生产预算。70,000 组中文/emoji 的完整结构、图片字节及下一轮模型历史核对通过。复审复现 SDK 的 `onAuthError` 会在 401/403 后自动重发工具，以及认证可由 object key 泄漏；修复仅在工具执行前永久关闭该拥有连接的自动 auth retry，并递归安全处理字段名碰撞。独立原 probe 证明每调用只发送一次、并发 401/403 各一次、后续明确新调用成功；6 个结构值全保留，事件/历史/模型请求/worker stdout 无合成凭据。最终模块 14/14、独立精确 4/4 和原两故障 probe 通过，15 文件冻结保存为 `89ab6fd8`。
+
+中央入口沿原13个生产接缝，工具资源由 main loader 选定并随该代关闭；只为可信 `notebook.run_cell` 追踪原服务 promise，facade 的 prompt-finally/abort/dispose 等真实执行结算后再释放选定依赖。普通工具校验失败继续交模型处理，物理取消未确认保留错误及内核隔离；不能以 host bridge 提前终态代替实际内核停止。执行者 28 个实际 app 模式各取得自然退出的通过日志，最后 scope 22/22、main 238/238、旧 Notebook/Wrapper 流程 2/2、UI 五模式最终 5/5，生产类型及 29 文件 lint 通过；范围有交集，不将分组日志称作单次全量。中央冻结保存为 `8449d073`，独立 APPROVE：实际 app/CLI 6/6（100.64 秒）、真实 Notebook drain 2/2、dispatch/资源快照 10/10、部分 loader 失败/abort 清理 probe 2/2；29 文件 lint 通过，生产 13 与测试/helper 16 的哈希前后一致。定向测试类型中旧 main harness 90→90，其余中央路径零诊断。
+
+结构判断：保留现有 Notebook execution 的单一协议/所有权实现（985 行）、数据平面的同一传输生命周期（627 行）、OmpBridge 的 worker/event/idle 生命周期（691 行）、宿主调用/进度队列（616 行）、远程代次生命周期（799 行）及 facade 的代次清理（715 行）；分别已有 router、会话、MCP adapter 和 helper 边界，不在安全修复中机械拆分。main 大入口是既有架构债，本轮只修改原服务接缝。完整 T11 provider/history 矩阵、T13 剩余主控制、T14 专家资源/后台/steer、T15 跨应用资源/作业冷恢复、T16 两台真实主机/provider/OAuth/UI/Finder 和稳定后的 T18 仍按原依赖执行。
+
 ## 冻结整合验收
 
 最新 main 整合验收（2026-10-14）：迁移 `0c5d6753` 与 main `acbbb6b8` 的组合 tree `a4a43a8daf43fb57174a8789921a550386794822` 标准并发 4 全量 **5864 项：5839 通过、0 失败、0 取消、24 既有跳过、1 todo，879.08 秒**。前后 2478 个跟踪文件及 tree 完全一致；实际 main 合并 `631671e6` 的 tree 与此候选相同，保留 main 聊天布局逐字一致。独立聊天回归 71/71。合并后主工作区依赖按 frozen lockfile 同步，coding-agent/natives/ai/catalog/tui/utils/wire 均核对为 18.10.3；主工作区生产类型、完整 lint、构建、asar 和真实终端 4 项 smoke 通过，保留两条既有格式警告。本轮标准全量已通过，不抹去下列历史计时失败，也不据此声称真实 SSH/provider/OAuth/Finder 或默认远程启用已验收。
@@ -104,7 +130,7 @@
 ## 当前未通过或未完成的项目
 
 - **T11/R3：** 已复现的 Anthropic opaque thinking、仅终态注册 API 缺口和完整工具列表的出站 DTO 均已独立验收；保留完整 schema、本地执行器和推测执行。真实 CLI 已复现 side ephemeral 通道丢失 opaque 及稀疏 thinking 内容；主通道修复不覆盖 SDK 捕获的 side/advisor/maintenance/autolearn 闭包，公开 custom handler 也仍位于外层 normalization 之内。上游最新补丁的定点源码仍保留该路径，未发现可用的全通道接缝或修复；独立 SDK 复现材料已准备但未发送，未修改 SDK、关闭默认维护或宣称完整 R3。Cursor RPC 断流恢复已另验收为 `044bac9b`；完整 KV/history replay 与剩余提供商矩阵仍待验收。
-- **T12/R4：** 完整最终结果及共享真实 browser、notebook、skills、环境、wrapper 等桌面服务适配已验收，继续保留 1 MiB 输入帧预算。远程 Library 六动作及并发、取消、恢复、真实审批已独立验收并保存为 `d94f10cd`，13 文件、149 项限定验证通过。真实桌面 SDK 搜索基础已独立验收并保存为 `a29e0ce2`，16 文件及精确 SDK 边界清单。空 Basic 用户名、原生模型头、HTTP 规范化与标准 JSON 转义的错误凭据泄露，以及命令凭据 helper 所有权问题均有原失败证据并已闭环。前版独立 76 项、最后两文件增量独立 40 项通过，16 文件哈希稳定；没有将前版计数冒充最终重跑。命令型凭据与旧发现缓存明确拒绝，成功结果不脱敏，未在产品 facade 默认开启；MCP、browser 输入在签名前的隐私处理及大进度事件尚未全部接入。
+- **T12/R4：** 原清单全部宿主工具已完成实现及模块定向验收，中央装配已独立 APPROVE，固定候选全量及本地合并收尾中，见上文完整交付记录。保留 1 MiB 输入预算；真实 SSH/provider/OAuth 属 T16，跨应用资源/后台冷恢复属 T15；不能把旧全量结果当成本轮最终结果。
 - **T13/R5：** 主运行权限及生产主会话组合已验收。审查复现的宿主桥致命故障悬挂和假就绪问题已修复，独立故障回归通过；实际 CLI 覆盖写入、拒绝、取消及恢复。真实 PhiEngine 路由、存储 adopter 与公共事件投影的 16 文件增量已通过独立 27 项复验，修复旧代清理误停新运行、模型清单不一致、损坏引用触发本地 I/O，以及丢失维护事件四项问题。打包闭包先以 `35ac4c49` 独立保存，应用路由保存为 `8ffb187d`；独立副本仅包含这 18 文件及已提交基础代码，构建、lint、生产类型、asar 检查及 30 项真实回归通过，18 文件哈希一致。上下文与名称控制已另行独立验收为 `356b3583`，19 项真实回归通过；真实前台 task 应用组合已保存为 `f148a977`；`3423a650` 已接通实际应用显式 opt-in，其他产品控制继续实施，默认入口仍为旧实现。关联主宿主审批的终态重入已随 `2837875b` 修复并独立验证，仅复核受影响接点，未重开旧阶段审查。
 - **T14/R6：** 定义编译、真实 CLI 探针和原生子权限基础 `2837875b` 已验收；准入控制底座 `39678516` 与真实前台 task 应用组合 `f148a977` 已分别通过独立审查。真实批准、拒绝、审批中停止、运行中停止、迟到启动、同调用 ID 的不同子身份、双 Phi 会话隔离、主子审批状态、重入关闭、持久失败及显式恢复均有保留的限定证据；最后停止缺口与结果分类问题已闭环，验证版本边界见上文。完整 SDK 启动前准入、实际设置/工具注册表及选定定义不可变性仍未证明；显式关闭本阶段不支持的启动功能只是必要防御，能力继续默认关闭。完整 edit、资源/环境、后台、steer、服务代理与唤醒仍待实现，不宣称完整 R6 或产品开放。
 - **T15/R7：** 持久化启动、严格全分支验证及真实 SDK 默认 tool-output shake 机器标记和 `.shake.log` 资产验证均已验收；facade adoption 增量已完成限定审查，`3423a650` 已验证受控产品路径的新实例恢复同 journal；完整资源和后台能力仍待接入。实际搜索验证发现锁定 SDK 持久化对通用字符串按每字段 500,000 字符截断并附提示；本轮保持真实 SDK 的冷恢复语义，不把实时大结果无损传输表述为冷恢复全文无损。header preflight 不替代完整 transcript/blob 验证；公开 switch 的同 UID 外部文件替换残余及首次验证前非内容寻址 shake 文件的历史真实性不作消除声明。
@@ -114,6 +140,6 @@
 
 按新增范围分工实施，独立审查发现问题后先修复并重跑原断言；已验收旧范围仅在受影响时复核。通过的冻结基础代码持续保存在可回溯提交，WIP 与故意保留的失败对照不混入冻结全套验收副本。
 
-`3423a650` 已把原有 facade 接入实际主进程和 runtime-adapter：`PHI_REMOTE_OMP_RPC=1` 显式选择 RPC，`PHI_REMOTE_OMP_AGENTS` 按名字选择主进程目录中的完整专家定义，renderer 定义不能授予权限。实际 CLI 验证可信 Checker 写入、审批中停止和迟到批准、异步选择的过期/取消，以及新实例恢复同 journal 且不重放请求。控制范围为原生主工具及专家 read/write/bash；环境、skills、警告或其他工具的专家定义，以及未支持的 persona/context/memory/MCP/skills/compaction 配置明确拒绝。未启用时保留本地和旧远程路径。关闭报错曾跳过选定连接释放，原失败已保留并修复；次要释放错误不替换原错误，重复释放仅执行一次。facade 现为 665 行，保留同一代次的 adoption/验证/关闭所有权，不为减少行数机械拆分。
+`3423a650` 已把原有 facade 接入实际主进程和 runtime-adapter：`PHI_REMOTE_OMP_RPC=1` 显式选择 RPC，`PHI_REMOTE_OMP_AGENTS` 按名字选择主进程目录中的完整专家定义，renderer 定义不能授予权限。实际 CLI 验证可信 Checker 写入、审批中停止和迟到批准、异步选择的过期/取消，以及新实例恢复同 journal 且不重放请求。控制范围为原生主工具及专家 read/write/bash；环境、skills、警告或其他工具的专家定义，以及 T13 未支持的 persona/context/memory/compaction 配置明确拒绝；主会话 MCP/skills 现沿上文 T12 的可信选定资源接入。未启用时保留本地和旧远程路径。关闭报错曾跳过选定连接释放，原失败已保留并修复；次要释放错误不替换原错误，重复释放仅执行一次。facade 现为 715 行，保留同一代次的 adoption/验证/关闭所有权，不为减少行数机械拆分。
 
 生产远程能力默认开放前，需要同时具备完整模型通道、真实宿主服务、主/子权限与审批、严格持久恢复及 R8 实机结果；当前实际应用接线只验收上述受控范围，不代表 T11–T15 全部完成。禁止远端失败后回落到本地执行、隐式重放中断 prompt 或用模拟对象冒充完整 SDK session。已按用户新授权合入本地 main；后续真实服务器验证和默认启用仍是独立门槛。

@@ -118,11 +118,13 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 `3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
 
-本阶段开放原生主工具、6 个 Notebook 编写工具（`list/read/insert_cell/update_cell/delete_cell/save`）、6 个 Wrapper 工具（`wrapper_search/inspect/run/status/wait/cancel`）及 `present_files`，复用既有 adapter、作业管理器和远端服务。`notebook.run_cell` 尚无实际 kernel 中断所有权，暂不登记。persona/context/memory/MCP/skills/compaction 等未接入配置仍明确报错，不能静默丢弃或回退本机。已有原生审批界面处理批准、拒绝和停止；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。具名专家、停止及恢复经过实际应用安装器/runtime-adapter/CLI 回归，但不是线上 SSH/provider 或默认开放验收。
+T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory/compaction 等 T13 未支持配置仍明确报错；专家资源/环境及后台能力另由 T14 验收。恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。这是受控 opt-in 的自动化交付，真实 SSH/provider/OAuth/Finder 及默认开启仍按 T16 门槛。
 
 Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 [Notebook 增量验收记录](omp-remote-acceptance.md#t12-notebook-实际应用增量2026-10-14)。
 
 Wrapper 升级回归须区分准入、等待和作业取消：环境/目标异步检查后，取消或改绑不得接受 job；被接受后 job 独立于聊天停止，保持原 target。停止 wait 只结束等待，明确 cancel 才终止作业；直接运行和 sbatch 写脚本后的实际提交前仍须检查原 job Control。status/list/wait/cancel 仅允许该 RPC Phi 会话/项目及对应 host/profile/root，列表先过滤归属再限数量，不得通过外会话查询阻止完成唤醒。复用旧 origin 映射，同应用新代恢复可继续查原 job；重启后无法证明归属的旧 job 明确拒绝，T15 冷恢复后续补齐。交付物须在远端验证后、发布前复核取消/原 run/项目绑定，结果保持远端 URI，不能打开本机同名文件。本轮实际场景和独立复验已证明同 Phi 新代恢复不重复启动，以及完成后只继续所属会话一次；使用隔离 SSH/Nextflow fixture，真实服务器与 Slurm/Nextflow 环境仍待 T16。完整结果见 [Wrapper 与交付物增量验收](omp-remote-acceptance.md#t12-wrapper-与交付物实际应用增量2026-10-14)。
+
+T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对应执行终态，未确认时隔离 kernel，facade 关闭不得提前释放原服务；旧取消不能影响新 run、peer kernel 或新下载续传。技能/环境在最终 SSH dispatch 前复核取消和可信声明，缺远程快照不得读本机路径。browser 的 typeText 只进入私有 vault 与实际宿主，公开事件、SDK journal 和下一轮模型请求不得含原文；对 rawBlock/providerMetadata/thoughtSignature 及 `name`/`toolName` replay 别名同样检查，旧不安全历史须在 adoption 前拒绝。MCP 401/403 只发送一次，下一次用户明确调用才再次执行；私有认证不能借 object key 或碰撞字段泄漏。大进度先完成有序 receipt hydration 才返回最终结果，取消中上传仍由原 controller 清理。实际 app、官方 CLI 和故障复审证据见 [T12 完整交付](omp-remote-acceptance.md#t12-完整宿主工具交付2026-10-14)。
 
 升级时增加 `app-remote-session-routing.test.ts`、`engine-facade-selected-cleanup.test.ts` 与 `engine-facade-child-composition.test.ts` 的相关回归。关闭失败仍须释放本阶段持有的连接，保留原始失败；不能因为清理错误跳过释放，也不能以关闭成功替代原生取消确认。
 

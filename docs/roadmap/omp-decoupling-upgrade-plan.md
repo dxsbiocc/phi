@@ -22,7 +22,7 @@
 
 下文“验收记录”指 [OMP 远程运行时验收记录](../runtime/omp-remote-acceptance.md)，引用行号对应本次规划时的已保存证据。
 
-OMP 18.10.3、引擎边界、RPC 基础、受控前台专家及显式恢复已合入 main；这表示阶段成果可继续开发，不表示 T11–T15 的全部产品能力完成。最近 main 组合验收 5864 项，5839 通过、0 失败、24 既有跳过、1 todo。T12 已复用既有服务接通 6 个 Notebook 编写工具、6 个 Wrapper 工具和交付物展示，并分别通过限定验收；`run_cell` 和其他工具族继续受控，资源和复杂专家配置仍明确拒绝。依据：[验收记录](../runtime/omp-remote-acceptance.md)的“冻结整合验收”及两批 T12 实际应用增量；`src/main/agent/remote-session-routing.ts`。
+OMP 18.10.3、引擎边界、RPC 基础、受控前台专家及显式恢复已合入 main。原 T12 的 Notebook 七工具、Wrapper 六工具、交付物、下载、skills/声明脚本与环境、Library/搜索、用户交互、MCP、browser 输入隐私及大进度事件已复用既有服务完成实现，正在对固定组合候选做最终验收及本地合并。此前 main 全量 5864 项零失败只对应旧 tree；本轮完整结果另记，不以限定测试代替。T11 完整模型通道、T13 剩余主控制、T14 完整专家能力、T15 冷恢复和 T16 实机仍各自保留门槛。依据：[验收记录](../runtime/omp-remote-acceptance.md)的 T12 完整交付及冻结整合验收；`src/main/agent/remote-session-routing.ts`。
 
 后续目标是交付一套可用的本地/远程科研工作台：用户从实际会话发起任务，使用 Notebook、分析流程、技能、环境和连接器，能看到进度、处理审批、停止任务、恢复历史，并且清楚工作在哪台机器上执行。优先完成远程科研业务，再完成实际环境验收和内部 beta 交付，稳定后删除旧实现。
 
@@ -32,7 +32,7 @@ OMP 18.10.3、引擎边界、RPC 基础、受控前台专家及显式恢复已�
 
 | 原任务 | 剩余范围与实施顺序 | 完成标准 | 依据 |
 |---|---|---|---|
-| **T12：宿主工具桥接，当前主线** | Notebook 编写及 Wrapper/交付物实际接入已通过限定验收；下一批接 skills/声明脚本与环境，随后 Library/搜索/用户交互，再补 MCP、browser 输入隐私与大进度事件。Notebook 运行另补真实中断所有权后开放。每组是本任务的小提交，不另立总计划。 | 从实际 RPC 应用入口调用服务；项目/主机正确；批准、拒绝、取消和恢复有效；结果、进度及文件引用可见；敏感参数不进入公开记录。 | 验收记录的两批 T12 实际应用增量；原 R4 工具清单 |
+| **T12：宿主工具桥接** | 原 R4 工具清单及下载/搜索已完成实现；各模块及统一应用装配已独立 APPROVE，固定候选全量及本地合并收尾中。 | 从实际 RPC 应用入口调用服务；项目/主机正确；批准、拒绝、取消和恢复有效；结果、进度及文件引用可见；敏感参数不进入公开记录。 | 验收记录的 T12 完整交付；原 R4 工具清单 |
 | **T11：模型代理与隧道，并行收尾** | 保留已验收 Cursor 断流修复；补支持的 provider 与完整 history/KV replay 矩阵，处理辅助通道 opaque/sparse 内容丢失。锁定本轮 18.10.3。 | 工具 schema、thinking、下一轮历史和取消正确；每个支持通道有真实 SDK 证据。无可行公开修复的缺口明确记录影响和解除条件，不把主通道通过写成全通道通过。 | 验收记录第 76 行 |
 | **T13：主会话审批及应用接入收尾** | 为新接入服务补确认/选择/输入和审批；补实际应用尚未接通的模型、思考级别、压缩等控制，已完成的名称/上下文接口只复用。 | 按准确 session/run 路由；后台审批可见；项目权限变化作用于后续调用；拒绝/停止无迟到副作用；控制值与 SDK 实际状态一致。 | 验收记录第 78 行；内部 beta P0 Approval/Model Scope |
 | **T14：子智能体与子会话审批** | 先支持真实科研专家所需 edit、skills、环境和服务代理；再补并行/后台、status/wait/steer/stop；最后补完成唤醒与生命周期。 | 主进程可信定义与实际工具/环境一致；子任务不能扩大权限；停止一个任务不影响其他会话；后台完成只通知正确父会话；唤醒不制造重复任务。 | 验收记录第 79 行；原 R6 与 D4 |
@@ -41,17 +41,17 @@ OMP 18.10.3、引擎边界、RPC 基础、受控前台专家及显式恢复已�
 | **T17：升级手册，贯穿全程** | 已有手册随每次实际交付补充：版本、部署、开关、支持范围、验证证据及回退。 | 新工作区能按记录复现安装、运行和回退；未测项如实标明；无需从头再写手册。 | 原阶段 5 与 `docs/runtime/omp-upgrade-runbook.md` |
 | **T18：清理旧实现，稳定后执行** | 新路径完成 T16、切换默认并稳定一个升级周期后，删除旧远程 read/write/edit/bash/search、分支及无用测试/白名单。 | 调用与打包引用已清空，普通本地会话不受影响；旧历史处理已验证；没有为兜底偷偷回落到本机执行。 | 原 R9 与 T18 依赖 |
 
-### T12 当前交付：Notebook 编写、Wrapper 与交付物
+### T12 当前交付：原 R4 全部宿主工具
 
-范围限定为主进程的可信宿主工具选择、已有 Notebook 服务接入和实际应用路径测试。复用现有 Notebook adapter、HostServiceRegistry 和审批 writer，不重复实现 Notebook、RPC 或运行时。
+沿原任务复用既有 builder、HostServiceRegistry、Notebook/Wrapper/Library/环境/下载服务、OMP 资源 worker 和 MCP manager。主进程可信资源快照选择工具及执行位置，renderer 参数不能授予资源权限；工具执行前继续核对 signal、原 run 和当前项目/主机绑定。
 
-实际应用已登记 `list/read/insert_cell/update_cell/delete_cell/save`，复用原工具名册与服务。真实应用安装器/runtime-adapter/CLI 的 5 个场景通过：读取、更新 draft、批准保存；拒绝或待批停止不落盘；后端查找期间停止或更改 SSH 绑定不进入执行；同 journal 新代恢复后显式读取且无隐式重放；另一项目的 Notebook cwd、draft 和磁盘独立。已批准的 draft 修改不因后续 save 被拒绝而撤销，已开始的磁盘 I/O 不承诺回滚。
+Notebook 七工具已登记，`run_cell` 以真实 kernel interrupt ACK 和对应 execute_reply/idle 终态确认停止；未确认的 kernel 保持隔离，旧 run 清理不能释放新执行。Wrapper 的接受、等待和取消边界沿已验收实现：接受后后台 job 独立于聊天停止，同应用新代可查同一 job；跨应用冷 origin 恢复仍属 T15。
 
-`notebook.run_cell` 暂不登记：已有执行链没有真实 kernel 中断所有权。原服务和 schema 保留；后续补齐中断语义再开放，不重写 Notebook 或 kernel。实际入口仍须显式设置 `PHI_REMOTE_OMP_RPC=1`，默认值未变。
+skills/声明脚本与 `env_request` 复用远程环境及 runtime，声明撤销、禁用、源变更和最终 SSH dispatch 都复核。远程项目缺失资源快照时明确拒绝，不能读取本机同名文件。Library 六动作和搜索复用已有服务及真实审批；`ask_user_question`、`render_blocks`、`palette`、`present_files` 和下载经原界面/发布路径返回。下载取消只持有原传输句柄，迟到旧取消不能停止新续传；已发出的原子发布不承诺回滚，记录真实产物并抑制过期成功。
 
-实现接缝仍为 `src/main/agent/remote-session-routing.ts`、现有 `desktop-tool-scope.ts` 的 Notebook builder，以及 main Notebook 服务注册。只补可信工具选择、桌面私有取消信号和后端查找后的原始会话/项目绑定复核。本轮进一步复用 Wrapper 的 6 个现有工具和 `present_files`，仅补实际名单及所属会话/项目、取消和远端结果发布边界；首条真实应用/CLI 流程已通过启动、查询、等待、展示和同 journal 新代恢复，无重复启动。Wrapper 启动的准入检查只约束作业被接受前；接受后后台作业保持原目标并独立于聊天停止。停止等待不取消作业，明确取消才进入原物理取消流程。归属复用现有持久 origin 与应用生命周期内的 Phi 映射，不新增 registry；应用重启后无法证明归属的旧作业拒绝接管，完整冷恢复仍属 T15。本轮 7 个实际场景按独立日志通过；独立关键 3/3、main 5/5 及必要边界复验通过，构建/类型/lint/asar 通过。完整数字与未测项见验收记录。
+MCP 经选定的真实资源 worker/manager 发现 schema 与工具，保留 HTTPS、存储 OAuth 及既有 stdio 策略；调用发生 401/403 时不自动重放，私有认证同时从结果字段和值中隔离。browser 私有输入在服务端 SDK 产生公开事件、签名或 journal 前投影成安全引用，旧不安全历史拒绝 adoption；大进度沿已有私有结果文件/receipt 有序 hydration，1 MiB 输入预算不变。
 
-下一批沿 T12 接 skills/声明脚本与环境，先核查已有服务、可信资源名册和执行位置，再补实际入口与必要权限/取消边界；T16 早期实机预检仍遵守独立门槛。
+模块提交与实际应用正反例详见 [T12 完整交付记录](../runtime/omp-remote-acceptance.md#t12-完整宿主工具交付2026-10-14)。RPC 仍须 `PHI_REMOTE_OMP_RPC=1` 显式启用；T11/T13–T16/T18 不随 T12 自动标成完成，默认切换沿原门槛执行。
 
 ### 交付顺序与依赖
 
