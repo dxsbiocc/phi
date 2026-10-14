@@ -14,6 +14,11 @@ import path from 'node:path'
 import ts from 'typescript'
 
 export const OMP_WORKER_ENTRY = 'src/main/agent/engine/in-process/main.ts'
+export const OMP_WORKER_ENTRIES = Object.freeze([
+  OMP_WORKER_ENTRY,
+  'src/main/agent/engine/rpc/desktop-websearch-worker.ts'
+])
+
 /** Runtime edges only: Bun erases explicit type declarations before executing the worker. */
 function runtimeImports(source, fileName) {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
@@ -105,7 +110,7 @@ function isBuiltin(specifier) {
 export function collectOmpWorkerSources(repoRoot) {
   const files = new Set()
   const packages = new Set()
-  const pending = [path.resolve(repoRoot, OMP_WORKER_ENTRY)]
+  const pending = OMP_WORKER_ENTRIES.map((entry) => path.resolve(repoRoot, entry))
   while (pending.length > 0) {
     const file = pending.pop()
     if (files.has(file)) continue

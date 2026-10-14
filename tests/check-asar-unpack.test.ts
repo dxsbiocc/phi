@@ -123,6 +123,7 @@ test('runtime worker closure follows value imports beyond the old hand-maintaine
   const { files, packages } = collectOmpWorkerSources(repoRoot)
   for (const expected of [
     'src/main/agent/engine/in-process/main.ts',
+    'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
     'src/main/agent/engine/phi-extension/index.ts',
     'src/main/agent/engine/phi-extension/extensions/next-action.ts',
     'src/main/agent/engine/tool-adapter.ts',
@@ -148,6 +149,11 @@ test('copy plugin emits exactly the closure files under out/', () => {
       'src/main/agent/engine/in-process/main.ts',
       "import { a } from '../../a'\nimport type { T } from '../../../../shared/t'\nimport 'yaml'\n"
     )
+    write(
+      'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
+      "import { search } from './desktop-websearch-owned'\nimport 'search-package'\n"
+    )
+    write('src/main/agent/engine/rpc/desktop-websearch-owned.ts', 'export const search = 1\n')
     write('src/main/agent/a.ts', "export { b } from './nested/b'\nexport const a = 1\n")
     write('src/main/agent/nested/b.ts', "const c = await import('./c')\nexport const b = c\n")
     write('src/main/agent/nested/c.ts', 'export {}\n')
@@ -166,10 +172,12 @@ test('copy plugin emits exactly the closure files under out/', () => {
     assert.deepEqual(emitted, [
       'out/main/agent/a.ts',
       'out/main/agent/engine/in-process/main.ts',
+      'out/main/agent/engine/rpc/desktop-websearch-owned.ts',
+      'out/main/agent/engine/rpc/desktop-websearch-worker.ts',
       'out/main/agent/nested/b.ts',
       'out/main/agent/nested/c.ts'
     ])
-    assert.deepEqual(collectOmpWorkerSources(root).packages, ['yaml'])
+    assert.deepEqual(collectOmpWorkerSources(root).packages, ['search-package', 'yaml'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -197,43 +205,42 @@ test('worker package assets include files electron-builder strips from node_modu
   }
 })
 
-test('the mandatory worker entry and runtime dependency/assets fail explicitly when missing', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'phi-runtime-assets-'))
+test('every worker entry is mandatory and second-entry dependencies/assets share the same closure', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-search-closure-'))
   const write = (relative: string, body: string): void => {
     mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
     writeFileSync(path.join(root, relative), body)
   }
   try {
-    assert.throws(() => collectOmpWorkerSources(root), /ENOENT/u)
-    write('src/main/agent/engine/in-process/main.ts', "import 'runtime-package'")
-    assert.throws(() => collectOmpWorkerPackageDirs(root), /runtime-package/u)
+    write('src/main/agent/engine/in-process/main.ts', 'export {}')
+    assert.throws(() => collectOmpWorkerSources(root), /desktop-websearch-worker/u)
+    write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', "import 'search-package'")
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /search-package/u)
     write(
-      'node_modules/runtime-package/package.json',
-      JSON.stringify({ dependencies: { 'runtime-dependency': '1' } })
+      'node_modules/search-package/package.json',
+      JSON.stringify({ dependencies: { 'search-dependency': '1' } })
     )
-    assert.throws(() => collectOmpWorkerPackageDirs(root), /runtime-dependency/u)
-    write('node_modules/runtime-dependency/package.json', '{}')
+    assert.throws(() => collectOmpWorkerPackageDirs(root), /search-dependency/u)
+    write('node_modules/search-dependency/package.json', '{}')
     write(
-      'node_modules/runtime-package/index.ts',
+      'node_modules/search-package/index.ts',
       "import prompt from './prompt.md' with { type: 'text' }"
     )
     write(
-      'node_modules/runtime-package/multiline.ts',
+      'node_modules/search-package/multiline.ts',
       `const n = 1; import asset from './prompt.md' with\n{ type: 'text' };`
     )
-    write('node_modules/runtime-package/prompt.md', 'owned runtime prompt')
+    write('node_modules/search-package/prompt.md', 'owned search prompt')
     write(
-      'node_modules/runtime-package/comment.ts',
+      'node_modules/search-package/comment.ts',
       '/**\n * import example from "./missing-example.json" with { type: "json" }\n */'
     )
-    assert.deepEqual(collectOmpWorkerPackageAssets(root), [
-      'node_modules/runtime-package/prompt.md'
-    ])
+    assert.deepEqual(collectOmpWorkerPackageAssets(root), ['node_modules/search-package/prompt.md'])
     assert.deepEqual(collectOmpWorkerPackageDirs(root), [
-      'node_modules/runtime-dependency',
-      'node_modules/runtime-package'
+      'node_modules/search-dependency',
+      'node_modules/search-package'
     ])
-    rmSync(path.join(root, 'node_modules/runtime-package/prompt.md'))
+    rmSync(path.join(root, 'node_modules/search-package/prompt.md'))
     assert.throws(() => collectOmpWorkerPackageAssets(root), /prompt.md/u)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -273,12 +280,8 @@ test('runtime closure erases only explicit type edges and keeps value, mixed, si
       // import 'missing-comment-sideeffect'
     `
     )
-    write('src/main/agent/engine/in-process/runtime-value.ts', 'export const live = true')
-    write(
-      'src/main/agent/engine/in-process/main.ts',
-      readFileSync(path.join(root, 'src/main/agent/engine/in-process/main.ts'), 'utf8') +
-        "\nimport './runtime-value'"
-    )
+    write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', `import './runtime-value'`)
+    write('src/main/agent/engine/rpc/runtime-value.ts', 'export const live = true')
     const closure = collectOmpWorkerSources(root)
     assert.deepEqual(closure.packages, [
       'default-plus-types',
@@ -293,7 +296,7 @@ test('runtime closure erases only explicit type edges and keeps value, mixed, si
       'required-runtime',
       'side-effect'
     ])
-    assert.equal(closure.files.includes('src/main/agent/engine/in-process/runtime-value.ts'), true)
+    assert.equal(closure.files.includes('src/main/agent/engine/rpc/runtime-value.ts'), true)
     assert.throws(() => collectOmpWorkerPackageDirs(root), /default-type-value/)
   } finally {
     rmSync(root, { recursive: true, force: true })

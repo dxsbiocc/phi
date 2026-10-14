@@ -25,6 +25,8 @@ import { HostServiceRegistry } from '../host-service-registry'
 import type { PhiHostRequestContext, PhiTool, PhiToolImage, PhiToolApproval } from '../types'
 import { rpcIdentifier } from './control-frame'
 import { remoteLibraryToolStore } from './remote-library-service'
+import { isDesktopWebSearchAdapter } from './desktop-websearch-adapter'
+import type { DesktopWebSearchAdapter } from './desktop-websearch-types'
 
 export interface RpcDesktopToolIdentity {
   readonly runtimeSessionId: string
@@ -56,6 +58,8 @@ export interface RpcDesktopToolScopeOptions {
   readonly scriptTools: readonly ScriptToolDescriptor[]
   /** Enable after the genuine selected-workspace library.execute/cancel service is registered. */
   readonly remoteLibrary?: true
+  /** A genuine separately owned desktop SDK adapter; owner awaits close on teardown. */
+  readonly desktopWebSearch?: DesktopWebSearchAdapter
   /** The actual RemoteRuntimeController.approvalFor; required when script tools are enabled. */
   readonly scriptApprovalFor?: (toolName: string, input: unknown) => PhiToolApproval | undefined
 }
@@ -127,6 +131,15 @@ export function createRpcDesktopToolScope(
     (options.catalogProjectDir !== undefined && !options.catalogProjectDir.startsWith('/'))
   )
     throw new Error('Desktop tools require a trusted canonical remote project scope')
+  const webSearch = options.desktopWebSearch
+  if (
+    webSearch &&
+    (!isDesktopWebSearchAdapter(webSearch) ||
+      Object.entries(identity).some(
+        ([key, value]) => webSearch.identity[key as keyof RpcDesktopToolIdentity] !== value
+      ))
+  )
+    throw new Error('Desktop search adapter belongs to a different trusted session')
   const lifetime = new AbortController()
   const calls = new AsyncLocalStorage<Call>()
   const active = new Set<AbortController>()
@@ -218,6 +231,7 @@ export function createRpcDesktopToolScope(
       interactionRequest('agentInteraction.request', request)
     ),
     buildRenderBlocksTool(),
+    ...(webSearch ? [webSearch.tool] : []),
     ...(options.remoteLibrary
       ? buildLibraryCustomTools(
           remoteLibraryToolStore(libraryRequest, identity, () => {
@@ -346,9 +360,32 @@ export function createRpcDesktopToolScope(
   return {
     identity,
     tools,
-    unavailable: options.remoteLibrary
-      ? UNAVAILABLE.filter(({ capability }) => capability !== 'library')
-      : UNAVAILABLE,
+    unavailable: UNAVAILABLE.flatMap((item) => {
+      if (options.remoteLibrary && item.capability === 'library') return []
+      if (webSearch && item.capability === 'websearch/MCP')
+        return [
+          {
+            capability: 'MCP',
+            reason: 'Requires a real session-private MCP resource/auth adapter and its lifecycle.'
+          }
+        ]
+      return [item]
+    }).concat(
+      webSearch
+        ? [
+            {
+              capability: 'websearch command-backed configuration',
+              reason:
+                'Command-backed credentials and model headers are rejected before execution; their helper ownership is unsupported.'
+            },
+            {
+              capability: 'websearch cached discovery',
+              reason:
+                'Search uses a private query catalog cache; previously cached discovery-only models are unsupported.'
+            }
+          ]
+        : []
+    ),
     recentUserImages: recentImages,
     approvalFor(toolName, input) {
       if (lifetime.signal.aborted) return undefined
@@ -364,6 +401,7 @@ export function createRpcDesktopToolScope(
     dispose() {
       if (lifetime.signal.aborted) return
       lifetime.abort(new Error('Desktop tool scope disposed'))
+      webSearch?.retire(lifetime.signal.reason)
       for (const controller of active) controller.abort(lifetime.signal.reason)
       vault.clear()
     }

@@ -320,6 +320,38 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent/internal-urls"],
       "purpose": "R6a native child authority uses the exact shared host InternalUrlRouter export; verified against pinned source and the official18.10.3 macOS single-file runtime in an isolated no-node_modules private extension tree",
       "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/rpc/desktop-websearch-worker.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/web/search",
+        "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-frame",
+        "@oh-my-pi/pi-ai/utils/schema"
+      ],
+      "purpose": "Desktop-owned real SDK search worker retains native provider/schema and official framed transport; per-query private process isolates native settings and keeps credentials off the remote wire",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/desktopWebSearchSdk.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent",
+        "@oh-my-pi/pi-coding-agent/web/search",
+        "@oh-my-pi/pi-ai/utils/schema",
+        "@oh-my-pi/pi-utils"
+      ],
+      "purpose": "Private real SDK web-search parity oracle uses synthetic auth and guarded loopback transport; direct native persistence baseline records upstream large-string limits without replacing provider execution",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/rpc/desktop-websearch-capability.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/config/resolve-config-value",
+        "@oh-my-pi/pi-coding-agent/config/models-config",
+        "@oh-my-pi/pi-coding-agent/session/auth-broker-config",
+        "@oh-my-pi/pi-ai/auth-broker/discover"
+      ],
+      "purpose": "Desktop search capability reuses the native validated model configuration and real auth discovery/resolver APIs to reject unowned command-backed credentials before execution; literal/environment and native store/account policies remain SDK-owned",
+      "plan": "keep"
     }
   ]
 }
