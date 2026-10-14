@@ -422,7 +422,7 @@ export class RpcHostToolBridge {
       this.finish(
         call,
         errorResult(
-          'Host tool progress exceeds its supported logical/file/byte budget or has invalid content'
+          'Host tool progress exceeds the supported frame limit or logical/file/byte budget or has invalid content'
         ),
         true
       )

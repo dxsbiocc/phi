@@ -247,10 +247,14 @@ test('late readiness after failure stays hidden until the user explicitly retrie
 
 test('the actual shared main-window guard rejects other windows and embedded frames', () => {
   const source = readFileSync('src/main/index.ts', 'utf8')
-  const start = source.indexOf('function requireMainWindowRenderer(')
-  const end = source.indexOf('\nfunction sendMainWindowFullscreenState(', start)
+  const sourceFile = ts.createSourceFile('src/main/index.ts', source, ts.ScriptTarget.ES2022, true)
+  const guard = sourceFile.statements.find(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === 'requireMainWindowRenderer'
+  )
+  assert.ok(guard)
   const code = ts.transpileModule(
-    `${source.slice(start, end)}; return requireMainWindowRenderer;`,
+    `${guard.getText(sourceFile)}; return requireMainWindowRenderer;`,
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
   ).outputText
   const sender = { mainFrame: {}, isDestroyed: () => false }
