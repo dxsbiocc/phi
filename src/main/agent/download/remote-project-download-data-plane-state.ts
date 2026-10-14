@@ -10,6 +10,18 @@ import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 
 const SHA256 = /^[a-f0-9]{64}$/u
 
+/** Desktop-only authority; never serialized in a request, manifest, or receipt. */
+export type RemoteProjectDownloadControl = Readonly<{
+  signal?: AbortSignal
+  beforeDispatch?: () => void
+}>
+
+export function assertRemoteDownloadCurrent(control?: RemoteProjectDownloadControl): void {
+  control?.signal?.throwIfAborted()
+  control?.beforeDispatch?.()
+  control?.signal?.throwIfAborted()
+}
+
 export type RemoteProjectDownloadContext = Readonly<{
   transferId: string
   hostKey: string
@@ -22,6 +34,7 @@ export type RemoteProjectDownloadContext = Readonly<{
   relativePath: string
   canonicalRoot: string
   maxFileBytes: number
+  control?: RemoteProjectDownloadControl
 }>
 
 export type PreflightState = Readonly<{
