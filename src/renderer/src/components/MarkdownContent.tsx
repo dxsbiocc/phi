@@ -61,6 +61,9 @@ import {
   useRemotePathKinds
 } from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
+import { ResourceMention } from './ResourceMention'
+import { useChatResourceMatcher } from '../lib/chatResourceMentionContext'
+import { createResourceMentionRemarkPlugin } from '../lib/markdownResourceMentions'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
@@ -670,6 +673,11 @@ function MarkdownContentImpl({
   const remoteStatPathKinds = useRemotePathKinds(remoteProject, pathReferencePaths)
   const localPathKinds = remoteProject ? remoteStatPathKinds : localStatPathKinds
   const { remarkPlugins, rehypePlugins } = useMarkdownPlugins(enableMath)
+  const resourceMentions = useChatResourceMatcher()
+  const plugins = useMemo(
+    () => [...remarkPlugins, createResourceMentionRemarkPlugin(resourceMentions)],
+    [remarkPlugins, resourceMentions]
+  )
 
   const components = useMemo<Components>(
     () => ({
@@ -743,6 +751,8 @@ function MarkdownContentImpl({
         </Box>
       ),
       a: ({ href, children }) => {
+        const resource = resourceMentions.resolveHref(href)
+        if (resource) return <ResourceMention resource={resource} />
         if (remoteProject && !href) return <InlineCodeShell>{children}</InlineCodeShell>
         if (remoteProject && typeof href === 'string') {
           const remotePath = remotePathWithinProjectUri(
@@ -888,7 +898,15 @@ function MarkdownContentImpl({
         </Box>
       )
     }),
-    [cwd, localPathKinds, onOpenLocalPath, onOpenWebUrl, remoteProject, showColorPalettes]
+    [
+      cwd,
+      localPathKinds,
+      onOpenLocalPath,
+      onOpenWebUrl,
+      remoteProject,
+      showColorPalettes,
+      resourceMentions
+    ]
   )
 
   return (
@@ -907,13 +925,19 @@ function MarkdownContentImpl({
       <ReactMarkdown
         skipHtml
         urlTransform={(value, key) =>
-          remoteProject &&
-          key === 'href' &&
-          remotePathWithinProjectUri(value, remoteProject.hostAlias, remoteProject.canonicalRoot)
+          key === 'href' && resourceMentions.resolveHref(value)
             ? value
-            : defaultUrlTransform(value)
+            : remoteProject &&
+                key === 'href' &&
+                remotePathWithinProjectUri(
+                  value,
+                  remoteProject.hostAlias,
+                  remoteProject.canonicalRoot
+                )
+              ? value
+              : defaultUrlTransform(value)
         }
-        remarkPlugins={remarkPlugins}
+        remarkPlugins={plugins}
         rehypePlugins={rehypePlugins}
         components={components}
       >

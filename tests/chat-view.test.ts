@@ -33,6 +33,7 @@ import {
   replaceInputReferenceRange
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
+import type { ChatResourceMention } from '../src/renderer/src/lib/chatResourceMentions'
 import {
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
@@ -62,6 +63,7 @@ function renderChat(
     pendingUserInteraction?: AgentUserInteractionRequest | null
     queuedPrompts?: Array<{ id: string; text: string }>
     skills?: SkillSummary[]
+    resourceMentions?: readonly ChatResourceMention[]
     promptAgents?: PromptAgentSummary[]
     onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
     onOpenWebUrl?: (url: string) => void
@@ -110,6 +112,7 @@ function renderChat(
         contextCompacting: options.contextCompacting,
         onCompactContext: options.onCompactContext,
         skills: options.skills ?? [],
+        resourceMentions: options.resourceMentions,
         promptAgents: options.promptAgents ?? [],
         onSelectModel: () => undefined,
         thinkingLevel: 'high',
@@ -140,6 +143,30 @@ function renderChat(
     )
   )
 }
+
+test('chat history receives the workspace resource catalog for user and assistant messages', () => {
+  const resources: ChatResourceMention[] = [
+    { kind: 'skill', id: '/skills/grill-me/SKILL.md', name: 'grill-me' },
+    { kind: 'wrapper', id: 'nf-core/modules/salmon', name: 'Salmon' },
+    { kind: 'plugin', id: 'office', name: 'Office' },
+    { kind: 'mcp', id: 'serena', name: 'Serena' }
+  ]
+  const markup = renderChat(
+    [
+      { id: 'user-resource', role: 'user', content: '$grill-me\n怎么开发一个 ios app' },
+      {
+        id: 'assistant-resource',
+        role: 'assistant',
+        content: '使用grill-me技能，配合 Salmon、Office 和 Serena。'
+      }
+    ],
+    { resourceMentions: resources }
+  )
+  assert.equal((markup.match(/data-phi-resource-mention="skill"/g) ?? []).length, 2)
+  for (const kind of ['wrapper', 'plugin', 'mcp']) {
+    assert.match(markup, new RegExp(`data-phi-resource-mention="${kind}"`))
+  }
+})
 
 test('chat view threads the in-app web opener to assistant markdown links', () => {
   const markup = renderChat(

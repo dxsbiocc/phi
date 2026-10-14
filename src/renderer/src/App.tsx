@@ -162,6 +162,7 @@ import {
   type WorkspaceTab
 } from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
+import type { ChatResourceMention } from './lib/chatResourceMentions'
 import {
   closeWorkspaceSidePanelMode,
   emptyWorkspaceSidePanelState,
@@ -4120,6 +4121,51 @@ function App(): React.JSX.Element {
     </Stack>
   )
 
+  const chatResourceMentions = useMemo<ChatResourceMention[]>(
+    () => [
+      ...skills.map((skill) => ({
+        kind: 'skill' as const,
+        id: skill.id,
+        name: skill.name,
+        icon: skill.icon,
+        onOpen: () => onOpenSkillTab(skill)
+      })),
+      ...wrapperCatalog.map((wrapper) => ({
+        kind: 'wrapper' as const,
+        id: wrapper.id,
+        name: wrapper.name,
+        icon: wrapper.icon,
+        aliases: wrapper.enablementId ? [wrapper.enablementId] : undefined,
+        onOpen: () => onOpenWrapperTab(wrapper)
+      })),
+      ...phiPluginsState.plugins.map((plugin) => ({
+        kind: 'plugin' as const,
+        id: plugin.id,
+        name: plugin.title,
+        icon: plugin.icon,
+        onOpen: () => onOpenPhiPluginTab(plugin)
+      })),
+      ...mcpServers.map((server) => ({
+        kind: 'mcp' as const,
+        id: server.id,
+        name: server.title ?? server.name,
+        icon: server.icon,
+        aliases: [server.name],
+        onOpen: () => onOpenMcpServerTab(server)
+      }))
+    ],
+    [
+      skills,
+      wrapperCatalog,
+      phiPluginsState.plugins,
+      mcpServers,
+      onOpenSkillTab,
+      onOpenWrapperTab,
+      onOpenPhiPluginTab,
+      onOpenMcpServerTab
+    ]
+  )
+
   const activeChatView = (
     <RemoteProjectFileContext.Provider
       value={
@@ -4183,6 +4229,7 @@ function App(): React.JSX.Element {
             contextUsageRefreshKey={contextUsageRefreshKey}
             contextCompacting={currentSessionIsCompacting}
             skills={skills}
+            resourceMentions={chatResourceMentions}
             promptAgents={promptAgents}
             onSelectModel={(model) => {
               void onSelectModel(model)

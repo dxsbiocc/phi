@@ -28,6 +28,8 @@ import { InputFileReferenceMenu } from '../../components/chat/InputFileReference
 import { InputInvocationReferenceMenu } from '../../components/chat/InputInvocationReferenceMenu'
 import { InputReferenceChips } from '../../components/chat/InputReferenceChips'
 import ChatMessageList from '../../components/chat/ChatMessageList'
+import { ResourceMentionsProvider } from '../../components/ResourceMention'
+import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import type { UserMessageRetryTarget } from '../../components/chat/ChatUserMessage'
 import {
   COMPOSER_ICON_SIZE,
@@ -121,6 +123,7 @@ type ViewProps = {
   contextUsageRefreshKey?: number
   contextCompacting?: boolean
   skills?: SkillSummary[]
+  resourceMentions?: readonly ChatResourceMention[]
   promptAgents?: PromptAgentSummary[]
   onSelectModel: (model: ModelOption | null) => void
   thinkingLevel: ThinkingLevel
@@ -189,6 +192,7 @@ function ChatView({
   contextUsageRefreshKey = 0,
   contextCompacting = false,
   skills = [],
+  resourceMentions,
   promptAgents = [],
   onSelectModel,
   thinkingLevel,
@@ -228,6 +232,17 @@ function ChatView({
   onJumpToNotebookCell,
   cwd = ''
 }: ViewProps): React.JSX.Element {
+  const messageResources = useMemo(
+    () =>
+      resourceMentions ??
+      skills.map((skill) => ({
+        kind: 'skill' as const,
+        id: skill.id,
+        name: skill.name,
+        icon: skill.icon
+      })),
+    [resourceMentions, skills]
+  )
   const contextUsage = useContextUsage(
     contextUsageTarget,
     selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : null,
@@ -601,23 +616,25 @@ function ChatView({
         containerName: 'phi-chat'
       }}
     >
-      <ChatMessageList
-        messages={messages}
-        messagesContainerRef={messagesContainerRef}
-        scrollResetKey={scrollResetKey}
-        scrollPositionStore={scrollPositionStore}
-        isGenerating={isGenerating}
-        currentRunStartedAt={currentRunStartedAt}
-        onGoSettings={onGoSettings}
-        onOpenBackgroundJobs={onOpenBackgroundJobs}
-        onOpenLocalPath={onOpenLocalPath}
-        onOpenWebUrl={onOpenWebUrl}
-        onJumpToNotebookCell={onJumpToNotebookCell}
-        onEditUserMessage={editUserMessage}
-        onRetryUserMessage={retryUserMessage}
-        onForkUserMessage={onForkUserMessage}
-        cwd={cwd}
-      />
+      <ResourceMentionsProvider resources={messageResources}>
+        <ChatMessageList
+          messages={messages}
+          messagesContainerRef={messagesContainerRef}
+          scrollResetKey={scrollResetKey}
+          scrollPositionStore={scrollPositionStore}
+          isGenerating={isGenerating}
+          currentRunStartedAt={currentRunStartedAt}
+          onGoSettings={onGoSettings}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
+          onOpenLocalPath={onOpenLocalPath}
+          onOpenWebUrl={onOpenWebUrl}
+          onJumpToNotebookCell={onJumpToNotebookCell}
+          onEditUserMessage={editUserMessage}
+          onRetryUserMessage={retryUserMessage}
+          onForkUserMessage={onForkUserMessage}
+          cwd={cwd}
+        />
+      </ResourceMentionsProvider>
       <Box
         sx={{
           px: 2,
