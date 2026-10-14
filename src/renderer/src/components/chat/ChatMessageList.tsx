@@ -20,6 +20,7 @@ import { PresentedFilesCard } from '../../features/chat/components/PresentedFile
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
+import { chatContentMaxWidth } from '../../layout'
 import {
   centeredScrollTop,
   groupIndexContainingItem,
@@ -745,23 +746,45 @@ const ChatMessageList = memo(function ChatMessageList({
   )
 
   return (
-    <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        position: 'relative',
+        // Let messages fade through the composer's top gutter instead of stopping above it.
+        mb: -1.5,
+        '@container phi-chat (max-width: 560px)': { mb: -1 }
+      }}
+    >
       <Box
         ref={handleMessagesContainerRef}
         onScroll={handleMessagesScroll}
-        sx={{ height: '100%', minWidth: 0, overflowY: 'auto', overflowX: 'hidden' }}
+        sx={{
+          height: '100%',
+          minWidth: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          maskImage: 'linear-gradient(to bottom, #000 calc(100% - 24px), transparent)',
+          '@container phi-chat (max-width: 560px)': {
+            maskImage: 'linear-gradient(to bottom, #000 calc(100% - 12px), transparent)',
+            '&::-webkit-scrollbar': { width: 8 }
+          }
+        }}
       >
         <Box
           ref={virtualListRef}
           sx={{
-            maxWidth: 860,
-            mx: 'auto',
+            maxWidth: chatContentMaxWidth,
+            // Use the full chat container, including the scrollbar slot, like the composer.
+            width: 'calc(100cqw - 32px)',
+            ml: `max(16px, calc((100cqw - ${chatContentMaxWidth}px) / 2))`,
             minWidth: 0,
-            px: 3,
             pt: 3,
             pb: isGenerating ? 6 : 3,
             '@container phi-chat (max-width: 560px)': {
-              px: 1.25,
+              width: 'calc(100cqw - 16px)',
+              ml: 1,
               pt: 1.5,
               pb: isGenerating ? 3 : 1.5
             }

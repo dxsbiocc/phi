@@ -41,6 +41,7 @@ import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
+import { chatContentMaxWidth } from '../../layout'
 import { GoPaperAirplane, GoSquare } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
@@ -644,7 +645,11 @@ function ChatView({
           '@container phi-chat (max-width: 560px)': { px: 1, pt: 1, pb: 1 }
         }}
       >
-        <Box component="form" onSubmit={handleChatSubmit} sx={{ maxWidth: 892, mx: 'auto' }}>
+        <Box
+          component="form"
+          onSubmit={handleChatSubmit}
+          sx={{ maxWidth: chatContentMaxWidth, mx: 'auto' }}
+        >
           <ToolApprovalDialog
             request={pendingApproval}
             onRespond={onRespondApproval}
