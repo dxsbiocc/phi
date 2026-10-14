@@ -352,6 +352,12 @@
       ],
       "purpose": "Desktop search capability reuses the native validated model configuration and real auth discovery/resolver APIs to reject unowned command-backed credentials before execution; literal/environment and native store/account policies remain SDK-owned",
       "plan": "keep"
+    },
+    {
+      "file": "tests/helpers/rpcTaskAdmissionExtension.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "R6b private actual CLI oracle uses erased ExtensionFactory types and public root Agent hooks to prove native task raw/effective argument and startup contracts; no production SDK dependency outside engine",
+      "plan": "keep"
     }
   ]
 }

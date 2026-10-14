@@ -105,7 +105,10 @@ export function executionBinding(control: RpcExecutionControl): ExecutionBinding
     sequence
   }
 }
-export function executionRoster(tools: readonly RpcExecutionTool[]): {
+export function executionRoster(
+  tools: readonly RpcExecutionTool[],
+  options: { readonly allowNativeTask?: boolean } = {}
+): {
   tools: readonly RpcExecutionTool[]
   hash: string
 } {
@@ -113,6 +116,7 @@ export function executionRoster(tools: readonly RpcExecutionTool[]): {
     throw new Error('Invalid execution roster')
   const names = new Set<string>()
   const native = new Set(['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep'])
+  if (options.allowNativeTask === true) native.add('task')
   const copy = tools
     .map((tool) => {
       if (
@@ -120,6 +124,7 @@ export function executionRoster(tools: readonly RpcExecutionTool[]): {
         names.has(tool.name) ||
         !['native', 'host'].includes(tool.site) ||
         (tool.site === 'native' && !native.has(tool.name)) ||
+        (tool.site === 'host' && tool.name === 'task') ||
         (tool.site === 'host' && native.has(tool.name)) ||
         (tool.site === 'host' &&
           (!tool.parameters ||

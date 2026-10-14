@@ -13,6 +13,7 @@ import {
 } from '../phi-extension/lib/rpc-runtime-config'
 import { storageHost } from './session-storage/remote-preflight'
 import type { RpcRuntimePreparationContext } from './ssh-stdio-factory'
+import { executionRoster } from '../phi-extension/lib/rpc-execution-protocol'
 
 /** Only registered writer-owned launch context can publish capability material. */
 export async function publishRpcRuntimeConfig(options: {
@@ -26,6 +27,13 @@ export async function publishRpcRuntimeConfig(options: {
   if (!storage || storageHost(storage) !== host || !host.transfer)
     throw new Error('RPC composition requires registered persistent storage')
   storage.lease.assertActive()
+  if (config.childRuntimeRequired !== undefined && typeof config.childRuntimeRequired !== 'boolean')
+    throw new Error('Invalid child runtime intent')
+  const roster = executionRoster(config.execution.tools, {
+    allowNativeTask: config.childRuntimeRequired === true
+  })
+  if (roster.tools.some((tool) => tool.name === 'task') !== (config.childRuntimeRequired === true))
+    throw new Error('Native task requires matching private child runtime intent')
   if (
     config.nonce !== context.bootstrap.nonce ||
     config.phiSessionId !== context.params.sessionId ||

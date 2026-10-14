@@ -138,6 +138,126 @@ test('multiple generations have separate HOME and config and closing one preserv
   assert.deepEqual(await readdir(base), [])
 })
 
+test('foreground child opt-in writes explicit backend and per-compiled-name policy from a snapshotted preparation result', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  const name = `phi_${'a'.repeat(24)}_0_fg`
+  const names = [name]
+  const nativeTools: Array<'read' | 'task' | 'bash'> = ['read', 'task']
+  const transfer = fixture.host.transfer!
+  const upload = transfer.uploadFile.bind(transfer)
+  transfer.uploadFile = async (source, destination, options) => {
+    await upload(source, destination, options)
+    if (destination.endsWith('/startup-policy.json')) {
+      names.push(`phi_${'b'.repeat(24)}_1_fg`)
+      nativeTools.push('bash')
+    }
+  }
+  const factory = await prepareSshRpcSessionTransport({
+    session: fixture.session,
+    runtime: fixture.options,
+    bundle: fixture.bundle,
+    projectId: 'project-1',
+    prepareRuntime: async () => ({
+      nativeTools,
+      childRuntimeRequired: true,
+      foregroundChildNativeNames: names
+    })
+  })
+  const channel = await factory.open(fixture.params, new AbortController().signal)
+  t.after(() => channel.close())
+  const base = join(fixture.runtimeRoot, 'rpc-sessions')
+  const [nonce] = await readdir(base)
+  const path = join(base, nonce, 'startup-policy.json')
+  const policy = JSON.parse(await readFile(path, 'utf8'))
+  assert.deepEqual(policy.eval, {
+    py: false,
+    js: false,
+    autoProvision: false,
+    tools: { enabled: false }
+  })
+  assert.deepEqual(policy.memory, { backend: 'off' })
+  assert.deepEqual(policy.task.agentAdvisor, { [name]: 'off' })
+  assert.deepEqual(policy.task.agentPrewalk, { [name]: 'off' })
+  assert.equal((await stat(path)).mode & 0o777, 0o600)
+  const command = fixture.session.commands.find((value) => value.includes('exec env -i'))!
+  assert.ok(command.includes("'--tools' 'read,task'"))
+  assert.ok(!command.includes("'--tools' 'read,task,bash'"))
+  assert.ok(command.includes(`'--config' ${shellQuote(path)}`))
+  assert.ok(command.includes(`cd -- ${shellQuote(join(base, nonce, 'home'))}`))
+})
+
+test('foreground native name preparation is strict and paired, while disabled policy retains its existing defaults', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  const name = `phi_${'a'.repeat(24)}_0_fg`
+  const invalid = [
+    { nativeTools: ['read', 'task'], childRuntimeRequired: true },
+    { nativeTools: ['read', 'task'], childRuntimeRequired: true, foregroundChildNativeNames: [] },
+    {
+      nativeTools: ['read', 'task'],
+      childRuntimeRequired: true,
+      foregroundChildNativeNames: [name, name]
+    },
+    {
+      nativeTools: ['read', 'task'],
+      childRuntimeRequired: true,
+      foregroundChildNativeNames: ['remote-markdown-name']
+    },
+    {
+      nativeTools: ['read', 'task'],
+      childRuntimeRequired: true,
+      foregroundChildNativeNames: Array.from(
+        { length: 33 },
+        (_, i) => `phi_${i.toString(16).padStart(24, '0')}_0_fg`
+      )
+    },
+    { nativeTools: ['read'], foregroundChildNativeNames: [name] },
+    { nativeTools: ['read'], childRuntimeRequired: false, foregroundChildNativeNames: 'unknown' },
+    { nativeTools: ['read'], unexpectedPreparationField: true }
+  ]
+  for (const raw of invalid) {
+    const factory = await prepareSshRpcSessionTransport({
+      session: fixture.session,
+      runtime: fixture.options,
+      bundle: fixture.bundle,
+      projectId: 'project-1',
+      prepareRuntime: async () => JSON.parse(JSON.stringify(raw))
+    })
+    await assert.rejects(
+      factory.open(fixture.params, new AbortController().signal).then(async (channel) => {
+        await channel.close()
+        throw new Error('Invalid result unexpectedly opened RPC')
+      }),
+      /Invalid composed native tool roster/
+    )
+    assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+  }
+  const factory = await prepareSshRpcSessionTransport({
+    session: fixture.session,
+    runtime: fixture.options,
+    bundle: fixture.bundle,
+    projectId: 'project-1',
+    prepareRuntime: async () => ({
+      nativeTools: ['read'],
+      childRuntimeRequired: false,
+      foregroundChildNativeNames: []
+    })
+  })
+  const channel = await factory.open(fixture.params, new AbortController().signal)
+  t.after(() => channel.close())
+  const base = join(fixture.runtimeRoot, 'rpc-sessions')
+  const [nonce] = await readdir(base)
+  assert.deepEqual(JSON.parse(await readFile(join(base, nonce, 'startup-policy.json'), 'utf8')), {
+    mcp: { enableProjectConfig: false },
+    extensions: [],
+    skills: [],
+    lsp: { enabled: false },
+    memory: { enabled: false },
+    tools: { xdev: false }
+  })
+})
+
 test('stdio acquisition failure removes owned configuration and preserves the connected master', async (t) => {
   const fixture = await fixtureWithFactory()
   t.after(fixture.cleanup)

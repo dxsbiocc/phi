@@ -32,6 +32,7 @@ export interface RpcRuntimeConfig {
   readonly projectId: string
   readonly projectRoot: string
   readonly generation: number
+  readonly childRuntimeRequired?: boolean
   readonly activeTools: readonly string[]
   readonly hiddenTools: readonly string[]
   readonly generationDirectory: string
@@ -88,8 +89,13 @@ export function validateRpcRuntimeConfig(
     'blobs',
     'execution',
     'result',
-    'native'
+    'native',
+    ...(value && typeof value === 'object' && Object.hasOwn(value, 'childRuntimeRequired')
+      ? ['childRuntimeRequired']
+      : [])
   ])
+  if (value.childRuntimeRequired !== undefined && typeof value.childRuntimeRequired !== 'boolean')
+    throw new Error('Invalid child runtime intent')
   exact(value.execution, ['capability', 'tools'])
   exact(value.result, ['capability', 'leaseId', 'directory'])
   exact(value.native, ['endpoint', 'models'])
@@ -160,7 +166,9 @@ export function validateRpcRuntimeConfig(
     }
     return { name: tool.name, site: tool.site }
   })
-  const roster = executionRoster(tools)
+  const roster = executionRoster(tools, { allowNativeTask: value.childRuntimeRequired === true })
+  if (roster.tools.some((tool) => tool.name === 'task') !== (value.childRuntimeRequired === true))
+    throw new Error('Native task requires matching child runtime intent')
   if (
     !Array.isArray(value.activeTools) ||
     new Set(value.activeTools).size !== value.activeTools.length ||

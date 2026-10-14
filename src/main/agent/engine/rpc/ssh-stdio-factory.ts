@@ -48,8 +48,67 @@ export interface SshRpcSessionTransportOptions {
 
 export interface RpcRuntimePreparationResult {
   readonly nativeTools: readonly (
-    'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep'
+    'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep' | 'task'
   )[]
+  readonly childRuntimeRequired?: boolean
+  /** Exact compiler-issued foreground names; no remote Markdown discovery grants this policy. */
+  readonly foregroundChildNativeNames?: readonly string[]
+}
+
+function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparationResult> {
+  const refused = (): never => {
+    throw new Error('Invalid composed native tool roster')
+  }
+  const fields = ['nativeTools', 'childRuntimeRequired', 'foregroundChildNativeNames']
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Reflect.ownKeys(value).some((key) => typeof key !== 'string' || !fields.includes(key)) ||
+    Object.values(Object.getOwnPropertyDescriptors(value)).some(
+      (descriptor) => !('value' in descriptor)
+    )
+  )
+    return refused()
+  const raw = value as Record<string, unknown>
+  const nativeTools = Array.isArray(raw.nativeTools) ? [...raw.nativeTools] : undefined
+  const nativeTool = (name: unknown): name is RpcRuntimePreparationResult['nativeTools'][number] =>
+    typeof name === 'string' &&
+    ['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep', 'task'].includes(name)
+  if (
+    !Array.isArray(nativeTools) ||
+    !nativeTools.every(nativeTool) ||
+    new Set(nativeTools).size !== nativeTools.length ||
+    (raw.childRuntimeRequired !== undefined && typeof raw.childRuntimeRequired !== 'boolean') ||
+    nativeTools.includes('task') !== (raw.childRuntimeRequired === true)
+  )
+    return refused()
+  const names = Array.isArray(raw.foregroundChildNativeNames)
+    ? [...raw.foregroundChildNativeNames]
+    : raw.foregroundChildNativeNames
+  const foregroundName = (name: unknown): name is string =>
+    typeof name === 'string' && name.length <= 128 && /^phi_[a-f0-9]{24}_[0-9]+_fg$/u.test(name)
+  if (
+    names !== undefined &&
+    (!Array.isArray(names) ||
+      !names.every(foregroundName) ||
+      names.length > 32 ||
+      new Set(names).size !== names.length)
+  )
+    return refused()
+  if (
+    raw.childRuntimeRequired === true
+      ? !Array.isArray(names) || names.length < 1
+      : Array.isArray(names) && names.length > 0
+  )
+    return refused()
+  return Object.freeze({
+    nativeTools: Object.freeze([...nativeTools]),
+    ...(raw.childRuntimeRequired === undefined
+      ? {}
+      : { childRuntimeRequired: raw.childRuntimeRequired }),
+    ...(Array.isArray(names) ? { foregroundChildNativeNames: Object.freeze([...names]) } : {})
+  })
 }
 
 export interface RpcRuntimePreparationContext {
@@ -244,7 +303,7 @@ private_dir ${q(agentDir)}`,
         )
         if (options.prepareSession)
           await cancelled(options.prepareSession({ params, homePath, agentDir, signal }), signal)
-        const runtimePreparation = options.prepareRuntime
+        const preparedRuntime = options.prepareRuntime
           ? await cancelled(
               options.prepareRuntime(
                 Object.freeze({
@@ -261,17 +320,8 @@ private_dir ${q(agentDir)}`,
               signal
             )
           : undefined
-        if (
-          runtimePreparation &&
-          (!Array.isArray(runtimePreparation.nativeTools) ||
-            new Set(runtimePreparation.nativeTools).size !==
-              runtimePreparation.nativeTools.length ||
-            runtimePreparation.nativeTools.some(
-              (name) =>
-                !['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep'].includes(name)
-            ))
-        )
-          throw new Error('Invalid composed native tool roster')
+        const runtimePreparation =
+          preparedRuntime === undefined ? undefined : snapshotRuntimePreparation(preparedRuntime)
         signal.throwIfAborted()
         // Explicit CLI overlays outrank global/project settings in 18.10.3.
         // Write this after the model-only preparation hook; startup MCP spawning
@@ -282,8 +332,36 @@ private_dir ${q(agentDir)}`,
             extensions: [],
             skills: [],
             lsp: { enabled: false },
-            memory: { enabled: false },
+            memory:
+              runtimePreparation?.childRuntimeRequired === true
+                ? { backend: 'off' }
+                : { enabled: false },
             ...(options.prepareRuntime ? { tools: { xdev: false } } : {}),
+            ...(runtimePreparation?.childRuntimeRequired === true
+              ? {
+                  async: { enabled: false },
+                  task: {
+                    batch: false,
+                    structured: false,
+                    speculativeLaunch: false,
+                    enableEffort: false,
+                    isolation: { enabled: false },
+                    agentAdvisor: Object.fromEntries(
+                      (runtimePreparation.foregroundChildNativeNames ?? []).map((name) => [
+                        name,
+                        'off'
+                      ])
+                    ),
+                    agentPrewalk: Object.fromEntries(
+                      (runtimePreparation.foregroundChildNativeNames ?? []).map((name) => [
+                        name,
+                        'off'
+                      ])
+                    )
+                  },
+                  eval: { py: false, js: false, autoProvision: false, tools: { enabled: false } }
+                }
+              : {}),
             ...(storage ? { goal: { continuationModes: [] } } : {})
           })
         )

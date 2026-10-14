@@ -13,6 +13,19 @@ import {
 } from './extensions/rpc-host-result'
 import { createRpcNativeStreamExtension } from './extensions/rpc-native-stream'
 import { registerRpcSessionVerification } from './extensions/rpc-session-verification'
+import { createRpcSubagentsExtension } from './extensions/rpc-subagents'
+import {
+  createRpcTaskAdmissionExtension,
+  type RpcVerifiedChildDispatch
+} from './extensions/rpc-task-admission'
+import {
+  loadRpcChildRuntimeConfig,
+  childConfigDigest,
+  makeRpcChildAttestation,
+  CHILD_ATTEST_COMMAND,
+  CHILD_ATTEST_DESCRIPTION
+} from './lib/rpc-child-config'
+import { validateRpcChildRoot, type RpcChildRootScope } from './lib/rpc-child-protocol'
 import { executionRoster } from './lib/rpc-execution-protocol'
 import {
   loadRpcRuntimeConfig,
@@ -95,6 +108,8 @@ function rawLiteralCollision(rawPath: string): boolean {
   }
   return false
 }
+// One process generation owns child lifetime across its real per-session extension instances.
+const childGenerations = new Map<string, { digest: string; controller: AbortController }>()
 
 const rpcExtension: ExtensionFactory = async (pi) => {
   const config = loadRpcBootstrapConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV])
@@ -102,6 +117,24 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     throw new Error('Phi RPC bootstrap cwd does not match its project')
   const modelMetadata = loadRpcModelMetadata(process.env.PI_CODING_AGENT_DIR, config)
   const runtime = loadRpcRuntimeConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV]!, config)
+  const childConfig =
+    runtime?.childRuntimeRequired === true
+      ? loadRpcChildRuntimeConfig(
+          process.env[RPC_BOOTSTRAP_CONFIG_ENV]!,
+          {
+            nonce: config.nonce,
+            phiSessionId: config.sessionId,
+            projectId: config.projectId,
+            projectRoot: config.projectRoot,
+            generation: runtime.generation
+          },
+          {
+            required: true,
+            otherCapabilities: [runtime.execution.capability, runtime.result.capability]
+          }
+        )
+      : undefined
+  let childPreflight: RpcVerifiedChildDispatch | undefined
   if (
     process.env.PHI_RPC_RUNTIME !== undefined &&
     (process.env.PHI_RPC_RUNTIME !== '1' || !runtime || !modelMetadata)
@@ -109,7 +142,14 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     throw new Error('Phi composed RPC runtime configuration is missing')
 
   // Refuse unsupported native spellings before the shared guard's realpath.
-  pi.on('tool_call', async (event) => {
+  pi.on('tool_call', async (event, ctx) => {
+    if (ctx.agent.kind !== 'main')
+      return (
+        childPreflight?.(event, ctx) ?? {
+          block: true,
+          reason: 'Phi child execution is unavailable'
+        }
+      )
     if (runtime && event.toolName !== 'read') return undefined
     const deny = {
       block: true as const,
@@ -153,6 +193,91 @@ const rpcExtension: ExtensionFactory = async (pi) => {
 
   if (runtime) {
     const lifetime = new AbortController()
+    let childController: ReturnType<typeof createRpcSubagentsExtension> | undefined
+    let taskAdmission: ReturnType<typeof createRpcTaskAdmissionExtension> | undefined
+    if (childConfig) {
+      const digest = childConfigDigest(childConfig)
+      let generation = childGenerations.get(config.nonce)
+      if (generation && (generation.digest !== digest || generation.controller.signal.aborted))
+        throw new Error('Phi child generation is retired or differs')
+      if (!generation) {
+        generation = { digest, controller: new AbortController() }
+        childGenerations.set(config.nonce, generation)
+      }
+      const ownedGeneration = generation
+      const root = (): RpcChildRootScope | undefined => {
+        if (ownedGeneration.controller.signal.aborted) return undefined
+        const ref = pi.pi.AgentRegistry.global().get('Main')
+        const session = ref?.session
+        if (
+          ref?.kind !== 'main' ||
+          !session?.sessionFile ||
+          realpathSync(session.sessionManager.getCwd()) !== config.projectRoot
+        )
+          return undefined
+        return validateRpcChildRoot({
+          phiSessionId: config.sessionId,
+          projectId: config.projectId,
+          cwd: config.projectRoot,
+          generation: runtime.generation,
+          rootAgentId: ref.id,
+          rootOmpSessionId: session.sessionId,
+          rootSessionFile: session.sessionFile
+        })
+      }
+      childController = createRpcSubagentsExtension({
+        readiness: () => {
+          const identity = root()
+          return identity
+            ? {
+                identity,
+                capability: childConfig.capability,
+                profiles: childConfig.profiles,
+                signal: ownedGeneration.controller.signal
+              }
+            : undefined
+        }
+      })
+      const children = childController
+      childPreflight = (event, ctx) =>
+        children.preflight(event.toolCallId, event.toolName, event.input, ctx)
+      taskAdmission = createRpcTaskAdmissionExtension({
+        config: childConfig,
+        signal: ownedGeneration.controller.signal,
+        root,
+        parentRun: () => execution.taskParent(),
+        onChildAborted: (run) => execution.revokeTaskParent(run),
+        assertPublication: () => {
+          const fresh = loadRpcChildRuntimeConfig(
+            process.env[RPC_BOOTSTRAP_CONFIG_ENV]!,
+            childConfig,
+            {
+              required: true,
+              otherCapabilities: [runtime.execution.capability, runtime.result.capability]
+            }
+          )
+          if (!fresh || childConfigDigest(fresh) !== digest)
+            throw new Error('Phi child publication changed')
+        }
+      })
+      const tasks = taskAdmission
+      pi.registerCommand(CHILD_ATTEST_COMMAND, {
+        description: CHILD_ATTEST_DESCRIPTION,
+        handler: async (args, ctx) => {
+          if (args !== config.nonce || ctx.agent.kind !== 'main' || !ctx.isIdle())
+            throw new Error('Phi child attestation refused')
+          tasks.assertInstalled(ctx)
+          const identity = root()
+          if (!identity) throw new Error('Phi child root identity is unavailable')
+          ctx.ui.notify(JSON.stringify(makeRpcChildAttestation(childConfig, identity)), 'info')
+        }
+      })
+      pi.on('session_shutdown', (_event, ctx) => {
+        if (ctx.agent.kind === 'main') ownedGeneration.controller.abort()
+        children.dispose()
+        tasks.dispose()
+      })
+    }
     const execution = createRpcExecutionAuthorityExtension({
       identity: {
         nonce: config.nonce,
@@ -162,9 +287,14 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         generation: runtime.generation
       },
       capability: runtime.execution.capability,
-      roster: runtime.execution.tools
+      roster: runtime.execution.tools,
+      allowNativeTask: childConfig !== undefined,
+      admitTask: taskAdmission?.preflight,
+      childPreflight
     })
-    const roster = executionRoster(runtime.execution.tools)
+    const roster = executionRoster(runtime.execution.tools, {
+      allowNativeTask: childConfig !== undefined
+    })
     const hostNames = new Set(
       roster.tools.filter((tool) => tool.site === 'host').map((tool) => tool.name)
     )
@@ -173,23 +303,39 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       endpoint: runtime.native.endpoint,
       models: runtime.native.models,
       signal: lifetime.signal,
-      isActive: () => !lifetime.signal.aborted
+      isActive: () => !lifetime.signal.aborted && (taskAdmission?.isStreamActive() ?? true)
     })
     await native.extension(pi)
+    if (childController && taskAdmission) {
+      await childController.extension(pi)
+      await taskAdmission.extension(pi)
+    }
     // All input rewriting and both project/URL guards precede the signed origin.
     await execution.extension(pi)
     await createRpcToolApprovalExtension({
       readiness: execution.readiness,
+      admitTask: taskAdmission?.preflight,
+      childPreflight,
+      mainNegativeApproval: taskAdmission
+        ? {
+            parentRun: execution.taskParent,
+            sealParent: (run, ctx) => {
+              if (taskAdmission?.sealParent(run, ctx)) execution.revokeTaskParent(run)
+            }
+          }
+        : undefined,
       classifyTool: (name) =>
-        hostNames.has(name)
-          ? 'host'
-          : ['write', 'edit'].includes(name)
-            ? 'write'
-            : ['bash', 'powershell'].includes(name)
-              ? 'exec'
-              : roster.tools.some((tool) => tool.name === name && tool.site === 'native')
-                ? 'read'
-                : undefined
+        name === 'task' && childConfig
+          ? 'delegate'
+          : hostNames.has(name)
+            ? 'host'
+            : ['write', 'edit'].includes(name)
+              ? 'write'
+              : ['bash', 'powershell'].includes(name)
+                ? 'exec'
+                : roster.tools.some((tool) => tool.name === name && tool.site === 'native')
+                  ? 'read'
+                  : undefined
     })(pi)
     let cached: Readonly<RpcHostResultReadiness> | undefined
     const readiness = (): Readonly<RpcHostResultReadiness> | undefined => {

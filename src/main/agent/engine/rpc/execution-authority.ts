@@ -18,6 +18,7 @@ import {
   type RpcExecutionControl,
   type RpcExecutionIdentity,
   type RpcExecutionLaunchIdentity,
+  type RpcExecutionOrigin,
   type RpcExecutionTool,
   type SignedExecutionMessage
 } from '../phi-extension/lib/rpc-execution-protocol'
@@ -27,6 +28,10 @@ import type { RpcHostToolRun } from './host-tool-bridge'
 import type { RpcControlChannel, RpcFrame, RpcPromptOptions, RpcPromptResult } from './types'
 
 export type RpcExecutionRun = RpcApprovalRun & RpcHostToolRun
+export interface RpcVerifiedTaskOrigin {
+  readonly origin: Readonly<RpcExecutionOrigin>
+  readonly run: RpcExecutionRun
+}
 interface RunState {
   binding: RpcExecutionRun
   controller: AbortController
@@ -42,6 +47,8 @@ export interface RpcExecutionAuthorityOptions {
   identity: RpcExecutionLaunchIdentity
   capability: string
   roster: readonly RpcExecutionTool[]
+  /** Enabled only with an attested foreground child runtime; never inferred from a tool name. */
+  allowNativeTask?: boolean
   signal?: AbortSignal
 }
 
@@ -54,6 +61,7 @@ export class RpcExecutionAuthority {
   private readonly roster: ReturnType<typeof executionRoster>
   private identity?: RpcExecutionIdentity
   private readonly cleanups: Array<() => void> = []
+  private readonly taskOrigins = new Set<(event: RpcVerifiedTaskOrigin) => void>()
   private sequence = 0
   private run?: RunState
   private latestRun?: RunState
@@ -68,7 +76,7 @@ export class RpcExecutionAuthority {
     this.connection = options.connection
     this.channel = options.connection.bindControl()
     this.launch = executionLaunchIdentity(options.identity)
-    this.roster = executionRoster(options.roster)
+    this.roster = executionRoster(options.roster, { allowNativeTask: options.allowNativeTask })
     if (
       !executionCapability(options.capability) ||
       !validApprovalIdentity({ ...this.launch, ompSessionId: 'validate', runId: 'validate' }) ||
@@ -109,9 +117,34 @@ export class RpcExecutionAuthority {
   currentRun(): RpcExecutionRun | undefined {
     return this.run?.binding
   }
+  allowsNativeTask(): boolean {
+    return (
+      !this.disposed &&
+      this.roster.tools.some((tool) => tool.site === 'native' && tool.name === 'task')
+    )
+  }
+  /** Only authenticated, sequential origins for this exact active execution run reach listeners. */
+  onTaskOrigin(listener: (event: RpcVerifiedTaskOrigin) => void): () => void {
+    if (this.disposed) throw new Error('Execution authority unavailable')
+    this.taskOrigins.add(listener)
+    return () => this.taskOrigins.delete(listener)
+  }
   sessionIdentity(): Readonly<RpcExecutionIdentity> {
     if (!this.identity || this.disposed) throw new Error('Execution authority unavailable')
     return this.identity
+  }
+  /** Synchronous local admission revocation; keeps the generation writer alive for scoped child cancel. */
+  revokeRun(runId: string): void {
+    if (this.disposed) throw new Error('Execution authority unavailable')
+    const state = this.run
+    if (!state) {
+      if (this.latestRun?.binding.id === runId) return
+      throw new Error('Execution authority cannot revoke a different run')
+    }
+    if (state.binding.id !== runId)
+      throw new Error('Execution authority cannot revoke a different run')
+    state.calls.clear()
+    state.controller.abort()
   }
   async beginRun(runId: string, signal?: AbortSignal): Promise<RpcExecutionRun> {
     if (
@@ -257,6 +290,7 @@ export class RpcExecutionAuthority {
     this.#capability = ''
     this.control = undefined
     for (const detach of this.cleanups.splice(0)) detach()
+    this.taskOrigins.clear()
     return this.closing
   }
   private retireSafely(): void {
@@ -359,7 +393,13 @@ export class RpcExecutionAuthority {
       return
     }
     const state = this.run
-    if (!state || message.runId !== state.binding.id || message.sequence !== state.sequence) return
+    if (
+      !state ||
+      state.controller.signal.aborted ||
+      message.runId !== state.binding.id ||
+      message.sequence !== state.sequence
+    )
+      return
     if (message.type === 'phi_rpc_execution_retired') {
       this.retireRun()
       return
@@ -378,5 +418,25 @@ export class RpcExecutionAuthority {
     }
     state.originSequence = message.originSequence
     state.calls.set(message.toolCallId, { name: message.toolName, digest: message.inputDigest })
+    if (message.toolName === 'task' && this.allowsNativeTask()) {
+      const origin: Readonly<RpcExecutionOrigin> = Object.freeze({
+        ...this.identity,
+        runId: message.runId,
+        protocolVersion: 1,
+        type: 'phi_rpc_execution_origin',
+        rosterHash: message.rosterHash,
+        sequence: message.sequence,
+        originSequence: message.originSequence,
+        toolCallId: message.toolCallId,
+        toolName: message.toolName,
+        inputDigest: message.inputDigest
+      })
+      const event = Object.freeze({ origin, run: state.binding })
+      try {
+        for (const listener of this.taskOrigins) listener(event)
+      } catch {
+        void this.cancelRun().catch(() => this.retireSafely())
+      }
+    }
   }
 }

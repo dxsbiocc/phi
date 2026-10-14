@@ -182,7 +182,6 @@ export class RpcChildRunRegistry {
     const entry = this.entry(value.id)
     if (!entry) return
     if (value.status === 'started') {
-      if (entry.failed) return
       if (
         entry.started ||
         !approvalIdentifier(value.agent) ||
@@ -209,18 +208,17 @@ export class RpcChildRunRegistry {
         this.retire(entry)
         return
       }
-      if (
-        !parent ||
-        !approvalIdentifier(parent.runId) ||
-        this.cancelledParents.has(parent.runId) ||
-        this.disposed ||
-        entry.failed
-      ) {
+      if (!parent || !approvalIdentifier(parent.runId) || this.disposed) {
         this.retire(entry)
         return
       }
       entry.started = started
       entry.parentRunId = parent.runId
+      // Permission retirement must not erase a verified native identity needed for cancellation.
+      if (this.cancelledParents.has(parent.runId) || entry.failed) {
+        this.retire(entry)
+        return
+      }
       this.join(entry)
     } else if (['completed', 'failed', 'aborted'].includes(String(value.status))) {
       if (entry.terminal) return

@@ -1,5 +1,6 @@
 import { realpathSync } from 'node:fs'
-import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import type { ExtensionContext, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import type { RpcTaskCall, RpcTaskParentRun, RpcVerifiedChildDispatch } from './rpc-task-admission'
 import {
   createApprovalEnvelope,
   sameApprovalIdentity,
@@ -29,7 +30,15 @@ export function createRpcExecutionAuthorityExtension(options: {
   identity: RpcExecutionLaunchIdentity
   capability: string
   roster: readonly RpcExecutionTool[]
-}): { extension: ExtensionFactory; readiness(): Readonly<RpcApprovalReadiness> | undefined } {
+  allowNativeTask?: boolean
+  admitTask?: (event: RpcTaskCall, ctx: ExtensionContext) => void
+  childPreflight?: RpcVerifiedChildDispatch
+}): {
+  extension: ExtensionFactory
+  readiness(): Readonly<RpcApprovalReadiness> | undefined
+  taskParent(): Readonly<RpcTaskParentRun> | undefined
+  revokeTaskParent(run: Readonly<RpcTaskParentRun>): void
+} {
   if (
     !executionCapability(options.capability) ||
     !validApprovalIdentity({ ...options.identity, ompSessionId: 'validate', runId: 'validate' })
@@ -37,7 +46,9 @@ export function createRpcExecutionAuthorityExtension(options: {
     throw new Error('Invalid execution authority configuration')
   const identity = executionLaunchIdentity(options.identity)
   const capability = options.capability
-  const roster = executionRoster(options.roster)
+  const roster = executionRoster(options.roster, { allowNativeTask: options.allowNativeTask })
+  if (options.allowNativeTask === true && !options.admitTask)
+    throw new Error('Native task requires exact root admission')
   if (JSON.stringify({ identity, roster }).includes(capability))
     throw new Error('Execution capability overlaps public configuration')
   const tools = new Map(roster.tools.map((tool) => [tool.name, tool]))
@@ -137,6 +148,18 @@ export function createRpcExecutionAuthorityExtension(options: {
       }
     }
     pi.on('tool_call', async (event, ctx) => {
+      if (ctx.agent.kind !== 'main') {
+        try {
+          return (
+            options.childPreflight?.(event, ctx) ?? {
+              block: true,
+              reason: 'Phi main execution authority unavailable'
+            }
+          )
+        } catch {
+          return { block: true, reason: 'Phi main execution authority unavailable' }
+        }
+      }
       const run = current
       try {
         const tool = tools.get(event.toolName)
@@ -152,6 +175,10 @@ export function createRpcExecutionAuthorityExtension(options: {
           run.seen.size >= MAX_EXECUTION_CALLS
         )
           return { block: true, reason: 'Phi main execution authority unavailable' }
+        if (event.toolName === 'task') {
+          if (!options.admitTask) return { block: true, reason: 'Phi native task is unavailable' }
+          options.admitTask(event, ctx)
+        }
         const input = executionInput(tool, event.input)
         if (
           !projectToolBoundaryDecision(identity.cwd, event.toolName, input).allowed ||
@@ -215,6 +242,22 @@ export function createRpcExecutionAuthorityExtension(options: {
   }
   return {
     extension,
+    taskParent: () =>
+      current && activated
+        ? Object.freeze({
+            runId: current.control.runId,
+            controlSequence: current.control.sequence,
+            signal: current.signal.signal
+          })
+        : undefined,
+    revokeTaskParent: (run) => {
+      if (
+        current?.control.runId === run.runId &&
+        current.control.sequence === run.controlSequence &&
+        current.signal.signal === run.signal
+      )
+        revoke()
+    },
     readiness: () =>
       current && activated && ompSessionId
         ? Object.freeze({
