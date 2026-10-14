@@ -91,6 +91,45 @@ test('chat web links retain normal anchor semantics while advertising in-app han
   assert.doesNotMatch(withoutCallback, /data-phi-open-web-url="in-app"/)
 })
 
+test('raw GitHub repository links display the repository name with GitHub branding', () => {
+  const markup = renderMarkdown('https://github.com/mattpocock/skills')
+
+  assert.match(markup, /data-phi-web-link-site="github"/)
+  assert.match(markup, />mattpocock\/skills</)
+})
+
+test('GitHub repository links retain the complete destination for opening and hover', () => {
+  const markup = renderMarkdown('https://github.com/mattpocock/skills/tree/main?tab=readme#setup')
+
+  assert.match(
+    markup,
+    /href="https:\/\/github\.com\/mattpocock\/skills\/tree\/main\?tab=readme#setup"/
+  )
+  assert.match(
+    markup,
+    /aria-description="https:\/\/github\.com\/mattpocock\/skills\/tree\/main\?tab=readme#setup"/
+  )
+})
+
+test('GitHub links preserve explicit Markdown labels and their nested formatting', () => {
+  const markup = renderMarkdown(
+    '[**Install** these `skills`](https://github.com/mattpocock/skills)'
+  )
+
+  assert.match(markup, /data-phi-web-link-site="github"/)
+  assert.match(markup, /<strong[^>]*>Install<\/strong>/)
+  assert.match(markup, /<code[^>]*>skills<\/code>/)
+  assert.doesNotMatch(markup, />mattpocock\/skills</)
+})
+
+test('ordinary web links show their full destination on hover', () => {
+  const markup = renderMarkdown('[Phi docs](https://example.com/docs?lang=zh#setup)')
+
+  assert.match(markup, /data-phi-web-link-site="web"/)
+  assert.match(markup, /aria-description="https:\/\/example\.com\/docs\?lang=zh#setup"/)
+  assert.match(markup, />Phi docs</)
+})
+
 test('local and unsafe links stay local while former database links use the in-app browser', () => {
   const onOpenWebUrl = (): void => undefined
   const local = renderMarkdown(
@@ -340,7 +379,7 @@ test('markdown latex colorbox output becomes a swatch palette instead of raw con
   assert.doesNotMatch(markup, /\\quad/)
 })
 
-test('markdown paragraphs render local paths as file preview links', () => {
+test('markdown paragraphs render local paths as file links with path tooltips', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -358,14 +397,14 @@ test('markdown paragraphs render local paths as file preview links', () => {
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/src\/App.tsx"/)
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/README.md"/)
   assert.match(markup, /打开文件 \/Users\/example\/project\/README.md/)
-  assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/project\/README.md"/)
+  assert.match(markup, /title="\/Users\/example\/project\/README.md"/)
   assert.match(markup, /font-size:1em/)
   assert.doesNotMatch(markup, /translateY\(1px\)/)
   assert.match(markup, /README.md<\/span><\/button>/)
   assert.doesNotMatch(markup, /\.\/src\/App.tsx<\/span>/)
 })
 
-test('markdown file links use tiered hover previews without embedding media inline', () => {
+test('markdown file links show paths instead of rich hover previews', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -376,17 +415,17 @@ test('markdown file links use tiered hover previews without embedding media inli
       })
     )
   )
-  const hoverPreviewSlots = markup.match(/data-phi-slot="local-file-hover-preview"/g) ?? []
-
-  assert.equal(hoverPreviewSlots.length, 2)
-  assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/project\/stacked_bar\.png"/)
-  assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/project\/report\.pdf"/)
+  assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 2)
+  assert.match(markup, /title="\/Users\/example\/project\/stacked_bar\.png"/)
+  assert.match(markup, /title="\/Users\/example\/project\/report\.pdf"/)
   assert.match(markup, /data-phi-file-kind="image"/)
   assert.match(markup, /data-phi-file-kind="pdf"/)
   assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-image"/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-file-hover-preview"/)
+  assert.doesNotMatch(markup, /data-phi-hover-preview-path=/)
 })
 
-test('markdown relative workspace paths render as clickable hover preview links', () => {
+test('markdown relative workspace paths expose their resolved full path on hover', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -400,15 +439,18 @@ test('markdown relative workspace paths render as clickable hover preview links'
 
   const absolutePath = '/Users/example/project/omics_viz/THRSP_network_omics.png'
   assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
-  assert.equal(markup.match(/data-phi-slot="local-file-hover-preview"/g)?.length ?? 0, 3)
   assert.match(markup, new RegExp(`data-phi-path="${absolutePath}"`))
-  assert.match(markup, new RegExp(`data-phi-hover-preview-path="${absolutePath}"`))
+  assert.equal(
+    markup.match(/title="\/Users\/example\/project\/omics_viz\/THRSP_network_omics\.png"/g)
+      ?.length ?? 0,
+    3
+  )
   assert.match(markup, /data-phi-file-kind="image"/)
   assert.match(markup, /打开文件 \/Users\/example\/project\/omics_viz\/THRSP_network_omics\.png/)
   assert.doesNotMatch(markup, /href="omics_viz\/THRSP_network_omics\.png"/)
 })
 
-test('markdown exposes project-external absolute files as guarded hover preview links', () => {
+test('markdown exposes project-external absolute files with full path tooltips', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -421,8 +463,7 @@ test('markdown exposes project-external absolute files as guarded hover preview 
   )
 
   assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
-  assert.equal(markup.match(/data-phi-slot="local-file-hover-preview"/g)?.length ?? 0, 3)
-  assert.match(markup, /data-phi-hover-preview-path="\/Users\/example\/data\/plots\/volcano\.png"/)
+  assert.equal(markup.match(/title="\/Users\/example\/data\/plots\/volcano\.png"/g)?.length ?? 0, 3)
   assert.match(markup, /data-phi-path="\/Users\/example\/data\/plots\/volcano\.png"/)
   assert.match(markup, /打开文件 \/Users\/example\/data\/plots\/volcano\.png/)
 })
@@ -474,6 +515,7 @@ test('markdown current-directory links render directory icons', () => {
   assert.match(markup, /data-phi-path="\/Users\/example\/project"/)
   assert.match(markup, /data-phi-path="\/Users\/example\/project\/outputs"/)
   assert.match(markup, /打开目录 \/Users\/example\/project/)
+  assert.match(markup, /title="\/Users\/example\/project"/)
   assert.doesNotMatch(markup, /lucide/)
   assert.match(markup, />test<\/span><\/button>/)
   assert.doesNotMatch(markup, /data-phi-file-kind="text"/)
@@ -681,6 +723,7 @@ test('remote project markdown links only stat-confirmed paths and keeps missing 
     assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/note\.txt"/)
     assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/result\.txt"/)
     assert.match(markup, /data-phi-path="ssh:\/\/cluster-a\/data\/project\/link\.txt"/)
+    assert.match(markup, /title="ssh:\/\/cluster-a\/data\/project\/link\.txt"/)
     assert.match(
       markup,
       /data-phi-path="ssh:\/\/cluster-a\/data\/project\/wrappers\/runs\/wrun_1\/params\.json"/

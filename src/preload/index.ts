@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
+import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
 import type { TerminalEvent, TerminalRendererBridge } from '../shared/terminalTypes'
 import type {
   RemoteWorkspaceFileRequest,
@@ -768,6 +769,7 @@ type RendererAuthApi = {
   openPath: (path: string) => Promise<void>
   getFileIcon: (path: string) => Promise<string | null>
   readResourceIcon: (key: string) => Promise<string | null>
+  getWebLinkPreview: (url: string) => Promise<WebLinkPreview>
   pickInputFiles: () => Promise<string[]>
   pickLocalUploadFiles: () => Promise<string[]>
   getPathForFile: (file: File) => string
@@ -1275,6 +1277,8 @@ const api: RendererAuthApi = {
   getFileIcon: (path: string): Promise<string | null> => ipcRenderer.invoke('files:getIcon', path),
   readResourceIcon: (key: string): Promise<string | null> =>
     ipcRenderer.invoke('resources:readIcon', key),
+  getWebLinkPreview: (url: string): Promise<WebLinkPreview> =>
+    ipcRenderer.invoke('web-link:preview', url),
   pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
   pickLocalUploadFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickLocalUpload'),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),

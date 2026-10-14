@@ -1,11 +1,14 @@
 import { Fragment, useMemo, type ReactNode } from 'react'
 import { Box } from '@mui/material'
+import { PhiIcons } from '../icons'
 import { createChatResourceMatcher, type ChatResourceMention } from '../lib/chatResourceMentions'
 import {
   ChatResourceMentionsContext,
   useChatResourceMatcher
 } from '../lib/chatResourceMentionContext'
 import { ResourceIcon } from './ResourceIcon'
+import { InlineLinkMenu, type InlineLinkMenuAction } from './markdown/InlineLinkMenu'
+import { inlineLinkLabelSx, useInlineLinkMenu } from './markdown/useInlineLinkMenu'
 
 export function ResourceMentionsProvider({
   resources,
@@ -29,54 +32,77 @@ export function ResourceMention({
   resource: ChatResourceMention
   inheritColor?: boolean
 }): React.JSX.Element {
+  const interactions = useInlineLinkMenu(`${resource.kind}:${resource.id}`)
+  const actions: InlineLinkMenuAction[] = [
+    {
+      id: 'copy',
+      label: '复制',
+      icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
+      onSelect: () => navigator.clipboard.writeText(resource.name)
+    },
+    {
+      id: 'details',
+      label: '查看详情',
+      icon: <PhiIcons.action.openDefault sx={{ fontSize: 16 }} />,
+      disabled: !resource.onOpen,
+      onSelect: () => resource.onOpen?.()
+    }
+  ]
   return (
-    <Box
-      component={resource.onOpen ? 'button' : 'span'}
-      type={resource.onOpen ? 'button' : undefined}
-      onClick={resource.onOpen}
-      data-phi-resource-mention={resource.kind}
-      data-phi-resource-id={resource.id}
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 0.4,
-        verticalAlign: 'baseline',
-        maxWidth: '100%',
-        mx: 0.1,
-        p: 0,
-        border: 0,
-        borderRadius: 0.5,
-        bgcolor: 'transparent',
-        color: inheritColor ? 'inherit' : 'primary.main',
-        font: 'inherit',
-        fontWeight: 600,
-        lineHeight: 'inherit',
-        textAlign: 'left',
-        whiteSpace: 'nowrap',
-        cursor: resource.onOpen ? 'pointer' : 'inherit',
-        '&:hover': resource.onOpen ? { textDecoration: 'underline' } : {},
-        '&:focus-visible': { outline: '2px solid currentColor', outlineOffset: 2 }
-      }}
-    >
-      <ResourceIcon
-        component="span"
-        kind={resource.kind}
-        icon={resource.icon}
-        size={18}
-        fallbackSize={16}
-      />
+    <>
       <Box
-        component="span"
+        component={resource.onOpen ? 'button' : 'span'}
+        type={resource.onOpen ? 'button' : undefined}
+        onClick={resource.onOpen}
+        onContextMenu={interactions.onContextMenu}
+        onKeyDown={interactions.onKeyDown}
+        tabIndex={resource.onOpen ? undefined : 0}
+        aria-haspopup="menu"
+        aria-controls={interactions.position ? interactions.menuId : undefined}
+        aria-expanded={interactions.position !== null}
+        data-phi-resource-mention={resource.kind}
+        data-phi-resource-id={resource.id}
         sx={{
-          // Use the name's text baseline when this component sits inside prose.
-          alignSelf: 'baseline',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.4,
+          verticalAlign: 'baseline',
+          maxWidth: '100%',
+          mx: 0.1,
+          p: 0,
+          border: 0,
+          borderRadius: 0.5,
+          bgcolor: 'transparent',
+          color: inheritColor ? 'inherit' : 'primary.main',
+          font: 'inherit',
+          fontWeight: 600,
+          lineHeight: 'inherit',
+          textAlign: 'left',
+          whiteSpace: 'nowrap',
+          cursor: resource.onOpen ? 'pointer' : 'inherit',
+          '&:hover': resource.onOpen ? { textDecoration: 'underline' } : {},
+          '&:focus-visible': { outline: '2px solid currentColor', outlineOffset: 2 }
         }}
       >
-        {resource.name}
+        <ResourceIcon
+          component="span"
+          kind={resource.kind}
+          icon={resource.icon}
+          size={18}
+          fallbackSize={16}
+        />
+        <Box component="span" sx={inlineLinkLabelSx}>
+          {resource.name}
+        </Box>
       </Box>
-    </Box>
+      <InlineLinkMenu
+        id={interactions.menuId}
+        kind="resource"
+        position={interactions.position}
+        actions={actions}
+        onClose={interactions.closeMenu}
+      />
+    </>
   )
 }
 

@@ -64,16 +64,10 @@ import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 import { ResourceMention } from './ResourceMention'
 import { useChatResourceMatcher } from '../lib/chatResourceMentionContext'
 import { createResourceMentionRemarkPlugin } from '../lib/markdownResourceMentions'
+import { textFromNode } from '../lib/markdownText'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
 const ContentCopyIcon = PhiIcons.action.copy
-
-function textFromNode(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(textFromNode).join('')
-  if (isValidElement<{ children?: ReactNode }>(node)) return textFromNode(node.props.children)
-  return ''
-}
 
 function omitHexColorNodes(node: ReactNode): ReactNode {
   if (typeof node === 'string') {
