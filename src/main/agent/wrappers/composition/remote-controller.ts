@@ -29,14 +29,20 @@ export interface RunController {
   /** Starts the run. Throws with the reason when the host or scheduler refuses. */
   start(
     session: RemoteSshSession,
-    input: { layout: RemoteRunLayout; runId: string; hpc: RemoteHpcSettings | undefined }
+    input: {
+      layout: RemoteRunLayout
+      runId: string
+      hpc: RemoteHpcSettings | undefined
+      beforeStart?: () => void
+    }
   ): Promise<{ pid?: number; jobId?: string; note?: string }>
   status(session: RemoteSshSession, handle: RemoteJobHandle): Promise<RemoteRunStatus>
   signal(session: RemoteSshSession, handle: RemoteJobHandle, signal: 'TERM' | 'KILL'): Promise<void>
 }
 
 const loginNodeController: RunController = {
-  async start(session, { layout }) {
+  async start(session, { layout, beforeStart }) {
+    beforeStart?.()
     const started = await session.exec(buildDetachedLaunchCommand(layout.runDir))
     if (started.code !== 0) throw new Error(started.stderr || started.stdout)
     const rawPid = started.stdout.trim()
@@ -74,9 +80,10 @@ async function sbatchStatus(
 }
 
 const sbatchController: RunController = {
-  async start(session, { layout, runId, hpc }) {
+  async start(session, { layout, runId, hpc, beforeStart }) {
     const script = joinRemote(layout.runDir, 'job.sbatch')
     await session.writeTextFile(script, buildRemoteSbatchScript({ layout, runId, hpc }))
+    beforeStart?.()
     const result = await session.exec(`sbatch ${shellQuote(script)}`)
     if (result.code !== 0) {
       const reason = `sbatch refused the job: ${(result.stderr || result.stdout).trim()}`

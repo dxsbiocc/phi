@@ -14,7 +14,8 @@ import { buildWrapperCompositionTools } from '../src/main/agent/wrappers/composi
 import {
   getWrapperRunsDir,
   listWrapperRuns,
-  readWrapperRun
+  readWrapperRun,
+  writeWrapperRun
 } from '../src/main/agent/wrappers/store'
 import {
   FAKE_NEXTFLOW,
@@ -903,5 +904,40 @@ test('a local Nextflow too old for the wrappers is refused before anything start
     assert.match(result.ok ? '' : result.error, /22\.10\.6/)
     assert.match(result.ok ? '' : result.error, /25\.04\.0/)
     assert.equal(listWrapperRuns(sb.agentDir).length, 0)
+  })
+})
+
+test('scoped job list filters ownership before limiting newer peer records', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake()
+    const m = manager(sb)
+    const started = await m.start({
+      id: WRAPPER_ID,
+      overrides: { outdir: sb.outdir },
+      profile: 'docker',
+      originSessionId: 'owned-runtime'
+    })
+    assert.equal(started.ok, true)
+    await m.wait(started.status.runId, 10000)
+    const owner = readWrapperRun(started.status.runId, sb.agentDir)!
+    for (let i = 0; i < 12; i++)
+      writeWrapperRun(
+        {
+          ...owner,
+          runId: `wrun_peer_${i}`,
+          originSessionId: 'peer-runtime',
+          createdAt: `2030-01-01T00:00:${String(i).padStart(2, '0')}.000Z`
+        },
+        sb.agentDir
+      )
+    const listed = await m.list(
+      1,
+      (runId) => readWrapperRun(runId, sb.agentDir)?.originSessionId === 'owned-runtime'
+    )
+    assert.deepEqual(
+      listed.map((run) => run.runId),
+      [owner.runId]
+    )
+    m.shutdown()
   })
 })

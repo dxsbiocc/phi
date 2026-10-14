@@ -1,4 +1,9 @@
 import {
+  WRAPPER_COMPOSITION_TOOL_NAMES,
+  buildWrapperCompositionTools
+} from '../src/main/agent/wrappers/composition/tools'
+import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
+import {
   NOTEBOOK_TOOL_NAMES,
   buildNotebookCustomTools
 } from '../src/main/agent/notebook/notebook-tools'
@@ -113,4 +118,29 @@ test('application RPC Notebook roster reuses all existing authoring tools with r
       ['notebook.save', 'write']
     ]
   )
+})
+
+test('application Wrapper roster reuses the six existing tools and their approval contract', () => {
+  const tools = buildWrapperCompositionTools(
+    createHostJobClient(async () => {
+      throw new Error('roster inspection cannot call a service')
+    })
+  )
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    WRAPPER_COMPOSITION_TOOL_NAMES
+  )
+  assert.deepEqual(
+    tools.map((tool) => [tool.name, tool.approval]),
+    [
+      ['wrapper_search', 'read'],
+      ['wrapper_inspect', 'read'],
+      ['wrapper_run', 'write'],
+      ['wrapper_status', 'read'],
+      ['wrapper_wait', 'read'],
+      ['wrapper_cancel', 'write']
+    ]
+  )
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.length, 6)
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook.run_cell' as never), false)
 })

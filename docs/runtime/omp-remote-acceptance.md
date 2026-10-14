@@ -65,6 +65,24 @@
 
 范围边界：本批只开放 Notebook 编写。`run_cell` 现有链路尚未拥有实际 kernel 中断，因此不登记；取消保证覆盖待审批及异步查找到 dispatch 前，已经开始的磁盘 I/O 不承诺回滚，已批准的 draft 修改不因后续 save 被拒绝而撤销。真实 SSH/provider/OAuth/Finder 未执行，T12 其他工具族及完整 R4 继续实施。既有万行 main 入口本轮只改原服务注册接缝，作为已有架构债保留；新 Notebook 场景放入独立 412 行 helper，未机械拆分旧 fixture。
 
+## T12 Wrapper 与交付物实际应用增量（2026-10-14）
+
+在 Notebook 增量 `719dada3` 上继续原 T12。复用 Wrapper 的 6 个 builder、host client/handler、JobManager、持久 job origin、remote job Control 与既有远端 presenter，实际 RPC 应用名单增加 `wrapper_search/inspect/run/status/wait/cancel` 和 `present_files`。未新增后端、registry、schema、依赖或开关，Notebook 原 6 个编写工具保留，RPC 默认仍关闭。
+
+可信 main context 决定 origin；远程 job 的 origin 经现有应用生命周期内的 resolver 关联到稳定 Phi 会话，再匹配 project、host/profile/root。状态/等待/取消先验归属再进入 manager，避免外会话读取污染完成回报状态；列表在归属过滤后应用 limit，不被 peer 的较新记录遮蔽。无法证明旧 origin 的 job 不接管，跨应用重启的完整冷恢复仍属 T15。既有本地 worker/UI 路径维持原范围。
+
+启动分界明确：target/环境异步检查后，最后同步复核取消与当前绑定，再持久创建并接受后台 job；成功返回后，聊天停止、空闲或关闭该代不会取消已接受的后台 job。随后物理准备/launch 只受原 job Control 和已选 target 控制。停止 `wrapper_wait` 只结束等待；明确 `wrapper_cancel` 走既有审批与取消确认。原红证明 manager 会在异步检查取消/改绑后接受 job（2 项），直接 login 和 sbatch 写脚本后也有迟到执行/取消态缺口（2 项）；补现有准入和最终执行前守卫后均通过，未重写 controller 或 SSH 协议。
+
+交付物沿原远端路径验证，校验 runtime/tool-call/context，并在异步检查后、发布前再次验证 signal、原 run 与项目绑定。远端结果保留 host/project/path 及 URI，不授予本机同名文件读取权限。首条真实应用安装器→runtime-adapter→官方 CLI→真实 JobManager 流程通过，30.69 秒自然退出：查找/检查、远端启动、状态/等待、实际远端路径验证与展示；新代显式恢复同 journal 后查同一 job/产物，无隐式重复启动。SSH 传输与 tiny Nextflow 使用隔离的本机 fixture，不代表真实服务器或 Nextflow/Slurm 实机验收。
+
+最终冻结为 9 个生产文件和 12 个测试/fixture 文件。执行者实际应用场景按独立日志全部通过：首流程 1/1（30.69 秒）、拒绝/待批停止/准入停止/改绑 4/4（63.72 秒）、已接受作业与 peer/停止等待/明确取消 1/1（34.70 秒）、恢复后的完成继续 1/1（25.52 秒）；均自然退出。最后 peer 场景严格核对 2 个 job/2 次实际 launch、主/peer PID 持续、停止等待不取消、仅明确取消本会话 job；之前的 HTTP 计数红日志保留，原计数跨越 native abort 在途请求而超出承诺，最终测试验证真实作业副作用，未容忍额外 job 或放宽时限。main/selector 6/6（1.75 秒）、改动相关组 108/108（89.82 秒）、原 Notebook 编写与恢复 1/1（28.64 秒）通过。测试修正只涉及 5 文件，9 个生产文件与共享 wrapperSandbox 均未再改。
+
+独立差异审查 APPROVE，无确认缺陷：最终实际 app/CLI 3/3（流程 30.32 秒、peer/停止 34.58 秒、完成继续 27.86 秒）；main 权限/异步交付物停止与改绑/实际完成回调一次继续/名册 5/5（1.89 秒）；关键边界 8/8（2.64 秒）以及收养作业 await 后取消/改绑的 2 项故障注入通过，后者均为 0 physical cancel。新增测试修正保留会话隔离、peer 回报状态、真实 job/launch/PID、同 Phi 新代和无重复启动断言。21 文件定向 lint 通过；main 旧测试类型诊断 90→90，3 个旧 Wrapper 测试合计 28→28，其余定向文件为零，合计新增诊断 0；没有清理无关类型债。各组有交集，不相加作为全库数量。
+
+主代理既有相关组：63 个未改 Wrapper/present 测试文件，563 项，562 通过、0 失败/取消、1 既有网络集成跳过，31.74 秒；9 个生产文件、共享 wrapperSandbox 及所选测试哈希前后不变。生产全部类型、构建、asar 通过，共享 runtime 目标字节未改且符号链接已恢复。完整 lint 首轮发现新测试缺返回类型，修正后的完整 lint 通过，保留两条既有格式警告；最终 5 测试修正另经定向 lint/typecheck。没有重复全库，先前 main 全量证据仍只对应原固定 tree。
+
+本轮 main 大入口仅修改原服务注册/发布接缝，作为既有架构债保留。JobManager 为 919 行，保留现有接受、持久化、进度和结束的同一所有者，避免在取消修复中机械拆分；host scope 和 remote controller 已分离。新实际流程与边界场景 helper 分别 349/372 行。真实 SSH/provider/OAuth、Slurm/Nextflow 环境和跨应用冷 origin 恢复尚未验证，沿 T16/T15 继续；默认 RPC 和 `run_cell` 门槛未变。
+
 ## 冻结整合验收
 
 最新 main 整合验收（2026-10-14）：迁移 `0c5d6753` 与 main `acbbb6b8` 的组合 tree `a4a43a8daf43fb57174a8789921a550386794822` 标准并发 4 全量 **5864 项：5839 通过、0 失败、0 取消、24 既有跳过、1 todo，879.08 秒**。前后 2478 个跟踪文件及 tree 完全一致；实际 main 合并 `631671e6` 的 tree 与此候选相同，保留 main 聊天布局逐字一致。独立聊天回归 71/71。合并后主工作区依赖按 frozen lockfile 同步，coding-agent/natives/ai/catalog/tui/utils/wire 均核对为 18.10.3；主工作区生产类型、完整 lint、构建、asar 和真实终端 4 项 smoke 通过，保留两条既有格式警告。本轮标准全量已通过，不抹去下列历史计时失败，也不据此声称真实 SSH/provider/OAuth/Finder 或默认远程启用已验收。

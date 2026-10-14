@@ -756,6 +756,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       params,
       launchKind: kind
     }
+    const cancelledBeforeStart = new Error('Wrapper job cancelled before controller launch')
     let started: { pid?: number; jobId?: string; note?: string }
     try {
       await session.mkdirp(joinRemote(layout.runDir, 'logs'))
@@ -769,8 +770,16 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
         joinRemote(layout.runDir, 'launch.sh'),
         buildRemoteLaunchScript({ layout, profile: options.profile, hpc: target.hpc })
       )
-      started = await controller.start(session, { layout, runId: options.runId, hpc: target.hpc })
+      started = await controller.start(session, {
+        layout,
+        runId: options.runId,
+        hpc: target.hpc,
+        beforeStart: () => {
+          if (control.cancelled) throw cancelledBeforeStart
+        }
+      })
     } catch (error) {
+      if (error === cancelledBeforeStart) return failure('', { cancelled: true })
       if (error instanceof RemoteLaunchRejectedError) return rejected(error.message)
       return recover(error)
     }

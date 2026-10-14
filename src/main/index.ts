@@ -389,7 +389,10 @@ import {
   readWrapperModuleDetails,
   resetWrapperCompositionCatalogCache
 } from './agent/wrappers/composition/discovery'
-import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
+import {
+  wrapperJobHostHandlers,
+  createWrapperJobHostScope
+} from './agent/wrappers/composition/job-host-handlers'
 import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
 import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
@@ -2299,7 +2302,59 @@ const wrapperJobs = new WrapperJobManager({
     }
   }
 })
-for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
+for (const [method, handler] of Object.entries(
+  wrapperJobHostHandlers(wrapperJobs, {
+    scopeFor: (context) => {
+      const originSessionId = context?.originSessionId
+      if (!originSessionId) {
+        if (context?.signal) throw new Error('RPC Wrapper call has no trusted origin')
+        return undefined
+      }
+      const origin = resolveOriginSession(originSessionId)
+      const manifest = origin && findPhiSessionById(origin.phiSessionId)
+      if (!origin || !manifest) throw new Error('Wrapper origin session is unavailable')
+      const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+      if (project?.location.kind !== 'ssh') {
+        if (context?.signal || manifest.projectLocation?.kind === 'ssh')
+          throw new Error('RPC Wrapper project is unavailable')
+        return undefined
+      }
+      if (ownsRemoteRuntimeSession(originSessionId) && !context?.signal)
+        throw new Error('RPC Wrapper call has no owned cancellation scope')
+      const binding = resolveRemoteWorkspaceHostBinding({
+        sessionId: origin.phiSessionId,
+        projectId: project.id
+      })
+      const target = resolveProjectRemoteTarget(project, undefined)
+      if ('reason' in target) throw new Error(target.reason)
+      const targetKey = JSON.stringify(target)
+      return createWrapperJobHostScope({
+        originSessionId,
+        phiSessionId: origin.phiSessionId,
+        projectId: project.id,
+        hostProfileId: project.location.hostProfileId,
+        host: target.target.connection.host,
+        workspaceRoot: target.target.workspaceRoot,
+        signal: context?.signal,
+        readRun: (runId) => readWrapperRun(runId),
+        resolveOrigin: resolveOriginSession,
+        assertCurrent: () => {
+          const currentProject = getProject(project.id)
+          if (
+            !currentProject ||
+            resolveOriginSession(originSessionId)?.phiSessionId !== origin.phiSessionId ||
+            resolveRemoteWorkspaceHostBinding({
+              sessionId: origin.phiSessionId,
+              projectId: project.id
+            }).cacheKey !== binding.cacheKey ||
+            JSON.stringify(resolveProjectRemoteTarget(currentProject, undefined)) !== targetKey
+          )
+            throw new Error('RPC Wrapper selected project/host binding changed')
+        }
+      })
+    }
+  })
+)) {
   getPhiEngine().host.register(method, handler)
 }
 wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId }))
@@ -2686,16 +2741,35 @@ function recordPresentedFiles(run: PromptRun, toolCallId: string, files: Present
   }
 }
 
-async function handlePresentFilesRequest(params: unknown): Promise<{ files: PresentedFile[] }> {
+async function handlePresentFilesRequest(
+  params: unknown,
+  context?: import('./agent/engine/types').PhiHostRequestContext
+): Promise<{ files: PresentedFile[] }> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
   const toolCallId = optionalStringField(record, 'toolCallId')
   const { run, toolCallId: callId, remote } = presentableRun(runtimeSessionId, toolCallId)
+  const routed = runtimeSessionId && ownsRemoteRuntimeSession(runtimeSessionId)
+  if (
+    routed &&
+    (context?.originSessionId !== runtimeSessionId ||
+      context?.toolCallId !== callId ||
+      !context.signal)
+  )
+    throw new Error('RPC deliverable origin/call binding differs')
+  context?.signal?.throwIfAborted()
+  const binding = remote ? resolveRemoteWorkspaceHostBinding(remote).cacheKey : undefined
   const files = remote
     ? await validateRemotePresentedFiles(remote, record.files, {
         connectHost: connectRemoteWorkspaceHost
       })
     : validatePresentedFiles(run.cwd, record.files)
+  context?.signal?.throwIfAborted()
+  if (
+    presentableRun(runtimeSessionId, toolCallId).run !== run ||
+    (remote && resolveRemoteWorkspaceHostBinding(remote).cacheKey !== binding)
+  )
+    throw new Error('Deliverable run/project binding changed during inspection')
   recordPresentedFiles(run, callId, files)
   return { files }
 }

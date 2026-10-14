@@ -1,3 +1,4 @@
+import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { NotebookToolHostRouter } from '../src/main/agent/notebook/notebook-tool-host-router'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import * as connectorSetup from '../src/main/agent/mcp/connector-setup'
@@ -352,6 +353,10 @@ type HarnessOptions = {
   remoteRpc?: boolean
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
+  remotePresentGate?: Promise<void>
+  onRemotePresentInspect?: () => void
+  routedRuntime?: (id: string) => boolean
+  remoteWrapperTarget?: boolean
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -2360,7 +2365,7 @@ async function harness(
     './agent/engine/omp-bridge': { getOmpBridge: () => fakeOmpBridge },
     './agent/engine/in-process-engine': {
       getPhiEngine: () => phiEngine,
-      ownsRemoteRuntimeSession: () => false
+      ownsRemoteRuntimeSession: (id: string) => options.routedRuntime?.(id) ?? false
     },
     './agent/remote-session-routing': {
       createAppRemoteSessionManager: (cwd: string, phiSessionId: string, resume: boolean) => ({
@@ -3045,7 +3050,14 @@ async function harness(
       }
     },
     './agent/wrappers/composition/job-host-handlers': {
-      wrapperJobHostHandlers: (): Record<string, never> => ({})
+      createWrapperJobHostScope,
+      wrapperJobHostHandlers: (
+        _jobs: unknown,
+        hostOptions?: { scopeFor?: unknown }
+      ): Record<string, never> => {
+        wrapperJobOptions.hostScopeFor = hostOptions?.scopeFor
+        return {}
+      }
     },
     './agent/wrappers/composition/job-continue': jobContinue,
     // The real delivery logic: this test is what proves index.ts wires it to the session timeline.
@@ -3781,8 +3793,19 @@ async function harness(
       isRemoteProjectAnchorPath: (path: string) => path.includes('/remote-project-anchors/')
     },
     './agent/wrappers/remote-connection-resolver': {
-      resolveProjectRemoteTarget: (project: { id?: string } | undefined): { reason: string } => {
+      resolveProjectRemoteTarget: (project: { id?: string } | undefined): unknown => {
         if (project?.id) remoteResolverProjectIds.push(project.id)
+        if (options.remoteWrapperTarget && project?.id)
+          return {
+            projectId: project.id,
+            hostProfileId: 'host-1',
+            connectionId: 'selected-wrapper-connection',
+            target: {
+              connection: { host: 'cluster-one' },
+              workspaceRoot: '/canonical/project',
+              hpc: { scheduler: 'local', runtime: 'singularity' }
+            }
+          }
         return { reason: 'remote execution is mocked out in main-integration.test.ts' }
       }
     },
@@ -3852,6 +3875,8 @@ async function harness(
           throw new Error('Invalid remote delivery identity')
         }
         if (!Array.isArray(value)) throw new Error('Invalid remote delivery files')
+        options.onRemotePresentInspect?.()
+        await options.remotePresentGate
         return value.map((item) => ({
           ...(item as Record<string, unknown>),
           path: 'ssh://cluster-one/canonical/project/report.pdf',
@@ -12644,4 +12669,120 @@ test('main host: owned remote worker Notebook context remains compatible without
     app.remoteNotebookCalls.some((call) => call.path?.includes('remote-project-anchors')),
     false
   )
+})
+
+test('main Wrapper scope rejects unknown origins and rebinds, while legacy local remains compatible', async () => {
+  let binding = 'selected-host'
+  const app = await harness(undefined, {
+    remoteNotebookBinding: () => binding,
+    remoteWrapperTarget: true
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'initialize selected Wrapper origin')
+  const scopeFor = app.wrapperJobOptions.hostScopeFor as (
+    context?: HostContext
+  ) => ReturnType<typeof createWrapperJobHostScope> | undefined
+  assert.throws(() => scopeFor({ signal: new AbortController().signal }), /trusted origin/)
+  assert.throws(
+    () => scopeFor({ originSessionId: 'unknown-runtime' }),
+    /origin session is unavailable/
+  )
+  const scope = scopeFor({ originSessionId: app.sessions[0].runtimeSessionId })!
+  assert.equal(scope.originSessionId, app.sessions[0].runtimeSessionId)
+  scope.assertCurrent!()
+  binding = 'replacement-host'
+  assert.throws(() => scope.assertCurrent!(), /project\/host binding changed/)
+  const local = await harness()
+  await local.invoke('agent:prompt', 'initialize ordinary local origin')
+  const localScope = local.wrapperJobOptions.hostScopeFor as typeof scopeFor
+  assert.equal(localScope({ originSessionId: local.sessions[0].runtimeSessionId }), undefined)
+})
+
+for (const boundary of ['stop', 'rebind'] as const)
+  test(`main remote present ${boundary} during inspection cannot commit a delivery`, async () => {
+    const session = new FakeSession('fresh.jsonl')
+    session.hold = true
+    let release!: () => void,
+      entered = false,
+      binding = 'selected-host',
+      routed = false
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const app = await harness(async () => session, {
+      remoteRpc: true,
+      remoteNotebookBinding: () => binding,
+      remotePresentGate: gate,
+      onRemotePresentInspect: () => {
+        entered = true
+      },
+      routedRuntime: () => routed
+    })
+    await app.invoke('projects:newRemoteSession', 'remote-project-1')
+    const active = app.invoke('agent:prompt', 'inspect the remote artifact')
+    await waitUntil(() => session.started)
+    routed = true
+    const present = app.hostHandlers.get('deliverables.present')!
+    const request = {
+      runtimeSessionId: session.runtimeSessionId,
+      toolCallId: 'held-present',
+      files: [{ path: 'report.pdf' }]
+    }
+    await assert.rejects(
+      present(request, {
+        originSessionId: 'forged',
+        toolCallId: 'held-present',
+        signal: new AbortController().signal
+      }),
+      /origin\/call binding differs/
+    )
+    const controller = new AbortController()
+    const pending = present(request, {
+      originSessionId: session.runtimeSessionId,
+      toolCallId: 'held-present',
+      signal: controller.signal
+    })
+    await waitUntil(() => entered)
+    if (boundary === 'stop') controller.abort(new Error('artifact inspection stopped'))
+    else binding = 'replacement-host'
+    release()
+    await assert.rejects(
+      pending,
+      boundary === 'stop' ? /artifact inspection stopped/ : /binding changed during inspection/
+    )
+    assert.equal(
+      app.appendedSessionEvents.some(
+        (entry) => (entry.event as { type?: string }).type === 'files_presented'
+      ),
+      false
+    )
+    await app.invoke('agent:stop')
+    await active
+  })
+
+test('main actual finished callback wakes the RPC-enabled owning Phi conversation exactly once', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'start a remote background wrapper')
+  const session = app.sessions[0]
+  const listeners = (
+    app as unknown as { wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void> }
+  ).wrapperJobFinishListeners
+  assert.equal(listeners.length, 1)
+  listeners[0](
+    FINISHED_RUN(session.runtimeSessionId, {
+      remote: { host: 'cluster-one', runDir: '/canonical/project/wrappers/runs/wrun_1' }
+    }),
+    { elapsedSeconds: 1 }
+  )
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], WOKEN)
+  assert.equal(app.sessions.length, 1)
+  const notices = app.appendedSessionEvents.filter(
+    (entry) => (entry.event as { type?: string }).type === 'wrapper_run_finished'
+  )
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].sessionId, current.phiSessionId)
 })

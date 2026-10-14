@@ -191,7 +191,11 @@ export function createRpcDesktopToolScope(
       return services.invoke(
         method,
         params,
-        method === 'notebookTool.execute' ? { ...call.context, signal: call.signal } : call.context
+        method === 'notebookTool.execute' ||
+          method.startsWith('wrapperJob.') ||
+          method === 'deliverables.present'
+          ? { ...call.context, signal: call.signal }
+          : call.context
       )
     }
   }

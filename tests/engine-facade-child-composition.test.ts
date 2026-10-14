@@ -7,6 +7,13 @@ import { join } from 'node:path'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 
 for (const mode of [
+  'app-wrapper-flow',
+  'app-wrapper-denied',
+  'app-wrapper-pending-stop',
+  'app-wrapper-precommit-stop',
+  'app-wrapper-precommit-rebind',
+  'app-wrapper-accepted-peer-stop',
+  'app-wrapper-wake',
   'app-notebook-approved',
   'app-notebook-denied',
   'app-notebook-pending-stop',

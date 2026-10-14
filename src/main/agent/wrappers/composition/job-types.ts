@@ -41,27 +41,40 @@ export interface WrapperJobSummary {
 export type StartJobResult = { ok: true; status: WrapperJobStatus } | { ok: false; error: string }
 export type CancelJobResult = { ok: true; status: WrapperJobStatus } | { ok: false; error: string }
 
+/** Main-owned admission only. Accepted background jobs no longer depend on this chat call. */
+export interface WrapperJobControl {
+  signal?: AbortSignal
+  assertCurrent?: () => void
+}
+
 export interface WrapperJobClient {
-  start(input: {
-    id: string
-    overrides: Record<string, unknown>
-    /** Omitted means the target's default: docker locally, the connection's runtime on a remote. */
-    profile?: string
-    /** Where to run. Default `local`; `remote` uses the project's saved HPC connection. */
-    target?: 'local' | 'remote'
-    /** The runtime session whose agent started this run; used to tell that conversation when it ends. */
-    originSessionId?: string
-    /** `false` opts out of waking that conversation when the run ends. Anything else means yes. */
-    continueWhenDone?: boolean
-    /** cpus/memory/time for every process, over the wrapper's defaults. Validated by the manager. */
-    resources?: unknown
-  }): Promise<StartJobResult>
+  start(
+    input: {
+      id: string
+      overrides: Record<string, unknown>
+      /** Omitted means the target's default: docker locally, the connection's runtime on a remote. */
+      profile?: string
+      /** Where to run. Default `local`; `remote` uses the project's saved HPC connection. */
+      target?: 'local' | 'remote'
+      /** The runtime session whose agent started this run; used to tell that conversation when it ends. */
+      originSessionId?: string
+      /** `false` opts out of waking that conversation when the run ends. Anything else means yes. */
+      continueWhenDone?: boolean
+      /** cpus/memory/time for every process, over the wrapper's defaults. Validated by the manager. */
+      resources?: unknown
+    },
+    control?: WrapperJobControl
+  ): Promise<StartJobResult>
   status(runId: string): Promise<WrapperJobStatus | undefined>
   /** Newest first. */
-  list(limit?: number): Promise<WrapperJobSummary[]>
-  cancel(runId: string): Promise<CancelJobResult>
+  list(limit?: number, ownsRun?: (runId: string) => boolean): Promise<WrapperJobSummary[]>
+  cancel(runId: string, control?: WrapperJobControl): Promise<CancelJobResult>
   /** Resolves with the status once the run ends or `timeoutMs` passes, whichever is first. */
-  wait(runId: string, timeoutMs: number): Promise<WrapperJobStatus | undefined>
+  wait(
+    runId: string,
+    timeoutMs: number,
+    control?: WrapperJobControl
+  ): Promise<WrapperJobStatus | undefined>
 }
 
 export const WRAPPER_JOB_HOST_METHODS = {

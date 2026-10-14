@@ -40,6 +40,7 @@ import {
   type CancelJobResult,
   type StartJobResult,
   type WrapperJobClient,
+  type WrapperJobControl,
   type WrapperJobStatus,
   type WrapperJobSummary
 } from './job-types'
@@ -260,15 +261,20 @@ export class WrapperJobManager implements WrapperJobClient {
     }
   }
 
-  async start(input: {
-    id: string
-    overrides: Record<string, unknown>
-    profile?: string
-    target?: 'local' | 'remote'
-    originSessionId?: string
-    continueWhenDone?: boolean
-    resources?: unknown
-  }): Promise<StartJobResult> {
+  async start(
+    input: {
+      id: string
+      overrides: Record<string, unknown>
+      profile?: string
+      target?: 'local' | 'remote'
+      originSessionId?: string
+      continueWhenDone?: boolean
+      resources?: unknown
+    },
+    control?: WrapperJobControl
+  ): Promise<StartJobResult> {
+    control?.signal?.throwIfAborted()
+    control?.assertCurrent?.()
     const { id, overrides } = input
     const parsedResources = parseWrapperRunResources(input.resources)
     if (!parsedResources.ok) return { ok: false, error: parsedResources.error }
@@ -440,6 +446,9 @@ export class WrapperJobManager implements WrapperJobClient {
       }
     }
 
+    // Last synchronous gate before accepting and persisting an independent background job.
+    control?.signal?.throwIfAborted()
+    control?.assertCurrent?.()
     const agentDir = this.agentDir()
     const params = mapped.params
     let run: WrapperRun
@@ -784,9 +793,9 @@ export class WrapperJobManager implements WrapperJobClient {
     return status
   }
 
-  async list(limit = 10): Promise<WrapperJobSummary[]> {
+  async list(limit = 10, ownsRun?: (runId: string) => boolean): Promise<WrapperJobSummary[]> {
     const runs = listWrapperRuns(this.agentDir())
-      .filter((run) => run.origin === 'composition')
+      .filter((run) => run.origin === 'composition' && (!ownsRun || ownsRun(run.runId)))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, Math.max(1, limit))
     return runs.map((stored) => {
@@ -801,7 +810,9 @@ export class WrapperJobManager implements WrapperJobClient {
     })
   }
 
-  async cancel(runId: string): Promise<CancelJobResult> {
+  async cancel(runId: string, control?: WrapperJobControl): Promise<CancelJobResult> {
+    control?.signal?.throwIfAborted()
+    control?.assertCurrent?.()
     let job = this.live.get(runId)
     if (!job) {
       const stored = readWrapperRun(runId, this.agentDir())
@@ -823,6 +834,8 @@ export class WrapperJobManager implements WrapperJobClient {
           : `Run not found: ${runId}`
       }
     }
+    control?.signal?.throwIfAborted()
+    control?.assertCurrent?.()
     if (!job.cancelRequested) {
       job.cancelRequested = true
       try {
@@ -836,7 +849,13 @@ export class WrapperJobManager implements WrapperJobClient {
     return { ok: true, status: this.liveStatus(job) }
   }
 
-  async wait(runId: string, timeoutMs: number): Promise<WrapperJobStatus | undefined> {
+  async wait(
+    runId: string,
+    timeoutMs: number,
+    control?: WrapperJobControl
+  ): Promise<WrapperJobStatus | undefined> {
+    control?.signal?.throwIfAborted()
+    control?.assertCurrent?.()
     const job = this.live.get(runId)
     if (!job) return this.noteReported(this.statusSync(runId))
 
@@ -844,11 +863,21 @@ export class WrapperJobManager implements WrapperJobClient {
     const timeout = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), Math.max(0, timeoutMs))
     })
+    let rejectAbort: ((error: unknown) => void) | undefined
+    const onAbort = (): void => rejectAbort?.(control?.signal?.reason)
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = reject
+    })
+    control?.signal?.addEventListener('abort', onAbort, { once: true })
+    if (control?.signal?.aborted) onAbort()
     try {
-      const outcome = await Promise.race([job.finished, timeout])
+      const outcome = await Promise.race([job.finished, timeout, aborted])
+      control?.signal?.throwIfAborted()
+      control?.assertCurrent?.()
       return this.noteReported(outcome === 'timeout' ? this.statusSync(runId) : outcome)
     } finally {
       if (timer) clearTimeout(timer)
+      control?.signal?.removeEventListener('abort', onAbort)
     }
   }
 

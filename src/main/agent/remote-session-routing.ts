@@ -1,3 +1,4 @@
+import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
@@ -170,7 +171,11 @@ export function installAppRemoteSessionRouting(
           bundle,
           recovery: manifest.runtimeRef ? 'resume' : 'new',
           approval: { ...options.approval, projectName: project.name },
-          desktopToolNames: APP_RPC_NOTEBOOK_TOOL_NAMES,
+          desktopToolNames: [
+            ...APP_RPC_NOTEBOOK_TOOL_NAMES,
+            ...WRAPPER_COMPOSITION_TOOL_NAMES,
+            'present_files'
+          ],
           recentUserImages: () => [],
           ...(definitions.length
             ? { foregroundChildren: { definitions, onApprovalEvent: options.onChildApprovalEvent } }

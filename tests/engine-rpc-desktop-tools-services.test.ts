@@ -19,7 +19,11 @@ test('remote present builder invokes existing remote validation and preserves SS
     const request = record(params)
     assert.equal(request.runtimeSessionId, 'runtime-session')
     assert.equal(request.toolCallId, 'present-call')
-    assert.deepEqual(context, { originSessionId: 'runtime-session', toolCallId: 'present-call' })
+    assert.ok(context.signal instanceof AbortSignal)
+    assert.deepEqual(
+      { originSessionId: context.originSessionId, toolCallId: context.toolCallId },
+      { originSessionId: 'runtime-session', toolCallId: 'present-call' }
+    )
     return {
       files: await validateRemotePresentedFiles(
         { sessionId: 'phi-session', projectId: 'project' },
