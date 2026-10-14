@@ -135,6 +135,10 @@ function createWorkerRssReader(): { read(pid: number): number; close(): void } {
   }
 }
 
+function pidFileReady(path: string): boolean {
+  return existsSync(path) && readFileSync(path, 'utf8').trim() !== ''
+}
+
 function readPid(path: string): number {
   const pid = Number(readFileSync(path, 'utf8').trim())
   assert.ok(Number.isSafeInteger(pid) && pid > 0, `invalid PID in ${path}`)
@@ -491,7 +495,7 @@ async function main(): Promise<void> {
       )
       await waitFor(() => firstStats.events > startEvents, 1_000, 'disconnected flood output')
       await waitFor(
-        () => existsSync(disconnectedFloodPidFile),
+        () => pidFileReady(disconnectedFloodPidFile),
         NORMAL_TIMEOUT_MS,
         'disconnected flood PID file'
       )
@@ -696,7 +700,7 @@ async function main(): Promise<void> {
       `/usr/bin/printf '%s\\n' "$$" > ${shellQuote(crashShellPidFile)}; /bin/sh -c 'trap "" HUP; while :; do /bin/sleep 30; done' & child=$!; /usr/bin/printf '%s\\n' "$child" > ${shellQuote(crashChildPidFile)}; /usr/bin/yes PHI_CRASH_FLOOD\n`
     )
     await waitFor(
-      () => existsSync(crashShellPidFile) && existsSync(crashChildPidFile),
+      () => pidFileReady(crashShellPidFile) && pidFileReady(crashChildPidFile),
       NORMAL_TIMEOUT_MS,
       'crash PID files'
     )
@@ -737,7 +741,7 @@ async function main(): Promise<void> {
       `/usr/bin/printf '%s%s\\n' ${shellQuote(recoveredSentinel.slice(0, recoveredSplit))} ${shellQuote(recoveredSentinel.slice(recoveredSplit))}; /usr/bin/printf '%s\\n' "$$" > ${shellQuote(recoveredShellPidFile)}\n`
     )
     await waitFor(
-      () => probe.markerAt(recoveredSentinel) !== undefined && existsSync(recoveredShellPidFile),
+      () => probe.markerAt(recoveredSentinel) !== undefined && pidFileReady(recoveredShellPidFile),
       NORMAL_TIMEOUT_MS,
       'terminal creation after worker crash'
     )

@@ -33,6 +33,7 @@ import {
   type Paths
 } from './remote-project-download-data-plane-scripts'
 import {
+  assertRemoteDownloadCurrent,
   checkedNumber,
   decodeManifest,
   lineValue,
@@ -74,6 +75,7 @@ export class RemoteProjectDownloadDataPlane implements TransferDataPlane {
 
   open(request: TransferRequest): Promise<TransferDataPlaneSession> {
     const context = this.context(request)
+    assertRemoteDownloadCurrent(context.control)
     if (
       request.direction !== 'download' ||
       request.destination.kind !== 'remote-workspace-path' ||
@@ -218,7 +220,9 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
         `path=${shellQuote(this.paths.manifest)}`,
         'if [ -L "$path" ]; then fail INVALID_MANIFEST; fi',
         'if [ -e "$path" ]; then safe_file "$path" || fail INVALID_MANIFEST; rm -f -- "$path"; fi'
-      ].join('\n')
+      ].join('\n'),
+      undefined,
+      false
     )
     if (result.code !== 0) throw mappedControlError(result.stdout, 'Remote metadata cleanup failed')
     this.manifest = null
@@ -226,7 +230,12 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
 
   async inspectPartial(): Promise<PartialInspection> {
     this.requireState()
-    const result = await this.runControl(inspectPartialCommand(this.context, this.paths))
+    // Retention records also inspect staging after cancellation; keep this read available.
+    const result = await this.runControl(
+      inspectPartialCommand(this.context, this.paths),
+      undefined,
+      false
+    )
     if (result.code !== 0)
       throw mappedControlError(result.stdout, 'Remote partial inspection failed')
     const encoded = lineValue(result.stdout, 'PHI_PART')?.split(':')
@@ -246,6 +255,7 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
   }
 
   createPartial(): Promise<void> {
+    assertRemoteDownloadCurrent(this.context.control)
     this.requireState()
     this.partial = {
       kind: 'file',
@@ -281,6 +291,8 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
   }
 
   async copy(options: TransferCopyOptions): Promise<void> {
+    assertRemoteDownloadCurrent(this.context.control)
+    options.signal.throwIfAborted()
     const state = this.requireState()
     const identity = this.identity
     const httpIdentity = this.httpIdentity
@@ -316,6 +328,8 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
     const closeOnAbort = (): void => void channel.close()
     options.signal.addEventListener('abort', closeOnAbort, { once: true })
     try {
+      assertRemoteDownloadCurrent(this.context.control)
+      options.signal.throwIfAborted()
       for await (const value of channel.stdout) {
         pending += Buffer.from(value).toString('utf8')
         if (Buffer.byteLength(pending) > CONTROL_BYTES) {
@@ -371,6 +385,7 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
       const closed = await channel.closed
       await stderr
       if (options.signal.aborted) throw new TransferError('ABORTED', 'Transfer cancelled')
+      assertRemoteDownloadCurrent(this.context.control)
       if (closed.code !== 0) throw this.copyError(remoteError)
       if (finalSize !== identity.size || !finalDigest || !SHA256.test(finalDigest)) {
         throw new TransferError('TRANSFER_FAILED', '服务器下载结果格式无效')
@@ -408,6 +423,7 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
   }
 
   async hashSource(_chunkSize: number, signal?: AbortSignal): Promise<string> {
+    assertRemoteDownloadCurrent(this.context.control)
     const advertised = this.httpIdentity?.remoteSha256
     if (advertised) return advertised
     const identity = this.identity
@@ -426,6 +442,7 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
   }
 
   async hashPartial(_chunkSize?: number, signal?: AbortSignal): Promise<string> {
+    assertRemoteDownloadCurrent(this.context.control)
     const state = this.requireState()
     if (this.digest) return this.digest
     const result = await this.runControl(
@@ -446,8 +463,13 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
     const digest = await this.hashPartial()
     if (!identity)
       throw new TransferError('TRANSFER_FAILED', 'Remote source identity is unavailable')
+    assertRemoteDownloadCurrent(this.context.control)
+    // Once this atomic command starts, its commit may finish despite cancellation.
+    // Complete metadata cleanup and report the actual artifact state; run() suppresses stale results.
     const result = await this.runControl(
-      publishCommand(this.context, this.paths, identity.size, digest, state.hashTool)
+      publishCommand(this.context, this.paths, identity.size, digest, state.hashTool),
+      undefined,
+      false
     )
     if (result.code !== 0) throw mappedControlError(result.stdout, 'Remote publish failed')
     this.partial = { kind: 'missing', size: 0, ownerId: null }
@@ -455,7 +477,11 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
   }
 
   async discard(): Promise<void> {
-    const result = await this.runControl(removeStateCommand(this.context, this.paths))
+    const result = await this.runControl(
+      removeStateCommand(this.context, this.paths),
+      undefined,
+      false
+    )
     if (result.code !== 0)
       throw mappedControlError(result.stdout, 'Remote transfer staging cannot be removed safely')
     this.partial = { kind: 'missing', size: 0, ownerId: null }
@@ -483,27 +509,46 @@ class RemoteProjectDownloadSession implements TransferDataPlaneSession {
     return sourceIdentity(result.stdout, this.context)
   }
 
-  private runControl(script: string, signal?: AbortSignal): Promise<RemoteExecBoundedResult> {
+  private async runControl(
+    script: string,
+    signal?: AbortSignal,
+    guarded = true
+  ): Promise<RemoteExecBoundedResult> {
+    if (guarded) assertRemoteDownloadCurrent(this.context.control)
+    const signals = [signal, guarded ? this.context.control?.signal : undefined].filter(
+      (item): item is AbortSignal => item !== undefined
+    )
+    const effectiveSignal = signals.length ? AbortSignal.any(signals) : undefined
+    effectiveSignal?.throwIfAborted()
     if (!this.context.session.execBounded)
       throw new TransferError('TRANSFER_FAILED', '服务器下载后端不可用')
-    return this.context.session.execBounded(script, {
+    const result = await this.context.session.execBounded(script, {
       timeoutMs: CONTROL_TIMEOUT_MS,
       maxOutputBytes: CONTROL_BYTES,
-      ...(signal ? { signal } : {})
+      ...(effectiveSignal ? { signal: effectiveSignal } : {})
     })
+    if (guarded) assertRemoteDownloadCurrent(this.context.control)
+    effectiveSignal?.throwIfAborted()
+    return result
   }
 }
 
 export async function remoteDownloadFreeBytes(
   context: RemoteProjectDownloadContext
 ): Promise<number> {
+  assertRemoteDownloadCurrent(context.control)
   if (!context.session.execBounded) {
     throw new TransferError('TRANSFER_FAILED', 'Remote download cleanup backend is unavailable')
   }
   const result = await context.session.execBounded(
     `set -eu\nphi_space=$(df -Pk ${shellQuote(context.canonicalRoot)} 2>/dev/null | awk 'NR == 2 { printf "%.0f", $4 * 1024 }')\ncase "$phi_space" in ''|*[!0-9]*) exit 1 ;; esac\nprintf 'PHI_SPACE=%s\\n' "$phi_space"`,
-    { timeoutMs: CONTROL_TIMEOUT_MS, maxOutputBytes: CONTROL_BYTES }
+    {
+      timeoutMs: CONTROL_TIMEOUT_MS,
+      maxOutputBytes: CONTROL_BYTES,
+      signal: context.control?.signal
+    }
   )
+  assertRemoteDownloadCurrent(context.control)
   const freeBytes = checkedNumber(lineValue(result.stdout, 'PHI_SPACE'), 'Remote free space')
   if (result.code !== 0 || result.stdoutTruncated || result.stderrTruncated) {
     throw new TransferError('TRANSFER_FAILED', 'Remote free-space check failed')

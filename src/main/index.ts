@@ -164,7 +164,14 @@ import { remoteMicromambaManifestVersion } from './agent/remote-micromamba-artif
 import { readHostRuntimeRoot } from './agent/remote-runtime-root-store'
 import { readHostRemoteEnvironmentPaths } from './agent/remote-environment-store'
 import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
-import { RemoteRuntimeController } from './agent/remote-runtime/controller'
+import {
+  RemoteRuntimeController,
+  controlRemoteRuntimeWorkspace,
+  type RemoteRuntimeDispatchControl
+} from './agent/remote-runtime/controller'
+import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
+import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
+import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
 import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
 import {
@@ -390,7 +397,10 @@ import {
   readWrapperModuleDetails,
   resetWrapperCompositionCatalogCache
 } from './agent/wrappers/composition/discovery'
-import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
+import {
+  wrapperJobHostHandlers,
+  createWrapperJobHostScope
+} from './agent/wrappers/composition/job-host-handlers'
 import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
 import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
@@ -483,7 +493,8 @@ import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-rout
 import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
 import {
   installAppRemoteSessionRouting,
-  createAppRemoteSessionManager
+  createAppRemoteSessionManager,
+  type AppRemoteSessionRoutingOptions
 } from './agent/remote-session-routing'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
@@ -1470,6 +1481,7 @@ installAppRemoteSessionRouting({
         bundledDir: getBundledAgentsDir()
       })
     ).agents,
+  loadDesktopTools: loadAppRemoteDesktopTools,
   approval: {
     shouldGate: (request) => {
       const manifest = request.sessionId ? findPhiSessionById(request.sessionId) : null
@@ -1561,13 +1573,36 @@ const notebookFileWatcher = new AnalysisNotebookFileWatcher({
 const remoteNotebookBackends = new Map<string, RemoteAnalysisNotebookBackend>()
 const remoteNotebookSessionIds = new Map<string, string>()
 const notebookToolHostRouter = new NotebookToolHostRouter({
-  local: (request) => notebookToolExecutor.execute(request),
+  local: (request, control) => notebookToolExecutor.execute(request, control),
   isRemoteCwd: isRemoteAnalysisCwd,
   resolveRemote: resolveRemoteNotebookToolBackend
 })
-getPhiEngine().host.register('notebookTool.execute', (params) =>
-  notebookToolHostRouter.execute(params as Parameters<typeof notebookToolHostRouter.execute>[0])
-)
+getPhiEngine().host.register('notebookTool.execute', async (params, context) => {
+  const request = params as Parameters<typeof notebookToolHostRouter.execute>[0]
+  const identity = request.remoteProject
+  const binding = identity
+    ? resolveRemoteWorkspaceHostBinding({
+        sessionId: identity.sessionId,
+        projectId: identity.projectId
+      })
+    : undefined
+  const beforeDispatch = (): void => {
+    if (!identity) return
+    const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
+    if (
+      context?.originSessionId !== identity.runtimeSessionId ||
+      !origin ||
+      getPhiSessionIdForKey(origin.sessionKey) !== identity.sessionId ||
+      resolveRemoteWorkspaceHostBinding({
+        sessionId: identity.sessionId,
+        projectId: identity.projectId
+      }).cacheKey !== binding?.cacheKey
+    )
+      throw new Error('远程 Notebook 后端不可用：运行或项目绑定已改变；没有回退到本机执行。')
+  }
+  beforeDispatch()
+  return notebookToolHostRouter.execute(request, { signal: context?.signal, beforeDispatch })
+})
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
     const skills = await listSkills(cwd)
@@ -1677,7 +1712,10 @@ async function resolveRemoteNotebookToolBackend(identity: {
     return null
   }
   const backend = remoteNotebookBackend(project, manifest.sessionId)
-  return { projectCwd: backend.projectCwd, execute: (request) => backend.tools.execute(request) }
+  return {
+    projectCwd: backend.projectCwd,
+    execute: (request, control) => backend.tools.execute(request, control)
+  }
 }
 
 function remoteNotebookBackendFor(
@@ -1696,6 +1734,7 @@ function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undef
   const sessionId = optionalStringField(params, 'remoteSessionId')
   const projectId = optionalStringField(params, 'projectId')
   if (!runtimeSessionId || !sessionId || !projectId) return undefined
+  if (findPhiSessionById(sessionId)?.projectId !== projectId) return undefined
   const project = getProject(projectId)
   if (!project || project.location.kind !== 'ssh') return undefined
   const root = projectRemoteRuntimeRoot(project)
@@ -1747,6 +1786,224 @@ const remoteRuntimeController = new RemoteRuntimeController({
     ]
   }
 })
+
+async function loadAppRemoteDesktopTools(
+  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>>[0],
+  signal: AbortSignal
+): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>> {
+  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
+  const selectedBinding = resolveRemoteWorkspaceHostBinding(boundary).cacheKey
+  const assertBinding = (): void => {
+    signal.throwIfAborted()
+    if (
+      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
+      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== selectedBinding
+    )
+      throw new Error('远程资源项目绑定已改变；请显式恢复当前项目会话。')
+  }
+  assertBinding()
+  const context = {
+    sessionId: identity.sessionId,
+    projectId: identity.projectId,
+    cwd: identity.resourceCwd,
+    agentDir: AGENT_DIR
+  }
+  const [globals, catalog, globalServers, mcpCatalog] = await Promise.all([
+    listGlobalSkills(),
+    loadRemoteProjectSkillCatalog(context),
+    listGlobalMcpServers(),
+    loadRemoteProjectMcpCatalog(context)
+  ])
+  signal.throwIfAborted()
+  const projectNames = new Set(catalog.sources.map((skill) => skill.name))
+  const allowedSkills = [
+    ...catalog.sources.map((skill) => skill.name),
+    ...globals
+      .filter((skill) => skill.enabled && !projectNames.has(skill.name))
+      .map((skill) => skill.name)
+  ]
+  const scripts = await remoteRuntimeController.scriptTools({
+    runtimeSessionId: identity.runtimeSessionId,
+    remoteSessionId: identity.sessionId,
+    projectId: identity.projectId
+  })
+  signal.throwIfAborted()
+  const { resourceCwd, ...toolIdentity } = identity
+  const search = await createDesktopWebSearchAdapter({
+    identity: toolIdentity,
+    agentDir: AGENT_DIR,
+    resourceCwd,
+    signal,
+    currentModel: () => {
+      assertBinding()
+      const model = findPhiSessionById(identity.sessionId)?.model
+      return model && { provider: model.providerId, id: model.modelId }
+    }
+  })
+  let mcp: Awaited<ReturnType<typeof createDesktopMcpAdapter>> | undefined
+  try {
+    const serverNames = [
+      ...new Set([
+        ...globalServers.filter((server) => server.enabled !== false).map((server) => server.name),
+        ...mcpCatalog.runtimeServers.map((server) => server.name)
+      ])
+    ]
+    if (serverNames.length)
+      mcp = await createDesktopMcpAdapter({
+        identity: toolIdentity,
+        agentDir: AGENT_DIR,
+        resourceCwd,
+        signal,
+        serverNames,
+        remoteProjectMcpServers: mcpCatalog.runtimeServers,
+        approvalFor: () => 'write',
+        beforeDispatch: assertBinding
+      })
+    signal.throwIfAborted()
+    return {
+      tools: {
+        assertBinding,
+        allowedSkills,
+        skillCatalog: [
+          ...catalog.summaries
+            .filter((skill) => allowedSkills.includes(skill.name))
+            .map((skill) => ({ name: skill.name, description: skill.description })),
+          ...globals
+            .filter((skill) => skill.enabled && !projectNames.has(skill.name))
+            .map((skill) => ({ name: skill.name, description: skill.description }))
+        ],
+        scriptTools: scripts.tools,
+        scriptApprovalFor: (name, input) => remoteRuntimeController.approvalFor(name, input),
+        remoteLibrary: true,
+        desktopWebSearch: search,
+        desktopMcp: mcp
+      },
+      close: async () => {
+        search.retire()
+        mcp?.retire()
+        await Promise.allSettled([search.close(), mcp?.close()])
+      }
+    }
+  } catch (error) {
+    search.retire(error)
+    mcp?.retire(error)
+    await Promise.allSettled([search.close(), mcp?.close()])
+    throw error
+  }
+}
+
+function remoteRuntimeDispatchControl(
+  params: unknown,
+  context: import('./agent/engine/types').PhiHostRequestContext
+): RemoteRuntimeDispatchControl | undefined {
+  if (
+    !isRecord(params) ||
+    (!Object.hasOwn(params, 'remoteSessionId') && !Object.hasOwn(params, 'projectId'))
+  )
+    return undefined
+  const runtimeId = optionalStringField(params, 'runtimeSessionId')
+  const sessionId = optionalStringField(params, 'remoteSessionId')
+  const projectId = optionalStringField(params, 'projectId')
+  if (
+    !runtimeId ||
+    !sessionId ||
+    !projectId ||
+    context.originSessionId !== runtimeId ||
+    resolveOriginSession(runtimeId)?.phiSessionId !== sessionId
+  )
+    throw new Error('远程资源请求的来源会话无效；没有回退到本机执行。')
+  const binding = resolveRemoteWorkspaceHostBinding({ sessionId, projectId })
+  const run = runnerRegistry.getActiveRun(sessionId)
+  const beforeDispatch = (): void => {
+    context.signal?.throwIfAborted()
+    run?.signal.throwIfAborted()
+    if (
+      (context.signal && (!run || runnerRegistry.getActiveRun(sessionId) !== run)) ||
+      resolveOriginSession(runtimeId)?.phiSessionId !== sessionId ||
+      resolveRemoteWorkspaceHostBinding({ sessionId, projectId }).cacheKey !== binding.cacheKey
+    )
+      throw new Error('远程资源运行或项目绑定已改变；没有回退到本机执行。')
+  }
+  beforeDispatch()
+  return { signal: context.signal, beforeDispatch }
+}
+
+function isRemoteRuntimeCancellation(
+  params: unknown,
+  context: import('./agent/engine/types').PhiHostRequestContext
+): boolean {
+  if (
+    !isRecord(params) ||
+    (!Object.hasOwn(params, 'remoteSessionId') && !Object.hasOwn(params, 'projectId'))
+  )
+    return false
+  const runtimeId = optionalStringField(params, 'runtimeSessionId')
+  if (
+    !runtimeId ||
+    context.originSessionId !== runtimeId ||
+    resolveOriginSession(runtimeId)?.phiSessionId !== params.remoteSessionId
+  )
+    throw new Error('远程资源取消请求的来源会话无效')
+  return true
+}
+
+const remoteLibraryService = new RemoteLibraryService(async (identity, signal) => {
+  const control = remoteRuntimeDispatchControl(
+    {
+      runtimeSessionId: identity.runtimeSessionId,
+      remoteSessionId: identity.sessionId,
+      projectId: identity.projectId
+    },
+    { originSessionId: identity.runtimeSessionId, signal }
+  )!
+  const project = getProject(identity.projectId)!
+  const binding = resolveRemoteWorkspaceHostBinding({
+    sessionId: identity.sessionId,
+    projectId: identity.projectId
+  })
+  const workspace = await openRemoteRuntimeWorkspace(
+    {
+      ...identity,
+      configuredRoot: projectRemoteRuntimeRoot(project).configured
+    },
+    signal
+  )
+  let session: Awaited<ReturnType<typeof binding.config.connect>> | undefined
+  try {
+    control.beforeDispatch()
+    session = await binding.config.connect()
+    control.beforeDispatch()
+    if (!session.openStdio) throw new Error('远程 Library 需要当前 SSH stdio 能力')
+    return {
+      workspace: {
+        ...controlRemoteRuntimeWorkspace(workspace, control.beforeDispatch),
+        close: async () => {
+          await Promise.allSettled([workspace.close?.(), session!.close()])
+        }
+      },
+      openLockStdio: async (command) => {
+        control.beforeDispatch()
+        const process = await session!.openStdio!(command)
+        try {
+          control.beforeDispatch()
+          return process
+        } catch (error) {
+          await process.close().catch(() => undefined)
+          throw error
+        }
+      }
+    }
+  } catch (error) {
+    await Promise.allSettled([workspace.close?.(), session?.close()])
+    throw error
+  }
+})
+getPhiEngine().host.register('library.execute', (params, context) =>
+  remoteLibraryService.execute(params, context)
+)
+getPhiEngine().host.register('library.cancel', (params, context) =>
+  remoteLibraryService.cancel(params, context)
+)
 
 function phiPluginListItems(): PhiPluginListItem[] {
   const enablement = getEnablementSnapshot({ agentDir: AGENT_DIR })
@@ -1841,39 +2098,44 @@ getPhiEngine().host.register('skills.scriptTools', (params) =>
     ? remoteRuntimeController.scriptTools(params)
     : skillHost.scriptTools(params)
 )
-getPhiEngine().host.register('skills.run', (params) =>
-  remoteRuntimeController.owns(params)
-    ? remoteRuntimeController.runSkill(params)
+getPhiEngine().host.register('skills.run', (params, context) => {
+  const control = remoteRuntimeDispatchControl(params, context)
+  return remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.runSkill(params, control)
     : skillHost.run(params)
-)
-getPhiEngine().host.register('skills.scriptTool', (params) =>
-  remoteRuntimeController.owns(params)
-    ? remoteRuntimeController.runScriptTool(params)
+})
+getPhiEngine().host.register('skills.scriptTool', (params, context) => {
+  const control = remoteRuntimeDispatchControl(params, context)
+  return remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.runScriptTool(params, control)
     : skillHost.scriptTool(params)
-)
-getPhiEngine().host.register('skills.cancel', (params) => {
-  if (remoteRuntimeController.owns(params)) return remoteRuntimeController.skills.cancel(params)
+})
+getPhiEngine().host.register('skills.cancel', (params, context) => {
+  if (isRemoteRuntimeCancellation(params, context))
+    return remoteRuntimeController.skills.cancel(params)
   return skillHost.cancel(params)
 })
-getPhiEngine().host.register('environments.bindSession', (params) =>
-  remoteRuntimeController.owns(params)
-    ? remoteRuntimeController.bindEnvironment(params)
+getPhiEngine().host.register('environments.bindSession', (params, context) => {
+  const control = remoteRuntimeDispatchControl(params, context)
+  return remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.bindEnvironment(params, control)
     : bindAgentSession(params, {
         builds: environmentBuilds,
         confirmBuild: (request) => confirmEnvironmentBuild(request)
       })
-)
-getPhiEngine().host.register('environments.request', (params) =>
-  remoteRuntimeController.owns(params)
-    ? remoteRuntimeController.requestEnvironment(params)
+})
+getPhiEngine().host.register('environments.request', (params, context) => {
+  const control = remoteRuntimeDispatchControl(params, context)
+  return remoteRuntimeController.owns(params)
+    ? remoteRuntimeController.requestEnvironment(params, control)
     : requestProjectEnvironment(params, {
         root: getRuntimeRoot(),
         builds: environmentBuilds,
         confirm: (request) => confirmEnvironmentRequest(request)
       })
-)
-getPhiEngine().host.register('environments.cancel', (params) =>
-  remoteRuntimeController.owns(params)
+})
+getPhiEngine().host.register('environments.cancel', (params, context) =>
+  isRemoteRuntimeCancellation(params, context)
     ? remoteRuntimeController.environments.cancel(params)
     : undefined
 )
@@ -2201,14 +2463,32 @@ getPhiEngine().host.register('remoteWorkspace.bash', (params) =>
 getPhiEngine().host.register('remoteWorkspace.cancelBash', (params) =>
   remoteBashManager.cancel(params)
 )
-getPhiEngine().host.register('remoteWorkspace.download', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteProjectDownloadManager.run(params)
+getPhiEngine().host.register('remoteWorkspace.download', (params, context) => {
+  const request = isRecord(params) ? params : {}
+  const control = remoteRuntimeDispatchControl(
+    {
+      runtimeSessionId: context.originSessionId,
+      remoteSessionId: request.sessionId,
+      projectId: request.projectId
+    },
+    context
   )
-)
-getPhiEngine().host.register('remoteWorkspace.cancelDownload', (params) =>
-  remoteProjectDownloadManager.cancel(params)
-)
+  return remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
+    remoteProjectDownloadManager.run(params, control)
+  )
+})
+getPhiEngine().host.register('remoteWorkspace.cancelDownload', (params, context) => {
+  const request = isRecord(params) ? params : {}
+  isRemoteRuntimeCancellation(
+    {
+      runtimeSessionId: context.originSessionId,
+      remoteSessionId: request.sessionId,
+      projectId: request.projectId
+    },
+    context
+  )
+  return remoteProjectDownloadManager.cancel(params)
+})
 
 // Background wrapper runs. The manager lives here, not in the agent worker: a run
 // must outlive any chat session, and the worker is stopped whenever it idles.
@@ -2279,7 +2559,59 @@ const wrapperJobs = new WrapperJobManager({
     }
   }
 })
-for (const [method, handler] of Object.entries(wrapperJobHostHandlers(wrapperJobs))) {
+for (const [method, handler] of Object.entries(
+  wrapperJobHostHandlers(wrapperJobs, {
+    scopeFor: (context) => {
+      const originSessionId = context?.originSessionId
+      if (!originSessionId) {
+        if (context?.signal) throw new Error('RPC Wrapper call has no trusted origin')
+        return undefined
+      }
+      const origin = resolveOriginSession(originSessionId)
+      const manifest = origin && findPhiSessionById(origin.phiSessionId)
+      if (!origin || !manifest) throw new Error('Wrapper origin session is unavailable')
+      const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+      if (project?.location.kind !== 'ssh') {
+        if (context?.signal || manifest.projectLocation?.kind === 'ssh')
+          throw new Error('RPC Wrapper project is unavailable')
+        return undefined
+      }
+      if (ownsRemoteRuntimeSession(originSessionId) && !context?.signal)
+        throw new Error('RPC Wrapper call has no owned cancellation scope')
+      const binding = resolveRemoteWorkspaceHostBinding({
+        sessionId: origin.phiSessionId,
+        projectId: project.id
+      })
+      const target = resolveProjectRemoteTarget(project, undefined)
+      if ('reason' in target) throw new Error(target.reason)
+      const targetKey = JSON.stringify(target)
+      return createWrapperJobHostScope({
+        originSessionId,
+        phiSessionId: origin.phiSessionId,
+        projectId: project.id,
+        hostProfileId: project.location.hostProfileId,
+        host: target.target.connection.host,
+        workspaceRoot: target.target.workspaceRoot,
+        signal: context?.signal,
+        readRun: (runId) => readWrapperRun(runId),
+        resolveOrigin: resolveOriginSession,
+        assertCurrent: () => {
+          const currentProject = getProject(project.id)
+          if (
+            !currentProject ||
+            resolveOriginSession(originSessionId)?.phiSessionId !== origin.phiSessionId ||
+            resolveRemoteWorkspaceHostBinding({
+              sessionId: origin.phiSessionId,
+              projectId: project.id
+            }).cacheKey !== binding.cacheKey ||
+            JSON.stringify(resolveProjectRemoteTarget(currentProject, undefined)) !== targetKey
+          )
+            throw new Error('RPC Wrapper selected project/host binding changed')
+        }
+      })
+    }
+  })
+)) {
   getPhiEngine().host.register(method, handler)
 }
 wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId }))
@@ -2666,16 +2998,35 @@ function recordPresentedFiles(run: PromptRun, toolCallId: string, files: Present
   }
 }
 
-async function handlePresentFilesRequest(params: unknown): Promise<{ files: PresentedFile[] }> {
+async function handlePresentFilesRequest(
+  params: unknown,
+  context?: import('./agent/engine/types').PhiHostRequestContext
+): Promise<{ files: PresentedFile[] }> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
   const toolCallId = optionalStringField(record, 'toolCallId')
   const { run, toolCallId: callId, remote } = presentableRun(runtimeSessionId, toolCallId)
+  const routed = runtimeSessionId && ownsRemoteRuntimeSession(runtimeSessionId)
+  if (
+    routed &&
+    (context?.originSessionId !== runtimeSessionId ||
+      context?.toolCallId !== callId ||
+      !context.signal)
+  )
+    throw new Error('RPC deliverable origin/call binding differs')
+  context?.signal?.throwIfAborted()
+  const binding = remote ? resolveRemoteWorkspaceHostBinding(remote).cacheKey : undefined
   const files = remote
     ? await validateRemotePresentedFiles(remote, record.files, {
         connectHost: connectRemoteWorkspaceHost
       })
     : validatePresentedFiles(run.cwd, record.files)
+  context?.signal?.throwIfAborted()
+  if (
+    presentableRun(runtimeSessionId, toolCallId).run !== run ||
+    (remote && resolveRemoteWorkspaceHostBinding(remote).cacheKey !== binding)
+  )
+    throw new Error('Deliverable run/project binding changed during inspection')
   recordPresentedFiles(run, callId, files)
   return { files }
 }
@@ -2738,7 +3089,10 @@ async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Pr
   }
 }
 
-async function handleAgentInteractionRequest(params: unknown): Promise<unknown> {
+async function handleAgentInteractionRequest(
+  params: unknown,
+  context?: import('./agent/engine/types').PhiHostRequestContext
+): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
   const questions = interactionQuestionsField(record.questions)
@@ -2747,7 +3101,11 @@ async function handleAgentInteractionRequest(params: unknown): Promise<unknown> 
   }
 
   const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
-  if (!run) {
+  if (
+    !run ||
+    run.cancelled ||
+    (context?.originSessionId && context.originSessionId !== runtimeSessionId)
+  ) {
     throw new Error('No active run for user interaction request')
   }
 
@@ -2773,8 +3131,18 @@ async function handleAgentInteractionRequest(params: unknown): Promise<unknown> 
       cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
       ...(project?.name ? { projectName: project.name } : {})
     },
-    window
+    window,
+    [context?.signal]
   )
+  if (
+    context?.signal?.aborted ||
+    run.cancelled ||
+    findActivePromptRunByRuntimeSessionId(runtimeSessionId) !== run
+  ) {
+    runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
+    notifySessionChanged()
+    return { requestId: interactionId, answers: [], cancelled: true }
+  }
   if (response.cancelled) {
     runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
   } else {
@@ -7320,12 +7688,10 @@ async function getAgentSession(
         (remoteContextFiles?.length ||
           personaMarkdown ||
           project?.memory?.enabled ||
-          Object.keys(sessionManifest?.autoCompaction ?? {}).length ||
-          remoteSkillCatalog?.sources.length ||
-          remoteMcpCatalog?.runtimeServers.length)
+          Object.keys(sessionManifest?.autoCompaction ?? {}).length)
       ) {
         throw new Error(
-          'RPC resources/persona/context/MCP/memory are not supported in this controlled stage'
+          'RPC persona/context/memory/compaction are not supported in this controlled stage'
         )
       }
       for (const diagnostic of agentScan.diagnostics) {
@@ -7547,7 +7913,7 @@ async function getAgentSession(
             ),
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
-        ...(remoteMcpCatalog?.runtimeServers.length
+        ...(!useRpc && remoteMcpCatalog?.runtimeServers.length
           ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
           : {}),
         projectBound: Boolean(project),

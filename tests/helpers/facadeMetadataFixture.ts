@@ -54,6 +54,7 @@ export interface FacadeMetadataFixture {
   phi: ReturnType<typeof createPhiSession>
   model(id: string): RuntimeModel
   channels: RemoteStdioProcess[]
+  hostSession: SelectedFacadeRuntime['session']
   rawRetryEvents: RpcFrame[]
   tunnels: Array<{ closed: Promise<void>; close(): Promise<void> }>
   leases: OwnedModelGatewayLease[]
@@ -74,7 +75,7 @@ export async function facadeMetadataFixture(
     isolatedProject?: boolean
     applicationRouting?: Pick<
       AppRemoteSessionRoutingOptions,
-      'foregroundAgentNames' | 'onChildApprovalEvent'
+      'foregroundAgentNames' | 'onChildApprovalEvent' | 'loadDesktopTools'
     > & {
       agents: import('../../src/main/agent/agents/definition').PhiAgentDefinition[]
       beforeConnect?: (phiSessionId: string) => Promise<void>
@@ -305,6 +306,7 @@ export async function facadeMetadataFixture(
           }),
           configuredRoot: () => f.runtimeRoot,
           loadAgents: async () => options.applicationRouting!.agents,
+          loadDesktopTools: options.applicationRouting.loadDesktopTools,
           foregroundAgentNames: options.applicationRouting.foregroundAgentNames,
           onChildApprovalEvent: options.applicationRouting.onChildApprovalEvent,
           approval: {
@@ -374,6 +376,7 @@ export async function facadeMetadataFixture(
     phi,
     model,
     channels,
+    hostSession: session,
     rawRetryEvents,
     tunnels,
     leases,

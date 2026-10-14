@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { BrowserTextVault } from '../../browser/browser-text-vault'
+import { assertSafeBrowserHistory } from './browser-tool-stream'
 import { getPhiAgentDir } from '../../runtime-paths'
 import {
   resolveRemoteWorkspaceHostBinding,
@@ -56,7 +57,15 @@ export interface SelectedFacadeRuntime {
   readonly desktopToolNames: readonly string[]
   readonly desktopTools?: Pick<
     RpcDesktopToolScopeOptions,
-    'allowedSkills' | 'scriptTools' | 'scriptApprovalFor' | 'paletteCatalogPath'
+    | 'allowedSkills'
+    | 'scriptTools'
+    | 'skillCatalog'
+    | 'assertBinding'
+    | 'scriptApprovalFor'
+    | 'paletteCatalogPath'
+    | 'remoteLibrary'
+    | 'desktopWebSearch'
+    | 'desktopMcp'
   >
   readonly recentUserImages: RpcDesktopToolScopeOptions['recentUserImages']
   readonly nativeTools?: RemoteSessionRuntimeOptions['nativeTools']
@@ -115,6 +124,9 @@ function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntim
       Object.freeze({
         ...selected.desktopTools,
         allowedSkills: Object.freeze([...selected.desktopTools.allowedSkills]),
+        skillCatalog:
+          selected.desktopTools.skillCatalog &&
+          Object.freeze(structuredClone(selected.desktopTools.skillCatalog)),
         scriptTools: Object.freeze(structuredClone(selected.desktopTools.scriptTools))
       })
   })
@@ -177,6 +189,7 @@ function workerState(
   models: readonly RuntimeModel[],
   projector: RpcFacadeEventProjector
 ): WorkerSessionState {
+  assertSafeBrowserHistory(snapshot.messages)
   const model = models.find(
     (candidate) =>
       candidate.provider === snapshot.model.provider && candidate.id === snapshot.model.id
@@ -356,21 +369,26 @@ export function createFacadeSessionFactory(
             },
             services: options.bridge.hostServices,
             currentRun: () => runtime?.currentRun(),
+            assertBinding: selected.desktopTools?.assertBinding,
             recentUserImages: selected.recentUserImages,
-            allowBrowserTypeText: () => false,
+            allowBrowserTypeText: () => selected.desktopToolNames.includes('browser'),
             browserTextVault: vault,
             agentDir: params.agentDir,
             allowedSkills: selected.desktopTools?.allowedSkills ?? [],
+            skillCatalog: selected.desktopTools?.skillCatalog,
             scriptTools: selected.desktopTools?.scriptTools ?? [],
             scriptApprovalFor: selected.desktopTools?.scriptApprovalFor,
-            paletteCatalogPath: selected.desktopTools?.paletteCatalogPath
+            paletteCatalogPath: selected.desktopTools?.paletteCatalogPath,
+            remoteLibrary: selected.desktopTools?.remoteLibrary,
+            desktopWebSearch: selected.desktopTools?.desktopWebSearch,
+            desktopMcp: selected.desktopTools?.desktopMcp
           })
           const projector = new RpcFacadeEventProjector()
           const scopeTools = tools
           const names = new Set(selected.desktopToolNames)
           if (
             names.size !== selected.desktopToolNames.length ||
-            names.has('browser') ||
+            (names.has('browser') && !selected.desktopTools) ||
             [...names].some((name) => !scopeTools.tools.some((tool) => tool.name === name))
           )
             throw new RemoteSessionCapabilityError('desktop tool roster/browser privacy')
@@ -454,6 +472,7 @@ export function createFacadeSessionFactory(
               })
             },
             recentUserImages: tools.recentUserImages,
+            browserTextVault: vault,
             approval: selected.approval,
             signal,
             beforeCheckpoint: (checkpointSignal) => {
@@ -550,7 +569,11 @@ export function createFacadeSessionFactory(
                   throw new Error('Remote turn failed or approval was denied')
                 return currentState()
               } finally {
-                if (submittedRun === run) submittedRun = undefined
+                try {
+                  await tools?.captureNotebookExecutionDrain(run.runId)()
+                } finally {
+                  if (submittedRun === run) submittedRun = undefined
+                }
               }
             },
             async contextUsage() {
@@ -609,12 +632,31 @@ export function createFacadeSessionFactory(
               }
             },
             async abort() {
+              const run = submittedRun
+              const drain = run && tools?.captureNotebookExecutionDrain(run.runId)
               stopSubmittedRun()
-              if (submittedRun) await runtime!.stop()
+              let failed = false,
+                failure: unknown
+              try {
+                if (run) await runtime!.stop()
+              } catch (error) {
+                failed = true
+                failure = error
+              }
+              try {
+                await drain?.()
+              } catch (error) {
+                if (!failed) {
+                  failed = true
+                  failure = error
+                }
+              }
+              if (failed) throw failure
               return currentState()
             },
             dispose() {
               return (closing ??= (async () => {
+                const drain = tools?.captureNotebookExecutionDrain()
                 stopSubmittedRun()
                 let failed = false
                 let failure: unknown
@@ -635,6 +677,14 @@ export function createFacadeSessionFactory(
                   detach?.()
                   adoption?.release()
                   tools?.dispose()
+                  try {
+                    await drain?.()
+                  } catch (error) {
+                    if (!failed) {
+                      failed = true
+                      failure = error
+                    }
+                  }
                   try {
                     await disposeSelected()
                   } catch (error) {

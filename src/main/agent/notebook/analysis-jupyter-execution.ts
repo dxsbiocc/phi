@@ -6,7 +6,7 @@ import type {
   NotebookOutput
 } from '../../../shared/notebookDocument'
 import type { JupyterServerConnection } from './analysis-jupyter-server'
-import { jupyterWebSocketToken } from './jupyter-runtime-backend'
+import { jupyterConnectionIdentity, jupyterWebSocketToken } from './jupyter-runtime-backend'
 
 export type AnalysisCellExecutionState = 'idle' | 'error'
 
@@ -66,8 +66,41 @@ export interface JupyterKernelCompletionResult {
   message?: string
 }
 
+export class JupyterKernelExecutionStoppedError extends Error {
+  constructor(reason: unknown) {
+    super(reason instanceof Error ? reason.message : 'Notebook execution stopped', {
+      cause: reason
+    })
+    this.name = 'JupyterKernelExecutionStoppedError'
+  }
+}
+
+/** Sent code may still be running, or a failed interrupt may still arrive late. */
+export class JupyterKernelExecutionUnconfirmedError extends Error {
+  constructor(
+    cause: unknown,
+    readonly released: Promise<void>,
+    readonly retire: () => void
+  ) {
+    super(
+      `Notebook 停止未确认 kernel 终止: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    )
+    this.name = 'JupyterKernelExecutionUnconfirmedError'
+  }
+}
+
+export interface JupyterKernelExecutionControl {
+  signal?: AbortSignal
+  checkCurrent?: () => void
+  interrupt: () => Promise<void>
+}
+
 export interface JupyterKernelClient {
-  executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult>
+  executeCode(
+    request: JupyterKernelExecuteRequest,
+    control?: JupyterKernelExecutionControl
+  ): Promise<JupyterKernelExecuteResult>
   completeCode(request: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult>
 }
 
@@ -589,7 +622,12 @@ export class WebSocketJupyterKernelClient implements JupyterKernelClient {
     if (options.webSocketConstructor) this.WebSocket = options.webSocketConstructor
   }
 
-  async executeCode(request: JupyterKernelExecuteRequest): Promise<JupyterKernelExecuteResult> {
+  async executeCode(
+    request: JupyterKernelExecuteRequest,
+    control?: JupyterKernelExecutionControl
+  ): Promise<JupyterKernelExecuteResult> {
+    control?.signal?.throwIfAborted()
+    control?.checkCurrent?.()
     const msgId = randomUUID()
     const socket = this.openSocket(request.connection, request.kernelId, request.sessionId)
     let sawIdle = false
@@ -607,7 +645,9 @@ export class WebSocketJupyterKernelClient implements JupyterKernelClient {
         if (type === 'execute_reply') sawReply = true
         if (type === 'status' && content?.execution_state === 'idle') sawIdle = true
         return sawIdle && sawReply ? normalizeJupyterKernelMessages(messages) : undefined
-      }
+      },
+      control,
+      true
     )
   }
 
@@ -698,34 +738,131 @@ function collectKernelMessages<T>(
   resolveWhen: (
     messages: RawJupyterKernelMessage[],
     message: RawJupyterKernelMessage
-  ) => T | undefined
+  ) => T | undefined,
+  control?: JupyterKernelExecutionControl,
+  ownsExecution = false
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const messages: RawJupyterKernelMessage[] = []
     let settled = false
-    const settle = (error?: unknown, result?: T): void => {
+    let sent = false
+    let stopReason: unknown
+    let interruptPending = false
+    let interruptAttempted = false
+    let interruptError: unknown
+    let terminal = false
+    let result: T | undefined
+    let failure: unknown
+    let resolveRelease!: () => void
+    const released = new Promise<void>((resolve) => {
+      resolveRelease = resolve
+    })
+    let quarantined = false
+    const retire = (): void => {
+      quarantined = false
+      socket.close()
+      resolveRelease()
+    }
+    const terminalRelease = (): void => {
+      if (terminal && (!interruptAttempted || (!interruptPending && !interruptError)))
+        resolveRelease()
+      if (terminal && settled) {
+        quarantined = false
+        socket.close()
+      }
+    }
+    const uncertain = (cause: unknown): JupyterKernelExecutionUnconfirmedError =>
+      new JupyterKernelExecutionUnconfirmedError(cause, released, retire)
+    const settle = (error?: unknown): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
-      socket.close()
+      control?.signal?.removeEventListener('abort', onAbort)
+      quarantined = error instanceof JupyterKernelExecutionUnconfirmedError && !terminal
+      if (!quarantined) socket.close()
+      terminalRelease()
       if (error) reject(error)
       else resolve(result as T)
     }
-    const timeout = setTimeout(() => settle(new Error(timeoutMessage)), timeoutMs)
-    socket.addEventListener('open', () => socket.send(JSON.stringify(requestMessage)))
+    const finish = (): void => {
+      if (settled || interruptPending) return
+      terminalRelease()
+      if (stopReason) {
+        if (interruptError) settle(uncertain(interruptError))
+        else if (!sent || terminal) settle(new JupyterKernelExecutionStoppedError(stopReason))
+        else if (failure) settle(uncertain(failure))
+      } else if (failure || terminal) {
+        settle(failure && ownsExecution && sent && !terminal ? uncertain(failure) : failure)
+      }
+    }
+    const stop = (reason: unknown): void => {
+      if (settled || stopReason) return
+      stopReason = reason || new Error('Notebook execution stopped')
+      if (sent && !terminal && control) {
+        // Keep the socket and execution lock until physical interrupt acknowledgement
+        // and terminal reply/idle. A rejected interrupt is never reported as success.
+        interruptAttempted = true
+        interruptPending = true
+        Promise.resolve()
+          .then(control.interrupt)
+          .catch((error: unknown) => {
+            interruptError = error || new Error('Jupyter kernel interrupt failed')
+          })
+          .finally(() => {
+            interruptPending = false
+            terminalRelease()
+            finish()
+          })
+      }
+      finish()
+    }
+    const onAbort = (): void => stop(control?.signal?.reason)
+    const checkCurrent = (): void => {
+      control?.signal?.throwIfAborted()
+      control?.checkCurrent?.()
+    }
+    const fail = (error: unknown): void => {
+      failure = error
+      finish()
+    }
+    const timeout = setTimeout(() => fail(new Error(timeoutMessage)), timeoutMs)
+    control?.signal?.addEventListener('abort', onAbort, { once: true })
+    if (control?.signal?.aborted) onAbort()
+    socket.addEventListener('open', () => {
+      if (settled || stopReason) return
+      try {
+        checkCurrent()
+        sent = true
+        socket.send(JSON.stringify(requestMessage))
+      } catch (error) {
+        stop(error)
+      }
+    })
     socket.addEventListener('message', (event) => {
+      if (settled && !quarantined) return
       try {
         const message = parseKernelMessage(event)
         if (message.parent_header?.msg_id !== msgId) return
-        messages.push(message)
-        const result = resolveWhen(messages, message)
-        if (result !== undefined) settle(undefined, result)
+        if (!stopReason && !settled) {
+          try {
+            checkCurrent()
+          } catch (error) {
+            stop(error)
+          }
+        }
+        if (!stopReason && !settled) messages.push(message)
+        if (!terminal) {
+          result = resolveWhen(messages, message)
+          terminal = result !== undefined
+        }
+        terminalRelease()
+        finish()
       } catch {
-        settle(new Error('Jupyter kernel message 无效'))
+        fail(new Error('Jupyter kernel message 无效'))
       }
     })
-    socket.addEventListener('error', () => settle(new Error('Jupyter kernel WebSocket error')))
-    socket.addEventListener('close', () => settle(new Error(closeMessage)))
+    socket.addEventListener('error', () => fail(new Error('Jupyter kernel WebSocket error')))
+    socket.addEventListener('close', () => fail(new Error(closeMessage)))
   })
 }
 
@@ -745,31 +882,80 @@ function positiveTimeout(value: number): number {
 export class AnalysisNotebookExecutor {
   private readonly client: JupyterKernelClient
   private readonly now: () => Date
+  private readonly activeKernels = new Map<string, { retire?: () => void }>()
 
   constructor(options: { client?: JupyterKernelClient; now?: () => Date } = {}) {
     this.client = options.client ?? new WebSocketJupyterKernelClient()
     this.now = options.now ?? (() => new Date())
   }
 
-  async executeCell(input: ExecuteNotebookCellInput): Promise<ExecutedNotebookCell> {
+  isExecuting(input: Pick<ExecuteNotebookCellInput, 'connection' | 'kernelId'>): boolean {
+    return this.activeKernels.has(
+      `${jupyterConnectionIdentity(input.connection)}\0${input.kernelId}`
+    )
+  }
+
+  /** Call only after the captured kernel has been explicitly retired/rebuilt. */
+  retireKernel(input: Pick<ExecuteNotebookCellInput, 'connection' | 'kernelId'>): void {
+    this.activeKernels
+      .get(`${jupyterConnectionIdentity(input.connection)}\0${input.kernelId}`)
+      ?.retire?.()
+  }
+
+  private async executeLocked<T>(
+    input: Pick<ExecuteNotebookCellInput, 'connection' | 'kernelId'>,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const key = `${jupyterConnectionIdentity(input.connection)}\0${input.kernelId}`
+    if (this.activeKernels.has(key)) throw new Error('Notebook kernel 正在执行，不能重叠运行 cell')
+    const owner: { retire?: () => void } = {}
+    this.activeKernels.set(key, owner)
+    const release = (): void => {
+      if (this.activeKernels.get(key) === owner) this.activeKernels.delete(key)
+    }
+    try {
+      return await operation()
+    } catch (error) {
+      if (error instanceof JupyterKernelExecutionUnconfirmedError) {
+        owner.retire = () => {
+          error.retire()
+          release()
+        }
+        void error.released.then(release)
+      }
+      throw error
+    } finally {
+      if (!owner.retire) release()
+    }
+  }
+
+  async executeCell(
+    input: ExecuteNotebookCellInput,
+    control?: JupyterKernelExecutionControl
+  ): Promise<ExecutedNotebookCell> {
     if (input.cell.cellType !== 'code') {
       throw new Error('只能执行 code cell')
     }
-    const startedAt = this.now().toISOString()
-    const result = await this.client.executeCode({
-      connection: input.connection,
-      sessionId: input.sessionId,
-      kernelId: input.kernelId,
-      code: input.cell.source
+    return this.executeLocked(input, async () => {
+      const startedAt = this.now().toISOString()
+      const result = await this.client.executeCode(
+        {
+          connection: input.connection,
+          sessionId: input.sessionId,
+          kernelId: input.kernelId,
+          code: input.cell.source
+        },
+        control
+      )
+      return {
+        cellId: input.cell.id,
+        executionCount: result.executionCount,
+        outputs: result.outputs,
+        state: result.status === 'error' ? 'error' : 'idle',
+        startedAt,
+        completedAt: this.now().toISOString()
+      }
     })
-    return {
-      cellId: input.cell.id,
-      executionCount: result.executionCount,
-      outputs: result.outputs,
-      state: result.status === 'error' ? 'error' : 'idle',
-      startedAt,
-      completedAt: this.now().toISOString()
-    }
   }
 
   async introspectVariables(
@@ -777,14 +963,17 @@ export class AnalysisNotebookExecutor {
   ): Promise<NotebookVariableIntrospection[]> {
     const variableNames = safeVariableNames(input.variableNames, input.language)
     if (variableNames.length === 0) return []
-    const result = await this.client.executeCode({
-      connection: input.connection,
-      sessionId: input.sessionId,
-      kernelId: input.kernelId,
-      code: buildNotebookVariableIntrospectionCode(variableNames, input.language),
-      storeHistory: false
+    if (this.isExecuting(input)) return []
+    return this.executeLocked(input, async () => {
+      const result = await this.client.executeCode({
+        connection: input.connection,
+        sessionId: input.sessionId,
+        kernelId: input.kernelId,
+        code: buildNotebookVariableIntrospectionCode(variableNames, input.language),
+        storeHistory: false
+      })
+      return parseNotebookVariableIntrospectionResult(result)
     })
-    return parseNotebookVariableIntrospectionResult(result)
   }
 
   async completeCode(input: CompleteNotebookCodeInput): Promise<JupyterKernelCompletionResult> {

@@ -15,6 +15,10 @@ import {
   type RemoteDownloadBackend
 } from '../../download/remote-project-download-tool'
 import { buildNotebookCustomTools } from '../../notebook/notebook-tools'
+import {
+  JupyterKernelExecutionStoppedError,
+  JupyterKernelExecutionUnconfirmedError
+} from '../../notebook/analysis-jupyter-execution'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
 import { buildLibraryCustomTools } from '../../library/library-tools'
@@ -27,6 +31,8 @@ import { rpcIdentifier } from './control-frame'
 import { remoteLibraryToolStore } from './remote-library-service'
 import { isDesktopWebSearchAdapter } from './desktop-websearch-adapter'
 import type { DesktopWebSearchAdapter } from './desktop-websearch-types'
+import { isDesktopMcpAdapter } from './desktop-mcp-adapter'
+import type { DesktopMcpAdapter } from './desktop-mcp-types'
 
 export interface RpcDesktopToolIdentity {
   readonly runtimeSessionId: string
@@ -46,6 +52,7 @@ export interface RpcDesktopToolScopeOptions {
   /** The exact registry populated by engine.host.register in the desktop main process. */
   readonly services: HostServiceRegistry
   readonly currentRun: () => RpcDesktopToolRun | undefined
+  readonly assertBinding?: () => void
   readonly recentUserImages: () => PhiToolImage[]
   readonly allowBrowserTypeText: () => boolean
   /** Shared with the real pre-dispatch redaction owner; raw text is never accepted here. */
@@ -55,11 +62,13 @@ export interface RpcDesktopToolScopeOptions {
   readonly catalogProjectDir?: string
   readonly paletteCatalogPath?: string
   readonly allowedSkills: readonly string[]
+  readonly skillCatalog?: readonly { readonly name: string; readonly description: string }[]
   readonly scriptTools: readonly ScriptToolDescriptor[]
   /** Enable after the genuine selected-workspace library.execute/cancel service is registered. */
   readonly remoteLibrary?: true
   /** A genuine separately owned desktop SDK adapter; owner awaits close on teardown. */
   readonly desktopWebSearch?: DesktopWebSearchAdapter
+  readonly desktopMcp?: DesktopMcpAdapter
   /** The actual RemoteRuntimeController.approvalFor; required when script tools are enabled. */
   readonly scriptApprovalFor?: (toolName: string, input: unknown) => PhiToolApproval | undefined
 }
@@ -75,6 +84,8 @@ export interface RpcDesktopToolScope {
     input: Readonly<Record<string, unknown>>
   ): PhiToolApproval | undefined
   dispose(): void
+  /** Captures only these genuine run objects; a late stop cannot drain a successor. */
+  captureNotebookExecutionDrain(runId?: string): () => Promise<void>
 }
 interface Call {
   readonly run: RpcDesktopToolRun
@@ -132,6 +143,7 @@ export function createRpcDesktopToolScope(
   )
     throw new Error('Desktop tools require a trusted canonical remote project scope')
   const webSearch = options.desktopWebSearch
+  const mcp = options.desktopMcp
   if (
     webSearch &&
     (!isDesktopWebSearchAdapter(webSearch) ||
@@ -140,9 +152,18 @@ export function createRpcDesktopToolScope(
       ))
   )
     throw new Error('Desktop search adapter belongs to a different trusted session')
+  if (
+    mcp &&
+    (!isDesktopMcpAdapter(mcp) ||
+      Object.entries(identity).some(
+        ([key, value]) => mcp.identity[key as keyof RpcDesktopToolIdentity] !== value
+      ))
+  )
+    throw new Error('Desktop MCP adapter belongs to a different trusted session')
   const lifetime = new AbortController()
   const calls = new AsyncLocalStorage<Call>()
   const active = new Set<AbortController>()
+  const notebookExecutions = new Map<RpcDesktopToolRun, Set<Promise<void>>>()
   const currentRun = options.currentRun
   const services = options.services
   const vault = options.browserTextVault
@@ -160,6 +181,7 @@ export function createRpcDesktopToolScope(
     throw new Error('Remote script tools require their live approval classifier')
 
   function live(call: Call): void {
+    options.assertBinding?.()
     lifetime.signal.throwIfAborted()
     call.signal.throwIfAborted()
     call.runSignal.throwIfAborted()
@@ -188,7 +210,32 @@ export function createRpcDesktopToolScope(
       ) {
         throw new Error('An SSH project cannot run a wrapper on the desktop')
       }
-      return services.invoke(method, params, call.context)
+      const operation = services.invoke(
+        method,
+        params,
+        method.startsWith('browser.') ? call.context : { ...call.context, signal: call.signal }
+      )
+      if (
+        method === 'notebookTool.execute' &&
+        params &&
+        typeof params === 'object' &&
+        'action' in params &&
+        params.action === 'run_cell'
+      ) {
+        const owned = notebookExecutions.get(call.run) ?? new Set<Promise<void>>()
+        notebookExecutions.set(call.run, owned)
+        const settled = operation.then(
+          () => undefined,
+          (error: unknown) => {
+            if (error instanceof JupyterKernelExecutionStoppedError) return
+            if (error instanceof JupyterKernelExecutionUnconfirmedError || call.signal.aborted)
+              throw error
+          }
+        )
+        owned.add(settled)
+        void settled.catch(() => undefined)
+      }
+      return operation
     }
   }
   const browserRequest = requestFor(['browser.execute', 'browser.cancel'])
@@ -217,6 +264,27 @@ export function createRpcDesktopToolScope(
       signal?.removeEventListener('abort', cancel)
     }
   }
+  const skillTool = buildSkillRunTool(skillRequest, {
+    runtimeSessionId: identity.runtimeSessionId,
+    allowedSkills: skills,
+    remoteProject
+  })
+  skillTool.description +=
+    '\nEnabled skills: ' +
+    skills
+      .map((name) => {
+        const description = options.skillCatalog?.find((skill) => skill.name === name)?.description
+        return description ? `${name}: ${description}` : name
+      })
+      .join('; ')
+  const skillProperties = skillTool.parameters.properties as Record<string, unknown>
+  skillTool.parameters = {
+    ...skillTool.parameters,
+    properties: {
+      ...skillProperties,
+      skill: { ...(skillProperties.skill as Record<string, unknown>), enum: skills }
+    }
+  }
   const built = [
     buildBrowserTool(
       identity.runtimeSessionId,
@@ -232,6 +300,7 @@ export function createRpcDesktopToolScope(
     ),
     buildRenderBlocksTool(),
     ...(webSearch ? [webSearch.tool] : []),
+    ...(mcp ? mcp.tools : []),
     ...(options.remoteLibrary
       ? buildLibraryCustomTools(
           remoteLibraryToolStore(libraryRequest, identity, () => {
@@ -251,11 +320,7 @@ export function createRpcDesktopToolScope(
         (await presentRequest('deliverables.present', request)) as { files: PresentedFile[] }
     ),
     buildRemoteProjectDownloadTool(download),
-    buildSkillRunTool(skillRequest, {
-      runtimeSessionId: identity.runtimeSessionId,
-      allowedSkills: skills,
-      remoteProject
-    }),
+    ...(skills.length ? [skillTool] : []),
     ...buildScriptTools(descriptors, skillRequest, {
       runtimeSessionId: identity.runtimeSessionId,
       remoteProject
@@ -332,7 +397,10 @@ export function createRpcDesktopToolScope(
                 trustedContext,
                 controller.signal
               )
-              const result = await untilAborted(operation, controller.signal)
+              const result =
+                tool.name === 'notebook.run_cell'
+                  ? await operation
+                  : await untilAborted(operation, controller.signal)
               live(call)
               // The legacy questionnaire builder encodes UI failures only in details.
               // Preserve those details while making a failed desktop surface explicit on RPC.
@@ -362,12 +430,24 @@ export function createRpcDesktopToolScope(
     tools,
     unavailable: UNAVAILABLE.flatMap((item) => {
       if (options.remoteLibrary && item.capability === 'library') return []
-      if (webSearch && item.capability === 'websearch/MCP')
+      if ((webSearch || mcp) && item.capability === 'websearch/MCP')
         return [
-          {
-            capability: 'MCP',
-            reason: 'Requires a real session-private MCP resource/auth adapter and its lifecycle.'
-          }
+          ...(!mcp
+            ? [
+                {
+                  capability: 'MCP',
+                  reason: 'No enabled session-private MCP adapter was selected.'
+                }
+              ]
+            : []),
+          ...(!webSearch
+            ? [
+                {
+                  capability: 'websearch',
+                  reason: 'No session-private desktop search adapter was selected.'
+                }
+              ]
+            : [])
         ]
       return [item]
     }).concat(
@@ -387,6 +467,22 @@ export function createRpcDesktopToolScope(
         : []
     ),
     recentUserImages: recentImages,
+    captureNotebookExecutionDrain(runId) {
+      const captured = [...notebookExecutions].filter(
+        ([run]) => runId === undefined || run.id === runId
+      )
+      let draining: Promise<void> | undefined
+      return () =>
+        (draining ??= (async () => {
+          const results = await Promise.allSettled(captured.flatMap(([, owned]) => [...owned]))
+          for (const [run, owned] of captured)
+            if (notebookExecutions.get(run) === owned) notebookExecutions.delete(run)
+          const failure = results.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+          )
+          if (failure) throw failure.reason
+        })())
+    },
     approvalFor(toolName, input) {
       if (lifetime.signal.aborted) return undefined
       const tool = tools.find((item) => item.name === toolName)
@@ -396,12 +492,14 @@ export function createRpcDesktopToolScope(
           ...input,
           runtimeSessionId: identity.runtimeSessionId
         })
+      if (mcp?.tools.some((item) => item.name === toolName)) return mcp.approvalFor(toolName, input)
       return tool.approval
     },
     dispose() {
       if (lifetime.signal.aborted) return
       lifetime.abort(new Error('Desktop tool scope disposed'))
       webSearch?.retire(lifetime.signal.reason)
+      mcp?.retire(lifetime.signal.reason)
       for (const controller of active) controller.abort(lifetime.signal.reason)
       vault.clear()
     }

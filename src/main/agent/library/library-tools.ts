@@ -11,6 +11,14 @@ import {
 import type { LibraryListFilters, SavePaperInput, UpdatePaperInput } from './library-types'
 
 export type LibraryToolAction = 'save' | 'update' | 'remove' | 'list' | 'find' | 'audit'
+export const LIBRARY_TOOL_NAMES = Object.freeze([
+  'lib.save',
+  'lib.update',
+  'lib.remove',
+  'lib.list',
+  'lib.find',
+  'lib.audit'
+] as const)
 
 export interface LibraryToolStore {
   save(input: SavePaperInput): ReturnType<typeof savePaper> | Promise<ReturnType<typeof savePaper>>
@@ -210,7 +218,7 @@ export function buildLibraryCustomTools(
 
   return [
     tool('save', {
-      name: 'lib.save',
+      name: LIBRARY_TOOL_NAMES[0],
       label: 'Save Paper',
       description:
         'Save or exact-deduplicate one paper into the current project literature library. This writes only the local project library, not external sources.',
@@ -222,7 +230,7 @@ export function buildLibraryCustomTools(
       approval: 'write'
     }),
     tool('update', {
-      name: 'lib.update',
+      name: LIBRARY_TOOL_NAMES[1],
       label: 'Update Paper',
       description:
         'Update local notes, tags, collection, priority, processing stage, xrefs, or full-text status for a saved paper.',
@@ -242,7 +250,7 @@ export function buildLibraryCustomTools(
       approval: 'write'
     }),
     tool('remove', {
-      name: 'lib.remove',
+      name: LIBRARY_TOOL_NAMES[2],
       label: 'Remove Paper',
       description: 'Remove one paper from the current project literature library.',
       parameters: {
@@ -255,7 +263,7 @@ export function buildLibraryCustomTools(
       approval: 'write'
     }),
     tool('list', {
-      name: 'lib.list',
+      name: LIBRARY_TOOL_NAMES[3],
       label: 'List Library Papers',
       description:
         'List saved papers from the current project literature library. Does not query external sources.',
@@ -266,7 +274,7 @@ export function buildLibraryCustomTools(
       approval: 'read'
     }),
     tool('find', {
-      name: 'lib.find',
+      name: LIBRARY_TOOL_NAMES[4],
       label: 'Find Library Papers',
       description:
         'Search saved papers in the current project literature library by title, author, DOI, tag, note, abstract, or identifier. Does not query external sources.',
@@ -280,7 +288,7 @@ export function buildLibraryCustomTools(
       approval: 'read'
     }),
     tool('audit', {
-      name: 'lib.audit',
+      name: LIBRARY_TOOL_NAMES[5],
       label: 'Audit Literature Library',
       description:
         'Check the current project literature library for duplicate ids, missing required fields, and orphan xrefs.',

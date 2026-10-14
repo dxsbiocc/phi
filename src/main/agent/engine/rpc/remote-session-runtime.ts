@@ -1,3 +1,5 @@
+import { assertSafeBrowserHistory } from './browser-tool-stream'
+import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
 import { createRuntimeMetadataControl, type RuntimeRenamePolicy } from './runtime-metadata-control'
@@ -66,6 +68,7 @@ export interface RemoteSessionRuntimeOptions {
   readonly sessionName?: string
   /** Genuine curated PhiTool instances supplied by the trusted facade. */
   readonly tools: readonly PhiTool[]
+  readonly browserTextVault?: BrowserTextVault
   readonly hostApprovalFor?: (
     toolName: string,
     input: Readonly<Record<string, unknown>>
@@ -292,6 +295,8 @@ export class RemoteSessionRuntime {
     this.transport = await prepareModelProxyRpcSessionTransport(
       {
         ...options.transport,
+        browserTextVault: options.browserTextVault,
+        currentBrowserRunSignal: () => this.promptController?.signal,
         prepareRuntime: async (context) => {
           this.lifetime.signal.throwIfAborted()
           if (!context.storage) throw new Error('Remote runtime requires persistent launch storage')
@@ -540,6 +545,7 @@ export class RemoteSessionRuntime {
       interrupt: (error) => this.close(error)
     })
     this.active()
+    assertSafeBrowserHistory(result.messages)
     if (options.sessionName !== undefined) {
       await this.metadata.reconcileInitialName(options.sessionName, result)
       this.snapshot = result
@@ -668,6 +674,7 @@ export class RemoteSessionRuntime {
       throw error
     } finally {
       signal?.removeEventListener('abort', abort)
+      this.options.browserTextVault?.clear()
       if (this.pending === operation) this.pending = undefined
       if (this.promptController === controller) {
         this.promptController = undefined
@@ -691,6 +698,7 @@ export class RemoteSessionRuntime {
       signal: this.lifetime.signal,
       readCheckpoint: () => this.verifyCurrent(old)
     })
+    assertSafeBrowserHistory(messages)
     const after = await preflightRemoteJournal(this.storage!, old.reference)
     if (before.fileIdentity !== after.fileIdentity || before.fingerprint !== after.fingerprint)
       throw new Error('Remote journal changed during checkpoint')

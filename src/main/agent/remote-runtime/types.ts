@@ -1,6 +1,8 @@
 import type { CommandResult, WorkspaceHost } from '../workspace-host/types'
 
 export interface RemoteRuntimeInputOptions {
+  /** Local admission callback, never part of the server script or transport DTO. */
+  beforeExec?: () => void
   signal?: AbortSignal
   timeoutMs: number
   maxOutputBytes: number

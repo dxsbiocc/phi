@@ -49,6 +49,8 @@ interface Invocation {
   detach(): void
   settled: boolean
   serial: Promise<void>
+  progressSequence: number
+  progressAcks: Array<number | undefined>
 }
 const generations = new WeakMap<RpcConnection, number>()
 const MAX_ACTIVE_CALLS = 64
@@ -201,6 +203,13 @@ export class RpcHostToolBridge {
 
   private receive(frame: RpcFrame): void {
     if (this.disposed) return
+    if (frame.type === 'tool_execution_update' && typeof frame.toolCallId === 'string') {
+      const call = [...this.calls.values()].find((call) => call.toolCallId === frame.toolCallId)
+      const sequence = call?.progressAcks.shift()
+      if (call && sequence !== undefined)
+        this.options.resultDelivery?.consumed(call.runId, call.toolCallId, sequence)
+      return
+    }
     if (frame.type === 'tool_execution_end' && typeof frame.toolCallId === 'string') {
       const runId = this.delivered.get(frame.toolCallId)
       if (runId) {
@@ -261,7 +270,9 @@ export class RpcHostToolBridge {
       controller,
       detach: () => runSignal.removeEventListener('abort', cancel),
       settled: false,
-      serial: Promise.resolve()
+      serial: Promise.resolve(),
+      progressSequence: 0,
+      progressAcks: []
     }
     runSignal.addEventListener('abort', cancel, { once: true })
     this.calls.set(call.id, call)
@@ -361,11 +372,58 @@ export class RpcHostToolBridge {
   private update(call: Invocation, partial: PhiToolResult): void {
     if (!this.live(call) || call.finishing) return
     try {
-      this.enqueue(call, { type: 'host_tool_update', id: call.id, partialResult: partial })
+      if (!validToolResult(partial)) throw new Error('Invalid host progress')
+      let small = false
+      try {
+        encodeRpcCommand({ type: 'host_tool_update', id: call.id, partialResult: partial })
+        small = true
+      } catch {
+        if (!this.options.resultDelivery) throw new Error('Large progress delivery unavailable')
+      }
+      if (small) {
+        this.enqueue(call, { type: 'host_tool_update', id: call.id, partialResult: partial })
+        call.progressAcks.push(undefined)
+        return
+      }
+      const snapshot = JSON.parse(encodeHostResult(partial).toString('utf8')) as PhiToolResult
+      const sequence = ++call.progressSequence
+      const before = call.serial
+      const publication = this.options.resultDelivery!.publish(
+        snapshot,
+        {
+          runId: call.runId,
+          invocationId: call.id,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          progressSequence: sequence
+        },
+        call.controller.signal,
+        before
+      )
+      void publication.catch(() => undefined)
+      call.serial = before
+        .then(async () => {
+          const placeholder = await publication
+          if (!this.live(call)) {
+            this.finish(call, errorResult('Host tool execution cancelled'), true)
+            return
+          }
+          call.progressAcks.push(sequence)
+          await this.channel.sendControl({
+            type: 'host_tool_update',
+            id: call.id,
+            partialResult: placeholder
+          })
+        })
+        .catch(() => {
+          this.finish(call, errorResult('Host tool progress delivery failed'), true)
+        })
     } catch {
       this.finish(
         call,
-        errorResult('Host tool progress exceeds the supported frame limit or has invalid content'),
+        errorResult(
+          'Host tool progress exceeds the supported frame limit or logical/file/byte budget or has invalid content'
+        ),
         true
       )
     }
@@ -439,6 +497,16 @@ export class RpcHostToolBridge {
         )
       }
     }
+    if (!abort && call.progressSequence > 0) {
+      call.finishing = true
+      const final = result
+      call.serial = call.serial.then(() => {
+        if (this.live(call)) this.complete(call, final, final.isError === true)
+        else this.finish(call, errorResult('Host tool execution cancelled'), true)
+      })
+      void call.serial.catch((error: unknown) => this.fail(asError(error)))
+      return
+    }
     this.complete(call, result, result.isError === true, abort)
   }
 
@@ -449,7 +517,7 @@ export class RpcHostToolBridge {
     abort = false,
     receipt = false
   ): void {
-    if (receipt) this.delivered.set(call.toolCallId, call.runId)
+    if (receipt || call.progressSequence > 0) this.delivered.set(call.toolCallId, call.runId)
     call.settled = true
     call.detach()
     this.calls.delete(call.id)
@@ -498,13 +566,19 @@ export class RpcHostToolBridge {
         if (
           (snapshot.type === 'host_tool_result' || !this.disposed) &&
           (snapshot.type !== 'host_tool_update' ||
-            (current === call.run && current.signal === call.run.signal && !current.signal.aborted))
+            (current === call.run &&
+              current.id === call.runId &&
+              current.signal === call.runSignal &&
+              current.authorizeCall === call.authority &&
+              !current.signal.aborted))
         ) {
           const staleFinal =
             snapshot.type === 'host_tool_result' &&
             snapshot.isError !== true &&
             (this.disposed ||
               current !== call.run ||
+              current.id !== call.runId ||
+              current.signal !== call.runSignal ||
               current.signal.aborted ||
               current.authorizeCall !== call.authority)
           await this.channel.sendControl(

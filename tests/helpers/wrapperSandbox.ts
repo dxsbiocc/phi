@@ -107,7 +107,7 @@ const ENV_KEYS = [
   'FAKE_SETSID_GATE'
 ]
 
-function seedGffreadPackage(agentDir: string): void {
+export function seedGffreadPackage(agentDir: string): void {
   const tree = getWrapperTreeDir(agentDir)
   const target = writeGffreadFixture(tree)
   const paths: string[] = []

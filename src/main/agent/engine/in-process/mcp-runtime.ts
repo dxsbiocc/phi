@@ -36,6 +36,7 @@ import {
 import { isRecord, stringValue } from './common'
 import { requestHost } from './ipc'
 import { getContext } from './runtime-context'
+import { handleDesktopMcpRequest } from './desktop-mcp-runtime'
 import {
   RemoteMcpAccess,
   SessionEntry,
@@ -269,6 +270,11 @@ export async function syncFeaturedApiKeys(id?: string): Promise<void> {
 
 export async function handleMcpRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'mcp.desktopCreate':
+    case 'mcp.desktopCall':
+    case 'mcp.desktopCancel':
+    case 'mcp.desktopClose':
+      return handleDesktopMcpRequest(method, params)
     case 'mcp.configuredStdioTools':
       return listConfiguredStdioMcpTools(params)
     case 'mcp.cancelConfiguredStdioTools':

@@ -1,6 +1,16 @@
+import {
+  WRAPPER_COMPOSITION_TOOL_NAMES,
+  buildWrapperCompositionTools
+} from '../src/main/agent/wrappers/composition/tools'
+import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
+import {
+  NOTEBOOK_TOOL_NAMES,
+  buildNotebookCustomTools
+} from '../src/main/agent/notebook/notebook-tools'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  APP_RPC_NOTEBOOK_TOOL_NAMES,
   createAppRemoteSessionManager,
   installAppRemoteSessionRouting,
   selectAppForegroundAgents,
@@ -83,4 +93,52 @@ test('application recovery manager keeps the Phi locator out of local journal op
   assert.equal(resumed.kind, 'open')
   assert.equal(resumed.getSessionFile(), 'phi-session:phi-session-id')
   assert.equal(resumed.getCwd(), '/local/anchor')
+})
+
+test('application RPC Notebook roster reuses existing authoring and owned execution classifications', () => {
+  assert.deepEqual(APP_RPC_NOTEBOOK_TOOL_NAMES, NOTEBOOK_TOOL_NAMES)
+  const tools = buildNotebookCustomTools(async () => undefined)
+  assert.deepEqual(
+    tools
+      .filter((tool) =>
+        APP_RPC_NOTEBOOK_TOOL_NAMES.includes(
+          tool.name as (typeof APP_RPC_NOTEBOOK_TOOL_NAMES)[number]
+        )
+      )
+      .map((tool) => [tool.name, tool.approval]),
+    [
+      ['notebook.list', 'read'],
+      ['notebook.read', 'read'],
+      ['notebook.insert_cell', 'write'],
+      ['notebook.update_cell', 'write'],
+      ['notebook.delete_cell', 'write'],
+      ['notebook.run_cell', 'write'],
+      ['notebook.save', 'write']
+    ]
+  )
+})
+
+test('application Wrapper roster reuses the six existing tools and their approval contract', () => {
+  const tools = buildWrapperCompositionTools(
+    createHostJobClient(async () => {
+      throw new Error('roster inspection cannot call a service')
+    })
+  )
+  assert.deepEqual(
+    tools.map((tool) => tool.name),
+    WRAPPER_COMPOSITION_TOOL_NAMES
+  )
+  assert.deepEqual(
+    tools.map((tool) => [tool.name, tool.approval]),
+    [
+      ['wrapper_search', 'read'],
+      ['wrapper_inspect', 'read'],
+      ['wrapper_run', 'write'],
+      ['wrapper_status', 'read'],
+      ['wrapper_wait', 'read'],
+      ['wrapper_cancel', 'write']
+    ]
+  )
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.length, 7)
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook.run_cell'), true)
 })

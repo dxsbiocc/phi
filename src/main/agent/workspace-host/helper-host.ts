@@ -188,13 +188,35 @@ export class HelperWorkspaceHost implements WorkspaceHost {
 
   private execution(): WorkspaceHost['exec'] {
     return {
-      run: (command, options) =>
-        this.client.request<CommandResult>(
-          'exec.run',
-          commandParams(command, options, this.path(options.cwd)),
-          { signal: options.signal, cancellable: true }
-        ),
+      run: async (command, options) => {
+        let submitted = false
+        try {
+          options.signal?.throwIfAborted()
+          options.beforeExec?.()
+          options.signal?.throwIfAborted()
+          const params = commandParams(command, options, this.path(options.cwd))
+          submitted = true
+          return await this.client.request<CommandResult>('exec.run', params, {
+            signal: options.signal,
+            cancellable: true
+          })
+        } catch (error) {
+          if (!submitted && options.signal?.aborted && error === options.signal.reason)
+            return {
+              stdout: '',
+              stderr: '',
+              code: null,
+              signal: 'SIGTERM',
+              truncated: false,
+              terminationReason: 'cancelled'
+            }
+          throw error
+        }
+      },
       spawnBackground: async (command, options) => {
+        options.signal?.throwIfAborted()
+        options.beforeExec?.()
+        options.signal?.throwIfAborted()
         const spawned = await this.client.request<SpawnResult>(
           'exec.spawnBackground',
           commandParams(command, options, this.path(options.cwd))

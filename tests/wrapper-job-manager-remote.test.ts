@@ -818,3 +818,56 @@ test('quitting leaves an sbatch-controller run going and the next start finishes
     })
   })
 })
+
+for (const revoked of ['cancel', 'binding'] as const)
+  test(`remote manager refuses ${revoked} after awaited environment check before accepting a job`, async () => {
+    await withSandbox(async (sb) =>
+      withRemote(sb, async (env) => {
+        let release!: () => void
+        let entered!: () => void
+        const checking = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        const controller = new AbortController()
+        let current = true
+        const m = manager(sb, env, {
+          resolveProjectForRun: () => projectForRun(env.remoteRoot, 'ssh'),
+          checkRemoteEnvironment: async () => {
+            entered()
+            await new Promise<void>((resolve) => {
+              release = resolve
+            })
+            return readyDoctor(env)
+          }
+        })
+        const pending = m.start(
+          {
+            id: WRAPPER_ID,
+            overrides: { gff: 'tests/data/genome.gff3' },
+            originSessionId: 'rpc-origin'
+          },
+          {
+            signal: controller.signal,
+            assertCurrent: () => {
+              assert.equal(current, true, 'Wrapper selected target changed')
+            }
+          }
+        )
+        await checking
+        if (revoked === 'cancel') controller.abort(new Error('Wrapper request stopped'))
+        else current = false
+        release()
+        try {
+          await assert.rejects(
+            pending,
+            revoked === 'cancel' ? /Wrapper request stopped/ : /selected target changed/
+          )
+          assert.deepEqual(listWrapperRuns(sb.agentDir), [])
+          assert.equal(existsSync(sb.pidFile), false)
+        } finally {
+          for (const run of listWrapperRuns(sb.agentDir)) await m.cancel(run.runId)
+          m.shutdown()
+        }
+      })
+    )
+  })

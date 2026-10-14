@@ -950,3 +950,50 @@ test('docker runs, or singularity without a cache dir, never stage images', asyn
     )
   })
 })
+
+for (const controller of ['login', 'sbatch'] as const)
+  test(`explicit job cancellation during ${controller} preparation never starts the controller`, async () => {
+    await withSandbox(async (sb) => {
+      const slurm =
+        controller === 'sbatch' ? installFakeSlurm(join(sb.root, 'cancel-slurm')) : undefined
+      try {
+        await withHarness(
+          sb,
+          async (h) => {
+            let release!: () => void
+            let prepared!: () => void
+            const ready = new Promise<void>((resolve) => {
+              prepared = resolve
+            })
+            const write = h.session.writeTextFile
+            h.session.writeTextFile = async (path, content) => {
+              await write(path, content)
+              if (path.endsWith(controller === 'sbatch' ? '/job.sbatch' : '/launch.sh')) {
+                prepared()
+                await new Promise<void>((resolve) => {
+                  release = resolve
+                })
+              }
+            }
+            const proc = start(h, {}, `wrun_cancel_${controller}`)
+            await ready
+            proc.cancel()
+            release()
+            const result = await proc.done
+            assert.equal(result.cancelled, true)
+            assert.equal(
+              h.session.commands.some(
+                (command) => command.includes('setsid bash') || command.startsWith('sbatch ')
+              ),
+              false
+            )
+          },
+          (nextflowBin) => ({
+            hpc: { scheduler: controller === 'sbatch' ? 'slurm' : 'local', controller, nextflowBin }
+          })
+        )
+      } finally {
+        slurm?.restore()
+      }
+    })
+  })

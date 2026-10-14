@@ -334,6 +334,8 @@ export type ToolApprovalRequest = {
 }
 
 export type PhiHostRequestContext = {
+  /** Desktop-only cancellation capability; never serialized to worker/RPC payloads. */
+  readonly signal?: AbortSignal
   readonly originSessionId?: string
   readonly agentRunId?: string
   readonly toolCallId?: string

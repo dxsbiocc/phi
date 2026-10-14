@@ -29,12 +29,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+export function isBrowserTextPlaceholder(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith(PLACEHOLDER_PREFIX)
+}
+
 function validText(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
     Buffer.byteLength(value, 'utf8') <= BROWSER_MAX_TEXT_BYTES &&
-    !value.startsWith(PLACEHOLDER_PREFIX)
+    !isBrowserTextPlaceholder(value)
   )
 }
 
@@ -139,11 +143,15 @@ export class BrowserTextVault {
   sanitize(toolCallId: string, input: unknown): Record<string, unknown> {
     if (!boundedIdentity(toolCallId) || !isRecord(input)) return { ...INVALID_BROWSER_INPUT }
     if (input.action !== 'typeText') return sanitizeOrdinaryBrowserInput(input)
-    if (!validTypeTextInput(input)) return { ...INVALID_BROWSER_INPUT }
     const existing = this.#entries.get(toolCallId)
-    if (existing && typeof input.text === 'string' && input.text === existing.placeholder) {
+    if (
+      existing &&
+      validTypeTextShapeWithPlaceholder(input) &&
+      input.text === existing.placeholder
+    ) {
       return this.#redactedShape(input, existing.placeholder)
     }
+    if (!validTypeTextInput(input) || existing) return { ...INVALID_BROWSER_INPUT }
     const placeholder = `${PLACEHOLDER_PREFIX}${this.#tokenFactory()}`
     const entry: VaultEntry = { placeholder, text: input.text, valid: true }
     this.#remember(toolCallId, entry)
@@ -240,8 +248,7 @@ function validTypeTextShapeWithPlaceholder(input: Record<string, unknown>): bool
     validRevision(input.expectedDocumentRevision) &&
     validOptionalTarget(input) &&
     (input.consequence === 'write' || input.consequence === 'irreversible') &&
-    typeof input.text === 'string' &&
-    input.text.startsWith(PLACEHOLDER_PREFIX)
+    isBrowserTextPlaceholder(input.text)
   )
 }
 

@@ -570,7 +570,7 @@ test('non-request PhiEngine methods forward subscriptions, host handlers, presen
   assert.equal(recording.child.killed, true)
 })
 
-test('worker dispatch matches the PhiEngine facade and private model gateway commands', () => {
+test('worker dispatch matches the PhiEngine facade and private model gateway/MCP commands', () => {
   const workerSource = readFileSync(
     join(process.cwd(), 'src/main/agent/engine/in-process/main.ts'),
     'utf8'
@@ -581,7 +581,11 @@ test('worker dispatch matches the PhiEngine facade and private model gateway com
   const engineMethods = [
     ...requestCases.map((entry) => entry.method),
     'modelGateway.create',
-    'modelGateway.revoke'
+    'modelGateway.revoke',
+    'mcp.desktopCreate',
+    'mcp.desktopCall',
+    'mcp.desktopCancel',
+    'mcp.desktopClose'
   ]
   assert.deepEqual([...new Set(engineMethods)].sort(), [...new Set(workerMethods)].sort())
 })

@@ -134,7 +134,8 @@ export function consumeHostResultFile(
           'cwd',
           'runId',
           'toolCallId',
-          'toolName'
+          'toolName',
+          'progressSequence'
         ] as const
       ).every((field) => receipt[field] === identity[field])
     )

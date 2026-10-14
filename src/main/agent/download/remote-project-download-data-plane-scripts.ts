@@ -354,7 +354,7 @@ export function truncateCommand(
     '[ ! -L "$temporary" ] || fail INVALID_PARTIAL',
     'if [ -e "$temporary" ]; then safe_file "$temporary" || fail INVALID_PARTIAL; rm -f -- "$temporary"; fi',
     'umask 077',
-    `( set -C; head -c ${size} "$phi_part" > "$temporary" ) || fail INVALID_PARTIAL`,
+    `( set -C; ${size === 0 ? ':' : `head -c ${size} "$phi_part"`} > "$temporary" ) || fail INVALID_PARTIAL`,
     'chmod 600 "$temporary"',
     '[ "$(file_meta "$temporary")" = "$(id -u):600:1" ] || fail INVALID_PARTIAL',
     'mv -f "$temporary" "$phi_part"'

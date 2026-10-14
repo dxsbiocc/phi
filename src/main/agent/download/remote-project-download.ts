@@ -22,6 +22,12 @@ import {
   type RemoteProjectDownloadContext
 } from './remote-project-download-data-plane'
 import type { RemoteDownloadResult } from './remote-project-download-tool'
+import {
+  assertRemoteDownloadCurrent,
+  type RemoteProjectDownloadControl
+} from './remote-project-download-data-plane-state'
+
+export type { RemoteProjectDownloadControl } from './remote-project-download-data-plane-state'
 
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -38,6 +44,7 @@ type Request = {
 
 type ActiveDownload = {
   controller: AbortController
+  control: RemoteProjectDownloadControl
   session?: RemoteSshSession
   handle?: TransferHandle
 }
@@ -54,16 +61,26 @@ export class RemoteProjectDownloadManager {
   private readonly cancelledBeforeStart = new Set<string>()
   constructor(private readonly dependencies: RemoteProjectDownloadDependencies = {}) {}
 
-  async run(input: unknown): Promise<RemoteDownloadResult> {
+  async run(input: unknown, control?: RemoteProjectDownloadControl): Promise<RemoteDownloadResult> {
     const request = checkedRequest(input)
     const key = requestKey(request)
     if (this.active.has(key)) throw new Error('远程下载请求 ID 已在使用')
-    const entry: ActiveDownload = { controller: new AbortController() }
+    const controller = new AbortController()
+    const entry: ActiveDownload = {
+      controller,
+      control: { signal: controller.signal, beforeDispatch: control?.beforeDispatch }
+    }
     if (this.cancelledBeforeStart.delete(key)) entry.controller.abort()
     this.active.set(key, entry)
+    const cancel = (): void => this.cancelEntry(entry)
+    control?.signal?.addEventListener('abort', cancel, { once: true })
+    if (control?.signal?.aborted) cancel()
     try {
-      return await this.execute(request, entry)
+      const result = await this.execute(request, entry)
+      assertRemoteDownloadCurrent(entry.control)
+      return result
     } finally {
+      control?.signal?.removeEventListener('abort', cancel)
       this.active.delete(key)
     }
   }
@@ -80,20 +97,32 @@ export class RemoteProjectDownloadManager {
       }
       return
     }
+    this.cancelEntry(entry)
+  }
+
+  private cancelEntry(entry: ActiveDownload): void {
     entry.controller.abort()
     entry.handle?.cancel()
-    if (entry.session && !entry.handle) void entry.session.close()
+    if (entry.session && !entry.handle) void entry.session.close().catch(() => undefined)
   }
 
   private async execute(request: Request, active: ActiveDownload): Promise<RemoteDownloadResult> {
-    active.controller.signal.throwIfAborted()
-    resolveRemoteWorkspaceHostBinding(
+    assertRemoteDownloadCurrent(active.control)
+    const binding = resolveRemoteWorkspaceHostBinding(
       { sessionId: request.sessionId, projectId: request.projectId },
       this.dependencies
     )
     const project = (this.dependencies.getProject ?? getProject)(request.projectId)
     if (!project || project.location.kind !== 'ssh') throw new Error('远程项目位置无效')
     const hostKey = project.location.hostProfileId
+    const assertCurrent = (): void => {
+      assertRemoteDownloadCurrent(active.control)
+      const current = resolveRemoteWorkspaceHostBinding(
+        { sessionId: request.sessionId, projectId: request.projectId },
+        this.dependencies
+      )
+      if (current.cacheKey !== binding.cacheKey) throw new Error('远程下载项目绑定已变化')
+    }
     return withAuthorizedRemoteWorkspacePath(
       {
         sessionId: request.sessionId,
@@ -103,13 +132,14 @@ export class RemoteProjectDownloadManager {
       },
       async (authorized, session) => {
         active.session = session
-        active.controller.signal.throwIfAborted()
+        assertCurrent()
         if (!session.execBounded) throw new Error('服务器下载后端不可用')
         const resolution = await resolveRemoteAddress(
           session,
           request.url,
           active.controller.signal
         )
+        assertCurrent()
         const sourceUrl = new URL(request.url)
         const sourceFingerprint = createHash('sha256')
           .update(`${sourceUrl.origin}${sourceUrl.pathname}`)
@@ -131,7 +161,8 @@ export class RemoteProjectDownloadManager {
           destination: authorized.path,
           relativePath: authorized.relativePath,
           canonicalRoot: authorized.canonicalRoot,
-          maxFileBytes: request.maxFileBytes
+          maxFileBytes: request.maxFileBytes,
+          control: { signal: active.controller.signal, beforeDispatch: assertCurrent }
         }
         const coordinator = getFileTransferCoordinator(
           this.dependencies.agentDir ?? getPhiAgentDir()
@@ -140,6 +171,7 @@ export class RemoteProjectDownloadManager {
         let storageKey: string
         try {
           const freeBytes = await remoteDownloadFreeBytes(context)
+          assertCurrent()
           const allowedRoots = new Set(
             (this.dependencies.listProjects ?? listProjects)().flatMap((candidate) =>
               candidate.location.kind === 'ssh' && candidate.location.hostProfileId === hostKey
@@ -160,6 +192,7 @@ export class RemoteProjectDownloadManager {
         } finally {
           releaseReservation()
         }
+        assertCurrent()
         const plane = new RemoteProjectDownloadDataPlane()
         plane.bind(context)
         try {
@@ -188,7 +221,11 @@ export class RemoteProjectDownloadManager {
           )
           active.handle = handle
           if (active.controller.signal.aborted) handle.cancel()
-          const result = await handle.completion
+          const result = await handle.completion.finally(() => {
+            // The retained transfer ID can already belong to a new request while SSH closes.
+            if (active.handle === handle) active.handle = undefined
+          })
+          assertCurrent()
           return {
             path: remoteWorkspaceUri(authorized.hostAlias, authorized.path),
             displayPath: authorized.relativePath,
@@ -198,7 +235,14 @@ export class RemoteProjectDownloadManager {
           plane.unbind(transferId)
         }
       },
-      this.dependencies
+      {
+        ...this.dependencies,
+        onConnected: (session) => {
+          active.session = session
+          assertCurrent()
+          this.dependencies.onConnected?.(session)
+        }
+      }
     )
   }
 }
@@ -349,7 +393,7 @@ function checkedRequest(value: unknown): Request {
   ) {
     throw new Error('远程下载 SHA-256 无效')
   }
-  return record as unknown as Request
+  return Object.freeze({ ...record }) as unknown as Request
 }
 
 function unsafeOutputPath(path: string): boolean {
