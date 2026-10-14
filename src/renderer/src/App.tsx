@@ -3992,10 +3992,18 @@ function App(): React.JSX.Element {
   }, [closeWorkspaceSidebarPreview, currentSessionTab, selectWorkspaceTab])
 
   const onSelectWorkspaceView = useCallback(
-    (view: 'chat' | 'projects'): void => {
+    (view: 'chat' | 'projects', anchorEl: HTMLElement): void => {
+      if (
+        view === 'chat' &&
+        activeView === 'analysis' &&
+        workspaceSidebarMode === 'conversations'
+      ) {
+        openWorkspaceSidebarPreview('conversations', anchorEl)
+        return
+      }
       onSelectWorkspaceSidebarMode(view === 'projects' ? 'projects' : 'conversations')
     },
-    [onSelectWorkspaceSidebarMode]
+    [activeView, onSelectWorkspaceSidebarMode, openWorkspaceSidebarPreview, workspaceSidebarMode]
   )
 
   const onNewChatFromSidebar = useCallback(async (): Promise<void> => {

@@ -5,7 +5,10 @@ import { runInNewContext } from 'node:vm'
 import { createElement, type ReactElement, type ReactNode } from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import ts from 'typescript'
-import type { WorkspaceSidebarMode } from '../src/renderer/src/lib/workspaceSidebar'
+import {
+  workspaceSidebarModeIsExpanded,
+  type WorkspaceSidebarMode
+} from '../src/renderer/src/lib/workspaceSidebar'
 
 type Panel = ReactElement<{
   'data-phi-retained-sidebar'?: WorkspaceSidebarMode
@@ -132,19 +135,33 @@ function activityClick(mode: WorkspaceSidebarMode): { selected: string[]; refres
   }
   visit(syntax)
   assert.ok(click)
-  const code = ts.transpileModule(`const click = ${click.getText(syntax)}; click();`, {
+  const code = ts.transpileModule(`const click = ${click.getText(syntax)}; click(event);`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022 }
   }).outputText
   const selected: string[] = []
+  const anchor = {}
   let refreshes = 0
   runInNewContext(code, {
     mode,
+    event: { currentTarget: anchor },
     closeWorkspaceSidebarPreview: () => undefined,
-    onSelectWorkspaceView: (view: string) => selected.push(view),
+    onSelectWorkspaceView: (view: string, anchorEl: unknown) => {
+      assert.equal(anchorEl, anchor)
+      selected.push(view)
+    },
     onSelectWorkspaceSidebarMode: (sidebar: string) => selected.push(sidebar),
     refreshForMode: () => async () => refreshes++
   })
   return { selected, refreshes }
+}
+
+for (const [mode, view] of [
+  ['conversations', 'chat'],
+  ['projects', 'projects']
+] as const) {
+  test(`${mode} activity navigation passes its button as the preview anchor`, () => {
+    assert.deepEqual(activityClick(mode), { selected: [view], refreshes: 0 })
+  })
 }
 
 for (const mode of ['runtime', 'plugins', 'skills', 'mcp', 'wrappers'] as const) {
@@ -153,7 +170,13 @@ for (const mode of ['runtime', 'plugins', 'skills', 'mcp', 'wrappers'] as const)
   })
 }
 
-test('content preview and selected navigation keep the same wrapper and button slot', () => {
+function activityButton(): (props: Record<string, unknown>) => ReactElement<{
+  title: string
+  disableHoverListener: boolean
+  disableFocusListener: boolean
+  disableTouchListener: boolean
+  children: Panel
+}> {
   const path = 'src/renderer/src/AppActivityBar.tsx'
   const syntax = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
   const declaration = syntax.statements.find(
@@ -177,7 +200,12 @@ test('content preview and selected navigation keep the same wrapper and button s
     IconButton: 'button',
     Tooltip: 'tooltip',
     activityBarButtonSx: () => ({})
-  }) as (props: Record<string, unknown>) => Panel
+  }) as ReturnType<typeof activityButton>
+  return render
+}
+
+test('content preview and selected navigation keep the same wrapper and button slot', () => {
+  const render = activityButton()
   const props = {
     mode: 'skills',
     label: '技能',
@@ -195,3 +223,101 @@ test('content preview and selected navigation keep the same wrapper and button s
   assert.equal((preview.props.children as Panel).type, (selected.props.children as Panel).type)
   assert.equal((preview.props.children as Panel).key, (selected.props.children as Panel).key)
 })
+
+test('an expanded navigation panel does not show a redundant label tooltip', () => {
+  const selected = activityButton()({ active: true, useContentPreview: false, label: '技能' })
+  assert.equal(selected.props.title, '')
+  assert.equal(selected.props.disableHoverListener, true)
+  assert.equal(selected.props.disableFocusListener, true)
+  assert.equal(selected.props.disableTouchListener, true)
+})
+
+test('inactive navigation without a content preview still describes its action', () => {
+  const inactive = activityButton()({ active: false, useContentPreview: false, label: '技能' })
+  assert.equal(inactive.props.title, '技能')
+  assert.equal(inactive.props.disableHoverListener, false)
+})
+
+test('docked conversation content does not select or suppress the conversation-list entry', () => {
+  const active = workspaceSidebarModeIsExpanded({
+    activeView: 'analysis',
+    isSidebarOpen: true,
+    workspaceSidebarMode: 'conversations',
+    mode: 'conversations'
+  })
+  assert.equal(active, false)
+  const opened: string[] = []
+  let focused = 0
+  let prevented = 0
+  const button = activityButton()({
+    mode: 'conversations',
+    label: '对话',
+    active,
+    useContentPreview: !active,
+    onPreviewOpen: (mode: string) => opened.push(mode),
+    onFocusPreview: () => focused++
+  }).props.children as ReactElement<{
+    onMouseEnter: (event: unknown) => void
+    onFocus: (event: unknown) => void
+    onKeyDown: (event: unknown) => void
+  }>
+  button.props.onMouseEnter({ currentTarget: {} })
+  button.props.onFocus({ currentTarget: {} })
+  button.props.onKeyDown({
+    key: 'ArrowRight',
+    currentTarget: {},
+    preventDefault: () => prevented++
+  })
+  assert.deepEqual(opened, ['conversations', 'conversations', 'conversations'])
+  assert.equal(focused, 1)
+  assert.equal(prevented, 1)
+})
+
+for (const [activeView, workspaceSidebarMode, view, dockedPreview] of [
+  ['analysis', 'conversations', 'chat', true],
+  ['analysis', 'conversations', 'projects', false],
+  ['chat', 'conversations', 'chat', false],
+  ['analysis', 'files', 'chat', false]
+] as const) {
+  test(`${view} navigation from ${activeView}/${workspaceSidebarMode} uses the correct destination`, () => {
+    const path = 'src/renderer/src/App.tsx'
+    const syntax = ts.createSourceFile(
+      path,
+      readFileSync(path, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    )
+    let callback: ts.Expression | undefined
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        node.name.getText(syntax) === 'onSelectWorkspaceView' &&
+        node.initializer &&
+        ts.isCallExpression(node.initializer)
+      )
+        callback = node.initializer.arguments[0]
+      ts.forEachChild(node, visit)
+    }
+    visit(syntax)
+    assert.ok(callback)
+    const anchor = {}
+    const previews: unknown[] = []
+    const selected: string[] = []
+    const code = ts.transpileModule(`(${callback.getText(syntax)})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText
+    const select = runInNewContext(code, {
+      activeView,
+      workspaceSidebarMode,
+      openWorkspaceSidebarPreview: (mode: string, anchorEl: unknown) =>
+        previews.push([mode, anchorEl]),
+      onSelectWorkspaceSidebarMode: (mode: string) => selected.push(mode)
+    }) as (view: string, anchorEl: unknown) => void
+    select(view, anchor)
+    assert.deepEqual(previews, dockedPreview ? [['conversations', anchor]] : [])
+    assert.deepEqual(
+      selected,
+      dockedPreview ? [] : [view === 'chat' ? 'conversations' : 'projects']
+    )
+  })
+}
