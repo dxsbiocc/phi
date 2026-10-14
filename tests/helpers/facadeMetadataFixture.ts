@@ -21,7 +21,7 @@ import type { RemoteSessionRuntimeOptions } from '../../src/main/agent/engine/rp
 import { saveRemoteHostProfile } from '../../src/main/agent/remote-hosts'
 import { createRemoteProject } from '../../src/main/agent/projects'
 import { ensureRemoteProjectAnchor } from '../../src/main/agent/remote-project-anchor'
-import { createPhiSession } from '../../src/main/agent/session/session-store'
+import { createPhiSession, findPhiSessionById } from '../../src/main/agent/session/session-store'
 import { SessionRunnerRegistry } from '../../src/main/agent/session/session-runner-registry'
 import { resolveRemoteWorkspaceHostBinding } from '../../src/main/agent/remote-workspace-boundary'
 import {
@@ -73,6 +73,7 @@ export async function facadeMetadataFixture(
     select?: (selected: SelectedFacadeRuntime) => SelectedFacadeRuntime
     providerFactory?: typeof startHostResultModel
     isolatedProject?: boolean
+    nonReasoningModel?: string
     applicationRouting?: Pick<
       AppRemoteSessionRoutingOptions,
       'foregroundAgentNames' | 'onChildApprovalEvent' | 'loadDesktopTools'
@@ -109,7 +110,7 @@ export async function facadeMetadataFixture(
           models: ['model-a', 'model-b'].map((id) => ({
             id,
             name: id,
-            reasoning: true,
+            reasoning: id !== options.nonReasoningModel,
             input: ['text'],
             contextWindow: 32768,
             maxTokens: 1024,
@@ -381,11 +382,12 @@ export async function facadeMetadataFixture(
     tunnels,
     leases,
     createApplicationSession() {
+      const saved = findPhiSessionById(phi.sessionId)!
       return createRuntimeAgentSession({
         cwd: anchor,
         agentDir,
-        model: model('model-a'),
-        thinkingLevel: 'high',
+        model: model(saved.model!.modelId),
+        thinkingLevel: saved.thinkingLevel,
         projectBound: true,
         sessionManager: createAppRemoteSessionManager(anchor, phi.sessionId, recovery === 'resume'),
         remoteProject: {

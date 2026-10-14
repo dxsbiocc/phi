@@ -1,5 +1,6 @@
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { createWebLinkPreviewService } from '../src/main/web-link-preview'
+import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
 import * as remoteLibrary from '../src/main/agent/engine/rpc/remote-library-service'
@@ -355,6 +356,7 @@ type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
   holdRendererReady?: boolean
   environmentGet?: () => Promise<unknown>
+  modelRuntimeGet?: () => Promise<void>
   remoteRpc?: boolean
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
@@ -1792,45 +1794,48 @@ async function harness(
             statusText: 'ready'
           }
         ],
-        getRuntime: async () => ({
-          getModels: () => [
-            {
-              provider: 'openai',
-              id: 'gpt-test',
-              name: 'GPT Test',
-              reasoning: true
-            },
-            {
-              provider: 'openai',
-              id: 'gpt-vision-test',
-              name: 'GPT Vision Test',
-              reasoning: false,
-              supportsImages: true
-            },
-            {
-              provider: 'kimi-code',
-              id: 'kimi-k2.5',
-              name: 'Kimi K2.5',
-              reasoning: true
-            },
-            {
-              provider: 'kimi-code',
-              id: 'kimi-for-coding',
-              name: 'K2.7 Coding',
-              reasoning: true
-            }
-          ],
-          getModel: (providerId: string, modelId: string) =>
-            providerId === 'missing'
-              ? undefined
-              : {
-                  provider: providerId,
-                  id: modelId,
-                  name: modelId,
-                  reasoning: true,
-                  ...(modelId === 'gpt-vision-test' ? { supportsImages: true } : {})
-                }
-        })
+        getRuntime: async () => {
+          await options.modelRuntimeGet?.()
+          return {
+            getModels: () => [
+              {
+                provider: 'openai',
+                id: 'gpt-test',
+                name: 'GPT Test',
+                reasoning: true
+              },
+              {
+                provider: 'openai',
+                id: 'gpt-vision-test',
+                name: 'GPT Vision Test',
+                reasoning: false,
+                supportsImages: true
+              },
+              {
+                provider: 'kimi-code',
+                id: 'kimi-k2.5',
+                name: 'Kimi K2.5',
+                reasoning: true
+              },
+              {
+                provider: 'kimi-code',
+                id: 'kimi-for-coding',
+                name: 'K2.7 Coding',
+                reasoning: true
+              }
+            ],
+            getModel: (providerId: string, modelId: string) =>
+              providerId === 'missing'
+                ? undefined
+                : {
+                    provider: providerId,
+                    id: modelId,
+                    name: modelId,
+                    reasoning: true,
+                    ...(modelId === 'gpt-vision-test' ? { supportsImages: true } : {})
+                  }
+          }
+        }
       })
     },
     './agent/persona-manager': {
@@ -2384,6 +2389,7 @@ async function harness(
       }
     },
     './agent/engine/events': engineEvents,
+    './agent/engine/rpc/runtime-selection-control': runtimeSelection,
     './web-link-preview': {
       createWebLinkPreviewService: (): ReturnType<typeof createWebLinkPreviewService> =>
         createWebLinkPreviewService({
@@ -12802,4 +12808,142 @@ test('main actual finished callback wakes the RPC-enabled owning Phi conversatio
   )
   assert.equal(notices.length, 1)
   assert.equal(notices[0].sessionId, current.phiSessionId)
+})
+
+test('RPC selection rejects a running Phi session before maps or manifest writes', async () => {
+  const session = new FakeSession('rpc-controls-busy.jsonl')
+  session.hold = true
+  const app = await harness(async () => session, { remoteRpc: true })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const running = app.invoke('agent:prompt', 'hold the selected remote run')
+  await tick()
+  const before = JSON.stringify(app.updatedSessionManifests)
+  const selected = await app.invoke('models:selected')
+  const thinking = await app.invoke('thinking:selected')
+  await assert.rejects(app.invoke('models:select', 'openai', 'gpt-vision-test'), /idle Phi session/)
+  await assert.rejects(app.invoke('thinking:select', 'medium'), /idle Phi session/)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.deepEqual(await app.invoke('models:selected'), selected)
+  assert.equal(await app.invoke('thinking:selected'), thinking)
+  await app.invoke('agent:stop')
+  await running
+})
+
+test('RPC model lookup cannot commit into a newly selected Phi session', async () => {
+  const gate = deferred<void>()
+  let held = false,
+    reached = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    modelRuntimeGet: async () => {
+      if (held) {
+        reached = true
+        await gate.promise
+      }
+    }
+  })
+  const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize the old selected session')
+  held = true
+  const selecting = app.invoke('models:select', 'openai', 'gpt-vision-test')
+  const rejected = assert.rejects(selecting, /superseded|stale/i)
+  await tick()
+  assert.equal(reached, true)
+  const second = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  assert.notEqual(second.phiSessionId, first.phiSessionId)
+  const before = JSON.stringify(app.updatedSessionManifests)
+  gate.resolve()
+  await rejected
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.equal(await app.invoke('models:selected'), null)
+})
+
+test('RPC thinking dispatch keeps its original view generation until confirmation', async () => {
+  let routed = false
+  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'initialize the old runtime identity')
+  routed = true
+  const session = app.sessions[0]
+  const gate = deferred<void>()
+  let reached = false
+  session.setThinkingLevel = async (
+    level: string,
+    control?: { assertCurrent(): void }
+  ): Promise<void> => {
+    reached = true
+    await gate.promise
+    control?.assertCurrent()
+    session.thinkingLevel = level
+  }
+  const beforeThinking = session.thinkingLevel
+  const selecting = app.invoke('thinking:select', 'medium')
+  const rejected = assert.rejects(selecting, /superseded|stale/i)
+  await tick()
+  assert.equal(reached, true)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const before = JSON.stringify(app.updatedSessionManifests)
+  gate.resolve()
+  await rejected
+  assert.equal(session.thinkingLevel, beforeThinking)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+})
+
+test('RPC selection accepts its own confirmed policy and checkpoint before main publishes the selection', async () => {
+  let routed = false
+  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize the selected runtime')
+  routed = true
+  const session = app.sessions[0]
+  const reference = {
+    ompSessionId: 'stable-omp',
+    journalBasename: 'stable.jsonl',
+    checkpoint: { leafId: 'before' }
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: reference }
+  })
+  session.setModel = async (model, control?: { assertCurrent(): void }): Promise<void> => {
+    control?.assertCurrent()
+    app.updatedSessionManifests.push({
+      sessionId: current.phiSessionId,
+      patch: {
+        model: { providerId: model.provider, modelId: model.id },
+        thinkingLevel: 'high',
+        runtimeRef: { ...reference, checkpoint: { leafId: 'model-confirmed' } }
+      }
+    })
+    session.model = model
+  }
+  await app.invoke('models:select', 'openai', 'gpt-test')
+  assert.equal(((await app.invoke('models:selected')) as { modelId: string }).modelId, 'gpt-test')
+  assert.equal(
+    (app.updatedSessionManifests.at(-1)!.patch.runtimeRef as typeof reference).checkpoint.leafId,
+    'model-confirmed'
+  )
+  session.setThinkingLevel = async (level, control?: { assertCurrent(): void }): Promise<void> => {
+    control?.assertCurrent()
+    app.updatedSessionManifests.push({
+      sessionId: current.phiSessionId,
+      patch: {
+        thinkingLevel: level,
+        runtimeRef: { ...reference, checkpoint: { leafId: 'thinking-confirmed' } }
+      }
+    })
+    session.thinkingLevel = level
+  }
+  await app.invoke('thinking:select', 'medium')
+  assert.equal(await app.invoke('thinking:selected'), 'medium')
+  assert.equal(
+    (app.updatedSessionManifests.at(-1)!.patch.runtimeRef as typeof reference).checkpoint.leafId,
+    'thinking-confirmed'
+  )
 })

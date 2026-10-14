@@ -1,4 +1,3 @@
-import { RemoteSessionCapabilityError } from '../engine/session-routing-engine'
 import { RuntimeReferenceError } from '../session/runtime-reference'
 import type { PhiAgentDefinition } from '../agents/definition'
 import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
@@ -23,6 +22,7 @@ import type {
   ResourceDiagnostic,
   RuntimeCredential,
   RuntimeModel,
+  RuntimeSelectionControl,
   RuntimeProvider,
   RuntimeProviderAuthStatus,
   RuntimeResourceBundle,
@@ -234,8 +234,11 @@ export interface RuntimeAgentSession {
   setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void>
   abort(): Promise<void>
   dispose(): Promise<void>
-  setModel(model: RuntimeModel): Promise<void>
-  setThinkingLevel(level: ThinkingLevel | undefined): void
+  setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void>
+  setThinkingLevel(
+    level: ThinkingLevel | undefined,
+    control?: RuntimeSelectionControl
+  ): Promise<void>
 }
 
 export interface CreateAgentSessionResult {
@@ -941,29 +944,35 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     })
   }
 
-  async setModel(model: RuntimeModel): Promise<void> {
+  async setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void> {
+    control?.assertCurrent()
     await this.ensureLive()
-    const state = await this.engine.sessions.setModel({
-      sessionId: this.sessionId,
-      agentDir: getPhiAgentDir(),
-      model
-    })
+    control?.assertCurrent()
+    const state = await this.engine.sessions.setModel(
+      {
+        sessionId: this.sessionId,
+        agentDir: getPhiAgentDir(),
+        model
+      },
+      control
+    )
+    control?.assertCurrent()
     applySessionState(this, state)
   }
 
-  setThinkingLevel(level: ThinkingLevel | undefined): void {
-    if (ownsRemoteRuntimeSession(this.sessionId))
-      throw new RemoteSessionCapabilityError('setThinkingLevel')
-    this.thinkingLevel = level
-    void this.ensureLive()
-      .then(() =>
-        this.engine.sessions.setThinkingLevel({
-          sessionId: this.sessionId,
-          level
-        })
-      )
-      .then((state) => applySessionState(this, state))
-      .catch(() => undefined)
+  async setThinkingLevel(
+    level: ThinkingLevel | undefined,
+    control?: RuntimeSelectionControl
+  ): Promise<void> {
+    control?.assertCurrent()
+    await this.ensureLive()
+    control?.assertCurrent()
+    const state = await this.engine.sessions.setThinkingLevel(
+      { sessionId: this.sessionId, level },
+      control
+    )
+    control?.assertCurrent()
+    applySessionState(this, state)
   }
 
   private async resolveToolApproval(request: ToolApprovalRequest): Promise<void> {

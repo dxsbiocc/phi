@@ -23,7 +23,7 @@ export async function selectRemoteModel(
   expected: Readonly<RpcModelMetadata>,
   target: Readonly<ModelGatewayModelRef>,
   signal: AbortSignal,
-  options: { timeoutMs?: number } = {}
+  options: { timeoutMs?: number; beforeDispatch?: () => void } = {}
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 10_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
@@ -147,6 +147,7 @@ export async function selectRemoteModel(
     await Promise.race([
       (async () => {
         const data = await connection.request({ type: 'get_available_commands' })
+        options.beforeDispatch?.()
         if (stopped) throw stopped
         if (!record(data) || !Array.isArray(data.commands))
           throw new Error('Phi RPC model selection command list is invalid')
@@ -161,6 +162,7 @@ export async function selectRemoteModel(
         )
           throw new Error('Phi RPC model selection command is not loaded')
         started = true
+        options.beforeDispatch?.()
         await Promise.all([
           connection
             .prompt(`/${RPC_MODEL_SELECTION_COMMAND} ${JSON.stringify(request)}`)

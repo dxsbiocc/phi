@@ -219,6 +219,11 @@ export interface PhiAuth {
 }
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+/** Main-owned selection authority; never serialized into SDK or renderer requests. */
+export interface RuntimeSelectionControl {
+  readonly preferredThinkingLevel?: ThinkingLevel
+  assertCurrent(): void
+}
 
 export type RuntimeAuthSource =
   'stored' | 'runtime' | 'environment' | 'fallback' | 'models_json_key' | 'models_json_command'
@@ -384,15 +389,21 @@ export interface PhiEngine {
     }): Promise<WorkerSessionState>
     abort(params: { sessionId: string }): Promise<WorkerSessionState>
     dispose(params: { sessionId: string }): Promise<unknown>
-    setModel(params: {
-      sessionId: string
-      agentDir: string
-      model: RuntimeModel
-    }): Promise<WorkerSessionState>
-    setThinkingLevel(params: {
-      sessionId: string
-      level: ThinkingLevel | undefined
-    }): Promise<WorkerSessionState>
+    setModel(
+      params: {
+        sessionId: string
+        agentDir: string
+        model: RuntimeModel
+      },
+      control?: RuntimeSelectionControl
+    ): Promise<WorkerSessionState>
+    setThinkingLevel(
+      params: {
+        sessionId: string
+        level: ThinkingLevel | undefined
+      },
+      control?: RuntimeSelectionControl
+    ): Promise<WorkerSessionState>
     rename(params: { sessionId: string; name: string }): Promise<WorkerSessionState>
     contextUsage(params: { sessionId: string }): Promise<ContextUsageSnapshot | null>
     compact(params: { sessionId: string }): Promise<{

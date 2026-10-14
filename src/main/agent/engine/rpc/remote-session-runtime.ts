@@ -1,4 +1,5 @@
 import { assertSafeBrowserHistory } from './browser-tool-stream'
+import { confirmInitialThinking, type RuntimeInitialSelection } from './runtime-selection-control'
 import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
@@ -65,6 +66,8 @@ export interface RemoteSessionRuntimeOptions {
   readonly transport: Omit<ModelProxyRpcTransportOptions, 'prepareRuntime'>
   readonly params: RpcSessionCreateParams
   readonly action: RemoteRecoveryAction
+  /** Only an explicit idle Phi selection supplies this; ordinary resume preserves journal policy. */
+  readonly initialSelection?: RuntimeInitialSelection
   readonly sessionName?: string
   /** Genuine curated PhiTool instances supplied by the trusted facade. */
   readonly tools: readonly PhiTool[]
@@ -126,6 +129,7 @@ export class RemoteSessionRuntime {
   private stopping?: Promise<void>
   private deniedRun?: string
   private readonly detach: Array<() => void> = []
+  private selectionGuard?: RuntimeInitialSelection
   private readonly metadata = createRuntimeMetadataControl({
     signal: () => AbortSignal.any([this.lifetime.signal, this.connection.bindControl().signal]),
     claim: () => {
@@ -150,10 +154,25 @@ export class RemoteSessionRuntime {
   readContextUsage(): Promise<ContextUsageSnapshot | null> {
     return this.metadata.readContextUsage()
   }
+  async readThinkingLevels(): Promise<readonly string[]> {
+    if (!this.isReady || this.pending || this.authority?.currentRun())
+      throw new Error('Remote selection requires an idle runtime')
+    const result = await this.connection.request<{ levels?: unknown }>({
+      type: 'get_available_thinking_levels'
+    })
+    if (
+      !this.isReady ||
+      !Array.isArray(result.levels) ||
+      !result.levels.every((level) => typeof level === 'string')
+    )
+      throw new Error('Remote SDK returned invalid thinking levels')
+    return result.levels
+  }
   rename(name: string, policy?: RuntimeRenamePolicy): Promise<RemoteRuntimeSnapshot> {
     return this.metadata.rename(name, policy)
   }
   private constructor(private readonly options: RemoteSessionRuntimeOptions) {
+    this.selectionGuard = options.initialSelection
     if (options.foregroundChildren)
       this.options = Object.freeze({
         ...options,
@@ -191,6 +210,7 @@ export class RemoteSessionRuntime {
     const runtime = new RemoteSessionRuntime(options)
     try {
       await runtime.initialize()
+      runtime.selectionGuard = undefined
       return runtime
     } catch (error) {
       await runtime.close(error)
@@ -218,6 +238,7 @@ export class RemoteSessionRuntime {
     return this.snapshot
   }
   private active = (): void => {
+    this.selectionGuard?.assertCurrent()
     this.lifetime.signal.throwIfAborted()
     if (this.closing) throw new Error('Remote runtime is closing')
     this.storage?.lease.assertActive()
@@ -296,6 +317,7 @@ export class RemoteSessionRuntime {
       {
         ...options.transport,
         browserTextVault: options.browserTextVault,
+        assertSelectionCurrent: this.active,
         currentBrowserRunSignal: () => this.promptController?.signal,
         prepareRuntime: async (context) => {
           this.lifetime.signal.throwIfAborted()
@@ -318,7 +340,7 @@ export class RemoteSessionRuntime {
               binding: options.foregroundChildren.binding,
               definitions: options.foregroundChildren.definitions,
               modelDescriptors: context.modelDescriptors,
-              parentModel: context.params.model,
+              parentModel: options.initialSelection?.model ?? context.params.model,
               parentThinkingLevel: options.foregroundChildren.parentThinkingLevel,
               native: context.native,
               otherCapabilities: [executionCapability, resultCapability]
@@ -403,7 +425,9 @@ export class RemoteSessionRuntime {
     if (typeof cleanup === 'function') this.preparedCleanup = cleanup
     if (this.lifetime.signal.aborted) await this.preparedCleanup?.()
     this.lifetime.signal.throwIfAborted()
+    this.active()
     await this.connection.start()
+    this.active()
     await this.transport.initialize({
       connection: this.connection,
       params: this.params,
@@ -444,7 +468,8 @@ export class RemoteSessionRuntime {
           { connection: this.connection, params: this.params, signal },
           { ...this.params.model!, ...selection.model }
         )
-        if (selection.policy === 'fresh' && this.params.thinkingLevel)
+        this.active()
+        if (!options.initialSelection && selection.policy === 'fresh' && this.params.thinkingLevel)
           await this.connection.request({
             type: 'set_thinking_level',
             level: this.params.thinkingLevel
@@ -502,41 +527,7 @@ export class RemoteSessionRuntime {
           })
         }
         const verified = await this.verifier!.verifyAttachment(identity, signal)
-        if (options.foregroundChildren && !this.children) {
-          if (!this.preparedChildren) throw new Error('Child runtime publication is unavailable')
-          this.children = await ProductionChildRuntime.create({
-            connection: this.connection,
-            execution: this.authority!,
-            prepared: this.preparedChildren,
-            root: {
-              rootOmpSessionId: identity.ompSessionId,
-              rootSessionFile: identity.journalPath
-            },
-            currentParentRun: options.foregroundChildren.currentParentRun,
-            approval: {
-              ...options.approval,
-              onEvent: (event) => {
-                const parent = this.children?.parentForChild(event.runId)
-                if (!parent) throw new Error('Child approval has no captured Phi parent')
-                try {
-                  options.foregroundChildren?.onApprovalEvent?.(parent, event)
-                } catch (error) {
-                  void this.interrupt(
-                    error instanceof Error ? error : new Error('Child approval persistence failed')
-                  ).catch(() => undefined)
-                  throw error
-                }
-              }
-            },
-            onDenied: (parent) => {
-              this.deniedRun = parent.runId
-            },
-            onError: (error) => {
-              void this.interrupt(error).catch(() => undefined)
-            },
-            signal: this.lifetime.signal
-          })
-        }
+        if (!options.initialSelection) await this.attachForegroundChildren(identity)
         return verified
       },
       publish: async (reference, _checkpoint, signal) => {
@@ -546,6 +537,34 @@ export class RemoteSessionRuntime {
     })
     this.active()
     assertSafeBrowserHistory(result.messages)
+    if (options.initialSelection) {
+      this.snapshot = result
+      this.active()
+      await this.transport.selectModel(
+        { connection: this.connection, params: this.params, signal: this.lifetime.signal },
+        options.initialSelection.model
+      )
+      this.active()
+      await confirmInitialThinking(
+        this.connection,
+        options.initialSelection.model,
+        options.initialSelection,
+        this.lifetime.signal
+      )
+      await this.attachForegroundChildren({
+        ompSessionId: result.reference.ompSessionId,
+        journalPath: result.checkpoint.journalPath
+      })
+      this.active()
+      await this.checkpointUnderGate(options.sessionName, {
+        model: {
+          provider: options.initialSelection.model.provider,
+          id: options.initialSelection.model.id
+        },
+        thinkingLevel: options.initialSelection.thinkingLevel
+      })
+      return
+    }
     if (options.sessionName !== undefined) {
       await this.metadata.reconcileInitialName(options.sessionName, result)
       this.snapshot = result
@@ -568,6 +587,47 @@ export class RemoteSessionRuntime {
       throw new Error('Remote initialization checkpoint changed during adoption')
     this.verifier.commitAttachment()
     this.snapshot = result
+  }
+  private async attachForegroundChildren(identity: {
+    ompSessionId: string
+    journalPath: string
+  }): Promise<void> {
+    const { options } = this
+    if (options.foregroundChildren && !this.children) {
+      if (!this.preparedChildren) throw new Error('Child runtime publication is unavailable')
+      this.children = await ProductionChildRuntime.create({
+        connection: this.connection,
+        execution: this.authority!,
+        prepared: this.preparedChildren,
+        root: {
+          rootOmpSessionId: identity.ompSessionId,
+          rootSessionFile: identity.journalPath
+        },
+        currentParentRun: options.foregroundChildren.currentParentRun,
+        approval: {
+          ...options.approval,
+          onEvent: (event) => {
+            const parent = this.children?.parentForChild(event.runId)
+            if (!parent) throw new Error('Child approval has no captured Phi parent')
+            try {
+              options.foregroundChildren?.onApprovalEvent?.(parent, event)
+            } catch (error) {
+              void this.interrupt(
+                error instanceof Error ? error : new Error('Child approval persistence failed')
+              ).catch(() => undefined)
+              throw error
+            }
+          }
+        },
+        onDenied: (parent) => {
+          this.deniedRun = parent.runId
+        },
+        onError: (error) => {
+          void this.interrupt(error).catch(() => undefined)
+        },
+        signal: this.lifetime.signal
+      })
+    }
   }
   private async verifyCurrent(snapshot: RemoteRuntimeSnapshot): Promise<RemoteHistoryCheckpoint> {
     this.active()
@@ -686,9 +746,16 @@ export class RemoteSessionRuntime {
   private checkpoint(): Promise<RemoteRuntimeSnapshot> {
     return this.withCheckpoint(() => this.checkpointUnderGate())
   }
-  private async checkpointUnderGate(sessionName?: string): Promise<RemoteRuntimeSnapshot> {
+  private async checkpointUnderGate(
+    sessionName?: string,
+    selection?: Pick<RemoteRuntimeSnapshot, 'model' | 'thinkingLevel'>
+  ): Promise<RemoteRuntimeSnapshot> {
     this.active()
-    const old = sessionName === undefined ? this.snapshot! : { ...this.snapshot!, sessionName }
+    const old = {
+      ...this.snapshot!,
+      ...selection,
+      ...(sessionName === undefined ? {} : { sessionName })
+    }
     const checkpoint = await this.verifyCurrent(old)
     const before = await preflightRemoteJournal(this.storage!, old.reference)
     const messages = await readRemoteHistory({
