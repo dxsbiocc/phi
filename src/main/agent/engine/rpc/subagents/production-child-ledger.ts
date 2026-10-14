@@ -4,13 +4,16 @@ import type { RpcVerifiedTaskOrigin } from '../execution-authority'
 import type { RpcChildStarted } from './run-registry'
 import type { RpcFrame } from '../types'
 import { withRemoteSignal } from '../history-pager'
+import type { RpcTaskSettlement } from '../../phi-extension/lib/rpc-task-settlement-protocol'
 
 interface ParentTask {
   readonly parent: SessionRun
   readonly toolCallId: string
   readonly digest: string
+  readonly controlSequence: number
   nativeId?: string
   endedWithoutStart?: boolean
+  noSpawn?: boolean
 }
 export interface ProductionChildLedgerOptions {
   readonly phiSessionId: string
@@ -28,6 +31,7 @@ export class ProductionChildLedger {
   private readonly parents = new Map<string, { run: SessionRun; detach: () => void }>()
   private readonly native = new Map<string, ParentTask>()
   private readonly changed = new Set<() => void>()
+  private readonly retirement = new Set<string>()
   private disposed = false
 
   constructor(private readonly options: ProductionChildLedgerOptions) {
@@ -40,6 +44,7 @@ export class ProductionChildLedger {
     const reusable =
       !!parent &&
       !!previous?.nativeId &&
+      !previous.noSpawn &&
       previous.parent.runId !== parent.runId &&
       this.options.isNativeTerminal?.(previous.nativeId, previous.parent.runId) === true
     if (
@@ -72,7 +77,8 @@ export class ProductionChildLedger {
     this.tasks.set(origin.toolCallId, {
       parent,
       toolCallId: origin.toolCallId,
-      digest: origin.inputDigest
+      digest: origin.inputDigest,
+      controlSequence: origin.sequence
     })
   }
 
@@ -110,10 +116,37 @@ export class ProductionChildLedger {
     }
   }
 
+  /** Caller must first verify the private receipt HMAC and immutable generation/root configuration. */
+  consumeNoSpawn(proof: Readonly<RpcTaskSettlement>): SessionRun | undefined {
+    const task = this.tasks.get(proof.toolCallId)
+    if (
+      this.disposed ||
+      !task ||
+      task.parent.runId !== proof.parentRunId ||
+      task.controlSequence !== proof.controlSequence ||
+      task.digest !== proof.inputDigest
+    )
+      return undefined
+    task.noSpawn = true
+    this.retirement.add(task.parent.runId)
+    this.notify()
+    return task.parent
+  }
+
+  needsGenerationRetirement(parentRunId: string): boolean {
+    return this.retirement.has(parentRunId)
+  }
+
+  hasNoSpawnConflict(parentRunId: string): boolean {
+    return [...this.native.values()].some(
+      (task) => task.parent.runId === parentRunId && task.noSpawn === true
+    )
+  }
+
   assertNoPendingStarts(parentRunId: string): void {
     if (this.disposed) throw new Error('Child parent ledger is unavailable')
     const pending = [...this.tasks.values()].filter(
-      (task) => task.parent.runId === parentRunId && !task.nativeId
+      (task) => task.parent.runId === parentRunId && !task.nativeId && !task.noSpawn
     )
     if (pending.some((task) => task.endedWithoutStart))
       throw new Error(
@@ -121,6 +154,8 @@ export class ProductionChildLedger {
       )
     if (pending.length)
       throw new Error('Authenticated task origins still have pending native starts')
+    if (this.hasNoSpawnConflict(parentRunId))
+      throw new Error('No-spawn proof conflicts with an observed native child')
   }
 
   async waitForStarts(parentRunId: string, signal: AbortSignal): Promise<void> {
@@ -128,10 +163,8 @@ export class ProductionChildLedger {
       signal.throwIfAborted()
       if (this.disposed) throw new Error('Child parent ledger is unavailable')
       const pending = [...this.tasks.values()].filter(
-        (task) => task.parent.runId === parentRunId && !task.nativeId
+        (task) => task.parent.runId === parentRunId && !task.nativeId && !task.noSpawn
       )
-      if (pending.some((task) => task.endedWithoutStart))
-        throw new Error('Task ended without an observed native start; cancellation is unconfirmed')
       if (!pending.length) return
       let wake!: () => void
       const changed = new Promise<void>((resolve) => {

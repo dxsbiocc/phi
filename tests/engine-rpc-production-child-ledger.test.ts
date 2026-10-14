@@ -166,9 +166,9 @@ test('an actual task-end envelope without observed start rejects confirmation an
     toolCallId: 'outer-task',
     isError: true
   })
-  await assert.rejects(waiting, /ended without an observed native start/)
   assert.throws(() => ledger.assertNoPendingStarts(run.runId), /unconfirmed/)
   assert.deepEqual(ledger.captureParent(ledgerStarted()), { runId: run.runId })
+  await waiting
   ledger.assertNoPendingStarts(run.runId)
   ledger.dispose()
 })

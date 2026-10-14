@@ -34,6 +34,7 @@ export interface ProductionChildControlWire {
   execution: RpcExecutionAuthority
   parent: ReturnType<typeof ledgerRun>
   origin(patch?: Partial<RpcExecutionOrigin>, invalidSignature?: boolean): void
+  originMessage(): Readonly<RpcExecutionOrigin> | undefined
   request(operation: 'register' | 'activate' | 'approve', sequence: number): RpcChildRequest
   lifecycle(status: string): unknown
   cancelled: string[]
@@ -48,6 +49,7 @@ export async function productionChildControlWire(
     attestationPatch?: Record<string, unknown>
     attestationIdentityPatch?: Partial<RpcChildRootScope>
     stateChangeAfterAttest?: 'session' | 'journal'
+    cancelGate?: Promise<void>
   } = {}
 ): Promise<ProductionChildControlWire> {
   const prepared = await createProductionChildConfig(productionChildOptions())
@@ -124,8 +126,13 @@ export async function productionChildControlWire(
     }
     if (command.type === 'cancel_subagent') {
       cancelled.push(String(command.subagentId))
-      emit(lifecycle('aborted'))
-      respond({ cancelled: true })
+      const complete = (): void => {
+        emit(lifecycle('aborted'))
+        respond({ cancelled: true })
+      }
+      if (options.cancelGate)
+        void options.cancelGate.then(complete, () => respond({ cancelled: false }))
+      else complete()
       return true
     }
     if (command.type !== 'prompt') return false
@@ -188,6 +195,7 @@ export async function productionChildControlWire(
     allowNativeTask: options.allowNativeTask !== false
   })
   const parent = ledgerRun()
+  let emittedOrigin: Readonly<RpcExecutionOrigin> | undefined
   const origin = (patch: Partial<RpcExecutionOrigin> = {}, invalidSignature = false): void => {
     if (!latest) throw new Error('Missing synthetic begin control')
     const message: RpcExecutionOrigin = {
@@ -206,6 +214,7 @@ export async function productionChildControlWire(
       ...patch
     }
     const signed = signExecutionMessage(message, capability)
+    emittedOrigin = Object.freeze(message)
     wire.emit({
       type: 'extension_ui_request',
       method: 'notify',
@@ -253,6 +262,7 @@ export async function productionChildControlWire(
     execution,
     parent,
     origin,
+    originMessage: () => emittedOrigin,
     request,
     lifecycle,
     cancelled,

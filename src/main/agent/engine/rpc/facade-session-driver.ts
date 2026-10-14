@@ -36,6 +36,10 @@ import type { RemoteSessionScope } from './session-storage/types'
 import { canonicalRemoteSessionName } from './runtime-metadata-control'
 import { RpcFacadeEventProjector } from './facade-event-projection'
 import type { RpcPromptOptions } from './types'
+import type { RpcApprovalEvent } from './approval-bridge'
+import { createFacadeChildApprovalWriter } from './facade-child-approval'
+import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../agents/definition'
+import { deriveProductionChildBinding } from './subagents/production-child-config'
 
 export interface SelectedFacadeRuntime {
   readonly hostProfileId: string
@@ -56,6 +60,12 @@ export interface SelectedFacadeRuntime {
   >
   readonly recentUserImages: RpcDesktopToolScopeOptions['recentUserImages']
   readonly nativeTools?: RemoteSessionRuntimeOptions['nativeTools']
+  /** Trusted main-process snapshot; renderer phiAgents never activates this capability. */
+  readonly foregroundChildren?: {
+    readonly definitions: readonly PhiAgentDefinition[]
+    /** Notification only; the facade is the single durable approval writer. */
+    readonly onApprovalEvent?: (event: RpcApprovalEvent, parent: SessionRun) => void | Promise<void>
+  }
   readonly onInterrupted?: (error: Error) => void
 }
 export interface FacadeSessionFactoryOptions {
@@ -89,6 +99,12 @@ function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntim
     approval: Object.freeze({ ...selected.approval }),
     desktopToolNames: Object.freeze([...selected.desktopToolNames]),
     nativeTools: selected.nativeTools && Object.freeze([...selected.nativeTools]),
+    foregroundChildren:
+      selected.foregroundChildren &&
+      Object.freeze({
+        ...selected.foregroundChildren,
+        definitions: Object.freeze(structuredClone(selected.foregroundChildren.definitions))
+      }),
     desktopTools:
       selected.desktopTools &&
       Object.freeze({
@@ -120,6 +136,14 @@ function promptOptions(raw: Record<string, unknown> | undefined): RpcPromptOptio
   return {
     images: raw.images.map((part) => ({ type: 'image', data: part.data, mimeType: part.mimeType }))
   }
+}
+function childThinkingLevel(
+  level: PhiSessionCreateParams['thinkingLevel'],
+  reasoning: RuntimeModel['reasoning']
+): PhiAgentThinkingLevel {
+  if (reasoning === false) return 'off'
+  if (level === 'max') throw new RemoteSessionCapabilityError('foreground child thinking level')
+  return level ?? 'off'
 }
 function capabilityGuard(params: PhiSessionCreateParams): void {
   if (
@@ -367,6 +391,21 @@ export function createFacadeSessionFactory(
           tools: tools.tools.filter((tool) => names.has(tool.name)),
           hostApprovalFor: tools.approvalFor,
           nativeTools: selected.nativeTools,
+          foregroundChildren: selected.foregroundChildren && {
+            binding: deriveProductionChildBinding(binding, selected),
+            definitions: selected.foregroundChildren.definitions,
+            parentThinkingLevel: childThinkingLevel(initial.thinkingLevel, model.reasoning),
+            currentParentRun: () => {
+              const run = submittedRun
+              return run && options.runners.getActiveRun(phiSessionId) === run ? run : undefined
+            },
+            onApprovalEvent: createFacadeChildApprovalWriter({
+              phiSessionId,
+              cwd: binding.canonicalRoot,
+              runners: options.runners,
+              notify: selected.foregroundChildren.onApprovalEvent
+            })
+          },
           recentUserImages: tools.recentUserImages,
           approval: selected.approval,
           signal,

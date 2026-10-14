@@ -13,6 +13,8 @@ import type { RpcConnection } from '../connection'
 import type { RpcExecutionAuthority } from '../execution-authority'
 import { withRemoteSignal } from '../history-pager'
 import type { RpcApprovalEvent } from '../approval-bridge'
+import type { RpcFrame } from '../types'
+import { verifyRpcTaskSettlement } from '../../phi-extension/lib/rpc-task-settlement-protocol'
 import { RpcChildAuthority } from './child-authority'
 import type { RpcChildApprovalOptions } from './child-approval-bridge'
 import { RpcChildHostUriBridge } from './host-uri-bridge'
@@ -139,6 +141,8 @@ export class ProductionChildRuntime {
   private readonly detach: Array<() => void> = []
   private readonly childParents = new Map<string, SessionRun>()
   private readonly stops = new Map<string, Promise<void>>()
+  private readonly conflictFaults = new Set<string>()
+  private failureReported = false
   private disposed = false
 
   private constructor(
@@ -205,8 +209,19 @@ export class ProductionChildRuntime {
     this.detach.push(
       options.execution.onTaskOrigin((event) => this.ledger.remember(event)),
       channel.onFrame((frame) => {
+        this.consumeSettlement(frame, identity)
         this.authority.observe(frame)
         this.ledger.observeTaskEnd(frame)
+        if (
+          frame.type === 'subagent_lifecycle' &&
+          record(frame.payload) &&
+          frame.payload.status === 'started' &&
+          typeof frame.payload.id === 'string'
+        ) {
+          const parent = this.ledger.parentForNative(frame.payload.id)
+          if (parent && this.ledger.hasNoSpawnConflict(parent.runId))
+            this.faultAfterConflictCancellation(parent.runId)
+        }
       })
     )
     this.uri = new RpcChildHostUriBridge({ channel, authority: this.authority })
@@ -302,6 +317,41 @@ export class ProductionChildRuntime {
     return parent
   }
 
+  /** A no-spawn receipt leaves a same-generation outer-ID tombstone, so the controller must rotate. */
+  needsGenerationRetirement(parentRunId: string): boolean {
+    return this.ledger.needsGenerationRetirement(parentRunId)
+  }
+
+  private consumeSettlement(frame: RpcFrame, identity: Readonly<RpcChildRootScope>): void {
+    if (
+      this.disposed ||
+      frame.type !== 'extension_ui_request' ||
+      frame.method !== 'notify' ||
+      frame.notifyType !== 'info' ||
+      typeof frame.message !== 'string'
+    )
+      return
+    const proof = verifyRpcTaskSettlement(frame.message, this.options.prepared.config, identity)
+    if (!proof) return
+    const parent = this.ledger.consumeNoSpawn(proof)
+    if (!parent) return
+    this.authority.registry.cancelParent(parent.runId)
+    if (this.options.execution.currentRun()?.id === parent.runId)
+      this.options.execution.revokeRun(parent.runId)
+    if (this.ledger.hasNoSpawnConflict(parent.runId))
+      this.faultAfterConflictCancellation(parent.runId)
+  }
+
+  private faultAfterConflictCancellation(parentRunId: string): void {
+    if (this.conflictFaults.has(parentRunId)) return
+    this.conflictFaults.add(parentRunId)
+    // Fault cleanup uses the sole foundation cancel tracker even if a sibling origin is still unproved.
+    void this.authority.cancelParent(parentRunId).then(
+      () => this.fail(new Error('Authenticated no-spawn proof conflicts with a real native child')),
+      () => this.fail(new Error('No-spawn conflict native cancellation was not confirmed'))
+    )
+  }
+
   /** Local revocation only; disconnect cannot establish that the remote process stopped. */
   dispose(): void {
     if (this.disposed) return
@@ -322,6 +372,8 @@ export class ProductionChildRuntime {
   }
 
   private fail(error: unknown): void {
+    if (this.failureReported) return
+    this.failureReported = true
     this.dispose()
     try {
       this.options.onError(error instanceof Error ? error : new Error('Child runtime failed'))

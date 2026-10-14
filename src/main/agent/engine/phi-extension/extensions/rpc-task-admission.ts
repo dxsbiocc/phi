@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { approvalIdentifier } from '../lib/rpc-approval-protocol'
+import { approvalIdentifier, createApprovalEnvelope } from '../lib/rpc-approval-protocol'
 import type { AgentSession, ExtensionContext, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import {
   validateRpcForegroundTaskInput,
@@ -13,8 +13,11 @@ import {
   projectRpcChildRoute,
   sameRpcChildModel,
   sameRpcChildRoute,
+  sameRpcChildRoot,
+  validateRpcChildRoot,
   type RpcChildRootScope
 } from '../lib/rpc-child-protocol'
+import { makeRpcTaskSettlement } from '../lib/rpc-task-settlement-protocol'
 
 type BeforeToolCall = NonNullable<AgentSession['agent']['beforeToolCall']>
 type Registry = ReturnType<Parameters<ExtensionFactory>[0]['pi']['AgentRegistry']['global']>
@@ -28,6 +31,22 @@ interface Installation {
   readonly session: AgentSession
   readonly previous: BeforeToolCall
   readonly wrapper: BeforeToolCall
+}
+interface SettlementParent {
+  readonly run: Readonly<RpcTaskParentRun>
+  readonly root: RpcChildRootScope
+  readonly ref: AgentReference
+  readonly session: AgentSession
+  readonly calls: Set<SettlementCall>
+  spawnAllowed: boolean
+}
+interface SettlementCall {
+  readonly parent: SettlementParent
+  readonly ctx: ExtensionContext
+  readonly toolCallId: string
+  readonly inputDigest: string
+  ended: boolean
+  sent: boolean
 }
 export interface RpcTaskAdmissionOptions {
   readonly config: Readonly<RpcChildRuntimeConfig>
@@ -101,6 +120,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     }
   >()
   const detach = new Set<() => void>()
+  const settlementParents = new Map<AbortSignal, SettlementParent>()
+  const settlementCalls = new Map<string, SettlementCall>()
+  const pendingSettlements = new Map<string, SettlementCall>()
+  const settledToolIds = new Set<string>()
   let blocked: Readonly<RpcTaskParentRun> | undefined
   const digest = childConfigDigest(options.config)
   let api: Parameters<ExtensionFactory>[0] | undefined
@@ -151,6 +174,132 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         throw new Error('Native task parent model or route differs')
     options.assertPublication()
     return session
+  }
+  const savedRootMatches = (call: SettlementCall, ctx: ExtensionContext): boolean => {
+    const { root, ref, session } = call.parent
+    try {
+      return (
+        !disposed &&
+        !options.signal.aborted &&
+        api?.pi.AgentRegistry.global().get(root.rootAgentId) === ref &&
+        ref.kind === 'main' &&
+        ref.session === session &&
+        ctx.agent.kind === 'main' &&
+        ctx.agent.id === root.rootAgentId &&
+        ctx.sessionManager === session.sessionManager &&
+        ctx.sessionManager.getSessionId() === root.rootOmpSessionId &&
+        session.sessionId === root.rootOmpSessionId &&
+        session.sessionFile === root.rootSessionFile &&
+        realpathSync(ctx.cwd) === root.cwd
+      )
+    } catch {
+      return false
+    }
+  }
+  const settleNoSpawn = (call: SettlementCall): void => {
+    if (
+      call.sent ||
+      !call.ended ||
+      !call.parent.run.signal.aborted ||
+      call.parent.spawnAllowed ||
+      !savedRootMatches(call, call.ctx)
+    )
+      return
+    try {
+      if (childConfigDigest(options.config) !== digest) return
+      const receipt = makeRpcTaskSettlement(options.config, call.parent.root, {
+        parentRunId: call.parent.run.runId,
+        controlSequence: call.parent.run.controlSequence,
+        toolCallId: call.toolCallId,
+        inputDigest: call.inputDigest
+      })
+      call.sent = true
+      settledToolIds.add(call.toolCallId)
+      call.ctx.ui.notify(JSON.stringify(receipt), 'info')
+    } catch {
+      /* Missing delivery leaves the original task unconfirmed. */
+    }
+  }
+  const captureSettlement = (
+    event: RpcTaskCall,
+    ctx: ExtensionContext,
+    session: AgentSession
+  ): void => {
+    if (!options.parentRun) return
+    const run = options.parentRun(),
+      root = options.root()
+    if (
+      !run ||
+      run.signal.aborted ||
+      !root ||
+      !Number.isSafeInteger(run.controlSequence) ||
+      run.controlSequence < 1
+    )
+      throw new Error('Native task parent is unavailable')
+    const scope = validateRpcChildRoot(root)
+    const envelope = createApprovalEnvelope(
+      {
+        nonce: options.config.nonce,
+        phiSessionId: scope.phiSessionId,
+        projectId: scope.projectId,
+        cwd: scope.cwd,
+        generation: scope.generation,
+        ompSessionId: scope.rootOmpSessionId,
+        runId: run.runId
+      },
+      event.toolCallId,
+      'task',
+      event.input
+    )
+    const key = parentKey(run, event.toolCallId)
+    const known = settlementCalls.get(key)
+    if (known) {
+      if (
+        known.parent.run.signal !== run.signal ||
+        known.parent.session !== session ||
+        !sameRpcChildRoot(known.parent.root, scope) ||
+        known.inputDigest !== envelope.inputDigest
+      )
+        throw new Error('Native task settlement binding differs')
+      return
+    }
+    if (
+      settledToolIds.has(event.toolCallId) ||
+      pendingSettlements.has(event.toolCallId) ||
+      settlementCalls.size >= 4096
+    )
+      throw new Error('Native task settlement is unavailable')
+    let parent = settlementParents.get(run.signal)
+    if (
+      parent &&
+      (parent.run.runId !== run.runId ||
+        parent.run.controlSequence !== run.controlSequence ||
+        parent.session !== session ||
+        !sameRpcChildRoot(parent.root, scope))
+    )
+      throw new Error('Native task parent settlement differs')
+    if (!parent) {
+      const ref = api!.pi.AgentRegistry.global().get(scope.rootAgentId)!
+      parent = { run, root: scope, ref, session, calls: new Set(), spawnAllowed: false }
+      settlementParents.set(run.signal, parent)
+      const captured = parent
+      const closed = (): void => {
+        for (const call of captured.calls) settleNoSpawn(call)
+      }
+      run.signal.addEventListener('abort', closed, { once: true })
+      detach.add(() => run.signal.removeEventListener('abort', closed))
+    }
+    const call: SettlementCall = {
+      parent,
+      ctx,
+      toolCallId: event.toolCallId,
+      inputDigest: envelope.inputDigest,
+      ended: false,
+      sent: false
+    }
+    parent.calls.add(call)
+    settlementCalls.set(key, call)
+    pendingSettlements.set(event.toolCallId, call)
   }
   const install = (ctx: ExtensionContext): void => {
     const session = actual(ctx)
@@ -308,6 +457,13 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       pi.on('session_switch', (_event, ctx) => {
         if (ctx.agent.kind === 'main') install(ctx)
       })
+      pi.on('tool_execution_end', (event, ctx) => {
+        const call = pendingSettlements.get(event.toolCallId)
+        if (event.toolName !== 'task' || !call || !savedRootMatches(call, ctx)) return
+        call.ended = true
+        pendingSettlements.delete(event.toolCallId)
+        settleNoSpawn(call)
+      })
       pi.on('before_subagent_spawn', (event, ctx) => {
         if (ctx.agent.kind !== 'main') return undefined
         try {
@@ -329,6 +485,16 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         try {
           const session = actual(ctx)
           resources(session)
+          const parent = settlementParents.get(run.signal)
+          if (
+            !parent ||
+            parent.session !== session ||
+            parent.run.runId !== run.runId ||
+            parent.run.controlSequence !== run.controlSequence
+          )
+            return { block: true, reason: 'Phi native task launch has no captured parent' }
+          // Permanent for this parent: any allowed sibling rules out a no-spawn receipt.
+          parent.spawnAllowed = true
           launches.set(event.spawnKey, { session, run })
           return undefined
         } catch {
@@ -353,6 +519,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         entry.input !== JSON.stringify(validateRpcForegroundTaskInput(event.input, options.config))
       )
         throw new Error('Native task has no exact prepared root admission')
+      captureSettlement(event, ctx, session)
     },
     sealParent: (run, ctx) => {
       try {
@@ -392,6 +559,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       accepted.clear()
       launches.clear()
       children.clear()
+      settlementParents.clear()
+      settlementCalls.clear()
+      pendingSettlements.clear()
+      settledToolIds.clear()
       for (const off of detach) off()
       detach.clear()
     }

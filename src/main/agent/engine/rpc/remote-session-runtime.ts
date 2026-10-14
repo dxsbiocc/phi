@@ -6,7 +6,11 @@ import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
 import { RpcConnection } from './connection'
 import { RpcExecutionAuthority } from './execution-authority'
-import { RpcApprovalBridge, type RpcApprovalBridgeOptions } from './approval-bridge'
+import {
+  RpcApprovalBridge,
+  type RpcApprovalBridgeOptions,
+  type RpcApprovalEvent
+} from './approval-bridge'
 import { RpcHostToolBridge } from './host-tool-bridge'
 import { RpcHostResultDelivery } from './host-result-delivery'
 import { registeredHostTools } from './host-tool-validation'
@@ -32,13 +36,25 @@ import type { RpcConnectionOptions, RpcPromptOptions, RpcPromptResult, RpcFrame 
 import { createRpcRuntimeHostPolicy } from './runtime-host-policy'
 import type { RpcHostToolRun } from './host-tool-bridge'
 import type { SafeModelDescriptor } from '../model-gateway-types'
+import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../agents/definition'
+import type { SessionRun } from '../../session/session-runner-registry'
+import type { RpcAgentServerBinding } from './subagents/types'
+import {
+  createProductionChildConfig,
+  publishProductionChildConfig,
+  type PreparedProductionChildConfig
+} from './subagents/production-child-config'
+import { ProductionChildRuntime } from './subagents/production-child-runtime'
 
 export interface RemoteRuntimeSnapshot extends Omit<RemoteSessionRecoveryResult, 'modelPolicy'> {
   readonly modelPolicy: RemoteSessionRecoveryResult['modelPolicy'] | 'maintained'
   readonly sessionName?: string
 }
 export interface RemoteRuntimeTurnResult {
-  readonly result: RpcPromptResult
+  /** An owned, confirmed stop can settle after SDK admission rejected without a prompt_result. */
+  readonly result:
+    | RpcPromptResult
+    | { readonly type: 'runtime_stop'; readonly status: 'aborted'; readonly error?: never }
   readonly snapshot: RemoteRuntimeSnapshot
   /** Phi run state includes explicit policy denial even when SDK completes its error-result turn. */
   readonly outcome: 'completed' | 'failed' | 'aborted'
@@ -57,6 +73,14 @@ export interface RemoteSessionRuntimeOptions {
   readonly nativeTools?: readonly (
     'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep'
   )[]
+  /** Explicit trusted foreground capability; absent retains the original task denial. */
+  readonly foregroundChildren?: {
+    readonly binding: RpcAgentServerBinding
+    readonly definitions: readonly PhiAgentDefinition[]
+    readonly parentThinkingLevel: PhiAgentThinkingLevel
+    readonly currentParentRun: () => SessionRun | undefined
+    readonly onApprovalEvent?: (parent: SessionRun, event: RpcApprovalEvent) => void
+  }
   readonly recentUserImages: () => PhiToolImage[]
   readonly approval: Pick<
     RpcApprovalBridgeOptions,
@@ -82,6 +106,8 @@ export class RemoteSessionRuntime {
   private modelDescriptors: readonly SafeModelDescriptor[] = []
   private delivery?: RpcHostResultDelivery
   private authority?: RpcExecutionAuthority
+  private preparedChildren?: PreparedProductionChildConfig
+  private children?: ProductionChildRuntime
   private hostPolicy?: ReturnType<typeof createRpcRuntimeHostPolicy>
   private host?: RpcHostToolBridge
   private approvals?: RpcApprovalBridge
@@ -93,6 +119,8 @@ export class RemoteSessionRuntime {
   private closing?: Promise<void>
   private pending?: Promise<RemoteRuntimeTurnResult>
   private promptController?: AbortController
+  private promptRunId?: string
+  private stopping?: Promise<void>
   private deniedRun?: string
   private readonly detach: Array<() => void> = []
   private readonly metadata = createRuntimeMetadataControl({
@@ -123,6 +151,15 @@ export class RemoteSessionRuntime {
     return this.metadata.rename(name, policy)
   }
   private constructor(private readonly options: RemoteSessionRuntimeOptions) {
+    if (options.foregroundChildren)
+      this.options = Object.freeze({
+        ...options,
+        foregroundChildren: Object.freeze({
+          ...options.foregroundChildren,
+          binding: Object.freeze({ ...options.foregroundChildren.binding }),
+          definitions: Object.freeze(structuredClone(options.foregroundChildren.definitions))
+        })
+      })
     this.params = Object.freeze({
       ...options.params,
       ...(options.params.model ? { model: Object.freeze({ ...options.params.model }) } : {})
@@ -179,6 +216,7 @@ export class RemoteSessionRuntime {
   }
   private active = (): void => {
     this.lifetime.signal.throwIfAborted()
+    if (this.closing) throw new Error('Remote runtime is closing')
     this.storage?.lease.assertActive()
     if (!this.gate || this.authority?.currentRun())
       throw new Error('Remote runtime checkpoint requires an exclusive idle gate')
@@ -231,20 +269,24 @@ export class RemoteSessionRuntime {
     })
     const registered = registeredHostTools(options.tools)
     const nativeTools = Object.freeze([
-      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash'] as const))
+      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash'] as const)),
+      ...(options.foregroundChildren ? (['task'] as const) : [])
     ])
     const tools = Object.freeze([...registered.values()].map(({ tool }) => tool))
-    const roster: readonly RpcExecutionTool[] = executionRoster([
-      ...nativeTools.map((name) => ({
-        name,
-        site: 'native' as const
-      })),
-      ...[...registered.values()].map(({ definition }) => ({
-        name: definition.name,
-        site: 'host' as const,
-        parameters: definition.parameters
-      }))
-    ]).tools
+    const roster: readonly RpcExecutionTool[] = executionRoster(
+      [
+        ...nativeTools.map((name) => ({
+          name,
+          site: 'native' as const
+        })),
+        ...[...registered.values()].map(({ definition }) => ({
+          name: definition.name,
+          site: 'host' as const,
+          parameters: definition.parameters
+        }))
+      ],
+      { allowNativeTask: options.foregroundChildren !== undefined }
+    ).tools
     if (!options.transport.preparePersistentStorage)
       throw new Error('Remote runtime requires registered persistent storage')
     this.transport = await prepareModelProxyRpcSessionTransport(
@@ -258,6 +300,31 @@ export class RemoteSessionRuntime {
           const executionCapability = randomBytes(32).toString('hex'),
             resultCapability = randomBytes(32).toString('hex'),
             leaseId = randomBytes(32).toString('hex')
+          if (options.foregroundChildren) {
+            if (!context.params.model) throw new Error('Child runtime requires its parent model')
+            this.preparedChildren = await createProductionChildConfig({
+              identity: {
+                nonce: context.bootstrap.nonce,
+                phiSessionId: context.params.sessionId,
+                projectId: context.bootstrap.projectId,
+                projectRoot: context.params.cwd,
+                generation: context.generation
+              },
+              binding: options.foregroundChildren.binding,
+              definitions: options.foregroundChildren.definitions,
+              modelDescriptors: context.modelDescriptors,
+              parentModel: context.params.model,
+              parentThinkingLevel: options.foregroundChildren.parentThinkingLevel,
+              native: context.native,
+              otherCapabilities: [executionCapability, resultCapability]
+            })
+            await publishProductionChildConfig({
+              prepared: this.preparedChildren,
+              context,
+              host: options.transport.runtime.runtimeHost,
+              uploadOptions: options.transport.runtime.uploadOptions
+            })
+          }
           this.delivery = await RpcHostResultDelivery.create({
             host: options.transport.runtime.runtimeHost,
             generationDirectory: context.generationDirectory,
@@ -279,6 +346,7 @@ export class RemoteSessionRuntime {
             projectId: context.bootstrap.projectId,
             projectRoot: context.params.cwd,
             generation: context.generation,
+            ...(this.preparedChildren ? { childRuntimeRequired: true } : {}),
             activeTools: Object.freeze(
               roster
                 .filter(
@@ -309,7 +377,19 @@ export class RemoteSessionRuntime {
             config: this.config,
             uploadOptions: options.transport.runtime.uploadOptions
           })
-          return { nativeTools }
+          return {
+            nativeTools,
+            ...(this.preparedChildren
+              ? {
+                  childRuntimeRequired: true,
+                  foregroundChildNativeNames: Object.freeze(
+                    this.preparedChildren.config.profiles.map(
+                      (profile) => profile.definition.nativeName
+                    )
+                  )
+                }
+              : {})
+          }
         }
       },
       this.lifetime.signal
@@ -412,10 +492,47 @@ export class RemoteSessionRuntime {
             },
             capability: config.execution.capability,
             roster,
+            allowNativeTask: this.preparedChildren !== undefined,
             signal
           })
         }
-        return this.verifier!.verifyAttachment(identity, signal)
+        const verified = await this.verifier!.verifyAttachment(identity, signal)
+        if (options.foregroundChildren && !this.children) {
+          if (!this.preparedChildren) throw new Error('Child runtime publication is unavailable')
+          this.children = await ProductionChildRuntime.create({
+            connection: this.connection,
+            execution: this.authority!,
+            prepared: this.preparedChildren,
+            root: {
+              rootOmpSessionId: identity.ompSessionId,
+              rootSessionFile: identity.journalPath
+            },
+            currentParentRun: options.foregroundChildren.currentParentRun,
+            approval: {
+              ...options.approval,
+              onEvent: (event) => {
+                const parent = this.children?.parentForChild(event.runId)
+                if (!parent) throw new Error('Child approval has no captured Phi parent')
+                try {
+                  options.foregroundChildren?.onApprovalEvent?.(parent, event)
+                } catch (error) {
+                  void this.interrupt(
+                    error instanceof Error ? error : new Error('Child approval persistence failed')
+                  ).catch(() => undefined)
+                  throw error
+                }
+              }
+            },
+            onDenied: (parent) => {
+              this.deniedRun = parent.runId
+            },
+            onError: (error) => {
+              void this.interrupt(error).catch(() => undefined)
+            },
+            signal: this.lifetime.signal
+          })
+        }
+        return verified
       },
       publish: async (reference, _checkpoint, signal) => {
         await publishRemoteSessionManifest(storage, reference, signal)
@@ -498,25 +615,49 @@ export class RemoteSessionRuntime {
     this.gate = false
     const controller = new AbortController()
     this.promptController = controller
+    this.promptRunId = runId
     this.deniedRun = undefined
-    const runSignal = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])])
+    // UI stops the real SessionRun first. Revoke permits immediately, but keep the
+    // owned execution/channel alive until every native child confirms cancellation.
+    const abort = (): void => {
+      void this.stopExecution().catch((error: unknown) => {
+        void this.interrupt(error instanceof Error ? error : new Error('Remote stop failed'))
+      })
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
     const operation = Promise.resolve().then(async () => {
-      await this.authority!.beginRun(runId, runSignal)
-      const result = await this.authority!.prompt(text, options)
+      await this.authority!.beginRun(runId, controller.signal)
+      let result: RemoteRuntimeTurnResult['result']
+      try {
+        result = await this.authority!.prompt(text, options)
+      } catch (error) {
+        if (!this.stopping) throw error
+        await this.stopping
+        if (!controller.signal.aborted || !this.children?.needsGenerationRetirement(runId))
+          throw error
+        result = { type: 'runtime_stop', status: 'aborted' }
+      }
+      await this.stopping
+      this.children?.assertParentSettled(runId)
       this.gate = true
       const snapshot = await this.checkpoint()
       this.active()
-      this.ready = true
-      this.gate = false
+      const executionAborted = controller.signal.aborted || result.status === 'aborted'
+      if (this.children?.needsGenerationRetirement(runId))
+        await this.close(new Error('Confirmed unspawned task requires a fresh runtime generation'))
+      else {
+        this.ready = true
+        this.gate = false
+      }
       return {
         result,
         snapshot,
-        outcome:
-          result.status === 'aborted'
-            ? ('aborted' as const)
-            : result.status === 'error' || this.deniedRun === runId
-              ? ('failed' as const)
-              : ('completed' as const)
+        outcome: executionAborted
+          ? ('aborted' as const)
+          : result.status === 'error' || this.deniedRun === runId
+            ? ('failed' as const)
+            : ('completed' as const)
       }
     })
     this.pending = operation
@@ -526,8 +667,13 @@ export class RemoteSessionRuntime {
       await this.close(error)
       throw error
     } finally {
+      signal?.removeEventListener('abort', abort)
       if (this.pending === operation) this.pending = undefined
-      if (this.promptController === controller) this.promptController = undefined
+      if (this.promptController === controller) {
+        this.promptController = undefined
+        this.promptRunId = undefined
+        this.stopping = undefined
+      }
     }
   }
   private checkpoint(): Promise<RemoteRuntimeSnapshot> {
@@ -571,9 +717,33 @@ export class RemoteSessionRuntime {
     return snapshot
   }
   async stop(): Promise<void> {
-    this.promptController?.abort(new Error('Phi run stopped'))
-    await this.authority?.cancelRun()
+    await this.stopExecution()
     await this.pending
+  }
+  private stopExecution(): Promise<void> {
+    if (this.stopping) return this.stopping
+    const runId = this.promptRunId,
+      controller = this.promptController
+    if (!runId || !controller) return Promise.resolve()
+    let resolve!: () => void, reject!: (error: unknown) => void
+    const stopping = new Promise<void>((yes, no) => {
+      resolve = yes
+      reject = no
+    })
+    this.stopping = stopping
+    void stopping.catch(() => undefined)
+    try {
+      // Publish ownership before a pending UI's synchronous abort listener reenters.
+      if (this.authority?.currentRun()?.id === runId) this.authority.revokeRun(runId)
+      void (async () => {
+        await this.children?.stopParent(runId)
+        await this.authority?.cancelRun()
+        controller.abort(new Error('Phi run stopped'))
+      })().then(resolve, reject)
+    } catch (error) {
+      reject(error)
+    }
+    return stopping
   }
   private interrupt(error: Error): Promise<void> {
     if (this.closing) return this.closing
@@ -592,7 +762,17 @@ export class RemoteSessionRuntime {
     this.ready = false
     this.gate = true
     this.closing = Promise.resolve().then(async () => {
+      let stopError: unknown,
+        stopFailed = false
+      try {
+        await stopped
+      } catch (error) {
+        stopFailed = true
+        stopError = error
+      }
+      this.lifetime.abort(reason)
       for (const detach of this.detach.splice(0)) detach()
+      this.children?.dispose()
       this.approvals?.dispose()
       this.host?.dispose()
       await Promise.allSettled([
@@ -601,8 +781,11 @@ export class RemoteSessionRuntime {
         this.connection.close(),
         Promise.resolve().then(() => this.preparedCleanup?.())
       ])
+      if (stopFailed) throw stopError
     })
-    this.lifetime.abort(reason)
+    void this.closing.catch(() => undefined)
+    // Permit revocation remains synchronous; cleanup ownership is already visible.
+    const stopped = this.stopExecution()
     return this.closing
   }
 }

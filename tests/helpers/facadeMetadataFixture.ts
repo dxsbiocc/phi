@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { StringDecoder } from 'node:string_decoder'
 import type { RpcFrame } from '../../src/main/agent/engine/rpc/types'
 import { spawn } from 'node:child_process'
-import { mkdir, writeFile, chmod, readdir, access } from 'node:fs/promises'
+import { mkdir, writeFile, chmod, readdir, access, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { createServer, connect, type Socket, type AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { createPersistentLauncherFixture } from './persistentLauncherFixture'
@@ -57,7 +57,13 @@ export interface FacadeMetadataFixture {
   close(): Promise<void>
 }
 
-export async function facadeMetadataFixture(): Promise<FacadeMetadataFixture> {
+export async function facadeMetadataFixture(
+  options: {
+    select?: (selected: SelectedFacadeRuntime) => SelectedFacadeRuntime
+    providerFactory?: typeof startHostResultModel
+    isolatedProject?: boolean
+  } = {}
+): Promise<FacadeMetadataFixture> {
   const agentDir = process.env.PI_CODING_AGENT_DIR!,
     bun = process.env.PHI_TEST_REAL_BUN!
   assert.ok(agentDir && bun && process.env.HOME?.includes('phi-facade-regression-'))
@@ -72,7 +78,7 @@ export async function facadeMetadataFixture(): Promise<FacadeMetadataFixture> {
   )
   await chmod(guardedBun, 0o700)
   process.env.PHI_BUN_PATH = guardedBun
-  const provider = await startHostResultModel()
+  const provider = await (options.providerFactory ?? startHostResultModel)()
   const providerId = 'phi-facade-regression'
   await writeFile(
     join(agentDir, 'models.yml'),
@@ -109,7 +115,23 @@ export async function facadeMetadataFixture(): Promise<FacadeMetadataFixture> {
     seedError += chunk.toString()
   })
   assert.equal(await new Promise((resolve) => seed.once('exit', resolve)), 0, seedError)
-  const f = await createPersistentLauncherFixture(true)
+  const base = await createPersistentLauncherFixture(true)
+  const isolatedProject = options.isolatedProject
+    ? await realpath(await mkdtemp(join(process.env.TMPDIR!, 'phi-facade-child-project-')))
+    : undefined
+  const f = isolatedProject
+    ? {
+        ...base,
+        scope: { ...base.scope, projectRoot: isolatedProject },
+        async cleanup() {
+          try {
+            await base.cleanup()
+          } finally {
+            await rm(isolatedProject, { recursive: true, force: true })
+          }
+        }
+      }
+    : base
   const engine = getPhiEngine(),
     bridge = getOmpBridge(),
     runners = new SessionRunnerRegistry()
@@ -256,21 +278,24 @@ export async function facadeMetadataFixture(): Promise<FacadeMetadataFixture> {
   const uninstall = installRemoteSessionRouting({
     enabled: true,
     runners,
-    selected: ({ phiSessionId, projectId }) => ({
-      hostProfileId: profile.id,
-      bindingHash: facadeBindingHash(
-        resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
-      ),
-      projectId,
-      projectRoot: f.scope.projectRoot,
-      runtime: f.options,
-      session,
-      bundle,
-      recovery,
-      recentUserImages: () => [],
-      desktopToolNames: [],
-      approval
-    })
+    selected: ({ phiSessionId, projectId }) => {
+      const selected: SelectedFacadeRuntime = {
+        hostProfileId: profile.id,
+        bindingHash: facadeBindingHash(
+          resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
+        ),
+        projectId,
+        projectRoot: f.scope.projectRoot,
+        runtime: f.options,
+        session,
+        bundle,
+        recovery,
+        recentUserImages: () => [],
+        desktopToolNames: [],
+        approval
+      }
+      return options.select ? options.select(selected) : selected
+    }
   })
   return {
     f,
