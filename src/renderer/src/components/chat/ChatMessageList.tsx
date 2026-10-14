@@ -775,16 +775,16 @@ const ChatMessageList = memo(function ChatMessageList({
         <Box
           ref={virtualListRef}
           sx={{
-            maxWidth: chatContentMaxWidth,
+            maxWidth: `var(--phi-chat-content-max-width, ${chatContentMaxWidth}px)`,
             // Use the full chat container, including the scrollbar slot, like the composer.
-            width: 'calc(100cqw - 32px)',
-            ml: `max(16px, calc((100cqw - ${chatContentMaxWidth}px) / 2))`,
+            width: 'calc(100cqw - 2 * var(--phi-chat-gutter, 16px))',
+            ml: `max(var(--phi-chat-gutter, 16px), calc((100cqw - var(--phi-chat-content-max-width, ${chatContentMaxWidth}px)) / 2))`,
             minWidth: 0,
             pt: 3,
             pb: isGenerating ? 6 : 3,
             '@container phi-chat (max-width: 560px)': {
-              width: 'calc(100cqw - 16px)',
-              ml: 1,
+              width: 'calc(100cqw - 2 * var(--phi-chat-compact-gutter, 8px))',
+              ml: 'var(--phi-chat-compact-gutter, 8px)',
               pt: 1.5,
               pb: isGenerating ? 3 : 1.5
             }

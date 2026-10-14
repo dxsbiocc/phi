@@ -41,7 +41,7 @@ import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
-import { chatContentMaxWidth } from '../../layout'
+import { chatComposerLayoutSx, chatLayoutVariables, type ChatPlacement } from './lib/chatLayout'
 import { GoPaperAirplane, GoSquare } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
@@ -156,6 +156,7 @@ type ViewProps = {
   disablePermissionModeSelect?: boolean
   disableModelControls?: boolean
   compactComposerControls?: boolean
+  placement?: ChatPlacement
   pendingApproval: ToolApprovalRequest | null
   pendingUserInteraction: AgentUserInteractionRequest | null
   queuedPrompts?: Array<{ id: string; text: string }>
@@ -220,6 +221,7 @@ function ChatView({
   disablePermissionModeSelect = false,
   disableModelControls = false,
   compactComposerControls = false,
+  placement = 'tab',
   pendingApproval,
   pendingUserInteraction,
   queuedPrompts = [],
@@ -605,6 +607,7 @@ function ChatView({
 
   return (
     <Box
+      data-phi-chat-placement={placement}
       onPointerDownCapture={onAcknowledgeActiveSession}
       onFocusCapture={onAcknowledgeActiveSession}
       sx={{
@@ -614,7 +617,8 @@ function ChatView({
         flexDirection: 'column',
         minHeight: 0,
         containerType: 'inline-size',
-        containerName: 'phi-chat'
+        containerName: 'phi-chat',
+        ...chatLayoutVariables(placement)
       }}
     >
       <ResourceMentionsProvider resources={messageResources}>
@@ -636,19 +640,11 @@ function ChatView({
           cwd={cwd}
         />
       </ResourceMentionsProvider>
-      <Box
-        sx={{
-          px: 2,
-          pt: 1.5,
-          pb: 2,
-          flexShrink: 0,
-          '@container phi-chat (max-width: 560px)': { px: 1, pt: 1, pb: 1 }
-        }}
-      >
+      <Box sx={chatComposerLayoutSx}>
         <Box
           component="form"
           onSubmit={handleChatSubmit}
-          sx={{ maxWidth: chatContentMaxWidth, mx: 'auto' }}
+          sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}
         >
           <ToolApprovalDialog
             request={pendingApproval}

@@ -61,7 +61,7 @@ export function HomeActivityHeatmap({
         </Box>
         <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
           {loading ? (
-            <Skeleton width={68} height={34} />
+            <Skeleton width={68} height={24 * 1.2} />
           ) : (
             <Typography
               component="p"

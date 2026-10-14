@@ -111,6 +111,8 @@ export function LocalPathButton({
         <Box
           component="span"
           sx={{
+            // Use the filename's text baseline rather than the icon's baseline.
+            alignSelf: 'baseline',
             minWidth: 0,
             overflow: 'hidden',
             textOverflow: 'ellipsis',

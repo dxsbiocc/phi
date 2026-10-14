@@ -8,6 +8,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { HomeView } from '../src/renderer/src/features/home/HomeView'
 import { HomeOverviewCards } from '../src/renderer/src/features/home/components/HomeOverviewCards'
 import { HomeResourceCategoryIcon } from '../src/renderer/src/features/home/components/HomeResourceCategoryIcon'
+import { HomePeriodSummary } from '../src/renderer/src/features/home/components/HomePeriodSummary'
 import {
   rankHomeWrapperRuns,
   selectHomeRecentWork
@@ -44,6 +45,7 @@ function renderHomeView(): string {
       { theme: createTheme() },
       createElement(HomeView, {
         sessions: [session('/ordinary')],
+        sessionsLoading: false,
         projects: [project],
         projectSessionRefreshKey: 0,
         onFetchProjectSessions: async () => [],
@@ -56,7 +58,7 @@ function renderHomeView(): string {
         wrapperRuns: [],
         wrapperCatalog: [],
         lastClosedSessionPath: null,
-        onLoadResources: () => undefined,
+        onLoadResources: async () => undefined,
         onNewChat: () => undefined,
         onShowProjects: () => undefined,
         onOpenSession: () => undefined
@@ -111,8 +113,8 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
   assert.match(source, /justifyContent: 'space-between'/)
 })
 
-test('empty conversation state omits the large continuation card', () => {
-  const markup = renderToStaticMarkup(
+function renderOverview(overrides: Partial<Parameters<typeof HomeOverviewCards>[0]> = {}): string {
+  return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
@@ -133,13 +135,82 @@ test('empty conversation state omits the large continuation card', () => {
         },
         wrapperRanking: [],
         wrapperRunCount: 0,
-        onOpenSession: () => undefined
+        onOpenSession: () => undefined,
+        ...overrides
       })
     )
   )
+}
 
-  assert.doesNotMatch(markup, /data-phi-home-primary-card/)
+test('empty conversations retain the continuation card and show an empty state', () => {
+  const markup = renderOverview()
+
+  assert.match(markup, /data-phi-home-primary-card="true"/)
+  assert.match(markup, /data-phi-home-recent-state="empty"/)
+  assert.match(markup, /暂无可继续的对话/)
   assert.match(markup, /data-phi-home-resources-card="true"/)
+})
+
+test('loading ordinary conversations reserves four Skeleton rows instead of an empty state', () => {
+  const markup = renderOverview({ sessionsLoading: true })
+
+  assert.match(markup, /data-phi-home-recent-state="loading" aria-busy="true"/)
+  assert.equal((markup.match(/data-phi-home-session-skeleton="true"/g) ?? []).length, 4)
+  assert.doesNotMatch(markup, /暂无可继续的对话/)
+})
+
+test('project conversation loading preserves known work and fills only the remaining slots', () => {
+  const markup = renderOverview({
+    ordinaryConversationCount: 1,
+    projectConversationsLoading: true,
+    recentWork: [{ session: session('/ordinary'), project: null }]
+  })
+
+  assert.match(markup, /继续 \/ordinary/)
+  assert.equal((markup.match(/data-phi-home-session-skeleton="true"/g) ?? []).length, 3)
+  assert.doesNotMatch(markup, /暂无可继续的对话/)
+})
+
+test('failed project conversation reads retain both cards and explain the unavailable data', () => {
+  const markup = renderOverview({ projectCount: 1, projectConversationsIncomplete: true })
+
+  assert.match(markup, /data-phi-home-primary-card="true"/)
+  assert.match(markup, /项目对话暂不可用/)
+  assert.match(markup, /data-phi-home-resources-card="true"/)
+  assert.doesNotMatch(markup, /data-phi-home-session-skeleton/)
+})
+
+test('resource counts show Skeletons while loading instead of reporting zero', () => {
+  const markup = renderOverview({
+    resources: {
+      skills: { total: 0, active: 0, loading: true },
+      wrappers: { total: 0, active: 0, loading: true },
+      connectors: { total: 0, active: 0, loading: true },
+      plugins: { total: 0, active: 0, loading: true }
+    }
+  })
+
+  assert.equal((markup.match(/data-phi-home-resource-loading="true"/g) ?? []).length, 4)
+  assert.doesNotMatch(markup, /共 0 个/)
+})
+
+test('activity placeholders keep period labels and end when no data is available', () => {
+  const render = (loading: boolean): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(HomePeriodSummary, { activity: null, loading })
+      )
+    )
+
+  const pending = render(true)
+  for (const label of ['本周', '本月', '今年']) assert.match(pending, new RegExp(label))
+  assert.match(pending, /MuiSkeleton-root/)
+
+  const unavailable = render(false)
+  assert.match(unavailable, /暂无活动记录/)
+  assert.doesNotMatch(unavailable, /MuiSkeleton-root/)
 })
 
 test('Wrapper and plugin fallbacks render substantial filled category icons', () => {

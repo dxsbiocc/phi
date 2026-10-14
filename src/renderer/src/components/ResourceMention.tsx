@@ -65,7 +65,15 @@ export function ResourceMention({
         size={18}
         fallbackSize={16}
       />
-      <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <Box
+        component="span"
+        sx={{
+          // Use the name's text baseline when this component sits inside prose.
+          alignSelf: 'baseline',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}
+      >
         {resource.name}
       </Box>
     </Box>
