@@ -109,11 +109,19 @@ function safeReplayMetadata(source: Record<string, unknown>): Record<string, unk
 
 function safeEvent(
   json: string,
-  identity: { provider: string; id: string; api: string }
+  identity: { provider: string; id: string; api: string },
+  project?: (event: Record<string, unknown>) => Record<string, unknown> | undefined
 ): { bytes: Uint8Array; terminal: boolean } {
-  const value: unknown = JSON.parse(json)
+  let value: unknown = JSON.parse(json)
   if (!record(value) || typeof value.type !== 'string' || !eventTypes.has(value.type))
     throw new Error('Invalid model stream')
+  if (project) {
+    const projected = project(value)
+    if (!projected)
+      return { bytes: new Uint8Array(), terminal: value.type === 'done' || value.type === 'error' }
+    value = projected
+  }
+  if (!record(value)) throw new Error('Invalid model projection')
   if (value.type === 'error') {
     const reason = value.reason === 'aborted' ? 'aborted' : 'error'
     const original = record(value.error) ? value.error : {}
@@ -173,7 +181,8 @@ export function boundedGatewayStream(
   abortController: AbortController,
   identity: { provider: string; id: string; api: string },
   onFinish: () => void,
-  limits: GatewayStreamLimits = GATEWAY_STREAM_LIMITS
+  limits: GatewayStreamLimits = GATEWAY_STREAM_LIMITS,
+  project?: (event: Record<string, unknown>) => Record<string, unknown> | undefined
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader()
   const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -222,7 +231,7 @@ export function boundedGatewayStream(
   }
   const onAbort = (): void => fail(false)
   const push = (bytes: Uint8Array): void => {
-    if (stopped) return
+    if (stopped || bytes.byteLength === 0) return
     if (bytes.byteLength > limits.maxEventBytes) {
       fail()
       return
@@ -286,7 +295,7 @@ export function boundedGatewayStream(
               push(encoder.encode('data: [DONE]\n\n'))
             } else {
               if (seenTerminal) throw new Error('Invalid model stream')
-              const event = safeEvent(payload, identity)
+              const event = safeEvent(payload, identity, project)
               seenTerminal = event.terminal
               push(event.bytes)
             }

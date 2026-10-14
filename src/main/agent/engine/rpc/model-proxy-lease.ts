@@ -1,3 +1,5 @@
+import type { BrowserTextVault } from '../../browser/browser-text-vault'
+import type { GatewayHttpListener } from '../in-process/model-gateway-http'
 import type { OmpBridge, OwnedModelGatewayLease } from '../omp-bridge'
 import type { ModelGatewayModelRef, SafeModelDescriptor } from '../model-gateway-types'
 import type { RpcModelMetadata } from '../phi-extension/lib/rpc-model-metadata'
@@ -23,6 +25,8 @@ export interface ModelProxyRpcTransportOptions extends Omit<
   'session' | 'prepareSession' | 'prepareRuntime'
 > {
   readonly gateway: Pick<OmpBridge, 'createModelGatewayLease'>
+  readonly browserTextVault?: BrowserTextVault
+  readonly currentBrowserRunSignal?: () => AbortSignal | undefined
   readonly session: Pick<
     RemoteSshSession,
     'openStdio' | 'openReverseTunnel' | 'execWithInput' | 'execBounded'
@@ -50,6 +54,7 @@ let modelProxyGeneration = 0
 interface Generation {
   readonly controller: AbortController
   gateway?: OwnedModelGatewayLease
+  browserGateway?: GatewayHttpListener
   tunnel?: RemoteReverseTunnel
   channel?: RemoteStdioProcess
   publication?: Pick<RpcModelMetadata, 'nonce' | 'sessionId' | 'projectRoot' | 'gatewayGeneration'>
@@ -205,6 +210,7 @@ export async function prepareModelProxyRpcSessionTransport(
           // channel and forwarding. A cleanup failure cannot suppress the others.
           const tasks = [
             Promise.resolve().then(() => owned.gateway?.close()),
+            Promise.resolve().then(() => owned.browserGateway?.close()),
             Promise.resolve().then(() => owned.channel?.close()),
             Promise.resolve().then(() => owned.tunnel?.close())
           ]
@@ -236,9 +242,24 @@ export async function prepareModelProxyRpcSessionTransport(
           () => owned.close(new Error('Model gateway worker closed')),
           () => owned.close(new Error('Model gateway worker closed'))
         )
+        if (options.browserTextVault) {
+          const { createBrowserModelGateway } = await import('./browser-model-gateway')
+          if (!options.currentBrowserRunSignal)
+            throw new Error('Browser model privacy requires a live run binding')
+          owned.browserGateway = await acquire(
+            createBrowserModelGateway({
+              lease: owned.gateway,
+              vault: options.browserTextVault,
+              currentRunSignal: options.currentBrowserRunSignal,
+              signal: controller.signal
+            }),
+            controller.signal,
+            (listener) => listener.close()
+          )
+        }
         owned.tunnel = await acquire(
           options.session.openReverseTunnel!({
-            localPort: owned.gateway.localPort,
+            localPort: owned.browserGateway?.port ?? owned.gateway.localPort,
             signal: controller.signal,
             onInvalidated: () => {
               void owned.close(new Error('Model gateway forwarding was invalidated'))

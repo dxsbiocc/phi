@@ -11,6 +11,7 @@ import {
   encodeHostResultEnvelope,
   hostResultLookupId,
   hostResultPlaceholder,
+  hostProgressPlaceholder,
   signHostResultReceipt,
   validHostResultIdentity,
   type HostResultIdentity,
@@ -27,6 +28,7 @@ export interface HostResultCall {
   invocationId: string
   toolCallId: string
   toolName: string
+  progressSequence?: number
 }
 export interface RpcHostResultDeliveryOptions {
   host: WorkspaceHost
@@ -195,7 +197,9 @@ export class RpcHostResultDelivery {
             controller.signal
           )
           controller.signal.throwIfAborted()
-          return hostResultPlaceholder(nullDetails)
+          return call.progressSequence === undefined
+            ? hostResultPlaceholder(nullDetails)
+            : hostProgressPlaceholder(call.progressSequence)
         } catch (error) {
           await this.remove(receipt)
           this.forget(receipt.receiptId)
@@ -210,10 +214,15 @@ export class RpcHostResultDelivery {
     return operation
   }
   /** Only call for the trusted server tool_execution_end, never a model-supplied acknowledgement. */
-  consumed(runId: string, toolCallId: string): void {
+  consumed(runId: string, toolCallId: string, progressSequence?: number): void {
     if (this.retired) return
     for (const reservation of this.reservations.values()) {
-      if (reservation.receipt.runId === runId && reservation.receipt.toolCallId === toolCallId) {
+      if (
+        reservation.receipt.runId === runId &&
+        reservation.receipt.toolCallId === toolCallId &&
+        (progressSequence === undefined ||
+          reservation.receipt.progressSequence === progressSequence)
+      ) {
         const cleanup = this.remove(reservation.receipt).then(() =>
           this.forget(reservation.receipt.receiptId)
         )

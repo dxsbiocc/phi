@@ -16,6 +16,8 @@ export interface HostResultIdentity {
   invocationId: string
   toolCallId: string
   toolName: string
+  /** Present only for a private progress snapshot, monotonically increasing per invocation. */
+  progressSequence?: number
 }
 export interface HostResultReceipt extends HostResultIdentity {
   type: 'phi_host_result_receipt'
@@ -52,6 +54,8 @@ export function validHostResultIdentity(value: HostResultIdentity): boolean {
       value.toolCallId,
       value.toolName
     ].every(identifier) &&
+    (value.progressSequence === undefined ||
+      (Number.isSafeInteger(value.progressSequence) && value.progressSequence > 0)) &&
     Number.isSafeInteger(value.generation) &&
     value.generation > 0 &&
     typeof value.cwd === 'string' &&
@@ -142,7 +146,8 @@ function unsigned(receipt: Omit<HostResultReceipt, 'mac'>): string {
     receipt.toolName,
     receipt.receiptId,
     receipt.bytes,
-    receipt.sha256
+    receipt.sha256,
+    ...(receipt.progressSequence === undefined ? [] : ['progress', receipt.progressSequence])
   ])
 }
 export function signHostResultReceipt(
@@ -164,7 +169,7 @@ export function parseHostResultReceipt(
 ): HostResultReceipt | undefined {
   if (
     !record(value) ||
-    Object.keys(value).length !== 15 ||
+    Object.keys(value).length !== (value.progressSequence === undefined ? 15 : 16) ||
     Object.keys(value).some(
       (key) =>
         ![
@@ -182,7 +187,8 @@ export function parseHostResultReceipt(
           'receiptId',
           'bytes',
           'sha256',
-          'mac'
+          'mac',
+          'progressSequence'
         ].includes(key)
     ) ||
     value.type !== 'phi_host_result_receipt' ||
@@ -228,7 +234,8 @@ export function hostResultLookupId(identity: HostResultLookupIdentity, capabilit
         identity.cwd,
         identity.runId,
         identity.toolCallId,
-        identity.toolName
+        identity.toolName,
+        ...(identity.progressSequence === undefined ? [] : ['progress', identity.progressSequence])
       ])
     )
     .digest('hex')
@@ -254,4 +261,19 @@ export function isHostResultPlaceholder(content: HostResultPayload['content']): 
   return (
     content.length === 1 && content[0].type === 'text' && content[0].text === HOST_RESULT_FAILURE
   )
+}
+
+const HOST_PROGRESS_PREFIX = 'Phi private host progress snapshot v1:'
+export function hostProgressPlaceholder(sequence: number): HostResultPayload {
+  if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error('Invalid progress sequence')
+  return { content: [{ type: 'text', text: HOST_PROGRESS_PREFIX + sequence }] }
+}
+export function hostProgressSequence(content: HostResultPayload['content']): number | undefined {
+  if (content.length !== 1 || content[0].type !== 'text') return undefined
+  const text = content[0].text
+  if (!text.startsWith(HOST_PROGRESS_PREFIX)) return undefined
+  const sequence = Number(text.slice(HOST_PROGRESS_PREFIX.length))
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || text !== HOST_PROGRESS_PREFIX + sequence)
+    throw new Error('Invalid progress sequence')
+  return sequence
 }
