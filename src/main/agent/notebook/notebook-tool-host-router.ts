@@ -1,5 +1,6 @@
 import type {
   NotebookRemoteProjectIdentity,
+  NotebookToolDispatchControl,
   NotebookToolHostExecutor,
   NotebookToolRequest
 } from './notebook-tools'
@@ -17,12 +18,6 @@ type NotebookToolHostRouterOptions = {
   ) => Promise<RemoteNotebookToolBackend | null | undefined>
 }
 
-type NotebookToolDispatchControl = {
-  signal?: AbortSignal
-  /** Revalidate the main-owned origin/project binding after asynchronous backend lookup. */
-  beforeDispatch?: () => void
-}
-
 export class NotebookToolHostRouter {
   constructor(private readonly options: NotebookToolHostRouterOptions) {}
 
@@ -36,7 +31,7 @@ export class NotebookToolHostRouter {
       throw new Error('远程 Notebook 请求缺少经过验证的远程 Notebook 后端；没有读取本机项目锚点。')
     }
     control.beforeDispatch?.()
-    return this.options.local(request)
+    return this.options.local(request, control)
   }
 
   private async executeRemote(
@@ -53,7 +48,7 @@ export class NotebookToolHostRouter {
     }
     control.signal?.throwIfAborted()
     control.beforeDispatch?.()
-    return backend.execute({ ...request, cwd: backend.projectCwd })
+    return backend.execute({ ...request, cwd: backend.projectCwd }, control)
   }
 }
 

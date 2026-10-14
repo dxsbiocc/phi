@@ -570,6 +570,11 @@ export class AnalysisNotebookSessionRegistry {
     }
   }
 
+  /** Interrupt the captured execution, never a replacement found by notebook path. */
+  async interruptExecutionTarget(target: AnalysisNotebookExecutionTarget): Promise<void> {
+    await this.client.interruptKernel(target.connection, target.kernelId)
+  }
+
   executionTarget(
     projectCwd: string,
     notebookPath: string
@@ -593,10 +598,18 @@ export class AnalysisNotebookSessionRegistry {
     projectCwd: string,
     notebookPath: string,
     state: AnalysisNotebookKernelState,
-    message?: string
+    message?: string,
+    target?: AnalysisNotebookExecutionTarget
   ): AnalysisNotebookSessionStatus | null {
     const record = this.records.get(this.key(projectCwd, notebookPath))
     if (!record) return null
+    if (
+      target &&
+      (record.sessionId !== target.sessionId ||
+        record.kernelId !== target.kernelId ||
+        !this.matchesRuntime(record, target.connection))
+    )
+      return null
     record.state = state
     record.message = message
     record.updatedAt = this.now().toISOString()

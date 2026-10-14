@@ -31,7 +31,16 @@ export type NotebookToolRequest = {
   remoteProject?: NotebookRemoteProjectIdentity
 }
 
-export type NotebookToolHostExecutor = (request: NotebookToolRequest) => Promise<unknown>
+/** Main-only ownership; never serialized into the host-tool request. */
+export type NotebookToolDispatchControl = {
+  signal?: AbortSignal
+  beforeDispatch?: () => void
+}
+
+export type NotebookToolHostExecutor = (
+  request: NotebookToolRequest,
+  control?: NotebookToolDispatchControl
+) => Promise<unknown>
 
 export type NotebookToolBuildOptions = {
   remoteProject?: NotebookRemoteProjectIdentity

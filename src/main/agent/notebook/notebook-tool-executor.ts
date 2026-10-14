@@ -7,12 +7,16 @@ import {
   type NotebookCellType,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
+import { jupyterConnectionIdentity } from './jupyter-runtime-backend'
 import { detectConfiguredAnalysisKernels } from '../environment/index'
-import { AnalysisNotebookExecutor } from './analysis-jupyter-execution'
+import {
+  AnalysisNotebookExecutor,
+  JupyterKernelExecutionStoppedError
+} from './analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
 import { openProjectNotebook, type AnalysisNotebookFile } from './analysis-notebook-files'
 import { createLocalNotebookWorkspace, type NotebookWorkspace } from './notebook-workspace'
-import type { NotebookToolRequest } from './notebook-tools'
+import type { NotebookToolDispatchControl, NotebookToolRequest } from './notebook-tools'
 
 type NotebookWorkspaceRef = {
   workingDirectory: string
@@ -196,7 +200,11 @@ export class AnalysisNotebookToolExecutor {
     this.onDraftChanged = options.onDraftChanged
   }
 
-  async execute(request: NotebookToolRequest): Promise<NotebookToolResult> {
+  async execute(
+    request: NotebookToolRequest,
+    control: NotebookToolDispatchControl = {}
+  ): Promise<NotebookToolResult> {
+    this.checkDispatch(control)
     const project = this.workspaceForCwd(request.cwd)
     const params = isRecord(request.params) ? request.params : {}
     switch (request.action) {
@@ -211,7 +219,7 @@ export class AnalysisNotebookToolExecutor {
       case 'delete_cell':
         return this.deleteCell(project, params)
       case 'run_cell':
-        return this.runCell(project, params)
+        return this.runCell(project, params, control)
       case 'save':
         return this.save(project, params)
       default:
@@ -456,9 +464,15 @@ export class AnalysisNotebookToolExecutor {
     }
   }
 
+  private checkDispatch(control: NotebookToolDispatchControl): void {
+    control.signal?.throwIfAborted()
+    control.beforeDispatch?.()
+  }
+
   private async runCell(
     project: NotebookWorkspaceRef,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    control: NotebookToolDispatchControl
   ): Promise<NotebookToolResult> {
     const state = await this.stateFor(project, stringValue(params.path, 'path'))
     const cellId = stringValue(params.cellId, 'cellId')
@@ -466,21 +480,43 @@ export class AnalysisNotebookToolExecutor {
     if (!cell) throw new Error(`Notebook cell not found: ${cellId}`)
     if (cell.cellType !== 'code') throw new Error('只能运行 code cell')
 
-    const { sessionStatus, target } = await this.resolveExecutionTarget(project, state)
+    this.checkDispatch(control)
+    const existingTarget = this.notebookSessionRegistry.executionTarget(
+      project.workingDirectory,
+      state.file.path
+    )
+    if (existingTarget && this.notebookExecutor.isExecuting?.(existingTarget)) {
+      throw new Error('Notebook kernel 正在执行，不能重叠运行 cell')
+    }
+    const { sessionStatus, target } = await this.resolveExecutionTarget(project, state, control)
+    this.checkDispatch(control)
+    if (sessionStatus.state === 'busy' || this.notebookExecutor.isExecuting?.(target)) {
+      throw new Error('Notebook kernel 正在执行，不能重叠运行 cell')
+    }
     this.notebookSessionRegistry.updateSessionState(
       project.workingDirectory,
       state.file.path,
       'busy',
-      'Notebook kernel 正在执行'
+      'Notebook kernel 正在执行',
+      target
     )
     try {
-      return await this.executeCodeCell(project, state, cellId, cell, target, sessionStatus)
+      return await this.executeCodeCell(
+        project,
+        state,
+        cellId,
+        cell,
+        target,
+        sessionStatus,
+        control
+      )
     } catch (error) {
       this.notebookSessionRegistry.updateSessionState(
         project.workingDirectory,
         state.file.path,
-        'error',
-        error instanceof Error ? error.message : String(error)
+        error instanceof JupyterKernelExecutionStoppedError ? 'idle' : 'error',
+        error instanceof Error ? error.message : String(error),
+        target
       )
       throw error
     }
@@ -488,7 +524,8 @@ export class AnalysisNotebookToolExecutor {
 
   private async resolveExecutionTarget(
     project: NotebookWorkspaceRef,
-    state: NotebookWorkspaceState
+    state: NotebookWorkspaceState,
+    control: NotebookToolDispatchControl
   ): Promise<{ sessionStatus: NotebookSessionStatus; target: NotebookExecutionTarget }> {
     const kernels = this.resolveKernelsByCwd(project.workingDirectory)
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
@@ -497,18 +534,22 @@ export class AnalysisNotebookToolExecutor {
       document: state.document,
       kernels
     })
+    this.checkDispatch(control)
     let target = this.notebookSessionRegistry.executionTarget(
       project.workingDirectory,
       state.file.path
     )
     if (!target) {
+      this.checkDispatch(control)
       await this.ensureJupyterServerReady(project.workingDirectory)
+      this.checkDispatch(control)
       sessionStatus = await this.notebookSessionRegistry.ensureSession({
         projectCwd: project.workingDirectory,
         notebookPath: state.file.path,
         document: state.document,
         kernels
       })
+      this.checkDispatch(control)
       target = this.notebookSessionRegistry.executionTarget(
         project.workingDirectory,
         state.file.path
@@ -524,14 +565,38 @@ export class AnalysisNotebookToolExecutor {
     cellId: string,
     cell: NotebookCell,
     target: NotebookExecutionTarget,
-    sessionStatus: NotebookSessionStatus
+    sessionStatus: NotebookSessionStatus,
+    control: NotebookToolDispatchControl
   ): Promise<NotebookToolResult> {
-    const execution = await this.notebookExecutor.executeCell({
-      connection: target.connection,
-      sessionId: target.sessionId,
-      kernelId: target.kernelId,
-      cell
-    })
+    const execution = await this.notebookExecutor.executeCell(
+      {
+        connection: target.connection,
+        sessionId: target.sessionId,
+        kernelId: target.kernelId,
+        cell
+      },
+      {
+        signal: control.signal,
+        checkCurrent: () => {
+          this.checkDispatch(control)
+          const current = this.notebookSessionRegistry.executionTarget(
+            project.workingDirectory,
+            state.file.path
+          )
+          if (
+            !current ||
+            current.sessionId !== target.sessionId ||
+            current.kernelId !== target.kernelId ||
+            (current.connection !== target.connection &&
+              jupyterConnectionIdentity(current.connection) !==
+                jupyterConnectionIdentity(target.connection))
+          )
+            throw new Error('Notebook execution target changed')
+        },
+        interrupt: () => this.notebookSessionRegistry.interruptExecutionTarget(target)
+      }
+    )
+    this.checkDispatch(control)
     state.document = updateNotebookCell(state.document, cellId, {
       executionCount: execution.executionCount,
       outputs: execution.outputs,
@@ -542,7 +607,7 @@ export class AnalysisNotebookToolExecutor {
       changedCellId: cellId,
       focusCellId: cellId
     })
-    return this.executedCellResult(project, state, cellId, cell, execution, sessionStatus)
+    return this.executedCellResult(project, state, cellId, cell, execution, sessionStatus, target)
   }
 
   private executedCellResult(
@@ -551,14 +616,16 @@ export class AnalysisNotebookToolExecutor {
     cellId: string,
     fallbackCell: NotebookCell,
     execution: NotebookExecution,
-    sessionStatus: NotebookSessionStatus
+    sessionStatus: NotebookSessionStatus,
+    target: NotebookExecutionTarget
   ): NotebookToolResult {
     const nextStatus =
       this.notebookSessionRegistry.updateSessionState(
         project.workingDirectory,
         state.file.path,
         'idle',
-        execution.state === 'error' ? 'Cell 执行出错，kernel 仍可继续使用' : 'Cell 执行完成'
+        execution.state === 'error' ? 'Cell 执行出错，kernel 仍可继续使用' : 'Cell 执行完成',
+        target
       ) ?? sessionStatus
     const cell = state.document.cells.find((item) => item.id === cellId) ?? fallbackCell
     const index = state.document.cells.indexOf(cell)
