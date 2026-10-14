@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { Settings } from '@oh-my-pi/pi-coding-agent'
 import { AuthStorage } from '@oh-my-pi/pi-ai'
 import { createPhiSettings } from './settings'
@@ -27,13 +27,20 @@ export async function leasedProfileMcpManager(
   settings: Settings,
   authStorage: AuthStorage,
   remoteProjectAnchor?: string,
-  remoteProjectMcpServers: ReturnType<typeof remoteProjectMcpRuntimeServersValue> = []
+  remoteProjectMcpServers: ReturnType<typeof remoteProjectMcpRuntimeServersValue> = [],
+  selected?: {
+    serverNames: ReadonlySet<string>
+    allowStdio: boolean
+    /** Worker-resolved credentials for already verified application entries. */
+    overrides?: Awaited<ReturnType<typeof loadAllMCPConfigs>>['configs']
+  }
 ): Promise<{
   manager: MCPManager
   leases: Map<string, EnvironmentLease>
   transports: Map<string, OwnedStdioTransportScope>
   remotePolicy?: RemoteMcpProfilePolicy
   projectPolicy?: RemoteMcpProfilePolicy
+  snapshot: Awaited<ReturnType<typeof loadAllMCPConfigs>>
 }> {
   const profile = readMcpConfig(agentDir)
   const phiSettings = createPhiSettings(settings)
@@ -62,11 +69,29 @@ export async function leasedProfileMcpManager(
       localProjectAnchor: remoteProjectAnchor,
       profile,
       options: discoveryOptions,
-      load: async (loadCwd, options) =>
-        (await loadAllMCPConfigs(
-          loadCwd,
-          options as Parameters<typeof loadAllMCPConfigs>[1]
-        )) as unknown as McpSnapshotLike
+      load: selected
+        ? async () => ({
+            configs: Object.fromEntries(
+              Object.entries(profile.mcpServers ?? {}).filter(([, entry]) => isRecord(entry))
+            ) as Record<string, Record<string, unknown>>,
+            sources: Object.fromEntries(
+              Object.keys(profile.mcpServers ?? {}).map((name) => [
+                name,
+                {
+                  provider: 'phi',
+                  providerName: 'Phi',
+                  path: join(agentDir, 'mcp.json'),
+                  level: 'user'
+                }
+              ])
+            ),
+            exaApiKeys: []
+          })
+        : async (loadCwd, options) =>
+            (await loadAllMCPConfigs(
+              loadCwd,
+              options as Parameters<typeof loadAllMCPConfigs>[1]
+            )) as unknown as McpSnapshotLike
     })
     const merged = mergeRemoteProjectMcpSnapshot(
       prepared.snapshot,
@@ -82,6 +107,19 @@ export async function leasedProfileMcpManager(
     })
   }
   const leases = new Map<string, EnvironmentLease>()
+  if (selected) {
+    const configs: typeof snapshot.configs = {}
+    const sources: typeof snapshot.sources = {}
+    for (const name of selected.serverNames) {
+      const config = selected.overrides?.[name] ?? snapshot.configs[name]
+      if (!config || config.enabled === false) throw new Error('Selected MCP resource unavailable')
+      if (config.type === 'stdio' && !selected.allowStdio)
+        throw new Error('Selected MCP stdio resource is not enabled for this session')
+      configs[name] = config
+      if (snapshot.sources[name]) sources[name] = snapshot.sources[name]
+    }
+    snapshot = { ...snapshot, configs, sources }
+  }
   try {
     for (const [name, config] of Object.entries(snapshot.configs)) {
       if (
@@ -122,6 +160,7 @@ export async function leasedProfileMcpManager(
       manager,
       leases,
       transports,
+      snapshot,
       ...(remotePolicy ? { remotePolicy } : {}),
       ...(projectPolicy ? { projectPolicy } : {})
     }

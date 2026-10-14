@@ -201,6 +201,10 @@ export class OmpBridge extends EventEmitter {
   private readonly stoppedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly pending = new Map<string, PendingRequest>()
   private readonly activeSessions = new Set<string>()
+  private readonly resourceWorkers = new Map<
+    object,
+    { child: ChildProcessWithoutNullStreams; controller: AbortController }
+  >()
   private readonly gatewayLeases = new Map<
     string,
     { child: ChildProcessWithoutNullStreams; invalidate(): void }
@@ -221,6 +225,29 @@ export class OmpBridge extends EventEmitter {
    */
   hasSession(sessionId: string): boolean {
     return this.activeSessions.has(sessionId)
+  }
+
+  /** Hold a session-owned resource service without creating an SDK conversation. */
+  retainResourceWorker(): { readonly signal: AbortSignal; release(): void } {
+    this.cancelIdleStop()
+    const child = this.ensureStarted()
+    const token = {}
+    const controller = new AbortController()
+    this.resourceWorkers.set(token, { child, controller })
+    return {
+      signal: controller.signal,
+      release: () => {
+        controller.abort(new Error('Resource worker lease released'))
+        this.resourceWorkers.delete(token)
+        this.scheduleIdleStop()
+      }
+    }
+  }
+
+  onResourceProgress(scopeId: string, listener: (value: unknown) => void): () => void {
+    const event = `resource:${scopeId}:progress`
+    this.on(event, listener)
+    return () => this.off(event, listener)
   }
 
   request<T = unknown>(method: string, params?: unknown): Promise<T> {
@@ -420,6 +447,7 @@ export class OmpBridge extends EventEmitter {
 
     this.stoppedChildren.add(child)
     this.activeSessions.clear()
+    this.invalidateResources(child)
     this.invalidateGateways(child)
     this.rejectAll(new Error('OMP worker stopped'), child)
     child.kill()
@@ -451,11 +479,13 @@ export class OmpBridge extends EventEmitter {
     })
 
     child.on('error', (error) => {
+      this.invalidateResources(child)
       this.invalidateGateways(child)
       this.rejectAll(error, child)
     })
 
     child.on('exit', (code, signal) => {
+      this.invalidateResources(child)
       // A worker we replaced can exit after its successor started (stop() then a new
       // request). It must not wipe the successor's sessions or fail its requests.
       const superseded = this.child !== null && this.child !== child
@@ -531,6 +561,8 @@ export class OmpBridge extends EventEmitter {
     if (message.event === 'sessionEvent' && message.sessionId) {
       const event = phiEventFromWire(message.payload)
       if (event) this.emit(`session:${message.sessionId}:event`, event)
+    } else if (message.event === 'desktopMcpProgress' && message.sessionId) {
+      this.emit(`resource:${message.sessionId}:progress`, message.payload)
     } else if (message.event === 'sessionState' && message.sessionId) {
       this.emit(`session:${message.sessionId}:state`, message.payload)
     } else if (message.event === 'toolApproval' && message.sessionId) {
@@ -624,6 +656,7 @@ export class OmpBridge extends EventEmitter {
     if (
       Array.from(this.pending.values()).some((request) => request.keepsWorkerAlive) ||
       this.activeSessions.size > 0 ||
+      this.resourceWorkers.size > 0 ||
       this.gatewayLeases.size > 0 ||
       !this.child
     )
@@ -633,6 +666,14 @@ export class OmpBridge extends EventEmitter {
       this.idleTimer = null
       void this.stop()
     }, 2000)
+  }
+
+  private invalidateResources(child: ChildProcessWithoutNullStreams): void {
+    for (const [token, resource] of this.resourceWorkers) {
+      if (resource.child !== child) continue
+      this.resourceWorkers.delete(token)
+      resource.controller.abort(new Error('Resource worker generation ended'))
+    }
   }
 
   private cancelIdleStop(): void {

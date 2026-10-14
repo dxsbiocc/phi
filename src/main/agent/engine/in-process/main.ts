@@ -7,6 +7,7 @@ import {
 import { IncomingRequest, isRecord, stringValue } from './common'
 import { handleHostResponse, isHostResponse, send } from './ipc'
 import { handleMcpRequest } from './mcp-runtime'
+import { closeAllDesktopMcpScopes } from './desktop-mcp-runtime'
 import { reloadResources } from './resources'
 import { loginModelRuntime, logoutModelRuntime, modelRuntimeSnapshot } from './runtime-context'
 import { createSession } from './session-creation'
@@ -42,6 +43,10 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
     case 'modelGateway.revoke':
       return revokeModelGatewayLease(params as Parameters<typeof revokeModelGatewayLease>[0])
     case 'mcp.configuredStdioTools':
+    case 'mcp.desktopCreate':
+    case 'mcp.desktopCall':
+    case 'mcp.desktopCancel':
+    case 'mcp.desktopClose':
     case 'mcp.cancelConfiguredStdioTools':
     case 'mcp.featuredTools':
     case 'mcp.syncFeaturedApiKeys':
@@ -146,6 +151,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
 
 const input = createInterface({ input: process.stdin })
 input.once('close', () => {
+  void closeAllDesktopMcpScopes().catch(() => undefined)
   void closeAllModelGatewayLeases().catch(() => undefined)
 })
 input.on('line', (line) => {

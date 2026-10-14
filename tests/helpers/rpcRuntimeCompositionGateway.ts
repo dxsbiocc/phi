@@ -25,7 +25,12 @@ export interface CompositionGateway {
   close(): Promise<void>
 }
 /** Real SDK image-capable registry in a disposable Bun process. The Node peer is only a scripted vendor. */
-export async function startCompositionGateway(anthropic = false): Promise<CompositionGateway> {
+export async function startCompositionGateway(
+  anthropic = false,
+  contextWindow = 32768
+): Promise<CompositionGateway> {
+  if (!Number.isSafeInteger(contextWindow) || contextWindow < 32768 || contextWindow > 2_000_000)
+    throw new Error('Invalid private composition model window')
   const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-composition-gateway-')))
   for (const name of ['home', 'agent', 'tmp']) await mkdir(join(root, name), { mode: 0o700 })
   const ordinary = anthropic ? undefined : await startHostResultModel()
@@ -48,6 +53,7 @@ export async function startCompositionGateway(anthropic = false): Promise<Compos
         XDG_CACHE_HOME: join(root, 'home/.cache'),
         PHI_COMPOSITION_PROVIDER: provider.url,
         PHI_COMPOSITION_ANTHROPIC: anthropic ? '1' : '',
+        PHI_COMPOSITION_CONTEXT_WINDOW: String(contextWindow),
         PI_PROXY_ANTHROPIC: anthropic ? provider.url : ''
       },
       stdio: ['pipe', 'pipe', 'pipe']

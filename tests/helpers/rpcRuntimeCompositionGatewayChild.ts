@@ -11,6 +11,9 @@ import { RPC_COMPOSITION_REF } from './rpcRuntimeCompositionGateway'
 const agentDir = process.env.PI_CODING_AGENT_DIR!,
   baseUrl = process.env.PHI_COMPOSITION_PROVIDER!
 const anthropic = process.env.PHI_COMPOSITION_ANTHROPIC === '1'
+const contextWindow = Number(process.env.PHI_COMPOSITION_CONTEXT_WINDOW ?? 32768)
+if (!Number.isSafeInteger(contextWindow) || contextWindow < 32768 || contextWindow > 2_000_000)
+  throw new Error('Invalid private composition model window')
 const ref = anthropic ? { provider: 'anthropic', id: 'claude-sonnet-4-6' } : RPC_COMPOSITION_REF
 if (!agentDir || !/^http:\/\/127\.0\.0\.1:\d+(?:\/v1)?$/u.test(baseUrl))
   throw new Error('Private composition gateway requires an isolated provider')
@@ -52,7 +55,7 @@ await writeFile(
                 name: 'Composition image model',
                 reasoning: true,
                 input: ['text', 'image'],
-                contextWindow: 32768,
+                contextWindow,
                 maxTokens: 1024,
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
               }

@@ -30,10 +30,10 @@ export interface RuntimeCompositionFixture {
 
 /** Real SDK worker + production gateway, real shell launcher and a private TCP forward, no sshd. */
 export async function runtimeCompositionFixture(
-  options: { anthropic?: boolean } = {}
+  options: { anthropic?: boolean; contextWindow?: number } = {}
 ): Promise<RuntimeCompositionFixture> {
   const f = await createPersistentLauncherFixture(true)
-  const sdk = await startCompositionGateway(options.anthropic)
+  const sdk = await startCompositionGateway(options.anthropic, options.contextWindow)
   const bundle = await createPhiExtensionBundle(
     process.cwd() + '/src/main/agent/engine/phi-extension'
   )
