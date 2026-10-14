@@ -1,6 +1,6 @@
 # OMP 升级操作手册
 
-更新日期：2026-10-14。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
+更新日期：2026-10-15。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
 
 本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
@@ -117,6 +117,10 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 ### 当前受控应用入口
 
 原 T12 全部宿主工具已合入本地 main `fb0d054`，固定候选标准全量 6083 项零失败，合并后主工作区类型/构建、asar 和四项终端宿主检查通过。全量之后仅独立压力脚本 PID 就绪修复，产品与全量测试源不变。附加 supervisor 压力阶段的既有状态竞争按 T16 待修；`smoke:terminal-packaged` 必须提供实际 `.app` 路径，未执行不得记为通过。详细首轮失败、修复及版本边界见 [冻结整合验收](omp-remote-acceptance.md#冻结整合验收)。
+
+原 T13 模型/思考级别实际控制及默认策略修正已合入 `365b2db`，复用 T12 审批、资源和 journal 恢复。升级回归应核对：空闲时从 main 可信目录选模型，模型切换新代只授权原模型与目标模型（去重后最多 2）；超过 256 的主目录不应导致启动失败，也不扩大 gateway256 预算。运行中/待批远程控制在写入前拒绝；每次 await 后重查原 session/generation/project/host/ref，迟到 UI 回复不能改动另一个会话。读取 SDK 实际可用思考级别并确认 effective state，不能把原始 `set_thinking_level` 的静默降级当成功。SDK/checkpoint/adoption 确认后才保存和发布 Phi 策略；不确定结果要求显式恢复同 journal，禁止隐式重放 prompt/工具。
+
+模型切换后的原资源调用、子任务、上下文查询和改名仍须可用；子配置在父模型/思考确认后建立。缺失 task wrapper 只可经可信空闲 attestation 的完整身份/资源/发布检查安装，被替换 wrapper 或错误父模型必须拒绝。本批官方 CLI 合同独立 5/5、UI 25/25、相关组 369/369、独立实际 4/4 与 main/权限 8/8，候选生产类型/lint/build/asar 和合并后主工作区 build/asar 通过。首轮相关组的 1 次原超时、隔离和最终同组通过记录均保留，未改期限；未重复全库，T12 6083 项仍只对应其旧冻结 tree。详细版本和限制见 [T13 增量验收](omp-remote-acceptance.md#t13-模型与思考级别实际应用增量2026-10-15)。最终 `365b2db` 主工作区类型/build/asar/完整 lint 再次通过（36.31 秒，2529 跟踪文件哈希前后未变）。最终默认策略补丁 `81b48731` 另以 7 单元、原模型/思考及新真实 fallback 3 项、独立 fallback 1 项验收；自动 high/最高常规，无常规 off，保存/显式 xhigh/max 不变。369 项证据属于补丁前 `1064cd63`，不混用版本。压缩、persona/memory/context 配置仍待后续原 T13，默认开关不变。
 
 `3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
 
