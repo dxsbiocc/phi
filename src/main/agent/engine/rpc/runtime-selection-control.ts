@@ -35,8 +35,10 @@ export function selectionThinking(
   }
   if (desired && supported.includes(desired)) return { phi: desired, rpc: desired }
   if (explicit) throw new Error('Unsupported thinking level for selected model')
-  const level = supported.includes('high') ? 'high' : supported[supported.length - 1]
-  return { phi: level, rpc: level }
+  // Extended tiers require a supported saved/desired choice, never an automatic fallback.
+  const regular = supported.filter((level) => level !== 'xhigh' && level !== 'max')
+  const level = regular.includes('high') ? 'high' : regular.at(-1)
+  return { phi: level, rpc: level ?? 'off' }
 }
 
 export async function confirmInitialThinking(
