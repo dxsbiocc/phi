@@ -116,6 +116,8 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 ### 当前受控应用入口
 
+原 T12 全部宿主工具已合入本地 main `fb0d054`，固定候选标准全量 6083 项零失败，合并后主工作区类型/构建、asar 和四项终端宿主检查通过。全量之后仅独立压力脚本 PID 就绪修复，产品与全量测试源不变。附加 supervisor 压力阶段的既有状态竞争按 T16 待修；`smoke:terminal-packaged` 必须提供实际 `.app` 路径，未执行不得记为通过。详细首轮失败、修复及版本边界见 [冻结整合验收](omp-remote-acceptance.md#冻结整合验收)。
+
 `3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
 
 T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory/compaction 等 T13 未支持配置仍明确报错；专家资源/环境及后台能力另由 T14 验收。恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。这是受控 opt-in 的自动化交付，真实 SSH/provider/OAuth/Finder 及默认开启仍按 T16 门槛。
