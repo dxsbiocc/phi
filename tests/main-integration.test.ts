@@ -10683,6 +10683,134 @@ test('main IPC: assistant error message ends are restored after switching sessio
   assert.doesNotMatch(JSON.stringify(restored.messages), /ak-fch/)
 })
 
+for (const errorMessage of [
+  'Cursor stream ended before turnEnded',
+  'stream closed before a terminal response event: Cursor stream ended before turnEnded'
+]) {
+  test(`main IPC: recovered Cursor stream interruption does not fail the run: ${errorMessage}`, async () => {
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.toolEvents = [
+        {
+          type: 'message_end',
+          message: { role: 'assistant', api: 'cursor-agent', stopReason: 'error', errorMessage }
+        },
+        {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            api: 'cursor-agent',
+            stopReason: 'stop',
+            content: [{ type: 'text', text: 'Recovered answer.' }]
+          }
+        }
+      ]
+      return session
+    })
+
+    await app.invoke('agent:prompt', 'hello')
+
+    assert.equal(
+      app.appendedSessionEvents.some((entry) => entry.event.type === 'run_failed'),
+      false
+    )
+    assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'assistant_message_finalized')
+    assert.equal(app.appendedSessionEvents.at(-1)?.event.content, 'Recovered answer.')
+  })
+}
+
+for (const outcome of [
+  { api: 'cursor-agent', stopReason: 'aborted' },
+  { api: 'cursor-agent', stopReason: 'length' },
+  { api: 'openai-completions', stopReason: 'stop' }
+]) {
+  test(`main IPC: an unsuccessful or other-provider answer cannot clear Cursor failure: ${JSON.stringify(outcome)}`, async () => {
+    const errorMessage = 'Cursor stream ended before turnEnded'
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.toolEvents = [
+        {
+          type: 'message_end',
+          message: { role: 'assistant', api: 'cursor-agent', stopReason: 'error', errorMessage }
+        },
+        { type: 'message_end', message: { role: 'assistant', ...outcome, content: [] } }
+      ]
+      return session
+    })
+
+    await app.invoke('agent:prompt', 'hello')
+
+    assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'run_failed')
+    assert.equal(app.appendedSessionEvents.at(-1)?.event.errorMessage, errorMessage)
+  })
+}
+
+test('main IPC: Cursor recovery retains an unrelated failure earlier in the run', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          api: 'cursor-agent',
+          stopReason: 'error',
+          errorMessage: '401 unauthorized'
+        }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          api: 'cursor-agent',
+          stopReason: 'error',
+          errorMessage: 'Cursor stream ended before turnEnded'
+        }
+      },
+      {
+        type: 'message_end',
+        message: { role: 'assistant', api: 'cursor-agent', stopReason: 'stop', content: [] }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'hello')
+
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'run_failed')
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.errorMessage, '401 unauthorized')
+})
+
+test('main IPC: Cursor recovery cannot clear a permanent provider stop', async () => {
+  const errorMessage = 'This model provider is not supported in your region.'
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.toolEvents = [
+      { type: 'auto_retry_start', attempt: 1, maxAttempts: 5, delayMs: 30_000, errorMessage },
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          api: 'cursor-agent',
+          stopReason: 'error',
+          errorMessage: 'Cursor stream ended before turnEnded'
+        }
+      },
+      {
+        type: 'message_end',
+        message: { role: 'assistant', api: 'cursor-agent', stopReason: 'stop', content: [] }
+      }
+    ]
+    return session
+  })
+
+  await app.invoke('agent:prompt', 'hello')
+
+  assert.ok(app.sessions[0].log.includes('abort'))
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'run_failed')
+  assert.equal(app.appendedSessionEvents.at(-1)?.event.errorMessage, errorMessage)
+})
+
 test('main IPC: unsupported provider region stops automatic retry and fails the run', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)

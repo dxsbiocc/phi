@@ -22,12 +22,17 @@ export type EngineFixture = {
 }
 export type EngineFactory = () => Promise<EngineFixture>
 
-export const createInProcessFixture: EngineFactory = async () => {
+export const createInProcessFixture = async (options?: {
+  providerFactory?: typeof startLoopbackModel
+  api?: 'cursor-agent'
+}): Promise<EngineFixture> => {
   const root = mkdtempSync(join(tmpdir(), 'phi-engine-contract-'))
   const agentDir = join(root, 'agent')
   const cwd = join(root, 'project')
   const home = join(root, 'home')
   const temp = join(root, 'tmp')
+  const providerId = options?.api === 'cursor-agent' ? 'cursor' : 'phi-contract'
+  const modelId = options?.api === 'cursor-agent' ? 'cursor-grok-4.6-fast' : 'contract-model'
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR
   let provider: Awaited<ReturnType<typeof startLoopbackModel>> | undefined
   let engine: PhiEngine | undefined
@@ -51,27 +56,35 @@ export const createInProcessFixture: EngineFactory = async () => {
   try {
     for (const dir of [agentDir, cwd, home, temp]) mkdirSync(dir, { recursive: true })
     const bun = resolveBunExecutable()
-    provider = await startLoopbackModel()
+    provider = await (options?.providerFactory ?? startLoopbackModel)()
     const configPath = join(agentDir, 'models.yml')
     writeFileSync(
       configPath,
       JSON.stringify({
         providers: {
-          'phi-contract': {
+          [providerId]: {
             baseUrl: provider.url,
-            api: 'openai-completions',
             apiKey: 'contract-only-key',
-            models: [
-              {
-                id: 'contract-model',
-                name: 'Contract Model',
-                reasoning: false,
-                input: ['text'],
-                contextWindow: 32768,
-                maxTokens: 256,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-              }
-            ]
+            ...(options?.api === 'cursor-agent'
+              ? {
+                  modelOverrides: {
+                    [modelId]: { baseUrl: provider.url, contextWindow: 32768, maxTokens: 256 }
+                  }
+                }
+              : {
+                  api: 'openai-completions',
+                  models: [
+                    {
+                      id: 'contract-model',
+                      name: 'Contract Model',
+                      reasoning: false,
+                      input: ['text'],
+                      contextWindow: 32768,
+                      maxTokens: 256,
+                      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+                    }
+                  ]
+                })
           }
         }
       })
@@ -86,8 +99,8 @@ export const createInProcessFixture: EngineFactory = async () => {
           methodOrder: ['soft']
         },
         mcp: { enableProjectConfig: false },
-        defaultProvider: 'phi-contract',
-        defaultModel: 'contract-model'
+        defaultProvider: providerId,
+        defaultModel: modelId
       })
     )
     process.env.PI_CODING_AGENT_DIR = agentDir
@@ -129,8 +142,8 @@ export const createInProcessFixture: EngineFactory = async () => {
       cwd,
       provider,
       model: {
-        provider: 'phi-contract',
-        id: 'contract-model',
+        provider: providerId,
+        id: modelId,
         name: 'Contract Model',
         reasoning: false
       },
