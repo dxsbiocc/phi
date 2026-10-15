@@ -1,12 +1,13 @@
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 
-export type ChatResourceKind = 'skill' | 'wrapper' | 'plugin' | 'mcp'
+export type ChatResourceKind = 'agent' | 'skill' | 'wrapper' | 'plugin' | 'mcp'
 
 export type ChatResourceMention = {
   kind: ChatResourceKind
   id: string
   name: string
   icon?: ResourceIconRef
+  available?: boolean
   aliases?: readonly string[]
   onOpen?: () => void
 }
@@ -17,6 +18,7 @@ export type ChatResourceToken =
 type ResourceIndex = Map<string, ChatResourceMention | null>
 
 const REFERENCE_KINDS: Record<string, ChatResourceKind> = {
+  agent: 'agent',
   skill: 'skill',
   wrapper: 'wrapper',
   plugin: 'plugin',
@@ -33,7 +35,18 @@ function addAlias(index: ResourceIndex, alias: string, resource: ChatResourceMen
   const existing = index.get(alias)
   if (existing === undefined) index.set(alias, resource)
   else if (existing && (existing.kind !== resource.kind || existing.id !== resource.id)) {
-    index.set(alias, null)
+    // Multiple source paths still share one name-only skill or agent invocation.
+    const sameInvocation =
+      (existing.kind === 'skill' || existing.kind === 'agent') &&
+      existing.kind === resource.kind &&
+      existing.name.trim().toLowerCase() === resource.name.trim().toLowerCase()
+    if (!sameInvocation) index.set(alias, null)
+    else if (
+      existing.kind === 'agent' &&
+      existing.available === false &&
+      resource.available !== false
+    )
+      index.set(alias, resource)
   }
 }
 
@@ -50,7 +63,10 @@ function hasMentionBoundaries(text: string, start: number, end: number): boolean
   const after = end < text.length ? String.fromCodePoint(text.codePointAt(end)!) : ''
   const reference = text
     .slice(start, end)
-    .replace(/^(?:\$|(?:skill|wrapper|plugin|connector|mcp):)/iu, '')
+    .replace(
+      /^(?:\$|(?:agent|skill|wrapper|plugin|connector|mcp):|\/(?:agent|prompts):|调用智能体：)/iu,
+      ''
+    )
   const allowHanNeighbors = /\p{Script=Latin}/u.test(reference) && !HAN_CHARACTER.test(reference)
   if (
     [before, after].some(
@@ -73,6 +89,7 @@ export function createChatResourceMatcher(resources: readonly ChatResourceMentio
 } {
   const bare: ResourceIndex = new Map()
   const byKind: Record<ChatResourceKind, ResourceIndex> = {
+    agent: new Map(),
     skill: new Map(),
     wrapper: new Map(),
     plugin: new Map(),
@@ -90,6 +107,10 @@ export function createChatResourceMatcher(resources: readonly ChatResourceMentio
         if (kind === resource.kind) references.add(`${prefix}:${alias}`)
       }
       if (resource.kind === 'skill' && canMentionBare(alias)) references.add(`$${alias}`)
+      if (resource.kind === 'agent' && canMentionBare(alias)) {
+        for (const prefix of ['/agent:', '/prompts:', '调用智能体：'])
+          references.add(`${prefix}${alias}`)
+      }
     }
   }
 
@@ -99,14 +120,16 @@ export function createChatResourceMatcher(resources: readonly ChatResourceMentio
       const alias = reference.slice(1)
       return canMentionBare(alias) ? (byKind.skill.get(alias) ?? undefined) : undefined
     }
-    const explicit = /^(skill|wrapper|plugin|connector|mcp):(.+)$/u.exec(reference)
+    const agentInvocation = /^(?:\/(?:agent|prompts):|调用智能体：)(.+)$/u.exec(reference)
+    if (agentInvocation) return byKind.agent.get(agentInvocation[1]) ?? undefined
+    const explicit = /^(agent|skill|wrapper|plugin|connector|mcp):(.+)$/u.exec(reference)
     if (explicit) return byKind[REFERENCE_KINDS[explicit[1]]].get(explicit[2]) ?? undefined
     return bare.get(reference) ?? undefined
   }
 
   const resolveHref = (href: string | undefined): ChatResourceMention | undefined => {
     if (!href || href !== href.trim()) return undefined
-    const match = /^(skill|wrapper|plugin|connector|mcp):\/\/([^/\\?#]+)\/?$/iu.exec(href)
+    const match = /^(agent|skill|wrapper|plugin|connector|mcp):\/\/([^/\\?#]+)\/?$/iu.exec(href)
     if (!match) return undefined
     try {
       const alias = decodeURIComponent(match[2])

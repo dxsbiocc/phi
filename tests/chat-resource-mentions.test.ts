@@ -97,6 +97,41 @@ test('duplicate catalog entries do not make the same resource ambiguous', () => 
   assert.deepEqual(mentions('grill-me', duplicated), ['skill:skill-grill:grill-me'])
 })
 
+test('same-name skills from different paths resolve one invocation while retaining exact identities', () => {
+  const first: ChatResourceMention = {
+    ...grill,
+    id: '/agents/skills/grill-me/SKILL.md',
+    icon: { key: 'first' },
+    onOpen: () => undefined
+  }
+  const second: ChatResourceMention = {
+    ...first,
+    id: '/codex/skills/grill-me/SKILL.md',
+    icon: { key: 'second' },
+    onOpen: () => undefined
+  }
+  const catalog = createChatResourceMatcher([first, second])
+  for (const text of ['$grill-me', 'grill-me', 'skill:grill-me']) {
+    assert.equal(catalog.resolveExact(text), first, text)
+  }
+  assert.equal(catalog.resolveHref('skill://grill-me'), first)
+  assert.equal(catalog.resolveHref(`skill://${encodeURIComponent(first.id)}`), first)
+  assert.equal(catalog.resolveHref(`skill://${encodeURIComponent(second.id)}`), second)
+  assert.deepEqual(mentions('$grill-me\n怎么开发一个 ios app', catalog), [
+    `skill:${first.id}:$grill-me`
+  ])
+})
+
+test('different skill names sharing an alias remain ambiguous', () => {
+  const catalog = createChatResourceMatcher([
+    { ...grill, aliases: ['review'] },
+    { ...grilling, aliases: ['review'] }
+  ])
+  assert.equal(catalog.resolveExact('$review'), undefined)
+  assert.equal(catalog.resolveExact('skill:review'), undefined)
+  assert.equal(catalog.resolveExact('review'), undefined)
+})
+
 test('substrings, filenames, paths, shell variables and external URLs stay plain', () => {
   const values = [
     'my-grill-me grill-me-extra grill-mes grilling2 pregrilling',
@@ -223,4 +258,59 @@ test('empty catalogs and repeated matching preserve plain text and source charac
     assert.equal(tokens.map((token) => token.text).join(''), input)
     assert.equal(tokens.filter((token) => token.kind === 'resource').length, 4)
   }
+})
+
+test('agent invocations and encoded root links resolve to the agent without consuming paths', () => {
+  const agent: ChatResourceMention = {
+    kind: 'agent',
+    id: '/agents/Reviewer.md',
+    name: 'Reviewer'
+  }
+  const catalog = createChatResourceMatcher([agent])
+  for (const reference of ['/agent:Reviewer', '/prompts:Reviewer', '调用智能体：Reviewer']) {
+    assert.equal(catalog.resolveExact(reference), agent)
+    assert.deepEqual(mentions(`${reference}\n请检查`, catalog), [`agent:${agent.id}:${reference}`])
+  }
+  assert.equal(catalog.resolveExact('agent:Reviewer'), agent)
+  assert.equal(catalog.resolveHref(`agent://${encodeURIComponent(agent.id)}`), agent)
+  assert.deepEqual(mentions('调用智能体：Reviewer检查这些文件。', catalog), [
+    `agent:${agent.id}:调用智能体：Reviewer`
+  ])
+  for (const text of [
+    '/agents/Reviewer.md',
+    '/tmp/agent:Reviewer',
+    './prompts:Reviewer',
+    '/agent:Reviewer.md',
+    '/agent:Reviewer/path',
+    'https://example.com/agent:Reviewer',
+    'agent://Reviewer?execute=1',
+    'agent://Reviewer/instructions',
+    '/agent:Unknown'
+  ]) {
+    assert.deepEqual(mentions(text, catalog), [], text)
+  }
+})
+
+test('agent name-only invocations prefer an available source while exact IDs preserve metadata', () => {
+  const pending: ChatResourceMention = {
+    kind: 'agent',
+    id: 'server:Reviewer',
+    name: 'Reviewer',
+    available: false
+  }
+  const local: ChatResourceMention = {
+    ...pending,
+    id: '/agents/Reviewer.md',
+    available: true
+  }
+  const catalog = createChatResourceMatcher([pending, local])
+  assert.equal(catalog.resolveExact('/agent:Reviewer'), local)
+  assert.equal(catalog.resolveExact('/prompts:Reviewer'), local)
+  assert.equal(catalog.resolveExact('调用智能体：Reviewer'), local)
+  assert.equal(catalog.resolveHref('agent://server%3AReviewer'), pending)
+  const ambiguous = createChatResourceMatcher([
+    { ...local, aliases: ['shared'] },
+    { ...local, id: '/agents/Writer.md', name: 'Writer', aliases: ['shared'] }
+  ])
+  assert.equal(ambiguous.resolveExact('/agent:shared'), undefined)
 })

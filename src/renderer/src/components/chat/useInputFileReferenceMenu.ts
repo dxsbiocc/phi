@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   filterInputFileReferenceCandidates,
   findActiveInputFileReference,
   formatInputFileReferenceTarget,
   inputFileReferenceDirectoryPath,
   inputFileReferenceLeafQuery,
-  replaceInputReferenceRange
+  replaceInputReferenceRange,
+  type InputReferenceCursor,
+  type InputReferenceKeyboardEvent
 } from '../../lib/inputReferences'
 import type { DirectoryListing, FileTreeEntry } from '../../types'
 import type { InputFileReferenceMenuState } from './InputFileReferenceMenu'
@@ -21,9 +23,9 @@ type UseInputFileReferenceMenuResult = {
   menuState: InputFileReferenceMenuState | null
   highlightedIndex: number
   onHighlight: (index: number) => void
-  onInputChanged: (inputElement: HTMLInputElement | HTMLTextAreaElement | null) => void
-  onInputCursorChanged: (inputElement: HTMLInputElement | HTMLTextAreaElement | null) => void
-  onKeyDown: (event: KeyboardEvent<HTMLElement>) => boolean
+  onInputChanged: (inputElement: InputReferenceCursor | null) => void
+  onInputCursorChanged: (inputElement: InputReferenceCursor | null) => void
+  onKeyDown: (event: InputReferenceKeyboardEvent) => boolean
   onSelect: (entry: FileTreeEntry) => void
 }
 
@@ -99,14 +101,14 @@ export function useInputFileReferenceMenu({
   }, [directoryPath, leafQuery, onListInputDirectory, visibleQuery])
 
   const updateInputCursor = useCallback(
-    (inputElement: HTMLInputElement | HTMLTextAreaElement | null): void => {
+    (inputElement: InputReferenceCursor | null): void => {
       setInputCursor(inputElement?.selectionStart ?? input.length)
     },
     [input.length]
   )
 
   const handleInputChanged = useCallback(
-    (inputElement: HTMLInputElement | HTMLTextAreaElement | null): void => {
+    (inputElement: InputReferenceCursor | null): void => {
       setDismissedReferenceKey(null)
       setHighlightedIndex(0)
       updateInputCursor(inputElement)
@@ -133,7 +135,7 @@ export function useInputFileReferenceMenu({
   )
 
   const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>): boolean => {
+    (event: InputReferenceKeyboardEvent): boolean => {
       if (event.nativeEvent.isComposing) return false
       if (!visibleQuery || !menuState) return false
 

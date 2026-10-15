@@ -1,9 +1,12 @@
-import { useCallback, useMemo, useState, type KeyboardEvent } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   findActiveInputInvocationReference,
   formatPromptAgentReference,
   formatSkillPromptReference,
-  removeInputInvocationReferenceRange
+  removeInputInvocationReferenceRange,
+  uniqueEnabledInputSkills,
+  type InputReferenceCursor,
+  type InputReferenceKeyboardEvent
 } from '../../lib/inputReferences'
 import type { PromptAgentSummary, SkillSummary } from '../../types'
 import type {
@@ -22,13 +25,11 @@ type UseInputInvocationReferenceMenuResult = {
   menuState: InputInvocationReferenceMenuState | null
   highlightedIndex: number
   onHighlight: (index: number) => void
-  onInputChanged: (inputElement: HTMLInputElement | HTMLTextAreaElement | null) => void
-  onInputCursorChanged: (inputElement: HTMLInputElement | HTMLTextAreaElement | null) => void
-  onKeyDown: (event: KeyboardEvent<HTMLElement>) => boolean
+  onInputChanged: (inputElement: InputReferenceCursor | null) => void
+  onInputCursorChanged: (inputElement: InputReferenceCursor | null) => void
+  onKeyDown: (event: InputReferenceKeyboardEvent) => boolean
   onSelect: (candidate: InputInvocationReferenceCandidate) => void
 }
-
-const INPUT_INVOCATION_CANDIDATE_LIMIT = 8
 
 function candidateMatches(name: string, query: string): boolean {
   const normalizedName = name.toLowerCase()
@@ -74,10 +75,11 @@ export function useInputInvocationReferenceMenu({
 
     const candidates =
       visibleQuery.kind === 'skill'
-        ? skills
-            .filter((skill) => !skill.disabled && candidateMatches(skill.name, visibleQuery.query))
+        ? uniqueEnabledInputSkills(skills)
+            .filter((skill) => candidateMatches(skill.name, visibleQuery.query))
             .map((skill): InputInvocationReferenceCandidate => {
               return {
+                id: skill.id,
                 ...(skill.icon ? { icon: skill.icon } : {}),
                 kind: 'skill',
                 name: skill.name,
@@ -107,22 +109,23 @@ export function useInputInvocationReferenceMenu({
       kind: visibleQuery.kind,
       query: visibleQuery.query,
       operator: visibleQuery.operator,
-      candidates: sortCandidates(candidates, visibleQuery.query).slice(
-        0,
-        INPUT_INVOCATION_CANDIDATE_LIMIT
-      )
+      candidates: sortCandidates(candidates, visibleQuery.query)
     }
   }, [promptAgents, skills, visibleQuery])
+  const effectiveHighlightedIndex = Math.min(
+    highlightedIndex,
+    Math.max(0, (menuState?.candidates.length ?? 0) - 1)
+  )
 
   const updateInputCursor = useCallback(
-    (inputElement: HTMLInputElement | HTMLTextAreaElement | null): void => {
+    (inputElement: InputReferenceCursor | null): void => {
       setInputCursor(inputElement?.selectionStart ?? input.length)
     },
     [input.length]
   )
 
   const handleInputChanged = useCallback(
-    (inputElement: HTMLInputElement | HTMLTextAreaElement | null): void => {
+    (inputElement: InputReferenceCursor | null): void => {
       setDismissedReferenceKey(null)
       setHighlightedIndex(0)
       updateInputCursor(inputElement)
@@ -144,7 +147,7 @@ export function useInputInvocationReferenceMenu({
   )
 
   const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>): boolean => {
+    (event: InputReferenceKeyboardEvent): boolean => {
       if (event.nativeEvent.isComposing) return false
       if (!visibleQuery || !menuState) return false
 
@@ -162,13 +165,18 @@ export function useInputInvocationReferenceMenu({
 
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        setHighlightedIndex((index) => (index + 1) % candidates.length)
+        setHighlightedIndex(
+          (index) => (Math.min(index, candidates.length - 1) + 1) % candidates.length
+        )
         return true
       }
 
       if (event.key === 'ArrowUp') {
         event.preventDefault()
-        setHighlightedIndex((index) => (index - 1 + candidates.length) % candidates.length)
+        setHighlightedIndex(
+          (index) =>
+            (Math.min(index, candidates.length - 1) - 1 + candidates.length) % candidates.length
+        )
         return true
       }
 
@@ -188,7 +196,7 @@ export function useInputInvocationReferenceMenu({
 
   return {
     menuState,
-    highlightedIndex,
+    highlightedIndex: effectiveHighlightedIndex,
     onHighlight: setHighlightedIndex,
     onInputChanged: handleInputChanged,
     onInputCursorChanged: updateInputCursor,

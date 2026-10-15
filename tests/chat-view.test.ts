@@ -603,7 +603,7 @@ test('chat view parses and renders file references as cards', () => {
   assert.match(composerMarkup, /data-phi-file-drop-target="chat-composer"/)
   assert.match(composerMarkup, /hibit\.diff\.exp\.genes\.csv/)
   assert.match(composerMarkup, /aria-label="移除引用文件 hibit\.diff\.exp\.genes\.csv"/)
-  assert.match(composerMarkup, /随心输入/)
+  assert.match(composerMarkup, /data-phi-composer-editor="codemirror"/)
   assert.doesNotMatch(composerMarkup, /引用文件：/)
 
   const officeComposerMarkup = renderChat([], {
@@ -628,7 +628,7 @@ test('chat view parses and renders file references as cards', () => {
   assert.doesNotMatch(messageMarkup, /引用文件：/)
 })
 
-test('chat composer renders agent and skill references as chips', () => {
+test('chat composer uses the inline editor for agent and skill references', () => {
   const markup = renderChat([], {
     input: '$anndata\n/prompts:analyst\n调用智能体：Visualization\n整理一下数据',
     skills: [
@@ -662,16 +662,9 @@ test('chat composer renders agent and skill references as chips', () => {
     ]
   })
 
-  assert.match(markup, /data-phi-slot="composer-reference-chips"/)
-  assert.equal(markup.match(/data-phi-reference-kind="skill"/g)?.length ?? 0, 1)
-  assert.equal(markup.match(/data-phi-reference-kind="agent"/g)?.length ?? 0, 2)
-  assert.match(markup, />anndata</)
-  assert.match(markup, />analyst</)
-  assert.match(markup, />Visualization</)
-  assert.match(markup, /整理一下数据/)
-  assert.doesNotMatch(markup, />\$anndata</)
-  assert.doesNotMatch(markup, /\/prompts:analyst/)
-  assert.doesNotMatch(markup, /调用智能体：Visualization/)
+  assert.match(markup, /data-phi-composer-editor="codemirror"/)
+  assert.doesNotMatch(markup, /data-phi-slot="composer-reference-chips"/)
+  assert.doesNotMatch(markup, /<textarea/)
 })
 
 test('chat composer offers skill and agent shortcut reference candidates', () => {
@@ -730,6 +723,51 @@ test('chat composer offers skill and agent shortcut reference candidates', () =>
   assert.match(agentMarkup, />\/agent:Vis</)
   assert.match(agentMarkup, />Visualization</)
   assert.doesNotMatch(agentMarkup, />analyst</)
+})
+
+test('chat composer routes the unified catalog to the inline editor', () => {
+  const catalog: ChatResourceMention[] = [
+    {
+      kind: 'wrapper',
+      id: 'nf-core/rnaseq',
+      name: 'RNA-seq',
+      icon: { key: 'wrapper-chip' },
+      onOpen: () => undefined
+    },
+    {
+      kind: 'mcp',
+      id: 'pubmed',
+      name: 'PubMed',
+      icon: { key: 'connector-chip' },
+      onOpen: () => undefined
+    },
+    {
+      kind: 'plugin',
+      id: 'office',
+      name: 'Office',
+      icon: { key: 'plugin-chip' },
+      onOpen: () => undefined
+    }
+  ]
+  const markup = renderChat([], {
+    input:
+      'wrapper://nf-core%2Frnaseq\nmcp://pubmed\nplugin://office\n/prompts:Reviewer\nhttps://example.com/paper\n整理资料',
+    resourceMentions: catalog,
+    promptAgents: [
+      {
+        id: '/agents/reviewer.md',
+        name: 'Reviewer',
+        description: 'Reviews drafts',
+        source: 'user',
+        trigger: '/prompts:Reviewer',
+        icon: { key: 'agent-chip' }
+      }
+    ],
+    onOpenWebUrl: () => undefined
+  })
+  assert.match(markup, /data-phi-composer-editor="codemirror"/)
+  assert.doesNotMatch(markup, /data-phi-slot="composer-reference-chips"/)
+  assert.doesNotMatch(markup, /<textarea/)
 })
 
 test('chat view keeps user messages right aligned inside virtual rows', () => {
@@ -1722,7 +1760,7 @@ test('chat view shows current permission mode in the composer', () => {
 test('chat view shows add-context control before permissions', () => {
   const markup = renderChat([])
 
-  assert.match(markup, /aria-label="添加文件、智能体或 Skill"[\s\S]*aria-label="选择权限模式/)
+  assert.match(markup, /aria-label="添加文件和资源引用"[\s\S]*aria-label="选择权限模式/)
 })
 
 test('chat view uses the suggested next action as a passive placeholder', () => {
@@ -1734,7 +1772,7 @@ test('chat view uses the suggested next action as a passive placeholder', () => 
     }
   ])
 
-  assert.match(markup, /placeholder="继续生成验证图表。"/)
+  assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
   assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
   assert.doesNotMatch(
     readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8'),
@@ -1826,7 +1864,7 @@ test('chat view does not reuse the previous user action when the assistant only 
     }
   ])
 
-  assert.match(markup, /placeholder="输入消息，Enter 发送，Shift\+Enter 换行"/)
+  assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.doesNotMatch(markup, /placeholder="[^"]*SbatchRunner/)
   assert.doesNotMatch(markup, /data-phi-placeholder-kind="suggested-next-action"/)
@@ -1842,7 +1880,7 @@ test('chat view shows full access permission mode in the composer', () => {
 test('chat view uses icon-only composer controls when file preview is open', () => {
   const markup = renderChat([], { compactComposerControls: true })
 
-  assert.match(markup, /placeholder="输入消息"/)
+  assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.match(markup, /aria-label="选择权限模式：权限 Auto"/)
   assert.match(markup, /aria-label="选择思考等级：High"/)
   assert.match(markup, /aria-label="选择模型：Kimi Coding"/)
@@ -2040,7 +2078,7 @@ test('chat view shows queued prompts above the composer while a session is busy'
     queuedPrompts: [{ id: 'queued-1', text: '排队的下一条问题' }]
   })
 
-  assert.match(markup, /placeholder="输入消息，Enter 加入队列，Shift\+Enter 换行"/)
+  assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.doesNotMatch(markup, /aria-label="加入队列"/)
   assert.match(markup, /aria-label="停止生成"/)
   assert.match(markup, /消息队列/)

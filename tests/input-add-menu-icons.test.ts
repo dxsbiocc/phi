@@ -80,3 +80,21 @@ test('shortcut reference results render the same resolved artwork', () => {
   assert.match(markup, /data-phi-resource-icon="agent"/)
   assert.match(markup, /data-phi-resource-icon-key="shortcut-agent-icon"/)
 })
+
+test('the add panel offers each enabled skill invocation once across source paths', () => {
+  const first = skill('first')
+  const markup = renderToStaticMarkup(
+    createElement(InputAddPanel, {
+      panelId: 'add-panel',
+      panelRef: createRef<HTMLDivElement>(),
+      skills: [first, { ...skill('duplicate'), id: '/other/demo/SKILL.md' }],
+      promptAgents: [],
+      cwd: '/workspace',
+      onInsertReference: () => undefined,
+      onClose: () => undefined
+    })
+  )
+  assert.equal(Array.from(markup.matchAll(/>demo</g)).length, 1)
+  assert.match(markup, /data-phi-resource-icon-key="first"/)
+  assert.doesNotMatch(markup, /data-phi-resource-icon-key="duplicate"/)
+})

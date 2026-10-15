@@ -43,6 +43,26 @@ test('a sent skill reference renders as icon and name in the user bubble', () =>
   assert.doesNotMatch(markup, />\$grill-me/)
 })
 
+test('a sent same-name skill from multiple sources renders one clickable icon component', () => {
+  const first: ChatResourceMention = {
+    kind: 'skill',
+    id: '/agents/skills/grill-me/SKILL.md',
+    name: 'grill-me',
+    icon: { key: 'first-grill' },
+    onOpen: () => undefined
+  }
+  const catalog = [
+    first,
+    { ...first, id: '/codex/skills/grill-me/SKILL.md', icon: { key: 'second-grill' } }
+  ]
+  const markup = render('$grill-me\n怎么开发一个 ios app', true, catalog)
+  assert.equal((markup.match(/data-phi-resource-mention="skill"/g) ?? []).length, 1)
+  assert.match(markup, /<button[^>]*data-phi-resource-mention="skill"/)
+  assert.match(markup, /data-phi-resource-icon-key="first-grill"/)
+  assert.match(markup, /怎么开发一个 ios app/)
+  assert.doesNotMatch(markup, />\$grill-me/)
+})
+
 test('assistant prose, emphasis, inline names and resource links use the same resource components', () => {
   const markup = render(
     '已接入 grill-me 和 **grilling**，使用 `salmon`、Office 和 [Serena](connector://serena)。'
@@ -74,4 +94,25 @@ test('known resource file identities still render as ordinary local paths', () =
   ])
   assert.doesNotMatch(markup, /data-phi-resource-mention=/)
   assert.match(markup, /SKILL\.md/)
+})
+
+test('sent and assistant agent invocations share an interactive icon and name component', () => {
+  const agent: ChatResourceMention = {
+    kind: 'agent',
+    id: '/agents/Reviewer.md',
+    name: 'Reviewer',
+    icon: { key: 'reviewer-icon' },
+    onOpen: () => undefined
+  }
+  for (const reference of ['/agent:Reviewer', '/prompts:Reviewer', '调用智能体：Reviewer']) {
+    const markup = render(`${reference}\n请检查文件`, true, [agent])
+    assert.match(markup, /<button[^>]*data-phi-resource-mention="agent"/)
+    assert.match(markup, /data-phi-resource-icon="agent"/)
+    assert.match(markup, /data-phi-resource-icon-key="reviewer-icon"/)
+    assert.match(markup, /请检查文件/)
+  }
+  const linked = render(`[审查](agent://${encodeURIComponent(agent.id)})`, false, [agent])
+  assert.match(linked, /<button[^>]*data-phi-resource-mention="agent"/)
+  const code = render('```sh\n/agent:Reviewer\n```\n\n`/prompts:Reviewer`', true, [agent])
+  assert.doesNotMatch(code, /data-phi-resource-mention=/)
 })

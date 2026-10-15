@@ -1,4 +1,4 @@
-import { Box, Button, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, IconButton, Paper, Stack, Typography } from '@mui/material'
 import {
   useEffect,
   useId,
@@ -14,6 +14,9 @@ import { PastedImagePreview } from './components/PastedImagePreview'
 import { ContextUsageIndicator } from './components/ContextUsageIndicator'
 import { usePastedImages } from './hooks/usePastedImages'
 import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
+import { useChatResourceCatalog } from './hooks/useChatResourceCatalog'
+import { ComposerTextEditor, type ComposerTextEditorHandle } from './components/ComposerTextEditor'
+import { inlineReferenceInsertion } from './lib/composerReferences'
 import { type LocalPathKind } from '../../components/MarkdownContent'
 import ToolApprovalDialog from '../../components/ToolApprovalDialog'
 import UserInteractionPanel from '../../components/UserInteractionPanel'
@@ -26,7 +29,6 @@ import { FileReferenceCards } from '../../components/chat/FileReferenceCards'
 import { InputAddControl, InputAddPanel } from '../../components/chat/InputAddMenu'
 import { InputFileReferenceMenu } from '../../components/chat/InputFileReferenceMenu'
 import { InputInvocationReferenceMenu } from '../../components/chat/InputInvocationReferenceMenu'
-import { InputReferenceChips } from '../../components/chat/InputReferenceChips'
 import ChatMessageList from '../../components/chat/ChatMessageList'
 import { ResourceMentionsProvider } from '../../components/ResourceMention'
 import type { ChatResourceMention } from '../../lib/chatResourceMentions'
@@ -50,14 +52,10 @@ import {
   type PromptHistoryDirection
 } from '../../lib/promptHistory'
 import {
-  appendInputReference,
   composeInputWithFileReferences,
-  composeInputWithInvocationReferences,
+  findActiveInputInvocationReference,
   mergeInputFileReferences,
-  mergeInputInvocationReferences,
-  parseInputInvocationReferences,
-  parseInputFileReferences,
-  type InputInvocationReference
+  parseInputFileReferences
 } from '../../lib/inputReferences'
 import {
   suggestedNextActionPlaceholderFromMessages,
@@ -81,17 +79,8 @@ export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
 const CloseIcon = PhiIcons.action.close
 
-function textInputFromEventTarget(
-  target: EventTarget | null
-): HTMLInputElement | HTMLTextAreaElement | null {
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-    return target
-  }
-  return null
-}
-
 function isTextInputAtHistoryBoundary(
-  inputElement: HTMLInputElement | HTMLTextAreaElement,
+  inputElement: ComposerTextEditorHandle,
   direction: PromptHistoryDirection
 ): boolean {
   const { selectionStart, selectionEnd, value } = inputElement
@@ -235,24 +224,18 @@ function ChatView({
   onJumpToNotebookCell,
   cwd = ''
 }: ViewProps): React.JSX.Element {
-  const messageResources = useMemo(
-    () =>
-      resourceMentions ??
-      skills.map((skill) => ({
-        kind: 'skill' as const,
-        id: skill.id,
-        name: skill.name,
-        icon: skill.icon
-      })),
-    [resourceMentions, skills]
-  )
+  const { resources: messageResources, details: agentDetails } = useChatResourceCatalog({
+    resources: resourceMentions,
+    skills,
+    agents: promptAgents
+  })
   const contextUsage = useContextUsage(
     contextUsageTarget,
     selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : null,
     isGenerating || contextCompacting,
     contextUsageRefreshKey
   )
-  const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null)
+  const inputRef = useRef<ComposerTextEditorHandle | null>(null)
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages])
   const promptHistoryKey = useMemo(() => promptHistory.join('\u0000'), [promptHistory])
   const promptHistoryCursorRef = useRef<number | null>(null)
@@ -277,36 +260,17 @@ function ChatView({
   const inputPlaceholder = suggestedNextAction ?? defaultInputPlaceholder
   const parsedComposerInput = useMemo(() => parseInputFileReferences(input), [input])
   const composerFileReferences = parsedComposerInput.references
-  const parsedInvocationInput = useMemo(
-    () => parseInputInvocationReferences(parsedComposerInput.body, skills, promptAgents),
-    [parsedComposerInput.body, promptAgents, skills]
+  const composerInputText = parsedComposerInput.body
+  const editableComposerTextFromInput = useCallback(
+    (value: string): string => parseInputFileReferences(value).body,
+    []
   )
-  const composerInvocationReferences = parsedInvocationInput.references
-  const composerInputText = parsedInvocationInput.body
 
   const resetPromptHistoryNavigation = useCallback((): void => {
     promptHistoryKeyRef.current = promptHistoryKey
     promptHistoryCursorRef.current = null
     promptHistoryDraftRef.current = ''
   }, [promptHistoryKey])
-  const composeComposerInput = useCallback(
-    (
-      fileReferences: string[],
-      invocationReferences: readonly InputInvocationReference[],
-      body: string
-    ): string =>
-      composeInputWithFileReferences(
-        fileReferences,
-        composeInputWithInvocationReferences(invocationReferences, body)
-      ),
-    []
-  )
-  const editableComposerTextFromInput = useCallback(
-    (value: string): string =>
-      parseInputInvocationReferences(parseInputFileReferences(value).body, skills, promptAgents)
-        .body,
-    [promptAgents, skills]
-  )
   const applyFileReferenceInput = useCallback(
     (nextValue: string, cursor: number): void => {
       resetPromptHistoryNavigation()
@@ -315,11 +279,7 @@ function ChatView({
         composerFileReferences,
         parsedNextValue.references
       )
-      const nextFullValue = composeComposerInput(
-        nextReferences,
-        composerInvocationReferences,
-        parsedNextValue.body
-      )
+      const nextFullValue = composeInputWithFileReferences(nextReferences, parsedNextValue.body)
       promptHistoryDraftRef.current = nextFullValue
       onInputChange(nextFullValue)
 
@@ -330,42 +290,25 @@ function ChatView({
         inputElement?.setSelectionRange(nextCursor, nextCursor)
       })
     },
-    [
-      composeComposerInput,
-      composerFileReferences,
-      composerInvocationReferences,
-      onInputChange,
-      resetPromptHistoryNavigation
-    ]
+    [composerFileReferences, onInputChange, resetPromptHistoryNavigation]
   )
   const applyInvocationReferenceInput = useCallback(
-    (nextBody: string, referenceText: string, cursor: number): void => {
+    (_nextBody: string, referenceText: string): void => {
+      const editor = inputRef.current
+      if (!editor) return
       resetPromptHistoryNavigation()
-      const parsedReference = parseInputInvocationReferences(referenceText, skills, promptAgents)
-      const nextValue = composeComposerInput(
-        composerFileReferences,
-        mergeInputInvocationReferences(composerInvocationReferences, parsedReference.references),
-        nextBody
+      const query = findActiveInputInvocationReference(editor.value, editor.selectionStart)
+      const insertion = inlineReferenceInsertion(
+        editor.value,
+        query?.start ?? editor.selectionStart,
+        query?.end ?? editor.selectionEnd,
+        referenceText
       )
-      promptHistoryDraftRef.current = nextValue
-      onInputChange(nextValue)
-
-      window.requestAnimationFrame(() => {
-        const inputElement = inputRef.current
-        inputElement?.focus({ preventScroll: true })
-        const nextCursor = Math.min(cursor, nextBody.length)
-        inputElement?.setSelectionRange(nextCursor, nextCursor)
-      })
+      editor.replaceRange(insertion.from, insertion.to, insertion.insert)
+      editor.setSelectionRange(insertion.cursor, insertion.cursor)
+      editor.focus({ preventScroll: true })
     },
-    [
-      composeComposerInput,
-      composerFileReferences,
-      composerInvocationReferences,
-      onInputChange,
-      promptAgents,
-      resetPromptHistoryNavigation,
-      skills
-    ]
+    [resetPromptHistoryNavigation]
   )
   const fileReferenceMenu = useInputFileReferenceMenu({
     input: composerInputText,
@@ -395,7 +338,7 @@ function ChatView({
 
     if (
       target.closest(
-        'button, a, input, textarea, select, [role="button"], [role="menuitem"], [aria-haspopup="true"]'
+        'button, a, input, textarea, select, [contenteditable="true"], .cm-editor, [role="button"], [role="menuitem"], [aria-haspopup="true"]'
       )
     ) {
       return
@@ -463,51 +406,30 @@ function ChatView({
   const insertInputReference = useCallback(
     (reference: string): void => {
       resetPromptHistoryNavigation()
-      const parsedReference = parseInputFileReferences(reference)
-      const parsedInvocationReference = parseInputInvocationReferences(
-        reference,
-        skills,
-        promptAgents
+      const parsed = parseInputFileReferences(reference)
+      if (parsed.references.length && !parsed.body) {
+        const next = composeInputWithFileReferences(
+          mergeInputFileReferences(composerFileReferences, parsed.references),
+          composerInputText
+        )
+        promptHistoryDraftRef.current = next
+        onInputChange(next)
+        window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
+        return
+      }
+      const editor = inputRef.current
+      if (!editor) return
+      const insertion = inlineReferenceInsertion(
+        editor.value,
+        editor.selectionStart,
+        editor.selectionEnd,
+        reference
       )
-      const nextValue =
-        parsedReference.references.length > 0 && !parsedReference.body
-          ? composeComposerInput(
-              mergeInputFileReferences(composerFileReferences, parsedReference.references),
-              composerInvocationReferences,
-              composerInputText
-            )
-          : parsedInvocationReference.references.length > 0 && !parsedInvocationReference.body
-            ? composeComposerInput(
-                composerFileReferences,
-                mergeInputInvocationReferences(
-                  composerInvocationReferences,
-                  parsedInvocationReference.references
-                ),
-                composerInputText
-              )
-            : appendInputReference(input, reference)
-      promptHistoryDraftRef.current = nextValue
-      onInputChange(nextValue)
-
-      window.requestAnimationFrame(() => {
-        const inputElement = inputRef.current
-        inputElement?.focus({ preventScroll: true })
-        const nextComposerText = editableComposerTextFromInput(nextValue)
-        inputElement?.setSelectionRange(nextComposerText.length, nextComposerText.length)
-      })
+      editor.replaceRange(insertion.from, insertion.to, insertion.insert)
+      editor.setSelectionRange(insertion.cursor, insertion.cursor)
+      editor.focus({ preventScroll: true })
     },
-    [
-      composeComposerInput,
-      composerFileReferences,
-      composerInputText,
-      composerInvocationReferences,
-      editableComposerTextFromInput,
-      input,
-      onInputChange,
-      promptAgents,
-      resetPromptHistoryNavigation,
-      skills
-    ]
+    [composerFileReferences, composerInputText, onInputChange, resetPromptHistoryNavigation]
   )
   const editUserMessage = useCallback(
     (content: string): void => {
@@ -534,51 +456,14 @@ function ChatView({
     (index: number): void => {
       resetPromptHistoryNavigation()
       const nextReferences = composerFileReferences.filter((_, itemIndex) => itemIndex !== index)
-      const nextValue = composeComposerInput(
-        nextReferences,
-        composerInvocationReferences,
-        composerInputText
-      )
+      const nextValue = composeInputWithFileReferences(nextReferences, composerInputText)
       promptHistoryDraftRef.current = nextValue
       onInputChange(nextValue)
       window.requestAnimationFrame(() => {
         inputRef.current?.focus({ preventScroll: true })
       })
     },
-    [
-      composeComposerInput,
-      composerFileReferences,
-      composerInputText,
-      composerInvocationReferences,
-      onInputChange,
-      resetPromptHistoryNavigation
-    ]
-  )
-  const removeInvocationReference = useCallback(
-    (index: number): void => {
-      resetPromptHistoryNavigation()
-      const nextInvocationReferences = composerInvocationReferences.filter(
-        (_, itemIndex) => itemIndex !== index
-      )
-      const nextValue = composeComposerInput(
-        composerFileReferences,
-        nextInvocationReferences,
-        composerInputText
-      )
-      promptHistoryDraftRef.current = nextValue
-      onInputChange(nextValue)
-      window.requestAnimationFrame(() => {
-        inputRef.current?.focus({ preventScroll: true })
-      })
-    },
-    [
-      composeComposerInput,
-      composerFileReferences,
-      composerInputText,
-      composerInvocationReferences,
-      onInputChange,
-      resetPromptHistoryNavigation
-    ]
+    [composerFileReferences, composerInputText, onInputChange, resetPromptHistoryNavigation]
   )
   const { isDragActive: composerDragActive, dragHandlers: composerDragHandlers } =
     useComposerFileDrop({
@@ -621,6 +506,7 @@ function ChatView({
         ...chatLayoutVariables(placement)
       }}
     >
+      {agentDetails}
       <ResourceMentionsProvider resources={messageResources}>
         <ChatMessageList
           messages={messages}
@@ -714,6 +600,7 @@ function ChatView({
               panelRef={inputAddPanelRef}
               skills={skills}
               promptAgents={promptAgents}
+              resources={messageResources}
               cwd={cwd}
               onPickFiles={onPickInputFiles}
               onInsertReference={insertInputReference}
@@ -758,42 +645,40 @@ function ChatView({
               variant="composer"
               onRemove={removeFileReference}
             />
-            <InputReferenceChips
-              references={composerInvocationReferences}
-              onRemove={removeInvocationReference}
-            />
             <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
-            <TextField
-              fullWidth
-              multiline
-              variant="standard"
-              minRows={1}
-              maxRows={8}
+            <ComposerTextEditor
+              key={scrollResetKey}
               inputRef={inputRef}
               value={composerInputText}
-              onChange={(event) => {
+              resources={messageResources}
+              onOpenWebUrl={onOpenWebUrl}
+              placeholder={inputPlaceholder}
+              placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
+              onChange={(value, cursor) => {
                 resetPromptHistoryNavigation()
-                fileReferenceMenu.onInputChanged(event.target)
-                invocationReferenceMenu.onInputChanged(event.target)
-                const nextValue = composeComposerInput(
-                  composerFileReferences,
-                  composerInvocationReferences,
-                  event.target.value
-                )
-                promptHistoryDraftRef.current = nextValue
-                onInputChange(nextValue)
+                const selection = { selectionStart: cursor }
+                fileReferenceMenu.onInputChanged(selection)
+                invocationReferenceMenu.onInputChanged(selection)
+                const next = composeInputWithFileReferences(composerFileReferences, value)
+                promptHistoryDraftRef.current = next
+                onInputChange(next)
               }}
-              onSelect={(event) => {
-                const inputElement = textInputFromEventTarget(event.target)
-                fileReferenceMenu.onInputCursorChanged(inputElement)
-                invocationReferenceMenu.onInputCursorChanged(inputElement)
+              onCursorChange={(cursor) => {
+                const selection = { selectionStart: cursor }
+                fileReferenceMenu.onInputCursorChanged(selection)
+                invocationReferenceMenu.onInputCursorChanged(selection)
               }}
-              onKeyDown={(event) => {
-                if (fileReferenceMenu.onKeyDown(event)) {
-                  return
+              onKeyDown={(event, editor) => {
+                const menuEvent = {
+                  key: event.key,
+                  nativeEvent: event,
+                  preventDefault: () => event.preventDefault()
                 }
-                if (invocationReferenceMenu.onKeyDown(event)) {
-                  return
+                if (fileReferenceMenu.onKeyDown(menuEvent)) {
+                  return true
+                }
+                if (invocationReferenceMenu.onKeyDown(menuEvent)) {
+                  return true
                 }
 
                 const acceptedSuggestion = suggestedNextActionToAccept(
@@ -803,7 +688,7 @@ function ChatView({
                     altKey: event.altKey,
                     metaKey: event.metaKey,
                     ctrlKey: event.ctrlKey,
-                    isComposing: event.nativeEvent.isComposing
+                    isComposing: event.isComposing
                   },
                   input,
                   suggestedNextAction
@@ -811,7 +696,7 @@ function ChatView({
                 if (acceptedSuggestion) {
                   event.preventDefault()
                   onInputChange(acceptedSuggestion)
-                  return
+                  return true
                 }
 
                 const historyDirection =
@@ -822,43 +707,33 @@ function ChatView({
                   !event.altKey &&
                   !event.metaKey &&
                   !event.ctrlKey &&
-                  !event.nativeEvent.isComposing
+                  !event.isComposing
                 ) {
-                  const inputElement = textInputFromEventTarget(event.target)
+                  const inputElement = editor
                   if (
                     inputElement &&
                     isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
                     navigatePromptHistory(historyDirection)
                   ) {
                     event.preventDefault()
-                    return
+                    return true
                   }
                 }
 
                 if (
                   event.key === 'Enter' &&
                   !event.shiftKey &&
-                  !event.nativeEvent.isComposing &&
+                  !event.isComposing &&
                   (canSend || canQueue) &&
                   (input.trim() || images.length > 0) &&
                   !isReadingPastedImage
                 ) {
                   event.preventDefault()
-                  event.currentTarget.closest('form')?.requestSubmit()
+                  const form = (event.target as HTMLElement).closest('form')
+                  form?.requestSubmit()
+                  return true
                 }
-              }}
-              placeholder={inputPlaceholder}
-              slotProps={{
-                htmlInput: {
-                  'data-phi-focus': 'chat-input',
-                  'data-phi-placeholder-kind': suggestedNextAction
-                    ? 'suggested-next-action'
-                    : 'default'
-                },
-                input: {
-                  disableUnderline: true,
-                  sx: { fontSize: '0.95rem', lineHeight: 1.6 }
-                }
+                return false
               }}
             />
             <Box

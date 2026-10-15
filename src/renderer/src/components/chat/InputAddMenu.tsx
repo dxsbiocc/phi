@@ -14,9 +14,12 @@ import { PhiIcons } from '../../icons'
 import {
   formatInputFileReferences,
   formatPromptAgentReference,
-  formatSkillPromptReference
+  formatSkillPromptReference,
+  formatComposerResourceReference,
+  uniqueEnabledInputSkills
 } from '../../lib/inputReferences'
 import type { PromptAgentSummary, SkillSummary } from '../../types'
+import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import { PromptAgentStatus, RemoteAgentTrustControl } from '../../features/agent/AgentTrustPanel'
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
@@ -120,6 +123,7 @@ export function InputAddPanel({
   panelRef,
   skills,
   promptAgents,
+  resources = [],
   cwd,
   onPickFiles,
   onInsertReference,
@@ -130,13 +134,14 @@ export function InputAddPanel({
   panelRef: Ref<HTMLDivElement>
   skills: SkillSummary[]
   promptAgents: PromptAgentSummary[]
+  resources?: readonly ChatResourceMention[]
   cwd: string
   onPickFiles?: () => Promise<string[]>
   onInsertReference: (reference: string) => void
   onTrustChanged?: () => Promise<void>
   onClose: () => void
 }): ReactNode {
-  const enabledSkills = useMemo(() => skills.filter((skill) => !skill.disabled), [skills])
+  const enabledSkills = useMemo(() => uniqueEnabledInputSkills(skills), [skills])
   const insertReference = useCallback(
     (reference: string): void => {
       onClose()
@@ -222,6 +227,32 @@ export function InputAddPanel({
           <InputAddEmptyState>暂无可引用 Skill</InputAddEmptyState>
         )}
       </InputAddGroup>
+      {(['wrapper', 'mcp', 'plugin'] as const).map((kind) => {
+        const candidates = resources.filter((resource) => resource.kind === kind)
+        if (!candidates.length) return null
+        return (
+          <InputAddGroup
+            key={kind}
+            title={{ wrapper: 'Wrapper', mcp: 'Connector', plugin: '插件' }[kind]}
+          >
+            {candidates.map((resource) => (
+              <InputAddMenuRow
+                key={resource.id}
+                icon={
+                  <ResourceIcon
+                    icon={resource.icon}
+                    kind={resource.kind}
+                    size={24}
+                    fallbackSize={18}
+                  />
+                }
+                primary={resource.name}
+                onClick={() => insertReference(formatComposerResourceReference(resource))}
+              />
+            ))}
+          </InputAddGroup>
+        )
+      })}
     </Paper>
   )
 }
@@ -238,12 +269,12 @@ export function InputAddControl({
   onToggle: () => void
 }): ReactNode {
   return (
-    <Tooltip title="添加文件、智能体或 Skill" enterDelay={400}>
+    <Tooltip title="添加文件和资源引用" enterDelay={400}>
       <IconButton
         ref={buttonRef}
         size="small"
         type="button"
-        aria-label="添加文件、智能体或 Skill"
+        aria-label="添加文件和资源引用"
         aria-controls={open ? controls : undefined}
         aria-expanded={open}
         aria-haspopup="menu"

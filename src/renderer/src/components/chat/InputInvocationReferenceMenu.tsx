@@ -1,4 +1,5 @@
 import { Box, ListItemButton, ListItemIcon, ListItemText, Paper, Typography } from '@mui/material'
+import { useEffect, useRef } from 'react'
 import type { ResourceIconRef } from '../../../../shared/resourceIconTypes'
 import type { InputInvocationReferenceKind } from '../../lib/inputReferences'
 import type { PromptAgentSummary } from '../../types'
@@ -111,8 +112,15 @@ export function InputInvocationReferenceMenu({
   onSelect,
   onTrustChanged
 }: InputInvocationReferenceMenuProps): React.JSX.Element {
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    menuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [highlightedIndex, state.candidates])
+
   return (
     <Paper
+      ref={menuRef}
       variant="outlined"
       role="listbox"
       aria-label="引用 Skill 或智能体"

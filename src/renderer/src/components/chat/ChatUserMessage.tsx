@@ -1,4 +1,5 @@
 import { Box, IconButton, Typography } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
 import { parseInputFileReferences } from '../../lib/inputReferences'
 import type { ChatMessage } from '../../types'
@@ -84,8 +85,9 @@ export function ChatUserMessage({
               minWidth: 0,
               px: 2,
               py: 1.25,
-              bgcolor: 'primary.main',
-              color: 'background.default',
+              bgcolor: (theme) =>
+                alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.22 : 0.12),
+              color: 'text.primary',
               borderRadius: '18px'
             }}
           >

@@ -1,5 +1,6 @@
 import { absoluteWorkspacePath } from './workspacePaths'
 import type { FileTreeEntry, PromptAgentSummary, SkillSummary } from '../types'
+import type { ChatResourceMention } from './chatResourceMentions'
 
 export type InputFileReferenceQuery = {
   start: number
@@ -18,6 +19,13 @@ export type InputInvocationReferenceQuery = {
 export type InputReferenceReplacement = {
   value: string
   cursor: number
+}
+
+export type InputReferenceCursor = { selectionStart: number | null }
+export type InputReferenceKeyboardEvent = {
+  key: string
+  nativeEvent: { isComposing: boolean }
+  preventDefault: () => void
 }
 
 export type ParsedInputFileReferences = {
@@ -510,6 +518,24 @@ function inputFileReferencePathSegments(path: string): string[] {
 
 export function formatSkillPromptReference(skill: Pick<SkillSummary, 'name'>): string {
   return `$${skill.name}`
+}
+
+export function formatComposerResourceReference(
+  resource: Pick<ChatResourceMention, 'kind' | 'id'>
+): string {
+  return `${resource.kind}://${encodeURIComponent(resource.id)}`
+}
+
+/** Source paths can differ while inserting the same name-only skill invocation. */
+export function uniqueEnabledInputSkills(skills: readonly SkillSummary[]): SkillSummary[] {
+  const seen = new Set<string>()
+  return skills.filter((skill) => {
+    if (skill.disabled) return false
+    const reference = formatSkillPromptReference(skill)
+    if (seen.has(reference)) return false
+    seen.add(reference)
+    return true
+  })
 }
 
 export function formatPromptAgentReference(
