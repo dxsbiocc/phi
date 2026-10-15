@@ -19,6 +19,7 @@ import type {
   BrowserWorkspaceRegistration
 } from './browser-workspace-registry'
 import type { BrowserPolicyContext } from './browser-policy'
+import type { BrowserToolDispatchControl } from '../agent/browser/browser-tool-host'
 
 const MAX_ID_BYTES = 256
 const MAX_ORIGIN_ID_BYTES = 512
@@ -415,15 +416,30 @@ export class BrowserIpcCoordinator {
     })
   }
 
-  async executeAgent(input: unknown, signal?: AbortSignal): Promise<BrowserOutcome> {
+  async executeAgent(
+    input: unknown,
+    signal?: AbortSignal,
+    control?: BrowserToolDispatchControl
+  ): Promise<BrowserOutcome> {
     return this.#safe(async () => {
+      control?.assertCurrent()
+      if (control) signal?.throwIfAborted()
       if (!isRecord(input)) return invalidRequest()
       const originSessionId = boundedString(input.originSessionId, MAX_ORIGIN_ID_BYTES)
       const runId = boundedString(input.runId, MAX_ID_BYTES)
       const toolCallId = boundedString(input.toolCallId, MAX_ID_BYTES)
       const command = parseBrowserCommand(input.command)
+      if (control && (runId !== control.runId || command.type === 'typeText'))
+        return invalidRequest()
       const session = safeSession(this.#resolveAgentSession(originSessionId))
       const workspace = await this.#workspace(session)
+      control?.assertCurrent()
+      if (control) signal?.throwIfAborted()
+      if (control) {
+        const latest = safeSession(this.#resolveAgentSession(originSessionId))
+        if (JSON.stringify(latest) !== JSON.stringify(session))
+          throw new BrowserIpcError('Expert browser session changed during selection')
+      }
       return workspace.execute(
         { kind: 'agent', sessionId: session.sessionId, runId, toolCallId },
         command,

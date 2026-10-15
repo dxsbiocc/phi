@@ -9,6 +9,7 @@ import {
 } from './rpc-native-sse'
 import { repairNativeTerminal } from './rpc-native-repair'
 import { projectNativeWireBody } from './rpc-native-wire'
+import { RPC_CHILD_MODEL_HEADER } from './rpc-child-model-authority'
 
 export interface TrustedNativeStreamScope {
   readonly generation: number
@@ -16,6 +17,8 @@ export interface TrustedNativeStreamScope {
   readonly endpoint: string
   readonly models: readonly { readonly provider: string; readonly id: string }[]
   readonly signal?: AbortSignal
+  /** Launcher-owned, evaluated for each exact native POST, never taken from SDK request input. */
+  readonly privateRequestHeaders?: () => Readonly<Record<string, string>> | undefined
   isActive(): boolean
 }
 function abortError(): Error {
@@ -42,7 +45,9 @@ export function validateNativeStreamScope(scope: TrustedNativeStreamScope): void
   integrity(
     Number.isSafeInteger(scope.generation) &&
       scope.generation > 0 &&
-      typeof scope.isActive === 'function'
+      typeof scope.isActive === 'function' &&
+      (scope.privateRequestHeaders === undefined ||
+        typeof scope.privateRequestHeaders === 'function')
   )
   integrity(typeof scope.endpoint === 'string')
   let url: URL
@@ -145,6 +150,25 @@ export function createNativeStreamIntegrityAdapter(
           const declaredHeaders = new Headers(
             init?.headers ?? (input instanceof Request ? input.headers : undefined)
           )
+          // Model/provider headers cannot impersonate another live child, even
+          // when this installation represents Main and has no child authority.
+          integrity(
+            !declaredHeaders.has(RPC_CHILD_MODEL_HEADER) &&
+              !(input instanceof Request && input.headers.has(RPC_CHILD_MODEL_HEADER))
+          )
+          const privateHeaders = scope.privateRequestHeaders?.()
+          if (privateHeaders) {
+            const names = new Set<string>()
+            for (const [name, value] of Object.entries(privateHeaders)) {
+              integrity(typeof value === 'string')
+              const normalized = new Headers([[name, value]])
+              const key = [...normalized.keys()][0]
+              integrity(key && !names.has(key) && !declaredHeaders.has(key))
+              names.add(key)
+              declaredHeaders.set(key, value)
+            }
+            requestHeaders = declaredHeaders
+          }
           if (declaredHeaders.has('content-length')) {
             // Derive the projected body's length without changing ordinary
             // header objects or the gateway's actual Authorization header.

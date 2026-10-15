@@ -1,6 +1,21 @@
 import type { PhiTool } from '../engine/types'
 
-import { isFinalAgentRunState, type AgentRunRegistry, type AgentRunSnapshot } from './registry'
+import {
+  isFinalAgentRunState,
+  type AgentRunSnapshot,
+  type AgentWaitOptions,
+  type AgentWaitResult
+} from './registry'
+
+/** Public control surface shared by the synchronous local registry and the owned RPC adapter. */
+export interface AgentRunToolRegistry {
+  get(id: string): AgentRunSnapshot | undefined | Promise<AgentRunSnapshot | undefined>
+  list(): readonly AgentRunSnapshot[] | Promise<readonly AgentRunSnapshot[]>
+  stop(id: string): boolean | Promise<boolean>
+  markReported(id: string): boolean | void | Promise<boolean | void>
+  steer(id: string, message: string): Promise<void>
+  wait(ids: string[] | undefined, options: AgentWaitOptions): Promise<AgentWaitResult>
+}
 
 const DEFAULT_WAIT_SECONDS = 120
 const MAX_WAIT_SECONDS = 600
@@ -106,7 +121,7 @@ function tool(
  * them, redirect one mid-flight, or cancel it. They only ever act on runs that
  * this conversation started through a delegation tool.
  */
-export function buildAgentRunTools(registry: AgentRunRegistry): PhiTool[] {
+export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
   const status = tool(
     'agent_status',
     'Shows the agent runs of this conversation (id, agent, state, what each is doing). Pass `id` to see one run in full, including its report once it has finished.',
@@ -120,12 +135,12 @@ export function buildAgentRunTools(registry: AgentRunRegistry): PhiTool[] {
       const now = Date.now()
       const id = stringParam(params, 'id')
       if (id) {
-        const run = registry.get(id)
+        const run = await registry.get(id)
         if (!run) return errorResult(`Unknown run: ${id}`)
-        registry.markReported(id)
+        await registry.markReported(id)
         return text(withReport(run, now))
       }
-      const runs = registry.list()
+      const runs = await registry.list()
       if (runs.length === 0) return text('No agent runs in this conversation yet.')
       return text(runs.map((run) => describeRun(run, now)).join('\n'))
     }
@@ -165,7 +180,7 @@ export function buildAgentRunTools(registry: AgentRunRegistry): PhiTool[] {
       if (result.runs.length === 0) return text('There are no unfinished agent runs to wait for.')
 
       const now = Date.now()
-      for (const run of result.runs) registry.markReported(run.id)
+      for (const run of result.runs) await registry.markReported(run.id)
       const lines = result.runs.map((run) => withReport(run, now))
       const pending = result.runs.filter((run) => !isFinalAgentRunState(run.state))
       if (pending.length > 0) {
@@ -213,9 +228,10 @@ export function buildAgentRunTools(registry: AgentRunRegistry): PhiTool[] {
     async (params) => {
       const id = stringParam(params, 'id')
       if (!id) return errorResult('Missing required parameter: id')
-      const run = registry.get(id)
+      const run = await registry.get(id)
       if (!run) return errorResult(`Unknown run: ${id}`)
-      if (!registry.stop(id)) return errorResult(`Run ${id} has already finished (${run.state}).`)
+      if (!(await registry.stop(id)))
+        return errorResult(`Run ${id} has already finished (${run.state}).`)
       return text(`Stopping ${id} (${run.agent}).`)
     }
   )

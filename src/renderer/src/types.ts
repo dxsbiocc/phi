@@ -47,6 +47,7 @@ import type { McpRendererApi } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type { RuntimeRecoveryApi } from '../../shared/runtimeRecoveryTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
 export type {
   HomeActivityDay,
@@ -804,6 +805,9 @@ export interface RendererApi
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
+  getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
+  resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
+  continueRuntimeFromSummary: RuntimeRecoveryApi['continueRuntimeFromSummary']
   forkSession: (
     sourceId: string,
     eventId: string

@@ -4,7 +4,7 @@ import {
   RemoteEnvironmentService,
   type RemoteEnvironmentServiceOptions
 } from './environment-service'
-import { RemoteSkillService } from './skill-service'
+import { RemoteSkillService, type RemoteSkillResourceOwner } from './skill-service'
 import { openRemoteRuntimeWorkspace, type RemoteRuntimeTarget } from './workspace'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
@@ -12,6 +12,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 export interface RemoteRuntimeDispatchControl {
   signal?: AbortSignal
   beforeDispatch(): void
+  readonly resourceOwner?: RemoteSkillResourceOwner
 }
 
 export interface RemoteRuntimeControllerOptions {
@@ -73,7 +74,13 @@ export class RemoteRuntimeController {
         options.listSkills(
           runtimeSessionId,
           runtimeSessionId ? this.targets.get(runtimeSessionId) : undefined
-        )
+        ),
+      resourceOwner: () => {
+        const control = this.controls.getStore()
+        control?.signal?.throwIfAborted()
+        control?.beforeDispatch()
+        return control?.resourceOwner
+      }
     })
   }
 
@@ -92,7 +99,7 @@ export class RemoteRuntimeController {
   ): ReturnType<RemoteSkillService['run']> {
     this.requireTarget(params)
     return control
-      ? this.controls.run(control, () => this.skills.run(params))
+      ? this.controls.run(this.snapshotControl(control), () => this.skills.run(params))
       : this.skills.run(params)
   }
 
@@ -102,7 +109,7 @@ export class RemoteRuntimeController {
   ): ReturnType<RemoteSkillService['scriptTool']> {
     this.requireTarget(params)
     return control
-      ? this.controls.run(control, () => this.skills.scriptTool(params))
+      ? this.controls.run(this.snapshotControl(control), () => this.skills.scriptTool(params))
       : this.skills.scriptTool(params)
   }
 
@@ -112,7 +119,7 @@ export class RemoteRuntimeController {
   ): ReturnType<RemoteEnvironmentService['request']> {
     this.requireTarget(params)
     return control
-      ? this.controls.run(control, () => this.environments.request(params))
+      ? this.controls.run(this.snapshotControl(control), () => this.environments.request(params))
       : this.environments.request(params)
   }
 
@@ -122,12 +129,42 @@ export class RemoteRuntimeController {
   ): ReturnType<RemoteEnvironmentService['bindSession']> {
     this.requireTarget(params)
     return control
-      ? this.controls.run(control, () => this.environments.bindSession(params))
+      ? this.controls.run(this.snapshotControl(control), () =>
+          this.environments.bindSession(params)
+        )
       : this.environments.bindSession(params)
   }
 
-  approvalFor(toolName: string, input: unknown): 'exec' | 'read' | 'write' | undefined {
-    return this.skills.approvalFor(toolName, input)
+  approvalFor(
+    toolName: string,
+    input: unknown,
+    control?: RemoteRuntimeDispatchControl
+  ): 'exec' | 'read' | 'write' | undefined {
+    return control
+      ? this.controls.run(this.snapshotControl(control), () =>
+          this.skills.approvalFor(toolName, input)
+        )
+      : this.skills.approvalFor(toolName, input)
+  }
+
+  private snapshotControl(control: RemoteRuntimeDispatchControl): RemoteRuntimeDispatchControl {
+    const owner = control.resourceOwner
+    if (!owner) return control
+    if (
+      typeof owner.toolOwner !== 'string' ||
+      !owner.toolOwner ||
+      !Array.isArray(owner.allowedSkills) ||
+      owner.allowedSkills.some((skill) => typeof skill !== 'string' || !skill)
+    )
+      throw new Error('远程资源请求缺少可信工具归属。')
+    return Object.freeze({
+      signal: control.signal,
+      beforeDispatch: control.beforeDispatch.bind(control),
+      resourceOwner: Object.freeze({
+        toolOwner: owner.toolOwner,
+        allowedSkills: Object.freeze([...owner.allowedSkills])
+      })
+    })
   }
 
   private requireTarget(params: unknown): RemoteRuntimeTarget {

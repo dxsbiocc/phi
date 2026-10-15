@@ -68,7 +68,7 @@ test('child sidecar snapshots complete known native profiles and rejects identit
   assert.throws(() => validateRpcChildRuntimeConfig({ ...config(), generation: 2 }, identity))
   assert.throws(() => validateRpcChildRuntimeConfig(config(), identity, [config().capability]))
   for (const patch of [
-    { tools: [{ name: 'edit', site: 'native' }] },
+    { tools: [{ name: 'task', site: 'native' }] },
     { blocking: false },
     { skills: ['unknown'] },
     { thinkingLevel: undefined }
@@ -77,6 +77,12 @@ test('child sidecar snapshots complete known native profiles and rejects identit
     Object.assign(value.profiles[0].definition, patch)
     assert.throws(() => validateRpcChildRuntimeConfig(value, identity))
   }
+  const edit = config()
+  Object.assign(edit.profiles[0].definition, { tools: [{ name: 'edit', site: 'native' }] })
+  assert.equal(
+    validateRpcChildRuntimeConfig(edit, identity).profiles[0].definition.tools[0].name,
+    'edit'
+  )
   const unknown = config()
   Object.assign(unknown.profiles[0].model, { contextWindow: null })
   assert.throws(() => validateRpcChildRuntimeConfig(unknown, identity))

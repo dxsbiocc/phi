@@ -235,6 +235,7 @@ export interface RuntimeAgentSession {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void
   prompt(text: string, options?: RuntimePromptOptions): Promise<void>
   getContextUsage(): Promise<ContextUsageSnapshot | null>
+  hasActiveAgentRuns?(): boolean
   compact(control?: RuntimeSelectionControl): Promise<ContextCompactionSummary>
   setAutoCompactionSettings(
     overrides: AutoCompactionOverrides,
@@ -289,6 +290,9 @@ export type CreateAgentSessionOptions = {
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
+  remoteRecovery?: {
+    replacementModel?: { providerId: string; modelId: string }
+  }
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -912,6 +916,10 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     })
   }
 
+  hasActiveAgentRuns(): boolean {
+    return this.engine.sessions.hasActiveAgentRuns?.(this.sessionId) ?? false
+  }
+
   async compact(control?: RuntimeSelectionControl): Promise<ContextCompactionSummary> {
     control?.assertCurrent()
     await this.ensureLive()
@@ -1111,8 +1119,11 @@ export function readAutoCompactionDefaults(
 }
 
 export async function createRuntimeAgentSession(
-  options: CreateAgentSessionOptions = {}
+  options: CreateAgentSessionOptions = {},
+  control?: RuntimeSelectionControl
 ): Promise<CreateAgentSessionResult> {
+  control?.assertCurrent()
+  control?.signal?.throwIfAborted()
   const cwd = options.cwd ?? process.cwd()
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const engine = getPhiEngine()
@@ -1144,9 +1155,19 @@ export async function createRuntimeAgentSession(
     memory: options.memory,
     remoteProject: options.remoteProject,
     remoteProjectMcpServers: options.remoteProjectMcpServers,
-    personaMarkdown: options.personaMarkdown
+    personaMarkdown: options.personaMarkdown,
+    remoteRecovery: options.remoteRecovery
   }
-  const created = await engine.sessions.create(createParams)
+  control?.assertCurrent()
+  control?.signal?.throwIfAborted()
+  const created = await engine.sessions.create(createParams, control)
+  try {
+    control?.assertCurrent()
+    control?.signal?.throwIfAborted()
+  } catch (error) {
+    await engine.sessions.dispose({ sessionId: created.sessionId }).catch(() => undefined)
+    throw error
+  }
   // Same params with the session's current model/thinking level, reopening its file when
   // one exists so the conversation carries over into a replacement worker.
   const recreate = async (current: RuntimeAgentSession): Promise<WorkerSessionState> => {

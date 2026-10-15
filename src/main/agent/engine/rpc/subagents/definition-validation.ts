@@ -1,6 +1,7 @@
 import { posix } from 'node:path'
 import { isValidPhiAgentName, type PhiAgentDefinition } from '../../../agents/definition'
 import { parseEnvironmentRef } from '../../../envs/contract'
+import { validateChildEnvironmentExecution } from '../../phi-extension/lib/rpc-child-resources'
 import type { ModelGatewayModelRef } from '../../model-gateway-types'
 import type {
   RpcAgentEnvironmentDescriptor,
@@ -214,7 +215,10 @@ export function snapshotEnvironment(
     environmentId: identifier(own(value, 'environmentId'), 'environment ID'),
     lockSha256,
     status: 'ready',
-    binding: resolvedBinding
+    binding: resolvedBinding,
+    ...(own(value, 'execution') === undefined
+      ? {}
+      : { execution: validateChildEnvironmentExecution(own(value, 'execution')) })
   }
 }
 

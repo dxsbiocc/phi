@@ -26,10 +26,17 @@ import {
   parseRpcChildRequest
 } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-protocol'
 import type { SafeModelDescriptor } from '../../src/main/agent/engine/model-gateway-types'
-import { childStream as stream, childBatchStream } from './rpcChildAuthorityProvider'
+import {
+  childStream as stream,
+  childBatchStream,
+  type ChildProviderToolCall
+} from './rpcChildAuthorityProvider'
 import { compileOptions, definition } from './rpcAgentDefinitionFixture'
 
 export interface ChildCliOptions {
+  readonly nativeSequence?: (cwd: string) => readonly ChildProviderToolCall[]
+  readonly nativeTools?: readonly string[]
+  readonly editMode?: 'replace'
   readonly decision?: (
     request: Readonly<ToolApprovalRequest>,
     signal: AbortSignal
@@ -90,6 +97,7 @@ export async function childAuthorityCli(options: ChildCliOptions = {}): Promise<
     journalDirectory = join(root, 'history')
   const tool =
     options.batch === 'write' ? 'write' : options.batch ? 'bash' : (options.tool ?? 'write')
+  const sequence = options.nativeSequence ? structuredClone(options.nativeSequence(cwd)) : undefined
   let journal = ''
   const frames: RpcFrame[] = [],
     requests: Request[] = [],
@@ -123,12 +131,17 @@ export async function childAuthorityCli(options: ChildCliOptions = {}): Promise<
         definition({
           name: 'Authority',
           systemPrompt: 'PRIVATE_TRUSTED_CHILD',
-          tools: ['write', ...(tool !== 'write' ? [tool] : [])],
+          tools: sequence
+            ? [...new Set(sequence.map((call) => call.name))]
+            : ['write', ...(tool !== 'write' ? [tool] : [])],
           skills: [],
           thinkingLevel: options.thinkingLevel ?? 'off'
         })
       ],
-      availableTools: ['write', 'read', 'bash'].map((name) => ({ name, site: 'native' })),
+      availableTools: (options.nativeTools ?? ['write', 'read', 'bash']).map((name) => ({
+        name,
+        site: 'native'
+      })),
       availableModels: [trustedModel],
       availableSkills: [],
       parentThinkingLevel: 'off'
@@ -165,6 +178,9 @@ export async function childAuthorityCli(options: ChildCliOptions = {}): Promise<
             'outer-authority-task'
           )
         else stream(res)
+      } else if (sequence) {
+        const call = sequence[childHits++]
+        call ? stream(res, call.name, call.args, call.id) : stream(res)
       } else if (++childHits === 1) {
         if (options.batch) {
           childBatchStream(
@@ -263,6 +279,7 @@ export async function childAuthorityCli(options: ChildCliOptions = {}): Promise<
   await writeFile(
     join(agentDir, 'config.yml'),
     JSON.stringify({
+      ...(options.editMode ? { edit: { mode: options.editMode } } : {}),
       compaction: { enabled: false },
       mcp: { enableProjectConfig: false },
       memory: { enabled: false },

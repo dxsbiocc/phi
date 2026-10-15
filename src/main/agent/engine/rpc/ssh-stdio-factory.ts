@@ -63,6 +63,8 @@ export interface RpcRuntimePreparationResult {
     'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep' | 'task'
   )[]
   readonly childRuntimeRequired?: boolean
+  readonly childBackgroundEnabled?: boolean
+  readonly childParallelEnabled?: boolean
   /** Exact compiler-issued foreground names; no remote Markdown discovery grants this policy. */
   readonly foregroundChildNativeNames?: readonly string[]
 }
@@ -71,7 +73,14 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
   const refused = (): never => {
     throw new Error('Invalid composed native tool roster')
   }
-  const fields = ['nativeTools', 'childRuntimeRequired', 'foregroundChildNativeNames', 'compaction']
+  const fields = [
+    'nativeTools',
+    'childRuntimeRequired',
+    'foregroundChildNativeNames',
+    'compaction',
+    'childBackgroundEnabled',
+    'childParallelEnabled'
+  ]
   if (
     !value ||
     typeof value !== 'object' ||
@@ -95,11 +104,19 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
     nativeTools.includes('task') !== (raw.childRuntimeRequired === true)
   )
     return refused()
+  for (const field of ['childBackgroundEnabled', 'childParallelEnabled'] as const)
+    if (
+      raw[field] !== undefined &&
+      (typeof raw[field] !== 'boolean' || raw.childRuntimeRequired !== true)
+    )
+      return refused()
   const names = Array.isArray(raw.foregroundChildNativeNames)
     ? [...raw.foregroundChildNativeNames]
     : raw.foregroundChildNativeNames
   const foregroundName = (name: unknown): name is string =>
-    typeof name === 'string' && name.length <= 128 && /^phi_[a-f0-9]{24}_[0-9]+_fg$/u.test(name)
+    typeof name === 'string' &&
+    name.length <= 128 &&
+    /^phi_[a-f0-9]{24}_[0-9]+_(?:fg|bg)$/u.test(name)
   if (
     names !== undefined &&
     (!Array.isArray(names) ||
@@ -120,6 +137,12 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
     ...(raw.childRuntimeRequired === undefined
       ? {}
       : { childRuntimeRequired: raw.childRuntimeRequired }),
+    ...(raw.childBackgroundEnabled === undefined
+      ? {}
+      : { childBackgroundEnabled: raw.childBackgroundEnabled as boolean }),
+    ...(raw.childParallelEnabled === undefined
+      ? {}
+      : { childParallelEnabled: raw.childParallelEnabled as boolean }),
     ...(Array.isArray(names) ? { foregroundChildNativeNames: Object.freeze([...names]) } : {})
   })
 }
@@ -358,9 +381,12 @@ private_dir ${q(agentDir)}`,
             ...(options.prepareRuntime ? { tools: { xdev: false } } : {}),
             ...(runtimePreparation?.childRuntimeRequired === true
               ? {
-                  async: { enabled: false },
+                  edit: { mode: 'replace' },
+                  bash: { autoBackground: { enabled: false } },
+                  async: { enabled: runtimePreparation.childBackgroundEnabled === true },
                   task: {
-                    batch: false,
+                    maxConcurrency: 4,
+                    batch: runtimePreparation.childParallelEnabled === true,
                     structured: false,
                     speculativeLaunch: false,
                     enableEffort: false,

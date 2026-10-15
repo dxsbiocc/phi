@@ -37,6 +37,37 @@ function sourceFile(path: string, content: string): PhiExtensionFile {
   return { path, sha256: hash(bytes), bytes }
 }
 
+/** Resolve only selected trusted expert selectors before publishing the bounded gateway lease. */
+export async function resolveRpcAgentModelRefs(
+  definitions: readonly import('../../../agents/definition').PhiAgentDefinition[],
+  availableModels: readonly import('../../model-gateway-types').ModelGatewayModelRef[],
+  parentModel: import('../../model-gateway-types').ModelGatewayModelRef
+): Promise<readonly import('../../model-gateway-types').ModelGatewayModelRef[]> {
+  if (definitions.length > RPC_AGENT_MAX_DEFINITIONS)
+    throw new Error('Invalid selected child model catalogue')
+  const agents = definitions.map(snapshotDefinition),
+    models = availableModels.map(modelRef),
+    parent = modelRef(parentModel)
+  const catalogue = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]))
+  if (!catalogue.has(`${parent.provider}/${parent.id}`))
+    throw new Error('Child parent model is unavailable')
+  const selected = new Map([[`${parent.provider}/${parent.id}`, parent]])
+  for (const agent of agents) {
+    const choice = await selectAgentModel(
+      agent.name,
+      agent.model,
+      (selector) => catalogue.get(selector),
+      parent
+    )
+    if (choice.warning || !choice.model)
+      throw new Error('Declared child model is unavailable; parent fallback is refused')
+    selected.set(`${choice.model.provider}/${choice.model.id}`, choice.model)
+  }
+  if (selected.size > 256)
+    throw new Error('Selected child models exceed the existing gateway budget')
+  return Object.freeze([...selected.values()].map((model) => Object.freeze({ ...model })))
+}
+
 /**
  * Compile an already trusted desktop snapshot into private generation inputs.
  * These files grant no authority: root must attest them, guard discovery shadowing,
@@ -59,6 +90,14 @@ export async function compileRpcAgentDefinitions(
   if (!Array.isArray(options.availableModels) || options.availableModels.length > 4096)
     throw new Error('Invalid RPC agent available models')
   const models = options.availableModels.map(modelRef)
+  const reasoning = new Map(
+    options.availableModels.map((model, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(model, 'reasoning')
+      if (!descriptor || !('value' in descriptor) || typeof descriptor.value !== 'boolean')
+        throw new Error('Invalid RPC agent model reasoning metadata')
+      return [JSON.stringify(models[index]), descriptor.value] as const
+    })
+  )
   const modelKey = (model: { provider: string; id: string }): string =>
     `${model.provider}/${model.id}`
   const byModel = new Map(models.map((model) => [modelKey(model), model]))
@@ -90,6 +129,13 @@ export async function compileRpcAgentDefinitions(
       parent
     )
     if (selection.warning) warnings.push(selection.warning)
+    const chosenModel = selection.model ?? parent
+    const supportsThinking = reasoning.get(JSON.stringify(chosenModel)) === true
+    if (!supportsThinking && agent.thinkingLevel && agent.thinkingLevel !== 'off')
+      throw new Error('RPC agent thinking level is unsupported by its selected model')
+    const effectiveThinkingLevel = supportsThinking
+      ? (agent.thinkingLevel ?? parentThinkingLevel)
+      : 'off'
     let environment: RpcAgentEnvironmentDescriptor | undefined
     if (agent.environment) {
       if (!resolveEnvironment)
@@ -106,7 +152,6 @@ export async function compileRpcAgentDefinitions(
         binding
       )
     }
-    const effectiveThinkingLevel = agent.thinkingLevel ?? parentThinkingLevel
     const profile = {
       phiName: agent.name,
       tools: declaredTools,

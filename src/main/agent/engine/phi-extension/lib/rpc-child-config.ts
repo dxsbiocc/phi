@@ -1,3 +1,4 @@
+import { RPC_CHILD_CONCURRENCY_LIMIT } from './rpc-task-capacity'
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   closeSync,
@@ -12,12 +13,20 @@ import { dirname, join } from 'node:path'
 import { createApprovalEnvelope, approvalIdentifier } from './rpc-approval-protocol'
 import { executionCapability } from './rpc-execution-protocol'
 import {
+  validateChildResourceCatalog,
+  childProfileResourceDigest,
+  type RpcChildSkillResource,
+  type RpcChildResourceCatalog
+} from './rpc-child-resources'
+import {
   sameRpcChildModel,
   sameRpcChildRoute,
   snapshotRpcChildProfile,
   validateRpcChildRoot,
   type RpcChildRootScope,
-  type RpcChildTrustedProfile
+  type RpcChildTrustedProfile,
+  validateRpcChildModel,
+  type RpcChildModelDescriptor
 } from './rpc-child-protocol'
 
 export const RPC_CHILD_RUNTIME_FILE = 'child-runtime.json'
@@ -32,6 +41,8 @@ export interface RpcChildConfigIdentity {
   readonly generation: number
 }
 export interface RpcChildRuntimeConfig extends RpcChildConfigIdentity {
+  readonly resources?: RpcChildResourceCatalog
+  readonly parentModel?: RpcChildModelDescriptor
   readonly schema: 1
   readonly manifestHash: string
   readonly manifestBinding: {
@@ -43,7 +54,12 @@ export interface RpcChildRuntimeConfig extends RpcChildConfigIdentity {
   readonly capability: string
   readonly profiles: readonly RpcChildTrustedProfile[]
   readonly files: readonly { readonly path: string; readonly sha256: string }[]
-  readonly policy: { readonly mode: 'foreground-native'; readonly taskShape: 'single' }
+  readonly policy: {
+    readonly mode: 'foreground-native'
+    readonly taskShape: 'single'
+    readonly allowBackground?: boolean
+    readonly allowParallel?: boolean
+  }
 }
 export interface RpcChildAttestation {
   readonly type: 'phi_rpc_child_attestation'
@@ -65,8 +81,36 @@ export function validateRpcForegroundTaskInput(
   input: unknown,
   config: RpcChildRuntimeConfig,
   options: { readonly allowIntent?: boolean } = {}
-): Readonly<RpcForegroundTaskInput> {
+):
+  | Readonly<RpcForegroundTaskInput>
+  | Readonly<{ context: string; tasks: readonly Readonly<RpcForegroundTaskInput>[] }> {
   const raw = snapshot(input, config)
+  if (Object.hasOwn(raw, 'tasks')) {
+    if (
+      config.policy.allowParallel !== true ||
+      Object.keys(raw).some(
+        (key) => !['context', 'tasks', ...(options.allowIntent ? ['i'] : [])].includes(key)
+      ) ||
+      typeof raw.context !== 'string' ||
+      !raw.context.trim() ||
+      raw.context.length > 65536 ||
+      !Array.isArray(raw.tasks) ||
+      raw.tasks.length < 1 ||
+      raw.tasks.length > RPC_CHILD_CONCURRENCY_LIMIT ||
+      (raw.i !== undefined && (typeof raw.i !== 'string' || raw.i.length > 512))
+    )
+      throw new Error('Native task batch is outside the trusted profile')
+    const tasks = raw.tasks.map((task) =>
+      validateRpcForegroundTaskInput(task, {
+        ...config,
+        policy: { ...config.policy, allowParallel: false }
+      })
+    ) as Readonly<RpcForegroundTaskInput>[]
+    const names = tasks.flatMap((task) => (task.name ? [task.name.toLowerCase()] : []))
+    if (new Set(names).size !== names.length)
+      throw new Error('Native task batch has duplicate names')
+    return Object.freeze({ context: raw.context, tasks: Object.freeze(tasks) })
+  }
   if (
     Object.keys(raw).some(
       (key) =>
@@ -137,7 +181,9 @@ export function validateRpcChildRuntimeConfig(
     'capability',
     'profiles',
     'files',
-    'policy'
+    'policy',
+    ...(Object.hasOwn(raw, 'parentModel') ? ['parentModel'] : []),
+    ...(Object.hasOwn(raw, 'resources') ? ['resources'] : [])
   ])
   if (
     raw.schema !== 1 ||
@@ -160,30 +206,50 @@ export function validateRpcChildRuntimeConfig(
     raw.manifestBinding.projectRoot !== identity.projectRoot
   )
     throw new Error('Private child manifest binding differs')
-  exact(raw.policy, ['mode', 'taskShape'])
+  exact(raw.policy, [
+    'mode',
+    'taskShape',
+    ...(Object.hasOwn(raw.policy as object, 'allowBackground') ? ['allowBackground'] : []),
+    ...(Object.hasOwn(raw.policy as object, 'allowParallel') ? ['allowParallel'] : [])
+  ])
   if (
     raw.policy.mode !== 'foreground-native' ||
     raw.policy.taskShape !== 'single' ||
+    (raw.policy.allowBackground !== undefined && typeof raw.policy.allowBackground !== 'boolean') ||
+    (raw.policy.allowParallel !== undefined && typeof raw.policy.allowParallel !== 'boolean') ||
     !Array.isArray(raw.profiles) ||
     raw.profiles.length < 1 ||
     raw.profiles.length > 32
   )
     throw new Error('Unsupported private child policy')
   const profiles = raw.profiles.map(snapshotRpcChildProfile)
+  const resources =
+    raw.resources === undefined ? undefined : validateChildResourceCatalog(raw.resources)
+  const parentModel =
+    raw.parentModel === undefined ? undefined : validateRpcChildModel(raw.parentModel)
   const names = new Set<string>()
   for (const profile of profiles) {
     const definition = profile.definition
     if (
-      !/^phi_[a-f0-9]{24}_[0-9]+_fg$/u.test(definition.nativeName) ||
+      !(
+        definition.blocking ? /^phi_[a-f0-9]{24}_[0-9]+_fg$/u : /^phi_[a-f0-9]{24}_[0-9]+_bg$/u
+      ).test(definition.nativeName) ||
+      (!definition.blocking && raw.policy.allowBackground !== true) ||
       names.has(definition.nativeName) ||
-      definition.tools.some((tool) => !['read', 'write', 'bash'].includes(tool.name)) ||
-      !sameRpcChildModel(profile.model, profiles[0].model) ||
+      (!parentModel && !sameRpcChildModel(profile.model, profiles[0].model)) ||
       !sameRpcChildRoute(profile.route, profiles[0].route)
     )
       throw new Error('Unsupported foreground child profile')
+    if (
+      definition.resourcesDigest !== undefined &&
+      (!resources ||
+        childProfileResourceDigest(definition, resources) !== definition.resourcesDigest)
+    )
+      throw new Error('Child resource digest differs from its shared catalogue')
     names.add(definition.nativeName)
   }
-  if (!Array.isArray(raw.files) || raw.files.length !== profiles.length + 1)
+  const resourcePaths = new Set(resources?.skills.map((skill) => skill.path) ?? [])
+  if (!Array.isArray(raw.files) || raw.files.length !== profiles.length + 1 + resourcePaths.size)
     throw new Error('Private child file inventory differs')
   const paths = new Set<string>()
   const files = raw.files.map((file: unknown) => {
@@ -193,7 +259,8 @@ export function validateRpcChildRuntimeConfig(
       !hash(file.sha256) ||
       paths.has(file.path) ||
       (file.path !== 'phi-agent-definitions.json' &&
-        !profiles.some((profile) => file.path === `agents/${profile.definition.nativeName}.md`))
+        !profiles.some((profile) => file.path === `agents/${profile.definition.nativeName}.md`) &&
+        !resourcePaths.has(file.path))
     )
       throw new Error('Unsupported private child file')
     paths.add(file.path)
@@ -206,6 +273,8 @@ export function validateRpcChildRuntimeConfig(
   )
     throw new Error('Private child manifest hash differs')
   const result: RpcChildRuntimeConfig = {
+    ...(parentModel ? { parentModel } : {}),
+    ...(resources ? { resources } : {}),
     schema: 1,
     nonce: identity.nonce,
     phiSessionId: identity.phiSessionId,
@@ -222,7 +291,14 @@ export function validateRpcChildRuntimeConfig(
     capability: raw.capability,
     profiles: Object.freeze(profiles),
     files: Object.freeze(files),
-    policy: Object.freeze({ mode: 'foreground-native', taskShape: 'single' })
+    policy: Object.freeze({
+      mode: 'foreground-native',
+      taskShape: 'single',
+      ...(raw.policy.allowBackground === undefined
+        ? {}
+        : { allowBackground: raw.policy.allowBackground }),
+      ...(raw.policy.allowParallel === undefined ? {} : { allowParallel: raw.policy.allowParallel })
+    })
   }
   return Object.freeze({ ...result, manifestBinding: Object.freeze(result.manifestBinding) })
 }
@@ -252,6 +328,16 @@ function privateBytes(path: string, maximum: number): Buffer {
   } finally {
     closeSync(fd)
   }
+}
+export function readRpcChildSkill(agentDir: string, skill: RpcChildSkillResource): string {
+  privateDirectory(join(agentDir, 'phi-child-skills'))
+  const bytes = privateBytes(join(agentDir, skill.path), 64 * 1024)
+  if (createHash('sha256').update(bytes).digest('hex') !== skill.sha256)
+    throw new Error('Trusted child skill content changed')
+  const markdown = bytes.toString('utf8')
+  if (!Buffer.from(markdown).equals(bytes))
+    throw new Error('Trusted child skill content is not UTF-8')
+  return markdown
 }
 function privateDirectory(path: string): void {
   const state = lstatSync(path)

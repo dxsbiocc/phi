@@ -94,15 +94,16 @@ function request(operation: RpcChildRequest['operation'] = 'register'): RpcChild
     scope
   }
   if (operation === 'activate') return { ...base, operation, actual }
-  if (operation === 'approve')
+  if (operation === 'approve' || operation === 'execute' || operation === 'result_consumed')
     return {
       ...base,
       operation,
+      ...(operation === 'result_consumed' ? { invocationId: randomUUID() } : {}),
       call: createRpcChildCall(scope, 'outer-call', 'write', {
         path: 'result.txt',
         content: 'Approved exact bytes'
       })
-    }
+    } as RpcChildRequest
   if (operation === 'cancel') return { ...base, operation, targetId: randomUUID() }
   return { ...base, operation }
 }
@@ -265,17 +266,16 @@ test('activation replies require explicit boolean decisions and exact request id
     assert.throws(() => parseRpcChildReply(malformed, sent))
 })
 
-test('trusted profile snapshot rejects unsupported resources, background, missing thinking and silent subsets', () => {
+test('trusted profile snapshot rejects unverified resources, invalid execution mode, missing thinking and silent subsets', () => {
   const snapshot = snapshotRpcChildProfile(profile)
   assert.ok(Object.isFrozen(snapshot.definition.tools))
   assert.deepEqual(snapshot, profile)
   for (const definition of [
-    { ...profile.definition, blocking: false },
+    { ...profile.definition, blocking: 'background' },
     { ...profile.definition, skills: ['unverified'] },
     { ...profile.definition, environment: { ref: 'unverified' } },
     { ...profile.definition, tools: [{ name: 'ChildHost', site: 'host' }] },
-    { ...profile.definition, tools: [{ name: 'grep', site: 'native' }] },
-    { ...profile.definition, tools: [{ name: 'edit', site: 'native' }] },
+    { ...profile.definition, tools: [{ name: 'task', site: 'native' }] },
     { ...profile.definition, tools: [] },
     { ...profile.definition, thinkingLevel: undefined },
     { ...profile.definition, thinkingLevel: 'auto' }
@@ -283,6 +283,19 @@ test('trusted profile snapshot rejects unsupported resources, background, missin
     assert.throws(() =>
       snapshotRpcChildProfile({ ...profile, definition } as RpcChildTrustedProfile)
     )
+  for (const name of ['edit', 'grep'])
+    assert.equal(
+      snapshotRpcChildProfile({
+        ...profile,
+        definition: { ...profile.definition, tools: [{ name, site: 'native' }] }
+      }).definition.tools[0].name,
+      name
+    )
+  assert.equal(
+    snapshotRpcChildProfile({ ...profile, definition: { ...profile.definition, blocking: false } })
+      .definition.blocking,
+    false
+  )
   assert.throws(() =>
     snapshotRpcChildProfile({
       ...profile,

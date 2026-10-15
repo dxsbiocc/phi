@@ -79,7 +79,8 @@ export class RemoteLibraryService {
   constructor(
     private readonly resolveTarget: (
       identity: Readonly<RemoteLibraryIdentity>,
-      signal: AbortSignal
+      signal: AbortSignal,
+      context: PhiHostRequestContext
     ) => RemoteLibraryTarget | Promise<RemoteLibraryTarget>
   ) {}
   async execute(value: unknown, context: PhiHostRequestContext): Promise<unknown> {
@@ -93,20 +94,23 @@ export class RemoteLibraryService {
         'Remote library request is already active or capacity is exhausted'
       )
     const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, ...(context.signal ? [context.signal] : [])])
     this.active.set(requestKey, controller)
     let target: RemoteLibraryTarget | undefined
     let outcome: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
+      signal.throwIfAborted()
       target = await this.resolveTarget(
         Object.freeze({
           runtimeSessionId: request.runtimeSessionId,
           sessionId: request.sessionId,
           projectId: request.projectId
         }),
-        controller.signal
+        signal,
+        context
       )
-      controller.signal.throwIfAborted()
-      outcome = { ok: true, value: await this.perform(request, target, controller.signal) }
+      signal.throwIfAborted()
+      outcome = { ok: true, value: await this.perform(request, target, signal) }
     } catch (error) {
       outcome = { ok: false, error }
     }

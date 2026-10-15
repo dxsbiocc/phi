@@ -32,11 +32,17 @@ import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import type {
+  RuntimeRecoveryState,
+  RuntimeRecoveryTarget,
+  RuntimeSummaryContinuation
+} from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
+import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
 import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
@@ -3295,6 +3301,10 @@ function App(): React.JSX.Element {
   const onForkUserMessage = useCallback(
     async (eventId: string): Promise<void> => {
       if (forkInProgressRef.current) return
+      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
+        showSnackbar('远程会话暂不支持分叉，可从恢复提示中查看摘要并另建会话。', 'info')
+        return
+      }
       const sourceId = useSessionStore.getState().activePhiSessionId
       if (!sourceId) return
       forkInProgressRef.current = true
@@ -3311,7 +3321,70 @@ function App(): React.JSX.Element {
         forkInProgressRef.current = false
       }
     },
-    [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
+    [onSelectSession, refreshSessions, rendererApi, showSnackbar, showSnackbarError]
+  )
+  const onRuntimeRecovered = useCallback(
+    async (state: RuntimeRecoveryState): Promise<void> => {
+      if (state.phase !== 'connected') return
+      const target = state.target
+      const current = useSessionStore.getState()
+      if (
+        current.activePhiSessionId !== target.sessionId ||
+        current.activeProjectId !== target.projectId ||
+        current.activeSessionPath !== target.sessionPath ||
+        current.activeSessionGeneration !== target.sessionGeneration
+      )
+        return
+      const request = ++sessionRequestRef.current
+      setIsSessionChanging(true)
+      try {
+        const result = await rendererApi.switchSession(target.sessionPath)
+        const latest = useSessionStore.getState()
+        if (
+          !result ||
+          request !== sessionRequestRef.current ||
+          latest.activePhiSessionId !== target.sessionId ||
+          latest.activeProjectId !== target.projectId ||
+          latest.activeSessionPath !== target.sessionPath ||
+          latest.activeSessionGeneration !== target.sessionGeneration
+        )
+          return
+        applyCurrentSession(result, undefined, {
+          onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+        })
+        replaceMessages(chatItemsFromSessionMessages(result.messages))
+        setContextUsageRefreshKey((value) => value + 1)
+        void refreshCurrentModelControls(request)
+        await refreshSessions()
+      } finally {
+        if (request === sessionRequestRef.current) setIsSessionChanging(false)
+      }
+    },
+    [
+      applyCurrentSession,
+      refreshCurrentModelControls,
+      refreshSessions,
+      rendererApi,
+      replaceMessages,
+      resetAnalysisJupyterRuntimeForCwdChange,
+      setIsSessionChanging
+    ]
+  )
+  const onRuntimeSummaryCreated = useCallback(
+    async (result: RuntimeSummaryContinuation): Promise<void> => {
+      const current = useSessionStore.getState()
+      if (
+        current.activePhiSessionId !== result.sourceSessionId &&
+        current.activePhiSessionId !== result.phiSessionId
+      ) {
+        void refreshSessions()
+        return
+      }
+      await onSelectSession(result.path)
+      await refreshSessions()
+      showSnackbar('已建立摘要新会话，尚未连接；下一条消息由你发送。', 'info')
+    },
+    [onSelectSession, refreshSessions, showSnackbar]
   )
   useEffect(() => {
     if (
@@ -4201,6 +4274,27 @@ function App(): React.JSX.Element {
     ]
   )
 
+  const runtimeRecoveryTarget = useMemo<RuntimeRecoveryTarget | null>(
+    () =>
+      activeProjectLocation?.kind === 'ssh' &&
+      activePhiSessionId &&
+      activeProjectId &&
+      activeSessionPath
+        ? {
+            sessionId: activePhiSessionId,
+            projectId: activeProjectId,
+            sessionPath: activeSessionPath,
+            sessionGeneration: activeSessionGeneration
+          }
+        : null,
+    [
+      activeProjectLocation?.kind,
+      activePhiSessionId,
+      activeProjectId,
+      activeSessionPath,
+      activeSessionGeneration
+    ]
+  )
   const activeChatView = (
     <RemoteProjectFileContext.Provider
       value={
@@ -4225,6 +4319,13 @@ function App(): React.JSX.Element {
             onOpenRemoteSettings={() => openSettings('remote')}
           />
         ) : null}
+        <RuntimeRecoveryBanner
+          api={rendererApi}
+          target={runtimeRecoveryTarget}
+          models={availableModels}
+          onRecovered={onRuntimeRecovered}
+          onSummaryCreated={onRuntimeSummaryCreated}
+        />
         <Suspense
           fallback={
             <Box
@@ -4276,7 +4377,10 @@ function App(): React.JSX.Element {
             onInputChange={setActiveInput}
             onRetryUserMessage={onRetryUserMessage}
             onForkUserMessage={
-              currentSessionIsBusy || currentSessionIsCompacting || !activePhiSessionId
+              currentSessionIsBusy ||
+              currentSessionIsCompacting ||
+              !activePhiSessionId ||
+              activeProjectLocation?.kind === 'ssh'
                 ? undefined
                 : onForkUserMessage
             }

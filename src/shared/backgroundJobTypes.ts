@@ -6,7 +6,10 @@ export type BackgroundAgentJob = {
   sessionTitle: string
   agentName: string
   task: string
-  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
+  /** False for restart metadata, which has no live SDK handle. */
+  canControl?: boolean
+  historyAvailable?: boolean
   background: boolean
   startedAt: string
   completedAt?: string

@@ -1,5 +1,20 @@
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
+import type { RpcChildSteerPermits } from './rpc-child-steer-permit'
+import {
+  childProfileResourceDigest,
+  childResourceHash,
+  rpcChildEffectivePrompt,
+  type RpcChildResourceCatalog,
+  type RpcChildEnvironmentResource
+} from '../lib/rpc-child-resources'
+import { readRpcChildSkill } from '../lib/rpc-child-config'
+import {
+  registerRpcChildHostTools,
+  rpcChildWrapperSourceMatches,
+  type RpcChildHostExecution
+} from './rpc-child-host-tools'
+import { assertRpcChildEnvironment, rpcChildEnvironmentCommand } from './rpc-child-environment'
 import type {
   AgentSession,
   ExtensionContext,
@@ -27,7 +42,9 @@ import {
   type RpcChildActualProfile,
   type RpcChildCall,
   type RpcChildRequest,
+  type RpcChildReply,
   type RpcChildRootScope,
+  type RpcChildScope,
   type RpcChildTrustedProfile
 } from '../lib/rpc-child-protocol'
 import { approvalIdentifier } from '../lib/rpc-approval-protocol'
@@ -47,10 +64,23 @@ export interface RpcChildReadiness {
   readonly signal: AbortSignal
 }
 export interface RpcSubagentsOptions {
+  readonly resources?: RpcChildResourceCatalog
+  readonly agentDir?: string
+  readonly hostResult?: {
+    readonly generationDirectory: string
+    readonly directory: string
+    readonly capability: string
+    readonly leaseId: string
+  }
+  readonly steerPermits?: RpcChildSteerPermits
   /** Trusted generation state only, never a value supplied by a model or child URI. */
   readiness(): RpcChildReadiness | undefined
 }
-interface ChildState extends RpcChildNativeExecution {
+interface ChildState extends RpcChildNativeExecution, RpcChildHostExecution {
+  readonly streamGate: AgentSession['agent']['streamFn']
+  readonly nativeStream: AgentSession['agent']['streamFn']
+  readonly effectivePrompt: readonly string[]
+  readonly environment?: RpcChildEnvironmentResource
   readonly profile: RpcChildTrustedProfile
   readonly session: AgentSession
   readonly ready: RpcChildReadiness
@@ -78,6 +108,10 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
     input: unknown,
     ctx: ExtensionContext
   ): { block: true; reason: string } | { input: Record<string, unknown> }
+  modelScope(
+    ctx: ExtensionContext,
+    nativeStream?: AgentSession['agent']['streamFn']
+  ): Readonly<RpcChildScope> | undefined
   dispose(): void
 } {
   const states = new Map<ExtensionContext['sessionManager'], ChildState>()
@@ -122,6 +156,14 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
         JSON.stringify(snapshotRpcChildProfile(profile)) !== JSON.stringify(child.profile)
       )
         return false
+      if (
+        child.profile.definition.resourcesDigest &&
+        (!options.resources ||
+          childProfileResourceDigest(child.profile.definition, options.resources) !==
+            child.profile.definition.resourcesDigest)
+      )
+        return false
+      if (child.environment) assertRpcChildEnvironment(child.environment)
       for (const model of [child.session.model, child.session.agent.state.model]) {
         if (
           !sameRpcChildModel(projectRpcChildModel(model), child.profile.model) ||
@@ -136,8 +178,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
         (level === 'off'
           ? agent.thinkingLevel !== undefined || agent.disableReasoning !== true
           : String(agent.thinkingLevel) !== level || agent.disableReasoning === true) ||
-        rpcChildPromptDigest(agent.systemPrompt) !==
-          rpcChildPromptDigest(child.profile.systemPrompt)
+        rpcChildPromptDigest(agent.systemPrompt) !== rpcChildPromptDigest(child.effectivePrompt)
       )
         return false
       if (
@@ -153,13 +194,17 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           const info = infos.find((item) => item.name === tool.name)
           return (
             !info ||
-            info.sourceInfo.source !== 'extension' ||
-            info.description !== child.wrappers.get(tool.name)
+            !rpcChildWrapperSourceMatches(tool, info.sourceInfo.source) ||
+            info.description !== child.wrappers.get(tool.name) ||
+            (tool.site === 'host' &&
+              childResourceHash(info.parameters) !==
+                options.resources?.hostTools.find((item) => item.name === tool.name)?.schemaSha256)
           )
         })
       )
         return false
       return (
+        child.session.agent.streamFn === child.streamGate &&
         states.get(ctx.sessionManager) === child &&
         child.permitted &&
         !child.controller.signal.aborted &&
@@ -179,6 +224,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
     }
   }
   const revoke = (child: ChildState): void => {
+    options.steerPermits?.revoke(child.session)
     child.permitted = false
     child.controller.abort()
     child.calls.clear()
@@ -186,11 +232,12 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
   }
   const exchange = async (
     child: ChildState,
-    operation: 'register' | 'activate' | 'approve',
-    extra: { actual?: RpcChildActualProfile; call?: RpcChildCall },
+    operation: 'register' | 'activate' | 'approve' | 'execute' | 'result_consumed',
+    extra: { actual?: RpcChildActualProfile; call?: RpcChildCall; invocationId?: string },
     signal: AbortSignal
-  ): Promise<boolean> => {
-    if (operation !== 'approve') signal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+  ): Promise<RpcChildReply> => {
+    if (operation === 'register' || operation === 'activate')
+      signal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
     if (signal.aborted || child.controller.signal.aborted)
       throw new Error('RPC child channel interrupted')
     const request = {
@@ -221,7 +268,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
       )
       signal.throwIfAborted()
       complete = true
-      return reply.allowed
+      return reply
     } catch {
       throw new Error('Phi child authority exchange was refused')
     } finally {
@@ -260,8 +307,8 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
         hasReservedRpcChildUri(input)
       )
         return refused
-      const effective = canonicalRpcChildNativeInput(
-        child.scope.cwd,
+      const effective = child.canonical!(
+        toolCallId,
         toolName,
         createRpcChildCall(child.scope, toolCallId, toolName, input).input
       )
@@ -335,7 +382,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
             !sameRpcChildModel(projectRpcChildModel(args[0]), child.profile.model) ||
             !sameRpcChildRoute(projectRpcChildRoute(args[0]), child.profile.route) ||
             rpcChildPromptDigest(args[1].systemPrompt ?? []) !==
-              rpcChildPromptDigest(child.profile.systemPrompt) ||
+              rpcChildPromptDigest(child.effectivePrompt) ||
             JSON.stringify((args[1].tools ?? []).map((tool) => tool.name).sort()) !==
               JSON.stringify(child.profile.definition.tools.map((tool) => tool.name).sort())
           )
@@ -383,15 +430,51 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           realpathSync(scope.childSessionFile) !== scope.childSessionFile
         )
           throw new Error('RPC child actual scope differs')
-        const nativeTools: ToolInfo[] = profile.definition.tools.map((tool) => {
-          const info = pi.getAllTools().find((item) => item.name === tool.name)
-          if (!info || info.sourceInfo.source !== 'builtin' || !session.getToolByName(tool.name))
-            throw new Error('RPC child native implementation is absent')
-          return info
+        const resources = options.resources
+        if (
+          profile.definition.resourcesDigest &&
+          (!resources ||
+            childProfileResourceDigest(profile.definition, resources) !==
+              profile.definition.resourcesDigest)
+        )
+          throw new Error('RPC child trusted resource snapshot differs')
+        const skills = profile.definition.skills.map((name) => {
+          const skill = resources?.skills.find((item) => item.name === name)
+          if (!skill || !options.agentDir)
+            throw new Error('RPC child trusted skill content is absent')
+          return { name, markdown: readRpcChildSkill(options.agentDir, skill) }
         })
+        const environment = profile.definition.environment
+          ? resources?.environments.find(
+              (item) =>
+                item.ref === profile.definition.environment!.ref &&
+                item.pluginId === profile.definition.environment!.pluginId
+            )
+          : undefined
+        if (profile.definition.environment && !environment)
+          throw new Error('RPC child managed environment is absent')
+        if (environment) assertRpcChildEnvironment(environment)
+        const effectivePrompt = rpcChildEffectivePrompt(profile.systemPrompt, skills, environment)
+        if (
+          profile.effectivePromptDigest &&
+          profile.effectivePromptDigest !== rpcChildPromptDigest(effectivePrompt)
+        )
+          throw new Error('RPC child effective prompt differs')
+        const nativeTools: ToolInfo[] = profile.definition.tools
+          .filter((tool) => tool.site === 'native')
+          .map((tool) => {
+            const info = pi.getAllTools().find((item) => item.name === tool.name)
+            if (!info || info.sourceInfo.source !== 'builtin' || !session.getToolByName(tool.name))
+              throw new Error('RPC child native implementation is absent')
+            return info
+          })
         child = {
           scope,
           profile,
+          effectivePrompt,
+          streamGate: gate,
+          nativeStream: originalStream,
+          ...(environment ? { environment } : {}),
           session,
           ready,
           controller,
@@ -407,6 +490,28 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           calls: new Map(),
           seen: new Set(),
           active: (current) => !!child && active(child, current),
+          canonical: (id, name, input) => {
+            if (!child) throw new Error('RPC child call has no owner')
+            if (child.environment) assertRpcChildEnvironment(child.environment)
+            const raw = createRpcChildCall(scope, id, name, input)
+            if (child.calls.get(id)?.inputDigest === raw.inputDigest) return { ...raw.input }
+            if (
+              !projectToolBoundaryDecision(scope.cwd, name, raw.input).allowed ||
+              !remoteUrlGuardDecision(name, raw.input).allowed
+            )
+              throw new Error('RPC child raw tool input is outside its project boundary')
+            const site = profile.definition.tools.find((tool) => tool.name === name)?.site
+            if (site === 'host') return { ...raw.input }
+            const effective = canonicalRpcChildNativeInput(scope.cwd, name, raw.input)
+            if (child.environment && name === 'powershell')
+              throw new Error('Managed child environments require bash')
+            return child.environment && name === 'bash'
+              ? {
+                  ...effective,
+                  command: rpcChildEnvironmentCommand(child.environment, effective.command)
+                }
+              : effective
+          },
           consume: (id, name, input) => {
             if (!child || !active(child, ctx)) throw new Error('RPC child call has no authority')
             const expected = child.calls.get(id)
@@ -416,7 +521,19 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
               throw new Error('RPC child effective input differs')
             return expected
           },
-          approve: (call, signal) => exchange(child!, 'approve', { call }, signal),
+          approve: async (call, signal) =>
+            (await exchange(child!, 'approve', { call }, signal)).allowed,
+          executeHost: async (call, signal) => {
+            const reply = await exchange(child!, 'execute', { call }, signal)
+            if (!reply.allowed || !reply.result) throw new Error('RPC child host execution refused')
+            return reply.result
+          },
+          resultConsumed: async (call, invocationId, signal) => {
+            if (
+              !(await exchange(child!, 'result_consumed', { call, invocationId }, signal)).allowed
+            )
+              throw new Error('RPC child host consumption refused')
+          },
           revoke: () => child && revoke(child)
         }
         states.set(ctx.sessionManager, child)
@@ -425,15 +542,29 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           signal: controller.signal
         })
         if (ready.signal.aborted) throw new Error('RPC child generation ended')
-        if (!(await exchange(child, 'register', {}, controller.signal)))
+        if (!(await exchange(child, 'register', {}, controller.signal)).allowed)
           throw new Error('RPC child registration refused')
         child.registered = true
-        child.wrappers = registerRpcChildNativeTools(
+        const nativeWrappers = registerRpcChildNativeTools(
           pi,
           nativeTools,
           (name) => session.getToolByName(name),
           (current) => (child && active(child, current) ? child : undefined)
         )
+        const hosts = profile.definition.tools
+          .filter((tool) => tool.site === 'host')
+          .map((tool) => {
+            const resource = resources?.hostTools.find((item) => item.name === tool.name)
+            if (!resource || !options.hostResult)
+              throw new Error('RPC child host implementation is absent')
+            return resource
+          })
+        const hostWrappers = hosts.length
+          ? registerRpcChildHostTools(pi, hosts, options.hostResult!, (current) =>
+              child && active(child, current) ? child : undefined
+            )
+          : new Map<string, string>()
+        child.wrappers = new Map([...nativeWrappers, ...hostWrappers])
       } catch {
         child ? revoke(child) : controller.abort()
         throw new Error('Phi child registration was refused')
@@ -457,10 +588,14 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           actualSession(ctx) !== child.session
         )
           throw new Error('RPC child generation changed')
-        if (child.activated && child.providerBegun)
+        const steered =
+          child.activated &&
+          child.providerBegun &&
+          options.steerPermits?.consume(child.session, child.scope, event.prompt, event.images)
+        if (child.activated && child.providerBegun && !steered)
           throw new Error('RPC child later prompt/steer is not supported in R6a')
         const prompt = rpcChildPromptDigest([event.prompt, JSON.stringify(event.images ?? [])])
-        if (child.initialPrompt !== undefined && child.initialPrompt !== prompt)
+        if (child.initialPrompt !== undefined && child.initialPrompt !== prompt && !steered)
           throw new Error('RPC child initial submission changed')
         child.initialPrompt = prompt
         const infos = pi.getAllTools()
@@ -469,8 +604,12 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
             const info = infos.find((item) => item.name === tool.name)
             return (
               !info ||
-              info.sourceInfo.source !== 'extension' ||
-              info.description !== child.wrappers.get(tool.name)
+              !rpcChildWrapperSourceMatches(tool, info.sourceInfo.source) ||
+              info.description !== child.wrappers.get(tool.name) ||
+              (tool.site === 'host' &&
+                childResourceHash(info.parameters) !==
+                  options.resources?.hostTools.find((item) => item.name === tool.name)
+                    ?.schemaSha256)
             )
           })
         )
@@ -515,28 +654,31 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           child.session.setThinkingLevel(effectiveLevel)
         if (
           rpcChildPromptDigest(child.session.agent.state.systemPrompt) !==
-          rpcChildPromptDigest(child.profile.systemPrompt)
+          rpcChildPromptDigest(child.effectivePrompt)
         )
-          child.session.agent.setSystemPrompt([...child.profile.systemPrompt])
+          child.session.agent.setSystemPrompt([...child.effectivePrompt])
         const actual = validateRpcChildActual({
           tools: enabled,
           model: projectRpcChildModel(child.session.model),
           route: projectRpcChildRoute(child.session.model),
           systemPromptDigest: rpcChildPromptDigest(child.session.agent.state.systemPrompt),
-          thinkingLevel: child.session.thinkingLevel
+          thinkingLevel: child.session.thinkingLevel,
+          ...(child.profile.definition.resourcesDigest
+            ? { resourcesDigest: child.profile.definition.resourcesDigest }
+            : {})
         })
         if (
           !sameRpcChildModel(actual.model, child.profile.model) ||
           !sameRpcChildRoute(actual.route, child.profile.route) ||
           actual.thinkingLevel !== level ||
-          actual.systemPromptDigest !== rpcChildPromptDigest(child.profile.systemPrompt)
+          actual.systemPromptDigest !== rpcChildPromptDigest(child.effectivePrompt)
         )
           throw new Error('RPC child actual profile differs')
         child.actualTools = new Map(
           child.session.agent.state.tools.map((tool) => [tool.name, tool])
         )
         if (!child.activated) {
-          if (!(await exchange(child, 'activate', { actual }, activationSignal!)))
+          if (!(await exchange(child, 'activate', { actual }, activationSignal!)).allowed)
             throw new Error('RPC child activation refused')
           child.activated = true
         }
@@ -544,7 +686,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
         if (child.controller.signal.aborted || readiness().capability !== child.ready.capability)
           throw new Error('RPC child activation expired')
         child.permitted = true
-        return { systemPrompt: [...child.profile.systemPrompt] }
+        return { systemPrompt: [...child.effectivePrompt] }
       } catch {
         child && revoke(child)
         throw new Error('Phi child activation was refused')
@@ -568,6 +710,17 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
   return {
     extension,
     preflight,
+    modelScope: (ctx, nativeStream) => {
+      const child = states.get(ctx.sessionManager)
+      return child &&
+        (nativeStream === undefined || child.nativeStream === nativeStream) &&
+        child.registered &&
+        child.activated &&
+        child.permitted &&
+        active(child, ctx)
+        ? child.scope
+        : undefined
+    },
     dispose: () => {
       disposed = true
       for (const child of states.values()) {

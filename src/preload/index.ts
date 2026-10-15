@@ -33,6 +33,7 @@ import type {
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionSettingsPatch,
@@ -862,6 +863,9 @@ type RendererAuthApi = {
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
+  getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
+  resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
+  continueRuntimeFromSummary: RuntimeRecoveryApi['continueRuntimeFromSummary']
   forkSession: (
     sourceId: string,
     eventId: string
@@ -1436,6 +1440,11 @@ const api: RendererAuthApi = {
   updateCurrentSessionPermissionMode: (permissionMode: PermissionMode): Promise<CurrentSession> =>
     ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),
+  getRuntimeRecoveryState: (target) => ipcRenderer.invoke('sessions:runtimeRecovery', target),
+  resumeRuntimeSession: (target, replacementModel) =>
+    ipcRenderer.invoke('sessions:resumeRuntime', target, replacementModel),
+  continueRuntimeFromSummary: (target, sha256) =>
+    ipcRenderer.invoke('sessions:continueRuntimeSummary', target, sha256),
   forkSession: (
     sourceId: string,
     eventId: string

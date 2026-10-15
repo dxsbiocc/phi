@@ -8,12 +8,17 @@ import {
 import { readGatewayJson } from '../in-process/model-gateway-request'
 import { boundedGatewayStream, GATEWAY_STREAM_LIMITS } from '../in-process/model-gateway-stream'
 import { assertBrowserHistoryPrivate, browserToolStreamProjector } from './browser-tool-stream'
+import { RPC_CHILD_MODEL_HEADER } from '../phi-extension/lib/rpc-child-model-authority'
 
 export interface BrowserModelGatewayOptions {
   lease: ModelGatewayLease
   vault: BrowserTextVault
   signal: AbortSignal
   currentRunSignal(): AbortSignal | undefined
+  /** Reserved signed header is resolved only by the current child registry. */
+  resolveChildRun?: (
+    header: string
+  ) => { readonly signal: AbortSignal; readonly vault: BrowserTextVault } | undefined
 }
 const unavailable = (): Response => new Response('Model request unavailable', { status: 502 })
 /** Desktop-only model egress. Raw typeText bytes never enter the server SDK or its journal. */
@@ -44,7 +49,10 @@ export async function createBrowserModelGateway(
       return undefined
     },
     async (request) => {
-      const run = options.currentRunSignal()
+      const childHeader = request.headers.get(RPC_CHILD_MODEL_HEADER)
+      const child = childHeader === null ? undefined : options.resolveChildRun?.(childHeader)
+      if (childHeader !== null && !child) return unavailable()
+      const run = child?.signal ?? options.currentRunSignal()
       if (!run || run.aborted) return unavailable()
       const controller = new AbortController()
       requests.add(controller)
@@ -80,7 +88,7 @@ export async function createBrowserModelGateway(
           return unavailable()
         }
         const identity = { provider: model.provider, id: model.id, api: 'openai-completions' }
-        const project = browserToolStreamProjector(options.vault, signal)
+        const project = browserToolStreamProjector(child?.vault ?? options.vault, signal)
         const body = boundedGatewayStream(
           response.body,
           controller,

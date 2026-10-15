@@ -1,3 +1,7 @@
+import * as runtimeRecoveryIpc from '../src/main/agent/session/runtime-recovery-ipc'
+import * as recoverySummary from '../src/main/agent/session/recovery-summary'
+import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery'
+import * as runtimeReference from '../src/main/agent/session/runtime-reference'
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { createWebLinkPreviewService } from '../src/main/web-link-preview'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
@@ -258,6 +262,7 @@ class FakeSession {
   readonly promptTexts: string[] = []
   readonly promptOptions: PromptOptions[] = []
   readonly sessionNameCalls: string[] = []
+  hasActiveAgentRuns?: () => boolean
   readonly sessionManager = {
     setSessionName: async (
       name: string,
@@ -405,6 +410,23 @@ type HarnessOptions = {
   projectMemoryRetire?: (projectId: string) => Promise<void>
   projectMemoryAdapterCreate?: (options: Record<string, unknown>) => Promise<unknown>
   remoteResourceScripts?: () => Promise<{ tools: unknown[]; problems: string[] }>
+  coldRuntimeOrigin?: (id: string) => { phiSessionId: string; cwd: string } | undefined
+  remoteRuntimeWorkspace?: () => Promise<unknown>
+  readyEnvironmentRead?: () => Promise<unknown>
+  coldChildRuns?: (phiSessionId: string) => readonly Record<string, unknown>[]
+  runtimeSessionReady?: () => boolean
+  childResourceOwner?: (
+    runtimeId: string,
+    childId: string
+  ) => { readonly toolOwner: string; readonly allowedSkills: readonly string[] }
+  remoteScriptRun?: (
+    params: unknown,
+    control?: import('../src/main/agent/remote-runtime/controller').RemoteRuntimeDispatchControl
+  ) => Promise<unknown>
+  onCreateSession?: (
+    options: Record<string, unknown>,
+    control?: { signal?: AbortSignal; assertCurrent(): void }
+  ) => Promise<void>
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -563,6 +585,7 @@ async function harness(
   factory?: (cwd: string, file: string) => Promise<FakeSession>,
   options: HarnessOptions = {}
 ): Promise<HarnessResult> {
+  const harnessOptions = options
   const handlers = new Map<string, Handler>()
   const sessions: FakeSession[] = []
   const deleted: string[] = []
@@ -1456,11 +1479,13 @@ async function harness(
       if (method === 'mcp.featuredAuthStatus') return true
       return { ok: true }
     },
+    hasSession: (): boolean => options.runtimeSessionReady?.() ?? false,
     stop: async () => {
       bridgeStops += 1
     }
   } as unknown as OmpBridge
   const phiEngine = createInProcessEngine(fakeOmpBridge)
+  if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   const modules: Record<string, unknown> = {
     './window-startup': windowStartup,
     './startup-splash': {
@@ -1818,9 +1843,11 @@ async function harness(
           model?: { provider: string; id: string }
           thinkingLevel?: string
         },
-        onEvent?: (summary: Record<string, unknown>) => void
+        onEvent?: (summary: Record<string, unknown>) => void,
+        control?: { signal?: AbortSignal; assertCurrent(): void }
       ): Promise<{ session: FakeSession }> => {
         createdAgentOptions.push(options)
+        await harnessOptions.onCreateSession?.(options, control)
         const session = factory
           ? await factory(options.cwd, options.sessionManager.file)
           : new FakeSession(options.sessionManager.file)
@@ -2465,6 +2492,19 @@ async function harness(
     },
     './agent/engine/events': engineEvents,
     './agent/engine/rpc/runtime-selection-control': runtimeSelection,
+    './agent/session/runtime-recovery-ipc': runtimeRecoveryIpc,
+    './agent/session/recovery-summary': recoverySummary,
+    './agent/engine/rpc/session-recovery': recoveryFailures,
+    './agent/session/runtime-reference': runtimeReference,
+    './agent/engine/rpc/facade-session-driver': { facadeBindingHash: () => 'a'.repeat(64) },
+    './agent/session/child-run-recovery': {
+      readColdChildRuns: (input: { phiSessionId: string }) =>
+        options.coldChildRuns?.(input.phiSessionId) ?? []
+    },
+    './agent/session/runtime-origin-store': {
+      registerRuntimeSessionOrigin: () => undefined,
+      resolveRuntimeSessionOrigin: (id: string) => options.coldRuntimeOrigin?.(id)
+    },
     './web-link-preview': {
       createWebLinkPreviewService: (): ReturnType<typeof createWebLinkPreviewService> =>
         createWebLinkPreviewService({
@@ -3441,10 +3481,13 @@ async function harness(
     './agent/remote-runtime/controller': {
       controlRemoteRuntimeWorkspace,
       RemoteRuntimeController: class {
-        readonly environments = { cancel: (): void => {} }
+        readonly environments = {
+          cancel: (): void => {},
+          describeReadyInWorkspace: async () => options.readyEnvironmentRead?.()
+        }
         readonly skills = { cancel: (): void => {} }
         owns(): boolean {
-          return false
+          return Boolean(options.remoteScriptRun)
         }
         scriptTools(): Promise<{ tools: unknown[]; problems: string[] }> {
           if (options.remoteResourceScripts) return options.remoteResourceScripts()
@@ -3453,7 +3496,11 @@ async function harness(
         runSkill(): never {
           throw new Error('remote runtime is mocked')
         }
-        runScriptTool(): never {
+        runScriptTool(
+          params: unknown,
+          control?: import('../src/main/agent/remote-runtime/controller').RemoteRuntimeDispatchControl
+        ): Promise<unknown> {
+          if (options.remoteScriptRun) return options.remoteScriptRun(params, control)
           throw new Error('remote runtime is mocked')
         }
         requestEnvironment(): never {
@@ -3719,7 +3766,8 @@ async function harness(
       }
     },
     './agent/remote-runtime/workspace': {
-      openRemoteRuntimeWorkspace: async (): Promise<never> => {
+      openRemoteRuntimeWorkspace: async (): Promise<unknown> => {
+        if (options.remoteRuntimeWorkspace) return options.remoteRuntimeWorkspace()
         throw new Error('main integration uses the remote notebook backend mock')
       }
     },
@@ -14224,4 +14272,760 @@ test('T13 main persona: idle onboarding uses a disposable tool-less session befo
   assert.equal(app.createdAgentOptions.length, 1)
   assert.equal(app.createdAgentOptions[0].noTools, 'all')
   assert.equal(app.sessions[0].disposed, true)
+})
+
+function runtimeRecoveryTarget(
+  current: unknown
+): import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryTarget {
+  const value = current as {
+    phiSessionId: string
+    projectId: string
+    path: string
+    sessionGeneration: number
+  }
+  return {
+    sessionId: value.phiSessionId,
+    projectId: value.projectId,
+    sessionPath: value.path,
+    sessionGeneration: value.sessionGeneration
+  }
+}
+function savedRemoteReference(phiSessionId: string): runtimeReference.RemoteOmpRuntimeRef {
+  const scope = {
+    hostProfileId: 'host-1',
+    bindingHash: 'a'.repeat(64),
+    projectId: 'remote-project-1',
+    projectRoot: '/canonical/project',
+    runtimeRoot: '/remote/runtime'
+  }
+  return {
+    ...scope,
+    kind: 'remote-omp',
+    version: 1,
+    durableSessionKey: runtimeReference.remoteOmpDurableSessionKey(scope, phiSessionId),
+    ompSessionId: 'saved-omp',
+    journalBasename: 'saved.jsonl',
+    ompVersion: '18.10.3'
+  }
+}
+
+test('T15 main recovery: a cold RPC state and summary preview perform no initialization or policy writes', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: savedRemoteReference(current.phiSessionId),
+      model: { providerId: 'openai', modelId: 'gpt-test' }
+    }
+  })
+  app.appendedSessionEvents.push({
+    sessionId: current.phiSessionId,
+    event: { type: 'user_message', content: 'Preserve the original research question.' }
+  })
+  const before = JSON.stringify(app.updatedSessionManifests)
+  const state = (await app.invoke(
+    'sessions:runtimeRecovery',
+    runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  assert.equal(state.phase, 'recovery-required')
+  assert.equal(state.canResume, true)
+  assert.match(state.summary!.content, /original research question/)
+  assert.equal(app.createdAgentOptions.length, 0)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+})
+
+test('T15 main recovery: explicit summary continuation preserves old history and seeds a distinct unconnected RPC Phi', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  const reference = savedRemoteReference(current.phiSessionId)
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: reference }
+  })
+  app.appendedSessionEvents.push({
+    sessionId: current.phiSessionId,
+    event: { type: 'user_message', content: 'Safe local research context.' }
+  })
+  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  const state = (await app.invoke(
+    'sessions:runtimeRecovery',
+    target
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  await assert.rejects(
+    app.invoke('sessions:continueRuntimeSummary', target, 'b'.repeat(64)),
+    /来源历史已更新/
+  )
+  assert.equal(app.createdPhiSessions.length, 1)
+  const result = (await app.invoke(
+    'sessions:continueRuntimeSummary',
+    target,
+    state.summary!.provenance.sha256
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeSummaryContinuation
+  assert.notEqual(result.phiSessionId, target.sessionId)
+  assert.equal(result.connected, false)
+  assert.equal(app.createdAgentOptions.length, 0)
+  const seed = app.appendedSessionEvents.find(
+    (entry) =>
+      entry.sessionId === result.phiSessionId &&
+      (entry.event as { type?: string }).type === 'runtime_recovery_summary'
+  )
+  assert.equal((seed!.event as { content: string }).content, state.summary!.content)
+  const provider = app.remoteRoutingOptions[0].loadPromptContext as (
+    identity: Record<string, string>,
+    signal: AbortSignal
+  ) => Promise<Record<string, unknown>>
+  const selected = await provider(
+    {
+      runtimeSessionId: 'new-owner',
+      sessionId: result.phiSessionId,
+      projectId: result.projectId,
+      cwd: '/canonical/project',
+      resourceCwd: '/isolated/remote-project-anchors/remote-project-1'
+    },
+    new AbortController().signal
+  )
+  assert.equal(selected.recoverySummary, state.summary!.content)
+  assert.deepEqual(
+    app.updatedSessionManifests.filter((entry) => entry.sessionId === current.phiSessionId).at(-1)!
+      .patch.runtimeRef,
+    reference
+  )
+  assert.equal(
+    app.appendedSessionEvents.filter(
+      (entry) => (entry.event as { type?: string }).type === 'user_message'
+    ).length,
+    1
+  )
+})
+
+test('T15 main recovery: disabled routing cannot create a summary Phi that would silently lose its seed on legacy execution', async () => {
+  const app = await harness()
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  const state = (await app.invoke(
+    'sessions:runtimeRecovery',
+    target
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  assert.equal(state.canResume, false)
+  assert.equal(state.canContinueFromSummary, false)
+  await assert.rejects(
+    app.invoke('sessions:continueRuntimeSummary', target, state.summary!.provenance.sha256),
+    /不能创建摘要会话/
+  )
+  assert.equal(app.createdPhiSessions.length, 1)
+  assert.equal(app.createdAgentOptions.length, 0)
+})
+
+test('T15 main recovery: retired model aliases require an explicit replacement before any history or policy effects', async () => {
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onCreateSession: async () => {
+      throw new recoveryFailures.RemoteRecoveryError('FILE_INVALID', 'fixture refuses the journal')
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: savedRemoteReference(current.phiSessionId),
+      model: { providerId: 'kimi-code', modelId: 'kimi-k2.5' }
+    }
+  })
+  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  const beforeManifest = JSON.stringify(app.updatedSessionManifests)
+  const beforeEvents = JSON.stringify(app.appendedSessionEvents)
+  const state = (await app.invoke(
+    'sessions:runtimeRecovery',
+    target
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  assert.equal(state.issue, 'model-unavailable')
+  await assert.rejects(
+    app.invoke('sessions:resumeRuntime', target),
+    (error) => (error as { code?: string }).code === 'MODEL_UNAVAILABLE'
+  )
+  assert.equal(app.createdAgentOptions.length, 0)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), beforeManifest)
+  assert.equal(JSON.stringify(app.appendedSessionEvents), beforeEvents)
+  await assert.rejects(
+    app.invoke('sessions:resumeRuntime', target, {
+      providerId: 'kimi-code',
+      modelId: 'kimi-for-coding'
+    }),
+    /fixture refuses/
+  )
+  assert.equal(app.createdAgentOptions.length, 1)
+  assert.deepEqual(app.createdAgentOptions[0].remoteRecovery, {
+    replacementModel: { providerId: 'kimi-code', modelId: 'kimi-for-coding' }
+  })
+  assert.equal((app.createdAgentOptions[0].model as { id: string }).id, 'kimi-for-coding')
+  assert.equal(JSON.stringify(app.updatedSessionManifests), beforeManifest)
+  assert.equal(JSON.stringify(app.appendedSessionEvents), beforeEvents)
+})
+
+test('T15 main recovery: stopping a pending explicit attach cancels its own preparation and sends no prompt', async () => {
+  let entered = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onCreateSession: async (_options, control) => {
+      entered = true
+      assert.ok(control?.signal)
+      await new Promise<void>((_resolve, reject) => {
+        control.signal!.addEventListener('abort', () => reject(control.signal!.reason), {
+          once: true
+        })
+      })
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: savedRemoteReference(current.phiSessionId),
+      model: { providerId: 'openai', modelId: 'gpt-test' }
+    }
+  })
+  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  const restoring = app.invoke('sessions:resumeRuntime', target)
+  const rejected = assert.rejects(restoring, /取消/)
+  await waitUntil(() => entered)
+  await app.invoke('agent:stop')
+  await rejected
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.appendedSessionEvents.length, 0)
+})
+
+test('T14 main controls: a confirmed background expert blocks persona and model policy edits without stopping its parent scope', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'materialize parent')
+  app.sessions[0].hasActiveAgentRuns = () => true
+  const before = JSON.stringify(app.updatedSessionManifests)
+  await assert.rejects(app.invoke('persona:setMarkdown', 'New persona'), /专家任务/)
+  await assert.rejects(app.invoke('models:select', 'openai', 'gpt-test'), /专家任务/)
+  assert.deepEqual(app.savedPersonas, [])
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.equal(app.sessions[0].log.includes('abort'), false)
+})
+
+test('T14 main resources: selected experts receive real enabled skill content and missing names do not load local fallback files', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+    cwd: string
+  }
+  const load = app.remoteRoutingOptions[0].loadAgentResources as (
+    identity: Record<string, string>,
+    definitions: readonly { skills: string[] }[],
+    signal: AbortSignal
+  ) => Promise<{ skills: readonly { name: string; description: string; markdown: string }[] }>
+  const identity = {
+    runtimeSessionId: 'parent',
+    sessionId: current.phiSessionId,
+    projectId: 'remote-project-1',
+    cwd: '/canonical/project',
+    resourceCwd: current.cwd
+  }
+  const resources = await load(identity, [{ skills: ['global'] }], new AbortController().signal)
+  assert.deepEqual(resources.skills, [
+    { name: 'global', description: 'global skill', markdown: '# global skill\n' }
+  ])
+  await assert.rejects(
+    load(identity, [{ skills: ['not-selected'] }], new AbortController().signal),
+    /专家技能不可用/
+  )
+})
+
+test('T14 main resources: a background child gets verified service ownership and late terminal ownership cannot dispatch', async () => {
+  let routed = false
+  let active = true
+  let calls = 0
+  let checked = 0
+  const gate = deferred<void>()
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    childResourceOwner: (_runtime, child) => {
+      checked += 1
+      assert.equal(child, 'owned-child')
+      if (!active) throw new Error('child ownership expired')
+      return { toolOwner: 'Checker', allowedSkills: ['global'] }
+    },
+    remoteScriptRun: async (_params, control) => {
+      calls += 1
+      assert.deepEqual(control?.resourceOwner, { toolOwner: 'Checker', allowedSkills: ['global'] })
+      control?.beforeDispatch()
+      await gate.promise
+      control?.beforeDispatch()
+      return { ok: true }
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize parent and end its prompt')
+  routed = true
+  const runtimeId = app.sessions[0].runtimeSessionId
+  const execute = app.hostHandlers.get('skills.scriptTool')!
+  const pending = execute(
+    {
+      runtimeSessionId: runtimeId,
+      remoteSessionId: current.phiSessionId,
+      projectId: 'remote-project-1',
+      requestId: 'request',
+      tool: 'global_command',
+      args: {},
+      toolOwner: 'main',
+      allowedSkills: ['not-selected']
+    },
+    { originSessionId: runtimeId, agentRunId: 'owned-child', signal: new AbortController().signal }
+  )
+  const rejected = assert.rejects(pending, /child ownership expired/)
+  await tick()
+  assert.equal(calls, 1)
+  active = false
+  gate.resolve()
+  await rejected
+  assert.ok(checked >= 3)
+})
+
+test('T15 main recovery: an accepted explicit attach stays with its original owner after navigation and publishes only confirmed model metadata', async () => {
+  const gate = deferred<void>()
+  let entered = false
+  let sessionId = ''
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => true,
+    runtimeSessionReady: () => true,
+    onCreateSession: async (options, control) => {
+      entered = true
+      await gate.promise
+      control?.assertCurrent()
+      const model = options.model as { provider: string; id: string }
+      app.updatedSessionManifests.push({
+        sessionId,
+        patch: {
+          model: { providerId: model.provider, modelId: model.id },
+          thinkingLevel: 'high',
+          runtimeRef: {
+            ...reference,
+            checkpoint: { leafId: 'confirmed', verifiedAt: '2026-10-15T00:00:00.000Z' }
+          }
+        }
+      })
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+    path: string
+  }
+  sessionId = current.phiSessionId
+  const reference = savedRemoteReference(sessionId)
+  app.updatedSessionManifests.push({
+    sessionId,
+    patch: { runtimeRef: reference, model: { providerId: 'openai', modelId: 'gpt-test' } }
+  })
+  const restoring = app.invoke(
+    'sessions:resumeRuntime',
+    runtimeRecoveryTarget(await app.invoke('sessions:current')),
+    { providerId: 'openai', modelId: 'gpt-vision-test' }
+  )
+  await waitUntil(() => entered)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const peer = await app.invoke('sessions:current')
+  gate.resolve()
+  const restored =
+    (await restoring) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  assert.equal(restored.phase, 'connected')
+  assert.equal(restored.target.sessionId, sessionId)
+  assert.deepEqual(await app.invoke('sessions:current'), peer)
+  assert.deepEqual(app.sessions[0].promptTexts, [])
+  assert.equal(app.appendedSessionEvents.length, 0)
+  await app.invoke('sessions:switch', current.path)
+  assert.deepEqual(await app.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-vision-test'
+  })
+  const state = (await app.invoke(
+    'sessions:runtimeRecovery',
+    runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
+  assert.equal(state.phase, 'connected')
+  assert.equal(state.canResume, false)
+})
+
+test('T15 main jobs: restart metadata is readonly, live IDs win, and listing failure never invents interrupted tasks', async () => {
+  let reads = 0
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    coldRuntimeOrigin: (id) =>
+      id === 'live-runtime' ? { phiSessionId: 'phi-1', cwd: '/fixture/remote' } : undefined,
+    coldChildRuns: (phiSessionId) => {
+      reads += 1
+      return ['old-child', 'live-child'].map((id) => ({
+        id,
+        phiSessionId,
+        agent: 'Researcher',
+        background: true,
+        status: 'interrupted',
+        startedAt: Date.parse('2026-10-01T00:00:00Z'),
+        canControl: false,
+        historyAvailable: false,
+        nativeId: 'private-native',
+        childSessionFile: '/private/server/child.jsonl'
+      }))
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  app.setBridgeAgentJobs([
+    {
+      agentSessionId: 'live-runtime',
+      agentRunId: 'live-child',
+      agentName: 'Researcher',
+      task: 'Confirmed live task',
+      state: 'running',
+      background: true,
+      startedAt: Date.now()
+    }
+  ])
+  const jobs = (await app.invoke('jobs:listAgents')) as Array<Record<string, unknown>>
+  assert.equal(jobs.length, 2)
+  assert.equal(jobs.filter((job) => job.agentRunId === 'live-child').length, 1)
+  const cold = jobs.find((job) => job.agentRunId === 'old-child')!
+  assert.equal(cold.agentSessionId, '')
+  assert.equal(cold.state, 'interrupted')
+  assert.equal(cold.canControl, false)
+  assert.equal(cold.historyAvailable, false)
+  assert.equal(cold.sessionPath, `phi-session:${current.phiSessionId}`)
+  assert.equal(cold.task, '')
+  assert.equal('nativeId' in cold, false)
+  assert.equal('childSessionFile' in cold, false)
+  const before = reads
+  app.failBridgeRequests(new Error('live listing unavailable'))
+  await assert.rejects(app.invoke('jobs:listAgents'), /live listing unavailable/)
+  assert.equal(reads, before)
+  assert.equal(app.createdAgentOptions.length, 0)
+})
+
+test('T14 main approvals: a finished parent child uses one durable event and only its original conversation attention', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const original = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'launch an expert')
+  const peer = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  const observer = app.remoteRoutingOptions[0].onChildApprovalEvent as (
+    event: Record<string, unknown>,
+    parent: unknown
+  ) => void
+  assert.ok(observer)
+  const request = {
+    requestId: 'approval-child-1',
+    sessionId: original.phiSessionId,
+    runId: 'child-1',
+    agentRunId: 'child-1',
+    toolCallId: 'child-tool',
+    toolName: 'write',
+    summary: 'write approved result',
+    cwd: '/canonical/project'
+  }
+  const event = {
+    type: 'approval_requested',
+    sessionId: original.phiSessionId,
+    runId: 'child-1',
+    approvalId: request.requestId,
+    toolCallId: request.toolCallId,
+    request
+  }
+  app.appendedSessionEvents.push({
+    sessionId: original.phiSessionId,
+    event: { ...event, agentRunId: 'child-1', parentRunId: 'old-parent' }
+  })
+  const before = app.appendedSessionEvents.length
+  observer(event, { sessionId: original.phiSessionId, runId: 'old-parent' })
+  observer(event, { sessionId: original.phiSessionId, runId: 'old-parent' })
+  assert.equal(app.appendedSessionEvents.length, before)
+  assert.equal(
+    app.updatedSessionManifests.filter((entry) => entry.sessionId === original.phiSessionId).at(-1)
+      ?.patch.status,
+    'needs_approval'
+  )
+  assert.equal(
+    app.updatedSessionManifests.some(
+      (entry) => entry.sessionId === peer.phiSessionId && entry.patch.status === 'needs_approval'
+    ),
+    false
+  )
+  const outcomeBefore = app.updatedSessionManifests
+    .filter((entry) => entry.sessionId === original.phiSessionId && 'lastRunOutcome' in entry.patch)
+    .at(-1)?.patch.lastRunOutcome
+  app.appendedSessionEvents.push({
+    sessionId: original.phiSessionId,
+    event: { ...event, type: 'approval_denied', agentRunId: 'child-1', parentRunId: 'old-parent' }
+  })
+  observer(
+    { ...event, type: 'approval_denied' },
+    { sessionId: original.phiSessionId, runId: 'old-parent' }
+  )
+  assert.equal(
+    app.updatedSessionManifests.filter((entry) => entry.sessionId === original.phiSessionId).at(-1)
+      ?.patch.status,
+    'failed'
+  )
+  assert.equal(
+    app.updatedSessionManifests
+      .filter(
+        (entry) => entry.sessionId === original.phiSessionId && 'lastRunOutcome' in entry.patch
+      )
+      .at(-1)?.patch.lastRunOutcome,
+    outcomeBefore
+  )
+  assert.equal(app.appendedSessionEvents.length, before + 1)
+  assert.equal(
+    ((await app.invoke('sessions:current')) as { phiSessionId: string }).phiSessionId,
+    peer.phiSessionId
+  )
+})
+
+test('T15 main controls: a known cold remote runtime cannot forward stop or steer to the legacy worker', async () => {
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    coldRuntimeOrigin: (id) =>
+      id === 'cold-runtime' ? { phiSessionId: 'phi-1', cwd: '/fixture/remote' } : undefined
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  const before = app.bridgeRequests.length
+  await assert.rejects(
+    app.invoke('agent:stopRun', 'cold-runtime', 'same-child-id'),
+    /没有可控制的连接/
+  )
+  await assert.rejects(
+    app.invoke('agent:steerRun', 'cold-runtime', 'same-child-id', 'continue'),
+    /没有可控制的连接/
+  )
+  assert.equal(app.bridgeRequests.length, before)
+  await app.invoke('agent:stopRun', 'unknown-local-runtime', 'local-child')
+  assert.equal(app.bridgeRequests.at(-1)?.method, 'agentRun.stop')
+})
+
+test('T14 main environments: selected experts use a readonly ready descriptor and close workspace on missing or rebound environments', async () => {
+  let host = 'cluster-one',
+    closed = 0,
+    reads = 0
+  let result: unknown = undefined
+  let rebound = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    remoteNotebookBinding: () => host,
+    remoteRuntimeWorkspace: async () => {
+      const host = { capabilities: () => ({}), fs: {}, exec: {} }
+      return {
+        projectHost: host,
+        runtimeHost: host,
+        close: async () => {
+          closed += 1
+        }
+      }
+    },
+    readyEnvironmentRead: async () => {
+      reads += 1
+      if (rebound) host = 'replacement'
+      return result
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+    cwd: string
+  }
+  const resolve = app.remoteRoutingOptions[0].resolveAgentEnvironment as (
+    identity: Record<string, string>,
+    agent: { environment: string; pluginId: string },
+    signal: AbortSignal
+  ) => Promise<Record<string, unknown>>
+  const identity = {
+    runtimeSessionId: 'parent',
+    sessionId: current.phiSessionId,
+    projectId: 'remote-project-1',
+    cwd: '/canonical/project',
+    resourceCwd: current.cwd
+  }
+  const agent = { environment: 'r-analysis', pluginId: 'trusted-plugin' }
+  await assert.rejects(resolve(identity, agent, new AbortController().signal), /尚未就绪/)
+  assert.equal(closed, 1)
+  result = {
+    ref: agent.environment,
+    environmentId: 'content-env',
+    lockSha256: 'b'.repeat(64),
+    status: 'ready',
+    execution: {
+      runtimeRoot: '/runtime',
+      micromambaPath: '/runtime/bin/micromamba',
+      prefixPath: '/runtime/envs/content-env',
+      markerPath: '/runtime/envs/content-env/.phi-ready',
+      markerSha256: 'c'.repeat(64)
+    }
+  }
+  const descriptor = await resolve(identity, agent, new AbortController().signal)
+  assert.equal(descriptor.environmentId, 'content-env')
+  assert.equal(descriptor.pluginId, agent.pluginId)
+  assert.deepEqual(descriptor.binding, {
+    serverId: 'host-1',
+    serverIdentitySha256: 'a'.repeat(64),
+    projectId: 'remote-project-1',
+    projectRoot: '/canonical/project'
+  })
+  assert.deepEqual(descriptor.execution, (result as Record<string, unknown>).execution)
+  assert.equal(closed, 2)
+  rebound = true
+  await assert.rejects(resolve(identity, agent, new AbortController().signal), /绑定已改变/)
+  assert.equal(closed, 3)
+  assert.equal(reads, 3)
+  assert.equal(app.createdAgentOptions.length, 0)
+  assert.equal(app.approvalOptions.length, 0)
+})
+
+test('T14 main browser: a verified background child keeps its own browser actor after its parent finishes', async () => {
+  let routed = false
+  let live = true,
+    checked = 0
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    childResourceOwner: (_runtime, child) => {
+      checked += 1
+      if (!live || child !== 'browser-child') throw new Error('child browser ownership ended')
+      return { toolOwner: 'Researcher', allowedSkills: [] }
+    }
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'start background browser research')
+  routed = true
+  const execute = app.hostHandlers.get('browser.execute')!
+  const runtimeId = app.sessions[0].runtimeSessionId
+  const context = {
+    originSessionId: runtimeId,
+    agentRunId: 'browser-child',
+    signal: new AbortController().signal
+  }
+  const request = {
+    originSessionId: runtimeId,
+    requestId: 'child-open',
+    toolCallId: 'child-browser-call',
+    command: { type: 'open', requestId: 'child-open', url: 'https://child.example.test' }
+  }
+  const result = (await execute(request, context)) as {
+    ok: boolean
+    snapshot: { tabs: Array<{ id: string; documentRevision: number }> }
+  }
+  assert.equal(result.ok, true)
+  assert.equal(app.browserViews.length, 1)
+  assert.ok(checked >= 3)
+  await assert.rejects(
+    execute(
+      {
+        ...request,
+        requestId: 'child-type',
+        command: {
+          type: 'typeText',
+          requestId: 'child-type',
+          tabId: result.snapshot.tabs[0].id,
+          expectedDocumentRevision: result.snapshot.tabs[0].documentRevision,
+          requireActive: true,
+          text: 'private text',
+          consequence: 'write'
+        }
+      },
+      context
+    ),
+    /text input is unavailable/
+  )
+  live = false
+  await assert.rejects(
+    async () =>
+      execute(
+        {
+          ...request,
+          requestId: 'late-open',
+          command: { ...request.command, requestId: 'late-open' }
+        },
+        context
+      ),
+    /ownership ended/
+  )
+  const cancel = app.hostHandlers.get('browser.cancel')!
+  await cancel(
+    { originSessionId: runtimeId, requestId: request.requestId, toolCallId: request.toolCallId },
+    context
+  )
+  assert.equal(app.browserViews.length, 1)
+  assert.equal(app.createdAgentOptions.length, 1)
+})
+
+test('T15 main recovery: closing the window cancels accepted background preparation without dispatching a prompt', async () => {
+  let entered = false,
+    cancelled = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onCreateSession: async (_options, control) => {
+      entered = true
+      await new Promise<void>((_resolve, reject) => {
+        const abort = (): void => {
+          cancelled = true
+          reject(new Error('owned recovery cancelled'))
+        }
+        control?.signal?.addEventListener('abort', abort, { once: true })
+        if (control?.signal?.aborted) abort()
+      })
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: savedRemoteReference(current.phiSessionId),
+      model: { providerId: 'openai', modelId: 'gpt-test' }
+    }
+  })
+  const restoring = app.invoke(
+    'sessions:resumeRuntime',
+    runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  )
+  const rejected = assert.rejects(restoring, /cancelled/)
+  await waitUntil(() => entered)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  app.closeMainWindow()
+  await rejected
+  assert.equal(cancelled, true)
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.appendedSessionEvents.length, 0)
 })

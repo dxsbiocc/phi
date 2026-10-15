@@ -610,6 +610,10 @@ export class WrapperJobManager implements WrapperJobClient {
       if (
         snapshot.runId !== run.runId ||
         snapshot.remoteRunDir !== expectedRunDir ||
+        run.remote?.projectId !== resolved.projectId ||
+        run.remote?.hostProfileId !== resolved.hostProfileId ||
+        run.remote?.connectionId !== resolved.connectionId ||
+        run.remote?.workspaceRoot !== resolved.target.workspaceRoot ||
         run.remote?.host !== resolved.target.connection.host ||
         run.remote?.runDir !== expectedRunDir
       ) {

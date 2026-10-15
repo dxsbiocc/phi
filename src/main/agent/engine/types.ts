@@ -229,6 +229,7 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'm
 /** Main-owned selection authority; never serialized into SDK or renderer requests. */
 export interface RuntimeSelectionControl {
   readonly preferredThinkingLevel?: ThinkingLevel
+  readonly signal?: AbortSignal
   assertCurrent(): void
 }
 
@@ -384,11 +385,19 @@ export type PhiSessionCreateParams = {
   }
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
   personaMarkdown?: string
+  /** Explicit main-owned restore intent; never inferred from a replacement model. */
+  remoteRecovery?: {
+    replacementModel?: { providerId: string; modelId: string }
+  }
 }
 
 export interface PhiEngine {
   sessions: {
-    create(params: PhiSessionCreateParams): Promise<WorkerCreateSessionResult>
+    create(
+      params: PhiSessionCreateParams,
+      control?: RuntimeSelectionControl
+    ): Promise<WorkerCreateSessionResult>
+    hasActiveAgentRuns?(sessionId: string): boolean
     prompt(params: {
       sessionId: string
       text: string
@@ -525,6 +534,20 @@ export interface PhiEngine {
   }
   agentRuns: {
     list(params: Record<string, never>): Promise<unknown>
+    /** Desktop-only lookup of a currently verified child; never serialized as a capability. */
+    resourceOwner?(
+      sessionId: string,
+      runId: string
+    ): { readonly toolOwner: string; readonly allowedSkills: readonly string[] }
+    wait?(
+      params: {
+        sessionId: string
+        ids?: readonly string[]
+        mode?: 'all' | 'any'
+        timeoutMs?: number
+      },
+      signal?: AbortSignal
+    ): Promise<unknown>
     steer(params: { sessionId: string; runId: string; message?: string }): Promise<unknown>
     stop(params: { sessionId: string; runId: string }): Promise<unknown>
   }

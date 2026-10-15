@@ -170,8 +170,11 @@ export function selectBackgroundJobs(
       .filter((run) => run.background)
       .map((run): UnifiedBackgroundJob => ({
         kind: 'agent',
-        key: `agent:${run.agentSessionId}:${run.agentRunId}`,
-        active: run.state === 'queued' || run.state === 'running',
+        key:
+          run.canControl === false
+            ? `agent:cold:${run.sessionId}:${run.agentRunId}`
+            : `agent:${run.agentSessionId}:${run.agentRunId}`,
+        active: run.canControl !== false && (run.state === 'queued' || run.state === 'running'),
         timestamp: run.completedAt ?? run.startedAt,
         run
       })),
@@ -236,6 +239,7 @@ export function selectBackgroundJobs(
 
 function belongsInFinishedTray(item: UnifiedBackgroundJob, query: BackgroundJobQuery): boolean {
   if (query.dismissedKeys?.has(item.key)) return false
+  if (item.kind === 'agent' && item.run.historyAvailable === false) return true
   if (!query.finishedAfter) return true
   const endedAt =
     item.kind === 'environment'

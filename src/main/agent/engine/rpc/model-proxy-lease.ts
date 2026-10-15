@@ -27,6 +27,9 @@ export interface ModelProxyRpcTransportOptions extends Omit<
   readonly gateway: Pick<OmpBridge, 'createModelGatewayLease'>
   readonly browserTextVault?: BrowserTextVault
   readonly currentBrowserRunSignal?: () => AbortSignal | undefined
+  readonly resolveBrowserChildRun?: (
+    header: string
+  ) => { readonly signal: AbortSignal; readonly vault: BrowserTextVault } | undefined
   /** Main-only generation/selection check, including the last awaited command lookup. */
   readonly assertSelectionCurrent?: () => void
   readonly session: Pick<
@@ -254,6 +257,7 @@ export async function prepareModelProxyRpcSessionTransport(
               lease: owned.gateway,
               vault: options.browserTextVault,
               currentRunSignal: options.currentBrowserRunSignal,
+              resolveChildRun: options.resolveBrowserChildRun,
               signal: controller.signal
             }),
             controller.signal,

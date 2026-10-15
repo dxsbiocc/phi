@@ -42,7 +42,11 @@ import {
   type RoutedSessionDriver,
   type RoutedSessionFactory
 } from '../session-routing-engine'
-import { createRpcDesktopToolScope, type RpcDesktopToolScopeOptions } from './desktop-tool-scope'
+import {
+  createRpcDesktopToolScope,
+  type RpcDesktopToolScopeOptions,
+  type RpcDesktopToolRun
+} from './desktop-tool-scope'
 import {
   RemoteSessionRuntime,
   type RemoteRuntimeSnapshot,
@@ -62,6 +66,17 @@ import { rpcPromptPolicy } from '../phi-extension/lib/rpc-prompt-policy'
 import { join } from 'node:path'
 import { filterPersonaContextFile } from '../phi-extension/lib/phi-main-system-prompt'
 import type { DesktopProjectMemoryAdapter } from './desktop-project-memory-adapter'
+import { RemoteRecoveryError } from './session-recovery'
+import type {
+  CompileRpcAgentDefinitionsOptions,
+  RpcAgentResourceCatalogInput,
+  RpcChildRunSnapshot
+} from './subagents/types'
+import { resolveRpcAgentModelRefs } from './subagents/definition-compiler'
+import { FacadeChildToolScopes, childJobView } from './facade-child-tool-scopes'
+import { recordChildRunRecovery } from '../../session/child-run-recovery'
+import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
+import { createFacadeAgentRunTools } from './facade-agent-run-tools'
 export type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
 
 export interface SelectedFacadeRuntime {
@@ -97,6 +112,11 @@ export interface SelectedFacadeRuntime {
   /** Trusted main-process snapshot; renderer phiAgents never activates this capability. */
   readonly foregroundChildren?: {
     readonly definitions: readonly PhiAgentDefinition[]
+    readonly allowParallel?: boolean
+    readonly allowBackground?: boolean
+    readonly resources?: Pick<RpcAgentResourceCatalogInput, 'skills'>
+    readonly resolveEnvironment?: CompileRpcAgentDefinitionsOptions['resolveEnvironment']
+    readonly onChildChange?: (snapshot: Readonly<RpcChildRunSnapshot>, parent: SessionRun) => void
     /** Notification only; the facade is the single durable approval writer. */
     readonly onApprovalEvent?: (event: RpcApprovalEvent, parent: SessionRun) => void | Promise<void>
   }
@@ -244,7 +264,9 @@ export function createFacadeSessionFactory(
   options: FacadeSessionFactoryOptions
 ): RoutedSessionFactory {
   return {
-    async create(params, signal, sink): Promise<RoutedSessionDriver> {
+    async create(params, signal, sink, control): Promise<RoutedSessionDriver> {
+      control?.assertCurrent()
+      let creationControl = control
       signal.throwIfAborted()
       if (!params.remoteProject) throw new Error('Remote facade requires an explicit SSH project')
       const requestedPrompt = structuredClone({
@@ -393,9 +415,14 @@ export function createFacadeSessionFactory(
           provider: initial.model.providerId,
           id: initial.model.modelId
         }
-        const chosenModel = reference
-          ? savedModel
-          : params.model && { provider: params.model.provider, id: params.model.id }
+        const replacement = params.remoteRecovery?.replacementModel
+        if (replacement && (!reference || !replacement.providerId || !replacement.modelId))
+          throw new Error('Explicit replacement requires an existing remote session')
+        const chosenModel = replacement
+          ? { provider: replacement.providerId, id: replacement.modelId }
+          : reference
+            ? savedModel
+            : params.model && { provider: params.model.provider, id: params.model.id }
         if (
           !chosenModel ||
           (params.model &&
@@ -404,8 +431,8 @@ export function createFacadeSessionFactory(
           throw new Error('Explicit remote model policy is required')
         if (
           !savedModel ||
-          chosenModel.provider !== savedModel.provider ||
-          chosenModel.id !== savedModel.id ||
+          (!replacement &&
+            (chosenModel.provider !== savedModel.provider || chosenModel.id !== savedModel.id)) ||
           (reference === undefined && params.thinkingLevel !== initial.thinkingLevel)
         )
           throw new Error('Phi model/thinking policy must be saved before remote creation')
@@ -442,31 +469,55 @@ export function createFacadeSessionFactory(
         }
         const vault = new BrowserTextVault()
         let tools: ReturnType<typeof createRpcDesktopToolScope> | undefined
+        let childTools: FacadeChildToolScopes | undefined
         try {
-          tools = createRpcDesktopToolScope({
-            identity: {
-              runtimeSessionId: params.sessionId,
-              sessionId: phiSessionId,
-              projectId,
-              cwd: binding.canonicalRoot
-            },
-            services: options.bridge.hostServices,
-            currentRun: () => runtime?.currentRun(),
-            assertBinding: selected.desktopTools?.assertBinding,
-            recentUserImages: selected.recentUserImages,
-            allowBrowserTypeText: () => selected.desktopToolNames.includes('browser'),
-            browserTextVault: vault,
-            agentDir: params.agentDir,
-            allowedSkills: selected.desktopTools?.allowedSkills ?? [],
-            skillCatalog: selected.desktopTools?.skillCatalog,
-            scriptTools: selected.desktopTools?.scriptTools ?? [],
-            scriptApprovalFor: selected.desktopTools?.scriptApprovalFor,
-            paletteCatalogPath: selected.desktopTools?.paletteCatalogPath,
-            remoteLibrary: selected.desktopTools?.remoteLibrary,
-            desktopWebSearch: selected.desktopTools?.desktopWebSearch,
-            desktopMcp: selected.desktopTools?.desktopMcp,
-            desktopMemory: selected.memory
-          })
+          const createScope = (
+            currentRun: () => RpcDesktopToolRun | undefined,
+            owner = 'main',
+            skills = selected.desktopTools?.allowedSkills ?? [],
+            childId?: string
+          ): ReturnType<typeof createRpcDesktopToolScope> =>
+            createRpcDesktopToolScope({
+              identity: {
+                runtimeSessionId: params.sessionId,
+                sessionId: phiSessionId,
+                projectId,
+                cwd: binding.canonicalRoot
+              },
+              services: options.bridge.hostServices,
+              currentRun,
+              toolOwner: owner,
+              ownsSharedResources: owner === 'main',
+              assertBinding: () => {
+                selected.desktopTools?.assertBinding?.()
+                if (childId && !runtime?.childRunForHost(childId))
+                  throw new Error('Child host scope is no longer active')
+              },
+              recentUserImages: selected.recentUserImages,
+              allowBrowserTypeText: () =>
+                owner === 'main' && selected.desktopToolNames.includes('browser'),
+              browserTextVault: childId ? runtime!.childBrowserTextVault(childId) : vault,
+              agentDir: params.agentDir,
+              allowedSkills: skills,
+              skillCatalog: selected.desktopTools?.skillCatalog,
+              scriptTools: selected.desktopTools?.scriptTools ?? [],
+              scriptApprovalFor: selected.desktopTools?.scriptApprovalFor
+                ? (name, input) => selected.desktopTools!.scriptApprovalFor!(name, input, childId)
+                : undefined,
+              paletteCatalogPath: selected.desktopTools?.paletteCatalogPath,
+              remoteLibrary: selected.desktopTools?.remoteLibrary,
+              desktopWebSearch: selected.desktopTools?.desktopWebSearch,
+              desktopMcp: selected.desktopTools?.desktopMcp,
+              desktopMemory: selected.memory
+            })
+          tools = createScope(() => runtime?.currentRun())
+          if (selected.foregroundChildren)
+            childTools = new FacadeChildToolScopes({
+              definitions: selected.foregroundChildren.definitions,
+              createScope,
+              current: (id) => runtime?.childRunForHost(id),
+              name: (run) => runtime!.childResourceOwner(run.id).toolOwner
+            })
           const projector = new RpcFacadeEventProjector()
           const scopeTools = tools
           const memoryNames = selected.memory?.tools.map((tool) => tool.name) ?? []
@@ -484,7 +535,10 @@ export function createFacadeSessionFactory(
               candidate.provider === chosenModel.provider && candidate.id === chosenModel.id
           )
           if (!model)
-            throw new Error('Selected remote model is unavailable in the real desktop registry')
+            throw new RemoteRecoveryError(
+              'MODEL_UNAVAILABLE',
+              'Selected remote model is unavailable'
+            )
           const stateFrom = (snapshot: RemoteRuntimeSnapshot): WorkerSessionState =>
             workerState(snapshot, initial.cwd, phiSessionId, models, projector)
           let state: WorkerSessionState | undefined
@@ -504,6 +558,7 @@ export function createFacadeSessionFactory(
           let runtimeEpoch = 0
           let selectionState: WorkerSessionState | undefined
           const assertAdoptionPolicy = (): void => {
+            creationControl?.assertCurrent()
             const latest = findPhiSessionById(phiSessionId)
             if (
               !latest ||
@@ -531,7 +586,15 @@ export function createFacadeSessionFactory(
           ): Promise<RemoteSessionRuntime> => {
             assertAdoptionPolicy()
             const epoch = ++runtimeEpoch
-            const refs = [bootModel, ...(selection ? [selection.model] : [])]
+            const childModels = selected.foregroundChildren
+              ? await resolveRpcAgentModelRefs(
+                  selected.foregroundChildren.definitions,
+                  models,
+                  selection?.model ?? bootModel
+                )
+              : []
+            assertAdoptionPolicy()
+            const refs = [bootModel, ...(selection ? [selection.model] : []), ...childModels]
               .filter(
                 (value, index, all) =>
                   all.findIndex(
@@ -539,7 +602,32 @@ export function createFacadeSessionFactory(
                   ) === index
               )
               .map(({ provider, id }) => ({ provider, id }))
-            return RemoteSessionRuntime.create({
+            const runTools = selected.foregroundChildren
+              ? createFacadeAgentRunTools({
+                  runtimeSessionId: params.sessionId,
+                  phiSessionId,
+                  projectId,
+                  host: options.bridge.hostServices,
+                  assertCurrent: () => {
+                    assertAdoptionPolicy()
+                    if (
+                      !controlOwner ||
+                      runtime !== controlOwner ||
+                      epoch !== runtimeEpoch ||
+                      closing ||
+                      interrupted
+                    )
+                      throw new RuntimeReferenceError('STALE_GENERATION', '专家控制代次已改变')
+                  },
+                  list: () => controlOwner!.listChildRuns(),
+                  wait: (options) => controlOwner!.waitForChildren(options),
+                  steer: (id, message, signal) => controlOwner!.steerChild(id, message, signal),
+                  stop: (id, signal) => controlOwner!.stopChild(id, signal),
+                  readChildReport: (run, signal) => controlOwner!.readChildReport(run, signal),
+                  waitCompletionDelivery: (id) => controlOwner!.awaitChildCompletionDelivery(id)
+                })
+              : []
+            const controlOwner: RemoteSessionRuntime = await RemoteSessionRuntime.create({
               transport: {
                 projectId,
                 runtime: selected.runtime,
@@ -574,14 +662,65 @@ export function createFacadeSessionFactory(
                 personaPath: promptPolicy.personaPath,
                 contextFiles: promptPolicy.contextFiles,
                 runtime: promptPolicy.runtime,
-                memoryBlock: selected.memory?.memoryBlock
+                memoryBlock: selected.memory?.memoryBlock,
+                recoverySummary: promptPolicy.recoverySummary
               },
-              tools: scopeTools.tools.filter((tool) => names.has(tool.name)),
-              hostApprovalFor: scopeTools.approvalFor,
+              tools: [...scopeTools.tools.filter((tool) => names.has(tool.name)), ...runTools],
+              hostApprovalFor: (name, input) =>
+                runTools.find((tool) => tool.name === name)?.approval ??
+                scopeTools.approvalFor(name, input),
               nativeTools: selected.nativeTools,
               foregroundChildren: selected.foregroundChildren && {
                 binding: deriveProductionChildBinding(binding, selected),
                 definitions: selected.foregroundChildren.definitions,
+                allowParallel: selected.foregroundChildren.allowParallel,
+                allowBackground: selected.foregroundChildren.allowBackground,
+                resources: {
+                  skills: selected.foregroundChildren.resources?.skills ?? [],
+                  hostTools: childTools!.hostTools
+                },
+                resolveEnvironment: selected.foregroundChildren.resolveEnvironment,
+                classifyTool: (run, call) => childTools!.classify(run, call),
+                executeHost: (run, call, signal) => childTools!.execute(run, call, signal),
+                drainHost: (id) => childTools!.drain(id),
+                onChildChange: (snapshot, parent) => {
+                  if (!attachedReference || interrupted || closing) return
+                  assertAdoptionPolicy()
+                  recordChildRunRecovery(
+                    { reference: attachedReference, snapshot },
+                    { assertCurrent: assertAdoptionPolicy }
+                  )
+                  selected.foregroundChildren?.onChildChange?.(snapshot, parent)
+                },
+                onChildFinished: async (snapshot) => {
+                  if (interrupted || closing || !runtime) return
+                  const report = await runtime.readChildReport(snapshot)
+                  if (interrupted || closing) return
+                  await options.bridge.hostServices.invoke(
+                    AGENT_RUN_HOST_METHODS.finished,
+                    {
+                      originSessionId: params.sessionId,
+                      run: {
+                        id: snapshot.id,
+                        agent: snapshot.agent,
+                        state:
+                          snapshot.status === 'completed'
+                            ? 'done'
+                            : snapshot.status === 'aborted'
+                              ? 'cancelled'
+                              : 'error',
+                        task: '',
+                        startedAt: snapshot.startedAt,
+                        completedAt: snapshot.completedAt,
+                        toolCallId: snapshot.parentToolCallId,
+                        ...(report
+                          ? { report }
+                          : { error: '专家任务未提供完整结果，请查看任务记录。' })
+                      }
+                    },
+                    { originSessionId: params.sessionId, agentRunId: snapshot.id }
+                  )
+                },
                 parentThinkingLevel: childThinkingLevel(
                   selection
                     ? selection.thinkingLevel === 'off'
@@ -658,6 +797,7 @@ export function createFacadeSessionFactory(
                 selected.onInterrupted?.(error)
               }
             })
+            return controlOwner
           }
           runtime = await startRuntime(
             model,
@@ -665,19 +805,37 @@ export function createFacadeSessionFactory(
               ? {
                   type: 'resume',
                   reference: { ...reference, phiSessionId },
-                  savedModel: chosenModel
+                  savedModel: savedModel!,
+                  ...(replacement ? { replacement: chosenModel } : {})
                 }
               : { type: 'new', model: chosenModel },
             reference
               ? {
                   model,
-                  thinkingLevel: expectedThinking ?? 'off',
+                  thinkingLevel: replacement
+                    ? selectionThinking(model, expectedThinking, false).rpc
+                    : (expectedThinking ?? 'off'),
                   assertCurrent: assertAdoptionPolicy,
                   signal
                 }
               : undefined
           )
           state ??= stateFrom(runtime.currentSnapshot())
+          assertAdoptionPolicy()
+          if (replacement) {
+            const confirmed = runtime.currentSnapshot()
+            const next = { providerId: confirmed.model.provider, modelId: confirmed.model.id }
+            const thinking =
+              confirmed.thinkingLevel === 'off'
+                ? undefined
+                : (confirmed.thinkingLevel as ThinkingLevel | undefined)
+            updateSessionManifest(phiSessionId, { model: next, thinkingLevel: thinking })
+            expectedModel = next
+            expectedThinking = thinking
+          }
+          // A recovery operation owns preparation only. Future user runs advance
+          // its captured prompt generation while this verified session stays live.
+          creationControl = undefined
           const currentState = (): WorkerSessionState => structuredClone(state!)
           const attachEvents = (owner: RemoteSessionRuntime): void => {
             detach = owner.onEvent((frame) => {
@@ -704,6 +862,7 @@ export function createFacadeSessionFactory(
               submittedRun ||
               metadataPending ||
               options.runners.getActiveRun(phiSessionId) ||
+              runtime!.hasActiveAgentRuns() ||
               !runtime!.isReady
             )
               throw new Error('Remote selection requires an idle Phi session')
@@ -853,6 +1012,18 @@ export function createFacadeSessionFactory(
             return operation
           }
           return {
+            hasActiveAgentRuns: () => !closing && !interrupted && runtime!.hasActiveAgentRuns(),
+            agentRuns: {
+              list: () =>
+                runtime!
+                  .listChildRuns()
+                  .filter((run) => run.background)
+                  .map(childJobView),
+              resourceOwner: (id) => runtime!.childResourceOwner(id),
+              steer: (id, message) => runtime!.steerChild(id, message),
+              stop: (id) => runtime!.stopChild(id),
+              wait: (options) => runtime!.waitForChildren(options)
+            },
             get isLive() {
               return (
                 !closing &&
@@ -971,6 +1142,7 @@ export function createFacadeSessionFactory(
                 submittedRun ||
                 metadataPending ||
                 options.runners.getActiveRun(phiSessionId) ||
+                runtime!.hasActiveAgentRuns() ||
                 !runtime!.isReady
               )
                 throw new Error('Compaction requires an idle Phi session')
@@ -1015,6 +1187,7 @@ export function createFacadeSessionFactory(
                 submittedRun ||
                 metadataPending ||
                 options.runners.getActiveRun(phiSessionId) ||
+                runtime!.hasActiveAgentRuns() ||
                 !runtime!.isReady
               )
                 throw new Error('Remote metadata requires an idle Phi session')
@@ -1032,6 +1205,7 @@ export function createFacadeSessionFactory(
                 submittedRun ||
                 metadataPending ||
                 options.runners.getActiveRun(phiSessionId) ||
+                runtime!.hasActiveAgentRuns() ||
                 !runtime!.isReady
               )
                 throw new Error('Remote metadata requires an idle Phi session')
@@ -1123,6 +1297,14 @@ export function createFacadeSessionFactory(
                   adoption?.release()
                   tools?.dispose()
                   try {
+                    await childTools?.drain()
+                  } catch (error) {
+                    if (!failed) {
+                      failed = true
+                      failure = error
+                    }
+                  }
+                  try {
                     await drain?.()
                   } catch (error) {
                     if (!failed) {
@@ -1145,6 +1327,7 @@ export function createFacadeSessionFactory(
           }
         } catch (error) {
           await runtime?.close(error)
+          await childTools?.drain().catch(() => undefined)
           initialAdoption.release()
           adoption?.release()
           tools?.dispose()

@@ -51,6 +51,7 @@ export function createRpcHostResultExtension(
       )
     }
     pi.on('tool_call', (event, ctx) => {
+      if (ctx.agent.kind !== 'main') return
       if (!options.isHostTool(event.toolName)) return
       try {
         const ready = options.readiness()
@@ -117,6 +118,7 @@ export function createRpcHostResultExtension(
       }
     })
     pi.on('tool_result', (event, ctx) => {
+      if (ctx.agent.kind !== 'main') return
       const placeholder = isHostResultPlaceholder(event.content)
       const current = options.readiness()
       const key = current && JSON.stringify([current.runId, event.toolCallId])

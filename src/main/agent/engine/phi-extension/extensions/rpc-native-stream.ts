@@ -17,7 +17,13 @@ interface Installation {
 const installed = new WeakMap<object, Installation>()
 
 /** The launcher supplies lease authority; model/extension event input cannot grant it. */
-export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope): {
+export function createRpcNativeStreamExtension(
+  scope: TrustedNativeStreamScope,
+  privateRequestHeaders?: (
+    ctx: ExtensionContext,
+    expectedNativeWrapper: StreamFn
+  ) => Readonly<Record<string, string>> | undefined
+): {
   extension: ExtensionFactory
   assertInstalled(ctx: ExtensionContext): void
   dispose(): void
@@ -66,6 +72,19 @@ export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope):
     const wrapper = createNativeStreamIntegrityAdapter(original, {
       ...scope,
       signal,
+      privateRequestHeaders: privateRequestHeaders
+        ? () => {
+            const installation = installed.get(current.agent)
+            integrity(
+              session(ctx) === current &&
+                installation?.owner === owner &&
+                installation.wrapper === wrapper &&
+                !installation.controller.signal.aborted &&
+                (ctx.agent.kind !== 'main' || current.agent.streamFn === wrapper)
+            )
+            return privateRequestHeaders(ctx, wrapper)
+          }
+        : scope.privateRequestHeaders,
       isActive: () => !disposed && !controller.signal.aborted && scope.isActive()
     })
     const entry: Installation = { agent: current.agent, original, wrapper, controller, owner }

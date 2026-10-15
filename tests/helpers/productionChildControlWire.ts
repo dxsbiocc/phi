@@ -50,10 +50,14 @@ export async function productionChildControlWire(
     attestationIdentityPatch?: Partial<RpcChildRootScope>
     stateChangeAfterAttest?: 'session' | 'journal'
     cancelGate?: Promise<void>
+    background?: boolean
   } = {}
 ): Promise<ProductionChildControlWire> {
-  const prepared = await createProductionChildConfig(productionChildOptions())
+  const prepared = await createProductionChildConfig(
+    productionChildOptions({ allowBackground: options.background === true })
+  )
   const config = prepared.config
+  const profile = config.profiles.find((item) => item.definition.blocking !== !!options.background)!
   const capability = 'b'.repeat(64)
   const identity = {
     nonce: config.nonce,
@@ -84,8 +88,8 @@ export async function productionChildControlWire(
     childOmpSessionId: 'child-sdk',
     childSessionFile: '/srv/history/root/child.jsonl',
     parentSession: '/srv/history/root.jsonl',
-    nativeName: config.profiles[0].definition.nativeName,
-    definitionHash: config.profiles[0].definition.definitionHash
+    nativeName: profile.definition.nativeName,
+    definitionHash: profile.definition.definitionHash
   }
   const lifecycle = (status: string): unknown => ({
     type: 'subagent_lifecycle',
@@ -96,6 +100,7 @@ export async function productionChildControlWire(
       status,
       sessionFile: scope.childSessionFile,
       parentToolCallId: 'outer-task',
+      ...(options.background ? { detached: true } : {}),
       index: 0
     }
   })
@@ -238,11 +243,15 @@ export async function productionChildControlWire(
         ...base,
         operation,
         actual: {
-          tools: config.profiles[0].definition.tools.map((tool) => tool.name),
-          model: config.profiles[0].model,
-          route: config.profiles[0].route,
+          tools: profile.definition.tools.map((tool) => tool.name),
+          model: profile.model,
+          route: profile.route,
           thinkingLevel: 'off',
-          systemPromptDigest: rpcChildPromptDigest(config.profiles[0].systemPrompt)
+          systemPromptDigest:
+            profile.effectivePromptDigest ?? rpcChildPromptDigest(profile.systemPrompt),
+          ...(profile.definition.resourcesDigest
+            ? { resourcesDigest: profile.definition.resourcesDigest }
+            : {})
         }
       }
     return {
