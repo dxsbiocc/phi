@@ -187,6 +187,31 @@ test('notebook mutation helpers update cells immutably and revise the document',
   assert.notEqual(updated.cells[1].contentHash, inserted.cells[1].contentHash)
 })
 
+test('clearing output also removes previous execution timing while retaining other metadata', () => {
+  const document = parseNotebook(pythonNotebook)
+  const timed = updateNotebookCell(document, 'cell-code', {
+    metadata: {
+      tags: ['keep'],
+      phi: {
+        custom: { keep: true },
+        executionStartedAt: '2026-10-15T10:00:00Z',
+        executionCompletedAt: '2026-10-15T10:07:11Z',
+        executionDurationMs: 431_000
+      }
+    }
+  })
+  const cleared = clearNotebookCellOutput(timed, 'cell-code')
+  const cell = cleared.cells.find((candidate) => candidate.id === 'cell-code')!
+  assert.deepEqual(cell.outputs, [])
+  assert.equal(cell.executionCount, null)
+  assert.deepEqual(cell.metadata, { tags: ['keep'], phi: { custom: { keep: true } } })
+  assert.equal(
+    (timed.cells[1].metadata.phi as Record<string, unknown>).executionDurationMs,
+    431_000
+  )
+  assert.deepEqual(cleared.cells[0], timed.cells[0])
+})
+
 test('createNotebookCell clears code-only fields when converting to markdown', () => {
   const document = insertNotebookCell(
     parseNotebook({ nbformat: 4, nbformat_minor: 5, metadata: {}, cells: [] }),

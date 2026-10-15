@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Box, Button } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import MarkdownContent from '../../../components/MarkdownContent'
@@ -7,6 +7,9 @@ import NotebookHtmlFrameOutput from './NotebookFrameOutput'
 import NotebookPreOutput from './NotebookPreOutput'
 import { NotebookPlotlyOutput, NotebookVegaOutput } from './NotebookRichOutput'
 import NotebookHtmlTableOutput from './NotebookTableOutput'
+import { formatNotebookExecutionCompletedAt } from '../lib/notebookExecutionTime'
+import NotebookOutputHeader from './NotebookOutputHeader'
+import { NotebookOutputWrapContext } from './notebookOutputContext'
 import {
   firstDisplayMime,
   displayMimes,
@@ -20,6 +23,7 @@ import {
   isVideoMime,
   metadataForMime,
   normalizeLatexDelimiters,
+  notebookOutputText,
   type NotebookMimeMetadata,
   prettyJson,
   textFromValue
@@ -401,17 +405,27 @@ function NotebookOutputItem({
 
 export default function NotebookOutputArea({
   notebookPath,
-  outputs
+  outputs,
+  executionCompletedAt,
+  isRunning = false,
+  onClearOutputs
 }: {
   notebookPath?: string | null
   outputs: NotebookOutput[]
+  executionCompletedAt?: string
+  isRunning?: boolean
+  onClearOutputs?: () => void
 }): React.JSX.Element | null {
-  if (outputs.length === 0) return null
+  const [wrapText, setWrapText] = useState(false)
+  const copyText = useMemo(() => notebookOutputText(outputs), [outputs])
+  const completedAtLabel = formatNotebookExecutionCompletedAt(executionCompletedAt)
+  if (outputs.length === 0 && !completedAtLabel && !isRunning) return null
 
   return (
-    <>
+    <NotebookOutputWrapContext.Provider value={wrapText}>
       <Box
         data-phi-notebook-output="area"
+        data-phi-notebook-output-wrap={wrapText ? 'true' : 'false'}
         sx={{
           width: '100%',
           maxWidth: 'inherit',
@@ -422,12 +436,24 @@ export default function NotebookOutputArea({
           borderTop: 1,
           borderColor: (theme) => alpha(theme.palette.text.primary, 0.08),
           bgcolor: 'transparent',
+          '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
+            opacity: 1,
+            pointerEvents: 'auto'
+          },
           '& + &': {
             borderTop: 1,
             borderColor: 'divider'
           }
         }}
       >
+        <NotebookOutputHeader
+          executionCompletedAt={executionCompletedAt}
+          copyText={copyText}
+          hasOutputs={outputs.length > 0}
+          wrapText={wrapText}
+          onToggleWrap={() => setWrapText((current) => !current)}
+          onClearOutputs={onClearOutputs}
+        />
         <Box>
           {outputs.map((output, index) => (
             <Box
@@ -439,6 +465,6 @@ export default function NotebookOutputArea({
           ))}
         </Box>
       </Box>
-    </>
+    </NotebookOutputWrapContext.Provider>
   )
 }

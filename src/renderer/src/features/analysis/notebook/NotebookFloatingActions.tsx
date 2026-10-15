@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Fab,
+  CircularProgress,
   ListItemIcon,
   ListItemText,
   Menu,
@@ -20,6 +21,7 @@ import type {
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 import { NotebookKernelControl } from './NotebookKernelControl'
 import { notebookCommandLabel } from '../lib/notebookShortcuts'
+import type { NotebookSaveState } from '../lib/notebookAutosave'
 
 export const notebookFloatingActionInset = 28
 export const notebookFloatingActionSize = 34
@@ -40,6 +42,7 @@ const SettingsIcon = PhiIcons.nav.settings
 export default function NotebookFloatingActions({
   hasDocument,
   isDirty,
+  saveState,
   isOpening,
   isStartingNotebookSession,
   anchor,
@@ -58,6 +61,7 @@ export default function NotebookFloatingActions({
 }: {
   hasDocument: boolean
   isDirty: boolean
+  saveState?: NotebookSaveState
   isOpening: boolean
   isStartingNotebookSession?: boolean
   anchor: NotebookFloatingActionAnchor
@@ -75,6 +79,18 @@ export default function NotebookFloatingActions({
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void | Promise<void>
 }): React.JSX.Element | null {
   const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null)
+  const currentSaveState = saveState ?? (isDirty ? 'pending' : 'saved')
+  const saveColor =
+    currentSaveState === 'error' ? 'error' : currentSaveState === 'saving' ? 'info' : 'warning'
+  const hasSaveActivity = currentSaveState !== 'saved'
+  const saveHint =
+    currentSaveState === 'saving'
+      ? '正在自动保存…'
+      : currentSaveState === 'error'
+        ? '自动保存失败，点击查看设置'
+        : currentSaveState === 'pending'
+          ? '修改将自动保存'
+          : '已自动保存 · Notebook 设置'
   const canDisconnectNotebookSession = Boolean(
     notebookFile && onStopNotebookSession && hasLiveNotebookSession(notebookSessionStatus)
   )
@@ -129,10 +145,12 @@ export default function NotebookFloatingActions({
       ) : null}
       {hasDocument ? (
         <>
-          <Tooltip title={isDirty ? '有未保存的修改' : 'Notebook 设置'} placement="left">
+          <Tooltip title={saveHint} placement="left">
             <span>
               <Fab
-                data-phi-notebook-save-state={isDirty ? 'unsaved' : 'saved'}
+                data-phi-notebook-save-state={
+                  currentSaveState === 'pending' ? 'unsaved' : currentSaveState
+                }
                 data-phi-notebook-floating-action="settings"
                 size="small"
                 aria-label="Notebook 设置"
@@ -141,15 +159,19 @@ export default function NotebookFloatingActions({
                 onClick={(event) => setSettingsAnchor(event.currentTarget)}
                 sx={{
                   ...fabSx,
-                  bgcolor: isDirty ? 'warning.light' : 'background.paper',
-                  color: isDirty ? 'warning.dark' : 'text.secondary',
+                  bgcolor: hasSaveActivity ? `${saveColor}.light` : 'background.paper',
+                  color: hasSaveActivity ? `${saveColor}.dark` : 'text.secondary',
                   '&:hover': {
-                    bgcolor: isDirty ? 'warning.light' : 'background.paper',
-                    color: isDirty ? 'warning.dark' : 'text.primary'
+                    bgcolor: hasSaveActivity ? `${saveColor}.light` : 'background.paper',
+                    color: hasSaveActivity ? `${saveColor}.dark` : 'text.primary'
                   }
                 }}
               >
-                <SettingsIcon fontSize="small" />
+                {currentSaveState === 'saving' ? (
+                  <CircularProgress size={18} color="inherit" />
+                ) : (
+                  <SettingsIcon fontSize="small" />
+                )}
               </Fab>
             </span>
           </Tooltip>
@@ -163,7 +185,7 @@ export default function NotebookFloatingActions({
           >
             <MenuItem
               data-phi-notebook-floating-action="save"
-              disabled={!isDirty || isOpening}
+              disabled={!isDirty || isOpening || currentSaveState === 'saving'}
               onClick={() => {
                 closeSettingsMenu()
                 onSave?.()

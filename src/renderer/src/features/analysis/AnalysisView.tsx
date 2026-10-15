@@ -99,7 +99,7 @@ export type AnalysisViewProps = {
   onSaveNotebook?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument
-  ) => boolean | void | Promise<boolean | void>
+  ) => AnalysisNotebookFile | boolean | void | Promise<AnalysisNotebookFile | boolean | void>
   onSyncNotebookDraft?: (file: AnalysisNotebookFile, document: NotebookDocument) => void
   onNotebookDirtyChange?: (file: AnalysisNotebookFile, dirty: boolean) => void
   onCreateNotebook?: (cwd: string) => void

@@ -2,6 +2,7 @@
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
 import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
@@ -1097,6 +1098,7 @@ declare global {
         cwd: string,
         input: PreloadAnalysisNotebookFormatInput
       ) => Promise<PreloadAnalysisNotebookFormatResult>
+      listNotebookAiGenerationJobs: () => Promise<NotebookAiGenerationJob[]>
       generateAnalysisNotebookCode: (
         cwd: string,
         path: string,

@@ -1,6 +1,7 @@
 import { Box, Button, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
+import { workspacePanelText } from '../../../layout'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import {
   canStopJob,
@@ -85,10 +86,18 @@ export function BackgroundJobRow({
             bgcolor: JOB_TONE_COLOR[status.tone]
           }}
         />
-        <Typography variant="body2" noWrap sx={{ flex: 1, fontWeight: 700 }} title={title}>
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{ ...workspacePanelText.itemTitle, flex: 1 }}
+          title={title}
+        >
           {title}
         </Typography>
-        <Typography variant="caption" sx={{ flexShrink: 0, color: JOB_TONE_COLOR[status.tone] }}>
+        <Typography
+          variant="caption"
+          sx={{ ...workspacePanelText.body, flexShrink: 0, color: JOB_TONE_COLOR[status.tone] }}
+        >
           {status.label}
         </Typography>
       </Stack>
@@ -98,6 +107,7 @@ export function BackgroundJobRow({
         component="div"
         title={`${jobSource(item)} · ${jobSubtitle(item)}`}
         noWrap
+        sx={workspacePanelText.body}
       >
         {jobSource(item)} · {jobSubtitle(item)}
       </Typography>
@@ -106,7 +116,7 @@ export function BackgroundJobRow({
         color={warning ? 'warning.main' : status.tone === 'error' ? 'error.main' : 'text.secondary'}
         component="div"
         title={detail}
-        sx={clampTwoLines}
+        sx={{ ...workspacePanelText.body, ...clampTwoLines }}
       >
         {detail}
       </Typography>

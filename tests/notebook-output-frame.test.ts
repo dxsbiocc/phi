@@ -67,7 +67,7 @@ test('altair 6 html is rendered as an in-app vega spec', () => {
   assert.match(rendererSource, /opacity: downloadMenuOpen \? 1 : 0/)
   assert.match(
     rendererSource,
-    /&:hover \.notebook-output-hover-actions, &:focus-within \.notebook-output-hover-actions/
+    /&:hover \.notebook-chart-hover-actions, &:focus-within \.notebook-chart-hover-actions/
   )
 })
 

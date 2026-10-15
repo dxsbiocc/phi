@@ -75,3 +75,61 @@ test('notebook virtual row height normalization keeps rows measurable', () => {
   assert.equal(normalizedNotebookVirtualRowHeight(12), 48)
   assert.equal(normalizedNotebookVirtualRowHeight(72.3), 73)
 })
+
+test('AI previews crossing the virtualization threshold stay visible after output heights shrink', () => {
+  const originalCells = notebookItems(22)
+  const expandedHeights = Object.fromEntries(originalCells.map(({ id }) => [id, 900]))
+  const viewport = { scrollTop: 19000, viewportHeight: 600 }
+  const originalWindow = notebookVirtualWindow(originalCells, expandedHeights, viewport)
+  assert.equal(originalWindow.enabled, false)
+  assert.equal(originalWindow.items.length, 22)
+
+  const displayCells = [...originalCells, { id: 'preview-markdown' }, { id: 'preview-code' }]
+  const collapsedHeights = Object.fromEntries(originalCells.map(({ id }) => [id, 200]))
+  const previewWindow = notebookVirtualWindow(displayCells, collapsedHeights, viewport)
+
+  assert.equal(previewWindow.enabled, true)
+  assert.ok(
+    previewWindow.items.length > 0,
+    'an outdated bottom scroll position must not blank the canvas'
+  )
+  assert.equal(previewWindow.endIndex, displayCells.length)
+  assert.ok(previewWindow.items.some(({ item }) => item.id === 'preview-code'))
+  assert.ok(previewWindow.beforeHeight <= previewWindow.totalHeight - viewport.viewportHeight)
+})
+
+test('shorter finalized AI cells keep the bottom viewport populated', () => {
+  const originalCells = notebookItems(22)
+  const previewCells = Array.from({ length: 40 }, (_, index) => ({ id: `preview-${index}` }))
+  const previousWindow = notebookVirtualWindow(
+    [...originalCells, ...previewCells],
+    {},
+    { scrollTop: 12500, viewportHeight: 600 }
+  )
+  assert.ok(previousWindow.items.length > 0)
+
+  const finalCells = [...originalCells, { id: 'markdown-result' }, { id: 'code-result' }]
+  const finalWindow = notebookVirtualWindow(
+    finalCells,
+    {},
+    { scrollTop: 12500, viewportHeight: 600 }
+  )
+
+  assert.ok(finalWindow.items.length > 0, 'replacing previews cannot leave only a blank spacer')
+  assert.equal(finalWindow.endIndex, finalCells.length)
+  assert.ok(finalWindow.items.some(({ item }) => item.id === 'code-result'))
+})
+
+test('resizing the bottom viewport includes a full visible range', () => {
+  const items = notebookItems(30)
+  const resizedWindow = notebookVirtualWindow(
+    items,
+    {},
+    { scrollTop: 2900, viewportHeight: 500 },
+    { estimatedRowHeight: 100, overscanPx: 0 }
+  )
+
+  assert.ok(resizedWindow.beforeHeight <= 2500)
+  assert.equal(resizedWindow.endIndex, items.length)
+  assert.ok(resizedWindow.items.length >= 5)
+})

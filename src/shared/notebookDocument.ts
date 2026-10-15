@@ -387,7 +387,13 @@ export function clearNotebookCellOutput(
   document: NotebookDocument,
   cellId: string
 ): NotebookDocument {
-  return updateNotebookCell(document, cellId, { executionCount: null, outputs: [] })
+  const metadata = cloneJsonObject(document.cells.find((cell) => cell.id === cellId)?.metadata)
+  if (isJsonObject(metadata.phi)) {
+    delete metadata.phi.executionStartedAt
+    delete metadata.phi.executionCompletedAt
+    delete metadata.phi.executionDurationMs
+  }
+  return updateNotebookCell(document, cellId, { executionCount: null, outputs: [], metadata })
 }
 
 export function cellContentHash(cell: NotebookCell): string {

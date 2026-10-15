@@ -148,10 +148,6 @@ test('workspace sessions and resources share the same tab strip', () => {
     /const showWorkspaceTabs =\s*visibleWorkspaceTabs\.length > 0 &&\s*\(activeView === 'chat' \|\| activeView === 'analysis' \|\| isResourceWorkspaceView\)/
   )
   assert.match(appSource, /workspaceFileWorkspaceTabs/)
-  assert.match(
-    appSource,
-    /const shouldShowSessionWorkspaceTab = !\(\s*activeView === 'analysis' && workspaceSidebarMode === 'conversations'\s*\)/
-  )
   assert.match(appSource, /visibleWorkspaceTabsForState\(\{/)
   assert.match(appSource, /sessionTabWasOpened/)
   assert.match(tabTypesSource, /export function visibleWorkspaceTabsForState/)

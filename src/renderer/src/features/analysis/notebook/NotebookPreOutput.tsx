@@ -1,12 +1,9 @@
-import { useMemo, useState } from 'react'
-import { Box, Button, IconButton, Tooltip, Typography } from '@mui/material'
-import { alpha } from '@mui/material/styles'
-import { TbTextWrap } from 'react-icons/tb'
-import { PhiIcons } from '../../../icons'
+import { useContext, useMemo, useState } from 'react'
+import { Box, Button, Typography } from '@mui/material'
+import { NotebookOutputWrapContext } from './notebookOutputContext'
 
 const maxVisibleLines = 48
 const maxVisibleChars = 5000
-const CopyIcon = PhiIcons.action.copy
 
 type FoldedOutput = {
   isFoldable: boolean
@@ -49,8 +46,7 @@ export default function NotebookPreOutput({
   tone?: 'normal' | 'error'
 }): React.JSX.Element {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [wrapText, setWrapText] = useState(false)
+  const wrapText = useContext(NotebookOutputWrapContext)
   const folded = useMemo(() => foldedOutput(text), [text])
   const displayText = folded.isFoldable && !isExpanded ? folded.previewText : text
   const kindLabel = outputKindLabel(kind)
@@ -58,12 +54,6 @@ export default function NotebookPreOutput({
   // Keep labels only where they distinguish the output, such as stderr,
   // errors, JSON/CSV/LaTeX rendered as text, and fallback mimes.
   const showKindLabel = !hideKindLabel && kind !== 'text/plain' && kind !== 'stream:stdout'
-
-  const copyOutput = async (): Promise<void> => {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }
 
   return (
     <Box
@@ -74,92 +64,11 @@ export default function NotebookPreOutput({
       sx={{
         minWidth: 0,
         position: 'relative',
-        width: '100%',
-        '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
-          opacity: 1,
-          pointerEvents: 'auto'
-        }
+        width: '100%'
       }}
     >
-      <Box
-        data-phi-notebook-output-toolbar="true"
-        className="notebook-output-hover-actions"
-        sx={{
-          alignItems: 'center',
-          display: 'flex',
-          gap: 0.25,
-          position: 'absolute',
-          right: 0,
-          top: 0,
-          zIndex: 2,
-          opacity: 0,
-          pointerEvents: 'none',
-          transition: 'opacity 140ms ease'
-        }}
-      >
-        <Tooltip title={copied ? '已复制' : '复制输出'}>
-          <IconButton
-            size="small"
-            aria-label={copied ? '已复制输出' : '复制输出'}
-            onMouseDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onClick={() => {
-              void copyOutput().catch((error) => {
-                console.error('Failed to copy notebook output:', error)
-              })
-            }}
-            data-phi-notebook-output-copy="true"
-            sx={{
-              width: 26,
-              height: 26,
-              p: 0,
-              color: tone === 'error' ? 'error.main' : 'text.secondary',
-              bgcolor: 'transparent',
-              '&:hover': {
-                color: tone === 'error' ? 'error.dark' : 'text.primary',
-                bgcolor: (theme) =>
-                  alpha(
-                    tone === 'error' ? theme.palette.error.main : theme.palette.text.primary,
-                    0.06
-                  )
-              }
-            }}
-          >
-            <CopyIcon sx={{ fontSize: 15 }} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title={wrapText ? '关闭输出换行' : '开启输出换行'}>
-          <IconButton
-            size="small"
-            aria-label={wrapText ? '关闭输出换行' : '开启输出换行'}
-            aria-pressed={wrapText ? 'true' : 'false'}
-            onMouseDown={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-            }}
-            onClick={() => setWrapText((current) => !current)}
-            data-phi-notebook-output-wrap-toggle="true"
-            sx={{
-              width: 26,
-              height: 26,
-              p: 0,
-              color: wrapText ? 'text.primary' : 'text.secondary',
-              bgcolor: (theme) =>
-                wrapText ? alpha(theme.palette.text.primary, 0.08) : 'transparent',
-              '&:hover': {
-                color: 'text.primary',
-                bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08)
-              }
-            }}
-          >
-            <Box component={TbTextWrap} sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
-      </Box>
       {showKindLabel ? (
-        <Box sx={{ mb: 0.45, pr: 7 }}>
+        <Box sx={{ mb: 0.45 }}>
           <Typography
             variant="caption"
             title={kindLabel}
@@ -189,7 +98,6 @@ export default function NotebookPreOutput({
           // (e.g. an unformatted repr()), which the line/char-count fold
           // never catches since it has no real newlines to count.
           maxHeight: 420,
-          pr: 7,
           overflowX: 'auto',
           overflowY: 'auto',
           whiteSpace: wrapText ? 'pre-wrap' : 'pre',

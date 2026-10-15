@@ -1,15 +1,18 @@
-import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
+import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import {
   createChatResourceMatcher,
   type ChatResourceKind,
   type ChatResourceMention
-} from '../../../lib/chatResourceMentions'
+} from './chatResourceMentions'
+
+export type NotebookInlineReferenceKind =
+  'module' | 'variable' | 'dataframe' | 'data_source' | 'cell_output'
 
 export type InlineComposerReference = {
   from: number
   to: number
   text: string
-  kind: ChatResourceKind | 'web'
+  kind: ChatResourceKind | 'web' | NotebookInlineReferenceKind
   id?: string
   name: string
   icon?: ResourceIconRef
@@ -18,7 +21,7 @@ export type InlineComposerReference = {
   url?: string
 }
 
-function codeRanges(text: string): Array<{ from: number; to: number }> {
+export function composerCodeRanges(text: string): Array<{ from: number; to: number }> {
   const ranges: Array<{ from: number; to: number }> = []
   let offset = 0
   let fence: { marker: string; from: number } | undefined
@@ -70,7 +73,7 @@ export function findInlineComposerReferences(
   onOpenWebUrl?: (url: string) => void
 ): InlineComposerReference[] {
   const matcher = createChatResourceMatcher(resources)
-  const protectedRanges = codeRanges(text)
+  const protectedRanges = composerCodeRanges(text)
   const references: InlineComposerReference[] = []
   const protectedAt = (from: number, to: number): boolean =>
     protectedRanges.some((range) => range.from < to && range.to > from)

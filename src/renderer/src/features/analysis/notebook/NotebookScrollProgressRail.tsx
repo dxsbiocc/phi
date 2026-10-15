@@ -23,7 +23,7 @@ function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JS
       sx={{
         display: 'block',
         minWidth: 0,
-        fontSize: item.level === 1 ? '0.9rem' : '0.84rem',
+        fontSize: item.level === 1 ? '0.9rem' : item.level === 2 ? '0.84rem' : '0.8rem',
         fontWeight: item.level <= 2 ? 700 : 500,
         lineHeight: 1.35,
         '& code': {
@@ -34,8 +34,8 @@ function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JS
           fontFamily: 'var(--font-mono)',
           fontSize: '0.9em'
         },
-        '& strong': {
-          fontWeight: 800
+        '& strong, & em, & del, & span, & code': {
+          fontWeight: 'inherit'
         },
         '& a': {
           color: 'inherit',
@@ -48,13 +48,14 @@ function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JS
         skipHtml
         remarkPlugins={[remarkGfm]}
         components={{
-          p: ({ children }) => <>{children}</>,
+          h1: ({ children }) => <>{children}</>,
           code: ({ children }) => <Box component="code">{children}</Box>,
           a: ({ children }) => <Box component="span">{children}</Box>,
           img: ({ alt }) => <Box component="span">{alt}</Box>
         }}
       >
-        {item.title}
+        {/* Keep inline heading context so labels like "1. Setup" cannot become lists. */}
+        {`# ${item.title}`}
       </ReactMarkdown>
     </Box>
   )
@@ -210,7 +211,7 @@ export default function NotebookScrollProgressRail({
                     borderRadius: 1,
                     px: 1,
                     py: 0.55,
-                    pl: 1 + Math.max(0, item.level - 1) * 1.35,
+                    pl: `${8 + Math.max(0, item.level - 1) * 10}px`,
                     bgcolor: active ? 'action.selected' : 'transparent',
                     color: active ? 'primary.main' : 'text.primary',
                     cursor: 'pointer',

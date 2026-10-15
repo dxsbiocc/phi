@@ -1,4 +1,5 @@
-import type { JsonObject, JsonValue } from '../../../../../shared/notebookDocument'
+import type { JsonObject, JsonValue, NotebookOutput } from '../../../../../shared/notebookDocument'
+import { stripHtmlPreview } from '../lib/notebookViewModel'
 
 const displayMimePriority = [
   'application/vnd.vegalite+json',
@@ -116,6 +117,56 @@ export function textFromValue(value: JsonValue | undefined): string | undefined 
 export function prettyJson(value: JsonValue): string {
   if (typeof value === 'string') return value
   return JSON.stringify(value, null, 2)
+}
+
+export function notebookOutputText(outputs: readonly NotebookOutput[]): string {
+  const chunks: { text: string; streamName?: string }[] = []
+  for (const output of outputs) {
+    let text = ''
+    if (output.outputType === 'stream') {
+      text = output.text ?? ''
+    } else if (output.outputType === 'error') {
+      text = [
+        [output.ename, output.evalue].filter(Boolean).join(': '),
+        output.traceback?.join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n')
+    } else {
+      // MIME bundles are alternative representations of the same result.
+      // Prefer its plain text and never copy binary/base64 media payloads.
+      const mime = [
+        'text/plain',
+        'text/markdown',
+        'text/csv',
+        'text/latex',
+        'application/json',
+        'text/html',
+        ...displayMimes(output.data)
+      ].find(
+        (candidate) =>
+          output.data[candidate] !== undefined &&
+          (candidate.startsWith('text/') ||
+            isJavaScriptMime(candidate) ||
+            isJsonObject(output.data[candidate]) ||
+            candidate === 'application/json' ||
+            candidate.endsWith('+json'))
+      )
+      if (mime) {
+        const raw =
+          mime === 'application/json' || mime.endsWith('+json')
+            ? prettyJson(output.data[mime])
+            : (textFromValue(output.data[mime]) ?? prettyJson(output.data[mime]))
+        text = mime === 'text/html' ? stripHtmlPreview(raw) : raw
+      }
+    }
+    if (!text) continue
+    const streamName = output.outputType === 'stream' ? (output.name ?? 'stdout') : undefined
+    const previous = chunks.at(-1)
+    if (streamName && previous?.streamName === streamName) previous.text += text
+    else chunks.push({ text, streamName })
+  }
+  return chunks.map((chunk) => chunk.text).join('\n\n')
 }
 
 export function normalizeLatexDelimiters(latex: string): string {

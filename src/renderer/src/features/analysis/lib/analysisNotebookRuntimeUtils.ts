@@ -40,6 +40,50 @@ export function removeAnalysisNotebookFileCacheEntry(
   return next
 }
 
+export function reconcileAnalysisNotebookDiskFile(
+  current: AnalysisNotebookFile | undefined,
+  incoming: AnalysisNotebookFile,
+  pendingSaveRevision?: string
+): { file: AnalysisNotebookFile; conflict: boolean } {
+  if (!current) return { file: incoming, conflict: false }
+  const dirty = current.document.revision !== current.savedRevision
+  const sameBasis = incoming.savedRevision === current.savedRevision
+  const savedOwnDraft = incoming.savedRevision === pendingSaveRevision
+  const matchesDraft = incoming.document.revision === current.document.revision
+  if (dirty && !sameBasis && !savedOwnDraft && !matchesDraft) {
+    return { file: current, conflict: true }
+  }
+  if (sameBasis && incoming.contentHash === current.contentHash && !matchesDraft) {
+    return { file: current, conflict: false }
+  }
+  return {
+    file: {
+      ...incoming,
+      document: dirty || matchesDraft ? current.document : incoming.document
+    },
+    conflict: false
+  }
+}
+
+export function mergeSavedAnalysisNotebook(
+  current: AnalysisNotebookFile | undefined,
+  saved: AnalysisNotebookFile,
+  submittedRevision: string
+): AnalysisNotebookFile {
+  if (
+    current &&
+    current.document.revision !== submittedRevision &&
+    current.document.revision !== current.savedRevision
+  ) {
+    return { ...saved, document: current.document }
+  }
+  return {
+    ...saved,
+    document:
+      current?.document.revision === saved.document.revision ? current.document : saved.document
+  }
+}
+
 export function requireRendererApiMethod<K extends keyof RendererApi>(
   rendererApi: RendererApi,
   method: K,

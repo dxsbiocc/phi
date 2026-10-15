@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import test from 'node:test'
+import ts from 'typescript'
 import { Fragment, createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
@@ -16,6 +19,125 @@ import type { CanvasCell } from '../src/renderer/src/features/analysis/lib/noteb
 import NotebookAiPreviewActions from '../src/renderer/src/features/analysis/notebook/NotebookAiPreviewActions'
 import NotebookCell from '../src/renderer/src/features/analysis/notebook/NotebookCell'
 import { parseNotebook } from '../src/shared/notebookDocument'
+import { notebookAiGeneratedCellsFromResult } from '../src/renderer/src/features/analysis/lib/notebookAiGenerationResult'
+import {
+  notebookAiEmptyGenerationMessage,
+  notebookAiPromptError
+} from '../src/renderer/src/features/analysis/lib/notebookAiErrors'
+import { notebookPromptContextReferences } from '../src/renderer/src/features/analysis/lib/notebookPromptReferences'
+import type {
+  AnalysisNotebookCodeGenerationProgress,
+  AnalysisNotebookCodeGenerationResult
+} from '../src/renderer/src/types'
+
+// Execute the callback registered by the real Canvas effect, so this protects
+// the running-request gate as well as the preview projection below.
+const canvasSource = ts.createSourceFile(
+  'NotebookCanvas.tsx',
+  readFileSync('src/renderer/src/features/analysis/notebook/NotebookCanvas.tsx', 'utf8'),
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX
+)
+
+function generationProgressEffect(): string {
+  let effect: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'useEffect' &&
+      node.arguments[0]?.getText(canvasSource).includes('onNotebookCodeGenerationProgress')
+    ) {
+      effect = node.arguments[0]
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(canvasSource)
+  assert.ok(effect, 'Canvas must subscribe to Notebook generation progress')
+  return ts.transpileModule(`(${effect.getText(canvasSource)})()`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText
+}
+
+const progressScript = generationProgressEffect()
+
+function canvasVariable(name: string): string {
+  let expression: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(canvasSource) === name) {
+      expression = node.initializer
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(canvasSource)
+  assert.ok(expression, `Canvas must define ${name}`)
+  return ts.transpileModule(`(${expression.getText(canvasSource)})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }).outputText
+}
+
+function progressHarness(initialDraft: NotebookAiPromptDraft | null): {
+  current: () => NotebookAiPromptDraft | null
+  submit: () => Promise<void>
+  cancel: () => void
+  complete: (result: AnalysisNotebookCodeGenerationResult) => void
+  fail: (error: unknown) => void
+  send: (
+    overrides?: Partial<AnalysisNotebookCodeGenerationProgress>
+  ) => NotebookAiPromptDraft | null
+} {
+  let current = initialDraft
+  let onProgress: ((progress: AnalysisNotebookCodeGenerationProgress) => void) | undefined
+  let complete: ((result: AnalysisNotebookCodeGenerationResult) => void) | undefined
+  let fail: ((error: unknown) => void) | undefined
+  const generation = new Promise<AnalysisNotebookCodeGenerationResult>((resolve, reject) => {
+    complete = resolve
+    fail = reject
+  })
+  const unsubscribe = (): void => {}
+  const context = {
+    aiPromptDraft: initialDraft,
+    aiContextOptions: [],
+    draftDocument: document,
+    notebookFile: { path: '/project/analysis.ipynb', relativePath: 'analysis.ipynb' },
+    stageGeneratedNotebookCells,
+    notebookAiGeneratedCellsFromResult,
+    notebookAiEmptyGenerationMessage,
+    notebookAiPromptError,
+    notebookPromptContextReferences,
+    onGenerateNotebookCode: () => generation,
+    onNotebookCodeGenerationProgress: (callback: typeof onProgress) => {
+      onProgress = callback
+      return unsubscribe
+    },
+    setAiPromptDraft: (update: typeof current | ((draft: typeof current) => typeof current)) => {
+      current = typeof update === 'function' ? update(current) : update
+    }
+  }
+  const cleanup = runInNewContext(progressScript, context)
+  assert.equal(cleanup, unsubscribe)
+  assert.ok(onProgress)
+  return {
+    current: () => current,
+    submit: runInNewContext(canvasVariable('submitAiPrompt'), context) as () => Promise<void>,
+    cancel: runInNewContext(canvasVariable('closeAiPrompt'), context) as () => void,
+    complete: (result: AnalysisNotebookCodeGenerationResult) => complete!(result),
+    fail: (error: unknown) => fail!(error),
+    send: (overrides: Partial<AnalysisNotebookCodeGenerationProgress> = {}) => {
+      onProgress!({
+        requestId: 'preview-run',
+        path: '/project/analysis.ipynb',
+        relativePath: 'analysis.ipynb',
+        source: 'streamed response',
+        language: 'python',
+        cells: generatedCells,
+        ...overrides
+      })
+      return current
+    }
+  }
+}
 
 const baseCell: CanvasCell = {
   id: 'cell-1',
@@ -100,15 +222,155 @@ test('AI preview cells are inserted into the notebook cell sequence', () => {
   ])
 })
 
-test('AI preview cells are not inserted while generation is still streaming', () => {
+test('AI preview cells include streamed Markdown and code in notebook order while generating', () => {
   const generatingDraft = createDraft({ isGenerating: true })
   const cells = notebookCellsWithAiPreview([baseCell], generatingDraft, 'python')
 
-  assert.deepEqual(cells, [baseCell])
+  assert.deepEqual(
+    cells.map((cell) => cell.type),
+    ['code', 'markdown', 'code']
+  )
+  assert.deepEqual(
+    cells.map((cell) => cell.source),
+    [baseCell.source, ...generatedCells.map((cell) => cell.source)]
+  )
   assert.deepEqual(notebookAiPreviewCellIds(generatingDraft), [
     'preview-run:preview-0',
     'preview-run:preview-1'
   ])
+})
+
+test('the real Canvas progress handler stages a matching running request', () => {
+  const running = createDraft({ isGenerating: true, stagedCells: [] })
+  const next = progressHarness(running).send()
+
+  assert.ok(next)
+  assert.equal(next.isGenerating, true)
+  assert.deepEqual(
+    Array.from(next.stagedCells, (cell) => cell.source),
+    generatedCells.map((cell) => cell.source)
+  )
+})
+
+test('Canvas ignores progress from another request or notebook and after generation finishes', () => {
+  for (const draft of [null, createDraft({ isGenerating: false })]) {
+    assert.equal(progressHarness(draft).send(), draft)
+  }
+  const running = createDraft({ isGenerating: true, stagedCells: [] })
+  for (const progress of [
+    { requestId: 'older-request' },
+    { path: '/project/other.ipynb', relativePath: 'other.ipynb' },
+    { path: '/another-project/analysis.ipynb', relativePath: 'analysis.ipynb' },
+    { cells: [] }
+  ]) {
+    assert.equal(progressHarness(running).send(progress), running)
+  }
+})
+
+test('Canvas uses the absolute notebook path and only falls back when it is absent', () => {
+  const running = createDraft({ isGenerating: true, stagedCells: [] })
+  assert.equal(
+    progressHarness(running).send({ relativePath: 'renamed/analysis.ipynb' })?.stagedCells.length,
+    2
+  )
+  assert.equal(progressHarness(running).send({ path: '' })?.stagedCells.length, 2)
+  assert.equal(progressHarness(running).send({ path: '', relativePath: 'other.ipynb' }), running)
+})
+
+test('streaming Canvas progress replaces preview contents with stable IDs in source order', () => {
+  const harness = progressHarness(createDraft({ isGenerating: true, stagedCells: [] }))
+  const partial = harness.send({ cells: [{ cellType: 'markdown', source: '## 折线图' }] })
+  assert.ok(partial)
+  assert.deepEqual(
+    Array.from(partial.stagedCells, (cell) => cell.previewId),
+    ['preview-run:preview-0']
+  )
+
+  const updated = harness.send()
+  assert.ok(updated)
+  assert.deepEqual(
+    Array.from(updated.stagedCells, (cell) => cell.previewId),
+    ['preview-run:preview-0', 'preview-run:preview-1']
+  )
+  assert.deepEqual(
+    notebookCellsWithAiPreview([baseCell], updated, 'python').map((cell) => cell.source),
+    [baseCell.source, ...generatedCells.map((cell) => cell.source)]
+  )
+  assert.deepEqual(
+    document.cells.map((cell) => cell.source),
+    [baseCell.source]
+  )
+})
+
+test('Canvas completion keeps one copy of each streamed preview and closes the progress gate', async () => {
+  const harness = progressHarness(createDraft({ stagedCells: [] }))
+  const pending = harness.submit()
+  const running = harness.send()
+  assert.ok(running?.isGenerating)
+  const previewIds = Array.from(running.stagedCells, (cell) => cell.previewId)
+
+  harness.complete({ source: 'final response', language: 'python', cells: generatedCells })
+  await pending
+  const completed = harness.current()
+  assert.ok(completed)
+  assert.equal(completed.isGenerating, false)
+  assert.deepEqual(
+    Array.from(completed.stagedCells, (cell) => cell.previewId),
+    previewIds
+  )
+  assert.deepEqual(
+    notebookCellsWithAiPreview([baseCell], completed, 'python').map((cell) => cell.source),
+    [baseCell.source, ...generatedCells.map((cell) => cell.source)]
+  )
+  assert.equal(
+    harness.send({ cells: [{ cellType: 'markdown', source: 'late update' }] }),
+    completed
+  )
+  assert.deepEqual(
+    document.cells.map((cell) => cell.source),
+    [baseCell.source]
+  )
+})
+
+test('Canvas failure removes streamed refactor previews and restores the original cell', async () => {
+  const harness = progressHarness(
+    createDraft({
+      mode: 'refactor',
+      targetCellId: baseCell.id,
+      stagedCells: []
+    })
+  )
+  const pending = harness.submit()
+  const running = harness.send()
+  assert.ok(running)
+  assert.deepEqual(
+    notebookCellsWithAiPreview([baseCell], running, 'python').map((cell) => cell.type),
+    ['markdown', 'code']
+  )
+
+  harness.fail(new Error('模型连接中断'))
+  await pending
+  const failed = harness.current()
+  assert.ok(failed)
+  assert.equal(failed.isGenerating, false)
+  assert.equal(failed.error, '模型连接中断')
+  assert.equal(failed.stagedCells.length, 0)
+  assert.deepEqual(notebookCellsWithAiPreview([baseCell], failed, 'python'), [baseCell])
+})
+
+test('closing a generating prompt prevents late progress or completion from restoring previews', async () => {
+  const harness = progressHarness(createDraft({ stagedCells: [] }))
+  const pending = harness.submit()
+  assert.equal(harness.send()?.stagedCells.length, 2)
+  harness.cancel()
+  assert.equal(harness.send(), null)
+  harness.complete({ source: 'final response', language: 'python', cells: generatedCells })
+  await pending
+  assert.equal(harness.current(), null)
+  assert.deepEqual(
+    document.cells.map((cell) => cell.source),
+    [baseCell.source]
+  )
 })
 
 test('AI refactor preview visually replaces the target cell with generated cells', () => {

@@ -3,7 +3,11 @@ import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
 import { PhiIcons } from '../../../icons'
-import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../../../layout'
+import {
+  workspacePanelActionSize,
+  workspacePanelHeaderHeight,
+  workspacePanelText
+} from '../../../layout'
 
 const AddIcon = PhiIcons.action.add
 const MoreIcon = PhiIcons.action.more
@@ -149,8 +153,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
               bgcolor: 'transparent',
               color: 'inherit',
               font: 'inherit',
-              fontSize: 14,
-              fontWeight: 650,
+              ...workspacePanelText.heading,
               cursor: 'pointer',
               '&:hover': { bgcolor: 'action.hover' },
               '&:focus-visible': {
@@ -165,7 +168,11 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
             ))}
           </Box>
         ) : (
-          <Typography component="span" sx={{ fontSize: 14, fontWeight: 600, px: 0.5 }}>
+          <Typography
+            component="span"
+            variant="subtitle2"
+            sx={{ ...workspacePanelText.heading, px: 0.5 }}
+          >
             {activeTerminal?.host === 'ssh' ? terminalDisplayTitle(activeTerminal) : 'Terminal'}
           </Typography>
         )}

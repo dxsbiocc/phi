@@ -73,15 +73,14 @@ export function trackWorkspaceSidebarPointer(onChange: () => void): () => void {
     onChange()
   }
   const leave = (event: PointerEvent): void => {
-    if (
-      event.relatedTarget ||
-      (event.clientX >= 0 &&
-        event.clientX < window.innerWidth &&
-        event.clientY >= 0 &&
-        event.clientY < window.innerHeight)
-    )
-      return
-    pointerPosition = null
+    if (event.relatedTarget) return
+    pointerPosition =
+      event.clientX >= 0 &&
+      event.clientX < window.innerWidth &&
+      event.clientY >= 0 &&
+      event.clientY < window.innerHeight
+        ? { x: event.clientX, y: event.clientY }
+        : null
     onChange()
   }
   const blur = (): void => {
@@ -91,11 +90,13 @@ export function trackWorkspaceSidebarPointer(onChange: () => void): () => void {
   document.addEventListener('pointermove', update, true)
   document.addEventListener('pointerover', update, true)
   document.addEventListener('pointerout', leave, true)
+  document.documentElement?.addEventListener('pointerleave', blur)
   window.addEventListener('blur', blur)
   return () => {
     document.removeEventListener('pointermove', update, true)
     document.removeEventListener('pointerover', update, true)
     document.removeEventListener('pointerout', leave, true)
+    document.documentElement?.removeEventListener('pointerleave', blur)
     window.removeEventListener('blur', blur)
     pointerPosition = null
   }

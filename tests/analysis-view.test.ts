@@ -41,6 +41,7 @@ function renderWorkspaceSidePanel(
     maximized?: 'jobs' | 'terminal' | 'browser' | null
     singleVisibleMode?: 'jobs' | 'terminal' | 'browser' | null
     content?: string
+    onRefreshJobs?: () => void
   } = {}
 ): string {
   const theme = createTheme()
@@ -54,6 +55,7 @@ function renderWorkspaceSidePanel(
         maximized: options.maximized ?? null,
         singleVisibleMode: options.singleVisibleMode ?? null,
         onCloseSlot: () => undefined,
+        onRefreshJobs: options.onRefreshJobs,
         onToggleMaximized: () => undefined,
         renderSlot: (mode, context) =>
           options.content
@@ -250,13 +252,25 @@ test('workspace side panel uses the compact shared height for jobs headers', () 
   const markup = renderWorkspaceSidePanel({ slots: ['jobs'], content: '后台任务列表' })
 
   assert.match(panelLayoutSource, /export const workspacePanelHeaderHeight = 32/)
-  assert.match(sidePanelSource, /workspacePanelHeaderHeight.*from '\.\.\/layout'/)
+  assert.match(sidePanelSource, /workspacePanelHeaderHeight[\s\S]{0,100}from '\.\.\/layout'/)
   assert.match(
     sidePanelSource,
     /data-phi-workspace-side-panel-slot-header=\{mode\}[\s\S]{0,180}height: workspacePanelHeaderHeight/
   )
   assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
   assert.match(markup, /height:32px/)
+})
+
+test('jobs refresh sits beside close in the shared titlebar', () => {
+  const markup = renderWorkspaceSidePanel({
+    slots: ['jobs'],
+    content: '后台任务列表',
+    onRefreshJobs: () => undefined
+  })
+  const refresh = markup.indexOf('aria-label="刷新后台任务"')
+  const close = markup.indexOf('aria-label="关闭后台任务"')
+  assert.ok(refresh >= 0 && close > refresh)
+  assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
 })
 
 test('workspace side panel uses one gap constant on every edge and between full cards', () => {
@@ -270,7 +284,7 @@ test('workspace side panel uses one gap constant on every edge and between full 
   )
 
   assert.match(panelLayoutSource, /export const workspacePanelGap = 1/)
-  assert.match(sidePanelSource, /workspacePanelGap.*from '\.\.\/layout'/)
+  assert.match(sidePanelSource, /workspacePanelGap[\s\S]{0,130}from '\.\.\/layout'/)
   assert.match(sidePanelSource, /gap: workspacePanelGap,\s*p: workspacePanelGap/)
   assert.doesNotMatch(sidePanelSource, /borderTop: index/)
   assert.match(sidePanelSource, /borderRadius: '16px'/)
@@ -486,7 +500,7 @@ test('remote notebook routes use server paths instead of the local session ancho
   assert.match(appSource, /remotePathInsideRoot\(path, scope\.canonicalRoot\)/)
   assert.doesNotMatch(appSource, /远程项目的 Notebook\/Jupyter 暂不可用/)
   assert.match(runtimeSource, /expectedHash: file\.contentHash/)
-  assert.match(runtimeSource, /change\.projectCwd !== analysisNotebookRegistry\?\.projectCwd/)
+  assert.match(runtimeSource, /change\.projectCwd !== getActiveCwd\(\)/)
 })
 
 test('analysis notebook runtime lets the active workspace open notebooks', () => {
@@ -886,6 +900,10 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookAiPromptCell.tsx'),
     'utf8'
   )
+  const composerEditorSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/chat/ComposerTextEditor.tsx'),
+    'utf8'
+  )
   const aiPreviewActionsSource = readFileSync(
     resolve(
       process.cwd(),
@@ -996,14 +1014,17 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /filteredContextOptions\.length > 0/)
   assert.match(aiPromptSource, /notebookAiContextMentionAtCursor\(nextPrompt, nextCursor\)/)
   assert.match(aiPromptSource, /notebookAiPromptWithContextReference/)
-  assert.match(aiPromptSource, /moveActiveContextOption\(1\)/)
   assert.match(aiPromptSource, /event\.key === 'ArrowUp'/)
-  assert.match(aiPromptSource, /moveActiveContextOption\(-1\)/)
-  assert.match(aiPromptSource, /event\.key === 'Enter' \|\| event\.key === 'Tab'/)
+  assert.match(aiPromptSource, /moveActiveContextOption\(event\.key === 'ArrowDown' \? 1 : -1\)/)
+  assert.match(
+    aiPromptSource,
+    /\(event\.key === 'Enter' && !event\.shiftKey\) \|\| event\.key === 'Tab'/
+  )
   assert.match(aiPromptSource, /selectActiveContextOption\(\)/)
   assert.match(aiPromptSource, /event\.key === 'Enter' &&/)
   assert.match(aiPromptSource, /!event\.shiftKey/)
-  assert.match(aiPromptSource, /!event\.nativeEvent\.isComposing/)
+  assert.match(aiPromptSource, /<ComposerTextEditor/)
+  assert.match(composerEditorSource, /event\.isComposing/)
   assert.doesNotMatch(
     aiPromptSource,
     /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === 'Enter'/
@@ -1124,13 +1145,16 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /selectedModel=\{aiPromptDraft\.model\}/)
   assert.match(analysisSource, /hasStagedCells=\{aiPromptDraft\.stagedCells\.length > 0\}/)
   assert.match(analysisSource, /const displayCells = useMemo/)
-  assert.match(analysisSource, /const aiPromptSurface = hasAiPreviewCells \? null : aiPromptCell/)
+  assert.match(
+    analysisSource,
+    /hasAiPreviewCells && !aiPromptDraft\?\.isGenerating \? null : aiPromptCell/
+  )
   assert.match(analysisSource, /const previousNotebookDocumentKeyRef = useRef/)
   assert.match(
     analysisSource,
     /const notebookChanged = previousNotebookDocumentKeyRef\.current !== notebookDocumentKey/
   )
-  assert.match(analysisSource, /if \(notebookChanged\) setAiPromptDraft\(null\)/)
+  assert.match(analysisSource, /if \(notebookChanged\) \{[\s\S]*?setAiPromptDraft\(null\)/)
   assert.match(analysisSource, /onNotebookCodeGenerationProgress/)
   assert.match(analysisSource, /requestId: draft\.id/)
   assert.match(analysisSource, /draft\.isGenerating/)
@@ -1151,7 +1175,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   )
   assert.match(analysisSource, /setSelectedCellId\(null\)/)
   assert.match(analysisSource, /onSelect=\{\(\) => setSelectedCellId\(null\)\}/)
-  assert.match(analysisSource, /references: draft\.references/)
+  assert.match(analysisSource, /references: notebookPromptContextReferences\(/)
   assert.match(analysisSource, /const generatedCells =/)
   assert.match(analysisSource, /stageGeneratedNotebookCells\(draftDocument, draft/)
   assert.match(analysisSource, /acceptStagedNotebookCell\(/)
@@ -1176,7 +1200,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /onReject=\{\(\) => rejectAiPreviewCell\(cell\.id\)\}/)
   assert.match(
     analysisSource,
-    /await saveNotebookDocument\(nextDocument\)[\s\S]*?setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft/
+    /setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft[\s\S]*?await saveNotebookDocument\(nextDocument\)/
   )
   assert.doesNotMatch(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-insertion/)
@@ -1210,7 +1234,6 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /thinkingLevel: workspace\.project\?\.defaultThinkingLevel \?\? selectedThinkingLevel/
   )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
-  assert.match(mainSource, /return \{ source, language, cells \}/)
   assert.match(analysisSource, /onSelectCell=\{isAiPreviewCell \? undefined : setSelectedCellId\}/)
   assert.match(
     analysisSource,
@@ -1472,11 +1495,11 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
   )
   assert.match(
     analysisSource,
-    /const saved = await onSaveNotebook\?\.\(pending\.file, pending\.nextDocument\)/
+    /const saved = await autosave\.saveNow\(pending\.file, nextDocument\)/
   )
   assert.match(analysisSource, /if \(saved === false\) return/)
   assert.ok(
-    analysisSource.indexOf('const saved = await onSaveNotebook') <
+    analysisSource.indexOf('const saved = await autosave.saveNow') <
       analysisSource.indexOf('await onStopNotebookSession')
   )
   assert.doesNotMatch(analysisSource, /window\.confirm\(\s*notebookKernelSwitchConfirmationMessage/)

@@ -32,6 +32,7 @@ import type {
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -973,6 +974,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
+  refreshAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput
@@ -1031,6 +1033,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
     cwd: string,
     input: AnalysisNotebookFormatInput
   ) => Promise<AnalysisNotebookFormatResult>
+  listNotebookAiGenerationJobs: () => Promise<NotebookAiGenerationJob[]>
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
@@ -1609,6 +1612,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:initializeProject', cwd),
   openAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
     ipcRenderer.invoke('analysis:openNotebook', cwd, path),
+  refreshAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
+    ipcRenderer.invoke('analysis:refreshNotebook', cwd, path),
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput
@@ -1684,6 +1689,8 @@ const api: RendererAuthApi = {
     input: AnalysisNotebookFormatInput
   ): Promise<AnalysisNotebookFormatResult> =>
     ipcRenderer.invoke('analysis:formatNotebookCell', cwd, input),
+  listNotebookAiGenerationJobs: (): Promise<NotebookAiGenerationJob[]> =>
+    ipcRenderer.invoke('analysis:listNotebookAiGenerationJobs'),
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,

@@ -268,7 +268,7 @@ export function NotebookVegaOutput({
         overflow: 'hidden',
         position: 'relative',
         bgcolor: 'transparent',
-        '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
+        '&:hover .notebook-chart-hover-actions, &:focus-within .notebook-chart-hover-actions': {
           opacity: 1,
           pointerEvents: 'auto'
         }
@@ -276,7 +276,7 @@ export function NotebookVegaOutput({
     >
       <Box
         data-phi-notebook-output-vega-toolbar="true"
-        className="notebook-output-hover-actions"
+        className="notebook-chart-hover-actions"
         sx={{
           alignItems: 'center',
           display: 'flex',

@@ -1,17 +1,21 @@
-import { Box, Button, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 
 import { PhiIcons } from '../../icons'
+import { workspacePanelText } from '../../layout'
 import { BackgroundJobDetail } from './components/BackgroundJobDetail'
 import { BackgroundJobGroup } from './components/BackgroundJobGroup'
 import { BackgroundJobRow } from './components/BackgroundJobRow'
 import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
 import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
+import {
+  resolveRequestedBackgroundJobKey,
+  resolveSelectedBackgroundJob
+} from './lib/requestedBackgroundJob'
 
 const ClearIcon = PhiIcons.action.delete
 
-/** Asks the panel to open the newest Jupyter startup job, whichever project it belongs to. */
-export const LATEST_JUPYTER_JOB_KEY = 'jupyter:latest'
+export { LATEST_JUPYTER_JOB_KEY } from './lib/requestedBackgroundJob'
 
 function canRetry(item: UnifiedBackgroundJob): boolean {
   return (
@@ -34,7 +38,7 @@ export function BackgroundJobsPanel({
   onOpenWrapper?: (canonicalId: string) => void
   requestedConnectorJobId?: string | null
   onRequestedConnectorJobHandled?: (id: string) => void
-  /** A job key to open, or `LATEST_JUPYTER_JOB_KEY`. */
+  /** A job key, `LATEST_JUPYTER_JOB_KEY`, or a key from `notebookAiJobRequestKey`. */
   requestedJobKey?: string | null
   onRequestedJobHandled?: (key: string) => void
   onOpenSetupAgent?: (prompt: string) => void
@@ -47,7 +51,7 @@ export function BackgroundJobsPanel({
   const [runningExpanded, setRunningExpanded] = useState(true)
   const [finishedExpanded, setFinishedExpanded] = useState(false)
   const all = [...jobs.active, ...jobs.recent]
-  const selected = selectedKey ? all.find((item) => item.key === selectedKey) : undefined
+  const selected = resolveSelectedBackgroundJob(selectedKey, all, data.notebookAiJobs)
 
   useEffect(() => {
     if (!requestedConnectorJobId || !loaded) return
@@ -63,20 +67,14 @@ export function BackgroundJobsPanel({
 
   useEffect(() => {
     if (!requestedJobKey || !loaded) return
-    const key =
-      requestedJobKey === LATEST_JUPYTER_JOB_KEY
-        ? data.jupyterJobs[0]
-          ? `jupyter:${data.jupyterJobs[0].id}`
-          : jobs.recent.find(
-              (item) => item.kind === 'history' && item.snapshot.sourceKind === 'jupyter'
-            )?.key
-        : requestedJobKey
+    const key = resolveRequestedBackgroundJobKey(requestedJobKey, data, jobs.recent)
+    if (!key) return
     const timer = window.setTimeout(() => {
       if (key) setSelectedKey(key)
       onRequestedJobHandled?.(requestedJobKey)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [data.jupyterJobs, jobs.recent, loaded, onRequestedJobHandled, requestedJobKey])
+  }, [data, jobs.recent, loaded, onRequestedJobHandled, requestedJobKey])
 
   const run = async (
     item: UnifiedBackgroundJob,
@@ -112,6 +110,7 @@ export function BackgroundJobsPanel({
         case 'connector':
           return api.cancelLocalConnectorAdd(item.setup.id)
         case 'jupyter':
+        case 'notebook-ai':
         case 'history':
           return Promise.resolve()
       }
@@ -154,16 +153,12 @@ export function BackgroundJobsPanel({
         bgcolor: 'background.paper'
       }}
     >
-      <Stack direction="row" spacing={1} sx={{ mb: 1, minWidth: 0, alignItems: 'center' }}>
-        <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }}>
-          后台任务 · {jobs.active.length} 个进行中
-        </Typography>
-        <Button size="small" onClick={() => void refresh()} sx={{ flexShrink: 0 }}>
-          刷新
-        </Button>
-      </Stack>
       {error && (
-        <Typography variant="caption" color="error.main" sx={{ mb: 0.5 }}>
+        <Typography
+          variant="caption"
+          color="error.main"
+          sx={{ ...workspacePanelText.body, px: 1.5, mb: 0.5 }}
+        >
           {error}
         </Typography>
       )}
@@ -181,14 +176,31 @@ export function BackgroundJobsPanel({
           {...(onOpenSetupTerminal ? { onOpenSetupTerminal } : {})}
         />
       ) : (
-        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}>
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            scrollbarGutter: 'stable both-edges'
+          }}
+        >
           {!loaded && (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ ...workspacePanelText.body, py: 1 }}
+            >
               正在读取任务…
             </Typography>
           )}
           {loaded && all.length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ ...workspacePanelText.body, py: 1 }}
+            >
               暂无任务
             </Typography>
           )}
@@ -202,7 +214,11 @@ export function BackgroundJobsPanel({
                 onToggle={() => setRunningExpanded((value) => !value)}
               >
                 {jobs.active.length === 0 ? (
-                  <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ ...workspacePanelText.body, px: 0.5 }}
+                  >
                     没有运行中的任务
                   </Typography>
                 ) : (
@@ -226,7 +242,11 @@ export function BackgroundJobsPanel({
                 }
               >
                 {jobs.recent.length === 0 ? (
-                  <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ ...workspacePanelText.body, px: 0.5 }}
+                  >
                     还没有已结束的任务
                   </Typography>
                 ) : (

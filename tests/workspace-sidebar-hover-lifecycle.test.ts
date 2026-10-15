@@ -66,6 +66,35 @@ const enterCode = actualCallback(
   'handleWorkspaceSidebarPreviewFocus'
 )
 
+const leaveCode = actualCallback(
+  'src/renderer/src/AppActivityBar.tsx',
+  'handleWorkspaceSidebarPreviewLeave',
+  'handleWorkspaceSidebarPreviewBlur'
+)
+
+test('leaving the flyout uses the current event position instead of stale hover geometry', () => {
+  let pointer = { x: 120, y: 180 }
+  const inside = (): boolean => pointer.x < 340
+  const active = { current: true }
+  let closes = 0
+  const invoke = runInNewContext(leaveCode, {
+    useCallback: (action: unknown) => action,
+    setWorkspaceSidebarPointerPosition: (next: { x: number; y: number }) => {
+      pointer = next
+    },
+    isPointerWithinWorkspaceSidebarPreview: inside,
+    previewPointerInsideRef: { current: true },
+    previewSurfaceActiveRef: active,
+    requestWorkspaceSidebarPreviewClose: () => closes++
+  }) as (event: { clientX: number; clientY: number }) => void
+
+  invoke({ clientX: 500, clientY: 180 })
+  assert.equal(pointer.x, 500)
+  assert.equal(pointer.y, 180)
+  assert.equal(active.current, false)
+  assert.equal(closes, 1)
+})
+
 for (const inside of [true, false]) {
   test(`enter events follow region containment even when a portal reports inside=${inside}`, () => {
     const pointer = { current: false }

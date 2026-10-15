@@ -60,7 +60,7 @@ export type AnalysisNotebookRuntimeState = {
   onSaveAnalysisNotebook: (
     file: AnalysisNotebookFile,
     document: AnalysisNotebookFile['document']
-  ) => Promise<boolean>
+  ) => Promise<AnalysisNotebookFile | false>
   onSyncAnalysisNotebookDraft: (
     file: AnalysisNotebookFile,
     document: AnalysisNotebookFile['document']

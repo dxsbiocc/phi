@@ -7,6 +7,7 @@ import type {
 import type { EnvironmentBuild } from '../../../../../shared/environmentBuildTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
@@ -22,6 +23,7 @@ export type BackgroundJobsData = {
   connectorJobs: McpConnectorSetupProgress[]
   uploadJobs: RemoteProjectUploadJob[]
   jupyterJobs: RemoteJupyterStartJob[]
+  notebookAiJobs: NotebookAiGenerationJob[]
 }
 
 type JobLists = { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] }
@@ -40,7 +42,8 @@ const EMPTY: BackgroundJobsData = {
   environmentBuilds: [],
   connectorJobs: [],
   uploadJobs: [],
-  jupyterJobs: []
+  jupyterJobs: [],
+  notebookAiJobs: []
 }
 
 function upsertBy<T>(current: readonly T[], next: T, same: (item: T) => boolean): T[] {
@@ -64,7 +67,8 @@ function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJ
     data.environmentBuilds,
     data.connectorJobs,
     data.uploadJobs,
-    data.jupyterJobs
+    data.jupyterJobs,
+    data.notebookAiJobs
   )
 }
 
@@ -146,10 +150,11 @@ class BackgroundJobsStore {
         listOrEmpty(api.listEnvironmentBuilds),
         listOrEmpty(api.listLocalConnectorJobs),
         listOrEmpty(api.listRemoteProjectUploads),
-        listOrEmpty(api.listRemoteJupyterJobs)
+        listOrEmpty(api.listRemoteJupyterJobs),
+        listOrEmpty(api.listNotebookAiGenerationJobs)
       ] as const)
       if (generation !== this.generation) return
-      const [agents, shells, wrappers, builds, connectors, uploads, jupyter] = results
+      const [agents, shells, wrappers, builds, connectors, uploads, jupyter, notebookAi] = results
       const current = this.state.data
       this.state = {
         ...this.state,
@@ -165,7 +170,9 @@ class BackgroundJobsStore {
         environmentBuilds: builds.status === 'fulfilled' ? builds.value : current.environmentBuilds,
         connectorJobs: connectors.status === 'fulfilled' ? connectors.value : current.connectorJobs,
         uploadJobs: uploads.status === 'fulfilled' ? uploads.value : current.uploadJobs,
-        jupyterJobs: jupyter.status === 'fulfilled' ? jupyter.value : current.jupyterJobs
+        jupyterJobs: jupyter.status === 'fulfilled' ? jupyter.value : current.jupyterJobs,
+        notebookAiJobs:
+          notebookAi.status === 'fulfilled' ? notebookAi.value : current.notebookAiJobs
       })
     } finally {
       this.refreshing = false
@@ -232,6 +239,21 @@ function jobsStore(): BackgroundJobsStore {
 /** Keeps terminal snapshots up to date without subscribing the application to polling renders. */
 export function useBackgroundJobRetention(): void {
   useEffect(() => jobsStore().retain(), [])
+}
+
+/** Uses the same shared poller as the panel without subscribing the app shell. */
+export function refreshBackgroundJobs(): Promise<void> {
+  return jobsStore().refresh()
+}
+
+/** Subscribe the toolbar only to count changes, rather than every polling timestamp. */
+export function useActiveBackgroundJobCount(): number {
+  const store = jobsStore()
+  return useSyncExternalStore(
+    store.subscribe,
+    () => store.getSnapshot().jobs.active.length,
+    () => 0
+  )
 }
 
 export function useBackgroundJobsData(): Snapshot & {

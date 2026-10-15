@@ -38,11 +38,14 @@ import ts from 'typescript'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
+import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
 import * as remoteJupyterStartJobs from '../src/main/agent/notebook/remote-jupyter-start-jobs'
+import * as notebookAiGenerationJobs from '../src/main/agent/notebook/notebook-ai-generation-jobs'
+import type { NotebookAiGenerationJob } from '../src/shared/notebookAiJobTypes'
 import * as phiPluginDetails from '../src/main/agent/plugins/details'
 import type { WorkspaceChangeSummary } from '../src/shared/workspaceChangeTypes'
 import type { ContextUsageSnapshot } from '../src/shared/contextUsageTypes'
@@ -392,6 +395,7 @@ type HarnessOptions = {
   holdRendererReady?: boolean
   environmentGet?: () => Promise<unknown>
   modelRuntimeGet?: () => Promise<void>
+  notebookOpenError?: Error
   remoteRpc?: boolean
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
@@ -1511,6 +1515,7 @@ async function harness(
     '../shared/phiPluginProblems': phiPluginProblems,
     '../shared/projectMemoryTypes': projectMemoryTypes,
     './agent/notebook/remote-jupyter-start-jobs': remoteJupyterStartJobs,
+    './agent/notebook/notebook-ai-generation-jobs': notebookAiGenerationJobs,
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
@@ -2158,22 +2163,25 @@ async function harness(
       })
     },
     './agent/notebook/analysis-notebook-files': {
-      openProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
-        path: `${workingDirectory}/${notebookPath}`,
-        relativePath: notebookPath,
-        name: 'qc.ipynb',
-        bytes: 128,
-        modifiedAt: '2026-09-09T00:00:00.000Z',
-        savedRevision: 'nb-open',
-        document: {
-          nbformat: 4,
-          nbformatMinor: 5,
-          metadata: {},
-          cells: [],
-          extra: {},
-          revision: 'nb-open'
+      openProjectNotebook: (workingDirectory: string, notebookPath: string) => {
+        if (options.notebookOpenError) throw options.notebookOpenError
+        return {
+          path: `${workingDirectory}/${notebookPath}`,
+          relativePath: notebookPath,
+          name: 'qc.ipynb',
+          bytes: 128,
+          modifiedAt: '2026-09-09T00:00:00.000Z',
+          savedRevision: 'nb-open',
+          document: {
+            nbformat: 4,
+            nbformatMinor: 5,
+            metadata: {},
+            cells: [],
+            extra: {},
+            revision: 'nb-open'
+          }
         }
-      }),
+      },
       saveProjectNotebook: (
         workingDirectory: string,
         input: { path: string; document: { revision: string } }
@@ -2534,6 +2542,7 @@ async function harness(
       installNotebookOutputProtocol: noop
     },
     '../shared/notebookDocument': notebookDocument,
+    '../shared/notebookExecutionMetadata': notebookExecutionMetadata,
     '../shared/sessionTitle': sessionTitle,
     './agent/content/skill-host': {
       createSkillHost: (): {
@@ -8905,6 +8914,238 @@ test('main IPC: deleting the bound remote session disposes its Notebook backend'
   )
 })
 
+test('main IPC: Notebook AI jobs expose live model activity, generated source and independent retries', async () => {
+  const preparation = deferred<void>()
+  const firstResponse = deferred<void>()
+  let holdPreparation = false
+  let attempts = 0
+  const app = await harness(
+    async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.skipFinalAssistantMessage = true
+      if (attempts++ === 0) {
+        session.preflight = firstResponse.promise
+        session.hold = true
+      }
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'Inspect the ' }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'thinking_delta',
+            contentIndex: 0,
+            delta: 'data dimensions.'
+          }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'thinking_end',
+            contentIndex: 0,
+            content: 'Inspect the data dimensions.'
+          }
+        },
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'notebook-inspection',
+          toolName: 'inspect',
+          intent: 'Read returned dataset metadata'
+        },
+        {
+          type: 'tool_execution_update',
+          toolCallId: 'notebook-inspection',
+          partialResult: { content: [{ type: 'text', text: 'Reading metadata' }] }
+        },
+        {
+          type: 'tool_execution_end',
+          toolCallId: 'notebook-inspection',
+          result: { content: [{ type: 'text', text: 'Metadata inspected' }] }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'text_delta',
+            contentIndex: 1,
+            delta: JSON.stringify({ cells: [{ language: 'python', code: 'df.describe()' }] })
+          }
+        }
+      ]
+      return session
+    },
+    {
+      modelRuntimeGet: async () => {
+        if (holdPreparation) await preparation.promise
+      }
+    }
+  )
+  const document = notebookDocument.parseNotebook({ nbformat: 4, metadata: {}, cells: [] })
+  const input = {
+    prompt: '总结数据',
+    language: 'python',
+    requestId: 'same-draft',
+    afterCellId: null,
+    references: [],
+    model: { providerId: 'openai', modelId: 'gpt-test' }
+  }
+  const listJobs = async (): Promise<NotebookAiGenerationJob[]> =>
+    app.invoke('analysis:listNotebookAiGenerationJobs') as Promise<NotebookAiGenerationJob[]>
+  holdPreparation = true
+  const generating = app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    input
+  )
+  await tick()
+  const [preparing] = await listJobs()
+  assert.equal(preparing.phase, 'preparing')
+  assert.equal(preparing.state, 'running')
+  assert.equal(preparing.model, 'openai/gpt-test')
+  assert.equal(preparing.notebookName, 'qc.ipynb')
+  assert.equal(preparing.notebookPath, '/projects/research/notebooks/qc.ipynb')
+  preparation.resolve()
+  await waitUntil(() => app.sessions.length === 1)
+  assert.equal((await listJobs())[0].phase, 'waiting')
+  firstResponse.resolve()
+  await waitUntil(() => app.sessions[0].started)
+  const [streaming] = await listJobs()
+  assert.equal(streaming.phase, 'generating')
+  assert.equal(streaming.sourcePreview, 'df.describe()')
+  assert.equal(streaming.cellCount, 1)
+  const thinking = streaming.entries?.filter((entry) => entry.kind === 'thinking')
+  assert.equal(thinking?.length, 1)
+  assert.equal(thinking?.[0].text, 'Inspect the data dimensions.')
+  assert.equal(thinking?.[0].status, 'completed')
+  assert.equal(
+    streaming.entries?.find((entry) => entry.kind === 'action')?.text,
+    'Metadata inspected'
+  )
+  assert.equal(streaming.entries?.find((entry) => entry.kind === 'action')?.status, 'completed')
+  assert.match(streaming.entries?.find((entry) => entry.kind === 'text')?.text ?? '', /df.describe/)
+  assert.equal(app.sessions[0].disposed, false)
+
+  await app.invoke(
+    'analysis:generateNotebookCode',
+    '/projects/research',
+    'notebooks/qc.ipynb',
+    document,
+    input
+  )
+  const [retry, firstAttempt] = await listJobs()
+  assert.notEqual(retry.id, firstAttempt.id)
+  assert.equal(retry.requestId, firstAttempt.requestId)
+  assert.equal(retry.state, 'completed')
+  assert.equal(firstAttempt.state, 'running')
+  assert.equal(firstAttempt.id, preparing.id)
+  app.sessions[0].finish.resolve()
+  await generating
+  assert.ok(app.sessions.every((session) => session.disposed))
+  assert.ok((await listJobs()).every((job) => job.state === 'completed' && job.completedAt))
+  assert.equal(app.createdPhiSessions.length, 0)
+  assert.equal(app.runStartInputs.length, 0)
+  assert.ok(app.createdAgentOptions.every((options) => options.noTools === 'all'))
+})
+
+test('main IPC: Notebook AI jobs keep the remote project identity and resolved notebook path', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.skipFinalAssistantMessage = true
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ cells: [{ language: 'python', code: 'adata.shape' }] })
+            }
+          ]
+        }
+      }
+    ]
+    return session
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+  const document = notebookDocument.parseNotebook({ nbformat: 4, metadata: {}, cells: [] })
+  await app.invoke(
+    'analysis:generateNotebookCode',
+    current.cwd,
+    'notebooks/remote.ipynb',
+    document,
+    { prompt: '查看数据维度', requestId: 'remote-notebook-ai' }
+  )
+  const [job] = (await app.invoke(
+    'analysis:listNotebookAiGenerationJobs'
+  )) as NotebookAiGenerationJob[]
+  assert.equal(job.projectCwd, '/canonical/project')
+  assert.equal(job.notebookPath, '/canonical/project/notebooks/remote.ipynb')
+  assert.equal(job.notebookName, 'remote.ipynb')
+  assert.equal(job.state, 'completed')
+  assert.equal(job.sourcePreview, 'adata.shape')
+  assert.deepEqual(app.jupyterServerCalls, [])
+  assert.equal(app.createdAgentOptions.at(-1)?.noTools, 'all')
+  assert.notEqual(app.createdAgentOptions.at(-1)?.cwd, current.cwd)
+})
+
+for (const preparationFailure of ['file', 'auth', 'model'] as const) {
+  test(`main IPC: Notebook AI jobs retain ${preparationFailure} preparation failures`, async () => {
+    const failure = new Error(`${preparationFailure} preparation unavailable`)
+    let failAuth = false
+    const app = await harness(undefined, {
+      ...(preparationFailure === 'file' ? { notebookOpenError: failure } : {}),
+      modelRuntimeGet: async () => {
+        if (failAuth) throw failure
+      }
+    })
+    failAuth = preparationFailure === 'auth'
+    const document = notebookDocument.parseNotebook({ nbformat: 4, metadata: {}, cells: [] })
+    await assert.rejects(
+      app.invoke(
+        'analysis:generateNotebookCode',
+        '/projects/research',
+        'notebooks/qc.ipynb',
+        document,
+        {
+          prompt: '总结数据',
+          requestId: `preparation-${preparationFailure}`,
+          ...(preparationFailure === 'model'
+            ? { model: { providerId: 'missing', modelId: 'unavailable' } }
+            : {})
+        }
+      ),
+      preparationFailure === 'model' ? /模型不可用/ : failure
+    )
+    const [job] = (await app.invoke(
+      'analysis:listNotebookAiGenerationJobs'
+    )) as NotebookAiGenerationJob[]
+    assert.equal(job.state, 'failed')
+    assert.equal(job.phase, 'failed')
+    assert.equal(job.requestId, `preparation-${preparationFailure}`)
+    assert.ok(job.completedAt)
+    assert.match(
+      job.error ?? '',
+      preparationFailure === 'model' ? /模型不可用/ : /preparation unavailable/
+    )
+    assert.equal(app.sessions.length, 0)
+  })
+}
+
 test('main IPC: notebook AI generation uses assistant event text when session history is empty', async () => {
   const app = await harness(async (_cwd, file) => {
     const session = new FakeSession(file)
@@ -9587,6 +9828,7 @@ test('main IPC: notebook AI generation repairs prose transcripts into NotebookCe
         }
       ]
     } else {
+      session.hold = true
       session.toolEvents = [
         {
           type: 'message_update',
@@ -9624,7 +9866,7 @@ test('main IPC: notebook AI generation repairs prose transcripts into NotebookCe
     ]
   })
 
-  const result = (await app.invoke(
+  const generating = app.invoke(
     'analysis:generateNotebookCode',
     '/projects/research',
     'notebooks/qc.ipynb',
@@ -9636,7 +9878,26 @@ test('main IPC: notebook AI generation repairs prose transcripts into NotebookCe
       afterCellId: 'cell-20',
       references: []
     }
-  )) as { cells: Array<{ cellType: string; source: string; language?: string }> }
+  )
+  await waitUntil(() => app.sessions[1]?.started === true)
+  const [repairing] = (await app.invoke(
+    'analysis:listNotebookAiGenerationJobs'
+  )) as NotebookAiGenerationJob[]
+  assert.equal(repairing.phase, 'repairing')
+  assert.equal(repairing.state, 'running')
+  assert.equal(repairing.cellCount, 2)
+  assert.doesNotMatch(repairing.sourcePreview ?? '', /我提供一个 markdown 解释/)
+  app.sessions[1].finish.resolve()
+  const result = (await generating) as {
+    cells: Array<{ cellType: string; source: string; language?: string }>
+  }
+  const jobs = (await app.invoke(
+    'analysis:listNotebookAiGenerationJobs'
+  )) as NotebookAiGenerationJob[]
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0].id, repairing.id)
+  assert.equal(jobs[0].state, 'completed')
+  assert.ok(app.sessions.every((session) => session.disposed))
 
   assert.equal(app.sessions.length, 2)
   assert.match(app.sessions[1].promptTexts[0], /Invalid previous model output/)
@@ -9948,6 +10209,13 @@ test('main IPC: notebook AI generation surfaces assistant event errors', async (
     ),
     /Provider failed before returning notebook cells/
   )
+  const [job] = (await app.invoke(
+    'analysis:listNotebookAiGenerationJobs'
+  )) as NotebookAiGenerationJob[]
+  assert.equal(job.state, 'failed')
+  assert.equal(job.error, 'Provider failed before returning notebook cells')
+  assert.ok(job.completedAt)
+  assert.equal(app.sessions[0].disposed, true)
 })
 
 test('main IPC: project agent sessions receive active notebook and app Jupyter context', async () => {

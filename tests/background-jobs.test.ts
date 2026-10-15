@@ -245,7 +245,7 @@ test('right sidebar job panel is available even when no job is running', () => {
     )
   )
   assert.match(markup, /data-phi-background-jobs-panel="true"/)
-  assert.match(markup, /后台任务 · 0 个进行中/)
+  assert.doesNotMatch(markup, /后台任务 · 0 个进行中|aria-label="刷新后台任务"/)
   assert.doesNotMatch(markup, /aria-expanded=/)
   const activityBarSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/AppActivityBar.tsx'),

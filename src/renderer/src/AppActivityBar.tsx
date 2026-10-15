@@ -27,6 +27,7 @@ import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import {
   hasVisibleWorkspaceSidebarDialog,
   isPointerWithinWorkspaceSidebarPreview,
+  setWorkspaceSidebarPointerPosition,
   trackWorkspaceSidebarPointer
 } from './lib/workspaceSidebarPreviewPointer'
 
@@ -136,6 +137,7 @@ function WorkspaceSidebarNavButton({
   useContentPreview,
   onPreviewOpen,
   onPreviewClose,
+  onPreviewBlur,
   onClick,
   previewOpen,
   onFocusPreview
@@ -146,7 +148,8 @@ function WorkspaceSidebarNavButton({
   active: boolean
   useContentPreview: boolean
   onPreviewOpen: (mode: WorkspaceSidebarMode, anchorEl: HTMLElement) => void
-  onPreviewClose: () => void
+  onPreviewClose: (event: MouseEvent<HTMLElement>) => void
+  onPreviewBlur: () => void
   onClick: (event: MouseEvent<HTMLButtonElement>) => void
   previewOpen: boolean
   onFocusPreview: () => void
@@ -172,7 +175,7 @@ function WorkspaceSidebarNavButton({
       onFocus={(event) => {
         if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
       }}
-      onBlur={useContentPreview ? onPreviewClose : undefined}
+      onBlur={useContentPreview ? onPreviewBlur : undefined}
       onClick={onClick}
     >
       <Icon fontSize="small" />
@@ -357,12 +360,16 @@ function AppActivityBarImpl({
     },
     [clearWorkspaceSidebarPreviewCloseTimer]
   )
-  const handleWorkspaceSidebarPreviewLeave = useCallback((): void => {
-    const inside = isPointerWithinWorkspaceSidebarPreview()
-    previewPointerInsideRef.current = inside
-    previewSurfaceActiveRef.current = inside
-    if (!inside) requestWorkspaceSidebarPreviewClose()
-  }, [requestWorkspaceSidebarPreviewClose])
+  const handleWorkspaceSidebarPreviewLeave = useCallback(
+    (event: MouseEvent<HTMLElement>): void => {
+      setWorkspaceSidebarPointerPosition({ x: event.clientX, y: event.clientY })
+      const inside = isPointerWithinWorkspaceSidebarPreview()
+      previewPointerInsideRef.current = inside
+      previewSurfaceActiveRef.current = inside
+      if (!inside) requestWorkspaceSidebarPreviewClose()
+    },
+    [requestWorkspaceSidebarPreviewClose]
+  )
   const handleWorkspaceSidebarPreviewBlur = useCallback(
     (event: FocusEvent<HTMLElement>): void => {
       const nextFocusedElement = event.relatedTarget
@@ -451,7 +458,8 @@ function AppActivityBarImpl({
             useContentPreview={shouldUseWorkspaceSidebarPreview(mode)}
             previewOpen={isWorkspaceSidebarPreviewOpen && workspaceSidebarPreviewMode === mode}
             onPreviewOpen={handlePreviewOpen}
-            onPreviewClose={requestWorkspaceSidebarPreviewClose}
+            onPreviewClose={handleWorkspaceSidebarPreviewLeave}
+            onPreviewBlur={requestWorkspaceSidebarPreviewClose}
             onFocusPreview={focusPreview}
             onClick={(event) => {
               closeWorkspaceSidebarPreview()
