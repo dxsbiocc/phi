@@ -68,7 +68,7 @@ export function ResourceMention({
           gap: 0.4,
           verticalAlign: 'baseline',
           maxWidth: '100%',
-          mx: 0.1,
+          mx: '0.25em',
           p: 0,
           border: 0,
           borderRadius: 0.5,
