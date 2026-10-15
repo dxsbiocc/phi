@@ -80,7 +80,7 @@ export function FileTreeRow({
               ? alpha(theme.palette.primary.main, 0.13)
               : alpha(theme.palette.text.primary, 0.055)
         },
-        '&:hover .phi-file-download, &:focus-within .phi-file-download': {
+        '&:hover .phi-file-download': {
           opacity: 1,
           pointerEvents: 'auto'
         }
@@ -156,6 +156,7 @@ export function FileTreeRow({
       {onDownload && (
         <Tooltip
           title="下载远程文件"
+          disableFocusListener
           enterDelay={FILE_TREE_TOOLTIP_DELAY_MS}
           enterNextDelay={FILE_TREE_TOOLTIP_DELAY_MS}
         >
@@ -172,7 +173,6 @@ export function FileTreeRow({
               mr: 0.5,
               flexShrink: 0,
               color: 'text.secondary',
-              '&:focus-visible': { opacity: 1 },
               '@media (hover: none)': { opacity: 1, pointerEvents: 'auto' }
             }}
           >
