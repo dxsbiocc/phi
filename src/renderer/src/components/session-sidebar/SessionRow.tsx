@@ -311,10 +311,11 @@ export const SessionRow = memo(function SessionRow({
         data-phi-session-row-shell="true"
         sx={{
           position: 'relative',
-          '&:hover .session-actions, &:focus-within .session-actions': {
-            opacity: 1
+          '&:hover .session-actions': {
+            opacity: 1,
+            pointerEvents: 'auto'
           },
-          '&:hover .session-title, &:focus-within .session-title': { pr: '34px' }
+          '&:hover .session-title': { pr: '34px' }
         }}
       >
         <Tooltip
@@ -450,7 +451,7 @@ export const SessionRow = memo(function SessionRow({
                 sx={{
                   minWidth: 0,
                   flex: 1,
-                  pr: menuAnchor ? '34px' : 0,
+                  pr: 0,
                   fontSize: ROW_LABEL_FONT_SIZE,
                   fontWeight: hasAttentionWeight ? 600 : 400
                 }}
@@ -467,13 +468,14 @@ export const SessionRow = memo(function SessionRow({
             right: 14,
             top: '50%',
             transform: 'translateY(-50%)',
-            opacity: menuAnchor ? 1 : 0,
+            opacity: 0,
+            pointerEvents: 'none',
             transition: 'opacity 0.15s ease',
             zIndex: 1,
             WebkitAppRegion: 'no-drag'
           }}
         >
-          <Tooltip title="更多操作">
+          <Tooltip title="更多操作" disableFocusListener>
             <IconButton
               size="small"
               aria-label="更多会话操作"

@@ -224,10 +224,11 @@ function ProjectRowImpl({
               outlineColor: 'primary.main',
               outlineOffset: 1
             },
-            '&:hover .project-actions, &:has(.project-actions :focus-visible) .project-actions': {
-              opacity: 1
+            '&:hover .project-actions': {
+              opacity: 1,
+              pointerEvents: 'auto'
             },
-            '&:hover .project-row-meta, &:has(.project-actions :focus-visible) .project-row-meta': {
+            '&:hover .project-row-meta': {
               opacity: 0
             },
             '&:hover .project-toggle-icon, &.Mui-focusVisible .project-toggle-icon': { opacity: 1 }
@@ -288,7 +289,7 @@ function ProjectRowImpl({
                   fontSize: ROW_META_FONT_SIZE,
                   color: project.gitStatus?.dirty ? 'warning.main' : 'text.secondary',
                   transition: 'opacity 0.15s ease',
-                  opacity: menuAnchor ? 0 : 1
+                  opacity: 1
                 }}
               >
                 {rowMetaLabel}
@@ -303,11 +304,12 @@ function ProjectRowImpl({
                 inset: 0,
                 alignItems: 'center',
                 justifyContent: 'flex-end',
-                opacity: menuAnchor ? 1 : 0,
+                opacity: 0,
+                pointerEvents: 'none',
                 transition: 'opacity 0.15s ease'
               }}
             >
-              <Tooltip title="更多">
+              <Tooltip title="更多" disableFocusListener>
                 <IconButton
                   size="small"
                   aria-label="更多项目操作"
@@ -321,7 +323,7 @@ function ProjectRowImpl({
                   <MoreHorizIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="新对话">
+              <Tooltip title="新对话" disableFocusListener>
                 <span>
                   <IconButton
                     size="small"

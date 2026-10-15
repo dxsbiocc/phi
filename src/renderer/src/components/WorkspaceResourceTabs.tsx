@@ -123,19 +123,17 @@ export function WorkspaceResourceTabs({
               '& svg': {
                 color: selected ? 'primary.main' : 'inherit'
               },
-              '&:hover .workspace-resource-tab-close, &:focus-within .workspace-resource-tab-close':
-                {
-                  opacity: 1
-                },
-              '&:hover .workspace-session-tab-icon, &:focus-visible .workspace-session-tab-icon, &:has(:focus-visible) .workspace-session-tab-icon':
-                {
-                  opacity: 0
-                },
-              '&:hover .workspace-session-tab-dock-action, &:focus-visible .workspace-session-tab-dock-action, &:has(:focus-visible) .workspace-session-tab-dock-action':
-                {
-                  opacity: 1,
-                  pointerEvents: 'auto'
-                }
+              '&:hover .workspace-resource-tab-close': {
+                opacity: 1,
+                pointerEvents: 'auto'
+              },
+              '&:hover .workspace-session-tab-icon': {
+                opacity: 0
+              },
+              '&:hover .workspace-session-tab-dock-action': {
+                opacity: 1,
+                pointerEvents: 'auto'
+              }
             }}
           >
             {tab.kind === 'session' && onDockSessionTab ? (
@@ -152,7 +150,7 @@ export function WorkspaceResourceTabs({
                     transition: 'opacity 120ms ease'
                   }}
                 />
-                <Tooltip title="移到左侧边栏" enterDelay={400}>
+                <Tooltip title="移到左侧边栏" enterDelay={400} disableFocusListener>
                   <Box
                     component="span"
                     role="button"
@@ -252,7 +250,8 @@ export function WorkspaceResourceTabs({
                 ml: 'auto',
                 borderRadius: '50%',
                 color: 'text.disabled',
-                opacity: selected ? 0.72 : 0,
+                opacity: 0,
+                pointerEvents: 'none',
                 transition: 'opacity 120ms ease, background-color 120ms ease, color 120ms ease',
                 WebkitAppRegion: 'no-drag',
                 '&:hover': {
