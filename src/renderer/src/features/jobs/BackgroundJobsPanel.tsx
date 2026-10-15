@@ -1,4 +1,4 @@
-import { Box, Button, IconButton, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 
 import { PhiIcons } from '../../icons'
@@ -9,6 +9,7 @@ import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
 import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
 
 const ClearIcon = PhiIcons.action.delete
+const RefreshIcon = PhiIcons.action.refresh
 
 /** Asks the panel to open the newest Jupyter startup job, whichever project it belongs to. */
 export const LATEST_JUPYTER_JOB_KEY = 'jupyter:latest'
@@ -158,9 +159,17 @@ export function BackgroundJobsPanel({
         <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }}>
           后台任务 · {jobs.active.length} 个进行中
         </Typography>
-        <Button size="small" onClick={() => void refresh()} sx={{ flexShrink: 0 }}>
-          刷新
-        </Button>
+        <Tooltip title="刷新" enterDelay={400}>
+          <IconButton
+            size="small"
+            color="primary"
+            aria-label="刷新后台任务"
+            onClick={() => void refresh()}
+            sx={{ flexShrink: 0, width: 32, height: 32 }}
+          >
+            <RefreshIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
       </Stack>
       {error && (
         <Typography variant="caption" color="error.main" sx={{ mb: 0.5 }}>

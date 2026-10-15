@@ -36,11 +36,11 @@ export function BackgroundJobGroup({
           minHeight: 40,
           boxSizing: 'border-box',
           px: 0.75,
-          borderRadius: 1,
-          bgcolor: 'action.hover'
+          borderRadius: 1
         }}
       >
         <ButtonBase
+          disableRipple
           onClick={onToggle}
           aria-expanded={expanded}
           aria-controls={contentId}
@@ -53,7 +53,6 @@ export function BackgroundJobGroup({
             px: 0.5,
             py: 0.5,
             borderRadius: 1,
-            '&:hover': { bgcolor: 'action.hover' },
             '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main' }
           }}
         >
