@@ -3,13 +3,15 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
-import type { ExtensionContext, ExtensionAPI } from '@oh-my-pi/pi-coding-agent'
 import { createRpcCompactionExtension } from '../src/main/agent/engine/phi-extension/extensions/rpc-compaction-control'
 import {
   compactionPolicy,
   RPC_COMPACTION_COMMAND
 } from '../src/main/agent/engine/phi-extension/lib/rpc-compaction-control'
 import type { RpcRuntimeConfig } from '../src/main/agent/engine/phi-extension/lib/rpc-runtime-config'
+
+type ExtensionAPI = Parameters<ReturnType<typeof createRpcCompactionExtension>['extension']>[0]
+type ExtensionContext = Parameters<Parameters<ExtensionAPI['registerCommand']>[1]['handler']>[1]
 
 for (const thresholdTokens of [-1, 25000])
   test(`owned policy accepts the SDK default percent sentinel with tokens ${thresholdTokens}`, () => {
