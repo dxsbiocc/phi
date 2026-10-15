@@ -1,6 +1,7 @@
 import { Box, ButtonBase, Collapse, Stack, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
+import { workspacePanelText } from '../../../layout'
 
 const ExpandIcon = PhiIcons.action.expand
 const CollapseIcon = PhiIcons.action.collapse
@@ -57,17 +58,17 @@ export function BackgroundJobGroup({
           }}
         >
           {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
-          <Typography variant="subtitle1" sx={{ fontSize: 15, fontWeight: 700 }}>
+          <Typography variant="subtitle2" sx={workspacePanelText.section}>
             {title}
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+          <Typography variant="body2" color="text.secondary" sx={workspacePanelText.body}>
             {count}
           </Typography>
         </ButtonBase>
         {action}
       </Stack>
       <Collapse in={expanded} id={contentId}>
-        <Box sx={{ pt: 0.75, px: 1 }}>{children}</Box>
+        <Box sx={{ pt: 0.75, px: 0.5 }}>{children}</Box>
       </Collapse>
     </Box>
   )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../../../../shared/browserTypes'
+import { workspacePanelText } from '../../layout'
 import { BrowserTabs } from './components/BrowserTabs'
 import { BrowserToolbar } from './components/BrowserToolbar'
 import { useBrowserViewport } from './hooks/useBrowserViewport'
@@ -88,11 +89,15 @@ export function BrowserStatusPane(props: BrowserStatusPaneProps): React.JSX.Elem
       }}
     >
       <Box sx={{ maxWidth: 280, minWidth: 0 }}>
-        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+        <Typography variant="body2" sx={workspacePanelText.heading}>
           {title}
         </Typography>
         {detail ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ ...workspacePanelText.body, display: 'block', mt: 0.5 }}
+          >
             {detail}
           </Typography>
         ) : null}

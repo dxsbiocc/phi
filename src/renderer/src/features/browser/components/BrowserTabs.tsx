@@ -3,7 +3,11 @@ import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/mat
 import { alpha } from '@mui/material/styles'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
 import { PhiIcons } from '../../../icons'
-import { workspacePanelActionSize, workspacePanelHeaderHeight } from '../../../layout'
+import {
+  workspacePanelActionSize,
+  workspacePanelHeaderHeight,
+  workspacePanelText
+} from '../../../layout'
 import { browserTabDisplayTitle, isBrowserTabActivationKey } from '../lib/browserPanelState'
 
 const AddIcon = PhiIcons.action.add
@@ -56,7 +60,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
           <Typography
             component="span"
             data-phi-browser-empty-tab-title="true"
-            sx={{ px: 1, fontSize: 13, fontWeight: 600, color: 'text.secondary' }}
+            sx={{ ...workspacePanelText.itemTitle, px: 1, color: 'text.secondary' }}
           >
             新标签页
           </Typography>
@@ -180,7 +184,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                   sx={{
                     flex: 1,
                     minWidth: 0,
-                    fontSize: 13,
+                    fontSize: workspacePanelText.itemTitle.fontSize,
                     fontWeight: selected ? 700 : 500,
                     lineHeight: 1.3
                   }}

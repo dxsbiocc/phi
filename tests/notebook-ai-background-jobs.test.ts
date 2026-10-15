@@ -7,6 +7,7 @@ import { ThemeProvider, createTheme } from '@mui/material'
 import type { NotebookAiGenerationJob } from '../src/shared/notebookAiJobTypes'
 import { BackgroundJobDetail } from '../src/renderer/src/features/jobs/components/BackgroundJobDetail'
 import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
+import { JobDetailField } from '../src/renderer/src/features/jobs/components/JobDetailField'
 import { BackgroundJobHistory } from '../src/renderer/src/features/jobs/lib/backgroundJobHistory'
 import {
   canStopJob,
@@ -146,6 +147,22 @@ test('Notebook rows open details without stop, retry, a made-up progress bar or 
   assert.match(detail, /等待模型响应/)
   assert.match(detail, /import pandas as pd/)
   assert.doesNotMatch(row + detail, /打开对话|停止这个|aria-label="停止|role="progressbar"|>重试</)
+})
+
+test('saved Notebook paths use the panel font while code fields stay monospaced', () => {
+  const path = render(
+    createElement(JobDetailField, {
+      label: 'Notebook',
+      value: '/project/notebooks/analysis.ipynb',
+      mono: true
+    })
+  )
+  const code = render(
+    createElement(JobDetailField, { label: '代码预览', value: 'print(1)', mono: true })
+  )
+
+  assert.doesNotMatch(path, /font-family:var\(--font-mono\)/)
+  assert.match(code, /font-family:var\(--font-mono\)/)
 })
 
 test('Notebook task history retains bounded metadata but never persists prompts, generated code or errors', () => {

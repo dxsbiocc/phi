@@ -2,6 +2,7 @@ import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 
 import { PhiIcons } from '../../icons'
+import { workspacePanelText } from '../../layout'
 import { BackgroundJobDetail } from './components/BackgroundJobDetail'
 import { BackgroundJobGroup } from './components/BackgroundJobGroup'
 import { BackgroundJobRow } from './components/BackgroundJobRow'
@@ -153,7 +154,11 @@ export function BackgroundJobsPanel({
       }}
     >
       {error && (
-        <Typography variant="caption" color="error.main" sx={{ mb: 0.5, fontSize: 13 }}>
+        <Typography
+          variant="caption"
+          color="error.main"
+          sx={{ ...workspacePanelText.body, px: 1.5, mb: 0.5 }}
+        >
           {error}
         </Typography>
       )}
@@ -171,14 +176,31 @@ export function BackgroundJobsPanel({
           {...(onOpenSetupTerminal ? { onOpenSetupTerminal } : {})}
         />
       ) : (
-        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowX: 'hidden', overflowY: 'auto' }}>
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            scrollbarGutter: 'stable both-edges'
+          }}
+        >
           {!loaded && (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 1, fontSize: 13 }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ ...workspacePanelText.body, py: 1 }}
+            >
               正在读取任务…
             </Typography>
           )}
           {loaded && all.length === 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ py: 1, fontSize: 13 }}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ ...workspacePanelText.body, py: 1 }}
+            >
               暂无任务
             </Typography>
           )}
@@ -195,7 +217,7 @@ export function BackgroundJobsPanel({
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ px: 0.5, fontSize: 13 }}
+                    sx={{ ...workspacePanelText.body, px: 0.5 }}
                   >
                     没有运行中的任务
                   </Typography>
@@ -223,7 +245,7 @@ export function BackgroundJobsPanel({
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ px: 0.5, fontSize: 13 }}
+                    sx={{ ...workspacePanelText.body, px: 0.5 }}
                   >
                     还没有已结束的任务
                   </Typography>

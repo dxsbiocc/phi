@@ -2,6 +2,7 @@ import { Box, Button, Stack, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import { workspacePanelText } from '../../../layout'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import {
   canStopJob,
@@ -27,7 +28,11 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
   }, [job.entries.length])
   return (
     <Box sx={{ minWidth: 0 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.35 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ ...workspacePanelText.label, display: 'block', mb: 0.35 }}
+      >
         启动日志
       </Typography>
       <Box
@@ -39,12 +44,13 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
           borderRadius: 1,
           bgcolor: 'action.hover',
           fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
+          fontSize: workspacePanelText.body.fontSize,
+          lineHeight: workspacePanelText.body.lineHeight,
           userSelect: 'text'
         }}
       >
         {job.entries.length === 0 ? (
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" sx={workspacePanelText.body}>
             还没有日志
           </Typography>
         ) : (
@@ -142,7 +148,7 @@ export function BackgroundJobDetail({
   return (
     <Box
       data-phi-background-job-detail={item.key}
-      sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, flex: 1 }}
+      sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, flex: 1, p: 1.5 }}
     >
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1, minWidth: 0 }}>
         <Button size="small" onClick={onBack} aria-label="返回任务列表" sx={{ flexShrink: 0 }}>
@@ -150,12 +156,20 @@ export function BackgroundJobDetail({
         </Button>
         <Typography
           variant="caption"
-          sx={{ flex: 1, textAlign: 'right', color: JOB_TONE_COLOR[status.tone] }}
+          sx={{
+            ...workspacePanelText.body,
+            flex: 1,
+            textAlign: 'right',
+            color: JOB_TONE_COLOR[status.tone]
+          }}
         >
           {status.label}
         </Typography>
       </Stack>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700, overflowWrap: 'anywhere', mb: 1 }}>
+      <Typography
+        variant="subtitle2"
+        sx={{ ...workspacePanelText.heading, overflowWrap: 'anywhere', mb: 1 }}
+      >
         {title}
       </Typography>
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>

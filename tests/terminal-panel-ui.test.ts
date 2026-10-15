@@ -152,7 +152,10 @@ test('terminal title bar uses the shared height without an extra divider', () =>
     'utf8'
   )
 
-  assert.match(titleBarSource, /workspacePanelHeaderHeight.*from '\.\.\/\.\.\/\.\.\/layout'/)
+  assert.match(
+    titleBarSource,
+    /workspacePanelHeaderHeight[\s\S]{0,100}from '\.\.\/\.\.\/\.\.\/layout'/
+  )
   assert.match(
     titleBarSource,
     /data-phi-terminal-title-bar="true"[\s\S]{0,180}height: workspacePanelHeaderHeight/

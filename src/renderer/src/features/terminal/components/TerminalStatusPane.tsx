@@ -1,4 +1,5 @@
 import { Box, Button, Typography } from '@mui/material'
+import { workspacePanelText } from '../../../layout'
 
 export type TerminalStatusKind =
   'starting' | 'exited' | 'failed' | 'remote' | 'unsupported' | 'limit' | 'unavailable'
@@ -76,11 +77,18 @@ export function TerminalStatusPane(props: TerminalStatusPaneProps): React.JSX.El
       }}
     >
       <Box sx={{ minWidth: 0, maxWidth: 320 }}>
-        <Typography variant="body2" sx={{ fontWeight: props.kind === 'starting' ? 500 : 750 }}>
+        <Typography
+          variant="body2"
+          sx={{ ...workspacePanelText.heading, fontWeight: props.kind === 'starting' ? 500 : 700 }}
+        >
           {copy.title}
         </Typography>
         {copy.detail ? (
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ ...workspacePanelText.body, display: 'block', mt: 0.5 }}
+          >
             {copy.detail}
           </Typography>
         ) : null}

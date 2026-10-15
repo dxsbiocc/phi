@@ -2,7 +2,12 @@ import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { GoScreenFull, GoScreenNormal, GoSync, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
-import { workspacePanelActionSize, workspacePanelGap, workspacePanelHeaderHeight } from '../layout'
+import {
+  workspacePanelActionSize,
+  workspacePanelGap,
+  workspacePanelHeaderHeight,
+  workspacePanelText
+} from '../layout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import type { FileTreeActions } from '../features/file-preview/lib/fileTreeActions'
@@ -110,7 +115,11 @@ function WorkspaceSidePanelSlotHeader({
         WebkitAppRegion: 'drag'
       }}
     >
-      <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }} noWrap>
+      <Typography
+        variant="subtitle2"
+        sx={{ ...workspacePanelText.heading, flex: 1, minWidth: 0 }}
+        noWrap
+      >
         {workspacePanelLabels[mode]}
       </Typography>
       {actions}
@@ -263,7 +272,7 @@ export function WorkspaceSidePanel({
             ) : (
               <>
                 <WorkspaceSidePanelSlotHeader mode={mode} actions={actions} />
-                <Box sx={{ flex: 1, minHeight: 0, display: 'flex', p: mode === 'jobs' ? 1.5 : 0 }}>
+                <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
                   {renderSlot(mode, { headerActions: actions })}
                 </Box>
               </>

@@ -252,7 +252,7 @@ test('workspace side panel uses the compact shared height for jobs headers', () 
   const markup = renderWorkspaceSidePanel({ slots: ['jobs'], content: '后台任务列表' })
 
   assert.match(panelLayoutSource, /export const workspacePanelHeaderHeight = 32/)
-  assert.match(sidePanelSource, /workspacePanelHeaderHeight.*from '\.\.\/layout'/)
+  assert.match(sidePanelSource, /workspacePanelHeaderHeight[\s\S]{0,100}from '\.\.\/layout'/)
   assert.match(
     sidePanelSource,
     /data-phi-workspace-side-panel-slot-header=\{mode\}[\s\S]{0,180}height: workspacePanelHeaderHeight/
@@ -284,7 +284,7 @@ test('workspace side panel uses one gap constant on every edge and between full 
   )
 
   assert.match(panelLayoutSource, /export const workspacePanelGap = 1/)
-  assert.match(sidePanelSource, /workspacePanelGap.*from '\.\.\/layout'/)
+  assert.match(sidePanelSource, /workspacePanelGap[\s\S]{0,130}from '\.\.\/layout'/)
   assert.match(sidePanelSource, /gap: workspacePanelGap,\s*p: workspacePanelGap/)
   assert.doesNotMatch(sidePanelSource, /borderTop: index/)
   assert.match(sidePanelSource, /borderRadius: '16px'/)

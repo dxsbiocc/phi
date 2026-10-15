@@ -280,8 +280,8 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
     switch (item.kind) {
       case 'notebook-ai':
         return [
-          { label: 'Notebook', value: item.job.notebookPath || item.job.notebookName, mono: true },
-          { label: '项目', value: item.job.projectCwd, mono: true },
+          { label: 'Notebook', value: item.job.notebookPath || item.job.notebookName },
+          { label: '项目', value: item.job.projectCwd },
           { label: '模型', value: item.job.model },
           { label: '状态', value: status },
           item.job.cellCount === undefined
@@ -340,7 +340,7 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
             label: '耗时',
             value: elapsed(item.run.startedAt ?? item.run.createdAt, item.run.completedAt, nowMs)
           },
-          { label: '输出目录', value: item.run.outDir, mono: true },
+          { label: '输出目录', value: item.run.outDir },
           item.run.environmentError
             ? { label: '环境错误', value: item.run.environmentError, mono: true }
             : undefined,

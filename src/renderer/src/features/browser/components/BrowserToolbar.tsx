@@ -2,6 +2,7 @@ import type { FormEvent, KeyboardEvent } from 'react'
 import { Box, IconButton, LinearProgress, TextField, Tooltip } from '@mui/material'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
 import { PhiIcons } from '../../../icons'
+import { workspacePanelText } from '../../../layout'
 
 const BackIcon = PhiIcons.action.back
 const RefreshIcon = PhiIcons.action.refresh
@@ -150,7 +151,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
               height: 30,
               borderRadius: 1,
               bgcolor: 'action.hover',
-              fontSize: 13
+              fontSize: workspacePanelText.body.fontSize
             },
             '& .MuiInputBase-input': { px: 1, py: 0 }
           }}
