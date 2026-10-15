@@ -81,18 +81,9 @@ test('actual reasoning model preserves supported high effort through the guarded
     await fixture.close()
   }
 })
-test('actual nonreasoning model refuses unsupported high effort before any child provider', async () => {
-  const fixture = await childAuthorityCli({ reasoning: false, thinkingLevel: 'high' })
-  try {
-    const levels = await fixture.connection.request<{ levels: string[] }>({
-      type: 'get_available_thinking_levels'
-    })
-    assert.equal(levels.levels.includes('high'), false)
-    await fixture.connection.prompt('Attempt an unsupported high-thinking native child')
-    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 0)
-    assert.equal(fixture.approvals.length, 0)
-    await assert.rejects(readFile(join(fixture.cwd, 'native-effect.txt')), { code: 'ENOENT' })
-  } finally {
-    await fixture.close()
-  }
+test('trusted nonreasoning child configuration refuses explicit high before native/provider setup', async () => {
+  await assert.rejects(
+    childAuthorityCli({ reasoning: false, thinkingLevel: 'high' }),
+    /RPC agent thinking level is unsupported by its selected model/
+  )
 })

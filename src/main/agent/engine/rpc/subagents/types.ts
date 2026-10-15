@@ -1,6 +1,43 @@
 import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../../agents/definition'
 import type { ModelGatewayModelRef, SafeModelDescriptor } from '../../model-gateway-types'
 import type { PhiExtensionFile } from '../extension-deployment/types'
+import type {
+  RpcChildEnvironmentExecution,
+  RpcChildHostResource
+} from '../../phi-extension/lib/rpc-child-resources'
+export type {
+  RpcChildResourceCatalog,
+  RpcChildEnvironmentExecution
+} from '../../phi-extension/lib/rpc-child-resources'
+
+/** Main snapshots contain real selected content; publication later replaces Markdown with hash refs. */
+export interface RpcAgentResourceCatalogInput {
+  readonly hostTools: readonly Omit<RpcChildHostResource, 'schemaSha256'>[]
+  readonly skills: readonly {
+    readonly name: string
+    readonly description: string
+    readonly markdown: string
+  }[]
+}
+
+/** Verified child lifecycle record, distinct from a live execution capability. */
+export interface RpcChildRunSnapshot {
+  readonly id: string
+  readonly phiSessionId: string
+  readonly projectId: string
+  readonly generation: number
+  readonly parentRunId: string
+  readonly parentToolCallId: string
+  readonly nativeId: string
+  readonly childSessionFile: string
+  readonly childOmpSessionId?: string
+  readonly agent: string
+  readonly background: boolean
+  readonly status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
+  readonly verified: boolean
+  readonly startedAt: number
+  readonly completedAt?: number
+}
 
 /** Trusted desktop binding, never inferred from agent frontmatter or a remote URL. */
 export interface RpcAgentServerBinding {
@@ -12,6 +49,7 @@ export interface RpcAgentServerBinding {
 
 /** A ready environment already resolved by the desktop environment service. */
 export interface RpcAgentEnvironmentDescriptor {
+  readonly execution?: RpcChildEnvironmentExecution
   readonly ref: string
   readonly pluginId?: string
   readonly environmentId: string

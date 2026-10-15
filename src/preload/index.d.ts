@@ -56,6 +56,7 @@ import type {
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionSettingsPatch,
@@ -902,6 +903,9 @@ declare global {
         sourceId: string,
         eventId: string
       ) => Promise<{ path: string; phiSessionId: string }>
+      getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
+      resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
+      continueRuntimeFromSummary: RuntimeRecoveryApi['continueRuntimeFromSummary']
       switchSession: (path: string) => Promise<{
         path: string
         phiSessionId?: string

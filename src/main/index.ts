@@ -1,5 +1,36 @@
+import {
+  registerRuntimeSessionOrigin,
+  resolveRuntimeSessionOrigin
+} from './agent/session/runtime-origin-store'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { PhiAgentEvent, PhiAgentEventSummary } from './agent/engine/types'
+import type {
+  RuntimeRecoveryModelSelection,
+  RuntimeRecoveryState,
+  RuntimeRecoveryTarget,
+  RuntimeRecoveryIssue,
+  RuntimeRecoverySummary
+} from '../shared/runtimeRecoveryTypes'
+import {
+  createRuntimeRecoveryController,
+  runtimeRecoveryMessage,
+  type RuntimeRecoveryScope
+} from './agent/session/runtime-recovery-ipc'
+import {
+  buildRuntimeRecoverySummary,
+  readRuntimeRecoverySummarySeed
+} from './agent/session/recovery-summary'
+import {
+  RemoteRecoveryError,
+  describeRemoteRecoveryFailure
+} from './agent/engine/rpc/session-recovery'
+import {
+  parseRuntimeReference,
+  assertRuntimeReferenceProject,
+  assertRuntimeScope,
+  RuntimeReferenceError
+} from './agent/session/runtime-reference'
+import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
@@ -178,6 +209,7 @@ import {
 import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
 import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
+import { readColdChildRuns } from './agent/session/child-run-recovery'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
 import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
 import {
@@ -1349,6 +1381,11 @@ let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
+const runtimeRecoveryOperations = new Map<
+  string,
+  { controller: AbortController; done: Promise<void> }
+>()
+const runtimeRecoveryFailures = new Map<string, RuntimeRecoveryIssue>()
 const projectMemoryPolicyUpdates = new Set<string>()
 const manualCompactionIds = new Set<string>()
 const manualCompactionOperations = new Map<
@@ -1475,9 +1512,45 @@ const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
     sendRunEventToWindow({ source: 'phi', ...event, phiSessionId: sessionId }),
   onChange: notifySessionChanged
 })
+// The RPC facade owns persistence; this observer reuses its records for sidebar attention.
+const rpcChildApprovals = new BackgroundAgentApprovalTracker({
+  readManifest: (sessionId) => {
+    const manifest = findPhiSessionById(sessionId)
+    const active = runnerRegistry.getActiveRun(sessionId)
+    return manifest && active ? { ...manifest, status: 'running', unreadKind: null } : manifest
+  },
+  appendEvent: (sessionId, event) => {
+    const persisted = readSessionEvents(sessionId).findLast(
+      (stored) =>
+        stored.type === event.type &&
+        stored.approvalId === event.approvalId &&
+        stored.agentRunId === event.agentRunId
+    )
+    if (!persisted) throw new Error('RPC child approval notification has no durable record')
+    return persisted
+  },
+  updateManifest: (sessionId, patch) => {
+    const attention = { ...patch }
+    delete attention.lastRunOutcome
+    const active = runnerRegistry.getActiveRun(sessionId)
+    if (active) {
+      // The live runner owns its status; a finished parent's child cannot change a successor.
+      if (attention.unreadKind === 'approval' || active.status !== 'needs_approval')
+        updateSessionManifest(sessionId, { unreadKind: attention.unreadKind })
+      return
+    }
+    updateSessionManifest(sessionId, attention)
+  },
+  onEvent: (sessionId, event) =>
+    sendRunEventToWindow({ source: 'phi', ...event, phiSessionId: sessionId }),
+  onChange: notifySessionChanged
+})
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent,
-  onRunSettled: (sessionId) => backgroundAgentApprovals.afterParentRunSettled(sessionId)
+  onRunSettled: (sessionId) => {
+    backgroundAgentApprovals.afterParentRunSettled(sessionId)
+    rpcChildApprovals.afterParentRunSettled(sessionId)
+  }
 })
 
 // Main-only internal migration gate; renderer session input cannot enable this route.
@@ -1503,6 +1576,30 @@ installAppRemoteSessionRouting({
     ).agents,
   loadDesktopTools: loadAppRemoteDesktopTools,
   loadPromptContext: loadAppRemotePromptContext,
+  loadAgentResources: loadAppRemoteAgentResources,
+  resolveAgentEnvironment: resolveAppRemoteAgentEnvironment,
+  onChildApprovalEvent: (event) => {
+    if (!event.request.cwd) return
+    if (event.type === 'approval_requested') {
+      rpcChildApprovals.requested({
+        sessionId: event.sessionId,
+        agentRunId: event.runId,
+        approvalId: event.approvalId,
+        toolName: event.request.toolName,
+        summary: event.request.summary ?? event.request.toolName,
+        cwd: event.request.cwd
+      })
+    } else {
+      rpcChildApprovals.resolved(
+        event.approvalId,
+        event.type === 'approval_approved'
+          ? 'approved'
+          : event.type === 'approval_denied'
+            ? 'denied'
+            : 'cancelled'
+      )
+    }
+  },
   onMemoryError: (identity) =>
     writeAppLog({
       level: 'error',
@@ -1614,7 +1711,19 @@ getPhiEngine().host.register('notebookTool.execute', async (params, context) => 
         projectId: identity.projectId
       })
     : undefined
+  const rpcControl =
+    identity && context
+      ? remoteRuntimeDispatchControl(
+          {
+            runtimeSessionId: identity.runtimeSessionId,
+            remoteSessionId: identity.sessionId,
+            projectId: identity.projectId
+          },
+          context
+        )
+      : undefined
   const beforeDispatch = (): void => {
+    rpcControl?.beforeDispatch()
     if (!identity) return
     const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
     if (
@@ -1815,6 +1924,103 @@ const remoteRuntimeController = new RemoteRuntimeController({
   }
 })
 
+async function loadAppRemoteAgentResources(
+  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadAgentResources']>>[0],
+  definitions: readonly import('./agent/agents/definition').PhiAgentDefinition[],
+  signal: AbortSignal
+): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadAgentResources']>> {
+  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
+  const binding = resolveRemoteWorkspaceHostBinding(boundary).cacheKey
+  const assertCurrent = (): void => {
+    signal.throwIfAborted()
+    if (
+      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
+      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== binding
+    )
+      throw new Error('专家资源的项目或主机绑定已改变')
+  }
+  assertCurrent()
+  const context = { ...boundary, cwd: identity.resourceCwd, agentDir: AGENT_DIR }
+  const [catalog, globals] = await Promise.all([
+    loadRemoteProjectSkillCatalog(context),
+    listGlobalSkills()
+  ])
+  assertCurrent()
+  const wanted = [...new Set(definitions.flatMap((definition) => definition.skills))]
+  if (wanted.length > 1024) throw new Error('专家技能数量超过当前限制')
+  const skills: Array<{ name: string; description: string; markdown: string }> = []
+  for (const name of wanted) {
+    const projectMatches = catalog.summaries.filter(
+      (skill) => skill.name === name && catalog.sources.some((source) => source.name === name)
+    )
+    const globalMatches = globals.filter((skill) => skill.enabled && skill.name === name)
+    if (projectMatches.length > 1 || (!projectMatches.length && globalMatches.length !== 1))
+      throw new Error(`专家技能不可用：${name}`)
+    const selected = projectMatches[0] ?? globalMatches[0]
+    const content = projectMatches.length
+      ? await readRemoteProjectSkillContent(context, selected.filePath)
+      : await readGlobalSkillContent(selected.filePath)
+    assertCurrent()
+    const markdown = typeof content === 'string' ? content : content.content
+    if (typeof markdown !== 'string' || Buffer.byteLength(markdown, 'utf8') > 64 * 1024)
+      throw new Error(`专家技能正文不可用：${name}`)
+    skills.push({ name, description: selected.description, markdown })
+  }
+  return { skills }
+}
+
+async function resolveAppRemoteAgentEnvironment(
+  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>[0],
+  agent: Parameters<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>[1],
+  signal: AbortSignal
+): Promise<
+  Awaited<ReturnType<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>>
+> {
+  if (!agent.environment) throw new Error('专家未声明环境')
+  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
+  const binding = resolveRemoteWorkspaceHostBinding(boundary)
+  const assertCurrent = (): void => {
+    signal.throwIfAborted()
+    if (
+      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
+      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== binding.cacheKey
+    )
+      throw new Error('专家环境的项目或主机绑定已改变')
+  }
+  assertCurrent()
+  const target = directRemoteRuntimeTarget({
+    runtimeSessionId: identity.runtimeSessionId,
+    remoteSessionId: identity.sessionId,
+    projectId: identity.projectId
+  })
+  if (!target) throw new Error('专家环境缺少已验证的远程项目')
+  const workspace = await openRemoteRuntimeWorkspace(target, signal)
+  try {
+    assertCurrent()
+    const environment = await remoteRuntimeController.environments.describeReadyInWorkspace(
+      agent.environment,
+      controlRemoteRuntimeWorkspace(workspace, assertCurrent),
+      signal
+    )
+    assertCurrent()
+    if (!environment) throw new Error(`专家环境尚未就绪：${agent.environment}`)
+    const project = requireProject(identity.projectId)
+    if (project.location.kind !== 'ssh') throw new Error('专家环境项目不再是 SSH 项目')
+    return {
+      ...environment,
+      ...(agent.pluginId ? { pluginId: agent.pluginId } : {}),
+      binding: {
+        serverId: project.location.hostProfileId,
+        serverIdentitySha256: facadeBindingHash(binding),
+        projectId: project.id,
+        projectRoot: binding.canonicalRoot
+      }
+    }
+  } finally {
+    await workspace.close?.()
+  }
+}
+
 async function loadAppRemotePromptContext(
   identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadPromptContext']>>[0],
   signal: AbortSignal
@@ -1847,11 +2053,18 @@ async function loadAppRemotePromptContext(
     AGENT_DIR
   )
   assertBinding()
+  const recoverySummary = readRuntimeRecoverySummarySeed({
+    sessionId: identity.sessionId,
+    projectId: identity.projectId,
+    events: readSessionEvents(identity.sessionId)
+  })?.content
+  assertBinding()
   return {
     personaMarkdown,
     ...(personaMarkdown ? { personaPath: join(AGENT_DIR, 'AGENTS.md') } : {}),
     contextFiles,
-    runtime
+    runtime,
+    ...(recoverySummary ? { recoverySummary } : {})
   }
 }
 
@@ -1962,7 +2175,19 @@ async function loadAppRemoteDesktopTools(
             .map((skill) => ({ name: skill.name, description: skill.description }))
         ],
         scriptTools: scripts.tools,
-        scriptApprovalFor: (name, input) => remoteRuntimeController.approvalFor(name, input),
+        scriptApprovalFor: (name, input, childRunId) => {
+          const control = childRunId
+            ? remoteRuntimeDispatchControl(
+                {
+                  runtimeSessionId: identity.runtimeSessionId,
+                  remoteSessionId: identity.sessionId,
+                  projectId: identity.projectId
+                },
+                { originSessionId: identity.runtimeSessionId, agentRunId: childRunId, signal }
+              )
+            : undefined
+          return remoteRuntimeController.approvalFor(name, input, control)
+        },
         remoteLibrary: true,
         desktopWebSearch: search,
         desktopMcp: mcp
@@ -2006,18 +2231,32 @@ function remoteRuntimeDispatchControl(
     throw new Error('远程资源请求的来源会话无效；没有回退到本机执行。')
   const binding = resolveRemoteWorkspaceHostBinding({ sessionId, projectId })
   const run = runnerRegistry.getActiveRun(sessionId)
+  const childId = ownsRemoteRuntimeSession(runtimeId) ? context.agentRunId : undefined
+  const readResourceOwner = ():
+    import('./agent/remote-runtime/skill-service').RemoteSkillResourceOwner | undefined => {
+    if (!childId) return undefined
+    const owner = getPhiEngine().agentRuns.resourceOwner?.(runtimeId, childId)
+    if (!owner) throw new Error('专家资源调用缺少当前已验证的运行身份')
+    return Object.freeze({
+      toolOwner: owner.toolOwner,
+      allowedSkills: Object.freeze([...owner.allowedSkills])
+    })
+  }
+  const resourceOwner = readResourceOwner()
   const beforeDispatch = (): void => {
     context.signal?.throwIfAborted()
-    run?.signal.throwIfAborted()
+    if (!childId) run?.signal.throwIfAborted()
+    if (childId && JSON.stringify(readResourceOwner()) !== JSON.stringify(resourceOwner))
+      throw new Error('专家资源运行身份已改变')
     if (
-      (context.signal && (!run || runnerRegistry.getActiveRun(sessionId) !== run)) ||
+      (!childId && context.signal && (!run || runnerRegistry.getActiveRun(sessionId) !== run)) ||
       resolveOriginSession(runtimeId)?.phiSessionId !== sessionId ||
       resolveRemoteWorkspaceHostBinding({ sessionId, projectId }).cacheKey !== binding.cacheKey
     )
       throw new Error('远程资源运行或项目绑定已改变；没有回退到本机执行。')
   }
   beforeDispatch()
-  return { signal: context.signal, beforeDispatch }
+  return { signal: context.signal, beforeDispatch, ...(resourceOwner ? { resourceOwner } : {}) }
 }
 
 function isRemoteRuntimeCancellation(
@@ -2039,14 +2278,14 @@ function isRemoteRuntimeCancellation(
   return true
 }
 
-const remoteLibraryService = new RemoteLibraryService(async (identity, signal) => {
+const remoteLibraryService = new RemoteLibraryService(async (identity, signal, context) => {
   const control = remoteRuntimeDispatchControl(
     {
       runtimeSessionId: identity.runtimeSessionId,
       remoteSessionId: identity.sessionId,
       projectId: identity.projectId
     },
-    { originSessionId: identity.runtimeSessionId, signal }
+    { ...context, originSessionId: identity.runtimeSessionId, signal }
   )!
   const project = getProject(identity.projectId)!
   const binding = resolveRemoteWorkspaceHostBinding({
@@ -2592,7 +2831,7 @@ const wrapperJobs = new WrapperJobManager({
     confirmBuild: (request) => confirmEnvironmentBuild(request)
   },
   resolveProjectForRun: (originSessionId) => {
-    const origin = resolveOriginSession(originSessionId)
+    const origin = resolveRecoverableJobOrigin(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
     if (!manifest) return undefined
     return manifest.projectId ? getProject(manifest.projectId) : null
@@ -2600,7 +2839,7 @@ const wrapperJobs = new WrapperJobManager({
   // A remote run goes to the HPC connection saved on the project the chat belongs to; a run
   // being resumed after a restart names its project and connection itself.
   resolveRemoteTarget: ({ originSessionId, projectId, connectionId }) => {
-    const origin = resolveOriginSession(originSessionId)
+    const origin = resolveRecoverableJobOrigin(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
     const project = projectId
       ? getProject(projectId)
@@ -2726,12 +2965,60 @@ function resolveOriginSession(
   return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
 }
 
+function currentRuntimeOriginScope(
+  manifest: PhiSessionManifest
+): import('./agent/session/runtime-reference').RemoteOmpScope | undefined {
+  if (!manifest.runtimeRef || !manifest.projectId) return undefined
+  const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
+  const project = requireProject(manifest.projectId)
+  if (project.location.kind !== 'ssh') return undefined
+  const binding = resolveRemoteWorkspaceHostBinding({
+    sessionId: manifest.sessionId,
+    projectId: project.id
+  })
+  const scope = {
+    hostProfileId: project.location.hostProfileId,
+    bindingHash: facadeBindingHash(binding),
+    projectId: project.id,
+    projectRoot: binding.canonicalRoot,
+    runtimeRoot: reference.runtimeRoot
+  }
+  assertRuntimeReferenceProject(manifest, scope)
+  assertRuntimeScope(reference, scope)
+  return scope
+}
+
+/** Cold records recover job attribution only; all tool/control/wakeup authority uses the live resolver. */
+function resolveRecoverableJobOrigin(
+  originSessionId: string | undefined
+): { phiSessionId: string; cwd: string } | undefined {
+  if (!originSessionId) return undefined
+  return (
+    resolveOriginSession(originSessionId) ??
+    resolveRuntimeSessionOrigin(
+      originSessionId,
+      {
+        readManifest: findPhiSessionById,
+        resolveRemoteScope: currentRuntimeOriginScope,
+        resolveConfiguredRuntimeRoot: (manifest) => {
+          const project = manifest.projectId ? getProject(manifest.projectId) : undefined
+          return project?.location.kind === 'ssh'
+            ? projectRemoteRuntimeRoot(project).configured
+            : undefined
+        }
+      },
+      AGENT_DIR
+    )
+  )
+}
+
 const browserToolHostCoordinator = new BrowserToolHostCoordinator({
   resolveActiveRun: (originSessionId) => {
     const run = findActivePromptRunByRuntimeSessionId(originSessionId)
     return run ? { runId: run.runId, cancelled: run.cancelled } : undefined
   },
-  executeAgent: (params, signal) => browserIpcCoordinator.executeAgent(params, signal)
+  executeAgent: (params, signal, control) =>
+    browserIpcCoordinator.executeAgent(params, signal, control)
 })
 
 function cancelBrowserRun(run: PromptRun): void {
@@ -2746,67 +3033,151 @@ async function cleanupBrowserRunTabs(run: PromptRun): Promise<void> {
   }
 }
 
-getPhiEngine().host.register('browser.execute', (params) =>
-  browserToolHostCoordinator.execute(params)
+function browserChildDispatchControl(
+  params: unknown,
+  context: import('./agent/engine/types').PhiHostRequestContext | undefined
+): import('./agent/browser/browser-tool-host').BrowserToolDispatchControl | undefined {
+  if (!context?.agentRunId) return undefined
+  const runtimeId = isRecord(params) ? optionalStringField(params, 'originSessionId') : undefined
+  if (!runtimeId || context.originSessionId !== runtimeId)
+    throw new Error('专家浏览器请求缺少已验证的来源')
+  const origin = resolveOriginSession(runtimeId)
+  const manifest = origin && findPhiSessionById(origin.phiSessionId)
+  if (!ownsRemoteRuntimeSession(runtimeId)) {
+    if (manifest?.projectLocation?.kind === 'ssh') throw new Error('远程专家浏览器连接不可用')
+    return undefined
+  }
+  if (!origin || !manifest?.projectId || !context.signal)
+    throw new Error('专家浏览器请求缺少独立运行范围')
+  const control = remoteRuntimeDispatchControl(
+    {
+      runtimeSessionId: runtimeId,
+      remoteSessionId: origin.phiSessionId,
+      projectId: manifest.projectId
+    },
+    context
+  )!
+  return {
+    runId: context.agentRunId,
+    signal: context.signal,
+    allowTypeText: false,
+    assertCurrent: control.beforeDispatch
+  }
+}
+getPhiEngine().host.register('browser.execute', (params, context) =>
+  browserToolHostCoordinator.execute(params, browserChildDispatchControl(params, context))
 )
-getPhiEngine().host.register('browser.cancel', (params) =>
-  browserToolHostCoordinator.cancel(params)
-)
+getPhiEngine().host.register('browser.cancel', (params, context) => {
+  if (context?.agentRunId) {
+    if (!isRecord(params) || context.originSessionId !== params.originSessionId)
+      throw new Error('专家浏览器取消请求的来源不匹配')
+    // Terminal cancellation uses only the captured child ID, never a successor's active run.
+    return browserToolHostCoordinator.cancel(params, { runId: context.agentRunId })
+  }
+  return browserToolHostCoordinator.cancel(params)
+})
 async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
   const raw = await getPhiEngine().agentRuns.list({})
-  if (!Array.isArray(raw)) return []
-  return raw
-    .flatMap((value): BackgroundAgentJob[] => {
-      if (!isRecord(value)) return []
-      const agentSessionId = optionalStringField(value, 'agentSessionId')
-      const agentRunId = optionalStringField(value, 'agentRunId')
-      const agentName = optionalStringField(value, 'agentName')
-      const state = value.state
-      const startedAt = value.startedAt
-      if (
-        !agentSessionId ||
-        !agentRunId ||
-        !agentName ||
-        (state !== 'queued' &&
-          state !== 'running' &&
-          state !== 'done' &&
-          state !== 'error' &&
-          state !== 'cancelled') ||
-        typeof startedAt !== 'number' ||
-        !Number.isFinite(startedAt)
-      )
-        return []
-      const origin = resolveOriginSession(agentSessionId)
-      if (!origin) return []
-      const manifest = findPhiSessionById(origin.phiSessionId)
-      if (!manifest) return []
-      return [
-        {
-          agentSessionId,
-          agentRunId,
-          sessionId: origin.phiSessionId,
-          sessionPath: phiOnlySessionPath(origin.phiSessionId),
+  if (!Array.isArray(raw)) throw new Error('后台 Agent 状态暂时不可用')
+  const live = raw.flatMap((value): BackgroundAgentJob[] => {
+    if (!isRecord(value)) return []
+    const agentSessionId = optionalStringField(value, 'agentSessionId')
+    const agentRunId = optionalStringField(value, 'agentRunId')
+    const agentName = optionalStringField(value, 'agentName')
+    const state = value.state
+    const startedAt = value.startedAt
+    if (
+      !agentSessionId ||
+      !agentRunId ||
+      !agentName ||
+      (state !== 'queued' &&
+        state !== 'running' &&
+        state !== 'done' &&
+        state !== 'error' &&
+        state !== 'cancelled') ||
+      typeof startedAt !== 'number' ||
+      !Number.isFinite(startedAt)
+    )
+      return []
+    const origin = resolveRecoverableJobOrigin(agentSessionId)
+    if (!origin) return []
+    const manifest = findPhiSessionById(origin.phiSessionId)
+    if (!manifest) return []
+    return [
+      {
+        agentSessionId,
+        agentRunId,
+        sessionId: origin.phiSessionId,
+        sessionPath: phiOnlySessionPath(origin.phiSessionId),
+        sessionTitle: messageContentTitleText(manifest.title) || '新对话',
+        agentName,
+        task: (optionalStringField(value, 'task') ?? '').slice(0, 300),
+        state,
+        background: value.background === true,
+        startedAt: new Date(startedAt).toISOString(),
+        ...(typeof value.completedAt === 'number' && Number.isFinite(value.completedAt)
+          ? { completedAt: new Date(value.completedAt).toISOString() }
+          : {}),
+        ...(optionalStringField(value, 'lastStep')
+          ? { lastStep: optionalStringField(value, 'lastStep')?.slice(0, 160) }
+          : {}),
+        ...(typeof value.toolCalls === 'number' && Number.isFinite(value.toolCalls)
+          ? { toolCalls: Math.max(0, Math.trunc(value.toolCalls)) }
+          : {}),
+        ...(optionalStringField(value, 'toolCallId')
+          ? { toolCallId: optionalStringField(value, 'toolCallId') }
+          : {})
+      }
+    ]
+  })
+  // Only a successful live listing establishes absence. Persisted records never grant control.
+  const liveIds = new Set(live.map((run) => `${run.sessionId}:${run.agentRunId}`))
+  const cold: BackgroundAgentJob[] = []
+  for (const manifest of listPhiSessions()) {
+    if (!manifest.runtimeRef) continue
+    try {
+      const scope = currentRuntimeOriginScope(manifest)
+      if (!scope) continue
+      const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
+      for (const run of readColdChildRuns(
+        { phiSessionId: manifest.sessionId, reference },
+        AGENT_DIR
+      )) {
+        if (!run.background || liveIds.has(`${manifest.sessionId}:${run.id}`)) continue
+        cold.push({
+          agentSessionId: '',
+          agentRunId: run.id,
+          sessionId: manifest.sessionId,
+          sessionPath: phiOnlySessionPath(manifest.sessionId),
           sessionTitle: messageContentTitleText(manifest.title) || '新对话',
-          agentName,
-          task: (optionalStringField(value, 'task') ?? '').slice(0, 300),
-          state,
-          background: value.background === true,
-          startedAt: new Date(startedAt).toISOString(),
-          ...(typeof value.completedAt === 'number' && Number.isFinite(value.completedAt)
-            ? { completedAt: new Date(value.completedAt).toISOString() }
-            : {}),
-          ...(optionalStringField(value, 'lastStep')
-            ? { lastStep: optionalStringField(value, 'lastStep')?.slice(0, 160) }
-            : {}),
-          ...(typeof value.toolCalls === 'number' && Number.isFinite(value.toolCalls)
-            ? { toolCalls: Math.max(0, Math.trunc(value.toolCalls)) }
-            : {}),
-          ...(optionalStringField(value, 'toolCallId')
-            ? { toolCallId: optionalStringField(value, 'toolCallId') }
+          agentName: run.agent,
+          task: '',
+          state:
+            run.status === 'completed'
+              ? 'done'
+              : run.status === 'failed'
+                ? 'error'
+                : run.status === 'aborted'
+                  ? 'cancelled'
+                  : 'interrupted',
+          background: true,
+          canControl: false,
+          historyAvailable: false,
+          startedAt: new Date(run.startedAt).toISOString(),
+          ...(run.completedAt !== undefined
+            ? { completedAt: new Date(run.completedAt).toISOString() }
             : {})
-        }
-      ]
-    })
+        })
+      }
+    } catch {
+      writeAppLog({
+        level: 'error',
+        event: 'child_recovery_metadata_unavailable',
+        sessionId: manifest.sessionId
+      })
+    }
+  }
+  return [...live, ...cold]
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
     .slice(0, 50)
 }
@@ -2890,15 +3261,16 @@ function showRunNotification({ title, body }: { title: string; body: string }): 
 }
 
 wrapperJobs.onFinish((run, status) => {
+  const liveOrigin = resolveOriginSession(run.originSessionId)
   if (status.state === 'lost' && run.remote?.projectId) {
     remoteConnectionTracker.noteRemoteRunLost(run.remote.projectId)
   }
   return deliverWrapperRunFinished(run, status, {
-    resolveSession: resolveOriginSession,
+    resolveSession: resolveRecoverableJobOrigin,
     appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
     sendToWindow: sendRunEventToWindow,
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
-    continueConversation: continueConversationAfterWrapperRun,
+    continueConversation: liveOrigin ? continueConversationAfterWrapperRun : async () => undefined,
     showOsNotification: showRunNotification
   })
 })
@@ -2971,6 +3343,21 @@ async function requestAgentRunControl(
 ): Promise<void> {
   if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少 Agent 会话')
   if (typeof agentRunId !== 'string' || !agentRunId) throw new Error('缺少 Agent 运行编号')
+  const origin = resolveRecoverableJobOrigin(agentSessionId)
+  const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
+  if (
+    manifest?.projectLocation?.kind === 'ssh' ||
+    manifest?.runtimeRef ||
+    manifest?.runtimeRecoveryError
+  ) {
+    if (
+      !ownsRemoteRuntimeSession(agentSessionId) ||
+      resolveOriginSession(agentSessionId)?.phiSessionId !== manifest.sessionId ||
+      !getPhiEngine().sessions.has(agentSessionId) ||
+      !currentRuntimeOriginScope(manifest)
+    )
+      throw new Error('远程专家任务当前没有可控制的连接；旧任务不会在本机重新启动。')
+  }
   const params = {
     sessionId: agentSessionId,
     runId: agentRunId,
@@ -5174,6 +5561,8 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     runSnapshot,
     normalizedText || (input.images?.length ? '图片' : undefined)
   )
+  if (runtimeRecoveryOperations.has(phiSessionId))
+    throw new Error('会话正在恢复，请等待恢复操作结束')
   if (manualCompactionIds.has(phiSessionId)) {
     throw new Error('上下文压缩正在进行，请稍后发送消息')
   }
@@ -7326,6 +7715,8 @@ function captureSessionControlTarget(
       }
       const result = pending ? await pending : null
       assertCurrent()
+      if (requireIdle && rpc && result?.session.hasActiveAgentRuns?.())
+        throw new Error('请等待专家任务运行结束后再修改会话')
       if (initializing) {
         expectedJournal = journal(findPhiSessionById(phiSessionId))
         initializing = false
@@ -7519,6 +7910,301 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
   }
 }
 
+interface MainRuntimeRecoveryScope extends RuntimeRecoveryScope {
+  readonly manifest: PhiSessionManifest
+  readonly key: string
+  readonly snapshot: SessionSnapshot & { permissionMode: PermissionMode }
+  attach(replacement?: RuntimeRecoveryModelSelection): Promise<RuntimeRecoveryState>
+}
+
+async function captureRuntimeRecoveryScope(
+  target: RuntimeRecoveryTarget
+): Promise<MainRuntimeRecoveryScope> {
+  const current = getCurrentSessionPayload()
+  if (
+    current.phiSessionId !== target.sessionId ||
+    current.path !== target.sessionPath ||
+    current.projectId !== target.projectId ||
+    current.sessionGeneration !== target.sessionGeneration
+  )
+    throw new StaleSessionError()
+  const manifest = findPhiSessionById(target.sessionId)
+  if (
+    !manifest ||
+    manifest.projectId !== target.projectId ||
+    manifest.projectLocation?.kind !== 'ssh'
+  )
+    throw new Error('恢复目标不是已绑定的远程会话')
+  const key = resolveSessionKeyAlias(currentSessionKey)
+  const snapshot = {
+    path: currentSessionPath,
+    cwd: currentCwd,
+    permissionMode: currentPermissionMode
+  }
+  const lifecycle = getLifecycleForKey(key)
+  let generation = lifecycle.currentGeneration
+  let record = lifecycle.currentRecord
+  let promptGeneration = getPromptGeneration(key)
+  let selected = true
+  const readBinding = (): ReturnType<typeof resolveRemoteWorkspaceHostBinding> | undefined => {
+    try {
+      return resolveRemoteWorkspaceHostBinding({
+        sessionId: target.sessionId,
+        projectId: target.projectId
+      })
+    } catch {
+      return undefined
+    }
+  }
+  const selectedBinding = readBinding()
+  const binding = selectedBinding?.cacheKey
+  const journal = JSON.stringify([
+    manifest.runtimeRef?.ompSessionId,
+    manifest.runtimeRef?.journalBasename
+  ])
+  const currentProject = getProject(target.projectId)
+  const readProject = (): string => {
+    const project = getProject(target.projectId)
+    const profile =
+      project?.location.kind === 'ssh'
+        ? getRemoteHostProfile(project.location.hostProfileId)
+        : undefined
+    return JSON.stringify([
+      project?.location,
+      project?.workingDirectory,
+      profile ? remoteConnectionConfigForProfile(profile) : null,
+      project?.location.kind === 'ssh' ? projectRemoteRuntimeRoot(project).configured : null
+    ])
+  }
+  const projectBinding = readProject()
+  const assertCurrent = (): void => {
+    const latest = findPhiSessionById(target.sessionId)
+    if (
+      (selected &&
+        (!sameCanonicalSessionKey(key, currentSessionKey) || currentCwd !== snapshot.cwd)) ||
+      getLifecycleForKey(key) !== lifecycle ||
+      !lifecycle.isCurrentGeneration(generation) ||
+      lifecycle.currentRecord !== record ||
+      getPromptGeneration(key) !== promptGeneration ||
+      latest?.projectId !== target.projectId ||
+      latest?.cwd !== snapshot.cwd ||
+      JSON.stringify([latest?.runtimeRef?.ompSessionId, latest?.runtimeRef?.journalBasename]) !==
+        journal ||
+      readBinding()?.cacheKey !== binding ||
+      readProject() !== projectBinding
+    )
+      throw new StaleSessionError()
+  }
+  assertCurrent()
+  const pending = Symbol('pending')
+  const resolved = record
+    ? await Promise.race([record.promise, Promise.resolve(pending)]).catch(() => null)
+    : null
+  assertCurrent()
+  const ready = resolved === pending ? null : resolved
+  const busy = (): boolean =>
+    Boolean(
+      hasActivePromptRun(key) ||
+      runnerRegistry.getActiveRun(target.sessionId) ||
+      manualCompactionIds.has(target.sessionId) ||
+      ready?.session.hasActiveAgentRuns?.() ||
+      (record && resolved === pending)
+    )
+  const assertIdle = (): void => {
+    if (busy()) throw new Error('请等待原会话和专家任务结束后再恢复')
+  }
+  let live = false
+  if (ready && ownsRemoteRuntimeSession(ready.session.runtimeSessionId)) {
+    try {
+      live = getPhiEngine().sessions.has(ready.session.runtimeSessionId)
+    } catch {
+      live = false
+    }
+  }
+  let issue: RuntimeRecoveryIssue =
+    runtimeRecoveryFailures.get(target.sessionId) ??
+    (manifest.runtimeRecoveryError
+      ? describeRemoteRecoveryFailure(
+          new RuntimeReferenceError(manifest.runtimeRecoveryError.code, '')
+        ).issue
+      : 'disconnected')
+  let validReference = false
+  if (manifest.runtimeRef) {
+    try {
+      const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
+      if (!selectedBinding || currentProject?.location.kind !== 'ssh')
+        throw new Error('项目或主机身份不匹配')
+      assertRuntimeReferenceProject(manifest, {
+        ...reference,
+        hostProfileId: currentProject.location.hostProfileId,
+        bindingHash: facadeBindingHash(selectedBinding),
+        projectId: currentProject.id,
+        projectRoot: selectedBinding.canonicalRoot
+      })
+      assertRuntimeScope(reference, {
+        ...reference,
+        hostProfileId: currentProject.location.hostProfileId,
+        bindingHash: facadeBindingHash(selectedBinding),
+        projectId: currentProject.id,
+        projectRoot: selectedBinding.canonicalRoot
+      })
+      validReference = true
+    } catch (error) {
+      issue = selectedBinding ? describeRemoteRecoveryFailure(error).issue : 'binding-changed'
+    }
+  }
+  if (!remoteOmpRpcEnabled) issue = 'not-enabled'
+  if (
+    remoteOmpRpcEnabled &&
+    manifest.model &&
+    !busy() &&
+    !runtimeRecoveryOperations.has(target.sessionId)
+  ) {
+    const runtime = await getAuthManager().getRuntime()
+    assertCurrent()
+    const saved = resolveRuntimeModelSelection(runtime, manifest.model)
+    if (!saved || saved.migratedFrom) issue = 'model-unavailable'
+  }
+  const state: RuntimeRecoveryState = {
+    target,
+    phase: live
+      ? 'connected'
+      : busy() || runtimeRecoveryOperations.has(target.sessionId)
+        ? 'busy'
+        : manifest.runtimeRef || manifest.runtimeRecoveryError
+          ? 'recovery-required'
+          : 'not-started',
+    issue,
+    message: runtimeRecoveryMessage(issue),
+    canResume: !live && !busy() && remoteOmpRpcEnabled && validReference,
+    canContinueFromSummary:
+      remoteOmpRpcEnabled &&
+      Boolean(manifest.runtimeRef || manifest.runtimeRecoveryError) &&
+      currentProject?.location.kind === 'ssh',
+    ...(manifest.model ? { savedModel: manifest.model } : {})
+  }
+  const scope: MainRuntimeRecoveryScope = {
+    state,
+    manifest,
+    key,
+    snapshot,
+    assertCurrent,
+    assertIdle,
+    attach: async (replacement) => {
+      assertCurrent()
+      assertIdle()
+      if (state.issue === 'model-unavailable' && !replacement)
+        throw new RemoteRecoveryError('MODEL_UNAVAILABLE', '请先选择可用的替代模型')
+      const controller = new AbortController()
+      let finish!: () => void
+      const done = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      runtimeRecoveryOperations.set(target.sessionId, { controller, done })
+      try {
+        const previous = lifecycle.advance()
+        generation = lifecycle.currentGeneration
+        record = lifecycle.currentRecord
+        advancePromptGeneration(key)
+        promptGeneration = getPromptGeneration(key)
+        selected = false
+        notifySessionChanged()
+        await cleanupSessionRecord(previous)
+        assertCurrent()
+        controller.signal.throwIfAborted()
+        const creating = getAgentSession(
+          key,
+          snapshot,
+          {
+            signal: controller.signal,
+            assertCurrent: () => {
+              controller.signal.throwIfAborted()
+              assertCurrent()
+            }
+          },
+          { ...(replacement ? { replacementModel: replacement } : {}) }
+        )
+        record = lifecycle.currentRecord
+        const result = await creating
+        assertCurrent()
+        controller.signal.throwIfAborted()
+        if (
+          !ownsRemoteRuntimeSession(result.session.runtimeSessionId) ||
+          !getPhiEngine().sessions.has(result.session.runtimeSessionId)
+        )
+          throw new Error('原远程会话尚未确认连接')
+        const confirmed = findPhiSessionById(target.sessionId)
+        if (confirmed?.model)
+          sessionModelSelections.set(resolveSessionKeyAlias(key), confirmed.model)
+        if (confirmed?.thinkingLevel === undefined)
+          sessionThinkingLevels.delete(resolveSessionKeyAlias(key))
+        else sessionThinkingLevels.set(resolveSessionKeyAlias(key), confirmed.thinkingLevel)
+        runtimeRecoveryFailures.delete(target.sessionId)
+        notifySessionChanged()
+        return {
+          ...state,
+          target: { ...target, sessionGeneration: generation },
+          phase: 'connected',
+          issue: undefined,
+          message: '原会话已恢复，未重发消息或任务。',
+          canResume: false
+        }
+      } catch (error) {
+        runtimeRecoveryFailures.set(target.sessionId, describeRemoteRecoveryFailure(error).issue)
+        notifySessionChanged()
+        throw error
+      } finally {
+        runtimeRecoveryOperations.delete(target.sessionId)
+        finish()
+      }
+    }
+  }
+  return scope
+}
+
+const runtimeRecoveryController = createRuntimeRecoveryController<MainRuntimeRecoveryScope>({
+  capture: captureRuntimeRecoveryScope,
+  resolveModel: async (selection, scope) => {
+    const runtime = await getAuthManager().getRuntime()
+    scope.assertCurrent()
+    const resolved = resolveRuntimeModelSelection(runtime, selection)
+    if (!resolved || resolved.migratedFrom)
+      throw new RemoteRecoveryError('MODEL_UNAVAILABLE', '所选替代模型目前不可用')
+    return resolved.selection
+  },
+  resume: (scope, replacement) => scope.attach(replacement),
+  summarize: (scope) =>
+    buildRuntimeRecoverySummary({
+      sourceSessionId: scope.manifest.sessionId,
+      projectId: scope.manifest.projectId ?? null,
+      events: readSessionEvents(scope.manifest.sessionId)
+    }),
+  continueFromSummary: async (scope, summary: RuntimeRecoverySummary) => {
+    scope.assertCurrent()
+    scope.assertIdle()
+    const created = createRemoteManagedSession(scope.manifest.projectId!)
+    appendSessionEvent(created.sessionId, {
+      type: 'runtime_recovery_summary',
+      content: summary.content,
+      provenance: summary.provenance,
+      contentSha256: createHash('sha256').update(summary.content).digest('hex')
+    })
+    const switched = await disposeAndSwitchSession(
+      created.path,
+      created.cwd,
+      created.permissionMode
+    )
+    return {
+      path: created.path,
+      phiSessionId: created.sessionId,
+      projectId: scope.manifest.projectId!,
+      sessionGeneration: switched.sessionGeneration,
+      sourceSessionId: scope.manifest.sessionId,
+      connected: false
+    }
+  }
+})
+
 function getCurrentSessionPayload(): CurrentSessionPayload {
   currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, {
     path: currentSessionPath,
@@ -7659,6 +8345,12 @@ async function stopActivePrompt(): Promise<void> {
   const run = getActivePromptRun(currentSessionKey)
   if (!run) {
     const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+    const recovery = phiSessionId ? runtimeRecoveryOperations.get(phiSessionId) : undefined
+    if (recovery) {
+      recovery.controller.abort(new Error('会话恢复已取消'))
+      await recovery.done
+      return
+    }
     const operation = phiSessionId ? manualCompactionOperations.get(phiSessionId) : undefined
     if (operation) {
       operation.cancelled = true
@@ -7700,6 +8392,8 @@ function stopAllPromptRuns(): {
 } {
   remoteBashManager.cancelAll()
   remoteMutationManager.cancelAll()
+  const recoveries = [...runtimeRecoveryOperations.values()]
+  for (const recovery of recoveries) recovery.controller.abort()
   const runs = [...activePromptRuns.values()]
   for (const [sessionKey, run] of activePromptRuns) {
     advancePromptGeneration(sessionKey)
@@ -7709,12 +8403,13 @@ function stopAllPromptRuns(): {
   const browserCleanup = Promise.all(runs.map((run) => cleanupBrowserRunTabs(run)))
   runnerRegistry.stopAll()
   cancelPendingRunWaits()
-  const runtimeAbort = Promise.all(
-    runs.map(async (run) => {
+  const runtimeAbort = Promise.all([
+    ...recoveries.map((recovery) => recovery.done),
+    ...runs.map(async (run) => {
       if (!run.session) return
       await abortSessionWithoutCancellingApprovals(run.session)
     })
-  ).then(() => undefined)
+  ]).then(() => undefined)
   return { browserCleanup: browserCleanup.then(() => undefined), runtimeAbort }
 }
 
@@ -7822,7 +8517,8 @@ async function getAgentSession(
     cwd: currentCwd,
     permissionMode: currentPermissionMode
   },
-  control?: { assertCurrent(): void }
+  control?: import('./agent/engine/types').RuntimeSelectionControl,
+  remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
 ): Promise<AgentSessionResult> {
   const lifecycle = getLifecycleForKey(sessionKey)
   const record = lifecycle.getOrCreate(
@@ -7934,11 +8630,19 @@ async function getAgentSession(
       assertCreationCurrent()
       const runtime = await getAuthManager().getRuntime()
       assertCreationCurrent()
-      const modelSelection = resolveSessionModelSelection(sessionKey, creationSnapshot)
+      const modelSelection =
+        remoteRecovery?.replacementModel ??
+        resolveSessionModelSelection(sessionKey, creationSnapshot)
       const resolvedModel = modelSelection
         ? resolveRuntimeModelSelection(runtime, modelSelection)
         : null
       const model = resolvedModel?.model
+      if (
+        (remoteRecovery || (useRpc && sessionManifest?.runtimeRef)) &&
+        modelSelection &&
+        (!resolvedModel || resolvedModel.migratedFrom)
+      )
+        throw new RemoteRecoveryError('MODEL_UNAVAILABLE', '原模型目前不可用，必须显式选择替代模型')
       if (modelSelection && !resolvedModel) {
         throw new Error(`模型不可用: ${modelSelectionLabel(modelSelection)}`)
       }
@@ -8221,45 +8925,81 @@ async function getAgentSession(
         if (latest.thinkingLevel !== thinkingLevel)
           updateSessionManifest(sessionManifest.sessionId, { thinkingLevel })
       }
-      const result = await createAgentSession({
-        modelRuntime: runtime,
-        thinkingLevel,
-        ...(sessionManifest?.autoCompaction
-          ? { autoCompaction: sessionManifest.autoCompaction }
-          : {}),
-        cwd: creationSnapshot.cwd,
-        sessionManager: useRpc
-          ? createAppRemoteSessionManager(
-              creationSnapshot.cwd,
-              sessionManifest!.sessionId,
-              Boolean(sessionManifest?.runtimeRef)
-            )
-          : createSessionManager(
-              creationSnapshot.cwd,
-              runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
-            ),
-        ...(resourceLoader ? { resourceLoader } : {}),
-        ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
-        ...(!useRpc && remoteMcpCatalog?.runtimeServers.length
-          ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
-          : {}),
-        projectBound: Boolean(project),
-        ...(project?.memory?.enabled ? { memory: project.memory } : {}),
-        ...(remoteProject
-          ? {
-              ...(project ? { remoteRuntimeRoot: projectRemoteRuntimeRoot(project) } : {}),
-              remoteProject: {
-                ...remoteProject,
-                phiSessionId: sessionManifest?.sessionId ?? '',
-                contextFiles: remoteContextFiles ?? []
+      const result = await createAgentSession(
+        {
+          ...(remoteRecovery ? { remoteRecovery } : {}),
+          modelRuntime: runtime,
+          thinkingLevel,
+          ...(sessionManifest?.autoCompaction
+            ? { autoCompaction: sessionManifest.autoCompaction }
+            : {}),
+          cwd: creationSnapshot.cwd,
+          sessionManager: useRpc
+            ? createAppRemoteSessionManager(
+                creationSnapshot.cwd,
+                sessionManifest!.sessionId,
+                Boolean(sessionManifest?.runtimeRef)
+              )
+            : createSessionManager(
+                creationSnapshot.cwd,
+                runtimeSessionPathForSnapshot(sessionKey, creationSnapshot)
+              ),
+          ...(resourceLoader ? { resourceLoader } : {}),
+          ...(agentScan.agents.length > 0 ? { phiAgents: agentScan.agents } : {}),
+          ...(!useRpc && remoteMcpCatalog?.runtimeServers.length
+            ? { remoteProjectMcpServers: remoteMcpCatalog.runtimeServers }
+            : {}),
+          projectBound: Boolean(project),
+          ...(project?.memory?.enabled ? { memory: project.memory } : {}),
+          ...(remoteProject
+            ? {
+                ...(project ? { remoteRuntimeRoot: projectRemoteRuntimeRoot(project) } : {}),
+                remoteProject: {
+                  ...remoteProject,
+                  phiSessionId: sessionManifest?.sessionId ?? '',
+                  contextFiles: remoteContextFiles ?? []
+                }
               }
-            }
-          : {}),
-        personaMarkdown,
-        ...(model ? { model } : {})
-      })
+            : {}),
+          personaMarkdown,
+          ...(model ? { model } : {})
+        },
+        undefined,
+        control
+      )
       try {
         assertCreationCurrent(true)
+        const phiSessionId = sessionManifest?.sessionId ?? getPhiSessionIdForKey(sessionKey)
+        const confirmed = phiSessionId ? findPhiSessionById(phiSessionId) : null
+        if (
+          confirmed &&
+          (confirmed.projectLocation?.kind !== 'ssh' ||
+            ownsRemoteRuntimeSession(result.session.runtimeSessionId))
+        ) {
+          const remoteScope =
+            confirmed.projectLocation?.kind === 'ssh'
+              ? currentRuntimeOriginScope(confirmed)
+              : undefined
+          if (confirmed.projectLocation?.kind === 'ssh' && !remoteScope)
+            throw new Error('远程运行来源尚未验证')
+          registerRuntimeSessionOrigin(
+            {
+              runtimeSessionId: result.session.runtimeSessionId,
+              phiSessionId: confirmed.sessionId,
+              projectId: confirmed.projectId ?? null,
+              cwd: confirmed.cwd,
+              ...(remoteScope
+                ? {
+                    remoteScope,
+                    configuredRuntimeRoot: projectRemoteRuntimeRoot(
+                      requireProject(confirmed.projectId!)
+                    ).configured
+                  }
+                : {})
+            },
+            AGENT_DIR
+          )
+        }
       } catch (error) {
         try {
           await abortSessionWithoutCancellingApprovals(result.session)
@@ -8432,6 +9172,8 @@ function captureCurrentSelectionTarget(): {
     resolved: async () => {
       const result = record ? await record.promise : null
       assertCurrent()
+      if (rpc && result?.session.hasActiveAgentRuns?.())
+        throw new Error('请等待专家任务运行结束后再修改会话')
       return result
     }
   }
@@ -9334,6 +10076,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('sessions:homeActivity', async () => getHomeActivity())
   ipcMain.handle('sessions:current', async () => getCurrentSessionPayloadWithMessages())
   ipcMain.handle('sessions:contextUsage', async () => getCurrentContextUsage())
+  ipcMain.handle('sessions:runtimeRecovery', async (_, target: unknown) =>
+    runtimeRecoveryController.getState(target)
+  )
+  ipcMain.handle('sessions:resumeRuntime', async (_, target: unknown, replacement?: unknown) =>
+    runtimeRecoveryController.resume(target, replacement)
+  )
+  ipcMain.handle('sessions:continueRuntimeSummary', async (_, target: unknown, sha256: unknown) =>
+    runtimeRecoveryController.continueFromSummary(target, sha256)
+  )
   ipcMain.handle('sessions:autoCompactionSettings', async (_, target: unknown) =>
     getCurrentAutoCompactionSettings(target)
   )
@@ -11613,7 +12364,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('persona:isOnboarded', async () => isOnboarded())
   ipcMain.handle('persona:getMarkdown', async () => getPersonaMarkdown())
   ipcMain.handle('persona:setMarkdown', async (_, markdown: string) => {
-    captureCurrentRpcConfigurationTarget()?.assertCurrent()
+    const target = captureCurrentRpcConfigurationTarget()
+    if (target) await target.resolved()
+    target?.assertCurrent()
     setPersonaMarkdown(markdown)
     await invalidateAgentSession()
     return getPersonaMarkdown()
@@ -11629,6 +12382,8 @@ app.whenReady().then(async () => {
     }
 
     const target = captureCurrentRpcConfigurationTarget()
+    if (target) await target.resolved()
+    target?.assertCurrent()
     let markdown: string
     try {
       markdown = await generatePersonaMarkdown(trimmedDescription, target ?? undefined)

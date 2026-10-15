@@ -233,13 +233,19 @@ export class RpcExecutionAuthority {
       throw new Error('Execution authority run binding failed')
     }
   }
-  async prompt(message: string, options?: RpcPromptOptions): Promise<RpcPromptResult> {
+  async prompt(
+    message: string,
+    options?: RpcPromptOptions,
+    beforeFinish?: (result: RpcPromptResult) => Promise<void>
+  ): Promise<RpcPromptResult> {
     const state = this.run
     if (!state || state.controller.signal.aborted || this.prompting || this.busy || this.disposed)
       throw new Error('Execution authority requires one active main run')
     this.prompting = true
     try {
-      return await this.connection.prompt(message, options)
+      const result = await this.connection.prompt(message, options)
+      await beforeFinish?.(result)
+      return result
     } finally {
       this.prompting = false
       if (!this.disposed) await this.finishState(state)

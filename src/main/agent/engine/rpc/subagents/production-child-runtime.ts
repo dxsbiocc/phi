@@ -1,4 +1,5 @@
 import type { SessionRun } from '../../../session/session-runner-registry'
+import { setTimeout as yieldForSettlement } from 'node:timers/promises'
 import {
   CHILD_ATTEST_COMMAND,
   CHILD_ATTEST_DESCRIPTION,
@@ -7,7 +8,8 @@ import {
 } from '../../phi-extension/lib/rpc-child-config'
 import {
   validateRpcChildRoot,
-  type RpcChildRootScope
+  type RpcChildRootScope,
+  type RpcChildCall
 } from '../../phi-extension/lib/rpc-child-protocol'
 import type { RpcConnection } from '../connection'
 import type { RpcExecutionAuthority } from '../execution-authority'
@@ -15,6 +17,7 @@ import { withRemoteSignal } from '../history-pager'
 import type { RpcApprovalEvent } from '../approval-bridge'
 import type { RpcFrame } from '../types'
 import { verifyRpcTaskSettlement } from '../../phi-extension/lib/rpc-task-settlement-protocol'
+import { parseRpcTaskLaunchReceipt } from '../../phi-extension/lib/rpc-task-launch-protocol'
 import { RpcChildAuthority } from './child-authority'
 import type { RpcChildApprovalOptions } from './child-approval-bridge'
 import { RpcChildHostUriBridge } from './host-uri-bridge'
@@ -23,6 +26,14 @@ import {
   assertPreparedProductionChildConfig,
   type PreparedProductionChildConfig
 } from './production-child-config'
+import {
+  RpcChildRunControls,
+  type RpcChildWaitOptions,
+  type RpcChildWaitResult
+} from './child-run-controls'
+import type { RpcChildRunSnapshot } from './types'
+import type { RpcChildRun } from './run-registry'
+import type { HostResultPayload } from '../../phi-extension/lib/rpc-host-result-protocol'
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
@@ -131,6 +142,23 @@ export interface ProductionChildRuntimeOptions {
   readonly onDenied: (parent: SessionRun, event: RpcApprovalEvent) => void
   readonly onError: (error: Error) => void
   readonly signal: AbortSignal
+  readonly onChildChange?: (snapshot: Readonly<RpcChildRunSnapshot>, parent: SessionRun) => void
+  readonly onChildFinished?: (
+    snapshot: Readonly<RpcChildRunSnapshot>,
+    parent: SessionRun
+  ) => void | Promise<void>
+  readonly executeHost?: (
+    run: RpcChildRun,
+    call: RpcChildCall,
+    requestId: string,
+    signal: AbortSignal
+  ) => Promise<HostResultPayload>
+  readonly hostResultConsumed?: (
+    run: RpcChildRun,
+    call: RpcChildCall,
+    invocationId: string
+  ) => void | Promise<void>
+  readonly drainHost?: (childRunId?: string) => Promise<void>
 }
 
 /** Generation composition API. Normal main turn completion never disposes this authority. */
@@ -138,6 +166,10 @@ export class ProductionChildRuntime {
   private readonly ledger: ProductionChildLedger
   private readonly authority: RpcChildAuthority
   private readonly uri: RpcChildHostUriBridge
+  private readonly controls: RpcChildRunControls
+  private readonly finished = new Set<string>()
+  private readonly pendingCompletion = new Set<string>()
+  private readonly completionDeliveries = new Map<string, Promise<void>>()
   private readonly detach: Array<() => void> = []
   private readonly childParents = new Map<string, SessionRun>()
   private readonly stops = new Map<string, Promise<void>>()
@@ -155,6 +187,8 @@ export class ProductionChildRuntime {
       approval: Object.freeze({ ...options.approval })
     })
     const { config } = options.prepared
+    const parallel = config.policy.allowParallel === true
+    const background = config.policy.allowBackground === true
     const channel = options.connection.bindControl()
     const execution = options.execution.sessionIdentity()
     if (
@@ -172,6 +206,9 @@ export class ProductionChildRuntime {
     this.ledger = new ProductionChildLedger({
       phiSessionId: config.phiSessionId,
       generation: config.generation,
+      allowBackground: background,
+      maxChildrenPerTask: parallel ? 32 : 1,
+      requireDispatchSeal: parallel || background,
       currentParentRun: options.currentParentRun,
       isNativeTerminal: (nativeId, parentRunId) =>
         !this.authority.registry.nativeChildren(parentRunId).includes(nativeId),
@@ -185,6 +222,9 @@ export class ProductionChildRuntime {
       profiles: config.profiles,
       capability: config.capability,
       signal: channel.signal,
+      executeHost: options.executeHost,
+      hostResultConsumed: options.hostResultConsumed,
+      drainHost: options.drainHost,
       captureParent: (started) => this.ledger.captureParent(started),
       approval: {
         ...options.approval,
@@ -206,6 +246,49 @@ export class ProductionChildRuntime {
         return record(response) && response.cancelled === true
       }
     })
+    this.controls = new RpcChildRunControls({
+      connection: options.connection,
+      authority: this.authority,
+      config,
+      signal: options.signal,
+      onUnconfirmed: (error) => this.fail(error)
+    })
+    this.detach.push(
+      this.authority.registry.onChange((snapshot) => {
+        const parent = this.ledger.parent(snapshot.parentRunId)
+        if (!parent) {
+          this.fail(new Error('Child lifecycle lacks its registered Phi parent'))
+          return
+        }
+        this.childParents.set(snapshot.id, parent)
+        try {
+          options.onChildChange?.(snapshot, parent)
+        } catch (error) {
+          this.fail(error)
+          return
+        }
+        if (!snapshot.background || snapshot.completedAt === undefined) return
+        const receipt = JSON.stringify([snapshot.phiSessionId, snapshot.generation, snapshot.id])
+        if (this.finished.has(receipt)) return
+        this.finished.add(receipt)
+        this.pendingCompletion.add(receipt)
+        const delivery = Promise.resolve()
+          .then(() => {
+            if (this.disposed || options.signal.aborted) return
+            return this.authority.drainHostExecutions(snapshot.id).then(() => {
+              if (this.disposed || options.signal.aborted) return
+              return options.onChildFinished?.(snapshot, parent)
+            })
+          })
+          .catch((error: unknown) => {
+            this.fail(error)
+            throw error
+          })
+          .finally(() => this.pendingCompletion.delete(receipt))
+        this.completionDeliveries.set(snapshot.id, delivery)
+        void delivery.catch(() => undefined)
+      })
+    )
     this.detach.push(
       options.execution.onTaskOrigin((event) => this.ledger.remember(event)),
       channel.onFrame((frame) => {
@@ -311,10 +394,102 @@ export class ProductionChildRuntime {
     const cached = this.childParents.get(childRunId)
     if (cached) return cached
     if (this.disposed) return undefined
-    const child = this.authority.registry.snapshot().find((run) => run.id === childRunId)
-    const parent = child && this.ledger.parentForNative(child.scope.nativeAgentId)
+    const child = this.authority.registry.getRecord(childRunId)
+    const parent = child && this.ledger.parent(child.parentRunId)
     if (parent) this.childParents.set(childRunId, parent)
     return parent
+  }
+  listRuns(): readonly Readonly<RpcChildRunSnapshot>[] {
+    return this.controls.listRuns()
+  }
+  status(childRunId: string): Readonly<RpcChildRunSnapshot> {
+    return this.controls.status(childRunId)
+  }
+  wait(options: RpcChildWaitOptions = {}): Promise<RpcChildWaitResult> {
+    return this.controls.wait(options)
+  }
+  steer(childRunId: string, message: string, signal?: AbortSignal): Promise<void> {
+    return this.controls.steer(childRunId, message, signal)
+  }
+  stopChild(childRunId: string, signal?: AbortSignal): Promise<Readonly<RpcChildRunSnapshot>> {
+    return this.controls.stop(childRunId, signal)
+  }
+  /** A terminal fact is reportable after physical host drain and durable parent delivery. */
+  awaitChildCompletionDelivery(childRunId: string): Promise<void> {
+    const child = this.controls.status(childRunId)
+    return this.completionDeliveries.get(child.id) ?? Promise.resolve()
+  }
+  hasActiveChildren(): boolean {
+    return (
+      this.pendingCompletion.size > 0 ||
+      this.ledger.hasPendingStarts() ||
+      this.listRuns().some((run) => run.completedAt === undefined)
+    )
+  }
+  childRunForHost(id: string): RpcChildRun | undefined {
+    const record =
+      this.authority.registry.getRecord(id) ?? this.authority.registry.recordForNative(id)
+    const run = record && this.authority.registry.getRun(record.id)
+    return run && this.authority.registry.current(run.scope) === run ? run : undefined
+  }
+  drainHost(childRunId?: string): Promise<void> {
+    return this.authority.drainHostExecutions(childRunId)
+  }
+  /** Background children may live on, but the actual parent and every admitted launch must settle. */
+  async awaitParentPromptSettled(parentRunId: string, signal: AbortSignal): Promise<void> {
+    const channel = this.options.connection.bindControl()
+    const joined = AbortSignal.any([
+      signal,
+      channel.signal,
+      this.options.signal,
+      AbortSignal.timeout(10000)
+    ])
+    await this.ledger.waitForStarts(parentRunId, joined)
+    for (;;) {
+      joined.throwIfAborted()
+      if (this.disposed) throw new Error('Child parent settlement is unavailable')
+      this.ledger.assertNoPendingStarts(parentRunId)
+      const children = this.ledger
+        .nativeIdsForParent(parentRunId)
+        .map((id) => this.authority.registry.recordForNative(id))
+      if (
+        children.some((child) => child?.status === 'interrupted' && child.completedAt === undefined)
+      )
+        throw new Error('Child admission was not confirmed')
+      const admitted = children.every(
+        (child) =>
+          child &&
+          (child.completedAt !== undefined ||
+            (child.background && child.verified && child.status === 'running'))
+      )
+      if (admitted) {
+        const state = await withRemoteSignal(
+          this.options.connection.request<unknown>({ type: 'get_state' }),
+          joined
+        )
+        if (
+          !record(state) ||
+          state.sessionId !== this.authority.registry.identity.rootOmpSessionId ||
+          state.sessionFile !== this.authority.registry.identity.rootSessionFile
+        )
+          throw new Error('Child parent session was replaced')
+        if (
+          state.isStreaming === false &&
+          state.isCompacting === false &&
+          state.isSettled === true &&
+          state.queuedMessageCount === 0 &&
+          state.hasPendingAsyncWork === false
+        ) {
+          await Promise.all(
+            children
+              .filter((child) => child?.completedAt !== undefined)
+              .map((child) => this.authority.drainHostExecutions(child!.id))
+          )
+          return
+        }
+      }
+      await yieldForSettlement(10, undefined, { signal: joined })
+    }
   }
 
   /** A no-spawn receipt leaves a same-generation outer-ID tombstone, so the controller must rotate. */
@@ -331,6 +506,18 @@ export class ProductionChildRuntime {
       typeof frame.message !== 'string'
     )
       return
+    const launch = parseRpcTaskLaunchReceipt(frame.message, this.options.prepared.config, identity)
+    if (launch) {
+      try {
+        this.ledger.acceptTaskLaunch(launch)
+      } catch (error) {
+        this.fail(error)
+        return
+      }
+      if (this.ledger.hasNoSpawnConflict(launch.parentRunId))
+        this.faultAfterConflictCancellation(launch.parentRunId)
+      return
+    }
     const proof = verifyRpcTaskSettlement(frame.message, this.options.prepared.config, identity)
     if (!proof) return
     const parent = this.ledger.consumeNoSpawn(proof)
@@ -356,8 +543,9 @@ export class ProductionChildRuntime {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    for (const detach of this.detach.splice(0)) detach()
+    // Emit conservative interruption while the original parent ledger is still available.
     this.uri.dispose()
+    for (const detach of this.detach.splice(0)) detach()
     this.ledger.dispose()
     // Submitted writer callbacks still need the originating parent for their sole terminal event.
   }

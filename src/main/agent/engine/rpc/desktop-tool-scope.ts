@@ -56,6 +56,10 @@ export interface RpcDesktopToolScopeOptions {
   /** The exact registry populated by engine.host.register in the desktop main process. */
   readonly services: HostServiceRegistry
   readonly currentRun: () => RpcDesktopToolRun | undefined
+  /** Trusted compiler identity, never a model argument or rewritten attachTo. */
+  readonly toolOwner?: string
+  /** Root alone retires selected adapters and the shared privacy vault. */
+  readonly ownsSharedResources?: boolean
   readonly assertBinding?: () => void
   readonly recentUserImages: () => PhiToolImage[]
   readonly allowBrowserTypeText: () => boolean
@@ -75,7 +79,11 @@ export interface RpcDesktopToolScopeOptions {
   readonly desktopMcp?: DesktopMcpAdapter
   readonly desktopMemory?: DesktopProjectMemoryAdapter
   /** The actual RemoteRuntimeController.approvalFor; required when script tools are enabled. */
-  readonly scriptApprovalFor?: (toolName: string, input: unknown) => PhiToolApproval | undefined
+  readonly scriptApprovalFor?: (
+    toolName: string,
+    input: unknown,
+    childRunId?: string
+  ) => PhiToolApproval | undefined
 }
 export interface RpcDesktopToolScope {
   readonly identity: Readonly<RpcDesktopToolIdentity>
@@ -187,7 +195,8 @@ export function createRpcDesktopToolScope(
   })
   const skills = Object.freeze([...options.allowedSkills])
   const descriptors = structuredClone(options.scriptTools).filter(
-    (descriptor) => descriptor.attachTo.includes('main') && skills.includes(descriptor.skill)
+    (descriptor) =>
+      descriptor.attachTo.includes(options.toolOwner ?? 'main') && skills.includes(descriptor.skill)
   )
   const scriptNames = new Set(descriptors.map((descriptor) => descriptor.name))
   const scriptApprovalFor = options.scriptApprovalFor
@@ -227,7 +236,9 @@ export function createRpcDesktopToolScope(
       const operation = services.invoke(
         method,
         params,
-        method.startsWith('browser.') ? call.context : { ...call.context, signal: call.signal }
+        method.startsWith('browser.') && !call.run.agentRunId
+          ? call.context
+          : { ...call.context, signal: call.signal }
       )
       if (
         method === 'notebookTool.execute' &&
@@ -513,10 +524,12 @@ export function createRpcDesktopToolScope(
     dispose() {
       if (lifetime.signal.aborted) return
       lifetime.abort(new Error('Desktop tool scope disposed'))
-      webSearch?.retire(lifetime.signal.reason)
-      mcp?.retire(lifetime.signal.reason)
+      if (options.ownsSharedResources !== false) {
+        webSearch?.retire(lifetime.signal.reason)
+        mcp?.retire(lifetime.signal.reason)
+      }
       for (const controller of active) controller.abort(lifetime.signal.reason)
-      vault.clear()
+      if (options.ownsSharedResources !== false) vault.clear()
     }
   }
   function recentImages(): PhiToolImage[] {

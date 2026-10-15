@@ -1,3 +1,7 @@
+import type {
+  RpcAgentResourceCatalogInput,
+  CompileRpcAgentDefinitionsOptions
+} from './engine/rpc/subagents/types'
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
@@ -107,6 +111,28 @@ export interface AppRemoteSessionRoutingOptions {
     },
     signal: AbortSignal
   ): Promise<NonNullable<SelectedFacadeRuntime['promptContext']>>
+  loadAgentResources?(
+    identity: {
+      runtimeSessionId: string
+      sessionId: string
+      projectId: string
+      cwd: string
+      resourceCwd: string
+    },
+    definitions: readonly PhiAgentDefinition[],
+    signal: AbortSignal
+  ): Promise<Pick<RpcAgentResourceCatalogInput, 'skills'>>
+  resolveAgentEnvironment?(
+    identity: {
+      runtimeSessionId: string
+      sessionId: string
+      projectId: string
+      cwd: string
+      resourceCwd: string
+    },
+    agent: Parameters<NonNullable<CompileRpcAgentDefinitionsOptions['resolveEnvironment']>>[0],
+    signal: AbortSignal
+  ): ReturnType<NonNullable<CompileRpcAgentDefinitionsOptions['resolveEnvironment']>>
   onMemoryError?(identity: { sessionId: string; projectId: string }): void | Promise<void>
   approval: SelectedFacadeRuntime['approval']
   onChildApprovalEvent?: NonNullable<SelectedFacadeRuntime['foregroundChildren']>['onApprovalEvent']
@@ -114,7 +140,8 @@ export interface AppRemoteSessionRoutingOptions {
 
 export function selectAppForegroundAgents(
   names: readonly string[],
-  catalog: readonly PhiAgentDefinition[]
+  catalog: readonly PhiAgentDefinition[],
+  completeProfiles = false
 ): readonly PhiAgentDefinition[] {
   if (names.length > 32 || new Set(names).size !== names.length)
     throw new Error('RPC foreground agent names must be unique and bounded')
@@ -124,12 +151,15 @@ export function selectAppForegroundAgents(
     if (matches.length !== 1) throw new Error(`RPC foreground agent is unavailable: ${name}`)
     const agent = matches[0]
     if (
-      agent.environment !== undefined ||
-      agent.skills.length ||
       agent.warnings.length ||
-      agent.tools.some((tool) => !['read', 'write', 'bash'].includes(tool))
-    )
+      agent.tools.includes('agent') ||
+      (!completeProfiles &&
+        (agent.environment !== undefined ||
+          agent.skills.length ||
+          agent.tools.some((tool) => !['read', 'write', 'bash'].includes(tool))))
+    ) {
       throw new Error(`Unsupported RPC foreground agent profile: ${name}`)
+    }
     return structuredClone(agent)
   })
   return Object.freeze(selected)
@@ -216,7 +246,8 @@ export function installAppRemoteSessionRouting(
               sessionId: phiSessionId,
               projectId,
               cwd: manifest.cwd
-            })
+            }),
+            true
           )
         : []
       assertSelected()
@@ -247,6 +278,17 @@ export function installAppRemoteSessionRouting(
           },
           signal
         )
+        assertSelected()
+        const agentIdentity = {
+          runtimeSessionId,
+          sessionId: phiSessionId,
+          projectId,
+          cwd: binding.canonicalRoot,
+          resourceCwd: manifest.cwd
+        }
+        const agentResources = definitions.length
+          ? await options.loadAgentResources?.(agentIdentity, definitions, signal)
+          : undefined
         assertSelected()
         resources = await options.loadDesktopTools?.(
           {
@@ -291,7 +333,30 @@ export function installAppRemoteSessionRouting(
           ...(promptContext ? { promptContext } : {}),
           recentUserImages: () => [],
           ...(definitions.length
-            ? { foregroundChildren: { definitions, onApprovalEvent: options.onChildApprovalEvent } }
+            ? { nativeTools: ['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const }
+            : {}),
+          ...(definitions.length
+            ? {
+                foregroundChildren: {
+                  definitions,
+                  allowParallel: true,
+                  allowBackground: true,
+                  ...(agentResources ? { resources: agentResources } : {}),
+                  ...(options.resolveAgentEnvironment
+                    ? {
+                        resolveEnvironment: (
+                          agent: Parameters<
+                            NonNullable<CompileRpcAgentDefinitionsOptions['resolveEnvironment']>
+                          >[0]
+                        ) => {
+                          assertSelected()
+                          return options.resolveAgentEnvironment!(agentIdentity, agent, signal)
+                        }
+                      }
+                    : {}),
+                  onApprovalEvent: options.onChildApprovalEvent
+                }
+              }
             : {}),
           dispose: async () => {
             await Promise.resolve()

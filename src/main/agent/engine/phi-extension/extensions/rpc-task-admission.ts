@@ -1,3 +1,4 @@
+import { assertRpcChildTaskCapacity } from '../lib/rpc-task-capacity'
 import { lstatSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { approvalIdentifier, createApprovalEnvelope } from '../lib/rpc-approval-protocol'
@@ -17,6 +18,9 @@ import {
   validateRpcChildRoot,
   type RpcChildRootScope
 } from '../lib/rpc-child-protocol'
+import { createRpcTaskLaunchTracker } from './rpc-task-launch-tracker'
+import { acknowledgeOwnedRpcChildDelivery } from './rpc-child-control'
+import { makeRpcTaskLaunchReceipt } from '../lib/rpc-task-launch-protocol'
 import { makeRpcTaskSettlement } from '../lib/rpc-task-settlement-protocol'
 
 type BeforeToolCall = NonNullable<AgentSession['agent']['beforeToolCall']>
@@ -47,6 +51,11 @@ interface SettlementCall {
   readonly inputDigest: string
   ended: boolean
   sent: boolean
+  declaredTaskCount: number
+  admitted: Map<string, string>
+  dispatchSealed: boolean
+  registeredJobs: Map<string, boolean>
+  registeredChildren: Map<string, { ref: AgentReference; agent: string }>
 }
 export interface RpcTaskAdmissionOptions {
   readonly config: Readonly<RpcChildRuntimeConfig>
@@ -94,20 +103,33 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
   assertInstalled(ctx: ExtensionContext): void
   sealParent(run: Readonly<RpcTaskParentRun>, ctx: ExtensionContext): boolean
   isStreamActive(): boolean
+  isChildStreamActive(nativeAgentId: string): boolean
   dispose(): void
 } {
+  const trackLaunches =
+    options.config.policy.allowParallel === true || options.config.policy.allowBackground === true
+  const trackDispatch = options.parentRun !== undefined
   const installations = new Map<AgentSession, Installation>()
+  const reservations = new Map<string, { count: number; call?: SettlementCall }>()
   const prepared = new Map<string, { session: AgentSession; input: string }>()
   const accepted = new Map<
     string,
     {
       session: AgentSession
-      agent: string
+      agents: readonly string[]
       root: RpcChildRootScope
       run: Readonly<RpcTaskParentRun>
     }
   >()
-  const launches = new Map<string, { session: AgentSession; run: Readonly<RpcTaskParentRun> }>()
+  const launches = new Map<
+    string,
+    {
+      session: AgentSession
+      run: Readonly<RpcTaskParentRun>
+      background: boolean
+      ref?: AgentReference
+    }
+  >()
   const parentKey = (run: Readonly<RpcTaskParentRun>, id: string): string =>
     JSON.stringify([run.runId, run.controlSequence, id])
   const children = new Map<
@@ -124,6 +146,19 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
   const settlementCalls = new Map<string, SettlementCall>()
   const pendingSettlements = new Map<string, SettlementCall>()
   const settledToolIds = new Set<string>()
+  // Normal Main completion also aborts its execution signal. Only a captured negative
+  // decision retires already admitted children from that parent; never revive it later.
+  const blockedParents = new WeakMap<AbortSignal, Set<string>>()
+  const parentIdentity = (run: Readonly<RpcTaskParentRun>): string =>
+    JSON.stringify([run.runId, run.controlSequence])
+  const parentBlocked = (run: Readonly<RpcTaskParentRun>): boolean =>
+    blockedParents.get(run.signal)?.has(parentIdentity(run)) === true
+  const blockParent = (run: Readonly<RpcTaskParentRun>): void => {
+    const entries = blockedParents.get(run.signal) ?? new Set<string>()
+    entries.add(parentIdentity(run))
+    blockedParents.set(run.signal, entries)
+    blocked = Object.freeze({ ...run })
+  }
   let blocked: Readonly<RpcTaskParentRun> | undefined
   const digest = childConfigDigest(options.config)
   let api: Parameters<ExtensionFactory>[0] | undefined
@@ -168,7 +203,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     const expected = options.config.profiles[0]
     for (const model of [session.model, session.agent.state.model])
       if (
-        !sameRpcChildModel(projectRpcChildModel(model), expected.model) ||
+        !sameRpcChildModel(
+          projectRpcChildModel(model),
+          options.config.parentModel ?? expected.model
+        ) ||
         !sameRpcChildRoute(projectRpcChildRoute(model), expected.route)
       )
         throw new Error('Native task parent model or route differs')
@@ -295,20 +333,93 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       toolCallId: event.toolCallId,
       inputDigest: envelope.inputDigest,
       ended: false,
-      sent: false
+      sent: false,
+      declaredTaskCount:
+        'tasks' in validateRpcForegroundTaskInput(event.input, options.config)
+          ? (
+              validateRpcForegroundTaskInput(event.input, options.config) as {
+                tasks: readonly unknown[]
+              }
+            ).tasks.length
+          : 1,
+      admitted: new Map(),
+      registeredJobs: new Map(),
+      registeredChildren: new Map(),
+      dispatchSealed: false
     }
     parent.calls.add(call)
     settlementCalls.set(key, call)
     pendingSettlements.set(event.toolCallId, call)
   }
+  const publishLaunch = (call: SettlementCall, sealed: boolean): void => {
+    if (!savedRootMatches(call, call.ctx)) throw new Error('Native task receipt ownership changed')
+    const receipt = makeRpcTaskLaunchReceipt(options.config, call.parent.root, {
+      parentRunId: call.parent.run.runId,
+      controlSequence: call.parent.run.controlSequence,
+      toolCallId: call.toolCallId,
+      inputDigest: call.inputDigest,
+      declaredTaskCount: call.declaredTaskCount,
+      expectedTaskCount: sealed
+        ? new Set([
+            ...call.admitted.keys(),
+            ...[...call.registeredJobs].filter(([, committed]) => committed).map(([id]) => id)
+          ]).size
+        : call.declaredTaskCount,
+      dispatchSealed: sealed
+    })
+    call.ctx.ui.notify(JSON.stringify(receipt), 'info')
+  }
+  const tracker = createRpcTaskLaunchTracker<SettlementCall>({
+    capture: (session, id, input) => {
+      const call = pendingSettlements.get(id)
+      const acceptedCall = call && accepted.get(parentKey(call.parent.run, id))
+      if (
+        !call ||
+        !acceptedCall ||
+        call.parent.session !== session ||
+        call.dispatchSealed ||
+        !savedRootMatches(call, call.ctx) ||
+        JSON.stringify(validateRpcForegroundTaskInput(input, options.config)) !==
+          preparedInputs.get(id)
+      )
+        throw new Error('Native task execute has no exact accepted admission')
+      return call
+    },
+    active: (call) => !call.parent.run.signal.aborted && savedRootMatches(call, call.ctx),
+    registering: (call, id) => {
+      if (
+        call.dispatchSealed ||
+        call.registeredJobs.has(id) ||
+        call.registeredJobs.size >= call.declaredTaskCount
+      )
+        throw new Error('Native task job registration exceeds its bounded dispatch')
+      call.registeredJobs.set(id, false)
+    },
+    registered: (call, id) => {
+      call.registeredJobs.set(id, true)
+    },
+    registrationFailed: (call, id) => {
+      call.registeredJobs.delete(id)
+    },
+    seal: (call) => {
+      reservations.delete(call.toolCallId)
+      if (!call.dispatchSealed) {
+        call.dispatchSealed = true
+        if (trackLaunches) publishLaunch(call, true)
+      }
+    }
+  })
+  const preparedInputs = new Map<string, string>()
   const install = (ctx: ExtensionContext): void => {
     const session = actual(ctx)
     const previousInstallation = installations.get(session)
     if (previousInstallation) {
       if (session.agent.beforeToolCall !== previousInstallation.wrapper)
         throw new Error('Native task admission hook was replaced')
+      if (trackDispatch) tracker.assertInstalled(session)
       return
     }
+    if (trackDispatch) tracker.install(session)
     const previous = session.agent.beforeToolCall
     if (!previous) throw new Error('Native task SDK dispatch callback is unavailable')
     const wrapper: BeforeToolCall = async (call, signal) => {
@@ -317,6 +428,8 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         block: true as const,
         reason: 'Phi native task admission refused this call'
       }
+      let committed = false
+      let acceptedKey: string | undefined
       try {
         signal?.throwIfAborted()
         if (actual(ctx) !== session || hasReservedRpcChildUri(call.toolCall.arguments))
@@ -327,6 +440,33 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         const effective = validateRpcForegroundTaskInput(call.args, options.config)
         if (JSON.stringify(raw) !== JSON.stringify(effective)) return refused
         resources(session)
+        if (trackLaunches) {
+          const requested = 'tasks' in effective ? effective.tasks.length : 1
+          const root = options.root()!
+          const ids = new Set(
+            (session.asyncJobManager?.getRunningJobs({ ownerId: root.rootAgentId }) ?? [])
+              .filter((job) => job.type === 'task')
+              .map((job) => job.agentId ?? job.id)
+          )
+          for (const child of api!.pi.AgentRegistry.global().list())
+            if (
+              child.kind === 'sub' &&
+              child.parentId === root.rootAgentId &&
+              child.status === 'running'
+            )
+              ids.add(child.id)
+          let reserved = 0
+          for (const reservation of reservations.values()) {
+            reserved += reservation.count
+            for (const id of [
+              ...(reservation.call?.admitted.keys() ?? []),
+              ...(reservation.call?.registeredJobs.keys() ?? [])
+            ])
+              ids.delete(id)
+          }
+          assertRpcChildTaskCapacity(ids, reserved, requested)
+          reservations.set(call.toolCall.id, { count: requested })
+        }
         prepared.set(call.toolCall.id, { session, input: JSON.stringify(effective) })
         const result = await previous.call(session.agent, call, signal)
         if (result?.block) return result
@@ -344,8 +484,23 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         if (parent && root) {
           const key = parentKey(parent, call.toolCall.id)
           if (parent.signal.aborted || accepted.has(key) || accepted.size >= 4096) return refused
-          accepted.set(key, { session, agent: effective.agent, root, run: parent })
+          acceptedKey = key
+          accepted.set(key, {
+            session,
+            agents:
+              'tasks' in effective ? effective.tasks.map((task) => task.agent) : [effective.agent],
+            root,
+            run: parent
+          })
+          preparedInputs.set(call.toolCall.id, JSON.stringify(effective))
+          const captured = pendingSettlements.get(call.toolCall.id)
+          if (!captured) return refused
+          if (trackLaunches) {
+            reservations.get(call.toolCall.id)!.call = captured
+            publishLaunch(captured, false)
+          }
         }
+        committed = true
         return result
       } catch (error) {
         if (
@@ -360,6 +515,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         return refused
       } finally {
         prepared.delete(call.toolCall.id)
+        if (!committed) {
+          reservations.delete(call.toolCall.id)
+          if (acceptedKey) accepted.delete(acceptedKey)
+        }
       }
     }
     session.agent.beforeToolCall = wrapper
@@ -386,7 +545,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           launch?.session !== session ||
           parent.run.signal !== launch.run.signal ||
           parent.session !== session ||
-          parent.agent !== event.agent ||
+          !parent.agents.includes(String(event.agent)) ||
           !ref?.session ||
           ref.kind !== 'sub' ||
           ref.parentId !== parent.root.rootAgentId ||
@@ -399,6 +558,46 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     )
     detach.add(
       registry.onChange((event) => {
+        if (event.type === 'registered') {
+          // Synchronous TaskTool spawns reserve their final ID after before_spawn.
+          // Only its original execute context may finish that captured dispatch binding.
+          const call = tracker.current()
+          const ref = event.ref
+          const agent = ref.displayName
+          const profile = options.config.profiles.find(
+            (item) => item.definition.nativeName === agent
+          )
+          if (
+            !call ||
+            call.parent.session !== session ||
+            call.ended ||
+            call.dispatchSealed ||
+            parentBlocked(call.parent.run) ||
+            !profile?.definition.blocking ||
+            ref.kind !== 'sub' ||
+            ref.parentId !== call.parent.root.rootAgentId ||
+            registry.get(ref.id) !== ref ||
+            !approvalIdentifier(ref.id)
+          )
+            return
+          const bound = call.registeredChildren.get(ref.id)
+          if (bound) return
+          if (
+            launches.has(ref.id) ||
+            launches.size >= 4096 ||
+            [...call.registeredChildren.values()].filter((child) => child.agent === agent).length >=
+              [...call.admitted.values()].filter((name) => name === agent).length
+          )
+            return
+          call.registeredChildren.set(ref.id, { ref, agent })
+          launches.set(ref.id, {
+            session,
+            run: call.parent.run,
+            background: false,
+            ref
+          })
+          return
+        }
         if (
           event.type !== 'status_changed' ||
           event.ref.status !== 'aborted' ||
@@ -423,7 +622,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           current.signal !== child.run.signal
         )
           return
-        blocked = child.run
+        blockParent(child.run)
         // This synchronous tombstone precedes TaskTool continuation and the delayed RPC ACK.
         try {
           options.onChildAborted?.(child.run)
@@ -439,7 +638,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       const instruction =
         'Phi delegation policy: use native task only with an explicit agent from ' +
         JSON.stringify(options.config.profiles.map((profile) => profile.definition.nativeName)) +
-        '. These agents are blocking foreground tasks with only their declared read/write/bash tools. ' +
+        '. Each agent uses its immutable declared tools, skills, managed environment, model and foreground/background mode. At most four experts may execute at once, including previously accepted background jobs; wait or stop one before requesting more. ' +
         'The default task agent and other bundled agents are unavailable. Do not request background, models, tools, effort, isolation, schemas or nested agents in task arguments.'
       pi.on('before_agent_start', (_event, ctx) =>
         ctx.agent.kind === 'main'
@@ -464,7 +663,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         pendingSettlements.delete(event.toolCallId)
         settleNoSpawn(call)
       })
-      pi.on('before_subagent_spawn', (event, ctx) => {
+      pi.on('before_subagent_spawn', async (event, ctx) => {
         if (ctx.agent.kind !== 'main') return undefined
         try {
           resources(actual(ctx))
@@ -472,7 +671,8 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           return { block: true, reason: 'Project agent resources cannot be verified' }
         }
         if (!options.parentRun) return undefined
-        const run = options.parentRun()
+        const capturedCall = tracker.current()
+        const run = capturedCall?.parent.run
         if (
           !run ||
           run.signal.aborted ||
@@ -485,6 +685,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         try {
           const session = actual(ctx)
           resources(session)
+          tracker.assertInstalled(session)
           const parent = settlementParents.get(run.signal)
           if (
             !parent ||
@@ -493,9 +694,42 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
             parent.run.controlSequence !== run.controlSequence
           )
             return { block: true, reason: 'Phi native task launch has no captured parent' }
+          const call = capturedCall
+          const acceptedCall = call && accepted.get(parentKey(run, call.toolCallId))
+          if (
+            !call ||
+            call.parent !== parent ||
+            !acceptedCall ||
+            (call.dispatchSealed && !call.registeredJobs.has(event.spawnKey)) ||
+            call.admitted.has(event.spawnKey) ||
+            call.admitted.size >= call.declaredTaskCount ||
+            [...call.admitted.values()].filter((agent) => agent === event.agent).length >=
+              acceptedCall.agents.filter((agent) => agent === event.agent).length
+          )
+            return { block: true, reason: 'Phi native task launch has no exact dispatch owner' }
+          const profile = options.config.profiles.find(
+            (item) => item.definition.nativeName === event.agent
+          )!
+          if (!profile.definition.blocking)
+            await acknowledgeOwnedRpcChildDelivery(
+              session,
+              ctx,
+              parent.root,
+              event.spawnKey,
+              AbortSignal.any([options.signal, run.signal])
+            )
+          if (
+            tracker.current() !== call ||
+            actual(ctx) !== session ||
+            (call?.dispatchSealed && call.registeredJobs.get(event.spawnKey) !== true) ||
+            run.signal.aborted
+          )
+            return { block: true, reason: 'Phi native task launch owner changed' }
+          call?.admitted.set(event.spawnKey, event.agent)
           // Permanent for this parent: any allowed sibling rules out a no-spawn receipt.
           parent.spawnAllowed = true
-          launches.set(event.spawnKey, { session, run })
+          if (!profile.definition.blocking)
+            launches.set(event.spawnKey, { session, run, background: true })
           return undefined
         } catch {
           return { block: true, reason: 'Phi native task launch scope is unavailable' }
@@ -510,6 +744,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       if (!installations.has(session)) install(ctx)
       if (session.agent.beforeToolCall !== installations.get(session)?.wrapper)
         throw new Error('Native task admission is not installed')
+      if (trackDispatch) tracker.assertInstalled(session)
     },
     preflight: (event, ctx) => {
       const session = actual(ctx)
@@ -537,7 +772,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           run.controlSequence < 1
         )
           return false
-        blocked = Object.freeze({ ...current })
+        blockParent(current)
         return true
       } catch {
         return false
@@ -545,8 +780,9 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     },
     isStreamActive: () => {
       if (disposed || options.signal.aborted) return false
-      if (!blocked) return true
       const current = options.parentRun?.()
+      if (current && parentBlocked(current)) return false
+      if (!blocked) return true
       return (
         !!current &&
         (current.runId !== blocked.runId ||
@@ -554,11 +790,77 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           current.signal !== blocked.signal)
       )
     },
+    isChildStreamActive: (nativeAgentId) => {
+      try {
+        if (disposed || options.signal.aborted || !approvalIdentifier(nativeAgentId)) return false
+        const launch = launches.get(nativeAgentId)
+        const registry = api?.pi.AgentRegistry.global()
+        const ref = registry?.get(nativeAgentId)
+        const child = ref && children.get(ref)
+        if (
+          !launch ||
+          !ref ||
+          (launch.ref && launch.ref !== ref) ||
+          (child &&
+            (child.session !== launch.session ||
+              child.run.signal !== launch.run.signal ||
+              child.run.runId !== launch.run.runId ||
+              child.run.controlSequence !== launch.run.controlSequence)) ||
+          parentBlocked(launch.run)
+        )
+          return false
+        const parent = settlementParents.get(launch.run.signal)
+        if (
+          !parent ||
+          parent.session !== launch.session ||
+          parent.run.runId !== launch.run.runId ||
+          parent.run.controlSequence !== launch.run.controlSequence ||
+          (child && !sameRpcChildRoot(parent.root, child.root))
+        )
+          return false
+        const root = parent.root
+        if (launch.background) {
+          const job = launch.session.asyncJobManager?.getJob(nativeAgentId)
+          if (
+            !job ||
+            job.agentId !== nativeAgentId ||
+            job.ownerId !== root.rootAgentId ||
+            job.type !== 'task'
+          )
+            return false
+        }
+        // Intentionally ignore launch.run.signal.aborted: ordinary Main agent_end
+        // retires that execution signal while its accepted background children remain owned.
+        return (
+          registry?.get(root.rootAgentId) === parent.ref &&
+          parent.ref.kind === 'main' &&
+          parent.ref.session === launch.session &&
+          launch.session.sessionId === root.rootOmpSessionId &&
+          launch.session.sessionFile === root.rootSessionFile &&
+          realpathSync(launch.session.sessionManager.getCwd()) === root.cwd &&
+          ref.id === nativeAgentId &&
+          ref.kind === 'sub' &&
+          ref.parentId === root.rootAgentId &&
+          ref.status === 'running' &&
+          ref.session !== null &&
+          typeof ref.sessionFile === 'string' &&
+          ref.sessionFile.length > 0 &&
+          (!child || ref.sessionFile === child.file) &&
+          ref.session.sessionFile === ref.sessionFile &&
+          ref.session.sessionId === ref.session.sessionManager.getSessionId() &&
+          ref.session.sessionManager.getHeader()?.parentSession === root.rootSessionFile
+        )
+      } catch {
+        return false
+      }
+    },
     dispose: () => {
       // Retired roots keep a closed wrapper; async abort issuance does not prove quiescence.
       disposed = true
       installations.clear()
       prepared.clear()
+      preparedInputs.clear()
+      reservations.clear()
       accepted.clear()
       launches.clear()
       children.clear()

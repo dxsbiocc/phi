@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
-import { extname } from 'node:path'
+import { extname, posix } from 'node:path'
 import { resolveInsideProject } from '../lib/project-path'
 import type {
   AgentSession,
@@ -50,8 +50,40 @@ export function canonicalRpcChildNativeInput(
   name: string,
   input: Readonly<Record<string, unknown>>
 ): Record<string, unknown> {
-  if (name !== 'read' && name !== 'write') return { ...input }
-  const raw = input.path
+  if (
+    (name === 'bash' || name === 'powershell') &&
+    (input.async === true ||
+      input.background === true ||
+      Object.hasOwn(input, 'name') ||
+      Object.hasOwn(input, 'ready'))
+  )
+    throw new Error('Phi child shell calls must remain owned synchronous executions')
+  if (!['read', 'write', 'edit', 'glob', 'grep'].includes(name)) return { ...input }
+  if (name === 'glob' || name === 'grep') {
+    const raw = input.path ?? cwd
+    if (
+      typeof raw !== 'string' ||
+      !raw ||
+      /[:;,'"\\{}!()|\t\r\n]/u.test(raw) ||
+      raw.split('/').includes('..') ||
+      raw.normalize('NFC') !== raw.normalize('NFD')
+    )
+      throw new Error('Phi child search requires one exact project path or simple glob')
+    const magic = raw.search(/[*?[]/u)
+    let base = raw,
+      suffix = ''
+    if (magic >= 0) {
+      if (/\s/u.test(raw)) throw new Error('Phi child search multi-path aliases are unavailable')
+      const slash = raw.lastIndexOf('/', magic)
+      base = slash < 0 ? cwd : raw.slice(0, slash) || '/'
+      suffix = raw.slice(slash + 1)
+    }
+    const resolved = resolveInsideProject(cwd, base, 'Child search path')
+    if (!resolved.ok) throw new Error('Phi child search path is outside the project')
+    const target = realpathSync(resolved.path)
+    return { ...input, path: suffix ? posix.join(target, suffix) : target }
+  }
+  const raw = input.path ?? (name === 'glob' || name === 'grep' ? cwd : undefined)
   const requested =
     name === 'read' && typeof raw === 'string' && raw.endsWith(':raw') ? raw.slice(0, -4) : raw
   if (
@@ -67,19 +99,20 @@ export function canonicalRpcChildNativeInput(
   const resolved = resolveInsideProject(cwd, requested, 'Child tool path')
   if (!resolved.ok) throw new Error('Phi child file path is outside the project')
   let target = resolved.path
-  if (name === 'read') {
+  if (name === 'read' || name === 'edit') {
     target = realpathSync(target)
     if (!statSync(target).isFile() || !textExtensions.has(extname(target).toLowerCase()))
       throw new Error('Phi child read requires an existing ordinary text file')
     // These pinned SDK variants must collapse before adding the trusted raw selector.
     if (/ (AM|PM)\./u.test(target))
       throw new Error('Phi child read timestamp aliases are unverified')
-    try {
-      lstatSync(target + ':raw')
-      throw new Error('Phi child raw selector collides with a literal path')
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
+    if (name === 'read')
+      try {
+        lstatSync(target + ':raw')
+        throw new Error('Phi child raw selector collides with a literal path')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
   }
   if (
     /[:;?\\'\u00a0\u2000-\u200a\u202f\u205f\u3000]/u.test(target) ||
@@ -93,6 +126,11 @@ export interface RpcChildNativeExecution {
   readonly scope: RpcChildScope
   readonly signal: AbortSignal
   active(ctx: ExtensionContext): boolean
+  canonical?(
+    toolCallId: string,
+    toolName: string,
+    input: Readonly<Record<string, unknown>>
+  ): Record<string, unknown>
   consume(toolCallId: string, toolName: string, input: unknown): RpcChildCall
   approve(call: RpcChildCall, signal: AbortSignal): Promise<boolean>
   revoke(): void
@@ -133,11 +171,9 @@ export function registerRpcChildNativeTools(
         try {
           combined.throwIfAborted()
           const initial = createRpcChildCall(binding.scope, toolCallId, tool.name, input)
-          const effective = canonicalRpcChildNativeInput(
-            binding.scope.cwd,
-            tool.name,
-            initial.input
-          )
+          const effective = binding.canonical
+            ? binding.canonical(toolCallId, tool.name, initial.input)
+            : canonicalRpcChildNativeInput(binding.scope.cwd, tool.name, initial.input)
           const call = binding.consume(toolCallId, tool.name, effective)
           if (!(await binding.approve(call, combined)) || !binding.active(ctx))
             throw new Error('Phi child call was refused')
@@ -146,13 +182,20 @@ export function registerRpcChildNativeTools(
             binding.scope,
             toolCallId,
             tool.name,
-            canonicalRpcChildNativeInput(
-              binding.scope.cwd,
-              tool.name,
-              createRpcChildCall(binding.scope, toolCallId, tool.name, input).input
-            )
+            createRpcChildCall(binding.scope, toolCallId, tool.name, input).input
           )
-          if (after.inputDigest !== call.inputDigest)
+          const normalized =
+            after.inputDigest === call.inputDigest
+              ? after
+              : createRpcChildCall(
+                  binding.scope,
+                  toolCallId,
+                  tool.name,
+                  binding.canonical
+                    ? binding.canonical(toolCallId, tool.name, after.input)
+                    : canonicalRpcChildNativeInput(binding.scope.cwd, tool.name, after.input)
+                )
+          if (normalized.inputDigest !== call.inputDigest)
             throw new Error('Phi child input changed during approval')
           // Execute an independent copy of precisely the approved canonical snapshot.
           const approvedInput = JSON.parse(JSON.stringify(call.input)) as Record<string, unknown>

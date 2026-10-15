@@ -22,9 +22,18 @@ import type { PhiExtensionFile } from '../extension-deployment/types'
 import { storageHost } from '../session-storage/remote-preflight'
 import type { RpcRuntimePreparationContext } from '../ssh-stdio-factory'
 import { compileRpcAgentDefinitions } from './definition-compiler'
-import { snapshotBinding } from './definition-validation'
+import { snapshotBinding, modelRef } from './definition-validation'
 import { rpcChildProfileFromDefinition } from './run-registry'
+import {
+  prepareProductionChildResources,
+  productionChildProfileResources,
+  snapshotProductionChildResources
+} from './production-child-resources'
 import type { RpcAgentServerBinding } from './types'
+import type { RpcAgentToolDescriptor } from './types'
+import type { RpcAgentResourceCatalogInput, CompileRpcAgentDefinitionsOptions } from './types'
+import { projectRpcChildModel } from '../../phi-extension/lib/rpc-child-protocol'
+import { CHILD_SKILL_DIRECTORY } from '../../phi-extension/lib/rpc-child-resources'
 
 export interface SelectedChildDeploymentBinding {
   readonly hostProfileId: string
@@ -70,6 +79,13 @@ export function assertPreparedProductionChildConfig(prepared: PreparedProduction
     throw new Error('Child configuration was not issued by the trusted compiler')
 }
 export interface CreateProductionChildConfigOptions {
+  readonly resources?: RpcAgentResourceCatalogInput
+  readonly availableSkills?: readonly string[]
+  readonly resolveEnvironment?: CompileRpcAgentDefinitionsOptions['resolveEnvironment']
+  readonly allowBackground?: boolean
+  readonly allowParallel?: boolean
+  /** The exact parent capability set; omission retains the accepted conservative native subset. */
+  readonly availableTools?: readonly RpcAgentToolDescriptor[]
   readonly identity: RpcChildConfigIdentity
   readonly binding: RpcAgentServerBinding
   readonly definitions: readonly PhiAgentDefinition[]
@@ -98,6 +114,33 @@ export async function createProductionChildConfig(
   const models = structuredClone(options.modelDescriptors)
   const parent = Object.freeze({ ...options.parentModel })
   const otherCapabilities = [...options.otherCapabilities]
+  const resourceSnapshot = snapshotProductionChildResources(options.resources)
+  const availableSkills = [
+    ...(options.availableSkills ??
+      resourceSnapshot?.catalog.skills.map((skill) => skill.name) ??
+      [])
+  ]
+  const resolveEnvironment = options.resolveEnvironment
+  const parentThinkingLevel = options.parentThinkingLevel
+  const allowBackground = options.allowBackground
+  const allowParallel = options.allowParallel
+  if (
+    [allowBackground, allowParallel].some(
+      (value) => value !== undefined && typeof value !== 'boolean'
+    )
+  )
+    throw new Error('Invalid child task policy flags')
+  if (
+    !Array.isArray(options.native.models) ||
+    !options.native.models.length ||
+    options.native.models.length > 256
+  )
+    throw new Error('Invalid child published model budget')
+  const nativeModels = options.native.models.map(modelRef)
+  const availableTools = structuredClone(
+    options.availableTools ??
+      ['read', 'write', 'bash'].map((name) => ({ name, site: 'native' as const }))
+  )
   const endpoint = new URL(options.native.endpoint)
   if (
     endpoint.href !== options.native.endpoint ||
@@ -106,9 +149,7 @@ export async function createProductionChildConfig(
     endpoint.password ||
     endpoint.search ||
     endpoint.hash ||
-    !options.native.models.some(
-      (model) => model.provider === parent.provider && model.id === parent.id
-    )
+    !nativeModels.some((model) => model.provider === parent.provider && model.id === parent.id)
   )
     throw new Error('Child compiler lacks the owned parent model route')
   const route = validateRpcChildRoute({
@@ -117,49 +158,59 @@ export async function createProductionChildConfig(
     transport: 'pi-native'
   })
   for (const definition of definitions)
-    if (
-      definition.environment !== undefined ||
-      definition.skills.length ||
-      definition.tools.some((name) => !['read', 'write', 'bash'].includes(name)) ||
-      definition.warnings.length
-    )
-      throw new Error('Unsupported foreground child definition')
+    if (definition.warnings.length) throw new Error('Unsupported foreground child definition')
   const compiled = await compileRpcAgentDefinitions({
     definitions,
     binding,
     availableModels: models,
     parentModel: parent,
-    parentThinkingLevel: options.parentThinkingLevel,
-    availableTools: ['read', 'write', 'bash'].map((name) => ({ name, site: 'native' })),
-    availableSkills: []
+    parentThinkingLevel,
+    availableTools,
+    availableSkills,
+    ...(resolveEnvironment ? { resolveEnvironment } : {})
   })
   if (compiled.warnings.length) throw new Error('Child model fallback is not supported')
-  const profiles = compiled.manifest.entries
-    .filter((entry) => entry.blocking)
-    .map((entry) => {
-      const definition = definitions.find((source) => source.name === entry.phiName)
-      const model = models.find(
-        (candidate) => candidate.provider === parent.provider && candidate.id === parent.id
-      )
-      if (
-        !definition ||
-        !model ||
-        entry.model.provider !== parent.provider ||
-        entry.model.id !== parent.id
-      )
-        throw new Error('Child model differs from its owned parent model')
-      return rpcChildProfileFromDefinition(
-        entry,
-        [definition.systemPrompt, AGENT_REPORT_PROTOCOL],
-        model,
-        route
-      )
-    })
-  const files = compiled.files.filter(
-    (file) =>
-      file.path === 'phi-agent-definitions.json' ||
-      profiles.some((profile) => file.path === `agents/${profile.definition.nativeName}.md`)
+  const selected = compiled.manifest.entries.filter(
+    (entry) => entry.blocking || allowBackground === true
   )
+  if (selected.length > 32) throw new Error('Child profiles exceed the existing count budget')
+  const resources = prepareProductionChildResources(resourceSnapshot, selected)
+  const profiles = selected.map((entry) => {
+    const definition = definitions.find((source) => source.name === entry.phiName)
+    const model = models.find(
+      (candidate) => candidate.provider === entry.model.provider && candidate.id === entry.model.id
+    )
+    if (
+      !definition ||
+      !model ||
+      !nativeModels.some(
+        (published) =>
+          published.provider === entry.model.provider && published.id === entry.model.id
+      )
+    )
+      throw new Error('Child model differs from its published owned route')
+    const basePrompt = [definition.systemPrompt, AGENT_REPORT_PROTOCOL]
+    return rpcChildProfileFromDefinition(
+      entry,
+      basePrompt,
+      model,
+      route,
+      productionChildProfileResources(entry, basePrompt, resources)
+    )
+  })
+  const files = [
+    ...compiled.files.filter(
+      (file) =>
+        file.path === 'phi-agent-definitions.json' ||
+        profiles.some((profile) => file.path === `agents/${profile.definition.nativeName}.md`)
+    ),
+    ...resources.files
+  ]
+  if (
+    files.some((file) => file.bytes.length > 128 * 1024) ||
+    files.reduce((total, file) => total + file.bytes.length, 0) > 1024 * 1024
+  )
+    throw new Error('Private child artifacts exceed the existing byte budget')
   const config = validateRpcChildRuntimeConfig(
     {
       schema: 1,
@@ -167,13 +218,24 @@ export async function createProductionChildConfig(
       manifestHash: compiled.manifestHash,
       manifestBinding: binding,
       capability: randomBytes(32).toString('hex'),
+      parentModel: projectRpcChildModel(
+        models.find((model) => model.provider === parent.provider && model.id === parent.id)
+      ),
       profiles,
+      ...(resources.catalog ? { resources: resources.catalog } : {}),
       files: files.map(({ path, sha256 }) => ({ path, sha256 })),
-      policy: { mode: 'foreground-native', taskShape: 'single' }
+      policy: {
+        mode: 'foreground-native',
+        taskShape: 'single',
+        ...(allowBackground === undefined ? {} : { allowBackground }),
+        ...(allowParallel === undefined ? {} : { allowParallel })
+      }
     },
     identity,
     otherCapabilities
   )
+  if (Buffer.byteLength(JSON.stringify(config)) > MAX_RPC_CHILD_CONFIG_BYTES)
+    throw new Error('Child configuration exceeds its supported byte limit')
   const prepared = Object.freeze({ config })
   issued.set(
     prepared,
@@ -234,9 +296,14 @@ export async function publishProductionChildConfig(options: {
     context.signal.throwIfAborted()
   }
   const agentDirectory = posix.join(context.agentDir, 'agents')
+  const skillDirectory = posix.join(context.agentDir, CHILD_SKILL_DIRECTORY)
   await run(
     `private_dir ${q(context.generationDirectory)}\n[ "$(cd -- ${q(context.generationDirectory)} && pwd -P)" = ${q(context.generationDirectory)} ] || fail 'Child generation directory is not canonical'\nprivate_dir ${q(context.agentDir)}\n[ "$(cd -- ${q(context.agentDir)} && pwd -P)" = ${q(context.agentDir)} ] || fail 'Child agent directory is not canonical'\n[ ! -e ${q(agentDirectory)} ] && [ ! -L ${q(agentDirectory)} ] || fail 'Child generation directory already exists'\nprivate_dir ${q(agentDirectory)}`
   )
+  if (files.some((file) => file.path.startsWith(CHILD_SKILL_DIRECTORY + '/')))
+    await run(
+      `[ ! -e ${q(skillDirectory)} ] && [ ! -L ${q(skillDirectory)} ] || fail 'Child skill directory already exists'\nprivate_dir ${q(skillDirectory)}`
+    )
   const local = await mkdtemp(join(tmpdir(), 'phi-child-publication-'))
   try {
     const publication = [

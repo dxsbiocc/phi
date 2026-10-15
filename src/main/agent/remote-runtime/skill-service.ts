@@ -57,10 +57,17 @@ interface RememberedTool {
   source: RemoteSkillSource
 }
 
+export interface RemoteSkillResourceOwner {
+  readonly toolOwner: string
+  readonly allowedSkills: readonly string[]
+}
+
 export interface RemoteSkillServiceOptions {
   openWorkspace: OpenRemoteRuntimeWorkspace
   environments: RemoteEnvironmentService
   listSkills: (runtimeSessionId?: string) => Promise<readonly RemoteSkillSource[]>
+  /** Desktop-captured authority; never selected from a tool's wire parameters. */
+  resourceOwner?: () => RemoteSkillResourceOwner | undefined
   timeoutMs?: number
   maxOutputBytes?: number
 }
@@ -176,6 +183,7 @@ export class RemoteSkillService {
         this.remembered.get(toolKey(input.runtimeSessionId, input.tool)) ??
         this.remembered.get(toolKey(undefined, input.tool))
       if (!remembered) throw new Error(`unknown script tool '${input.tool}'`)
+      this.assertScriptOwner(remembered)
       const current = await this.refreshRemoteSource(input.runtimeSessionId, remembered)
       workspace = await this.options.openWorkspace(input.runtimeSessionId, controller.signal)
       return await this.executeScriptTool(workspace, current, input, controller.signal)
@@ -196,13 +204,32 @@ export class RemoteSkillService {
   }
 
   approvalFor(toolName: string, input: unknown): 'exec' | 'read' | 'write' | undefined {
-    if (toolName === 'skill_run') return 'exec'
+    if (toolName === 'skill_run') {
+      this.assertAllowedSkill(field(input, 'skill'))
+      return 'exec'
+    }
     const runtimeSessionId = field(input, 'runtimeSessionId')
     const remembered =
       this.remembered.get(toolKey(runtimeSessionId, toolName)) ??
       this.remembered.get(toolKey(undefined, toolName)) ??
       (!runtimeSessionId ? this.latestRemembered.get(toolName) : undefined)
-    return remembered ? scriptToolApproval(remembered.tool, input) : undefined
+    if (!remembered) return undefined
+    this.assertScriptOwner(remembered)
+    return scriptToolApproval(remembered.tool, input)
+  }
+
+  private assertAllowedSkill(name: string | undefined): RemoteSkillResourceOwner | undefined {
+    const owner = this.options.resourceOwner?.()
+    if (owner && (!name || !owner.allowedSkills.includes(name)))
+      throw new Error(`skill '${name ?? ''}' is not allowed for '${owner.toolOwner}'`)
+    return owner
+  }
+
+  private assertScriptOwner(remembered: RememberedTool): void {
+    const owner = this.assertAllowedSkill(remembered.skill.name)
+    const toolOwner = owner?.toolOwner ?? 'main'
+    if (!remembered.tool.attachTo.includes(toolOwner))
+      throw new Error(`script tool '${remembered.tool.name}' is not attached to '${toolOwner}'`)
   }
 
   private withValidatedSource<T>(
@@ -258,6 +285,7 @@ export class RemoteSkillService {
     runtimeSessionId: string
   ): Promise<{ skill: ValidatedSkill; source: RemoteSkillSource }> {
     if (allowed && !allowed.includes(name)) throw new Error(`skill '${name}' is disabled`)
+    this.assertAllowedSkill(name)
     const source = (await this.options.listSkills(runtimeSessionId)).find(
       (candidate) => candidate.name === name
     )

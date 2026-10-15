@@ -4,6 +4,7 @@ import {
   type CreateAgentSessionResult,
   createRuntimeAgentSession
 } from '../runtime/runtime-adapter'
+import type { RuntimeSelectionControl } from '../engine/types'
 
 export type AgentEventSummary = import('../engine/types').PhiAgentEventSummary
 
@@ -93,9 +94,10 @@ export function summarizeEvent(event: AgentSessionEvent): AgentEventSummary {
 
 export async function createAgentSession(
   options?: CreateAgentSessionOptions,
-  onEvent?: (summary: AgentEventSummary) => void
+  onEvent?: (summary: AgentEventSummary) => void,
+  control?: RuntimeSelectionControl
 ): Promise<CreateAgentSessionResult> {
-  const result = await createRuntimeAgentSession(options)
+  const result = await createRuntimeAgentSession(options, control)
 
   result.session.subscribe((event) => {
     const summary = summarizeEvent(event)

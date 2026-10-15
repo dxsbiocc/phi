@@ -10,7 +10,7 @@ import {
 } from './facadeChildParallelProvider'
 import { runParallelChildStop } from './facadeChildParallelOracle'
 import { runDelayedChildStarted } from './facadeChildStartedOracle'
-import { runTwoPendingChildren } from './facadeTwoChildOracle'
+import { runTwoPendingChildren, runUnnamedForegroundBatch } from './facadeTwoChildOracle'
 import { runReentrantChildClose } from './facadeChildReentrantOracle'
 import { runForegroundHostStop } from './facadeChildHostOracle'
 import type { PhiAgentDefinition } from '../../src/main/agent/agents/definition'
@@ -26,6 +26,7 @@ import type { ToolApprovalRequest } from '../../src/main/agent/tool-approval'
 import type { RpcApprovalEvent } from '../../src/main/agent/engine/rpc/approval-bridge'
 import { holdChildCancellationAck } from './facadeChildControlProbe'
 import type { RpcChildRuntimeConfig } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-config'
+import type { RpcChildRunSnapshot } from '../../src/main/agent/engine/rpc/subagents/types'
 
 const applicationRouting = process.env.PHI_FACADE_CHILD_MODE?.startsWith('app-') === true
 const mode = (process.env.PHI_FACADE_CHILD_MODE ?? 'approved').replace(/^app-/, '')
@@ -43,6 +44,7 @@ const definition: PhiAgentDefinition = {
 const childEvents: RpcApprovalEvent[] = [],
   childParents: SessionRun[] = [],
   mainEvents: RpcApprovalEvent[] = []
+const batchChildren = new Map<string, Readonly<RpcChildRunSnapshot>>()
 let releaseSelection: (() => void) | undefined
 let selectionStarted: (() => void) | undefined
 const selectionReached = new Promise<void>((resolve) => {
@@ -83,8 +85,17 @@ const f = await facadeMetadataFixture({
     if (mode === 'disabled') return selected
     const base = {
       ...selected,
+      ...(mode === 'profile' ? { nativeTools: ['read', 'write', 'bash'] as const } : {}),
       ...(mode === 'host-stop' ? { desktopToolNames: ['notebook.save'] } : {}),
       foregroundChildren: {
+        ...(mode === 'unnamed-fg-batch'
+          ? {
+              allowParallel: true,
+              onChildChange(snapshot: Readonly<RpcChildRunSnapshot>) {
+                batchChildren.set(snapshot.id, snapshot)
+              }
+            }
+          : {}),
         onApprovalEvent(event: RpcApprovalEvent, parent: SessionRun) {
           childEvents.push(event)
           childParents.push(parent)
@@ -167,6 +178,8 @@ try {
     await runReentrantChildClose(f)
   } else if (mode === 'two-child') {
     await runTwoPendingChildren(f, childEvents, childParents)
+  } else if (mode === 'unnamed-fg-batch') {
+    await runUnnamedForegroundBatch(f, childEvents, childParents, batchChildren)
   } else if (mode === 'delayed-started') {
     await runDelayedChildStarted(f)
   } else if (mode.startsWith('parallel-')) {
@@ -215,8 +228,19 @@ try {
     const config: RpcChildRuntimeConfig = JSON.parse(
       await readFile(join(directories[0], 'child-runtime.json'), 'utf8')
     )
-    assert.equal(config.profiles.length, 1)
-    const nativeName = config.profiles[0].definition.nativeName
+    assert.equal(config.profiles.length, applicationRouting ? 2 : 1)
+    assert.ok(config.profiles.every((profile) => profile.definition.phiName === 'Checker'))
+    const foreground = config.profiles.filter((profile) => profile.definition.blocking)
+    assert.equal(foreground.length, 1)
+    assert.equal(
+      config.profiles.filter((profile) => !profile.definition.blocking).length,
+      applicationRouting ? 1 : 0
+    )
+    if (applicationRouting) {
+      assert.equal(config.policy.allowBackground, true)
+      assert.equal(config.policy.allowParallel, true)
+    }
+    const nativeName = foreground[0].definition.nativeName
     const path = join(f.f.scope.projectRoot, 'approved-child.txt')
     f.provider.enqueue(
       {

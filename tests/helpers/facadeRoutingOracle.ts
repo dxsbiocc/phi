@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mock } from 'node:test'
 import { spawn } from 'node:child_process'
 import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { createServer, connect, type Socket, type AddressInfo } from 'node:net'
@@ -30,8 +32,56 @@ import {
 import { createPhiExtensionBundle } from '../../src/main/agent/engine/rpc/extension-deployment'
 import { phiOnlySessionPath, phiSessionIdFromPath } from '../../src/main/agent/session/sessions'
 import { deriveRemoteSessionPaths } from '../../src/main/agent/engine/rpc/session-storage/paths'
+import { RpcConnection } from '../../src/main/agent/engine/rpc/connection'
+import { RpcFacadeEventProjector } from '../../src/main/agent/engine/rpc/facade-event-projection'
+import type { RpcCommand, RpcRequestOptions } from '../../src/main/agent/engine/rpc/types'
+import { remoteOmpJournalPath } from '../../src/main/agent/session/runtime-reference'
 import { createRuntimeAgentSession } from '../../src/main/agent/runtime/runtime-adapter'
 import type { PhiSessionCreateParams, WorkerSessionState } from '../../src/main/agent/engine/types'
+
+async function withThinkingReadback<T>(
+  phiSessionId: string,
+  level: string,
+  change: () => Promise<T>
+): Promise<T> {
+  const reference = findPhiSessionById(phiSessionId)!.runtimeRef!
+  const journalPath = remoteOmpJournalPath(reference)
+  let confirmed: string | undefined
+  const request = RpcConnection.prototype.request
+  const observer = mock.method(
+    RpcConnection.prototype,
+    'request',
+    function (this: RpcConnection, command: RpcCommand, options?: RpcRequestOptions) {
+      const response = request.call(this, command, options)
+      if (command.type !== 'get_state') return response
+      return response.then((value) => {
+        if (
+          value &&
+          typeof value === 'object' &&
+          'sessionId' in value &&
+          value.sessionId === reference.ompSessionId &&
+          'sessionFile' in value &&
+          value.sessionFile === journalPath &&
+          'thinkingLevel' in value &&
+          value.thinkingLevel === level
+        )
+          confirmed = level
+        return value
+      })
+    }
+  )
+  try {
+    const result = await change()
+    assert.equal(
+      confirmed,
+      level,
+      'the actual attached SDK session must read back the accepted thinking level'
+    )
+    return result
+  } finally {
+    observer.mock.restore()
+  }
+}
 
 const agentDir = process.env.PI_CODING_AGENT_DIR!
 const repo = process.cwd()
@@ -404,11 +454,16 @@ try {
     }
   })
   assert.equal(healthy.session.sessionManager.getCwd(), anchor)
-  assert.throws(() => healthy.session.setThinkingLevel('low'), /尚未实现/)
+  const beforeHealthyThinkingRequests = provider.requests.length
+  await withThinkingReadback(healthyPhi.sessionId, 'low', () =>
+    healthy.session.setThinkingLevel('low')
+  )
+  assert.equal(healthy.session.thinkingLevel, 'low')
+  assert.equal(findPhiSessionById(healthyPhi.sessionId)!.thinkingLevel, 'low')
   assert.equal(
-    healthy.session.thinkingLevel,
-    'high',
-    'unsupported thinking must not optimistically mutate the proxy'
+    provider.requests.length,
+    beforeHealthyThinkingRequests,
+    'thinking control cannot invoke the model or replay history'
   )
   provider.enqueue({ text: 'held partial', hold: true })
   const held = runners.startRun({
@@ -453,9 +508,110 @@ try {
   await next.done
   assert.equal(next.outcome, 'completed')
   assert.ok(state!.messages!.some((message) => JSON.stringify(message).includes('next turn works')))
-  await assert.rejects(
-    () => engine.sessions.setThinkingLevel({ sessionId: 'facade-remote-2', level: 'low' }),
-    /尚未实现/
+  const beforeThinkingReference = findPhiSessionById(phi.sessionId)!.runtimeRef!
+  const thinkingJournalPath = remoteOmpJournalPath(beforeThinkingReference)
+  const entries = (value: string): Array<Record<string, unknown>> =>
+    value
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+  const ordered = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([key, item]) => [key, ordered(item)])
+          )
+        : value
+  const digest = (value: unknown): string =>
+    createHash('sha256')
+      .update(JSON.stringify(ordered(value)))
+      .digest('hex')
+  const entryKey = (entry: Record<string, unknown>, index: number): string =>
+    typeof entry.id === 'string' ? entry.id : `${entry.type}:${index}`
+  const beforeEntries = entries(await readFile(thinkingJournalPath, 'utf8'))
+  const beforeContext = state!.messages!
+  const stoppedIndexes = beforeContext.flatMap((value, index) => {
+    const message = value as Record<string, unknown>
+    return message.role === 'assistant' &&
+      message.stopReason === 'aborted' &&
+      digest(message.content) === digest([{ type: 'text', text: 'held partial' }])
+      ? [index]
+      : []
+  })
+  assert.equal(stoppedIndexes.length, 1, 'this scenario has exactly one known held partial abort')
+  const stoppedIndex = stoppedIndexes[0]
+  const stoppedMessage = beforeContext[stoppedIndex]
+  const projector = new RpcFacadeEventProjector()
+  const stoppedEntries = beforeEntries.filter(
+    (entry) =>
+      entry.type === 'message' &&
+      digest(projector.message(entry.message)) === digest(stoppedMessage)
+  )
+  assert.equal(
+    stoppedEntries.length,
+    1,
+    'the exact aborted partial must already exist in the physical transcript'
+  )
+  const stoppedEntry = stoppedEntries[0]
+  assert.equal(typeof stoppedEntry.id, 'string')
+  const beforeThinkingRequests = provider.requests.length
+  const confirmedThinking = await withThinkingReadback(phi.sessionId, 'low', () =>
+    engine.sessions.setThinkingLevel({ sessionId: 'facade-remote-2', level: 'low' })
+  )
+  assert.equal(confirmedThinking.thinkingLevel, 'low')
+  assert.equal(findPhiSessionById(phi.sessionId)!.thinkingLevel, 'low')
+  assert.deepEqual(
+    confirmedThinking.messages,
+    [...beforeContext.slice(0, stoppedIndex), ...beforeContext.slice(stoppedIndex + 1)],
+    'SDK restore context omits only this known aborted assistant; every other message stays exact'
+  )
+  const afterThinkingReference = findPhiSessionById(phi.sessionId)!.runtimeRef!
+  assert.equal(remoteOmpJournalPath(afterThinkingReference), thinkingJournalPath)
+  assert.equal(afterThinkingReference.ompSessionId, beforeThinkingReference.ompSessionId)
+  const afterEntries = entries(await readFile(thinkingJournalPath, 'utf8'))
+  const beforeKeys = beforeEntries.map(entryKey),
+    afterKeys = afterEntries.map(entryKey)
+  assert.equal(new Set(beforeKeys).size, beforeKeys.length)
+  assert.equal(new Set(afterKeys).size, afterKeys.length)
+  const afterById = new Map(afterEntries.map((entry, index) => [entryKey(entry, index), entry]))
+  for (let index = 0; index < beforeEntries.length; index++) {
+    assert.ok(afterById.has(beforeKeys[index]), 'each old physical journal id must remain present')
+    assert.equal(
+      digest(afterById.get(beforeKeys[index])),
+      digest(beforeEntries[index]),
+      'every old physical journal entry must remain canonical-identical by id'
+    )
+  }
+  assert.deepEqual(
+    afterKeys.filter((key) => beforeKeys.includes(key)),
+    beforeKeys
+  )
+  const retainedStopped = afterById.get(stoppedEntry.id as string)!
+  assert.deepEqual(
+    retainedStopped.message,
+    stoppedEntry.message,
+    'the original aborted terminal and held partial remain in physical history'
+  )
+  assert.deepEqual(projector.message(retainedStopped.message), stoppedMessage)
+  const appended = afterEntries.filter(
+    (entry, index) => !beforeKeys.includes(entryKey(entry, index))
+  )
+  assert.ok(
+    appended.every(
+      (entry) =>
+        entry.type === 'model_change' ||
+        entry.type === 'thinking_level_change' ||
+        (entry.type === 'custom' && entry.customType === 'session_exit')
+    ),
+    'thinking rotation may append only SDK model/thinking/retirement metadata, never a prompt or tool replay'
+  )
+  assert.equal(
+    provider.requests.length,
+    beforeThinkingRequests,
+    'thinking control cannot invoke the model or replay history'
   )
   await assert.rejects(
     () => engine.history.open({ path: phiOnlySessionPath(phi.sessionId), agentDir }),

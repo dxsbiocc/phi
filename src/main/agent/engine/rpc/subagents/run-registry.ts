@@ -17,7 +17,7 @@ import {
 } from '../../phi-extension/lib/rpc-child-protocol'
 import type { RpcFrame } from '../types'
 import type { RpcChildTrustedProfile } from '../../phi-extension/lib/rpc-child-protocol'
-import type { RpcAgentDefinitionProfile, RpcAgentServerBinding } from './types'
+import type { RpcAgentDefinitionProfile, RpcAgentServerBinding, RpcChildRunSnapshot } from './types'
 import { snapshotBinding } from './definition-validation'
 import type { SafeModelDescriptor } from '../../model-gateway-types'
 
@@ -26,7 +26,8 @@ export function rpcChildProfileFromDefinition(
   definition: RpcAgentDefinitionProfile,
   systemPrompt: readonly string[],
   model: SafeModelDescriptor,
-  route: RpcChildTrustedProfile['route']
+  route: RpcChildTrustedProfile['route'],
+  resources: { readonly resourcesDigest?: string; readonly effectivePromptDigest?: string } = {}
 ): RpcChildTrustedProfile {
   if (
     typeof model.contextWindow !== 'number' ||
@@ -37,11 +38,11 @@ export function rpcChildProfileFromDefinition(
     model.maxTokens < 1 ||
     model.provider !== definition.model.provider ||
     model.id !== definition.model.id ||
-    definition.environment ||
-    definition.skills.length ||
-    !definition.blocking ||
     !definition.thinkingLevel ||
-    definition.tools.some((tool) => tool.site !== 'native')
+    ((definition.environment ||
+      definition.skills.length ||
+      definition.tools.some((tool) => tool.site !== 'native')) &&
+      !resources.resourcesDigest)
   )
     throw new Error('Unverifiable compiler child profile')
   return snapshotRpcChildProfile({
@@ -53,7 +54,18 @@ export function rpcChildProfileFromDefinition(
       tools: definition.tools,
       skills: definition.skills,
       model: definition.model,
-      thinkingLevel: definition.thinkingLevel
+      thinkingLevel: definition.thinkingLevel,
+      ...(definition.environment
+        ? {
+            environment: {
+              ref: definition.environment.ref,
+              ...(definition.environment.pluginId
+                ? { pluginId: definition.environment.pluginId }
+                : {})
+            }
+          }
+        : {}),
+      ...(resources.resourcesDigest ? { resourcesDigest: resources.resourcesDigest } : {})
     },
     model: {
       provider: model.provider,
@@ -65,6 +77,9 @@ export function rpcChildProfileFromDefinition(
     },
     route: { api: route.api, baseUrl: route.baseUrl, transport: route.transport },
     systemPrompt,
+    ...(resources.effectivePromptDigest
+      ? { effectivePromptDigest: resources.effectivePromptDigest }
+      : {}),
     expectedAgentSource: 'user'
   })
 }
@@ -85,6 +100,7 @@ export interface RpcChildRun {
   readonly signal: AbortSignal
 }
 interface Entry {
+  readonly id: string
   scope?: RpcChildScope
   started?: RpcChildStarted
   parentRunId?: string
@@ -92,6 +108,9 @@ interface Entry {
   controller: AbortController
   failed: boolean
   terminal?: 'completed' | 'failed' | 'aborted'
+  startedAt?: number
+  completedAt?: number
+  lastSnapshot?: string
   terminalWaiters: Set<(status: string | undefined) => void>
   waiters: Set<(run: RpcChildRun | undefined) => void>
 }
@@ -109,12 +128,19 @@ export interface RpcChildRegistryOptions {
 export class RpcChildRunRegistry {
   readonly identity: RpcChildRootScope
   private readonly profiles = new Map<string, RpcChildActualProfile>()
+  private readonly names = new Map<string, string>()
+  private readonly blocking = new Map<string, boolean>()
+  private readonly toolSites = new Map<string, ReadonlyMap<string, 'native' | 'host'>>()
+  private readonly listeners = new Set<(snapshot: Readonly<RpcChildRunSnapshot>) => void>()
   private readonly entries = new Map<string, Entry>()
   private readonly hashes = new Map<string, string>()
   private readonly cancelledParents = new Set<string>()
   private readonly maximum: number
   private disposed = false
   private readonly abort = (): void => this.dispose()
+  get isActive(): boolean {
+    return !this.disposed && !this.options.signal.aborted
+  }
 
   constructor(private readonly options: RpcChildRegistryOptions) {
     this.options = Object.freeze({ ...options })
@@ -140,13 +166,21 @@ export class RpcChildRunRegistry {
       const definition = profile.definition
       if (this.profiles.has(definition.nativeName)) throw new Error('Duplicate child profile')
       this.hashes.set(definition.nativeName, definition.definitionHash)
+      this.names.set(definition.nativeName, definition.phiName)
+      this.blocking.set(definition.nativeName, definition.blocking)
+      this.toolSites.set(
+        definition.nativeName,
+        new Map(definition.tools.map((tool) => [tool.name, tool.site]))
+      )
       this.profiles.set(
         definition.nativeName,
         validateRpcChildActual({
           tools: definition.tools.map((tool) => tool.name),
           model: profile.model,
           route: profile.route,
-          systemPromptDigest: rpcChildPromptDigest(profile.systemPrompt),
+          systemPromptDigest:
+            profile.effectivePromptDigest ?? rpcChildPromptDigest(profile.systemPrompt),
+          ...(definition.resourcesDigest ? { resourcesDigest: definition.resourcesDigest } : {}),
           ...(definition.thinkingLevel ? { thinkingLevel: definition.thinkingLevel } : {})
         })
       )
@@ -201,6 +235,13 @@ export class RpcChildRunRegistry {
         sessionFile: value.sessionFile,
         detached: value.detached === true
       })
+      if (
+        !this.names.has(started.agent) ||
+        started.detached !== (this.blocking.get(started.agent) === false)
+      ) {
+        this.retire(entry)
+        return
+      }
       let parent: ReturnType<RpcChildRegistryOptions['captureParent']>
       try {
         parent = this.options.captureParent(started)
@@ -213,13 +254,16 @@ export class RpcChildRunRegistry {
         return
       }
       entry.started = started
+      entry.startedAt = Date.now()
       entry.parentRunId = parent.runId
       // Permission retirement must not erase a verified native identity needed for cancellation.
       if (this.cancelledParents.has(parent.runId) || entry.failed) {
         this.retire(entry)
+        this.notify(entry)
         return
       }
       this.join(entry)
+      this.notify(entry)
     } else if (['completed', 'failed', 'aborted'].includes(String(value.status))) {
       if (entry.terminal) return
       if (!entry.started) {
@@ -233,8 +277,10 @@ export class RpcChildRunRegistry {
         value.agentSource === 'user'
       ) {
         entry.terminal = value.status as 'completed' | 'failed' | 'aborted'
+        entry.completedAt = Date.now()
         for (const resolve of [...entry.terminalWaiters]) resolve(entry.terminal)
         this.retire(entry)
+        this.notify(entry)
       }
     }
   }
@@ -253,6 +299,7 @@ export class RpcChildRunRegistry {
       !sameRpcChildModel(normalized.model, expected.model) ||
       !sameRpcChildRoute(normalized.route, expected.route) ||
       normalized.systemPromptDigest !== expected.systemPromptDigest ||
+      normalized.resourcesDigest !== expected.resourcesDigest ||
       normalized.thinkingLevel !== expected.thinkingLevel ||
       normalized.tools.join('\0') !== expected.tools.join('\0')
     ) {
@@ -282,9 +329,16 @@ export class RpcChildRunRegistry {
       ? entry.run
       : undefined
   }
+  toolSite(scope: RpcChildScope, toolName: string): 'native' | 'host' | undefined {
+    return this.current(scope) ? this.toolSites.get(scope.nativeName)?.get(toolName) : undefined
+  }
   cancelChild(scope: RpcChildScope): void {
     const entry = this.entries.get(scope.nativeAgentId)
     if (entry?.scope && sameRpcChildScope(scope, entry.scope)) this.retire(entry)
+  }
+  revokeNative(nativeId: string): void {
+    const entry = this.entries.get(nativeId)
+    if (entry?.started && entry.parentRunId) this.retire(entry)
   }
   waitForTerminal(nativeId: string, signal: AbortSignal): Promise<string | undefined> {
     const entry = this.entries.get(nativeId)
@@ -324,6 +378,31 @@ export class RpcChildRunRegistry {
       [...this.entries.values()].flatMap((entry) => (entry.run && !entry.failed ? [entry.run] : []))
     )
   }
+  /** Public lifecycle facts survive permission retirement; they grant no execution authority. */
+  records(): readonly Readonly<RpcChildRunSnapshot>[] {
+    return Object.freeze(
+      [...this.entries.values()].flatMap((entry) => {
+        const record = this.describe(entry)
+        return record ? [record] : []
+      })
+    )
+  }
+  getRecord(id: string): Readonly<RpcChildRunSnapshot> | undefined {
+    return this.records().find((record) => record.id === id)
+  }
+  recordForNative(nativeId: string): Readonly<RpcChildRunSnapshot> | undefined {
+    const entry = this.entries.get(nativeId)
+    return entry && this.describe(entry)
+  }
+  getRun(id: string): RpcChildRun | undefined {
+    for (const entry of this.entries.values()) if (entry.run?.id === id) return entry.run
+    return undefined
+  }
+  onChange(listener: (snapshot: Readonly<RpcChildRunSnapshot>) => void): () => void {
+    if (this.disposed) throw new Error('Child registry is unavailable')
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -333,6 +412,7 @@ export class RpcChildRunRegistry {
       for (const resolve of [...entry.terminalWaiters]) resolve(undefined)
     }
     this.entries.clear()
+    this.listeners.clear()
   }
   private entry(id: string): Entry | undefined {
     if (this.disposed) return undefined
@@ -340,6 +420,7 @@ export class RpcChildRunRegistry {
     if (!entry) {
       if (this.entries.size >= this.maximum) return undefined
       entry = {
+        id: randomUUID(),
         controller: new AbortController(),
         failed: false,
         waiters: new Set(),
@@ -355,7 +436,7 @@ export class RpcChildRunRegistry {
       entry.started.id !== entry.scope.nativeAgentId ||
       entry.started.agent !== entry.scope.nativeName ||
       entry.started.sessionFile !== entry.scope.childSessionFile ||
-      entry.started.detached
+      entry.started.detached !== (this.blocking.get(entry.scope.nativeName) === false)
     ) {
       this.retire(entry)
       return
@@ -363,13 +444,14 @@ export class RpcChildRunRegistry {
     if (!entry.run && entry.waiters.size) {
       const profile = this.profiles.get(entry.scope.nativeName)!
       entry.run = Object.freeze({
-        id: randomUUID(),
+        id: entry.id,
         parentRunId: entry.parentRunId,
         parentToolCallId: entry.started.parentToolCallId,
         scope: entry.scope,
         profile,
         signal: entry.controller.signal
       })
+      this.notify(entry)
     }
     if (entry.run) for (const resolve of [...entry.waiters]) resolve(entry.run)
   }
@@ -378,5 +460,45 @@ export class RpcChildRunRegistry {
     entry.failed = true
     entry.controller.abort()
     for (const resolve of [...entry.waiters]) resolve(undefined)
+    this.notify(entry)
+  }
+  private describe(entry: Entry): Readonly<RpcChildRunSnapshot> | undefined {
+    if (!entry.started || !entry.parentRunId || entry.startedAt === undefined) return undefined
+    const agent = this.names.get(entry.started.agent)
+    if (!agent) return undefined
+    return Object.freeze({
+      id: entry.id,
+      phiSessionId: this.identity.phiSessionId,
+      projectId: this.identity.projectId,
+      generation: this.identity.generation,
+      parentRunId: entry.parentRunId,
+      parentToolCallId: entry.started.parentToolCallId,
+      nativeId: entry.started.id,
+      childSessionFile: entry.started.sessionFile,
+      ...(entry.scope ? { childOmpSessionId: entry.scope.childOmpSessionId } : {}),
+      agent,
+      background: entry.started.detached,
+      status:
+        entry.terminal === 'completed' && !entry.run
+          ? 'failed'
+          : (entry.terminal ?? (entry.failed ? 'interrupted' : entry.run ? 'running' : 'queued')),
+      verified: !!entry.run,
+      startedAt: entry.startedAt,
+      ...(entry.completedAt === undefined ? {} : { completedAt: entry.completedAt })
+    })
+  }
+  private notify(entry: Entry): void {
+    const snapshot = this.describe(entry)
+    if (!snapshot) return
+    const encoded = JSON.stringify(snapshot)
+    if (entry.lastSnapshot === encoded) return
+    entry.lastSnapshot = encoded
+    for (const listener of this.listeners) {
+      try {
+        listener(snapshot)
+      } catch {
+        /* Observers cannot extend child authority. */
+      }
+    }
   }
 }

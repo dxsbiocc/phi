@@ -2,15 +2,30 @@ import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import { approvalIdentifier, createApprovalEnvelope } from './rpc-approval-protocol'
 import { executionCapability } from './rpc-execution-protocol'
+import {
+  isHostResultPlaceholder,
+  validHostResultPayload,
+  type HostResultPayload
+} from './rpc-host-result-protocol'
 
 export const RPC_CHILD_SCHEME = 'phi-child'
 export const MAX_RPC_CHILD_REQUEST_BYTES = 128 * 1024
 export const MAX_RPC_CHILD_REPLY_BYTES = 4096
 export const MAX_RPC_CHILD_CALLS = 4096
-export type RpcChildOperation = 'register' | 'activate' | 'approve'
-export const RPC_CHILD_NATIVE_TOOLS = Object.freeze(['read', 'write', 'bash', 'powershell'])
+export type RpcChildOperation = 'register' | 'activate' | 'approve' | 'execute' | 'result_consumed'
+export const RPC_CHILD_NATIVE_TOOLS = Object.freeze([
+  'read',
+  'write',
+  'edit',
+  'glob',
+  'grep',
+  'bash',
+  'powershell'
+])
 /** Package-local trusted DTO. Node maps validated compiler output without importing compiler modules into the server bundle. */
 export interface RpcChildDefinition {
+  readonly resourcesDigest?: string
+  readonly environment?: { readonly ref: string; readonly pluginId?: string }
   readonly definitionHash: string
   readonly phiName: string
   readonly nativeName: string
@@ -34,6 +49,7 @@ export interface RpcChildRoute {
   readonly transport: 'pi-native' | 'sse'
 }
 export interface RpcChildTrustedProfile {
+  readonly effectivePromptDigest?: string
   readonly definition: RpcChildDefinition
   readonly systemPrompt: readonly string[]
   readonly expectedAgentSource: 'user'
@@ -58,6 +74,7 @@ export interface RpcChildScope extends RpcChildRootScope {
   readonly definitionHash: string
 }
 export interface RpcChildActualProfile {
+  readonly resourcesDigest?: string
   readonly tools: readonly string[]
   readonly model: RpcChildModelDescriptor
   readonly route: RpcChildRoute
@@ -82,6 +99,12 @@ export type RpcChildRequest = RpcChildRequestBase &
     | { readonly operation: 'register' }
     | { readonly operation: 'activate'; readonly actual: RpcChildActualProfile }
     | { readonly operation: 'approve'; readonly call: RpcChildCall }
+    | { readonly operation: 'execute'; readonly call: RpcChildCall }
+    | {
+        readonly operation: 'result_consumed'
+        readonly call: RpcChildCall
+        readonly invocationId: string
+      }
     | { readonly operation: 'cancel'; readonly targetId: string }
   )
 export interface RpcChildReply {
@@ -90,6 +113,12 @@ export interface RpcChildReply {
   readonly operation: RpcChildOperation
   readonly sequence: number
   readonly allowed: boolean
+  readonly result?: RpcChildHostResult
+}
+export interface RpcChildHostResult {
+  readonly runId: string
+  readonly invocationId: string
+  readonly payload: HostResultPayload
 }
 const rootKeys = [
   'phiSessionId',
@@ -285,12 +314,12 @@ export function sameRpcChildRoute(a: RpcChildRoute, b: RpcChildRoute): boolean {
 }
 export function validateRpcChildActual(value: unknown): RpcChildActualProfile {
   const raw = value as Record<string, unknown>
-  exact(
-    value,
-    raw?.thinkingLevel === undefined
+  exact(value, [
+    ...(raw?.thinkingLevel === undefined
       ? ['tools', 'model', 'route', 'systemPromptDigest']
-      : ['tools', 'model', 'route', 'systemPromptDigest', 'thinkingLevel']
-  )
+      : ['tools', 'model', 'route', 'systemPromptDigest', 'thinkingLevel']),
+    ...(raw?.resourcesDigest === undefined ? [] : ['resourcesDigest'])
+  ])
   const model = validateRpcChildModel(raw.model)
   const route = validateRpcChildRoute(raw.route)
   if (
@@ -299,6 +328,7 @@ export function validateRpcChildActual(value: unknown): RpcChildActualProfile {
     !raw.tools.every(approvalIdentifier) ||
     new Set(raw.tools).size !== raw.tools.length ||
     !executionCapability(raw.systemPromptDigest) ||
+    (raw.resourcesDigest !== undefined && !executionCapability(raw.resourcesDigest)) ||
     (raw.thinkingLevel !== undefined &&
       !['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(String(raw.thinkingLevel)))
   )
@@ -308,6 +338,7 @@ export function validateRpcChildActual(value: unknown): RpcChildActualProfile {
     model,
     route,
     systemPromptDigest: raw.systemPromptDigest,
+    ...(raw.resourcesDigest === undefined ? {} : { resourcesDigest: raw.resourcesDigest }),
     ...(raw.thinkingLevel === undefined ? {} : { thinkingLevel: raw.thinkingLevel })
   }) as RpcChildActualProfile
 }
@@ -347,11 +378,13 @@ export function parseRpcChildRequest(content: unknown): RpcChildRequest {
   const operationKeys =
     value?.operation === 'activate'
       ? ['actual']
-      : value?.operation === 'approve'
+      : value?.operation === 'approve' || value?.operation === 'execute'
         ? ['call']
-        : value?.operation === 'cancel'
-          ? ['targetId']
-          : []
+        : value?.operation === 'result_consumed'
+          ? ['call', 'invocationId']
+          : value?.operation === 'cancel'
+            ? ['targetId']
+            : []
   exact(raw, ['schema', 'id', 'capability', 'sequence', 'scope', 'operation', ...operationKeys])
   if (
     value.schema !== 1 ||
@@ -359,7 +392,9 @@ export function parseRpcChildRequest(content: unknown): RpcChildRequest {
     !executionCapability(value.capability) ||
     !Number.isSafeInteger(value.sequence) ||
     Number(value.sequence) < 1 ||
-    !['register', 'activate', 'approve', 'cancel'].includes(String(value.operation))
+    !['register', 'activate', 'approve', 'execute', 'result_consumed', 'cancel'].includes(
+      String(value.operation)
+    )
   )
     throw new Error('Invalid RPC child request')
   const scope = validateRpcChildScope(value.scope)
@@ -369,7 +404,16 @@ export function parseRpcChildRequest(content: unknown): RpcChildRequest {
       scope,
       actual: validateRpcChildActual(value.actual)
     }) as unknown as RpcChildRequest
-  if (value.operation === 'approve') {
+  if (
+    value.operation === 'approve' ||
+    value.operation === 'execute' ||
+    value.operation === 'result_consumed'
+  ) {
+    if (
+      value.operation === 'result_consumed' &&
+      (!rpcChildRequestId(value.invocationId) || value.invocationId === value.id)
+    )
+      throw new Error('Invalid child host consumption identity')
     exact(value.call, ['toolCallId', 'toolName', 'input', 'inputDigest'])
     const call = createRpcChildCall(
       scope,
@@ -400,7 +444,16 @@ export function parseRpcChildReply(
   if (typeof content !== 'string' || Buffer.byteLength(content) > MAX_RPC_CHILD_REPLY_BYTES)
     throw new Error('RPC child reply exceeds its bound')
   const reply: unknown = JSON.parse(content)
-  exact(reply, ['schema', 'id', 'operation', 'sequence', 'allowed'])
+  exact(reply, [
+    'schema',
+    'id',
+    'operation',
+    'sequence',
+    'allowed',
+    ...(request.operation === 'execute' && (reply as Record<string, unknown>)?.allowed === true
+      ? ['result']
+      : [])
+  ])
   if (
     reply.schema !== 1 ||
     reply.id !== request.id ||
@@ -409,6 +462,19 @@ export function parseRpcChildReply(
     typeof reply.allowed !== 'boolean'
   )
     throw new Error('RPC child reply binding mismatch')
+  if (request.operation === 'execute' && reply.allowed) {
+    exact(reply.result, ['runId', 'invocationId', 'payload'])
+    if (
+      !approvalIdentifier(reply.result.runId) ||
+      reply.result.invocationId !== request.id ||
+      !validHostResultPayload(reply.result.payload) ||
+      !isHostResultPlaceholder((reply.result.payload as HostResultPayload).content) ||
+      (reply.result.payload as HostResultPayload).isError !== true ||
+      ((reply.result.payload as HostResultPayload).details !== undefined &&
+        (reply.result.payload as HostResultPayload).details !== null)
+    )
+      throw new Error('Child host reply must use its exact signed delivery')
+  }
   return Object.freeze({ ...reply }) as unknown as RpcChildReply
 }
 export function rpcChildUri(part: 'request' | 'reply' | 'cancel', id: string): string {
@@ -489,11 +555,17 @@ export function snapshotRpcChildProfile(value: RpcChildTrustedProfile): RpcChild
     runId: 'profile'
   }
   const safe = createApprovalEnvelope(root, 'profile', 'profile', value).input
-  exact(safe, ['definition', 'systemPrompt', 'expectedAgentSource', 'model', 'route'])
+  exact(safe, [
+    'definition',
+    'systemPrompt',
+    'expectedAgentSource',
+    'model',
+    'route',
+    ...(safe.effectivePromptDigest === undefined ? [] : ['effectivePromptDigest'])
+  ])
   const definition = safe.definition as Record<string, unknown>
-  exact(
-    definition,
-    definition?.thinkingLevel === undefined
+  exact(definition, [
+    ...(definition?.thinkingLevel === undefined
       ? ['definitionHash', 'phiName', 'nativeName', 'blocking', 'tools', 'skills', 'model']
       : [
           'definitionHash',
@@ -504,18 +576,26 @@ export function snapshotRpcChildProfile(value: RpcChildTrustedProfile): RpcChild
           'skills',
           'model',
           'thinkingLevel'
-        ]
-  )
+        ]),
+    ...(definition?.resourcesDigest === undefined ? [] : ['resourcesDigest']),
+    ...(definition?.environment === undefined ? [] : ['environment'])
+  ])
   exact(definition.model, ['provider', 'id'])
   if (
     safe.expectedAgentSource !== 'user' ||
     !executionCapability(definition.definitionHash) ||
     !approvalIdentifier(definition.phiName) ||
     !approvalIdentifier(definition.nativeName) ||
-    definition.blocking !== true ||
+    typeof definition.blocking !== 'boolean' ||
     definition.thinkingLevel === undefined ||
     !Array.isArray(definition.skills) ||
-    definition.skills.length !== 0 ||
+    definition.skills.length > 128 ||
+    !definition.skills.every(approvalIdentifier) ||
+    new Set(definition.skills).size !== definition.skills.length ||
+    (definition.resourcesDigest !== undefined &&
+      !executionCapability(definition.resourcesDigest)) ||
+    (safe.effectivePromptDigest !== undefined &&
+      !executionCapability(safe.effectivePromptDigest)) ||
     !Array.isArray(definition.tools) ||
     definition.tools.length < 1 ||
     definition.tools.length > 64 ||
@@ -523,13 +603,36 @@ export function snapshotRpcChildProfile(value: RpcChildTrustedProfile): RpcChild
     !approvalIdentifier(definition.model.id)
   )
     throw new Error('Unsupported RPC child profile')
+  if (definition.environment !== undefined) {
+    exact(definition.environment, [
+      'ref',
+      ...(definition.environment !== null &&
+      typeof definition.environment === 'object' &&
+      Object.hasOwn(definition.environment, 'pluginId')
+        ? ['pluginId']
+        : [])
+    ])
+    if (
+      !approvalIdentifier(definition.environment.ref) ||
+      (definition.environment.pluginId !== undefined &&
+        !approvalIdentifier(definition.environment.pluginId))
+    )
+      throw new Error('Invalid child environment reference')
+  }
+  if (
+    (definition.skills.length || definition.environment !== undefined) &&
+    (!definition.resourcesDigest || !safe.effectivePromptDigest)
+  )
+    throw new Error('Child resource references lack an immutable effective profile')
   const names = new Set<string>()
   for (const tool of definition.tools) {
     exact(tool, ['name', 'site'])
     if (
-      tool.site !== 'native' ||
+      !['native', 'host'].includes(String(tool.site)) ||
       typeof tool.name !== 'string' ||
-      !RPC_CHILD_NATIVE_TOOLS.includes(tool.name) ||
+      (tool.site === 'native'
+        ? !RPC_CHILD_NATIVE_TOOLS.includes(tool.name)
+        : !definition.resourcesDigest || RPC_CHILD_NATIVE_TOOLS.includes(tool.name)) ||
       names.has(tool.name)
     )
       throw new Error('Unsupported RPC child native tool')

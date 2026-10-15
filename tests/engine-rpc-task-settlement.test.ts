@@ -38,6 +38,17 @@ interface Fixture {
   hook(): unknown
   setWrongModel(wrong: boolean): void
   replaceHook(): void
+  admitChild(
+    nativeId: string,
+    beforeLifecycle?: boolean,
+    spawnKey?: string,
+    toolCallId?: string,
+    extraNativeId?: string
+  ): Promise<void>
+  registerChild(nativeId: string): void
+  changeParent(id: string, sequence: number): void
+  sealCurrentParent(): boolean
+  replaceChildRef(id: string): void
   close(): Promise<void>
 }
 
@@ -77,7 +88,11 @@ async function fixture(startup = true): Promise<Fixture> {
     policy: { mode: 'foreground-native', taskShape: 'single' }
   }
   const controller = new AbortController()
-  const parent = Object.freeze({ runId: 'parent-A', controlSequence: 7, signal: controller.signal })
+  let parent: Readonly<RpcTaskParentRun> = Object.freeze({
+    runId: 'parent-A',
+    controlSequence: 7,
+    signal: controller.signal
+  })
   const input = {
     agent: nativeName,
     name: 'controlled-child',
@@ -86,7 +101,7 @@ async function fixture(startup = true): Promise<Fixture> {
   }
   const notifications: string[] = []
   const handlers = new Map<string, Handler[]>()
-  const sessionManager = { getSessionId: () => root.rootOmpSessionId }
+  const sessionManager = { getSessionId: () => root.rootOmpSessionId, getCwd: () => cwd }
   const ctx = {
     cwd,
     agent: { kind: 'main', id: 'Main' },
@@ -108,6 +123,13 @@ async function fixture(startup = true): Promise<Fixture> {
     return undefined
   }
   const model = { ...childProfile.model, ...childProfile.route }
+  let taskWork = async (): Promise<void> => {}
+  const taskTool = {
+    execute: async (id: string, input: unknown): Promise<void> => {
+      assert.ok(id && input)
+      return taskWork()
+    }
+  }
   const session = {
     sessionId: root.rootOmpSessionId,
     sessionFile: root.rootSessionFile,
@@ -120,9 +142,31 @@ async function fixture(startup = true): Promise<Fixture> {
       explicit: ['trusted-fixture']
     },
     preparedExtensions: [{}],
-    extensionPaths: ['trusted-fixture']
+    extensionPaths: ['trusted-fixture'],
+    getToolByName: () => taskTool
   }
-  const ref = { kind: 'main', session }
+  const ref = { id: root.rootAgentId, kind: 'main', session }
+  const refs = new Map<string, unknown>([['Main', ref]])
+  const lifecycle: Handler[] = []
+  const registryChanges = new Set<(event: unknown) => void>()
+  const registerChild = (nativeId: string): void => {
+    const file = join(cwd, nativeId + '.jsonl')
+    const manager = {
+      getSessionId: () => 'omp-' + nativeId,
+      getHeader: () => ({ parentSession: root.rootSessionFile })
+    }
+    const child = {
+      id: nativeId,
+      displayName: nativeName,
+      kind: 'sub',
+      parentId: root.rootAgentId,
+      status: 'running',
+      sessionFile: file,
+      session: { sessionId: 'omp-' + nativeId, sessionFile: file, sessionManager: manager }
+    }
+    refs.set(nativeId, child)
+    for (const listener of registryChanges) listener({ type: 'registered', ref: child })
+  }
   let forbidReads = false
   const admission = createRpcTaskAdmissionExtension({
     config,
@@ -141,12 +185,23 @@ async function fixture(startup = true): Promise<Fixture> {
     on: (event: string, handler: Handler): void => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
     },
-    events: { on: () => () => {} },
+    events: {
+      on: (_name: string, listener: Handler) => {
+        lifecycle.push(listener)
+        return () => {
+          const index = lifecycle.indexOf(listener)
+          if (index >= 0) lifecycle.splice(index, 1)
+        }
+      }
+    },
     pi: {
       AgentRegistry: {
         global: () => ({
-          get: (id: string) => (id === 'Main' ? ref : undefined),
-          onChange: () => () => {}
+          get: (id: string) => refs.get(id),
+          onChange: (listener: (event: unknown) => void) => {
+            registryChanges.add(listener)
+            return () => registryChanges.delete(listener)
+          }
         })
       }
     }
@@ -157,21 +212,26 @@ async function fixture(startup = true): Promise<Fixture> {
     return result
   }
   if (startup) await emit('session_start', {})
+  let lastAdmittedId = 'outer-task'
   return {
     admission,
     config,
     root,
-    parent,
+    get parent() {
+      return parent
+    },
     controller,
     notifications,
     ctx,
     input,
-    admit: (id = 'outer-task') =>
-      session.agent.beforeToolCall({
+    admit: (id = 'outer-task') => {
+      lastAdmittedId = id
+      return session.agent.beforeToolCall({
         tool: { name: 'task' },
         toolCall: { id, arguments: { ...input, i: 'Controlled intent' } },
         args: input
-      } as Parameters<typeof previous>[0]),
+      } as Parameters<typeof previous>[0])
+    },
     end: async (id = 'outer-task', toolName = 'task') => {
       await emit('tool_execution_end', {
         type: 'tool_execution_end',
@@ -181,13 +241,19 @@ async function fixture(startup = true): Promise<Fixture> {
         isError: true
       })
     },
-    spawn: () =>
-      emit('before_subagent_spawn', {
-        agent: nativeName,
-        invocationKind: 'task',
-        spawnKey: 'controlled-child',
-        patterns: ['fixture/model']
-      }),
+    spawn: async () => {
+      let result: unknown
+      taskWork = async () => {
+        result = await emit('before_subagent_spawn', {
+          agent: nativeName,
+          invocationKind: 'task',
+          spawnKey: 'controlled-child',
+          patterns: ['fixture/model']
+        })
+      }
+      await taskTool.execute(lastAdmittedId, input)
+      return result
+    },
     changeActualScope: (field) => {
       if (field === 'journal') session.sessionFile = join(cwd, 'other-root.jsonl')
       else sessionManager.getSessionId = () => 'other-omp'
@@ -203,6 +269,60 @@ async function fixture(startup = true): Promise<Fixture> {
     },
     replaceHook: () => {
       session.agent.beforeToolCall = async () => undefined
+    },
+    admitChild: async (
+      nativeId,
+      beforeLifecycle = false,
+      spawnKey = nativeId,
+      id = 'outer-' + nativeId,
+      extraNativeId
+    ) => {
+      const result = await session.agent.beforeToolCall({
+        tool: { name: 'task' },
+        toolCall: { id, arguments: { ...input, i: 'Captured child' } },
+        args: input
+      } as Parameters<typeof previous>[0])
+      assert.equal(result, undefined)
+      taskWork = async () => {
+        assert.equal(
+          await emit('before_subagent_spawn', {
+            agent: nativeName,
+            invocationKind: 'task',
+            spawnKey,
+            patterns: ['fixture/model']
+          }),
+          undefined
+        )
+        registerChild(nativeId)
+        if (extraNativeId) registerChild(extraNativeId)
+      }
+      await taskTool.execute(id, input)
+      if (beforeLifecycle) return
+      for (const listener of lifecycle)
+        await listener(
+          {
+            id: nativeId,
+            status: 'started',
+            agent: nativeName,
+            agentSource: 'user',
+            parentToolCallId: id,
+            sessionFile: join(cwd, nativeId + '.jsonl')
+          },
+          ctx
+        )
+    },
+    registerChild,
+    changeParent: (id, sequence) => {
+      parent = Object.freeze({
+        runId: id,
+        controlSequence: sequence,
+        signal: new AbortController().signal
+      })
+    },
+    sealCurrentParent: () =>
+      admission.sealParent(parent, ctx as unknown as Parameters<Admission['sealParent']>[1]),
+    replaceChildRef: (id) => {
+      refs.set(id, { kind: 'sub', parentId: root.rootAgentId, status: 'running', session: null })
     },
     close: async () => {
       admission.dispose()
@@ -375,3 +495,81 @@ for (const field of ['journal', 'omp'] as const)
     await f.end()
     assert.equal(f.notifications.length, 0)
   })
+
+test('captured child stream isolates a later negative parent and preserves the negative tombstone across new Main runs', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-A')
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(f.admission.isChildStreamActive('unknown-child'), false)
+  // Ordinary execution-authority agent_end retires the parent signal too.
+  f.controller.abort()
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  f.changeParent('parent-B', 8)
+  await f.admitChild('child-B')
+  assert.equal(f.sealCurrentParent(), true)
+  assert.equal(f.admission.isStreamActive(), false)
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(f.admission.isChildStreamActive('child-B'), false)
+  f.changeParent('parent-C', 9)
+  await f.admitChild('child-C')
+  assert.equal(f.admission.isStreamActive(), true)
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(
+    f.admission.isChildStreamActive('child-B'),
+    false,
+    'a new Main never revives a denied old parent'
+  )
+  assert.equal(f.admission.isChildStreamActive('child-C'), true)
+  f.replaceChildRef('child-A')
+  assert.equal(f.admission.isChildStreamActive('child-A'), false)
+  f.admission.dispose()
+  assert.equal(f.admission.isChildStreamActive('child-C'), false)
+})
+
+test('captured child stream rejects changed original root and never queries a newer Main binding', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-A')
+  f.forbidCurrentReads()
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  f.changeActualScope('journal')
+  assert.equal(f.admission.isChildStreamActive('child-A'), false)
+})
+
+test('captured first child model request does not depend on a later started lifecycle notification', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-first-model', true)
+  assert.equal(f.admission.isChildStreamActive('child-first-model'), true)
+  assert.equal(f.admission.isChildStreamActive('unknown-child'), false)
+})
+
+test('foreground unique native IDs preserve repeated labels and tool IDs across distinct parent runs', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('bounded-child', true, 'bounded-child', 'reused-task')
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+  await f.end('reused-task')
+  f.controller.abort()
+  f.changeParent('parent-B', 8)
+  await f.admitChild('bounded-child-2', true, 'bounded-child', 'reused-task')
+  assert.equal(f.admission.isChildStreamActive('bounded-child-2'), true)
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+  f.sealCurrentParent()
+  assert.equal(f.admission.isChildStreamActive('bounded-child-2'), false)
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+})
+
+test('unnamed foreground dispatch binds only its actual registered actor within the admitted count', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('GeneratedActor', true, 'outer-task:0', 'outer-task', 'extra-actor')
+  assert.equal(f.admission.isChildStreamActive('GeneratedActor'), true)
+  assert.equal(f.admission.isChildStreamActive('outer-task:0'), false)
+  assert.equal(f.admission.isChildStreamActive('extra-actor'), false)
+  f.registerChild('outside-dispatch')
+  assert.equal(f.admission.isChildStreamActive('outside-dispatch'), false)
+  f.registerChild('GeneratedActor')
+  assert.equal(f.admission.isChildStreamActive('GeneratedActor'), false)
+})

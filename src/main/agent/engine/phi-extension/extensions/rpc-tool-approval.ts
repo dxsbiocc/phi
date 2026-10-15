@@ -63,6 +63,14 @@ export function createRpcToolApprovalExtension(options: RpcToolApprovalOptions):
           event.toolName,
           event.input
         )
+        if (
+          ['bash', 'powershell'].includes(event.toolName) &&
+          (envelope.input.async === true ||
+            envelope.input.background === true ||
+            Object.hasOwn(envelope.input, 'name') ||
+            Object.hasOwn(envelope.input, 'ready'))
+        )
+          return blocked
         const boundary = projectToolBoundaryDecision(identity.cwd, event.toolName, envelope.input)
         const url = remoteUrlGuardDecision(event.toolName, envelope.input)
         if (!boundary.allowed || !url.allowed)

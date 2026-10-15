@@ -15,6 +15,7 @@ import type {
   RemoteRuntimeWorkspace
 } from './types'
 import { untilAbort } from './abort-wait'
+import type { RpcAgentEnvironmentDescriptor } from '../engine/rpc/subagents/types'
 import {
   validRemoteEnvironmentRequest,
   type ValidRemoteEnvironmentRequest
@@ -123,11 +124,52 @@ export class RemoteEnvironmentService {
     }
   }
 
+  /** Read an already-created environment without confirming, building or publishing anything. */
+  async describeReadyInWorkspace(
+    ref: string,
+    workspace: RemoteRuntimeWorkspace,
+    signal?: AbortSignal
+  ): Promise<Omit<RpcAgentEnvironmentDescriptor, 'binding' | 'pluginId'> | undefined> {
+    signal?.throwIfAborted()
+    const state = await this.storedEnvironmentState(ref, workspace, signal)
+    if (!state) return undefined
+    const record = state.record
+    // This is the existing requested package/channel constraint digest, not a
+    // claim that a separate solved-lock file was persisted by this service.
+    const lockSha256 = digest(
+      JSON.stringify({ packages: [...record.packages].sort(), channels: record.channels })
+    )
+    if (record.envId !== lockSha256) return undefined
+    signal?.throwIfAborted()
+    const prefixPath = posix.join(workspace.runtimeRoot, 'envs', record.envId)
+    return {
+      ref,
+      environmentId: record.envId,
+      lockSha256,
+      status: 'ready',
+      execution: {
+        runtimeRoot: workspace.runtimeRoot,
+        micromambaPath: this.micromambaPath(workspace),
+        prefixPath,
+        markerPath: posix.join(prefixPath, '.phi-remote-env.json'),
+        markerSha256: digest(state.marker)
+      }
+    }
+  }
+
   private async storedEnvironment(
     ref: string,
     workspace: RemoteRuntimeWorkspace,
     signal?: AbortSignal
   ): Promise<EnvironmentRecord | undefined> {
+    return (await this.storedEnvironmentState(ref, workspace, signal))?.record
+  }
+
+  private async storedEnvironmentState(
+    ref: string,
+    workspace: RemoteRuntimeWorkspace,
+    signal?: AbortSignal
+  ): Promise<{ record: EnvironmentRecord; marker: string } | undefined> {
     const state = await probeEnvironmentAlias(
       workspace,
       aliasPath(workspace.projectRoot, ref),
@@ -140,7 +182,7 @@ export class RemoteEnvironmentService {
     if (typeof alias.name !== 'string' || marker.envId !== alias.envId) return undefined
     if (!sameStringArray(marker.packages, alias.packages)) return undefined
     if (!sameStringArray(marker.channels, alias.channels)) return undefined
-    return alias
+    return { record: alias, marker: state.marker }
   }
 
   micromambaPath(workspace: RemoteRuntimeWorkspace): string {

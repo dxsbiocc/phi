@@ -4,11 +4,15 @@ import { remoteJournalPath } from './session-storage/paths'
 import { readRemoteHistory, withRemoteSignal, type RemoteHistoryCheckpoint } from './history-pager'
 import {
   REMOTE_SESSION_OMP_VERSION,
+  RemoteSessionStorageError,
   type RemoteJournalPreflight,
   type RemoteSessionReference,
   type RemoteSessionStoragePreparation
 } from './session-storage/types'
 import type { RpcControlChannel } from './types'
+import { RuntimeReferenceError } from '../../session/runtime-reference'
+import { SessionVerificationError } from '../phi-extension/lib/rpc-session-verification-protocol'
+import type { RuntimeRecoveryIssue } from '../../../../shared/runtimeRecoveryTypes'
 
 export interface RemoteRecoveryModel {
   readonly provider: string
@@ -41,6 +45,60 @@ export class RemoteRecoveryError extends Error {
   ) {
     super(message, options)
     this.name = 'RemoteRecoveryError'
+  }
+}
+
+/** Safe user projection only. Raw transport/provider/SDK errors and their causes remain private. */
+export function describeRemoteRecoveryFailure(error: unknown): {
+  readonly issue: RuntimeRecoveryIssue
+  readonly message: string
+} {
+  const code =
+    error instanceof RemoteRecoveryError ||
+    error instanceof RemoteSessionStorageError ||
+    error instanceof RuntimeReferenceError ||
+    error instanceof SessionVerificationError
+      ? error.code
+      : undefined
+  if (code === 'MODEL_UNAVAILABLE')
+    return {
+      issue: 'model-unavailable',
+      message: '原会话模型不可用，请明确选择可用模型后恢复，或根据本地历史另开会话。'
+    }
+  if (code === 'FILE_MISSING')
+    return {
+      issue: 'journal-missing',
+      message: '服务器会话文件已丢失；本地历史仍可查看，可明确选择根据本地历史另开会话。'
+    }
+  if (code === 'ASSET_MISSING')
+    return {
+      issue: 'asset-missing',
+      message: '原会话引用的图片或大输出资产缺失，无法完整恢复；本地历史仍可查看。'
+    }
+  if (
+    code === 'FILE_INVALID' ||
+    code === 'INVALID_RUNTIME_REFERENCE' ||
+    code === 'VERIFICATION_LIMIT'
+  )
+    return {
+      issue: 'journal-invalid',
+      message: '服务器会话或资产无法通过完整性验证，已停止恢复；本地历史仍可查看。'
+    }
+  if (
+    code === 'IDENTITY_MISMATCH' ||
+    code === 'HOST_IDENTITY_CHANGED' ||
+    code === 'PROJECT_MISMATCH' ||
+    code === 'INVALID_SCOPE' ||
+    code === 'PATH_INVALID'
+  )
+    return {
+      issue: 'binding-changed',
+      message: '会话所属项目、主机或目录已改变，请先核对绑定；旧历史没有被迁移或重发。'
+    }
+  return {
+    issue: 'disconnected',
+    message:
+      '原会话尚未连接或恢复未完成；请重新连接后显式恢复。本地历史仍可查看，旧任务不会自动重发。'
   }
 }
 

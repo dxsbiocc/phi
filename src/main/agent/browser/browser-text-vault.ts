@@ -23,6 +23,8 @@ type VaultEntry = {
 export interface BrowserTextVaultOptions {
   cap?: number
   tokenFactory?: () => string
+  /** Child model actors currently have no private typing capability. */
+  allowTypeText?: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,8 +128,10 @@ export class BrowserTextVault {
   readonly #cap: number
   readonly #tokenFactory: () => string
   readonly #entries = new Map<string, VaultEntry>()
+  readonly #allowTypeText: boolean
 
   constructor(options: BrowserTextVaultOptions = {}) {
+    this.#allowTypeText = options.allowTypeText !== false
     this.#cap =
       Number.isSafeInteger(options.cap) && (options.cap as number) > 0
         ? Math.min(options.cap as number, 1024)
@@ -143,6 +147,7 @@ export class BrowserTextVault {
   sanitize(toolCallId: string, input: unknown): Record<string, unknown> {
     if (!boundedIdentity(toolCallId) || !isRecord(input)) return { ...INVALID_BROWSER_INPUT }
     if (input.action !== 'typeText') return sanitizeOrdinaryBrowserInput(input)
+    if (!this.#allowTypeText) return { ...INVALID_BROWSER_INPUT }
     const existing = this.#entries.get(toolCallId)
     if (
       existing &&

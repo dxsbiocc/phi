@@ -6,6 +6,7 @@ import {
   type TrustedNativeStreamScope
 } from '../lib/rpc-native-stream-adapter'
 import { integrity } from '../lib/rpc-native-sse'
+import { RPC_CHILD_MODEL_HEADER } from '../lib/rpc-child-model-authority'
 
 interface Installation {
   readonly agent: { streamFn: StreamFn }
@@ -17,7 +18,13 @@ interface Installation {
 const installed = new WeakMap<object, Installation>()
 
 /** The launcher supplies lease authority; model/extension event input cannot grant it. */
-export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope): {
+export function createRpcNativeStreamExtension(
+  scope: TrustedNativeStreamScope,
+  privateRequestHeaders?: (
+    ctx: ExtensionContext,
+    expectedNativeWrapper: StreamFn
+  ) => Readonly<Record<string, string>> | undefined
+): {
   extension: ExtensionFactory
   assertInstalled(ctx: ExtensionContext): void
   dispose(): void
@@ -28,7 +35,7 @@ export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope):
   let api: Parameters<ExtensionFactory>[0] | undefined
   let disposed = false
   const session = (ctx: ExtensionContext): AgentSession => {
-    integrity(api && !disposed && scope.isActive() && !scope.signal?.aborted)
+    integrity(api && !disposed && !scope.signal?.aborted)
     const ref = api.pi.AgentRegistry.global().get(ctx.agent.id)
     const current = ref?.session
     integrity(
@@ -63,10 +70,41 @@ export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope):
     const signal = scope.signal
       ? AbortSignal.any([scope.signal, controller.signal])
       : controller.signal
+    const actorHeaders = (): Readonly<Record<string, string>> | undefined => {
+      const installation = installed.get(current.agent)
+      integrity(
+        session(ctx) === current &&
+          installation?.owner === owner &&
+          installation.wrapper === wrapper &&
+          !installation.controller.signal.aborted
+      )
+      if (ctx.agent.kind === 'main') {
+        integrity(scope.isActive() && current.agent.streamFn === wrapper)
+        return privateRequestHeaders
+          ? privateRequestHeaders(ctx, wrapper)
+          : scope.privateRequestHeaders?.()
+      }
+      integrity(ctx.agent.kind === 'sub' && privateRequestHeaders)
+      // The trusted callback verifies the exact profile gate/native original
+      // and this child's captured parent before signing its complete binding.
+      const headers = privateRequestHeaders(ctx, wrapper)
+      const header = headers?.[RPC_CHILD_MODEL_HEADER]
+      integrity(typeof header === 'string' && header.length > 0 && header.length <= 8192)
+      return headers
+    }
     const wrapper = createNativeStreamIntegrityAdapter(original, {
       ...scope,
       signal,
-      isActive: () => !disposed && !controller.signal.aborted && scope.isActive()
+      privateRequestHeaders: actorHeaders,
+      isActive: () => {
+        if (disposed || controller.signal.aborted || scope.signal?.aborted) return false
+        try {
+          actorHeaders()
+          return true
+        } catch {
+          return false
+        }
+      }
     })
     const entry: Installation = { agent: current.agent, original, wrapper, controller, owner }
     current.agent.streamFn = wrapper
@@ -95,7 +133,8 @@ export function createRpcNativeStreamExtension(scope: TrustedNativeStreamScope):
       integrity(
         entry?.owner === owner &&
           current.agent.streamFn === entry.wrapper &&
-          !entry.controller.signal.aborted
+          !entry.controller.signal.aborted &&
+          (ctx.agent.kind !== 'main' || scope.isActive())
       )
     },
     dispose: () => {

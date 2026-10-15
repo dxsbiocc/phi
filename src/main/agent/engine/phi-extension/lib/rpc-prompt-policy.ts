@@ -8,6 +8,7 @@ export interface FacadePromptContext {
   readonly personaPath?: string
   readonly contextFiles: readonly { readonly path: string; readonly content: string }[]
   readonly runtime?: RemoteRuntimePromptContext
+  readonly recoverySummary?: string
 }
 export interface RpcPromptPolicy extends FacadePromptContext {
   readonly schema: 1
@@ -45,7 +46,8 @@ export function rpcPromptPolicy(value: unknown): Readonly<RpcPromptPolicy> {
           'personaPath',
           'contextFiles',
           'runtime',
-          'memoryBlock'
+          'memoryBlock',
+          'recoverySummary'
         ].includes(key)
     ) ||
     value.schema !== 1 ||
@@ -62,6 +64,7 @@ export function rpcPromptPolicy(value: unknown): Readonly<RpcPromptPolicy> {
     (value.personaPath !== undefined &&
       (!text(value.personaPath, 4096) || !value.personaPath.startsWith('/'))) ||
     (value.memoryBlock !== undefined && !text(value.memoryBlock, 64 * 1024)) ||
+    (value.recoverySummary !== undefined && !text(value.recoverySummary, 16 * 1024)) ||
     !Array.isArray(value.contextFiles) ||
     value.contextFiles.length > 3
   )

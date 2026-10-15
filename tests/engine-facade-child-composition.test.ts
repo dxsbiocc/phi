@@ -30,6 +30,7 @@ for (const mode of [
   'parallel-child-first',
   'delayed-started',
   'two-child',
+  'unnamed-fg-batch',
   'reentrant-close',
   'host-stop',
   'repeat-child',

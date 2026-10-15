@@ -6,6 +6,11 @@ import { withRemoteSignal } from '../history-pager'
 import type { RpcChildRun, RpcChildRunRegistry } from './run-registry'
 
 export interface RpcChildApprovalOptions {
+  /** Main-owned resource metadata only; absent or unknown tools remain closed. */
+  readonly classifyTool?: (
+    run: RpcChildRun,
+    call: RpcChildCall
+  ) => 'read' | 'write' | 'exec' | undefined
   readonly shouldGate: (request: Readonly<ToolApprovalRequest>) => boolean
   readonly requestToolApproval: (
     request: Readonly<ToolApprovalRequest>,
@@ -16,13 +21,19 @@ export interface RpcChildApprovalOptions {
 }
 export interface RpcChildApprovalPermit {
   readonly result: Promise<boolean>
+  readonly committed: Promise<boolean>
   canCommit(): boolean
+  /** A committed host decision outlives its exchange reader, but never its child or policy. */
+  canExecute(): boolean
   /** The URI writer owns commit; retirement without a write is cancellation. */
   finish(written: boolean, allowed?: boolean): void
 }
 const nativeRisk = new Map([
   ['read', 'read'],
   ['write', 'write'],
+  ['edit', 'write'],
+  ['glob', 'read'],
+  ['grep', 'read'],
   ['bash', 'exec'],
   ['powershell', 'exec']
 ])
@@ -56,6 +67,12 @@ export class RpcChildApprovalBridge {
       requested = false,
       gate: boolean | undefined
     let decision: RpcApprovalDecision = 'cancelled'
+    let risk: string | undefined
+    let committed = false
+    let resolveCommit!: (value: boolean) => void
+    const commit = new Promise<boolean>((resolve) => {
+      resolveCommit = resolve
+    })
     let request: Readonly<ToolApprovalRequest> | undefined
     const notify = (type: RpcApprovalEvent['type']): void => {
       if (!request) return
@@ -81,6 +98,7 @@ export class RpcChildApprovalBridge {
           decision === 'approved' &&
           live() &&
           exact() &&
+          risk === (nativeRisk.get(call.toolName) ?? this.options.classifyTool?.(run, call)) &&
           (gate === undefined || (!!request && this.options.shouldGate(request) === gate)) &&
           !finished &&
           live()
@@ -92,6 +110,8 @@ export class RpcChildApprovalBridge {
     const finish = (written: boolean, allowed = false): void => {
       if (finished) return
       finished = true
+      committed = written && allowed && decision === 'approved'
+      resolveCommit(committed)
       if (requested)
         notify(
           written && allowed
@@ -106,8 +126,8 @@ export class RpcChildApprovalBridge {
       try {
         if (finished || !live() || !exact() || !run.profile.tools.includes(call.toolName))
           return false
-        const risk = nativeRisk.get(call.toolName)
-        if (!risk) return false
+        risk = nativeRisk.get(call.toolName) ?? this.options.classifyTool?.(run, call)
+        if (risk !== 'read' && risk !== 'write' && risk !== 'exec') return false
         if (risk === 'read') {
           decision = 'approved'
           return canCommit()
@@ -159,6 +179,20 @@ export class RpcChildApprovalBridge {
         return false
       }
     })
-    return Object.freeze({ result, canCommit, finish })
+    const canExecute = (): boolean => {
+      try {
+        return (
+          committed &&
+          !run.signal.aborted &&
+          this.registry.current(run.scope) === run &&
+          exact() &&
+          risk === (nativeRisk.get(call.toolName) ?? this.options.classifyTool?.(run, call)) &&
+          (gate === undefined || (!!request && this.options.shouldGate(request) === gate))
+        )
+      } catch {
+        return false
+      }
+    }
+    return Object.freeze({ result, committed: commit, canCommit, canExecute, finish })
   }
 }

@@ -16,10 +16,21 @@ export interface BrowserToolActiveRun {
   runId: string
   cancelled: boolean
 }
+/** Desktop-only authority for an independently verified expert run. */
+export interface BrowserToolDispatchControl {
+  readonly runId: string
+  readonly signal: AbortSignal
+  readonly allowTypeText: false
+  assertCurrent(): void
+}
 
 export interface BrowserToolHostCoordinatorOptions {
   resolveActiveRun: (originSessionId: string) => BrowserToolActiveRun | undefined
-  executeAgent: (input: unknown, signal: AbortSignal) => Promise<BrowserOutcome>
+  executeAgent: (
+    input: unknown,
+    signal: AbortSignal,
+    control?: BrowserToolDispatchControl
+  ) => Promise<BrowserOutcome>
   rememberedRequestCap?: number
 }
 
@@ -300,9 +311,15 @@ export class BrowserToolHostCoordinator {
         : 256
   }
 
-  async execute(input: unknown): Promise<BrowserOutcome> {
+  async execute(input: unknown, control?: BrowserToolDispatchControl): Promise<BrowserOutcome> {
     const request = parseRequest(input)
-    const run = this.#resolveActiveRun(request.originSessionId)
+    control?.assertCurrent()
+    control?.signal.throwIfAborted()
+    if (control && request.command.type === 'typeText')
+      throw new Error('Expert browser text input is unavailable')
+    const run = control
+      ? { runId: boundedString(control.runId, MAX_ID_BYTES), cancelled: control.signal.aborted }
+      : this.#resolveActiveRun(request.originSessionId)
     if (!run || run.cancelled) throw new Error('Active browser run is unavailable')
 
     const baseKey = requestBaseKey(request.originSessionId, request.toolCallId, request.requestId)
@@ -326,7 +343,11 @@ export class BrowserToolHostCoordinator {
       runId: run.runId,
       originSessionId: request.originSessionId
     })
+    const cancel = (): void => controller.abort(control?.signal.reason)
+    control?.signal.addEventListener('abort', cancel, { once: true })
+    if (control?.signal.aborted) cancel()
     try {
+      control?.assertCurrent()
       return await this.#executeAgent(
         {
           originSessionId: request.originSessionId,
@@ -334,15 +355,17 @@ export class BrowserToolHostCoordinator {
           toolCallId: request.toolCallId,
           command: request.command
         },
-        controller.signal
+        controller.signal,
+        control
       )
     } finally {
+      control?.signal.removeEventListener('abort', cancel)
       if (this.#controllers.get(key)?.controller === controller) this.#controllers.delete(key)
       this.#remember(this.#completed, key)
     }
   }
 
-  cancel(input: unknown): void {
+  cancel(input: unknown, control?: Pick<BrowserToolDispatchControl, 'runId'>): void {
     if (!isRecord(input) || !exactKeys(input, ['originSessionId', 'requestId', 'toolCallId'])) {
       throw new Error('Invalid browser host request')
     }
@@ -352,12 +375,16 @@ export class BrowserToolHostCoordinator {
     const baseKey = requestBaseKey(originSessionId, toolCallId, requestId)
     const recordedRunId = this.#requestRuns.get(baseKey)
     if (recordedRunId) {
+      if (control && recordedRunId !== control.runId)
+        throw new Error('Browser cancellation belongs to another expert run')
       const recordedKey = requestIdentityKey(originSessionId, recordedRunId, toolCallId, requestId)
       const active = this.#controllers.get(recordedKey)
       if (active) active.controller.abort()
       return
     }
-    const currentRun = this.#resolveActiveRun(originSessionId)
+    const currentRun = control
+      ? { runId: boundedString(control.runId, MAX_ID_BYTES), cancelled: true }
+      : this.#resolveActiveRun(originSessionId)
     if (!currentRun) throw new Error('Active browser run is unavailable')
     const key = requestIdentityKey(originSessionId, currentRun.runId, toolCallId, requestId)
     const active = this.#controllers.get(key)

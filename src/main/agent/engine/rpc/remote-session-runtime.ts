@@ -12,11 +12,11 @@ import {
 } from '../phi-extension/lib/rpc-compaction-control'
 import type { RuntimeSelectionControl } from '../types'
 import { confirmInitialThinking, type RuntimeInitialSelection } from './runtime-selection-control'
-import type { BrowserTextVault } from '../../browser/browser-text-vault'
+import { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
 import { createRuntimeMetadataControl, type RuntimeRenamePolicy } from './runtime-metadata-control'
-import type { PhiTool, PhiToolImage, PhiToolApproval } from '../types'
+import type { PhiTool, PhiToolImage, PhiToolApproval, PhiToolResult } from '../types'
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
 import { RpcConnection } from './connection'
@@ -53,13 +53,24 @@ import type { RpcHostToolRun } from './host-tool-bridge'
 import type { SafeModelDescriptor } from '../model-gateway-types'
 import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../agents/definition'
 import type { SessionRun } from '../../session/session-runner-registry'
-import type { RpcAgentServerBinding } from './subagents/types'
+import type {
+  RpcAgentServerBinding,
+  RpcAgentResourceCatalogInput,
+  CompileRpcAgentDefinitionsOptions,
+  RpcChildRunSnapshot
+} from './subagents/types'
+import type { RpcChildRun } from './subagents/run-registry'
+import type { RpcChildCall } from '../phi-extension/lib/rpc-child-protocol'
+import type { RpcChildWaitOptions, RpcChildWaitResult } from './subagents/child-run-controls'
 import {
   createProductionChildConfig,
   publishProductionChildConfig,
   type PreparedProductionChildConfig
 } from './subagents/production-child-config'
 import { ProductionChildRuntime } from './subagents/production-child-runtime'
+import { completedChildReport } from './subagents/child-report'
+import { verifyRpcChildModelHeader } from '../phi-extension/lib/rpc-child-model-authority'
+import { sameRpcChildScope } from '../phi-extension/lib/rpc-child-protocol'
 
 export interface RemoteRuntimeSnapshot extends Omit<RemoteSessionRecoveryResult, 'modelPolicy'> {
   readonly modelPolicy: RemoteSessionRecoveryResult['modelPolicy'] | 'maintained'
@@ -101,6 +112,22 @@ export interface RemoteSessionRuntimeOptions {
   readonly foregroundChildren?: {
     readonly binding: RpcAgentServerBinding
     readonly definitions: readonly PhiAgentDefinition[]
+    readonly allowParallel?: boolean
+    readonly allowBackground?: boolean
+    readonly resources?: RpcAgentResourceCatalogInput
+    readonly resolveEnvironment?: CompileRpcAgentDefinitionsOptions['resolveEnvironment']
+    readonly classifyTool?: (run: RpcChildRun, call: RpcChildCall) => PhiToolApproval | undefined
+    readonly executeHost?: (
+      run: RpcChildRun,
+      call: RpcChildCall,
+      signal: AbortSignal
+    ) => Promise<PhiToolResult>
+    readonly drainHost?: (childRunId?: string) => Promise<void>
+    readonly onChildChange?: (snapshot: Readonly<RpcChildRunSnapshot>, parent: SessionRun) => void
+    readonly onChildFinished?: (
+      snapshot: Readonly<RpcChildRunSnapshot>,
+      parent: SessionRun
+    ) => void | Promise<void>
     readonly parentThinkingLevel: PhiAgentThinkingLevel
     readonly currentParentRun: () => SessionRun | undefined
     readonly onApprovalEvent?: (parent: SessionRun, event: RpcApprovalEvent) => void
@@ -132,6 +159,7 @@ export class RemoteSessionRuntime {
   private authority?: RpcExecutionAuthority
   private preparedChildren?: PreparedProductionChildConfig
   private children?: ProductionChildRuntime
+  private readonly childVaults = new Map<string, BrowserTextVault>()
   private hostPolicy?: ReturnType<typeof createRpcRuntimeHostPolicy>
   private host?: RpcHostToolBridge
   private approvals?: RpcApprovalBridge
@@ -159,7 +187,12 @@ export class RemoteSessionRuntime {
   private readonly metadata = createRuntimeMetadataControl({
     signal: () => AbortSignal.any([this.lifetime.signal, this.connection.bindControl().signal]),
     claim: () => {
-      if (!this.isReady || this.pending || this.authority?.currentRun())
+      if (
+        !this.isReady ||
+        this.pending ||
+        this.authority?.currentRun() ||
+        this.hasActiveAgentRuns()
+      )
         throw new Error('Remote metadata requires an idle runtime')
       this.ready = false
       this.gate = true
@@ -182,7 +215,7 @@ export class RemoteSessionRuntime {
   }
   async assertIdle(control?: RuntimeSelectionControl): Promise<void> {
     control?.assertCurrent()
-    if (!this.isReady || this.pending || this.authority?.currentRun())
+    if (!this.isReady || this.pending || this.authority?.currentRun() || this.hasActiveAgentRuns())
       throw new Error('Control requires an idle remote runtime')
     const state = await this.connection.request({ type: 'get_state' })
     control?.assertCurrent()
@@ -233,7 +266,7 @@ export class RemoteSessionRuntime {
   compact(
     control?: RuntimeSelectionControl
   ): Promise<{ summary: RpcCompactionSummary; snapshot: RemoteRuntimeSnapshot }> {
-    if (!this.isReady || this.manualCompaction || this.pending)
+    if (!this.isReady || this.manualCompaction || this.pending || this.hasActiveAgentRuns())
       return Promise.reject(new Error('Compaction requires an idle remote runtime'))
     this.ready = false
     this.gate = true
@@ -389,6 +422,72 @@ export class RemoteSessionRuntime {
   currentRun(): RpcHostToolRun | undefined {
     return this.hostPolicy?.currentRun()
   }
+  hasActiveAgentRuns(): boolean {
+    return this.children?.hasActiveChildren() ?? false
+  }
+  childRunForHost(id: string): RpcChildRun | undefined {
+    return this.children?.childRunForHost(id)
+  }
+  childBrowserTextVault(id: string): BrowserTextVault {
+    const run = this.childRunForHost(id)
+    if (!run) throw new Error('Child privacy authority is unavailable')
+    let vault = this.childVaults.get(run.id)
+    if (!vault) {
+      vault = new BrowserTextVault({ allowTypeText: false })
+      this.childVaults.set(run.id, vault)
+    }
+    return vault
+  }
+  childResourceOwner(id: string): {
+    readonly toolOwner: string
+    readonly allowedSkills: readonly string[]
+  } {
+    const run = this.childRunForHost(id)
+    const profile =
+      run &&
+      this.preparedChildren?.config.profiles.find(
+        (entry) => entry.definition.nativeName === run.scope.nativeName
+      )
+    if (!profile) throw new Error('Child resource owner is unavailable')
+    return Object.freeze({
+      toolOwner: profile.definition.phiName,
+      allowedSkills: Object.freeze([...profile.definition.skills])
+    })
+  }
+  listChildRuns(): readonly Readonly<RpcChildRunSnapshot>[] {
+    return this.children?.listRuns() ?? []
+  }
+  steerChild(id: string, message: string, signal?: AbortSignal): Promise<void> {
+    if (!this.children) return Promise.reject(new Error('Child controls are unavailable'))
+    return this.children.steer(id, message, signal)
+  }
+  stopChild(id: string, signal?: AbortSignal): Promise<Readonly<RpcChildRunSnapshot>> {
+    if (!this.children) return Promise.reject(new Error('Child controls are unavailable'))
+    return this.children.stopChild(id, signal)
+  }
+  waitForChildren(options: RpcChildWaitOptions): Promise<RpcChildWaitResult> {
+    if (!this.children) return Promise.reject(new Error('Child controls are unavailable'))
+    return this.children.wait(options)
+  }
+  awaitChildCompletionDelivery(id: string): Promise<void> {
+    if (!this.children) return Promise.reject(new Error('Child completion delivery is unavailable'))
+    return this.children.awaitChildCompletionDelivery(id)
+  }
+  async readChildReport(run: Readonly<RpcChildRunSnapshot>, signal?: AbortSignal): Promise<string> {
+    const known = this.children?.status(run.id)
+    if (!known || known.nativeId !== run.nativeId || known.completedAt === undefined)
+      throw new Error('Child report is not owned by this generation')
+    if (known.status !== 'completed') return ''
+    const result = await withRemoteSignal(
+      this.connection.request<{ messages: unknown[] }>({
+        type: 'get_subagent_messages',
+        subagentId: known.nativeId
+      }),
+      AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])])
+    )
+    if (!Array.isArray(result.messages)) throw new Error('Child report is unavailable')
+    return completedChildReport(result.messages)
+  }
   currentSnapshot(): RemoteRuntimeSnapshot {
     if (!this.snapshot || !this.isReady) throw new Error('Remote runtime is not ready')
     return this.snapshot
@@ -478,6 +577,20 @@ export class RemoteSessionRuntime {
         beforeLaunch: this.active,
         currentBrowserRunSignal: () =>
           this.promptController?.signal ?? this.manualController?.signal,
+        resolveBrowserChildRun: (header) => {
+          try {
+            this.lifetime.signal.throwIfAborted()
+            this.options.assertBinding?.()
+          } catch {
+            return undefined
+          }
+          if (!this.preparedChildren || !this.children) return undefined
+          const scope = verifyRpcChildModelHeader(header, this.preparedChildren.config.capability)
+          const run = scope && this.children.childRunForHost(scope.nativeAgentId)
+          if (!scope || !run || run.signal.aborted || !sameRpcChildScope(scope, run.scope))
+            return undefined
+          return { signal: run.signal, vault: this.childBrowserTextVault(run.id) }
+        },
         prepareRuntime: async (context) => {
           this.lifetime.signal.throwIfAborted()
           if (!context.storage) throw new Error('Remote runtime requires persistent launch storage')
@@ -498,6 +611,20 @@ export class RemoteSessionRuntime {
               },
               binding: options.foregroundChildren.binding,
               definitions: options.foregroundChildren.definitions,
+              availableTools: [
+                ...roster
+                  .filter((tool) => tool.site === 'native' && tool.name !== 'task')
+                  .map(({ name, site }) => ({ name, site })),
+                ...(options.foregroundChildren.resources?.hostTools ?? []).map(({ name }) => ({
+                  name,
+                  site: 'host' as const
+                }))
+              ],
+              availableSkills: options.foregroundChildren.resources?.skills.map(({ name }) => name),
+              resources: options.foregroundChildren.resources,
+              resolveEnvironment: options.foregroundChildren.resolveEnvironment,
+              allowBackground: options.foregroundChildren.allowBackground,
+              allowParallel: options.foregroundChildren.allowParallel,
               modelDescriptors: context.modelDescriptors,
               parentModel: options.initialSelection?.model ?? context.params.model,
               parentThinkingLevel: options.foregroundChildren.parentThinkingLevel,
@@ -580,6 +707,9 @@ export class RemoteSessionRuntime {
             ...(this.preparedChildren
               ? {
                   childRuntimeRequired: true,
+                  childBackgroundEnabled:
+                    this.preparedChildren.config.policy.allowBackground === true,
+                  childParallelEnabled: this.preparedChildren.config.policy.allowParallel === true,
                   foregroundChildNativeNames: Object.freeze(
                     this.preparedChildren.config.profiles.map(
                       (profile) => profile.definition.nativeName
@@ -728,13 +858,16 @@ export class RemoteSessionRuntime {
       })
       this.active()
       if (options.compaction) await this.compactionPolicyUnderGate(result)
-      await this.checkpointUnderGate(options.sessionName, {
+      const selection = {
         model: {
           provider: options.initialSelection.model.provider,
           id: options.initialSelection.model.id
         },
         thinkingLevel: options.initialSelection.thinkingLevel
-      })
+      }
+      if (options.sessionName !== undefined)
+        await this.metadata.reconcileInitialName(options.sessionName, { ...result, ...selection })
+      await this.checkpointUnderGate(options.sessionName, selection)
       return
     }
     if (options.compaction) await this.compactionPolicyUnderGate(result)
@@ -779,6 +912,7 @@ export class RemoteSessionRuntime {
         currentParentRun: options.foregroundChildren.currentParentRun,
         approval: {
           ...options.approval,
+          classifyTool: options.foregroundChildren.classifyTool,
           onEvent: (event) => {
             const parent = this.children?.parentForChild(event.runId)
             if (!parent) throw new Error('Child approval has no captured Phi parent')
@@ -797,6 +931,41 @@ export class RemoteSessionRuntime {
         },
         onError: (error) => {
           void this.interrupt(error).catch(() => undefined)
+        },
+        executeHost: options.foregroundChildren.executeHost
+          ? async (run, call, requestId, signal) => {
+              const result = await options.foregroundChildren!.executeHost!(run, call, signal)
+              return this.delivery!.publish(
+                result,
+                {
+                  runId: run.id,
+                  invocationId: requestId,
+                  toolCallId: call.toolCallId,
+                  toolName: call.toolName
+                },
+                signal
+              )
+            }
+          : undefined,
+        hostResultConsumed: (run, call) => this.delivery!.consumed(run.id, call.toolCallId),
+        drainHost: options.foregroundChildren.drainHost,
+        onChildChange: (snapshot, parent) => {
+          try {
+            options.foregroundChildren?.onChildChange?.(snapshot, parent)
+          } finally {
+            if (snapshot.completedAt !== undefined) {
+              this.childVaults.get(snapshot.id)?.clear()
+              this.childVaults.delete(snapshot.id)
+            }
+          }
+        },
+        onChildFinished: async (snapshot, parent) => {
+          try {
+            await options.foregroundChildren?.onChildFinished?.(snapshot, parent)
+          } finally {
+            this.childVaults.get(snapshot.id)?.clear()
+            this.childVaults.delete(snapshot.id)
+          }
         },
         signal: this.lifetime.signal
       })
@@ -869,7 +1038,10 @@ export class RemoteSessionRuntime {
       await this.authority!.beginRun(runId, controller.signal)
       let result: RemoteRuntimeTurnResult['result']
       try {
-        result = await this.authority!.prompt(text, options)
+        result = await this.authority!.prompt(text, options, async (received) => {
+          if (received.status !== 'aborted' && !controller.signal.aborted)
+            await this.children?.awaitParentPromptSettled(runId, this.lifetime.signal)
+        })
       } catch (error) {
         if (!this.stopping) throw error
         await this.stopping
@@ -878,7 +1050,8 @@ export class RemoteSessionRuntime {
         result = { type: 'runtime_stop', status: 'aborted' }
       }
       await this.stopping
-      this.children?.assertParentSettled(runId)
+      if (controller.signal.aborted || result.status === 'aborted')
+        this.children?.assertParentSettled(runId)
       this.gate = true
       const snapshot = await this.checkpoint()
       this.active()
@@ -1029,6 +1202,33 @@ export class RemoteSessionRuntime {
         stopFailed = false
       try {
         await stopped
+      } catch (error) {
+        stopFailed = true
+        stopError = error
+      }
+      try {
+        if (this.children && !this.connection.bindControl().signal.aborted) {
+          const parents = new Set(
+            this.children
+              .listRuns()
+              .filter((run) => run.completedAt === undefined)
+              .map((run) => run.parentRunId)
+          )
+          const results = await Promise.allSettled(
+            [...parents].map((parent) =>
+              Promise.resolve().then(() => this.children!.stopParent(parent))
+            )
+          )
+          const failed = results.find((result) => result.status === 'rejected')
+          if (failed?.status === 'rejected') throw failed.reason
+        }
+      } catch (error) {
+        if (!stopFailed) {
+          stopFailed = true
+          stopError = error
+        }
+      }
+      try {
         if (this.manualCompaction) {
           const pending = this.manualCompaction,
             controller = this.manualController
@@ -1048,12 +1248,24 @@ export class RemoteSessionRuntime {
           if (failed) throw failure
         }
       } catch (error) {
-        stopFailed = true
-        stopError = error
+        if (!stopFailed) {
+          stopFailed = true
+          stopError = error
+        }
       }
       this.lifetime.abort(reason)
       for (const detach of this.detach.splice(0)) detach()
       this.children?.dispose()
+      for (const vault of this.childVaults.values()) vault.clear()
+      this.childVaults.clear()
+      try {
+        await this.options.foregroundChildren?.drainHost?.()
+      } catch (error) {
+        if (!stopFailed) {
+          stopFailed = true
+          stopError = error
+        }
+      }
       this.approvals?.dispose()
       this.host?.dispose()
       await Promise.allSettled([

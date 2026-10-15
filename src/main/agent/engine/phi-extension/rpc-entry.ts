@@ -16,6 +16,9 @@ import {
 import { createRpcNativeStreamExtension } from './extensions/rpc-native-stream'
 import { registerRpcSessionVerification } from './extensions/rpc-session-verification'
 import { createRpcSubagentsExtension } from './extensions/rpc-subagents'
+import { createRpcChildControlExtension } from './extensions/rpc-child-control'
+import { createRpcChildSteerPermits } from './extensions/rpc-child-steer-permit'
+import { createRpcChildModelHeader, RPC_CHILD_MODEL_HEADER } from './lib/rpc-child-model-authority'
 import { createCursorStreamRecoveryExtension } from './extensions/cursor-stream-recovery'
 import {
   createRpcTaskAdmissionExtension,
@@ -28,7 +31,11 @@ import {
   CHILD_ATTEST_COMMAND,
   CHILD_ATTEST_DESCRIPTION
 } from './lib/rpc-child-config'
-import { validateRpcChildRoot, type RpcChildRootScope } from './lib/rpc-child-protocol'
+import {
+  sameRpcChildRoot,
+  validateRpcChildRoot,
+  type RpcChildRootScope
+} from './lib/rpc-child-protocol'
 import { executionRoster } from './lib/rpc-execution-protocol'
 import {
   loadRpcRuntimeConfig,
@@ -112,7 +119,18 @@ function rawLiteralCollision(rawPath: string): boolean {
   return false
 }
 // One process generation owns child lifetime across its real per-session extension instances.
-const childGenerations = new Map<string, { digest: string; controller: AbortController }>()
+const childGenerations = new Map<
+  string,
+  {
+    digest: string
+    controller: AbortController
+    steerPermits: ReturnType<typeof createRpcChildSteerPermits>
+    taskOwner?: {
+      root: RpcChildRootScope
+      tasks: ReturnType<typeof createRpcTaskAdmissionExtension>
+    }
+  }
+>()
 
 const rpcExtension: ExtensionFactory = async (pi) => {
   const config = loadRpcBootstrapConfig(process.env[RPC_BOOTSTRAP_CONFIG_ENV])
@@ -138,6 +156,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         )
       : undefined
   let childPreflight: RpcVerifiedChildDispatch | undefined
+  let childGeneration: ReturnType<typeof childGenerations.get>
   if (
     process.env.PHI_RPC_RUNTIME !== undefined &&
     (process.env.PHI_RPC_RUNTIME !== '1' || !runtime || !modelMetadata)
@@ -215,10 +234,15 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       if (generation && (generation.digest !== digest || generation.controller.signal.aborted))
         throw new Error('Phi child generation is retired or differs')
       if (!generation) {
-        generation = { digest, controller: new AbortController() }
+        generation = {
+          digest,
+          controller: new AbortController(),
+          steerPermits: createRpcChildSteerPermits()
+        }
         childGenerations.set(config.nonce, generation)
       }
       const ownedGeneration = generation
+      childGeneration = ownedGeneration
       const root = (): RpcChildRootScope | undefined => {
         if (ownedGeneration.controller.signal.aborted) return undefined
         const ref = pi.pi.AgentRegistry.global().get('Main')
@@ -240,6 +264,15 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         })
       }
       childController = createRpcSubagentsExtension({
+        resources: childConfig.resources,
+        agentDir: process.env.PI_CODING_AGENT_DIR!,
+        hostResult: {
+          generationDirectory: runtime.generationDirectory,
+          directory: runtime.result.directory,
+          capability: runtime.result.capability,
+          leaseId: runtime.result.leaseId
+        },
+        steerPermits: ownedGeneration.steerPermits,
         readiness: () => {
           const identity = root()
           return identity
@@ -275,6 +308,24 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         }
       })
       const tasks = taskAdmission
+      await createRpcChildControlExtension({
+        config: childConfig,
+        root,
+        signal: ownedGeneration.controller.signal,
+        steerPermits: ownedGeneration.steerPermits,
+        assertPublication: () => {
+          const fresh = loadRpcChildRuntimeConfig(
+            process.env[RPC_BOOTSTRAP_CONFIG_ENV]!,
+            childConfig,
+            {
+              required: true,
+              otherCapabilities: [runtime.execution.capability, runtime.result.capability]
+            }
+          )
+          if (!fresh || childConfigDigest(fresh) !== digest)
+            throw new Error('Phi child publication changed')
+        }
+      })(pi)
       pi.registerCommand(CHILD_ATTEST_COMMAND, {
         description: CHILD_ATTEST_DESCRIPTION,
         handler: async (args, ctx) => {
@@ -283,13 +334,16 @@ const rpcExtension: ExtensionFactory = async (pi) => {
           tasks.assertInstalled(ctx)
           const identity = root()
           if (!identity) throw new Error('Phi child root identity is unavailable')
+          ownedGeneration.taskOwner = { root: identity, tasks }
           ctx.ui.notify(JSON.stringify(makeRpcChildAttestation(childConfig, identity)), 'info')
         }
       })
       pi.on('session_shutdown', (_event, ctx) => {
-        if (ctx.agent.kind === 'main') ownedGeneration.controller.abort()
-        children.dispose()
-        tasks.dispose()
+        if (ctx.agent.kind === 'main') {
+          ownedGeneration.controller.abort()
+          children.dispose()
+          tasks.dispose()
+        }
       })
     }
     const execution = createRpcExecutionAuthorityExtension({
@@ -312,15 +366,36 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     const hostNames = new Set(
       roster.tools.filter((tool) => tool.site === 'host').map((tool) => tool.name)
     )
-    const native = createRpcNativeStreamExtension({
-      generation: runtime.generation,
-      endpoint: runtime.native.endpoint,
-      models: runtime.native.models,
-      signal: lifetime.signal,
-      isActive: () =>
-        !lifetime.signal.aborted &&
-        (compaction.isActive() || (taskAdmission?.isStreamActive() ?? true))
-    })
+    const native = createRpcNativeStreamExtension(
+      {
+        generation: runtime.generation,
+        endpoint: runtime.native.endpoint,
+        models: runtime.native.models,
+        signal: lifetime.signal,
+        isActive: () =>
+          !lifetime.signal.aborted &&
+          (compaction.isActive() || (taskAdmission?.isStreamActive() ?? true))
+      },
+      (ctx, expectedNativeWrapper) => {
+        if (ctx.agent.kind === 'main') return undefined
+        const childScope = childController?.modelScope(ctx, expectedNativeWrapper)
+        const owner = childGeneration?.taskOwner
+        if (
+          !childConfig ||
+          !childScope ||
+          !childGeneration ||
+          childGenerations.get(config.nonce) !== childGeneration ||
+          childGeneration.controller.signal.aborted ||
+          !owner ||
+          !sameRpcChildRoot(owner.root, childScope) ||
+          !owner.tasks.isChildStreamActive(childScope.nativeAgentId)
+        )
+          throw new Error('Child model authority is unavailable')
+        return {
+          [RPC_CHILD_MODEL_HEADER]: createRpcChildModelHeader(childScope, childConfig.capability)
+        }
+      }
+    )
     await native.extension(pi)
     if (childController && taskAdmission) {
       await childController.extension(pi)

@@ -70,7 +70,8 @@ export function createRpcPromptExtension(
             {
               personaMarkdown: policy.personaMarkdown,
               runtime: policy.runtime,
-              memoryBlock: policy.memoryBlock
+              memoryBlock: policy.memoryBlock,
+              recoverySummary: policy.recoverySummary
             }
           )
         }

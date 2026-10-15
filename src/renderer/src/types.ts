@@ -47,6 +47,7 @@ import type { McpRendererApi } from './features/mcp/lib/mcpTypes'
 export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
+import type { RuntimeRecoveryApi } from '../../shared/runtimeRecoveryTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
 export type {
   HomeActivityDay,
@@ -723,6 +724,7 @@ export interface AnalysisNotebookFormatResult {
 export interface RendererApi
   extends
     AutoCompactionApi,
+    RuntimeRecoveryApi,
     ManagedEnvironmentRendererApi,
     McpRendererApi,
     RemoteProjectUploadRendererApi,

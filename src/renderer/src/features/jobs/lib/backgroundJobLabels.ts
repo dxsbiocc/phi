@@ -31,7 +31,8 @@ const AGENT_STATE_LABELS = {
   running: '运行中',
   done: '已完成',
   error: '失败',
-  cancelled: '已停止'
+  cancelled: '已停止',
+  interrupted: '已中断'
 } satisfies Record<BackgroundAgentJob['state'], string>
 
 const SHELL_STATE_LABELS = {
@@ -161,6 +162,7 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   }
   return [
     AGENT_STATE_LABELS[item.run.state],
+    item.run.historyAvailable === false ? '旧连接的记录，未自动重启' : undefined,
     duration,
     item.run.lastStep,
     item.run.toolCalls ? `${item.run.toolCalls} 步` : undefined
@@ -214,6 +216,7 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
 
 export function canStopJob(item: UnifiedBackgroundJob): boolean {
   if (item.kind === 'history') return false
+  if (item.kind === 'agent' && item.run.canControl === false) return false
   if (item.kind === 'wrapper') return canStopUnifiedWrapperRun(item.run)
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
   if (item.kind === 'jupyter') return false
@@ -254,6 +257,9 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
           { label: '对话', value: item.run.sessionTitle },
           { label: '任务', value: item.run.task },
           { label: '状态', value: status },
+          item.run.historyAvailable === false
+            ? { label: '说明', value: '旧连接的任务记录；执行历史不可用，未自动重启。' }
+            : undefined,
           { label: '开始时间', value: timeLabel(item.run.startedAt) },
           {
             label: '耗时',

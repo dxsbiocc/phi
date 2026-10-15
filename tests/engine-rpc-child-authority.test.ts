@@ -106,9 +106,9 @@ test('actual tool, model, prompt and thinking profile mismatches remain closed',
     }
   }
 })
-test('unsupported background, host and resource profiles fail before registry creation', () => {
+test('unverified host and resource profiles and invalid mode fail before registry creation', () => {
   for (const definition of [
-    { ...childProfile.definition, blocking: false },
+    { ...childProfile.definition, blocking: 'background' as unknown as boolean },
     { ...childProfile.definition, skills: ['unverified'] },
     { ...childProfile.definition, tools: [{ name: 'ChildHost', site: 'host' as const }] }
   ]) {
@@ -116,6 +116,16 @@ test('unsupported background, host and resource profiles fail before registry cr
       () => childAuthority({ profiles: [{ ...childProfile, definition }] }),
       /profile|native tool/
     )
+  }
+})
+test('low-level authority accepts the explicit trusted background profile without granting any invocation', () => {
+  const { authority } = childAuthority({
+    profiles: [{ ...childProfile, definition: { ...childProfile.definition, blocking: false } }]
+  })
+  try {
+    assert.equal(authority.registry.current(childScope), undefined)
+  } finally {
+    authority.dispose()
   }
 })
 test('capability, request replay and sequence gaps cannot gain child authority', async () => {
@@ -310,7 +320,7 @@ test('compiler-to-wire model mapper explicitly refuses unknown and invalid limit
     assert.throws(
       () =>
         rpcChildProfileFromDefinition(
-          childProfile.definition,
+          { ...childProfile.definition, environment: undefined },
           childProfile.systemPrompt,
           {
             ...childModel,
@@ -322,7 +332,7 @@ test('compiler-to-wire model mapper explicitly refuses unknown and invalid limit
     )
   assert.deepEqual(
     rpcChildProfileFromDefinition(
-      childProfile.definition,
+      { ...childProfile.definition, environment: undefined },
       childProfile.systemPrompt,
       childModel,
       childProfile.route

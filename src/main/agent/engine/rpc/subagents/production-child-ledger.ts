@@ -11,7 +11,12 @@ interface ParentTask {
   readonly toolCallId: string
   readonly digest: string
   readonly controlSequence: number
-  nativeId?: string
+  readonly nativeIds: Set<string>
+  declaredTaskCount?: number
+  expectedTaskCount?: number
+  dispatchSealed: boolean
+  launchAttested: boolean
+  conflict?: boolean
   endedWithoutStart?: boolean
   noSpawn?: boolean
 }
@@ -23,6 +28,18 @@ export interface ProductionChildLedgerOptions {
   readonly onStop: (parent: SessionRun) => void
   /** Only a registry-confirmed terminal permits a later parent turn to reuse a provider outer ID. */
   readonly isNativeTerminal?: (nativeId: string, parentRunId: string) => boolean
+  readonly allowBackground?: boolean
+  readonly maxChildrenPerTask?: number
+  readonly requireDispatchSeal?: boolean
+}
+export interface VerifiedTaskLaunchExpectation {
+  readonly parentRunId: string
+  readonly toolCallId: string
+  readonly controlSequence: number
+  readonly inputDigest: string
+  readonly declaredTaskCount: number
+  readonly expectedTaskCount: number
+  readonly dispatchSealed: boolean
 }
 
 /** Only the execution authority's verified origin callback admits a parent task. */
@@ -32,10 +49,15 @@ export class ProductionChildLedger {
   private readonly native = new Map<string, ParentTask>()
   private readonly changed = new Set<() => void>()
   private readonly retirement = new Set<string>()
+  private readonly pendingLaunches = new Map<string, VerifiedTaskLaunchExpectation>()
+  private readonly maximum: number
   private disposed = false
 
   constructor(private readonly options: ProductionChildLedgerOptions) {
     this.options = Object.freeze({ ...options })
+    this.maximum = options.maxChildrenPerTask ?? 1
+    if (!Number.isSafeInteger(this.maximum) || this.maximum < 1 || this.maximum > 32)
+      throw new Error('Invalid task child capacity')
   }
 
   remember({ origin, run }: RpcVerifiedTaskOrigin): void {
@@ -43,10 +65,12 @@ export class ProductionChildLedger {
     const previous = this.tasks.get(origin.toolCallId)
     const reusable =
       !!parent &&
-      !!previous?.nativeId &&
+      !!previous?.nativeIds.size &&
       !previous.noSpawn &&
       previous.parent.runId !== parent.runId &&
-      this.options.isNativeTerminal?.(previous.nativeId, previous.parent.runId) === true
+      [...previous.nativeIds].every(
+        (id) => this.options.isNativeTerminal?.(id, previous.parent.runId) === true
+      )
     if (
       this.disposed ||
       origin.toolName !== 'task' ||
@@ -78,8 +102,17 @@ export class ProductionChildLedger {
       parent,
       toolCallId: origin.toolCallId,
       digest: origin.inputDigest,
-      controlSequence: origin.sequence
+      controlSequence: origin.sequence,
+      nativeIds: new Set(),
+      expectedTaskCount: this.options.requireDispatchSeal ? undefined : 1,
+      dispatchSealed: this.options.requireDispatchSeal !== true,
+      launchAttested: false
     })
+    const pending = this.pendingLaunches.get(JSON.stringify([parent.runId, origin.toolCallId]))
+    if (pending) {
+      this.pendingLaunches.delete(JSON.stringify([parent.runId, origin.toolCallId]))
+      this.acceptTaskLaunch(pending)
+    }
   }
 
   captureParent(started: RpcChildStarted): { readonly runId: string } | undefined {
@@ -88,12 +121,18 @@ export class ProductionChildLedger {
       this.disposed ||
       !task ||
       task.toolCallId !== started.parentToolCallId ||
-      started.detached ||
-      (task.nativeId !== undefined && task.nativeId !== started.id) ||
+      (started.detached && !this.options.allowBackground) ||
       (this.native.has(started.id) && this.native.get(started.id) !== task)
     )
       return undefined
-    task.nativeId = started.id
+    if (
+      !task.nativeIds.has(started.id) &&
+      task.nativeIds.size >= (task.expectedTaskCount ?? this.maximum)
+    ) {
+      if (!task.launchAttested && this.maximum === 1) return undefined
+      task.conflict = true
+    }
+    task.nativeIds.add(started.id)
     this.native.set(started.id, task)
     this.notify()
     return Object.freeze({ runId: task.parent.runId })
@@ -109,11 +148,67 @@ export class ProductionChildLedger {
     )
       return
     const task = this.tasks.get(frame.toolCallId)
-    if (task && !task.nativeId) {
+    if (task && !task.nativeIds.size) {
       // A finished task without its observed start is uncertain, never evidence of an empty child set.
       task.endedWithoutStart = true
       this.notify()
     }
+  }
+  /** Only the runtime's verified, generation-bound HMAC receipt may enter here. */
+  acceptTaskLaunch(proof: VerifiedTaskLaunchExpectation): void {
+    if (
+      this.disposed ||
+      !Number.isSafeInteger(proof.declaredTaskCount) ||
+      proof.declaredTaskCount < 1 ||
+      proof.declaredTaskCount > this.maximum ||
+      !Number.isSafeInteger(proof.expectedTaskCount) ||
+      proof.expectedTaskCount < 0 ||
+      proof.expectedTaskCount > proof.declaredTaskCount ||
+      (!proof.dispatchSealed && proof.expectedTaskCount !== proof.declaredTaskCount)
+    )
+      throw new Error('Invalid authenticated task dispatch count')
+    const task = this.tasks.get(proof.toolCallId)
+    if (!task || task.parent.runId !== proof.parentRunId) {
+      const parent = this.options.currentParentRun()
+      if (
+        !parent ||
+        parent.runId !== proof.parentRunId ||
+        parent.sessionId !== this.options.phiSessionId ||
+        parent.signal.aborted ||
+        this.pendingLaunches.size >= MAX_EXECUTION_CALLS
+      )
+        throw new Error('Task launch receipt lacks its registered parent')
+      const key = JSON.stringify([proof.parentRunId, proof.toolCallId])
+      const previous = this.pendingLaunches.get(key)
+      if (previous?.dispatchSealed && !proof.dispatchSealed) return
+      if (
+        previous &&
+        (previous.inputDigest !== proof.inputDigest ||
+          previous.controlSequence !== proof.controlSequence ||
+          previous.declaredTaskCount !== proof.declaredTaskCount)
+      )
+        throw new Error('Task launch receipt was replaced')
+      this.pendingLaunches.set(key, Object.freeze({ ...proof }))
+      return
+    }
+    if (
+      task.digest !== proof.inputDigest ||
+      task.controlSequence !== proof.controlSequence ||
+      (task.declaredTaskCount !== undefined && task.declaredTaskCount !== proof.declaredTaskCount)
+    )
+      throw new Error('Task launch receipt differs from its authenticated origin')
+    if (task.launchAttested && task.dispatchSealed) {
+      if (!proof.dispatchSealed) return
+      if (task.expectedTaskCount !== proof.expectedTaskCount)
+        throw new Error('Task dispatch seal was replaced')
+      return
+    }
+    task.declaredTaskCount = proof.declaredTaskCount
+    task.expectedTaskCount = proof.expectedTaskCount
+    task.dispatchSealed = proof.dispatchSealed
+    task.launchAttested = true
+    if (task.nativeIds.size > proof.expectedTaskCount) task.conflict = true
+    this.notify()
   }
 
   /** Caller must first verify the private receipt HMAC and immutable generation/root configuration. */
@@ -139,14 +234,21 @@ export class ProductionChildLedger {
 
   hasNoSpawnConflict(parentRunId: string): boolean {
     return [...this.native.values()].some(
-      (task) => task.parent.runId === parentRunId && task.noSpawn === true
+      (task) =>
+        task.parent.runId === parentRunId && (task.noSpawn === true || task.conflict === true)
     )
   }
 
   assertNoPendingStarts(parentRunId: string): void {
     if (this.disposed) throw new Error('Child parent ledger is unavailable')
     const pending = [...this.tasks.values()].filter(
-      (task) => task.parent.runId === parentRunId && !task.nativeId && !task.noSpawn
+      (task) =>
+        task.parent.runId === parentRunId &&
+        !task.noSpawn &&
+        (!task.dispatchSealed ||
+          task.expectedTaskCount === undefined ||
+          task.expectedTaskCount === 0 ||
+          task.nativeIds.size < task.expectedTaskCount)
     )
     if (pending.some((task) => task.endedWithoutStart))
       throw new Error(
@@ -163,7 +265,13 @@ export class ProductionChildLedger {
       signal.throwIfAborted()
       if (this.disposed) throw new Error('Child parent ledger is unavailable')
       const pending = [...this.tasks.values()].filter(
-        (task) => task.parent.runId === parentRunId && !task.nativeId && !task.noSpawn
+        (task) =>
+          task.parent.runId === parentRunId &&
+          !task.noSpawn &&
+          (!task.dispatchSealed ||
+            task.expectedTaskCount === undefined ||
+            task.expectedTaskCount === 0 ||
+            task.nativeIds.size < task.expectedTaskCount)
       )
       if (!pending.length) return
       let wake!: () => void
@@ -190,6 +298,23 @@ export class ProductionChildLedger {
   parent(runId: string): SessionRun | undefined {
     return this.disposed ? undefined : this.parents.get(runId)?.run
   }
+  nativeIdsForParent(parentRunId: string): readonly string[] {
+    return Object.freeze(
+      [...this.native.entries()]
+        .filter(([, task]) => task.parent.runId === parentRunId)
+        .map(([id]) => id)
+    )
+  }
+  hasPendingStarts(): boolean {
+    return [...this.tasks.values()].some(
+      (task) =>
+        !task.noSpawn &&
+        (!task.dispatchSealed ||
+          task.expectedTaskCount === undefined ||
+          task.expectedTaskCount === 0 ||
+          task.nativeIds.size < task.expectedTaskCount)
+    )
+  }
 
   dispose(): void {
     if (this.disposed) return
@@ -199,5 +324,6 @@ export class ProductionChildLedger {
     this.parents.clear()
     this.tasks.clear()
     this.native.clear()
+    this.pendingLaunches.clear()
   }
 }
