@@ -5,6 +5,7 @@ import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 import { createRpcModelSelectionExtension } from './extensions/rpc-model-selection'
+import { createRpcCompactionExtension } from './extensions/rpc-compaction-control'
 import { createRpcExecutionAuthorityExtension } from './extensions/rpc-execution-authority'
 import { createRpcToolApprovalExtension } from './extensions/rpc-tool-approval'
 import {
@@ -201,6 +202,8 @@ const rpcExtension: ExtensionFactory = async (pi) => {
 
   if (runtime) {
     const lifetime = new AbortController()
+    const compaction = createRpcCompactionExtension(runtime, lifetime.signal)
+    await compaction.extension(pi)
     let childController: ReturnType<typeof createRpcSubagentsExtension> | undefined
     let taskAdmission: ReturnType<typeof createRpcTaskAdmissionExtension> | undefined
     if (childConfig) {
@@ -311,7 +314,9 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       endpoint: runtime.native.endpoint,
       models: runtime.native.models,
       signal: lifetime.signal,
-      isActive: () => !lifetime.signal.aborted && (taskAdmission?.isStreamActive() ?? true)
+      isActive: () =>
+        !lifetime.signal.aborted &&
+        (compaction.isActive() || (taskAdmission?.isStreamActive() ?? true))
     })
     await native.extension(pi)
     if (childController && taskAdmission) {

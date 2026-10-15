@@ -235,7 +235,8 @@ const localAgentOptions = new Set([
   // The native client also serializes remote-local endpoint/concurrency defaults.
   // The official gateway drops these; the desktop SDK owns its own defaults.
   'antigravityEndpointMode',
-  'maxInFlightRequests'
+  'maxInFlightRequests',
+  'codexCompaction'
 ])
 
 function validateOptions(value: unknown, sessionKey: string): SimpleStreamOptions {

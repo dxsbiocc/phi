@@ -1,4 +1,14 @@
 import { assertSafeBrowserHistory } from './browser-tool-stream'
+import {
+  assertRuntimeIdleState,
+  requestRuntimeCompactionControl
+} from './runtime-compaction-control'
+import {
+  compactionPolicy,
+  type RpcCompactionPolicy,
+  type RpcCompactionSummary
+} from '../phi-extension/lib/rpc-compaction-control'
+import type { RuntimeSelectionControl } from '../types'
 import { confirmInitialThinking, type RuntimeInitialSelection } from './runtime-selection-control'
 import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
@@ -63,6 +73,7 @@ export interface RemoteRuntimeTurnResult {
   readonly outcome: 'completed' | 'failed' | 'aborted'
 }
 export interface RemoteSessionRuntimeOptions {
+  readonly compaction?: RpcCompactionPolicy
   readonly transport: Omit<ModelProxyRpcTransportOptions, 'prepareRuntime'>
   readonly params: RpcSessionCreateParams
   readonly action: RemoteRecoveryAction
@@ -130,6 +141,14 @@ export class RemoteSessionRuntime {
   private deniedRun?: string
   private readonly detach: Array<() => void> = []
   private selectionGuard?: RuntimeInitialSelection
+  private manualCompaction?: Promise<{
+    summary: RpcCompactionSummary
+    snapshot: RemoteRuntimeSnapshot
+  }>
+  private manualController?: AbortController
+  private manualCancelled = false
+  private manualAbort?: Promise<void>
+  private manualFailureClosing = false
   private readonly metadata = createRuntimeMetadataControl({
     signal: () => AbortSignal.any([this.lifetime.signal, this.connection.bindControl().signal]),
     claim: () => {
@@ -153,6 +172,136 @@ export class RemoteSessionRuntime {
   })
   readContextUsage(): Promise<ContextUsageSnapshot | null> {
     return this.metadata.readContextUsage()
+  }
+  async assertIdle(control?: RuntimeSelectionControl): Promise<void> {
+    control?.assertCurrent()
+    if (!this.isReady || this.pending || this.authority?.currentRun())
+      throw new Error('Control requires an idle remote runtime')
+    const state = await this.connection.request({ type: 'get_state' })
+    control?.assertCurrent()
+    if (!this.isReady) throw new Error('Remote generation changed during idle confirmation')
+    assertRuntimeIdleState(state, this.snapshot!)
+  }
+  private async compactionPolicyUnderGate(
+    snapshot = this.snapshot!,
+    signal = this.lifetime.signal
+  ): Promise<RpcCompactionPolicy> {
+    if (!this.options.compaction || !this.config)
+      throw new Error('Owned compaction policy is unavailable')
+    const result = await requestRuntimeCompactionControl({
+      connection: this.connection,
+      identity: {
+        nonce: this.config.nonce,
+        phiSessionId: this.config.phiSessionId,
+        generation: this.config.generation,
+        ompSessionId: snapshot.reference.ompSessionId,
+        journalPath: snapshot.checkpoint.journalPath
+      },
+      policy: this.options.compaction,
+      operation: 'settings',
+      signal,
+      assertCurrent: this.active
+    })
+    this.active()
+    return compactionPolicy(result.policy)
+  }
+  async readCompactionPolicy(): Promise<RpcCompactionPolicy> {
+    await this.assertIdle()
+    this.ready = false
+    this.gate = true
+    try {
+      return await this.compactionPolicyUnderGate()
+    } catch (error) {
+      await this.interrupt(
+        error instanceof Error ? error : new Error('Compaction policy readback failed')
+      )
+      throw error
+    } finally {
+      if (!this.closing) {
+        this.ready = true
+        this.gate = false
+      }
+    }
+  }
+  compact(
+    control?: RuntimeSelectionControl
+  ): Promise<{ summary: RpcCompactionSummary; snapshot: RemoteRuntimeSnapshot }> {
+    if (!this.isReady || this.manualCompaction || this.pending)
+      return Promise.reject(new Error('Compaction requires an idle remote runtime'))
+    this.ready = false
+    this.gate = true
+    this.manualCancelled = false
+    this.manualAbort = undefined
+    const manualController = new AbortController()
+    this.manualController = manualController
+    const controlSignal = AbortSignal.any([this.lifetime.signal, manualController.signal])
+    let began = false
+    const assertCurrent = (): void => {
+      this.active()
+      control?.assertCurrent()
+      if (this.manualCancelled) throw new Error('Owned compaction cancelled')
+    }
+    const operation = Promise.resolve()
+      .then(() =>
+        this.withCheckpoint(async () => {
+          assertCurrent()
+          assertRuntimeIdleState(
+            await this.connection.request({ type: 'get_state' }),
+            this.snapshot!
+          )
+          assertCurrent()
+          began = true
+          const policy = await this.compactionPolicyUnderGate(this.snapshot!, controlSignal)
+          assertCurrent()
+          const result = await requestRuntimeCompactionControl({
+            connection: this.connection,
+            identity: {
+              nonce: this.config!.nonce,
+              phiSessionId: this.config!.phiSessionId,
+              generation: this.config!.generation,
+              ompSessionId: this.snapshot!.reference.ompSessionId,
+              journalPath: this.snapshot!.checkpoint.journalPath
+            },
+            policy,
+            operation: 'compact',
+            signal: controlSignal,
+            assertCurrent
+          })
+          assertCurrent()
+          if (!result.summary) throw new Error('Compaction summary is missing')
+          await this.compactionPolicyUnderGate(this.snapshot!, controlSignal)
+          assertCurrent()
+          const snapshot = await this.checkpointUnderGate()
+          assertCurrent()
+          return { summary: result.summary, snapshot }
+        })
+      )
+      .then((result) => {
+        assertCurrent()
+        this.ready = true
+        this.gate = false
+        return result
+      })
+      .catch(async (error: unknown) => {
+        await this.manualAbort?.catch(() => undefined)
+        if (!began && !this.closing && !this.manualCancelled) {
+          this.ready = true
+          this.gate = false
+        } else if (!this.closing) {
+          this.manualFailureClosing = true
+          await this.close(error)
+        }
+        throw error
+      })
+      .finally(() => {
+        if (this.manualCompaction === operation) this.manualCompaction = undefined
+        this.manualController = undefined
+        this.manualFailureClosing = false
+        this.options.browserTextVault?.clear()
+      })
+    this.manualCompaction = operation
+    void operation.catch(() => undefined)
+    return operation
   }
   async readThinkingLevels(): Promise<readonly string[]> {
     if (!this.isReady || this.pending || this.authority?.currentRun())
@@ -318,7 +467,8 @@ export class RemoteSessionRuntime {
         ...options.transport,
         browserTextVault: options.browserTextVault,
         assertSelectionCurrent: this.active,
-        currentBrowserRunSignal: () => this.promptController?.signal,
+        currentBrowserRunSignal: () =>
+          this.promptController?.signal ?? this.manualController?.signal,
         prepareRuntime: async (context) => {
           this.lifetime.signal.throwIfAborted()
           if (!context.storage) throw new Error('Remote runtime requires persistent launch storage')
@@ -405,6 +555,7 @@ export class RemoteSessionRuntime {
             uploadOptions: options.transport.runtime.uploadOptions
           })
           return {
+            ...(options.compaction ? { compaction: options.compaction } : {}),
             nativeTools,
             ...(this.preparedChildren
               ? {
@@ -556,6 +707,7 @@ export class RemoteSessionRuntime {
         journalPath: result.checkpoint.journalPath
       })
       this.active()
+      if (options.compaction) await this.compactionPolicyUnderGate(result)
       await this.checkpointUnderGate(options.sessionName, {
         model: {
           provider: options.initialSelection.model.provider,
@@ -565,6 +717,7 @@ export class RemoteSessionRuntime {
       })
       return
     }
+    if (options.compaction) await this.compactionPolicyUnderGate(result)
     if (options.sessionName !== undefined) {
       await this.metadata.reconcileInitialName(options.sessionName, result)
       this.snapshot = result
@@ -792,6 +945,21 @@ export class RemoteSessionRuntime {
     return snapshot
   }
   async stop(): Promise<void> {
+    if (this.manualCompaction) {
+      const pending = this.manualCompaction,
+        controller = this.manualController
+      this.manualCancelled = true
+      this.manualAbort ??= this.connection.abort()
+      try {
+        await this.manualAbort
+      } catch (error) {
+        await this.close(error)
+        throw error
+      }
+      controller?.abort(new Error('Owned compaction cancelled after SDK stop acknowledgement'))
+      await pending
+      return
+    }
     await this.stopExecution()
     await this.pending
   }
@@ -841,6 +1009,24 @@ export class RemoteSessionRuntime {
         stopFailed = false
       try {
         await stopped
+        if (this.manualCompaction) {
+          const pending = this.manualCompaction,
+            controller = this.manualController
+          this.manualCancelled = true
+          this.manualAbort ??= this.connection.abort()
+          let failed = false,
+            failure: unknown
+          try {
+            await this.manualAbort
+          } catch (error) {
+            failed = true
+            failure = error
+            await this.connection.close()
+          }
+          controller?.abort(reason)
+          if (!this.manualFailureClosing) await pending.catch(() => undefined)
+          if (failed) throw failure
+        }
       } catch (error) {
         stopFailed = true
         stopError = error

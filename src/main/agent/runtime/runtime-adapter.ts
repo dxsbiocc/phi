@@ -23,6 +23,7 @@ import type {
   RuntimeCredential,
   RuntimeModel,
   RuntimeSelectionControl,
+  RuntimeAutoCompactionReceipt,
   RuntimeProvider,
   RuntimeProviderAuthStatus,
   RuntimeResourceBundle,
@@ -230,8 +231,14 @@ export interface RuntimeAgentSession {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void
   prompt(text: string, options?: RuntimePromptOptions): Promise<void>
   getContextUsage(): Promise<ContextUsageSnapshot | null>
-  compact(): Promise<ContextCompactionSummary>
-  setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void>
+  compact(control?: RuntimeSelectionControl): Promise<ContextCompactionSummary>
+  setAutoCompactionSettings(
+    overrides: AutoCompactionOverrides,
+    control?: RuntimeSelectionControl
+  ): Promise<RuntimeAutoCompactionReceipt | undefined>
+  getAutoCompactionSettings?(
+    control?: RuntimeSelectionControl
+  ): Promise<RuntimeAutoCompactionReceipt | undefined>
   abort(): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void>
@@ -898,19 +905,76 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     })
   }
 
-  async compact(): Promise<ContextCompactionSummary> {
+  async compact(control?: RuntimeSelectionControl): Promise<ContextCompactionSummary> {
+    control?.assertCurrent()
     await this.ensureLive()
-    const result = await this.engine.sessions.compact({ sessionId: this.sessionId })
+    control?.assertCurrent()
+    const result = await this.engine.sessions.compact({ sessionId: this.sessionId }, control)
+    control?.assertCurrent()
     applySessionState(this, result.state)
     return result.summary
   }
 
-  async setAutoCompactionSettings(overrides: AutoCompactionOverrides): Promise<void> {
+  async setAutoCompactionSettings(
+    overrides: AutoCompactionOverrides,
+    control?: RuntimeSelectionControl
+  ): Promise<RuntimeAutoCompactionReceipt | undefined> {
+    control?.assertCurrent()
     await this.ensureLive()
-    await this.engine.sessions.setAutoCompactionSettings({
-      sessionId: this.sessionId,
-      overrides
-    })
+    control?.assertCurrent()
+    const result = await this.engine.sessions.setAutoCompactionSettings(
+      {
+        sessionId: this.sessionId,
+        overrides
+      },
+      control
+    )
+    control?.assertCurrent()
+    if (
+      result &&
+      typeof result === 'object' &&
+      'enabled' in result &&
+      typeof result.enabled === 'boolean' &&
+      'thresholdPercent' in result &&
+      typeof result.thresholdPercent === 'number' &&
+      'thresholdTokens' in result &&
+      typeof result.thresholdTokens === 'number'
+    )
+      return {
+        enabled: result.enabled,
+        thresholdPercent: result.thresholdPercent,
+        thresholdTokens: result.thresholdTokens,
+        ...('defaults' in result &&
+        result.defaults &&
+        typeof result.defaults === 'object' &&
+        'enabled' in result.defaults &&
+        typeof result.defaults.enabled === 'boolean' &&
+        'thresholdPercent' in result.defaults &&
+        typeof result.defaults.thresholdPercent === 'number' &&
+        'thresholdTokens' in result.defaults &&
+        typeof result.defaults.thresholdTokens === 'number'
+          ? {
+              defaults: {
+                enabled: result.defaults.enabled,
+                thresholdPercent: result.defaults.thresholdPercent,
+                thresholdTokens: result.defaults.thresholdTokens
+              }
+            }
+          : {})
+      }
+    return undefined
+  }
+  async getAutoCompactionSettings(
+    control?: RuntimeSelectionControl
+  ): Promise<RuntimeAutoCompactionReceipt | undefined> {
+    control?.assertCurrent()
+    if (!this.engine.sessions.autoCompactionSettings) return undefined
+    const result = await this.engine.sessions.autoCompactionSettings(
+      { sessionId: this.sessionId },
+      control
+    )
+    control?.assertCurrent()
+    return result
   }
 
   async abort(): Promise<void> {

@@ -491,7 +491,11 @@ import {
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
-import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
+import {
+  getPhiEngine,
+  ownsRemoteRuntimeSession,
+  readRpcCompactionPolicy
+} from './agent/engine/in-process-engine'
 import {
   installAppRemoteSessionRouting,
   createAppRemoteSessionManager,
@@ -1336,6 +1340,10 @@ const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
 const manualCompactionIds = new Set<string>()
+const manualCompactionOperations = new Map<
+  string,
+  { session?: AgentSessionInstance; cancelled: boolean; done: Promise<void> }
+>()
 const approvedRemoteBashCalls = new Map<
   string,
   { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
@@ -7054,11 +7062,14 @@ async function getCurrentContextUsage(): Promise<CurrentContextUsage> {
     cwd: currentCwd,
     permissionMode: currentPermissionMode
   }
-  if (!runtimeSessionPathForSnapshot(sessionKey, snapshot)) {
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  if (
+    !runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
+    !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
+  ) {
     return { ...identity, usage: null }
   }
 
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   const result =
     manifest?.projectLocation?.kind === 'ssh'
       ? await getCurrentResolvedSessionIfReady()
@@ -7126,22 +7137,134 @@ function autoCompactionSettingsPatch(value: unknown): AutoCompactionSettingsPatc
   return result
 }
 
+// Bind a control before its first await. RPC may advance its own checkpoint/runtime
+// generation; the owner, lifecycle record, journal, project and host stay bound.
+// Manual dispatch releases only the view fence so accepted work survives navigation.
+function captureCompactionTarget(
+  sessionKey: string,
+  phiSessionId: string,
+  manual = false,
+  requireIdle = true
+): {
+  current: CurrentSessionPayload
+  rpc: boolean
+  assertCurrent(): void
+  acceptManual(): void
+  resolved(snapshot?: SessionSnapshot): Promise<AgentSessionResult | null>
+} {
+  const key = resolveSessionKeyAlias(sessionKey)
+  const current = getCurrentSessionPayload()
+  const lifecycle = getLifecycleForKey(key)
+  const generation = lifecycle.currentGeneration
+  const promptGeneration = getPromptGeneration(key)
+  let record = lifecycle.currentRecord
+  let initializing = false
+  let acceptedManual = false
+  const manifest = findPhiSessionById(phiSessionId)
+  const binding = (value: typeof manifest): string => {
+    const project = value?.projectId ? getProject(value.projectId) : undefined
+    const location = value?.projectLocation
+    const profile =
+      location?.kind === 'ssh' ? getRemoteHostProfile(location.hostProfileId) : undefined
+    return JSON.stringify([
+      value?.projectId,
+      value?.cwd,
+      value?.cwdRealPath,
+      location,
+      project?.location,
+      profile ? remoteConnectionConfigForProfile(profile) : null
+    ])
+  }
+  const journal = (value: typeof manifest): string =>
+    JSON.stringify([value?.runtimeRef?.ompSessionId, value?.runtimeRef?.journalBasename])
+  const initialBinding = binding(manifest)
+  let expectedJournal = journal(manifest)
+  const rpc = Boolean(
+    manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh')
+  )
+  const assertCurrent = (): void => {
+    const latest = findPhiSessionById(phiSessionId)
+    const now = acceptedManual ? undefined : getCurrentSessionPayload()
+    if (
+      (!acceptedManual &&
+        (!now ||
+          !sameCanonicalSessionKey(key, currentSessionKey) ||
+          now.path !== current.path ||
+          now.cwd !== current.cwd ||
+          now.phiSessionId !== phiSessionId ||
+          getCurrentLifecycle() !== lifecycle)) ||
+      getPhiSessionIdForKey(key) !== phiSessionId ||
+      getLifecycleForKey(key) !== lifecycle ||
+      !lifecycle.isCurrentGeneration(generation) ||
+      lifecycle.currentRecord !== record ||
+      getPromptGeneration(key) !== promptGeneration ||
+      binding(latest) !== initialBinding ||
+      (!initializing && journal(latest) !== expectedJournal)
+    )
+      throw new StaleSessionError()
+    if (
+      requireIdle &&
+      (hasActivePromptRun(key) ||
+        runnerRegistry.getActiveRun(phiSessionId) ||
+        (!manual && manualCompactionIds.has(phiSessionId)))
+    )
+      throw new Error('请等待当前会话运行结束后再修改压缩设置')
+  }
+  assertCurrent()
+  return {
+    current,
+    rpc,
+    assertCurrent,
+    acceptManual: (): void => {
+      assertCurrent()
+      if (!manual) throw new Error('只有手动压缩操作可以进入后台执行')
+      acceptedManual = true
+    },
+    resolved: async (snapshot?: SessionSnapshot): Promise<AgentSessionResult | null> => {
+      assertCurrent()
+      let pending = record?.promise
+      if (!record && snapshot) {
+        // getOrCreate installs this exact record synchronously without advancing
+        // the Phi view generation. Only this call may adopt the initial attachment.
+        initializing = !manifest?.runtimeRef
+        pending = getAgentSession(key, snapshot, { assertCurrent })
+        record = lifecycle.currentRecord
+      }
+      const result = pending ? await pending : null
+      assertCurrent()
+      if (initializing) {
+        expectedJournal = journal(findPhiSessionById(phiSessionId))
+        initializing = false
+      }
+      assertCurrent()
+      return result
+    }
+  }
+}
+
 async function getCurrentAutoCompactionSettings(
   target: unknown
 ): Promise<CurrentAutoCompactionSettings> {
-  const { current, manifest } = currentAutoCompactionManifest(target)
-  const defaults = await readAutoCompactionDefaults(
-    manifest.projectLocation?.kind === 'ssh' ? AGENT_DIR : current.cwd,
-    AGENT_DIR
-  )
-  const latestManifest = currentAutoCompactionManifest(target).manifest
-  const overrides = latestManifest.autoCompaction ?? {}
+  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
+  const captured = captureCompactionTarget(sessionKey, manifest.sessionId, false, false)
+  const ready = await captured.resolved()
+  const receipt =
+    captured.rpc && ready ? await ready.session.getAutoCompactionSettings?.(captured) : undefined
+  captured.assertCurrent()
+  const defaults =
+    receipt?.defaults ??
+    (captured.rpc
+      ? (await readRpcCompactionPolicy(AGENT_DIR, manifest.autoCompaction ?? {})).defaults
+      : await readAutoCompactionDefaults(current.cwd, AGENT_DIR))
+  captured.assertCurrent()
+  const overrides = findPhiSessionById(manifest.sessionId)?.autoCompaction ?? {}
   return {
     sessionPath: current.path,
     phiSessionId: current.phiSessionId ?? null,
     sessionGeneration: current.sessionGeneration,
-    enabled: overrides.enabled ?? defaults.enabled,
-    thresholdPercent: overrides.thresholdPercent ?? defaults.thresholdPercent,
+    enabled: receipt?.enabled ?? overrides.enabled ?? defaults.enabled,
+    thresholdPercent:
+      receipt?.thresholdPercent ?? overrides.thresholdPercent ?? defaults.thresholdPercent,
     defaults,
     overrides
   }
@@ -7151,30 +7274,43 @@ async function setCurrentAutoCompactionSettings(
   target: unknown,
   value: unknown
 ): Promise<CurrentAutoCompactionSettings> {
-  const { manifest, sessionKey } = currentAutoCompactionManifest(target)
-  if (hasActivePromptRun(sessionKey) || manualCompactionIds.has(manifest.sessionId)) {
-    throw new Error('请等待当前会话运行结束后再修改自动压缩设置')
-  }
+  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
+  const captured = captureCompactionTarget(sessionKey, manifest.sessionId)
   const patch = autoCompactionSettingsPatch(value)
   const overrides: AutoCompactionOverrides = { ...(manifest.autoCompaction ?? {}) }
   if (patch.enabled === null) delete overrides.enabled
   else if (patch.enabled !== undefined) overrides.enabled = patch.enabled
   if (patch.thresholdPercent === null) delete overrides.thresholdPercent
-  else if (patch.thresholdPercent !== undefined) {
-    overrides.thresholdPercent = patch.thresholdPercent
-  }
-  const lifecycle = getLifecycleForKey(sessionKey)
-  const record = lifecycle.currentRecord
-  const pending = Symbol('pending')
-  const ready = record ? await Promise.race([record.promise, Promise.resolve(pending)]) : pending
-  if (ready !== pending && record && lifecycle.isCurrent(record)) {
-    await ready.session.setAutoCompactionSettings(overrides)
-  }
+  else if (patch.thresholdPercent !== undefined) overrides.thresholdPercent = patch.thresholdPercent
+  const ready = await captured.resolved()
+  // Resolve local/cold settings before any save. A live RPC receipt includes its
+  // installation's baseline, so no new read can turn a committed success into failure.
+  const defaults = captured.rpc
+    ? ready
+      ? undefined
+      : (await readRpcCompactionPolicy(AGENT_DIR, overrides)).defaults
+    : await readAutoCompactionDefaults(current.cwd, AGENT_DIR)
+  captured.assertCurrent()
+  const receipt = ready
+    ? await ready.session.setAutoCompactionSettings(overrides, captured)
+    : undefined
+  captured.assertCurrent()
+  const confirmedDefaults = receipt?.defaults ?? defaults
+  if (!confirmedDefaults) throw new Error('远程自动压缩设置缺少已确认的默认策略')
   updateSessionManifest(manifest.sessionId, {
     autoCompaction: Object.keys(overrides).length > 0 ? overrides : undefined
   })
   notifySessionChanged()
-  return getCurrentAutoCompactionSettings(target)
+  return {
+    sessionPath: current.path,
+    phiSessionId: current.phiSessionId ?? null,
+    sessionGeneration: current.sessionGeneration,
+    enabled: receipt?.enabled ?? overrides.enabled ?? confirmedDefaults.enabled,
+    thresholdPercent:
+      receipt?.thresholdPercent ?? overrides.thresholdPercent ?? confirmedDefaults.thresholdPercent,
+    defaults: confirmedDefaults,
+    overrides
+  }
 }
 
 async function compactCurrentSession(target: unknown): Promise<ManualCompactionOutcome> {
@@ -7194,14 +7330,33 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
     cwd: currentCwd,
     permissionMode: currentPermissionMode
   }
-  if (!runtimeSessionPathForSnapshot(sessionKey, snapshot)) {
+  if (hasActivePromptRun(sessionKey)) throw new Error('请等待当前会话运行结束后再压缩')
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  if (
+    !runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
+    !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
+  ) {
     throw new Error('当前会话暂无可压缩的历史')
   }
-  if (hasActivePromptRun(sessionKey)) throw new Error('请等待当前会话运行结束后再压缩')
 
   const phiSessionId = ensurePhiSessionId(sessionKey, snapshot)
   if (manualCompactionIds.has(phiSessionId)) throw new Error('上下文压缩正在进行')
+  const captured = captureCompactionTarget(sessionKey, phiSessionId, true)
+  let finish!: () => void
+  const operation: { session?: AgentSessionInstance; cancelled: boolean; done: Promise<void> } = {
+    cancelled: false,
+    done: new Promise<void>((resolve) => {
+      finish = resolve
+    })
+  }
+  const control = {
+    assertCurrent: (): void => {
+      if (operation.cancelled) throw new Error('上下文压缩已取消')
+      captured.assertCurrent()
+    }
+  }
   manualCompactionIds.add(phiSessionId)
+  manualCompactionOperations.set(phiSessionId, operation)
   const sessionPath = phiOnlySessionPath(phiSessionId)
   const sessionGeneration = getLifecycleForKey(sessionKey).currentGeneration
   const broadcast = (event: StoredSessionEvent): void => {
@@ -7217,10 +7372,16 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
   }
 
   try {
-    const { session } = await getAgentSession(sessionKey, snapshot)
+    const resolved = await captured.resolved(snapshot)
+    control.assertCurrent()
+    if (!resolved) throw new Error('当前会话暂无可压缩的历史')
+    const { session } = resolved
+    operation.session = session
     let result: Awaited<ReturnType<typeof session.compact>>
     try {
-      result = await session.compact()
+      captured.acceptManual()
+      result = await session.compact(control)
+      control.assertCurrent()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       try {
@@ -7257,7 +7418,9 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
       ...(result.shortSummary ? { shortSummary: result.shortSummary } : {})
     }
   } finally {
+    manualCompactionOperations.delete(phiSessionId)
     manualCompactionIds.delete(phiSessionId)
+    finish()
     flushPendingContinuations(phiSessionId, false)
   }
 }
@@ -7401,6 +7564,16 @@ async function stopActivePrompt(): Promise<void> {
   advancePromptGeneration(currentSessionKey)
   const run = getActivePromptRun(currentSessionKey)
   if (!run) {
+    const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+    const operation = phiSessionId ? manualCompactionOperations.get(phiSessionId) : undefined
+    if (operation) {
+      operation.cancelled = true
+      try {
+        if (operation.session) await operation.session.abort()
+      } finally {
+        await operation.done
+      }
+    }
     return
   }
 
@@ -7554,16 +7727,19 @@ async function getAgentSession(
     path: currentSessionPath,
     cwd: currentCwd,
     permissionMode: currentPermissionMode
-  }
+  },
+  control?: { assertCurrent(): void }
 ): Promise<AgentSessionResult> {
   const lifecycle = getLifecycleForKey(sessionKey)
   const record = lifecycle.getOrCreate(
     snapshot,
     async (creationSnapshot, generation) => {
+      control?.assertCurrent()
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
       await waitForSessionCleanup(creationSnapshot)
+      control?.assertCurrent()
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
@@ -7599,10 +7775,14 @@ async function getAgentSession(
         throw new Error('远程项目会话归属无效，请重新选择项目')
       }
       const useRpc = remoteOmpRpcEnabled && remoteProject !== null
+      if (sessionManifest?.runtimeRef && !useRpc) {
+        throw new Error('此会话属于远程 RPC 运行时，请启用对应运行路径后显式恢复')
+      }
       const remoteContextFiles = remoteProject
         ? await loadRemoteProjectInstructions(remoteProject.location)
         : null
       const runtime = await getAuthManager().getRuntime()
+      control?.assertCurrent()
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
@@ -7685,17 +7865,10 @@ async function getAgentSession(
             agentDir: AGENT_DIR
           })
         : undefined
+      control?.assertCurrent()
       const personaMarkdown = getPersonaMarkdown()
-      if (
-        useRpc &&
-        (remoteContextFiles?.length ||
-          personaMarkdown ||
-          project?.memory?.enabled ||
-          Object.keys(sessionManifest?.autoCompaction ?? {}).length)
-      ) {
-        throw new Error(
-          'RPC persona/context/memory/compaction are not supported in this controlled stage'
-        )
+      if (useRpc && (remoteContextFiles?.length || personaMarkdown || project?.memory?.enabled)) {
+        throw new Error('RPC persona/context/memory are not supported in this controlled stage')
       }
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
@@ -7893,6 +8066,7 @@ async function getAgentSession(
         })
         await resourceLoader.reload()
       }
+      control?.assertCurrent()
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
@@ -7912,7 +8086,7 @@ async function getAgentSession(
       const result = await createAgentSession({
         modelRuntime: runtime,
         thinkingLevel,
-        ...(!useRpc && sessionManifest?.autoCompaction
+        ...(sessionManifest?.autoCompaction
           ? { autoCompaction: sessionManifest.autoCompaction }
           : {}),
         cwd: creationSnapshot.cwd,
@@ -7946,6 +8120,21 @@ async function getAgentSession(
         ...(!useRpc ? { personaMarkdown } : {}),
         ...(model ? { model } : {})
       })
+      try {
+        control?.assertCurrent()
+      } catch (error) {
+        try {
+          await abortSessionWithoutCancellingApprovals(result.session)
+        } catch (cleanupError) {
+          logUnexpectedError(cleanupError)
+        }
+        try {
+          await result.session.dispose()
+        } catch (cleanupError) {
+          logUnexpectedError(cleanupError)
+        }
+        throw error
+      }
       if (typeof result.session.runtimeSessionId === 'string') {
         runtimeSessionOrigins.set(result.session.runtimeSessionId, {
           sessionKey,
@@ -8029,16 +8218,13 @@ async function applyNextRunConfiguration(
     // The selected RPC generation already owns this saved policy. Unsupported changes are explicit.
     const selection = resolveSessionModelSelection(sessionKey, snapshot)
     if (
-      Object.keys(manifest?.autoCompaction ?? {}).length ||
       !selection ||
       selection.providerId !== session.model?.provider ||
       selection.modelId !== session.model?.id ||
       selectionThinking(session.model!, resolveSessionThinkingLevel(sessionKey, snapshot)).phi !==
         session.thinkingLevel
     )
-      throw new Error(
-        'RPC model/thinking/compaction changes require a supported remote control path'
-      )
+      throw new Error('RPC model/thinking changes require a supported remote control path')
     return
   }
   await session.setAutoCompactionSettings(manifest?.autoCompaction ?? {})

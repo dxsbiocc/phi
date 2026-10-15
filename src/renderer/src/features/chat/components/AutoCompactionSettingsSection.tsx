@@ -10,7 +10,7 @@ import {
   Switch,
   Typography
 } from '@mui/material'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -35,7 +35,10 @@ export function AutoCompactionSettingsSection({
     key: string
     value: CurrentAutoCompactionSettings
   } | null>(null)
-  const [savingKey, setSavingKey] = useState<string | null>(null)
+  const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set())
+  const savingKeysRef = useRef(new Set<string>())
+  const requestRef = useRef(0)
+  const activeTargetKeyRef = useRef('')
   const [errorState, setErrorState] = useState<{ key: string; message: string } | null>(null)
   const [retryKey, setRetryKey] = useState(0)
   const thresholdLabelId = useId()
@@ -46,21 +49,24 @@ export function AutoCompactionSettingsSection({
   const settings = settingsState?.key === targetKey ? settingsState.value : null
   const error = errorState?.key === targetKey ? errorState.message : null
   const loading = Boolean(sessionPath) && !settings && !error
-  const controlsDisabled = disabled || loading || savingKey === targetKey || !settings
+  const controlsDisabled =
+    disabled || compacting || loading || savingKeys.has(targetKey) || !settings
 
   useEffect(() => {
+    activeTargetKeyRef.current = targetKey
+    const request = ++requestRef.current
     if (!sessionPath) return undefined
     let cancelled = false
     void getRendererApi()
       .getAutoCompactionSettings({ sessionPath, phiSessionId, sessionGeneration })
       .then((value) => {
-        if (!cancelled) {
+        if (!cancelled && request === requestRef.current) {
           setSettingsState({ key: targetKey, value })
           setErrorState((current) => (current?.key === targetKey ? null : current))
         }
       })
       .catch((failure: unknown) => {
-        if (!cancelled)
+        if (!cancelled && request === requestRef.current)
           setErrorState({
             key: targetKey,
             message: failure instanceof Error ? failure.message : String(failure)
@@ -68,25 +74,46 @@ export function AutoCompactionSettingsSection({
       })
     return () => {
       cancelled = true
+      requestRef.current += 1
+      activeTargetKeyRef.current = ''
     }
   }, [targetKey, sessionPath, phiSessionId, sessionGeneration, retryKey])
 
   const save = async (patch: AutoCompactionSettingsPatch): Promise<void> => {
-    if (!target) return
-    setSavingKey(targetKey)
+    if (
+      !target ||
+      controlsDisabled ||
+      activeTargetKeyRef.current !== targetKey ||
+      savingKeysRef.current.has(targetKey)
+    )
+      return
+    const request = ++requestRef.current
+    savingKeysRef.current.add(targetKey)
+    setSavingKeys((current) => new Set(current).add(targetKey))
     setErrorState(null)
     try {
       const value = await getRendererApi().setAutoCompactionSettings(target, patch)
-      setSettingsState((current) =>
-        current?.key === targetKey ? { key: targetKey, value } : current
-      )
+      if (request === requestRef.current && activeTargetKeyRef.current === targetKey) {
+        setSettingsState({ key: targetKey, value })
+      }
     } catch (failure) {
-      setErrorState({
-        key: targetKey,
-        message: failure instanceof Error ? failure.message : String(failure)
-      })
+      if (request === requestRef.current && activeTargetKeyRef.current === targetKey) {
+        setErrorState({
+          key: targetKey,
+          message: failure instanceof Error ? failure.message : String(failure)
+        })
+      }
     } finally {
-      setSavingKey((current) => (current === targetKey ? null : current))
+      savingKeysRef.current.delete(targetKey)
+      setSavingKeys((current) => {
+        const next = new Set(current)
+        next.delete(targetKey)
+        return next
+      })
+      // Returning to the same session needs a fresh read, not an old save receipt.
+      if (activeTargetKeyRef.current === targetKey && request !== requestRef.current) {
+        setRetryKey((current) => current + 1)
+      }
     }
   }
 

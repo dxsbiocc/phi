@@ -11,7 +11,9 @@ export type ModelReply = {
 export type ModelRequest = { messages: Array<Record<string, unknown>>; [key: string]: unknown }
 
 /** A provider, not an engine stub: the real SDK parses these streaming chunks. */
-export async function startHostResultModel(): Promise<{
+export async function startHostResultModel(
+  options: { replyFor?: (request: ModelRequest) => ModelReply | undefined } = {}
+): Promise<{
   url: string
   requests: ModelRequest[]
   enqueue(...replies: ModelReply[]): void
@@ -33,7 +35,7 @@ export async function startHostResultModel(): Promise<{
           new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
         ) as ModelRequest
       )
-      const reply = replies.shift()
+      const reply = options.replyFor?.(requests.at(-1)!) ?? replies.shift()
       if (!reply) {
         response.writeHead(500).end('No scripted model reply remains')
         return

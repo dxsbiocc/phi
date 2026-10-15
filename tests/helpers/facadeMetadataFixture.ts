@@ -76,6 +76,7 @@ export async function facadeMetadataFixture(
     isolatedProject?: boolean
     nonReasoningModel?: string
     thinkingEfforts?: Readonly<Record<string, readonly ThinkingLevel[]>>
+    contextWindow?: number
     applicationRouting?: Pick<
       AppRemoteSessionRoutingOptions,
       'foregroundAgentNames' | 'onChildApprovalEvent' | 'loadDesktopTools'
@@ -117,7 +118,7 @@ export async function facadeMetadataFixture(
               ? { thinking: { mode: 'effort', efforts: options.thinkingEfforts[id] } }
               : {}),
             input: ['text'],
-            contextWindow: 32768,
+            contextWindow: options.contextWindow ?? 32768,
             maxTokens: 1024,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
           }))
@@ -393,6 +394,7 @@ export async function facadeMetadataFixture(
         agentDir,
         model: model(saved.model!.modelId),
         thinkingLevel: saved.thinkingLevel,
+        autoCompaction: saved.autoCompaction,
         projectBound: true,
         sessionManager: createAppRemoteSessionManager(anchor, phi.sessionId, recovery === 'resume'),
         remoteProject: {

@@ -1921,6 +1921,13 @@ test('chat view replaces send with one square stop control', () => {
   assert.match(regularMarkup, /title="运行中，点击停止生成"/)
 })
 
+test('manual context compaction offers the existing stop control while no chat run is generating', () => {
+  const markup = renderChat([], { isGenerating: false, contextCompacting: true })
+  assert.match(markup, /data-phi-composer-action="stop"/)
+  assert.match(markup, /aria-label="停止生成"/)
+  assert.doesNotMatch(markup, /data-phi-composer-action="send"/)
+})
+
 test('agent execution details scroll instead of flattening every child step into the chat flow', () => {
   const source = readFileSync('src/renderer/src/components/AgentExecutionCard.tsx', 'utf8')
 

@@ -5,7 +5,12 @@ import {
   readPlanFile,
   resolveApprovedPlan
 } from '../omp-internals'
-import { applyAutoCompactionOverrides, createPhiSettings } from './settings'
+import {
+  applyAutoCompactionOverrides,
+  createPhiSettings,
+  assertRpcCompactionPolicySupported
+} from './settings'
+import type { ResolvedRuntimeCompactionPolicy } from '../types'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../../plan/plan-review-mode'
 import {
   AutoCompactionDefaults,
@@ -137,12 +142,27 @@ export function autoCompactionOverrides(value: unknown): AutoCompactionOverrides
   }
 }
 
-export async function readAutoCompactionDefaults(params: unknown): Promise<AutoCompactionDefaults> {
+export async function readAutoCompactionDefaults(
+  params: unknown
+): Promise<AutoCompactionDefaults | ResolvedRuntimeCompactionPolicy> {
   const record = isRecord(params) ? params : {}
   const settings = await Settings.loadReadOnly({
     cwd: stringValue(record.cwd, process.cwd()),
     agentDir: stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   })
+  if (record.includePolicy === true) {
+    const baseline = createPhiSettings(settings).compaction.read()
+    applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.overrides))
+    assertRpcCompactionPolicySupported(settings)
+    return {
+      policy: createPhiSettings(settings).compaction.read(),
+      defaults: {
+        enabled: baseline.enabled && baseline.methodOrder.length > 0,
+        thresholdPercent: baseline.thresholdPercent,
+        thresholdTokens: baseline.thresholdTokens
+      }
+    }
+  }
   const compaction = createPhiSettings(settings).compaction.read()
   return {
     enabled: compaction.enabled && compaction.methodOrder.length > 0,

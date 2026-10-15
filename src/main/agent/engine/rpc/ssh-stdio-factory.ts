@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import {
+  compactionPolicy,
+  type RpcCompactionPolicy
+} from '../phi-extension/lib/rpc-compaction-control'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, posix } from 'node:path'
@@ -52,6 +56,7 @@ export interface SshRpcSessionTransportOptions {
 }
 
 export interface RpcRuntimePreparationResult {
+  readonly compaction?: RpcCompactionPolicy
   readonly nativeTools: readonly (
     'read' | 'write' | 'edit' | 'bash' | 'powershell' | 'glob' | 'grep' | 'task'
   )[]
@@ -64,7 +69,7 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
   const refused = (): never => {
     throw new Error('Invalid composed native tool roster')
   }
-  const fields = ['nativeTools', 'childRuntimeRequired', 'foregroundChildNativeNames']
+  const fields = ['nativeTools', 'childRuntimeRequired', 'foregroundChildNativeNames', 'compaction']
   if (
     !value ||
     typeof value !== 'object' ||
@@ -108,6 +113,7 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
   )
     return refused()
   return Object.freeze({
+    ...(raw.compaction === undefined ? {} : { compaction: compactionPolicy(raw.compaction) }),
     nativeTools: Object.freeze([...nativeTools]),
     ...(raw.childRuntimeRequired === undefined
       ? {}
@@ -335,6 +341,9 @@ private_dir ${q(agentDir)}`,
         // precedes tool_call guards and must never inherit repository commands.
         const policyBytes = Buffer.from(
           JSON.stringify({
+            ...(runtimePreparation?.compaction
+              ? { compaction: { ...runtimePreparation.compaction, modelThresholdsEnabled: false } }
+              : {}),
             disabledProviders: PHI_DISABLED_CAPABILITY_PROVIDERS,
             mcp: { enableProjectConfig: false },
             extensions: [],

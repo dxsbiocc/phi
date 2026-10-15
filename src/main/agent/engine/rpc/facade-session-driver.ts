@@ -1,4 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
+import {
+  compactionPolicy,
+  type RpcCompactionPolicy
+} from '../phi-extension/lib/rpc-compaction-control'
+import type {
+  AutoCompactionOverrides,
+  ContextCompactionSummary
+} from '../../../../shared/contextUsageTypes'
 import { BrowserTextVault } from '../../browser/browser-text-vault'
 import { assertSafeBrowserHistory } from './browser-tool-stream'
 import { selectionThinking, type RuntimeInitialSelection } from './runtime-selection-control'
@@ -28,6 +36,7 @@ import type {
   RuntimeSelectionControl,
   ThinkingLevel
 } from '../types'
+import type { ResolvedRuntimeCompactionPolicy } from '../types'
 import {
   RemoteSessionCapabilityError,
   type RoutedSessionDriver,
@@ -87,6 +96,10 @@ export interface SelectedFacadeRuntime {
   readonly dispose?: () => void | Promise<void>
 }
 export interface FacadeSessionFactoryOptions {
+  readonly compactionPolicy?: (
+    agentDir: string,
+    overrides: AutoCompactionOverrides
+  ) => Promise<ResolvedRuntimeCompactionPolicy>
   /** The real singleton whose host registry is populated by engine.host.register. */
   readonly bridge: OmpBridge
   readonly models: (agentDir: string) => Promise<readonly RuntimeModel[]>
@@ -175,7 +188,6 @@ function capabilityGuard(params: PhiSessionCreateParams): void {
     params.memory ||
     params.personaMarkdown ||
     params.resourceOptions ||
-    params.autoCompaction ||
     params.phiAgents?.length ||
     params.remoteProjectMcpServers?.length ||
     params.remoteProject?.contextFiles.length
@@ -233,6 +245,10 @@ export function createFacadeSessionFactory(
       const binding = resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
       const initial = findPhiSessionById(phiSessionId)
       if (!initial) throw new Error('Phi session does not exist')
+      if (
+        JSON.stringify(params.autoCompaction ?? {}) !== JSON.stringify(initial.autoCompaction ?? {})
+      )
+        throw new RemoteSessionCapabilityError('unsaved auto compaction policy')
       const selected = captureSelection(
         await options.selected(
           {
@@ -360,6 +376,7 @@ export function createFacadeSessionFactory(
         let metadataPending = false
         let selectionAbort: AbortController | undefined
         let selectionPending: Promise<WorkerSessionState> | undefined
+        let compactionPending: Promise<unknown> | undefined
         let submittedRun: SessionRun | undefined
         const stopSubmittedRun = (): void => {
           const run = submittedRun
@@ -414,6 +431,16 @@ export function createFacadeSessionFactory(
           let state: WorkerSessionState | undefined
           let expectedModel = initial.model
           let expectedThinking = initial.thinkingLevel
+          let expectedAuto = initial.autoCompaction ?? {}
+          let currentCompaction: RpcCompactionPolicy | undefined
+          let currentCompactionDefaults:
+            import('../../../../shared/contextUsageTypes').AutoCompactionDefaults | undefined
+          if (options.compactionPolicy) {
+            const resolved = await options.compactionPolicy(params.agentDir, expectedAuto)
+            currentCompaction = compactionPolicy(resolved.policy)
+            currentCompactionDefaults = resolved.defaults
+          }
+          signal.throwIfAborted()
           let rotating = false
           let runtimeEpoch = 0
           let selectionState: WorkerSessionState | undefined
@@ -422,7 +449,8 @@ export function createFacadeSessionFactory(
             if (
               !latest ||
               JSON.stringify(latest.model) !== JSON.stringify(expectedModel) ||
-              latest.thinkingLevel !== expectedThinking
+              latest.thinkingLevel !== expectedThinking ||
+              JSON.stringify(latest.autoCompaction ?? {}) !== JSON.stringify(expectedAuto)
             )
               throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
             if (latest.title !== expectedTitle)
@@ -439,8 +467,10 @@ export function createFacadeSessionFactory(
           const startRuntime = async (
             bootModel: RuntimeModel,
             action: RemoteSessionRuntimeOptions['action'],
-            selection?: RuntimeInitialSelection
+            selection?: RuntimeInitialSelection,
+            nextCompaction = currentCompaction
           ): Promise<RemoteSessionRuntime> => {
+            assertAdoptionPolicy()
             const epoch = ++runtimeEpoch
             const refs = [bootModel, ...(selection ? [selection.model] : [])]
               .filter(
@@ -476,6 +506,7 @@ export function createFacadeSessionFactory(
               sessionName: expectedTitle,
               action,
               initialSelection: selection,
+              compaction: nextCompaction,
               tools: scopeTools.tools.filter((tool) => names.has(tool.name)),
               hostApprovalFor: scopeTools.approvalFor,
               nativeTools: selected.nativeTools,
@@ -595,7 +626,8 @@ export function createFacadeSessionFactory(
             requestedModel: RuntimeModel | undefined,
             requestedThinking: ThinkingLevel | undefined,
             thinkingOnly: boolean,
-            control?: RuntimeSelectionControl
+            control?: RuntimeSelectionControl,
+            requestedAuto?: AutoCompactionOverrides
           ): Promise<WorkerSessionState> => {
             if (
               closing ||
@@ -628,6 +660,8 @@ export function createFacadeSessionFactory(
             let retired = false
             let candidate: RemoteSessionRuntime | undefined
             try {
+              await oldRuntime.assertIdle(control)
+              assertCurrent()
               const catalog = await options.models(params.agentDir)
               assertCurrent()
               const target = requestedModel ?? currentState().model
@@ -640,6 +674,16 @@ export function createFacadeSessionFactory(
               )
               if (!trusted || !bootModel || !oldReference)
                 throw new Error('Selected model is unavailable in the trusted desktop registry')
+              const nextAuto = requestedAuto ?? expectedAuto
+              const resolvedCompaction = options.compactionPolicy
+                ? await options.compactionPolicy(params.agentDir, nextAuto)
+                : undefined
+              const nextCompaction = resolvedCompaction
+                ? compactionPolicy(resolvedCompaction.policy)
+                : undefined
+              assertCurrent()
+              if (requestedAuto && !nextCompaction)
+                throw new RemoteSessionCapabilityError('auto compaction policy resolver')
               const thinking = selectionThinking(
                 trusted,
                 thinkingOnly
@@ -657,10 +701,14 @@ export function createFacadeSessionFactory(
               if (
                 expectedModel?.providerId === trusted.provider &&
                 expectedModel.modelId === trusted.id &&
-                expectedThinking === thinking.phi
+                expectedThinking === thinking.phi &&
+                JSON.stringify(nextAuto) === JSON.stringify(expectedAuto) &&
+                JSON.stringify(nextCompaction) === JSON.stringify(currentCompaction)
               )
                 return currentState()
               models = catalog
+              await oldRuntime.assertIdle(control)
+              assertCurrent()
               rotating = true
               retired = true
               ++runtimeEpoch // A retiring channel cannot close or publish through the replacement.
@@ -680,15 +728,23 @@ export function createFacadeSessionFactory(
                   thinkingLevel: thinking.rpc,
                   assertCurrent,
                   signal: AbortSignal.any([signal, controller.signal])
-                }
+                },
+                nextCompaction
               )
               assertCurrent()
               if (!candidate.isReady || !selectionState)
                 throw new Error('Remote selection did not produce a verified checkpoint')
               const next = { providerId: trusted.provider, modelId: trusted.id }
-              updateSessionManifest(phiSessionId, { model: next, thinkingLevel: thinking.phi })
+              updateSessionManifest(phiSessionId, {
+                model: next,
+                thinkingLevel: thinking.phi,
+                autoCompaction: Object.keys(nextAuto).length ? nextAuto : undefined
+              })
               expectedModel = next
               expectedThinking = thinking.phi
+              expectedAuto = structuredClone(nextAuto)
+              currentCompaction = nextCompaction
+              currentCompactionDefaults = resolvedCompaction?.defaults
               runtime = candidate
               state = selectionState
               selectionState = undefined
@@ -742,7 +798,7 @@ export function createFacadeSessionFactory(
               if (!run || run.sessionId !== phiSessionId || run.signal.aborted)
                 throw new Error('Remote prompt requires the actual active Phi run')
               const prompt = promptOptions(raw)
-              if (submittedRun || closing || interrupted || !runtime!.isReady)
+              if (submittedRun || metadataPending || closing || interrupted || !runtime!.isReady)
                 throw new Error('Remote runtime cannot admit this prompt')
               submittedRun = run
               try {
@@ -772,6 +828,101 @@ export function createFacadeSessionFactory(
             },
             setModel: (next, control) => beginSelection(next, undefined, false, control),
             setThinkingLevel: (level, control) => beginSelection(undefined, level, true, control),
+            async autoCompactionSettings(control) {
+              signal.throwIfAborted()
+              control?.assertCurrent()
+              assertAdoptionPolicy()
+              if (closing || interrupted || !currentCompaction || !currentCompactionDefaults)
+                throw new Error('Confirmed auto compaction settings are unavailable')
+              if (metadataPending)
+                throw new Error('Auto compaction settings require a settled control operation')
+              if (!runtime!.isReady && !submittedRun && !options.runners.getActiveRun(phiSessionId))
+                throw new Error('Auto compaction settings require an attached runtime')
+              if (
+                runtime!.isReady &&
+                !submittedRun &&
+                !options.runners.getActiveRun(phiSessionId)
+              ) {
+                metadataPending = true
+                try {
+                  await runtime!.readCompactionPolicy()
+                  control?.assertCurrent()
+                  assertAdoptionPolicy()
+                } finally {
+                  metadataPending = false
+                }
+              }
+              return {
+                enabled: currentCompaction.enabled && currentCompaction.methodOrder.length > 0,
+                thresholdPercent: currentCompaction.thresholdPercent,
+                thresholdTokens: currentCompaction.thresholdTokens,
+                defaults: structuredClone(currentCompactionDefaults)
+              }
+            },
+            async setAutoCompactionSettings(overrides, control) {
+              if (
+                Object.keys(overrides).some(
+                  (key) => !['enabled', 'thresholdPercent'].includes(key)
+                ) ||
+                (overrides.enabled !== undefined && typeof overrides.enabled !== 'boolean') ||
+                (overrides.thresholdPercent !== undefined &&
+                  ![70, 80, 90].includes(overrides.thresholdPercent))
+              )
+                throw new Error('Invalid auto compaction overrides')
+              await beginSelection(undefined, undefined, false, control, structuredClone(overrides))
+              const policy = currentCompaction!
+              return {
+                enabled: policy.enabled && policy.methodOrder.length > 0,
+                thresholdPercent: policy.thresholdPercent,
+                thresholdTokens: policy.thresholdTokens,
+                defaults: currentCompactionDefaults!
+              }
+            },
+            async compact(control) {
+              if (
+                closing ||
+                interrupted ||
+                submittedRun ||
+                metadataPending ||
+                options.runners.getActiveRun(phiSessionId) ||
+                !runtime!.isReady
+              )
+                throw new Error('Compaction requires an idle Phi session')
+              metadataPending = true
+              const owner = runtime!
+              let completed = false
+              const assertCurrent = (): void => {
+                signal.throwIfAborted()
+                control?.assertCurrent()
+                assertAdoptionPolicy()
+                if (runtime !== owner || closing) throw new Error('Compaction generation changed')
+              }
+              try {
+                const operation = owner.compact({ assertCurrent })
+                compactionPending = operation
+                const result = await operation
+                completed = true
+                assertCurrent()
+                state = stateFrom(result.snapshot)
+                sink.state(currentState())
+                return {
+                  summary: result.summary as ContextCompactionSummary,
+                  state: currentState()
+                }
+              } catch (error) {
+                if (completed || !owner.isReady) {
+                  await owner.close(error).catch(() => undefined)
+                  interrupted = true
+                  tools?.dispose()
+                  adoption?.release()
+                  await disposeSelected().catch(() => undefined)
+                }
+                throw error
+              } finally {
+                compactionPending = undefined
+                metadataPending = false
+              }
+            },
             async contextUsage() {
               if (
                 closing ||
@@ -828,6 +979,10 @@ export function createFacadeSessionFactory(
               }
             },
             async abort() {
+              if (compactionPending) {
+                await runtime!.stop()
+                return currentState()
+              }
               const pendingSelection = selectionPending
               selectionAbort?.abort(new Error('Remote selection cancelled'))
               if (pendingSelection) await pendingSelection

@@ -927,7 +927,7 @@ function ChatView({
                     loading={contextUsage.loading}
                   />
                 )}
-                {!isGenerating ? (
+                {!isGenerating && !contextCompacting ? (
                   <IconButton
                     type="submit"
                     disabled={

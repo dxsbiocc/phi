@@ -2549,8 +2549,20 @@ function App(): React.JSX.Element {
 
   const onStopGeneration = async (): Promise<void> => {
     const stoppedRequest = sendRequestRef.current
+    const stoppedSession = useSessionStore.getState()
+    const stoppedTarget = {
+      phiSessionId: stoppedSession.activePhiSessionId ?? null,
+      sessionPath: stoppedSession.activeSessionPath,
+      sessionGeneration: stoppedSession.activeSessionGeneration
+    }
     await rendererApi.stopGeneration()
-    if (stoppedRequest === sendRequestRef.current) {
+    const current = useSessionStore.getState()
+    if (
+      stoppedRequest === sendRequestRef.current &&
+      (current.activePhiSessionId ?? null) === stoppedTarget.phiSessionId &&
+      current.activeSessionPath === stoppedTarget.sessionPath &&
+      current.activeSessionGeneration === stoppedTarget.sessionGeneration
+    ) {
       isSendingRef.current = false
       setIsSendingMessage(false)
       setPendingApproval(null)
@@ -3205,6 +3217,15 @@ function App(): React.JSX.Element {
   const currentSessionIsCompacting = compactingSessions.has(activeContextCompactionKey)
   const onCompactContext = useCallback(
     async (target: ManualCompactionTarget): Promise<void> => {
+      const isCurrentTarget = (): boolean => {
+        const current = useSessionStore.getState()
+        return (
+          (current.activePhiSessionId ?? null) === target.phiSessionId &&
+          current.activeSessionPath === target.sessionPath &&
+          current.activeSessionGeneration === target.sessionGeneration
+        )
+      }
+      if (!isCurrentTarget()) return
       const key = JSON.stringify([
         target.phiSessionId,
         target.sessionPath,
@@ -3215,10 +3236,11 @@ function App(): React.JSX.Element {
       setCompactingSessions((previous) => new Set(previous).add(key))
       try {
         await rendererApi.compactCurrentSession(target)
+        if (!isCurrentTarget()) return
         showSnackbar('上下文已压缩', 'success')
         setContextUsageRefreshKey((value) => value + 1)
       } catch (error) {
-        showSnackbarError(error, '上下文压缩失败')
+        if (isCurrentTarget()) showSnackbarError(error, '上下文压缩失败')
       } finally {
         compactingSessionKeysRef.current.delete(key)
         setCompactingSessions((previous) => {

@@ -5,7 +5,8 @@ import {
   type FacadeSessionFactoryOptions
 } from './rpc/facade-session-driver'
 import type { RoutedSessionFactory } from './session-routing-engine'
-import type { PhiEngine } from './types'
+import type { PhiEngine, ResolvedRuntimeCompactionPolicy } from './types'
+import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
 
 export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
   return {
@@ -96,6 +97,19 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
 let engine: SessionRoutingEngine | null = null
 let remoteFactory: RoutedSessionFactory | undefined
 
+/** Exact desktop baseline and overrides, resolved with the existing non-persistent settings policy. */
+export function readRpcCompactionPolicy(
+  agentDir: string,
+  overrides: AutoCompactionOverrides
+): Promise<ResolvedRuntimeCompactionPolicy> {
+  return getOmpBridge().request('settings.autoCompactionDefaults', {
+    cwd: agentDir,
+    agentDir,
+    overrides,
+    includePolicy: true
+  })
+}
+
 /** Main-process opt-in only. Existing sessions retain their captured driver and authority. */
 export function installRemoteSessionRouting(
   options: Omit<FacadeSessionFactoryOptions, 'bridge' | 'models'> & { enabled: true }
@@ -105,6 +119,7 @@ export function installRemoteSessionRouting(
   const factory = createFacadeSessionFactory({
     ...options,
     bridge,
+    compactionPolicy: readRpcCompactionPolicy,
     models: async (agentDir) => (await getPhiEngine().models.snapshot({ agentDir })).models
   })
   remoteFactory = factory
