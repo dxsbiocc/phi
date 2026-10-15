@@ -31,7 +31,11 @@ import {
   CHILD_ATTEST_COMMAND,
   CHILD_ATTEST_DESCRIPTION
 } from './lib/rpc-child-config'
-import { validateRpcChildRoot, type RpcChildRootScope } from './lib/rpc-child-protocol'
+import {
+  sameRpcChildRoot,
+  validateRpcChildRoot,
+  type RpcChildRootScope
+} from './lib/rpc-child-protocol'
 import { executionRoster } from './lib/rpc-execution-protocol'
 import {
   loadRpcRuntimeConfig,
@@ -121,6 +125,10 @@ const childGenerations = new Map<
     digest: string
     controller: AbortController
     steerPermits: ReturnType<typeof createRpcChildSteerPermits>
+    taskOwner?: {
+      root: RpcChildRootScope
+      tasks: ReturnType<typeof createRpcTaskAdmissionExtension>
+    }
   }
 >()
 
@@ -148,6 +156,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         )
       : undefined
   let childPreflight: RpcVerifiedChildDispatch | undefined
+  let childGeneration: ReturnType<typeof childGenerations.get>
   if (
     process.env.PHI_RPC_RUNTIME !== undefined &&
     (process.env.PHI_RPC_RUNTIME !== '1' || !runtime || !modelMetadata)
@@ -233,6 +242,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         childGenerations.set(config.nonce, generation)
       }
       const ownedGeneration = generation
+      childGeneration = ownedGeneration
       const root = (): RpcChildRootScope | undefined => {
         if (ownedGeneration.controller.signal.aborted) return undefined
         const ref = pi.pi.AgentRegistry.global().get('Main')
@@ -324,6 +334,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
           tasks.assertInstalled(ctx)
           const identity = root()
           if (!identity) throw new Error('Phi child root identity is unavailable')
+          ownedGeneration.taskOwner = { root: identity, tasks }
           ctx.ui.notify(JSON.stringify(makeRpcChildAttestation(childConfig, identity)), 'info')
         }
       })
@@ -368,7 +379,18 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       (ctx, expectedNativeWrapper) => {
         if (ctx.agent.kind === 'main') return undefined
         const childScope = childController?.modelScope(ctx, expectedNativeWrapper)
-        if (!childConfig || !childScope) throw new Error('Child model authority is unavailable')
+        const owner = childGeneration?.taskOwner
+        if (
+          !childConfig ||
+          !childScope ||
+          !childGeneration ||
+          childGenerations.get(config.nonce) !== childGeneration ||
+          childGeneration.controller.signal.aborted ||
+          !owner ||
+          !sameRpcChildRoot(owner.root, childScope) ||
+          !owner.tasks.isChildStreamActive(childScope.nativeAgentId)
+        )
+          throw new Error('Child model authority is unavailable')
         return {
           [RPC_CHILD_MODEL_HEADER]: createRpcChildModelHeader(childScope, childConfig.capability)
         }

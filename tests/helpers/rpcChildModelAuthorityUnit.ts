@@ -299,7 +299,12 @@ await check('wrong endpoint rejects before requesting actor authority or network
 })
 
 type FixtureSession = { agent: { streamFn: StreamFn }; sessionManager: { getSessionId(): string } }
-function fixtureExtension(): {
+function fixtureExtension(
+  options: {
+    readonly mainActive?: () => boolean
+    readonly childAllowed?: (nativeAgentId: string) => boolean
+  } = {}
+): {
   extension: ReturnType<typeof createRpcNativeStreamExtension>
   sessions: Map<string, FixtureSession>
   contexts: Map<string, ExtensionContext>
@@ -324,23 +329,30 @@ function fixtureExtension(): {
       sessionManager: session.sessionManager
     } as unknown as ExtensionContext)
   }
-  const extension = createRpcNativeStreamExtension(scope, (ctx, expectedNativeWrapper) => {
-    if (ctx.agent.id === 'Main') return undefined
-    assert.ok(active.has(ctx.agent.id), 'Unknown or revoked child')
-    assert.equal(nativeStreams.get(ctx.agent.id), expectedNativeWrapper, 'Wrong native original')
-    assert.equal(
-      sessions.get(ctx.agent.id)!.agent.streamFn,
-      gates.get(ctx.agent.id),
-      'Wrong outer gate'
-    )
-    const owned = {
-      ...childScope,
-      nativeAgentId: ctx.agent.id,
-      childOmpSessionId: `${ctx.agent.id}-sdk`,
-      childSessionFile: `/srv/history/root/${ctx.agent.id}.jsonl`
+  const extension = createRpcNativeStreamExtension(
+    {
+      ...scope,
+      isActive: () => options.mainActive?.() ?? true
+    },
+    (ctx, expectedNativeWrapper) => {
+      if (ctx.agent.id === 'Main') return undefined
+      assert.ok(active.has(ctx.agent.id), 'Unknown or revoked child')
+      assert.ok(options.childAllowed?.(ctx.agent.id) ?? true, 'Denied captured parent')
+      assert.equal(nativeStreams.get(ctx.agent.id), expectedNativeWrapper, 'Wrong native original')
+      assert.equal(
+        sessions.get(ctx.agent.id)!.agent.streamFn,
+        gates.get(ctx.agent.id),
+        'Wrong outer gate'
+      )
+      const owned = {
+        ...childScope,
+        nativeAgentId: ctx.agent.id,
+        childOmpSessionId: `${ctx.agent.id}-sdk`,
+        childSessionFile: `/srv/history/root/${ctx.agent.id}.jsonl`
+      }
+      return { [RPC_CHILD_MODEL_HEADER]: createRpcChildModelHeader(owned, childCapability) }
     }
-    return { [RPC_CHILD_MODEL_HEADER]: createRpcChildModelHeader(owned, childCapability) }
-  })
+  )
   const api = {
     pi: {
       AgentRegistry: {
@@ -428,7 +440,7 @@ await check(
               }
             })
           ),
-          kind === 'outer' ? /Wrong outer gate/u : /Wrong native original/u
+          NativeStreamIntegrityError
         )
       } finally {
         f.extension.dispose()
@@ -472,7 +484,7 @@ await check(
             }
           })
         ),
-        /Unknown or revoked child/u
+        NativeStreamIntegrityError
       )
       let calls = 0
       await drain(
@@ -491,6 +503,56 @@ await check(
         })
       )
       assert.equal(calls, 1)
+    } finally {
+      f.extension.dispose()
+    }
+  }
+)
+
+await check(
+  'denying a new Main parent preserves its older admitted child and blocks same-parent child',
+  async () => {
+    let mainActive = true
+    const childParents = new Map([
+      ['A', 'old-parent'],
+      ['B', 'new-parent']
+    ])
+    const deniedParents = new Set<string>()
+    const f = fixtureExtension({
+      mainActive: () => mainActive,
+      childAllowed: (id) => !deniedParents.has(childParents.get(id)!)
+    })
+    try {
+      deniedParents.add('new-parent')
+      mainActive = false
+      let requests = 0
+      await drain(
+        f.sessions.get('A')!.agent.streamFn(model, context, {
+          fetch: async (_input, init) => {
+            requests++
+            assert.equal(
+              verifyRpcChildModelHeader(
+                new Headers(init?.headers).get(RPC_CHILD_MODEL_HEADER),
+                childCapability
+              )?.nativeAgentId,
+              'A'
+            )
+            return reply()
+          }
+        })
+      )
+      assert.equal(requests, 1)
+      for (const id of ['Main', 'B'])
+        await assert.rejects(
+          drain(
+            f.sessions.get(id)!.agent.streamFn(model, context, {
+              fetch: async () => {
+                throw Error('Denied actor reached network')
+              }
+            })
+          ),
+          NativeStreamIntegrityError
+        )
     } finally {
       f.extension.dispose()
     }

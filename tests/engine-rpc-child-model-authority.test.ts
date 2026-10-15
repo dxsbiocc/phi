@@ -111,6 +111,6 @@ test('native request actor headers preserve peer isolation and reject SDK collis
   assert.equal(result.stderr, '')
   const report = JSON.parse(result.stdout) as { passed: number; names: string[] }
   assert.equal(report.passed, report.names.length)
-  assert.equal(report.passed, 10)
+  assert.equal(report.passed, 11)
   t.diagnostic(`${report.passed} native actor-header contract scenarios passed`)
 })

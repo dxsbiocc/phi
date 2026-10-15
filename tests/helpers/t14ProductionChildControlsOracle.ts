@@ -16,17 +16,23 @@ import {
 import type { RpcChildRunSnapshot } from '../../src/main/agent/engine/rpc/subagents/types'
 import type { RpcChildRuntimeConfig } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 import type { ToolApprovalRequest } from '../../src/main/agent/tool-approval'
+import type { RpcApprovalEvent } from '../../src/main/agent/engine/rpc/approval-bridge'
 
 const STEER = 'PRODUCTION_CHILD_A_STEER_ONLY'
 const PEER = 'PRODUCTION_PEER_STREAM_ONLY'
+const LATER_MAIN = 'PRODUCTION_LATER_MAIN_DENIED'
+const mode = process.env.PHI_T14_CONTROL_MODE ?? 'default'
+assert.ok(mode === 'default' || mode === 'later-main-denied')
+const laterMainDenied = mode === 'later-main-denied'
 const primary = 'production-control-parent'
 const peerRuntime = 'production-control-peer'
 const snapshots = new Map<string, Readonly<RpcChildRunSnapshot>>()
 const wakeups: string[] = []
+const mainApprovalEvents: RpcApprovalEvent[] = []
 const decisions: Array<{
   request: Readonly<ToolApprovalRequest>
   signal: AbortSignal
-  decide(value: 'approved'): void
+  decide(value: 'approved' | 'denied'): void
 }> = []
 const definitions: PhiAgentDefinition[] = ['A', 'B'].map((suffix) => ({
   name: `Control${suffix}`,
@@ -47,6 +53,7 @@ let phase = 'fixture'
 const failureState = (error: unknown): string =>
   JSON.stringify({
     phase,
+    bundleHash,
     error: error instanceof Error ? error.message : String(error),
     hits,
     snapshots: [...snapshots.values()].map(({ agent, status, verified }) => ({
@@ -74,6 +81,19 @@ const replyFor = (request: ModelRequest): ModelReply => {
   )
   if (who === 'peer') return { text: 'Independent peer remains active', hold: true }
   if (who === 'root') {
+    if (laterMainDenied && JSON.stringify(request.messages).includes(LATER_MAIN)) {
+      assert.equal(hits.root, 3, 'The denied Main turn must not make a later provider request')
+      return {
+        tool: {
+          name: 'write',
+          id: 'later-main-write',
+          args: {
+            path: join(projectRoot, 'later-main-must-not-write.txt'),
+            content: 'The denied later Main turn must never execute'
+          }
+        }
+      }
+    }
     if (hits.root > 1) return { text: 'Parent finished while owned background children continue' }
     assert.ok(config)
     const tasks = ['A', 'B'].map((suffix) => {
@@ -152,7 +172,10 @@ try {
     requestToolApproval: (request, signal) =>
       new Promise((resolve) => {
         decisions.push({ request, signal, decide: resolve })
-      })
+      }),
+    onEvent: (event) => {
+      mainApprovalEvents.push(event)
+    }
   })
   const handlers = agentRunHostHandlers({
     resolveSession: (id) =>
@@ -246,6 +269,45 @@ try {
     }
   })
   await until(() => hits.peer === 1, 'Independent peer is really streaming')
+  if (laterMainDenied) {
+    phase = 'later-main-approval'
+    const laterRun = f.runners.startRun({
+      sessionId: f.phi.sessionId,
+      runId: createRunId(),
+      execute: async () => {
+        await f.engine.sessions.prompt({ sessionId: primary, text: LATER_MAIN })
+      }
+    })
+    await until(
+      () => decisions.some((item) => item.request.toolCallId === 'later-main-write'),
+      'The later Main turn reaches its own native write approval'
+    )
+    const laterDialog = decisions.find((item) => item.request.toolCallId === 'later-main-write')!
+    assert.equal(laterDialog.request.agentRunId, undefined)
+    assert.equal(laterDialog.request.runId, laterRun.runId)
+    assert.equal(laterDialog.request.sessionId, f.phi.sessionId)
+    assert.notEqual(laterRun.runId, a.parentRunId)
+    laterDialog.decide('denied')
+    await laterRun.done
+    assert.equal(laterRun.outcome, 'failed')
+    assert.deepEqual(
+      mainApprovalEvents
+        .filter((event) => event.runId === laterRun.runId)
+        .map((event) => event.type),
+      ['approval_requested', 'approval_denied']
+    )
+    assert.equal(await f.exists(join(projectRoot, 'later-main-must-not-write.txt')), false)
+    assert.equal(hits.root, 3)
+    for (const child of [a, b]) {
+      assert.equal(snapshots.get(child.id)?.status, 'running')
+      assert.equal(snapshots.get(child.id)?.parentRunId, run.runId)
+      assert.equal(
+        decisions.find((item) => item.request.agentRunId === child.id)?.signal.aborted,
+        false
+      )
+    }
+    assert.equal(peerRun.signal.aborted, false)
+  }
   await assert.rejects(
     f.engine.agentRuns.steer({
       sessionId: peerRuntime,
@@ -350,14 +412,16 @@ try {
   )
   assert.equal(
     hits.root,
-    2,
+    laterMainDenied ? 3 : 2,
     'Private steering/stop and SDK background delivery never replay the parent model'
   )
   assert.equal(hits.b, 1)
   assert.equal(hits.a, 2)
   assert.equal(hits.peer, 1)
+  if (laterMainDenied)
+    assert.equal(await f.exists(join(projectRoot, 'later-main-must-not-write.txt')), false)
   console.log(
-    `PRODUCTION_CHILD_CONTROL_OK bundle=${bundleHash} parent returned while two verified background children remained; exact child steer/native stop/wait and peer isolation; one original-Phi continuation decision, no parent replay`
+    `PRODUCTION_CHILD_CONTROL_OK mode=${mode} bundle=${bundleHash} parent returned while two verified background children remained; exact child steer/native stop/wait and peer isolation; one original-Phi continuation decision, no parent replay`
   )
 } catch (error) {
   console.error(failureState(error))

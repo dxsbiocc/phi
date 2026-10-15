@@ -146,7 +146,10 @@ export async function childAuthorityCli(options: ChildCliOptions = {}): Promise<
       availableSkills: [],
       parentThinkingLevel: 'off'
     })
-  )
+  ).catch(async (error: unknown) => {
+    await rm(root, { recursive: true, force: true })
+    throw error
+  })
   const entry = compiled.manifest.entries.find((item) => item.blocking)!
   const server = createServer((req, res) => {
     void (async () => {

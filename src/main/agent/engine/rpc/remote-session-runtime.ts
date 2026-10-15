@@ -858,13 +858,16 @@ export class RemoteSessionRuntime {
       })
       this.active()
       if (options.compaction) await this.compactionPolicyUnderGate(result)
-      await this.checkpointUnderGate(options.sessionName, {
+      const selection = {
         model: {
           provider: options.initialSelection.model.provider,
           id: options.initialSelection.model.id
         },
         thinkingLevel: options.initialSelection.thinkingLevel
-      })
+      }
+      if (options.sessionName !== undefined)
+        await this.metadata.reconcileInitialName(options.sessionName, { ...result, ...selection })
+      await this.checkpointUnderGate(options.sessionName, selection)
       return
     }
     if (options.compaction) await this.compactionPolicyUnderGate(result)

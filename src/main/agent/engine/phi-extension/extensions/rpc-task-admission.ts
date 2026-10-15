@@ -102,6 +102,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
   assertInstalled(ctx: ExtensionContext): void
   sealParent(run: Readonly<RpcTaskParentRun>, ctx: ExtensionContext): boolean
   isStreamActive(): boolean
+  isChildStreamActive(nativeAgentId: string): boolean
   dispose(): void
 } {
   const trackLaunches =
@@ -118,7 +119,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
       run: Readonly<RpcTaskParentRun>
     }
   >()
-  const launches = new Map<string, { session: AgentSession; run: Readonly<RpcTaskParentRun> }>()
+  const launches = new Map<
+    string,
+    { session: AgentSession; run: Readonly<RpcTaskParentRun>; background: boolean }
+  >()
   const parentKey = (run: Readonly<RpcTaskParentRun>, id: string): string =>
     JSON.stringify([run.runId, run.controlSequence, id])
   const children = new Map<
@@ -135,6 +139,19 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
   const settlementCalls = new Map<string, SettlementCall>()
   const pendingSettlements = new Map<string, SettlementCall>()
   const settledToolIds = new Set<string>()
+  // Normal Main completion also aborts its execution signal. Only a captured negative
+  // decision retires already admitted children from that parent; never revive it later.
+  const blockedParents = new WeakMap<AbortSignal, Set<string>>()
+  const parentIdentity = (run: Readonly<RpcTaskParentRun>): string =>
+    JSON.stringify([run.runId, run.controlSequence])
+  const parentBlocked = (run: Readonly<RpcTaskParentRun>): boolean =>
+    blockedParents.get(run.signal)?.has(parentIdentity(run)) === true
+  const blockParent = (run: Readonly<RpcTaskParentRun>): void => {
+    const entries = blockedParents.get(run.signal) ?? new Set<string>()
+    entries.add(parentIdentity(run))
+    blockedParents.set(run.signal, entries)
+    blocked = Object.freeze({ ...run })
+  }
   let blocked: Readonly<RpcTaskParentRun> | undefined
   const digest = childConfigDigest(options.config)
   let api: Parameters<ExtensionFactory>[0] | undefined
@@ -557,7 +574,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           current.signal !== child.run.signal
         )
           return
-        blocked = child.run
+        blockParent(child.run)
         // This synchronous tombstone precedes TaskTool continuation and the delayed RPC ACK.
         try {
           options.onChildAborted?.(child.run)
@@ -664,7 +681,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           call?.admitted.set(event.spawnKey, event.agent)
           // Permanent for this parent: any allowed sibling rules out a no-spawn receipt.
           parent.spawnAllowed = true
-          launches.set(event.spawnKey, { session, run })
+          launches.set(event.spawnKey, { session, run, background: !profile.definition.blocking })
           return undefined
         } catch {
           return { block: true, reason: 'Phi native task launch scope is unavailable' }
@@ -707,7 +724,7 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           run.controlSequence < 1
         )
           return false
-        blocked = Object.freeze({ ...current })
+        blockParent(current)
         return true
       } catch {
         return false
@@ -715,14 +732,78 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     },
     isStreamActive: () => {
       if (disposed || options.signal.aborted) return false
-      if (!blocked) return true
       const current = options.parentRun?.()
+      if (current && parentBlocked(current)) return false
+      if (!blocked) return true
       return (
         !!current &&
         (current.runId !== blocked.runId ||
           current.controlSequence !== blocked.controlSequence ||
           current.signal !== blocked.signal)
       )
+    },
+    isChildStreamActive: (nativeAgentId) => {
+      try {
+        if (disposed || options.signal.aborted || !approvalIdentifier(nativeAgentId)) return false
+        const launch = launches.get(nativeAgentId)
+        const registry = api?.pi.AgentRegistry.global()
+        const ref = registry?.get(nativeAgentId)
+        const child = ref && children.get(ref)
+        if (
+          !launch ||
+          !ref ||
+          (child &&
+            (child.session !== launch.session ||
+              child.run.signal !== launch.run.signal ||
+              child.run.runId !== launch.run.runId ||
+              child.run.controlSequence !== launch.run.controlSequence)) ||
+          parentBlocked(launch.run)
+        )
+          return false
+        const parent = settlementParents.get(launch.run.signal)
+        if (
+          !parent ||
+          parent.session !== launch.session ||
+          parent.run.runId !== launch.run.runId ||
+          parent.run.controlSequence !== launch.run.controlSequence ||
+          (child && !sameRpcChildRoot(parent.root, child.root))
+        )
+          return false
+        const root = parent.root
+        if (launch.background) {
+          const job = launch.session.asyncJobManager?.getJob(nativeAgentId)
+          if (
+            !job ||
+            job.agentId !== nativeAgentId ||
+            job.ownerId !== root.rootAgentId ||
+            job.type !== 'task'
+          )
+            return false
+        }
+        // Intentionally ignore launch.run.signal.aborted: ordinary Main agent_end
+        // retires that execution signal while its accepted background children remain owned.
+        return (
+          registry?.get(root.rootAgentId) === parent.ref &&
+          parent.ref.kind === 'main' &&
+          parent.ref.session === launch.session &&
+          launch.session.sessionId === root.rootOmpSessionId &&
+          launch.session.sessionFile === root.rootSessionFile &&
+          realpathSync(launch.session.sessionManager.getCwd()) === root.cwd &&
+          ref.id === nativeAgentId &&
+          ref.kind === 'sub' &&
+          ref.parentId === root.rootAgentId &&
+          ref.status === 'running' &&
+          ref.session !== null &&
+          typeof ref.sessionFile === 'string' &&
+          ref.sessionFile.length > 0 &&
+          (!child || ref.sessionFile === child.file) &&
+          ref.session.sessionFile === ref.sessionFile &&
+          ref.session.sessionId === ref.session.sessionManager.getSessionId() &&
+          ref.session.sessionManager.getHeader()?.parentSession === root.rootSessionFile
+        )
+      } catch {
+        return false
+      }
     },
     dispose: () => {
       // Retired roots keep a closed wrapper; async abort issuance does not prove quiescence.

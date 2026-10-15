@@ -34,6 +34,7 @@ function lifecycleFixture(
     ready: true,
     gate: false,
     lifetime: new AbortController(),
+    childVaults: new Map(),
     detach: [],
     options: {},
     host: {

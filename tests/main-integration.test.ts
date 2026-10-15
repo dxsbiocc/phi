@@ -393,6 +393,7 @@ type HarnessOptions = {
   remoteRpc?: boolean
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
+  remoteNotebookBackendCreate?: () => void
   remotePresentGate?: Promise<void>
   onRemotePresentInspect?: () => void
   routedRuntime?: (id: string) => boolean
@@ -869,6 +870,8 @@ async function harness(
       string,
       {
         controller: AbortController
+        sessionId: string
+        signal: AbortSignal
         done: Promise<void>
         runId: string
         startedAt: string
@@ -894,6 +897,8 @@ async function harness(
       })
       const run = {
         controller,
+        sessionId: input.sessionId,
+        signal: controller.signal,
         runId: input.runId,
         startedAt: '2026-09-05T00:00:00.000Z',
         status: 'running' as const,
@@ -927,19 +932,12 @@ async function harness(
     }
     getActiveRun(sessionId: string): {
       sessionId: string
+      signal: AbortSignal
       runId: string
       startedAt: string
       status: 'running' | 'needs_approval' | 'needs_input'
     } | null {
-      const run = this.runs.get(sessionId)
-      return run
-        ? {
-            sessionId,
-            runId: run.runId,
-            startedAt: run.startedAt,
-            status: run.status
-          }
-        : null
+      return this.runs.get(sessionId) ?? null
     }
     stopRun(sessionId: string): void {
       this.runs.get(sessionId)?.controller.abort()
@@ -2326,6 +2324,7 @@ async function harness(
     './agent/notebook/notebook-tool-host-router': { NotebookToolHostRouter },
     './agent/notebook/remote-analysis-notebook-backend': {
       createRemoteAnalysisNotebookBackend: () => {
+        options.remoteNotebookBackendCreate?.()
         const sessions = new TestAnalysisNotebookSessionRegistry()
         const pathFor = (path: string): string =>
           path.startsWith('/') ? path : `/canonical/project/${path}`
@@ -12786,43 +12785,66 @@ test('main IPC: opted-in remote persona and project instructions use existing tr
   assert.equal(created.resourceLoader, undefined)
 })
 
-for (const boundary of ['cancel', 'rebind'] as const)
-  test(`main host: Notebook ${boundary} after backend lookup blocks dispatch`, async () => {
-    let binding = 'selected-Notebook-host'
-    const app = await harness(undefined, { remoteNotebookBinding: () => binding })
-    const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
-      phiSessionId: string
-      cwd: string
-    }
-    await app.invoke('agent:prompt', 'initialize the trusted runtime origin')
-    const runtimeSessionId = app.sessions[0].runtimeSessionId
-    const execute = app.hostHandlers.get('notebookTool.execute')!
-    const controller = new AbortController()
-    const pending = execute(
-      {
-        action: 'save',
-        cwd: current.cwd,
-        params: { path: 'notebooks/analysis.ipynb' },
-        remoteProject: {
-          runtimeSessionId,
-          sessionId: current.phiSessionId,
-          projectId: 'remote-project-1'
+for (const boundary of ['cancel-before', 'cancel', 'rebind'] as const)
+  test(
+    boundary === 'cancel-before'
+      ? 'main host: Notebook cancellation before backend lookup blocks lookup and dispatch'
+      : `main host: Notebook ${boundary} after backend lookup blocks dispatch`,
+    async () => {
+      let binding = 'selected-Notebook-host'
+      let backendLookups = 0
+      const session = new FakeSession('notebook-lookup-owner.jsonl')
+      session.hold = true
+      const app = await harness(async () => session, {
+        remoteNotebookBinding: () => binding,
+        remoteNotebookBackendCreate: () => {
+          backendLookups += 1
         }
-      },
-      { originSessionId: runtimeSessionId, signal: controller.signal }
-    )
-    if (boundary === 'cancel') controller.abort(new Error('Notebook lookup cancelled'))
-    else binding = 'replacement-Notebook-host'
-    await assert.rejects(
-      pending,
-      boundary === 'cancel' ? /Notebook lookup cancelled/ : /运行或项目绑定已改变/
-    )
-    assert.equal(
-      app.remoteNotebookCalls.some((call) => call.action === 'save'),
-      false
-    )
-    assert.deepEqual(app.jupyterServerCalls, [])
-  })
+      })
+      const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+        phiSessionId: string
+        cwd: string
+      }
+      const parent = app.invoke('agent:prompt', 'initialize the trusted runtime origin')
+      await waitUntil(() => session.started)
+      try {
+        const runtimeSessionId = session.runtimeSessionId
+        const execute = app.hostHandlers.get('notebookTool.execute')!
+        const controller = new AbortController()
+        if (boundary === 'cancel-before') controller.abort(new Error('Notebook lookup cancelled'))
+        const pending = execute(
+          {
+            action: 'save',
+            cwd: current.cwd,
+            params: { path: 'notebooks/analysis.ipynb' },
+            remoteProject: {
+              runtimeSessionId,
+              sessionId: current.phiSessionId,
+              projectId: 'remote-project-1'
+            }
+          },
+          { originSessionId: runtimeSessionId, signal: controller.signal }
+        )
+        assert.equal(backendLookups, boundary === 'cancel-before' ? 0 : 1)
+        if (boundary === 'cancel') controller.abort(new Error('Notebook lookup cancelled'))
+        else if (boundary === 'rebind') binding = 'replacement-Notebook-host'
+        await assert.rejects(
+          pending,
+          boundary === 'rebind' ? /运行或项目绑定已改变/ : /Notebook lookup cancelled/
+        )
+        assert.equal(
+          app.remoteNotebookCalls.some(
+            (call) => call.action === 'tool:save' || call.action === 'save'
+          ),
+          false
+        )
+        assert.deepEqual(app.jupyterServerCalls, [])
+      } finally {
+        session.finish.resolve()
+        await parent
+      }
+    }
+  )
 
 test('main host: owned remote worker Notebook context remains compatible without a cancellation signal', async () => {
   const app = await harness()

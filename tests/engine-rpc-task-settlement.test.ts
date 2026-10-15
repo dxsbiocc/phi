@@ -38,6 +38,10 @@ interface Fixture {
   hook(): unknown
   setWrongModel(wrong: boolean): void
   replaceHook(): void
+  admitChild(nativeId: string, beforeLifecycle?: boolean): Promise<void>
+  changeParent(id: string, sequence: number): void
+  sealCurrentParent(): boolean
+  replaceChildRef(id: string): void
   close(): Promise<void>
 }
 
@@ -77,7 +81,11 @@ async function fixture(startup = true): Promise<Fixture> {
     policy: { mode: 'foreground-native', taskShape: 'single' }
   }
   const controller = new AbortController()
-  const parent = Object.freeze({ runId: 'parent-A', controlSequence: 7, signal: controller.signal })
+  let parent: Readonly<RpcTaskParentRun> = Object.freeze({
+    runId: 'parent-A',
+    controlSequence: 7,
+    signal: controller.signal
+  })
   const input = {
     agent: nativeName,
     name: 'controlled-child',
@@ -86,7 +94,7 @@ async function fixture(startup = true): Promise<Fixture> {
   }
   const notifications: string[] = []
   const handlers = new Map<string, Handler[]>()
-  const sessionManager = { getSessionId: () => root.rootOmpSessionId }
+  const sessionManager = { getSessionId: () => root.rootOmpSessionId, getCwd: () => cwd }
   const ctx = {
     cwd,
     agent: { kind: 'main', id: 'Main' },
@@ -122,7 +130,9 @@ async function fixture(startup = true): Promise<Fixture> {
     preparedExtensions: [{}],
     extensionPaths: ['trusted-fixture']
   }
-  const ref = { kind: 'main', session }
+  const ref = { id: root.rootAgentId, kind: 'main', session }
+  const refs = new Map<string, unknown>([['Main', ref]])
+  const lifecycle: Handler[] = []
   let forbidReads = false
   const admission = createRpcTaskAdmissionExtension({
     config,
@@ -141,11 +151,19 @@ async function fixture(startup = true): Promise<Fixture> {
     on: (event: string, handler: Handler): void => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler])
     },
-    events: { on: () => () => {} },
+    events: {
+      on: (_name: string, listener: Handler) => {
+        lifecycle.push(listener)
+        return () => {
+          const index = lifecycle.indexOf(listener)
+          if (index >= 0) lifecycle.splice(index, 1)
+        }
+      }
+    },
     pi: {
       AgentRegistry: {
         global: () => ({
-          get: (id: string) => (id === 'Main' ? ref : undefined),
+          get: (id: string) => refs.get(id),
           onChange: () => () => {}
         })
       }
@@ -161,7 +179,9 @@ async function fixture(startup = true): Promise<Fixture> {
     admission,
     config,
     root,
-    parent,
+    get parent() {
+      return parent
+    },
     controller,
     notifications,
     ctx,
@@ -203,6 +223,63 @@ async function fixture(startup = true): Promise<Fixture> {
     },
     replaceHook: () => {
       session.agent.beforeToolCall = async () => undefined
+    },
+    admitChild: async (nativeId, beforeLifecycle = false) => {
+      const id = 'outer-' + nativeId
+      const result = await session.agent.beforeToolCall({
+        tool: { name: 'task' },
+        toolCall: { id, arguments: { ...input, i: 'Captured child' } },
+        args: input
+      } as Parameters<typeof previous>[0])
+      assert.equal(result, undefined)
+      assert.equal(
+        await emit('before_subagent_spawn', {
+          agent: nativeName,
+          invocationKind: 'task',
+          spawnKey: nativeId,
+          patterns: ['fixture/model']
+        }),
+        undefined
+      )
+      const file = join(cwd, nativeId + '.jsonl')
+      const manager = {
+        getSessionId: () => 'omp-' + nativeId,
+        getHeader: () => ({ parentSession: root.rootSessionFile })
+      }
+      const child = {
+        id: nativeId,
+        kind: 'sub',
+        parentId: root.rootAgentId,
+        status: 'running',
+        sessionFile: file,
+        session: { sessionId: 'omp-' + nativeId, sessionFile: file, sessionManager: manager }
+      }
+      refs.set(nativeId, child)
+      if (beforeLifecycle) return
+      for (const listener of lifecycle)
+        await listener(
+          {
+            id: nativeId,
+            status: 'started',
+            agent: nativeName,
+            agentSource: 'user',
+            parentToolCallId: id,
+            sessionFile: file
+          },
+          ctx
+        )
+    },
+    changeParent: (id, sequence) => {
+      parent = Object.freeze({
+        runId: id,
+        controlSequence: sequence,
+        signal: new AbortController().signal
+      })
+    },
+    sealCurrentParent: () =>
+      admission.sealParent(parent, ctx as unknown as Parameters<Admission['sealParent']>[1]),
+    replaceChildRef: (id) => {
+      refs.set(id, { kind: 'sub', parentId: root.rootAgentId, status: 'running', session: null })
     },
     close: async () => {
       admission.dispose()
@@ -375,3 +452,52 @@ for (const field of ['journal', 'omp'] as const)
     await f.end()
     assert.equal(f.notifications.length, 0)
   })
+
+test('captured child stream isolates a later negative parent and preserves the negative tombstone across new Main runs', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-A')
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(f.admission.isChildStreamActive('unknown-child'), false)
+  // Ordinary execution-authority agent_end retires the parent signal too.
+  f.controller.abort()
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  f.changeParent('parent-B', 8)
+  await f.admitChild('child-B')
+  assert.equal(f.sealCurrentParent(), true)
+  assert.equal(f.admission.isStreamActive(), false)
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(f.admission.isChildStreamActive('child-B'), false)
+  f.changeParent('parent-C', 9)
+  await f.admitChild('child-C')
+  assert.equal(f.admission.isStreamActive(), true)
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  assert.equal(
+    f.admission.isChildStreamActive('child-B'),
+    false,
+    'a new Main never revives a denied old parent'
+  )
+  assert.equal(f.admission.isChildStreamActive('child-C'), true)
+  f.replaceChildRef('child-A')
+  assert.equal(f.admission.isChildStreamActive('child-A'), false)
+  f.admission.dispose()
+  assert.equal(f.admission.isChildStreamActive('child-C'), false)
+})
+
+test('captured child stream rejects changed original root and never queries a newer Main binding', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-A')
+  f.forbidCurrentReads()
+  assert.equal(f.admission.isChildStreamActive('child-A'), true)
+  f.changeActualScope('journal')
+  assert.equal(f.admission.isChildStreamActive('child-A'), false)
+})
+
+test('captured first child model request does not depend on a later started lifecycle notification', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('child-first-model', true)
+  assert.equal(f.admission.isChildStreamActive('child-first-model'), true)
+  assert.equal(f.admission.isChildStreamActive('unknown-child'), false)
+})
