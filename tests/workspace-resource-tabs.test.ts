@@ -205,7 +205,7 @@ test('a modified notebook tab keeps a visible unsaved marker', () => {
   assert.match(markup, /未保存修改/)
 })
 
-test('an active conversation tab replaces its chat icon with an in-place dock action on interaction', () => {
+test('active and inactive conversation tabs expose the same in-place dock action', () => {
   const tab: WorkspaceSessionTab = {
     key: 'session:/tmp/chat.jsonl',
     kind: 'session',
@@ -215,24 +215,26 @@ test('an active conversation tab replaces its chat icon with an in-place dock ac
     sessionGeneration: 1,
     sidebarMode: 'conversations'
   }
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme: createTheme() },
-      createElement(WorkspaceResourceTabs, {
-        tabs: [tab],
-        activeKey: tab.key,
-        onSelect: () => undefined,
-        onClose: () => undefined,
-        onDockSessionTab: () => undefined
-      })
+  for (const activeKey of [tab.key, 'file:/tmp/notes.ipynb']) {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(WorkspaceResourceTabs, {
+          tabs: [tab],
+          activeKey,
+          onSelect: () => undefined,
+          onClose: () => undefined,
+          onDockSessionTab: () => undefined
+        })
+      )
     )
-  )
 
-  assert.match(markup, /workspace-session-tab-icon/)
-  assert.match(markup, /data-phi-session-tab-dock-action="true"/)
-  assert.match(markup, /aria-label="移到左侧边栏"/)
-  assert.match(markup, /workspace-session-tab-dock-action/)
+    assert.match(markup, /workspace-session-tab-icon/)
+    assert.match(markup, /data-phi-session-tab-dock-action="true"/)
+    assert.match(markup, /aria-label="移到左侧边栏"/)
+    assert.match(markup, /workspace-session-tab-dock-action/)
+  }
 })
 
 test('a finished prompt only moves the active tab off session tabs', () => {

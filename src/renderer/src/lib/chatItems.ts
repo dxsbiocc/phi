@@ -26,6 +26,10 @@ import {
 } from '../features/chat/lib/runtimeToolRecovery'
 import { storedPromptImages } from '../features/chat/lib/storedPromptImages'
 import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
+import {
+  applyApprovalTimelineEvent,
+  approvalItemFromEvent
+} from '../features/chat/lib/approvalTimeline'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
@@ -400,6 +404,9 @@ export function chatItemFromPhiTimelineEvent(event: {
   eventId?: string
   runId?: string
   approvalId?: string
+  phiSessionId?: string
+  sessionId?: string
+  toolCallId?: string
   toolName?: unknown
   summary?: unknown
   shortSummary?: unknown
@@ -417,6 +424,8 @@ export function chatItemFromPhiTimelineEvent(event: {
   toModelId?: unknown
   toModelName?: unknown
 }): ChatItem | null {
+  const approval = approvalItemFromEvent(event)
+  if (approval) return approval
   const id = event.eventId ?? `${event.type ?? 'phi'}-${event.runId ?? event.approvalId ?? 'event'}`
   if (event.type === 'run_interrupted') {
     return {
@@ -433,27 +442,6 @@ export function chatItemFromPhiTimelineEvent(event: {
       role: 'error',
       content: error || '运行失败。',
       ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'approval_requested') {
-    const toolName = typeof event.toolName === 'string' ? event.toolName : '工具调用'
-    const summary = typeof event.summary === 'string' && event.summary ? `：${event.summary}` : ''
-    return {
-      id,
-      role: 'warning',
-      content: `等待批准 ${toolName}${summary}`,
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'approval_denied') {
-    return { id, role: 'error', content: '权限请求已拒绝。', ...createdAtField(event.createdAt) }
-  }
-  if (event.type === 'approval_cancelled') {
-    return {
-      id,
-      role: 'warning',
-      content: '权限请求已取消。',
       ...createdAtField(event.createdAt)
     }
   }
@@ -687,6 +675,10 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       type?: string
       eventId?: string
       runId?: string
+      approvalId?: string
+      phiSessionId?: string
+      sessionId?: string
+      summary?: string
       userMessageId?: string
       preferPhiTimeline?: boolean
       content?: unknown
@@ -732,6 +724,7 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     }
 
     if (message.source === 'phi') {
+      if (applyApprovalTimelineEvent(items, message)) continue
       const planReview = planReviewItemFromEvent(message)
       if (planReview) {
         items.push(planReview)

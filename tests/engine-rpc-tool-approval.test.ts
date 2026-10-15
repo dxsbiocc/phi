@@ -21,6 +21,7 @@ import {
   approvalIdentity
 } from './helpers/rpcApprovalFixture'
 import { extensionPackageFailures } from './helpers/extensionPackageBoundary'
+import type { PermissionMode } from '../src/main/agent/projects'
 
 function mainBridge(
   f: Awaited<ReturnType<typeof realApprovalFixture>>,
@@ -62,6 +63,85 @@ function mainBridge(
     }
   })
 }
+
+test(
+  'actual running RPC honors ask, auto, full and ask again without releasing an existing waiter',
+  { timeout: 30000 },
+  async (t) => {
+    const f = await realApprovalFixture()
+    t.after(() => f.close())
+    let mode: PermissionMode = 'ask'
+    const answer = deferred<RpcApprovalDecision>()
+    const events: RpcApprovalEvent[] = []
+    const waits: string[] = []
+    const inputFor = (id: string): Record<string, unknown> => ({
+      command: `printf ${id} > ${id}.txt`
+    })
+    const run = Object.freeze({
+      id: f.identity.runId,
+      signal: new AbortController().signal,
+      authorizeCall: (
+        id: string,
+        name: string,
+        input: Readonly<Record<string, unknown>>,
+        digest: string
+      ) => {
+        if (!['ask-first', 'auto-next', 'full-next', 'ask-last'].includes(id) || name !== 'bash')
+          return undefined
+        const expected = createApprovalEnvelope(f.identity, id, name, inputFor(id))
+        return digest === expected.inputDigest &&
+          createApprovalEnvelope(f.identity, id, name, input).inputDigest === digest
+          ? ('main' as const)
+          : undefined
+      }
+    })
+    const bridge = new RpcApprovalBridge({
+      connection: f.connection,
+      scope: { ...f.identity, currentRun: () => run },
+      shouldGate: () => mode === 'ask',
+      requestToolApproval: (request) => {
+        waits.push(request.toolCallId!)
+        return request.toolCallId === 'ask-first' ? answer.promise : 'denied'
+      },
+      onEvent: (event) => {
+        events.push(event)
+      }
+    })
+    t.after(() => bridge.dispose())
+    const detach = f.connection.onEvent((event) => {
+      if (event.type !== 'tool_execution_end') return
+      if (event.toolCallId === 'auto-next') mode = 'full'
+      if (event.toolCallId === 'full-next') mode = 'ask'
+    })
+    t.after(detach)
+    f.provider.enqueue(
+      ...['ask-first', 'auto-next', 'full-next', 'ask-last'].map((id) => ({
+        tool: { name: 'bash', args: inputFor(id), id }
+      })),
+      { text: 'done' }
+    )
+    const prompt = f.connection.prompt('Execute each scripted command once.')
+    await until(() => waits.length === 1)
+    mode = 'auto'
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(existsSync(join(f.cwd, 'ask-first.txt')), false)
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['approval_requested']
+    )
+    answer.resolve('approved')
+    assert.equal((await prompt).status, 'completed', f.stderr())
+    for (const id of ['ask-first', 'auto-next', 'full-next']) {
+      assert.equal(readFileSync(join(f.cwd, `${id}.txt`), 'utf8'), id)
+    }
+    assert.equal(existsSync(join(f.cwd, 'ask-last.txt')), false)
+    assert.deepEqual(waits, ['ask-first', 'ask-last'])
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['approval_requested', 'approval_approved', 'approval_requested', 'approval_denied']
+    )
+  }
+)
 
 for (const name of ['write', 'edit', 'bash'] as const)
   test(

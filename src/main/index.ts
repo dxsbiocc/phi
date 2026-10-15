@@ -41,6 +41,11 @@ import type {
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
 import {
+  validatePermissionMode,
+  validateSessionPermissionModeUpdate
+} from './agent/session/permission-mode-control'
+import { registerWorkspaceFileIpc } from './workspace-file-ipc'
+import {
   createStartupSplashWindow,
   dismissStartupSplashWindow,
   type StartupSplashWindow
@@ -1372,6 +1377,9 @@ function requireRemoteBashApproval(request: RemoteBashRequest): void {
   if (!manifest || manifest.projectId !== request.projectId) {
     throw new Error('远程命令会话归属无效')
   }
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteBashCalls.get(key)
+  approvedRemoteBashCalls.delete(key)
   if (manifest.permissionMode !== 'ask') return
   const project = getProject(request.projectId)
   const host =
@@ -1382,9 +1390,6 @@ function requireRemoteBashApproval(request: RemoteBashRequest): void {
     throw new Error('远程项目的 SSH 服务器档案不可用')
   }
   const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteBashCalls.get(key)
-  approvedRemoteBashCalls.delete(key)
   if (
     !approved ||
     approved.projectId !== request.projectId ||
@@ -1401,6 +1406,9 @@ function requireRemoteWriteApproval(request: RemoteWriteRequest): void {
   if (!manifest || manifest.projectId !== request.projectId) {
     throw new Error('远程写入会话归属无效')
   }
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteWriteCalls.get(key)
+  approvedRemoteWriteCalls.delete(key)
   if (manifest.permissionMode !== 'ask') return
   const project = getProject(request.projectId)
   const host =
@@ -1411,9 +1419,6 @@ function requireRemoteWriteApproval(request: RemoteWriteRequest): void {
     throw new Error('远程项目的 SSH 服务器档案不可用')
   }
   const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteWriteCalls.get(key)
-  approvedRemoteWriteCalls.delete(key)
   if (
     !approved ||
     approved.projectId !== request.projectId ||
@@ -1431,6 +1436,9 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
   if (!manifest || manifest.projectId !== request.projectId) {
     throw new Error('远程编辑会话归属无效')
   }
+  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
+  const approved = approvedRemoteEditCalls.get(key)
+  approvedRemoteEditCalls.delete(key)
   if (manifest.permissionMode !== 'ask') return
   const project = getProject(request.projectId)
   const host =
@@ -1441,9 +1449,6 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
     throw new Error('远程项目的 SSH 服务器档案不可用')
   }
   const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteEditCalls.get(key)
-  approvedRemoteEditCalls.delete(key)
   if (
     !approved ||
     approved.projectId !== request.projectId ||
@@ -5578,13 +5583,15 @@ function resolveSessionPermissionMode(
   snapshot: Pick<SessionSnapshot, 'path' | 'cwd'>
 ): PermissionMode {
   const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  if (manifest) {
+    sessionPermissionModes.set(canonicalKey, manifest.permissionMode)
+    return manifest.permissionMode
+  }
   if (sessionPermissionModes.has(canonicalKey)) {
     return sessionPermissionModes.get(canonicalKey) ?? 'auto'
   }
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return (
-    manifest?.permissionMode ?? projectForSession(sessionKey, snapshot)?.permissionMode ?? 'auto'
-  )
+  return projectForSession(sessionKey, snapshot)?.permissionMode ?? 'auto'
 }
 
 function ensurePhiSessionId(
@@ -8025,161 +8032,155 @@ async function getAgentSession(
         ...(agentLeaderPrompt ? [agentLeaderPrompt] : [])
       ]
       const shouldLoadCoreSkill = !remoteProject && existsSync(getCoreAuthoringSkillDir())
-      const extensionFactories =
-        !useRpc && (remoteProject || creationSnapshot.permissionMode === 'ask')
-          ? [
-              createApprovalExtension({
-                signal: sessionAbortController.signal,
-                classifyTool: (toolName, input) =>
-                  remoteProject
-                    ? remoteRuntimeController.approvalFor(toolName, input)
-                    : skillHost.approvalFor(toolName, input),
-                ...(remoteProject
-                  ? {
-                      shouldGate: () =>
-                        findPhiSessionById(sessionManifest?.sessionId ?? '')?.permissionMode ===
-                        'ask'
-                    }
-                  : {}),
-                getContext: (event) => {
-                  const run = getActivePromptRun(sessionKey)
-                  const phiSessionId = run?.phiSessionId ?? sessionManifest?.sessionId
-                  if (!phiSessionId) return null
-                  const remoteHost =
-                    project?.location.kind === 'ssh'
-                      ? getRemoteHostProfile(project.location.hostProfileId)
-                      : undefined
-                  if (project?.location.kind === 'ssh' && !remoteHost) {
-                    throw new Error('远程项目的 SSH 服务器档案不可用')
+      const extensionFactories = !useRpc
+        ? [
+            createApprovalExtension({
+              signal: sessionAbortController.signal,
+              classifyTool: (toolName, input) =>
+                remoteProject
+                  ? remoteRuntimeController.approvalFor(toolName, input)
+                  : skillHost.approvalFor(toolName, input),
+              shouldGate: () =>
+                resolveSessionPermissionMode(sessionKey, creationSnapshot) === 'ask',
+              getContext: (event) => {
+                const run = getActivePromptRun(sessionKey)
+                const phiSessionId = run?.phiSessionId ?? sessionManifest?.sessionId
+                if (!phiSessionId) return null
+                const remoteHost =
+                  project?.location.kind === 'ssh'
+                    ? getRemoteHostProfile(project.location.hostProfileId)
+                    : undefined
+                if (project?.location.kind === 'ssh' && !remoteHost) {
+                  throw new Error('远程项目的 SSH 服务器档案不可用')
+                }
+                return {
+                  sessionId: phiSessionId,
+                  sessionPath: phiOnlySessionPath(phiSessionId),
+                  sessionGeneration: run?.sessionGeneration ?? generation,
+                  runId: event?.agentRunId ?? run?.runId ?? 'background-agent',
+                  cwd:
+                    project?.location.kind === 'ssh' && remoteHost
+                      ? `ssh://${remoteHost.hostAlias}${project.location.canonicalRoot}`
+                      : creationSnapshot.cwd,
+                  ...(project?.location.kind === 'ssh' && remoteHost
+                    ? {
+                        scopeNote: remoteBashApprovalScope(
+                          remoteHost.hostAlias,
+                          project.location.canonicalRoot
+                        ),
+                        writeScopeNote: `SSH ${remoteHost.hostAlias} · 项目 ${project.location.canonicalRoot}；新建文件或修改已读取且未变化的文件。`
+                      }
+                    : {}),
+                  ...(project?.name ? { projectName: project.name } : {})
+                }
+              },
+              onApprovalRequested: (request) => {
+                if (!request.sessionId) return
+                if (request.agentRunId && request.cwd) {
+                  backgroundAgentApprovals.requested({
+                    sessionId: request.sessionId,
+                    agentRunId: request.agentRunId,
+                    approvalId: request.requestId,
+                    toolName: request.toolName,
+                    summary: request.summary,
+                    cwd: request.cwd
+                  })
+                } else {
+                  runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
+                    toolName: request.toolName,
+                    summary: request.summary
+                  })
+                }
+              },
+              onApprovalResolved: (request, approved) => {
+                if (!request.sessionId) return
+                if (approved) {
+                  if (
+                    remoteProject &&
+                    request.toolName === 'bash' &&
+                    request.toolCallId &&
+                    request.approvalDigest &&
+                    request.cwd
+                  ) {
+                    approvedRemoteBashCalls.set(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                      {
+                        projectId: remoteProject.projectId,
+                        approvedCwd: request.cwd,
+                        approvalDigest: request.approvalDigest,
+                        expiresAt: Date.now() + 120_000
+                      }
+                    )
                   }
-                  return {
-                    sessionId: phiSessionId,
-                    sessionPath: phiOnlySessionPath(phiSessionId),
-                    sessionGeneration: run?.sessionGeneration ?? generation,
-                    runId: event?.agentRunId ?? run?.runId ?? 'background-agent',
-                    cwd:
-                      project?.location.kind === 'ssh' && remoteHost
-                        ? `ssh://${remoteHost.hostAlias}${project.location.canonicalRoot}`
-                        : creationSnapshot.cwd,
-                    ...(project?.location.kind === 'ssh' && remoteHost
-                      ? {
-                          scopeNote: remoteBashApprovalScope(
-                            remoteHost.hostAlias,
-                            project.location.canonicalRoot
-                          ),
-                          writeScopeNote: `SSH ${remoteHost.hostAlias} · 项目 ${project.location.canonicalRoot}；新建文件或修改已读取且未变化的文件。`
-                        }
-                      : {}),
-                    ...(project?.name ? { projectName: project.name } : {})
+                  if (
+                    remoteProject &&
+                    request.toolName === 'write' &&
+                    request.toolCallId &&
+                    request.approvalDigest &&
+                    request.cwd
+                  ) {
+                    approvedRemoteWriteCalls.set(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                      {
+                        projectId: remoteProject.projectId,
+                        approvedCwd: request.cwd,
+                        approvalDigest: request.approvalDigest,
+                        expiresAt: Date.now() + 120_000
+                      }
+                    )
                   }
-                },
-                onApprovalRequested: (request) => {
-                  if (!request.sessionId) return
-                  if (request.agentRunId && request.cwd) {
-                    backgroundAgentApprovals.requested({
-                      sessionId: request.sessionId,
-                      agentRunId: request.agentRunId,
-                      approvalId: request.requestId,
-                      toolName: request.toolName,
-                      summary: request.summary,
-                      cwd: request.cwd
-                    })
-                  } else {
-                    runnerRegistry.markNeedsApproval(request.sessionId, request.requestId, {
-                      toolName: request.toolName,
-                      summary: request.summary
-                    })
+                  if (
+                    remoteProject &&
+                    request.toolName === 'edit' &&
+                    request.toolCallId &&
+                    request.approvalDigest &&
+                    request.cwd
+                  ) {
+                    approvedRemoteEditCalls.set(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId),
+                      {
+                        projectId: remoteProject.projectId,
+                        approvedCwd: request.cwd,
+                        approvalDigest: request.approvalDigest,
+                        expiresAt: Date.now() + 120_000
+                      }
+                    )
                   }
-                },
-                onApprovalResolved: (request, approved) => {
-                  if (!request.sessionId) return
-                  if (approved) {
-                    if (
-                      remoteProject &&
-                      request.toolName === 'bash' &&
-                      request.toolCallId &&
-                      request.approvalDigest &&
-                      request.cwd
-                    ) {
-                      approvedRemoteBashCalls.set(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
-                        {
-                          projectId: remoteProject.projectId,
-                          approvedCwd: request.cwd,
-                          approvalDigest: request.approvalDigest,
-                          expiresAt: Date.now() + 120_000
-                        }
-                      )
-                    }
-                    if (
-                      remoteProject &&
-                      request.toolName === 'write' &&
-                      request.toolCallId &&
-                      request.approvalDigest &&
-                      request.cwd
-                    ) {
-                      approvedRemoteWriteCalls.set(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
-                        {
-                          projectId: remoteProject.projectId,
-                          approvedCwd: request.cwd,
-                          approvalDigest: request.approvalDigest,
-                          expiresAt: Date.now() + 120_000
-                        }
-                      )
-                    }
-                    if (
-                      remoteProject &&
-                      request.toolName === 'edit' &&
-                      request.toolCallId &&
-                      request.approvalDigest &&
-                      request.cwd
-                    ) {
-                      approvedRemoteEditCalls.set(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId),
-                        {
-                          projectId: remoteProject.projectId,
-                          approvedCwd: request.cwd,
-                          approvalDigest: request.approvalDigest,
-                          expiresAt: Date.now() + 120_000
-                        }
-                      )
-                    }
-                    if (request.agentRunId) {
-                      backgroundAgentApprovals.resolved(request.requestId, 'approved')
-                    } else {
-                      runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
-                    }
-                  } else {
-                    if (remoteProject && request.toolCallId) {
-                      approvedRemoteBashCalls.delete(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
-                      )
-                      approvedRemoteWriteCalls.delete(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
-                      )
-                      approvedRemoteEditCalls.delete(
-                        remoteBashApprovalKey(request.sessionId, request.toolCallId)
-                      )
-                    }
-                    if (request.agentRunId) {
-                      backgroundAgentApprovals.resolved(request.requestId, 'denied')
-                    } else {
-                      runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
-                    }
-                  }
-                },
-                onApprovalCancelled: (request) => {
-                  if (!request.sessionId) return
                   if (request.agentRunId) {
-                    backgroundAgentApprovals.resolved(request.requestId, 'cancelled')
+                    backgroundAgentApprovals.resolved(request.requestId, 'approved')
                   } else {
-                    runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
+                    runnerRegistry.markApprovalApproved(request.sessionId, request.requestId)
+                  }
+                } else {
+                  if (remoteProject && request.toolCallId) {
+                    approvedRemoteBashCalls.delete(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                    )
+                    approvedRemoteWriteCalls.delete(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                    )
+                    approvedRemoteEditCalls.delete(
+                      remoteBashApprovalKey(request.sessionId, request.toolCallId)
+                    )
+                  }
+                  if (request.agentRunId) {
+                    backgroundAgentApprovals.resolved(request.requestId, 'denied')
+                  } else {
+                    runnerRegistry.markApprovalDenied(request.sessionId, request.requestId)
                   }
                 }
-              })
-            ]
-          : []
+              },
+              onApprovalCancelled: (request) => {
+                if (!request.sessionId) return
+                if (request.agentRunId) {
+                  backgroundAgentApprovals.resolved(request.requestId, 'cancelled')
+                } else {
+                  runnerRegistry.markApprovalCancelled(request.sessionId, request.requestId)
+                }
+              }
+            })
+          ]
+        : []
       if (
         !useRpc &&
         (remoteProject ||
@@ -8897,6 +8898,23 @@ app.whenReady().then(async () => {
       })
     }
   )
+  registerWorkspaceFileIpc({
+    ipcMain,
+    dialog,
+    shell,
+    requireRenderer: requireMainWindowRenderer,
+    requireLocalWorkspaceRoot: (rootPath) => {
+      if (
+        isRemoteResourceScope() ||
+        resolve(rootPath) !== resolve(currentCwd) ||
+        isRemoteProjectAnchorPath(rootPath, AGENT_DIR)
+      ) {
+        throw new Error('只能修改当前本地工作区中的文件')
+      }
+    },
+    observeRemote: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
+    downloads: wrapperResultDownloads
+  })
   ipcMain.handle('files:preview', async (_, filePath: string) => {
     return createFilePreview(filePath)
   })
@@ -8935,6 +8953,7 @@ app.whenReady().then(async () => {
     return controller !== undefined
   })
   ipcMain.handle('wrapperResults:download', async (event, request: unknown) => {
+    requireMainWindowRenderer(event)
     const checked = validateWrapperResultDownloadRequest(request)
     const { requestId } = checked
     if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
@@ -8979,7 +8998,8 @@ app.whenReady().then(async () => {
       wrapperResultDownloads.delete(requestId)
     }
   })
-  ipcMain.handle('wrapperResults:cancelDownload', async (_, requestId: unknown) => {
+  ipcMain.handle('wrapperResults:cancelDownload', async (event, requestId: unknown) => {
+    requireMainWindowRenderer(event)
     if (typeof requestId !== 'string') throw new Error('Wrapper 下载请求 ID 无效')
     const active = wrapperResultDownloads.get(requestId)
     if (!active || active.phase === 'saving') return false
@@ -9322,23 +9342,29 @@ app.whenReady().then(async () => {
     async (_, target: unknown, patch: unknown) => setCurrentAutoCompactionSettings(target, patch)
   )
   ipcMain.handle('sessions:compact', async (_, target: unknown) => compactCurrentSession(target))
-  ipcMain.handle('sessions:updatePermissionMode', async (_, permissionMode: PermissionMode) => {
-    currentPermissionMode = permissionMode
-    sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-    const phiSessionId =
-      getPhiSessionIdForKey(currentSessionKey) ??
-      (currentSessionPath
-        ? findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)?.sessionId
-        : undefined)
-    if (phiSessionId) {
-      updateSessionManifest(phiSessionId, { permissionMode })
+  ipcMain.handle(
+    'sessions:updatePermissionMode',
+    async (event, value: unknown, target: unknown) => {
+      requireMainWindowRenderer(event)
+      const permissionMode = validateSessionPermissionModeUpdate(
+        value,
+        target,
+        getCurrentSessionPayload()
+      )
+      currentPermissionMode = permissionMode
+      sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
+      const phiSessionId =
+        getPhiSessionIdForKey(currentSessionKey) ??
+        (currentSessionPath
+          ? findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)?.sessionId
+          : undefined)
+      if (phiSessionId) {
+        updateSessionManifest(phiSessionId, { permissionMode })
+      }
+      notifySessionChanged()
+      return getCurrentSessionPayload()
     }
-    if (!hasActivePromptRun(currentSessionKey)) {
-      await invalidateAgentSession()
-    }
-    notifySessionChanged()
-    return getCurrentSessionPayload()
-  })
+  )
   ipcMain.handle('sessions:create', async () => {
     const cwd = getNoProjectTaskFolder()
     const session = createPhiManagedSession(cwd, 'auto')
@@ -9626,34 +9652,23 @@ app.whenReady().then(async () => {
     }
     deleteProject(id)
   })
-  ipcMain.handle(
-    'projects:updatePermissionMode',
-    async (_, id: string, permissionMode: PermissionMode) => {
-      const project = updateProjectPermissionMode(id, permissionMode)
-      if (project.location?.kind === 'ssh') {
-        for (const manifest of listPhiSessions()) {
-          if (manifest.projectId === id) {
-            updateSessionManifest(manifest.sessionId, { permissionMode })
-          }
-        }
-        const selected = findPhiManifestForSession(
-          currentSessionKey,
-          currentSessionPath,
-          currentCwd
-        )
-        if (selected?.projectId === id) {
-          currentPermissionMode = permissionMode
-          sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-          notifySessionChanged()
-        }
+  ipcMain.handle('projects:updatePermissionMode', async (event, id: string, value: unknown) => {
+    requireMainWindowRenderer(event)
+    const permissionMode = validatePermissionMode(value)
+    const project = updateProjectPermissionMode(id, permissionMode)
+    for (const manifest of listPhiSessions()) {
+      if (manifest.projectId === id) {
+        updateSessionManifest(manifest.sessionId, { permissionMode })
       }
-      if (project.location?.kind !== 'ssh' && project.workingDirectory === currentCwd) {
-        currentPermissionMode = project.permissionMode
-        await invalidateAgentSession()
-      }
-      return project
     }
-  )
+    const selected = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
+    if (selected?.projectId === id || project.workingDirectory === currentCwd) {
+      currentPermissionMode = permissionMode
+      sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
+      notifySessionChanged()
+    }
+    return project
+  })
   ipcMain.handle(
     'projects:updateDefaults',
     async (

@@ -6,13 +6,7 @@ import { BackgroundJobDetail } from './components/BackgroundJobDetail'
 import { BackgroundJobGroup } from './components/BackgroundJobGroup'
 import { BackgroundJobRow } from './components/BackgroundJobRow'
 import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
-import {
-  backgroundJobTrayStartedAt,
-  dismissBackgroundJobs,
-  dismissedBackgroundJobKeys,
-  selectBackgroundJobs,
-  type UnifiedBackgroundJob
-} from './lib/backgroundJobs'
+import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
 
 const ClearIcon = PhiIcons.action.delete
 
@@ -46,49 +40,43 @@ export function BackgroundJobsPanel({
   onOpenSetupAgent?: (prompt: string) => void
   onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
-  const { data, loaded, error, nowMs, refresh, setError } = useBackgroundJobsData()
+  const { data, jobs, loaded, error, nowMs, refresh, setError, clearCompleted } =
+    useBackgroundJobsData()
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [runningExpanded, setRunningExpanded] = useState(true)
-  const [finishedExpanded, setFinishedExpanded] = useState(true)
-  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(
-    () => new Set(dismissedBackgroundJobKeys())
-  )
-  const jobs = selectBackgroundJobs(
-    data.agentJobs,
-    data.wrapperRuns,
-    { finishedAfter: backgroundJobTrayStartedAt(), dismissedKeys },
-    data.shellJobs,
-    data.environmentBuilds,
-    data.connectorJobs,
-    data.uploadJobs,
-    data.jupyterJobs
-  )
+  const [finishedExpanded, setFinishedExpanded] = useState(false)
   const all = [...jobs.active, ...jobs.recent]
   const selected = selectedKey ? all.find((item) => item.key === selectedKey) : undefined
 
   useEffect(() => {
-    if (!requestedConnectorJobId) return
-    if (!data.connectorJobs.some((setup) => setup.id === requestedConnectorJobId)) return
+    if (!requestedConnectorJobId || !loaded) return
+    const exists = [...jobs.active, ...jobs.recent].some(
+      (item) => item.key === `connector:${requestedConnectorJobId}`
+    )
     const timer = window.setTimeout(() => {
-      setSelectedKey(`connector:${requestedConnectorJobId}`)
+      if (exists) setSelectedKey(`connector:${requestedConnectorJobId}`)
       onRequestedConnectorJobHandled?.(requestedConnectorJobId)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [data.connectorJobs, onRequestedConnectorJobHandled, requestedConnectorJobId])
+  }, [jobs.active, jobs.recent, loaded, onRequestedConnectorJobHandled, requestedConnectorJobId])
 
   useEffect(() => {
     if (!requestedJobKey || !loaded) return
     const key =
       requestedJobKey === LATEST_JUPYTER_JOB_KEY
-        ? data.jupyterJobs[0] && `jupyter:${data.jupyterJobs[0].id}`
+        ? data.jupyterJobs[0]
+          ? `jupyter:${data.jupyterJobs[0].id}`
+          : jobs.recent.find(
+              (item) => item.kind === 'history' && item.snapshot.sourceKind === 'jupyter'
+            )?.key
         : requestedJobKey
     const timer = window.setTimeout(() => {
       if (key) setSelectedKey(key)
       onRequestedJobHandled?.(requestedJobKey)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [data.jupyterJobs, loaded, onRequestedJobHandled, requestedJobKey])
+  }, [data.jupyterJobs, jobs.recent, loaded, onRequestedJobHandled, requestedJobKey])
 
   const run = async (
     item: UnifiedBackgroundJob,
@@ -124,6 +112,7 @@ export function BackgroundJobsPanel({
         case 'connector':
           return api.cancelLocalConnectorAdd(item.setup.id)
         case 'jupyter':
+        case 'history':
           return Promise.resolve()
       }
     }
@@ -136,11 +125,6 @@ export function BackgroundJobsPanel({
     } else if (item.kind === 'upload') {
       void run(item, () => window.api.retryRemoteProjectUpload(item.upload.id), '重试上传失败')
     }
-  }
-
-  const clearRecent = (): void => {
-    dismissBackgroundJobs(jobs.recent.map((item) => item.key))
-    setDismissedKeys(new Set(dismissedBackgroundJobKeys()))
   }
 
   const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => (
@@ -171,7 +155,7 @@ export function BackgroundJobsPanel({
       }}
     >
       <Stack direction="row" spacing={1} sx={{ mb: 1, minWidth: 0, alignItems: 'center' }}>
-        <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }}>
+        <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }}>
           后台任务 · {jobs.active.length} 个进行中
         </Typography>
         <Button size="small" onClick={() => void refresh()} sx={{ flexShrink: 0 }}>
@@ -233,8 +217,8 @@ export function BackgroundJobsPanel({
                 onToggle={() => setFinishedExpanded((value) => !value)}
                 action={
                   jobs.recent.length > 0 ? (
-                    <Tooltip title="从这里清掉，运行记录仍留在工具页">
-                      <IconButton size="small" aria-label="清除已完成" onClick={clearRecent}>
+                    <Tooltip title="清除已完成记录，运行中的任务不受影响">
+                      <IconButton size="small" aria-label="清除已完成" onClick={clearCompleted}>
                         <ClearIcon size={15} />
                       </IconButton>
                     </Tooltip>
@@ -243,7 +227,7 @@ export function BackgroundJobsPanel({
               >
                 {jobs.recent.length === 0 ? (
                   <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
-                    本次启动后还没有结束的任务
+                    还没有已结束的任务
                   </Typography>
                 ) : (
                   jobs.recent.map(renderRow)

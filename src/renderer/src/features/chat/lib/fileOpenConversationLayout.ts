@@ -2,10 +2,11 @@ import type { FileOpenConversationLayout } from '../../../../../shared/appSettin
 
 export function sidebarStateForFileOpenConversationLayout(layout: FileOpenConversationLayout): {
   isSidebarOpen: true
-  workspaceSidebarMode: 'conversations' | 'files'
-} {
+  workspaceSidebarMode: 'conversations'
+} | null {
+  if (layout === 'tab') return null
   return {
     isSidebarOpen: true,
-    workspaceSidebarMode: layout === 'sidebar' ? 'conversations' : 'files'
+    workspaceSidebarMode: 'conversations'
   }
 }

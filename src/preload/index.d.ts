@@ -73,6 +73,7 @@ import type {
   WrapperRunPlan,
   WrapperSubmitConfirmation
 } from '../shared/wrapperTypes'
+import type { WorkspaceFileOperationsRendererApi } from '../shared/workspaceFileOperations'
 import type {
   RemoteWorkspaceFileRequest,
   RemoteWorkspacePathProbeRequest,
@@ -640,7 +641,7 @@ type PreloadAnalysisNotebookFormatResult = {
 declare global {
   interface Window {
     platform: NodeJS.Platform
-    api: {
+    api: WorkspaceFileOperationsRendererApi & {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
       sshBootstrap: SshBootstrapRendererBridge
@@ -874,7 +875,10 @@ declare global {
         patch: AutoCompactionSettingsPatch
       ) => Promise<CurrentAutoCompactionSettings>
       compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
-      updateCurrentSessionPermissionMode: (permissionMode: PreloadPermissionMode) => Promise<{
+      updateCurrentSessionPermissionMode: (
+        permissionMode: PreloadPermissionMode,
+        target: ManualCompactionTarget
+      ) => Promise<{
         path: string | null
         phiSessionId?: string
         cwd: string

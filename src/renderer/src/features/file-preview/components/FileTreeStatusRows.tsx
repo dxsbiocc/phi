@@ -1,10 +1,14 @@
-import { Alert, Box, Typography } from '@mui/material'
+import { Alert, Box, CircularProgress, Typography } from '@mui/material'
 
-export function FileTreeLoadingRow({ path }: { path: string }): React.JSX.Element {
+export function FileTreeLoadingIndicator({ label }: { label: string }): React.JSX.Element {
   return (
-    <Box key={`${path}-loading`} sx={{ px: 1.5, py: 0.75, color: 'text.secondary' }}>
-      <Typography variant="caption">正在读取目录</Typography>
-    </Box>
+    <CircularProgress
+      size={14}
+      thickness={5}
+      disableShrink
+      aria-label={`加载目录 ${label}`}
+      sx={{ ml: 'auto', flexShrink: 0 }}
+    />
   )
 }
 

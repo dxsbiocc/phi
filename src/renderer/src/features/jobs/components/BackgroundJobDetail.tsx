@@ -120,6 +120,18 @@ export function BackgroundJobDetail({
   const [copied, setCopied] = useState(false)
   const status = jobStatus(item)
   const title = jobTitle(item)
+  const sessionPath =
+    item.kind === 'agent' || item.kind === 'shell'
+      ? item.run.sessionPath
+      : item.kind === 'history'
+        ? item.snapshot.sessionPath
+        : undefined
+  const wrapperId =
+    item.kind === 'wrapper'
+      ? item.run.wrapper.canonicalId
+      : item.kind === 'history'
+        ? item.snapshot.wrapperId
+        : undefined
 
   const copy = async (): Promise<void> => {
     await navigator.clipboard.writeText(detailText(item, nowMs))
@@ -177,17 +189,17 @@ export function BackgroundJobDetail({
         <Button size="small" onClick={() => void copy().catch(() => undefined)}>
           {copied ? '已复制' : '复制详情'}
         </Button>
-        {(item.kind === 'agent' || item.kind === 'shell') && (
-          <Button size="small" onClick={() => onOpenSession(item.run.sessionPath)}>
+        {sessionPath && (
+          <Button size="small" onClick={() => onOpenSession(sessionPath)}>
             打开对话
           </Button>
         )}
-        {item.kind === 'wrapper' && onOpenWrapper && (
-          <Button size="small" onClick={() => onOpenWrapper(item.run.wrapper.canonicalId)}>
+        {wrapperId && onOpenWrapper && (
+          <Button size="small" onClick={() => onOpenWrapper(wrapperId)}>
             打开 Wrapper
           </Button>
         )}
-        {onRetry && item.kind !== 'connector' && (
+        {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
           <Button size="small" disabled={busy} onClick={() => onRetry(item)}>
             重试
           </Button>

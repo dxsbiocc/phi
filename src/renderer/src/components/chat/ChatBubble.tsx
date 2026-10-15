@@ -11,6 +11,7 @@ import {
 } from './ChatUserMessage'
 import { ThinkingBlock } from './ThinkingBlock'
 import type { ChatContentResizeHandler } from './useCollapseResizeNotifier'
+import { ApprovalTimelineCard } from '../../features/chat/components/ApprovalTimelineCard'
 
 export type ChatBubbleProps = {
   message: ChatMessage
@@ -57,6 +58,15 @@ export const ChatBubble = memo(function ChatBubble({
   onContentResize,
   cwd = ''
 }: ChatBubbleProps): ReactNode {
+  if (message.approval) {
+    return (
+      <ApprovalTimelineCard
+        message={{ ...message, approval: message.approval }}
+        onContentResize={onContentResize}
+      />
+    )
+  }
+
   if (message.contextCompaction) {
     const failed = message.role === 'error'
     const Icon = failed ? PhiIcons.state.blocked : PhiIcons.action.refresh

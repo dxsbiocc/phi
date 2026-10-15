@@ -6,15 +6,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { CompanionChatToggle } from '../src/renderer/src/features/chat/components/CompanionChatToggle'
 import { sidebarStateForFileOpenConversationLayout } from '../src/renderer/src/features/chat/lib/fileOpenConversationLayout'
 
-test('file-open conversation layout maps to a deterministic sidebar destination', () => {
+test('only the side-by-side conversation preference requests a sidebar change', () => {
   assert.deepEqual(sidebarStateForFileOpenConversationLayout('sidebar'), {
     isSidebarOpen: true,
     workspaceSidebarMode: 'conversations'
   })
-  assert.deepEqual(sidebarStateForFileOpenConversationLayout('tab'), {
-    isSidebarOpen: true,
-    workspaceSidebarMode: 'files'
-  })
+  assert.equal(sidebarStateForFileOpenConversationLayout('tab'), null)
 })
 
 test('companion chat actions expose both layout directions without relying on drag', () => {

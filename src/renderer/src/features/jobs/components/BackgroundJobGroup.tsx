@@ -26,7 +26,20 @@ export function BackgroundJobGroup({
   const contentId = `background-job-group-${id}`
   return (
     <Box data-phi-background-job-group={id} sx={{ minWidth: 0, mb: 1 }}>
-      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', minWidth: 0 }}>
+      <Stack
+        direction="row"
+        spacing={0.5}
+        sx={{
+          alignItems: 'center',
+          width: '100%',
+          minWidth: 0,
+          minHeight: 40,
+          boxSizing: 'border-box',
+          px: 0.75,
+          borderRadius: 1,
+          bgcolor: 'action.hover'
+        }}
+      >
         <ButtonBase
           onClick={onToggle}
           aria-expanded={expanded}
@@ -34,6 +47,7 @@ export function BackgroundJobGroup({
           sx={{
             flex: 1,
             minWidth: 0,
+            alignSelf: 'stretch',
             justifyContent: 'flex-start',
             gap: 0.75,
             px: 0.5,
@@ -43,18 +57,18 @@ export function BackgroundJobGroup({
             '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main' }
           }}
         >
-          {expanded ? <CollapseIcon size={14} /> : <ExpandIcon size={14} />}
-          <Typography variant="caption" sx={{ fontWeight: 700 }}>
+          {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
+          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
             {title}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="body2" color="text.secondary">
             {count}
           </Typography>
         </ButtonBase>
         {action}
       </Stack>
       <Collapse in={expanded} id={contentId}>
-        <Box sx={{ pt: 0.75 }}>{children}</Box>
+        <Box sx={{ pt: 0.75, px: 1 }}>{children}</Box>
       </Collapse>
     </Box>
   )

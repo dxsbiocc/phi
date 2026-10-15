@@ -118,9 +118,9 @@ export function BackgroundJobRow({
           sx={{ mt: 0.75, height: 2, borderRadius: 1 }}
         />
       )}
-      {(canStop || onRetry) && (
+      {(canStop || (onRetry && item.kind !== 'history')) && (
         <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
-          {onRetry && (
+          {onRetry && item.kind !== 'history' && (
             <Button
               size="small"
               disabled={busy}

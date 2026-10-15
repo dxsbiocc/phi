@@ -156,3 +156,27 @@ test('resource selection from an existing sidebar does not dismiss its hover pre
   assert.equal(state.open, false)
   assert.equal(state.previewCloses, 0)
 })
+
+test('docking an inactive conversation keeps the selected file and opens its companion directly', () => {
+  const file = { path: '/project/notes.ipynb' },
+    state = { file: '', docks: 0, previewCloses: 0 }
+  const dock = runInNewContext(
+    ts.transpileModule(`const dock=${callback('onDockConversationToSidebar')};dock`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      currentSessionTab: { key: 'session:/current' },
+      activeWorkspaceFileTab: file,
+      workspaceFileTabs: [file],
+      closeWorkspaceSidebarPreview: () => state.previewCloses++,
+      onSelectWorkspaceFileTab: (tab: { path: string }) => {
+        state.file = tab.path
+      },
+      showActiveConversationInSidebar: () => state.docks++
+    }
+  ) as (tab: { key: string }) => void
+  dock({ key: 'session:/current' })
+  assert.deepEqual(state, { file: '/project/notes.ipynb', docks: 1, previewCloses: 1 })
+  dock({ key: 'session:/old' })
+  assert.deepEqual(state, { file: '/project/notes.ipynb', docks: 1, previewCloses: 1 })
+})

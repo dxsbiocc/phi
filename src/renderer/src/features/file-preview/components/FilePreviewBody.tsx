@@ -1,3 +1,4 @@
+import type { FileTreeActions } from '../lib/fileTreeActions'
 import { Alert, Box, Button, CircularProgress, Typography } from '@mui/material'
 import { spreadsheetPreviewModel } from '../../../lib/spreadsheetPreview'
 import { formatBytes } from '../../../lib/toolOutputPresentation'
@@ -28,6 +29,8 @@ type FilePreviewBodyProps = {
   state: FilePreviewPanelState
   onOpenFile: (path: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
+  fileActions?: FileTreeActions
+  treeRevision?: number
   onDownloadFile?: (path: string) => void
 }
 
@@ -35,7 +38,9 @@ export function FilePreviewBody({
   state,
   onOpenFile,
   onListDirectory,
-  onDownloadFile
+  onDownloadFile,
+  fileActions,
+  treeRevision = 0
 }: FilePreviewBodyProps): React.JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -71,10 +76,11 @@ export function FilePreviewBody({
   if (state.status === 'directory') {
     return (
       <ProjectFileTree
-        key={state.directory.path}
+        key={`${state.directory.path}:${treeRevision}`}
         rootPath={state.directory.path}
         activePath={state.directory.path}
-        initialListing={state.directory}
+        initialListing={treeRevision === 0 ? state.directory : undefined}
+        fileActions={fileActions}
         variant="standalone"
         onOpenFile={onOpenFile}
         onListDirectory={onListDirectory}

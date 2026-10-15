@@ -1,3 +1,4 @@
+import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
 import {
   lazy,
   Suspense,
@@ -41,6 +42,7 @@ import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
+import { useBackgroundJobRetention } from './features/jobs/hooks/useBackgroundJobsData'
 import BrowserPanel from './features/browser/BrowserPanel'
 import TerminalPanel from './features/terminal/TerminalPanel'
 import { useTerminalWorkspaceRestoration } from './features/terminal/hooks/useTerminalWorkspaceRestoration'
@@ -645,6 +647,7 @@ function AppResizeSeparator({
 }
 
 function App(): React.JSX.Element {
+  useBackgroundJobRetention()
   const {
     mode: themeMode,
     effectiveMode,
@@ -759,6 +762,8 @@ function App(): React.JSX.Element {
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
+  const [isUpdatingPermissionMode, setIsUpdatingPermissionMode] = useState(false)
+  const permissionModeUpdateRef = useRef(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const [exportTarget, setExportTarget] = useState<SessionSummary | null>(null)
   const [isExportingSession, setIsExportingSession] = useState(false)
@@ -1100,7 +1105,6 @@ function App(): React.JSX.Element {
     getActiveProjectId,
     getActiveRemoteProject,
     showSnackbarError,
-    setIsSidebarOpen,
     setActiveView: navigateToView
   })
   const onNavigateToNotebookView = useCallback((): void => {
@@ -1619,6 +1623,7 @@ function App(): React.JSX.Element {
 
   const applyFileOpenConversationLayout = useCallback((): void => {
     const next = sidebarStateForFileOpenConversationLayout(fileOpenConversationLayout)
+    if (!next) return
     projectSidebarSelectionRequestRef.current += 1
     setWorkspaceSidebarMode(next.workspaceSidebarMode)
     setIsSidebarOpen(next.isSidebarOpen)
@@ -2587,12 +2592,34 @@ function App(): React.JSX.Element {
   }
 
   const onSelectPermissionMode = async (permissionMode: PermissionMode): Promise<void> => {
-    if (permissionMode === activePermissionMode) return
-    const current = await rendererApi.updateCurrentSessionPermissionMode(permissionMode)
-    applyCurrentSession(current, undefined, {
-      onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-    })
-    setProjectSessionRefreshKey((key) => key + 1)
+    const state = useSessionStore.getState()
+    if (permissionMode === state.currentPermissionMode || permissionModeUpdateRef.current) return
+    const target: ManualCompactionTarget = {
+      sessionPath: state.activeSessionPath,
+      phiSessionId: state.activePhiSessionId,
+      sessionGeneration: state.activeSessionGeneration
+    }
+    permissionModeUpdateRef.current = true
+    setIsUpdatingPermissionMode(true)
+    try {
+      const current = await rendererApi.updateCurrentSessionPermissionMode(permissionMode, target)
+      const active = useSessionStore.getState()
+      if (
+        active.activeSessionPath !== target.sessionPath ||
+        active.activePhiSessionId !== target.phiSessionId ||
+        active.activeSessionGeneration !== target.sessionGeneration
+      )
+        return
+      applyCurrentSession(current, undefined, {
+        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+      })
+      setProjectSessionRefreshKey((key) => key + 1)
+    } catch (error) {
+      showSnackbarError(error, '切换权限模式失败')
+    } finally {
+      permissionModeUpdateRef.current = false
+      setIsUpdatingPermissionMode(false)
+    }
   }
 
   const previewFilePathInWorkspaceTab = useCallback(
@@ -2841,7 +2868,10 @@ function App(): React.JSX.Element {
 
   const onRevealPreviewPathInWorkspace = useCallback(
     (path: string, kind: LocalPathKind = 'file'): void => {
-      if (path.startsWith('ssh://')) setWorkspaceSidebarMode('files')
+      if (path.startsWith('ssh://')) {
+        setWorkspaceSidebarMode('files')
+        setIsSidebarOpen(true)
+      }
       onRevealPreviewPath(path, kind)
     },
     [onRevealPreviewPath]
@@ -3037,6 +3067,30 @@ function App(): React.JSX.Element {
     },
     [activeProjectId, activeRemoteFileScope, rendererApi, showSnackbar, showSnackbarError]
   )
+
+  const workspaceFileActions = useWorkspaceFileActions({
+    rootPath: workspaceFilesRootPath,
+    rendererApi,
+    getActiveCwd,
+    getActiveRemoteProject,
+    workspace: {
+      filePreview,
+      filePreviewCache,
+      workspaceFileTabs,
+      activeWorkspaceFilePath,
+      setFilePreview,
+      clearCachedFilePreview,
+      setWorkspaceFileTabs,
+      setActiveWorkspaceFilePath,
+      filePreviewRequestRef
+    },
+    onChanged: onRefreshWorkspaceSidePanel,
+    onOpenFile: onOpenWorkspaceFileFromSidebar,
+    onOpenDirectory: previewDirectoryPathInWorkspaceTab,
+    onDownloadFile: downloadWrapperResultFile,
+    onRevealFile: onRevealPreviewPath,
+    onNotice: (message) => showSnackbar(message, 'warning')
+  })
 
   useEffect(() => {
     if (typeof rendererApi.onRemoteProjectUploadsChanged !== 'function') return undefined
@@ -3517,9 +3571,6 @@ function App(): React.JSX.Element {
     !wrapperResultBelongsToProject(activeWrapperResultScope, activeProjectId)
       ? null
       : (activeWorkspaceFilePath ?? (filePreview ? filePreviewStatePath(filePreview) : null))
-  const activeResultPreview = activeFilePreviewState
-    ? isActiveWrapperResultUri(filePreviewStatePath(activeFilePreviewState))
-    : false
 
   const showCachedOrLoadFilePreview = useCallback(
     (tab: WorkspaceFileTab): void => {
@@ -4006,19 +4057,24 @@ function App(): React.JSX.Element {
     [closeWorkspaceSidebarPreview, workspaceSidebarMode]
   )
 
-  const onDockConversationToSidebar = useCallback((): void => {
-    const target = activeWorkspaceFileTab ?? workspaceFileTabs.at(-1) ?? null
-    if (!target) return
-    closeWorkspaceSidebarPreview()
-    onSelectWorkspaceFileTab(target)
-    showActiveConversationInSidebar()
-  }, [
-    activeWorkspaceFileTab,
-    closeWorkspaceSidebarPreview,
-    onSelectWorkspaceFileTab,
-    showActiveConversationInSidebar,
-    workspaceFileTabs
-  ])
+  const onDockConversationToSidebar = useCallback(
+    (tab: WorkspaceSessionTab): void => {
+      if (tab.key !== currentSessionTab.key) return
+      const target = activeWorkspaceFileTab ?? workspaceFileTabs.at(-1) ?? null
+      if (!target) return
+      closeWorkspaceSidebarPreview()
+      onSelectWorkspaceFileTab(target)
+      showActiveConversationInSidebar()
+    },
+    [
+      activeWorkspaceFileTab,
+      currentSessionTab.key,
+      closeWorkspaceSidebarPreview,
+      onSelectWorkspaceFileTab,
+      showActiveConversationInSidebar,
+      workspaceFileTabs
+    ]
+  )
 
   const onRestoreConversationToMain = useCallback((): void => {
     closeWorkspaceSidebarPreview()
@@ -4298,7 +4354,9 @@ function App(): React.JSX.Element {
             onSelectPermissionMode={(mode) => {
               void onSelectPermissionMode(mode)
             }}
-            disablePermissionModeSelect={isSessionChanging || currentSessionIsCompacting}
+            disablePermissionModeSelect={
+              isSessionChanging || currentSessionIsCompacting || isUpdatingPermissionMode
+            }
             disableModelControls={isSessionChanging || currentSessionIsCompacting}
             pendingApproval={pendingApproval}
             pendingUserInteraction={pendingUserInteraction}
@@ -4521,11 +4579,16 @@ function App(): React.JSX.Element {
         onOpenDefaultPath={onOpenDefaultPreviewPath}
         onRevealPath={onRevealPreviewPathInWorkspace}
         onListDirectory={onListPreviewDirectory}
+        fileActions={workspaceFileActions}
+        treeRevision={workspaceSidePanelTreeRevision}
         onDownloadFile={
-          activeResultPreview ? (path) => void downloadWrapperResultFile(path) : undefined
+          activeFilePreviewState &&
+          filePreviewStatePath(activeFilePreviewState).startsWith('ssh://')
+            ? downloadWrapperResultFile
+            : undefined
         }
-        downloadState={activeResultPreview ? fileDownload : null}
-        onCancelDownload={activeResultPreview ? cancelActiveWrapperResultDownload : undefined}
+        downloadState={fileDownload}
+        onCancelDownload={cancelActiveWrapperResultDownload}
       />
     ) : null
   ) : null
@@ -4577,6 +4640,9 @@ function App(): React.JSX.Element {
           ? (paths, destinationPath) => void onDropRemoteProjectFiles(paths, destinationPath)
           : undefined,
       onListWorkspaceDirectory: onListPreviewDirectory,
+      workspaceFileActions,
+      fileDownloadState: fileDownload,
+      onCancelFileDownload: cancelActiveWrapperResultDownload,
       runtimeProjectCwd: activeProject?.workingDirectory ?? '',
       runtimeStatus: analysisJupyterRuntimeStatus,
       isRuntimeLoading: isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter,
@@ -4664,6 +4730,9 @@ function App(): React.JSX.Element {
       onSelectRemoteUploadDirectory,
       onDropRemoteProjectFiles,
       onListPreviewDirectory,
+      workspaceFileActions,
+      fileDownload,
+      cancelActiveWrapperResultDownload,
       activeProject?.workingDirectory,
       analysisJupyterRuntimeStatus,
       isLoadingAnalysisJupyterRuntime,
@@ -4965,15 +5034,15 @@ function App(): React.JSX.Element {
                         onOpenDefaultPath={onOpenDefaultPreviewPath}
                         onRevealPath={onRevealPreviewPathInWorkspace}
                         onListDirectory={onListPreviewDirectory}
+                        fileActions={workspaceFileActions}
+                        treeRevision={workspaceSidePanelTreeRevision}
                         onDownloadFile={
-                          activeResultPreview
-                            ? (path) => void downloadWrapperResultFile(path)
+                          filePreviewStatePath(activeFilePreviewState).startsWith('ssh://')
+                            ? downloadWrapperResultFile
                             : undefined
                         }
-                        downloadState={activeResultPreview ? fileDownload : null}
-                        onCancelDownload={
-                          activeResultPreview ? cancelActiveWrapperResultDownload : undefined
-                        }
+                        downloadState={fileDownload}
+                        onCancelDownload={cancelActiveWrapperResultDownload}
                       />
                     ) : null}
                   </Box>
