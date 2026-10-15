@@ -10,6 +10,10 @@
 
 本轮原 T14/T15 的实现与限定验证已补齐，当前整合提交 `03da779e`、合入 `a70d403b`，功能候选 `d9b5d776` 的零失败标准全量与组合限定检查分别见下文；首轮 `b7720a84` 的 13 项失败完整保留。RPC/专家仍是 main-owned 显式 opt-in，真实环境与默认开放保留 T16 门槛。
 
+本轮最新限定进展（2026-10-15）：T11 history 三个实际场景已通过，新增五项断言后仅 vendor/KV 一例复验；完整 T11 因辅助 opaque 上游接缝仍未关闭。T16 终端修复已 main `10f979bc`，原 15 项纯测试、原压力五阶段及 primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本和原 `d670` bundle 的无 provider RPC foundation 已通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred），本轮未覆盖，不记功能失败。
+
+源码 `19da6594` 已合入 `db09181f`。该整合候选的生产类型、构建、lint、asar 均退出 0（68.75 秒）；2704 个跟踪文件、HEAD、tree 及共享资源引用前后稳定。未重跑该整合候选的全库测试。以上结果只绑定本轮范围；不宣称当前全库或完整双主机 R8 通过，RPC 默认关闭。旧验收原样保留，最新证据与限制见文末。
+
 ## 已保存的基础成果
 
 下列测试数来自独立审查员对冻结代码的限定测试；范围有交集，不相加作为全套测试数。每次审查均核对实际源码、锁定版本的 SDK 合同及运行前后文件哈希。
@@ -304,7 +308,7 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 - **T13/R5：** 主运行权限及生产主会话组合已验收。审查复现的宿主桥致命故障悬挂和假就绪问题已修复，独立故障回归通过；实际 CLI 覆盖写入、拒绝、取消及恢复。真实 PhiEngine 路由、存储 adopter 与公共事件投影的 16 文件增量已通过独立 27 项复验，修复旧代清理误停新运行、模型清单不一致、损坏引用触发本地 I/O，以及丢失维护事件四项问题。打包闭包先以 `35ac4c49` 独立保存，应用路由保存为 `8ffb187d`；独立副本仅包含这 18 文件及已提交基础代码，构建、lint、生产类型、asar 检查及 30 项真实回归通过，18 文件哈希一致。上下文与名称控制已另行独立验收为 `356b3583`，19 项真实回归通过；真实前台 task 应用组合已保存为 `f148a977`；`3423a650` 已接通实际应用显式 opt-in。模型/思考级别与异步 UI 控制及默认策略修正随后已合入 `365b2db`，见上文 T13 增量；压缩 `eea33bd3` 与 persona/memory/context/公共入口 `9f723379` 均已完成；原 T13 Phi 功能已全部验收，默认 RPC 仍关闭。关联主宿主审批的终态重入已随 `2837875b` 修复并独立验证，仅复核受影响接点，未重开旧阶段审查。
 - **T14/R6：** 本轮已接入独立模型/思考、原生 edit/搜索、受信资源/环境/服务、Task 并行/后台四路、原四控制工具与正确 Phi 完成消费/唤醒。最终固定源码与全量/合入状态见本轮 T14/T15 节；browser 子 typeText 仍明确 unsupported，持续后台需当前代存活，默认不开放。
 - **T15/R7：** 本轮已接入显式原 journal 恢复、模型失效后的明确替换、安全错误路径与 D5 摘要新会话、Wrapper 冷 origin 严格绑定。冷 SDK 子任务仅恢复来源 metadata：旧活动且无终态证明的记录标 interrupted，已保存 completed/failed/aborted 终态保留，全部不可控制且无完整历史；不复活 handle 或开放旧子历史；保留 SDK 500,000 字符字段截断与首次 shake 基线/同 UID 替换的既有边界。最终固定验收状态见本轮节。
-- **T16/R8：** 真实 SSH、服务器、真实 provider/OAuth、人工 UI 与 Finder 打包启动未执行；附加终端压力检查的既有 failed→exited 状态竞争按上文证据待修。官方 Linux x64 资产完整性与主 ELF GLIBC 版本静态检查通过，不能据此声称服务器兼容通过。
+- **T16/R8：** GPU 已实际安装/隔离执行官方 18.10.3，并通过无 provider RPC foundation；它不代替完整 R8、真实 provider/OAuth、人工 UI/Finder。node2/node3/yzhang 组按用户要求 deferred，本轮未覆盖。终端 failed→exited 精确竞争已在 `10f979bc` 修复并通过原压力检查；历史失败及各版静态资产证据保留，最新限定结果见文末。
 
 ## 后续门槛
 
@@ -319,3 +323,28 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 `3423a650` 已把原有 facade 接入实际主进程和 runtime-adapter：`PHI_REMOTE_OMP_RPC=1` 显式选择 RPC，`PHI_REMOTE_OMP_AGENTS` 按名字选择主进程目录中的完整专家定义，renderer 定义不能授予权限。实际 CLI 验证可信 Checker 写入、审批中停止和迟到批准、异步选择的过期/取消，以及新实例恢复同 journal 且不重放请求。专家控制范围仍为 read/write/bash；环境、skills、警告或其他工具的专家定义，以及未经主进程可信快照授权的配置明确拒绝；主会话 MCP/skills 现沿上文 T12 的可信选定资源接入，模型/思考控制及默认策略沿 `365b2db` 接通，压缩沿 `eea33bd3`、persona/context/记忆及公共控制沿 `9f723379` 接通。未启用时保留本地和旧远程路径。关闭报错曾跳过选定连接释放，原失败已保留并修复；次要释放错误不替换原错误，重复释放仅执行一次。facade 现为 1160 行，作为临时 legacy 例外保留同一代次的 adoption/验证/关闭所有权，结构判断见 T13 压缩增量。
 
 生产远程能力默认开放前，需要同时具备完整模型通道、真实宿主服务、主/子权限与审批、严格持久恢复及 R8 实机结果；当前实际应用接线只验收上述受控范围，不代表 T11–T15 全部完成。禁止远端失败后回落到本地执行、隐式重放中断 prompt 或用模拟对象冒充完整 SDK session。已按用户新授权合入本地 main；后续真实服务器验证和默认启用仍是独立门槛。
+
+## T11 history 与 T16 前置增量（2026-10-15）
+
+| 范围 | 本轮结果与证据边界 |
+|---|---|
+| T11 history | `.omx/T11-history-parity-freeze.json` 的三例实际官方 SDK/CLI + 合成 loopback 通过：冷 CLI 同 journal、Anthropic/Responses 迁移及 stateful Responses、Google/Bedrock 迁移。随后补五项隔离断言，`.omx/T11-history-parity-assertion-freeze.json` 只记录 vendor/KV 1/1 复验（用例 1031.727 ms，runner 1389.932 ms，自然退出）；新 runner 哈希 `61ebf01c0b7a9572b2253cd8d719d1e786984c62e86c45f2b3edd31fb185fd2c`。helper 哈希 `d699132f954cff9c4c9f2667feca0afc0d8b47a65bdf532a907f155246469f35`；其余两例测试体未变的证明保留，没有在新 runner 上重跑。补断言后的单 vendor/KV runner 约 1.390 秒。定向类型/lint/格式均通过；不冒称本轮全库。 |
+| History / KV 限制 | 真实 SDK 请求证明 Responses previous_response_id/delta 和分支不匹配时完整 replay，不证明外部 vendor 的 KV 命中、算力复用、计费或延迟。冷重启只重启官方 CLI、保留 fixture HOME 与既有桌面 gateway lease，不是重启桌面网关或持久 KV 导出/导入；不宣称 Codex SSE 的 previous_response_id 链式续接。 |
+| 辅助 opaque | `.omx/T11-compat-upstream-audit.md`：锁定 18.10.3 和官方 18.11.0 固定提交 `c2cb79e4c227aa4b22c4ccb933ff72fd88bceba4` 的关键 projector 相同；网关补稀疏 delta 不会补出 SDK 缺失的 opaque 消费分支，仍需上游 canonical native / 无损 projector 或公共全通道接缝。没有升级/修改 SDK、全局 patch 或禁用默认维护；完整 T11/R3 未关闭。 |
+| T16 终端 | 已合入 main `10f979bc`；failed 后的清理 exit 不再覆盖失败终态，正常 shell exit 保留。生产仅三行 guard（两注释、一条件），原 15/15、未改压力脚本五阶段退出 0，68.318 秒，独立 APPROVE。`.omx/T16-terminal-stress-after-failure-guard.json` 所列源码哈希运行前后稳定；原 PID/进程/内存/延迟/期限断言保留。primary build/types/lint/asar 各退出 0，自有两路径哈希稳定；同期两处其他 UI 变化只限制全树稳定性声明。历史失败仍保留，仅关闭该精确竞争。 |
+| GPU 官方资产 | 先前只读预检确认 Linux/x64、glibc 2.35、flock/hash、ext4、无 noexec、约 144 GiB 可用；随后实际安装官方 18.10.3 到 `/home/dengxsh/.phi/runtime/omp/18.10.3/omp`，隔离 HOME 执行确认版本，40.824 秒，测试 cleanup=true。receipt：`.omx/T16-gpu-private-state/t16-30e7b919-df9f-4bd5-ac63-4b9750685225.json`。只证明该安装和版本执行，不扩大为完整科学环境或 R8。 |
+| GPU RPC foundation | 真实 SDK session `01a13f6c-92a9-77bb-8583-d79c5196c095` 完成 attestation/get_state/stdio close，64.557 秒；agentInvocations=0、未发普通 prompt、未做用户 Phi adoption、测试 cleanup=true。bundle `d670fd16d55e085913365c851b00021e563f896ea64050156c2f2f57ea83c8f9`；receipt `.omx/T16-gpu-rpc-smoke.t16-rpc-88b7b417-fcf1-46bd-b9f7-ffcb6ac39f9a.json`。仅无 provider 的 foundation，不是完整 R8 读写/Bash、Notebook/Wrapper、adoption、provider/OAuth/Finder 验收。 |
+| Cursor 子任务 | 最终实际结果：最终生产 bundle `f964cf799034b298411610e7dd6e4aabc20e94ee4520089b086b3bfd8e25af7a` 的实时停止、排队恢复前停止、后台控制 3/3 自然退出通过（18.561/18.701/26.847 秒），29 个组合文件与当时 HEAD `c136ec4a` 前后稳定。排队场景另用只读出队观察包 `af34ad32`，真实 SDK child verified/aborted，原 EOF/partial 日志如实保留、恢复消息未投递、下一明确 Main 无旧恢复请求；实时停止仍要求实际 journal aborted。依据 `.omx/T11-cursor-final3-receipt.json` 及独立最终审查。旧 d670 范围的 text/repeat/tool/parallel 与 later-Main negative 保留其版本绑定，没有把这些结果迁成 f964 全八例重跑。此前 Node 纯组范围为 6 生产文件 + 4 纯测试文件（10 路径）；原三项红例在修复后的 42/42 纯组中通过，末次常量整理后仅定点 3/3 再验，定向类型/lint/格式通过。纯测试不代替最终实际场景，既有主通道断流验收不替代子任务停止/排队停止。 |
+| 最终 bundle 的停止限定验证 | 产品 bundle `f964cf799034b298411610e7dd6e4aabc20e94ee4520089b086b3bfd8e25af7a`，66 文件；原 stream stop 18.561 秒、queued stop 18.701 秒已通过。queued 场景透明 observer 独立记录（哈希前缀 `af34ad3281…`），不与产品 bundle 混称。旧 `d670` 四个正常场景与 later-Main negative 等保留旧版本范围，不冒称 `f964` 全八例重跑；最终后台结果仍以 Cursor 最终 receipt 为准。 |
+| GPU 公共模块探针 | 官方 compiled CLI 上的诊断 bundle `baac72ac1f5ba29f27ccf6c3d1bba36b50c44f7f2393c2282697e1ebb5ea1d03` 证明 sameRegistry/lifecycleRelease/USER_INTERRUPT_LABEL 均 true，agentInvocations=0，64.366 秒、测试 cleanup=true。receipt：`.omx/T16-gpu-queued-module-probe.t16-public-module-4308a3f6-1ad6-4f73-acd1-64315a460963.json`。它只是公开模块同实例诊断，不是最终产品 bundle 或完整 R8。 |
+| GPU 最终 foundation | `f964` 产品 bundle 的最终基础验证：最终生产扩展 `f964cf79` 另在 GPU 完成真实 attestation/get_state/物理关闭与清理，61.202 秒、agentInvocations=0、无用户 Phi adoption。receipt：`.omx/T16-gpu-rpc-smoke.t16-rpc-1ea1d722-9f51-40e3-bceb-2dbfb313563b.json`；29 个冻结文件与当时 HEAD 稳定。该结果仅为无 provider 的最终扩展/RPC 基础验证，完整 R8 仍未覆盖。仍不代替完整 R8、普通模型、工具/审批、Phi adoption 或外部服务/UI/Finder。 |
+| 独立打包运行检查 | standalone packaged worker/native/捆绑 runtime/resize：同一整合候选的目录打包及独立打包终端检查均退出 0（54.58 秒）；在仓库外临时应用和隔离 HOME 中验证包内运行时、真实 native 加载、输入回显及 113 列×37 行缩放，资源引用和 2704 个跟踪文件前后稳定。依据 `.omx/T11-T16-package-smoke.json`；未执行 Electron/Finder 交互启动验收。不据此声称 Electron/Finder 启动或人工 UI 通过。 |
+| 用户暂缓的服务器组 | node2/node3/yzhang 按用户明确要求暂缓（deferred），本轮不继续尝试；记为未覆盖，不计功能失败、不阻塞 GPU，也不宣称完整双主机 R8 通过。 |
+
+冻结的停止合同：执行权限立即撤销并拒绝新模型请求，已在途模型独立等待真实 terminal 或对应取消尝试完成（成功、拒绝或 timeout）再清理；传输清理不把拒绝/timeout 冒充停止成功。停止先真实 cancel 已知原生子实例，按精确父 ledger 承接迟到启动，再收齐封闭派发、全部真实 ACK/aborted，原 10 秒期限不变，避免先等派发封闭再取消的互相等待。Cursor 续答复用公开 `Agent.followUp` 进入原 child 队列，保持原已完成工具不重放合同。
+
+公开 queued 取消合同：仅 official cancel 明确返回 false，且当前记录仍是已 verified 的活跃 owned queued Cursor，才允许原 signed control 的新 action `cancel_queued`；原 11 字段及预算不变。复用 SDK 公开精确 registry/agent-lifecycle 与 canonical `USER_INTERRUPT_LABEL`，捕获原 ref/session 和真实私有 queue nonce，每次 await 前后复核；真实 release 与 abort 均 settled，且原 ref 实际 aborted、session=null 后才 ACK。Node 仍等待实际 SDK aborted，执行和模型权限都不恢复。Sub-local 私有 scope 查询是跨 factory 的只读能力；真实 publish/revoke 静态核对及新 queued actual 支持该组合结论，独立 Map 纯测仅算 helper unit。公开 import 只新增两项精确文件 allowlist，总计 47 项，不使用 wildcard。
+
+结构判断：`rpc-subagents.ts` 746 行保留，同一 Sub state/active/profile/teardown 内聚，复用原权限谓词而不复制；`subagents/production-child-runtime.ts` 611 行保留同代 ledger/ACK/teardown。remote runtime 1288 行延续原 1284 行的临时 legacy 例外，只作必要透传，不夹带大入口拆分。
+
+以上证据分别绑定其冻结源码与具体执行范围，不相加成全量、不覆盖旧版本验收。T12–T15 继续复用；真实 provider/OAuth/MCP、人工 UI/Finder 和完整 R8 仍保留原门槛。RPC 默认关闭，T18 须待新路径完成 T16、默认切换并稳定一个升级周期。

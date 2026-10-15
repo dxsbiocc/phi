@@ -4,6 +4,10 @@
 
 本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
+本轮限定状态（2026-10-15）：原 T11 history 三场景通过，补五项断言后只复验 vendor/KV 一例；辅助 opaque 仍需上游公共修复，完整 T11 未关闭。原 T16 终端修复已 main `10f979bc`，原压力五阶段和 15 项纯测试、primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本及原 `d670` bundle 的无 provider RPC foundation 通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred）、不作功能失败。
+
+源码 `19da6594` 已合入 `db09181f`。该整合候选的生产类型、构建、lint、asar 均退出 0（68.75 秒）；2704 个跟踪文件、HEAD、tree 及共享资源引用前后稳定。未重跑该整合候选的全库测试。以上结果仅指本轮限定范围，不代表当前全库或双主机 R8。历史步骤和证据保留，最新升级合同见文末。
+
 ## 1. 固定起点与目标
 
 1. 记录当前提交、工作区状态、SDK／原生模块版本、捆绑 Bun 版本及已有检查结果。保留并行任务的分支和未提交改动；不要把其差异归入 SDK 升级。
@@ -165,8 +169,8 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 | 子智能体 | 并行/后台四路、status/wait/steer/stop、模型/资源、审批、停止及完成消费/正确 Phi 唤醒 | 本轮隔离 SDK/CLI 与本机服务有定向证据；真实 SSH/provider/PTY 与人工使用仍待 T16 |
 | 打包版               | asar 解包、Finder 启动、worker／代理启动、终端与退出                                                      | Finder／真实打包启动待验证；构建／闭包及本机 PTY smoke 已通过 |
 | 旧远程路径           | 一轮 read／edit／bash 对话，未启用新 RPC 时行为稳定                                                       | 真实服务器待授权验证                                          |
-| 新远程运行时         | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复                                    | 待验证；本地部署夹具不证明 Linux 二进制可运行                 |
-| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | T11–T15 就绪且获用户授权后执行，尚未通过                      |
+| 新远程运行时 | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复 | GPU 官方 18.10.3 安装/隔离版本及无 provider RPC foundation 通过；上传中断恢复及完整 R8 未覆盖，cluster deferred |
+| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | GPU 目前仅 foundation 通过，完整 R8 尚未通过；node2/node3/yzhang 按用户要求 deferred，不当作 failed/pass |
 
 只有 SDK／二进制 manifest 版本一致、RPC 协议兼容、模型代理与隧道、宿主工具、主／子会话审批、存储恢复及 R8 实机清单均验收后，才讨论远程默认切换。R1 27 项测试或本地 RPC 基础测试不能代替这些门槛。旧远程实现的删除属于稳定一个升级周期后的 R9。
 
@@ -218,3 +222,18 @@ T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 �
 公开发布物离线补证：18.10.3 Linux x64 资产 276,170,720 字节，完整 SHA256 与清单、官方 API 和官方摘要一致；主 ELF 最高版本需求为 GLIBC_2.17，384 个 GLIBC 未定义动态符号与系统 LLVM 逐项相符。Bun 内嵌原生模块闭包尚未完整证明，未执行该二进制；不能据此认定目标服务器可运行或 R8 已通过。
 
 T10b 最终自动化补证（`e4447c5d`）：全套串行 4930 项，4905 通过、0 失败/取消、24 既有跳过、1 todo，1096.00 秒；23 个冻结源码/测试/打包文件哈希及前后 HEAD 未变。标准并发 4 两轮分别出现 3 项与 2 项不同的既有限时/探测失败，5 个用例按原断言和期限单独复现均通过，相关文件与 main 一致。标准测试脚本、全部断言/期限/跳过条件不变；串行通过不等于标准并发稳定性已解决。日志分别保留 full-first、full-second、两组 reproduction 和 full-serial；真实 SSH/provider/Finder 仍未验收。
+
+## 9. T11/T16 本轮升级合同（2026-10-15）
+
+- History/KV 验收按源码版本记录：初版三实际场景通过，审查新增五项断言后只复验 vendor/KV 1/1，另外两例沿用已证未变的测试体。以 `.omx/T11-history-parity-assertion-freeze.json` 为准，不写成新 runner 三例重跑、外部 vendor KV 命中或持久 KV 导出/导入。冷 CLI 重启与桌面网关重启必须区分。
+- 18.10.3 的辅助 opaque 完整性边界仍在；官方 18.11.0 源码核验也未提供相应公共修复，不据此升级依赖或标完整 T11 通过。网关稀疏增量补齐不替代 opaque 全通道无损；不得改真实 model/API、全局 patch 或关闭默认维护来掩盖缺口。
+- 终端 failed 状态须在 worker 清理 exit 后保持，正常退出仍为 exited。修复已 main `10f979bc`；三行 guard 的原 15 项纯测试和原压力五阶段通过，68.318 秒、独立 APPROVE、自有两路径与压力所列源码哈希稳定。primary build/types/lint/asar 各退出 0，同期两处其他 UI 变化不允许宣称全树冻结；压力脚本、原期限与所有 PID/进程/内存/延迟断言未改。升级后保留这条终态合同与历史失败证据。
+- GPU 在只读预检后已实际安装官方 18.10.3 并隔离 HOME 确认版本（40.824 秒、测试 cleanup=true）；真实无 provider RPC foundation 已通过（64.557 秒、attestation/get_state/stdio close、agentInvocations=0、测试 cleanup=true）。安装/RPC receipt、实际 session 和 bundle 哈希见本轮验收。后续仍须单独证明完整 R8 读写/Bash、Notebook/Wrapper、Phi adoption、外部 provider/OAuth/Finder；foundation 不替代它们，也不证明所有原生模块或科学包完整可用。
+- Cursor 子任务最终实际结果：最终生产 bundle `f964cf799034b298411610e7dd6e4aabc20e94ee4520089b086b3bfd8e25af7a` 的实时停止、排队恢复前停止、后台控制 3/3 自然退出通过（18.561/18.701/26.847 秒），29 个组合文件与当时 HEAD `c136ec4a` 前后稳定。排队场景另用只读出队观察包 `af34ad32`，真实 SDK child verified/aborted，原 EOF/partial 日志如实保留、恢复消息未投递、下一明确 Main 无旧恢复请求；实时停止仍要求实际 journal aborted。依据 `.omx/T11-cursor-final3-receipt.json` 及独立最终审查。旧 d670 范围的 text/repeat/tool/parallel 与 later-Main negative 保留其版本绑定，没有把这些结果迁成 f964 全八例重跑。升级须分清执行撤权与已在途模型传输清理：立即封执行及新模型请求，原在途请求按真实 terminal/取消尝试结算清理；停止成功仍收齐原生 ACK/aborted。先 cancel 已知子实例、按精确父 ledger 承接迟到启动，再等派发封闭，原 10 秒不变。公开 `Agent.followUp` 继续进入原 child 队列，纯测试通过不能代替最终实际停止和排队停止。
+- node2/node3/yzhang 组按用户要求暂缓（deferred），本轮未覆盖、不作功能失败、不继续连接、不阻塞 GPU；单 GPU 进展不能表述为完整双主机 R8 通过。T12–T15 不重做，RPC 仍默认关闭；真实外部服务/人工 UI/Finder 及稳定后的 T18 沿原门槛执行。
+
+本轮独立打包运行结果：同一整合候选的目录打包及独立打包终端检查均退出 0（54.58 秒）；在仓库外临时应用和隔离 HOME 中验证包内运行时、真实 native 加载、输入回显及 113 列×37 行缩放，资源引用和 2704 个跟踪文件前后稳定。依据 `.omx/T11-T16-package-smoke.json`；未执行 Electron/Finder 交互启动验收。，仅覆盖 standalone packaged worker/native/捆绑 runtime/resize；Electron/Finder 启动及人工 UI 仍须另行实证。
+
+公开 queued 取消升级合同必须重新核验：official cancel 明确 false 后，只有仍 verified/active/owned 的 queued Cursor 可走原 signed control `cancel_queued`，原 11 字段/预算不变。捕获的真实 ref/session/private queue nonce 在每次 await 前后重证，公开 lifecycle release 与 abort 都 settled、原 ref 真实 aborted/session=null 才 ACK；Node 仍须实际 SDK aborted，不能恢复已撤销执行/模型权限。必须验证唯一新增公开子模块的两处精确文件引用，以及 compiled CLI 的同实例 registry、canonical USER_INTERRUPT_LABEL、park CAS/tombstone 和真实 queued stop；新增两项精确文件后 allowlist 总计 47，不扩大为 wildcard。SDK 即使小升级，也不能据 exports 存在就假定这些同实例/代次语义安全。队列 followUp 不等于已执行，停止成功及历史必须符合真实 SDK journal 终态，不能用文本、控制 ACK 或合成消息替代 journal truth。
+
+最终产品 bundle `f964cf799034b298411610e7dd6e4aabc20e94ee4520089b086b3bfd8e25af7a`（66 文件）的 stream stop 18.561 秒、queued stop 18.701 秒有真实通过证据，queued 透明 observer 单独记录；旧 `d670` 四正常及 later-Main negative 等仍按旧范围保留，不记成最终 bundle 全八例重跑。GPU compiled 公共模块探针（诊断 bundle `baac72ac…`，64.366 秒、0 普通模型、cleanup=true）只证明 sameRegistry/release/label，不是最终产品/R8；最终 `f964` foundation：最终生产扩展 `f964cf79` 另在 GPU 完成真实 attestation/get_state/物理关闭与清理，61.202 秒、agentInvocations=0、无用户 Phi adoption。receipt：`.omx/T16-gpu-rpc-smoke.t16-rpc-1ea1d722-9f51-40e3-bceb-2dbfb313563b.json`；29 个冻结文件与当时 HEAD 稳定。该结果仅为无 provider 的最终扩展/RPC 基础验证，完整 R8 仍未覆盖。
