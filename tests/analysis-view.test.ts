@@ -500,7 +500,7 @@ test('remote notebook routes use server paths instead of the local session ancho
   assert.match(appSource, /remotePathInsideRoot\(path, scope\.canonicalRoot\)/)
   assert.doesNotMatch(appSource, /远程项目的 Notebook\/Jupyter 暂不可用/)
   assert.match(runtimeSource, /expectedHash: file\.contentHash/)
-  assert.match(runtimeSource, /change\.projectCwd !== analysisNotebookRegistry\?\.projectCwd/)
+  assert.match(runtimeSource, /change\.projectCwd !== getActiveCwd\(\)/)
 })
 
 test('analysis notebook runtime lets the active workspace open notebooks', () => {
@@ -1154,7 +1154,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     analysisSource,
     /const notebookChanged = previousNotebookDocumentKeyRef\.current !== notebookDocumentKey/
   )
-  assert.match(analysisSource, /if \(notebookChanged\) setAiPromptDraft\(null\)/)
+  assert.match(analysisSource, /if \(notebookChanged\) \{[\s\S]*?setAiPromptDraft\(null\)/)
   assert.match(analysisSource, /onNotebookCodeGenerationProgress/)
   assert.match(analysisSource, /requestId: draft\.id/)
   assert.match(analysisSource, /draft\.isGenerating/)
@@ -1200,7 +1200,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /onReject=\{\(\) => rejectAiPreviewCell\(cell\.id\)\}/)
   assert.match(
     analysisSource,
-    /await saveNotebookDocument\(nextDocument\)[\s\S]*?setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft/
+    /setDraftDocument\(nextDocument\)[\s\S]*?setAiPromptDraft[\s\S]*?await saveNotebookDocument\(nextDocument\)/
   )
   assert.doesNotMatch(analysisSource, /const \[pendingAiInsertion, setPendingAiInsertion\]/)
   assert.doesNotMatch(aiPromptSource, /data-phi-notebook-ai-staged-insertion/)
@@ -1495,11 +1495,11 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
   )
   assert.match(
     analysisSource,
-    /const saved = await onSaveNotebook\?\.\(pending\.file, pending\.nextDocument\)/
+    /const saved = await autosave\.saveNow\(pending\.file, nextDocument\)/
   )
   assert.match(analysisSource, /if \(saved === false\) return/)
   assert.ok(
-    analysisSource.indexOf('const saved = await onSaveNotebook') <
+    analysisSource.indexOf('const saved = await autosave.saveNow') <
       analysisSource.indexOf('await onStopNotebookSession')
   )
   assert.doesNotMatch(analysisSource, /window\.confirm\(\s*notebookKernelSwitchConfirmationMessage/)

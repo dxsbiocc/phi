@@ -28,7 +28,9 @@ import {
   cacheAnalysisNotebookFile,
   jupyterServerIsReady,
   missingJupyterRuntimeHandler,
+  mergeSavedAnalysisNotebook,
   notebookEnvironmentErrorMessage,
+  reconcileAnalysisNotebookDiskFile,
   remoteJupyterRequiresExplicitStart,
   removeAnalysisNotebookFileCacheEntry,
   requireRendererApiMethod,
@@ -48,9 +50,8 @@ export function useAnalysisNotebookRuntime({
 }: AnalysisNotebookRuntimeDeps): AnalysisNotebookRuntimeState {
   const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
     useState<AnalysisNotebookRegistry | null>(null)
-  const [activeAnalysisNotebook, setActiveAnalysisNotebook] = useState<AnalysisNotebookFile | null>(
-    null
-  )
+  const [activeAnalysisNotebook, setActiveAnalysisNotebookState] =
+    useState<AnalysisNotebookFile | null>(null)
   const [isLoadingAnalysisNotebooks, setIsLoadingAnalysisNotebooks] = useState(false)
   const [isOpeningAnalysisNotebook, setIsOpeningAnalysisNotebook] = useState(false)
   const [analysisNotebookError, setAnalysisNotebookError] = useState<string | null>(null)
@@ -98,16 +99,37 @@ export function useAnalysisNotebookRuntime({
   const analysisNotebookSessionEpochRef = useRef(0)
   const isStartingNotebookSessionRef = useRef(false)
   const analysisCellExecutionRequestRef = useRef(0)
+  const notebookScopeEpochRef = useRef(0)
+  const notebookRefreshRequestRef = useRef(0)
+  const pendingNotebookSavesRef = useRef(new Map<string, string>())
+  const pendingNotebookSyncsRef = useRef(new Map<string, number>())
+  const notebookRegistryCwdRef = useRef<string | null>(null)
+  const notebookFileCwdsRef = useRef(new WeakMap<AnalysisNotebookFile, string>())
+  const notebookPathCwdsRef = useRef(new Map<string, string>())
 
-  useEffect(() => {
-    activeAnalysisNotebookRef.current = activeAnalysisNotebook
-    if (activeAnalysisNotebook) {
-      analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
-        analysisNotebookFileCacheRef.current,
-        activeAnalysisNotebook
-      )
-    }
-  }, [activeAnalysisNotebook])
+  const setActiveAnalysisNotebook = useCallback(
+    (file: AnalysisNotebookFile | null): void => {
+      activeAnalysisNotebookRef.current = file
+      if (file) {
+        const cwd = notebookFileCwdsRef.current.get(file) ?? getActiveCwd()
+        notebookFileCwdsRef.current.set(file, cwd)
+        notebookPathCwdsRef.current.set(file.path, cwd)
+        analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+          analysisNotebookFileCacheRef.current,
+          file
+        )
+      }
+      setActiveAnalysisNotebookState(file)
+    },
+    [getActiveCwd]
+  )
+
+  const cancelPendingNotebookSyncs = useCallback((): void => {
+    pendingNotebookSyncsRef.current.forEach((timer) => window.clearTimeout(timer))
+    pendingNotebookSyncsRef.current.clear()
+  }, [])
+
+  useEffect(() => cancelPendingNotebookSyncs, [cancelPendingNotebookSyncs])
 
   const getActiveAnalysisCwd = useCallback((): string | null => {
     const cwd = getActiveCwd()
@@ -122,6 +144,7 @@ export function useAnalysisNotebookRuntime({
     try {
       const registry = await rendererApi.listAnalysisNotebooks(cwd)
       if (request !== analysisNotebooksRequestRef.current || cwd !== getActiveCwd()) return
+      notebookRegistryCwdRef.current = cwd
       setAnalysisNotebookRegistry(registry)
     } catch (error) {
       if (request !== analysisNotebooksRequestRef.current) return
@@ -228,7 +251,13 @@ export function useAnalysisNotebookRuntime({
         }
       }
     },
-    [getActiveAnalysisCwd, refreshAnalysisNotebookSessionStatus, rendererApi, showSnackbar]
+    [
+      getActiveAnalysisCwd,
+      refreshAnalysisNotebookSessionStatus,
+      rendererApi,
+      setActiveAnalysisNotebook,
+      showSnackbar
+    ]
   )
 
   const activateCachedAnalysisNotebook = useCallback(
@@ -245,7 +274,7 @@ export function useAnalysisNotebookRuntime({
       void refreshAnalysisNotebookSessionStatus(file)
       return file
     },
-    [refreshAnalysisNotebookSessionStatus]
+    [refreshAnalysisNotebookSessionStatus, setActiveAnalysisNotebook]
   )
 
   const forgetCachedAnalysisNotebook = useCallback((path: string): void => {
@@ -287,9 +316,17 @@ export function useAnalysisNotebookRuntime({
     async (
       file: AnalysisNotebookFile,
       document: AnalysisNotebookFile['document']
-    ): Promise<boolean> => {
-      const cwd = getActiveCwd()
-      setAnalysisNotebookContentError(null)
+    ): Promise<AnalysisNotebookFile | false> => {
+      const cwd =
+        notebookFileCwdsRef.current.get(file) ??
+        notebookPathCwdsRef.current.get(file.path) ??
+        getActiveCwd()
+      const epoch = notebookScopeEpochRef.current
+      const saveKey = `${cwd}\0${file.path}`
+      pendingNotebookSavesRef.current.set(saveKey, document.revision)
+      if (cwd === getActiveCwd() && activeAnalysisNotebookRef.current?.path === file.path) {
+        setAnalysisNotebookContentError(null)
+      }
       try {
         const saved = await rendererApi.saveAnalysisNotebook(cwd, {
           path: file.path,
@@ -297,16 +334,49 @@ export function useAnalysisNotebookRuntime({
           expectedRevision: file.savedRevision,
           ...(file.contentHash ? { expectedHash: file.contentHash } : {})
         })
-        setActiveAnalysisNotebook(saved)
-        void refreshAnalysisNotebookSessionStatus(saved)
-        await refreshAnalysisNotebooks()
-        return true
+        notebookFileCwdsRef.current.set(saved, cwd)
+        if (cwd !== getActiveCwd() || epoch !== notebookScopeEpochRef.current) return saved
+        const current = analysisNotebookFileCacheRef.current.get(file.path)
+        const next = mergeSavedAnalysisNotebook(current, saved, document.revision)
+        analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
+          analysisNotebookFileCacheRef.current,
+          next
+        )
+        if (activeAnalysisNotebookRef.current?.path === file.path) {
+          setActiveAnalysisNotebook(next)
+          void refreshAnalysisNotebookSessionStatus(next)
+        }
+        if (next.document.revision !== saved.savedRevision) {
+          // A backend save also acknowledges its submitted draft. Restore later
+          // edits if the earlier debounce already fired while that write waited.
+          void rendererApi
+            .syncAnalysisNotebookDraft(cwd, next.path, next.document, next.savedRevision)
+            .catch(() => {})
+        }
+        void refreshAnalysisNotebooks()
+        return saved
       } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
+        if (
+          cwd === getActiveCwd() &&
+          epoch === notebookScopeEpochRef.current &&
+          activeAnalysisNotebookRef.current?.path === file.path
+        ) {
+          setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
+        }
         return false
+      } finally {
+        if (pendingNotebookSavesRef.current.get(saveKey) === document.revision) {
+          pendingNotebookSavesRef.current.delete(saveKey)
+        }
       }
     },
-    [getActiveCwd, refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
+    [
+      getActiveCwd,
+      refreshAnalysisNotebookSessionStatus,
+      refreshAnalysisNotebooks,
+      rendererApi,
+      setActiveAnalysisNotebook
+    ]
   )
 
   const onSyncAnalysisNotebookDraft = useCallback(
@@ -314,17 +384,41 @@ export function useAnalysisNotebookRuntime({
       file: AnalysisNotebookFile,
       document: AnalysisNotebookFile['document']
     ): Promise<void> => {
-      const cwd = getActiveCwd()
+      const cwd =
+        notebookFileCwdsRef.current.get(file) ??
+        notebookPathCwdsRef.current.get(file.path) ??
+        getActiveCwd()
+      if (cwd !== getActiveCwd()) return
+      const epoch = notebookScopeEpochRef.current
+      const cached = analysisNotebookFileCacheRef.current.get(file.path)
+      // Adopting an agent/disk snapshot in Canvas is not a new local edit.
+      if (cached?.document.revision === document.revision) return
+      const next = { ...(cached ?? file), document }
       analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
         analysisNotebookFileCacheRef.current,
-        { ...file, document }
+        next
       )
-      try {
-        await rendererApi.syncAnalysisNotebookDraft(cwd, file.path, document, file.savedRevision)
-      } catch (error) {
-        if (cwd !== getActiveCwd()) return
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法同步 notebook 草稿'))
+      if (activeAnalysisNotebookRef.current?.path === file.path) {
+        // The local marker is synchronous; the backend sync remains debounced.
+        activeAnalysisNotebookRef.current = next
       }
+      const previous = pendingNotebookSyncsRef.current.get(file.path)
+      if (previous !== undefined) window.clearTimeout(previous)
+      pendingNotebookSyncsRef.current.set(
+        file.path,
+        window.setTimeout(() => {
+          pendingNotebookSyncsRef.current.delete(file.path)
+          if (cwd !== getActiveCwd() || epoch !== notebookScopeEpochRef.current) return
+          const latest = analysisNotebookFileCacheRef.current.get(file.path)
+          if (!latest) return
+          void rendererApi
+            .syncAnalysisNotebookDraft(cwd, latest.path, latest.document, latest.savedRevision)
+            .catch((error) => {
+              if (cwd !== getActiveCwd() || epoch !== notebookScopeEpochRef.current) return
+              setAnalysisNotebookContentError(readableErrorMessage(error, '无法同步 notebook 草稿'))
+            })
+        }, 300)
+      )
     },
     [getActiveCwd, rendererApi]
   )
@@ -346,7 +440,12 @@ export function useAnalysisNotebookRuntime({
         setIsOpeningAnalysisNotebook(false)
       }
     },
-    [refreshAnalysisNotebookSessionStatus, refreshAnalysisNotebooks, rendererApi]
+    [
+      refreshAnalysisNotebookSessionStatus,
+      refreshAnalysisNotebooks,
+      rendererApi,
+      setActiveAnalysisNotebook
+    ]
   )
 
   const onDeleteAnalysisNotebook = useCallback(
@@ -372,7 +471,14 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookContentError(readableErrorMessage(error, '无法删除 notebook'))
       }
     },
-    [activeAnalysisNotebook, getActiveCwd, refreshAnalysisNotebooks, rendererApi, showSnackbar]
+    [
+      activeAnalysisNotebook,
+      getActiveCwd,
+      refreshAnalysisNotebooks,
+      rendererApi,
+      setActiveAnalysisNotebook,
+      showSnackbar
+    ]
   )
 
   const refreshAnalysisKernels = useCallback(async (): Promise<void> => {
@@ -812,7 +918,7 @@ export function useAnalysisNotebookRuntime({
         }
       }
     },
-    [getActiveCwd, rendererApi]
+    [getActiveCwd, rendererApi, setActiveAnalysisNotebook]
   )
 
   const onStopAnalysisNotebookCell = useCallback(
@@ -906,36 +1012,59 @@ export function useAnalysisNotebookRuntime({
   )
 
   const resetAnalysisJupyterRuntimeForCwdChange = useCallback((): void => {
+    notebookScopeEpochRef.current += 1
+    analysisNotebookOpenRequestRef.current += 1
+    notebookRefreshRequestRef.current += 1
+    cancelPendingNotebookSyncs()
+    pendingNotebookSavesRef.current.clear()
+    notebookRegistryCwdRef.current = null
     analysisJupyterRuntimeRequestRef.current += 1
     analysisNotebookFileCacheRef.current = new Map()
+    setAnalysisNotebookRegistry(null)
     setAnalysisKernelDiagnostics(null)
     setAnalysisJupyterStatus(null)
     setAnalysisJupyterRuntimeStatus(null)
     setAnalysisJupyterRuntimeError(null)
     setAnalysisNotebookSessionStatus(null)
-  }, [])
+  }, [cancelPendingNotebookSyncs])
 
   const closeActiveNotebook = useCallback((): void => {
+    analysisNotebookOpenRequestRef.current += 1
+    notebookRefreshRequestRef.current += 1
+    setIsOpeningAnalysisNotebook(false)
     setActiveAnalysisNotebook(null)
     setAnalysisNotebookSessionStatus(null)
     setExecutingAnalysisCellId(null)
     setAnalysisCellExecutionError(null)
     setAnalysisNotebookContentError(null)
-  }, [])
+  }, [setActiveAnalysisNotebook])
 
   const handleNotebookDraftChanged = useCallback(
     (change: AnalysisNotebookDraftChange): void => {
       if (change.source === 'renderer') return
       if (
         change.projectCwd !== getActiveCwd() &&
-        change.projectCwd !== analysisNotebookRegistry?.projectCwd
+        (notebookRegistryCwdRef.current !== getActiveCwd() ||
+          change.projectCwd !== analysisNotebookRegistry?.projectCwd)
+      )
+        return
+      const current =
+        analysisNotebookFileCacheRef.current.get(change.path) ??
+        analysisNotebookFileCacheRef.current.get(change.relativePath)
+      if (!current) return
+      if (
+        pendingNotebookSyncsRef.current.has(current.path) &&
+        current.document.revision !== current.savedRevision &&
+        current.document.revision !== change.document.revision
       ) {
+        if (activeAnalysisNotebookRef.current?.path === current.path) {
+          setActiveAnalysisNotebook(current)
+          setAnalysisNotebookContentError(
+            'Notebook 的 AI 修改与尚未同步的本地编辑冲突；已保留本地内容。'
+          )
+        }
         return
       }
-
-      const current = activeAnalysisNotebookRef.current
-      if (!current) return
-      if (current.path !== change.path && current.relativePath !== change.relativePath) return
 
       const next: AnalysisNotebookFile = {
         ...current,
@@ -949,6 +1078,7 @@ export function useAnalysisNotebookRuntime({
         analysisNotebookFileCacheRef.current,
         next
       )
+      if (activeAnalysisNotebookRef.current?.path !== current.path) return
       setActiveAnalysisNotebook(next)
       const focusCellId = change.focusCellId ?? change.changedCellId
       if (focusCellId && change.document.cells.some((cell) => cell.id === focusCellId)) {
@@ -967,7 +1097,8 @@ export function useAnalysisNotebookRuntime({
       analysisNotebookRegistry?.projectCwd,
       getActiveCwd,
       refreshAnalysisNotebookSessionStatus,
-      refreshAnalysisNotebooks
+      refreshAnalysisNotebooks,
+      setActiveAnalysisNotebook
     ]
   )
 
@@ -975,39 +1106,57 @@ export function useAnalysisNotebookRuntime({
     (change: AnalysisNotebookFileChange): void => {
       if (
         change.projectCwd !== getActiveCwd() &&
-        change.projectCwd !== analysisNotebookRegistry?.projectCwd
-      ) {
+        (notebookRegistryCwdRef.current !== getActiveCwd() ||
+          change.projectCwd !== analysisNotebookRegistry?.projectCwd)
+      )
         return
-      }
 
       void refreshAnalysisNotebooks()
+      const current =
+        analysisNotebookFileCacheRef.current.get(change.path) ??
+        analysisNotebookFileCacheRef.current.get(change.relativePath)
+      const active = activeAnalysisNotebookRef.current
+      const isActive = active?.path === change.path || active?.relativePath === change.relativePath
 
       if (change.type === 'changed') {
+        const { file, conflict } = reconcileAnalysisNotebookDiskFile(
+          current,
+          change.file,
+          pendingNotebookSavesRef.current.get(`${getActiveCwd()}\0${change.path}`)
+        )
         analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
           analysisNotebookFileCacheRef.current,
-          change.file
+          file
         )
+        if (isActive) {
+          setActiveAnalysisNotebook(file)
+          setAnalysisNotebookContentError(
+            conflict
+              ? 'Notebook 已在磁盘上修改，与未保存的本地内容冲突；已保留本地内容，请另存或处理冲突后再保存。'
+              : null
+          )
+          if (!conflict) void refreshAnalysisNotebookSessionStatus(file)
+        }
+        return
       }
       if (change.type === 'deleted') {
+        if (current && current.document.revision !== current.savedRevision) {
+          if (isActive) {
+            setActiveAnalysisNotebook(current)
+            setAnalysisNotebookContentError('Notebook 已在磁盘上删除；未保存的本地内容仍已保留。')
+          }
+          return
+        }
         analysisNotebookFileCacheRef.current = removeAnalysisNotebookFileCacheEntry(
           analysisNotebookFileCacheRef.current,
           change.path
         )
       }
 
-      const current = activeAnalysisNotebookRef.current
-      if (!current) return
-      if (current.path !== change.path && current.relativePath !== change.relativePath) return
-
-      if (change.type === 'changed') {
-        setAnalysisNotebookContentError(null)
-        setActiveAnalysisNotebook(change.file)
-        void refreshAnalysisNotebookSessionStatus(change.file)
-        return
-      }
+      if (!isActive) return
 
       if (change.type === 'deleted') {
-        setActiveAnalysisNotebook(null)
+        closeActiveNotebook()
         setAnalysisNotebookSessionStatus(null)
         setExecutingAnalysisCellId(null)
         setAnalysisCellExecutionError(null)
@@ -1019,11 +1168,73 @@ export function useAnalysisNotebookRuntime({
     },
     [
       analysisNotebookRegistry?.projectCwd,
+      closeActiveNotebook,
       getActiveCwd,
       refreshAnalysisNotebookSessionStatus,
-      refreshAnalysisNotebooks
+      refreshAnalysisNotebooks,
+      setActiveAnalysisNotebook
     ]
   )
+
+  const refreshActiveNotebookFile = useCallback(async (): Promise<void> => {
+    const current = activeAnalysisNotebookRef.current
+    const cwd = getActiveCwd()
+    if (
+      !current ||
+      !cwd ||
+      current.document.revision !== current.savedRevision ||
+      pendingNotebookSavesRef.current.has(`${cwd}\0${current.path}`) ||
+      typeof rendererApi.refreshAnalysisNotebook !== 'function'
+    )
+      return
+    const request = ++notebookRefreshRequestRef.current
+    const epoch = notebookScopeEpochRef.current
+    try {
+      const file = await rendererApi.refreshAnalysisNotebook(cwd, current.path)
+      const latest = activeAnalysisNotebookRef.current
+      if (
+        request !== notebookRefreshRequestRef.current ||
+        epoch !== notebookScopeEpochRef.current ||
+        cwd !== getActiveCwd() ||
+        latest?.path !== current.path ||
+        latest.document.revision !== current.document.revision ||
+        latest.savedRevision !== current.savedRevision ||
+        latest.contentHash !== current.contentHash
+      )
+        return
+      handleNotebookFileChanged({
+        type: 'changed',
+        projectCwd: cwd,
+        path: file.path,
+        relativePath: file.relativePath,
+        file
+      })
+    } catch (error) {
+      if (
+        request === notebookRefreshRequestRef.current &&
+        epoch === notebookScopeEpochRef.current &&
+        cwd === getActiveCwd() &&
+        activeAnalysisNotebookRef.current?.path === current.path
+      ) {
+        setAnalysisNotebookContentError(
+          readableErrorMessage(error, '无法自动刷新 notebook；当前内容已保留。')
+        )
+      }
+    }
+  }, [getActiveCwd, handleNotebookFileChanged, rendererApi])
+
+  useEffect(() => {
+    const refresh = (): void => {
+      if (document.visibilityState === 'visible') void refreshActiveNotebookFile()
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      notebookRefreshRequestRef.current += 1
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [refreshActiveNotebookFile])
 
   return {
     analysisNotebookRegistry,

@@ -69,6 +69,8 @@ import {
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
 import { useNotebookSourceServices } from '../hooks/useNotebookSourceServices'
+import { useNotebookAutosave } from '../hooks/useNotebookAutosave'
+import { shouldPreserveNotebookDraftOnSave } from '../lib/notebookAutosave'
 import NotebookAiPromptCell, {
   type NotebookAiPromptReferenceAddOptions
 } from './NotebookAiPromptCell'
@@ -267,6 +269,12 @@ export default function NotebookCanvas({
   const [draftNotebookPath, setDraftNotebookPath] = useState<string | null>(
     notebookFile?.path ?? null
   )
+  const { autosave, saveState, saveError } = useNotebookAutosave({
+    file: notebookFile,
+    document: draftDocument,
+    onSave: onSaveNotebook,
+    enabled: !isOpening && draftNotebookPath === notebookFile?.path
+  })
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null)
   const [agentHighlightedCellId, setAgentHighlightedCellId] = useState<string | null>(null)
   const [aiPromptDraft, setAiPromptDraft] = useState<NotebookAiPromptDraft | null>(null)
@@ -535,16 +543,41 @@ export default function NotebookCanvas({
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) {
-        setDraftDocument(initialDocument)
+        setDraftDocument((current) =>
+          !notebookChanged &&
+          shouldPreserveNotebookDraftOnSave(
+            current,
+            initialDocument,
+            Boolean(
+              notebookPath &&
+              initialDocument &&
+              autosave.isLocalSaveRevision(
+                notebookPath,
+                initialDocument.revision,
+                notebookFile?.contentHash
+              )
+            )
+          )
+            ? current
+            : initialDocument
+        )
         setDraftNotebookPath(notebookPath)
-        setSelectedCellId(null)
-        if (notebookChanged) setAiPromptDraft(null)
+        if (notebookChanged) {
+          setSelectedCellId(null)
+          setAiPromptDraft(null)
+        }
       }
     })
     return () => {
       cancelled = true
     }
-  }, [initialDocument, notebookDocumentKey, notebookFile?.path])
+  }, [
+    autosave,
+    initialDocument,
+    notebookDocumentKey,
+    notebookFile?.contentHash,
+    notebookFile?.path
+  ])
 
   useEffect(() => {
     if (!onNotebookCodeGenerationProgress) return undefined
@@ -577,15 +610,18 @@ export default function NotebookCanvas({
     })
   }, [draftDocument, notebookFile, onNotebookCodeGenerationProgress])
 
-  useEffect(() => {
-    if (!notebookFile || !draftDocument || !onSyncNotebookDraft) return
-    const timeout = window.setTimeout(() => {
-      onSyncNotebookDraft(notebookFile, draftDocument)
-    }, 300)
-    return () => {
-      window.clearTimeout(timeout)
-    }
-  }, [draftDocument, notebookFile, onSyncNotebookDraft])
+  useLayoutEffect(() => {
+    if (
+      !notebookFile ||
+      !draftDocument ||
+      !onSyncNotebookDraft ||
+      draftNotebookPath !== notebookFile.path
+    )
+      return
+    // Register local edits before a watcher/focus refresh can observe them.
+    // The runtime debounces the backend synchronization, not this dirty guard.
+    onSyncNotebookDraft(notebookFile, draftDocument)
+  }, [draftDocument, draftNotebookPath, notebookFile, onSyncNotebookDraft])
 
   useEffect(() => {
     scheduleNotebookScrollState()
@@ -743,12 +779,13 @@ export default function NotebookCanvas({
   ])
 
   const saveNotebookDocument = useCallback(
-    async (document: NotebookDocument): Promise<void> => {
+    async (document: NotebookDocument): Promise<boolean> => {
       if (notebookFile && onSaveNotebook) {
-        await onSaveNotebook(notebookFile, document)
+        return autosave.saveNow(notebookFile, document)
       }
+      return false
     },
-    [notebookFile, onSaveNotebook]
+    [autosave, notebookFile, onSaveNotebook]
   )
   const onUpdateCellSource = (cellId: string, source: string): void => {
     setDraftDocument((document) =>
@@ -1011,9 +1048,9 @@ export default function NotebookCanvas({
         draft,
         previewId
       )
-      await saveNotebookDocument(nextDocument)
       setDraftDocument(nextDocument)
       setAiPromptDraft((current) => (current?.id === draft.id ? nextDraft : current))
+      await saveNotebookDocument(nextDocument)
     },
     [aiPromptDraft, draftDocument, saveNotebookDocument]
   )
@@ -1102,9 +1139,9 @@ export default function NotebookCanvas({
   }
   const onSave = useCallback((): void => {
     if (notebookFile && draftDocument) {
-      onSaveNotebook?.(notebookFile, draftDocument)
+      void saveNotebookDocument(draftDocument)
     }
-  }, [draftDocument, notebookFile, onSaveNotebook])
+  }, [draftDocument, notebookFile, saveNotebookDocument])
   // Same rationale as onInsertCell/onMoveAiPrompt above: onRunCell/onStopCell
   // read notebookFile/draftDocument directly, so NotebookCell needs their
   // real identity (not a blanket "ignore all functions") to avoid running a
@@ -1235,13 +1272,24 @@ export default function NotebookCanvas({
   const confirmKernelSwitch = async (): Promise<void> => {
     const pending = pendingKernelSwitch
     if (!pending) return
+    if (notebookFile?.path !== pending.file.path) {
+      setPendingKernelSwitch(null)
+      return
+    }
 
-    const saved = await onSaveNotebook?.(pending.file, pending.nextDocument)
+    const nextKernel = kernelDiagnostics
+      ? resolveNotebookKernel(pending.nextDocument, kernelDiagnostics)
+      : null
+    const nextDocument =
+      draftDocument && nextKernel
+        ? withNotebookKernel(draftDocument, nextKernel)
+        : pending.nextDocument
+    setDraftDocument(nextDocument)
+    const saved = await autosave.saveNow(pending.file, nextDocument)
     if (saved === false) return
 
     setPendingKernelSwitch(null)
     autoConnectKeyRef.current = pending.nextAutoConnectKey
-    setDraftDocument(pending.nextDocument)
 
     if (pending.hasCurrentLiveSession) {
       if (onStopNotebookSession) {
@@ -1250,7 +1298,7 @@ export default function NotebookCanvas({
     }
 
     if (onStartNotebookSession) {
-      await onStartNotebookSession(pending.file, pending.nextDocument)
+      await onStartNotebookSession(pending.file, nextDocument)
     }
   }
   const aiPromptCell = aiPromptDraft ? (
@@ -1329,9 +1377,9 @@ export default function NotebookCanvas({
           }}
         >
           {isOpening ? <Typography color="text.secondary">正在打开 notebook...</Typography> : null}
-          {error ? (
+          {error || saveError ? (
             <Typography color="error.main" sx={{ mb: 2 }}>
-              {error}
+              {error || saveError}
             </Typography>
           ) : null}
           {notebookSessionError ? (
@@ -1467,6 +1515,7 @@ export default function NotebookCanvas({
       <NotebookFloatingActions
         hasDocument={Boolean(notebookFile && draftDocument)}
         isDirty={isDirty}
+        saveState={saveState}
         isOpening={Boolean(isOpening)}
         isStartingNotebookSession={isStartingNotebookSession}
         anchor={floatingActionAnchor}

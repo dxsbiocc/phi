@@ -68,8 +68,13 @@ export function computeVirtualWindow<T extends VirtualListItem>(
     }
   }
 
-  const scrollTop = Math.max(0, viewport.scrollTop)
   const viewportHeight = Math.max(0, viewport.viewportHeight)
+  // Measurements and AI previews can shrink the list before the browser's next
+  // scroll event. Keep that stale viewport inside the current content range.
+  const scrollTop = Math.min(
+    Math.max(0, viewport.scrollTop),
+    Math.max(0, totalHeight - viewportHeight)
+  )
   const visibleStart = Math.max(0, scrollTop - overscanPx)
   const visibleEnd = scrollTop + viewportHeight + overscanPx
   let startIndex = 0

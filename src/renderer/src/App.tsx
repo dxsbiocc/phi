@@ -4651,6 +4651,7 @@ function App(): React.JSX.Element {
       }
     >
       <AnalysisView
+        key={activeProject?.id ?? activeCwd ?? 'notebook-workspace'}
         hideLeftRail
         notebookRegistry={analysisNotebookRegistry}
         notebookFile={activeAnalysisNotebook}

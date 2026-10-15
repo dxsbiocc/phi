@@ -10767,6 +10767,14 @@ app.whenReady().then(async () => {
       initializeProjectAnalysis(workspace.workingDirectory)
     )
   })
+  ipcMain.handle('analysis:refreshNotebook', async (_, cwd: string, notebookPath: string) => {
+    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+    if (!workspace) {
+      throw new Error('请选择一个已添加的项目或当前 workspace')
+    }
+    // Revalidation reads disk without replacing the tool draft or active path.
+    return analysisOpenFile(workspace, notebookPath, true)
+  })
   ipcMain.handle('analysis:openNotebook', async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {

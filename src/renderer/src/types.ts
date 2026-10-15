@@ -879,6 +879,7 @@ export interface RendererApi
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
+  refreshAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput

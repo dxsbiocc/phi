@@ -974,6 +974,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   listAnalysisNotebooks: (cwd?: string) => Promise<AnalysisNotebookRegistry>
   initializeProjectAnalysis: (cwd: string) => Promise<AnalysisProjectInitialization>
   openAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
+  refreshAnalysisNotebook: (cwd: string, path: string) => Promise<AnalysisNotebookFile>
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput
@@ -1611,6 +1612,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('analysis:initializeProject', cwd),
   openAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
     ipcRenderer.invoke('analysis:openNotebook', cwd, path),
+  refreshAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
+    ipcRenderer.invoke('analysis:refreshNotebook', cwd, path),
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput
