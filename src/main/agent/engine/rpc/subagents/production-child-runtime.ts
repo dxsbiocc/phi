@@ -173,6 +173,10 @@ export class ProductionChildRuntime {
   private readonly detach: Array<() => void> = []
   private readonly childParents = new Map<string, SessionRun>()
   private readonly stops = new Map<string, Promise<void>>()
+  private readonly stopCancellations = new Map<
+    string,
+    { controller: AbortController; children: Map<string, Promise<void>> }
+  >()
   private readonly conflictFaults = new Set<string>()
   private failureReported = false
   private disposed = false
@@ -243,7 +247,12 @@ export class ProductionChildRuntime {
           type: 'cancel_subagent',
           subagentId: nativeAgentId
         })
-        return record(response) && response.cancelled === true
+        if (!record(response)) return false
+        if (response.cancelled === true) return true
+        if (response.cancelled !== false) return false
+        const child = this.authority.registry.recordForNative(nativeAgentId)
+        if (!child?.verified || child.completedAt !== undefined) return false
+        return this.controls.cancelQueued(nativeAgentId)
       }
     })
     this.controls = new RpcChildRunControls({
@@ -302,6 +311,7 @@ export class ProductionChildRuntime {
           typeof frame.payload.id === 'string'
         ) {
           const parent = this.ledger.parentForNative(frame.payload.id)
+          if (parent) this.cancelStoppingChild(parent.runId, frame.payload.id)
           if (parent && this.ledger.hasNoSpawnConflict(parent.runId))
             this.faultAfterConflictCancellation(parent.runId)
         }
@@ -362,23 +372,49 @@ export class ProductionChildRuntime {
       return Promise.reject(new Error('Child runtime cancellation is unavailable'))
     const known = this.stops.get(parentRunId)
     if (known) return known
-    this.authority.registry.cancelParent(parentRunId)
+    const tracker = {
+      controller: new AbortController(),
+      children: new Map<string, Promise<void>>()
+    }
     const signal = AbortSignal.any([
       channel.signal,
       this.options.signal,
+      tracker.controller.signal,
       AbortSignal.timeout(10000)
     ])
     const stopping = Promise.resolve()
       .then(async () => {
+        // Foreground TaskTool seals only after its children finish. Start their
+        // genuine cancellation now, while the exact dispatch seal is pending.
+        for (const id of this.authority.registry.nativeChildren(parentRunId))
+          this.cancelStoppingChild(parentRunId, id)
         await this.ledger.waitForStarts(parentRunId, signal)
+        await withRemoteSignal(Promise.all(tracker.children.values()), signal)
         await withRemoteSignal(this.authority.cancelParent(parentRunId), signal)
         this.assertParentSettled(parentRunId)
       })
       .finally(() => {
+        tracker.controller.abort()
+        if (this.stopCancellations.get(parentRunId) === tracker)
+          this.stopCancellations.delete(parentRunId)
+        this.authority.registry.drainParentModels(parentRunId)
         if (this.stops.get(parentRunId) === stopping) this.stops.delete(parentRunId)
       })
     this.stops.set(parentRunId, stopping)
+    this.stopCancellations.set(parentRunId, tracker)
+    // Publish stop ownership before synchronous permission observers can reenter.
+    this.authority.registry.cancelParent(parentRunId)
     return stopping
+  }
+
+  private cancelStoppingChild(parentRunId: string, nativeId: string): void {
+    const tracker = this.stopCancellations.get(parentRunId)
+    if (!tracker || tracker.children.has(nativeId)) return
+    const cancellation = this.authority.cancelChild(nativeId)
+    tracker.children.set(nativeId, cancellation)
+    // Keep the real failure (including a refused ACK) instead of masking it
+    // with the later seal deadline, and immediately observe every rejection.
+    void cancellation.catch((error: unknown) => tracker.controller.abort(error))
   }
 
   /** Tentative/unregistered native starts remain outstanding until a real matching terminal event. */
@@ -547,6 +583,9 @@ export class ProductionChildRuntime {
     this.uri.dispose()
     for (const detach of this.detach.splice(0)) detach()
     this.ledger.dispose()
+    for (const tracker of this.stopCancellations.values())
+      tracker.controller.abort(new Error('Child runtime cancellation is unavailable'))
+    this.stopCancellations.clear()
     // Submitted writer callbacks still need the originating parent for their sole terminal event.
   }
 

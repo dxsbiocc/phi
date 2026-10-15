@@ -7,6 +7,138 @@ import {
 import type { RpcApprovalEvent } from '../src/main/agent/engine/rpc/approval-bridge'
 import { createApprovalEnvelope } from '../src/main/agent/engine/phi-extension/lib/rpc-approval-protocol'
 import { productionChildControlWire, controlExchange } from './helpers/productionChildControlWire'
+import { makeRpcTaskLaunchReceipt } from '../src/main/agent/engine/phi-extension/lib/rpc-task-launch-protocol'
+
+function taskLaunch(
+  f: Awaited<ReturnType<typeof productionChildControlWire>>,
+  count: number,
+  sealed: boolean
+): void {
+  const origin = f.originMessage()
+  assert.ok(origin)
+  f.wire.emit({
+    type: 'extension_ui_request',
+    method: 'notify',
+    notifyType: 'info',
+    message: JSON.stringify(
+      makeRpcTaskLaunchReceipt(f.prepared.config, f.root, {
+        parentRunId: f.parent.run.runId,
+        controlSequence: origin.sequence,
+        toolCallId: origin.toolCallId,
+        inputDigest: origin.inputDigest,
+        declaredTaskCount: count,
+        expectedTaskCount: count,
+        dispatchSealed: sealed
+      })
+    )
+  })
+}
+
+async function parallelRuntime(
+  f: Awaited<ReturnType<typeof productionChildControlWire>>
+): Promise<ProductionChildRuntime> {
+  return ProductionChildRuntime.create({
+    connection: f.connection,
+    execution: f.execution,
+    prepared: f.prepared,
+    root: f.root,
+    currentParentRun: () => f.parent.run,
+    approval: {
+      shouldGate: () => true,
+      requestToolApproval: () => assert.fail('Stopped parent cannot approve')
+    },
+    onDenied: () => undefined,
+    onError: () => undefined,
+    signal: f.connection.bindControl().signal
+  })
+}
+
+test('foreground stop sends genuine cancellation before waiting for the seal produced by task completion', async (t) => {
+  const f: Awaited<ReturnType<typeof productionChildControlWire>> =
+    await productionChildControlWire({ parallel: true, onCancel: () => taskLaunch(f, 1, true) })
+  t.after(f.close)
+  const child = await parallelRuntime(f)
+  t.after(() => child.dispose())
+  await f.execution.beginRun(f.parent.run.runId)
+  f.origin()
+  taskLaunch(f, 1, false)
+  f.wire.emit(f.lifecycle('started'))
+  const stopping = child.stopParent(f.parent.run.runId)
+  void stopping.catch(() => undefined)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    f.cancelled,
+    ['native-child'],
+    'FG task cannot seal until its live child receives cancel'
+  )
+  await stopping
+  child.assertParentSettled(f.parent.run.runId)
+})
+
+test('stopping a sealed parallel dispatch also joins late-start cancellation after terminal but before its delayed ACK', async (t) => {
+  let release!: () => void
+  const ack = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const f: Awaited<ReturnType<typeof productionChildControlWire>> =
+    await productionChildControlWire({
+      parallel: true,
+      terminalBeforeAck: true,
+      cancelGates: new Map([['late-child', ack]]),
+      onCancel: (id) => {
+        if (id !== 'native-child') return
+        f.wire.emit(f.lifecycle('started', 'late-child'))
+        taskLaunch(f, 2, true)
+      }
+    })
+  t.after(f.close)
+  const child = await parallelRuntime(f)
+  t.after(() => child.dispose())
+  await f.execution.beginRun(f.parent.run.runId)
+  f.origin()
+  taskLaunch(f, 2, false)
+  f.wire.emit(f.lifecycle('started'))
+  let settled = false
+  const stopping = child.stopParent(f.parent.run.runId).then(() => {
+    settled = true
+  })
+  void stopping.catch(() => undefined)
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.deepEqual(f.cancelled, ['native-child', 'late-child'])
+    assert.equal(
+      child.listRuns().every((run) => run.status === 'aborted'),
+      true
+    )
+    assert.equal(settled, false, 'Observed terminal never replaces the genuine delayed ACK')
+    release()
+    await stopping
+    assert.equal(settled, true)
+  } finally {
+    release()
+  }
+})
+
+test('an unsealed foreground cancellation refusal preserves its error instead of waiting for a seal timeout', async (t) => {
+  const refused = Promise.reject(new Error('private synthetic refusal'))
+  void refused.catch(() => undefined)
+  const f = await productionChildControlWire({
+    parallel: true,
+    cancelGate: refused
+  })
+  t.after(f.close)
+  const child = await parallelRuntime(f)
+  t.after(() => child.dispose())
+  await f.execution.beginRun(f.parent.run.runId)
+  f.origin()
+  taskLaunch(f, 1, false)
+  f.wire.emit(f.lifecycle('started'))
+  const stopping = child.stopParent(f.parent.run.runId)
+  void stopping.catch(() => undefined)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(f.cancelled, ['native-child'])
+  await assert.rejects(stopping, /Native cancellation refused/)
+})
 
 test('production Node composition consumes verified task origins and routes durable child approvals to its exact parent', async (t) => {
   const f = await productionChildControlWire()

@@ -31,8 +31,10 @@ test('child activation waits for independent started and allocates a child run d
     assert.equal(run.parentRunId, 'parent-run')
     assert.notEqual(run.id, run.parentRunId)
     assert.equal(run.signal.aborted, false)
+    assert.equal(run.modelSignal.aborted, false)
     authority.observe({ type: 'agent_end' })
     assert.equal(authority.registry.current(childScope), run)
+    assert.equal(run.modelSignal.aborted, false)
   } finally {
     authority.dispose()
   }
@@ -268,6 +270,102 @@ test('unconfirmed native cancellation fails explicitly while child permission re
     authority.dispose()
   }
 })
+test('execution revocation preserves an established model transport until native ACK and aborted lifecycle', async () => {
+  let acknowledge!: (allowed: boolean) => void
+  let called!: () => void
+  const nativeCalled = new Promise<void>((resolve) => {
+    called = resolve
+  })
+  const ack = new Promise<boolean>((resolve) => {
+    acknowledge = resolve
+  })
+  const { authority } = childAuthority({
+    captureParent: (started) => ({ runId: started.id === 'child' ? 'parent-one' : 'parent-two' }),
+    cancelNativeChild: () => {
+      called()
+      return ack
+    }
+  })
+  const peer = {
+    ...childScope,
+    nativeAgentId: 'peer',
+    childOmpSessionId: 'peer-sdk',
+    childSessionFile: '/srv/history/root/peer.jsonl'
+  }
+  try {
+    await activateChild(authority)
+    await activateChild(authority, peer)
+    const run = authority.registry.current(childScope)!
+    const other = authority.registry.current(peer)!
+    const stopping = authority.cancelParent('parent-one')
+    void stopping.catch(() => undefined)
+    assert.equal(run.signal.aborted, true)
+    assert.equal(authority.registry.current(childScope), undefined)
+    assert.equal(run.modelSignal.aborted, false)
+    await nativeCalled
+    acknowledge(true)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(run.modelSignal.aborted, false, 'ACK alone cannot close the SDK model stream')
+    assert.equal(other.signal.aborted, false)
+    assert.equal(other.modelSignal.aborted, false)
+    const terminal = childStarted()
+    ;(terminal.payload as Record<string, unknown>).status = 'aborted'
+    authority.observe(terminal)
+    await stopping
+    assert.equal(run.modelSignal.aborted, true)
+    assert.equal(other.modelSignal.aborted, false)
+  } finally {
+    authority.dispose()
+  }
+})
+test('failed or timed-out native cancellation always drains only its owned model transport', async () => {
+  for (const mode of ['refused', 'timeout'] as const) {
+    const { authority } = childAuthority({
+      cancellationTimeoutMs: 20,
+      cancelNativeChild: () => (mode === 'refused' ? false : new Promise<boolean>(() => undefined))
+    })
+    try {
+      await activateChild(authority)
+      const run = authority.registry.current(childScope)!
+      await assert.rejects(authority.cancelChild('child'))
+      assert.equal(run.signal.aborted, true)
+      assert.equal(run.modelSignal.aborted, true)
+    } finally {
+      authority.dispose()
+    }
+  }
+})
+test('refused SDK cancellation drains model transport while physical host cleanup is still pending', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const draining = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const { authority } = childAuthority({
+    cancelNativeChild: () => false,
+    drainHost: () => {
+      entered()
+      return held
+    }
+  })
+  try {
+    await activateChild(authority)
+    const run = authority.registry.current(childScope)!
+    const stopping = authority.cancelChild('child')
+    void stopping.catch(() => undefined)
+    await draining
+    assert.equal(run.signal.aborted, true)
+    assert.equal(run.modelSignal.aborted, true)
+    release()
+    await assert.rejects(stopping)
+  } finally {
+    release()
+    authority.dispose()
+  }
+})
 test('cancelled parent cannot admit a later tentative child and generation retirement closes active children', async () => {
   const { authority, controller } = childAuthority()
   try {
@@ -284,6 +382,7 @@ test('cancelled parent cannot admit a later tentative child and generation retir
     const run = active.authority.registry.current(childScope)!
     active.controller.abort()
     assert.equal(run.signal.aborted, true)
+    assert.equal(run.modelSignal.aborted, true)
     assert.throws(
       () => active.authority.accept(childRequest('approve', 3), signal()),
       /unavailable/
@@ -291,6 +390,23 @@ test('cancelled parent cannot admit a later tentative child and generation retir
   } finally {
     active.authority.dispose()
     controller.abort()
+  }
+})
+test('verified native terminal lifecycle drains its model transport without cancelling an unrelated parent', async () => {
+  for (const status of ['completed', 'failed'] as const) {
+    const { authority } = childAuthority()
+    try {
+      await activateChild(authority)
+      const run = authority.registry.current(childScope)!
+      const terminal = childStarted()
+      ;(terminal.payload as Record<string, unknown>).status = status
+      authority.observe(terminal)
+      assert.equal(run.signal.aborted, true)
+      assert.equal(run.modelSignal.aborted, true)
+      assert.equal(authority.registry.current(childScope), undefined)
+    } finally {
+      authority.dispose()
+    }
   }
 })
 test('trusted compiler manifest must bind the same root project and cwd', () => {

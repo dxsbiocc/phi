@@ -11,7 +11,8 @@ import {
 } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-protocol'
 import {
   createRpcChildControlAck,
-  parseRpcChildSteerRequest,
+  parseRpcChildControlRequest,
+  type RpcChildControlRequest,
   RPC_CHILD_CONTROL_COMMAND,
   RPC_CHILD_CONTROL_DESCRIPTION
 } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-control'
@@ -26,6 +27,7 @@ interface ChildLifecycleFixture {
   wire: ReturnType<typeof createInitializationWire>
   cancelled: string[]
   steered: Array<{ id: string; message: string }>
+  controlRequests: RpcChildControlRequest[]
   lifecycle(scope: RpcChildScope, status: string): RpcFrame
   activate(id?: string): Promise<RpcChildScope>
   close(): Promise<void>
@@ -33,7 +35,13 @@ interface ChildLifecycleFixture {
 
 /** Synthetic protocol peer, never claimed as an SDK child/process acceptance. */
 export async function childLifecycleControlFixture(
-  options: { cancelGate?: Promise<void>; refuseFirstCancel?: boolean; steerBusyOnce?: boolean } = {}
+  options: {
+    cancelGate?: Promise<void>
+    refuseFirstCancel?: boolean
+    steerBusyOnce?: boolean
+    refuseQueuedCancel?: boolean
+    firstLookupGate?: Promise<void>
+  } = {}
 ): Promise<ChildLifecycleFixture> {
   const prepared = await createProductionChildConfig(productionChildOptions())
   const config = prepared.config
@@ -41,9 +49,11 @@ export async function childLifecycleControlFixture(
   const scopes = new Map<string, RpcChildScope>()
   const cancelled: string[] = []
   const steered: Array<{ id: string; message: string }> = []
+  const controlRequests: RpcChildControlRequest[] = []
+  let lookups = 0
   const wire = createInitializationWire((command, respond, emit) => {
     if (command.type === 'get_available_commands') {
-      respond({
+      const available = {
         commands: [
           {
             name: RPC_CHILD_CONTROL_COMMAND,
@@ -51,16 +61,24 @@ export async function childLifecycleControlFixture(
             description: RPC_CHILD_CONTROL_DESCRIPTION
           }
         ]
-      })
+      }
+      if (++lookups === 1 && options.firstLookupGate)
+        void options.firstLookupGate.then(() => respond(available))
+      else respond(available)
       return true
     }
     if (command.type === 'prompt') {
       const prefix = `/${RPC_CHILD_CONTROL_COMMAND} `
       if (typeof command.message !== 'string' || !command.message.startsWith(prefix))
         throw new Error('Control fixture refuses a model prompt')
-      const request = parseRpcChildSteerRequest(command.message.slice(prefix.length), config)
-      const accepted = !options.steerBusyOnce || steered.length > 0
-      steered.push({ id: request.scope.nativeAgentId, message: request.message })
+      const request = parseRpcChildControlRequest(command.message.slice(prefix.length), config)
+      controlRequests.push(request)
+      const accepted =
+        request.action === 'cancel_queued'
+          ? options.refuseQueuedCancel !== true
+          : !options.steerBusyOnce || steered.length > 0
+      if (request.action === 'steer')
+        steered.push({ id: request.scope.nativeAgentId, message: request.message })
       emit({
         type: 'extension_ui_request',
         method: 'notify',
@@ -132,6 +150,7 @@ export async function childLifecycleControlFixture(
     wire,
     cancelled,
     steered,
+    controlRequests,
     lifecycle,
     async activate(id = 'child-one'): Promise<RpcChildScope> {
       const profile = config.profiles[0]

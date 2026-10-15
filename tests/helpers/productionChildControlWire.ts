@@ -36,7 +36,7 @@ export interface ProductionChildControlWire {
   origin(patch?: Partial<RpcExecutionOrigin>, invalidSignature?: boolean): void
   originMessage(): Readonly<RpcExecutionOrigin> | undefined
   request(operation: 'register' | 'activate' | 'approve', sequence: number): RpcChildRequest
-  lifecycle(status: string): unknown
+  lifecycle(status: string, nativeId?: string): unknown
   cancelled: string[]
   close(): Promise<void>
 }
@@ -51,10 +51,17 @@ export async function productionChildControlWire(
     stateChangeAfterAttest?: 'session' | 'journal'
     cancelGate?: Promise<void>
     background?: boolean
+    parallel?: boolean
+    onCancel?: (nativeId: string) => void
+    cancelGates?: ReadonlyMap<string, Promise<void>>
+    terminalBeforeAck?: boolean
   } = {}
 ): Promise<ProductionChildControlWire> {
   const prepared = await createProductionChildConfig(
-    productionChildOptions({ allowBackground: options.background === true })
+    productionChildOptions({
+      allowBackground: options.background === true,
+      allowParallel: options.parallel === true
+    })
   )
   const config = prepared.config
   const profile = config.profiles.find((item) => item.definition.blocking !== !!options.background)!
@@ -91,14 +98,17 @@ export async function productionChildControlWire(
     nativeName: profile.definition.nativeName,
     definitionHash: profile.definition.definitionHash
   }
-  const lifecycle = (status: string): unknown => ({
+  const lifecycle = (status: string, nativeId = scope.nativeAgentId): unknown => ({
     type: 'subagent_lifecycle',
     payload: {
-      id: scope.nativeAgentId,
+      id: nativeId,
       agent: scope.nativeName,
       agentSource: 'user',
       status,
-      sessionFile: scope.childSessionFile,
+      sessionFile:
+        nativeId === scope.nativeAgentId
+          ? scope.childSessionFile
+          : `/srv/history/root/${nativeId}.jsonl`,
       parentToolCallId: 'outer-task',
       ...(options.background ? { detached: true } : {}),
       index: 0
@@ -130,13 +140,16 @@ export async function productionChildControlWire(
       return true
     }
     if (command.type === 'cancel_subagent') {
-      cancelled.push(String(command.subagentId))
+      const nativeId = String(command.subagentId)
+      cancelled.push(nativeId)
+      options.onCancel?.(nativeId)
+      if (options.terminalBeforeAck) emit(lifecycle('aborted', nativeId))
       const complete = (): void => {
-        emit(lifecycle('aborted'))
+        if (!options.terminalBeforeAck) emit(lifecycle('aborted', nativeId))
         respond({ cancelled: true })
       }
-      if (options.cancelGate)
-        void options.cancelGate.then(complete, () => respond({ cancelled: false }))
+      const gate = options.cancelGates?.get(nativeId) ?? options.cancelGate
+      if (gate) void gate.then(complete, () => respond({ cancelled: false }))
       else complete()
       return true
     }

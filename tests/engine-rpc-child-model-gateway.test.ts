@@ -42,10 +42,14 @@ test(
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve)
     })
-    const children = new Map<string, { controller: AbortController; vault: BrowserTextVault }>()
+    const children = new Map<
+      string,
+      { controller: AbortController; model: AbortController; vault: BrowserTextVault }
+    >()
     for (const id of ['child-a', 'child-b'])
       children.set(id, {
         controller: new AbortController(),
+        model: new AbortController(),
         vault: new BrowserTextVault({ allowTypeText: false })
       })
     const capability = 'c'.repeat(64)
@@ -93,7 +97,7 @@ test(
         const verified = verifyRpcChildModelHeader(header, capability)
         const child = verified && children.get(verified.nativeAgentId)
         return child && !child.controller.signal.aborted
-          ? { signal: child.controller.signal, vault: child.vault }
+          ? { signal: child.controller.signal, modelSignal: child.model.signal, vault: child.vault }
           : undefined
       }
     })
@@ -130,6 +134,16 @@ test(
     const b = send('b', createRpcChildModelHeader(scope('child-b'), capability))
     await until(() => responses.size === 2)
     children.get('child-a')!.controller.abort()
+    assert.equal(
+      (await send('a-revoked', createRpcChildModelHeader(scope('child-a'), capability))).status,
+      502
+    )
+    assert.equal(
+      closed.has('a'),
+      false,
+      'Execution retirement does not truncate an admitted model transport'
+    )
+    children.get('child-a')!.model.abort()
     assert.equal((await a).status, 502)
     await until(() => closed.has('a'))
     assert.equal(closed.has('b'), false)

@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import { AgentLifecycleManager } from '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle'
 
 import { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
@@ -16,10 +17,16 @@ import {
 import { createRpcNativeStreamExtension } from './extensions/rpc-native-stream'
 import { registerRpcSessionVerification } from './extensions/rpc-session-verification'
 import { createRpcSubagentsExtension } from './extensions/rpc-subagents'
-import { createRpcChildControlExtension } from './extensions/rpc-child-control'
+import {
+  createRpcChildControlExtension,
+  createRpcChildControlScopes
+} from './extensions/rpc-child-control'
 import { createRpcChildSteerPermits } from './extensions/rpc-child-steer-permit'
 import { createRpcChildModelHeader, RPC_CHILD_MODEL_HEADER } from './lib/rpc-child-model-authority'
-import { createCursorStreamRecoveryExtension } from './extensions/cursor-stream-recovery'
+import {
+  createCursorStreamRecoveryExtension,
+  hasOwnedCursorContinuation
+} from './extensions/cursor-stream-recovery'
 import {
   createRpcTaskAdmissionExtension,
   type RpcVerifiedChildDispatch
@@ -125,6 +132,7 @@ const childGenerations = new Map<
     digest: string
     controller: AbortController
     steerPermits: ReturnType<typeof createRpcChildSteerPermits>
+    controlScopes: ReturnType<typeof createRpcChildControlScopes>
     taskOwner?: {
       root: RpcChildRootScope
       tasks: ReturnType<typeof createRpcTaskAdmissionExtension>
@@ -237,7 +245,8 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         generation = {
           digest,
           controller: new AbortController(),
-          steerPermits: createRpcChildSteerPermits()
+          steerPermits: createRpcChildSteerPermits(),
+          controlScopes: createRpcChildControlScopes()
         }
         childGenerations.set(config.nonce, generation)
       }
@@ -273,6 +282,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
           leaseId: runtime.result.leaseId
         },
         steerPermits: ownedGeneration.steerPermits,
+        controlScopes: ownedGeneration.controlScopes,
         readiness: () => {
           const identity = root()
           return identity
@@ -313,6 +323,11 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         root,
         signal: ownedGeneration.controller.signal,
         steerPermits: ownedGeneration.steerPermits,
+        queuedCancellation: {
+          lifecycle: AgentLifecycleManager.global(),
+          owns: hasOwnedCursorContinuation,
+          verify: ownedGeneration.controlScopes.verify
+        },
         assertPublication: () => {
           const fresh = loadRpcChildRuntimeConfig(
             process.env[RPC_BOOTSTRAP_CONFIG_ENV]!,

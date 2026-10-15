@@ -328,6 +328,7 @@ export class RpcChildAuthority {
           throw new Error('Native child cancellation was not confirmed')
       })
       .finally(() => {
+        this.registry.drainParentModels(runId)
         if (this.cancellations.get(runId) === attempt) this.cancellations.delete(runId)
       })
     this.cancellations.set(runId, attempt)
@@ -364,6 +365,8 @@ export class RpcChildAuthority {
             throw new Error('Native aborted lifecycle absent')
         } catch (error) {
           failure = error
+        } finally {
+          this.registry.drainModel(nativeId)
         }
         try {
           await this.drainHostExecutions(record.id)
@@ -374,6 +377,7 @@ export class RpcChildAuthority {
         confirmed = true
       })
       .finally(() => {
+        this.registry.drainModel(nativeId)
         if (!confirmed && this.nativeCancellations.get(nativeId) === attempt)
           this.nativeCancellations.delete(nativeId)
       })

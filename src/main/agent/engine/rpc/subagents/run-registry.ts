@@ -98,6 +98,8 @@ export interface RpcChildRun {
   readonly scope: RpcChildScope
   readonly profile: RpcChildActualProfile
   readonly signal: AbortSignal
+  /** Existing model requests drain after SDK cancellation; this grants no new execution. */
+  readonly modelSignal: AbortSignal
 }
 interface Entry {
   readonly id: string
@@ -106,6 +108,7 @@ interface Entry {
   parentRunId?: string
   run?: RpcChildRun
   controller: AbortController
+  readonly modelController: AbortController
   failed: boolean
   terminal?: 'completed' | 'failed' | 'aborted'
   startedAt?: number
@@ -338,7 +341,14 @@ export class RpcChildRunRegistry {
   }
   revokeNative(nativeId: string): void {
     const entry = this.entries.get(nativeId)
-    if (entry?.started && entry.parentRunId) this.retire(entry)
+    if (entry?.started && entry.parentRunId) this.retire(entry, false)
+  }
+  drainModel(nativeId: string): void {
+    this.entries.get(nativeId)?.modelController.abort()
+  }
+  drainParentModels(parentRunId: string): void {
+    for (const entry of this.entries.values())
+      if (entry.parentRunId === parentRunId) entry.modelController.abort()
   }
   waitForTerminal(nativeId: string, signal: AbortSignal): Promise<string | undefined> {
     const entry = this.entries.get(nativeId)
@@ -371,7 +381,8 @@ export class RpcChildRunRegistry {
       return
     }
     this.cancelledParents.add(runId)
-    for (const entry of this.entries.values()) if (entry.parentRunId === runId) this.retire(entry)
+    for (const entry of this.entries.values())
+      if (entry.parentRunId === runId) this.retire(entry, false)
   }
   snapshot(): readonly RpcChildRun[] {
     return Object.freeze(
@@ -422,6 +433,7 @@ export class RpcChildRunRegistry {
       entry = {
         id: randomUUID(),
         controller: new AbortController(),
+        modelController: new AbortController(),
         failed: false,
         waiters: new Set(),
         terminalWaiters: new Set()
@@ -449,13 +461,15 @@ export class RpcChildRunRegistry {
         parentToolCallId: entry.started.parentToolCallId,
         scope: entry.scope,
         profile,
-        signal: entry.controller.signal
+        signal: entry.controller.signal,
+        modelSignal: entry.modelController.signal
       })
       this.notify(entry)
     }
     if (entry.run) for (const resolve of [...entry.waiters]) resolve(entry.run)
   }
-  private retire(entry: Entry): void {
+  private retire(entry: Entry, drainModel = true): void {
+    if (drainModel) entry.modelController.abort()
     if (entry.failed) return
     entry.failed = true
     entry.controller.abort()

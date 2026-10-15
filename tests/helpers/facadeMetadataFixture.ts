@@ -73,6 +73,16 @@ export async function facadeMetadataFixture(
   options: {
     select?: (selected: SelectedFacadeRuntime) => SelectedFacadeRuntime
     providerFactory?: typeof startHostResultModel
+    cursorProvider?: {
+      readonly apiKey: string
+      readonly baseUrl: string
+      readonly modelOverrides: Readonly<
+        Record<
+          string,
+          { readonly baseUrl: string; readonly contextWindow?: number; readonly maxTokens: number }
+        >
+      >
+    }
     isolatedProject?: boolean
     nonReasoningModel?: string
     thinkingEfforts?: Readonly<Record<string, readonly ThinkingLevel[]>>
@@ -127,7 +137,8 @@ export async function facadeMetadataFixture(
             maxTokens: 1024,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
           }))
-        }
+        },
+        ...(options.cursorProvider ? { cursor: options.cursorProvider } : {})
       }
     }),
     { mode: 0o600 }

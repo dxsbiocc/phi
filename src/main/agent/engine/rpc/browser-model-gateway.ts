@@ -16,9 +16,13 @@ export interface BrowserModelGatewayOptions {
   signal: AbortSignal
   currentRunSignal(): AbortSignal | undefined
   /** Reserved signed header is resolved only by the current child registry. */
-  resolveChildRun?: (
-    header: string
-  ) => { readonly signal: AbortSignal; readonly vault: BrowserTextVault } | undefined
+  resolveChildRun?: (header: string) =>
+    | {
+        readonly signal: AbortSignal
+        readonly modelSignal: AbortSignal
+        readonly vault: BrowserTextVault
+      }
+    | undefined
 }
 const unavailable = (): Response => new Response('Model request unavailable', { status: 502 })
 /** Desktop-only model egress. Raw typeText bytes never enter the server SDK or its journal. */
@@ -54,9 +58,11 @@ export async function createBrowserModelGateway(
       if (childHeader !== null && !child) return unavailable()
       const run = child?.signal ?? options.currentRunSignal()
       if (!run || run.aborted) return unavailable()
+      const transport = child ? child.modelSignal : run
+      if (!transport || transport.aborted) return unavailable()
       const controller = new AbortController()
       requests.add(controller)
-      const signal = AbortSignal.any([options.signal, request.signal, run, controller.signal])
+      const signal = AbortSignal.any([options.signal, request.signal, transport, controller.signal])
       const abort = (): void => controller.abort(new Error('Browser model stream stopped'))
       signal.addEventListener('abort', abort, { once: true })
       let owns = false
@@ -66,12 +72,15 @@ export async function createBrowserModelGateway(
       }
       try {
         signal.throwIfAborted()
-        const payload = await readGatewayJson(request, signal)
+        const payload = await readGatewayJson(request, AbortSignal.any([signal, run]))
         assertBrowserHistoryPrivate(payload)
         const modelId =
           payload && typeof payload === 'object' ? Reflect.get(payload, 'modelId') : undefined
         const model = lease.models.find((model) => `${model.provider}/${model.id}` === modelId)
         if (!model) return new Response('Invalid model request', { status: 400 })
+        // Execution authority governs admission. After dispatch, SDK cancellation
+        // must reach the client before the desktop drains this owned transport.
+        run.throwIfAborted()
         const response = await fetch(`http://127.0.0.1:${lease.localPort}/v1/pi/stream`, {
           method: 'POST',
           headers: {

@@ -358,6 +358,18 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent"],
       "purpose": "R6b private actual CLI oracle uses erased ExtensionFactory types and public root Agent hooks to prove native task raw/effective argument and startup contracts; no production SDK dependency outside engine",
       "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/phi-extension/rpc-entry.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/registry/agent-lifecycle"],
+      "purpose": "T11 pinned 18.10.3 canonical public lifecycle release for an authenticated owned Cursor continuation excluded by the RPC live-ref guard; exact module/global identity verified on the official compiled Linux runtime. Revalidate queued cancellation and reference CAS on every SDK upgrade.",
+      "plan": "keep"
+    },
+    {
+      "file": "src/main/agent/engine/phi-extension/extensions/rpc-child-control.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/registry/agent-lifecycle"],
+      "purpose": "Erased public lifecycle type for the pinned owned queued-cancellation adapter; runtime mutation remains behind the canonical release plus real session.abort and exact reference checks.",
+      "plan": "keep"
     }
   ]
 }

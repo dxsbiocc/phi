@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import type { RpcChildSteerPermits } from './rpc-child-steer-permit'
+import type { RpcChildControlScopes } from './rpc-child-control'
 import {
   childProfileResourceDigest,
   childResourceHash,
@@ -73,6 +74,7 @@ export interface RpcSubagentsOptions {
     readonly leaseId: string
   }
   readonly steerPermits?: RpcChildSteerPermits
+  readonly controlScopes?: RpcChildControlScopes
   /** Trusted generation state only, never a value supplied by a model or child URI. */
   readiness(): RpcChildReadiness | undefined
 }
@@ -96,6 +98,7 @@ interface ChildState extends RpcChildNativeExecution, RpcChildHostExecution {
   actualTools: ReadonlyMap<string, AgentSession['agent']['state']['tools'][number]>
   calls: Map<string, RpcChildCall>
   seen: Set<string>
+  revokeControlScope?: () => void
 }
 const refused = { block: true as const, reason: 'Phi child execution authority is unavailable' }
 
@@ -224,6 +227,7 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
     }
   }
   const revoke = (child: ChildState): void => {
+    child.revokeControlScope?.()
     options.steerPermits?.revoke(child.session)
     child.permitted = false
     child.controller.abort()
@@ -537,6 +541,15 @@ export function createRpcSubagentsExtension(options: RpcSubagentsOptions): {
           revoke: () => child && revoke(child)
         }
         states.set(ctx.sessionManager, child)
+        const ownedChild = child
+        child.revokeControlScope = options.controlScopes?.publish(session, () =>
+          ownedChild.registered &&
+          ownedChild.activated &&
+          ownedChild.permitted &&
+          active(ownedChild, ctx)
+            ? ownedChild.scope
+            : undefined
+        )
         ready.signal.addEventListener('abort', () => revoke(child!), {
           once: true,
           signal: controller.signal

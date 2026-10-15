@@ -8,7 +8,7 @@ import {
 import { createInProcessFixture } from './engine-contract/in-process-factory'
 import { startLoopbackCursor } from './helpers/loopbackCursor'
 
-type Handler = (event: Record<string, unknown>) => unknown
+type Handler = (event: Record<string, unknown>, context?: { agent: { kind: 'main' } }) => unknown
 
 function recovery(): { start: () => void; stop: Handler; end: Handler } {
   const handlers = new Map<string, Handler>()
@@ -16,9 +16,10 @@ function recovery(): { start: () => void; stop: Handler; end: Handler } {
   createCursorStreamRecoveryExtension(() => agent)({
     on: (name: string, handler: Handler) => handlers.set(name, handler)
   } as never)
-  handlers.get('before_agent_start')?.({})
+  const context = { agent: { kind: 'main' as const } }
+  handlers.get('before_agent_start')?.({}, context)
   return {
-    start: () => handlers.get('before_agent_start')?.({}),
+    start: () => handlers.get('before_agent_start')?.({}, context),
     stop: (event) => handlers.get('session_stop')?.(event),
     end: (event) => agent.transformAssistantMessage?.(event.message as never)
   }

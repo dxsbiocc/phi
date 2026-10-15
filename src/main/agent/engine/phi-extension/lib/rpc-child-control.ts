@@ -12,6 +12,7 @@ export const RPC_CHILD_CONTROL_COMMAND = 'phi-rpc-child-control'
 export const RPC_CHILD_CONTROL_DESCRIPTION =
   'Apply one authenticated Phi child control without invoking the parent model.'
 const MAX_MESSAGE_BYTES = 20000
+const QUEUED_CANCEL_MESSAGE = 'Cancel only the retained automatic Cursor continuation.'
 function plainMessage(value: unknown): value is string {
   return (
     typeof value === 'string' &&
@@ -35,9 +36,13 @@ export interface RpcChildSteerRequest extends Binding {
   readonly message: string
   readonly proof: string
 }
+export type RpcChildQueuedCancelRequest = Omit<RpcChildSteerRequest, 'action'> & {
+  readonly action: 'cancel_queued'
+}
+export type RpcChildControlRequest = RpcChildSteerRequest | RpcChildQueuedCancelRequest
 export interface RpcChildControlAck extends Binding {
   readonly type: 'phi_rpc_child_control_ack'
-  readonly action: 'steer'
+  readonly action: RpcChildControlRequest['action']
   readonly accepted: boolean
   readonly proof: string
 }
@@ -149,8 +154,49 @@ export function parseRpcChildSteerRequest(
     throw new Error('Phi child control authentication failed')
   return Object.freeze({ ...body, proof: value.proof as string })
 }
+export function createRpcChildQueuedCancelRequest(
+  config: Readonly<RpcChildRuntimeConfig>,
+  scope: RpcChildScope,
+  sequence: number
+): Readonly<RpcChildQueuedCancelRequest> {
+  const { proof, ...input } = createRpcChildSteerRequest(
+    config,
+    scope,
+    sequence,
+    QUEUED_CANCEL_MESSAGE
+  )
+  void proof
+  const body = { ...input, action: 'cancel_queued' as const }
+  return Object.freeze({ ...body, proof: signature(body, config) })
+}
+export function parseRpcChildControlRequest(
+  args: string,
+  config: Readonly<RpcChildRuntimeConfig>
+): Readonly<RpcChildControlRequest> {
+  if (Buffer.byteLength(args) > 32768) throw new Error('Phi child control exceeds its bound')
+  const value = record(JSON.parse(args))
+  if (value.action === 'steer') return parseRpcChildSteerRequest(args, config)
+  const input = binding(value, config)
+  if (
+    Object.keys(value).length !== 11 ||
+    value.type !== 'phi_rpc_child_control' ||
+    value.action !== 'cancel_queued' ||
+    value.message !== QUEUED_CANCEL_MESSAGE ||
+    input.messageDigest !== createHash('sha256').update(QUEUED_CANCEL_MESSAGE).digest('hex')
+  )
+    throw new Error('Invalid Phi queued child cancellation')
+  const body = {
+    ...input,
+    type: 'phi_rpc_child_control' as const,
+    action: 'cancel_queued' as const,
+    message: QUEUED_CANCEL_MESSAGE
+  }
+  if (!validProof(body, value.proof, config))
+    throw new Error('Phi child control authentication failed')
+  return Object.freeze({ ...body, proof: value.proof as string })
+}
 export function createRpcChildControlAck(
-  request: Readonly<RpcChildSteerRequest>,
+  request: Readonly<RpcChildControlRequest>,
   config: Readonly<RpcChildRuntimeConfig>,
   accepted = true
 ): Readonly<RpcChildControlAck> {
@@ -158,14 +204,14 @@ export function createRpcChildControlAck(
   const body = {
     ...input,
     type: 'phi_rpc_child_control_ack' as const,
-    action: 'steer' as const,
+    action: request.action,
     accepted
   }
   return Object.freeze({ ...body, proof: signature(body, config) })
 }
 export function parseRpcChildControlAck(
   content: unknown,
-  request: Readonly<RpcChildSteerRequest>,
+  request: Readonly<RpcChildControlRequest>,
   config: Readonly<RpcChildRuntimeConfig>
 ): Readonly<RpcChildControlAck> | undefined {
   try {
@@ -175,13 +221,13 @@ export function parseRpcChildControlAck(
     const body = {
       ...input,
       type: 'phi_rpc_child_control_ack' as const,
-      action: 'steer' as const,
+      action: request.action,
       accepted: value.accepted === true
     }
     const valid =
       Object.keys(value).length === 11 &&
       value.type === body.type &&
-      value.action === 'steer' &&
+      value.action === request.action &&
       typeof value.accepted === 'boolean' &&
       input.id === request.id &&
       input.sequence === request.sequence &&
@@ -195,7 +241,7 @@ export function parseRpcChildControlAck(
 }
 export function verifyRpcChildControlAck(
   content: unknown,
-  request: Readonly<RpcChildSteerRequest>,
+  request: Readonly<RpcChildControlRequest>,
   config: Readonly<RpcChildRuntimeConfig>
 ): boolean {
   return parseRpcChildControlAck(content, request, config)?.accepted === true

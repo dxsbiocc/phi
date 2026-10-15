@@ -589,7 +589,11 @@ export class RemoteSessionRuntime {
           const run = scope && this.children.childRunForHost(scope.nativeAgentId)
           if (!scope || !run || run.signal.aborted || !sameRpcChildScope(scope, run.scope))
             return undefined
-          return { signal: run.signal, vault: this.childBrowserTextVault(run.id) }
+          return {
+            signal: run.signal,
+            modelSignal: run.modelSignal,
+            vault: this.childBrowserTextVault(run.id)
+          }
         },
         prepareRuntime: async (context) => {
           this.lifetime.signal.throwIfAborted()
