@@ -4,6 +4,12 @@ export type JsonObject = { [key: string]: JsonValue }
 
 export type NotebookCellType = 'code' | 'markdown' | 'raw'
 
+export interface NotebookGeneratedCell {
+  cellType: Extract<NotebookCellType, 'code' | 'markdown'>
+  source: string
+  language?: string
+}
+
 export interface NotebookOutput {
   outputType: string
   data: JsonObject

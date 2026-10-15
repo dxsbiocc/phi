@@ -1,5 +1,5 @@
 import type {
-  NotebookCellType,
+  NotebookGeneratedCell,
   NotebookDocument,
   NotebookOutput
 } from '../../shared/notebookDocument'
@@ -569,11 +569,7 @@ export interface AnalysisNotebookContextReference {
   }
 }
 
-export interface AnalysisNotebookGeneratedCell {
-  cellType: Extract<NotebookCellType, 'code' | 'markdown'>
-  source: string
-  language?: string
-}
+export type AnalysisNotebookGeneratedCell = NotebookGeneratedCell
 export interface AnalysisNotebookCodeGenerationResult {
   source: string
   language: string
