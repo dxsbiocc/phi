@@ -31,6 +31,7 @@ import {
   isNotebookTextEntryShortcutTarget
 } from '../lib/notebookShortcuts'
 import { notebookAiGeneratedCellsFromResult } from '../lib/notebookAiGenerationResult'
+import { notebookPromptContextReferences } from '../lib/notebookPromptReferences'
 import { useNotebookAutoConnect } from '../lib/useNotebookAutoConnect'
 import {
   clearNotebookCellOutput,
@@ -273,7 +274,6 @@ export default function NotebookCanvas({
   const notebookCanvasRef = useRef<HTMLDivElement | null>(null)
   const scrollViewportRef = useRef<HTMLDivElement | null>(null)
   const virtualListRef = useRef<HTMLDivElement | null>(null)
-  const aiPromptDraftRef = useRef<NotebookAiPromptDraft | null>(null)
   const scrollFrameRef = useRef<number | null>(null)
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const notebookDocumentKey = notebookFile?.path ?? activeNotebookPath ?? null
@@ -323,10 +323,6 @@ export default function NotebookCanvas({
   )
   const outline = useMemo(() => notebookOutline(displayCells), [displayCells])
   const [activeOutlineId, setActiveOutlineId] = useState<string | null>(outline[0]?.id ?? null)
-
-  useEffect(() => {
-    aiPromptDraftRef.current = aiPromptDraft
-  }, [aiPromptDraft])
 
   useEffect(() => {
     const virtualRowObservers = virtualRowObserversRef.current
@@ -553,20 +549,11 @@ export default function NotebookCanvas({
   useEffect(() => {
     if (!onNotebookCodeGenerationProgress) return undefined
     return onNotebookCodeGenerationProgress((progress) => {
-      const draftSnapshot = aiPromptDraftRef.current
-      if (
-        !draftSnapshot ||
-        draftSnapshot.isGenerating ||
-        draftSnapshot.id !== progress.requestId ||
-        progress.cells.length === 0
-      ) {
-        return
-      }
       setAiPromptDraft((draft) => {
         if (
           !draft ||
           !draftDocument ||
-          draft.isGenerating ||
+          !draft.isGenerating ||
           draft.id !== progress.requestId ||
           progress.cells.length === 0
         ) {
@@ -574,8 +561,9 @@ export default function NotebookCanvas({
         }
         if (
           notebookFile &&
-          progress.path !== notebookFile.path &&
-          progress.relativePath !== notebookFile.relativePath
+          (progress.path
+            ? progress.path !== notebookFile.path
+            : progress.relativePath !== notebookFile.relativePath)
         ) {
           return draft
         }
@@ -976,7 +964,11 @@ export default function NotebookCanvas({
           ? { providerId: draft.model.providerId, modelId: draft.model.modelId }
           : undefined,
         afterCellId: draft.afterCellId,
-        references: draft.references
+        references: notebookPromptContextReferences(
+          draft.prompt,
+          [...draft.references, ...aiContextOptions],
+          draft.mode === 'refactor' ? draft.targetCellId : undefined
+        )
       })
       const generatedCells = notebookAiGeneratedCellsFromResult(result, draft.language)
       if (generatedCells.length === 0) {
@@ -1293,10 +1285,8 @@ export default function NotebookCanvas({
       onDragStart={onDragAiPrompt}
     />
   ) : null
-  const hasAiPreviewCells = Boolean(
-    aiPromptDraft && !aiPromptDraft.isGenerating && aiPromptDraft.stagedCells.length > 0
-  )
-  const aiPromptSurface = hasAiPreviewCells ? null : aiPromptCell
+  const hasAiPreviewCells = Boolean(aiPromptDraft && aiPromptDraft.stagedCells.length > 0)
+  const aiPromptSurface = hasAiPreviewCells && !aiPromptDraft?.isGenerating ? null : aiPromptCell
 
   return (
     <Box
@@ -1380,6 +1370,12 @@ export default function NotebookCanvas({
                     index={index}
                     onMeasure={measureVirtualRow}
                   >
+                    {isAiPreviewCell &&
+                    aiPromptDraft?.mode === 'refactor' &&
+                    aiPromptDraft.isGenerating &&
+                    aiPromptDraft.stagedCells[0]?.previewId === cell.id ? (
+                      <Box sx={{ mb: 1.35 }}>{aiPromptSurface}</Box>
+                    ) : null}
                     <NotebookCell
                       cell={cell}
                       cellNumber={index + 1}

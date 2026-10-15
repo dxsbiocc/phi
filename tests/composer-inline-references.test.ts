@@ -4,9 +4,10 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   findInlineComposerReferences,
-  inlineReferenceInsertion
-} from '../src/renderer/src/features/chat/lib/composerReferences'
-import { ComposerReferenceChip } from '../src/renderer/src/features/chat/components/ComposerReferenceChip'
+  inlineReferenceInsertion,
+  type NotebookInlineReferenceKind
+} from '../src/renderer/src/lib/composerReferences'
+import { ComposerReferenceChip } from '../src/renderer/src/components/chat/ComposerReferenceChip'
 import type { ChatResourceMention } from '../src/renderer/src/lib/chatResourceMentions'
 
 const resources: ChatResourceMention[] = [
@@ -111,4 +112,41 @@ test('inline chips reuse artwork and expose independent detail and removal actio
   assert.match(markup, /aria-label="查看智能体 Reviewer"/)
   assert.match(markup, /aria-label="移除智能体引用 Reviewer"/)
   assert.doesNotMatch(markup, /composer-reference-chips/)
+})
+
+test('Notebook chips keep the @ prefix and use distinct artwork for every context kind', () => {
+  const kinds: NotebookInlineReferenceKind[] = [
+    'module',
+    'variable',
+    'dataframe',
+    'data_source',
+    'cell_output'
+  ]
+  const artwork = kinds.map((kind) => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerReferenceChip, {
+        reference: { kind, name: 'context', text: '@context' },
+        onRemove: () => undefined
+      })
+    )
+    assert.match(markup, new RegExp(`data-phi-reference-kind="${kind}"`))
+    assert.match(markup, />@context<\/span>/)
+    assert.match(markup, /aria-label="移除.+引用 context"/)
+    const svg = /<svg[^>]*>([\s\S]*?)<\/svg>/u.exec(markup)
+    assert.ok(svg, `${kind} needs an icon`)
+    return svg[1]
+  })
+  assert.equal(new Set(artwork).size, kinds.length)
+})
+
+test('read-only reference chips keep their label without editable actions', () => {
+  const markup = renderToStaticMarkup(
+    createElement(ComposerReferenceChip, {
+      reference: { kind: 'dataframe', name: 'df', text: '@df' },
+      disabled: true,
+      onRemove: () => assert.fail('disabled reference cannot be removed')
+    })
+  )
+  assert.match(markup, />@df<\/span>/)
+  assert.doesNotMatch(markup, /data-phi-reference-remove=|MuiChip-deletable/)
 })

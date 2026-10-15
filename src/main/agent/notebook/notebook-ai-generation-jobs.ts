@@ -1,25 +1,46 @@
 import { randomUUID } from 'node:crypto'
 import type { NotebookAiGenerationJob } from '../../../shared/notebookAiJobTypes'
+import type { AnalysisNotebookGeneratedCell } from '../../../shared/notebookCodeGeneration'
+import type { PhiAgentEventSummary } from '../engine/event-types'
+import { NotebookAiActivity } from './notebook-ai-activity'
 
 const MAX_FINISHED_JOBS = 50
 const MAX_PROMPT_LENGTH = 4_000
 const MAX_SOURCE_PREVIEW_LENGTH = 20_000
+const MAX_PREVIEW_CELLS = 100
 const MAX_ERROR_LENGTH = 4_000
+
+function boundedPreviewCells(
+  cells: AnalysisNotebookGeneratedCell[]
+): AnalysisNotebookGeneratedCell[] {
+  let remaining = MAX_SOURCE_PREVIEW_LENGTH
+  const preview: AnalysisNotebookGeneratedCell[] = []
+  for (const cell of cells) {
+    if (remaining <= 0 || preview.length >= MAX_PREVIEW_CELLS) break
+    const source = cell.source.slice(0, remaining)
+    preview.push({ ...cell, source })
+    remaining -= source.length + 2
+  }
+  return preview
+}
 
 type JobProgress = Partial<
   Pick<
     NotebookAiGenerationJob,
-    'notebookPath' | 'notebookName' | 'model' | 'sourcePreview' | 'cellCount'
+    'notebookPath' | 'notebookName' | 'model' | 'sourcePreview' | 'previewCells' | 'cellCount'
   >
 >
 
 export interface NotebookAiGenerationJobHandle {
   readonly id: string
+  observe(summary: PhiAgentEventSummary): void
   update(
     phase: Exclude<NotebookAiGenerationJob['phase'], 'completed' | 'failed'>,
     progress?: JobProgress
   ): void
-  complete(progress: Pick<NotebookAiGenerationJob, 'sourcePreview' | 'cellCount'>): void
+  complete(
+    progress: Pick<NotebookAiGenerationJob, 'sourcePreview' | 'previewCells' | 'cellCount'>
+  ): void
   fail(error: unknown): void
 }
 
@@ -31,7 +52,11 @@ export class NotebookAiGenerationJobs {
 
   list(): NotebookAiGenerationJob[] {
     // New attempts are inserted first, including attempts with identical start timestamps.
-    return this.jobs.map((job) => ({ ...job }))
+    return this.jobs.map((job) => ({
+      ...job,
+      ...(job.entries ? { entries: job.entries.map((entry) => ({ ...entry })) } : {}),
+      ...(job.previewCells ? { previewCells: job.previewCells.map((cell) => ({ ...cell })) } : {})
+    }))
   }
 
   begin(
@@ -44,6 +69,8 @@ export class NotebookAiGenerationJobs {
   ): NotebookAiGenerationJobHandle {
     const id = randomUUID()
     const timestamp = this.now().toISOString()
+    const activity = new NotebookAiActivity(() => this.now().toISOString())
+    activity.phase('preparing')
     const job: NotebookAiGenerationJob = {
       ...input,
       id,
@@ -52,7 +79,8 @@ export class NotebookAiGenerationJobs {
       state: 'running',
       phase: 'preparing',
       startedAt: timestamp,
-      updatedAt: timestamp
+      updatedAt: timestamp,
+      entries: activity.entries
     }
     this.jobs.unshift(job)
 
@@ -61,9 +89,14 @@ export class NotebookAiGenerationJobs {
       if (progress.sourcePreview !== undefined) {
         job.sourcePreview = progress.sourcePreview.slice(0, MAX_SOURCE_PREVIEW_LENGTH)
       }
+      if (progress.previewCells !== undefined) {
+        job.previewCells = boundedPreviewCells(progress.previewCells)
+      }
       job.updatedAt = this.now().toISOString()
     }
     const finish = (state: 'completed' | 'failed'): void => {
+      activity.finish(state === 'failed')
+      activity.phase(state)
       job.state = state
       job.phase = state
       job.completedAt = this.now().toISOString()
@@ -72,8 +105,17 @@ export class NotebookAiGenerationJobs {
     }
     return {
       id,
+      observe: (summary) => {
+        if (job.state !== 'running' || !activity.observe(summary)) return
+        if (job.phase === 'waiting' || job.phase === 'preparing') {
+          job.phase = 'generating'
+          activity.phase('generating')
+        }
+        job.updatedAt = this.now().toISOString()
+      },
       update: (phase, progress = {}) => {
         if (job.state !== 'running') return
+        if (job.phase !== phase) activity.phase(phase)
         job.phase = phase
         applyProgress(progress)
       },

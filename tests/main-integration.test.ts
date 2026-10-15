@@ -8914,7 +8914,7 @@ test('main IPC: deleting the bound remote session disposes its Notebook backend'
   )
 })
 
-test('main IPC: Notebook AI jobs expose preparation, waiting, generated source and independent retries', async () => {
+test('main IPC: Notebook AI jobs expose live model activity, generated source and independent retries', async () => {
   const preparation = deferred<void>()
   const firstResponse = deferred<void>()
   let holdPreparation = false
@@ -8931,13 +8931,53 @@ test('main IPC: Notebook AI jobs expose preparation, waiting, generated source a
         {
           type: 'message_update',
           message: { role: 'assistant' },
-          assistantMessageEvent: { type: 'thinking_delta', delta: 'private reasoning' }
+          assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'Inspect the ' }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'thinking_delta',
+            contentIndex: 0,
+            delta: 'data dimensions.'
+          }
+        },
+        {
+          type: 'message_update',
+          message: { role: 'assistant' },
+          assistantMessageEvent: {
+            type: 'thinking_end',
+            contentIndex: 0,
+            content: 'Inspect the data dimensions.'
+          }
+        },
+        {
+          type: 'tool_execution_start',
+          toolCallId: 'notebook-inspection',
+          toolName: 'inspect',
+          intent: 'Read returned dataset metadata'
+        },
+        {
+          type: 'tool_execution_update',
+          toolCallId: 'notebook-inspection',
+          partialResult: { content: [{ type: 'text', text: 'Reading metadata' }] }
+        },
+        {
+          type: 'tool_execution_end',
+          toolCallId: 'notebook-inspection',
+          result: { content: [{ type: 'text', text: 'Metadata inspected' }] }
         },
         {
           type: 'message_update',
           message: { role: 'assistant' },
           assistantMessageEvent: {
             type: 'text_delta',
+            contentIndex: 1,
             delta: JSON.stringify({ cells: [{ language: 'python', code: 'df.describe()' }] })
           }
         }
@@ -8985,7 +9025,16 @@ test('main IPC: Notebook AI jobs expose preparation, waiting, generated source a
   assert.equal(streaming.phase, 'generating')
   assert.equal(streaming.sourcePreview, 'df.describe()')
   assert.equal(streaming.cellCount, 1)
-  assert.doesNotMatch(JSON.stringify(streaming), /private reasoning/)
+  const thinking = streaming.entries?.filter((entry) => entry.kind === 'thinking')
+  assert.equal(thinking?.length, 1)
+  assert.equal(thinking?.[0].text, 'Inspect the data dimensions.')
+  assert.equal(thinking?.[0].status, 'completed')
+  assert.equal(
+    streaming.entries?.find((entry) => entry.kind === 'action')?.text,
+    'Metadata inspected'
+  )
+  assert.equal(streaming.entries?.find((entry) => entry.kind === 'action')?.status, 'completed')
+  assert.match(streaming.entries?.find((entry) => entry.kind === 'text')?.text ?? '', /df.describe/)
   assert.equal(app.sessions[0].disposed, false)
 
   await app.invoke(
@@ -9007,6 +9056,7 @@ test('main IPC: Notebook AI jobs expose preparation, waiting, generated source a
   assert.ok((await listJobs()).every((job) => job.state === 'completed' && job.completedAt))
   assert.equal(app.createdPhiSessions.length, 0)
   assert.equal(app.runStartInputs.length, 0)
+  assert.ok(app.createdAgentOptions.every((options) => options.noTools === 'all'))
 })
 
 test('main IPC: Notebook AI jobs keep the remote project identity and resolved notebook path', async () => {

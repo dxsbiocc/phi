@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import NotebookPreOutput from '../src/renderer/src/features/analysis/notebook/NotebookPreOutput'
+import { NotebookOutputWrapContext } from '../src/renderer/src/features/analysis/notebook/notebookOutputContext'
 
 function renderPreOutput(kind: string, text: string): string {
   return renderToStaticMarkup(
@@ -52,12 +51,10 @@ test('plain text output shows no "text/plain" mime label -- it is the unremarkab
 
   assert.doesNotMatch(markup, />text\/plain</)
   assert.match(markup, />2</)
-  // the copy button should still be there, just not paired with a label
-  assert.match(markup, /复制输出/)
-  assert.match(markup, /data-phi-notebook-output-copy="true"/)
-  assert.match(markup, /data-phi-notebook-output-wrap-toggle="true"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-toolbar/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-copy/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-wrap-toggle/)
   assert.match(markup, /data-phi-notebook-output-wrap="false"/)
-  assert.match(markup, /aria-label="开启输出换行"/)
 })
 
 test('stdout output hides its label, while stderr and error keep theirs', () => {
@@ -88,30 +85,32 @@ test('stderr output can hide its inner label when an outer channel button alread
   assert.match(markup, /载入程序包/)
 })
 
-test('output hover actions are anchored to the full output width', () => {
-  const source = readFileSync(
-    resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),
-    'utf-8'
-  )
+test('text blocks use the full output width after their toolbars are lifted to the cell header', () => {
+  const markup = renderPreOutput('stream:stdout', 'all the available width')
 
-  assert.match(source, /data-phi-notebook-output-pre="true"[\s\S]*?minWidth: 0/)
-  assert.match(source, /data-phi-notebook-output-pre="true"[\s\S]*?width: '100%'/)
-  assert.match(source, /data-phi-notebook-output-toolbar="true"[\s\S]*?position: 'absolute'/)
-  assert.match(source, /data-phi-notebook-output-toolbar="true"[\s\S]*?right: 0/)
+  assert.match(markup, /min-width:0/)
+  assert.match(markup, /width:100%/)
+  assert.doesNotMatch(markup, /padding-right:56px/)
+  assert.doesNotMatch(markup, /notebook-output-hover-actions/)
 })
 
-test('output hover actions are hidden until the user hovers or focuses the output', () => {
-  const source = readFileSync(
-    resolve('src/renderer/src/features/analysis/notebook/NotebookPreOutput.tsx'),
-    'utf-8'
+test('the cell wrap preference reaches every text block and nested rich fallback', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(
+        NotebookOutputWrapContext.Provider,
+        { value: true },
+        createElement(NotebookPreOutput, { kind: 'stream:stdout', text: 'stdout' }),
+        createElement(NotebookPreOutput, { kind: 'application/json', text: '{"data": 1}' }),
+        createElement(NotebookPreOutput, { kind: 'vega:fallback', text: 'fallback' })
+      )
+    )
   )
 
-  assert.match(source, /className="notebook-output-hover-actions"/)
-  assert.match(source, /opacity: 0/)
-  assert.match(source, /pointerEvents: 'none'/)
-  assert.match(
-    source,
-    /&:hover \.notebook-output-hover-actions, &:focus-within \.notebook-output-hover-actions/
-  )
-  assert.match(source, /whiteSpace: wrapText \? 'pre-wrap' : 'pre'/)
+  assert.equal((markup.match(/data-phi-notebook-output-wrap="true"/g) ?? []).length, 3)
+  assert.match(markup, /white-space:pre-wrap/)
+  assert.match(markup, /overflow-wrap:anywhere/)
+  assert.doesNotMatch(markup, /data-phi-notebook-output-toolbar/)
 })

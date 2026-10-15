@@ -9,6 +9,7 @@ import { BackgroundJobDetail } from '../src/renderer/src/features/jobs/component
 import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
 import { JobDetailField } from '../src/renderer/src/features/jobs/components/JobDetailField'
 import { BackgroundJobHistory } from '../src/renderer/src/features/jobs/lib/backgroundJobHistory'
+import { notebookJobPreviewCells } from '../src/renderer/src/features/jobs/lib/notebookJobPreview'
 import {
   canStopJob,
   jobDetail,
@@ -118,7 +119,7 @@ test('Notebook tasks show readable phases, elapsed time and real completion or e
   assert.equal(fields.项目, '/project')
   assert.equal(fields.模型, 'provider/model')
   assert.equal(fields.请求, 'PRIVATE_PROMPT: summarize expression')
-  assert.equal(fields.代码预览, 'df.head()')
+  assert.equal(fields.生成内容预览, 'df.head()')
   assert.ok(fields.开始时间)
   assert.ok(fields.结束时间)
   const [failed] = select([
@@ -147,6 +148,96 @@ test('Notebook rows open details without stop, retry, a made-up progress bar or 
   assert.match(detail, /等待模型响应/)
   assert.match(detail, /import pandas as pd/)
   assert.doesNotMatch(row + detail, /打开对话|停止这个|aria-label="停止|role="progressbar"|>重试</)
+})
+
+test('Notebook preview renders typed Markdown and highlighted code instead of flattening cells', () => {
+  const [item] = select([
+    job({
+      sourcePreview: '## Findings\n\nvalue = 1',
+      previewCells: [
+        { cellType: 'markdown', source: '## Findings' },
+        { cellType: 'code', source: 'value = 1', language: 'python' }
+      ]
+    })
+  ]).active
+  const markup = render(
+    createElement(BackgroundJobDetail, {
+      item,
+      nowMs: Date.parse(completedAt),
+      busy: false,
+      onBack: () => undefined,
+      onStop: () => undefined,
+      onOpenSession: () => undefined
+    })
+  )
+  assert.match(markup, /data-phi-notebook-job-preview-cell="markdown"/)
+  assert.match(markup, /data-phi-notebook-job-preview-cell="code"/)
+  assert.match(markup, /data-phi-markdown-code-language="python"/)
+  assert.match(markup, /展开生成内容预览/)
+})
+
+test('Notebook details show a bounded live activity timeline before long metadata', () => {
+  const [item] = select([
+    job({
+      entries: [
+        { id: 'phase-1', kind: 'phase', at: startedAt, updatedAt: startedAt, text: '等待模型响应' },
+        {
+          id: 'thinking-1',
+          kind: 'thinking',
+          at: startedAt,
+          updatedAt: startedAt,
+          text: 'Checking the traceback',
+          status: 'completed'
+        },
+        {
+          id: 'action-1',
+          kind: 'action',
+          at: startedAt,
+          updatedAt: startedAt,
+          label: 'read',
+          text: 'Inspecting source',
+          status: 'running'
+        },
+        {
+          id: 'text-1',
+          kind: 'text',
+          at: startedAt,
+          updatedAt: startedAt,
+          text: 'The missing import is scanpy',
+          status: 'running'
+        }
+      ]
+    })
+  ]).active
+  const markup = render(
+    createElement(BackgroundJobDetail, {
+      item,
+      nowMs: Date.parse(completedAt),
+      busy: false,
+      onBack: () => undefined,
+      onStop: () => undefined,
+      onOpenSession: () => undefined
+    })
+  )
+  assert.match(markup, /data-phi-notebook-job-activity/)
+  assert.match(markup, /role="log"/)
+  assert.match(markup, /max-height:320px/)
+  assert.match(markup, /overflow-y:auto/)
+  assert.match(markup, /Checking the traceback/)
+  assert.match(markup, /Inspecting source/)
+  assert.match(markup, /The missing import is scanpy/)
+  assert.ok(
+    markup.indexOf('data-phi-notebook-job-activity') < markup.indexOf('/project/analysis.ipynb')
+  )
+})
+
+test('legacy flattened previews recognize Markdown cues while plain code remains code', () => {
+  assert.equal(
+    notebookJobPreviewCells({ sourcePreview: '## 原因\n\n**结论**' })[0].cellType,
+    'markdown'
+  )
+  assert.equal(notebookJobPreviewCells({ sourcePreview: 'value = df.mean()' })[0].cellType, 'code')
+  assert.equal(notebookJobPreviewCells({ sourcePreview: '  value = 1' })[0].source, '  value = 1')
 })
 
 test('saved Notebook paths use the panel font while code fields stay monospaced', () => {

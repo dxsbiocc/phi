@@ -7,7 +7,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import {
   ComposerTextEditor,
   type ComposerTextEditorHandle
-} from '../src/renderer/src/features/chat/components/ComposerTextEditor'
+} from '../src/renderer/src/components/chat/ComposerTextEditor'
 
 test('composer editor renders an SSR-safe host without modifying or rendering source markup', () => {
   const inputRef = createRef<ComposerTextEditorHandle>()

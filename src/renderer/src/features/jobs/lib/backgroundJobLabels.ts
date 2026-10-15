@@ -295,7 +295,7 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
           { label: '当前步骤', value: NOTEBOOK_AI_PHASE_LABELS[item.job.phase] },
           { label: '请求', value: item.job.prompt },
           item.job.sourcePreview
-            ? { label: '代码预览', value: item.job.sourcePreview, mono: true, scroll: true }
+            ? { label: '生成内容预览', value: item.job.sourcePreview, mono: true, scroll: true }
             : undefined,
           item.job.error ? { label: '错误', value: item.job.error, mono: true } : undefined
         ]

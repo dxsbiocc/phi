@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent
+} from 'react'
 import {
   Alert,
   AlertTitle,
@@ -12,14 +20,17 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  TextField,
   Tooltip,
   Typography
 } from '@mui/material'
-import { alpha, type Theme } from '@mui/material/styles'
+import { alpha } from '@mui/material/styles'
 import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 
 import { ModelSelectorControl } from '../../../components/chat/ChatComposerControls'
+import {
+  ComposerTextEditor,
+  type ComposerTextEditorHandle
+} from '../../../components/chat/ComposerTextEditor'
 import { compactComposerIconButtonSx } from '../../../components/chat/composerControlStyles'
 import { PhiIcons } from '../../../icons'
 import { getProviderErrorDisplay } from '../../../lib/providerErrors'
@@ -29,6 +40,7 @@ import {
   notebookAiPromptWithContextReference
 } from '../lib/notebookAiContextMentions'
 import { notebookContextKindLabel } from '../lib/notebookViewModel'
+import { notebookPromptReferences } from '../lib/notebookPromptReferences'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import {
@@ -298,7 +310,15 @@ export default function NotebookAiPromptCell({
         : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const promptShellRef = useRef<HTMLDivElement | null>(null)
-  const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+  const promptInputRef = useRef<ComposerTextEditorHandle | null>(null)
+  const referenceCandidates = useMemo(
+    () => [...references, ...contextOptions],
+    [references, contextOptions]
+  )
+  const resolvePromptReferences = useCallback(
+    (text: string) => notebookPromptReferences(text, referenceCandidates),
+    [referenceCandidates]
+  )
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
   const pendingPromptCursorRef = useRef<number | null>(null)
@@ -317,7 +337,9 @@ export default function NotebookAiPromptCell({
   const showContextMenu =
     contextMenuOpen ||
     Boolean(activeContextMentionKey && activeContextMentionKey !== dismissedContextMentionKey)
-  const selectedReferenceIds = new Set(references.map((reference) => reference.id))
+  const selectedReferenceIds = new Set(
+    resolvePromptReferences(prompt).map((reference) => reference.id)
+  )
   const groupedContextOptions = filteredContextOptions.reduce((groups, option) => {
     const label = notebookContextKindLabel(option.kind, option.detail)
     groups.set(label, [...(groups.get(label) ?? []), option])
@@ -345,22 +367,19 @@ export default function NotebookAiPromptCell({
     const mention = activeContextMention
     const nextPrompt = mention
       ? notebookAiPromptWithContextReference(prompt, mention, option)
-      : undefined
-    if (mention && nextPrompt) {
-      pendingPromptCursorRef.current = mention.start + `@${option.name}`.length + 1
-    }
-    onReferenceAdd(option, nextPrompt ? { prompt: nextPrompt } : undefined)
+      : `${prompt}${prompt.endsWith(' ') || prompt.length === 0 ? '' : ' '}@${option.name} `
+    const from = mention?.start ?? prompt.length
+    const to = mention?.end ?? prompt.length
+    const insertion = nextPrompt.slice(from, nextPrompt.length - (prompt.length - to))
+    pendingPromptCursorRef.current = from + insertion.length
+    onReferenceAdd(option, { prompt: nextPrompt })
+    promptInputRef.current?.replaceRange(from, to, insertion)
     setActiveContextOptionId(option.id)
     setContextMenuOpen(false)
   }
   const selectActiveContextOption = (): void => {
     if (!activeContextOption) return
     addContextOption(activeContextOption)
-  }
-  const updatePromptCursorFromElement = (
-    element: HTMLInputElement | HTMLTextAreaElement | null
-  ): void => {
-    setPromptCursorPosition(element?.selectionStart ?? prompt.length)
   }
   useLayoutEffect(() => {
     const shell = promptShellRef.current
@@ -479,95 +498,86 @@ export default function NotebookAiPromptCell({
           >
             <TbSparkles size={19} />
           </Box>
-          <TextField
-            autoFocus
-            fullWidth
-            multiline
-            minRows={2}
-            value={prompt}
-            disabled={isGenerating}
-            inputRef={promptInputRef}
-            placeholder={
-              mode === 'refactor'
-                ? 'Refactor selected cell with AI, @ to include context'
-                : 'Generate with AI, @ to include context'
-            }
-            variant="standard"
+          <Box
             data-phi-notebook-ai-prompt-input="true"
-            onSelect={(event) => {
-              updatePromptCursorFromElement(
-                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
-              )
-            }}
-            onClick={(event) => {
-              updatePromptCursorFromElement(
-                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
-              )
-            }}
-            onKeyUp={(event) => {
-              updatePromptCursorFromElement(
-                event.currentTarget as HTMLInputElement | HTMLTextAreaElement
-              )
-            }}
-            onChange={(event) => {
-              const nextPrompt = event.target.value
-              const nextCursor = event.target.selectionStart ?? nextPrompt.length
-              onPromptChange(nextPrompt)
-              setPromptCursorPosition(nextCursor)
-              setDismissedContextMentionKey(null)
-              setContextMenuOpen(Boolean(notebookAiContextMentionAtCursor(nextPrompt, nextCursor)))
-            }}
-            onKeyDown={(event) => {
-              if (showContextMenu && filteredContextOptions.length > 0) {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault()
-                  moveActiveContextOption(1)
-                  return
-                }
-                if (event.key === 'ArrowUp') {
-                  event.preventDefault()
-                  moveActiveContextOption(-1)
-                  return
-                }
-                if (event.key === 'Enter' || event.key === 'Tab') {
-                  event.preventDefault()
-                  selectActiveContextOption()
-                  return
-                }
-              }
-              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault()
-                if (hasStagedCells && !isGenerating) {
-                  onAccept()
-                } else if (canSubmit) {
-                  onSubmit()
-                }
-                return
-              }
-              if (event.key === 'Escape') {
-                if (showContextMenu) {
-                  setContextMenuOpen(false)
-                  setDismissedContextMentionKey(activeContextMentionKey)
-                } else if (hasStagedCells && !isGenerating) {
-                  onReject()
-                }
+            sx={{
+              minWidth: 0,
+              '& .cm-editor': {
+                color: 'text.primary',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.9rem',
+                lineHeight: 1.6
+              },
+              '& .cm-content': {
+                minWidth: 0,
+                maxWidth: '100%',
+                minHeight: '3.2em',
+                p: 0.2,
+                caretColor: (theme) => notebookCaretColor(theme)
+              },
+              '& .phi-composer-inline-reference': { maxWidth: 'calc(100% - 4px)' },
+              '& .cm-cursor': {
+                borderLeftColor: (theme) => notebookCaretColor(theme)
               }
             }}
-            slotProps={{
-              input: {
-                disableUnderline: true,
-                sx: {
-                  alignItems: 'flex-start',
-                  color: 'text.primary',
-                  caretColor: (theme: Theme) => notebookCaretColor(theme),
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '0.9rem',
-                  lineHeight: 1.6,
-                  p: 0.2
-                }
+          >
+            <ComposerTextEditor
+              autoFocus
+              value={prompt}
+              resources={[]}
+              resolveReferences={resolvePromptReferences}
+              disabled={isGenerating}
+              inputRef={promptInputRef}
+              focusKey="notebook-ai-input"
+              ariaLabel="Notebook AI 输入框"
+              placeholder={
+                mode === 'refactor'
+                  ? 'Refactor selected cell with AI, @ to include context'
+                  : 'Generate with AI, @ to include context'
               }
-            }}
-          />
+              onCursorChange={setPromptCursorPosition}
+              onChange={(nextPrompt, nextCursor) => {
+                onPromptChange(nextPrompt)
+                setPromptCursorPosition(nextCursor)
+                setDismissedContextMentionKey(null)
+                setContextMenuOpen(
+                  Boolean(notebookAiContextMentionAtCursor(nextPrompt, nextCursor))
+                )
+              }}
+              onKeyDown={(event) => {
+                if (showContextMenu && filteredContextOptions.length > 0) {
+                  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    moveActiveContextOption(event.key === 'ArrowDown' ? 1 : -1)
+                    return true
+                  }
+                  if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+                    selectActiveContextOption()
+                    return true
+                  }
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  if (hasStagedCells && !isGenerating) {
+                    onAccept()
+                  } else if (canSubmit) {
+                    onSubmit()
+                  }
+                  return true
+                }
+                if (event.key === 'Escape') {
+                  if (showContextMenu) {
+                    setContextMenuOpen(false)
+                    setDismissedContextMentionKey(activeContextMentionKey)
+                    return true
+                  }
+                  if (hasStagedCells && !isGenerating) {
+                    onReject()
+                    return true
+                  }
+                }
+                return false
+              }}
+            />
+          </Box>
           {showContextMenu ? (
             <Box
               data-phi-notebook-ai-context-menu="true"
@@ -882,15 +892,6 @@ export default function NotebookAiPromptCell({
             </span>
           </Tooltip>
         </Box>
-        {!compactControls ? (
-          <Typography
-            data-phi-notebook-ai-background-job-hint="true"
-            variant="caption"
-            sx={{ display: 'block', px: 1.2, pb: 1, color: 'text.secondary', lineHeight: 1.5 }}
-          >
-            生成进度可在右上角「后台任务」查看。
-          </Typography>
-        ) : null}
         {error && errorOutputText && errorDisplay ? (
           <Box
             data-phi-notebook-ai-error-output="true"

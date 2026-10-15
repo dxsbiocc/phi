@@ -16,7 +16,7 @@ import type {
 } from '../../../types'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
 import { pollJupyterServerStartupStatus } from '../../runtime/lib/jupyterStatusPolling'
-import { updateNotebookCell } from '../../../../../shared/notebookDocument'
+import { clearNotebookCellOutput, updateNotebookCell } from '../../../../../shared/notebookDocument'
 import { notebookCellMetadataWithExecutionDuration } from '../../../../../shared/notebookExecutionMetadata'
 import type { AnalysisNotebookAgentFocus } from '../lib/notebookCanvasTypes'
 import type {
@@ -756,13 +756,16 @@ export function useAnalysisNotebookRuntime({
       const cwd = getActiveCwd()
       setExecutingAnalysisCellId(cellId)
       setAnalysisCellExecutionError(null)
+      let executionDocument = document
       try {
+        executionDocument = clearNotebookCellOutput(document, cellId)
+        setActiveAnalysisNotebook({ ...file, document: executionDocument })
         const executeAnalysisNotebookCell = requireRendererApiMethod(
           rendererApi,
           'executeAnalysisNotebookCell',
           'Notebook cell 执行 API 尚未加载，请重启 Phi 后再试'
         )
-        const result = await executeAnalysisNotebookCell(cwd, file.path, document, cellId)
+        const result = await executeAnalysisNotebookCell(cwd, file.path, executionDocument, cellId)
         if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) {
           return
         }
@@ -780,9 +783,9 @@ export function useAnalysisNotebookRuntime({
         // running indicator clears — the only trace is a banner above the
         // cell list that's easy to miss if the user scrolled down to it.
         try {
-          const cell = document.cells.find((candidate) => candidate.id === cellId)
+          const cell = executionDocument.cells.find((candidate) => candidate.id === cellId)
           if (!cell) return
-          const nextDocument = updateNotebookCell(document, cellId, {
+          const nextDocument = updateNotebookCell(executionDocument, cellId, {
             metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, {
               startedAt,
               completedAt: new Date().toISOString()

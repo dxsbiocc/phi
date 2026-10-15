@@ -31,11 +31,11 @@ import {
 import { createRoot, type Root } from 'react-dom/client'
 
 import { ComposerReferenceChip } from './ComposerReferenceChip'
-import type { ChatResourceMention } from '../../../lib/chatResourceMentions'
+import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import {
   findInlineComposerReferences,
   type InlineComposerReference
-} from '../lib/composerReferences'
+} from '../../lib/composerReferences'
 
 export type ComposerTextEditorHandle = {
   readonly value: string
@@ -49,6 +49,11 @@ export type ComposerTextEditorHandle = {
 type ComposerTextEditorProps = {
   value: string
   resources: readonly ChatResourceMention[]
+  resolveReferences?: (text: string) => InlineComposerReference[]
+  disabled?: boolean
+  ariaLabel?: string
+  focusKey?: string
+  autoFocus?: boolean
   onOpenWebUrl?: (url: string) => void
   placeholder?: string
   placeholderKind?: string
@@ -75,11 +80,13 @@ function hasFilePayload(data: DataTransfer | null): boolean {
 function ReferenceWidgetContent({
   reference,
   view,
-  theme
+  theme,
+  disabled
 }: {
   reference: InlineComposerReference
   view: EditorView
   theme: Theme
+  disabled: boolean
 }): React.JSX.Element {
   useLayoutEffect(() => {
     view.requestMeasure()
@@ -88,7 +95,9 @@ function ReferenceWidgetContent({
     <ThemeProvider theme={theme}>
       <ComposerReferenceChip
         reference={reference}
+        disabled={disabled}
         onRemove={() => {
+          if (view.state.readOnly) return
           if (view.state.sliceDoc(reference.from, reference.to) !== reference.text) return
           view.dispatch({
             changes: { from: reference.from, to: reference.to },
@@ -105,7 +114,8 @@ function ReferenceWidgetContent({
 class ReferenceWidget extends WidgetType {
   constructor(
     readonly reference: InlineComposerReference,
-    readonly theme: Theme
+    readonly theme: Theme,
+    readonly disabled: boolean
   ) {
     super()
   }
@@ -115,6 +125,7 @@ class ReferenceWidget extends WidgetType {
     const right = other.reference
     return (
       this.theme === other.theme &&
+      this.disabled === other.disabled &&
       left.from === right.from &&
       left.to === right.to &&
       left.kind === right.kind &&
@@ -134,7 +145,12 @@ class ReferenceWidget extends WidgetType {
     const root = createRoot(dom)
     widgetRoots.set(dom, root)
     root.render(
-      <ReferenceWidgetContent reference={this.reference} view={view} theme={this.theme} />
+      <ReferenceWidgetContent
+        reference={this.reference}
+        view={view}
+        theme={this.theme}
+        disabled={this.disabled}
+      />
     )
     return dom
   }
@@ -144,7 +160,12 @@ class ReferenceWidget extends WidgetType {
     if (!root) return false
     dom.dataset.phiInlineReference = this.reference.kind
     root.render(
-      <ReferenceWidgetContent reference={this.reference} view={view} theme={this.theme} />
+      <ReferenceWidgetContent
+        reference={this.reference}
+        view={view}
+        theme={this.theme}
+        disabled={this.disabled}
+      />
     )
     return true
   }
@@ -163,11 +184,10 @@ class ReferenceWidget extends WidgetType {
 
 function referenceDecorations(view: EditorView, config: EditorConfiguration): DecorationSet {
   const cursor = view.state.selection.main
-  const references = findInlineComposerReferences(
-    view.state.doc.toString(),
-    config.resources,
-    config.onOpenWebUrl
-  )
+  const text = view.state.doc.toString()
+  const references = config.resolveReferences
+    ? config.resolveReferences(text)
+    : findInlineComposerReferences(text, config.resources, config.onOpenWebUrl)
   return Decoration.set(
     references
       .filter(
@@ -182,10 +202,9 @@ function referenceDecorations(view: EditorView, config: EditorConfiguration): De
           )
       )
       .map((reference) =>
-        Decoration.replace({ widget: new ReferenceWidget(reference, config.theme) }).range(
-          reference.from,
-          reference.to
-        )
+        Decoration.replace({
+          widget: new ReferenceWidget(reference, config.theme, Boolean(config.disabled))
+        }).range(reference.from, reference.to)
       ),
     true
   )
@@ -199,6 +218,11 @@ export function ComposerTextEditor({
   const {
     value,
     resources,
+    resolveReferences,
+    disabled,
+    ariaLabel,
+    focusKey,
+    autoFocus,
     onOpenWebUrl,
     placeholder,
     placeholderKind,
@@ -240,7 +264,7 @@ export function ComposerTextEditor({
       },
       replaceRange(from, to, text) {
         const view = viewRef.current
-        if (!view) return
+        if (!view || view.state.readOnly) return
         const length = view.state.doc.length
         const start = Math.max(0, Math.min(from, to, length))
         const end = Math.max(start, Math.min(Math.max(from, to), length))
@@ -259,11 +283,14 @@ export function ComposerTextEditor({
   const visualExtensions = useMemo(
     () => [
       editorPlaceholder(placeholder ?? ''),
+      EditorView.editable.of(!disabled),
+      EditorState.readOnly.of(Boolean(disabled)),
       EditorView.contentAttributes.of({
-        'data-phi-focus': 'chat-input',
+        'data-phi-focus': focusKey ?? 'chat-input',
         role: 'textbox',
         'aria-multiline': 'true',
-        'aria-label': '消息输入框',
+        'aria-label': ariaLabel ?? '消息输入框',
+        'aria-disabled': disabled ? 'true' : 'false',
         'data-phi-placeholder-kind': placeholderKind ?? 'default',
         spellcheck: 'true'
       }),
@@ -295,13 +322,19 @@ export function ComposerTextEditor({
         }
       })
     ],
-    [placeholder, placeholderKind, theme]
+    [placeholder, placeholderKind, disabled, ariaLabel, focusKey, theme]
   )
 
-  useEffect(() => {
+  // Native editor events must see the callbacks from the latest React commit.
+  useLayoutEffect(() => {
     configuration.current = {
       value,
       resources,
+      resolveReferences,
+      disabled,
+      ariaLabel,
+      focusKey,
+      autoFocus,
       onOpenWebUrl,
       placeholder,
       placeholderKind,
@@ -318,6 +351,11 @@ export function ComposerTextEditor({
   }, [
     value,
     resources,
+    resolveReferences,
+    disabled,
+    ariaLabel,
+    focusKey,
+    autoFocus,
     onOpenWebUrl,
     placeholder,
     placeholderKind,
@@ -380,6 +418,7 @@ export function ComposerTextEditor({
                   event.isComposing ||
                   event.keyCode === 229 ||
                   view.composing ||
+                  view.state.readOnly ||
                   view.compositionStarted ||
                   (event.target instanceof Element &&
                     event.target.closest('[data-phi-inline-reference]'))
@@ -413,6 +452,10 @@ export function ComposerTextEditor({
       })
     })
     viewRef.current = view
+    if (configuration.current.autoFocus && !configuration.current.disabled) {
+      view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length) })
+      view.focus()
+    }
     return () => {
       viewRef.current = null
       view.destroy()
@@ -421,7 +464,7 @@ export function ComposerTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current
     if (!view) return
     const before = view.state.doc.toString()

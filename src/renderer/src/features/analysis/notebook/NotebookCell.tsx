@@ -874,6 +874,10 @@ function NotebookCellImpl({
           outputs={cell.outputs}
           notebookPath={notebookPath}
           executionCompletedAt={isCodeCell && !isRunning ? cell.executionCompletedAt : undefined}
+          isRunning={isRunning}
+          onClearOutputs={
+            editable && !provisional && onClearOutputs ? () => onClearOutputs(cell.id) : undefined
+          }
         />
       </Box>
       <Box

@@ -15,8 +15,11 @@ import { ContextUsageIndicator } from './components/ContextUsageIndicator'
 import { usePastedImages } from './hooks/usePastedImages'
 import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
 import { useChatResourceCatalog } from './hooks/useChatResourceCatalog'
-import { ComposerTextEditor, type ComposerTextEditorHandle } from './components/ComposerTextEditor'
-import { inlineReferenceInsertion } from './lib/composerReferences'
+import {
+  ComposerTextEditor,
+  type ComposerTextEditorHandle
+} from '../../components/chat/ComposerTextEditor'
+import { inlineReferenceInsertion } from '../../lib/composerReferences'
 import { type LocalPathKind } from '../../components/MarkdownContent'
 import ToolApprovalDialog from '../../components/ToolApprovalDialog'
 import UserInteractionPanel from '../../components/UserInteractionPanel'

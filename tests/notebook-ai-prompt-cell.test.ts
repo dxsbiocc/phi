@@ -53,19 +53,23 @@ test('notebook AI leaves task navigation to the notebook toolbar in every genera
   }
 })
 
-test('the wide notebook AI prompt points to the top-right task entry before and during a request', () => {
+test('the notebook AI prompt keeps task access icon-only before and during a request', () => {
   const idle = renderPromptCell()
   const running = renderPromptCell({ isGenerating: true })
   for (const markup of [idle, running]) {
-    assert.ok(markup.includes('data-phi-notebook-ai-background-job-hint="true"'))
-    assert.ok(markup.includes('右上角「后台任务」'))
+    assert.doesNotMatch(markup, /data-phi-notebook-ai-background-job-hint/)
+    assert.doesNotMatch(markup, /生成进度可在右上角「后台任务」查看。/)
   }
-  assert.ok(running.includes('生成进度可在右上角「后台任务」查看。'))
 })
 
 test('the wide prompt retains language and model labels in single accessible selectors', () => {
   const markup = renderPromptCell({
-    selectedModel: { providerId: 'openai', modelId: 'gpt-test', name: 'GPT Test' }
+    selectedModel: {
+      providerId: 'openai',
+      modelId: 'gpt-test',
+      name: 'GPT Test',
+      thinkingLevels: ['high']
+    }
   })
 
   assert.match(markup, /data-phi-notebook-ai-prompt-shell="true"/)
@@ -103,7 +107,8 @@ test('the prompt cell exposes refactor mode for selected-cell AI edits', () => {
   })
 
   assert.match(markup, /data-phi-notebook-ai-mode="refactor"/)
-  assert.match(markup, /placeholder="Refactor selected cell with AI, @ to include context"/)
+  assert.match(markup, /data-phi-composer-editor="codemirror"/)
+  assert.match(markup, /data-phi-notebook-ai-prompt-input="true"/)
 })
 
 test('the target-language button disables while a generation is in flight', () => {

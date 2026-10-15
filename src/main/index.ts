@@ -6202,12 +6202,14 @@ async function repairNotebookGenerationCompletion(input: {
   nearbyContext: string
   otherCellContext: string
   invalidOutput: string
+  onEvent?: (summary: PhiAgentEventSummary) => void
   onProgress?: (completion: NotebookCompletionSelection) => void
 }): Promise<NotebookCompletionSelection | null> {
   let assistantText = ''
   let errorMessage = ''
   const candidates: unknown[] = []
   const { session } = await createAgentSession(input.sessionOptions, (summary) => {
+    input.onEvent?.(summary)
     assistantText = assistantTextFromEventSummary(summary, assistantText)
     candidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
     errorMessage = assistantErrorMessageFromEventSummary(summary) ?? errorMessage
@@ -6329,6 +6331,7 @@ async function generateAnalysisNotebookCode(
       lastProgressSource = source
       job.update('generating', {
         sourcePreview: source,
+        previewCells: selectedCompletion.cells,
         cellCount: selectedCompletion.cells.length
       })
       if (!input.requestId || !onProgress) return
@@ -6342,6 +6345,7 @@ async function generateAnalysisNotebookCode(
       })
     }
     const { session } = await createAgentSession(sessionOptions, (summary) => {
+      job.observe(summary)
       eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
       eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
       eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
@@ -6405,9 +6409,11 @@ async function generateAnalysisNotebookCode(
           nearbyContext,
           otherCellContext,
           invalidOutput: assistantText,
+          onEvent: (summary) => job.observe(summary),
           onProgress: (completion) => {
             job.update('repairing', {
               sourcePreview: generatedNotebookCellsSource(completion.cells),
+              previewCells: completion.cells,
               cellCount: completion.cells.length
             })
           }
@@ -6438,7 +6444,11 @@ async function generateAnalysisNotebookCode(
     } finally {
       await session.dispose()
     }
-    job.complete({ sourcePreview: result.source, cellCount: result.cells.length })
+    job.complete({
+      sourcePreview: result.source,
+      previewCells: result.cells,
+      cellCount: result.cells.length
+    })
     return result
   } catch (error) {
     job.fail(error)

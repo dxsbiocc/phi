@@ -900,6 +900,10 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookAiPromptCell.tsx'),
     'utf8'
   )
+  const composerEditorSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/chat/ComposerTextEditor.tsx'),
+    'utf8'
+  )
   const aiPreviewActionsSource = readFileSync(
     resolve(
       process.cwd(),
@@ -1010,14 +1014,17 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(aiPromptSource, /filteredContextOptions\.length > 0/)
   assert.match(aiPromptSource, /notebookAiContextMentionAtCursor\(nextPrompt, nextCursor\)/)
   assert.match(aiPromptSource, /notebookAiPromptWithContextReference/)
-  assert.match(aiPromptSource, /moveActiveContextOption\(1\)/)
   assert.match(aiPromptSource, /event\.key === 'ArrowUp'/)
-  assert.match(aiPromptSource, /moveActiveContextOption\(-1\)/)
-  assert.match(aiPromptSource, /event\.key === 'Enter' \|\| event\.key === 'Tab'/)
+  assert.match(aiPromptSource, /moveActiveContextOption\(event\.key === 'ArrowDown' \? 1 : -1\)/)
+  assert.match(
+    aiPromptSource,
+    /\(event\.key === 'Enter' && !event\.shiftKey\) \|\| event\.key === 'Tab'/
+  )
   assert.match(aiPromptSource, /selectActiveContextOption\(\)/)
   assert.match(aiPromptSource, /event\.key === 'Enter' &&/)
   assert.match(aiPromptSource, /!event\.shiftKey/)
-  assert.match(aiPromptSource, /!event\.nativeEvent\.isComposing/)
+  assert.match(aiPromptSource, /<ComposerTextEditor/)
+  assert.match(composerEditorSource, /event\.isComposing/)
   assert.doesNotMatch(
     aiPromptSource,
     /\(event\.metaKey \|\| event\.ctrlKey\) && event\.key === 'Enter'/
@@ -1138,7 +1145,10 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisSource, /selectedModel=\{aiPromptDraft\.model\}/)
   assert.match(analysisSource, /hasStagedCells=\{aiPromptDraft\.stagedCells\.length > 0\}/)
   assert.match(analysisSource, /const displayCells = useMemo/)
-  assert.match(analysisSource, /const aiPromptSurface = hasAiPreviewCells \? null : aiPromptCell/)
+  assert.match(
+    analysisSource,
+    /hasAiPreviewCells && !aiPromptDraft\?\.isGenerating \? null : aiPromptCell/
+  )
   assert.match(analysisSource, /const previousNotebookDocumentKeyRef = useRef/)
   assert.match(
     analysisSource,
@@ -1165,7 +1175,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   )
   assert.match(analysisSource, /setSelectedCellId\(null\)/)
   assert.match(analysisSource, /onSelect=\{\(\) => setSelectedCellId\(null\)\}/)
-  assert.match(analysisSource, /references: draft\.references/)
+  assert.match(analysisSource, /references: notebookPromptContextReferences\(/)
   assert.match(analysisSource, /const generatedCells =/)
   assert.match(analysisSource, /stageGeneratedNotebookCells\(draftDocument, draft/)
   assert.match(analysisSource, /acceptStagedNotebookCell\(/)

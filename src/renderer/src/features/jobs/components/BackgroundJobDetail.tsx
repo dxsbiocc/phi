@@ -15,6 +15,8 @@ import {
 import { buildConnectorJobDetailText } from '../lib/connectorJobDetails'
 import { ConnectorJobDetailBody } from './ConnectorJobDetailDialog'
 import { JobDetailField } from './JobDetailField'
+import { NotebookJobPreview } from './NotebookJobPreview'
+import { NotebookJobActivity } from './NotebookJobActivity'
 
 function entryTime(at: string): string {
   const date = new Date(at)
@@ -94,6 +96,16 @@ function detailText(item: UnifiedBackgroundJob, nowMs: number): string {
       '',
       '启动日志：',
       ...item.job.entries.map((entry) => `${entry.at} [${entry.kind}] ${entry.text}`)
+    )
+  }
+  if (item.kind === 'notebook-ai' && item.job.entries?.length) {
+    lines.push(
+      '',
+      '运行过程：',
+      ...item.job.entries.map(
+        (entry) =>
+          `${entry.at} [${entry.kind}${entry.label ? `:${entry.label}` : ''}] ${entry.text}`
+      )
     )
   }
   return lines.join('\n')
@@ -187,9 +199,16 @@ export function BackgroundJobDetail({
           />
         ) : (
           <Stack spacing={1.25}>
-            {jobDetailFields(item, nowMs).map((field) => (
-              <JobDetailField key={field.label} {...field} />
-            ))}
+            {item.kind === 'notebook-ai' && (
+              <NotebookJobActivity key={item.job.id} job={item.job} />
+            )}
+            {jobDetailFields(item, nowMs).map((field) =>
+              item.kind === 'notebook-ai' && field.label === '生成内容预览' ? (
+                <NotebookJobPreview key={field.label} job={item.job} />
+              ) : (
+                <JobDetailField key={field.label} {...field} />
+              )
+            )}
             {item.kind === 'jupyter' && <JupyterStartLog job={item.job} />}
           </Stack>
         )}
