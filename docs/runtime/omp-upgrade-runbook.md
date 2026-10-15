@@ -124,17 +124,35 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 原 T13 压缩控制已合入 `eea33bd3`，最终候选 `9b1425aa`（相关组 `88cde2d8` 之后仅修单元测试类型来源）。升级须验证手动压缩的私有回调与真实 checkpoint，不把 command ACK 当成功；停止必须可达并等待原 CLI 终态/退役。接受 A 压缩后切到 B，A 应继续并只向 A 发布；原 owner/host/journal 被替换必须拒绝。自动 70/80/90/继承须确认实际加载四字段后才保存，模型切换和恢复继续保留策略；原生 -1 reserve sentinel 合法，启用非空 per-model 阈值 map 无法被当前协议忠实表达时须在旧代退役/保存前明确拒绝。合法 summary 多请求不等于原工具重放，取消允许官方 session_exit，旧 journal entries 须保持。真实 CLI 6/6、独立实际 4/4、相关 610/610 及候选/主工作区生产类型/lint/build/asar 通过；并行输入编辑器 WIP 保留且未提交。原失败、精确版本与结构例外见 [压缩增量验收](omp-remote-acceptance.md#t13-压缩实际应用增量2026-10-15)。
 
-原 T13 Phi 应用功能已全部合入 `9f723379`（完整源码 `cadb8823`）。升级须同时核对默认 Phi/persona 恰好一次、可信远程三文件与真实路径、模型/压缩轮换和恢复后的固定配置；不得全局关闭 discovery providers 来隐藏模型。记忆必须证明真实本机 SDK 总结→canonical UI root→新会话 prompt，learn/删除/清空同源，旧 child 确认结束且 peer 不受影响；canonical 角色/预算、ENV auth/proxy/CA 行为保留，环境只用于同一受信本机 tool-less SDK child。记忆设置先退役旧写入者再保存；本代 prompt 不热替换，不中断已接受的聊天。原 T13 全矩阵、700/700 和真实场景证据见 [完整验收](omp-remote-acceptance.md#t13-全部-phi-应用功能交付2026-10-15)。后续按原 T14/T15 范围并行；真实外部验收仍属 T16。
+原 T13 Phi 应用功能已全部合入 `9f723379`（完整源码 `cadb8823`）。升级须同时核对默认 Phi/persona 恰好一次、可信远程三文件与真实路径、模型/压缩轮换和恢复后的固定配置；不得全局关闭 discovery providers 来隐藏模型。记忆必须证明真实本机 SDK 总结→canonical UI root→新会话 prompt，learn/删除/清空同源，旧 child 确认结束且 peer 不受影响；canonical 角色/预算、ENV auth/proxy/CA 行为保留，环境只用于同一受信本机 tool-less SDK child。记忆设置先退役旧写入者再保存；本代 prompt 不热替换，不中断已接受的聊天。原 T13 全矩阵、700/700 和真实场景证据见 [完整验收](omp-remote-acceptance.md#t13-全部-phi-应用功能交付2026-10-15)。原 T14/T15 本轮实现和限定证据已接续下文；最终候选验收不得用 T13 旧结果代替，真实外部验收仍属 T16。
 
-`3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
+实际主进程入口仍为显式 opt-in：`PHI_REMOTE_OMP_RPC=1` 才走 RPC，`PHI_REMOTE_OMP_AGENTS=Checker,...` 从 Main 可信目录选择完整具名定义。默认不开；renderer 不能提交替代定义或扩大权限。本轮 T14 已接独立模型/思考、原生 edit/搜索、可信 skills/环境/服务、Task 并行/后台四路与原 `agent_status/agent_wait/agent_steer/agent_stop`。当前整合提交 `03da779e`、合入 `a70d403b`；功能冻结候选 `d9b5d776` 标准全量 `6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo`、1542.28 秒，仅证明该候选，组合未重跑全库。版本与限定交叉检查见 [本轮验收](omp-remote-acceptance.md#t14t15-专家与显式恢复2026-10-15)。
 
-T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory 现按主进程可信快照接入，未经授权或未知配置仍明确报错；专家资源/环境及后台能力另由 T14 验收。恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。这是受控 opt-in 的自动化交付，真实 SSH/provider/OAuth/Finder 及默认开启仍按 T16 门槛。
+T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory 现按主进程可信快照接入，未经授权或未知配置仍明确报错；专家资源/环境、Task 并行后台及四个控制工具按本轮 T14 的 Main 可信目录和所属子实例接入，最终证据绑定本轮固定候选。恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。这是受控 opt-in 的自动化交付，真实 SSH/provider/OAuth/Finder 及默认开启仍按 T16 门槛。
 
 Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 [Notebook 增量验收记录](omp-remote-acceptance.md#t12-notebook-实际应用增量2026-10-14)。
 
-Wrapper 升级回归须区分准入、等待和作业取消：环境/目标异步检查后，取消或改绑不得接受 job；被接受后 job 独立于聊天停止，保持原 target。停止 wait 只结束等待，明确 cancel 才终止作业；直接运行和 sbatch 写脚本后的实际提交前仍须检查原 job Control。status/list/wait/cancel 仅允许该 RPC Phi 会话/项目及对应 host/profile/root，列表先过滤归属再限数量，不得通过外会话查询阻止完成唤醒。复用旧 origin 映射，同应用新代恢复可继续查原 job；重启后无法证明归属的旧 job 明确拒绝，T15 冷恢复后续补齐。交付物须在远端验证后、发布前复核取消/原 run/项目绑定，结果保持远端 URI，不能打开本机同名文件。本轮实际场景和独立复验已证明同 Phi 新代恢复不重复启动，以及完成后只继续所属会话一次；使用隔离 SSH/Nextflow fixture，真实服务器与 Slurm/Nextflow 环境仍待 T16。完整结果见 [Wrapper 与交付物增量验收](omp-remote-acceptance.md#t12-wrapper-与交付物实际应用增量2026-10-14)。
+Wrapper 升级回归须区分准入、等待和作业取消：环境/目标异步检查后，取消或改绑不得接受 job；被接受后 job 独立于聊天停止，保持原 target。停止 wait 只结束等待，明确 cancel 才终止作业；直接运行和 sbatch 写脚本后的实际提交前仍须检查原 job Control。status/list/wait/cancel 仅允许该 RPC Phi 会话/项目及对应 host/profile/root，列表先过滤归属再限数量，不得通过外会话查询阻止完成唤醒。T15 接受时持久保存可信 origin，冷查询每次复核当前 Phi/project/profile/root 与配置；新代只查询/监控原 job，不重复 launch。未知旧 origin 或不同连接/主机/目录仍明确拒绝。交付物须在远端验证后、发布前复核取消/原 run/项目绑定，结果保持远端 URI，不能打开本机同名文件。本轮实际场景和独立复验已证明同 Phi 新代恢复不重复启动，以及完成后只继续所属会话一次；使用隔离 SSH/Nextflow fixture，真实服务器与 Slurm/Nextflow 环境仍待 T16。完整结果见 [Wrapper 与交付物增量验收](omp-remote-acceptance.md#t12-wrapper-与交付物实际应用增量2026-10-14)。
 
 T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对应执行终态，未确认时隔离 kernel，facade 关闭不得提前释放原服务；旧取消不能影响新 run、peer kernel 或新下载续传。技能/环境在最终 SSH dispatch 前复核取消和可信声明，缺远程快照不得读本机路径。browser 的 typeText 只进入私有 vault 与实际宿主，公开事件、SDK journal 和下一轮模型请求不得含原文；对 rawBlock/providerMetadata/thoughtSignature 及 `name`/`toolName` replay 别名同样检查，旧不安全历史须在 adoption 前拒绝。MCP 401/403 只发送一次，下一次用户明确调用才再次执行；私有认证不能借 object key 或碰撞字段泄漏。大进度先完成有序 receipt hydration 才返回最终结果，取消中上传仍由原 controller 清理。实际 app、官方 CLI 和故障复审证据见 [T12 完整交付](omp-remote-acceptance.md#t12-完整宿主工具交付2026-10-14)。
+
+### T14/T15 后续升级必须保持的合同
+
+- 专家实际 model/thinking、完整工具集合、受信 skills/ready 环境/服务与发布哈希必须与 Main 选择的完整 profile 一致；SDK before_spawn 的每次子 factory 执行均要重证同一 Task/Main-attested owner。started 观察缓存只能作候选，不能单凭延迟事件或空 local profile 授权。
+- Task 批量/后台沿真实 SDK manager，活跃与预留名额合计最多 4，超额拒绝。当前代活着时父 prompt 可以先返回、后台继续；冷重启不得把磁盘 transcript 或 metadata 变成 live job/handle，也不新增 daemon/setsid 自动续跑。
+- 原四 agent 控制工具只在父 Main 的真实 host 名册启用，不自动给专家递归使用。native/private ID 只在当前 owned live 列表内解析并归一 canonical private ID；stop/steer/wait 传准确调用信号。先等子任务物理/持久 finished delivery，再发原 reported ack，不能把较新 Main 当成旧子权限或重复唤醒。
+- 子模型调用必须按同一 live actor 与准确模型路由；父 prompt 结束不回落 Main，子 HTTP 取消不伤 peer。子 browser typeText 明确 unsupported，不能在升级中借主会话 vault 隐式开放；父 typing 原已验收路径仍保留。
+- 恢复先严格证明旧 journal/model/blob/shake，显式替换模型时先确认目标 SDK 状态，再保存 Phi。Main lookup 后目标消失须 typed MODEL_UNAVAILABLE、Phi/ref 不变；factory 返回后旧准备控制结束不得阻止下一条明确用户 prompt。
+- 物理 transcript 与 SDK provider context 分开核对。默认恢复可去掉 aborted/error assistant 的不安全 replay，但旧 journal entry ID 与完整 canonical 内容仍须保留；对已知 stopped partial 精确投影/比较，不能泛过滤断言来掩盖丢失，也不强迫 SDK 重放死 partial。
+- D5 只在用户明确确认后另建新 Phi/new journal，原会话/ref 保留；有界本地时间线摘要只进入可信私有 context，不自动 prompt/tool/job。单 seed 的 newPhi/project/provenance/body hash、16 KiB 边界和回读校验保留；旧来源删除不破坏已接受的新快照，损坏新 seed 必须拒绝。
+- Wrapper 冷 origin 是 provenance，不是 live capability；每次复核当前 Phi/project/profile/root/配置，只有可证明的原 controller/job 才恢复查询与监控。未知来源拒绝，不打开远端路径的本机同名文件。
+- 分清证据范围：官方 SDK + 本机回环 provider、local shell 远端 fixture、ready marker/命令 fixture 不证明真实 SSH/provider/OAuth/Slurm/Nextflow/conda solve。冷 SDK 子记录仅在旧活动且无终态证明时标 interrupted，已保存 completed/failed/aborted 终态 metadata 保留，全部 `canControl=false/historyAvailable=false`；SDK 500,000 字符字段持久化截断等原边界继续保留。
+
+本轮首全 `b7720a84` 在代码不变的固定副本为 **6441 项：6403 通过、13 失败、0 取消、24 skip、1 todo，1562.75 秒**。原日志不覆写；修正固定源码 `3dc66eab` 的生产类型/build/asar/lint 已通过（70.36 秒、2645 跟踪哈希/HEAD 稳定、共享 binaries 未变）；功能候选 `d9b5d776` 的修后标准全量单独记录为 `6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo`、1542.28 秒，2645 跟踪哈希稳定；不以分组绿色代替，也不扩展为组合全量。Main 测试类型基线仍 **90→90、新增 0**，不宣称全体测试类型零债务。首轮 13 项按 10 项旧 fixture/合同、同一真实名称同步缺口的 2 个失败场景、1 项 Bun 原期限超时分类；另有独审跨父 Main negative 生产缺口修复。原 `-b7720a8` 日志保留，无后缀 standard-full 路径记录修后全量。`3dc66eab` 的 15 文件修正 scope APPROVE、后续 5 文件增量独审与合入 `a70d403b` 分别记录。下一步仍是原 T11 兼容收尾、T16 实机/人工，稳定后 T18。
+
+中间 `3dc66eab` 标准全量另保留为 **6446 项：6419 通过、2 失败、0 取消、24 skip、1 todo，1545.63 秒**，2645 跟踪哈希/HEAD 前后稳定，日志为 `.omx/T14-T15-standard-full-test-3dc66ea.json/.log`。repeat-child/resources 两红同源于同步前台预检键（label 或 toolCallId:index）与 allocator 分配的实际 native ID 不同；升级须复用真实 `TaskTool.execute` ALS 与 registry 的已登记 actual ref/profile、已计数名额，不按 nearest/label 猜。始终追踪真实 FG，receipt 与并行/BG 授权仍独立按原 flag，后台 exact-job 不变。`d9b5d776` 的 5 文件增量 pure 26/26、actual 5/5（129.559 秒）、独立 scope APPROVE；fresh bundle 和全部 360 依赖哈希绑定详见本轮验收。原断言不变，限定通过不代替最终标准全量。
+
+组合版本须另行核对：主线 57 路径已提交 `8b9c545b`，整合为 `03da779eee81a606f887aa8ec154d10be91e1a79`、tree `06ff470204e8e4e419443a76a3469add89c19e77`，2669 跟踪文件、138 功能差异；49 个对方非共享路径及 130 个本功能非共享路径分别与 `8b9c545b`、`d9b5d776` 完全一致。8 个共享路径只在 `jobLabels` 冲突处保留历史只读与 agent `canControl=false` 双守卫。限定轻组 `458/458，0 失败`、绑定 `fb63a68b` 的 actual `22/22（17 个实际 SDK 场景、5 项轻量），0 失败`、生产 gates `238.2` 秒与主工作区后检查分别保存；未重跑组合全库。原 279 项属于对方 `8b9c545b` 提交证据，不是本轮重跑；合并时的 Notebook 36 路径 WIP 完整保留，不夹带重做 UI。
 
 升级时增加 `app-remote-session-routing.test.ts`、`engine-facade-selected-cleanup.test.ts` 与 `engine-facade-child-composition.test.ts` 的相关回归。关闭失败仍须释放本阶段持有的连接，保留原始失败；不能因为清理错误跳过释放，也不能以关闭成功替代原生取消确认。
 
@@ -144,7 +162,7 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 | API key／OAuth       | 实际登录、浏览器／device 交换、刷新、注销和重新发送                                                       | 待验证；合成存储与回调通过不等于真实交换通过                  |
 | 自动压缩             | 实际触发压缩后继续对话，历史和设置符合预期                                                                | 隔离真实 CLI/应用已通过；外部 provider 与人工 UI 仍待 T16                                |
 | MCP                  | 一个真实 HTTPS OAuth 连接器及一个本地 stdio 连接器                                                        | 外部 HTTPS OAuth 待验证；自动化 stdio 生命周期已通过          |
-| 子智能体             | 并行、后台、steer、显式 async／PTY、审批与停止                                                            | 人工清单待验证；普通专家原生 Bash 契约已通过                  |
+| 子智能体 | 并行/后台四路、status/wait/steer/stop、模型/资源、审批、停止及完成消费/正确 Phi 唤醒 | 本轮隔离 SDK/CLI 与本机服务有定向证据；真实 SSH/provider/PTY 与人工使用仍待 T16 |
 | 打包版               | asar 解包、Finder 启动、worker／代理启动、终端与退出                                                      | Finder／真实打包启动待验证；构建／闭包及本机 PTY smoke 已通过 |
 | 旧远程路径           | 一轮 read／edit／bash 对话，未启用新 RPC 时行为稳定                                                       | 真实服务器待授权验证                                          |
 | 新远程运行时         | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复                                    | 待验证；本地部署夹具不证明 Linux 二进制可运行                 |
@@ -188,6 +206,12 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 | 后续 R1        | T9 独立审查 APPROVE，提交 `3e8462a8`；T10 候选分支整合提交 `46df9dc8`，在 18.10.3 依赖下复跑部署测试 27／27；真实资产／Linux／SSH／RPC 启用未据此验收 |
 
 T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 项、新增会话回归 20 项（19 真实引擎、1 wire metadata）、原丰富契约 18 项通过。完整候选分支 4862 项：4837 通过、0 失败/取消、24 既有跳过、1 todo，296.71 秒；生产 typecheck/lint/build/asar 通过。T10b 后续三路独立 APPROVE；合并核心 159/159 自然退出，生产 typecheck/lint/build/asar 通过，完整串行回归 4930 项、0 失败/取消。实际 CLI 用 `--trusted-extension` 加载默认入口，nonce 身份与守卫确认后才就绪；项目启动命令被私有策略阻断。完整扩展单份打包、逐文件校验、原子部署，预装 `flock` 的内核锁断线释放。审批桥接前仅开放已有普通文本读取，尚不代表完整 PhiEngine、R3–R7 或真实服务器验收。
+
+### 历史应用入口限制（3423a650 当时范围）
+
+以下原文保留旧批次当时的前台能力限制；本轮当前范围以上述 T14/T15 合同为准：
+
+`3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
 
 本地证据归档位于恢复工作区，属于执行记录，不是随仓库交付的产品资源：T8 副本的 `.omx/t8-upgrade-report.md`、`.omx/t8-full-test-awake.log`／`.exit`、`.omx/t8-contract-final.log`、`.omx/t8-mcp-stdio-regression.log`、`.omx/t8-cross-version-history.log`、`.omx/t8-native-terminal-smoke.log`；T9 副本的 `.omx/t9-deployment-report.md` 与缓存修复前后日志。审查或合入时应把必要结论写入可持久追踪的提交／审查说明，不能只依赖本地临时文件。
 

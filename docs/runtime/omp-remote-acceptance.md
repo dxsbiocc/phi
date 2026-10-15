@@ -8,6 +8,8 @@
 
 原 T13 模型与思考级别实际应用增量已合入本地 main `365b2db`（包括初次合并 `43718e2` 与默认策略修正）；相关组 369/369、实际 CLI/应用与独立审查、生产类型/lint/build/asar 通过。压缩控制随后已合入 `eea33bd3`，见下文独立增量；T13 整体随后已由 `9f723379` 完成，见下文完整交付；没有重做 T12、推送或默认启用 RPC。
 
+本轮原 T14/T15 的实现与限定验证已补齐，当前整合提交 `03da779e`、合入 `a70d403b`，功能候选 `d9b5d776` 的零失败标准全量与组合限定检查分别见下文；首轮 `b7720a84` 的 13 项失败完整保留。RPC/专家仍是 main-owned 显式 opt-in，真实环境与默认开放保留 T16 门槛。
+
 ## 已保存的基础成果
 
 下列测试数来自独立审查员对冻结代码的限定测试；范围有交集，不相加作为全套测试数。每次审查均核对实际源码、锁定版本的 SDK 合同及运行前后文件哈希。
@@ -198,6 +200,78 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 
 完整验收矩阵与文件清单在 `.omx/omp-recovery/pm/reports/T13-COMPLETE-COMPLETION.md`，实际与独立证据在 `T13-Complete-*` 和候选 `.omx/T13-*`。T12 6083、模型369及压缩610仍绑定各自旧版本，不冒称本轮重跑全库。原 T13 定义的 Phi 功能完成，不等于全部 OMP 原生配置：启用非空 per-model 阈值 map 仍明确拒绝；远程 plan mode 原产品入口禁用、tool-less auxiliary 仍本机。T11/T14/T15/T16/T18、真实 SSH/provider/OAuth/UI/Finder 和终端压力竞争保留原门槛，RPC 默认关闭，未推送。
 
+## T14/T15 专家与显式恢复（2026-10-15）
+
+本轮沿原 T14/R6 与 T15/R7 完成产品接线，没有重建 T12 服务、改任务编号、改 SDK 或扩大依赖/白名单/协议预算。功能冻结候选 `d9b5d776ce84845337b0d37d4f033f2e4320d71d`，tree `de03e7884d2c19c69e42da51f09a4af4917c66ed`，共 138 个功能路径、2645 个跟踪文件。该候选标准全量为 **6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo，1542.28 秒**，全部 2645 跟踪哈希前后稳定；它不是后续整合提交的全量结果。当前整合提交 `03da779eee81a606f887aa8ec154d10be91e1a79`，本地合入 `a70d403b`。
+
+验证期间主线并行 57 路径已保存为 `8b9c545be8ba2cb74482f4846eae9ac72b5d9284`；整合提交以它为基线，tree `06ff470204e8e4e419443a76a3469add89c19e77`，2669 跟踪文件、138 个功能差异。49 个对方非共享路径与 `8b9c545b` 完全一致，130 个本功能非共享路径与 `d9b5d776` 完全一致；8 个共享路径整合，仅 `jobLabels` 冲突同时保留历史只读与 agent `canControl=false` 两个守卫。没有重做对方 UI；其原 279 项仅是该提交的验证记录，不声称本轮重跑。合并时的 Notebook 36 路径 WIP 完整保留。组合后的 21 文件轻组、前台实际五场景/T15 恢复/主线 RPC policy 交叉及生产 gates/主工作区后检查分别记录，未重跑组合后的全库，也不把以下分组相加成全量。
+
+最新主分支悬停修正 `e764106c` 的五个界面/测试路径已保留；它们与本功能 138 路径无重叠，其余 2664 路径与 `fb63a68b` 逐字一致。431 项交叉组与 22 项 SDK/轻量组曾在 `fb63a68b` 通过；最终界面相关组和生产检查绑定 `03da779e`，实际 SDK 22 项仍明确绑定 `fb63a68b`，没有冒称在纯样式整合后重跑 SDK。共享 RendererApi 直接继承已有恢复接口，删除三个重复别名，运行时代码逐字不变，架构检查通过。
+
+最终固定标准全量退出码 0，HEAD/tree 与 2645 个跟踪文件运行前后一致；保留原并发 4、300000ms 及全部跳过/todo。功能全量只绑定 d9b5d776；合并的提交 tree 与整合候选 03da779e 完全相同，整合验证使用另列的定向回归，没有宣称再次运行全库。合并后以独立类型提交 `9e1e5ae2` 将生成单元格类型移到已有 shared Notebook 文档模块，保留 renderer 旧别名，字段/可变性/生成 JavaScript 不变；Notebook 新增的两行接口留在未提交工作区。主工作区 production type/build、完整 lint 与 asar 再次通过（65.6 秒），2680 个跟踪及并行工作文件检查期间未变，全部并行 WIP 保留且未纳入功能提交。全量只对应固定提交；并行 WIP 没有冒充已跑过全库。
+
+### 本轮实现
+
+| 范围 | 实际行为及边界 |
+|---|---|
+| 可信专家配置 | Main 选择完整具名定义与资源快照；专家独立模型/思考与实际 SDK 模型、支持等级及签名路由一致。无推测 fallback，不把未支持的显式 effort 当成功；renderer 或工具参数不能自授模型/资源。 |
+| 原生工具与资源 | 专家可用声明并获准的 read/write/edit、bash、glob/grep；skills/声明脚本、受管环境及服务代理复用 T12 的真实执行器、schema、动态审批与取消。资源由同一已证 Task/子实例 owner 选定，缺失/撤销/改绑在最终派发前拒绝，不读本机同名资源。 |
+| 环境与安装边界 | ready 环境复用既有 alias、marker、包/通道约束摘要与受管命令接缝；权限和执行位置保持服务器所属。隔离 marker/命令 fixture 不等于真实 conda solve、安装或目标主机包可用性验证；这些仍须 T16。 |
+| Task 并行与后台 | 沿官方 SDK Task/async manager 与现有持久父调用记录，主进程按已选定义授予并行/后台；活跃与预留名额合计最多 4，超额拒绝，不另造隐式排队平台。父 prompt 返回后已接受的后台子任务可在同一所属代继续。 |
+| 四个专家控制工具 | 原 `agent_status/agent_wait/agent_steer/agent_stop` 的 schema、说明和执行逻辑复用为父 Main 的 host 工具。原生 task ID 和私有 run ID 仅在当前已证 live 列表内解析，控制、去重及 reported 一律归一私有 ID；不把该名册默认授给子专家递归使用。 |
+| 审批、停止与回报 | 主/子运行、项目与主机绑定独立；stop/steer/wait 传原调用信号。物理取消/host drain 与对应终态确认后结算，失败不能跳过 peer 清理。完成先向原 Phi 持久交付，再确认 reported；消费抑制重复唤醒，较新的 Main 运行不能接走旧子任务权限。 |
+| 子模型网关与浏览器 | 子模型按准确 inference actor/模型/会话授权，父 prompt 结束不把子调用降级成 Main；HTTP 取消保持 peer。子 browser `typeText` 明确 unsupported，待独立 actor 隐私闭环后再开放；父会话已验收的私有输入路径不受影响。 |
+| 显式原会话恢复 | 复用严格 journal/transcript/blob/shake 验证、writer lease 与原子 adopter。原模型可用则保留；失效时由用户明确选择目标，先证明旧 journal 的模型，再确认新模型读回，最后保存 Phi。每个 await 复核原身份，创建控制只活到 factory 返回，不污染下一次明确 prompt。 |
+| 恢复 UI 与 D5 | 断线、不可用模型、丢失/损坏 journal、缺资产、绑定变化有安全固定提示。本地时间线仍可读；用户明确确认有界摘要后创建新 Phi ID，原会话/ref 不覆盖。摘要只作私有 context，不自动 prompt/tool/job；单 seed 的 newPhi/project/provenance/body hash 及 16 KiB 边界严格校验，删除旧来源不破坏已接受的新快照。 |
+| Wrapper 冷 origin | 接受时持久保存主进程可信来源，冷查询每次核对当前 Phi/project/profile/root 与运行时配置。既有 JobManager 只接管可证明归属的原 job/controller，不重做 launch；项目/主机档案/connection/root 不同或旧 origin 不可证明时拒绝。远端结果仍是远端定位符。 |
+| 冷 SDK 子任务 | 真实同 journal 新进程不会重建旧 child registry/async job/live handle。只保留已验证的来源 metadata：旧活动且无终态证明的记录标 interrupted，已保存 completed/failed/aborted 终态保留，全部 `canControl=false/historyAvailable=false`；即使旧子文件仍在，也不冒充可用的官方冷 transcript 读取权限。 |
+
+持续 SDK 后台执行要求当前 RPC/子实例所属代仍存活；本批没有新增 server daemon、setsid 自动续跑或跨重启隐式提交平台。Wrapper 沿用既有独立持久作业机制，与 SDK 子任务冷中断是不同生命周期。公开 child task 预览保持空值，不从不可信 payload 猜完整任务。
+
+### 验证证据与最终门
+
+下列分组来自各自冻结范围，不能相加为全量，也不能用早一版限定通过覆盖后续源码。官方 SDK/CLI、真实桌面 factory/服务与本机 shell 回环 fixture 均使用隔离 HOME/agentDir 和合成模型/凭据；不代表真实 SSH、外部 provider/OAuth、Slurm/Nextflow 或 conda solve 已通过。
+
+| 证据 | 已保存结果与范围 |
+|---|---|
+| 官方子任务契约 | `T14-child-control-contract-freeze.json`：3/3、3.868 秒；并行/后台、准确 steer/cancel/wait 与同 root journal 冷重启，冷 registry 空、旧 steer/history 拒绝、0 provider 重放。 |
+| 原生 edit/搜索与资源执行 | `T14-native-edit-search-first.log`：批准/拒绝/停止 3/3、3.535 秒。`T14-resource-actual-posix.log`：实际 App/CLI 1/1、32.197 秒，独立 model-b/off、SKILL 恰好一次、真实文件与 Bash、mamba fixture、MCP image/blob、同 journal 恢复 0 重放。mamba/ready-marker fixture 不等于真实 conda solve；compiler/owner 专项另行限定，不冒充外部环境验收。 |
+| 后台生产控制 | 前版 `T14-lifecycle-final-freeze.json` 的限定 22/22 与实际组合 1/1、28.364 秒保留。`3dc66eab` 批次 default/later Main negative 实际 2/2、60.181 秒，fresh bundle `d363a…`；跨父 Main 否决与同一所属子实例控制分别核对。常规 SDK started 在 prompt 前；观察缓存只是候选，实际修正是 Subfactory 再次执行 local-empty 时保持同一 Main-attested owner，不是“SDK 总是晚发 started”。 |
+| 原四控制工具 | `T14-agent-run-tools-freeze.json`：6 新例加原本地合同共 54/54；native/private ID、精确调用信号、completion-before-reported、并发去重和 peer failure 隔离。实际 Main 名册的最终覆盖绑定本轮固定源码。 |
+| 既有真实应用及名称恢复 | 原 metadata 的 late-policy/send-failure 是同一名称同步缺口的两个真实失败场景，修后 2/2、52.358 秒；原 app 三个真实 App/CLI 场景加一个 nonreasoning 可信 compiler 提前拒绝轻量场景（0 CLI/provider），runner 汇总 4/4、56.040 秒。版本和分组有交集，不与其它限定组相加。 |
+| T15 恢复与创建控制 | `T15-recovery-integration-final-freeze.json`：router4、观察边界1、真实恢复1（29.894秒）；真实目录先有 B 后消失时 typed MODEL_UNAVAILABLE 且 Phi A/ref 不变；saved A→同 journal attached B→Phi B；旧准备控制结束后首次明确 prompt 成功，provider 总数仅 seed A + 新 prompt B。 |
+| D5、origin 与 UI | 后端 FIFO 修复后 10/10；私有提示词/preload/App 19/19；同 Phi 代次变化及恢复成功/界面刷新失败的独立 UI 回归见 Main freeze。Wrapper 既有冷接管 3/3 为本机 shell 远端 fixture；不扩展成真实集群验收。 |
+| 路由与物理历史 | `3dc66eab` 批次 raw/projector 路由 actual 1/1、55.308 秒：thinking SDK 读回与 Phi 一致，原 journal 全部旧 entry ID/canonical hash 不变；原 aborted partial 连同 SDK 原始字段仍完整落盘，返回 context 只去已知那一条。原 DTO-vs-raw 诊断失败日志保留，不写成先前未持久化或丢历史。 |
+| 类型与生产检查 | Main 旧测试类型 **90→90、新增 0**，新增/owned 测试类型单独记录；不能写成全体测试类型零债务。固定 `3dc66eab` 生产类型/build/asar/完整 lint 均退出 0，70.36 秒，2645 跟踪文件及 HEAD 前后稳定，共享 binaries 未变。`3dc66eab` 的 15 文件修正 scope APPROVE；后续 5 文件增量另行独审，标准全量另行绑定下行，不混用。 |
+| 前台真实 ID 增量 | `T14-foreground-final-id-final-receipt.json`：5 文件（1 生产、4 测试）窄修，pure 26/26；actual 5/5、129.559 秒，自然退出。unnamed FG 18.578、repeat 18.892、resources 33.656、BG 27.371、later Main negative 30.584 秒；fresh bundle `fa76e127c9e2dec0822e489e0d813f68821057202c7f97ecb352bda610f9c792`，360 依赖哈希不变。5 文件 scope 独立 APPROVE，快照 SHA256 `cc6334acd6f6f71020be00ac3a16b37b6bc96c976e10ae76d86f6d85469d30de`；不把前版 15 文件审查当成该增量审查。 |
+| 功能候选标准全量 | `d9b5d776`：**6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo，1542.28 秒**，2645 跟踪哈希稳定；原标准 runner，未改变断言/期限/并发/skip。只证明该功能候选，不证明整合提交全量。 |
+| 主线组合限定检查 | `03da779e`：21 文件轻组 `458/458，0 失败`；`fb63a68b` 的 actual 五场景/T15 恢复/主线 RPC policy 交叉 `22/22（17 个实际 SDK 场景、5 项轻量），0 失败`；生产 gates `238.2` 秒，主工作区后检查按最终整合记录。各自限定范围，组合未重跑全库，不与功能候选全量混算。 |
+
+首轮标准全量保留为失败记录：固定 `b7720a84c9be70b93645133d3c8dbf2351f7dd3a`、tree `fc2b531e8f2d1cba8d0fdcfa0dfe75e53154b383`，**6441 项：6403 通过、13 失败、0 取消、24 既有跳过、1 todo，1562.75 秒**；HEAD/tree 及 2645 跟踪文件运行前后不变。原始记录为 `.omx/T14-T15-standard-full-test-b7720a8.json/.log`。13 项分为 10 项旧 fixture/合同、同一真实名称同步生产缺口的 2 个失败场景和 1 项 Bun 原期限超时；另独审发现的跨父 Main negative 生产缺口也已修复，它不计入这 13 项。原断言、时间、并发与 skip/todo 不提高。首轮只引用 `-b7720a8` 归档；无后缀 standard-full 路径用于修后固定全量，不能再当作首轮日志。`d9b5d776` 功能候选的修后全量独立记为 `6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo`、1542.28 秒，不能扩展为 `03da779e` 组合全量。
+
+中间候选 `3dc66eab8f628de6713f631570816fa14833bdfb`、tree `45ea743138a9aa86041a339a2c19e4911e7dfcd5` 的标准全量为 **6446 项：6419 通过、2 失败、0 取消、24 既有跳过、1 todo，1545.63 秒**；HEAD 及 2645 跟踪哈希前后不变。失败记录独立归档为 `.omx/T14-T15-standard-full-test-3dc66ea.json/.log`，不是最终通过记录。repeat-child 与 resources 两个失败同源于同步前台子任务预检键（label 或 toolCallId:index）与 allocator 分配的实际 native ID 不同，原资源/重复调用断言保留。后续 5 文件增量复用实际 `TaskTool.execute` 的 AsyncLocalStorage 所有权，以及真实 registry 已登记的 actual ref/profile 和已计数准入名额；不按最近记录或 label 猜所属。所有真实前台子任务始终追踪，原 flag 对 receipt 与并行/后台授权的控制独立保留，后台 exact-job 路径不变。限定回归及独审通过见上表，最终全量只绑定 `d9b5d776`。
+
+本轮修正还区分 SDK 的物理 transcript 与恢复后的 provider context：默认 buildContext 会剔除 aborted/error assistant 的不安全 replay；这不等于物理历史删除。路由 fixture 必须按旧 entry ID 与完整 canonical SHA 证明原 journal 全保，已知 stopped partial 的 raw entry 前后不变；只对已知那一条 ephemeral context 差异作精确断言。原 Object.create 生命周期 fixture 则补真实构造器拥有的空 childVaults Map，不能给生产清理增加 optional fallback 来掩盖夹具缺失。原红日志及修后 actual 结果均保留，物理/公开 DTO 的字段差异不等于物理消息不存在；最终全量另以固定候选为准。
+
+结构判断绑定 `d9b5d776`，不混用主工作区的并行改动。本轮已提取 7 个内聚 helper，并复用原 builder；前台 ID 增量的其余新增 helper 均不足 600 行，旧 legacy 判断不变。以下长文件保留判断分别记录：
+
+| 文件与行数 | 本轮保留理由 |
+|---|---|
+| `rpc-subagents.ts` 733、`rpc-task-admission.ts` 875（`3dc66eab` 时为 826）、`rpc-child-protocol.ts` 655 | 同一精确子身份、Task 准入/容量、Main-attested owner、重复 Subfactory 执行、取消结算与签名边界内聚；前台 ID 修正继续沿原 execute/registry/actor 所有权。该 admission 源 SHA256 为 `762932d591cd41e4133b0fc42658ec1bba1a8065f229b394412008a22ce6d8bf`。资源、model actor 与 controls 已分离，不在安全修复中机械拆分。 |
+| `job-manager.ts` 923、`browser-ipc.ts` 601 | 已有作业所有者及窗口/owner 授权内聚，本轮分别只增加 4 行、16 行；拆分与本次恢复和授权修复无关。 |
+| `facadeRoutingOracle.ts` 726 | 同一端到端应用路由 fixture，连贯核对物理 journal、公开 DTO、模型/思考轮换、停止与无重放。 |
+| renderer `types.ts` 995 | 应用级 DTO 声明，本轮仅增加 4 行，保持共享类型边界。 |
+| Main `index.ts` 12443、facade 1343、remote runtime 1284、runtime-adapter 1252、preload `index.ts` 2125 / `index.d.ts` 1287、App 5364、Main VM 测试 15053 | 明确作为临时 legacy 架构债保留，集中管理同一 owner/代次/checkpoint/关闭时序；以后拆分须先锁住这些真实边界，不在本轮安全/恢复修复中夹带大入口迁移。 |
+
+后续继续原 T11 完整 provider/history/KV 与 side/advisor 兼容性收尾，再做 T16 指定主机、真实 provider/OAuth、MCP、环境及 UI/Finder 验收；RPC 默认仍关闭。新默认路径稳定一个升级周期后才做 T18 清理，T17 随真实交付更新，不另建一套重叠任务。
+
+### 本轮以前的 T14/T15 范围记录
+
+以下保留原阶段当时的范围和限制，不能当作本轮当前能力清单：
+
+- **T14/R6：** 定义编译、真实 CLI 探针和原生子权限基础 `2837875b` 已验收；准入控制底座 `39678516` 与真实前台 task 应用组合 `f148a977` 已分别通过独立审查。真实批准、拒绝、审批中停止、运行中停止、迟到启动、同调用 ID 的不同子身份、双 Phi 会话隔离、主子审批状态、重入关闭、持久失败及显式恢复均有保留的限定证据；最后停止缺口与结果分类问题已闭环，验证版本边界见上文。完整 SDK 启动前准入、实际设置/工具注册表及选定定义不可变性仍未证明；显式关闭本阶段不支持的启动功能只是必要防御，能力继续默认关闭。完整 edit、资源/环境、后台、steer、服务代理与唤醒仍待实现，不宣称完整 R6 或产品开放。
+- **T15/R7：** 持久化启动、严格全分支验证及真实 SDK 默认 tool-output shake 机器标记和 `.shake.log` 资产验证均已验收；facade adoption 增量已完成限定审查，`3423a650` 已验证受控产品路径的新实例恢复同 journal；完整资源和后台能力仍待接入。实际搜索验证发现锁定 SDK 持久化对通用字符串按每字段 500,000 字符截断并附提示；本轮保持真实 SDK 的冷恢复语义，不把实时大结果无损传输表述为冷恢复全文无损。header preflight 不替代完整 transcript/blob 验证；公开 switch 的同 UID 外部文件替换残余及首次验证前非内容寻址 shake 文件的历史真实性不作消除声明。
+
 ## 冻结整合验收
 
 最新 T12 完整交付：固定候选 `fa6c181c`，tree `73cfa9eaaac5ffa6106d4bc4fc171011fee8472c`，标准并发 4 全量 **6083 项：6058 通过、0 失败、0 取消、24 既有跳过、1 todo，1079.53 秒**。2521 个跟踪文件及 HEAD/tree 前后完全一致；所有原审批、取消、零写入、预算、期限、并发与跳过设置保留。生产 node/web/scripts 类型、完整 lint（0 错误、2 条既有格式警告）、构建及 asar 通过。`smoke:terminal-host` 的四项真实本机场景与 manager smoke 通过，共享 Bun/micromamba 目标字节未变，验收副本的临时链接已恢复。
@@ -228,13 +302,19 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 
 - **T11/R3：** 已复现的 Anthropic opaque thinking、仅终态注册 API 缺口和完整工具列表的出站 DTO 均已独立验收；保留完整 schema、本地执行器和推测执行。真实 CLI 已复现 side ephemeral 通道丢失 opaque 及稀疏 thinking 内容；主通道修复不覆盖 SDK 捕获的 side/advisor/maintenance/autolearn 闭包，公开 custom handler 也仍位于外层 normalization 之内。上游最新补丁的定点源码仍保留该路径，未发现可用的全通道接缝或修复；独立 SDK 复现材料已准备但未发送，未修改 SDK、关闭默认维护或宣称完整 R3。Cursor RPC 断流恢复已另验收为 `044bac9b`；完整 KV/history replay 与剩余提供商矩阵仍待验收。
 - **T13/R5：** 主运行权限及生产主会话组合已验收。审查复现的宿主桥致命故障悬挂和假就绪问题已修复，独立故障回归通过；实际 CLI 覆盖写入、拒绝、取消及恢复。真实 PhiEngine 路由、存储 adopter 与公共事件投影的 16 文件增量已通过独立 27 项复验，修复旧代清理误停新运行、模型清单不一致、损坏引用触发本地 I/O，以及丢失维护事件四项问题。打包闭包先以 `35ac4c49` 独立保存，应用路由保存为 `8ffb187d`；独立副本仅包含这 18 文件及已提交基础代码，构建、lint、生产类型、asar 检查及 30 项真实回归通过，18 文件哈希一致。上下文与名称控制已另行独立验收为 `356b3583`，19 项真实回归通过；真实前台 task 应用组合已保存为 `f148a977`；`3423a650` 已接通实际应用显式 opt-in。模型/思考级别与异步 UI 控制及默认策略修正随后已合入 `365b2db`，见上文 T13 增量；压缩 `eea33bd3` 与 persona/memory/context/公共入口 `9f723379` 均已完成；原 T13 Phi 功能已全部验收，默认 RPC 仍关闭。关联主宿主审批的终态重入已随 `2837875b` 修复并独立验证，仅复核受影响接点，未重开旧阶段审查。
-- **T14/R6：** 定义编译、真实 CLI 探针和原生子权限基础 `2837875b` 已验收；准入控制底座 `39678516` 与真实前台 task 应用组合 `f148a977` 已分别通过独立审查。真实批准、拒绝、审批中停止、运行中停止、迟到启动、同调用 ID 的不同子身份、双 Phi 会话隔离、主子审批状态、重入关闭、持久失败及显式恢复均有保留的限定证据；最后停止缺口与结果分类问题已闭环，验证版本边界见上文。完整 SDK 启动前准入、实际设置/工具注册表及选定定义不可变性仍未证明；显式关闭本阶段不支持的启动功能只是必要防御，能力继续默认关闭。完整 edit、资源/环境、后台、steer、服务代理与唤醒仍待实现，不宣称完整 R6 或产品开放。
-- **T15/R7：** 持久化启动、严格全分支验证及真实 SDK 默认 tool-output shake 机器标记和 `.shake.log` 资产验证均已验收；facade adoption 增量已完成限定审查，`3423a650` 已验证受控产品路径的新实例恢复同 journal；完整资源和后台能力仍待接入。实际搜索验证发现锁定 SDK 持久化对通用字符串按每字段 500,000 字符截断并附提示；本轮保持真实 SDK 的冷恢复语义，不把实时大结果无损传输表述为冷恢复全文无损。header preflight 不替代完整 transcript/blob 验证；公开 switch 的同 UID 外部文件替换残余及首次验证前非内容寻址 shake 文件的历史真实性不作消除声明。
+- **T14/R6：** 本轮已接入独立模型/思考、原生 edit/搜索、受信资源/环境/服务、Task 并行/后台四路、原四控制工具与正确 Phi 完成消费/唤醒。最终固定源码与全量/合入状态见本轮 T14/T15 节；browser 子 typeText 仍明确 unsupported，持续后台需当前代存活，默认不开放。
+- **T15/R7：** 本轮已接入显式原 journal 恢复、模型失效后的明确替换、安全错误路径与 D5 摘要新会话、Wrapper 冷 origin 严格绑定。冷 SDK 子任务仅恢复来源 metadata：旧活动且无终态证明的记录标 interrupted，已保存 completed/failed/aborted 终态保留，全部不可控制且无完整历史；不复活 handle 或开放旧子历史；保留 SDK 500,000 字符字段截断与首次 shake 基线/同 UID 替换的既有边界。最终固定验收状态见本轮节。
 - **T16/R8：** 真实 SSH、服务器、真实 provider/OAuth、人工 UI 与 Finder 打包启动未执行；附加终端压力检查的既有 failed→exited 状态竞争按上文证据待修。官方 Linux x64 资产完整性与主 ELF GLIBC 版本静态检查通过，不能据此声称服务器兼容通过。
 
 ## 后续门槛
 
-按新增范围分工实施，独立审查发现问题后先修复并重跑原断言；已验收旧范围仅在受影响时复核。通过的冻结基础代码持续保存在可回溯提交，WIP 与故意保留的失败对照不混入冻结全套验收副本。
+本轮 T14/T15 的功能全量绑定 `d9b5d776`；当前主线整合 `03da779e` 的限定交叉检查、生产 gates 与本地合入 `a70d403b` 另行绑定，组合未重跑全库。已交付的专家/恢复功能不重派；后续继续完整 T11 通道、T16 实机及 T18 稳定周期，保持原任务编号。默认 RPC 仍须 `PHI_REMOTE_OMP_RPC=1`，专家仍须 main 可信具名选择；未启用不把旧远程历史静默迁移到本机执行。
+
+只有完整模型通道、真实宿主服务、主/子审批、严格恢复以及 R8 实机共同通过，才讨论默认切换。冷 SDK 子任务的中断/终态来源 metadata、D5 新会话上下文与 Wrapper 独立 job 恢复不能相互冒充；禁止隐式重放或用模拟对象冒充完整 SDK session。
+
+### 历史入口边界（3423a650 当时范围）
+
+以下原文保留旧批次的验收边界，其中 read/write/bash 与完整能力待接入指该旧版本，不覆盖本轮当前状态：
 
 `3423a650` 已把原有 facade 接入实际主进程和 runtime-adapter：`PHI_REMOTE_OMP_RPC=1` 显式选择 RPC，`PHI_REMOTE_OMP_AGENTS` 按名字选择主进程目录中的完整专家定义，renderer 定义不能授予权限。实际 CLI 验证可信 Checker 写入、审批中停止和迟到批准、异步选择的过期/取消，以及新实例恢复同 journal 且不重放请求。专家控制范围仍为 read/write/bash；环境、skills、警告或其他工具的专家定义，以及未经主进程可信快照授权的配置明确拒绝；主会话 MCP/skills 现沿上文 T12 的可信选定资源接入，模型/思考控制及默认策略沿 `365b2db` 接通，压缩沿 `eea33bd3`、persona/context/记忆及公共控制沿 `9f723379` 接通。未启用时保留本地和旧远程路径。关闭报错曾跳过选定连接释放，原失败已保留并修复；次要释放错误不替换原错误，重复释放仅执行一次。facade 现为 1160 行，作为临时 legacy 例外保留同一代次的 adoption/验证/关闭所有权，结构判断见 T13 压缩增量。
 
