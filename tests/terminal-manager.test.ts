@@ -355,6 +355,89 @@ test('maps started, exit, and failed host events to snapshots and state events',
   await manager.dispose()
 })
 
+test('keeps failure visible when supervisor failure is followed by a worker cleanup exit', async (t) => {
+  const { host, manager, events } = harness()
+  t.after(() => manager.dispose())
+  const snapshot = await manager.create(project('alpha'), 80, 24, 'supervisor_failure_create')
+  events.length = 0
+
+  // TerminalHost emits failure first, then asks the worker to kill its PTY.
+  host.emit({
+    type: 'failed',
+    terminalId: snapshot.terminalId,
+    message: 'supervisor exited (SIGKILL)'
+  })
+  const failed = { ...snapshot, state: 'failed' as const, message: 'Terminal process failed' }
+  assert.equal(manager.snapshot(snapshot.terminalId)?.state, 'failed')
+  host.emit({
+    type: 'exit',
+    terminalId: snapshot.terminalId,
+    exitCode: null,
+    cancelled: true,
+    timedOut: false
+  })
+
+  assert.deepEqual(await manager.list(project('alpha')), [failed])
+  assert.equal(manager.snapshot(snapshot.terminalId)?.state, 'failed')
+  assert.deepEqual(events, [{ type: 'state', snapshot: failed }])
+  await terminalError(() => manager.input(snapshot.terminalId, 'must not run\n'), 'not_open')
+  assert.deepEqual(host.inputCalls, [])
+})
+
+test('user close still removes a failed terminal while cleanup exits arrive', async (t) => {
+  const { host, manager, events } = harness()
+  t.after(() => manager.dispose())
+  const snapshot = await manager.create(project('alpha'), 80, 24, 'failed_user_close_create')
+  const ordinary = await manager.create(project('alpha'), 80, 24, 'ordinary_user_close_create')
+  host.emit({
+    type: 'failed',
+    terminalId: snapshot.terminalId,
+    message: 'supervisor exited (SIGKILL)'
+  })
+  const closed = new Deferred<void>()
+  const close = host.close.bind(host)
+  host.close = async (terminalId, mode) => {
+    await close(terminalId, mode)
+    await closed.promise
+  }
+  const closing = manager.close(snapshot.terminalId)
+  const ordinaryClosing = manager.close(ordinary.terminalId)
+  host.emit({
+    type: 'exit',
+    terminalId: snapshot.terminalId,
+    exitCode: 0,
+    cancelled: true,
+    timedOut: false
+  })
+  assert.equal(manager.snapshot(snapshot.terminalId)?.state, 'failed')
+  host.emit({
+    type: 'exit',
+    terminalId: ordinary.terminalId,
+    exitCode: 0,
+    cancelled: true,
+    timedOut: false
+  })
+  assert.equal(manager.snapshot(ordinary.terminalId)?.state, 'exited')
+  closed.resolve()
+  await Promise.all([closing, ordinaryClosing])
+  assert.equal(manager.snapshot(snapshot.terminalId), undefined)
+  assert.equal(manager.snapshot(ordinary.terminalId), undefined)
+  assert.deepEqual(await manager.list(project('alpha')), [])
+  assert.deepEqual(host.closeCalls, [
+    { terminalId: snapshot.terminalId, mode: 'user' },
+    { terminalId: ordinary.terminalId, mode: 'user' }
+  ])
+  const eventCount = events.length
+  host.emit({
+    type: 'exit',
+    terminalId: snapshot.terminalId,
+    exitCode: 0,
+    cancelled: true,
+    timedOut: false
+  })
+  assert.equal(events.length, eventCount)
+})
+
 function assertStateEvent(
   terminalId: string,
   state: 'starting' | 'open' | 'closing' | 'exited' | 'failed'

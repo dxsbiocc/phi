@@ -479,6 +479,9 @@ export class TerminalManager {
         if (record.snapshot.state === 'starting') this.updateState(record, { state: 'open' })
         return
       case 'exit':
+        // A supervisor failure can be followed by its worker's cleanup exit.
+        // Keep the failure visible until the user removes the terminal.
+        if (record.snapshot.state === 'failed') return
         this.updateState(record, { state: 'exited', exitCode: event.exitCode ?? undefined })
         return
       case 'failed':
