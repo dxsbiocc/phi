@@ -12,6 +12,7 @@ import type { SessionRun } from '../../src/main/agent/session/session-runner-reg
 import type { ToolApprovalRequest } from '../../src/main/agent/tool-approval'
 import type { RpcApprovalEvent } from '../../src/main/agent/engine/rpc/approval-bridge'
 import type { RpcChildRuntimeConfig } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-config'
+import type { RpcChildRunSnapshot } from '../../src/main/agent/engine/rpc/subagents/types'
 
 async function waitFor(check: () => boolean): Promise<void> {
   const began = Date.now()
@@ -177,5 +178,104 @@ export async function runTwoPendingChildren(
   assert.equal(f.provider.requests.length, 7)
   console.log(
     'two real pending native children: A stop/late UI isolated, B approved, A next turn reusable'
+  )
+}
+
+/** One pure foreground batch reserves native IDs only after its public spawn hooks. */
+export async function runUnnamedForegroundBatch(
+  f: FacadeMetadataFixture,
+  events: RpcApprovalEvent[],
+  parents: SessionRun[],
+  children: ReadonlyMap<string, Readonly<RpcChildRunSnapshot>>
+): Promise<void> {
+  const dialogs: Array<{
+    request: Readonly<ToolApprovalRequest>
+    decide(value: 'approved'): void
+  }> = []
+  f.configureApproval({
+    shouldGate: () => true,
+    requestToolApproval: (request) =>
+      new Promise((resolve) => dialogs.push({ request, decide: resolve }))
+  })
+  const id = 'unnamed-foreground-parent'
+  await f.engine.sessions.create(f.params(id))
+  const config: RpcChildRuntimeConfig = JSON.parse(
+    await readFile(join((await f.privateDirectories())[0], 'child-runtime.json'), 'utf8')
+  )
+  assert.equal(config.policy.allowParallel, true)
+  assert.equal(config.policy.allowBackground, undefined)
+  const nativeName = config.profiles[0].definition.nativeName
+  const paths = ['a', 'b'].map((suffix) =>
+    join(f.f.scope.projectRoot, `unnamed-foreground-${suffix}.txt`)
+  )
+  f.provider.enqueue(
+    {
+      tool: {
+        name: 'task',
+        id: 'unnamed-foreground-task',
+        args: {
+          i: 'Delegate two real foreground tasks without labels',
+          context: 'One bounded pure foreground batch',
+          tasks: paths.map((path) => ({
+            agent: nativeName,
+            task: 'Write only the requested fixture file: ' + path,
+            solutionSpace: 'The current private project'
+          }))
+        }
+      }
+    },
+    ...paths.map((path, index) => ({
+      tool: {
+        name: 'write',
+        id: 'unnamed-child-write-' + index,
+        args: { path, content: 'Actual unnamed foreground child ' + index }
+      }
+    }))
+  )
+  const run = f.runners.startRun({
+    sessionId: f.phi.sessionId,
+    runId: createRunId(),
+    execute: async () => {
+      await f.engine.sessions.prompt({ sessionId: id, text: 'Run both unnamed foreground tasks' })
+    }
+  })
+  await waitFor(() => dialogs.length === 2 || !!run.outcome)
+  assert.equal(run.outcome, undefined)
+  assert.equal(f.provider.requests.length, 3)
+  assert.equal(children.size, 2)
+  const records = [...children.values()]
+  assert.equal(new Set(records.map((child) => child.nativeId)).size, 2)
+  assert.ok(records.every((child) => child.verified && !child.background))
+  assert.ok(records.every((child) => child.parentRunId === run.runId))
+  assert.ok(records.every((child) => child.parentToolCallId === 'unnamed-foreground-task'))
+  const childRunIds = new Set(records.map((child) => child.id))
+  assert.equal(new Set(dialogs.map((dialog) => dialog.request.agentRunId)).size, 2)
+  assert.ok(dialogs.every((dialog) => childRunIds.has(dialog.request.agentRunId!)))
+  assert.ok(dialogs.every((dialog) => dialog.request.runId !== run.runId))
+  assert.ok(parents.every((parent) => parent === run))
+  for (const path of paths) assert.equal(await f.exists(path), false)
+  f.provider.enqueue(
+    { text: 'Actual foreground child finished' },
+    { text: 'Actual foreground child finished' },
+    { text: 'Parent reports both real foreground children completed' }
+  )
+  for (const dialog of dialogs) dialog.decide('approved')
+  await run.done
+  assert.equal(run.outcome, 'completed')
+  for (const [index, path] of paths.entries())
+    assert.equal(await readFile(path, 'utf8'), 'Actual unnamed foreground child ' + index)
+  assert.equal(f.provider.requests.length, 6)
+  const durable = readSessionEvents(run.sessionId).filter((event) =>
+    event.type.startsWith('approval_')
+  )
+  assert.equal(durable.filter((event) => event.type === 'approval_requested').length, 2)
+  assert.equal(durable.filter((event) => event.type === 'approval_approved').length, 2)
+  assert.equal(durable.length, 4)
+  assert.ok(
+    durable.every((event) => childRunIds.has(event.runId!) && event.parentRunId === run.runId)
+  )
+  assert.equal(events.length, 4)
+  console.log(
+    'Two unnamed foreground native IDs, two exact child approvals, two real writes, no Main fallback'
   )
 }

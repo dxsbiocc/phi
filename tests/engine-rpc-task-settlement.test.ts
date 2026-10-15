@@ -38,7 +38,14 @@ interface Fixture {
   hook(): unknown
   setWrongModel(wrong: boolean): void
   replaceHook(): void
-  admitChild(nativeId: string, beforeLifecycle?: boolean): Promise<void>
+  admitChild(
+    nativeId: string,
+    beforeLifecycle?: boolean,
+    spawnKey?: string,
+    toolCallId?: string,
+    extraNativeId?: string
+  ): Promise<void>
+  registerChild(nativeId: string): void
   changeParent(id: string, sequence: number): void
   sealCurrentParent(): boolean
   replaceChildRef(id: string): void
@@ -116,6 +123,13 @@ async function fixture(startup = true): Promise<Fixture> {
     return undefined
   }
   const model = { ...childProfile.model, ...childProfile.route }
+  let taskWork = async (): Promise<void> => {}
+  const taskTool = {
+    execute: async (id: string, input: unknown): Promise<void> => {
+      assert.ok(id && input)
+      return taskWork()
+    }
+  }
   const session = {
     sessionId: root.rootOmpSessionId,
     sessionFile: root.rootSessionFile,
@@ -128,11 +142,31 @@ async function fixture(startup = true): Promise<Fixture> {
       explicit: ['trusted-fixture']
     },
     preparedExtensions: [{}],
-    extensionPaths: ['trusted-fixture']
+    extensionPaths: ['trusted-fixture'],
+    getToolByName: () => taskTool
   }
   const ref = { id: root.rootAgentId, kind: 'main', session }
   const refs = new Map<string, unknown>([['Main', ref]])
   const lifecycle: Handler[] = []
+  const registryChanges = new Set<(event: unknown) => void>()
+  const registerChild = (nativeId: string): void => {
+    const file = join(cwd, nativeId + '.jsonl')
+    const manager = {
+      getSessionId: () => 'omp-' + nativeId,
+      getHeader: () => ({ parentSession: root.rootSessionFile })
+    }
+    const child = {
+      id: nativeId,
+      displayName: nativeName,
+      kind: 'sub',
+      parentId: root.rootAgentId,
+      status: 'running',
+      sessionFile: file,
+      session: { sessionId: 'omp-' + nativeId, sessionFile: file, sessionManager: manager }
+    }
+    refs.set(nativeId, child)
+    for (const listener of registryChanges) listener({ type: 'registered', ref: child })
+  }
   let forbidReads = false
   const admission = createRpcTaskAdmissionExtension({
     config,
@@ -164,7 +198,10 @@ async function fixture(startup = true): Promise<Fixture> {
       AgentRegistry: {
         global: () => ({
           get: (id: string) => refs.get(id),
-          onChange: () => () => {}
+          onChange: (listener: (event: unknown) => void) => {
+            registryChanges.add(listener)
+            return () => registryChanges.delete(listener)
+          }
         })
       }
     }
@@ -175,6 +212,7 @@ async function fixture(startup = true): Promise<Fixture> {
     return result
   }
   if (startup) await emit('session_start', {})
+  let lastAdmittedId = 'outer-task'
   return {
     admission,
     config,
@@ -186,12 +224,14 @@ async function fixture(startup = true): Promise<Fixture> {
     notifications,
     ctx,
     input,
-    admit: (id = 'outer-task') =>
-      session.agent.beforeToolCall({
+    admit: (id = 'outer-task') => {
+      lastAdmittedId = id
+      return session.agent.beforeToolCall({
         tool: { name: 'task' },
         toolCall: { id, arguments: { ...input, i: 'Controlled intent' } },
         args: input
-      } as Parameters<typeof previous>[0]),
+      } as Parameters<typeof previous>[0])
+    },
     end: async (id = 'outer-task', toolName = 'task') => {
       await emit('tool_execution_end', {
         type: 'tool_execution_end',
@@ -201,13 +241,19 @@ async function fixture(startup = true): Promise<Fixture> {
         isError: true
       })
     },
-    spawn: () =>
-      emit('before_subagent_spawn', {
-        agent: nativeName,
-        invocationKind: 'task',
-        spawnKey: 'controlled-child',
-        patterns: ['fixture/model']
-      }),
+    spawn: async () => {
+      let result: unknown
+      taskWork = async () => {
+        result = await emit('before_subagent_spawn', {
+          agent: nativeName,
+          invocationKind: 'task',
+          spawnKey: 'controlled-child',
+          patterns: ['fixture/model']
+        })
+      }
+      await taskTool.execute(lastAdmittedId, input)
+      return result
+    },
     changeActualScope: (field) => {
       if (field === 'journal') session.sessionFile = join(cwd, 'other-root.jsonl')
       else sessionManager.getSessionId = () => 'other-omp'
@@ -224,37 +270,33 @@ async function fixture(startup = true): Promise<Fixture> {
     replaceHook: () => {
       session.agent.beforeToolCall = async () => undefined
     },
-    admitChild: async (nativeId, beforeLifecycle = false) => {
-      const id = 'outer-' + nativeId
+    admitChild: async (
+      nativeId,
+      beforeLifecycle = false,
+      spawnKey = nativeId,
+      id = 'outer-' + nativeId,
+      extraNativeId
+    ) => {
       const result = await session.agent.beforeToolCall({
         tool: { name: 'task' },
         toolCall: { id, arguments: { ...input, i: 'Captured child' } },
         args: input
       } as Parameters<typeof previous>[0])
       assert.equal(result, undefined)
-      assert.equal(
-        await emit('before_subagent_spawn', {
-          agent: nativeName,
-          invocationKind: 'task',
-          spawnKey: nativeId,
-          patterns: ['fixture/model']
-        }),
-        undefined
-      )
-      const file = join(cwd, nativeId + '.jsonl')
-      const manager = {
-        getSessionId: () => 'omp-' + nativeId,
-        getHeader: () => ({ parentSession: root.rootSessionFile })
+      taskWork = async () => {
+        assert.equal(
+          await emit('before_subagent_spawn', {
+            agent: nativeName,
+            invocationKind: 'task',
+            spawnKey,
+            patterns: ['fixture/model']
+          }),
+          undefined
+        )
+        registerChild(nativeId)
+        if (extraNativeId) registerChild(extraNativeId)
       }
-      const child = {
-        id: nativeId,
-        kind: 'sub',
-        parentId: root.rootAgentId,
-        status: 'running',
-        sessionFile: file,
-        session: { sessionId: 'omp-' + nativeId, sessionFile: file, sessionManager: manager }
-      }
-      refs.set(nativeId, child)
+      await taskTool.execute(id, input)
       if (beforeLifecycle) return
       for (const listener of lifecycle)
         await listener(
@@ -264,11 +306,12 @@ async function fixture(startup = true): Promise<Fixture> {
             agent: nativeName,
             agentSource: 'user',
             parentToolCallId: id,
-            sessionFile: file
+            sessionFile: join(cwd, nativeId + '.jsonl')
           },
           ctx
         )
     },
+    registerChild,
     changeParent: (id, sequence) => {
       parent = Object.freeze({
         runId: id,
@@ -500,4 +543,33 @@ test('captured first child model request does not depend on a later started life
   await f.admitChild('child-first-model', true)
   assert.equal(f.admission.isChildStreamActive('child-first-model'), true)
   assert.equal(f.admission.isChildStreamActive('unknown-child'), false)
+})
+
+test('foreground unique native IDs preserve repeated labels and tool IDs across distinct parent runs', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('bounded-child', true, 'bounded-child', 'reused-task')
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+  await f.end('reused-task')
+  f.controller.abort()
+  f.changeParent('parent-B', 8)
+  await f.admitChild('bounded-child-2', true, 'bounded-child', 'reused-task')
+  assert.equal(f.admission.isChildStreamActive('bounded-child-2'), true)
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+  f.sealCurrentParent()
+  assert.equal(f.admission.isChildStreamActive('bounded-child-2'), false)
+  assert.equal(f.admission.isChildStreamActive('bounded-child'), true)
+})
+
+test('unnamed foreground dispatch binds only its actual registered actor within the admitted count', async (t) => {
+  const f = await fixture()
+  t.after(() => f.close())
+  await f.admitChild('GeneratedActor', true, 'outer-task:0', 'outer-task', 'extra-actor')
+  assert.equal(f.admission.isChildStreamActive('GeneratedActor'), true)
+  assert.equal(f.admission.isChildStreamActive('outer-task:0'), false)
+  assert.equal(f.admission.isChildStreamActive('extra-actor'), false)
+  f.registerChild('outside-dispatch')
+  assert.equal(f.admission.isChildStreamActive('outside-dispatch'), false)
+  f.registerChild('GeneratedActor')
+  assert.equal(f.admission.isChildStreamActive('GeneratedActor'), false)
 })
