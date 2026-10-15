@@ -13,6 +13,8 @@ import { cfgMemoryBackend } from '@oh-my-pi/pi-coding-agent/memory-backend/setti
 import {
   cfgCompactionEnabled,
   cfgCompactionMethodOrder,
+  cfgCompactionModelThresholds,
+  cfgCompactionModelThresholdsEnabled,
   cfgCompactionThresholdPercent,
   cfgCompactionThresholdTokens
 } from '@oh-my-pi/pi-coding-agent/session/context-settings'
@@ -222,4 +224,13 @@ export function applyAutoCompactionOverrides(
     thresholdTokens: overrides.thresholdPercent === undefined ? baseline.thresholdTokens : -1,
     methodOrder
   })
+}
+
+/** Controlled RPC policy cannot silently discard desktop model-specific threshold rules. */
+export function assertRpcCompactionPolicySupported(settings: Settings): void {
+  if (
+    cfgCompactionModelThresholdsEnabled.get(settings) &&
+    Object.keys(cfgCompactionModelThresholds.get(settings)).length
+  )
+    throw new Error('RPC compaction does not yet support inherited per-model thresholds')
 }

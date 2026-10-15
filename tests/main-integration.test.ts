@@ -248,6 +248,8 @@ type PromptOptions = {
 }
 let fakeRuntimeSessionCounter = 0
 
+type CompactionControl = { assertCurrent(): void }
+
 class FakeSession {
   readonly runtimeSessionId = `runtime-${++fakeRuntimeSessionCounter}`
   readonly messages: unknown[] = []
@@ -271,6 +273,12 @@ class FakeSession {
   contextUsageGate = Promise.resolve()
   autoCompactionOverrides: { enabled?: boolean; thresholdPercent?: 70 | 80 | 90 } = {}
   autoCompactionSettingsCalls = 0
+  getAutoCompactionSettings?: (control?: CompactionControl) => Promise<{
+    enabled: boolean
+    thresholdPercent: number
+    thresholdTokens: number
+    defaults?: { enabled: boolean; thresholdPercent: number; thresholdTokens: number }
+  }>
   compactCalls = 0
   compactGate = Promise.resolve()
   compactError?: Error
@@ -310,21 +318,28 @@ class FakeSession {
     await this.contextUsageGate
     return this.contextUsage
   }
-  async setAutoCompactionSettings(overrides: {
-    enabled?: boolean
-    thresholdPercent?: 70 | 80 | 90
-  }): Promise<void> {
+  async setAutoCompactionSettings(
+    overrides: {
+      enabled?: boolean
+      thresholdPercent?: 70 | 80 | 90
+    },
+    control?: CompactionControl
+  ): Promise<unknown> {
+    control?.assertCurrent()
     this.autoCompactionSettingsCalls += 1
     this.autoCompactionOverrides = { ...overrides }
+    return undefined
   }
-  async compact(): Promise<{
+  async compact(control?: CompactionControl): Promise<{
     summary: string
     shortSummary: string
     tokensBefore: number
     tokensAfter?: number
   }> {
+    control?.assertCurrent()
     this.compactCalls += 1
     await this.compactGate
+    control?.assertCurrent()
     if (this.compactError) throw this.compactError
     return {
       summary: 'Earlier work was summarized.',
@@ -363,6 +378,13 @@ type HarnessOptions = {
   remotePresentGate?: Promise<void>
   onRemotePresentInspect?: () => void
   routedRuntime?: (id: string) => boolean
+  compactionDefaultsRead?: () => Promise<{
+    enabled: boolean
+    thresholdPercent: number
+    thresholdTokens: number
+  }>
+  rpcCompactionPolicyRead?: (overrides: Record<string, unknown>) => Promise<unknown>
+  remoteHostBinding?: () => string
   remoteWrapperTarget?: boolean
 }
 type BrowserIntegrationView = {
@@ -1734,7 +1756,12 @@ async function harness(
         enabled: boolean
         thresholdPercent: number
         thresholdTokens: number
-      }> => ({ enabled: true, thresholdPercent: -1, thresholdTokens: -1 }),
+      }> =>
+        options.compactionDefaultsRead?.() ?? {
+          enabled: true,
+          thresholdPercent: -1,
+          thresholdTokens: -1
+        },
       createRuntimeResourceLoader: (options: Record<string, unknown>): unknown => {
         resourceLoaderOptions.push(options)
         return {
@@ -2375,7 +2402,18 @@ async function harness(
     './agent/engine/omp-bridge': { getOmpBridge: () => fakeOmpBridge },
     './agent/engine/in-process-engine': {
       getPhiEngine: () => phiEngine,
-      ownsRemoteRuntimeSession: (id: string) => options.routedRuntime?.(id) ?? false
+      ownsRemoteRuntimeSession: (id: string) => options.routedRuntime?.(id) ?? false,
+      readRpcCompactionPolicy: async (_agentDir: string, overrides: Record<string, unknown>) =>
+        options.rpcCompactionPolicyRead?.(overrides) ?? {
+          policy: {
+            enabled: true,
+            thresholdPercent: -1,
+            thresholdTokens: -1,
+            methodOrder: ['summary'],
+            ...overrides
+          },
+          defaults: { enabled: true, thresholdPercent: -1, thresholdTokens: -1 }
+        }
     },
     './agent/remote-session-routing': {
       createAppRemoteSessionManager: (cwd: string, phiSessionId: string, resume: boolean) => ({
@@ -3228,7 +3266,7 @@ async function harness(
       ],
       getRemoteHostProfile: (id: string) =>
         id === 'host-1'
-          ? { id, label: 'Cluster', hostAlias: 'cluster-one' }
+          ? { id, label: 'Cluster', hostAlias: options.remoteHostBinding?.() ?? 'cluster-one' }
           : id.startsWith('ssh-config:')
             ? {
                 id,
@@ -12947,3 +12985,633 @@ test('RPC selection accepts its own confirmed policy and checkpoint before main 
     'thinking-confirmed'
   )
 })
+
+test('RPC compaction main: saved automatic policy reaches startup without enabling other unsupported controls', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  await app.invoke('sessions:autoCompactionSettings:set', target, {
+    enabled: false,
+    thresholdPercent: 80
+  })
+  assert.equal(app.sessions.length, 0)
+  await app.invoke('agent:prompt', 'materialize saved compaction policy')
+  assert.deepEqual(app.createdAgentOptions[0].autoCompaction, {
+    enabled: false,
+    thresholdPercent: 80
+  })
+})
+
+test('RPC compaction main: confirmed live policy returns its baseline without postcommit reads', async () => {
+  let routed = false
+  let reads = 0
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    compactionDefaultsRead: async () => {
+      reads += 1
+      throw new Error('postcommit defaults unavailable')
+    }
+  })
+  const current = await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'materialize')
+  routed = true
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const baseline = { enabled: true, thresholdPercent: -1, thresholdTokens: 16384 }
+  app.sessions[0].setAutoCompactionSettings = async (overrides, control) => {
+    control?.assertCurrent()
+    return { ...baseline, ...overrides, defaults: baseline }
+  }
+  const saved = (await app.invoke('sessions:autoCompactionSettings:set', target, {
+    enabled: false,
+    thresholdPercent: 80
+  })) as Record<string, unknown>
+  assert.equal(reads, 0)
+  assert.equal(saved.enabled, false)
+  assert.equal(saved.thresholdPercent, 80)
+  assert.deepEqual(saved.defaults, baseline)
+  assert.deepEqual(app.updatedSessionManifests.at(-1)?.patch.autoCompaction, {
+    enabled: false,
+    thresholdPercent: 80
+  })
+  assert.equal(saved.phiSessionId, (current as { phiSessionId: string }).phiSessionId)
+})
+
+test('RPC compaction main: stale cold policy lookup cannot save into its old or next conversation', async () => {
+  const gate = deferred<void>()
+  let entered = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    rpcCompactionPolicyRead: async () => {
+      entered = true
+      await gate.promise
+      return {
+        policy: {
+          enabled: false,
+          thresholdPercent: 80,
+          thresholdTokens: -1,
+          methodOrder: ['summary']
+        },
+        defaults: { enabled: true, thresholdPercent: -1, thresholdTokens: -1 }
+      }
+    }
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const saving = app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false })
+  const rejected = assert.rejects(saving, /superseded|stale/i)
+  await tick()
+  assert.equal(entered, true)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const before = JSON.stringify(app.updatedSessionManifests)
+  gate.resolve()
+  await rejected
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.equal(app.sessions.length, 0)
+})
+
+test('RPC compaction main: a late live acknowledgement cannot save after host rebinding', async () => {
+  let routed = false
+  let binding = 'cluster-one'
+  const gate = deferred<void>()
+  let entered = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    remoteHostBinding: () => binding
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'materialize')
+  routed = true
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  app.sessions[0].setAutoCompactionSettings = async (_overrides, control) => {
+    entered = true
+    await gate.promise
+    control?.assertCurrent()
+    const defaults = { enabled: true, thresholdPercent: -1, thresholdTokens: -1 }
+    return { ...defaults, enabled: false, defaults }
+  }
+  const saving = app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false })
+  const rejected = assert.rejects(saving, /superseded|stale/i)
+  await tick()
+  assert.equal(entered, true)
+  binding = 'replacement-host'
+  const before = JSON.stringify(app.updatedSessionManifests)
+  gate.resolve()
+  await rejected
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+})
+
+test('RPC compaction main: stop waits for its selected manual owner and never aborts a peer', async () => {
+  const gate = deferred<void>()
+  const abortGate = deferred<void>()
+  const app = await harness()
+  const first = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', 'first')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const owner = app.sessions[0]
+  let entered = false
+  owner.compact = async (control) => {
+    entered = true
+    await gate.promise
+    control?.assertCurrent()
+    return { summary: 'summary', shortSummary: 'summary', tokensBefore: 0 }
+  }
+  owner.abort = async () => {
+    owner.log.push('abort')
+    await abortGate.promise
+    gate.resolve()
+  }
+  const compacting = app.invoke('sessions:compact', target)
+  const rejected = assert.rejects(compacting, /cancel|取消/i)
+  await tick()
+  assert.equal(entered, true)
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'peer')
+  await app.invoke('agent:stop')
+  assert.equal(owner.log.includes('abort'), false)
+  await app.invoke('sessions:switch', first.path)
+  let stopped = false
+  const stop = app.invoke('agent:stop').then(() => {
+    stopped = true
+  })
+  await tick()
+  assert.equal(stopped, false)
+  assert.equal(owner.log.filter((entry) => entry === 'abort').length, 1)
+  assert.equal(app.sessions[1].log.includes('abort'), false)
+  abortGate.resolve()
+  await stop
+  await rejected
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'context_compacted'
+    ),
+    false
+  )
+})
+
+test('RPC compaction main: live getters preserve the installed baseline during a prompt', async () => {
+  let routed = false
+  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', 'materialize')
+  routed = true
+  const session = app.sessions[0]
+  const defaults = { enabled: true, thresholdPercent: -1, thresholdTokens: 16384 }
+  session.getAutoCompactionSettings = async (control) => {
+    control?.assertCurrent()
+    return { enabled: false, thresholdPercent: 70, thresholdTokens: 16384, defaults }
+  }
+  session.hold = true
+  // Existing next-run model reconciliation requires a saved exact selection for RPC.
+  await app.invoke('models:select', 'openai', 'gpt-test')
+  const running = app.invoke('agent:prompt', 'hold')
+  await tick()
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const settings = (await app.invoke('sessions:autoCompactionSettings', target)) as Record<
+    string,
+    unknown
+  >
+  assert.equal(settings.enabled, false)
+  assert.equal(settings.thresholdPercent, 70)
+  assert.deepEqual(settings.defaults, defaults)
+  await assert.rejects(
+    app.invoke('sessions:autoCompactionSettings:set', target, { enabled: true }),
+    /运行结束/
+  )
+  await assert.rejects(app.invoke('sessions:compact', target), /运行结束/)
+  await app.invoke('agent:stop')
+  await running
+})
+
+test('RPC compaction main: stale manual initialization stops after registry lookup before creating a runtime', async () => {
+  const gate = deferred<void>()
+  let hold = false
+  let reached = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    modelRuntimeGet: async () => {
+      if (hold) {
+        reached = true
+        await gate.promise
+      }
+    }
+  })
+  const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: {
+      runtimeSessionPath: 'saved-rpc.jsonl',
+      runtimeRef: {
+        ompSessionId: 'saved-omp',
+        journalBasename: 'saved.jsonl',
+        checkpoint: { leafId: 'before' }
+      }
+    }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  hold = true
+  const compacting = app.invoke('sessions:compact', target)
+  const rejected = assert.rejects(compacting, /superseded|stale/i)
+  await tick()
+  assert.equal(reached, true)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const before = JSON.stringify(app.updatedSessionManifests)
+  gate.resolve()
+  await rejected
+  assert.equal(app.sessions.length, 0)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+})
+
+test('RPC compaction main: an automatic save awaits its original pending runtime before dispatch', async () => {
+  const gate = deferred<void>()
+  let hold = false
+  let reached = false
+  const app = await harness(undefined, {
+    modelRuntimeGet: async () => {
+      if (hold) {
+        reached = true
+        await gate.promise
+      }
+    }
+  })
+  const first = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: { runtimeSessionPath: 'saved-local.jsonl' }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  hold = true
+  const reading = app.invoke('sessions:contextUsage')
+  await tick()
+  assert.equal(reached, true)
+  const before = JSON.stringify(app.updatedSessionManifests)
+  let saved = false
+  const saving = app
+    .invoke('sessions:autoCompactionSettings:set', target, { enabled: false })
+    .then(() => {
+      saved = true
+    })
+  await tick()
+  assert.equal(saved, false)
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  gate.resolve()
+  await reading
+  await saving
+  assert.deepEqual(app.sessions[0].autoCompactionOverrides, { enabled: false })
+})
+
+test('RPC compaction main: stopped manual initialization cannot dispatch after the lookup resolves', async () => {
+  const gate = deferred<void>()
+  let hold = false
+  const app = await harness(undefined, {
+    modelRuntimeGet: async () => {
+      if (hold) await gate.promise
+    }
+  })
+  const first = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: { runtimeSessionPath: 'saved-local.jsonl' }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  hold = true
+  const compacting = app.invoke('sessions:compact', target)
+  const rejected = assert.rejects(compacting, /superseded|stale|取消/i)
+  await tick()
+  let stopped = false
+  const stopping = app.invoke('agent:stop').then(() => {
+    stopped = true
+  })
+  await tick()
+  assert.equal(stopped, false)
+  gate.resolve()
+  await stopping
+  await rejected
+  assert.equal(app.sessions.length, 0)
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'context_compacted'
+    ),
+    false
+  )
+})
+
+test('RPC compaction main: a failed local defaults read cannot produce a saved false failure', async () => {
+  const error = new Error('desktop policy unavailable')
+  const app = await harness(undefined, {
+    compactionDefaultsRead: async () => {
+      throw error
+    }
+  })
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'materialize')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const before = JSON.stringify(app.updatedSessionManifests)
+  await assert.rejects(
+    app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false }),
+    error
+  )
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.equal(app.sessions[0].autoCompactionSettingsCalls, 1)
+})
+
+test('RPC compaction main: a persisted runtime reference supports manual compaction and usage without a legacy path', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize')
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: {
+      runtimeSessionPath: undefined,
+      runtimeRef: {
+        ompSessionId: 'saved-omp',
+        journalBasename: 'saved.jsonl',
+        checkpoint: { leafId: 'before' }
+      }
+    }
+  })
+  app.sessions[0].contextUsage = { tokens: 5000, contextWindow: 200000, percent: 2.5 }
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const result = (await app.invoke('sessions:compact', target)) as {
+    phiSessionId: string
+    tokensAfter: number
+  }
+  assert.equal(result.phiSessionId, first.phiSessionId)
+  assert.equal(result.tokensAfter, 5000)
+  assert.equal(app.sessions[0].compactCalls, 1)
+  const usage = (await app.invoke('sessions:contextUsage')) as {
+    usage: FakeSession['contextUsage']
+  }
+  assert.deepEqual(usage.usage, app.sessions[0].contextUsage)
+})
+
+test('RPC compaction main: its own cold resume preserves the initiating view generation', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: {
+      runtimeRef: {
+        ompSessionId: 'saved-omp',
+        journalBasename: 'saved.jsonl',
+        checkpoint: { leafId: 'before' }
+      },
+      autoCompaction: { enabled: false, thresholdPercent: 90 }
+    }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const result = (await app.invoke('sessions:compact', target)) as { phiSessionId: string }
+  assert.equal(result.phiSessionId, first.phiSessionId)
+  assert.equal(app.sessions.length, 1)
+  assert.equal(app.sessions[0].compactCalls, 1)
+  assert.deepEqual(app.createdAgentOptions[0].autoCompaction, {
+    enabled: false,
+    thresholdPercent: 90
+  })
+  assert.deepEqual(compactionTarget(await app.invoke('sessions:current')), target)
+  const notices = app.events.filter(
+    (event) =>
+      event.channel === 'agent:event' &&
+      (event.data as { type?: string }).type === 'context_compacted'
+  )
+  assert.equal(notices.length, 1)
+  assert.equal(
+    (notices[0].data as { sessionGeneration: number }).sessionGeneration,
+    target.sessionGeneration
+  )
+})
+
+for (const boundary of ['navigation', 'lifecycle'] as const)
+  test(`RPC compaction main: late live policy acknowledgement rejects ${boundary} replacement without saving`, async () => {
+    let routed = false
+    const gate = deferred<void>()
+    let entered = false
+    const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+    await app.invoke('projects:newRemoteSession', 'remote-project-1')
+    await app.invoke('agent:prompt', 'materialize')
+    routed = true
+    const target = compactionTarget(await app.invoke('sessions:current'))
+    app.sessions[0].setAutoCompactionSettings = async (_overrides, control) => {
+      entered = true
+      await gate.promise
+      control?.assertCurrent()
+      const defaults = { enabled: true, thresholdPercent: -1, thresholdTokens: -1 }
+      return { ...defaults, enabled: false, defaults }
+    }
+    const saving = app.invoke('sessions:autoCompactionSettings:set', target, { enabled: false })
+    const rejected = assert.rejects(saving, /superseded|stale/i)
+    await tick()
+    assert.equal(entered, true)
+    if (boundary === 'navigation') await app.invoke('projects:newRemoteSession', 'remote-project-1')
+    else await app.invoke('sessions:updatePermissionMode', 'auto')
+    const before = JSON.stringify(app.updatedSessionManifests)
+    gate.resolve()
+    await rejected
+    assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  })
+
+test('RPC compaction main: accepted manual work continues on its owner after navigation', async () => {
+  const gate = deferred<void>()
+  const app = await harness()
+  const first = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  await app.invoke('agent:prompt', 'materialize')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const owner = app.sessions[0]
+  owner.compactGate = gate.promise
+  const compacting = app.invoke('sessions:compact', target)
+  await tick()
+  assert.equal(owner.compactCalls, 1)
+  const second = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  const beforePeer = await app.invoke('sessions:current')
+  gate.resolve()
+  const outcome = (await compacting) as { phiSessionId: string }
+  assert.equal(outcome.phiSessionId, first.phiSessionId)
+  assert.deepEqual(await app.invoke('sessions:current'), beforePeer)
+  const notices = app.appendedSessionEvents.filter(
+    (entry) => (entry.event as { type?: string }).type === 'context_compacted'
+  )
+  assert.equal(notices.length, 1)
+  assert.equal(notices[0].sessionId, first.phiSessionId)
+  assert.notEqual(notices[0].sessionId, second.phiSessionId)
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'context_compaction_failed'
+    ),
+    false
+  )
+  assert.equal(owner.log.includes('abort'), false)
+  assert.equal(owner.log.includes('dispose'), false)
+})
+
+test('RPC compaction main: an adopted RPC reference never falls back to legacy when routing is disabled', async () => {
+  const app = await harness()
+  const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: {
+      runtimeRef: {
+        ompSessionId: 'saved-omp',
+        journalBasename: 'saved.jsonl',
+        checkpoint: { leafId: 'before' }
+      }
+    }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  await assert.rejects(app.invoke('sessions:compact', target), /远程 RPC.*显式恢复/)
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.createdAgentOptions.length, 0)
+})
+
+test('RPC compaction main: a cancelled async bootstrap disposes only its own result before dispatch', async () => {
+  const gate = deferred<void>()
+  let entered = false
+  const app = await harness(async (_cwd, file) => {
+    entered = true
+    await gate.promise
+    return new FakeSession(file)
+  })
+  const first = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: { runtimeSessionPath: 'saved-local.jsonl' }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const compacting = app.invoke('sessions:compact', target)
+  const rejected = assert.rejects(compacting, /superseded|stale|取消/i)
+  await tick()
+  assert.equal(entered, true)
+  const stopping = app.invoke('agent:stop')
+  gate.resolve()
+  await stopping
+  await rejected
+  assert.equal(app.sessions.length, 1)
+  assert.equal(app.sessions[0].compactCalls, 0)
+  assert.deepEqual(app.sessions[0].log, ['abort', 'dispose'])
+})
+
+test('RPC compaction main: stop preserves an abort error after awaiting the same manual terminal event', async () => {
+  const gate = deferred<void>()
+  const abortError = new Error('abort acknowledgement failed')
+  const app = await harness()
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'materialize')
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  app.sessions[0].compactGate = gate.promise
+  app.sessions[0].abort = async () => {
+    throw abortError
+  }
+  const compacting = app.invoke('sessions:compact', target)
+  const compactRejected = assert.rejects(compacting, /取消/)
+  await tick()
+  let returned = false
+  const stopping = app.invoke('agent:stop').finally(() => {
+    returned = true
+  })
+  const stopRejected = assert.rejects(stopping, (error) => error === abortError)
+  await tick()
+  assert.equal(returned, false)
+  gate.resolve()
+  await stopRejected
+  await compactRejected
+})
+
+test('RPC compaction main: stale bootstrap still disposes its owned result when abort cleanup fails', async () => {
+  const gate = deferred<void>()
+  const cleanupError = new Error('owned abort acknowledgement failed')
+  let entered = false
+  const app = await harness(async (_cwd, file) => {
+    entered = true
+    await gate.promise
+    const session = new FakeSession(file)
+    session.abort = async () => {
+      session.log.push('abort')
+      throw cleanupError
+    }
+    return session
+  })
+  const first = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  app.updatedSessionManifests.push({
+    sessionId: first.phiSessionId,
+    patch: { runtimeSessionPath: 'saved-local.jsonl' }
+  })
+  const target = compactionTarget(await app.invoke('sessions:current'))
+  const compacting = app.invoke('sessions:compact', target)
+  const rejected = assert.rejects(
+    compacting,
+    (error) =>
+      error !== cleanupError &&
+      error instanceof Error &&
+      /superseded|stale|取消/i.test(error.message)
+  )
+  await tick()
+  assert.equal(entered, true)
+  const stopping = app.invoke('agent:stop')
+  gate.resolve()
+  await stopping
+  await rejected
+  assert.equal(app.sessions.length, 1)
+  assert.equal(app.sessions[0].compactCalls, 0)
+  assert.deepEqual(app.sessions[0].log, ['abort', 'dispose'])
+})
+
+for (const boundary of ['lifecycle', 'host', 'journal'] as const)
+  test(`RPC compaction main: accepted manual work still rejects its own ${boundary} replacement`, async () => {
+    const gate = deferred<void>()
+    let host = 'cluster-one'
+    const app = await harness(undefined, { remoteRpc: true, remoteHostBinding: () => host })
+    const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+      phiSessionId: string
+    }
+    await app.invoke('agent:prompt', 'materialize')
+    const reference = {
+      ompSessionId: 'saved-omp',
+      journalBasename: 'saved.jsonl',
+      checkpoint: { leafId: 'before' }
+    }
+    app.updatedSessionManifests.push({
+      sessionId: first.phiSessionId,
+      patch: { runtimeRef: reference }
+    })
+    const target = compactionTarget(await app.invoke('sessions:current'))
+    const owner = app.sessions[0]
+    owner.compactGate = gate.promise
+    const compacting = app.invoke('sessions:compact', target)
+    const rejected = assert.rejects(compacting, /superseded|stale/i)
+    await tick()
+    assert.equal(owner.compactCalls, 1)
+    if (boundary === 'lifecycle') await app.invoke('sessions:updatePermissionMode', 'auto')
+    const second = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+      phiSessionId: string
+    }
+    if (boundary === 'host') host = 'replacement-host'
+    if (boundary === 'journal')
+      app.updatedSessionManifests.push({
+        sessionId: first.phiSessionId,
+        patch: { runtimeRef: { ...reference, journalBasename: 'replacement.jsonl' } }
+      })
+    const beforePeer = await app.invoke('sessions:current')
+    gate.resolve()
+    await rejected
+    assert.deepEqual(await app.invoke('sessions:current'), beforePeer)
+    const failures = app.appendedSessionEvents.filter(
+      (entry) => (entry.event as { type?: string }).type === 'context_compaction_failed'
+    )
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0].sessionId, first.phiSessionId)
+    assert.notEqual(failures[0].sessionId, second.phiSessionId)
+    assert.equal(
+      app.appendedSessionEvents.some(
+        (entry) => (entry.event as { type?: string }).type === 'context_compacted'
+      ),
+      false
+    )
+  })

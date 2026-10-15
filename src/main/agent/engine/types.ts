@@ -37,6 +37,13 @@ export interface PhiCompactionSettings {
   thresholdTokens: number
   methodOrder: PhiCompactionMethod[]
 }
+export interface ResolvedRuntimeCompactionPolicy {
+  policy: PhiCompactionSettings
+  defaults: AutoCompactionDefaults
+}
+export interface RuntimeAutoCompactionReceipt extends AutoCompactionDefaults {
+  defaults?: AutoCompactionDefaults
+}
 
 export type PhiWebSearchProvider =
   | 'perplexity'
@@ -406,14 +413,24 @@ export interface PhiEngine {
     ): Promise<WorkerSessionState>
     rename(params: { sessionId: string; name: string }): Promise<WorkerSessionState>
     contextUsage(params: { sessionId: string }): Promise<ContextUsageSnapshot | null>
-    compact(params: { sessionId: string }): Promise<{
+    compact(
+      params: { sessionId: string },
+      control?: RuntimeSelectionControl
+    ): Promise<{
       summary: ContextCompactionSummary
       state: WorkerSessionState
     }>
-    setAutoCompactionSettings(params: {
-      sessionId: string
-      overrides: AutoCompactionOverrides
-    }): Promise<unknown>
+    setAutoCompactionSettings(
+      params: {
+        sessionId: string
+        overrides: AutoCompactionOverrides
+      },
+      control?: RuntimeSelectionControl
+    ): Promise<unknown>
+    autoCompactionSettings?(
+      params: { sessionId: string },
+      control?: RuntimeSelectionControl
+    ): Promise<RuntimeAutoCompactionReceipt>
     enterPlanMode(params: { sessionId: string }): Promise<unknown>
     has(sessionId: string): boolean
   }

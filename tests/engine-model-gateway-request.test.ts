@@ -262,3 +262,28 @@ test('actual body bytes are bounded without a Content-Length header', async () =
   assert.equal(reads, 65)
   assert.equal(canceled, 1)
 })
+
+test('maintenance local Codex context is discarded without accepting unrelated native options', () => {
+  const codexCompaction = {
+    operationId: 'd21aa56c-f47e-4c45-9e36-65aa33e1fe0a',
+    trigger: 'manual',
+    reason: 'user_requested',
+    implementation: 'responses',
+    phase: 'standalone_turn',
+    strategy: 'memento'
+  }
+  const request = validateGatewayPayload(
+    payload({ codexCompaction, maxTokens: 13107 }),
+    'owned-lease'
+  )
+  assert.equal(Object.hasOwn(request.options, 'codexCompaction'), false)
+  assert.equal(request.options.maxTokens, 13107)
+  assert.throws(
+    () =>
+      validateGatewayPayload(
+        payload({ codexCompaction, unknownCompactionAuthority: { enabled: true } }),
+        'owned-lease'
+      ),
+    GatewayInputError
+  )
+})

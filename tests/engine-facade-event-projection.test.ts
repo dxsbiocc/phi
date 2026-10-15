@@ -157,3 +157,48 @@ test('reserved phi-child tool carriers and their results remain private; legal s
     /private dispatcher failed/
   )
 })
+
+test('verified compaction history exposes display fields while stripping provider and authority payloads', () => {
+  const projector = new RpcFacadeEventProjector()
+  const display = {
+    role: 'compactionSummary',
+    summary: 'Confirmed compacted history',
+    shortSummary: 'Retained facts',
+    tokensBefore: 0,
+    tokensAfter: 12.5,
+    timestamp: 123,
+    method: 'soft',
+    blocks: [
+      { type: 'text', text: 'Display block' },
+      { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }
+    ]
+  }
+  assert.deepEqual(
+    projector.messages([
+      {
+        ...display,
+        providerPayload: { credential: 'PRIVATE_PROVIDER_SENTINEL' },
+        authority: 'PRIVATE_AUTHORITY_SENTINEL'
+      }
+    ]),
+    [display]
+  )
+})
+
+test('malformed compaction messages and unrelated custom roles still fail public history projection', () => {
+  for (const message of [
+    { role: 'compactionSummary', summary: 'Summary', timestamp: 1, tokensBefore: -1 },
+    {
+      role: 'compactionSummary',
+      summary: 'Summary',
+      timestamp: 1,
+      tokensBefore: 0,
+      blocks: [{ type: 'image', url: 'https://external.invalid/image' }]
+    },
+    { role: 'unknownCustomRole', summary: 'Summary', timestamp: 1 }
+  ])
+    assert.throws(
+      () => new RpcFacadeEventProjector().messages([message]),
+      /Unsupported remote public history/
+    )
+})

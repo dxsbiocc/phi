@@ -122,6 +122,40 @@ export class RpcFacadeEventProjector {
   message(raw: unknown): PhiEventMessage | undefined {
     try {
       if (!record(raw) || !number(raw.timestamp)) return undefined
+      if (raw.role === 'compactionSummary') {
+        if (
+          !text(raw.summary) ||
+          !number(raw.tokensBefore) ||
+          (raw.shortSummary !== undefined && !text(raw.shortSummary)) ||
+          (raw.tokensAfter !== undefined && !number(raw.tokensAfter)) ||
+          (raw.method !== undefined &&
+            (!text(raw.method) ||
+              !['remote', 'snapcompact', 'handoff', 'shake', 'soft'].includes(raw.method))) ||
+          (raw.warning !== undefined && !text(raw.warning)) ||
+          (raw.historyRewriteAt !== undefined && !number(raw.historyRewriteAt))
+        )
+          return undefined
+        const blocks = raw.blocks === undefined ? undefined : toolContent(raw.blocks)
+        const images = raw.images === undefined ? undefined : toolContent(raw.images)
+        if (
+          (raw.blocks !== undefined && !blocks) ||
+          (raw.images !== undefined && (!images || images.some((part) => part.type !== 'image')))
+        )
+          return undefined
+        return {
+          role: 'compactionSummary',
+          summary: raw.summary,
+          tokensBefore: raw.tokensBefore,
+          timestamp: raw.timestamp,
+          ...(raw.shortSummary === undefined ? {} : { shortSummary: raw.shortSummary }),
+          ...(raw.tokensAfter === undefined ? {} : { tokensAfter: raw.tokensAfter }),
+          ...(raw.method === undefined ? {} : { method: raw.method }),
+          ...(raw.warning === undefined ? {} : { warning: raw.warning }),
+          ...(raw.historyRewriteAt === undefined ? {} : { historyRewriteAt: raw.historyRewriteAt }),
+          ...(blocks ? { blocks } : {}),
+          ...(images ? { images } : {})
+        }
+      }
       if (
         (raw.role === 'user' || raw.role === 'developer') &&
         (text(raw.content) || Array.isArray(raw.content))

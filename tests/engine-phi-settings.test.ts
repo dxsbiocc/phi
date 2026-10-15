@@ -43,6 +43,7 @@ import { resolveRoleChain } from '@oh-my-pi/pi-coding-agent/config/model-resolve
 import { getBundledModels } from '@oh-my-pi/pi-catalog/models'
 import {
   applyAutoCompactionOverrides,
+  assertRpcCompactionPolicySupported,
   createPhiSettings
 } from ${JSON.stringify(PHI_SETTINGS_MODULE_URL)}
 
@@ -701,4 +702,19 @@ return { before, after: phi.webSearch.read() }
   assert.equal(result.after.order[0], 'google')
   assert.ok(!result.after.excluded.includes('google'))
   assert.ok(result.after.excluded.includes('exa'))
+})
+
+test('RPC policy rejects inherited model maps even when automatic maintenance is disabled', async () => {
+  const accepted = await runSettingsScenario<boolean[]>(`
+return [
+  { enabled: false, methodOrder: [], modelThresholds: { 'fixture/model': '90%' } },
+  { enabled: true, methodOrder: ['soft'], modelThresholds: { 'fixture/model': '90%' } },
+  { enabled: false, methodOrder: [], modelThresholdsEnabled: false, modelThresholds: { 'fixture/model': '90%' } },
+  { enabled: true, methodOrder: ['soft'], modelThresholds: {} }
+].map(compaction => {
+  try { assertRpcCompactionPolicySupported(Settings.isolated({compaction})); return true }
+  catch { return false }
+})
+`)
+  assert.deepEqual(accepted, [false, false, true, true])
 })

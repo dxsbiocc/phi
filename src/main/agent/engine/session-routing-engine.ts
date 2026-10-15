@@ -1,4 +1,9 @@
 import type { ContextUsageSnapshot } from '../../../shared/contextUsageTypes'
+import type {
+  AutoCompactionDefaults,
+  AutoCompactionOverrides,
+  ContextCompactionSummary
+} from '../../../shared/contextUsageTypes'
 import type { PhiAgentEvent } from './event-types'
 import type {
   PhiEngine,
@@ -8,6 +13,7 @@ import type {
   RuntimeSelectionControl,
   ThinkingLevel
 } from './types'
+import type { RuntimeAutoCompactionReceipt } from './types'
 import { findPhiSessionById, listPhiSessions } from '../session/session-store'
 import { phiSessionIdFromPath } from '../session/sessions'
 import { excludesManifestLocalJournalPath } from '../session/manifest-file'
@@ -20,6 +26,14 @@ export class RemoteSessionCapabilityError extends Error {
   }
 }
 export interface RoutedSessionDriver {
+  autoCompactionSettings?(control?: RuntimeSelectionControl): Promise<RuntimeAutoCompactionReceipt>
+  compact?(
+    control?: RuntimeSelectionControl
+  ): Promise<{ summary: ContextCompactionSummary; state: WorkerSessionState }>
+  setAutoCompactionSettings?(
+    overrides: AutoCompactionOverrides,
+    control?: RuntimeSelectionControl
+  ): Promise<AutoCompactionDefaults>
   readonly isLive: boolean
   state(): WorkerSessionState
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
@@ -127,6 +141,18 @@ export class SessionRoutingEngine implements PhiEngine {
       throw new RemoteSessionCapabilityError(operation)
   }
   readonly sessions: PhiEngine['sessions'] = {
+    autoCompactionSettings: async (params, control) => {
+      const owner = this.owned(params.sessionId)
+      if (owner) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.autoCompactionSettings)
+          throw new RemoteSessionCapabilityError('auto compaction settings')
+        return driver.autoCompactionSettings(control)
+      }
+      if (!this.legacy.sessions.autoCompactionSettings)
+        throw new Error('Live compaction settings are unavailable')
+      return this.legacy.sessions.autoCompactionSettings(params, control)
+    },
     create: async (params) => {
       if (this.owns(params.sessionId))
         throw new RuntimeReferenceError(
@@ -258,12 +284,21 @@ export class SessionRoutingEngine implements PhiEngine {
       if (this.owns(params.sessionId)) return this.driver(params.sessionId).contextUsage()
       return this.legacy.sessions.contextUsage(params)
     },
-    compact: async (params) => {
-      this.unsupported(params.sessionId, 'compact')
+    compact: async (params, control) => {
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.compact) throw new RemoteSessionCapabilityError('compact')
+        return driver.compact(control)
+      }
       return this.legacy.sessions.compact(params)
     },
-    setAutoCompactionSettings: async (params) => {
-      this.unsupported(params.sessionId, 'setAutoCompactionSettings')
+    setAutoCompactionSettings: async (params, control) => {
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.setAutoCompactionSettings)
+          throw new RemoteSessionCapabilityError('setAutoCompactionSettings')
+        return driver.setAutoCompactionSettings(params.overrides, control)
+      }
       return this.legacy.sessions.setAutoCompactionSettings(params)
     },
     enterPlanMode: async (params) => {
