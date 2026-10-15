@@ -10,6 +10,7 @@ import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProject
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 import type { RetainedBackgroundJob } from './backgroundJobHistory'
 
@@ -39,8 +40,27 @@ export type LiveBackgroundJob =
       setup: McpConnectorSetupProgress
     }
   | { kind: 'jupyter'; key: string; active: boolean; timestamp: string; job: RemoteJupyterStartJob }
+  | {
+      kind: 'notebook-ai'
+      key: string
+      active: boolean
+      timestamp: string
+      job: NotebookAiGenerationJob
+    }
 
 export type UnifiedBackgroundJob = LiveBackgroundJob | RetainedBackgroundJob
+
+export function notebookAiBackgroundJob(
+  job: NotebookAiGenerationJob
+): Extract<LiveBackgroundJob, { kind: 'notebook-ai' }> {
+  return {
+    kind: 'notebook-ai',
+    key: `notebook-ai:${job.id}`,
+    active: job.state === 'running',
+    timestamp: job.completedAt ?? job.startedAt,
+    job
+  }
+}
 
 const ACTIVE_WRAPPER_STATES = new Set<WrapperRun['state']>([
   'created',
@@ -165,7 +185,8 @@ export function selectBackgroundJobs(
   environments: readonly EnvironmentBuild[] = [],
   connectors: readonly McpConnectorSetupProgress[] = [],
   uploads: readonly RemoteProjectUploadJob[] = [],
-  jupyterJobs: readonly RemoteJupyterStartJob[] = []
+  jupyterJobs: readonly RemoteJupyterStartJob[] = [],
+  notebookAiJobs: readonly NotebookAiGenerationJob[] = []
 ): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 50
   const items: LiveBackgroundJob[] = [
@@ -227,7 +248,8 @@ export function selectBackgroundJobs(
       active: job.state === 'running',
       timestamp: job.finishedAt ?? job.startedAt,
       job
-    }))
+    })),
+    ...notebookAiJobs.map(notebookAiBackgroundJob)
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
     right.timestamp.localeCompare(left.timestamp)
@@ -253,7 +275,9 @@ function belongsInFinishedTray(item: LiveBackgroundJob, query: BackgroundJobQuer
           ? item.timestamp
           : item.kind === 'jupyter'
             ? item.job.finishedAt
-            : item.run.completedAt
+            : item.kind === 'notebook-ai'
+              ? item.job.completedAt
+              : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
 }
 

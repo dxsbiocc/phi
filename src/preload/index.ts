@@ -32,6 +32,7 @@ import type {
 } from '../shared/projectLocation'
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -1031,6 +1032,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
     cwd: string,
     input: AnalysisNotebookFormatInput
   ) => Promise<AnalysisNotebookFormatResult>
+  listNotebookAiGenerationJobs: () => Promise<NotebookAiGenerationJob[]>
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
@@ -1684,6 +1686,8 @@ const api: RendererAuthApi = {
     input: AnalysisNotebookFormatInput
   ): Promise<AnalysisNotebookFormatResult> =>
     ipcRenderer.invoke('analysis:formatNotebookCell', cwd, input),
+  listNotebookAiGenerationJobs: (): Promise<NotebookAiGenerationJob[]> =>
+    ipcRenderer.invoke('analysis:listNotebookAiGenerationJobs'),
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,

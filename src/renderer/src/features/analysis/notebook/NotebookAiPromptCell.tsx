@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react'
 import {
   Alert,
   AlertTitle,
@@ -20,6 +20,7 @@ import { alpha, type Theme } from '@mui/material/styles'
 import { TbGripVertical, TbSparkles } from 'react-icons/tb'
 
 import { ModelSelectorControl } from '../../../components/chat/ChatComposerControls'
+import { compactComposerIconButtonSx } from '../../../components/chat/composerControlStyles'
 import { PhiIcons } from '../../../icons'
 import { getProviderErrorDisplay } from '../../../lib/providerErrors'
 import {
@@ -141,7 +142,7 @@ function NotebookContextPreview({
   reference: AnalysisNotebookContextReference
 }): React.JSX.Element {
   const preview = reference.preview
-  const kindLabel = notebookContextKindLabel(reference.kind)
+  const kindLabel = notebookContextKindLabel(reference.kind, reference.detail)
 
   return (
     <>
@@ -296,11 +297,13 @@ export default function NotebookAiPromptCell({
         ? '生成预览'
         : '输入需求后生成'
   const promptCellRef = useRef<HTMLDivElement | null>(null)
+  const promptShellRef = useRef<HTMLDivElement | null>(null)
   const promptInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
   const contextOptionListRef = useRef<HTMLDivElement | null>(null)
   const contextOptionRefs = useRef(new Map<string, HTMLDivElement>())
   const pendingPromptCursorRef = useRef<number | null>(null)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
+  const [compactControls, setCompactControls] = useState(false)
   const [languageMenuAnchor, setLanguageMenuAnchor] = useState<HTMLElement | null>(null)
   const [activeContextOptionId, setActiveContextOptionId] = useState<string | null>(null)
   const [dismissedContextMentionKey, setDismissedContextMentionKey] = useState<string | null>(null)
@@ -316,7 +319,7 @@ export default function NotebookAiPromptCell({
     Boolean(activeContextMentionKey && activeContextMentionKey !== dismissedContextMentionKey)
   const selectedReferenceIds = new Set(references.map((reference) => reference.id))
   const groupedContextOptions = filteredContextOptions.reduce((groups, option) => {
-    const label = notebookContextKindLabel(option.kind)
+    const label = notebookContextKindLabel(option.kind, option.detail)
     groups.set(label, [...(groups.get(label) ?? []), option])
     return groups
   }, new Map<string, AnalysisNotebookContextReference[]>())
@@ -359,6 +362,25 @@ export default function NotebookAiPromptCell({
   ): void => {
     setPromptCursorPosition(element?.selectionStart ?? prompt.length)
   }
+  useLayoutEffect(() => {
+    const shell = promptShellRef.current
+    if (!shell) return
+
+    const updateCompactControls = (): void => {
+      const width = shell.getBoundingClientRect().width
+      if (width <= 0 || width < 520 === compactControls) return
+      setLanguageMenuAnchor(null)
+      setCompactControls(width < 520)
+    }
+    updateCompactControls()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateCompactControls)
+      return () => window.removeEventListener('resize', updateCompactControls)
+    }
+    const observer = new ResizeObserver(updateCompactControls)
+    observer.observe(shell)
+    return () => observer.disconnect()
+  }, [compactControls])
   useEffect(() => {
     if (!showContextMenu) return
 
@@ -424,6 +446,9 @@ export default function NotebookAiPromptCell({
     >
       <Box />
       <Box
+        ref={promptShellRef}
+        data-phi-notebook-ai-prompt-shell="true"
+        data-phi-notebook-ai-compact-controls={compactControls ? 'true' : 'false'}
         sx={{
           position: 'relative',
           border: 1,
@@ -662,7 +687,8 @@ export default function NotebookAiPromptCell({
                                 whiteSpace: 'nowrap'
                               }}
                             >
-                              {option.detail ?? notebookContextKindLabel(option.kind)}
+                              {option.detail ??
+                                notebookContextKindLabel(option.kind, option.detail)}
                             </Typography>
                           </ListItemButton>
                         ))}
@@ -699,6 +725,7 @@ export default function NotebookAiPromptCell({
           </Tooltip>
         </Box>
         <Box
+          data-phi-notebook-ai-controls="true"
           sx={{
             display: 'flex',
             alignItems: 'center',
@@ -708,31 +735,53 @@ export default function NotebookAiPromptCell({
             pt: 0.4
           }}
         >
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={isGenerating}
-            data-phi-notebook-ai-target-language={
-              isMarkdownTarget ? 'markdown' : codeAction.language
-            }
-            startIcon={targetAction.renderIcon(false)}
-            onClick={(event) => setLanguageMenuAnchor(event.currentTarget)}
-            sx={{
-              height: 32,
-              minWidth: 112,
-              borderRadius: 1,
-              justifyContent: 'flex-start',
-              color: 'text.secondary',
-              textTransform: 'none',
-              fontWeight: 700,
-              '&.Mui-disabled': {
-                borderColor: (theme) => alpha(theme.palette.text.primary, 0.12),
-                color: 'text.secondary'
-              }
-            }}
-          >
-            {targetAction.label}
-          </Button>
+          <Tooltip title={`生成语言：${targetAction.label}`}>
+            <span>
+              {compactControls ? (
+                <IconButton
+                  size="small"
+                  disabled={isGenerating}
+                  aria-label={`选择生成语言：${targetAction.label}`}
+                  data-phi-notebook-ai-target-language={
+                    isMarkdownTarget ? 'markdown' : codeAction.language
+                  }
+                  data-phi-notebook-ai-target-language-compact="true"
+                  onClick={(event) => setLanguageMenuAnchor(event.currentTarget)}
+                  sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
+                >
+                  {targetAction.renderIcon(isGenerating)}
+                </IconButton>
+              ) : (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={isGenerating}
+                  aria-label={`选择生成语言：${targetAction.label}`}
+                  data-phi-notebook-ai-target-language={
+                    isMarkdownTarget ? 'markdown' : codeAction.language
+                  }
+                  data-phi-notebook-ai-target-language-compact="false"
+                  startIcon={targetAction.renderIcon(false)}
+                  onClick={(event) => setLanguageMenuAnchor(event.currentTarget)}
+                  sx={{
+                    height: 32,
+                    minWidth: 112,
+                    borderRadius: 1,
+                    justifyContent: 'flex-start',
+                    color: 'text.secondary',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    '&.Mui-disabled': {
+                      borderColor: (theme) => alpha(theme.palette.text.primary, 0.12),
+                      color: 'text.secondary'
+                    }
+                  }}
+                >
+                  {targetAction.label}
+                </Button>
+              )}
+            </span>
+          </Tooltip>
           <Menu
             anchorEl={languageMenuAnchor}
             open={Boolean(languageMenuAnchor)}
@@ -762,12 +811,18 @@ export default function NotebookAiPromptCell({
               <ListItemText primary="Markdown" secondary="生成说明文字，不生成代码" />
             </MenuItem>
           </Menu>
-          <Box data-phi-notebook-ai-model-selector="true" sx={{ minWidth: 0 }}>
+          <Box
+            data-phi-notebook-ai-model-selector="true"
+            data-phi-notebook-ai-model-selector-compact={compactControls ? 'true' : 'false'}
+            sx={{ minWidth: 0, flexShrink: compactControls ? 0 : 1 }}
+          >
             <ModelSelectorControl
+              key={compactControls ? 'compact' : 'regular'}
               models={modelOptions}
               selectedModel={selectedModel}
               onSelectModel={onModelChange}
               disabled={isGenerating}
+              compact={compactControls}
             />
           </Box>
           <Box sx={{ flex: 1 }} />
@@ -827,6 +882,15 @@ export default function NotebookAiPromptCell({
             </span>
           </Tooltip>
         </Box>
+        {!compactControls ? (
+          <Typography
+            data-phi-notebook-ai-background-job-hint="true"
+            variant="caption"
+            sx={{ display: 'block', px: 1.2, pb: 1, color: 'text.secondary', lineHeight: 1.5 }}
+          >
+            生成进度可在右上角「后台任务」查看。
+          </Typography>
+        ) : null}
         {error && errorOutputText && errorDisplay ? (
           <Box
             data-phi-notebook-ai-error-output="true"

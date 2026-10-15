@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
-import { GoScreenFull, GoScreenNormal, GoX } from 'react-icons/go'
+import { GoScreenFull, GoScreenNormal, GoSync, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
 import { workspacePanelActionSize, workspacePanelGap, workspacePanelHeaderHeight } from '../layout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
@@ -26,12 +26,14 @@ function WorkspaceSidePanelSlotActions({
   mode,
   maximized,
   showLayoutAction,
+  onRefreshJobs,
   onToggleMaximized,
   onClose
 }: {
   mode: WorkspaceSidePanelMode
   maximized: boolean
   showLayoutAction: boolean
+  onRefreshJobs?: () => void
   onToggleMaximized: () => void
   onClose: () => void
 }): React.JSX.Element {
@@ -71,6 +73,13 @@ function WorkspaceSidePanelSlotActions({
           </IconButton>
         </Tooltip>
       ) : null}
+      {mode === 'jobs' && onRefreshJobs ? (
+        <Tooltip title="刷新后台任务">
+          <IconButton type="button" aria-label="刷新后台任务" onClick={onRefreshJobs} sx={actionSx}>
+            <GoSync size={16} style={{ transform: 'scale(0.72)' }} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
       <Tooltip title={`关闭${label}`}>
         <IconButton type="button" aria-label={`关闭${label}`} onClick={onClose} sx={actionSx}>
           <GoX size={16} />
@@ -101,7 +110,7 @@ function WorkspaceSidePanelSlotHeader({
         WebkitAppRegion: 'drag'
       }}
     >
-      <Typography variant="body2" sx={{ flex: 1, minWidth: 0, fontWeight: 600 }} noWrap>
+      <Typography variant="subtitle1" sx={{ flex: 1, minWidth: 0, fontWeight: 700 }} noWrap>
         {workspacePanelLabels[mode]}
       </Typography>
       {actions}
@@ -182,6 +191,7 @@ export function WorkspaceSidePanel({
   maximized,
   singleVisibleMode = null,
   onCloseSlot,
+  onRefreshJobs,
   onToggleMaximized,
   renderSlot
 }: {
@@ -190,6 +200,7 @@ export function WorkspaceSidePanel({
   maximized: WorkspaceSidePanelMode | null
   singleVisibleMode?: WorkspaceSidePanelMode | null
   onCloseSlot: (mode: WorkspaceSidePanelMode) => void
+  onRefreshJobs?: () => void
   onToggleMaximized: (mode: WorkspaceSidePanelMode) => void
   renderSlot: (
     mode: WorkspaceSidePanelMode,
@@ -224,6 +235,7 @@ export function WorkspaceSidePanel({
             mode={mode}
             maximized={maximized === mode}
             showLayoutAction={maximized !== null || visibleSlots.length > 1}
+            onRefreshJobs={onRefreshJobs}
             onToggleMaximized={() => onToggleMaximized(mode)}
             onClose={() => onCloseSlot(mode)}
           />

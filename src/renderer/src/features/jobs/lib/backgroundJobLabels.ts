@@ -3,6 +3,7 @@ import type {
   BackgroundShellJob
 } from '../../../../../shared/backgroundJobTypes'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { runProgressLabel, runStateLabel } from '../../wrapper/lib/wrapperView'
@@ -59,6 +60,15 @@ const JUPYTER_STATE_LABELS: Record<RemoteJupyterStartJob['state'], string> = {
   cancelled: '已停止'
 }
 
+const NOTEBOOK_AI_PHASE_LABELS: Record<NotebookAiGenerationJob['phase'], string> = {
+  preparing: '准备上下文',
+  waiting: '等待模型响应',
+  generating: '正在生成代码',
+  repairing: '修正生成结果',
+  completed: '已完成',
+  failed: '生成失败'
+}
+
 function uploadTitle(upload: RemoteProjectUploadJob): string {
   const first = upload.files[0]?.name ?? '本机文件'
   return upload.totalFiles > 1 ? `${first} 等 ${upload.totalFiles} 个文件` : first
@@ -100,6 +110,7 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
   if (item.kind === 'upload') return uploadTitle(item.upload)
   if (item.kind === 'jupyter') return `启动 Jupyter Server · ${item.job.projectName}`
+  if (item.kind === 'notebook-ai') return `AI 生成 · ${item.job.notebookName}`
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
@@ -112,6 +123,7 @@ export function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'upload') return '上传'
   if (item.kind === 'wrapper') return 'Wrapper'
   if (item.kind === 'jupyter') return '远程 Jupyter'
+  if (item.kind === 'notebook-ai') return 'Notebook AI'
   return item.run.sessionTitle
 }
 
@@ -121,6 +133,7 @@ export function jobSubtitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'environment') return item.build.envId
   if (item.kind === 'upload') return item.upload.destinationDirectory || '项目根目录'
   if (item.kind === 'jupyter') return item.job.serverLabel
+  if (item.kind === 'notebook-ai') return item.job.projectCwd
   if (item.kind === 'agent') return item.run.task
   if (item.kind === 'shell') return '后台命令'
   return item.run.runId
@@ -143,6 +156,16 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'upload') return uploadDetail(item.upload)
+  if (item.kind === 'notebook-ai') {
+    return [
+      NOTEBOOK_AI_PHASE_LABELS[item.job.phase],
+      elapsed(item.job.startedAt, item.job.completedAt, nowMs),
+      item.job.cellCount === undefined ? undefined : `${item.job.cellCount} 个单元`,
+      item.job.state === 'failed' ? item.job.error : undefined
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
   if (item.kind === 'jupyter') {
     return [
       JUPYTER_STATE_LABELS[item.job.state],
@@ -181,6 +204,8 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
   const done = (label: string): { label: string; tone: JobTone } => ({ label, tone: 'success' })
   const stopped = (label: string): { label: string; tone: JobTone } => ({ label, tone: 'neutral' })
   switch (item.kind) {
+    case 'notebook-ai':
+      return item.job.state === 'completed' ? done('已完成') : failed('生成失败')
     case 'jupyter':
       if (item.job.state === 'ready') return done(JUPYTER_STATE_LABELS.ready)
       if (item.job.state === 'failed') return failed(JUPYTER_STATE_LABELS.failed)
@@ -220,6 +245,7 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
   if (item.kind === 'wrapper') return canStopUnifiedWrapperRun(item.run)
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
   if (item.kind === 'jupyter') return false
+  if (item.kind === 'notebook-ai') return false
   return item.active
 }
 
@@ -252,6 +278,27 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
   const status = jobStatus(item).label
   const fields: Array<JobDetailField | undefined> = (() => {
     switch (item.kind) {
+      case 'notebook-ai':
+        return [
+          { label: 'Notebook', value: item.job.notebookPath || item.job.notebookName, mono: true },
+          { label: '项目', value: item.job.projectCwd, mono: true },
+          { label: '模型', value: item.job.model },
+          { label: '状态', value: status },
+          item.job.cellCount === undefined
+            ? undefined
+            : { label: '生成单元', value: `${item.job.cellCount} 个单元` },
+          { label: '开始时间', value: timeLabel(item.job.startedAt) },
+          { label: '耗时', value: elapsed(item.job.startedAt, item.job.completedAt, nowMs) },
+          item.job.completedAt
+            ? { label: '结束时间', value: timeLabel(item.job.completedAt) }
+            : undefined,
+          { label: '当前步骤', value: NOTEBOOK_AI_PHASE_LABELS[item.job.phase] },
+          { label: '请求', value: item.job.prompt },
+          item.job.sourcePreview
+            ? { label: '代码预览', value: item.job.sourcePreview, mono: true, scroll: true }
+            : undefined,
+          item.job.error ? { label: '错误', value: item.job.error, mono: true } : undefined
+        ]
       case 'agent':
         return [
           { label: '对话', value: item.run.sessionTitle },

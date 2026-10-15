@@ -57,10 +57,10 @@ export function BackgroundJobGroup({
           }}
         >
           {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}
-          <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          <Typography variant="subtitle1" sx={{ fontSize: 15, fontWeight: 700 }}>
             {title}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
             {count}
           </Typography>
         </ButtonBase>

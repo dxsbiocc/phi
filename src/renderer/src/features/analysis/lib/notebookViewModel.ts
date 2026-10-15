@@ -1,4 +1,5 @@
 import { parseHtmlTable } from './notebookHtmlTable'
+import { notebookExecutionCompletedAt } from './notebookExecutionTime'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import {
   updateNotebookMetadata,
@@ -28,6 +29,7 @@ export type CanvasCell = {
   state: CellState
   source: string
   executionDurationMs?: number
+  executionCompletedAt?: string
   outputs: NotebookOutput[]
 }
 
@@ -56,10 +58,14 @@ export type NotebookListEntry = {
 
 export type NotebookCellAccent = 'markdown' | 'python' | 'r' | 'code' | 'ai'
 
-export function notebookContextKindLabel(kind: AnalysisNotebookContextReference['kind']): string {
-  if (kind === 'dataframe') return 'Dataframe'
+export function notebookContextKindLabel(
+  kind: AnalysisNotebookContextReference['kind'],
+  detail?: string
+): string {
+  if (kind === 'dataframe') return 'DataFrame'
   if (kind === 'data_source') return 'Data Source'
   if (kind === 'cell_output') return 'Cell Output'
+  if (kind === 'variable' && detail === 'module') return 'Module'
   return 'Variable'
 }
 
@@ -638,6 +644,7 @@ export function documentCells(
           : 'idle',
     source: cell.source,
     executionDurationMs: cellExecutionDurationMs(cell.metadata),
+    executionCompletedAt: notebookExecutionCompletedAt(cell.metadata),
     outputs: cell.cellType === 'code' ? cell.outputs : []
   }))
 }

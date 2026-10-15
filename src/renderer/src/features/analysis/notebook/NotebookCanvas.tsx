@@ -948,7 +948,13 @@ export default function NotebookCanvas({
 
     setAiPromptDraft((current) =>
       current?.id === draft.id
-        ? { ...current, isGenerating: true, stagedCells: [], error: null, errorDetail: null }
+        ? {
+            ...current,
+            isGenerating: true,
+            stagedCells: [],
+            error: null,
+            errorDetail: null
+          }
         : current
     )
 

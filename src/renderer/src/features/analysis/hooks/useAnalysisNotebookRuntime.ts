@@ -17,6 +17,7 @@ import type {
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
 import { pollJupyterServerStartupStatus } from '../../runtime/lib/jupyterStatusPolling'
 import { updateNotebookCell } from '../../../../../shared/notebookDocument'
+import { notebookCellMetadataWithExecutionDuration } from '../../../../../shared/notebookExecutionMetadata'
 import type { AnalysisNotebookAgentFocus } from '../lib/notebookCanvasTypes'
 import type {
   AnalysisNotebookRuntimeDeps,
@@ -751,6 +752,7 @@ export function useAnalysisNotebookRuntime({
       cellId: string
     ): Promise<void> => {
       const request = ++analysisCellExecutionRequestRef.current
+      const startedAt = new Date().toISOString()
       const cwd = getActiveCwd()
       setExecutingAnalysisCellId(cellId)
       setAnalysisCellExecutionError(null)
@@ -778,7 +780,13 @@ export function useAnalysisNotebookRuntime({
         // running indicator clears — the only trace is a banner above the
         // cell list that's easy to miss if the user scrolled down to it.
         try {
+          const cell = document.cells.find((candidate) => candidate.id === cellId)
+          if (!cell) return
           const nextDocument = updateNotebookCell(document, cellId, {
+            metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, {
+              startedAt,
+              completedAt: new Date().toISOString()
+            }),
             outputs: [
               {
                 outputType: 'error',

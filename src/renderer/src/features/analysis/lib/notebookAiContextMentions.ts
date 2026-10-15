@@ -38,8 +38,9 @@ export function filterNotebookAiContextOptions(
     const fields = [
       option.name,
       option.detail,
-      option.id,
-      notebookContextKindLabel(option.kind),
+      // Imported bindings retain variable IDs, but belong to the Module category.
+      option.id.slice(option.id.indexOf(':') + 1),
+      notebookContextKindLabel(option.kind, option.detail),
       option.preview?.source,
       option.preview?.shape,
       option.preview?.value,

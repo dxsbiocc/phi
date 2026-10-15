@@ -149,8 +149,8 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
               bgcolor: 'transparent',
               color: 'inherit',
               font: 'inherit',
-              fontSize: 14,
-              fontWeight: 650,
+              fontSize: 16,
+              fontWeight: 700,
               cursor: 'pointer',
               '&:hover': { bgcolor: 'action.hover' },
               '&:focus-visible': {
@@ -165,7 +165,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
             ))}
           </Box>
         ) : (
-          <Typography component="span" sx={{ fontSize: 14, fontWeight: 600, px: 0.5 }}>
+          <Typography component="span" variant="subtitle1" sx={{ fontWeight: 700, px: 0.5 }}>
             {activeTerminal?.host === 'ssh' ? terminalDisplayTitle(activeTerminal) : 'Terminal'}
           </Typography>
         )}

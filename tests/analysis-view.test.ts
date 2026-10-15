@@ -41,6 +41,7 @@ function renderWorkspaceSidePanel(
     maximized?: 'jobs' | 'terminal' | 'browser' | null
     singleVisibleMode?: 'jobs' | 'terminal' | 'browser' | null
     content?: string
+    onRefreshJobs?: () => void
   } = {}
 ): string {
   const theme = createTheme()
@@ -54,6 +55,7 @@ function renderWorkspaceSidePanel(
         maximized: options.maximized ?? null,
         singleVisibleMode: options.singleVisibleMode ?? null,
         onCloseSlot: () => undefined,
+        onRefreshJobs: options.onRefreshJobs,
         onToggleMaximized: () => undefined,
         renderSlot: (mode, context) =>
           options.content
@@ -257,6 +259,18 @@ test('workspace side panel uses the compact shared height for jobs headers', () 
   )
   assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
   assert.match(markup, /height:32px/)
+})
+
+test('jobs refresh sits beside close in the shared titlebar', () => {
+  const markup = renderWorkspaceSidePanel({
+    slots: ['jobs'],
+    content: '后台任务列表',
+    onRefreshJobs: () => undefined
+  })
+  const refresh = markup.indexOf('aria-label="刷新后台任务"')
+  const close = markup.indexOf('aria-label="关闭后台任务"')
+  assert.ok(refresh >= 0 && close > refresh)
+  assert.match(markup, /data-phi-workspace-side-panel-slot-header="jobs"/)
 })
 
 test('workspace side panel uses one gap constant on every edge and between full cards', () => {
@@ -1210,7 +1224,6 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /thinkingLevel: workspace\.project\?\.defaultThinkingLevel \?\? selectedThinkingLevel/
   )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
-  assert.match(mainSource, /return \{ source, language, cells \}/)
   assert.match(analysisSource, /onSelectCell=\{isAiPreviewCell \? undefined : setSelectedCellId\}/)
   assert.match(
     analysisSource,

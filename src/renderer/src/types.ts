@@ -49,6 +49,7 @@ import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type { RuntimeRecoveryApi } from '../../shared/runtimeRecoveryTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
+import type { NotebookAiGenerationJob } from '../../shared/notebookAiJobTypes'
 export type {
   HomeActivityDay,
   HomeActivityPeriodSummary,
@@ -934,6 +935,7 @@ export interface RendererApi
     cwd: string,
     input: AnalysisNotebookFormatInput
   ) => Promise<AnalysisNotebookFormatResult>
+  listNotebookAiGenerationJobs: () => Promise<NotebookAiGenerationJob[]>
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,

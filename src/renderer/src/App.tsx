@@ -11,6 +11,7 @@ import {
   type MouseEvent
 } from 'react'
 import {
+  Badge,
   Box,
   Button,
   CssBaseline,
@@ -48,7 +49,11 @@ import MacWindowControls from './components/MacWindowControls'
 import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
-import { useBackgroundJobRetention } from './features/jobs/hooks/useBackgroundJobsData'
+import {
+  useActiveBackgroundJobCount,
+  useBackgroundJobRetention,
+  refreshBackgroundJobs
+} from './features/jobs/hooks/useBackgroundJobsData'
 import BrowserPanel from './features/browser/BrowserPanel'
 import TerminalPanel from './features/terminal/TerminalPanel'
 import { useTerminalWorkspaceRestoration } from './features/terminal/hooks/useTerminalWorkspaceRestoration'
@@ -261,6 +266,9 @@ export function TopRightControls({
   onRefreshSidePanel: () => void
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
 }): React.JSX.Element | null {
+  const runningBackgroundJobs = useActiveBackgroundJobCount()
+  const backgroundJobsLabel =
+    runningBackgroundJobs > 0 ? `后台任务 · ${runningBackgroundJobs} 个运行中` : '后台任务'
   if (!showSidePanelRefresh && !showSidePanelButtons) return null
 
   const buttonSx = {
@@ -287,6 +295,16 @@ export function TopRightControls({
     },
     '& svg': { color: 'inherit', display: 'block' }
   })
+  const runningJobsButtonSx: SxProps<Theme> = {
+    ...buttonSx,
+    color: 'info.main',
+    bgcolor: (theme) => alpha(theme.palette.info.main, 0.12),
+    '&:hover': {
+      color: 'info.main',
+      bgcolor: (theme) => alpha(theme.palette.info.main, 0.2)
+    },
+    '& svg': { color: 'inherit', display: 'block' }
+  }
 
   return (
     <Box
@@ -317,17 +335,45 @@ export function TopRightControls({
         </Tooltip>
       ) : null}
       {showSidePanelButtons ? (
-        <Tooltip title="后台任务">
+        <Tooltip title={backgroundJobsLabel}>
           <IconButton
             data-phi-background-jobs-toggle-button="true"
+            data-phi-background-jobs-running-count={runningBackgroundJobs}
             data-phi-workspace-panel-toggle="jobs"
             size="small"
-            aria-label="后台任务"
+            aria-label={backgroundJobsLabel}
             aria-pressed={activePanels.includes('jobs')}
             onClick={() => onTogglePanel('jobs')}
-            sx={panelButtonSx(activePanels.includes('jobs'))}
+            sx={
+              runningBackgroundJobs > 0
+                ? runningJobsButtonSx
+                : panelButtonSx(activePanels.includes('jobs'))
+            }
           >
-            <GoStack aria-hidden focusable="false" size={20} />
+            <Badge
+              aria-hidden="true"
+              badgeContent={runningBackgroundJobs}
+              max={99}
+              color="info"
+              invisible={runningBackgroundJobs === 0}
+              sx={{
+                '& .MuiBadge-badge': {
+                  height: 16,
+                  minWidth: 16,
+                  px: 0.4,
+                  border: '2px solid',
+                  borderColor: 'background.paper',
+                  fontSize: '0.6rem',
+                  fontWeight: 700,
+                  transform: 'translate(40%, -40%)'
+                },
+                '& .MuiBadge-invisible': {
+                  transform: 'scale(0) translate(40%, -40%)'
+                }
+              }}
+            >
+              <GoStack aria-hidden focusable="false" size={20} />
+            </Badge>
           </IconButton>
         </Tooltip>
       ) : null}
@@ -3206,7 +3252,9 @@ function App(): React.JSX.Element {
     [workspaceFileTabs]
   )
   const shouldShowSessionWorkspaceTab = !(
-    activeView === 'analysis' && workspaceSidebarMode === 'conversations'
+    activeView === 'analysis' &&
+    isSidebarOpen &&
+    workspaceSidebarMode === 'conversations'
   )
   const visibleWorkspaceTabs = useMemo(() => {
     return resolveWorkspaceResourceTabIcons(
@@ -5195,6 +5243,7 @@ function App(): React.JSX.Element {
                 maximized={workspaceSidePanelState.maximized}
                 singleVisibleMode={responsiveSingleVisibleMode}
                 onCloseSlot={onCloseWorkspaceSidePanelSlot}
+                onRefreshJobs={() => void refreshBackgroundJobs()}
                 onToggleMaximized={onToggleWorkspaceSidePanelMaximized}
                 renderSlot={(mode, slotContext) => {
                   if (mode === 'jobs') {

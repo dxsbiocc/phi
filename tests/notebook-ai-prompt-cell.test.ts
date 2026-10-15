@@ -40,6 +40,44 @@ function renderPromptCell(overrides: Partial<NotebookAiPromptCellProps> = {}): s
   )
 }
 
+test('notebook AI leaves task navigation to the notebook toolbar in every generation state', () => {
+  for (const state of [
+    {},
+    { isGenerating: true },
+    { hasStagedCells: true },
+    { error: '模型暂时不可用' }
+  ]) {
+    const markup = renderPromptCell(state)
+    assert.doesNotMatch(markup, /data-phi-notebook-ai-view-job/)
+    assert.doesNotMatch(markup, /查看任务/)
+  }
+})
+
+test('the wide notebook AI prompt points to the top-right task entry before and during a request', () => {
+  const idle = renderPromptCell()
+  const running = renderPromptCell({ isGenerating: true })
+  for (const markup of [idle, running]) {
+    assert.ok(markup.includes('data-phi-notebook-ai-background-job-hint="true"'))
+    assert.ok(markup.includes('右上角「后台任务」'))
+  }
+  assert.ok(running.includes('生成进度可在右上角「后台任务」查看。'))
+})
+
+test('the wide prompt retains language and model labels in single accessible selectors', () => {
+  const markup = renderPromptCell({
+    selectedModel: { providerId: 'openai', modelId: 'gpt-test', name: 'GPT Test' }
+  })
+
+  assert.match(markup, /data-phi-notebook-ai-prompt-shell="true"/)
+  assert.match(markup, /data-phi-notebook-ai-compact-controls="false"/)
+  assert.match(markup, /data-phi-notebook-ai-target-language-compact="false"/)
+  assert.match(markup, /data-phi-notebook-ai-model-selector-compact="false"/)
+  assert.match(markup, /aria-label="选择生成语言：Python"/)
+  assert.match(markup, />Python</)
+  assert.match(markup, />GPT Test</)
+  assert.equal((markup.match(/aria-label="选择模型"/g) ?? []).length, 1)
+})
+
 test('the target-language button is a real, clickable control (not a disabled stub)', () => {
   const markup = renderPromptCell()
 

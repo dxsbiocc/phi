@@ -18,7 +18,8 @@ const KINDS = new Set([
   'environment',
   'connector',
   'upload',
-  'jupyter'
+  'jupyter',
+  'notebook-ai'
 ])
 const DETAIL_LABELS = new Set([
   '对话',
@@ -34,7 +35,10 @@ const DETAIL_LABELS = new Set([
   '文件',
   '目标目录',
   '项目',
-  '服务器'
+  '服务器',
+  'Notebook',
+  '模型',
+  '生成单元'
 ])
 
 export interface JobHistorySnapshot {

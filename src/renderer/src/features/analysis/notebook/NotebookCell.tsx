@@ -869,13 +869,12 @@ function NotebookCellImpl({
             </Menu>
           </>
         ) : null}
-        {cell.outputs.length > 0 ? (
-          // NotebookOutputArea already draws its own top border as the
-          // code/output divider -- an extra <Divider /> here just stacked a
-          // second hairline right against it, making the seam look thicker
-          // than the single clean line Marimo (and this one) is going for.
-          <NotebookOutputArea outputs={cell.outputs} notebookPath={notebookPath} />
-        ) : null}
+        {/* NotebookOutputArea owns the single divider between source and output. */}
+        <NotebookOutputArea
+          outputs={cell.outputs}
+          notebookPath={notebookPath}
+          executionCompletedAt={isCodeCell && !isRunning ? cell.executionCompletedAt : undefined}
+        />
       </Box>
       <Box
         sx={{

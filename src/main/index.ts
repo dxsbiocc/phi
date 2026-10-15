@@ -132,6 +132,7 @@ import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve,
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
+import { NotebookAiGenerationJobs } from './agent/notebook/notebook-ai-generation-jobs'
 import { getAuthManager } from './agent/auth-manager'
 import {
   fallbackMarkdownFromDescription,
@@ -596,6 +597,7 @@ import {
   type JsonObject,
   type NotebookDocument
 } from '../shared/notebookDocument'
+import { notebookCellMetadataWithExecutionDuration } from '../shared/notebookExecutionMetadata'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
 import { createBeforeQuitHandler } from './app-quit'
@@ -1684,6 +1686,7 @@ const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
 const notebookExecutor = new AnalysisNotebookExecutor()
+const notebookAiGenerationJobs = new NotebookAiGenerationJobs()
 const activeNotebookPathByProjectCwd = new Map<string, string>()
 const notebookToolExecutor = new AnalysisNotebookToolExecutor({
   resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
@@ -3715,31 +3718,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-function notebookCellMetadataWithExecutionDuration(
-  metadata: JsonObject,
-  execution: { startedAt: string; completedAt: string }
-): JsonObject {
-  const startedAt = Date.parse(execution.startedAt)
-  const completedAt = Date.parse(execution.completedAt)
-  const durationMs =
-    Number.isFinite(startedAt) && Number.isFinite(completedAt)
-      ? Math.max(0, completedAt - startedAt)
-      : 0
-  const phiMetadata =
-    metadata.phi && typeof metadata.phi === 'object' && !Array.isArray(metadata.phi)
-      ? (metadata.phi as JsonObject)
-      : {}
-  return {
-    ...metadata,
-    phi: {
-      ...phiMetadata,
-      executionStartedAt: execution.startedAt,
-      executionCompletedAt: execution.completedAt,
-      executionDurationMs: durationMs
-    }
-  }
 }
 
 async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
@@ -6224,6 +6202,7 @@ async function repairNotebookGenerationCompletion(input: {
   nearbyContext: string
   otherCellContext: string
   invalidOutput: string
+  onProgress?: (completion: NotebookCompletionSelection) => void
 }): Promise<NotebookCompletionSelection | null> {
   let assistantText = ''
   let errorMessage = ''
@@ -6232,6 +6211,12 @@ async function repairNotebookGenerationCompletion(input: {
     assistantText = assistantTextFromEventSummary(summary, assistantText)
     candidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
     errorMessage = assistantErrorMessageFromEventSummary(summary) ?? errorMessage
+    const completion = chooseNotebookCompletion(
+      [...candidates, assistantText.trim()],
+      input.language,
+      parseGeneratedNotebookCompletionSnapshot
+    )
+    if (completion?.cells.length) input.onProgress?.(completion)
   })
 
   try {
@@ -6286,145 +6271,178 @@ async function generateAnalysisNotebookCode(
   if (!workspace) {
     throw new Error('请选择一个已添加的项目或当前 workspace')
   }
-  const remote = remoteNotebookBackendFor(workspace)
-  const file = await analysisOpenFile(workspace, notebookPath)
-  const runtime = await getAuthManager().getRuntime()
   const modelSelection = input.model ?? workspace.project?.defaultModel ?? selectedModel
-  const resolvedModel = modelSelection
-    ? resolveRuntimeModelSelection(runtime, modelSelection)
-    : null
-  if (modelSelection && !resolvedModel) {
-    throw new Error(`模型不可用: ${modelSelectionLabel(modelSelection)}`)
-  }
-  const { insertionIndex, nearbyContext, otherCellContext } = notebookCellPromptContext(
-    document,
-    input.afterCellId
-  )
-  const language = input.language || 'python'
-  const references = await notebookAiReferencesWithKernelIntrospection({
+  const job = notebookAiGenerationJobs.begin({
+    requestId: input.requestId,
     projectCwd: workspace.workingDirectory,
-    notebookPath: file.path,
-    prompt,
-    language,
-    references: input.references,
-    sessions: analysisSessions(workspace)
+    notebookPath,
+    notebookName: basename(notebookPath),
+    model: modelSelection ? modelSelectionLabel(modelSelection) : '默认模型',
+    prompt
   })
-  const sessionCwd = remote ? AGENT_DIR : workspace.workingDirectory
-  const sessionOptions = {
-    modelRuntime: runtime,
-    cwd: sessionCwd,
-    noTools: 'all' as const,
-    thinkingLevel: workspace.project?.defaultThinkingLevel ?? selectedThinkingLevel,
-    sessionManager: createInMemoryRuntimeSessionManager(sessionCwd),
-    ...(resolvedModel ? { model: resolvedModel.model } : {})
-  }
-  let eventAssistantText = ''
-  let eventErrorMessage = ''
-  const eventCompletionCandidates: unknown[] = []
-  let lastProgressSource = ''
-  const emitProgress = (): void => {
-    if (!input.requestId || !onProgress) return
-    const selectedCompletion = chooseNotebookCompletion(
-      [...eventCompletionCandidates, eventAssistantText.trim()],
-      language,
-      parseGeneratedNotebookCompletionSnapshot
-    )
-    if (!selectedCompletion || selectedCompletion.cells.length === 0) return
-    const source = generatedNotebookCellsSource(selectedCompletion.cells)
-    if (source === lastProgressSource) return
-    lastProgressSource = source
-    onProgress({
-      requestId: input.requestId,
-      path: file.path,
-      relativePath: file.relativePath,
-      source,
-      language,
-      cells: selectedCompletion.cells
-    })
-  }
-  const { session } = await createAgentSession(sessionOptions, (summary) => {
-    eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
-    eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
-    eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
-    emitProgress()
-  })
-
   try {
-    await session.prompt(
-      buildNotebookCodeGenerationPrompt({
-        language,
-        notebookPath: file.relativePath,
-        insertionIndex,
-        references,
-        userPrompt: prompt,
-        nearbyContext,
-        otherCellContext
-      }),
-      {
-        expandPromptTemplates: false,
-        userInitiated: true,
-        skipCompactionCheck: true
-      }
-    )
-    if (eventErrorMessage) {
-      throw new Error(eventErrorMessage)
+    const remote = remoteNotebookBackendFor(workspace)
+    const file = await analysisOpenFile(workspace, notebookPath)
+    job.update('preparing', { notebookPath: file.path, notebookName: basename(file.path) })
+    const runtime = await getAuthManager().getRuntime()
+    const resolvedModel = modelSelection
+      ? resolveRuntimeModelSelection(runtime, modelSelection)
+      : null
+    if (modelSelection && !resolvedModel) {
+      throw new Error(`模型不可用: ${modelSelectionLabel(modelSelection)}`)
     }
-
-    const lastAssistantMessage = [...session.messages].reverse().find((message) => {
-      const record = message as { role?: string }
-      return record.role === 'assistant'
-    })
-    const candidates = [
-      ...eventCompletionCandidates,
-      eventAssistantText.trim(),
-      lastAssistantMessage
-    ]
-    const selectedCompletion = chooseNotebookCompletion(
-      candidates,
+    const { insertionIndex, nearbyContext, otherCellContext } = notebookCellPromptContext(
+      document,
+      input.afterCellId
+    )
+    const language = input.language || 'python'
+    const references = await notebookAiReferencesWithKernelIntrospection({
+      projectCwd: workspace.workingDirectory,
+      notebookPath: file.path,
+      prompt,
       language,
-      parseFinalGeneratedNotebookCompletion
-    )
-    let assistantText = selectedCompletion?.text || eventAssistantText.trim()
-    assistantText ||= extractAssistantText(lastAssistantMessage).trim()
-    let cells = selectedCompletion?.cells ?? []
-    let completionText = assistantText
-    if (cells.length === 0) {
-      const repairedCompletion = await repairNotebookGenerationCompletion({
-        sessionOptions,
+      references: input.references,
+      sessions: analysisSessions(workspace)
+    })
+    const sessionCwd = remote ? AGENT_DIR : workspace.workingDirectory
+    const sessionOptions = {
+      modelRuntime: runtime,
+      cwd: sessionCwd,
+      noTools: 'all' as const,
+      thinkingLevel: workspace.project?.defaultThinkingLevel ?? selectedThinkingLevel,
+      sessionManager: createInMemoryRuntimeSessionManager(sessionCwd),
+      ...(resolvedModel ? { model: resolvedModel.model } : {})
+    }
+    let eventAssistantText = ''
+    let eventErrorMessage = ''
+    const eventCompletionCandidates: unknown[] = []
+    let lastProgressSource = ''
+    const emitProgress = (): void => {
+      const selectedCompletion = chooseNotebookCompletion(
+        [...eventCompletionCandidates, eventAssistantText.trim()],
         language,
-        notebookPath: file.relativePath,
-        insertionIndex,
-        references,
-        userPrompt: prompt,
-        nearbyContext,
-        otherCellContext,
-        invalidOutput: assistantText
+        parseGeneratedNotebookCompletionSnapshot
+      )
+      if (!selectedCompletion || selectedCompletion.cells.length === 0) return
+      const source = generatedNotebookCellsSource(selectedCompletion.cells)
+      if (source === lastProgressSource) return
+      lastProgressSource = source
+      job.update('generating', {
+        sourcePreview: source,
+        cellCount: selectedCompletion.cells.length
       })
-      if (repairedCompletion) {
-        cells = repairedCompletion.cells
-        completionText = repairedCompletion.text
-      }
-    }
-    if (cells.length === 0) {
-      const emptyResultDiagnostic =
-        completionText ||
-        '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
-      throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
-    }
-    const source = generatedNotebookCellsSource(cells)
-    if (input.requestId && onProgress && source !== lastProgressSource) {
+      if (!input.requestId || !onProgress) return
       onProgress({
         requestId: input.requestId,
         path: file.path,
         relativePath: file.relativePath,
         source,
         language,
-        cells
+        cells: selectedCompletion.cells
       })
     }
-    return { source, language, cells }
-  } finally {
-    await session.dispose()
+    const { session } = await createAgentSession(sessionOptions, (summary) => {
+      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
+      eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+      eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
+      if (eventAssistantText || eventCompletionCandidates.length) job.update('generating')
+      emitProgress()
+    })
+
+    let result: Required<AnalysisNotebookCodeGenerationResult>
+    try {
+      job.update(
+        'waiting',
+        session.model ? { model: `${session.model.provider}/${session.model.id}` } : {}
+      )
+      await session.prompt(
+        buildNotebookCodeGenerationPrompt({
+          language,
+          notebookPath: file.relativePath,
+          insertionIndex,
+          references,
+          userPrompt: prompt,
+          nearbyContext,
+          otherCellContext
+        }),
+        {
+          expandPromptTemplates: false,
+          userInitiated: true,
+          skipCompactionCheck: true
+        }
+      )
+      if (eventErrorMessage) {
+        throw new Error(eventErrorMessage)
+      }
+
+      const lastAssistantMessage = [...session.messages].reverse().find((message) => {
+        const record = message as { role?: string }
+        return record.role === 'assistant'
+      })
+      const candidates = [
+        ...eventCompletionCandidates,
+        eventAssistantText.trim(),
+        lastAssistantMessage
+      ]
+      const selectedCompletion = chooseNotebookCompletion(
+        candidates,
+        language,
+        parseFinalGeneratedNotebookCompletion
+      )
+      let assistantText = selectedCompletion?.text || eventAssistantText.trim()
+      assistantText ||= extractAssistantText(lastAssistantMessage).trim()
+      let cells = selectedCompletion?.cells ?? []
+      let completionText = assistantText
+      if (cells.length === 0) {
+        job.update('repairing')
+        const repairedCompletion = await repairNotebookGenerationCompletion({
+          sessionOptions,
+          language,
+          notebookPath: file.relativePath,
+          insertionIndex,
+          references,
+          userPrompt: prompt,
+          nearbyContext,
+          otherCellContext,
+          invalidOutput: assistantText,
+          onProgress: (completion) => {
+            job.update('repairing', {
+              sourcePreview: generatedNotebookCellsSource(completion.cells),
+              cellCount: completion.cells.length
+            })
+          }
+        })
+        if (repairedCompletion) {
+          cells = repairedCompletion.cells
+          completionText = repairedCompletion.text
+        }
+      }
+      if (cells.length === 0) {
+        const emptyResultDiagnostic =
+          completionText ||
+          '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
+        throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
+      }
+      const source = generatedNotebookCellsSource(cells)
+      if (input.requestId && onProgress && source !== lastProgressSource) {
+        onProgress({
+          requestId: input.requestId,
+          path: file.path,
+          relativePath: file.relativePath,
+          source,
+          language,
+          cells
+        })
+      }
+      result = { source, language, cells }
+    } finally {
+      await session.dispose()
+    }
+    job.complete({ sourcePreview: result.source, cellCount: result.cells.length })
+    return result
+  } catch (error) {
+    job.fail(error)
+    throw error
   }
 }
 
@@ -11030,6 +11048,7 @@ app.whenReady().then(async () => {
       })
     }
   )
+  ipcMain.handle('analysis:listNotebookAiGenerationJobs', () => notebookAiGenerationJobs.list())
   ipcMain.handle(
     'analysis:generateNotebookCode',
     async (

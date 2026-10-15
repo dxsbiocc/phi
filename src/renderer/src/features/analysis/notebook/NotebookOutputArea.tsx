@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Box, Button } from '@mui/material'
+import { Box, Button, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import MarkdownContent from '../../../components/MarkdownContent'
 import type { JsonObject, NotebookOutput } from '../../../../../shared/notebookDocument'
@@ -7,6 +7,7 @@ import NotebookHtmlFrameOutput from './NotebookFrameOutput'
 import NotebookPreOutput from './NotebookPreOutput'
 import { NotebookPlotlyOutput, NotebookVegaOutput } from './NotebookRichOutput'
 import NotebookHtmlTableOutput from './NotebookTableOutput'
+import { formatNotebookExecutionCompletedAt } from '../lib/notebookExecutionTime'
 import {
   firstDisplayMime,
   displayMimes,
@@ -401,12 +402,15 @@ function NotebookOutputItem({
 
 export default function NotebookOutputArea({
   notebookPath,
-  outputs
+  outputs,
+  executionCompletedAt
 }: {
   notebookPath?: string | null
   outputs: NotebookOutput[]
+  executionCompletedAt?: string
 }): React.JSX.Element | null {
-  if (outputs.length === 0) return null
+  const completedAtLabel = formatNotebookExecutionCompletedAt(executionCompletedAt)
+  if (outputs.length === 0 && !completedAtLabel) return null
 
   return (
     <>
@@ -428,6 +432,24 @@ export default function NotebookOutputArea({
           }
         }}
       >
+        {completedAtLabel ? (
+          <Typography
+            component="time"
+            dateTime={executionCompletedAt}
+            title="运行结束时间"
+            data-phi-notebook-cell-execution-completed-at={executionCompletedAt}
+            sx={{
+              display: 'block',
+              mb: outputs.length > 0 ? 1 : 0,
+              color: 'text.secondary',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.72rem',
+              lineHeight: 1.5
+            }}
+          >
+            {completedAtLabel}
+          </Typography>
+        ) : null}
         <Box>
           {outputs.map((output, index) => (
             <Box
