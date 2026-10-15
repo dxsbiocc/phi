@@ -1,5 +1,6 @@
 import { Box, Button, Paper, Stack, Typography } from '@mui/material'
 import type { ToolApprovalRequest } from '../types'
+import { ApprovalDetails } from '../features/chat/components/ApprovalDetails'
 
 const TOOL_LABELS: Record<string, string> = {
   bash: '执行终端命令',
@@ -72,23 +73,7 @@ function ToolApprovalDialog({
             )}
           </Stack>
         </Box>
-        <Typography
-          variant="body2"
-          sx={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '0.85rem',
-            lineHeight: 1.55,
-            whiteSpace: 'pre-wrap',
-            overflowWrap: 'anywhere',
-            maxHeight: 132,
-            overflow: 'auto',
-            bgcolor: 'action.hover',
-            borderRadius: 1,
-            p: 1.5
-          }}
-        >
-          {request.summary}
-        </Typography>
+        <ApprovalDetails key={request.requestId} summary={request.summary} label="查看命令和详情" />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Box sx={{ flex: 1 }}>
             {request.sessionPath && (

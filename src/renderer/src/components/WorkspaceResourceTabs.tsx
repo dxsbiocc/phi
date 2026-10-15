@@ -127,16 +127,18 @@ export function WorkspaceResourceTabs({
                 {
                   opacity: 1
                 },
-              '&:hover .workspace-session-tab-icon, &:focus-within .workspace-session-tab-icon': {
-                opacity: 0
-              },
-              '&:hover .workspace-session-tab-dock-action, &:focus-within .workspace-session-tab-dock-action':
+              '&:hover .workspace-session-tab-icon, &:focus-visible .workspace-session-tab-icon, &:has(:focus-visible) .workspace-session-tab-icon':
                 {
-                  opacity: 1
+                  opacity: 0
+                },
+              '&:hover .workspace-session-tab-dock-action, &:focus-visible .workspace-session-tab-dock-action, &:has(:focus-visible) .workspace-session-tab-dock-action':
+                {
+                  opacity: 1,
+                  pointerEvents: 'auto'
                 }
             }}
           >
-            {tab.kind === 'session' && selected && onDockSessionTab ? (
+            {tab.kind === 'session' && onDockSessionTab ? (
               <Box
                 component="span"
                 sx={{ position: 'relative', width: 18, height: 18, flexShrink: 0 }}
@@ -178,6 +180,7 @@ export function WorkspaceResourceTabs({
                       justifyContent: 'center',
                       borderRadius: '50%',
                       opacity: 0,
+                      pointerEvents: 'none',
                       cursor: 'pointer',
                       color: 'primary.main',
                       transition: 'opacity 120ms ease, background-color 120ms ease',

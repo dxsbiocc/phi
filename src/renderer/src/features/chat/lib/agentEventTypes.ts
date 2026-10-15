@@ -29,6 +29,8 @@ export interface AgentEventSummary {
   truncated?: boolean
   durationMs?: number
   approvalId?: string
+  summary?: string
+  shortSummary?: string
   sessionGeneration?: number
   sessionPath?: string | null
   cwd?: string

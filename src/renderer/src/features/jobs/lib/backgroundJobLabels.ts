@@ -95,6 +95,7 @@ export function jobPercent(item: UnifiedBackgroundJob): number | undefined {
 }
 
 export function jobTitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'history') return item.snapshot.title
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
   if (item.kind === 'upload') return uploadTitle(item.upload)
@@ -105,6 +106,7 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
 }
 
 export function jobSource(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'history') return item.snapshot.source
   if (item.kind === 'connector') return '连接器'
   if (item.kind === 'environment') return '环境'
   if (item.kind === 'upload') return '上传'
@@ -114,6 +116,7 @@ export function jobSource(item: UnifiedBackgroundJob): string {
 }
 
 export function jobSubtitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'history') return '历史记录'
   if (item.kind === 'connector') return item.setup.summary ?? item.setup.id
   if (item.kind === 'environment') return item.build.envId
   if (item.kind === 'upload') return item.upload.destinationDirectory || '项目根目录'
@@ -136,6 +139,7 @@ function elapsed(
 
 /** One line for the list row. */
 export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
+  if (item.kind === 'history') return item.snapshot.status.label
   if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'upload') return uploadDetail(item.upload)
@@ -168,6 +172,7 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
 }
 
 export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: JobTone } {
+  if (item.kind === 'history') return item.snapshot.status
   if (item.active) {
     if (item.kind === 'jupyter') return { label: JUPYTER_STATE_LABELS.running, tone: 'running' }
     return { label: '进行中', tone: 'running' }
@@ -210,6 +215,7 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
 }
 
 export function canStopJob(item: UnifiedBackgroundJob): boolean {
+  if (item.kind === 'history') return false
   if (item.kind === 'agent' && item.run.canControl === false) return false
   if (item.kind === 'wrapper') return canStopUnifiedWrapperRun(item.run)
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
@@ -242,6 +248,7 @@ function timeLabel(value: string | number | undefined): string {
 
 /** Fields of the in-panel detail view. Connector and Jupyter jobs add their own sections. */
 export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobDetailField[] {
+  if (item.kind === 'history') return item.snapshot.fields
   const status = jobStatus(item).label
   const fields: Array<JobDetailField | undefined> = (() => {
     switch (item.kind) {

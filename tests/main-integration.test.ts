@@ -4,6 +4,8 @@ import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery
 import * as runtimeReference from '../src/main/agent/session/runtime-reference'
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { createWebLinkPreviewService } from '../src/main/web-link-preview'
+import * as permissionModeControl from '../src/main/agent/session/permission-mode-control'
+import * as workspaceFileIpc from '../src/main/workspace-file-ipc'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
@@ -1860,6 +1862,7 @@ async function harness(
     },
     './agent/auth-manager': {
       getAuthManager: (): unknown => ({
+        logout: async (): Promise<void> => undefined,
         getProviderStatuses: async () => [
           {
             providerId: 'openai',
@@ -4217,6 +4220,8 @@ async function harness(
         return { sessionId, ...patch }
       }
     },
+    './agent/session/permission-mode-control': permissionModeControl,
+    './workspace-file-ipc': workspaceFileIpc,
     './agent/local-file-access': localFileAccess,
     '../../resources/icon.png?asset': { default: '/icon.png' }
   }
@@ -7177,7 +7182,10 @@ test('remote project permission switches apply to existing sessions and host tic
   const app = await harness()
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   await app.invoke('agent:prompt', 'inspect a file')
-  const options = app.approvalOptions[0] as { shouldGate: () => boolean }
+  const options = app.approvalOptions[0] as {
+    shouldGate: () => boolean
+    onApprovalResolved: (request: Record<string, unknown>, approved: boolean) => void
+  }
   assert.ok(options)
   assert.equal(options.shouldGate(), true)
   const sessionId = String(app.createdPhiSessions[0]?.sessionId)
@@ -7194,6 +7202,19 @@ test('remote project permission switches apply to existing sessions and host tic
     content: 'safe'
   }
   await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'full')
+  // An existing ask-mode waiter may be explicitly approved after switching mode.
+  // Its one-use ticket must be consumed by this call even though full skips gating.
+  options.onApprovalResolved(
+    {
+      sessionId,
+      requestId: 'late-mode-approval',
+      toolCallId: input.toolCallId,
+      toolName: 'write',
+      approvalDigest: fakeWriteApprovalDigest(input),
+      cwd: 'ssh://cluster-one/canonical/project'
+    },
+    true
+  )
   assert.equal(options.shouldGate(), false)
   assert.equal(
     app.updatedSessionManifests.some(
@@ -10465,10 +10486,29 @@ test('main IPC: an SDK completion without a start still suppresses a hosted dupl
   assert.equal(completed.length, 1)
 })
 
+async function permissionTarget(
+  app: HarnessResult
+): Promise<{ sessionPath: string | null; phiSessionId: string | null; sessionGeneration: number }> {
+  const current = (await app.invoke('sessions:current')) as {
+    path: string | null
+    phiSessionId?: string
+    sessionGeneration: number
+  }
+  return {
+    sessionPath: current.path,
+    phiSessionId: current.phiSessionId ?? null,
+    sessionGeneration: current.sessionGeneration
+  }
+}
+
+async function updatePermissionMode(app: HarnessResult, mode: string): Promise<unknown> {
+  return app.invoke('sessions:updatePermissionMode', mode, await permissionTarget(app))
+}
+
 test('main IPC: current conversation permission mode affects the next run', async () => {
   const app = await harness()
 
-  const current = (await app.invoke('sessions:updatePermissionMode', 'ask')) as {
+  const current = (await updatePermissionMode(app, 'ask')) as {
     permissionMode: string
   }
   assert.equal(current.permissionMode, 'ask')
@@ -10484,7 +10524,7 @@ test('main IPC: permission mode changes stay scoped to the selected conversation
   const first = (await app.invoke('sessions:switch', 'alpha')) as { permissionMode: string }
   assert.equal(first.permissionMode, 'ask')
 
-  const updated = (await app.invoke('sessions:updatePermissionMode', 'full')) as {
+  const updated = (await updatePermissionMode(app, 'full')) as {
     permissionMode: string
   }
   assert.equal(updated.permissionMode, 'full')
@@ -10496,18 +10536,125 @@ test('main IPC: permission mode changes stay scoped to the selected conversation
   assert.equal(restored.permissionMode, 'full')
 })
 
-test('main IPC: full access permission mode runs without approval extension', async () => {
+test('main IPC: full access retains an inactive live approval hook', async () => {
   const app = await harness()
 
-  const current = (await app.invoke('sessions:updatePermissionMode', 'full')) as {
+  const current = (await updatePermissionMode(app, 'full')) as {
     permissionMode: string
   }
   assert.equal(current.permissionMode, 'full')
 
   await app.invoke('agent:prompt', 'full access')
 
-  assert.equal(app.approvalOptions.length, 0)
+  assert.equal(app.approvalOptions.length, 1)
+  assert.equal((app.approvalOptions[0].shouldGate as () => boolean)(), false)
 })
+
+test(
+  'main IPC: active local run reads ask, auto and full changes without recreation',
+  { timeout: 3000 },
+  async () => {
+    const session = new FakeSession('live-permissions.jsonl')
+    session.hold = true
+    const app = await harness(async () => session)
+    const prompt = app.invoke('agent:prompt', 'keep running')
+    await tick()
+    assert.equal(app.approvalOptions.length, 1)
+    const shouldGate = app.approvalOptions[0].shouldGate as () => boolean
+    assert.equal(shouldGate(), false)
+    for (const mode of ['ask', 'auto', 'full', 'ask']) {
+      await updatePermissionMode(app, mode)
+      assert.equal(shouldGate(), mode === 'ask')
+      assert.equal(session.disposed, false)
+      assert.equal(session.log.includes('abort'), false)
+    }
+    assert.equal(app.createdAgentOptions.length, 1)
+    await app.invoke('agent:stop')
+    await prompt
+  }
+)
+
+test('main IPC: delayed or foreign permission changes cannot mutate a replacement conversation', async () => {
+  const app = await harness()
+  await app.invoke('sessions:switch', 'alpha')
+  const first = await permissionTarget(app)
+  await app.invoke('sessions:switch', 'beta')
+  const second = await permissionTarget(app)
+  const persisted = app.updatedSessionManifests.length
+  await assert.rejects(app.invoke('sessions:updatePermissionMode', 'full', first), /会话已切换/)
+  await assert.rejects(
+    app.invokeFromForeign('sessions:updatePermissionMode', 'full', second),
+    /renderer|渲染|窗口|可信/i
+  )
+  await assert.rejects(
+    app.invoke('sessions:updatePermissionMode', 'invalid', second),
+    /权限模式无效/
+  )
+  await assert.rejects(app.invoke('sessions:updatePermissionMode', 'auto'), /缺少会话目标/)
+  assert.equal(app.updatedSessionManifests.length, persisted)
+  assert.equal(
+    ((await app.invoke('sessions:current')) as { permissionMode: string }).permissionMode,
+    'ask'
+  )
+})
+
+test(
+  'main IPC: visible conversation permission changes leave background run policy isolated',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.hold = true
+      return session
+    })
+    await app.invoke('sessions:switch', 'alpha')
+    const first = app.invoke('agent:prompt', 'alpha keeps running')
+    await tick()
+    const alphaPolicy = app.approvalOptions[0].shouldGate as () => boolean
+    assert.equal(alphaPolicy(), true)
+    await app.invoke('sessions:switch', 'beta')
+    await updatePermissionMode(app, 'full')
+    const second = app.invoke('agent:prompt', 'beta keeps running')
+    await tick()
+    const betaPolicy = app.approvalOptions[1].shouldGate as () => boolean
+    assert.equal(betaPolicy(), false)
+    assert.equal(alphaPolicy(), true)
+    await updatePermissionMode(app, 'ask')
+    assert.equal(betaPolicy(), true)
+    assert.equal(alphaPolicy(), true)
+    await app.invoke('sessions:switch', 'alpha')
+    await updatePermissionMode(app, 'auto')
+    assert.equal(alphaPolicy(), false)
+    assert.equal(betaPolicy(), true)
+    assert.equal(app.sessions.length, 2)
+    assert.ok(app.sessions.every((session) => !session.disposed && !session.log.includes('abort')))
+    for (const session of app.sessions) session.finish.resolve()
+    await Promise.all([first, second])
+  }
+)
+
+test(
+  'main IPC: local project policy changes reach existing live sessions without aborting them',
+  { timeout: 3000 },
+  async () => {
+    const session = new FakeSession('local-project-live.jsonl')
+    session.hold = true
+    const app = await harness(async () => session)
+    await app.invoke('sessions:switch', 'defaults')
+    const prompt = app.invoke('agent:prompt', 'keep project running')
+    await tick()
+    const shouldGate = app.approvalOptions[0].shouldGate as () => boolean
+    assert.equal(shouldGate(), true)
+    for (const mode of ['auto', 'full', 'ask']) {
+      await app.invoke('projects:updatePermissionMode', 'project-/projects/defaults', mode)
+      assert.equal(shouldGate(), mode === 'ask')
+      assert.equal(session.disposed, false)
+      assert.equal(session.log.includes('abort'), false)
+    }
+    await app.invoke('agent:stop')
+    await prompt
+  }
+)
 
 test(
   'main IPC: assistant thinking deltas are persisted as timeline items',
@@ -11356,7 +11503,7 @@ test(
     const prompt = app.invoke('agent:prompt', 'first')
     await tick()
 
-    const current = (await app.invoke('sessions:updatePermissionMode', 'full')) as {
+    const current = (await updatePermissionMode(app, 'full')) as {
       permissionMode: string
     }
 
@@ -13557,7 +13704,7 @@ for (const boundary of ['navigation', 'lifecycle'] as const)
     await tick()
     assert.equal(entered, true)
     if (boundary === 'navigation') await app.invoke('projects:newRemoteSession', 'remote-project-1')
-    else await app.invoke('sessions:updatePermissionMode', 'auto')
+    else await app.invoke('auth:logout', 'openai')
     const before = JSON.stringify(app.updatedSessionManifests)
     gate.resolve()
     await rejected
@@ -13735,7 +13882,7 @@ for (const boundary of ['lifecycle', 'host', 'journal'] as const)
     const rejected = assert.rejects(compacting, /superseded|stale/i)
     await tick()
     assert.equal(owner.compactCalls, 1)
-    if (boundary === 'lifecycle') await app.invoke('sessions:updatePermissionMode', 'auto')
+    if (boundary === 'lifecycle') await app.invoke('auth:logout', 'openai')
     const second = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
       phiSessionId: string
     }
@@ -13934,7 +14081,7 @@ for (const boundary of ['rebind', 'lifecycle'] as const)
     await tick()
     assert.equal(entered, true)
     if (boundary === 'rebind') host = 'replacement'
-    else await app.invoke('sessions:updatePermissionMode', 'auto')
+    else await app.invoke('auth:logout', 'openai')
     gate.resolve()
     await rejected
     assert.deepEqual(app.sessions[0].sessionNameCalls, [])

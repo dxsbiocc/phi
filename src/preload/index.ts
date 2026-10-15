@@ -3,6 +3,12 @@ import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../sha
 import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
 import type { TerminalEvent, TerminalRendererBridge } from '../shared/terminalTypes'
 import type {
+  WorkspaceFileOperationsRendererApi,
+  WorkspaceFileOperationTarget,
+  WorkspaceFileRenameRequest,
+  RemoteWorkspaceFileDownloadRequest
+} from '../shared/workspaceFileOperations'
+import type {
   RemoteWorkspaceFileRequest,
   RemoteWorkspacePathProbeRequest,
   RemoteWorkspacePathStat
@@ -755,7 +761,7 @@ type RemoteRipgrepRequest = {
 
 type RemoteRipgrepIpcProgress = RemoteRipgrepProgress & { requestId: string }
 
-type RendererAuthApi = {
+type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   sshBootstrap: SshBootstrapRendererBridge
@@ -861,7 +867,10 @@ type RendererAuthApi = {
     patch: AutoCompactionSettingsPatch
   ) => Promise<CurrentAutoCompactionSettings>
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
-  updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
+  updateCurrentSessionPermissionMode: (
+    permissionMode: PermissionMode,
+    target: ManualCompactionTarget
+  ) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
   getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
   resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
@@ -1294,6 +1303,14 @@ const api: RendererAuthApi = {
       inputFilesDroppedSubscribers.delete(cb)
     }
   },
+  renameWorkspaceFile: (request: WorkspaceFileRenameRequest): Promise<{ path: string }> =>
+    ipcRenderer.invoke('files:renameWorkspaceFile', request),
+  deleteWorkspaceFile: (request: WorkspaceFileOperationTarget): Promise<void> =>
+    ipcRenderer.invoke('files:deleteWorkspaceFile', request),
+  downloadRemoteWorkspaceFile: (
+    request: RemoteWorkspaceFileDownloadRequest
+  ): Promise<WrapperResultDownloadResult> =>
+    ipcRenderer.invoke('remoteWorkspace:download', request),
   previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
   previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest): Promise<FilePreview> =>
     ipcRenderer.invoke('remoteWorkspace:preview', request),
@@ -1437,8 +1454,11 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke('sessions:autoCompactionSettings:set', target, patch),
   compactCurrentSession: (target: ManualCompactionTarget): Promise<ManualCompactionOutcome> =>
     ipcRenderer.invoke('sessions:compact', target),
-  updateCurrentSessionPermissionMode: (permissionMode: PermissionMode): Promise<CurrentSession> =>
-    ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode),
+  updateCurrentSessionPermissionMode: (
+    permissionMode: PermissionMode,
+    target: ManualCompactionTarget
+  ): Promise<CurrentSession> =>
+    ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode, target),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),
   getRuntimeRecoveryState: (target) => ipcRenderer.invoke('sessions:runtimeRecovery', target),
   resumeRuntimeSession: (target, replacementModel) =>

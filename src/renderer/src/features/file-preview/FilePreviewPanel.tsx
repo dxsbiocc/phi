@@ -1,3 +1,4 @@
+import type { FileTreeActions } from './lib/fileTreeActions'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { useEffect, useState } from 'react'
@@ -63,6 +64,8 @@ type FilePreviewPanelProps = {
   onOpenDefaultPath: (path: string, kind?: 'file' | 'directory') => void
   onRevealPath: (path: string, kind?: 'file' | 'directory') => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
+  fileActions?: FileTreeActions
+  treeRevision?: number
   onDownloadFile?: (path: string) => void
   downloadState?: FileDownloadState | null
   onCancelDownload?: () => void
@@ -385,6 +388,8 @@ export default function FilePreviewPanel({
   onOpenDefaultPath,
   onRevealPath,
   onListDirectory,
+  fileActions,
+  treeRevision,
   onDownloadFile,
   downloadState,
   onCancelDownload
@@ -468,6 +473,8 @@ export default function FilePreviewPanel({
             state={state}
             onOpenFile={onOpenFile}
             onListDirectory={onListDirectory}
+            fileActions={fileActions}
+            treeRevision={treeRevision}
             onDownloadFile={availableDownload}
           />
         </Box>

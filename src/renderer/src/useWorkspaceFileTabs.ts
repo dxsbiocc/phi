@@ -103,7 +103,6 @@ export type WorkspaceFileTabsDeps = {
   getActiveProjectId: () => string | null
   getActiveRemoteProject: () => RemoteWorkspaceFileScope | null
   showSnackbarError: (error: unknown, fallback: string) => void
-  setIsSidebarOpen: (value: boolean) => void
   setActiveView: (view: AppView) => void
 }
 
@@ -149,7 +148,6 @@ export function useWorkspaceFileTabs({
   getActiveProjectId,
   getActiveRemoteProject,
   showSnackbarError,
-  setIsSidebarOpen,
   setActiveView
 }: WorkspaceFileTabsDeps): WorkspaceFileTabsState {
   const [filePreview, setFilePreview] = useState<FilePreviewPanelState | null>(null)
@@ -228,10 +226,9 @@ export function useWorkspaceFileTabs({
   const openWorkspaceTab = useCallback(
     (tab: WorkspaceFileTab): void => {
       upsertWorkspaceFileTab(tab)
-      setIsSidebarOpen(true)
       setActiveView('analysis')
     },
-    [setActiveView, setIsSidebarOpen, upsertWorkspaceFileTab]
+    [setActiveView, upsertWorkspaceFileTab]
   )
 
   const loadFilePreview = useCallback(
@@ -387,17 +384,18 @@ export function useWorkspaceFileTabs({
   const downloadWrapperResultFile = useCallback(
     async (uri: string): Promise<void> => {
       const scope = wrapperResultScopeRef.current
-      if (!scope || scope.projectId !== getActiveProjectId()) {
-        showSnackbarError(new Error('远程运行不属于当前项目'), '无法下载结果')
-        return
-      }
       if (activeDownloadIdRef.current) {
         showSnackbarError(new Error('已有文件正在下载'), '无法开始新下载')
         return
       }
-      let request: ReturnType<typeof wrapperResultRequestForUri>
+      let route: ReturnType<typeof workspaceFileRoute>
       try {
-        request = wrapperResultRequestForUri(uri, scope)
+        route = workspaceFileRoute(
+          uri,
+          scope?.projectId === getActiveProjectId() ? scope : null,
+          getActiveRemoteProject()
+        )
+        if (route.kind === 'local') throw new Error('请选择远程文件进行下载')
       } catch (error) {
         showSnackbarError(error, '无法下载结果')
         return
@@ -413,7 +411,10 @@ export function useWorkspaceFileTabs({
         totalBytes: 0
       })
       try {
-        const result = await rendererApi.downloadWrapperResult({ ...request, requestId })
+        const result =
+          route.kind === 'remote-project'
+            ? await rendererApi.downloadRemoteWorkspaceFile({ ...route.request, requestId })
+            : await rendererApi.downloadWrapperResult({ ...route.request, requestId })
         if (activeDownloadIdRef.current !== requestId) return
         setFileDownload(
           result.status === 'cancelled'
@@ -438,7 +439,7 @@ export function useWorkspaceFileTabs({
         if (activeDownloadIdRef.current === requestId) activeDownloadIdRef.current = null
       }
     },
-    [getActiveProjectId, rendererApi, showSnackbarError]
+    [getActiveProjectId, getActiveRemoteProject, rendererApi, showSnackbarError]
   )
 
   const previewFilePath = useCallback(

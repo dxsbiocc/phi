@@ -1,7 +1,7 @@
 import { Box, InputAdornment, TextField } from '@mui/material'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../../icons'
-import type { DirectoryListing, FileTreeEntry } from '../../../types'
+import type { DirectoryListing } from '../../../types'
 import {
   fileTreeVirtualWindow,
   normalizedFileTreeVirtualRowHeight,
@@ -14,21 +14,24 @@ import {
   shouldAutoRevealTreePath,
   shouldRestoreRememberedTreeScroll
 } from '../lib/fileTreeReveal'
+import {
+  fileNameFromPath,
+  flattenDirectoryRows,
+  type DirectoryLoadState,
+  type FileTreeRowDescriptor
+} from '../lib/fileTreeRows'
+import { useFileTreeActions } from '../hooks/useFileTreeActions'
+import {
+  fileTreeParentPath,
+  fileTreePathInSubtree,
+  type FileTreeActions
+} from '../lib/fileTreeActions'
+import { FileTreeActionMenu } from './FileTreeActionMenu'
 import { FileTreeRootRow } from './FileTreeRootRow'
 import { FileTreeRow } from './FileTreeRow'
-import {
-  FileTreeEmptyRow,
-  FileTreeErrorRow,
-  FileTreeLoadingRow,
-  FileTreeTruncatedRow
-} from './FileTreeStatusRows'
+import { FileTreeEmptyRow, FileTreeErrorRow, FileTreeTruncatedRow } from './FileTreeStatusRows'
 
 const SearchIcon = PhiIcons.action.search
-
-type DirectoryLoadState =
-  | { status: 'loading' }
-  | { status: 'ready'; listing: DirectoryListing }
-  | { status: 'error'; message: string }
 
 type RememberedTreeState = { expandedPaths: Set<string>; query: string; scrollTop: number }
 const rememberedTreeStates = new Map<string, RememberedTreeState>()
@@ -42,10 +45,13 @@ function rememberTreeState(key: string, state: RememberedTreeState): void {
   }
 }
 
+type FileTreeVirtualRowItem = FileTreeVirtualItem & { row: FileTreeRowDescriptor }
+
 type ProjectFileTreeProps = {
   rootPath: string
   activePath: string
   onOpenFile: (path: string) => void
+  fileActions?: FileTreeActions
   onSelectDirectory?: (path: string) => void
   onDropLocalPaths?: (paths: string[], destinationPath: string) => void
   onListDirectory: (path: string) => Promise<DirectoryListing>
@@ -55,77 +61,6 @@ type ProjectFileTreeProps = {
   searchPlaceholder?: string
   stateKey?: string
   variant?: 'sidebar' | 'standalone'
-}
-
-type FileTreeRowDescriptor =
-  | { id: string; kind: 'entry'; entry: FileTreeEntry; depth: number }
-  | { id: string; kind: 'loading'; path: string }
-  | { id: string; kind: 'error'; path: string; message: string }
-  | { id: string; kind: 'empty'; path: string; depth: number; isEmpty: boolean }
-  | { id: string; kind: 'truncated'; path: string }
-
-type FileTreeVirtualRowItem = FileTreeVirtualItem & { row: FileTreeRowDescriptor }
-
-function fileNameFromPath(path: string): string {
-  return path.split('/').filter(Boolean).pop() ?? path
-}
-
-function matchesQuery(entry: FileTreeEntry, normalizedQuery: string): boolean {
-  return (
-    entry.name.toLowerCase().includes(normalizedQuery) ||
-    entry.displayPath.toLowerCase().includes(normalizedQuery)
-  )
-}
-
-// Flattens the (recursively expandable) directory tree into a single list of
-// row descriptors — data, not JSX — so the list can be windowed the same way
-// the chat and notebook lists are: only rows near the viewport get rendered,
-// with spacer boxes preserving the scrollable height for the rest.
-function flattenDirectoryRows(
-  path: string,
-  depth: number,
-  directories: Record<string, DirectoryLoadState>,
-  expandedPaths: Set<string>,
-  normalizedQuery: string
-): FileTreeRowDescriptor[] {
-  const state = directories[path]
-  if (!state || state.status === 'loading') {
-    return [{ id: `${path}-loading`, kind: 'loading', path }]
-  }
-  if (state.status === 'error') {
-    return [{ id: `${path}-error`, kind: 'error', path, message: state.message }]
-  }
-
-  const entries = normalizedQuery
-    ? state.listing.entries.filter((entry) => matchesQuery(entry, normalizedQuery))
-    : state.listing.entries
-  if (entries.length === 0) {
-    return [
-      {
-        id: `${path}-empty`,
-        kind: 'empty',
-        path,
-        depth,
-        isEmpty: state.listing.entries.length === 0
-      }
-    ]
-  }
-
-  const rows: FileTreeRowDescriptor[] = []
-  for (const entry of entries) {
-    rows.push({ id: entry.path, kind: 'entry', entry, depth })
-    if (entry.kind === 'directory' && expandedPaths.has(entry.path)) {
-      rows.push(
-        ...flattenDirectoryRows(entry.path, depth + 1, directories, expandedPaths, normalizedQuery)
-      )
-    }
-  }
-
-  if (state.listing.truncated) {
-    rows.push({ id: `${path}-truncated`, kind: 'truncated', path })
-  }
-
-  return rows
 }
 
 function fileTreeListScrollTop(
@@ -163,6 +98,7 @@ export function ProjectFileTree({
   rootPath,
   activePath,
   onOpenFile,
+  fileActions,
   onSelectDirectory,
   onDropLocalPaths,
   onListDirectory,
@@ -188,6 +124,12 @@ export function ProjectFileTree({
         : { status: 'loading' }
   }))
   const normalizedQuery = query.trim().toLowerCase()
+  const directoryVersions = useRef(new Map<string, number>())
+  const treeScope = `${treeStateKey}\0${rootPath}`
+  const currentTreeScope = useRef(treeScope)
+  useEffect(() => {
+    currentTreeScope.current = treeScope
+  }, [treeScope])
   const isStandalone = variant === 'standalone'
   const revealPaths = useMemo(
     () => (revealPath ? fileTreeRevealPaths(rootPath, revealPath) : []),
@@ -229,11 +171,18 @@ export function ProjectFileTree({
 
   const loadDirectory = useCallback(
     (path: string): void => {
+      const version = (directoryVersions.current.get(path) ?? 0) + 1
+      directoryVersions.current.set(path, version)
+      const scope = treeScope
       void onListDirectory(path)
         .then((listing) => {
+          if (currentTreeScope.current !== scope || directoryVersions.current.get(path) !== version)
+            return
           setDirectories((prev) => ({ ...prev, [path]: { status: 'ready', listing } }))
         })
         .catch((error) => {
+          if (currentTreeScope.current !== scope || directoryVersions.current.get(path) !== version)
+            return
           setDirectories((prev) => ({
             ...prev,
             [path]: {
@@ -243,7 +192,7 @@ export function ProjectFileTree({
           }))
         })
     },
-    [onListDirectory]
+    [onListDirectory, treeScope]
   )
 
   const ensureDirectoryLoaded = useCallback(
@@ -290,6 +239,37 @@ export function ProjectFileTree({
     },
     [ensureDirectoryLoaded, expandedPaths]
   )
+
+  const actions = useFileTreeActions({
+    scope: treeStateKey,
+    rootPath,
+    fileActions,
+    onOpenEntry: (entry) => {
+      if (entry.kind === 'file') onOpenFile(entry.path)
+      else {
+        onSelectDirectory?.(entry.path)
+        if (!expandedPaths.has(entry.path)) toggleDirectory(entry.path)
+      }
+    },
+    onMutation: (entry) => {
+      const parent = fileTreeParentPath(entry.path)
+      for (const [path, version] of directoryVersions.current) {
+        if (path === parent || fileTreePathInSubtree(path, entry.path))
+          directoryVersions.current.set(path, version + 1)
+      }
+      setExpandedPaths(
+        (current) =>
+          new Set([...current].filter((path) => !fileTreePathInSubtree(path, entry.path)))
+      )
+      setDirectories((current) => ({
+        ...Object.fromEntries(
+          Object.entries(current).filter(([path]) => !fileTreePathInSubtree(path, entry.path))
+        ),
+        [parent]: { status: 'loading' }
+      }))
+      if (parent !== rootPath) loadDirectory(parent)
+    }
+  })
 
   const rootExpanded = expandedPaths.has(rootPath)
   const flatRows = useMemo(
@@ -492,8 +472,6 @@ export function ProjectFileTree({
   const renderFileTreeRow = useCallback(
     (row: FileTreeRowDescriptor): ReactNode => {
       switch (row.kind) {
-        case 'loading':
-          return <FileTreeLoadingRow path={row.path} />
         case 'error':
           return <FileTreeErrorRow path={row.path} message={row.message} />
         case 'empty':
@@ -511,8 +489,20 @@ export function ProjectFileTree({
               depth={depth}
               isExpanded={isExpanded}
               isActive={isActive}
+              isLoading={
+                isDirectory &&
+                isExpanded &&
+                (!directories[entry.path] || directories[entry.path].status === 'loading')
+              }
               genericDirectoryIcons={genericDirectoryIcons}
               localDropTargetPath={onDropLocalPaths && isDirectory ? entry.path : undefined}
+              onContextMenu={(event) => actions.onContextMenu(entry, event)}
+              onKeyDown={(event) => actions.onKeyDown(entry, event)}
+              onDownload={
+                !isDirectory && entry.path.startsWith('ssh://') && fileActions?.onDownloadFile
+                  ? () => actions.onDownload(entry)
+                  : undefined
+              }
               onClick={() => {
                 if (isDirectory) {
                   onSelectDirectory?.(entry.path)
@@ -528,8 +518,11 @@ export function ProjectFileTree({
     },
     [
       activePath,
+      actions,
+      directories,
       expandedPaths,
       genericDirectoryIcons,
+      fileActions,
       onOpenFile,
       onDropLocalPaths,
       onSelectDirectory,
@@ -544,6 +537,12 @@ export function ProjectFileTree({
   }, [rootPath, rootState])
   const rootDisplayPath = rootState?.status === 'ready' ? rootState.listing.displayPath : rootPath
   const rootActive = activePath === rootPath
+  const rootEntry = {
+    path: rootPath,
+    name: rootName,
+    displayPath: rootDisplayPath,
+    kind: 'directory' as const
+  }
 
   return (
     <Box
@@ -587,18 +586,24 @@ export function ProjectFileTree({
         onScroll={handleFileTreeScroll}
         sx={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'auto', px: 0.75, pb: 0.75 }}
       >
-        <FileTreeRootRow
-          rootPath={rootPath}
-          rootName={rootName}
-          rootDisplayPath={rootDisplayPath}
-          isExpanded={rootExpanded}
-          isActive={rootActive}
-          localDropTargetPath={onDropLocalPaths ? rootPath : undefined}
-          onToggle={() => {
-            onSelectDirectory?.(rootPath)
-            toggleDirectory(rootPath)
-          }}
-        />
+        <Box
+          onContextMenu={(event) => actions.onContextMenu(rootEntry, event)}
+          onKeyDown={(event) => actions.onKeyDown(rootEntry, event)}
+        >
+          <FileTreeRootRow
+            rootPath={rootPath}
+            rootName={rootName}
+            rootDisplayPath={rootDisplayPath}
+            isExpanded={rootExpanded}
+            isActive={rootActive}
+            isLoading={rootExpanded && (!rootState || rootState.status === 'loading')}
+            localDropTargetPath={onDropLocalPaths ? rootPath : undefined}
+            onToggle={() => {
+              onSelectDirectory?.(rootPath)
+              toggleDirectory(rootPath)
+            }}
+          />
+        </Box>
         <Box ref={virtualListRef}>
           {virtualCells.beforeHeight > 0 ? (
             <Box aria-hidden="true" sx={{ height: virtualCells.beforeHeight }} />
@@ -617,6 +622,7 @@ export function ProjectFileTree({
           ) : null}
         </Box>
       </Box>
+      <FileTreeActionMenu {...actions.menuProps} />
     </Box>
   )
 }

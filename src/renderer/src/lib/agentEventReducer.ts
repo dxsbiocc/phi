@@ -21,6 +21,7 @@ import {
   unavailableUiBlocksItemFromToolEvent
 } from '../features/chat/lib/uiBlocks'
 import { outputPreviewText } from './toolOutputPresentation'
+import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
 
 export interface AgentEventReducerState {
   messages: ChatItem[]
@@ -547,6 +548,10 @@ export function reduceAgentEventState(
   const presentedFiles = presentedFilesItemFromPhiTimelineEvent(event)
   if (presentedFiles) {
     if (!next.some((item) => item.id === presentedFiles.id)) next.push(presentedFiles)
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyApprovalTimelineEvent(next, event)) {
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 

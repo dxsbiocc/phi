@@ -1,3 +1,5 @@
+import type { FileTreeActions } from './features/file-preview/lib/fileTreeActions'
+import type { FileDownloadState } from './features/file-preview/lib/filePreviewState'
 import { memo, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import SessionSidebar from './components/SessionSidebar'
@@ -58,6 +60,9 @@ export type AppWorkspaceSidebarProps = {
   onOpenWorkspaceFile: (path: string) => void
   onSelectWorkspaceDirectory?: (path: string) => void
   onDropLocalPaths?: (paths: string[], destinationPath: string) => void
+  workspaceFileActions?: FileTreeActions
+  fileDownloadState?: FileDownloadState | null
+  onCancelFileDownload?: () => void
   onListWorkspaceDirectory: (path: string) => Promise<DirectoryListing>
 
   runtimeProjectCwd: string
@@ -171,6 +176,9 @@ function AppWorkspaceSidebarImpl({
   onSelectWorkspaceDirectory,
   onDropLocalPaths,
   onListWorkspaceDirectory,
+  workspaceFileActions,
+  fileDownloadState,
+  onCancelFileDownload,
   runtimeProjectCwd,
   runtimeStatus,
   isRuntimeLoading,
@@ -377,6 +385,9 @@ function AppWorkspaceSidebarImpl({
               onSelectDirectory={onSelectWorkspaceDirectory}
               onDropLocalPaths={onDropLocalPaths}
               onListDirectory={onListWorkspaceDirectory}
+              fileActions={workspaceFileActions}
+              downloadState={fileDownloadState}
+              onCancelDownload={onCancelFileDownload}
             />
           )}
         </Box>

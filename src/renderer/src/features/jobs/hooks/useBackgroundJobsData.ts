@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 
 import type {
   BackgroundAgentJob,
@@ -9,6 +9,8 @@ import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnect
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
+import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
+import { selectBackgroundJobs, type UnifiedBackgroundJob } from '../lib/backgroundJobs'
 
 const REFRESH_MS = 2000
 
@@ -20,6 +22,15 @@ export type BackgroundJobsData = {
   connectorJobs: McpConnectorSetupProgress[]
   uploadJobs: RemoteProjectUploadJob[]
   jupyterJobs: RemoteJupyterStartJob[]
+}
+
+type JobLists = { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] }
+type Snapshot = {
+  data: BackgroundJobsData
+  jobs: JobLists
+  loaded: boolean
+  error: string
+  nowMs: number
 }
 
 const EMPTY: BackgroundJobsData = {
@@ -44,31 +55,90 @@ function listOrEmpty<T>(list: (() => Promise<T[]>) | undefined): Promise<T[]> {
   return typeof list === 'function' ? list() : Promise.resolve([])
 }
 
-/** Polls every job source and merges the pushed updates in between. */
-export function useBackgroundJobsData(): {
-  data: BackgroundJobsData
-  loaded: boolean
-  error: string
-  nowMs: number
-  refresh: () => Promise<void>
-  setError: (error: string) => void
-} {
-  const [data, setData] = useState<BackgroundJobsData>(EMPTY)
-  const [error, setError] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  const refreshingRef = useRef(false)
+function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJobs> {
+  return selectBackgroundJobs(
+    data.agentJobs,
+    data.wrapperRuns,
+    { maxRecent: Number.MAX_SAFE_INTEGER },
+    data.shellJobs,
+    data.environmentBuilds,
+    data.connectorJobs,
+    data.uploadJobs,
+    data.jupyterJobs
+  )
+}
 
-  const refresh = useCallback(async (): Promise<void> => {
-    if (refreshingRef.current) return
-    refreshingRef.current = true
+/** One source poller per renderer, retained by the app even when the panel is closed. */
+class BackgroundJobsStore {
+  private readonly history = new BackgroundJobHistory(backgroundJobHistoryStorage())
+  private state: Snapshot = {
+    data: EMPTY,
+    jobs: this.history.select({ active: [], recent: [] }),
+    loaded: false,
+    error: '',
+    nowMs: Date.now()
+  }
+  private readonly listeners = new Set<() => void>()
+  private references = 0
+  private timer: number | undefined
+  private refreshing = false
+  private generation = 0
+  private unsubscribes: Array<(() => void) | undefined> | undefined
+
+  getSnapshot = (): Snapshot => this.state
+
+  retain = (): (() => void) => {
+    this.references += 1
+    if (this.references === 1) {
+      this.generation += 1
+      void this.refresh()
+      this.timer = window.setInterval(() => void this.refresh(), REFRESH_MS)
+    }
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.references -= 1
+      if (this.references !== 0) return
+      this.generation += 1
+      window.clearInterval(this.timer)
+      this.timer = undefined
+      for (const unsubscribe of this.unsubscribes ?? []) unsubscribe?.()
+      this.unsubscribes = undefined
+    }
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    const release = this.retain()
+    return () => {
+      this.listeners.delete(listener)
+      release()
+    }
+  }
+
+  setError = (error: string): void => {
+    this.state = { ...this.state, error }
+    this.emit()
+  }
+
+  clearCompleted = (): void => {
+    this.history.clearCompleted(liveJobs(this.state.data).recent)
+    this.publish(this.state.data)
+  }
+
+  refresh = async (): Promise<void> => {
+    if (this.refreshing) return
+    this.refreshing = true
+    const generation = this.generation
     try {
-      if (typeof window.api.listAgentJobs !== 'function') {
-        setError('请重启 Phi 以查看后台任务。')
-        setLoaded(true)
+      const api = window.api
+      if (typeof api?.listAgentJobs !== 'function') {
+        this.state = { ...this.state, error: '请重启 Phi 以查看后台任务。', loaded: true }
+        this.emit()
         return
       }
-      const api = window.api
+      this.attachEvents(api)
       const results = await Promise.allSettled([
         api.listAgentJobs(),
         listOrEmpty(api.listShellJobs),
@@ -78,8 +148,17 @@ export function useBackgroundJobsData(): {
         listOrEmpty(api.listRemoteProjectUploads),
         listOrEmpty(api.listRemoteJupyterJobs)
       ] as const)
+      if (generation !== this.generation) return
       const [agents, shells, wrappers, builds, connectors, uploads, jupyter] = results
-      setData((current) => ({
+      const current = this.state.data
+      this.state = {
+        ...this.state,
+        loaded: true,
+        error: results.some((result) => result.status === 'rejected')
+          ? '部分任务状态暂时无法读取，稍后会自动重试。'
+          : ''
+      }
+      this.publish({
         agentJobs: agents.status === 'fulfilled' ? agents.value : current.agentJobs,
         shellJobs: shells.status === 'fulfilled' ? shells.value : current.shellJobs,
         wrapperRuns: wrappers.status === 'fulfilled' ? wrappers.value : current.wrapperRuns,
@@ -87,62 +166,85 @@ export function useBackgroundJobsData(): {
         connectorJobs: connectors.status === 'fulfilled' ? connectors.value : current.connectorJobs,
         uploadJobs: uploads.status === 'fulfilled' ? uploads.value : current.uploadJobs,
         jupyterJobs: jupyter.status === 'fulfilled' ? jupyter.value : current.jupyterJobs
-      }))
-      setError(
-        results.some((result) => result.status === 'rejected')
-          ? '部分任务状态暂时无法读取，稍后会自动重试。'
-          : ''
-      )
-      setLoaded(true)
-      setNowMs(Date.now())
+      })
     } finally {
-      refreshingRef.current = false
+      this.refreshing = false
+      if (generation !== this.generation && this.references > 0) void this.refresh()
     }
-  }, [])
+  }
 
-  useEffect(() => {
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), REFRESH_MS)
-    return () => window.clearInterval(timer)
-  }, [refresh])
+  private publish(data: BackgroundJobsData): void {
+    const live = liveJobs(data)
+    this.history.observe([...live.active, ...live.recent])
+    this.state = { ...this.state, data, jobs: this.history.select(live), nowMs: Date.now() }
+    this.emit()
+  }
 
-  useEffect(() => {
-    const api = window.api
-    const unsubscribes = [
+  private emit(): void {
+    for (const listener of this.listeners) listener()
+  }
+
+  private attachEvents(api: Window['api']): void {
+    if (this.unsubscribes) return
+    this.unsubscribes = [
       api.onEnvironmentBuildsChanged?.((build) =>
-        setData((current) => ({
-          ...current,
+        this.publish({
+          ...this.state.data,
           environmentBuilds: upsertBy(
-            current.environmentBuilds,
+            this.state.data.environmentBuilds,
             build,
             (item) => item.envId === build.envId
           )
-        }))
+        })
       ),
       api.onMcpConnectorSetupChanged?.((setup) => {
         if (setup.kind !== 'local-stdio') return
-        setData((current) => ({
-          ...current,
-          connectorJobs: upsertBy(current.connectorJobs, setup, (item) => item.id === setup.id)
-        }))
+        this.publish({
+          ...this.state.data,
+          connectorJobs: upsertBy(
+            this.state.data.connectorJobs,
+            setup,
+            (item) => item.id === setup.id
+          )
+        })
       }),
       api.onRemoteProjectUploadsChanged?.((job) =>
-        setData((current) => ({
-          ...current,
-          uploadJobs: upsertBy(current.uploadJobs, job, (item) => item.id === job.id)
-        }))
+        this.publish({
+          ...this.state.data,
+          uploadJobs: upsertBy(this.state.data.uploadJobs, job, (item) => item.id === job.id)
+        })
       ),
       api.onRemoteJupyterJobsChanged?.((job) =>
-        setData((current) => ({
-          ...current,
-          jupyterJobs: upsertBy(current.jupyterJobs, job, (item) => item.id === job.id)
-        }))
+        this.publish({
+          ...this.state.data,
+          jupyterJobs: upsertBy(this.state.data.jupyterJobs, job, (item) => item.id === job.id)
+        })
       )
     ]
-    return () => {
-      for (const unsubscribe of unsubscribes) unsubscribe?.()
-    }
-  }, [])
+  }
+}
 
-  return { data, loaded, error, nowMs, refresh, setError }
+let shared: BackgroundJobsStore | undefined
+function jobsStore(): BackgroundJobsStore {
+  return (shared ??= new BackgroundJobsStore())
+}
+
+/** Keeps terminal snapshots up to date without subscribing the application to polling renders. */
+export function useBackgroundJobRetention(): void {
+  useEffect(() => jobsStore().retain(), [])
+}
+
+export function useBackgroundJobsData(): Snapshot & {
+  refresh: () => Promise<void>
+  clearCompleted: () => void
+  setError: (error: string) => void
+} {
+  const store = jobsStore()
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  return {
+    ...snapshot,
+    refresh: store.refresh,
+    clearCompleted: store.clearCompleted,
+    setError: store.setError
+  }
 }

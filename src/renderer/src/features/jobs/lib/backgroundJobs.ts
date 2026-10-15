@@ -11,8 +11,9 @@ import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
+import type { RetainedBackgroundJob } from './backgroundJobHistory'
 
-export type UnifiedBackgroundJob =
+export type LiveBackgroundJob =
   | { kind: 'agent'; key: string; active: boolean; timestamp: string; run: BackgroundAgentJob }
   | {
       kind: 'upload'
@@ -38,6 +39,8 @@ export type UnifiedBackgroundJob =
       setup: McpConnectorSetupProgress
     }
   | { kind: 'jupyter'; key: string; active: boolean; timestamp: string; job: RemoteJupyterStartJob }
+
+export type UnifiedBackgroundJob = LiveBackgroundJob | RetainedBackgroundJob
 
 const ACTIVE_WRAPPER_STATES = new Set<WrapperRun['state']>([
   'created',
@@ -163,12 +166,12 @@ export function selectBackgroundJobs(
   connectors: readonly McpConnectorSetupProgress[] = [],
   uploads: readonly RemoteProjectUploadJob[] = [],
   jupyterJobs: readonly RemoteJupyterStartJob[] = []
-): { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] } {
-  const maxRecent = query.maxRecent ?? 8
-  const items: UnifiedBackgroundJob[] = [
+): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
+  const maxRecent = query.maxRecent ?? 50
+  const items: LiveBackgroundJob[] = [
     ...agents
       .filter((run) => run.background)
-      .map((run): UnifiedBackgroundJob => ({
+      .map((run): LiveBackgroundJob => ({
         kind: 'agent',
         key:
           run.canControl === false
@@ -178,21 +181,21 @@ export function selectBackgroundJobs(
         timestamp: run.completedAt ?? run.startedAt,
         run
       })),
-    ...shells.map((run): UnifiedBackgroundJob => ({
+    ...shells.map((run): LiveBackgroundJob => ({
       kind: 'shell',
       key: `shell:${run.agentSessionId}:${run.jobId}`,
       active: run.state === 'queued' || run.state === 'running',
       timestamp: run.completedAt ?? run.startedAt,
       run
     })),
-    ...wrappers.map((run): UnifiedBackgroundJob => ({
+    ...wrappers.map((run): LiveBackgroundJob => ({
       kind: 'wrapper',
       key: `wrapper:${run.runId}`,
       active: ACTIVE_WRAPPER_STATES.has(run.state),
       timestamp: run.completedAt ?? run.updatedAt,
       run
     })),
-    ...environments.map((build): UnifiedBackgroundJob => ({
+    ...environments.map((build): LiveBackgroundJob => ({
       kind: 'environment',
       key: `environment:${build.envId}`,
       active: build.state === 'building',
@@ -201,7 +204,7 @@ export function selectBackgroundJobs(
     })),
     ...connectors
       .filter((setup) => setup.kind === 'local-stdio')
-      .map((setup): UnifiedBackgroundJob => {
+      .map((setup): LiveBackgroundJob => {
         const active = setup.phase === 'starting'
         return {
           kind: 'connector',
@@ -211,14 +214,14 @@ export function selectBackgroundJobs(
           setup
         }
       }),
-    ...uploads.map((upload): UnifiedBackgroundJob => ({
+    ...uploads.map((upload): LiveBackgroundJob => ({
       kind: 'upload',
       key: `upload:${upload.id}`,
       active: ['queued', 'uploading', 'verifying'].includes(upload.status),
       timestamp: new Date(upload.updatedAt).toISOString(),
       upload
     })),
-    ...jupyterJobs.map((job): UnifiedBackgroundJob => ({
+    ...jupyterJobs.map((job): LiveBackgroundJob => ({
       kind: 'jupyter',
       key: `jupyter:${job.id}`,
       active: job.state === 'running',
@@ -237,7 +240,7 @@ export function selectBackgroundJobs(
   }
 }
 
-function belongsInFinishedTray(item: UnifiedBackgroundJob, query: BackgroundJobQuery): boolean {
+function belongsInFinishedTray(item: LiveBackgroundJob, query: BackgroundJobQuery): boolean {
   if (query.dismissedKeys?.has(item.key)) return false
   if (item.kind === 'agent' && item.run.historyAvailable === false) return true
   if (!query.finishedAfter) return true

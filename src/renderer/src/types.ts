@@ -77,6 +77,7 @@ import type {
   ManualCompactionOutcome,
   ManualCompactionTarget
 } from '../../shared/contextUsageTypes'
+import type { WorkspaceFileOperationsRendererApi } from '../../shared/workspaceFileOperations'
 import type {
   RemoteWorkspaceFileRequest,
   RemoteWorkspacePathProbeRequest,
@@ -170,6 +171,7 @@ export interface ChatMessage {
   content: string
   backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
   contextCompaction?: ContextCompactionDetails
+  approval?: import('./features/chat/lib/approvalTimeline').ApprovalDetails
   images?: Array<PromptImageInput | StoredPromptImage>
   runId?: string
   createdAt?: string
@@ -724,7 +726,8 @@ export interface RendererApi
     AutoCompactionApi,
     ManagedEnvironmentRendererApi,
     McpRendererApi,
-    RemoteProjectUploadRendererApi {
+    RemoteProjectUploadRendererApi,
+    WorkspaceFileOperationsRendererApi {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   readyWindow: (background: string) => Promise<void>
@@ -803,7 +806,10 @@ export interface RendererApi
   getCurrentSession: () => Promise<CurrentSession>
   getCurrentContextUsage: () => Promise<CurrentContextUsage>
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
-  updateCurrentSessionPermissionMode: (permissionMode: PermissionMode) => Promise<CurrentSession>
+  updateCurrentSessionPermissionMode: (
+    permissionMode: PermissionMode,
+    target: ManualCompactionTarget
+  ) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
   getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
   resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']

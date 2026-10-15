@@ -5,6 +5,9 @@ import { PhiIcons } from '../icons'
 import { workspacePanelActionSize, workspacePanelGap, workspacePanelHeaderHeight } from '../layout'
 import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
+import type { FileTreeActions } from '../features/file-preview/lib/fileTreeActions'
+import type { FileDownloadState } from '../features/file-preview/lib/filePreviewState'
+import { ResultDownloadStatus } from '../features/file-preview/components/ResultDownloadStatus'
 import { ProjectFileTree } from '../features/file-preview/components/ProjectFileTree'
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
@@ -113,7 +116,10 @@ export function WorkspaceFilesPane({
   onOpenFile,
   onSelectDirectory,
   onDropLocalPaths,
-  onListDirectory
+  onListDirectory,
+  fileActions,
+  downloadState,
+  onCancelDownload
 }: {
   rootPath?: string | null
   activePath?: string | null
@@ -121,6 +127,9 @@ export function WorkspaceFilesPane({
   onOpenFile?: (path: string) => void
   onSelectDirectory?: (path: string) => void
   onDropLocalPaths?: (paths: string[], destinationPath: string) => void
+  fileActions?: FileTreeActions
+  downloadState?: FileDownloadState | null
+  onCancelDownload?: () => void
   onListDirectory?: (path: string) => Promise<DirectoryListing>
 }): React.JSX.Element {
   if (!rootPath || !onOpenFile || !onListDirectory) {
@@ -150,16 +159,20 @@ export function WorkspaceFilesPane({
   }
 
   return (
-    <ProjectFileTree
-      key={`${rootPath}:${treeRevision}`}
-      rootPath={rootPath}
-      activePath={activePath ?? rootPath}
-      onOpenFile={onOpenFile}
-      onSelectDirectory={onSelectDirectory}
-      onDropLocalPaths={onDropLocalPaths}
-      onListDirectory={onListDirectory}
-      variant="standalone"
-    />
+    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <ResultDownloadStatus state={downloadState} onCancel={onCancelDownload} />
+      <ProjectFileTree
+        key={`${rootPath}:${treeRevision}`}
+        rootPath={rootPath}
+        activePath={activePath ?? rootPath}
+        onOpenFile={onOpenFile}
+        onSelectDirectory={onSelectDirectory}
+        onDropLocalPaths={onDropLocalPaths}
+        onListDirectory={onListDirectory}
+        fileActions={fileActions}
+        variant="standalone"
+      />
+    </Box>
   )
 }
 
