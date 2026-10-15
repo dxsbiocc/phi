@@ -57,8 +57,17 @@ import type { RpcApprovalEvent } from './approval-bridge'
 import { createFacadeChildApprovalWriter } from './facade-child-approval'
 import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../agents/definition'
 import { deriveProductionChildBinding } from './subagents/production-child-config'
+import type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
+import { rpcPromptPolicy } from '../phi-extension/lib/rpc-prompt-policy'
+import { join } from 'node:path'
+import { filterPersonaContextFile } from '../phi-extension/lib/phi-main-system-prompt'
+import type { DesktopProjectMemoryAdapter } from './desktop-project-memory-adapter'
+export type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
 
 export interface SelectedFacadeRuntime {
+  readonly onMemoryError?: () => void | Promise<void>
+  readonly memory?: DesktopProjectMemoryAdapter
+  readonly promptContext?: FacadePromptContext
   readonly hostProfileId: string
   /** Exact selected project/profile binding, never host-alias-only identity. */
   readonly bindingHash: string
@@ -123,6 +132,7 @@ function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntim
   const session = selected.session
   return Object.freeze({
     ...selected,
+    promptContext: selected.promptContext && Object.freeze(structuredClone(selected.promptContext)),
     runtime: Object.freeze({ ...selected.runtime }),
     session: Object.freeze({
       openStdio: session.openStdio?.bind(session),
@@ -185,12 +195,9 @@ function childThinkingLevel(
 function capabilityGuard(params: PhiSessionCreateParams): void {
   if (
     params.noTools ||
-    params.memory ||
-    params.personaMarkdown ||
     params.resourceOptions ||
     params.phiAgents?.length ||
-    params.remoteProjectMcpServers?.length ||
-    params.remoteProject?.contextFiles.length
+    params.remoteProjectMcpServers?.length
   )
     throw new RemoteSessionCapabilityError(
       'resources/MCP/memory/persona/child/context configuration'
@@ -240,6 +247,10 @@ export function createFacadeSessionFactory(
     async create(params, signal, sink): Promise<RoutedSessionDriver> {
       signal.throwIfAborted()
       if (!params.remoteProject) throw new Error('Remote facade requires an explicit SSH project')
+      const requestedPrompt = structuredClone({
+        personaMarkdown: params.personaMarkdown ?? '',
+        contextFiles: params.remoteProject.contextFiles
+      })
       capabilityGuard(params)
       const { phiSessionId, projectId, location } = params.remoteProject
       const binding = resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
@@ -261,9 +272,55 @@ export function createFacadeSessionFactory(
       )
       let selectedCleanup: Promise<void> | undefined
       const disposeSelected = (): Promise<void> =>
-        (selectedCleanup ??= Promise.resolve().then(() => selected.dispose?.()))
+        (selectedCleanup ??= Promise.resolve().then(async () => {
+          let failed = false,
+            failure: unknown
+          try {
+            await selected.memory?.close()
+          } catch (error) {
+            failed = true
+            failure = error
+          }
+          try {
+            await selected.dispose?.()
+          } catch (error) {
+            if (!failed) {
+              failed = true
+              failure = error
+            }
+          }
+          if (failed) throw failure
+        }))
       try {
         signal.throwIfAborted()
+        if (params.memory?.enabled && !selected.memory)
+          throw new RemoteSessionCapabilityError('untrusted project memory')
+        const promptContext = selected.promptContext ?? { contextFiles: [] }
+        if (
+          (promptContext.personaMarkdown ?? '') !== requestedPrompt.personaMarkdown ||
+          JSON.stringify(promptContext.contextFiles.map(({ path, content }) => [path, content])) !==
+            JSON.stringify(
+              requestedPrompt.contextFiles.map(({ path, content }) => [path, content])
+            ) ||
+          (promptContext.personaPath !== undefined &&
+            promptContext.personaPath !== join(params.agentDir, 'AGENTS.md'))
+        )
+          throw new RemoteSessionCapabilityError('untrusted persona or remote context snapshot')
+        const promptPolicy = rpcPromptPolicy({
+          ...promptContext,
+          contextFiles: filterPersonaContextFile(
+            { agentsFiles: [...promptContext.contextFiles] },
+            join(params.agentDir, 'AGENTS.md')
+          ).agentsFiles,
+          schema: 1,
+          nonce: 'preflight',
+          phiSessionId,
+          projectId,
+          projectRoot: binding.canonicalRoot,
+          contextRoot: binding.remoteRoot,
+          hostAlias: binding.hostAlias,
+          generation: 1
+        })
         const afterSelection = findPhiSessionById(phiSessionId)
         const afterBinding = resolveRemoteWorkspaceHostBinding({
           sessionId: phiSessionId,
@@ -407,13 +464,15 @@ export function createFacadeSessionFactory(
             paletteCatalogPath: selected.desktopTools?.paletteCatalogPath,
             remoteLibrary: selected.desktopTools?.remoteLibrary,
             desktopWebSearch: selected.desktopTools?.desktopWebSearch,
-            desktopMcp: selected.desktopTools?.desktopMcp
+            desktopMcp: selected.desktopTools?.desktopMcp,
+            desktopMemory: selected.memory
           })
           const projector = new RpcFacadeEventProjector()
           const scopeTools = tools
-          const names = new Set(selected.desktopToolNames)
+          const memoryNames = selected.memory?.tools.map((tool) => tool.name) ?? []
+          const names = new Set([...selected.desktopToolNames, ...memoryNames])
           if (
-            names.size !== selected.desktopToolNames.length ||
+            names.size !== selected.desktopToolNames.length + memoryNames.length ||
             (names.has('browser') && !selected.desktopTools) ||
             [...names].some((name) => !scopeTools.tools.some((tool) => tool.name === name))
           )
@@ -504,9 +563,19 @@ export function createFacadeSessionFactory(
                 thinkingLevel: action.type === 'new' ? params.thinkingLevel : undefined
               },
               sessionName: expectedTitle,
+              assertBinding: assertAdoptionPolicy,
               action,
               initialSelection: selection,
               compaction: nextCompaction,
+              promptPolicy: {
+                hostAlias: promptPolicy.hostAlias,
+                personaMarkdown: promptPolicy.personaMarkdown,
+                contextRoot: promptPolicy.contextRoot,
+                personaPath: promptPolicy.personaPath,
+                contextFiles: promptPolicy.contextFiles,
+                runtime: promptPolicy.runtime,
+                memoryBlock: selected.memory?.memoryBlock
+              },
               tools: scopeTools.tools.filter((tool) => names.has(tool.name)),
               hostApprovalFor: scopeTools.approvalFor,
               nativeTools: selected.nativeTools,
@@ -815,6 +884,23 @@ export function createFacadeSessionFactory(
                   throw new RuntimeReferenceError('STALE_GENERATION', 'Phi 运行已被替换')
                 state = stateFrom(result.snapshot)
                 sink.state(currentState())
+                if (result.outcome === 'completed' && selected.memory) {
+                  try {
+                    await selected.memory.ingest({
+                      runId: run.runId,
+                      snapshot: result.snapshot,
+                      outcome: 'completed',
+                      signal: run.signal
+                    })
+                  } catch {
+                    selected.memory.retire()
+                    try {
+                      await selected.onMemoryError?.()
+                    } catch {
+                      /* Safe diagnostics cannot change the completed chat. */
+                    }
+                  }
+                }
                 if (result.outcome === 'failed')
                   throw new Error('Remote turn failed or approval was denied')
                 return currentState()
@@ -939,7 +1025,7 @@ export function createFacadeSessionFactory(
                 metadataPending = false
               }
             },
-            async rename(rawName) {
+            async rename(rawName, control) {
               const name = canonicalRemoteSessionName(rawName)
               if (
                 closing ||
@@ -951,6 +1037,8 @@ export function createFacadeSessionFactory(
                 throw new Error('Remote metadata requires an idle Phi session')
               assertAdoptionPolicy()
               const assertCurrent = (): void => {
+                control?.assertCurrent()
+                signal.throwIfAborted()
                 assertAdoptionPolicy()
                 if (
                   JSON.stringify(findPhiSessionById(phiSessionId)?.runtimeRef) !==

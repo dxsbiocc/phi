@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -49,6 +49,8 @@ export function ProjectMemoryCard({
   onSettingsSaved
 }: ProjectMemoryCardProps): React.JSX.Element {
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
+  const operationRef = useRef(false)
   const [expanded, setExpanded] = useState(false)
   const [snapshot, setSnapshot] = useState<ProjectMemorySnapshot | null>(null)
   const [loading, setLoading] = useState(false)
@@ -57,6 +59,8 @@ export function ProjectMemoryCard({
   const remote = project.location?.kind === 'ssh'
 
   const run = useCallback(async (action: () => Promise<ProjectMemorySnapshot>) => {
+    if (operationRef.current) return
+    operationRef.current = true
     setLoading(true)
     setError(null)
     try {
@@ -64,6 +68,7 @@ export function ProjectMemoryCard({
     } catch (failure) {
       setError(errorMessage(failure))
     } finally {
+      operationRef.current = false
       setLoading(false)
     }
   }, [])
@@ -78,6 +83,8 @@ export function ProjectMemoryCard({
     key: keyof ProjectMemorySettings,
     value: boolean
   ): Promise<void> => {
+    if (savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     setError(null)
     try {
@@ -90,6 +97,7 @@ export function ProjectMemoryCard({
     } catch (failure) {
       setError(errorMessage(failure))
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -235,7 +243,13 @@ export function ProjectMemoryCard({
                   <Button size="small" onClick={() => setConfirmingClear(false)}>
                     取消
                   </Button>
-                  <Button size="small" color="error" variant="contained" onClick={clearMemory}>
+                  <Button
+                    size="small"
+                    color="error"
+                    variant="contained"
+                    disabled={loading}
+                    onClick={clearMemory}
+                  >
                     确认清空
                   </Button>
                 </>

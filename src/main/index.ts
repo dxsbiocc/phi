@@ -189,6 +189,11 @@ import { createCheckedRemoteProject } from './agent/remote-project-create'
 import { RemoteProjectUploadService } from './agent/remote-project-upload'
 import { remoteTransferHostKey } from './agent/transfer'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
+import { resolveRemoteRuntimePromptContext } from './agent/remote-runtime-context'
+import {
+  createDesktopProjectMemoryAdapter,
+  retireDesktopProjectMemoryAdapters
+} from './agent/engine/rpc/desktop-project-memory-adapter'
 import {
   remoteBashApprovalScope,
   resolveAuthorizedRemoteConnectionConfig,
@@ -1339,6 +1344,7 @@ let sessionSwitchRequest = 0
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
+const projectMemoryPolicyUpdates = new Set<string>()
 const manualCompactionIds = new Set<string>()
 const manualCompactionOperations = new Map<
   string,
@@ -1491,6 +1497,14 @@ installAppRemoteSessionRouting({
       })
     ).agents,
   loadDesktopTools: loadAppRemoteDesktopTools,
+  loadPromptContext: loadAppRemotePromptContext,
+  onMemoryError: (identity) =>
+    writeAppLog({
+      level: 'error',
+      event: 'project_memory_ingestion_failed',
+      sessionId: identity.sessionId,
+      metadata: { projectId: identity.projectId, reason: 'ingestion_failed' }
+    }),
   approval: {
     shouldGate: (request) => {
       const manifest = request.sessionId ? findPhiSessionById(request.sessionId) : null
@@ -1796,12 +1810,53 @@ const remoteRuntimeController = new RemoteRuntimeController({
   }
 })
 
+async function loadAppRemotePromptContext(
+  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadPromptContext']>>[0],
+  signal: AbortSignal
+): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadPromptContext']>> {
+  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
+  const selected = resolveRemoteWorkspaceHostBinding(boundary)
+  const project = requireProject(identity.projectId)
+  if (project.location.kind !== 'ssh') throw new Error('远程主会话配置缺少 SSH 项目')
+  const assertBinding = (): void => {
+    signal.throwIfAborted()
+    if (
+      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
+      selected.canonicalRoot !== identity.cwd ||
+      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== selected.cacheKey
+    ) {
+      throw new Error('远程主会话配置的项目或主机绑定已改变')
+    }
+  }
+  assertBinding()
+  const contextFiles = await loadRemoteProjectInstructions(project.location)
+  assertBinding()
+  const personaMarkdown = getPersonaMarkdown()
+  const runtimeRoot = projectRemoteRuntimeRoot(project)
+  const runtime = resolveRemoteRuntimePromptContext(
+    {
+      hostProfileId: project.location.hostProfileId,
+      canonicalRoot: project.location.canonicalRoot,
+      ...(runtimeRoot.source === 'project' ? { projectOverride: runtimeRoot.configured } : {})
+    },
+    AGENT_DIR
+  )
+  assertBinding()
+  return {
+    personaMarkdown,
+    ...(personaMarkdown ? { personaPath: join(AGENT_DIR, 'AGENTS.md') } : {}),
+    contextFiles,
+    runtime
+  }
+}
+
 async function loadAppRemoteDesktopTools(
   identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>>[0],
   signal: AbortSignal
 ): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>> {
   const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
   const selectedBinding = resolveRemoteWorkspaceHostBinding(boundary).cacheKey
+  const memoryPolicy = normalizeProjectMemorySettings(getProject(identity.projectId)?.memory)
   const assertBinding = (): void => {
     signal.throwIfAborted()
     if (
@@ -1810,7 +1865,15 @@ async function loadAppRemoteDesktopTools(
     )
       throw new Error('远程资源项目绑定已改变；请显式恢复当前项目会话。')
   }
-  assertBinding()
+  const assertMemoryBinding = (): void => {
+    assertBinding()
+    if (
+      JSON.stringify(normalizeProjectMemorySettings(getProject(identity.projectId)?.memory)) !==
+      JSON.stringify(memoryPolicy)
+    )
+      throw new Error('项目记忆策略已改变')
+  }
+  assertMemoryBinding()
   const context = {
     sessionId: identity.sessionId,
     projectId: identity.projectId,
@@ -1823,7 +1886,7 @@ async function loadAppRemoteDesktopTools(
     listGlobalMcpServers(),
     loadRemoteProjectMcpCatalog(context)
   ])
-  signal.throwIfAborted()
+  assertMemoryBinding()
   const projectNames = new Set(catalog.sources.map((skill) => skill.name))
   const allowedSkills = [
     ...catalog.sources.map((skill) => skill.name),
@@ -1836,7 +1899,7 @@ async function loadAppRemoteDesktopTools(
     remoteSessionId: identity.sessionId,
     projectId: identity.projectId
   })
-  signal.throwIfAborted()
+  assertMemoryBinding()
   const { resourceCwd, ...toolIdentity } = identity
   const search = await createDesktopWebSearchAdapter({
     identity: toolIdentity,
@@ -1850,7 +1913,19 @@ async function loadAppRemoteDesktopTools(
     }
   })
   let mcp: Awaited<ReturnType<typeof createDesktopMcpAdapter>> | undefined
+  let memory: Awaited<ReturnType<typeof createDesktopProjectMemoryAdapter>> | undefined
   try {
+    if (memoryPolicy.enabled) {
+      memory = await createDesktopProjectMemoryAdapter({
+        identity: toolIdentity,
+        agentDir: AGENT_DIR,
+        resourceCwd,
+        settings: memoryPolicy,
+        signal,
+        beforeDispatch: assertMemoryBinding
+      })
+      assertMemoryBinding()
+    }
     const serverNames = [
       ...new Set([
         ...globalServers.filter((server) => server.enabled !== false).map((server) => server.name),
@@ -1868,7 +1943,7 @@ async function loadAppRemoteDesktopTools(
         approvalFor: () => 'write',
         beforeDispatch: assertBinding
       })
-    signal.throwIfAborted()
+    assertMemoryBinding()
     return {
       tools: {
         assertBinding,
@@ -1887,16 +1962,19 @@ async function loadAppRemoteDesktopTools(
         desktopWebSearch: search,
         desktopMcp: mcp
       },
+      memory,
       close: async () => {
         search.retire()
         mcp?.retire()
-        await Promise.allSettled([search.close(), mcp?.close()])
+        memory?.retire()
+        await Promise.allSettled([search.close(), mcp?.close(), memory?.close()])
       }
     }
   } catch (error) {
     search.retire(error)
     mcp?.retire(error)
-    await Promise.allSettled([search.close(), mcp?.close()])
+    memory?.retire()
+    await Promise.allSettled([search.close(), mcp?.close(), memory?.close()])
     throw error
   }
 }
@@ -5597,8 +5675,13 @@ function createRemoteManagedSession(projectId: string): {
 // Turns a free-text description of the desired assistant into a persona markdown file
 // by asking the agent itself to write it, in a throwaway session (noTools + in-memory
 // history) so it doesn't touch the user's real chat or leave tool-call side effects.
-async function generatePersonaMarkdown(description: string): Promise<string> {
+async function generatePersonaMarkdown(
+  description: string,
+  control?: { assertCurrent(): void }
+): Promise<string> {
+  control?.assertCurrent()
   const runtime = await getAuthManager().getRuntime()
+  control?.assertCurrent()
   const model = selectedModel
     ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
     : undefined
@@ -5618,6 +5701,7 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
   )
 
   try {
+    control?.assertCurrent()
     await session.prompt(
       [
         '请根据下面用户对助手的描述，生成一份 Markdown 格式的智能体人设配置。',
@@ -5629,6 +5713,7 @@ async function generatePersonaMarkdown(description: string): Promise<string> {
       ].join('\n')
     )
 
+    control?.assertCurrent()
     const lastAssistantMessage = [...session.messages].reverse().find((message) => {
       const record = message as { role?: string }
       return record.role === 'assistant'
@@ -7140,11 +7225,12 @@ function autoCompactionSettingsPatch(value: unknown): AutoCompactionSettingsPatc
 // Bind a control before its first await. RPC may advance its own checkpoint/runtime
 // generation; the owner, lifecycle record, journal, project and host stay bound.
 // Manual dispatch releases only the view fence so accepted work survives navigation.
-function captureCompactionTarget(
+function captureSessionControlTarget(
   sessionKey: string,
   phiSessionId: string,
   manual = false,
-  requireIdle = true
+  requireIdle = true,
+  viewBound = true
 ): {
   current: CurrentSessionPayload
   rpc: boolean
@@ -7184,9 +7270,10 @@ function captureCompactionTarget(
   )
   const assertCurrent = (): void => {
     const latest = findPhiSessionById(phiSessionId)
-    const now = acceptedManual ? undefined : getCurrentSessionPayload()
+    const requireSelected = viewBound && !acceptedManual
+    const now = requireSelected ? getCurrentSessionPayload() : undefined
     if (
-      (!acceptedManual &&
+      (requireSelected &&
         (!now ||
           !sameCanonicalSessionKey(key, currentSessionKey) ||
           now.path !== current.path ||
@@ -7246,7 +7333,7 @@ async function getCurrentAutoCompactionSettings(
   target: unknown
 ): Promise<CurrentAutoCompactionSettings> {
   const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
-  const captured = captureCompactionTarget(sessionKey, manifest.sessionId, false, false)
+  const captured = captureSessionControlTarget(sessionKey, manifest.sessionId, false, false)
   const ready = await captured.resolved()
   const receipt =
     captured.rpc && ready ? await ready.session.getAutoCompactionSettings?.(captured) : undefined
@@ -7275,7 +7362,7 @@ async function setCurrentAutoCompactionSettings(
   value: unknown
 ): Promise<CurrentAutoCompactionSettings> {
   const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
-  const captured = captureCompactionTarget(sessionKey, manifest.sessionId)
+  const captured = captureSessionControlTarget(sessionKey, manifest.sessionId)
   const patch = autoCompactionSettingsPatch(value)
   const overrides: AutoCompactionOverrides = { ...(manifest.autoCompaction ?? {}) }
   if (patch.enabled === null) delete overrides.enabled
@@ -7341,7 +7428,7 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
 
   const phiSessionId = ensurePhiSessionId(sessionKey, snapshot)
   if (manualCompactionIds.has(phiSessionId)) throw new Error('上下文压缩正在进行')
-  const captured = captureCompactionTarget(sessionKey, phiSessionId, true)
+  const captured = captureSessionControlTarget(sessionKey, phiSessionId, true)
   let finish!: () => void
   const operation: { session?: AgentSessionInstance; cancelled: boolean; done: Promise<void> } = {
     cancelled: false,
@@ -7738,11 +7825,6 @@ async function getAgentSession(
       if (!lifecycle.isCurrentGeneration(generation)) {
         throw new StaleSessionError()
       }
-      await waitForSessionCleanup(creationSnapshot)
-      control?.assertCurrent()
-      if (!lifecycle.isCurrentGeneration(generation)) {
-        throw new StaleSessionError()
-      }
       const sessionManifest = findPhiManifestForSession(
         sessionKey,
         creationSnapshot.path,
@@ -7774,6 +7856,67 @@ async function getAgentSession(
       ) {
         throw new Error('远程项目会话归属无效，请重新选择项目')
       }
+      const initialPromptGeneration = getPromptGeneration(sessionKey)
+      const initialRun = getActivePromptRun(sessionKey)
+      const ownerBinding = (): string => {
+        const latest = findPhiManifestForSession(
+          sessionKey,
+          creationSnapshot.path,
+          creationSnapshot.cwd
+        )
+        const latestProject = latest?.projectId
+          ? getProject(latest.projectId)
+          : getProjectByCwd(creationSnapshot.cwd)
+        return JSON.stringify([
+          latest?.sessionId,
+          latest?.projectId,
+          latest?.cwd,
+          latest?.cwdRealPath,
+          latest?.projectLocation,
+          latestProject?.location,
+          normalizeProjectMemorySettings(latestProject?.memory)
+        ])
+      }
+      const initialOwnerBinding = ownerBinding()
+      const initialJournal = JSON.stringify([
+        sessionManifest?.runtimeRef?.ompSessionId,
+        sessionManifest?.runtimeRef?.journalBasename
+      ])
+      const remoteBinding = remoteProject
+        ? resolveRemoteWorkspaceHostBinding({
+            sessionId: sessionManifest!.sessionId,
+            projectId: remoteProject.projectId
+          }).cacheKey
+        : undefined
+      const assertCreationCurrent = (allowInitialAdoption = false): void => {
+        control?.assertCurrent()
+        const latest = findPhiManifestForSession(
+          sessionKey,
+          creationSnapshot.path,
+          creationSnapshot.cwd
+        )
+        if (
+          !lifecycle.isCurrentGeneration(generation) ||
+          getPromptGeneration(sessionKey) !== initialPromptGeneration ||
+          (initialRun && (initialRun.cancelled || getActivePromptRun(sessionKey) !== initialRun)) ||
+          ownerBinding() !== initialOwnerBinding ||
+          ((!allowInitialAdoption || sessionManifest?.runtimeRef) &&
+            JSON.stringify([
+              latest?.runtimeRef?.ompSessionId,
+              latest?.runtimeRef?.journalBasename
+            ]) !== initialJournal) ||
+          (remoteProject &&
+            resolveRemoteWorkspaceHostBinding({
+              sessionId: sessionManifest!.sessionId,
+              projectId: remoteProject.projectId
+            }).cacheKey !== remoteBinding)
+        ) {
+          throw new StaleSessionError()
+        }
+      }
+      assertCreationCurrent()
+      await waitForSessionCleanup(creationSnapshot)
+      assertCreationCurrent()
       const useRpc = remoteOmpRpcEnabled && remoteProject !== null
       if (sessionManifest?.runtimeRef && !useRpc) {
         throw new Error('此会话属于远程 RPC 运行时，请启用对应运行路径后显式恢复')
@@ -7781,11 +7924,9 @@ async function getAgentSession(
       const remoteContextFiles = remoteProject
         ? await loadRemoteProjectInstructions(remoteProject.location)
         : null
+      assertCreationCurrent()
       const runtime = await getAuthManager().getRuntime()
-      control?.assertCurrent()
-      if (!lifecycle.isCurrentGeneration(generation)) {
-        throw new StaleSessionError()
-      }
+      assertCreationCurrent()
       const modelSelection = resolveSessionModelSelection(sessionKey, creationSnapshot)
       const resolvedModel = modelSelection
         ? resolveRuntimeModelSelection(runtime, modelSelection)
@@ -7849,6 +7990,7 @@ async function getAgentSession(
               agentDir: AGENT_DIR,
               bundledDir: getBundledAgentsDir()
             })
+      assertCreationCurrent()
       const remoteSkillCatalog = remoteProject
         ? await loadRemoteProjectSkillCatalog({
             sessionId: sessionManifest?.sessionId ?? '',
@@ -7857,6 +7999,7 @@ async function getAgentSession(
             agentDir: AGENT_DIR
           })
         : undefined
+      assertCreationCurrent()
       const remoteMcpCatalog: RemoteProjectMcpCatalog | undefined = remoteProject
         ? await loadRemoteProjectMcpCatalog({
             sessionId: sessionManifest?.sessionId ?? '',
@@ -7865,11 +8008,8 @@ async function getAgentSession(
             agentDir: AGENT_DIR
           })
         : undefined
-      control?.assertCurrent()
+      assertCreationCurrent()
       const personaMarkdown = getPersonaMarkdown()
-      if (useRpc && (remoteContextFiles?.length || personaMarkdown || project?.memory?.enabled)) {
-        throw new Error('RPC persona/context/memory are not supported in this controlled stage')
-      }
       for (const diagnostic of agentScan.diagnostics) {
         writeAppLog({
           event:
@@ -8066,10 +8206,7 @@ async function getAgentSession(
         })
         await resourceLoader.reload()
       }
-      control?.assertCurrent()
-      if (!lifecycle.isCurrentGeneration(generation)) {
-        throw new StaleSessionError()
-      }
+      assertCreationCurrent()
 
       if (useRpc && sessionManifest && !sessionManifest.runtimeRef && model) {
         const latest = findPhiSessionById(sessionManifest.sessionId)
@@ -8117,11 +8254,11 @@ async function getAgentSession(
               }
             }
           : {}),
-        ...(!useRpc ? { personaMarkdown } : {}),
+        personaMarkdown,
         ...(model ? { model } : {})
       })
       try {
-        control?.assertCurrent()
+        assertCreationCurrent(true)
       } catch (error) {
         try {
           await abortSessionWithoutCancellingApprovals(result.session)
@@ -8297,6 +8434,20 @@ function captureCurrentSelectionTarget(): {
       return result
     }
   }
+}
+
+function captureCurrentRpcConfigurationTarget(): ReturnType<
+  typeof captureSessionControlTarget
+> | null {
+  const key = resolveSessionKeyAlias(currentSessionKey)
+  const phiSessionId = getPhiSessionIdForKey(key)
+  const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
+  if (
+    !phiSessionId ||
+    !(manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh'))
+  )
+    return null
+  return captureSessionControlTarget(key, phiSessionId)
 }
 
 function createWindow(): void {
@@ -9380,6 +9531,32 @@ app.whenReady().then(async () => {
     if (!trimmedName) return
 
     if (isPhiOnlySessionPath(path)) {
+      const phiSessionId = phiSessionIdFromPath(path)
+      const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
+      if (!manifest) throw new Error('会话不存在')
+      const rpc = Boolean(
+        manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
+      )
+      if (rpc) {
+        const key = createSessionKey(path, manifest.cwd)
+        const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
+        const ready = await captured.resolved()
+        captured.assertCurrent()
+        if (ready) {
+          if (!ownsRemoteRuntimeSession(ready.session.runtimeSessionId))
+            throw new Error('RPC rename requires an exact live attachment')
+          const confirmed = await ready.session.sessionManager.setSessionName(
+            trimmedName,
+            'user',
+            captured
+          )
+          captured.assertCurrent()
+          if (!confirmed) throw new Error('远程会话名称尚未确认')
+          notifySessionChanged()
+          return
+        }
+        if (manifest.runtimeRef) throw new Error('远程会话名称需要显式恢复后修改')
+      }
       await renameSession(path, trimmedName)
       return
     }
@@ -9440,6 +9617,7 @@ app.whenReady().then(async () => {
     })
     await disposeRemoteNotebookBackend(id)
     const project = getProject(id)
+    await retireDesktopProjectMemoryAdapters(id)
     if (project?.memory) {
       // Memory lives under Phi's own directory, so it would outlive the project otherwise.
       await getPhiEngine()
@@ -9499,12 +9677,42 @@ app.whenReady().then(async () => {
     }
   )
   // Memory settings reach the worker at session creation, so they apply to new conversations.
-  ipcMain.handle('projects:updateMemory', async (_, id: string, settings: unknown) =>
-    updateProjectMemory(id, settings)
-  )
+  ipcMain.handle('projects:updateMemory', async (_, id: string, settings: unknown) => {
+    if (projectMemoryPolicyUpdates.has(id)) throw new Error('项目记忆设置正在更新，请稍后重试')
+    const project = requireProject(id)
+    const previous = normalizeProjectMemorySettings(project.memory)
+    const next = normalizeProjectMemorySettings(settings)
+    const currentBinding = (): string => {
+      const current = requireProject(id)
+      const profile =
+        current.location.kind === 'ssh'
+          ? getRemoteHostProfile(current.location.hostProfileId)
+          : undefined
+      return JSON.stringify([
+        current.location,
+        current.workingDirectory,
+        current.workingDirectoryRealPath,
+        normalizeProjectMemorySettings(current.memory),
+        profile ? remoteConnectionConfigForProfile(profile) : null,
+        current.location.kind === 'ssh' ? projectRemoteRuntimeRoot(current) : null
+      ])
+    }
+    const binding = currentBinding()
+    projectMemoryPolicyUpdates.add(id)
+    try {
+      if (previous.enabled !== next.enabled || previous.learn !== next.learn) {
+        await retireDesktopProjectMemoryAdapters(id)
+        if (currentBinding() !== binding) throw new StaleSessionError()
+      }
+      return updateProjectMemory(id, next)
+    } finally {
+      projectMemoryPolicyUpdates.delete(id)
+    }
+  })
   ipcMain.handle('memory:snapshot', async (_, id: string) => projectMemorySnapshot(id))
   ipcMain.handle('memory:deleteLesson', async (_, id: string, index: unknown, text: unknown) => {
     const project = requireProject(id)
+    await retireDesktopProjectMemoryAdapters(id)
     await getPhiEngine().memory.deleteLesson({
       ...projectMemoryTarget(project),
       index,
@@ -9513,7 +9721,9 @@ app.whenReady().then(async () => {
     return projectMemorySnapshot(id)
   })
   ipcMain.handle('memory:clear', async (_, id: string) => {
-    await getPhiEngine().memory.clear(projectMemoryTarget(requireProject(id)))
+    const project = requireProject(id)
+    await retireDesktopProjectMemoryAdapters(id)
+    await getPhiEngine().memory.clear(projectMemoryTarget(project))
     return projectMemorySnapshot(id)
   })
   ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
@@ -11388,6 +11598,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('persona:isOnboarded', async () => isOnboarded())
   ipcMain.handle('persona:getMarkdown', async () => getPersonaMarkdown())
   ipcMain.handle('persona:setMarkdown', async (_, markdown: string) => {
+    captureCurrentRpcConfigurationTarget()?.assertCurrent()
     setPersonaMarkdown(markdown)
     await invalidateAgentSession()
     return getPersonaMarkdown()
@@ -11402,15 +11613,18 @@ app.whenReady().then(async () => {
       return ''
     }
 
+    const target = captureCurrentRpcConfigurationTarget()
     let markdown: string
     try {
-      markdown = await generatePersonaMarkdown(trimmedDescription)
+      markdown = await generatePersonaMarkdown(trimmedDescription, target ?? undefined)
     } catch (error) {
+      target?.assertCurrent()
       logUnexpectedError(error)
       console.error('生成人设配置失败，回退为原始描述:', error)
       markdown = fallbackMarkdownFromDescription(trimmedDescription)
     }
 
+    target?.assertCurrent()
     setPersonaMarkdown(markdown)
     await invalidateAgentSession()
     return markdown

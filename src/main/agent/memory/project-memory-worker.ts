@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises'
+import { mutateProjectMemory } from '../engine/rpc/desktop-project-memory-runtime'
 
 import type { PhiTool } from '../engine/types'
 
@@ -46,8 +47,10 @@ export async function deleteProjectMemoryLesson(params: unknown): Promise<Projec
   }
   if (typeof record.text !== 'string') throw new Error('经验内容无效')
   const root = getMemoryRoot(target.agentDir, target.cwd)
-  await deleteLearnedLesson(root, record.index, record.text)
-  return readProjectMemoryFiles(root)
+  return mutateProjectMemory(target, async () => {
+    await deleteLearnedLesson(root, record.index as number, record.text as string)
+    return readProjectMemoryFiles(root)
+  })
 }
 
 /**
@@ -58,20 +61,26 @@ export async function deleteProjectMemoryLesson(params: unknown): Promise<Projec
  */
 export async function clearProjectMemory(params: unknown): Promise<void> {
   const target = projectMemoryTarget(params)
-  const db = openMemoryDb(getAgentDbPath(target.agentDir))
-  try {
-    db.transaction(() => {
-      db.prepare(
-        'DELETE FROM stage1_outputs WHERE thread_id IN (SELECT id FROM threads WHERE cwd = ?)'
-      ).run(target.cwd)
-      db.prepare("DELETE FROM jobs WHERE kind = 'memory_consolidate_global' AND job_key = ?").run(
-        `global:${target.cwd}`
-      )
-    })()
-  } finally {
-    closeMemoryDb(db)
-  }
-  await rm(getMemoryRoot(target.agentDir, target.cwd), { recursive: true, force: true })
+  await mutateProjectMemory(
+    target,
+    async () => {
+      const db = openMemoryDb(getAgentDbPath(target.agentDir))
+      try {
+        db.transaction(() => {
+          db.prepare(
+            'DELETE FROM stage1_outputs WHERE thread_id IN (SELECT id FROM threads WHERE cwd = ?)'
+          ).run(target.cwd)
+          db.prepare(
+            "DELETE FROM jobs WHERE kind = 'memory_consolidate_global' AND job_key = ?"
+          ).run(`global:${target.cwd}`)
+        })()
+      } finally {
+        closeMemoryDb(db)
+      }
+      await rm(getMemoryRoot(target.agentDir, target.cwd), { recursive: true, force: true })
+    },
+    true
+  )
 }
 
 export function buildWorkerProjectLearnTool(target: ProjectMemoryTarget): PhiTool {

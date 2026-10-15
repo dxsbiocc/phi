@@ -12,7 +12,10 @@ export interface LearnedLessonInput {
   context?: string
 }
 
-export type SaveLearnedLesson = (input: LearnedLessonInput) => Promise<{ stored: number }>
+export type SaveLearnedLesson = (
+  input: LearnedLessonInput,
+  signal?: AbortSignal
+) => Promise<{ stored: number }>
 
 /**
  * Phi's own `learn`: the SDK's autolearn variant would also expose `manage_skill` and
@@ -44,14 +47,16 @@ export function buildProjectLearnTool(save: SaveLearnedLesson): PhiTool {
       }
     },
     approval: 'read',
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _onUpdate, _ctx, signal) {
+      signal?.throwIfAborted()
       const record = (params ?? {}) as Record<string, unknown>
       const content = typeof record.memory === 'string' ? record.memory.trim() : ''
       const context = typeof record.context === 'string' ? record.context.trim() : ''
       if (!content) {
         return { content: [{ type: 'text', text: 'learn：经验内容为空，未记录。' }], isError: true }
       }
-      const result = await save({ content, ...(context ? { context } : {}) })
+      const result = await save({ content, ...(context ? { context } : {}) }, signal)
+      signal?.throwIfAborted()
       if (result.stored === 0) {
         return {
           content: [{ type: 'text', text: 'learn：经验在去除敏感内容后为空，未记录。' }],

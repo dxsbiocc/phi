@@ -38,7 +38,7 @@ export interface RoutedSessionDriver {
   state(): WorkerSessionState
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
   contextUsage(): Promise<ContextUsageSnapshot | null>
-  rename(name: string): Promise<WorkerSessionState>
+  rename(name: string, control?: RuntimeSelectionControl): Promise<WorkerSessionState>
   setModel?(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<WorkerSessionState>
   setThinkingLevel?(
     level: ThinkingLevel | undefined,
@@ -276,9 +276,10 @@ export class SessionRoutingEngine implements PhiEngine {
       }
       return this.legacy.sessions.setThinkingLevel(params)
     },
-    rename: async (params) => {
-      if (this.owns(params.sessionId)) return this.driver(params.sessionId).rename(params.name)
-      return this.legacy.sessions.rename(params)
+    rename: async (params, control) => {
+      if (this.owns(params.sessionId))
+        return this.driver(params.sessionId).rename(params.name, control)
+      return this.legacy.sessions.rename(params, control)
     },
     contextUsage: async (params) => {
       if (this.owns(params.sessionId)) return this.driver(params.sessionId).contextUsage()

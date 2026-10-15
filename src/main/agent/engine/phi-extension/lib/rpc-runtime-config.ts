@@ -26,6 +26,7 @@ export function rpcRuntimeConfigDigest(config: RpcRuntimeConfig): string {
 }
 
 export interface RpcRuntimeConfig {
+  readonly promptPolicyHash?: string
   readonly schema: 1
   readonly nonce: string
   readonly phiSessionId: string
@@ -92,10 +93,18 @@ export function validateRpcRuntimeConfig(
     'native',
     ...(value && typeof value === 'object' && Object.hasOwn(value, 'childRuntimeRequired')
       ? ['childRuntimeRequired']
+      : []),
+    ...(value && typeof value === 'object' && Object.hasOwn(value, 'promptPolicyHash')
+      ? ['promptPolicyHash']
       : [])
   ])
   if (value.childRuntimeRequired !== undefined && typeof value.childRuntimeRequired !== 'boolean')
     throw new Error('Invalid child runtime intent')
+  if (
+    value.promptPolicyHash !== undefined &&
+    (typeof value.promptPolicyHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.promptPolicyHash))
+  )
+    throw new Error('Invalid Phi prompt publication hash')
   exact(value.execution, ['capability', 'tools'])
   exact(value.result, ['capability', 'leaseId', 'directory'])
   exact(value.native, ['endpoint', 'models'])

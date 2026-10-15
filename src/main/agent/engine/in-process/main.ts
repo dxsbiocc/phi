@@ -1,3 +1,11 @@
+import {
+  createDesktopProjectMemory,
+  ingestDesktopProjectMemory,
+  learnDesktopProjectMemory,
+  cancelDesktopProjectMemory,
+  closeDesktopProjectMemory,
+  closeAllDesktopProjectMemory
+} from '../rpc/desktop-project-memory-runtime'
 import { createInterface } from 'node:readline'
 import {
   clearProjectMemory,
@@ -72,6 +80,16 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return promptSession(params)
     case 'session.contextUsage':
       return sessionContextUsage(params)
+    case 'memory.desktopCreate':
+      return createDesktopProjectMemory(params)
+    case 'memory.desktopIngest':
+      return ingestDesktopProjectMemory(params)
+    case 'memory.desktopLearn':
+      return learnDesktopProjectMemory(params)
+    case 'memory.desktopCancel':
+      return cancelDesktopProjectMemory(params)
+    case 'memory.desktopClose':
+      return closeDesktopProjectMemory(params)
     case 'memory.read':
       return readProjectMemory(params)
     case 'memory.deleteLesson':
@@ -152,6 +170,7 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
 const input = createInterface({ input: process.stdin })
 input.once('close', () => {
   void closeAllDesktopMcpScopes().catch(() => undefined)
+  void closeAllDesktopProjectMemory().catch(() => undefined)
   void closeAllModelGatewayLeases().catch(() => undefined)
 })
 input.on('line', (line) => {
