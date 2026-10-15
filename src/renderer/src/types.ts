@@ -724,6 +724,7 @@ export interface AnalysisNotebookFormatResult {
 export interface RendererApi
   extends
     AutoCompactionApi,
+    RuntimeRecoveryApi,
     ManagedEnvironmentRendererApi,
     McpRendererApi,
     RemoteProjectUploadRendererApi,
@@ -811,9 +812,6 @@ export interface RendererApi
     target: ManualCompactionTarget
   ) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
-  getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
-  resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
-  continueRuntimeFromSummary: RuntimeRecoveryApi['continueRuntimeFromSummary']
   forkSession: (
     sourceId: string,
     eventId: string
