@@ -1,11 +1,18 @@
 // Single review surface for non-MCP OMP internals during OMP upgrades.
 
+import {
+  Settings as OmpSettings,
+  SessionManager as OmpSessionManager,
+  createAgentSession as ompCreateAgentSession,
+  type CreateAgentSessionOptions as OmpCreateAgentSessionOptions
+} from '@oh-my-pi/pi-coding-agent'
 import type { Model as OmpModel } from '@oh-my-pi/pi-ai/types'
 import { authPolicyFor as ompAuthPolicyFor } from '@oh-my-pi/pi-catalog/compat/auth'
 import { providerEntry as ompGetCatalogProviderEntry } from '@oh-my-pi/pi-catalog/compat/providers'
 import {
   getMemoryRoot as ompGetMemoryRoot,
-  saveLearnedLesson as ompSaveLearnedLesson
+  saveLearnedLesson as ompSaveLearnedLesson,
+  startMemoryStartupTask as ompStartMemoryStartupTask
 } from '@oh-my-pi/pi-coding-agent/memories'
 import {
   closeMemoryDb as ompCloseMemoryDb,
@@ -23,7 +30,7 @@ import {
   DEFAULT_COMPACTION_METHOD_ORDER as OMP_DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder as ompResolveCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
-import { getAgentDbPath as ompGetAgentDbPath } from '@oh-my-pi/pi-utils'
+import { getAgentDbPath as ompGetAgentDbPath, logger as ompLogger } from '@oh-my-pi/pi-utils'
 
 import type { PhiCompactionMethod } from './types'
 
@@ -243,4 +250,170 @@ export function closeMemoryDb(db: PhiMemoryDatabase): void {
 
 export function getAgentDbPath(agentDir?: string): string {
   return ompGetAgentDbPath(agentDir)
+}
+
+/** Explicit memory-only transcripts; these files never resume a user's SDK conversation. */
+export async function writeImportedMemoryRollout(
+  cwd: string,
+  directory: string,
+  messages: readonly unknown[]
+): Promise<{ id: string; path: string }> {
+  const manager = OmpSessionManager.create(cwd, directory)
+  for (const raw of messages) {
+    if (!raw || typeof raw !== 'object') throw new Error('Invalid imported memory message')
+    const message = raw as Record<string, unknown>
+    if (message.role === 'compactionSummary' && typeof message.summary === 'string') {
+      manager.appendMessage({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Verified conversation summary (memory-only import):\n${message.summary}`
+          }
+        ],
+        timestamp: Date.now()
+      })
+    } else {
+      manager.appendMessage(raw as Parameters<typeof manager.appendMessage>[0])
+    }
+  }
+  await manager.flush()
+  const path = manager.getSessionFile()
+  if (!path) throw new Error('Memory import did not persist a rollout')
+  return { id: manager.getSessionId(), path }
+}
+
+export function removeImportedMemoryThread(agentDir: string, id: string): void {
+  const db = ompOpenMemoryDb(ompGetAgentDbPath(agentDir))
+  try {
+    db.transaction(() => {
+      db.prepare('DELETE FROM stage1_outputs WHERE thread_id = ?').run(id)
+      db.prepare("DELETE FROM jobs WHERE kind = 'memory_stage1' AND job_key = ?").run(id)
+      db.prepare('DELETE FROM threads WHERE id = ?').run(id)
+    })()
+  } finally {
+    ompCloseMemoryDb(db)
+  }
+}
+
+/** A joined, owned child cannot still hold these SDK job leases. Other workers are untouched. */
+export function releaseImportedMemoryJobs(agentDir: string, childPid: number): void {
+  const db = ompOpenMemoryDb(ompGetAgentDbPath(agentDir))
+  try {
+    db.prepare(
+      "UPDATE jobs SET status = 'pending', worker_id = NULL, ownership_token = NULL, lease_until = NULL, retry_at = NULL WHERE status = 'running' AND worker_id = ?"
+    ).run(`memory-${childPid}`)
+  } finally {
+    ompCloseMemoryDb(db)
+  }
+}
+
+/** Read only desktop-global preferences, then apply the terminal-import safety policy. */
+export async function loadImportedMemorySettings(
+  canonicalAgentDir: string,
+  cwd: string
+): Promise<OmpSettings> {
+  const base = await OmpSettings.loadReadOnly({
+    cwd: canonicalAgentDir,
+    agentDir: canonicalAgentDir
+  })
+  return base
+    .overlay({
+      'memory.backend': 'local',
+      // Every import is an already verified terminal checkpoint, not an active rollout.
+      'memories.minRolloutIdleHours': 0,
+      extensions: [],
+      'skills.enabled': false,
+      'mcp.enableProjectConfig': false
+    })
+    .cloneForCwd(cwd)
+}
+
+/** Uses a real tool-less SDK companion and the original public two-stage local pipeline. */
+export async function runImportedMemoryPipeline(options: {
+  canonicalAgentDir: string
+  agentDir: string
+  cwd: string
+  directory: string
+  context: Pick<OmpCreateAgentSessionOptions, 'authStorage' | 'modelRegistry'>
+  model: OmpModel
+}): Promise<{ started: true; status: 'summary' | 'empty' }> {
+  const settings = await loadImportedMemorySettings(options.canonicalAgentDir, options.cwd)
+  const manager = OmpSessionManager.create(options.cwd, options.directory)
+  const result = await ompCreateAgentSession({
+    cwd: options.cwd,
+    agentDir: options.agentDir,
+    settings,
+    sessionManager: manager,
+    authStorage: options.context.authStorage,
+    modelRegistry: options.context.modelRegistry,
+    model: options.model,
+    agentId: `phi-memory-${manager.getSessionId()}`,
+    toolNames: [],
+    customTools: [],
+    restrictToolNames: true,
+    enableMCP: false,
+    enableLsp: false,
+    disableExtensionDiscovery: true,
+    bindProcessState: false,
+    customSystemPrompt: 'Desktop project-memory ingestion companion.'
+  })
+  const session = result.session
+  let started = false
+  let finish!: () => void
+  const drained = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const begin = session.beginLocalMemoryStartup.bind(session)
+  const end = session.endLocalMemoryStartup.bind(session)
+  session.beginLocalMemoryStartup = () => {
+    started = true
+    return begin()
+  }
+  session.endLocalMemoryStartup = (signal) => {
+    try {
+      end(signal)
+    } finally {
+      finish()
+    }
+  }
+  try {
+    ompStartMemoryStartupTask({
+      session,
+      settings,
+      modelRegistry: options.context.modelRegistry!,
+      agentDir: options.agentDir,
+      taskDepth: 0
+    })
+    if (!started) throw new Error('SDK memory pipeline did not start')
+    await drained
+    const db = ompOpenMemoryDb(ompGetAgentDbPath(options.agentDir))
+    try {
+      const failed = db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM jobs WHERE status IN ('failed', 'running', 'pending')"
+        )
+        .get() as { count: number }
+      const unprocessed = db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM threads t LEFT JOIN jobs j ON j.kind = 'memory_stage1' AND j.job_key = t.id WHERE j.last_success_watermark IS NULL OR j.last_success_watermark < t.updated_at"
+        )
+        .get() as { count: number }
+      if (failed.count > 0 || unprocessed.count > 0)
+        throw new Error('SDK memory pipeline did not complete its jobs')
+      const outputs = db.prepare('SELECT COUNT(*) AS count FROM stage1_outputs').get() as {
+        count: number
+      }
+      return { started: true, status: outputs.count > 0 ? 'summary' : 'empty' }
+    } finally {
+      ompCloseMemoryDb(db)
+    }
+  } finally {
+    await session.dispose()
+  }
+}
+
+export function silenceProjectMemorySdkLogging(): void {
+  delete process.env.PI_REQ_DEBUG
+  ompLogger.setTransports({ file: false, console: false })
 }

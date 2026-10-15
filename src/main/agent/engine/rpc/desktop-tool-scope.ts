@@ -33,6 +33,10 @@ import { isDesktopWebSearchAdapter } from './desktop-websearch-adapter'
 import type { DesktopWebSearchAdapter } from './desktop-websearch-types'
 import { isDesktopMcpAdapter } from './desktop-mcp-adapter'
 import type { DesktopMcpAdapter } from './desktop-mcp-types'
+import {
+  isDesktopProjectMemoryAdapter,
+  type DesktopProjectMemoryAdapter
+} from './desktop-project-memory-adapter'
 
 export interface RpcDesktopToolIdentity {
   readonly runtimeSessionId: string
@@ -69,6 +73,7 @@ export interface RpcDesktopToolScopeOptions {
   /** A genuine separately owned desktop SDK adapter; owner awaits close on teardown. */
   readonly desktopWebSearch?: DesktopWebSearchAdapter
   readonly desktopMcp?: DesktopMcpAdapter
+  readonly desktopMemory?: DesktopProjectMemoryAdapter
   /** The actual RemoteRuntimeController.approvalFor; required when script tools are enabled. */
   readonly scriptApprovalFor?: (toolName: string, input: unknown) => PhiToolApproval | undefined
 }
@@ -144,6 +149,7 @@ export function createRpcDesktopToolScope(
     throw new Error('Desktop tools require a trusted canonical remote project scope')
   const webSearch = options.desktopWebSearch
   const mcp = options.desktopMcp
+  const memory = options.desktopMemory
   if (
     webSearch &&
     (!isDesktopWebSearchAdapter(webSearch) ||
@@ -160,6 +166,14 @@ export function createRpcDesktopToolScope(
       ))
   )
     throw new Error('Desktop MCP adapter belongs to a different trusted session')
+  if (
+    memory &&
+    (!isDesktopProjectMemoryAdapter(memory) ||
+      Object.entries(identity).some(
+        ([key, value]) => memory.identity[key as keyof RpcDesktopToolIdentity] !== value
+      ))
+  )
+    throw new Error('Desktop memory adapter belongs to a different trusted session')
   const lifetime = new AbortController()
   const calls = new AsyncLocalStorage<Call>()
   const active = new Set<AbortController>()
@@ -301,6 +315,7 @@ export function createRpcDesktopToolScope(
     buildRenderBlocksTool(),
     ...(webSearch ? [webSearch.tool] : []),
     ...(mcp ? mcp.tools : []),
+    ...(memory ? memory.tools : []),
     ...(options.remoteLibrary
       ? buildLibraryCustomTools(
           remoteLibraryToolStore(libraryRequest, identity, () => {

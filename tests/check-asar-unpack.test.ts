@@ -124,6 +124,7 @@ test('runtime worker closure follows value imports beyond the old hand-maintaine
   for (const expected of [
     'src/main/agent/engine/in-process/main.ts',
     'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
+    'src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts',
     'src/main/agent/engine/phi-extension/index.ts',
     'src/main/agent/engine/phi-extension/extensions/next-action.ts',
     'src/main/agent/engine/tool-adapter.ts',
@@ -154,6 +155,11 @@ test('copy plugin emits exactly the closure files under out/', () => {
       "import { search } from './desktop-websearch-owned'\nimport 'search-package'\n"
     )
     write('src/main/agent/engine/rpc/desktop-websearch-owned.ts', 'export const search = 1\n')
+    write(
+      'src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts',
+      "import { memory } from './desktop-memory-owned'\nimport 'node:crypto'\n"
+    )
+    write('src/main/agent/engine/rpc/desktop-memory-owned.ts', 'export const memory = 1\n')
     write('src/main/agent/a.ts', "export { b } from './nested/b'\nexport const a = 1\n")
     write('src/main/agent/nested/b.ts', "const c = await import('./c')\nexport const b = c\n")
     write('src/main/agent/nested/c.ts', 'export {}\n')
@@ -172,6 +178,8 @@ test('copy plugin emits exactly the closure files under out/', () => {
     assert.deepEqual(emitted, [
       'out/main/agent/a.ts',
       'out/main/agent/engine/in-process/main.ts',
+      'out/main/agent/engine/rpc/desktop-memory-owned.ts',
+      'out/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts',
       'out/main/agent/engine/rpc/desktop-websearch-owned.ts',
       'out/main/agent/engine/rpc/desktop-websearch-worker.ts',
       'out/main/agent/nested/b.ts',
@@ -213,6 +221,8 @@ test('every worker entry is mandatory and second-entry dependencies/assets share
   }
   try {
     write('src/main/agent/engine/in-process/main.ts', 'export {}')
+    assert.throws(() => collectOmpWorkerSources(root), /desktop-project-memory-sdk-worker/u)
+    write('src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts', 'export {}')
     assert.throws(() => collectOmpWorkerSources(root), /desktop-websearch-worker/u)
     write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', "import 'search-package'")
     assert.throws(() => collectOmpWorkerPackageDirs(root), /search-package/u)
@@ -281,6 +291,10 @@ test('runtime closure erases only explicit type edges and keeps value, mixed, si
     `
     )
     write('src/main/agent/engine/rpc/desktop-websearch-worker.ts', `import './runtime-value'`)
+    write(
+      'src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts',
+      `import './runtime-value'`
+    )
     write('src/main/agent/engine/rpc/runtime-value.ts', 'export const live = true')
     const closure = collectOmpWorkerSources(root)
     assert.deepEqual(closure.packages, [

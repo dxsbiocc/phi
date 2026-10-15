@@ -204,7 +204,11 @@ export interface RuntimeSessionManager {
   getCwd(): string
   getSessionFile(): string | undefined
   appendSessionInfo(name: string): void
-  setSessionName(name: string, source?: 'user' | 'auto'): Promise<boolean>
+  setSessionName(
+    name: string,
+    source?: 'user' | 'auto',
+    control?: RuntimeSelectionControl
+  ): Promise<boolean>
 }
 
 export interface RuntimeResourceLoader {
@@ -808,11 +812,14 @@ class ActiveRuntimeSessionManagerProxy extends RuntimeSessionManagerProxy {
     void this.setSessionName(name)
   }
 
-  override async setSessionName(name: string): Promise<boolean> {
-    const state = await this.engine.sessions.rename({
-      sessionId: this.sessionId,
-      name
-    })
+  override async setSessionName(
+    name: string,
+    _source?: 'user' | 'auto',
+    control?: RuntimeSelectionControl
+  ): Promise<boolean> {
+    control?.assertCurrent()
+    const state = await this.engine.sessions.rename({ sessionId: this.sessionId, name }, control)
+    control?.assertCurrent()
     this.path = state.sessionFile ?? this.path
     if (state.cwd) this.cwd = state.cwd
     return true

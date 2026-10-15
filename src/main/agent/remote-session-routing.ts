@@ -24,6 +24,7 @@ export const APP_RPC_NOTEBOOK_TOOL_NAMES = NOTEBOOK_TOOL_NAMES
 
 export interface AppRemoteDesktopResources {
   readonly tools: NonNullable<SelectedFacadeRuntime['desktopTools']>
+  readonly memory?: SelectedFacadeRuntime['memory']
   /** Retire/drain owned desktop adapters before releasing the selected SSH/workspace. */
   close?(): void | Promise<void>
 }
@@ -96,6 +97,17 @@ export interface AppRemoteSessionRoutingOptions {
     },
     signal: AbortSignal
   ): Promise<AppRemoteDesktopResources>
+  loadPromptContext?(
+    identity: {
+      runtimeSessionId: string
+      sessionId: string
+      projectId: string
+      cwd: string
+      resourceCwd: string
+    },
+    signal: AbortSignal
+  ): Promise<NonNullable<SelectedFacadeRuntime['promptContext']>>
+  onMemoryError?(identity: { sessionId: string; projectId: string }): void | Promise<void>
   approval: SelectedFacadeRuntime['approval']
   onChildApprovalEvent?: NonNullable<SelectedFacadeRuntime['foregroundChildren']>['onApprovalEvent']
 }
@@ -166,6 +178,37 @@ export function installAppRemoteSessionRouting(
         sessionId: phiSessionId,
         projectId
       })
+      const configuredRoot = options.configuredRoot(project)
+      const manifestBinding = JSON.stringify([
+        manifest.cwd,
+        manifest.projectLocation,
+        manifest.runtimeRef?.ompSessionId,
+        manifest.runtimeRef?.journalBasename
+      ])
+      const assertSelected = (): void => {
+        signal.throwIfAborted()
+        const latest = findPhiSessionById(phiSessionId)
+        const currentProject = getProject(projectId)
+        if (
+          !latest ||
+          !currentProject ||
+          latest.projectId !== projectId ||
+          JSON.stringify([
+            latest.cwd,
+            latest.projectLocation,
+            latest.runtimeRef?.ompSessionId,
+            latest.runtimeRef?.journalBasename
+          ]) !== manifestBinding ||
+          (dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
+            sessionId: phiSessionId,
+            projectId
+          }).cacheKey !== binding.cacheKey ||
+          options.configuredRoot(currentProject) !== configuredRoot
+        ) {
+          throw new Error('RPC selected project/host binding changed before runtime creation')
+        }
+      }
+      assertSelected()
       const definitions = names.length
         ? selectAppForegroundAgents(
             names,
@@ -176,22 +219,35 @@ export function installAppRemoteSessionRouting(
             })
           )
         : []
+      assertSelected()
       const bundle = await createPhiExtensionBundle(
         resolvePhiExtensionSourceRoot(options.appPaths())
       )
-      signal.throwIfAborted()
+      assertSelected()
       const workspace = await (dependencies.openWorkspace ?? openRemoteRuntimeWorkspace)(
         {
           runtimeSessionId,
           sessionId: phiSessionId,
           projectId,
-          configuredRoot: options.configuredRoot(project)
+          configuredRoot
         },
         signal
       )
       let session: Awaited<ReturnType<typeof binding.config.connect>> | undefined
       let resources: AppRemoteDesktopResources | undefined
       try {
+        assertSelected()
+        const promptContext = await options.loadPromptContext?.(
+          {
+            runtimeSessionId,
+            sessionId: phiSessionId,
+            projectId,
+            cwd: binding.canonicalRoot,
+            resourceCwd: manifest.cwd
+          },
+          signal
+        )
+        assertSelected()
         resources = await options.loadDesktopTools?.(
           {
             runtimeSessionId,
@@ -202,9 +258,9 @@ export function installAppRemoteSessionRouting(
           },
           signal
         )
-        signal.throwIfAborted()
+        assertSelected()
         session = await binding.config.connect()
-        signal.throwIfAborted()
+        assertSelected()
         if (
           !session.openStdio ||
           !session.openReverseTunnel ||
@@ -230,6 +286,9 @@ export function installAppRemoteSessionRouting(
           approval: { ...options.approval, projectName: project.name },
           desktopToolNames: appRpcDesktopToolNames(resources?.tools),
           desktopTools: resources?.tools,
+          memory: resources?.memory,
+          onMemoryError: () => options.onMemoryError?.({ sessionId: phiSessionId, projectId }),
+          ...(promptContext ? { promptContext } : {}),
           recentUserImages: () => [],
           ...(definitions.length
             ? { foregroundChildren: { definitions, onApprovalEvent: options.onChildApprovalEvent } }

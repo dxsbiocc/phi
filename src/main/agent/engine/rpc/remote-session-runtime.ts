@@ -1,4 +1,6 @@
 import { assertSafeBrowserHistory } from './browser-tool-stream'
+import { publishRpcPromptPolicy } from './prompt-policy-publication'
+import type { RpcPromptPolicy } from '../phi-extension/lib/rpc-prompt-policy'
 import {
   assertRuntimeIdleState,
   requestRuntimeCompactionControl
@@ -73,6 +75,11 @@ export interface RemoteRuntimeTurnResult {
   readonly outcome: 'completed' | 'failed' | 'aborted'
 }
 export interface RemoteSessionRuntimeOptions {
+  readonly assertBinding?: () => void
+  readonly promptPolicy?: Omit<
+    RpcPromptPolicy,
+    'schema' | 'nonce' | 'phiSessionId' | 'projectId' | 'projectRoot' | 'generation'
+  >
   readonly compaction?: RpcCompactionPolicy
   readonly transport: Omit<ModelProxyRpcTransportOptions, 'prepareRuntime'>
   readonly params: RpcSessionCreateParams
@@ -389,6 +396,7 @@ export class RemoteSessionRuntime {
   private active = (): void => {
     this.selectionGuard?.assertCurrent()
     this.lifetime.signal.throwIfAborted()
+    this.options.assertBinding?.()
     if (this.closing) throw new Error('Remote runtime is closing')
     this.storage?.lease.assertActive()
     if (!this.gate || this.authority?.currentRun())
@@ -467,6 +475,7 @@ export class RemoteSessionRuntime {
         ...options.transport,
         browserTextVault: options.browserTextVault,
         assertSelectionCurrent: this.active,
+        beforeLaunch: this.active,
         currentBrowserRunSignal: () =>
           this.promptController?.signal ?? this.manualController?.signal,
         prepareRuntime: async (context) => {
@@ -516,7 +525,18 @@ export class RemoteSessionRuntime {
             signal: context.signal,
             uploadOptions: options.transport.runtime.uploadOptions
           })
+          const promptPolicyHash = options.promptPolicy
+            ? await publishRpcPromptPolicy({
+                context,
+                runtime: options.transport.runtime,
+                policy: options.promptPolicy,
+                assertCurrent: this.active
+              })
+            : undefined
+          context.signal.throwIfAborted()
+          this.active()
           this.config = Object.freeze({
+            ...(promptPolicyHash ? { promptPolicyHash } : {}),
             schema: 1,
             nonce: context.bootstrap.nonce,
             phiSessionId: context.params.sessionId,

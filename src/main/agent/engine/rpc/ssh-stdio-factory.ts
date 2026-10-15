@@ -34,6 +34,8 @@ import {
 } from './rpc-startup-policy'
 
 export interface SshRpcSessionTransportOptions {
+  /** Main-only last dispatch fence; never serialized into CLI or SSH protocol options. */
+  beforeLaunch?: () => void
   /** The selected, already connected session: the factory never owns its SSH master. */
   session: Pick<RemoteSshSession, 'openStdio'>
   runtime: Omit<RemoteOmpDeploymentOptions, 'signal'>
@@ -421,6 +423,7 @@ private_dir ${q(agentDir)}`,
         // applies --cwd. Start in the owned HOME, then let the official CLI
         // switch the real process and session cwd after that startup phase.
         storage?.lease.assertActive()
+        options.beforeLaunch?.()
         const persistentEnv = storage
           ? ` XDG_DATA_HOME=${q(storage.paths.data)} XDG_STATE_HOME=${q(statePath)} XDG_CACHE_HOME=${q(cachePath)} TMPDIR=${q(tempPath)} TEMP=${q(tempPath)} TMP=${q(tempPath)}`
           : ''

@@ -411,7 +411,10 @@ export interface PhiEngine {
       },
       control?: RuntimeSelectionControl
     ): Promise<WorkerSessionState>
-    rename(params: { sessionId: string; name: string }): Promise<WorkerSessionState>
+    rename(
+      params: { sessionId: string; name: string },
+      control?: RuntimeSelectionControl
+    ): Promise<WorkerSessionState>
     contextUsage(params: { sessionId: string }): Promise<ContextUsageSnapshot | null>
     compact(
       params: { sessionId: string },

@@ -6,6 +6,7 @@ import { createProjectToolBoundaryExtension } from './extensions/project-boundar
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 import { createRpcModelSelectionExtension } from './extensions/rpc-model-selection'
 import { createRpcCompactionExtension } from './extensions/rpc-compaction-control'
+import { createRpcPromptExtension } from './extensions/rpc-prompt'
 import { createRpcExecutionAuthorityExtension } from './extensions/rpc-execution-authority'
 import { createRpcToolApprovalExtension } from './extensions/rpc-tool-approval'
 import {
@@ -202,6 +203,8 @@ const rpcExtension: ExtensionFactory = async (pi) => {
 
   if (runtime) {
     const lifetime = new AbortController()
+    const prompt = createRpcPromptExtension(runtime, lifetime.signal)
+    await prompt.extension(pi)
     const compaction = createRpcCompactionExtension(runtime, lifetime.signal)
     await compaction.extension(pi)
     let childController: ReturnType<typeof createRpcSubagentsExtension> | undefined
@@ -404,6 +407,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         )
           throw new Error('Phi RPC exact tool roster is not active')
         native.assertInstalled(ctx)
+        prompt.assertInstalled(ctx)
         ctx.ui.notify(
           JSON.stringify({
             type: 'phi_rpc_runtime_attestation',
