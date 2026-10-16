@@ -272,7 +272,8 @@ class SshUploadSession implements TransferDataPlaneSession {
     this.requirePreflight()
     this.manifest = { ...manifest }
     if (this.initialized || this.preflightState!.manifest !== null) return
-    const temporary = `${this.paths.manifest}.${this.request.transferId}.tmp`
+    // The retained path already contains the transfer ID; avoid duplicating it in scratch names.
+    const temporary = `${this.paths.manifest}.tmp`
     const result = await this.runControl(
       buildUploadInitializeScript({
         ...this.paths,
@@ -334,8 +335,8 @@ class SshUploadSession implements TransferDataPlaneSession {
         buildUploadStreamScript({
           partial: this.paths.partial,
           manifestPath: this.paths.manifest,
-          manifestTemporary: `${this.paths.manifest}.${this.request.transferId}.stream`,
-          truncateTemporary: `${this.paths.partial}.${this.request.transferId}.truncate`,
+          manifestTemporary: `${this.paths.manifest}.stream`,
+          truncateTemporary: `${this.paths.partial}.truncate`,
           manifest: this.manifest!,
           offset: copyOptions.offset,
           hashTool: preflight.hashTool
