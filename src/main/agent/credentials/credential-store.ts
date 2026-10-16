@@ -1,10 +1,11 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 
-const CREDENTIALS_FILE = 'api-credentials.json'
+const CREDENTIALS_FILE = 'mcp-credentials.json'
+const LEGACY_CREDENTIALS_FILE = 'api-credentials.json'
 
 /** Electron's `safeStorage` shape, injectable for tests. */
 export interface SafeStorageLike {
@@ -31,24 +32,33 @@ function getSafeStorage(): SafeStorageLike {
 }
 
 function getCredentialsPath(agentDir = getPhiAgentDir()): string {
-  // Preserve the existing main-side location so this merge does not strand
-  // already-encrypted MCP keys. Only the source module moves out of db/.
-  return join(agentDir, 'db-connectors', CREDENTIALS_FILE)
+  return join(agentDir, CREDENTIALS_FILE)
+}
+
+function getLegacyCredentialsPath(agentDir: string): string {
+  return join(agentDir, 'db-connectors', LEGACY_CREDENTIALS_FILE)
 }
 
 type CredentialStore = Record<string, string>
 
-function readStore(agentDir: string): CredentialStore {
-  const path = getCredentialsPath(agentDir)
-  if (!existsSync(path)) return {}
+function readStoreFile(path: string): CredentialStore | undefined {
+  if (!existsSync(path)) return undefined
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'))
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as CredentialStore)
-      : {}
+      : undefined
   } catch {
-    return {}
+    return undefined
   }
+}
+
+function readStore(agentDir: string): CredentialStore {
+  return (
+    readStoreFile(getCredentialsPath(agentDir)) ??
+    readStoreFile(getLegacyCredentialsPath(agentDir)) ??
+    {}
+  )
 }
 
 function writeStore(store: CredentialStore, agentDir: string): void {
@@ -57,6 +67,8 @@ function writeStore(store: CredentialStore, agentDir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   if (existsSync(path)) chmodSync(path, 0o600)
   writeFileSync(path, `${JSON.stringify(store, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
+  const legacyPath = getLegacyCredentialsPath(agentDir)
+  if (existsSync(legacyPath)) unlinkSync(legacyPath)
 }
 
 export function isCredentialStorageAvailable(safeStorageImpl?: SafeStorageLike): boolean {

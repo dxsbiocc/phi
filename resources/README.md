@@ -60,6 +60,6 @@ adopting a newer catalog source. The runtime isolation workflow remains separate
 into its temporary account before launching the app. It does not depend on startup
 auto-installation or the developer's existing Phi account.
 
-This cleanup does not alter installed content, credentials, sessions, or artifacts
-under `~/.phi`. In particular, `~/.phi/db-connectors/` still stores credentials and
-is independent of the retired source directory.
+The retired `~/.phi/db-connectors/` directory is separate from bundled resources.
+MCP API-key credentials now live in `~/.phi/mcp-credentials.json`; existing encrypted
+keys in the old directory remain readable and move to the new file on the next write.

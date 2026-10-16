@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -34,10 +42,11 @@ test('fixed MCP keys stay encrypted on disk and are never accepted for other IDs
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-keys-'))
   try {
     setFeaturedMcpApiKey('tavily', 'tvly-test-secret', agentDir, safeStorage)
-    const credentialPath = join(agentDir, 'db-connectors', 'api-credentials.json')
+    const credentialPath = join(agentDir, 'mcp-credentials.json')
     const stored = readFileSync(credentialPath, 'utf8')
     assert.equal(stored.includes('tvly-test-secret'), false)
     assert.equal(statSync(credentialPath).mode & 0o777, 0o600)
+    assert.equal(existsSync(join(agentDir, 'db-connectors')), false)
     assert.equal(featuredMcpApiKeyStatus('tavily', agentDir, safeStorage), true)
     assert.equal(readFeaturedMcpApiKey('tavily', agentDir, safeStorage), 'tvly-test-secret')
     assert.throws(() => setFeaturedMcpApiKey('notion', 'secret', agentDir, safeStorage), /不支持/)
@@ -47,6 +56,32 @@ test('fixed MCP keys stay encrypted on disk and are never accepted for other IDs
     )
     clearFeaturedMcpApiKey('tavily', agentDir)
     assert.equal(featuredMcpApiKeyStatus('tavily', agentDir, safeStorage), false)
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('legacy encrypted MCP keys are readable and move to the new path on write', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-legacy-'))
+  const legacyDirectory = join(agentDir, 'db-connectors')
+  const legacyPath = join(legacyDirectory, 'api-credentials.json')
+  const credentialPath = join(agentDir, 'mcp-credentials.json')
+  try {
+    mkdirSync(legacyDirectory)
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        PHI_MCP_TAVILY_API_KEY: safeStorage.encryptString('legacy-secret').toString('base64')
+      }),
+      { mode: 0o600 }
+    )
+    assert.equal(readFeaturedMcpApiKey('tavily', agentDir, safeStorage), 'legacy-secret')
+
+    setFeaturedMcpApiKey('serpapi', 'new-secret', agentDir, safeStorage)
+    assert.equal(readFeaturedMcpApiKey('tavily', agentDir, safeStorage), 'legacy-secret')
+    assert.equal(readFeaturedMcpApiKey('serpapi', agentDir, safeStorage), 'new-secret')
+    assert.equal(existsSync(legacyPath), false)
+    assert.equal(statSync(credentialPath).mode & 0o777, 0o600)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
