@@ -95,6 +95,7 @@ type SessionRecord = {
   kernelId: string
   runtimeId: string
   state: AnalysisNotebookKernelState
+  startingExecutionAvailable: boolean
   startedAt: string
   updatedAt: string
   message?: string
@@ -198,8 +199,7 @@ function sessionState(executionState: JupyterKernelExecutionState): AnalysisNote
   if (executionState === 'busy' || executionState === 'starting') return 'busy'
   if (executionState === 'restarting') return 'restarting'
   if (executionState === 'dead') return 'disconnected'
-  if (executionState === 'unknown') return 'disconnected'
-  return 'idle'
+  return 'disconnected'
 }
 
 function publicStatus(record: SessionRecord): AnalysisNotebookSessionStatus {
@@ -594,6 +594,36 @@ export class AnalysisNotebookSessionRegistry {
     }
   }
 
+  /** Only the current ensure call may consume an exact, explicitly starting target. */
+  consumeStartingExecution(
+    projectCwd: string,
+    notebookPath: string,
+    target: AnalysisNotebookExecutionTarget,
+    previousTarget: AnalysisNotebookExecutionTarget | null
+  ): boolean {
+    const record = this.records.get(this.key(projectCwd, notebookPath))
+    const connection = this.getConnection(projectCwd)
+    if (
+      !record ||
+      !connection ||
+      !this.matchesRuntime(record, connection) ||
+      !this.matchesRuntime(record, target.connection) ||
+      record.sessionId !== target.sessionId ||
+      record.kernelId !== target.kernelId ||
+      record.kernelName !== target.kernelName
+    )
+      return false
+    const unchanged =
+      previousTarget &&
+      previousTarget.sessionId === target.sessionId &&
+      previousTarget.kernelId === target.kernelId &&
+      previousTarget.kernelName === target.kernelName &&
+      jupyterConnectionIdentity(previousTarget.connection) === record.runtimeId
+    const available = record.startingExecutionAvailable && record.state === 'busy' && !unchanged
+    record.startingExecutionAvailable = false
+    return Boolean(available)
+  }
+
   updateSessionState(
     projectCwd: string,
     notebookPath: string,
@@ -610,6 +640,7 @@ export class AnalysisNotebookSessionRegistry {
         !this.matchesRuntime(record, target.connection))
     )
       return null
+    record.startingExecutionAvailable = false
     record.state = state
     record.message = message
     record.updatedAt = this.now().toISOString()
@@ -697,6 +728,7 @@ export class AnalysisNotebookSessionRegistry {
       kernelId: created.kernelId,
       runtimeId: jupyterConnectionIdentity(connection),
       state: sessionState(created.executionState),
+      startingExecutionAvailable: created.executionState === 'starting',
       startedAt: timestamp,
       updatedAt: timestamp,
       message: 'Notebook kernel 已连接'

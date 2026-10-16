@@ -465,7 +465,19 @@ export class AnalysisNotebookToolExecutor {
     }
     const { sessionStatus, target } = await this.resolveExecutionTarget(project, state, control)
     this.checkDispatch(control)
-    if (sessionStatus.state === 'busy' || this.notebookExecutor.isExecuting?.(target)) {
+    if (sessionStatus.state === 'disconnected') {
+      throw new Error('Notebook kernel 尚未就绪，不能运行 cell')
+    }
+    if (
+      this.notebookExecutor.isExecuting?.(target) ||
+      (sessionStatus.state === 'busy' &&
+        !this.notebookSessionRegistry.consumeStartingExecution(
+          project.workingDirectory,
+          state.file.path,
+          target,
+          existingTarget
+        ))
+    ) {
       throw new Error('Notebook kernel 正在执行，不能重叠运行 cell')
     }
     this.notebookSessionRegistry.updateSessionState(
