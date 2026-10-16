@@ -28,14 +28,23 @@ import {
 import type { RpcFrame } from '../src/main/agent/engine/rpc/types'
 import { RpcSessionBackend } from '../src/main/agent/engine/rpc/rpc-session-backend'
 import { createBootstrapFixture } from './engine-contract/bootstrap-stdio-fixture'
-import { extensionPackageFailures } from './helpers/extensionPackageBoundary'
+import { extensionPackageBoundary } from './helpers/extensionPackageBoundary'
+import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extension-deployment/bundle'
 
 const packageRoot = fileURLToPath(
   new URL('../src/main/agent/engine/phi-extension', import.meta.url)
 )
 
 test('RPC extension package remains self-contained with type-only SDK root imports', () => {
-  assert.deepEqual(extensionPackageFailures(packageRoot), [])
+  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const boundary = extensionPackageBoundary(packageRoot, HOST_PROVIDED_OMP_IMPORTS)
+  assert.deepEqual(boundary.failures, [])
+  assert.deepEqual(boundary.hostImports, [
+    `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
+    `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
+    `rpc-entry.ts -> ${agentLifecycle}`
+  ])
 })
 
 test('bootstrap config enforces private plain bounded identity and canonical project', () => {

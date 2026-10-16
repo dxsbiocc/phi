@@ -127,8 +127,8 @@ test('a terminal without run identity never resolves one of several conflicting 
   assert.equal(approvalItemFromEvent({ type: 'toString' }), null)
 })
 
-test('approval timeline and pending approval panel hide full details and retain primary actions', () => {
-  const message = live([requested])[0]
+test('decided approval timeline stays collapsed while the pending approval shows full details and actions', () => {
+  const message = live([requested, terminal('approved')])[0]
   const markup = renderToStaticMarkup(
     createElement(ChatBubble, {
       message,
@@ -136,7 +136,7 @@ test('approval timeline and pending approval panel hide full details and retain 
       onOpenBackgroundJobs: () => undefined
     })
   )
-  assert.match(markup, /等待批准/)
+  assert.match(markup, /已批准/)
   assert.match(markup, /bash/)
   assert.match(markup, /aria-expanded="false"/)
   assert.doesNotMatch(markup, /a long command/)
@@ -147,13 +147,12 @@ test('approval timeline and pending approval panel hide full details and retain 
       onOpenSession: () => undefined
     })
   )
-  assert.match(approval, /aria-expanded="false"/)
   assert.match(approval, />批准</)
   assert.match(approval, />拒绝</)
-  assert.doesNotMatch(approval, /a long command/)
+  assert.match(approval, /a long command/)
 })
 
-test('collapsed pending approval retains the exact approve, refuse and open-session actions', () => {
+test('pending approval retains the exact approve, refuse and open-session actions', () => {
   const actions: Array<string | boolean> = []
   const tree = ToolApprovalDialog({
     request: { requestId: 'approval-1', toolName: 'bash', summary, sessionPath: '/sessions/one' },

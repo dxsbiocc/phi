@@ -84,9 +84,14 @@ function inside(root: string, target: string): boolean {
   return fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot)
 }
 
-export function extensionPackageFailures(packageRoot: string): string[] {
+export function extensionPackageBoundary(
+  packageRoot: string,
+  hostProvidedImports: readonly string[]
+): { failures: string[]; hostImports: string[] } {
   const root = realpathSync(packageRoot)
   const failures: string[] = []
+  const hostImports: string[] = []
+  const allowedHostImports = new Set(hostProvidedImports)
   const files: string[] = []
   const seen = new Set<string>()
   const walk = (directory: string): void => {
@@ -131,17 +136,20 @@ export function extensionPackageFailures(packageRoot: string): string[] {
         continue
       } else if (specifier && ompTypeRoots.has(specifier) && reference.typeOnly) {
         continue
-      } else if (specifier === '@oh-my-pi/pi-ai/utils/event-stream' && reference.staticImport) {
-        continue
-      } else if (
-        specifier === '@oh-my-pi/pi-coding-agent/internal-urls' &&
-        reference.staticImport
-      ) {
+      } else if (specifier && allowedHostImports.has(specifier) && reference.staticImport) {
+        hostImports.push(label)
         continue
       } else {
         failures.push(label)
       }
     }
   }
-  return failures
+  return { failures, hostImports: hostImports.sort() }
+}
+
+export function extensionPackageFailures(
+  packageRoot: string,
+  hostProvidedImports: readonly string[]
+): string[] {
+  return extensionPackageBoundary(packageRoot, hostProvidedImports).failures
 }

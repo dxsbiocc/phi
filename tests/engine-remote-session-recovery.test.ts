@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHash } from 'node:crypto'
-import { chmod, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { RpcConnection } from '../src/main/agent/engine/rpc/connection'
 import {
@@ -310,7 +310,7 @@ test(
         .map((line) => JSON.parse(line))
         .find((entry) => entry.type === 'session')
       assert.equal(header.id, created.reference.ompSessionId)
-      assert.equal(header.cwd, f.fixture.scope.projectRoot)
+      assert.equal(await realpath(header.cwd), f.fixture.scope.projectRoot)
       assert.equal(created.messages.length, 0)
       assert.equal(f.provider.requests.length, 0)
       const png = (await readFile(new URL('../resources/icon.png', import.meta.url))).toString(

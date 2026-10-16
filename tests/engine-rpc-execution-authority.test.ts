@@ -24,7 +24,8 @@ import {
   privateHistoryText
 } from './helpers/rpcExecutionAuthorityFixture'
 import { deferred } from './helpers/rpc-initialization-wire'
-import { extensionPackageFailures } from './helpers/extensionPackageBoundary'
+import { extensionPackageBoundary } from './helpers/extensionPackageBoundary'
+import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extension-deployment/bundle'
 
 test(
   'actual private CLI discovers and atomically activates signed bridge without model/history/capability disclosure',
@@ -415,12 +416,18 @@ test(
 )
 
 test('execution authority extension package stays self-contained', () => {
-  assert.deepEqual(
-    extensionPackageFailures(
-      fileURLToPath(new URL('../src/main/agent/engine/phi-extension', import.meta.url))
-    ),
-    []
+  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const boundary = extensionPackageBoundary(
+    fileURLToPath(new URL('../src/main/agent/engine/phi-extension', import.meta.url)),
+    HOST_PROVIDED_OMP_IMPORTS
   )
+  assert.deepEqual(boundary.failures, [])
+  assert.deepEqual(boundary.hostImports, [
+    `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
+    `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
+    `rpc-entry.ts -> ${agentLifecycle}`
+  ])
 })
 
 test(

@@ -96,10 +96,18 @@ test(
       if (Date.now() > deadline) throw new Error('Approval did not arrive')
       await delay(5)
     }
-    const count = (await f.sdk.snapshot()).providerRequests.length
+    const beforeCloseCount = (await f.sdk.snapshot()).providerRequests.length
     await first.close(new Error('Synthetic transport generation replacement'))
     await assert.rejects(oldRun)
     await assert.rejects(access(join(f.f.scope.projectRoot, 'old-generation.txt')))
+    // OMP may finish draining its denied tool result while close is in progress,
+    // which sends at most one more provider request from the old generation (observed
+    // 0 or 1). Bound it, then isolate resume and late-approval replay exactly.
+    const closedRequestCount = (await f.sdk.snapshot()).providerRequests.length
+    assert.ok(
+      closedRequestCount - beforeCloseCount <= 1,
+      `closing the old generation sent ${closedRequestCount - beforeCloseCount} provider requests`
+    )
     const second = await f.create({
       action: { type: 'resume', reference, savedModel: f.ref },
       approval: {
@@ -110,15 +118,17 @@ test(
       }
     })
     assert.equal(second.currentSnapshot().reference.ompSessionId, reference.ompSessionId)
-    assert.equal((await f.sdk.snapshot()).providerRequests.length, count)
+    assert.equal((await f.sdk.snapshot()).providerRequests.length, closedRequestCount)
     answer!('approved')
     await delay(20)
     await assert.rejects(access(join(f.f.scope.projectRoot, 'old-generation.txt')))
+    assert.equal((await f.sdk.snapshot()).providerRequests.length, closedRequestCount)
     await f.sdk.enqueue({ text: 'new generation explicit response' })
     assert.equal(
       (await second.prompt('phi-generation-new', 'new explicit prompt')).outcome,
       'completed'
     )
+    assert.equal((await f.sdk.snapshot()).providerRequests.length, closedRequestCount + 1)
     await assert.rejects(access(join(f.f.scope.projectRoot, 'old-generation.txt')))
     assert.equal(f.f.session.closed, false)
   }

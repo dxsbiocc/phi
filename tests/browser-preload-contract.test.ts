@@ -12,6 +12,18 @@ import type {
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
+function memberName(member: ts.NamedDeclaration): string | undefined {
+  const name = member.name
+  return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined
+}
+
+function typeMembers(type: ts.TypeNode): readonly ts.TypeElement[] {
+  if (ts.isTypeLiteralNode(type)) return type.members
+  if (ts.isIntersectionTypeNode(type)) return type.types.flatMap(typeMembers)
+  if (ts.isParenthesizedTypeNode(type)) return typeMembers(type.type)
+  return []
+}
+
 test('shared browser renderer bridge exposes one Electron-free public contract', () => {
   const shared = source('src/shared/browserTypes.ts')
   const start = shared.indexOf('export interface BrowserRendererBridge')
@@ -84,15 +96,110 @@ test('preload and renderer expose only one namespaced browser bridge using share
   assert.doesNotMatch(preload, /removeAllListeners\('browser:event'/)
   assert.match(preload, /browser: browserBridge/)
 
-  assert.match(ambient, /import type \{ BrowserRendererBridge \} from '\.\.\/shared\/browserTypes'/)
-  assert.match(ambient, /api: \{[\s\S]*browser: BrowserRendererBridge/)
-  assert.match(
-    renderer,
-    /import type \{ BrowserRendererBridge \} from '\.\.\/\.\.\/shared\/browserTypes'/
+  const ambientFile = ts.createSourceFile(
+    'index.d.ts',
+    ambient,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
   )
-  assert.match(
+  const browserImports = ambientFile.statements.flatMap((statement) => {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !statement.importClause?.namedBindings ||
+      !ts.isNamedImports(statement.importClause.namedBindings)
+    )
+      return []
+    return statement.importClause.namedBindings.elements
+      .filter(
+        (element) => (element.propertyName?.text ?? element.name.text) === 'BrowserRendererBridge'
+      )
+      .map((element) => ({
+        module: statement.moduleSpecifier.text,
+        typeOnly: statement.importClause?.isTypeOnly === true || element.isTypeOnly,
+        localName: element.name.text
+      }))
+  })
+  assert.deepEqual(browserImports, [
+    {
+      module: '../shared/browserTypes',
+      typeOnly: true,
+      localName: 'BrowserRendererBridge'
+    }
+  ])
+
+  const windowApis: ts.PropertySignature[] = []
+  const visitWindowApi = (node: ts.Node): void => {
+    if (ts.isInterfaceDeclaration(node) && node.name.text === 'Window') {
+      for (const member of node.members) {
+        if (ts.isPropertySignature(member) && memberName(member) === 'api') windowApis.push(member)
+      }
+    }
+    ts.forEachChild(node, visitWindowApi)
+  }
+  visitWindowApi(ambientFile)
+  assert.equal(windowApis.length, 1)
+  assert.ok(windowApis[0]?.type)
+  const apiMembers = typeMembers(windowApis[0].type)
+  const browserMembers = apiMembers.filter(
+    (member): member is ts.PropertySignature =>
+      ts.isPropertySignature(member) && memberName(member)?.startsWith('browser') === true
+  )
+  assert.deepEqual(
+    browserMembers.map((member) => ({
+      name: memberName(member),
+      type: member.type?.getText(ambientFile)
+    })),
+    [{ name: 'browser', type: 'BrowserRendererBridge' }]
+  )
+  const rendererFile = ts.createSourceFile(
+    'types.ts',
     renderer,
-    /export interface RendererApi\s+extends\s+AutoCompactionApi,\s+ManagedEnvironmentRendererApi,[^{]*\{\s+browser: BrowserRendererBridge/
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  )
+  const rendererBrowserImports = rendererFile.statements.flatMap((statement) => {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !statement.importClause?.namedBindings ||
+      !ts.isNamedImports(statement.importClause.namedBindings)
+    )
+      return []
+    return statement.importClause.namedBindings.elements
+      .filter(
+        (element) => (element.propertyName?.text ?? element.name.text) === 'BrowserRendererBridge'
+      )
+      .map((element) => ({
+        module: statement.moduleSpecifier.text,
+        typeOnly: statement.importClause?.isTypeOnly === true || element.isTypeOnly,
+        localName: element.name.text
+      }))
+  })
+  assert.deepEqual(rendererBrowserImports, [
+    {
+      module: '../../shared/browserTypes',
+      typeOnly: true,
+      localName: 'BrowserRendererBridge'
+    }
+  ])
+  const rendererApis = rendererFile.statements.filter(
+    (statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === 'RendererApi'
+  )
+  assert.equal(rendererApis.length, 1)
+  const rendererBrowserMembers = rendererApis[0].members.filter(
+    (member): member is ts.PropertySignature =>
+      ts.isPropertySignature(member) && memberName(member)?.startsWith('browser') === true
+  )
+  assert.deepEqual(
+    rendererBrowserMembers.map((member) => ({
+      name: memberName(member),
+      type: member.type?.getText(rendererFile)
+    })),
+    [{ name: 'browser', type: 'BrowserRendererBridge' }]
   )
 
   const design = source('docs/superpowers/specs/2026-09-30-in-app-browser-design.md')

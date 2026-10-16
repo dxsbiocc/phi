@@ -75,6 +75,14 @@ export async function nativeWireCli(
     }),
     { mode: 0o600 }
   )
+  const adapter = baseline
+    ? fileURLToPath(
+        new URL(
+          '../fixtures/rpc-native-stream-pre-wire-projection/lib/rpc-native-stream-adapter.ts',
+          import.meta.url
+        )
+      )
+    : resolve('src/main/agent/engine/phi-extension/lib/rpc-native-stream-adapter.ts')
   const child = spawn(
     resolveBunExecutable(),
     [
@@ -113,9 +121,7 @@ export async function nativeWireCli(
         PI_CODING_AGENT_DIR: join(root, 'agent'),
         PHI_WIRE_SCOPE: scope,
         PHI_WIRE_LOCAL_AUDIT: audit,
-        PHI_WIRE_ADAPTER: baseline
-          ? resolve('.omx/t11c-wire-baseline/lib/rpc-native-stream-adapter.ts')
-          : resolve('src/main/agent/engine/phi-extension/lib/rpc-native-stream-adapter.ts'),
+        PHI_WIRE_ADAPTER: adapter,
         DO_NOT_TRACK: '1',
         NO_PROXY: '127.0.0.1,localhost'
       },

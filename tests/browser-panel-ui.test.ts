@@ -5,6 +5,7 @@ import test from 'node:test'
 import { createElement, type ComponentProps, type ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
+import ts from 'typescript'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../src/shared/browserTypes'
 import BrowserPanel, { BrowserStatusPane } from '../src/renderer/src/features/browser/BrowserPanel'
 import { BrowserTabs } from '../src/renderer/src/features/browser/components/BrowserTabs'
@@ -179,7 +180,31 @@ test('browser tabs use the compact workspace panel header height', () => {
     'utf8'
   )
 
-  assert.match(tabsSource, /workspacePanelHeaderHeight.*from '\.\.\/\.\.\/\.\.\/layout'/)
+  const sourceFile = ts.createSourceFile(
+    'BrowserTabs.tsx',
+    tabsSource,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  const headerHeightImports: string[] = []
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !statement.importClause?.namedBindings ||
+      !ts.isNamedImports(statement.importClause.namedBindings)
+    )
+      continue
+    for (const element of statement.importClause.namedBindings.elements) {
+      const importedName = element.propertyName?.text ?? element.name.text
+      if (importedName === 'workspacePanelHeaderHeight') {
+        assert.equal(element.name.text, 'workspacePanelHeaderHeight')
+        headerHeightImports.push(statement.moduleSpecifier.text)
+      }
+    }
+  }
+  assert.deepEqual(headerHeightImports, ['../../../layout'])
   assert.match(
     tabsSource,
     /data-phi-browser-tabs="true"[\s\S]{0,180}height: workspacePanelHeaderHeight/

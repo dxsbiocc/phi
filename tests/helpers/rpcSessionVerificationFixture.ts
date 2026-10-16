@@ -29,9 +29,7 @@ export async function createSessionVerificationFixture(
   bytes(path: string): Promise<Buffer>
   close(): Promise<void>
 }> {
-  const root = await realpath(
-    await mkdtemp(fileURLToPath(new URL('../../.omx/t15-verifier-fixture-', import.meta.url)))
-  )
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-session-verifier-fixture-')))
   const home = join(root, 'home'),
     projectRoot = options.isolatedProject
       ? await realpath(await mkdtemp(join(tmpdir(), 'phi-session-proof-project-')))

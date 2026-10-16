@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readFile, readdir, access, mkdtemp, copyFile, chmod, writeFile } from 'node:fs/promises'
+import {
+  readFile,
+  readdir,
+  access,
+  mkdtemp,
+  copyFile,
+  chmod,
+  writeFile,
+  rm
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PhiTool } from '../src/main/agent/engine/types'
 import { runtimeCompositionFixture } from './helpers/rpcRuntimeCompositionFixture'
@@ -192,7 +202,8 @@ test(
     ).join('\n')
     assert.ok(archived.includes('actual desktop host execution result'))
     if (process.env.PHI_WIRE_SAVE_SHAKE_EVIDENCE === '1') {
-      const evidence = await mkdtemp(join(process.cwd(), '.omx/t11c-wire-shake-evidence-'))
+      const evidence = await mkdtemp(join(tmpdir(), 'phi-wire-shake-evidence-'))
+      t.after(() => rm(evidence, { recursive: true, force: true }))
       await copyFile(turn.snapshot.checkpoint.journalPath, join(evidence, 'journal.jsonl'))
       await chmod(join(evidence, 'journal.jsonl'), 0o600)
       for (const name of artifactNames) {
@@ -200,7 +211,7 @@ test(
         await chmod(join(evidence, name), 0o600)
       }
       await writeFile(
-        join(process.cwd(), '.omx/t11c-wire-shake-evidence.json'),
+        join(evidence, 'evidence.json'),
         JSON.stringify({
           evidence,
           originalJournal: turn.snapshot.checkpoint.journalPath,

@@ -20,8 +20,9 @@ import {
   captureApprovalHook,
   approvalIdentity
 } from './helpers/rpcApprovalFixture'
-import { extensionPackageFailures } from './helpers/extensionPackageBoundary'
+import { extensionPackageBoundary } from './helpers/extensionPackageBoundary'
 import type { PermissionMode } from '../src/main/agent/projects'
+import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extension-deployment/bundle'
 
 function mainBridge(
   f: Awaited<ReturnType<typeof realApprovalFixture>>,
@@ -331,7 +332,15 @@ test(
 
 test('approval modules remain within the deployed extension package', () => {
   const root = fileURLToPath(new URL('../src/main/agent/engine/phi-extension', import.meta.url))
-  assert.deepEqual(extensionPackageFailures(root), [])
+  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const boundary = extensionPackageBoundary(root, HOST_PROVIDED_OMP_IMPORTS)
+  assert.deepEqual(boundary.failures, [])
+  assert.deepEqual(boundary.hostImports, [
+    `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
+    `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
+    `rpc-entry.ts -> ${agentLifecycle}`
+  ])
 })
 
 test('server hook denies subagent depth-zero, unready and forged OMP identity before opening UI', async () => {

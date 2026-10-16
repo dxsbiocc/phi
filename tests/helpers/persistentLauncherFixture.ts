@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createPhiExtensionBundle } from '../../src/main/agent/engine/rpc/extension-deployment'
 import { prepareSshRpcSessionTransport } from '../../src/main/agent/engine/rpc/ssh-stdio-factory'
@@ -46,9 +47,7 @@ export async function createPersistentLauncherFixture(
   const base = await createPhiExtensionDeploymentFixture(
     `#!/bin/sh\nif [ "$1" = --version ]; then printf 'omp/18.10.3\\n'; exit 0; fi\n${payload}\n`
   )
-  const projectRoot = await realpath(
-    await mkdtemp(join(process.cwd(), '.omx/t15-launcher-project-'))
-  )
+  const projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'phi-launcher-project-')))
   const session = createLocalShellSession(base.runtimeRoot)
   const openStdio = session.openStdio!
   // Model a normal remote account explicitly; preparation-shell umasks do not carry over.

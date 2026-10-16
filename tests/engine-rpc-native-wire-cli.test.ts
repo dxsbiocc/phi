@@ -3,7 +3,8 @@ import test from 'node:test'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import { writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { nativeWireCli } from './helpers/rpcNativeWireCliFixture'
 import {
@@ -157,17 +158,19 @@ test(
       })
     }
     t.diagnostic(`Actual wire shapes: ${JSON.stringify(shapes)}`)
-    if (process.env.PHI_WIRE_BASELINE === '1' || process.env.PHI_WIRE_EVIDENCE === '1')
+    if (process.env.PHI_WIRE_BASELINE === '1' || process.env.PHI_WIRE_EVIDENCE === '1') {
+      const evidence = await mkdtemp(join(tmpdir(), 'phi-wire-cli-evidence-'))
+      t.after(() => rm(evidence, { recursive: true, force: true }))
       await writeFile(
         join(
-          process.cwd(),
-          process.env.PHI_WIRE_BASELINE === '1'
-            ? '.omx/t11c-wire-baseline-shape.json'
-            : '.omx/t11c-wire-cli-shape.json'
+          evidence,
+          process.env.PHI_WIRE_BASELINE === '1' ? 'baseline-shape.json' : 'cli-shape.json'
         ),
         JSON.stringify(shapes) + '\n',
         { mode: 0o600 }
       )
+      t.diagnostic(`Wire shape evidence saved temporarily at ${evidence}`)
+    }
     for (const [index, raw] of wire.entries()) {
       const local = audit[index]
       assert.equal(local.speculativeEnabled, true)

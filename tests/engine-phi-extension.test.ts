@@ -4,10 +4,14 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import test from 'node:test'
 
-import { extensionPackageFailures } from './helpers/extensionPackageBoundary'
+import {
+  extensionPackageBoundary,
+  extensionPackageFailures
+} from './helpers/extensionPackageBoundary'
 import { previousExtensions } from './helpers/previousPhiExtensions'
 import { isRecord as packageIsRecord } from '../src/main/agent/engine/phi-extension/lib/common'
 import { isRecord as workerIsRecord } from '../src/main/agent/engine/in-process/common'
+import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extension-deployment/bundle'
 
 import {
   createMainSessionExtensions,
@@ -143,7 +147,15 @@ function host(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
 }
 
 test('Phi extension package imports stay self-contained and OMP root stays type-only', () => {
-  assert.deepEqual(extensionPackageFailures(packageRoot), [])
+  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const boundary = extensionPackageBoundary(packageRoot, HOST_PROVIDED_OMP_IMPORTS)
+  assert.deepEqual(boundary.failures, [])
+  assert.deepEqual(boundary.hostImports, [
+    `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
+    `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
+    `rpc-entry.ts -> ${agentLifecycle}`
+  ])
 })
 
 test('the copied package record predicate agrees with the worker helper', () => {
@@ -184,7 +196,7 @@ test('self-containment checker rejects runtime OMP, every external reference for
       "import test from 'node:test'"
     ]
     writeFileSync(resolve(root, 'valid.ts'), valid.join('\n'))
-    assert.deepEqual(extensionPackageFailures(root), [])
+    assert.deepEqual(extensionPackageFailures(root, HOST_PROVIDED_OMP_IMPORTS), [])
     const invalid = [
       ['runtime.ts', "import { createAgentSession } from '@oh-my-pi/pi-coding-agent'"],
       ['side-effect.tsx', "import '@oh-my-pi/pi-coding-agent'"],
@@ -226,7 +238,7 @@ test('self-containment checker rejects runtime OMP, every external reference for
       ]
     ]
     for (const [name, source] of invalid) writeFileSync(resolve(root, name), source)
-    const failedFiles = extensionPackageFailures(root)
+    const failedFiles = extensionPackageFailures(root, HOST_PROVIDED_OMP_IMPORTS)
       .map((failure) => failure.split(' -> ')[0])
       .sort()
     assert.deepEqual(failedFiles, invalid.map(([name]) => name).sort())

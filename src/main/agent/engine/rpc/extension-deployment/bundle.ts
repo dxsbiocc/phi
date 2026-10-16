@@ -8,6 +8,20 @@ import type { PhiExtensionBundle, PhiExtensionFile } from './types'
 const SOURCE_DIRECTORY = 'src/main/agent/engine/phi-extension'
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024
 
+export const HOST_PROVIDED_OMP_IMPORTS = [
+  // OMP 18.10.3 exposes this exact module through its compiled extension host.
+  // Native stream integrity uses the host's canonical event stream class.
+  '@oh-my-pi/pi-ai/utils/event-stream',
+  // Child approvals use the host's shared router, not a bundled second SDK.
+  // Keep the named export exact; neighboring paths are not part of this contract.
+  '@oh-my-pi/pi-coding-agent/internal-urls',
+  // Pinned 18.10.3 hosts this exact public lifecycle module. Queued cancel
+  // additionally verifies that it manages the host's genuine global registry.
+  '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle'
+] as const
+
+const hostProvidedOmpImports = new Set<string>(HOST_PROVIDED_OMP_IMPORTS)
+
 /** Explicit app paths avoid importing Electron in the Node-only deployment module. */
 export function resolvePhiExtensionSourceRoot(options: {
   appPath: string
@@ -129,15 +143,7 @@ export function validatePhiExtensionBundle(bundle: PhiExtensionBundle): void {
         )
       )
         continue
-      // OMP18.10.3 exposes this exact module through its compiled extension host.
-      // Native stream integrity uses the host's canonical event stream class.
-      if (specifier === '@oh-my-pi/pi-ai/utils/event-stream') continue
-      // Child approvals use the host's shared router, not a bundled second SDK.
-      // Keep the named export exact; neighboring paths are not part of this contract.
-      if (specifier === '@oh-my-pi/pi-coding-agent/internal-urls') continue
-      // Pinned18.10.3 hosts this exact public lifecycle module. Queued cancel
-      // additionally verifies that it manages the host's genuine global registry.
-      if (specifier === '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle') continue
+      if (hostProvidedOmpImports.has(specifier)) continue
       if (!specifier.startsWith('.') || /[\\\0\r\n]/.test(specifier)) {
         throw new Error(`Non-self-contained extension import in ${file.path}: ${specifier}`)
       }

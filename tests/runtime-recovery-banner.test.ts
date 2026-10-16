@@ -11,6 +11,7 @@ import type {
   RuntimeRecoveryState,
   RuntimeRecoveryTarget
 } from '../src/shared/runtimeRecoveryTypes'
+import * as confirmationDialog from '../src/renderer/src/components/ConfirmationDialog'
 import * as recoveryState from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
 
 test('recovery banner: a confirmed connection shows a failed UI refresh without offering another SDK recovery', () => {
@@ -55,6 +56,7 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
     require: (name: string) => {
       if (name === '../hooks/useRuntimeRecovery') return { useRuntimeRecovery: recovery }
       if (name === '../lib/runtimeRecoveryState') return recoveryState
+      if (name === '../../../components/ConfirmationDialog') return confirmationDialog
       return require(name)
     }
   })

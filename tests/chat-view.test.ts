@@ -2003,6 +2003,54 @@ test('chat view renders tool approval inline instead of a modal dialog', () => {
   assert.doesNotMatch(markup, /role="dialog"/)
 })
 
+test('pending approval renders every line of a multi-line summary including its path', () => {
+  const markup = renderChat([], {
+    pendingApproval: {
+      requestId: 'approval-multi-line',
+      toolName: 'edit',
+      summary:
+        '修改已读取且未变化的文件。\n/Users/example/project/src/second-line.ts\n保留最后一行。'
+    }
+  })
+
+  assert.match(markup, /修改已读取且未变化的文件。/)
+  assert.match(markup, /\/Users\/example\/project\/src\/second-line\.ts/)
+  assert.match(markup, /保留最后一行。/)
+})
+
+test('pending approval renders a command longer than 110 characters in full', () => {
+  const longCommand = `printf ${'x'.repeat(120)} command-tail`
+  const markup = renderChat([], {
+    pendingApproval: {
+      requestId: 'approval-long-command',
+      toolName: 'bash',
+      summary: longCommand
+    }
+  })
+
+  assert.ok(markup.includes(longCommand))
+  assert.match(markup, /command-tail/)
+})
+
+test('decided approval in the timeline renders only its preview line by default', () => {
+  const markup = renderChat([
+    {
+      id: 'approval-decided',
+      role: 'warning',
+      content: '已批准 bash',
+      approval: {
+        status: 'approved',
+        toolName: 'bash',
+        summary: 'printf preview-line\n/Users/example/project/private-second-line.ts'
+      }
+    }
+  ])
+
+  assert.match(markup, /printf preview-line/)
+  assert.match(markup, /aria-expanded="false"/)
+  assert.doesNotMatch(markup, /private-second-line\.ts/)
+})
+
 test('remote specialist approval shows the real host, project and path without the local anchor', () => {
   const markup = renderChat([], {
     pendingApproval: {

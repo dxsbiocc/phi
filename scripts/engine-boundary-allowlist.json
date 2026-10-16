@@ -156,6 +156,28 @@
       "plan": "keep"
     },
     {
+      "file": "tests/fixtures/rpc-native-stream-pre-wire-projection/lib/rpc-native-repair.ts",
+      "specifiers": ["@oh-my-pi/pi-ai"],
+      "purpose": "Frozen pre-native-wire-projection negative-control fixture; preserves the exact historical adapter dependency graph without a Git-history or developer-local baseline",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/fixtures/rpc-native-stream-pre-wire-projection/lib/rpc-native-sse.ts",
+      "specifiers": ["@oh-my-pi/pi-ai"],
+      "purpose": "Frozen pre-native-wire-projection negative-control fixture; preserves the exact historical adapter dependency graph without a Git-history or developer-local baseline",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/fixtures/rpc-native-stream-pre-wire-projection/lib/rpc-native-stream-adapter.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-agent-core",
+        "@oh-my-pi/pi-ai",
+        "@oh-my-pi/pi-ai/utils/event-stream"
+      ],
+      "purpose": "Frozen pre-native-wire-projection negative-control fixture loaded by the real CLI probe; preserves exact historical imports without making tests depend on Git history",
+      "plan": "keep"
+    },
+    {
       "file": "tests/helpers/ownedStdioScopeFixture.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/mcp/client",

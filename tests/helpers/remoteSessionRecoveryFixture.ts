@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
@@ -37,11 +38,10 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
   close(): Promise<void>
 }> {
   const base = await createRemoteSessionStorageFixture()
-  // Bun normalizes macOS /private/var to /var in process.cwd. Keep the exact project
-  // proof symlink-free under the checkout; the durable temp runtime is unchanged.
-  const projectRoot = await realpath(
-    await mkdtemp(fileURLToPath(new URL('../../.omx/t15c-project-', import.meta.url)))
-  )
+  // Storage validation requires the canonical project path. OMP records the
+  // equivalent lexical /var alias on macOS, so verifyAttachment canonicalizes
+  // that real SDK header before comparing the recovered identity.
+  const projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'phi-recovery-project-')))
   const scope = { ...base.scope, projectRoot }
   const paths = deriveRemoteSessionPaths(scope)
   const fixture = {
@@ -302,7 +302,11 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
                 .filter(Boolean)
                 .map((line) => JSON.parse(line))
                 .find((entry) => entry.type === 'session') as { cwd: string }
-              return { ...identity, projectRoot: header.cwd, leafId: entries.leafId }
+              return {
+                ...identity,
+                projectRoot: await realpath(header.cwd),
+                leafId: entries.leafId
+              }
             },
             publish: async (reference, _checkpoint, signal) => {
               await publishRemoteSessionManifest(preparation, reference, signal)

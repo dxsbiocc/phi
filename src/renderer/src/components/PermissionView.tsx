@@ -181,7 +181,9 @@ export function PermissionSettingsSection({
               fontFamily: 'var(--font-mono)',
               fontSize: '0.85rem',
               whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere'
+              overflowWrap: 'anywhere',
+              maxHeight: 132,
+              overflow: 'auto'
             }}
           >
             {pendingApproval.summary}
