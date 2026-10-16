@@ -66,7 +66,7 @@ export function validateWorkspaceFileOperation(
   return value as unknown as WorkspaceFileOperationTarget | WorkspaceFileRenameRequest
 }
 
-async function localTarget(
+export async function resolveLocalWorkspaceFileTarget(
   request: Extract<WorkspaceFileOperationTarget, { kind: 'local' }>,
   agentDir = getPhiAgentDir()
 ): Promise<{ target: string; info: Stats }> {
@@ -116,7 +116,7 @@ async function renameLocal(
   request: Extract<WorkspaceFileRenameRequest, { kind: 'local' }>,
   agentDir?: string
 ): Promise<{ path: string }> {
-  const { target, info } = await localTarget(request, agentDir)
+  const { target, info } = await resolveLocalWorkspaceFileTarget(request, agentDir)
   const destination = join(dirname(target), request.newName)
   if (basename(target) === request.newName) return { path: request.path }
   await assertAbsent(destination)
@@ -261,7 +261,7 @@ export async function deleteWorkspaceFile(
   if (request.kind === 'remote') {
     await mutateRemote(request, undefined, dependencies)
   } else {
-    const { target } = await localTarget(request, dependencies.agentDir)
+    const { target } = await resolveLocalWorkspaceFileTarget(request, dependencies.agentDir)
     await dependencies.trashItem(target)
   }
 }

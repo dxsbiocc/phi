@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import {
   Alert,
   Button,
@@ -171,12 +172,7 @@ export function McpSourcesPanel({
           </Button>
         </DialogActions>
       </Dialog>
-      <Dialog
-        open={Boolean(pendingUpdate)}
-        onClose={() => setPendingUpdate(null)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <ConfirmationDialog open={Boolean(pendingUpdate)} onClose={() => setPendingUpdate(null)}>
         <DialogTitle>确认更新软件源</DialogTitle>
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 1 }}>
@@ -197,8 +193,8 @@ export function McpSourcesPanel({
             确认更新
           </Button>
         </DialogActions>
-      </Dialog>
-      <Dialog open={Boolean(pendingRemove)} onClose={() => setPendingRemove(null)}>
+      </ConfirmationDialog>
+      <ConfirmationDialog open={Boolean(pendingRemove)} onClose={() => setPendingRemove(null)}>
         <DialogTitle>移除软件源？</DialogTitle>
         <DialogContent>
           <Alert severity="warning">软件源会从目录中移除，但已安装的连接器会保留。</Alert>
@@ -216,7 +212,7 @@ export function McpSourcesPanel({
             移除
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
     </>
   )
 }

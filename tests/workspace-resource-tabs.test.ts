@@ -176,33 +176,40 @@ test('already-open resource tabs receive fresh icons from current metadata', () 
   )
 })
 
-test('a modified notebook tab keeps a visible unsaved marker', () => {
-  const tab = {
-    key: 'file:/project/notes.ipynb',
-    kind: 'notebook' as const,
-    id: '/project/notes.ipynb',
-    itemId: '/project/notes.ipynb',
-    name: 'notes.ipynb',
-    title: 'notes.ipynb',
-    status: '/project/notes.ipynb',
-    path: '/project/notes.ipynb',
-    pathKind: 'file' as const,
-    absolutePath: '/project/notes.ipynb',
-    dirty: true
+test('modified text and notebook tabs show an unsaved marker until saved', () => {
+  for (const kind of ['file', 'notebook'] as const) {
+    const path = kind === 'file' ? '/project/README.md' : '/project/notes.ipynb'
+    for (const dirty of [true, false]) {
+      const tab = {
+        key: `file:${path}`,
+        kind,
+        id: path,
+        itemId: path,
+        name: path.split('/').at(-1)!,
+        title: path.split('/').at(-1)!,
+        status: path,
+        path,
+        pathKind: 'file' as const,
+        absolutePath: path,
+        dirty
+      }
+      const markup = renderToStaticMarkup(
+        createElement(
+          ThemeProvider,
+          { theme: createTheme() },
+          createElement(WorkspaceResourceTabs, {
+            tabs: [tab],
+            activeKey: tab.key,
+            onSelect: () => undefined,
+            onClose: () => undefined
+          })
+        )
+      )
+      assert.equal(markup.includes('aria-label="未保存的修改"'), dirty, `${kind}: ${dirty}`)
+      assert.equal(markup.includes('data-phi-tab-unsaved="true"'), dirty)
+      assert.match(markup, /aria-label="关闭 /, 'the marker preserves the close action')
+    }
   }
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme: createTheme() },
-      createElement(WorkspaceResourceTabs, {
-        tabs: [tab],
-        activeKey: tab.key,
-        onSelect: () => undefined,
-        onClose: () => undefined
-      })
-    )
-  )
-  assert.match(markup, /未保存修改/)
 })
 
 test('active and inactive conversation tabs expose the same in-place dock action', () => {

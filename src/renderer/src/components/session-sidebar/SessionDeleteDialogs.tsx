@@ -1,12 +1,6 @@
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle
-} from '@mui/material'
+import { Button, DialogActions, DialogContent, DialogContentText, DialogTitle } from '@mui/material'
 import type { Theme } from '@mui/material/styles'
+import { ConfirmationDialog } from '../ConfirmationDialog'
 
 type SessionDeleteDialogsProps = {
   deleteSessionOpen: boolean
@@ -37,27 +31,28 @@ export function SessionDeleteDialogs({
 
   return (
     <>
-      <Dialog open={deleteSessionOpen} onClose={onCancelSessionDelete} sx={previewDialogSx}>
+      <ConfirmationDialog
+        open={deleteSessionOpen}
+        onClose={onCancelSessionDelete}
+        sx={previewDialogSx}
+      >
         <DialogTitle>删除这段对话？</DialogTitle>
         <DialogContent>
           <DialogContentText>{deleteSessionTitle} 将被永久删除，无法恢复。</DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onCancelSessionDelete} sx={{ minHeight: 44 }}>
-            取消
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={onConfirmSessionDelete}
-            sx={{ minHeight: 44 }}
-          >
+          <Button onClick={onCancelSessionDelete}>取消</Button>
+          <Button color="error" variant="contained" onClick={onConfirmSessionDelete}>
             删除
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
 
-      <Dialog open={deleteProjectOpen} onClose={onCancelProjectDelete} sx={previewDialogSx}>
+      <ConfirmationDialog
+        open={deleteProjectOpen}
+        onClose={onCancelProjectDelete}
+        sx={previewDialogSx}
+      >
         <DialogTitle>移除这个项目？</DialogTitle>
         <DialogContent>
           <DialogContentText>
@@ -65,19 +60,12 @@ export function SessionDeleteDialogs({
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onCancelProjectDelete} sx={{ minHeight: 44 }}>
-            取消
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            onClick={onConfirmProjectDelete}
-            sx={{ minHeight: 44 }}
-          >
+          <Button onClick={onCancelProjectDelete}>取消</Button>
+          <Button color="error" variant="contained" onClick={onConfirmProjectDelete}>
             移除
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
     </>
   )
 }

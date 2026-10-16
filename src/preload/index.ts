@@ -6,6 +6,10 @@ import type {
   WorkspaceFileOperationsRendererApi,
   WorkspaceFileOperationTarget,
   WorkspaceFileRenameRequest,
+  WorkspaceMarkdownSaveRequest,
+  WorkspaceMarkdownSaveResult,
+  WorkspaceTextSaveRequest,
+  WorkspaceTextSaveResult,
   RemoteWorkspaceFileDownloadRequest
 } from '../shared/workspaceFileOperations'
 import type {
@@ -846,7 +850,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
   listModels: () => Promise<ModelOption[]>
-  selectModel: (providerId: string, modelId: string) => Promise<void>
+  selectModel: (providerId: string | null, modelId: string | null) => Promise<void>
   getSelectedModel: () => Promise<SelectedModel>
   selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
   getThinkingLevel: () => Promise<ThinkingLevel>
@@ -1307,6 +1311,10 @@ const api: RendererAuthApi = {
       inputFilesDroppedSubscribers.delete(cb)
     }
   },
+  saveTextFile: (request: WorkspaceTextSaveRequest): Promise<WorkspaceTextSaveResult> =>
+    ipcRenderer.invoke('files:saveTextFile', request),
+  saveMarkdownFile: (request: WorkspaceMarkdownSaveRequest): Promise<WorkspaceMarkdownSaveResult> =>
+    ipcRenderer.invoke('files:saveMarkdownFile', request),
   renameWorkspaceFile: (request: WorkspaceFileRenameRequest): Promise<{ path: string }> =>
     ipcRenderer.invoke('files:renameWorkspaceFile', request),
   deleteWorkspaceFile: (request: WorkspaceFileOperationTarget): Promise<void> =>
@@ -1428,7 +1436,7 @@ const api: RendererAuthApi = {
   cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
     ipcRenderer.invoke('managedEnvironments:clean'),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
-  selectModel: (providerId: string, modelId: string): Promise<void> =>
+  selectModel: (providerId: string | null, modelId: string | null): Promise<void> =>
     ipcRenderer.invoke('models:select', providerId, modelId),
   getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected'),
   selectThinkingLevel: (level: ThinkingLevel): Promise<void> =>

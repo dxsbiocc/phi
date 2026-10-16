@@ -216,12 +216,19 @@ export function WorkspaceResourceTabs({
             >
               {tab.title}
             </Typography>
-            {tab.kind === 'notebook' && tab.dirty && (
+            {(tab.kind === 'file' || tab.kind === 'notebook') && tab.dirty && (
               <Box
                 component="span"
                 role="img"
-                aria-label="未保存修改"
-                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
+                aria-label="未保存的修改"
+                data-phi-tab-unsaved="true"
+                sx={{
+                  width: 7,
+                  height: 7,
+                  flexShrink: 0,
+                  borderRadius: '50%',
+                  bgcolor: '#E6B52A'
+                }}
               />
             )}
             <Box

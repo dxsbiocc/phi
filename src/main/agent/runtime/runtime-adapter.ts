@@ -244,7 +244,7 @@ export interface RuntimeAgentSession {
   getAutoCompactionSettings?(
     control?: RuntimeSelectionControl
   ): Promise<RuntimeAutoCompactionReceipt | undefined>
-  abort(): Promise<void>
+  abort(options?: { preserveApprovals?: boolean }): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void>
   setThinkingLevel(
@@ -992,8 +992,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     return result
   }
 
-  async abort(): Promise<void> {
-    this.approvalAbortController.abort()
+  async abort(options?: { preserveApprovals?: boolean }): Promise<void> {
+    if (!options?.preserveApprovals) this.approvalAbortController.abort()
     // A session the worker no longer holds has nothing running to abort.
     if (
       this.recreate &&

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -27,7 +27,7 @@ test('workspace mutations and downloads reject untrusted frames before filesyste
     dialog: {
       showSaveDialog: async () => {
         dialogs += 1
-        return { canceled: true }
+        return { canceled: true, filePath: '' }
       }
     },
     shell: {
@@ -39,6 +39,8 @@ test('workspace mutations and downloads reject untrusted frames before filesyste
     observeRemote: async (_, operation) => operation()
   })
   for (const channel of [
+    'files:saveTextFile',
+    'files:saveMarkdownFile',
     'files:renameWorkspaceFile',
     'files:deleteWorkspaceFile',
     'remoteWorkspace:download'
@@ -67,7 +69,7 @@ test('local IPC operations require the active local workspace scope and delete t
     requireLocalWorkspaceRoot: (requested) => {
       if (remoteActive || requested !== root) throw new Error('not the active local workspace')
     },
-    dialog: { showSaveDialog: async () => ({ canceled: true }) },
+    dialog: { showSaveDialog: async () => ({ canceled: true, filePath: '' }) },
     shell: {
       trashItem: async (path) => {
         trashed.push(path)
@@ -101,7 +103,63 @@ test('local IPC operations require the active local workspace scope and delete t
       path: join(root, 'renamed.txt')
     })
     assert.equal(trashed.length, 1)
+    const markdown = join(root, 'note.md')
+    writeFileSync(markdown, '# Before\n')
+    const save = handlers.get('files:saveMarkdownFile')!
+    const markdownRequest = {
+      kind: 'local',
+      rootPath: root,
+      path: markdown,
+      expectedContent: '# Before\n',
+      content: '# After\n'
+    }
+    await assert.rejects(
+      async () => save(event, { ...markdownRequest, rootPath: '/' }),
+      /active local workspace/
+    )
+    assert.deepEqual(await save(event, markdownRequest), {
+      path: markdown,
+      content: '# After\n',
+      bytes: Buffer.byteLength('# After\n')
+    })
+    assert.equal(readFileSync(markdown, 'utf8'), '# After\n')
+    const textPath = join(root, 'example.py')
+    writeFileSync(textPath, 'print(1)\n')
+    const saveText = handlers.get('files:saveTextFile')!
+    const textRequest = {
+      ...markdownRequest,
+      path: textPath,
+      expectedContent: 'print(1)\n',
+      content: 'print(2)\n'
+    }
+    await assert.rejects(
+      async () => saveText(event, { ...textRequest, rootPath: '/' }),
+      /active local workspace/
+    )
+    assert.deepEqual(await saveText(event, textRequest), {
+      path: textPath,
+      content: 'print(2)\n',
+      bytes: Buffer.byteLength('print(2)\n')
+    })
+    const pendingSave = save(event, {
+      ...markdownRequest,
+      expectedContent: '# After\n',
+      content: '# Should remain unsaved\n'
+    })
+    const pendingTextSave = saveText(event, {
+      ...textRequest,
+      expectedContent: 'print(2)\n',
+      content: 'print(3)\n'
+    })
     remoteActive = true
+    await Promise.all([
+      assert.rejects(async () => pendingSave, /active local workspace/),
+      assert.rejects(async () => pendingTextSave, /active local workspace/)
+    ])
+    assert.equal(readFileSync(textPath, 'utf8'), 'print(2)\n')
+    assert.equal(readFileSync(markdown, 'utf8'), '# After\n')
+    await assert.rejects(async () => save(event, markdownRequest), /active local workspace/)
+    await assert.rejects(async () => saveText(event, textRequest), /active local workspace/)
     await assert.rejects(
       async () =>
         handlers.get('files:deleteWorkspaceFile')!(event, {
@@ -132,7 +190,7 @@ test('download IPC validates input before save dialog and cancellation never sta
     dialog: {
       showSaveDialog: async () => {
         dialogs += 1
-        return { canceled: true }
+        return { canceled: true, filePath: '' }
       }
     },
     shell: { trashItem: async () => undefined },

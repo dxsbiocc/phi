@@ -1,4 +1,6 @@
 import type { FileTreeEntry } from '../../../types'
+import type { WorkspaceTextSaveResult } from '../../../../../shared/workspaceFileOperations'
+import type { RemoteProjectFileContextValue } from '../../../lib/remoteProjectFileContext'
 
 export const FILE_TREE_TOOLTIP_DELAY_MS = 800
 
@@ -8,6 +10,17 @@ export type FileTreeActions = {
   onDownloadFile?: (path: string) => void
   onRevealFile?: (path: string) => void
   canModifyFile?: (path: string) => boolean
+  onSaveTextFile?: (
+    path: string,
+    content: string,
+    expectedContent: string
+  ) => Promise<WorkspaceTextSaveResult>
+  onTextDirtyChange?: (path: string, dirty: boolean) => void
+  onSaveMarkdownFile?: FileTreeActions['onSaveTextFile']
+  onMarkdownDirtyChange?: FileTreeActions['onTextDirtyChange']
+  onOpenDirectory?: (path: string) => void
+  onReloadFile?: (path: string) => void
+  markdownRemoteContext?: RemoteProjectFileContextValue | null
 }
 
 export type FileTreeAction = 'open' | 'download' | 'reveal' | 'copy' | 'rename' | 'delete'

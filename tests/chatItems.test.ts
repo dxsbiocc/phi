@@ -16,6 +16,28 @@ test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => 
   assert.equal(isWrapperToolName('wrap_per'), false)
 })
 
+test('automatic model fallback notices survive session history restoration', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'model_fallback',
+      eventId: 'fallback-1',
+      runId: 'run-1',
+      fromProviderId: 'first-provider',
+      fromModelId: 'first-model',
+      toProviderId: 'second-provider',
+      toModelId: 'second-model'
+    }
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'warning')
+  assert.equal(items[0].runId, 'run-1')
+  assert.match(
+    items[0].content,
+    /first-provider\/first-model 请求失败，正在尝试 second-provider\/second-model/
+  )
+})
+
 test('session history restores declared final files as a separate card', () => {
   const items = chatItemsFromSessionMessages([
     { source: 'phi', type: 'user_message', eventId: 'user-1', content: 'make a report' },

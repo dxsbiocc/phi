@@ -31,7 +31,11 @@ export function modelOptionFromSelection(
   return (
     available.find(
       (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
-    ) ?? null
+    ) ?? {
+      ...selection,
+      name: `${selection.providerId}/${selection.modelId}（不可用）`,
+      thinkingLevels: []
+    }
   )
 }
 
@@ -168,14 +172,10 @@ export function useModelSelection(
       const request = ++modelRequestRef.current
       const isCurrent = (): boolean =>
         sessionKey === getSessionKey() && request === modelRequestRef.current
-      if (!model) {
-        setSelectedModel(null)
-        return
-      }
       const pending = beginSelection(sessionKey)
       setSelectedModel(model)
       try {
-        await window.api.selectModel(model.providerId, model.modelId)
+        await window.api.selectModel(model?.providerId ?? null, model?.modelId ?? null)
         if (request > pending.confirmedModelRequest) {
           pending.confirmedModel = model
           pending.confirmedModelRequest = request

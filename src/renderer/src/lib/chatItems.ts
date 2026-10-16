@@ -510,7 +510,7 @@ export function chatItemFromPhiTimelineEvent(event: {
       ...createdAtField(event.createdAt)
     }
   }
-  if (event.type === 'model_selection_migrated') {
+  if (event.type === 'model_selection_migrated' || event.type === 'model_fallback') {
     const from =
       typeof event.fromProviderId === 'string' && typeof event.fromModelId === 'string'
         ? `${event.fromProviderId}/${event.fromModelId}`
@@ -524,7 +524,11 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
-      content: `${from} 当前不可用，已切换到 ${to}。`,
+      content:
+        event.type === 'model_fallback'
+          ? `${from} 请求失败，正在尝试 ${to}。`
+          : `${from} 当前不可用，已切换到 ${to}。`,
+      ...runIdField(event.runId),
       ...createdAtField(event.createdAt)
     }
   }

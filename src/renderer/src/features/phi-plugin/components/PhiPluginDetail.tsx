@@ -5,7 +5,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -18,6 +17,7 @@ import {
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import { PhiIcons } from '../../../icons'
@@ -292,11 +292,9 @@ export function PhiPluginDetail({
         </Stack>
       </Box>
 
-      <Dialog
+      <ConfirmationDialog
         open={pendingUninstall !== null}
         onClose={busyPluginId ? undefined : () => setPendingUninstall(null)}
-        fullWidth
-        maxWidth="sm"
       >
         <DialogTitle>卸载 {pendingUninstall?.title ?? '插件'}？</DialogTitle>
         <DialogContent>
@@ -327,7 +325,7 @@ export function PhiPluginDetail({
             {busyPluginId ? '卸载中…' : '确认卸载'}
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
       <EnvironmentBuildConfirmDialog
         environment={
           pendingBuild

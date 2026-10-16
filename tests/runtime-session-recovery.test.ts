@@ -8,6 +8,7 @@ import test from 'node:test'
 import { getOmpBridge } from '../src/main/agent/engine/omp-bridge'
 import {
   createRuntimeAgentSession,
+  createRuntimeResourceLoader,
   createRuntimeSessionManager
 } from '../src/main/agent/runtime/runtime-adapter'
 
@@ -114,6 +115,52 @@ test(
       await assert.rejects(getOmpBridge().request('crash'))
 
       await session.abort()
+      await session.dispose()
+    })
+  }
+)
+
+test(
+  'internal model-recovery abort keeps future approval requests usable',
+  { skip: !hasBun },
+  async () => {
+    await withFakeWorker(async (dir) => {
+      const approvalSignals: boolean[] = []
+      const resourceLoader = createRuntimeResourceLoader({
+        cwd: dir,
+        extensionFactories: [
+          (api) => {
+            api.on('tool_call', (_event, context) => {
+              const signal = (context as { signal: AbortSignal }).signal
+              approvalSignals.push(signal.aborted)
+              return { block: signal.aborted }
+            })
+          }
+        ]
+      })
+      const { session } = await createRuntimeAgentSession({
+        cwd: dir,
+        sessionManager: createRuntimeSessionManager(dir),
+        resourceLoader
+      })
+      const bridge = getOmpBridge()
+      const requestApproval = async (): Promise<void> => {
+        bridge.emit(`session:${session.runtimeSessionId}:toolApproval`, {
+          requestId: `approval-${approvalSignals.length}`,
+          toolName: 'write',
+          input: { path: 'result.txt', content: 'done' }
+        })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      }
+
+      await session.abort({ preserveApprovals: true })
+      await session.prompt('continue with the fallback model')
+      await requestApproval()
+      assert.deepEqual(approvalSignals, [false])
+
+      await session.abort()
+      await requestApproval()
+      assert.deepEqual(approvalSignals, [false, true])
       await session.dispose()
     })
   }

@@ -38,6 +38,7 @@ import ts from 'typescript'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
 import * as notebookCompletion from '../src/main/agent/notebook/notebook-completion'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
+import * as automaticModelFallback from '../src/main/agent/session/automatic-model-fallback'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
 import * as sessionTitle from '../src/shared/sessionTitle'
@@ -394,6 +395,8 @@ type HostContext = {
 }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
+  lastSelectedModel?: { providerId: string; modelId: string } | null
+  remoteDefaultModel?: { providerId: string; modelId: string } | null
   titleRequest?: sessionTitleGeneration.SessionTitleGeneratorOptions['request']
   useTitleRuntime?: boolean
   holdRendererReady?: boolean
@@ -1857,6 +1860,7 @@ async function harness(
         }
       }
     },
+    './agent/session/automatic-model-fallback': automaticModelFallback,
     './agent/session/session-manager': {
       createAgentSession: async (
         options: {
@@ -1873,7 +1877,7 @@ async function harness(
         const session = factory
           ? await factory(options.cwd, options.sessionManager.file)
           : new FakeSession(options.sessionManager.file)
-        session.model = options.model
+        if (options.model) session.model = options.model
         session.thinkingLevel = options.thinkingLevel
         if (onEvent) {
           session.subscribe((event) => onEvent(event as Record<string, unknown>))
@@ -1992,6 +1996,11 @@ async function harness(
             id,
             ...(options.remoteMemorySettings ? { memory: options.remoteMemorySettings } : {}),
             name: 'Remote project',
+            ...(options.remoteDefaultModel
+              ? { defaultModel: options.remoteDefaultModel }
+              : options.remoteRpc && options.remoteDefaultModel !== null
+                ? { defaultModel: { providerId: 'openai', modelId: 'gpt-test' } }
+                : {}),
             location: {
               kind: 'ssh',
               hostProfileId: 'host-1',
@@ -4022,6 +4031,10 @@ async function harness(
       }
     },
     './agent/app-settings': {
+      readLastSelectedModel: () => options.lastSelectedModel,
+      writeLastSelectedModel: (model: HarnessOptions['lastSelectedModel']) => {
+        options.lastSelectedModel = model
+      },
       readAppSettings: (): Record<string, unknown> => ({
         noProjectTaskFolder: appNoProjectTaskFolder,
         allowExternalFileRead,
@@ -11311,6 +11324,166 @@ test('main IPC: aborted automatic compaction records its failure reason', async 
   })
 })
 
+test('main IPC: automatic model failures switch within one run and keep automatic selection', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.model = { provider: 'openai', id: 'gpt-test' }
+    const prompt = session.prompt.bind(session)
+    session.prompt = async (text, options) => {
+      const failed = session.model?.id === 'gpt-test'
+      session.skipFinalAssistantMessage = failed
+      session.toolEvents = failed
+        ? [
+            {
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                stopReason: 'error',
+                errorMessage: '503 provider unavailable'
+              }
+            }
+          ]
+        : [
+            {
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                stopReason: 'stop',
+                content: [{ type: 'text', text: 'Recovered answer' }]
+              }
+            }
+          ]
+      await prompt(text, options)
+    }
+    return session
+  })
+  await app.invoke('agent:prompt', 'hello')
+  assert.equal(app.sessions.length, 1)
+  assert.equal(app.sessions[0].promptTexts.length, 2)
+  assert.equal(app.sessions[0].model?.id, 'gpt-vision-test')
+  assert.equal(await app.invoke('models:selected'), null)
+  assert.equal(app.runStartInputs.length, 1)
+  const events = app.appendedSessionEvents.map((entry) => entry.event as Record<string, unknown>)
+  assert.equal(events.filter((event) => event.type === 'user_message').length, 1)
+  assert.equal(events.filter((event) => event.type === 'model_fallback').length, 1)
+  assert.equal(
+    events.some((event) => event.type === 'run_failed'),
+    false
+  )
+  assert.equal(events.at(-1)?.content, 'Recovered answer')
+})
+
+test('main IPC: automatic fallback only tries configured models and preserves the last error', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.model = { provider: 'openai', id: 'gpt-test' }
+    const prompt = session.prompt.bind(session)
+    session.prompt = async (text, options) => {
+      session.promptError = new Error(`503 ${session.model?.id} unavailable`)
+      await prompt(text, options)
+    }
+    return session
+  })
+  await assert.rejects(app.invoke('agent:prompt', 'hello'), /gpt-vision-test unavailable/)
+  assert.equal(app.sessions[0].promptTexts.length, 2)
+  assert.equal(app.sessions[0].model?.provider, 'openai')
+})
+
+test('main IPC: SDK recovery clears earlier provider failure without switching models', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.model = { provider: 'openai', id: 'gpt-test' }
+    session.toolEvents = [
+      {
+        type: 'message_end',
+        message: { role: 'assistant', stopReason: 'error', errorMessage: '429 rate limit' }
+      },
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'SDK recovered' }]
+        }
+      },
+      { type: 'auto_retry_end', success: true, attempt: 1 }
+    ]
+    return session
+  })
+  await app.invoke('agent:prompt', 'hello')
+  assert.equal(app.sessions[0].promptTexts.length, 1)
+  assert.equal(
+    app.appendedSessionEvents.some((entry) =>
+      ['run_failed', 'model_fallback'].includes(String((entry.event as { type?: string }).type))
+    ),
+    false
+  )
+})
+
+test('main IPC: automatic image prompts choose an image-capable configured model', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.model = { provider: 'openai', id: 'gpt-test', supportsImages: false }
+    return session
+  })
+  await app.invoke('agent:prompt', 'Describe this image', {
+    images: [{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }]
+  })
+  assert.equal(app.sessions[0].model?.id, 'gpt-vision-test')
+  assert.equal(app.sessions[0].promptOptions[0].images?.length, 1)
+})
+
+test('main IPC: automatic region failure aborts backoff and continues with another model', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.model = { provider: 'openai', id: 'gpt-test' }
+    const prompt = session.prompt.bind(session)
+    const abort = session.abort.bind(session)
+    session.abort = async (options?: { preserveApprovals?: boolean }) => {
+      assert.equal(options?.preserveApprovals, true)
+      await abort()
+    }
+    session.prompt = async (text, options) => {
+      const failed = session.model?.id === 'gpt-test'
+      session.hold = failed
+      session.skipFinalAssistantMessage = failed
+      session.toolEvents = failed
+        ? [
+            {
+              type: 'auto_retry_start',
+              attempt: 1,
+              maxAttempts: 5,
+              delayMs: 30_000,
+              errorMessage: 'Provider is not supported in your region'
+            }
+          ]
+        : []
+      await prompt(text, options)
+    }
+    return session
+  })
+  await app.invoke('agent:prompt', 'hello')
+  assert.equal(app.sessions[0].promptTexts.length, 2)
+  assert.equal(app.sessions[0].model?.id, 'gpt-vision-test')
+  assert.equal(
+    app.appendedSessionEvents.some(
+      (entry) => (entry.event as { type?: string }).type === 'run_failed'
+    ),
+    false
+  )
+})
+
+test('main IPC: explicit model failures do not activate automatic fallback', async () => {
+  const app = await harness(async (_cwd, file) => {
+    const session = new FakeSession(file)
+    session.promptError = new Error('503 model unavailable')
+    return session
+  })
+  await app.invoke('models:select', 'openai', 'gpt-test')
+  await assert.rejects(app.invoke('agent:prompt', 'hello'), /503 model unavailable/)
+  assert.equal(app.sessions[0].promptTexts.length, 1)
+})
+
 test('main IPC: project sessions inherit project model defaults', { timeout: 3000 }, async () => {
   const app = await harness()
   await app.invoke('projects:newSession', '/projects/defaults', 'ask')
@@ -13544,7 +13717,10 @@ test('RPC model lookup cannot commit into a newly selected Phi session', async (
   gate.resolve()
   await rejected
   assert.equal(JSON.stringify(app.updatedSessionManifests), before)
-  assert.equal(await app.invoke('models:selected'), null)
+  assert.deepEqual(await app.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-test'
+  })
 })
 
 test('RPC thinking dispatch keeps its original view generation until confirmation', async () => {
@@ -15897,4 +16073,241 @@ test('T15 main recovery: closing the window cancels accepted background preparat
   assert.equal(cancelled, true)
   assert.equal(app.sessions.length, 0)
   assert.equal(app.appendedSessionEvents.length, 0)
+})
+
+test('main model preference: new local and remote chats inherit the latest manual choice across restart', async () => {
+  const preferences: HarnessOptions = {}
+  const app = await harness(undefined, preferences)
+  await app.invoke('projects:newSession', '/projects/defaults', 'ask')
+  const first = app.createdPhiSessions[0]
+  assert.deepEqual(first.model, { providerId: 'anthropic', modelId: 'claude-test' })
+  await app.invoke('models:select', 'openai', 'gpt-test')
+  const expected = { providerId: 'openai', modelId: 'gpt-test' }
+  assert.deepEqual(preferences.lastSelectedModel, expected)
+  await app.invoke('sessions:create')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
+  await app.invoke('projects:newSession', '/projects/defaults', 'ask')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
+  await app.invoke('models:select', 'openai', 'gpt-vision-test')
+  await app.invoke('sessions:switch', `phi-session:${first.sessionId}`)
+  assert.deepEqual(await app.invoke('models:selected'), expected)
+  assert.deepEqual(preferences.lastSelectedModel, {
+    providerId: 'openai',
+    modelId: 'gpt-vision-test'
+  })
+  const restarted = await harness(undefined, preferences)
+  await restarted.invoke('sessions:create')
+  assert.deepEqual(restarted.createdPhiSessions.at(-1)?.model, preferences.lastSelectedModel)
+})
+
+test('main model preference: explicit automatic overrides project defaults and stays automatic after a run', async () => {
+  const preferences: HarnessOptions = {}
+  const app = await harness(undefined, preferences)
+  await app.invoke('projects:newSession', '/projects/defaults', 'ask')
+  await app.invoke('models:select', null, null)
+  assert.equal(await app.invoke('models:selected'), null)
+  assert.equal(preferences.lastSelectedModel, null)
+  await app.invoke('agent:prompt', 'use automatic selection')
+  assert.equal(await app.invoke('models:selected'), null)
+  await app.invoke('projects:newSession', '/projects/defaults', 'ask')
+  assert.equal(app.createdPhiSessions.at(-1)?.model, null)
+  const restarted = await harness(undefined, preferences)
+  await restarted.invoke('projects:newRemoteSession', 'remote-project-1')
+  assert.equal(restarted.createdPhiSessions.at(-1)?.model, null)
+  assert.equal(await restarted.invoke('models:selected'), null)
+})
+
+test('main model preference: rejected choices do not replace the remembered model', async () => {
+  const preferences: HarnessOptions = {
+    lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
+  }
+  const session = new FakeSession('model-choice.jsonl')
+  const app = await harness(async () => session, preferences)
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'materialize session')
+  session.setModel = async () => {
+    throw new Error('Model change rejected')
+  }
+  await assert.rejects(
+    app.invoke('models:select', 'openai', 'gpt-vision-test'),
+    /Model change rejected/
+  )
+  await assert.rejects(app.invoke('models:select', 'missing', 'gone'), /未知模型/)
+  assert.deepEqual(preferences.lastSelectedModel, { providerId: 'openai', modelId: 'gpt-test' })
+  assert.deepEqual(await app.invoke('models:selected'), preferences.lastSelectedModel)
+})
+
+test('main model preference: unavailable saved model is retained without silently selecting another model', async () => {
+  const unavailable = { providerId: 'missing', modelId: 'gone' }
+  const app = await harness(undefined, { lastSelectedModel: unavailable })
+  await app.invoke('projects:newSession', '/projects/defaults', 'ask')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, unavailable)
+  assert.deepEqual(await app.invoke('models:selected'), unavailable)
+  await assert.rejects(
+    app.invoke('agent:prompt', 'keep the unavailable choice visible'),
+    /模型不可用/
+  )
+})
+
+for (const latest of ['fixed', 'automatic'] as const) {
+  test(`main model preference: delayed fixed selection cannot overwrite a newer ${latest} choice`, async () => {
+    const preferences: HarnessOptions = {
+      lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
+    }
+    const session = new FakeSession('ordered-model-choice.jsonl')
+    const app = await harness(async () => session, preferences)
+    const current = (await app.invoke('sessions:create')) as { phiSessionId: string }
+    await app.invoke('agent:prompt', 'materialize selection target')
+    const gate = deferred<void>()
+    let entered = false
+    session.setModel = async (model) => {
+      if (model.id === 'gpt-vision-test') {
+        entered = true
+        await gate.promise
+      }
+      session.model = model
+    }
+    const earlier = app.invoke('models:select', 'openai', 'gpt-vision-test')
+    await waitUntil(() => entered)
+    const newer =
+      latest === 'automatic'
+        ? app.invoke('models:select', null, null)
+        : app.invoke('models:select', 'openai', 'gpt-session')
+    await tick()
+    gate.resolve()
+    await Promise.all([earlier, newer])
+    const expected =
+      latest === 'automatic' ? null : { providerId: 'openai', modelId: 'gpt-session' }
+    assert.deepEqual(await app.invoke('models:selected'), expected)
+    assert.deepEqual(preferences.lastSelectedModel, expected)
+    assert.deepEqual(
+      app.updatedSessionManifests
+        .filter((entry) => entry.sessionId === current.phiSessionId && 'model' in entry.patch)
+        .at(-1)?.patch.model,
+      expected
+    )
+    if (latest === 'fixed') assert.equal(session.model?.id, 'gpt-session')
+    await app.invoke('sessions:create')
+    assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
+  })
+}
+
+test('main model preference: rejected earlier switch does not block a newer model selection', async () => {
+  const preferences: HarnessOptions = {
+    lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
+  }
+  const session = new FakeSession('rejected-model-choice.jsonl')
+  const app = await harness(async () => session, preferences)
+  await app.invoke('sessions:create')
+  await app.invoke('agent:prompt', 'materialize selection target')
+  const gate = deferred<void>()
+  let entered = false
+  session.setModel = async (model) => {
+    if (model.id === 'gpt-vision-test') {
+      entered = true
+      await gate.promise
+      throw new Error('Earlier switch failed')
+    }
+    session.model = model
+  }
+  const earlier = app.invoke('models:select', 'openai', 'gpt-vision-test')
+  const rejected = assert.rejects(earlier, /Earlier switch failed/)
+  await waitUntil(() => entered)
+  const newer = app.invoke('models:select', 'openai', 'gpt-session')
+  gate.resolve()
+  await Promise.all([rejected, newer])
+  assert.equal(session.model?.id, 'gpt-session')
+  assert.deepEqual(preferences.lastSelectedModel, { providerId: 'openai', modelId: 'gpt-session' })
+})
+
+test('main model preference: an older switch finishing after another conversation preserves the newer global choice', async () => {
+  const preferences: HarnessOptions = {
+    lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
+  }
+  const session = new FakeSession('first-model-choice.jsonl')
+  const app = await harness(async () => session, preferences)
+  const first = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', 'materialize first target')
+  const gate = deferred<void>()
+  let entered = false
+  session.setModel = async (model) => {
+    entered = true
+    await gate.promise
+    session.model = model
+  }
+  const earlier = app.invoke('models:select', 'openai', 'gpt-vision-test')
+  await waitUntil(() => entered)
+  await app.invoke('sessions:create')
+  await app.invoke('models:select', 'openai', 'gpt-session')
+  await app.invoke('sessions:switch', first.path)
+  gate.resolve()
+  await earlier
+  assert.deepEqual(await app.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-vision-test'
+  })
+  assert.deepEqual(preferences.lastSelectedModel, { providerId: 'openai', modelId: 'gpt-session' })
+  await app.invoke('sessions:create')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, preferences.lastSelectedModel)
+})
+
+test('main model preference: RPC automatic selection rejects before changing a fresh remote conversation', async () => {
+  const preferences: HarnessOptions = {
+    remoteRpc: true,
+    lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
+  }
+  const app = await harness(undefined, preferences)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const before = JSON.stringify(app.updatedSessionManifests)
+  await assert.rejects(
+    app.invoke('models:select', null, null),
+    /远程 RPC 对话暂不支持自动模型，请选择具体模型/
+  )
+  assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  assert.deepEqual(await app.invoke('models:selected'), preferences.lastSelectedModel)
+  assert.deepEqual(preferences.lastSelectedModel, { providerId: 'openai', modelId: 'gpt-test' })
+})
+
+for (const remoteRpc of [false, true]) {
+  test(`main model preference: global automatic ${remoteRpc ? 'keeps RPC project defaults' : 'remains automatic for legacy remote sessions'}`, async () => {
+    const defaultModel = { providerId: 'openai', modelId: 'gpt-test' }
+    const preferences: HarnessOptions = {
+      remoteRpc,
+      lastSelectedModel: null,
+      remoteDefaultModel: defaultModel
+    }
+    const app = await harness(undefined, preferences)
+    await app.invoke('projects:newRemoteSession', 'remote-project-1')
+    const expected = remoteRpc ? defaultModel : null
+    assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
+    assert.deepEqual(await app.invoke('models:selected'), expected)
+    assert.equal(preferences.lastSelectedModel, null)
+    if (remoteRpc) {
+      await app.invoke(
+        'agent:prompt',
+        'initialize remote conversation with the supported project model'
+      )
+      assert.equal(
+        app.createdAgentOptions[0].model && (app.createdAgentOptions[0].model as { id: string }).id,
+        defaultModel.modelId
+      )
+      assert.equal(preferences.lastSelectedModel, null)
+    }
+  })
+}
+
+test('main model preference: RPC conversation without a concrete model reports an actionable preflight error', async () => {
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    lastSelectedModel: null,
+    remoteDefaultModel: null
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await assert.rejects(
+    app.invoke('agent:prompt', 'initialize a remote conversation without a supported model'),
+    /远程 RPC 对话暂不支持自动模型，请选择具体模型/
+  )
+  assert.equal(app.createdAgentOptions.length, 0)
 })

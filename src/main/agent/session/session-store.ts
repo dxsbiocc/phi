@@ -59,7 +59,7 @@ export interface PhiSessionManifest {
   runtimeRef?: PhiRuntimeRef
   readonly runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   permissionMode: PermissionMode
-  model?: ModelSelection
+  model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
   autoCompaction?: AutoCompactionOverrides
   status: SessionStatus
@@ -84,7 +84,7 @@ export interface CreatePhiSessionInput {
   forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
   permissionMode: PermissionMode
-  model?: ModelSelection
+  model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
   autoCompaction?: AutoCompactionOverrides
 }
@@ -219,7 +219,7 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     ...(input.forkedFrom ? { forkedFrom: input.forkedFrom } : {}),
     ...(input.runtimeSessionPath ? { runtimeSessionPath: input.runtimeSessionPath } : {}),
     permissionMode: input.permissionMode,
-    ...(input.model ? { model: input.model } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
     ...(input.autoCompaction ? { autoCompaction: input.autoCompaction } : {}),
     status: 'idle',

@@ -15,6 +15,7 @@ import {
   type FilePreviewPanelState
 } from './lib/filePreviewState'
 import type { FileDownloadState } from './lib/filePreviewState'
+import { FilePreviewActionsContext } from './lib/filePreviewActionsContext'
 
 export type { FilePreviewPanelState } from './lib/filePreviewState'
 export { ProjectFileTree } from './components/ProjectFileTree'
@@ -327,14 +328,11 @@ function FilePreviewActions({
           sx={{
             width: 34,
             height: 30,
-            border: 1,
-            borderColor: 'divider',
             borderRadius: 2,
-            color: 'primary.main',
+            color: 'text.secondary',
             '&:hover': {
-              borderColor: 'primary.main',
-              bgcolor: (theme) =>
-                alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.1)
+              bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
+              color: 'text.primary'
             }
           }}
         >
@@ -394,6 +392,7 @@ export default function FilePreviewPanel({
   downloadState,
   onCancelDownload
 }: FilePreviewPanelProps): React.JSX.Element {
+  const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null)
   const path = previewFullPath(state)
   const displayPath = previewDisplayPath(state)
   const rootLabel = previewRootLabel(state)
@@ -402,83 +401,90 @@ export default function FilePreviewPanel({
   const availableDownload = downloadState?.status === 'running' ? undefined : onDownloadFile
 
   return (
-    <Box
-      component="aside"
-      aria-label="文件预览"
-      data-phi-file-kind={previewIcon.kind}
-      data-phi-file-preview-layout={layout}
-      sx={{
-        ...(layout === 'workspace'
-          ? {
-              flex: 1,
-              width: '100%',
-              flexBasis: '100%',
-              maxWidth: 'none',
-              minWidth: 0
-            }
-          : filePreviewPaneLayoutSx),
-        borderLeft: layout === 'workspace' ? 0 : 1,
-        borderColor: 'divider',
-        bgcolor: 'background.paper',
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0
-      }}
-    >
+    <FilePreviewActionsContext.Provider value={{ target: actionHost, inHeader: true }}>
       <Box
+        component="aside"
+        aria-label="文件预览"
+        data-phi-file-kind={previewIcon.kind}
+        data-phi-file-preview-layout={layout}
         sx={{
-          px: 1.5,
-          py: 1,
-          borderBottom: 1,
+          ...(layout === 'workspace'
+            ? {
+                flex: 1,
+                width: '100%',
+                flexBasis: '100%',
+                maxWidth: 'none',
+                minWidth: 0
+              }
+            : filePreviewPaneLayoutSx),
+          borderLeft: layout === 'workspace' ? 0 : 1,
           borderColor: 'divider',
+          bgcolor: 'background.paper',
           display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          flexShrink: 0
-        }}
-      >
-        <FilePathBreadcrumb rootLabel={rootLabel} displayPath={displayPath} fullPath={path} />
-        <FilePreviewActions
-          path={path}
-          pathKind={isDirectoryState ? 'directory' : 'file'}
-          onOpenDefaultPath={onOpenDefaultPath}
-          onRevealPath={onRevealPath}
-          onDownloadFile={availableDownload}
-          showDownloadAction={state.status === 'ready' && state.file.kind !== 'metadata'}
-        />
-      </Box>
-
-      <ResultDownloadStatus state={downloadState} onCancel={onCancelDownload} />
-
-      <Box
-        data-phi-file-preview-content={isDirectoryState ? 'directory' : 'split'}
-        sx={{
-          flex: 1,
-          minWidth: 0,
-          minHeight: 0,
-          display: 'flex'
+          flexDirection: 'column',
+          minHeight: 0
         }}
       >
         <Box
-          data-phi-file-preview-pane={isDirectoryState ? 'directory' : 'file'}
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: 1,
+            borderColor: 'divider',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            flexShrink: 0
+          }}
+        >
+          <FilePathBreadcrumb rootLabel={rootLabel} displayPath={displayPath} fullPath={path} />
+          <Box
+            ref={setActionHost}
+            data-phi-file-editor-actions="true"
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}
+          />
+          <FilePreviewActions
+            path={path}
+            pathKind={isDirectoryState ? 'directory' : 'file'}
+            onOpenDefaultPath={onOpenDefaultPath}
+            onRevealPath={onRevealPath}
+            onDownloadFile={availableDownload}
+            showDownloadAction={state.status === 'ready' && state.file.kind !== 'metadata'}
+          />
+        </Box>
+
+        <ResultDownloadStatus state={downloadState} onCancel={onCancelDownload} />
+
+        <Box
+          data-phi-file-preview-content={isDirectoryState ? 'directory' : 'split'}
           sx={{
             flex: 1,
             minWidth: 0,
             minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column'
+            display: 'flex'
           }}
         >
-          <FilePreviewBody
-            state={state}
-            onOpenFile={onOpenFile}
-            onListDirectory={onListDirectory}
-            fileActions={fileActions}
-            treeRevision={treeRevision}
-            onDownloadFile={availableDownload}
-          />
+          <Box
+            data-phi-file-preview-pane={isDirectoryState ? 'directory' : 'file'}
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <FilePreviewBody
+              state={state}
+              onOpenFile={onOpenFile}
+              onListDirectory={onListDirectory}
+              fileActions={fileActions}
+              treeRevision={treeRevision}
+              onDownloadFile={availableDownload}
+            />
+          </Box>
         </Box>
       </Box>
-    </Box>
+    </FilePreviewActionsContext.Provider>
   )
 }

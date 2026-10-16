@@ -843,7 +843,7 @@ declare global {
           thinkingLevels: Array<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
         }>
       >
-      selectModel: (providerId: string, modelId: string) => Promise<void>
+      selectModel: (providerId: string | null, modelId: string | null) => Promise<void>
       getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
       selectThinkingLevel: (
         level: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'

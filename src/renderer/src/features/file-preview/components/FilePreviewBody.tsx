@@ -11,6 +11,9 @@ import { molecularStructureFormatForPath } from '../lib/molecularStructureFiles'
 import { MolecularStructureFilePreview } from './MolecularStructureFilePreview'
 import { ProjectFileTree } from './ProjectFileTree'
 import { SpreadsheetPreview } from './SpreadsheetPreview'
+import { MarkdownFilePreview } from './MarkdownFilePreview'
+import { isMarkdownFilePath } from '../lib/markdownFiles'
+import { TextFilePreview } from './TextFilePreview'
 
 function binaryPreviewMessage(mimeType: string): string {
   const subtype = mimeType.split('/').at(-1)?.replace(/^x-/, '') ?? 'binary'
@@ -93,7 +96,15 @@ export function FilePreviewBody({
   }
 
   if (state.file.kind === 'html') {
-    return <HtmlReportPreview key={state.file.path} file={state.file} />
+    const file = state.file
+    return (
+      <TextFilePreview
+        key={file.path}
+        file={file}
+        fileActions={fileActions}
+        renderPreview={(content) => <HtmlReportPreview file={{ ...file, content }} />}
+      />
+    )
   }
 
   if (state.file.kind === 'metadata') {
@@ -119,7 +130,7 @@ export function FilePreviewBody({
     )
   }
 
-  const spreadsheetModel = spreadsheetPreviewModel(state.file)
+  const file = state.file
   const molecularStructureFormat =
     state.file.kind === 'text' ? molecularStructureFormatForPath(state.file.path) : null
 
@@ -131,15 +142,36 @@ export function FilePreviewBody({
           {formatBytes(state.file.bytes)}
         </Alert>
       ) : null}
-      {spreadsheetModel ? (
-        <SpreadsheetPreview model={spreadsheetModel} />
-      ) : molecularStructureFormat && state.file.kind === 'text' ? (
-        <>
-          <MolecularStructureFilePreview file={state.file} format={molecularStructureFormat} />
-          <CodePreview file={state.file} />
-        </>
+      {state.file.kind === 'text' && isMarkdownFilePath(state.file.path) ? (
+        <MarkdownFilePreview
+          key={state.file.path}
+          file={state.file}
+          fileActions={fileActions}
+          onOpenFile={onOpenFile}
+        />
       ) : (
-        <CodePreview file={state.file} />
+        <TextFilePreview
+          key={file.path}
+          file={file}
+          fileActions={fileActions}
+          renderPreview={(content) => {
+            const currentFile = { ...file, content }
+            const spreadsheetModel = spreadsheetPreviewModel(currentFile)
+            return spreadsheetModel ? (
+              <SpreadsheetPreview model={spreadsheetModel} />
+            ) : molecularStructureFormat ? (
+              <>
+                <MolecularStructureFilePreview
+                  file={currentFile}
+                  format={molecularStructureFormat}
+                />
+                <CodePreview file={currentFile} />
+              </>
+            ) : (
+              <CodePreview file={currentFile} />
+            )
+          }}
+        />
       )}
     </>
   )

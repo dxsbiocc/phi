@@ -109,7 +109,8 @@ test('file preview panel renders file content with line numbers', () => {
   assert.match(markup, /App\.tsx/)
   assert.match(markup, />src<\/span>/)
   assert.doesNotMatch(markup, /aria-label="显示目录树"/)
-  assert.doesNotMatch(markup, /aria-pressed="false"/)
+  assert.match(markup, /data-phi-file-editor-actions="true"/)
+  assert.match(markup, /data-phi-text-file="true"/)
   assert.doesNotMatch(markup, />目录树<\/button>/)
   assert.match(markup, /data-phi-file-open-default-button="true"/)
   assert.match(markup, /aria-label="默认应用打开"/)
@@ -475,7 +476,7 @@ test('spreadsheet preview model parses delimited text without UI coupling', () =
       rootPath: '/tmp',
       rootLabel: 'tmp',
       kind: 'text',
-      mimeType: 'text/markdown',
+      mimeType: 'text/plain',
       content: '# Readme',
       bytes: 8,
       previewBytes: 8,

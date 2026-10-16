@@ -1,11 +1,6 @@
-import {
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Typography
-} from '@mui/material'
+import { Button, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material'
+
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 
 export function RemoteNextflowInstallDialog({
   open,
@@ -19,7 +14,7 @@ export function RemoteNextflowInstallDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   return (
-    <Dialog open={open} onClose={() => !installing && onClose()} maxWidth="xs" fullWidth>
+    <ConfirmationDialog open={open} onClose={() => !installing && onClose()}>
       <DialogTitle>自动安装 Nextflow</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mt: 1 }}>
@@ -35,6 +30,6 @@ export function RemoteNextflowInstallDialog({
           确认安装
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

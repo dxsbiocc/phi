@@ -132,6 +132,7 @@ import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve,
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
+import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
 import { NotebookAiGenerationJobs } from './agent/notebook/notebook-ai-generation-jobs'
 import { getAuthManager } from './agent/auth-manager'
 import {
@@ -483,7 +484,12 @@ import {
   readWrapperRun
 } from './agent/wrappers/store'
 import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
-import { readAppSettings, updateAppSettings } from './agent/app-settings'
+import {
+  readAppSettings,
+  readLastSelectedModel,
+  updateAppSettings,
+  writeLastSelectedModel
+} from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import {
   emptyNotebookRegistry,
@@ -1378,7 +1384,10 @@ let currentSessionPath: string | undefined
 // carries a permission mode gating bash/edit/write tool calls (see tool-approval.ts).
 let currentCwd: string = getNoProjectTaskFolder()
 let currentPermissionMode: PermissionMode = 'auto'
-const selectedModel: ModelSelection | null = null
+let selectedModel: ModelSelection | null | undefined = readLastSelectedModel()
+let modelSelectionRequest = 0
+let lastRememberedModelSelectionRequest = 0
+const sessionModelSelectionQueues = new Map<string, Promise<void>>()
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
@@ -1507,7 +1516,7 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
 const phiSessionIdsByKey = new Map<string, string>()
 const loadedSkillNamesBySession = new Map<string, string[]>()
 const sessionKeyAliases = new Map<string, string>()
-const sessionModelSelections = new Map<string, ModelSelection>()
+const sessionModelSelections = new Map<string, ModelSelection | null>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
 let preventSleepBlockerId: number | null = null
@@ -2135,7 +2144,7 @@ async function loadAppRemoteDesktopTools(
     currentModel: () => {
       assertBinding()
       const model = findPhiSessionById(identity.sessionId)?.model
-      return model && { provider: model.providerId, id: model.modelId }
+      return model ? { provider: model.providerId, id: model.modelId } : undefined
     }
   })
   let mcp: Awaited<ReturnType<typeof createDesktopMcpAdapter>> | undefined
@@ -4726,6 +4735,14 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
   const notice = persistSdkCompactionNotice(run.phiSessionId, run.runId, summary)
   if (notice) return notice
 
+  if (
+    isPhiEventType(summary, 'auto_retry_end') &&
+    summary.success &&
+    !run.stoppingPermanentProviderError
+  ) {
+    delete run.recordedFailureMessage
+  }
+
   if (summary.type === 'auto_compaction_start' && typeof summary.action === 'string') {
     if (typeof summary.reason === 'string') {
       run.compactionReasons.set(summary.action, summary.reason)
@@ -5466,6 +5483,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   const runLifecycle = getLifecycleForKey(runSessionKey)
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
+  const automaticModelSelection = resolveSessionModelSelection(runSessionKey, runSnapshot) === null
   const project = projectForSession(runSessionKey, runSnapshot)
   if (
     input.planMode &&
@@ -5615,12 +5633,35 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
           throw error
         }
         promptRun.session = session
+        const automatic =
+          automaticModelSelection && !ownsRemoteRuntimeSession(session.runtimeSessionId)
+        const automaticCandidates = async (): Promise<RuntimeModel[]> => {
+          const [runtime, providers] = await Promise.all([
+            getAuthManager().getRuntime(),
+            getAuthManager().getProviderStatuses()
+          ])
+          const configured = new Set(
+            providers
+              .filter((provider) => provider.configured)
+              .map((provider) => provider.providerId)
+          )
+          return selectableRuntimeModels(runtime).filter(
+            (model) =>
+              configured.has(model.provider) &&
+              (!input.images?.length || model.supportsImages === true)
+          )
+        }
 
         await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
         if (input.planMode) {
           await getPhiEngine().sessions.enterPlanMode({
             sessionId: session.runtimeSessionId
           })
+        }
+        if (automatic && input.images?.length && session.model?.supportsImages !== true) {
+          const compatible = (await automaticCandidates())[0]
+          if (signal.aborted || promptRun.cancelled) return
+          if (compatible) await session.setModel(compatible)
         }
         if (input.images?.length && session.model?.supportsImages !== true) {
           throw new Error('当前模型不支持图片，请切换到支持图片的模型后重试')
@@ -5637,30 +5678,59 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
         }
 
         try {
-          await session.prompt(normalizedText, {
-            hostRunId: promptRun.runId,
-            ...(input.images?.length
-              ? {
-                  images: input.images.map((image) => ({
-                    type: 'image' as const,
-                    data: image.data,
-                    mimeType: image.mimeType
-                  }))
+          await promptWithAutomaticModelFallback({
+            session,
+            text: normalizedText,
+            automatic,
+            isCurrent: () =>
+              !signal.aborted &&
+              !promptRun.cancelled &&
+              promptRun.generation === getPromptGeneration(runSessionKey) &&
+              runLifecycle.isCurrentGeneration(promptRun.sessionGeneration),
+            recordedFailure: () => promptRun.recordedFailureMessage,
+            clearFailure: () => {
+              delete promptRun.recordedFailureMessage
+              delete promptRun.stoppingPermanentProviderError
+            },
+            candidates: automaticCandidates,
+            onSwitch: (from, to, error) => {
+              const stored = appendSessionEvent(phiSessionId, {
+                type: 'model_fallback',
+                runId,
+                fromProviderId: from.provider,
+                fromModelId: from.id,
+                toProviderId: to.provider,
+                toModelId: to.id,
+                toModelName: to.name,
+                errorMessage: redactSensitiveText(error)
+              })
+              broadcastSessionTimelineEvent(phiSessionId, stored)
+            },
+            options: {
+              hostRunId: promptRun.runId,
+              ...(input.images?.length
+                ? {
+                    images: input.images.map((image) => ({
+                      type: 'image' as const,
+                      data: image.data,
+                      mimeType: image.mimeType
+                    }))
+                  }
+                : {}),
+              preflightResult: (success) => {
+                if (
+                  success &&
+                  (signal.aborted ||
+                    promptRun.cancelled ||
+                    promptRun.generation !== getPromptGeneration(runSessionKey) ||
+                    !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
+                ) {
+                  void abortSessionWithoutCancellingApprovals(session).catch((error) => {
+                    logUnexpectedError(error)
+                    console.error('Failed to abort stale prompt:', error)
+                  })
+                  throw new StaleSessionError()
                 }
-              : {}),
-            preflightResult: (success) => {
-              if (
-                success &&
-                (signal.aborted ||
-                  promptRun.cancelled ||
-                  promptRun.generation !== getPromptGeneration(runSessionKey) ||
-                  !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
-              ) {
-                void abortSessionWithoutCancellingApprovals(session).catch((error) => {
-                  logUnexpectedError(error)
-                  console.error('Failed to abort stale prompt:', error)
-                })
-                throw new StaleSessionError()
               }
             }
           })
@@ -5871,7 +5941,8 @@ function resolveSessionModelSelection(
     return sessionModelSelections.get(canonicalKey) ?? null
   }
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return manifest?.model ?? projectForSession(sessionKey, snapshot)?.defaultModel ?? selectedModel
+  if (manifest?.model !== undefined) return manifest.model
+  return projectForSession(sessionKey, snapshot)?.defaultModel ?? selectedModel ?? null
 }
 
 function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapshot): ThinkingLevel {
@@ -5930,7 +6001,7 @@ function ensurePhiSessionId(
     ...(sessionTitle ? { title: sessionTitle } : {}),
     ...(runtimeSessionPath(snapshot.path) ? { runtimeSessionPath: snapshot.path } : {}),
     permissionMode: snapshot.permissionMode,
-    ...(model ? { model } : {}),
+    model,
     thinkingLevel: resolveSessionThinkingLevel(sessionKey, snapshot)
   })
   linkPhiManagedSessionKey(sessionKey, snapshot.cwd, session.sessionId)
@@ -5943,7 +6014,7 @@ function createPhiManagedSession(
   title?: string
 ): { path: string; sessionId: string; permissionMode: PermissionMode } {
   const project = getProjectByCwd(cwd)
-  const model = project?.defaultModel ?? selectedModel
+  const model = selectedModel !== undefined ? selectedModel : (project?.defaultModel ?? null)
   const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
     kind: project ? 'project' : 'ordinary',
@@ -5952,7 +6023,7 @@ function createPhiManagedSession(
     cwdRealPath: project?.workingDirectoryRealPath ?? cwd,
     ...(sessionTitle ? { title: sessionTitle } : {}),
     permissionMode,
-    ...(model ? { model } : {}),
+    model,
     thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
   })
   const path = phiOnlySessionPath(session.sessionId)
@@ -5971,6 +6042,10 @@ function createRemoteManagedSession(projectId: string): {
   const project = getProject(projectId)
   if (!project || project.location.kind !== 'ssh') throw new Error('远程项目不存在')
   const cwd = ensureRemoteProjectAnchor(project.id)
+  const model =
+    selectedModel !== undefined && !(remoteOmpRpcEnabled && selectedModel === null)
+      ? selectedModel
+      : (project.defaultModel ?? null)
   const session = createPhiSession({
     kind: 'project',
     projectId: project.id,
@@ -5978,7 +6053,7 @@ function createRemoteManagedSession(projectId: string): {
     cwd,
     cwdRealPath: cwd,
     permissionMode: project.permissionMode,
-    ...(project.defaultModel ? { model: project.defaultModel } : {}),
+    model,
     ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})
   })
   const path = phiOnlySessionPath(session.sessionId)
@@ -7600,7 +7675,7 @@ async function abortSession(session: AgentSessionInstance): Promise<void> {
 async function abortSessionWithoutCancellingApprovals(
   session: AgentSessionInstance
 ): Promise<void> {
-  await session.abort()
+  await session.abort({ preserveApprovals: true })
 }
 
 async function abortAndDisposeSession(
@@ -8816,6 +8891,9 @@ async function getAgentSession(
       const modelSelection =
         remoteRecovery?.replacementModel ??
         resolveSessionModelSelection(sessionKey, creationSnapshot)
+      if (useRpc && !modelSelection) {
+        throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
+      }
       const resolvedModel = modelSelection
         ? resolveRuntimeModelSelection(runtime, modelSelection)
         : null
@@ -10130,57 +10208,91 @@ app.whenReady().then(async () => {
       thinkingLevels: getSupportedThinkingLevels(model)
     }))
   })
-  ipcMain.handle('models:select', async (_, providerId: string, modelId: string) => {
+  ipcMain.handle('models:select', async (_, providerId: string | null, modelId: string | null) => {
     const target = captureCurrentSelectionTarget()
-    const runtime = await getAuthManager().getRuntime()
-    target.assertCurrent()
-    const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
-    if (!resolved || resolved.migratedFrom) throw new Error(`未知模型: ${providerId}/${modelId}`)
-    const model = resolved.model
-    if (target.rpc) {
-      const current = await target.resolved()
-      target.assertCurrent()
-      const snapshot = {
-        path: currentSessionPath,
-        cwd: currentCwd,
-        permissionMode: currentPermissionMode
-      }
-      const preferred = selectionThinking(
-        model,
-        resolveSessionThinkingLevel(target.key, snapshot)
-      ).phi
-      if (current) {
-        if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
-          throw new Error('Remote selection requires an exact live attachment')
-        await current.session.setModel(model, {
-          assertCurrent: target.assertCurrent,
-          preferredThinkingLevel: preferred
-        })
-        target.assertCurrent()
-      } else {
-        if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
-          throw new Error('Remote selection requires an exact live attachment')
-        if (target.phiSessionId)
-          updateSessionManifest(target.phiSessionId, {
-            model: { providerId, modelId },
-            thinkingLevel: preferred
-          })
-      }
-      const key = resolveSessionKeyAlias(target.key)
-      sessionModelSelections.set(key, { providerId, modelId })
-      const confirmed = target.phiSessionId
-        ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
-        : preferred
-      if (confirmed === undefined) sessionThinkingLevels.delete(key)
-      else sessionThinkingLevels.set(key, confirmed)
-      return
+    const request = ++modelSelectionRequest
+    const key = target.phiSessionId ?? resolveSessionKeyAlias(target.key)
+    const rememberSelection = (model: ModelSelection | null): void => {
+      if (request < lastRememberedModelSelectionRequest) return
+      writeLastSelectedModel(model)
+      selectedModel = model
+      lastRememberedModelSelectionRequest = request
     }
-    const nextModel = { providerId, modelId }
-    sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
-    if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
-    if (hasActivePromptRun(target.key)) return
-    const current = await target.resolved()
-    if (current) await current.session.setModel(model)
+    const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(async () => {
+      target.assertCurrent()
+      if (providerId === null && modelId === null) {
+        if (target.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
+        sessionModelSelections.set(resolveSessionKeyAlias(target.key), null)
+        if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: null })
+        rememberSelection(null)
+        return
+      }
+      if (typeof providerId !== 'string' || typeof modelId !== 'string') {
+        throw new Error('模型选择无效')
+      }
+      const runtime = await getAuthManager().getRuntime()
+      target.assertCurrent()
+      const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
+      if (!resolved || resolved.migratedFrom) throw new Error(`未知模型: ${providerId}/${modelId}`)
+      const model = resolved.model
+      if (target.rpc) {
+        const current = await target.resolved()
+        target.assertCurrent()
+        const snapshot = {
+          path: currentSessionPath,
+          cwd: currentCwd,
+          permissionMode: currentPermissionMode
+        }
+        const preferred = selectionThinking(
+          model,
+          resolveSessionThinkingLevel(target.key, snapshot)
+        ).phi
+        if (current) {
+          if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
+            throw new Error('Remote selection requires an exact live attachment')
+          await current.session.setModel(model, {
+            assertCurrent: target.assertCurrent,
+            preferredThinkingLevel: preferred
+          })
+          target.assertCurrent()
+        } else {
+          if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
+            throw new Error('Remote selection requires an exact live attachment')
+          if (target.phiSessionId)
+            updateSessionManifest(target.phiSessionId, {
+              model: { providerId, modelId },
+              thinkingLevel: preferred
+            })
+        }
+        const key = resolveSessionKeyAlias(target.key)
+        sessionModelSelections.set(key, { providerId, modelId })
+        const confirmed = target.phiSessionId
+          ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
+          : preferred
+        if (confirmed === undefined) sessionThinkingLevels.delete(key)
+        else sessionThinkingLevels.set(key, confirmed)
+        rememberSelection({ providerId, modelId })
+        return
+      }
+      const nextModel = { providerId, modelId }
+      if (!hasActivePromptRun(target.key)) {
+        const current = await target.resolved()
+        if (current) await current.session.setModel(model)
+        target.assertCurrent()
+      }
+      sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
+      if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
+      rememberSelection(nextModel)
+    })
+    const settled = selection.then(
+      () => undefined,
+      () => undefined
+    )
+    sessionModelSelectionQueues.set(key, settled)
+    void settled.then(() => {
+      if (sessionModelSelectionQueues.get(key) === settled) sessionModelSelectionQueues.delete(key)
+    })
+    return selection
   })
   ipcMain.handle('models:selected', async () => {
     const snapshot: SessionSnapshot = {
@@ -10194,12 +10306,7 @@ app.whenReady().then(async () => {
       return resolveRuntimeModelSelection(runtime, resolved)?.selection ?? resolved
     }
 
-    const current = await getCurrentResolvedSession()
-    if (!current) return null
-
-    const { session } = current
-    const model = session.model
-    return model ? { providerId: model.provider, modelId: model.id } : null
+    return null
   })
 
   ipcMain.handle('thinking:select', async (_, level: ThinkingLevel) => {

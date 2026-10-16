@@ -9,6 +9,7 @@ import {
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
 import { getPhiAgentDir } from './runtime-paths'
+import type { ModelSelection } from './session/session-store'
 
 const SETTINGS_FILE = 'settings.json'
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -83,6 +84,37 @@ export function readAppSettings(agentDir = getPhiAgentDir()): PhiAppSettings {
   return appSettingsFromRaw(readRawSettings(agentDir, { strict: false }), agentDir)
 }
 
+export function readLastSelectedModel(
+  agentDir = getPhiAgentDir()
+): ModelSelection | null | undefined {
+  const value = readRawSettings(agentDir, { strict: false }).lastSelectedModel
+  if (value === null) return null
+  if (
+    !isRecord(value) ||
+    typeof value.providerId !== 'string' ||
+    !value.providerId.trim() ||
+    typeof value.modelId !== 'string' ||
+    !value.modelId.trim()
+  ) {
+    return undefined
+  }
+  return { providerId: value.providerId, modelId: value.modelId }
+}
+
+function writeRawSettings(raw: Record<string, unknown>, agentDir: string): void {
+  const path = getAppSettingsPath(agentDir)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, 'utf-8')
+}
+
+export function writeLastSelectedModel(
+  model: ModelSelection | null,
+  agentDir = getPhiAgentDir()
+): void {
+  const raw = readRawSettings(agentDir, { strict: true })
+  writeRawSettings({ ...raw, lastSelectedModel: model }, agentDir)
+}
+
 export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): PhiAppSettings {
   if (!isRecord(patch)) {
     throw new Error('设置更新内容无效')
@@ -135,9 +167,7 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
     nextRaw.fileOpenConversationLayout = patch.fileOpenConversationLayout
   }
 
-  const path = getAppSettingsPath(agentDir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(nextRaw, null, 2)}\n`, 'utf-8')
+  writeRawSettings(nextRaw, agentDir)
 
   return appSettingsFromRaw(nextRaw, agentDir)
 }

@@ -3,7 +3,6 @@ import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
-import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogContentText from '@mui/material/DialogContentText'
@@ -17,6 +16,7 @@ import type {
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { useSessionStore } from '../../../stores/sessionStore'
 import { ManagedEnvironmentsSection } from './ManagedEnvironmentsSection'
 import { ManagedEnvironmentDetail } from './ManagedEnvironmentDetail'
@@ -73,7 +73,7 @@ function DestructiveActionDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   return (
-    <Dialog open={action !== null} onClose={working ? undefined : onClose} fullWidth maxWidth="sm">
+    <ConfirmationDialog open={action !== null} onClose={working ? undefined : onClose}>
       <DialogTitle>{action ? actionDialogTitle(action) : ''}</DialogTitle>
       <DialogContent>
         {action?.kind === 'remove' ? (
@@ -87,7 +87,7 @@ function DestructiveActionDialog({
           </DialogContentText>
         ) : null}
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
+      <DialogActions>
         <Button disabled={working} onClick={onClose}>
           取消
         </Button>
@@ -101,7 +101,7 @@ function DestructiveActionDialog({
           {working ? '处理中…' : '确认'}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }
 

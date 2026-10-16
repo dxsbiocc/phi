@@ -1,7 +1,6 @@
 import {
   Box,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -10,6 +9,7 @@ import {
   Typography
 } from '@mui/material'
 
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { formatPackageSize } from '../../../components/catalog/packageSize'
 import type { WrapperInstallSummary } from '../lib/wrapperInstallPlan'
 
@@ -27,7 +27,7 @@ export function WrapperInstallConfirmDialog({
 }): React.JSX.Element {
   const count = summary?.dependencies.length ?? 0
   return (
-    <Dialog open={summary !== null} onClose={onCancel} maxWidth="xs" fullWidth>
+    <ConfirmationDialog open={summary !== null} onClose={onCancel}>
       <DialogTitle>安装 {title}</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" sx={{ mb: 1.5 }}>
@@ -63,6 +63,6 @@ export function WrapperInstallConfirmDialog({
           安装全部
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

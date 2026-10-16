@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import {
   Alert,
   Box,
@@ -541,11 +542,9 @@ export function PhiPluginCatalogDialog({
         />
       </Box>
 
-      <Dialog
+      <ConfirmationDialog
         open={pendingInstall !== null}
         onClose={installWorking ? undefined : () => setPendingInstall(null)}
-        fullWidth
-        maxWidth="sm"
       >
         <DialogTitle>
           {pendingInstall && installIsUpgrade(pendingInstall) ? '升级插件？' : '安装插件？'}
@@ -600,7 +599,7 @@ export function PhiPluginCatalogDialog({
                 : '确认安装'}
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
     </Dialog>
   )
 }

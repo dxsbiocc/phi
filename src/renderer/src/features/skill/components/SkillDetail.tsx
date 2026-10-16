@@ -2,7 +2,6 @@ import { useEffect, useState, type MouseEvent } from 'react'
 import {
   Button,
   Chip,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -14,6 +13,8 @@ import {
   Tooltip,
   Typography
 } from '@mui/material'
+
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { PhiIcons } from '../../../icons'
 import type { SkillSummary } from '../../../types'
 import { RemoteProjectTrustControl, RemoteProjectTrustStatus } from '../../agent/AgentTrustPanel'
@@ -235,12 +236,7 @@ function SkillDeleteDialog({
   onConfirm: (skill: SkillSummary) => Promise<void>
 }): React.JSX.Element {
   return (
-    <Dialog
-      open={Boolean(skill)}
-      onClose={isDeleting ? undefined : onClose}
-      maxWidth="xs"
-      fullWidth
-    >
+    <ConfirmationDialog open={Boolean(skill)} onClose={isDeleting ? undefined : onClose}>
       <DialogTitle>卸载技能</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1 }}>
@@ -274,7 +270,7 @@ function SkillDeleteDialog({
           卸载
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }
 

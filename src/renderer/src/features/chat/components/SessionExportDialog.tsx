@@ -1,13 +1,6 @@
-import {
-  Alert,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Typography
-} from '@mui/material'
+import { Alert, Button, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material'
 
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { SessionSummary } from '../../../types'
 
 export function SessionExportDialog({
@@ -22,7 +15,7 @@ export function SessionExportDialog({
   onExport: () => void
 }): React.JSX.Element {
   return (
-    <Dialog open={session !== null} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
+    <ConfirmationDialog open={session !== null} onClose={busy ? undefined : onClose}>
       <DialogTitle>导出完整会话</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1.5 }}>
@@ -36,7 +29,7 @@ export function SessionExportDialog({
           项目工作目录中的文件不会被复制。导出结果用于查看和备份，目前不能直接导入 Phi。
         </Typography>
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
+      <DialogActions>
         <Button disabled={busy} onClick={onClose}>
           取消
         </Button>
@@ -44,6 +37,6 @@ export function SessionExportDialog({
           {busy ? '正在导出…' : '选择位置并导出'}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

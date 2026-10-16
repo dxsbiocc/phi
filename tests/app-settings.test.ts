@@ -12,7 +12,9 @@ import {
 import {
   getAppSettingsPath,
   readAppSettings,
-  updateAppSettings
+  readLastSelectedModel,
+  updateAppSettings,
+  writeLastSelectedModel
 } from '../src/main/agent/app-settings'
 
 function withTempAgentDir(run: (agentDir: string) => void): void {
@@ -83,5 +85,34 @@ test('app settings rejects invalid file-open conversation layouts', () => {
       () => updateAppSettings({ fileOpenConversationLayout: 'floating' }, agentDir),
       /打开文件时的对话布局设置无效/
     )
+  })
+})
+
+test('last model preference distinguishes no choice from persisted automatic selection', () => {
+  withTempAgentDir((agentDir) => {
+    assert.equal(readLastSelectedModel(agentDir), undefined)
+    const model = { providerId: 'openai', modelId: 'gpt-test' }
+    writeLastSelectedModel(model, agentDir)
+    assert.deepEqual(readLastSelectedModel(agentDir), model)
+    writeLastSelectedModel(null, agentDir)
+    assert.equal(readLastSelectedModel(agentDir), null)
+  })
+})
+
+test('last model preference preserves general settings and ignores malformed preferences', () => {
+  withTempAgentDir((agentDir) => {
+    const path = getAppSettingsPath(agentDir)
+    writeFileSync(path, JSON.stringify({ custom: 'keep', lastSelectedModel: { modelId: 'bad' } }))
+    assert.equal(readLastSelectedModel(agentDir), undefined)
+    writeLastSelectedModel({ providerId: 'fixture', modelId: 'valid' }, agentDir)
+    updateAppSettings({ allowExternalFileRead: true }, agentDir)
+    assert.deepEqual(readLastSelectedModel(agentDir), { providerId: 'fixture', modelId: 'valid' })
+    const raw = JSON.parse(readFileSync(path, 'utf8'))
+    assert.equal(raw.custom, 'keep')
+    assert.equal(raw.allowExternalFileRead, true)
+    writeFileSync(path, '{invalid')
+    assert.equal(readLastSelectedModel(agentDir), undefined)
+    assert.throws(() => writeLastSelectedModel(null, agentDir), /不是合法 JSON/)
+    assert.equal(readFileSync(path, 'utf8'), '{invalid')
   })
 })

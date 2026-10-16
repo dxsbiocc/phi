@@ -1,4 +1,8 @@
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
+import {
+  textFileHasUnsavedChanges,
+  useTextFileDrafts
+} from './features/file-preview/lib/textFileDrafts'
 import type { NotebookViewStateStore } from './features/analysis/lib/notebookViewState'
 import {
   lazy,
@@ -3140,6 +3144,7 @@ function App(): React.JSX.Element {
     },
     onChanged: onRefreshWorkspaceSidePanel,
     onOpenFile: onOpenWorkspaceFileFromSidebar,
+    onReloadFile: loadFilePreview,
     onOpenDirectory: previewDirectoryPathInWorkspaceTab,
     onDownloadFile: downloadWrapperResultFile,
     onRevealFile: onRevealPreviewPath,
@@ -3737,6 +3742,11 @@ function App(): React.JSX.Element {
     (tabLike: AnalysisWorkspaceFileTab): void => {
       const closingTab = workspaceFileTabs.find((tab) => tab.path === tabLike.path)
       if (!closingTab) return
+      if (textFileHasUnsavedChanges(closingTab.path)) {
+        showSnackbar('请先保存或放弃此文本文件的修改。', 'warning')
+        return
+      }
+      useTextFileDrafts.getState().release(closingTab.path)
       const remainingTabs = workspaceFileTabs.filter((tab) => tab.path !== closingTab.path)
       setWorkspaceFileTabs(remainingTabs)
       clearCachedFilePreview(closingTab.path)
@@ -3789,6 +3799,7 @@ function App(): React.JSX.Element {
       setFilePreview,
       setWorkspaceFileTabs,
       showCachedOrLoadFilePreview,
+      showSnackbar,
       workspaceFileTabs,
       workspaceSidebarMode,
       navigateToView

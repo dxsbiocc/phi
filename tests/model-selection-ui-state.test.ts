@@ -146,7 +146,10 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
       effects.push(setup)
     }
   }
-  let selected = { providerId: 'fixture', modelId: 'first' }
+  let selected: { providerId: string; modelId: string } | null = {
+    providerId: 'fixture',
+    modelId: 'first'
+  }
   let thinkingLevel: ThinkingLevel = 'high'
   const api: Api = {
     listModels: async () => models,
@@ -155,7 +158,7 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
     ...overrides,
     selectModel: async (providerId, modelId) => {
       await overrides.selectModel?.(providerId, modelId)
-      selected = { providerId, modelId }
+      selected = providerId !== null && modelId !== null ? { providerId, modelId } : null
     },
     selectThinkingLevel: async (level) => {
       await overrides.selectThinkingLevel?.(level)
@@ -574,6 +577,7 @@ test('a late older model success cannot replace a newer confirmed fallback when 
   let refreshing = false
   const f = await harness({
     selectModel: (_provider, model) => {
+      assert.ok(model)
       backendModel = model
       return model === 'second' ? older.promise : Promise.resolve()
     },
@@ -628,4 +632,56 @@ test('a nonreasoning model succeeds while undefined thinking reads preserve a va
   assert.equal(initialLevel, 'high')
   assert.equal(f.read().thinkingLevel, 'high')
   assert.equal(f.errors.length, 0)
+})
+
+test('selecting automatic persists null through the model IPC and reconciliation', async () => {
+  const calls: unknown[][] = []
+  const f = await harness({
+    selectModel: async (...args) => {
+      calls.push(args)
+    }
+  })
+  await f.read().onSelectModel(null)
+  assert.deepEqual(calls, [[null, null]])
+  assert.equal(f.read().selectedModel, null)
+  assert.equal(f.errors.length, 0)
+})
+
+test('a rejected automatic selection restores the confirmed fixed model', async () => {
+  const f = await harness({
+    selectModel: async () => {
+      throw new Error('Busy')
+    }
+  })
+  await f.read().onSelectModel(null)
+  assert.equal(f.read().selectedModel, models[0])
+  assert.equal(f.errors.length, 1)
+})
+
+test('a fixed selection following automatic wins while its confirmation settles', async () => {
+  const automatic = deferred<void>()
+  const f = await harness({
+    selectModel: (providerId) => (providerId === null ? automatic.promise : Promise.resolve())
+  })
+  const pending = f.read().onSelectModel(null)
+  await f.read().onSelectModel(models[2])
+  automatic.reject(new Error('Superseded automatic selection'))
+  await pending
+  assert.equal(f.read().selectedModel, models[2])
+  assert.equal(f.errors.length, 0)
+})
+
+test('an unavailable saved model remains visible instead of displaying automatic selection', async () => {
+  const f = await harness({
+    getSelectedModel: async () => ({ providerId: 'missing', modelId: 'saved-model' })
+  })
+  const selected = f.read().selectedModel
+  assert.equal(selected?.providerId, 'missing')
+  assert.equal(selected?.modelId, 'saved-model')
+  assert.equal(selected?.name, 'missing/saved-model（不可用）')
+  assert.equal(selected?.thinkingLevels.length, 0)
+  assert.equal(
+    f.read().availableModels.some((model) => model.providerId === 'missing'),
+    false
+  )
 })

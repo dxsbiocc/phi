@@ -288,7 +288,14 @@ export function ModelSelectorControl({
             onChange={(event) => handleQueryChange(event.target.value)}
           />
         </Box>
-        <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+        <Box
+          sx={{
+            overflowY: 'auto',
+            scrollbarGutter: 'stable both-edges',
+            flex: 1,
+            minHeight: 0
+          }}
+        >
           {models.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
               无可用模型 — 请先在设置中配置 Provider
@@ -309,8 +316,8 @@ export function ModelSelectorControl({
                 sx={{
                   '&:before': { display: 'none' },
                   '&.Mui-expanded': { m: 0 },
-                  borderBottom: 1,
-                  borderColor: 'divider'
+                  border: 0,
+                  bgcolor: 'transparent'
                 }}
               >
                 <AccordionSummary
@@ -331,7 +338,12 @@ export function ModelSelectorControl({
                   <List
                     dense
                     disablePadding
-                    sx={{ maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }}
+                    sx={{
+                      maxHeight: 180,
+                      overflowY: 'auto',
+                      scrollbarGutter: 'stable both-edges',
+                      overscrollBehavior: 'contain'
+                    }}
                   >
                     {options.map((option) => (
                       <ListItemButton

@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -13,6 +12,7 @@ import {
   Typography
 } from '@mui/material'
 import { useState } from 'react'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type {
   RuntimeRecoveryApi,
   RuntimeRecoveryState,
@@ -128,13 +128,11 @@ export function RuntimeRecoveryBanner({
           </Stack>
         </Stack>
       </Alert>
-      <Dialog
+      <ConfirmationDialog
         open={summaryOpen && Boolean(state.summary)}
         onClose={() => {
           if (!busy) updateSelection({ summaryOpen: false })
         }}
-        maxWidth="sm"
-        fullWidth
       >
         <DialogTitle>用本地摘要另建会话</DialogTitle>
         <DialogContent>
@@ -168,7 +166,7 @@ export function RuntimeRecoveryBanner({
             用此摘要新建会话
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
     </>
   )
 }

@@ -1,13 +1,14 @@
 import {
   Alert,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
   Typography
 } from '@mui/material'
+
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 
 export function McpImportedInstallDialog({
@@ -24,7 +25,7 @@ export function McpImportedInstallDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   return (
-    <Dialog open={open} onClose={busy ? undefined : onCancel} maxWidth="sm" fullWidth disablePortal>
+    <ConfirmationDialog open={open} onClose={busy ? undefined : onCancel} disablePortal>
       <DialogTitle>确认安装未签名连接器</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
@@ -66,6 +67,6 @@ export function McpImportedInstallDialog({
           确认并继续
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

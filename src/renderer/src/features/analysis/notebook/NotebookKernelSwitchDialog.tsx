@@ -1,7 +1,6 @@
 import {
   Box,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -11,6 +10,7 @@ import {
 import { alpha } from '@mui/material/styles'
 
 import { PhiIcons } from '../../../icons'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { PendingKernelSwitch } from '../lib/notebookCanvasTypes'
 
 const NotebookIcon = PhiIcons.file.jupyter
@@ -25,40 +25,22 @@ export default function NotebookKernelSwitchDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   return (
-    <Dialog
+    <ConfirmationDialog
       open={Boolean(pending)}
       onClose={onCancel}
-      maxWidth="xs"
-      fullWidth
       data-phi-notebook-kernel-switch-dialog="true"
-      slotProps={{
-        paper: {
-          sx: {
-            borderRadius: 3,
-            border: 1,
-            borderColor: (theme) => alpha(theme.palette.warning.main, 0.28),
-            bgcolor: 'background.paper',
-            boxShadow: (theme) => `0 18px 60px ${alpha(theme.palette.common.black, 0.34)}`
-          }
-        }
-      }}
     >
       <DialogTitle
         sx={{
           display: 'flex',
           alignItems: 'center',
-          gap: 1,
-          px: 2.5,
-          pt: 2.25,
-          pb: 1.25,
-          fontSize: '1rem',
-          fontWeight: 800
+          gap: 1
         }}
       >
         <NotebookIcon sx={{ fontSize: 21, color: 'warning.main' }} />
         切换 notebook kernel
       </DialogTitle>
-      <DialogContent sx={{ px: 2.5, pb: 1 }}>
+      <DialogContent>
         <Stack spacing={1.25}>
           <Box
             data-phi-notebook-kernel-switch-summary="true"
@@ -96,19 +78,12 @@ export default function NotebookKernelSwitchDialog({
           </Typography>
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ px: 2.5, pb: 2, gap: 1 }}>
-        <Button onClick={onCancel} sx={{ borderRadius: 999 }}>
-          取消
-        </Button>
-        <Button
-          variant="contained"
-          color="warning"
-          onClick={onConfirm}
-          sx={{ borderRadius: 999, px: 2 }}
-        >
+      <DialogActions>
+        <Button onClick={onCancel}>取消</Button>
+        <Button variant="contained" color="warning" onClick={onConfirm}>
           切换 kernel
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

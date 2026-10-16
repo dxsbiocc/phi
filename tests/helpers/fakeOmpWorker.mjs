@@ -34,6 +34,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'session.prompt':
       if (!known()) return fail(`Unknown session: ${params.sessionId}`)
       return ok({ sessionFile: sessions.get(params.sessionId).manager?.path })
+    case 'session.abort':
+      if (!known()) return fail(`Unknown session: ${params.sessionId}`)
+      return ok({ sessionFile: sessions.get(params.sessionId).manager?.path })
     case 'session.dispose':
       if (!known()) return fail(`Unknown session: ${params.sessionId}`)
       sessions.delete(params.sessionId)

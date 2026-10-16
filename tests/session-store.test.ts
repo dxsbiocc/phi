@@ -89,6 +89,30 @@ test('AI and manual title provenance survives reloading a session manifest', () 
   })
 })
 
+test('explicit automatic model selection survives saving, reloading, and forking', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'project',
+      projectId: 'project-1',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'ask',
+      model: null
+    })
+    assert.equal(session.manifest.model, null)
+    updateSessionManifest(session.sessionId, { title: 'Keep auto' })
+    assert.equal(
+      listPhiSessions().find((item) => item.sessionId === session.sessionId)?.model,
+      null
+    )
+    const turn = appendSessionEvent(session.sessionId, { type: 'user_message', content: 'hello' })
+    assert.equal(
+      forkPhiSession(session.sessionId, turn.eventId, '/runtime/fork.jsonl').manifest.model,
+      null
+    )
+  })
+})
+
 test('automatic compaction overrides persist per session and follow a fork', () => {
   withPhiDir(() => {
     const first = createPhiSession({

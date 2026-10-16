@@ -22,16 +22,15 @@ test('folder operations affect descendants but preserve similarly named siblings
   }
 })
 
-test('renaming or deleting a parent refuses unsaved descendant notebooks', () => {
+test('renaming or deleting a parent refuses unsaved descendant notebooks and text files', () => {
   const tabs = [
     { path: '/work/data/notebook.ipynb', dirty: true },
+    { path: '/work/data/source.py', dirty: true },
     { path: '/work/data-old/clean.txt' }
   ]
-  assert.throws(() => assertWorkspaceFilesSaved('/work/data', tabs), /未保存的笔记本/)
-  assert.throws(
-    () => assertWorkspaceFilesSaved('/work/data/notebook.ipynb', tabs),
-    /未保存的笔记本/
-  )
+  assert.throws(() => assertWorkspaceFilesSaved('/work/data', tabs), /未保存的修改/)
+  assert.throws(() => assertWorkspaceFilesSaved('/work/data/notebook.ipynb', tabs), /未保存的修改/)
+  assert.throws(() => assertWorkspaceFilesSaved('/work/data/source.py', tabs), /未保存的修改/)
   assert.doesNotThrow(() => assertWorkspaceFilesSaved('/work/data-old', tabs))
   assert.doesNotThrow(() =>
     assertWorkspaceFilesSaved('/work/data', [{ path: '/work/data/notebook.ipynb', dirty: false }])

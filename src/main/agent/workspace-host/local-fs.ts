@@ -423,10 +423,18 @@ class LocalFileSystem {
     options: AtomicWriteOptions
   ): Promise<AtomicWriteResult> {
     await assertWritePrecondition(target, options)
+    const existingMode = await lstat(target).then(
+      (info) => (info.isFile() ? info.mode & 0o777 : undefined),
+      (error) => {
+        if (errorCode(error) === 'ENOENT') return undefined
+        throw error
+      }
+    )
     const temporary = join(dirname(target), `.phi-write-${randomUUID()}`)
     const handle = await open(temporary, 'wx', 0o600)
     try {
       await handle.writeFile(content)
+      if (existingMode !== undefined) await handle.chmod(existingMode)
       await handle.sync()
       await handle.close()
       await assertWritePrecondition(target, options)

@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   CircularProgress,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
@@ -17,6 +16,7 @@ import {
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../../../icons'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { FileTreeActionDialog, FileTreeMenuTarget } from '../hooks/useFileTreeActions'
 import { fileTreeDisplayPath, type FileTreeAction } from '../lib/fileTreeActions'
 
@@ -93,7 +93,7 @@ export function FileTreeActionMenu({
           ]
         })}
       </Menu>
-      <Dialog open={Boolean(dialog)} onClose={onCloseDialog} maxWidth="xs" fullWidth>
+      <ConfirmationDialog open={Boolean(dialog)} onClose={onCloseDialog}>
         <DialogTitle>{rename ? '重命名' : '删除确认'}</DialogTitle>
         <DialogContent>
           {rename ? (
@@ -145,7 +145,7 @@ export function FileTreeActionMenu({
             {rename ? '保存' : '删除'}
           </Button>
         </DialogActions>
-      </Dialog>
+      </ConfirmationDialog>
       <Snackbar open={Boolean(notice)} autoHideDuration={6000} onClose={onCloseNotice}>
         <Alert severity="error" onClose={onCloseNotice}>
           {notice}

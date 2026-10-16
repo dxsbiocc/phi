@@ -1,6 +1,9 @@
 import type { BrowserWindow, Dialog, IpcMain, IpcMainInvokeEvent, Shell } from 'electron'
 import { basename } from 'node:path'
+import type { WorkspaceTextSaveResult } from '../shared/workspaceFileOperations'
 
+import { validateWorkspaceMarkdownSaveRequest } from './workspace-markdown-file'
+import { saveWorkspaceTextFile, validateWorkspaceTextSaveRequest } from './workspace-text-file'
 import {
   deleteWorkspaceFile,
   renameWorkspaceFile,
@@ -23,6 +26,25 @@ export function registerWorkspaceFileIpc(options: {
     { controller: AbortController; phase: 'downloading' | 'verifying' | 'saving' }
   >
 }): void {
+  for (const [channel, validate] of [
+    ['files:saveTextFile', validateWorkspaceTextSaveRequest],
+    ['files:saveMarkdownFile', validateWorkspaceMarkdownSaveRequest]
+  ] as const) {
+    options.ipcMain.handle(channel, async (event, input: unknown) => {
+      options.requireRenderer(event)
+      const request = validate(input)
+      const requireScope = (): void => {
+        options.requireRenderer(event)
+        if (request.kind === 'local') options.requireLocalWorkspaceRoot(request.rootPath)
+      }
+      requireScope()
+      const operation = (): Promise<WorkspaceTextSaveResult> =>
+        saveWorkspaceTextFile(request, { beforeWrite: requireScope })
+      return request.kind === 'remote'
+        ? options.observeRemote(request.projectId, operation)
+        : operation()
+    })
+  }
   options.ipcMain.handle('files:renameWorkspaceFile', async (event, input: unknown) => {
     options.requireRenderer(event)
     const request = validateWorkspaceFileOperation(input, true)

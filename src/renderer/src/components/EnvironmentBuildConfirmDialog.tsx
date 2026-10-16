@@ -1,6 +1,5 @@
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
-import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogContentText from '@mui/material/DialogContentText'
@@ -8,6 +7,7 @@ import DialogTitle from '@mui/material/DialogTitle'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
+import { ConfirmationDialog } from './ConfirmationDialog'
 import type { EnvironmentBuildEstimate } from '../../../shared/environmentBuildTypes'
 import { formatBuildEstimate } from '../lib/environmentFormatting'
 
@@ -29,11 +29,9 @@ export function EnvironmentBuildConfirmDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   return (
-    <Dialog
+    <ConfirmationDialog
       open={environment !== null}
       onClose={working ? undefined : onClose}
-      fullWidth
-      maxWidth="sm"
       disablePortal
     >
       <DialogTitle>
@@ -54,7 +52,7 @@ export function EnvironmentBuildConfirmDialog({
           </Typography>
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
+      <DialogActions>
         <Button disabled={working} onClick={onClose}>
           取消
         </Button>
@@ -68,6 +66,6 @@ export function EnvironmentBuildConfirmDialog({
           {working ? '处理中…' : '开始构建'}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

@@ -1,13 +1,14 @@
 import {
   Alert,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Stack,
   Typography
 } from '@mui/material'
+
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type {
   LocalMcpConnectorRequest,
   LocalMcpRuntimeOption
@@ -52,11 +53,9 @@ export function McpLocalConnectConfirmDialog({
   const environmentNames = Object.keys(request.env)
 
   return (
-    <Dialog
+    <ConfirmationDialog
       open={open}
       onClose={submitting ? undefined : onCancel}
-      maxWidth="sm"
-      fullWidth
       disablePortal={disablePortal}
       aria-labelledby="mcp-local-connect-confirm-title"
       aria-describedby="mcp-local-connect-confirm-description"
@@ -117,6 +116,6 @@ export function McpLocalConnectConfirmDialog({
           {submitting ? '正在提交…' : '确认并在后台添加'}
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }

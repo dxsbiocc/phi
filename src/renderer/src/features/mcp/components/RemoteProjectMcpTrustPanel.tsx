@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -12,6 +11,7 @@ import {
   Typography
 } from '@mui/material'
 import { useMemo, useState } from 'react'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 
 import type {
   RemoteProjectMcpConfirmationItem,
@@ -78,7 +78,7 @@ export function RemoteProjectMcpTrustDialog({
   }
 
   return (
-    <Dialog open={open} onClose={busy ? undefined : close} maxWidth="md" fullWidth disablePortal>
+    <ConfirmationDialog open={open} onClose={busy ? undefined : close} disablePortal>
       <DialogTitle>信任服务器项目 MCP 配置</DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
@@ -145,7 +145,7 @@ export function RemoteProjectMcpTrustDialog({
           确认并信任
         </Button>
       </DialogActions>
-    </Dialog>
+    </ConfirmationDialog>
   )
 }
 

@@ -71,8 +71,8 @@ Goal: support global providers with project/session-specific model selection.
 - Keep provider auth and available provider/model discovery global.
 - Add project default model/thinking fields.
 - Add session model/thinking fields and make them win over project defaults.
-- New project sessions inherit project defaults, then global defaults.
-- Ordinary sessions inherit global defaults.
+- New sessions inherit the most recent successfully selected model, including an explicit automatic choice, and retain that preference across app restarts. Project defaults apply before a global choice has been saved; existing sessions keep their own selection.
+- Automatic local sessions try other configured compatible models after a model request fails, retaining the same run and history. Remote RPC sessions still require a concrete model: a global automatic choice preserves their project default, or asks the user to choose a model when no project default exists.
 - Place current-session model controls in the chat/session context, not only global settings.
 - Disable model/thinking switching while a session is `running` or `needs_approval`.
 - Treat model changes as affecting the next run only.
@@ -170,6 +170,7 @@ Goal: make the internal beta comfortable without expanding scope.
 
 - Add minimal shortcuts: new session, focus input/search, and close dialogs.
 - Keep search as local list filtering only.
+- Render Markdown files with the existing renderer and use the existing CodeMirror for in-place editing. Text files share content search, explicit conflict-safe saves, and recoverable local drafts; show unsaved changes with a yellow marker on the file tab. Edit only complete UTF-8 previews within the current writable workspace.
 - Continue using SDK/runtime automatic session names and support manual rename.
 - Hide or clean up unsent and unrenamed empty sessions.
 - Add lightweight read-only Git status: branch and dirty marker.

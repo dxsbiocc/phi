@@ -9,6 +9,8 @@ import type { RendererApi } from '../../../types'
 import { filePreviewStatePath } from '../../../lib/workspacePaths'
 import { fileTreePathInSubtree, type FileTreeActions } from '../lib/fileTreeActions'
 import { assertWorkspaceFilesSaved, renamedWorkspacePath } from '../lib/workspaceFileMutations'
+import type { WorkspaceTextSaveResult } from '../../../../../shared/workspaceFileOperations'
+import type { RemoteProjectFileContextValue } from '../../../lib/remoteProjectFileContext'
 
 type FileWorkspace = Pick<
   WorkspaceFileTabsState,
@@ -31,6 +33,7 @@ export function useWorkspaceFileActions({
   workspace,
   onChanged,
   onOpenFile,
+  onReloadFile,
   onOpenDirectory,
   onDownloadFile,
   onRevealFile,
@@ -43,6 +46,7 @@ export function useWorkspaceFileActions({
   workspace: FileWorkspace
   onChanged: () => void
   onOpenFile: (path: string) => void
+  onReloadFile?: (path: string) => void
   onOpenDirectory: (path: string) => void
   onDownloadFile: (path: string) => void
   onRevealFile: (path: string) => void
@@ -102,7 +106,7 @@ export function useWorkspaceFileActions({
       if (
         state.workspaceFileTabs.some((tab) => tab.dirty && fileTreePathInSubtree(tab.path, path))
       ) {
-        onNotice?.('文件操作已完成；操作期间产生的未保存笔记本仍保留在标签页中，请另存以保留修改。')
+        onNotice?.('文件操作已完成；操作期间产生的未保存修改仍保留在标签页中，请另存以保留修改。')
       }
       // Successful mutations invalidate parents' listings as well as descendant previews.
       for (const cachedPath of Object.keys(state.filePreviewCache)) {
@@ -143,6 +147,80 @@ export function useWorkspaceFileActions({
     ]
   )
 
+  const saveTextFile = useCallback(
+    async (
+      path: string,
+      content: string,
+      expectedContent: string
+    ): Promise<WorkspaceTextSaveResult> => {
+      const target = targetForPath(path)
+      const identity = JSON.stringify([getActiveCwd(), getActiveRemoteProject()])
+      const before = latest.current
+      const cached = before.filePreviewCache[path]
+      const initial =
+        before.filePreview?.status === 'ready' && before.filePreview.file.path === path
+          ? before.filePreview
+          : cached?.status === 'ready'
+            ? cached
+            : null
+      const result = await rendererApi.saveTextFile({ ...target, content, expectedContent })
+      if (
+        identity !== JSON.stringify([getActiveCwd(), getActiveRemoteProject()]) ||
+        currentRoot.current !== rootPath
+      )
+        return result
+      const state = latest.current
+      state.clearCachedFilePreview(path)
+      if (state.filePreview && filePreviewStatePath(state.filePreview) === path) {
+        state.filePreviewRequestRef.current += 1
+        if (initial?.file.kind === 'text' || initial?.file.kind === 'html')
+          state.setFilePreview({
+            status: 'ready',
+            file: {
+              ...initial.file,
+              content: result.content,
+              bytes: result.bytes,
+              previewBytes: result.bytes,
+              truncated: false
+            }
+          })
+        else onOpenFile(path)
+      }
+      onChanged()
+      return result
+    },
+    [
+      getActiveCwd,
+      getActiveRemoteProject,
+      onChanged,
+      onOpenFile,
+      rendererApi,
+      rootPath,
+      targetForPath
+    ]
+  )
+
+  const textDirtyChange = useCallback((path: string, dirty: boolean): void => {
+    latest.current.setWorkspaceFileTabs((tabs) =>
+      tabs.map((tab) => (tab.path === path ? { ...tab, dirty } : tab))
+    )
+  }, [])
+
+  const { sessionId, projectId, hostAlias, canonicalRoot } = getActiveRemoteProject() ?? {}
+  const markdownRemoteContext = useMemo<RemoteProjectFileContextValue | null>(
+    () =>
+      sessionId && projectId && hostAlias && canonicalRoot
+        ? {
+            sessionId,
+            projectId,
+            hostAlias,
+            canonicalRoot,
+            remoteRoot: canonicalRoot,
+            openPath: (uri, kind) => (kind === 'directory' ? onOpenDirectory(uri) : onOpenFile(uri))
+          }
+        : null,
+    [sessionId, projectId, hostAlias, canonicalRoot, onOpenDirectory, onOpenFile]
+  )
   return useMemo(
     () => ({
       canModifyFile: (path: string): boolean => {
@@ -155,9 +233,30 @@ export function useWorkspaceFileActions({
       },
       onRenameFile: (path: string, name: string) => mutate(path, name),
       onDeleteFile: (path: string) => mutate(path),
+      onSaveTextFile: saveTextFile,
+      onSaveMarkdownFile: saveTextFile,
+      onTextDirtyChange: textDirtyChange,
+      onOpenDirectory,
+      onReloadFile: (path: string) => {
+        latest.current.clearCachedFilePreview(path)
+        if (onReloadFile) onReloadFile(path)
+        else onOpenFile(path)
+      },
+      markdownRemoteContext,
       onDownloadFile,
       onRevealFile
     }),
-    [mutate, onDownloadFile, onRevealFile, targetForPath]
+    [
+      mutate,
+      onDownloadFile,
+      onRevealFile,
+      targetForPath,
+      saveTextFile,
+      textDirtyChange,
+      onOpenDirectory,
+      onReloadFile,
+      onOpenFile,
+      markdownRemoteContext
+    ]
   )
 }
