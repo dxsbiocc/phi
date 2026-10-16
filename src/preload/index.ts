@@ -106,6 +106,10 @@ import type {
   AgentUserInteractionRequest,
   AgentUserInteractionResponse
 } from '../shared/agentInteractionTypes'
+import type {
+  AgentNameConflictQueueState,
+  AgentNameConflictResolutionRequest
+} from '../shared/agentNameConflictTypes'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../shared/appSettingsTypes'
 import type { MenuBarAction } from '../shared/menuBarTypes'
 import type {
@@ -354,6 +358,7 @@ type Project = {
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
   memory?: ProjectMemorySettings
+  rpcAgentAliases?: Record<string, string>
   createdAt: string
 }
 
@@ -907,6 +912,9 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   onRemoteProjectConnectionChanged: (
     cb: (change: RemoteProjectConnectionChange) => void
   ) => Unsubscribe
+  getPendingAgentNameConflict: () => Promise<AgentNameConflictQueueState>
+  onAgentNameConflictChanged: (cb: (state: AgentNameConflictQueueState) => void) => Unsubscribe
+  respondAgentNameConflict: (request: AgentNameConflictResolutionRequest) => Promise<void>
   deleteProject: (id: string) => Promise<void>
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
   updateProjectDefaults: (
@@ -1520,6 +1528,15 @@ const api: RendererAuthApi = {
     ipcRenderer.on('projects:remoteConnectionChanged', handler)
     return () => ipcRenderer.removeListener('projects:remoteConnectionChanged', handler)
   },
+  getPendingAgentNameConflict: (): Promise<AgentNameConflictQueueState> =>
+    ipcRenderer.invoke('agentNameConflicts:getPending'),
+  onAgentNameConflictChanged: (cb: (state: AgentNameConflictQueueState) => void): Unsubscribe => {
+    const handler = (_: unknown, state: AgentNameConflictQueueState): void => cb(state)
+    ipcRenderer.on('agentNameConflicts:changed', handler)
+    return () => ipcRenderer.removeListener('agentNameConflicts:changed', handler)
+  },
+  respondAgentNameConflict: (request: AgentNameConflictResolutionRequest): Promise<void> =>
+    ipcRenderer.invoke('agentNameConflicts:respond', request),
   deleteProject: (id: string): Promise<void> => ipcRenderer.invoke('projects:delete', id),
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode): Promise<Project> =>
     ipcRenderer.invoke('projects:updatePermissionMode', id, permissionMode),

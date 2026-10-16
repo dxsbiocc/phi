@@ -23,6 +23,7 @@ import type {
   RpcAgentEnvironmentDescriptor,
   RpcAgentDefinitionProfile
 } from './types'
+import { planRpcPublishedAgentNames } from './published-agent-names'
 
 function hash(content: string | Buffer): string {
   return createHash('sha256').update(content).digest('hex')
@@ -32,7 +33,10 @@ function sourceFile(path: string, content: string): PhiExtensionFile {
   const bytes = Buffer.from(content, 'utf8')
   if (bytes.length > RPC_AGENT_MAX_FILE_BYTES)
     throw new Error('RPC agent file exceeds its byte limit')
-  if (!/^(?:agents\/phi_[a-f0-9]{24}_[0-9]+_(?:fg|bg)\.md|phi-agent-definitions\.json)$/.test(path))
+  if (
+    path !== 'phi-agent-definitions.json' &&
+    !/^agents\/[A-Za-z][A-Za-z0-9_-]{0,127}\.md$/u.test(path)
+  )
     throw new Error('Invalid RPC agent output path')
   return { path, sha256: hash(bytes), bytes }
 }
@@ -106,6 +110,10 @@ export async function compileRpcAgentDefinitions(
   const parentThinkingLevel = thinkingLevel(options.parentThinkingLevel)
   if (!byModel.has(modelKey(parent))) throw new Error('RPC agent parent model is unavailable')
   const resolveEnvironment = options.resolveEnvironment
+  const publication =
+    options.publishedNames === undefined
+      ? undefined
+      : planRpcPublishedAgentNames(options.definitions, binding, options.publishedNames)
   const resolved: Array<
     Omit<RpcAgentDefinitionProfile, 'nativeName' | 'blocking'> & {
       description: string
@@ -178,8 +186,19 @@ export async function compileRpcAgentDefinitions(
       ['fg', true],
       ['bg', false]
     ] as const) {
-      const nativeName = `phi_${namespace}_${index}_${suffix}`
-      const entry = { ...profile, nativeName, blocking }
+      const published = publication?.find(
+        (candidate) =>
+          candidate.sourceName === agents[index].name && candidate.blocking === blocking
+      )
+      const nativeName = published?.nativeName ?? `phi_${namespace}_${index}_${suffix}`
+      const entry = {
+        ...profile,
+        ...(published && published.displayName !== profile.phiName
+          ? { displayName: published.displayName }
+          : {}),
+        nativeName,
+        blocking
+      }
       const frontmatter = stringifyYaml(
         {
           name: nativeName,

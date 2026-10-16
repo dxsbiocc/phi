@@ -65,7 +65,10 @@ export interface RpcAgentToolDescriptor {
 
 export interface RpcAgentDefinitionProfile {
   readonly definitionHash: string
+  /** Immutable Phi catalogue name used for trusted resource ownership. */
   readonly phiName: string
+  /** Optional user-facing project alias; never grants resource authority. */
+  readonly displayName?: string
   readonly nativeName: string
   readonly blocking: boolean
   readonly tools: readonly RpcAgentToolDescriptor[]
@@ -97,6 +100,8 @@ export interface CompileRpcAgentDefinitionsOptions {
   readonly parentThinkingLevel?: PhiAgentThinkingLevel
   readonly availableTools: readonly RpcAgentToolDescriptor[]
   readonly availableSkills: readonly string[]
+  /** Source Phi name -> stable project/session publication name. */
+  readonly publishedNames?: Readonly<Record<string, string>>
   /** Receives a detached safe snapshot, without desktop file paths or plugin objects. */
   readonly resolveEnvironment?: (
     agent: Readonly<Pick<PhiAgentDefinition, 'name' | 'environment' | 'pluginId'>>

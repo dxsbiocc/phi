@@ -112,6 +112,10 @@ export interface SelectedFacadeRuntime {
   /** Trusted main-process snapshot; renderer phiAgents never activates this capability. */
   readonly foregroundChildren?: {
     readonly definitions: readonly PhiAgentDefinition[]
+    readonly aliases?: Readonly<Record<string, string>>
+    readonly blockedAgents?: Readonly<
+      Record<string, { readonly filePath: string; readonly contentHash: string }>
+    >
     readonly allowParallel?: boolean
     readonly allowBackground?: boolean
     readonly resources?: Pick<RpcAgentResourceCatalogInput, 'skills'>
@@ -167,7 +171,13 @@ function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntim
       selected.foregroundChildren &&
       Object.freeze({
         ...selected.foregroundChildren,
-        definitions: Object.freeze(structuredClone(selected.foregroundChildren.definitions))
+        definitions: Object.freeze(structuredClone(selected.foregroundChildren.definitions)),
+        aliases:
+          selected.foregroundChildren.aliases &&
+          Object.freeze({ ...selected.foregroundChildren.aliases }),
+        blockedAgents:
+          selected.foregroundChildren.blockedAgents &&
+          Object.freeze(structuredClone(selected.foregroundChildren.blockedAgents))
       }),
     desktopTools:
       selected.desktopTools &&
@@ -673,6 +683,8 @@ export function createFacadeSessionFactory(
               foregroundChildren: selected.foregroundChildren && {
                 binding: deriveProductionChildBinding(binding, selected),
                 definitions: selected.foregroundChildren.definitions,
+                aliases: selected.foregroundChildren.aliases,
+                blockedAgents: selected.foregroundChildren.blockedAgents,
                 allowParallel: selected.foregroundChildren.allowParallel,
                 allowBackground: selected.foregroundChildren.allowBackground,
                 resources: {

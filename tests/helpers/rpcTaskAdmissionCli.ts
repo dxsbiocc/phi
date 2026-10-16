@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer, type ServerResponse } from 'node:http'
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,12 +12,17 @@ import type { RpcFrame } from '../../src/main/agent/engine/rpc/types'
 import { compileRpcAgentDefinitions } from '../../src/main/agent/engine/rpc/subagents/definition-compiler'
 import { rpcChildProfileFromDefinition } from '../../src/main/agent/engine/rpc/subagents/run-registry'
 import { compileOptions, definition } from './rpcAgentDefinitionFixture'
+import {
+  nextRpcAgentAlias,
+  planRpcPublishedAgentNames
+} from '../../src/main/agent/engine/rpc/subagents/published-agent-names'
 
 export interface TaskAdmissionFixture {
   root: string
   cwd: string
   agentDir: string
   nativeName: string
+  defaultNativeName: string
   connection: RpcConnection
   frames: RpcFrame[]
   requests: Array<{ actor: 'root' | 'child'; body: Record<string, unknown> }>
@@ -54,10 +60,13 @@ export async function taskAdmissionCli(
       cwd: string
       agentDir: string
       nativeName: string
+      defaultNativeName: string
     }) => Promise<void>
     ambient?: boolean
     admission?: boolean
     pythonOnlyPreflight?: boolean
+    aliasPhi?: boolean
+    blockedConflict?: boolean
   } = {}
 ): Promise<TaskAdmissionFixture> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-task-admission-')))
@@ -77,23 +86,32 @@ export async function taskAdmissionCli(
     contextWindow: 32768,
     maxTokens: 1024
   }
+  const binding = {
+    serverId: 'seam',
+    serverIdentitySha256: 'a'.repeat(64),
+    projectId: 'seam-project',
+    projectRoot: cwd
+  }
+  const definitions = [
+    definition({
+      name: 'Native',
+      tools: ['write'],
+      skills: [],
+      systemPrompt: 'PRIVATE_TASK_SEAM',
+      thinkingLevel: 'off'
+    })
+  ]
+  const defaultNativeName = planRpcPublishedAgentNames(definitions, binding).find(
+    (entry) => entry.blocking
+  )!.defaultName
+  const aliases = options.aliasPhi
+    ? { Native: nextRpcAgentAlias('Native', new Set([defaultNativeName])) }
+    : {}
   const compiled = await compileRpcAgentDefinitions(
     compileOptions({
-      binding: {
-        serverId: 'seam',
-        serverIdentitySha256: 'a'.repeat(64),
-        projectId: 'seam-project',
-        projectRoot: cwd
-      },
-      definitions: [
-        definition({
-          name: 'Native',
-          tools: ['write'],
-          skills: [],
-          systemPrompt: 'PRIVATE_TASK_SEAM',
-          thinkingLevel: 'off'
-        })
-      ],
+      binding,
+      definitions,
+      publishedNames: aliases,
       availableModels: [model],
       availableTools: [{ name: 'write', site: 'native' }],
       availableSkills: [],
@@ -169,7 +187,7 @@ export async function taskAdmissionCli(
       }),
       { mode: 0o600 }
     )
-    await options.prepare?.({ root, cwd, agentDir, nativeName })
+    await options.prepare?.({ root, cwd, agentDir, nativeName, defaultNativeName })
     const entry = compiled.manifest.entries.find((item) => item.blocking)!
     const childConfig = join(root, 'child-runtime.json')
     await writeFile(
@@ -191,6 +209,19 @@ export async function taskAdmissionCli(
             transport: 'sse'
           })
         ],
+        ...(options.blockedConflict
+          ? {
+              blockedAgents: [
+                {
+                  nativeName,
+                  filePath: join(cwd, '.omp/agents', `${defaultNativeName}.md`),
+                  contentHash: createHash('sha256')
+                    .update(await readFile(join(cwd, '.omp/agents', `${defaultNativeName}.md`)))
+                    .digest('hex')
+                }
+              ]
+            }
+          : {}),
         files: compiled.files
           .filter(
             (file) =>
@@ -331,6 +362,7 @@ export async function taskAdmissionCli(
       cwd,
       agentDir,
       nativeName,
+      defaultNativeName,
       connection,
       frames,
       requests,

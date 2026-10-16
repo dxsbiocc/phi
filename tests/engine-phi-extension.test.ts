@@ -147,12 +147,14 @@ function host(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
 }
 
 test('Phi extension package imports stay self-contained and OMP root stays type-only', () => {
-  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const [eventStream, internalUrls, agentLifecycle, task, taskAgents] = HOST_PROVIDED_OMP_IMPORTS
   const boundary = extensionPackageBoundary(packageRoot, HOST_PROVIDED_OMP_IMPORTS)
   assert.deepEqual(boundary.failures, [])
   assert.deepEqual(boundary.hostImports, [
     `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
     `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${task}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${taskAgents}`,
     `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
     `rpc-entry.ts -> ${agentLifecycle}`
   ])

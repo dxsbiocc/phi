@@ -179,6 +179,7 @@ async function fixture(startup = true): Promise<Fixture> {
       if (forbidReads) throw new Error('Must not read current parent B')
       return parent
     },
+    verifyResolvedDefinitions: false,
     assertPublication: () => {}
   })
   await admission.extension({

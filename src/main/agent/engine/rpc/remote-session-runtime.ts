@@ -112,6 +112,10 @@ export interface RemoteSessionRuntimeOptions {
   readonly foregroundChildren?: {
     readonly binding: RpcAgentServerBinding
     readonly definitions: readonly PhiAgentDefinition[]
+    readonly aliases?: Readonly<Record<string, string>>
+    readonly blockedAgents?: Readonly<
+      Record<string, { readonly filePath: string; readonly contentHash: string }>
+    >
     readonly allowParallel?: boolean
     readonly allowBackground?: boolean
     readonly resources?: RpcAgentResourceCatalogInput
@@ -368,7 +372,13 @@ export class RemoteSessionRuntime {
         foregroundChildren: Object.freeze({
           ...options.foregroundChildren,
           binding: Object.freeze({ ...options.foregroundChildren.binding }),
-          definitions: Object.freeze(structuredClone(options.foregroundChildren.definitions))
+          definitions: Object.freeze(structuredClone(options.foregroundChildren.definitions)),
+          aliases:
+            options.foregroundChildren.aliases &&
+            Object.freeze({ ...options.foregroundChildren.aliases }),
+          blockedAgents:
+            options.foregroundChildren.blockedAgents &&
+            Object.freeze(structuredClone(options.foregroundChildren.blockedAgents))
         })
       })
     this.params = Object.freeze({
@@ -615,6 +625,8 @@ export class RemoteSessionRuntime {
               },
               binding: options.foregroundChildren.binding,
               definitions: options.foregroundChildren.definitions,
+              aliases: options.foregroundChildren.aliases,
+              blockedAgents: options.foregroundChildren.blockedAgents,
               availableTools: [
                 ...roster
                   .filter((tool) => tool.site === 'native' && tool.name !== 'task')

@@ -2,6 +2,7 @@ import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createRpcTaskAdmissionExtension } from '../../src/main/agent/engine/phi-extension/extensions/rpc-task-admission'
+import { rpcTaskDefinitionConflictReason } from '../../src/main/agent/engine/phi-extension/extensions/rpc-task-definition-verifier'
 import {
   loadRpcChildRuntimeConfig,
   validateRpcChildRuntimeConfig
@@ -62,6 +63,7 @@ const extension: ExtensionFactory = async (pi) => {
     const admission = createRpcTaskAdmissionExtension({
       config,
       signal: new AbortController().signal,
+      verifyResolvedDefinition: rpcTaskDefinitionConflictReason,
       root: () => {
         const ref = pi.pi.AgentRegistry.global().get('Main')
         const session = ref?.session

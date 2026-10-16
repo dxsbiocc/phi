@@ -416,7 +416,7 @@ test(
 )
 
 test('execution authority extension package stays self-contained', () => {
-  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const [eventStream, internalUrls, agentLifecycle, task, taskAgents] = HOST_PROVIDED_OMP_IMPORTS
   const boundary = extensionPackageBoundary(
     fileURLToPath(new URL('../src/main/agent/engine/phi-extension', import.meta.url)),
     HOST_PROVIDED_OMP_IMPORTS
@@ -425,6 +425,8 @@ test('execution authority extension package stays self-contained', () => {
   assert.deepEqual(boundary.hostImports, [
     `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
     `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${task}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${taskAgents}`,
     `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
     `rpc-entry.ts -> ${agentLifecycle}`
   ])

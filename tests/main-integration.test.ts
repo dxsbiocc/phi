@@ -3651,6 +3651,29 @@ async function harness(
         }
       }
     },
+    './agent/agent-name-conflict-coordinator': {
+      AgentNameConflictCoordinator: class {
+        beginInlineResolution(): () => void {
+          return () => undefined
+        }
+        subscribe(): () => void {
+          return () => undefined
+        }
+        pending(): null {
+          return null
+        }
+        async inspect(): Promise<{
+          aliases: Record<string, never>
+          blockedAgents: Record<string, never>
+          conflicts: []
+        }> {
+          return { aliases: {}, blockedAgents: {}, conflicts: [] }
+        }
+        async resolve(): Promise<void> {
+          return undefined
+        }
+      }
+    },
     './agent/remote-project-upload': {
       RemoteProjectUploadService: class {
         private jobs = new Map<string, Record<string, unknown>>()

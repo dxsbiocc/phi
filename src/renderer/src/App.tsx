@@ -45,6 +45,11 @@ import type {
   RuntimeSummaryContinuation
 } from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
+import type {
+  AgentNameConflictChoice,
+  AgentNameConflictNotice,
+  AgentNameConflictQueueState
+} from '../../shared/agentNameConflictTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
@@ -795,6 +800,8 @@ function App(): React.JSX.Element {
   } | null>(null)
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
+  const [agentNameConflict, setAgentNameConflict] = useState<AgentNameConflictNotice | null>(null)
+  const [resolvingAgentNameConflict, setResolvingAgentNameConflict] = useState(false)
   const [isSkillCatalogOpen, setIsSkillCatalogOpen] = useState(false)
   const [isPhiPluginCatalogOpen, setIsPhiPluginCatalogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
@@ -1372,6 +1379,42 @@ function App(): React.JSX.Element {
       openLocalTrustedOverlay('new-project', () => setIsNewProjectDialogOpen(true))
     },
     [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+  )
+  useEffect(() => {
+    let disposed = false
+    const present = (state: AgentNameConflictQueueState): void => {
+      if (disposed) return
+      if (!state.current) {
+        cancelLocalTrustedOverlay('agent-name-conflict')
+        setAgentNameConflict(null)
+        return
+      }
+      openLocalTrustedOverlay('agent-name-conflict', () => {
+        if (!disposed) setAgentNameConflict(state.current)
+      })
+    }
+    const unsubscribe = rendererApi.onAgentNameConflictChanged(present)
+    void rendererApi.getPendingAgentNameConflict().then(present, () => undefined)
+    return () => {
+      disposed = true
+      unsubscribe()
+      cancelLocalTrustedOverlay('agent-name-conflict')
+    }
+  }, [cancelLocalTrustedOverlay, openLocalTrustedOverlay, rendererApi])
+
+  const onResolveAgentNameConflict = useCallback(
+    async (choice: AgentNameConflictChoice): Promise<void> => {
+      if (!agentNameConflict || resolvingAgentNameConflict) return
+      setResolvingAgentNameConflict(true)
+      try {
+        await rendererApi.respondAgentNameConflict({ id: agentNameConflict.id, choice })
+      } catch (error) {
+        showSnackbar(error instanceof Error ? error.message : 'Agent conflict resolution failed')
+      } finally {
+        setResolvingAgentNameConflict(false)
+      }
+    },
+    [agentNameConflict, rendererApi, resolvingAgentNameConflict, showSnackbar]
   )
   const setSessionSearchOpenWithBrowserGate = useCallback(
     (open: boolean): void => {
@@ -3598,6 +3641,7 @@ function App(): React.JSX.Element {
     isSessionSearchOpen ||
     isProviderDialogOpen ||
     isNewProjectDialogOpen ||
+    agentNameConflict ||
     isSkillCatalogOpen ||
     isPhiPluginCatalogOpen ||
     showEnvironmentSummary ||
@@ -5487,6 +5531,11 @@ function App(): React.JSX.Element {
           activityBarWidth={activityBarWidth}
           sidebarWidth={sidebarWidth}
           macTitlebarHeight={WINDOW_TITLEBAR_HEIGHT}
+          agentNameConflict={agentNameConflict}
+          resolvingAgentNameConflict={resolvingAgentNameConflict}
+          onResolveAgentNameConflict={(choice) => {
+            void onResolveAgentNameConflict(choice)
+          }}
         />
         <SessionExportDialog
           session={exportTarget}

@@ -1,11 +1,13 @@
 import { assertRpcChildTaskCapacity } from '../lib/rpc-task-capacity'
-import { lstatSync, realpathSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
 import { approvalIdentifier, createApprovalEnvelope } from '../lib/rpc-approval-protocol'
 import type { AgentSession, ExtensionContext, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import {
   validateRpcForegroundTaskInput,
+  rpcChildDispatchConflictReason,
   childConfigDigest,
+  type RpcForegroundTaskInput,
   type RpcChildRuntimeConfig
 } from '../lib/rpc-child-config'
 import {
@@ -65,6 +67,17 @@ export interface RpcTaskAdmissionOptions {
   readonly assertPublication: () => void
   readonly parentRun?: () => Readonly<RpcTaskParentRun> | undefined
   readonly onChildAborted?: (run: Readonly<RpcTaskParentRun>) => void
+  /** Test-only synthetic sessions may disable filesystem resolution; production defaults on. */
+  readonly verifyResolvedDefinitions?: boolean
+  /** OMP-owned resolver/parser adapter supplied by the production extension entry. */
+  readonly verifyResolvedDefinition?: (
+    session: AgentSession,
+    input: {
+      readonly name: string
+      readonly expectedPath: string
+      readonly expectedHash: string
+    }
+  ) => Promise<string | undefined>
 }
 export interface RpcTaskCall {
   readonly toolCallId: string
@@ -75,25 +88,37 @@ export type RpcVerifiedChildDispatch = (
   event: RpcTaskCall,
   ctx: ExtensionContext
 ) => { block: true; reason: string } | { input: Record<string, unknown> }
-/** Deliberately rejects ambient agent resources; this is a conservative policy, not SDK discovery. */
-export function assertRpcTaskProjectResourcesAbsent(cwd: string): void {
-  for (let directory = cwd; ; directory = dirname(directory)) {
-    for (const resource of [
-      '.omp/agents',
-      '.omp/plugins',
-      '.claude/plugins',
-      '.claude/settings.json',
-      '.claude/settings.local.json'
-    ]) {
-      try {
-        lstatSync(join(directory, resource))
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-        throw new Error('Project agent resources cannot be verified')
-      }
-      throw new Error('Project and ancestor agent resources are unsupported for native child tasks')
+class RpcTaskDefinitionConflictError extends Error {}
+
+function requestedAgents(
+  input:
+    | Readonly<RpcForegroundTaskInput>
+    | Readonly<{ tasks: readonly Readonly<RpcForegroundTaskInput>[] }>
+): readonly string[] {
+  return 'tasks' in input ? input.tasks.map((task) => task.agent) : [input.agent]
+}
+
+async function assertRpcTaskDefinitionsResolved(
+  session: AgentSession,
+  input:
+    | Readonly<RpcForegroundTaskInput>
+    | Readonly<{ tasks: readonly Readonly<RpcForegroundTaskInput>[] }>,
+  config: Readonly<RpcChildRuntimeConfig>,
+  verify: RpcTaskAdmissionOptions['verifyResolvedDefinition']
+): Promise<void> {
+  const agentDir = process.env.PI_CODING_AGENT_DIR
+  if (!agentDir) throw new Error('Native child publication location is unavailable')
+  if (!verify) throw new Error('OMP child definition verifier is unavailable')
+  for (const name of new Set(requestedAgents(input))) {
+    const expectedPath = join(agentDir, 'agents', `${name}.md`)
+    const expectedHash = config.files.find((file) => file.path === `agents/${name}.md`)?.sha256
+    if (!expectedHash) {
+      throw new RpcTaskDefinitionConflictError(
+        `Phi child ${name} is shadowed by an unresolved agent definition`
+      )
     }
-    if (dirname(directory) === directory) break
+    const reason = await verify(session, { name, expectedPath, expectedHash })
+    if (reason) throw new RpcTaskDefinitionConflictError(reason)
   }
 }
 /** Keeps the actual native TaskTool/SDK handler and validates both public raw/effective inputs. */
@@ -164,7 +189,6 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
   let api: Parameters<ExtensionFactory>[0] | undefined
   let disposed = false
   const resources = (session: AgentSession): void => {
-    assertRpcTaskProjectResourcesAbsent(options.config.projectRoot)
     const roots = session.effectiveExtensionRoots
     if (
       roots.mode !== 'explicit-only' ||
@@ -439,7 +463,16 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         })
         const effective = validateRpcForegroundTaskInput(call.args, options.config)
         if (JSON.stringify(raw) !== JSON.stringify(effective)) return refused
+        const conflictReason = rpcChildDispatchConflictReason(effective, options.config)
+        if (conflictReason) return { block: true, reason: conflictReason }
         resources(session)
+        if (options.verifyResolvedDefinitions !== false)
+          await assertRpcTaskDefinitionsResolved(
+            session,
+            effective,
+            options.config,
+            options.verifyResolvedDefinition
+          )
         if (trackLaunches) {
           const requested = 'tasks' in effective ? effective.tasks.length : 1
           const root = options.root()!
@@ -503,15 +536,8 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         committed = true
         return result
       } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message ===
-            'Project and ancestor agent resources are unsupported for native child tasks'
-        )
-          return {
-            block: true,
-            reason: 'Project and ancestor agent resources are unsupported for native child tasks'
-          }
+        if (error instanceof RpcTaskDefinitionConflictError)
+          return { block: true, reason: error.message }
         return refused
       } finally {
         prepared.delete(call.toolCall.id)

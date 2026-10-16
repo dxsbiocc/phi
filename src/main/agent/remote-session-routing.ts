@@ -90,6 +90,21 @@ export interface AppRemoteSessionRoutingOptions {
     projectId: string
     cwd: string
   }): Promise<readonly PhiAgentDefinition[]>
+  resolveAgentConflicts?(
+    identity: {
+      runtimeSessionId: string
+      sessionId: string
+      projectId: string
+      cwd: string
+    },
+    definitions: readonly PhiAgentDefinition[],
+    signal: AbortSignal
+  ): Promise<{
+    readonly aliases: Readonly<Record<string, string>>
+    readonly blockedAgents: Readonly<
+      Record<string, { readonly filePath: string; readonly contentHash: string }>
+    >
+  }>
   /** Main catalog authority; renderer create parameters never supply this resource snapshot. */
   loadDesktopTools?(
     identity: {
@@ -251,6 +266,19 @@ export function installAppRemoteSessionRouting(
           )
         : []
       assertSelected()
+      const conflictPolicy = definitions.length
+        ? await options.resolveAgentConflicts?.(
+            {
+              runtimeSessionId,
+              sessionId: phiSessionId,
+              projectId,
+              cwd: manifest.cwd
+            },
+            definitions,
+            signal
+          )
+        : undefined
+      assertSelected()
       const bundle = await createPhiExtensionBundle(
         resolvePhiExtensionSourceRoot(options.appPaths())
       )
@@ -339,6 +367,10 @@ export function installAppRemoteSessionRouting(
             ? {
                 foregroundChildren: {
                   definitions,
+                  ...(conflictPolicy?.aliases ? { aliases: conflictPolicy.aliases } : {}),
+                  ...(conflictPolicy?.blockedAgents
+                    ? { blockedAgents: conflictPolicy.blockedAgents }
+                    : {}),
                   allowParallel: true,
                   allowBackground: true,
                   ...(agentResources ? { resources: agentResources } : {}),

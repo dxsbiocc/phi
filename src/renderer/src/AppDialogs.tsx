@@ -25,6 +25,11 @@ import type {
 } from './types'
 import { EnvironmentSummaryDialog } from './features/environment/components/EnvironmentSummaryDialog'
 import { snackbarAutoHideDuration } from './lib/snackbarDuration'
+import AgentNameConflictDialog from './features/agent/components/AgentNameConflictDialog'
+import type {
+  AgentNameConflictChoice,
+  AgentNameConflictNotice
+} from '../../shared/agentNameConflictTypes'
 
 export type { SnackbarNotice, SnackbarSeverity } from './components/AppSnackbarCard'
 
@@ -113,6 +118,9 @@ export type AppDialogsProps = {
   activityBarWidth: number
   sidebarWidth: number
   macTitlebarHeight: number
+  agentNameConflict: AgentNameConflictNotice | null
+  resolvingAgentNameConflict: boolean
+  onResolveAgentNameConflict: (choice: AgentNameConflictChoice) => void
 }
 
 export default function AppDialogs({
@@ -184,7 +192,10 @@ export default function AppDialogs({
   isSidebarOpen,
   activityBarWidth,
   sidebarWidth,
-  macTitlebarHeight
+  macTitlebarHeight,
+  agentNameConflict,
+  resolvingAgentNameConflict,
+  onResolveAgentNameConflict
 }: AppDialogsProps): React.JSX.Element {
   const [returnToNewProject, setReturnToNewProject] = useState(false)
   return (
@@ -296,6 +307,12 @@ export default function AppDialogs({
           setSettingsCategory('remote')
           setIsSettingsOpen(true)
         }}
+      />
+
+      <AgentNameConflictDialog
+        notice={agentNameConflict}
+        busy={resolvingAgentNameConflict}
+        onResolve={onResolveAgentNameConflict}
       />
 
       <Snackbar

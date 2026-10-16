@@ -552,8 +552,14 @@ import {
 import {
   installAppRemoteSessionRouting,
   createAppRemoteSessionManager,
+  selectAppForegroundAgents,
   type AppRemoteSessionRoutingOptions
 } from './agent/remote-session-routing'
+import { AgentNameConflictCoordinator } from './agent/agent-name-conflict-coordinator'
+import type {
+  AgentNameConflictChoice,
+  AgentNameConflictResolutionRequest
+} from '../shared/agentNameConflictTypes'
 import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from './app-update-check'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
@@ -1569,6 +1575,36 @@ const runnerRegistry = new SessionRunnerRegistry({
     rpcChildApprovals.afterParentRunSettled(sessionId)
   }
 })
+const agentNameConflicts = new AgentNameConflictCoordinator()
+agentNameConflicts.subscribe((current) => {
+  sendToAllWindows('agentNameConflicts:changed', { current })
+})
+
+const configuredRemoteAgentNames =
+  process.env.PHI_REMOTE_OMP_AGENTS?.split(',')
+    .map((name) => name.trim())
+    .filter(Boolean) ?? []
+
+async function loadConfiguredRemoteAgents(identity: {
+  sessionId: string
+  projectId: string
+  cwd: string
+}): Promise<readonly import('./agent/agents/definition').PhiAgentDefinition[]> {
+  if (!configuredRemoteAgentNames.length) return []
+  const catalog = await loadRemoteAgentCatalog({
+    ...identity,
+    agentDir: AGENT_DIR,
+    bundledDir: getBundledAgentsDir()
+  })
+  return selectAppForegroundAgents(configuredRemoteAgentNames, catalog.agents, true)
+}
+
+function conflictChoiceFromAnswer(answer: unknown): AgentNameConflictChoice | undefined {
+  if (answer === 'Rename Phi agent') return 'rename_phi'
+  if (answer === 'Rename other agent') return 'rename_other'
+  if (answer === 'Not now') return 'not_now'
+  return undefined
+}
 
 // Main-only internal migration gate; renderer session input cannot enable this route.
 const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
@@ -1591,6 +1627,63 @@ installAppRemoteSessionRouting({
         bundledDir: getBundledAgentsDir()
       })
     ).agents,
+  resolveAgentConflicts: async (identity, definitions, signal) => {
+    const endInlineResolution = agentNameConflicts.beginInlineResolution(identity.sessionId)
+    try {
+      for (;;) {
+        signal.throwIfAborted()
+        const inspection = await agentNameConflicts.inspect({
+          sessionId: identity.sessionId,
+          projectId: identity.projectId,
+          definitions,
+          enqueueDialogs: false,
+          signal
+        })
+        const conflict = inspection.conflicts[0]
+        if (!conflict) {
+          return { aliases: inspection.aliases, blockedAgents: inspection.blockedAgents }
+        }
+        const promptRun = findActivePromptRunByPhiSessionId(identity.sessionId)
+        if (!promptRun) throw new Error('No active run for agent conflict resolution')
+        const response = (await handleAgentInteractionRequest(
+          {
+            runtimeSessionId: identity.runtimeSessionId,
+            allowCustomAnswer: false,
+            allowCancel: false,
+            questions: [
+              {
+                header: 'Conflict',
+                question: `${conflict.hostAlias}:${conflict.filePath} defines ${conflict.requestedName}, which shadows Phi agent ${conflict.phiAgentName}. Choose which definition to rename.`,
+                options: [
+                  {
+                    label: 'Rename Phi agent',
+                    description: `Publish Phi's trusted definition as ${conflict.proposedPhiName} for this project.`
+                  },
+                  {
+                    label: 'Rename other agent',
+                    description: `Change only that file's frontmatter name to ${conflict.proposedOtherName}.`
+                  },
+                  {
+                    label: 'Not now',
+                    description: `Disable ${conflict.phiAgentName} child tasks for this conversation session.`
+                  }
+                ]
+              }
+            ]
+          },
+          { originSessionId: identity.runtimeSessionId, signal },
+          promptRun
+        )) as import('../shared/agentInteractionTypes').AgentUserInteractionResponse
+        signal.throwIfAborted()
+        const choice = conflictChoiceFromAnswer(response.answers[0]?.answer)
+        if (response.cancelled || !choice)
+          throw new Error('Agent conflict resolution was cancelled')
+        await agentNameConflicts.resolve(conflict.id, choice)
+      }
+    } finally {
+      endInlineResolution()
+    }
+  },
   loadDesktopTools: loadAppRemoteDesktopTools,
   loadPromptContext: loadAppRemotePromptContext,
   loadAgentResources: loadAppRemoteAgentResources,
@@ -2703,14 +2796,42 @@ async function runWrapperResultRead<T>(
   }
 }
 function scheduleRemoteProjectCheck(sessionId: string, projectId: string): void {
-  void remoteConnectionTracker.check(sessionId, projectId).catch((error) => {
-    writeAppLog({
-      level: 'warn',
-      event: 'remote_project_connection_check_failed',
-      sessionId,
-      metadata: { projectId, reason: error instanceof Error ? error.message : '检查未完成' }
+  void remoteConnectionTracker
+    .check(sessionId, projectId)
+    .then((state) => {
+      if (state.phase === 'reachable') scheduleAgentNameConflictCheck(sessionId, projectId)
     })
-  })
+    .catch((error) => {
+      writeAppLog({
+        level: 'warn',
+        event: 'remote_project_connection_check_failed',
+        sessionId,
+        metadata: { projectId, reason: error instanceof Error ? error.message : '检查未完成' }
+      })
+    })
+}
+
+function scheduleAgentNameConflictCheck(sessionId: string, projectId: string): void {
+  if (!remoteOmpRpcEnabled || !configuredRemoteAgentNames.length) return
+  const manifest = findPhiSessionById(sessionId)
+  if (!manifest || manifest.projectId !== projectId) return
+  void loadConfiguredRemoteAgents({ sessionId, projectId, cwd: manifest.cwd })
+    .then((definitions) =>
+      agentNameConflicts.inspect({
+        sessionId,
+        projectId,
+        definitions,
+        enqueueDialogs: true
+      })
+    )
+    .catch((error) => {
+      writeAppLog({
+        level: 'warn',
+        event: 'rpc_agent_conflict_check_failed',
+        sessionId,
+        metadata: { projectId, reason: error instanceof Error ? error.message : String(error) }
+      })
+    })
 }
 getPhiEngine().host.register('remoteWorkspace.resolvePath', (params) =>
   remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
@@ -3441,6 +3562,14 @@ function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): Prompt
   )
 }
 
+function findActivePromptRunByPhiSessionId(phiSessionId: string): PromptRun | null {
+  return (
+    [...activePromptRuns.values()].find(
+      (run) => run.phiSessionId === phiSessionId && !run.cancelled
+    ) ?? null
+  )
+}
+
 function presentableRun(
   runtimeSessionId: string | undefined,
   toolCallId: string | undefined
@@ -3588,19 +3717,24 @@ async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Pr
 
 async function handleAgentInteractionRequest(
   params: unknown,
-  context?: import('./agent/engine/types').PhiHostRequestContext
+  context?: import('./agent/engine/types').PhiHostRequestContext,
+  initializingRun?: PromptRun
 ): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
   const questions = interactionQuestionsField(record.questions)
+  const allowCustomAnswer = record.allowCustomAnswer !== false
+  const allowCancel = record.allowCancel !== false
   if (!runtimeSessionId || questions.length === 0) {
     throw new Error('Invalid user interaction request')
   }
 
-  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+  const run = initializingRun ?? findActivePromptRunByRuntimeSessionId(runtimeSessionId)
   if (
     !run ||
     run.cancelled ||
+    (initializingRun !== undefined && getActivePromptRun(run.sessionKey) !== run) ||
+    (run.session !== undefined && run.session.runtimeSessionId !== runtimeSessionId) ||
     (context?.originSessionId && context.originSessionId !== runtimeSessionId)
   ) {
     throw new Error('No active run for user interaction request')
@@ -3626,7 +3760,9 @@ async function handleAgentInteractionRequest(
       sessionGeneration: run.sessionGeneration,
       runId: run.runId,
       cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
-      ...(project?.name ? { projectName: project.name } : {})
+      ...(project?.name ? { projectName: project.name } : {}),
+      ...(allowCustomAnswer ? {} : { allowCustomAnswer: false }),
+      ...(allowCancel ? {} : { allowCancel: false })
     },
     window,
     [context?.signal]
@@ -3634,7 +3770,9 @@ async function handleAgentInteractionRequest(
   if (
     context?.signal?.aborted ||
     run.cancelled ||
-    findActivePromptRunByRuntimeSessionId(runtimeSessionId) !== run
+    (initializingRun !== undefined
+      ? getActivePromptRun(run.sessionKey) !== run
+      : findActivePromptRunByRuntimeSessionId(runtimeSessionId) !== run)
   ) {
     runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
     notifySessionChanged()
@@ -10989,7 +11127,35 @@ app.whenReady().then(async () => {
       throw new Error('远程重连请求必须包含会话和项目 ID')
     }
     const { sessionId, projectId } = request as { sessionId: string; projectId: string }
-    return remoteConnectionTracker.check(sessionId, projectId, { userInitiated: true })
+    const state = await remoteConnectionTracker.check(sessionId, projectId, { userInitiated: true })
+    if (state.phase === 'reachable') scheduleAgentNameConflictCheck(sessionId, projectId)
+    return state
+  })
+  ipcMain.handle('agentNameConflicts:getPending', (event) => {
+    requireMainWindowRenderer(event)
+    return { current: agentNameConflicts.pending() }
+  })
+  ipcMain.handle('agentNameConflicts:respond', async (event, input: unknown) => {
+    requireMainWindowRenderer(event)
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      Object.keys(input).sort().join(',') !== ['choice', 'id'].join(',')
+    ) {
+      throw new Error('Invalid agent conflict response')
+    }
+    const request = input as AgentNameConflictResolutionRequest
+    const current = agentNameConflicts.pending()
+    if (
+      !current ||
+      request.id !== current.id ||
+      !['rename_phi', 'rename_other', 'not_now'].includes(request.choice)
+    ) {
+      throw new Error('Agent conflict request is no longer current')
+    }
+    await agentNameConflicts.resolve(current.id, request.choice)
+    scheduleAgentNameConflictCheck(current.sessionId, current.projectId)
   })
   ipcMain.handle(
     'projects:newSession',
@@ -11432,8 +11598,9 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     'agent:interaction-response',
-    async (_, requestId: string, response, cancelled?: boolean) => {
-      resolveAgentUserInteraction(requestId, response, cancelled === true)
+    async (event, requestId: string, response, cancelled?: boolean) => {
+      const window = requireMainWindowRenderer(event)
+      resolveAgentUserInteraction(requestId, response, cancelled === true, window.webContents.id)
     }
   )
 

@@ -51,6 +51,10 @@ import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type { RuntimeRecoveryApi } from '../../shared/runtimeRecoveryTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
 import type { NotebookAiGenerationJob } from '../../shared/notebookAiJobTypes'
+import type {
+  AgentNameConflictQueueState,
+  AgentNameConflictResolutionRequest
+} from '../../shared/agentNameConflictTypes'
 export type {
   HomeActivityDay,
   HomeActivityPeriodSummary,
@@ -809,6 +813,9 @@ export interface RendererApi
   onRemoteProjectConnectionChanged: (
     cb: (change: RemoteProjectConnectionChange) => void
   ) => () => void
+  getPendingAgentNameConflict: () => Promise<AgentNameConflictQueueState>
+  onAgentNameConflictChanged: (cb: (state: AgentNameConflictQueueState) => void) => () => void
+  respondAgentNameConflict: (request: AgentNameConflictResolutionRequest) => Promise<void>
   deleteProject: (id: string) => Promise<void>
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode) => Promise<Project>
   updateProjectDefaults: (

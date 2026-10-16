@@ -24,6 +24,7 @@ export interface Project {
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
   memory?: ProjectMemorySettings
+  rpcAgentAliases?: Record<string, string>
   createdAt: string
 }
 

@@ -31,6 +31,7 @@ import {
   createRpcTaskAdmissionExtension,
   type RpcVerifiedChildDispatch
 } from './extensions/rpc-task-admission'
+import { rpcTaskDefinitionConflictReason } from './extensions/rpc-task-definition-verifier'
 import {
   loadRpcChildRuntimeConfig,
   childConfigDigest,
@@ -304,6 +305,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
         root,
         parentRun: () => execution.taskParent(),
         onChildAborted: (run) => execution.revokeTaskParent(run),
+        verifyResolvedDefinition: rpcTaskDefinitionConflictReason,
         assertPublication: () => {
           const fresh = loadRpcChildRuntimeConfig(
             process.env[RPC_BOOTSTRAP_CONFIG_ENV]!,

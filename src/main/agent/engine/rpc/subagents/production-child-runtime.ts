@@ -88,6 +88,20 @@ export async function attestProductionChildRuntime(
   const detach = channel.onFrame((frame) => {
     if (frame.type === 'agent_start') reject(new Error('Child runtime attestation invoked a model'))
     if (
+      frame.type === 'extension_error' &&
+      frame.extensionPath === `command:${CHILD_ATTEST_COMMAND}` &&
+      frame.event === 'command'
+    ) {
+      reject(
+        new Error(
+          typeof frame.error === 'string' && frame.error.length > 0
+            ? frame.error
+            : 'Child runtime attestation command failed'
+        )
+      )
+      return
+    }
+    if (
       frame.type !== 'extension_ui_request' ||
       frame.method !== 'notify' ||
       typeof frame.message !== 'string'

@@ -17,7 +17,11 @@ export const HOST_PROVIDED_OMP_IMPORTS = [
   '@oh-my-pi/pi-coding-agent/internal-urls',
   // Pinned 18.10.3 hosts this exact public lifecycle module. Queued cancel
   // additionally verifies that it manages the host's genuine global registry.
-  '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle'
+  '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle',
+  // Dispatch admission must inspect the same discovered AgentDefinition record
+  // the pinned OMP TaskTool resolves, including its source and parsed content.
+  '@oh-my-pi/pi-coding-agent/task',
+  '@oh-my-pi/pi-coding-agent/task/agents'
 ] as const
 
 const hostProvidedOmpImports = new Set<string>(HOST_PROVIDED_OMP_IMPORTS)

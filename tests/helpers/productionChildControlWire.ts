@@ -44,6 +44,7 @@ export interface ProductionChildControlWire {
 export async function productionChildControlWire(
   options: {
     badAttestation?: boolean
+    attestationError?: string
     allowNativeTask?: boolean
     actualRootAgentId?: string
     attestationPatch?: Record<string, unknown>
@@ -174,21 +175,30 @@ export async function productionChildControlWire(
         )
       })
     } else if (text.startsWith(`/${CHILD_ATTEST_COMMAND} `)) {
-      const proof = makeRpcChildAttestation(config, rootIdentity)
-      attested = true
-      emit({
-        type: 'extension_ui_request',
-        method: 'notify',
-        notifyType: 'info',
-        message: JSON.stringify({
-          ...proof,
-          ...options.attestationPatch,
-          ...(options.attestationIdentityPatch
-            ? { identity: { ...proof.identity, ...options.attestationIdentityPatch } }
-            : {}),
-          ...(options.badAttestation ? { hmac: 'f'.repeat(64) } : {})
+      if (options.attestationError) {
+        emit({
+          type: 'extension_error',
+          extensionPath: `command:${CHILD_ATTEST_COMMAND}`,
+          event: 'command',
+          error: options.attestationError
         })
-      })
+      } else {
+        const proof = makeRpcChildAttestation(config, rootIdentity)
+        attested = true
+        emit({
+          type: 'extension_ui_request',
+          method: 'notify',
+          notifyType: 'info',
+          message: JSON.stringify({
+            ...proof,
+            ...options.attestationPatch,
+            ...(options.attestationIdentityPatch
+              ? { identity: { ...proof.identity, ...options.attestationIdentityPatch } }
+              : {}),
+            ...(options.badAttestation ? { hmac: 'f'.repeat(64) } : {})
+          })
+        })
+      }
     } else throw new Error('Synthetic Node test must not claim a model prompt')
     respond({ agentInvoked: false })
     emit({

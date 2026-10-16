@@ -11,6 +11,7 @@ type InteractionWindow = BrowserWindow
 
 type PendingInteraction = {
   settle: (response: AgentUserInteractionResponse) => void
+  senderId: number
 }
 
 export type AgentUserInteractionInput = {
@@ -23,6 +24,8 @@ export type AgentUserInteractionInput = {
   runId?: string
   cwd?: string
   projectName?: string
+  allowCustomAnswer?: boolean
+  allowCancel?: boolean
 }
 
 const pendingInteractions = new Map<string, PendingInteraction>()
@@ -57,9 +60,12 @@ function addWindowUnavailableListener(window: InteractionWindow, callback: () =>
 export function resolveAgentUserInteraction(
   requestId: string,
   response: AgentUserInteractionResponse,
-  cancelled = false
+  cancelled = false,
+  senderId?: number
 ): void {
-  pendingInteractions.get(requestId)?.settle({ ...response, requestId, cancelled })
+  const pending = pendingInteractions.get(requestId)
+  if (!pending || (senderId !== undefined && pending.senderId !== senderId)) return
+  pending.settle({ ...response, requestId, cancelled })
 }
 
 export function cancelAgentUserInteractions(): void {
@@ -85,7 +91,11 @@ export function waitForAgentUserInteraction(
         : {}),
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.projectName ? { projectName: input.projectName } : {})
+      ...(input.projectName ? { projectName: input.projectName } : {}),
+      ...(input.allowCustomAnswer === undefined
+        ? {}
+        : { allowCustomAnswer: input.allowCustomAnswer }),
+      ...(input.allowCancel === undefined ? {} : { allowCancel: input.allowCancel })
     }
     let settled = false
     const cleanupFns: Array<() => void> = []
@@ -100,7 +110,7 @@ export function waitForAgentUserInteraction(
       resolve(response)
     }
 
-    pendingInteractions.set(request.requestId, { settle })
+    pendingInteractions.set(request.requestId, { settle, senderId: window.webContents.id })
 
     for (const signal of signals) {
       if (!signal) continue

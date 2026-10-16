@@ -54,6 +54,11 @@ export interface RpcChildRuntimeConfig extends RpcChildConfigIdentity {
   readonly capability: string
   readonly profiles: readonly RpcChildTrustedProfile[]
   readonly files: readonly { readonly path: string; readonly sha256: string }[]
+  readonly blockedAgents?: readonly {
+    readonly nativeName: string
+    readonly filePath: string
+    readonly contentHash: string
+  }[]
   readonly policy: {
     readonly mode: 'foreground-native'
     readonly taskShape: 'single'
@@ -182,6 +187,7 @@ export function validateRpcChildRuntimeConfig(
     'profiles',
     'files',
     'policy',
+    ...(Object.hasOwn(raw, 'blockedAgents') ? ['blockedAgents'] : []),
     ...(Object.hasOwn(raw, 'parentModel') ? ['parentModel'] : []),
     ...(Object.hasOwn(raw, 'resources') ? ['resources'] : [])
   ])
@@ -231,9 +237,7 @@ export function validateRpcChildRuntimeConfig(
   for (const profile of profiles) {
     const definition = profile.definition
     if (
-      !(
-        definition.blocking ? /^phi_[a-f0-9]{24}_[0-9]+_fg$/u : /^phi_[a-f0-9]{24}_[0-9]+_bg$/u
-      ).test(definition.nativeName) ||
+      !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(definition.nativeName) ||
       (!definition.blocking && raw.policy.allowBackground !== true) ||
       names.has(definition.nativeName) ||
       (!parentModel && !sameRpcChildModel(profile.model, profiles[0].model)) ||
@@ -248,6 +252,36 @@ export function validateRpcChildRuntimeConfig(
       throw new Error('Child resource digest differs from its shared catalogue')
     names.add(definition.nativeName)
   }
+  const blockedAgents =
+    raw.blockedAgents === undefined
+      ? undefined
+      : (() => {
+          if (!Array.isArray(raw.blockedAgents) || raw.blockedAgents.length > profiles.length)
+            throw new Error('Invalid blocked child agent policy')
+          const blockedNames = new Set<string>()
+          return Object.freeze(
+            raw.blockedAgents.map((value: unknown) => {
+              exact(value, ['nativeName', 'filePath', 'contentHash'])
+              if (
+                typeof value.nativeName !== 'string' ||
+                !names.has(value.nativeName) ||
+                blockedNames.has(value.nativeName) ||
+                typeof value.filePath !== 'string' ||
+                !value.filePath.startsWith('/') ||
+                value.filePath.length > 4096 ||
+                /[\0\r\n]/u.test(value.filePath) ||
+                !hash(value.contentHash)
+              )
+                throw new Error('Invalid blocked child agent policy')
+              blockedNames.add(value.nativeName)
+              return Object.freeze({
+                nativeName: value.nativeName,
+                filePath: value.filePath,
+                contentHash: value.contentHash
+              })
+            })
+          )
+        })()
   const resourcePaths = new Set(resources?.skills.map((skill) => skill.path) ?? [])
   if (!Array.isArray(raw.files) || raw.files.length !== profiles.length + 1 + resourcePaths.size)
     throw new Error('Private child file inventory differs')
@@ -290,6 +324,7 @@ export function validateRpcChildRuntimeConfig(
     },
     capability: raw.capability,
     profiles: Object.freeze(profiles),
+    ...(blockedAgents ? { blockedAgents } : {}),
     files: Object.freeze(files),
     policy: Object.freeze({
       mode: 'foreground-native',
@@ -301,6 +336,19 @@ export function validateRpcChildRuntimeConfig(
     })
   }
   return Object.freeze({ ...result, manifestBinding: Object.freeze(result.manifestBinding) })
+}
+
+export function rpcChildDispatchConflictReason(
+  input:
+    | Readonly<RpcForegroundTaskInput>
+    | Readonly<{ tasks: readonly Readonly<RpcForegroundTaskInput>[] }>,
+  config: Readonly<RpcChildRuntimeConfig>
+): string | undefined {
+  const requested = 'tasks' in input ? input.tasks.map((task) => task.agent) : [input.agent]
+  const blocked = config.blockedAgents?.find((entry) => requested.includes(entry.nativeName))
+  return blocked
+    ? `Phi child ${blocked.nativeName} is disabled for this session because it is shadowed by ${blocked.filePath}`
+    : undefined
 }
 function privateBytes(path: string, maximum: number): Buffer {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)

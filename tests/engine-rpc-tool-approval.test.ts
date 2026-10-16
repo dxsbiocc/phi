@@ -332,12 +332,14 @@ test(
 
 test('approval modules remain within the deployed extension package', () => {
   const root = fileURLToPath(new URL('../src/main/agent/engine/phi-extension', import.meta.url))
-  const [eventStream, internalUrls, agentLifecycle] = HOST_PROVIDED_OMP_IMPORTS
+  const [eventStream, internalUrls, agentLifecycle, task, taskAgents] = HOST_PROVIDED_OMP_IMPORTS
   const boundary = extensionPackageBoundary(root, HOST_PROVIDED_OMP_IMPORTS)
   assert.deepEqual(boundary.failures, [])
   assert.deepEqual(boundary.hostImports, [
     `extensions/rpc-child-control.ts -> ${agentLifecycle}`,
     `extensions/rpc-subagents.ts -> ${internalUrls}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${task}`,
+    `extensions/rpc-task-definition-verifier.ts -> ${taskAgents}`,
     `lib/rpc-native-stream-adapter.ts -> ${eventStream}`,
     `rpc-entry.ts -> ${agentLifecycle}`
   ])

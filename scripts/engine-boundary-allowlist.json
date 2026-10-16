@@ -344,6 +344,15 @@
       "plan": "keep"
     },
     {
+      "file": "src/main/agent/engine/phi-extension/extensions/rpc-task-definition-verifier.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/task",
+        "@oh-my-pi/pi-coding-agent/task/agents"
+      ],
+      "purpose": "Pinned OMP 18.10.3 dispatch guard uses OMP's own public discovery selection and parser so the checked AgentDefinition is the source/content record native TaskTool will run; verified by actual compiled-CLI shadow and negative-control tests",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/rpc/desktop-websearch-worker.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/web/search",

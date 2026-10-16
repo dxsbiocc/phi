@@ -282,6 +282,27 @@ test('default-disabled execution and a mismatched child attestation cannot activ
   }
 })
 
+test('child attestation command failure preserves its original error without waiting for the startup budget', async (t) => {
+  const reason =
+    'Project agent definition shadowed Phi child at /srv/project/.omp/agents/explore.md'
+  const f = await productionChildControlWire({ attestationError: reason })
+  t.after(f.close)
+  const startedAt = performance.now()
+  await assert.rejects(
+    attestProductionChildRuntime(
+      f.connection,
+      f.prepared.config,
+      { rootOmpSessionId: f.root.rootOmpSessionId, rootSessionFile: f.root.rootSessionFile },
+      f.connection.bindControl().signal
+    ),
+    (error: Error) => {
+      assert.equal(error.message, reason)
+      return true
+    }
+  )
+  assert.ok(performance.now() - startedAt < 1_000, 'failure must arrive within half the 2s budget')
+})
+
 test('root AgentRegistry identity comes from authenticated attestation rather than a caller hardcoded ID', async (t) => {
   const f = await productionChildControlWire({ actualRootAgentId: 'ActualRegistryRoot' })
   t.after(f.close)

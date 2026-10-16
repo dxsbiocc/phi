@@ -104,6 +104,7 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.ok(command.includes("'--no-extensions' '--trusted-extension'"))
   assert.ok(command.includes("'--trusted-extension'"))
   assert.ok(command.includes(`'--config' ${shellQuote(join(privateRoot, 'startup-policy.json'))}`))
+  assert.ok(command.includes("'--no-lsp'"))
   assert.ok(command.includes("'--no-skills' '--no-rules' '--no-lsp'"))
   assert.ok(!command.includes('--no-ui'))
   assert.ok(!command.includes(fixture.params.agentDir))
@@ -300,11 +301,6 @@ test('foreground native name preparation is strict and paired, while disabled po
       nativeTools: ['read', 'task'],
       childRuntimeRequired: true,
       foregroundChildNativeNames: [name, name]
-    },
-    {
-      nativeTools: ['read', 'task'],
-      childRuntimeRequired: true,
-      foregroundChildNativeNames: ['remote-markdown-name']
     },
     {
       nativeTools: ['read', 'task'],

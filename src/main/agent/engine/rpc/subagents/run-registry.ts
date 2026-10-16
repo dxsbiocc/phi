@@ -49,6 +49,7 @@ export function rpcChildProfileFromDefinition(
     definition: {
       definitionHash: definition.definitionHash,
       phiName: definition.phiName,
+      ...(definition.displayName ? { displayName: definition.displayName } : {}),
       nativeName: definition.nativeName,
       blocking: definition.blocking,
       tools: definition.tools,
@@ -169,7 +170,7 @@ export class RpcChildRunRegistry {
       const definition = profile.definition
       if (this.profiles.has(definition.nativeName)) throw new Error('Duplicate child profile')
       this.hashes.set(definition.nativeName, definition.definitionHash)
-      this.names.set(definition.nativeName, definition.phiName)
+      this.names.set(definition.nativeName, definition.displayName ?? definition.phiName)
       this.blocking.set(definition.nativeName, definition.blocking)
       this.toolSites.set(
         definition.nativeName,
