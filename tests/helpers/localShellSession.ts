@@ -9,6 +9,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import type {
   RemoteExecResult,
@@ -31,6 +32,18 @@ export interface LocalShellSession extends RemoteSshSession {
     options: RemoteUploadFileOptions | undefined
   }>
   closed: boolean
+}
+
+function signalStdioProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32' && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal)
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
+    }
+  }
+  child.kill(signal)
 }
 
 export function createLocalShellSession(remoteRoot?: string): LocalShellSession {
@@ -104,7 +117,10 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
     },
     async openStdio(command): Promise<RemoteStdioProcess> {
       session.commands.push(command)
-      const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+      const child = spawn('bash', ['-c', command], {
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
       stdioProcesses.add(child)
       const closed = new Promise<{ code: number | null; signal: string | null }>(
         (resolve, reject) => {
@@ -122,7 +138,12 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
         closed,
         async close() {
           child.stdin.end()
-          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+          await Promise.race([closed, delay(250)])
+          if (child.exitCode === null && child.signalCode === null)
+            signalStdioProcess(child, 'SIGTERM')
+          await Promise.race([closed, delay(2_000)])
+          if (child.exitCode === null && child.signalCode === null)
+            signalStdioProcess(child, 'SIGKILL')
           await closed.catch(() => undefined)
         }
       }
@@ -131,7 +152,7 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
       session.closed = true
       for (const child of stdioProcesses) {
         child.stdin.end()
-        child.kill('SIGTERM')
+        signalStdioProcess(child, 'SIGTERM')
       }
     }
   }

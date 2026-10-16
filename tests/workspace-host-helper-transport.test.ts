@@ -172,3 +172,14 @@ test('closing a local SSH session terminates its open stdio child', async () => 
 
   assert.ok(result.signal || result.code !== null)
 })
+
+test('closing a local stdio channel allows an EOF-driven child to exit cleanly', async () => {
+  const session = createLocalShellSession()
+  assert.ok(session.openStdio)
+  const channel = await session.openStdio('cat >/dev/null')
+
+  await channel.close()
+
+  assert.deepEqual(await channel.closed, { code: 0, signal: null })
+  await session.close()
+})
