@@ -68,6 +68,27 @@ test('createPhiSession creates a stable session directory and manifest', () => {
   })
 })
 
+test('AI and manual title provenance survives reloading a session manifest', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    const activity = session.manifest.lastActivityAt
+    updateSessionManifest(session.sessionId, { title: 'AI 生成的标题', titleSource: 'auto' })
+    let reloaded = listPhiSessions().find((entry) => entry.sessionId === session.sessionId)!
+    assert.equal(reloaded.title, 'AI 生成的标题')
+    assert.equal(reloaded.titleSource, 'auto')
+    updateSessionManifest(session.sessionId, { title: '用户修改的标题', titleSource: 'user' })
+    reloaded = listPhiSessions().find((entry) => entry.sessionId === session.sessionId)!
+    assert.equal(reloaded.title, '用户修改的标题')
+    assert.equal(reloaded.titleSource, 'user')
+    assert.equal(reloaded.lastActivityAt, activity, 'naming alone must not reorder conversations')
+  })
+})
+
 test('automatic compaction overrides persist per session and follow a fork', () => {
   withPhiDir(() => {
     const first = createPhiSession({

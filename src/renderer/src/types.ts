@@ -817,6 +817,7 @@ export interface RendererApi
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
   deleteSession: (path: string) => Promise<void>
   renameSession: (path: string, name: string) => Promise<void>
+  generateSessionTitle: (path: string) => Promise<string>
   exportSession: (sessionId: string) => Promise<SessionExportResult | null>
   listProjects: () => Promise<Project[]>
   pickProjectDirectory: () => Promise<string | null>

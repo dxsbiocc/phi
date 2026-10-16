@@ -884,6 +884,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
   deleteSession: (path: string) => Promise<void>
   renameSession: (path: string, name: string) => Promise<void>
+  generateSessionTitle: (path: string) => Promise<string>
   exportSession: (sessionId: string) => Promise<SessionExportResult | null>
   listProjects: () => Promise<Project[]>
   pickProjectDirectory: () => Promise<string | null>
@@ -1480,6 +1481,8 @@ const api: RendererAuthApi = {
   deleteSession: (path: string): Promise<void> => ipcRenderer.invoke('sessions:delete', path),
   renameSession: (path: string, name: string): Promise<void> =>
     ipcRenderer.invoke('sessions:rename', path, name),
+  generateSessionTitle: (path: string): Promise<string> =>
+    ipcRenderer.invoke('sessions:generateTitle', path),
   exportSession: (sessionId: string): Promise<SessionExportResult | null> =>
     ipcRenderer.invoke('sessions:export', sessionId),
   listProjects: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),

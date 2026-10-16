@@ -570,6 +570,7 @@ import {
   finishWorkspaceChangeCapture
 } from './agent/session/workspace-changes'
 import { persistWorkspaceDiff, readWorkspaceDiff } from './agent/session/workspace-diffs'
+import { SessionTitleGenerator } from './agent/session/session-title-generation'
 import {
   persistPromptImages,
   readPromptImage,
@@ -5733,10 +5734,13 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   setPromptQueue(
     runSessionKey,
     run.then(
-      () => {
+      (result) => {
         deleteActivePromptRun(runSessionKey, promptRun)
         notifySessionChanged()
         flushPendingContinuations(phiSessionId, promptRun.cancelled)
+        if (result && !promptRun.cancelled && !promptRun.recordedFailureMessage) {
+          scheduleAutomaticSessionTitle(phiSessionId)
+        }
       },
       () => {
         deleteActivePromptRun(runSessionKey, promptRun)
@@ -5982,6 +5986,236 @@ function createRemoteManagedSession(projectId: string): {
   linkPhiManagedSessionKey(key, cwd, session.sessionId)
   sessionPermissionModes.set(resolveSessionKeyAlias(key), project.permissionMode)
   return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
+}
+
+let sessionTitleGenerator: SessionTitleGenerator | null = null
+const automaticTitleJobs = new Map<string, Promise<void>>()
+const titleRenameQueues = new Map<string, Promise<void>>()
+const manualTitleRequests = new Set<string>()
+
+function sessionTitleContext(path: string): {
+  manifest: PhiSessionManifest
+  firstUserMessage: string
+  userMessage: string
+  assistantMessage?: string
+} {
+  const id = phiSessionIdFromPath(path)
+  const manifest = id ? findPhiSessionById(id) : findPhiSessionByRuntimePath(path)
+  if (!manifest) throw new Error('请先打开该对话，再生成标题')
+  const events = readSessionEvents(manifest.sessionId)
+  const userMessages = events
+    .filter((event) => event.type === 'user_message' && typeof event.content === 'string')
+    .map((event) => messageContentTitleText(event.content as string))
+    .filter(Boolean)
+  const firstUserMessage = userMessages[0]
+  const userMessage = userMessages.find(hasSessionTitleTopic) ?? firstUserMessage
+  if (!userMessage) throw new Error('对话还没有可用于生成标题的内容')
+  const reply = events.find(
+    (event) => event.type === 'assistant_message_finalized' && typeof event.content === 'string'
+  )
+  return {
+    manifest,
+    firstUserMessage,
+    userMessage,
+    ...(reply ? { assistantMessage: reply.content as string } : {})
+  }
+}
+
+function hasSessionTitleTopic(message: string): boolean {
+  return !/^(?:hi|hello|hey|你好|您好|哈喽|嗨|谢谢|thanks|thank you|继续|continue|好的|ok|okay|好)[！!。，,.\s]*$/i.test(
+    message.trim()
+  )
+}
+
+function getSessionTitleGenerator(): SessionTitleGenerator {
+  if (mainWindowCleanupStarted) throw new Error('标题生成服务已关闭')
+  sessionTitleGenerator ??= new SessionTitleGenerator({
+    request: async ({ sessionPath, prompt, signal }) => {
+      const { manifest } = sessionTitleContext(sessionPath)
+      const key = createPhiSessionKey(manifest.sessionId, manifest.cwd)
+      const selection = resolveSessionModelSelection(key, {
+        path: sessionPath,
+        cwd: manifest.cwd,
+        permissionMode: manifest.permissionMode
+      })
+      const runtime = await getAuthManager().getRuntime()
+      signal.throwIfAborted()
+      let model = selection ? resolveRuntimeModelSelection(runtime, selection)?.model : undefined
+      if (!selection) {
+        const lifecycle = getLifecycleForKey(key)
+        const record = lifecycle.currentRecord
+        if (record) {
+          const ready = await record.promise
+          if (lifecycle.isCurrent(record)) model = ready.session.model
+        }
+        signal.throwIfAborted()
+      }
+      if (selection && !model) throw new Error('请先为对话配置可用模型')
+      const cwd = getNoProjectTaskFolder()
+      let streamedText = ''
+      let replyFailed = false
+      const { session } = await createAgentSession(
+        {
+          cwd,
+          modelRuntime: runtime,
+          ...(model ? { model } : {}),
+          thinkingLevel: 'minimal',
+          noTools: 'all',
+          sessionManager: createInMemoryRuntimeSessionManager(cwd)
+        },
+        (summary) => {
+          if (assistantErrorMessageFromEventSummary(summary)) replyFailed = true
+          const event = isPhiMessageUpdateSummary(summary)
+            ? summary.assistantMessageEvent
+            : undefined
+          if (event?.type === 'text_delta' && typeof event.delta === 'string') {
+            streamedText += event.delta
+          }
+          const message = isPhiEventType(summary, 'message_end')
+            ? summary.message
+            : (event?.partial ?? event?.message)
+          if ((message as { role?: string } | undefined)?.role === 'assistant') {
+            const body = extractAssistantText(message).trim()
+            if (body) streamedText = body
+          }
+        },
+        { signal, assertCurrent: () => signal.throwIfAborted() }
+      )
+      const abort = (): void => {
+        void session.abort().catch(logUnexpectedError)
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      try {
+        signal.throwIfAborted()
+        await session.prompt(prompt, {
+          expandPromptTemplates: false,
+          userInitiated: true,
+          skipCompactionCheck: true
+        })
+        signal.throwIfAborted()
+        const assistant = session.messages.findLast(
+          (message) => (message as { role?: string }).role === 'assistant'
+        )
+        const final = assistant as { stopReason?: string; errorMessage?: unknown } | undefined
+        if (
+          final?.stopReason === 'error' ||
+          final?.stopReason === 'aborted' ||
+          final?.errorMessage ||
+          (replyFailed && final?.stopReason !== 'stop')
+        )
+          return ''
+        return extractAssistantText(assistant).trim() || streamedText.trim()
+      } finally {
+        signal.removeEventListener('abort', abort)
+        await session.dispose()
+      }
+    }
+  })
+  return sessionTitleGenerator
+}
+
+function enqueueSessionTitleWrite<T>(path: string, write: () => Promise<T>): Promise<T> {
+  const previous = titleRenameQueues.get(path) ?? Promise.resolve()
+  const result = previous.then(write)
+  const settled = result.then(
+    () => {},
+    () => {}
+  )
+  titleRenameQueues.set(path, settled)
+  void settled.then(() => {
+    if (titleRenameQueues.get(path) === settled) titleRenameQueues.delete(path)
+  })
+  return result
+}
+
+async function renameConversation(
+  path: string,
+  name: string,
+  source: 'auto' | 'user'
+): Promise<void> {
+  const id = phiSessionIdFromPath(path)
+  if (id) {
+    const manifest = findPhiSessionById(id)
+    if (!manifest) throw new Error('会话不存在')
+    const rpc = Boolean(
+      manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
+    )
+    if (rpc) {
+      const key = createSessionKey(path, manifest.cwd)
+      const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
+      const ready = await captured.resolved()
+      captured.assertCurrent()
+      if (ready) {
+        if (!ownsRemoteRuntimeSession(ready.session.runtimeSessionId))
+          throw new Error('RPC rename requires an exact live attachment')
+        const confirmed = await ready.session.sessionManager.setSessionName(name, source, captured)
+        captured.assertCurrent()
+        if (!confirmed) throw new Error('远程会话名称尚未确认')
+      } else {
+        if (manifest.runtimeRef) throw new Error('远程会话名称需要显式恢复后修改')
+        await renameSession(path, name)
+      }
+    } else {
+      await renameSession(path, name)
+    }
+    updateSessionManifest(id, { titleSource: source })
+    notifySessionChanged()
+    return
+  }
+  const current = await getCurrentResolvedSession()
+  if (currentSessionPath === path && current) {
+    await current.session.sessionManager.setSessionName(name, source)
+  } else {
+    await renameSession(path, name)
+  }
+}
+
+function scheduleAutomaticSessionTitle(sessionId: string): void {
+  if (mainWindowCleanupStarted || automaticTitleJobs.has(sessionId)) return
+  const path = phiOnlySessionPath(sessionId)
+  const job = (async () => {
+    const context = sessionTitleContext(path)
+    const { manifest, userMessage, firstUserMessage } = context
+    if (
+      manifest.titleSource ||
+      !hasSessionTitleTopic(userMessage) ||
+      manifest.runtimeRecoveryError ||
+      (manifest.title && messageContentTitleText(manifest.title) !== firstUserMessage)
+    )
+      return
+    const target = captureSessionControlTarget(
+      createPhiSessionKey(sessionId, manifest.cwd),
+      sessionId,
+      false,
+      true,
+      false
+    )
+    const title = await getSessionTitleGenerator().generate({ sessionPath: path, ...context })
+    if (!title || mainWindowCleanupStarted) return
+    await enqueueSessionTitleWrite(path, async () => {
+      if (mainWindowCleanupStarted) return
+      target.assertCurrent()
+      const latest = findPhiSessionById(sessionId)
+      if (
+        !latest ||
+        latest.titleSource ||
+        latest.title !== manifest.title ||
+        latest.runtimeRecoveryError ||
+        manualTitleRequests.has(path) ||
+        runnerRegistry.getActiveRun(sessionId) ||
+        runtimeRecoveryOperations.has(sessionId)
+      )
+        return
+      await renameConversation(path, title, 'auto')
+    })
+  })()
+    .catch(() => {
+      writeAppLog({ level: 'warn', event: 'session_auto_title_unavailable', sessionId })
+    })
+    .finally(() => {
+      if (automaticTitleJobs.get(sessionId) === job) automaticTitleJobs.delete(sessionId)
+    })
+  automaticTitleJobs.set(sessionId, job)
 }
 
 // Turns a free-text description of the desired assistant into a persona markdown file
@@ -8390,6 +8624,7 @@ async function disposeRemoteNotebookBackend(projectId: string): Promise<void> {
 function cleanupMainWindowRuntime(): Promise<void> {
   if (mainWindowCleanupPromise) return mainWindowCleanupPromise
   mainWindowCleanupStarted = true
+  sessionTitleGenerator?.dispose()
   mainWindowCleanupPromise = Promise.resolve().then(async () => {
     let promptShutdown = {
       browserCleanup: Promise.resolve(),
@@ -10214,6 +10449,7 @@ app.whenReady().then(async () => {
     return acknowledgeSession(path, cwd)
   })
   ipcMain.handle('sessions:delete', async (_, path: string) => {
+    sessionTitleGenerator?.cancel(path)
     const deletionCwd = currentCwd
     const phiSessionId = phiSessionIdFromPath(path)
     const manifest = phiSessionId
@@ -10251,47 +10487,30 @@ app.whenReady().then(async () => {
     deleteSession(path)
     if (manifest) loadedSkillNamesBySession.delete(manifest.sessionId)
   })
+  ipcMain.handle('sessions:generateTitle', async (event, path: unknown) => {
+    requireMainWindowRenderer(event)
+    if (typeof path !== 'string' || !path || path.length > 8192) {
+      throw new Error('对话路径无效')
+    }
+    const context = sessionTitleContext(path)
+    if (runnerRegistry.getActiveRun(context.manifest.sessionId)) {
+      throw new Error('请等待对话运行结束后再生成标题')
+    }
+    const title = await getSessionTitleGenerator().generate({ sessionPath: path, ...context })
+    if (!title) throw new Error('暂时无法生成标题，请稍后重试，并检查当前模型是否可用')
+    return title
+  })
   ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
     const trimmedName = name.trim()
     if (!trimmedName) return
 
-    if (isPhiOnlySessionPath(path)) {
-      const phiSessionId = phiSessionIdFromPath(path)
-      const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
-      if (!manifest) throw new Error('会话不存在')
-      const rpc = Boolean(
-        manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
-      )
-      if (rpc) {
-        const key = createSessionKey(path, manifest.cwd)
-        const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
-        const ready = await captured.resolved()
-        captured.assertCurrent()
-        if (ready) {
-          if (!ownsRemoteRuntimeSession(ready.session.runtimeSessionId))
-            throw new Error('RPC rename requires an exact live attachment')
-          const confirmed = await ready.session.sessionManager.setSessionName(
-            trimmedName,
-            'user',
-            captured
-          )
-          captured.assertCurrent()
-          if (!confirmed) throw new Error('远程会话名称尚未确认')
-          notifySessionChanged()
-          return
-        }
-        if (manifest.runtimeRef) throw new Error('远程会话名称需要显式恢复后修改')
-      }
-      await renameSession(path, trimmedName)
-      return
+    manualTitleRequests.add(path)
+    sessionTitleGenerator?.cancel(path)
+    try {
+      await enqueueSessionTitleWrite(path, () => renameConversation(path, trimmedName, 'user'))
+    } finally {
+      manualTitleRequests.delete(path)
     }
-    const current = await getCurrentResolvedSession()
-    if (currentSessionPath === path && current) {
-      const { session } = current
-      await session.sessionManager.setSessionName(trimmedName, 'user')
-      return
-    }
-    await renameSession(path, trimmedName)
   })
   ipcMain.handle('sessions:export', async (_, sessionId: unknown) => {
     if (typeof sessionId !== 'string') throw new Error('会话编号无效')
