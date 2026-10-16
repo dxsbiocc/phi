@@ -103,7 +103,9 @@ test('remote env_request creates and then reuses a content-addressed environment
       })
     }
     const service = new RemoteEnvironmentService(options)
-    const first = await service.request(request())
+    const first = await service.request(
+      request({ channels: ['https://untrusted.invalid/channel'] })
+    )
     const second = await new RemoteEnvironmentService(options).request(
       request({ requestId: 'environment-request-2' })
     )
@@ -125,9 +127,9 @@ test('remote env_request creates and then reuses a content-addressed environment
     assert.equal(calls.length, 1)
     assert.match(
       calls[0] ?? '',
-      /^create --no-rc -p .*\/envs\/[a-f0-9]{64} --override-channels -c conda-forge --yes/u
+      /^create --no-rc -p .*\/envs\/[a-f0-9]{64} --override-channels -c conda-forge -c bioconda --yes/u
     )
-    assert.doesNotMatch(calls[0] ?? '', /-c bioconda/u)
+    assert.doesNotMatch(calls[0] ?? '', /untrusted\.invalid/u)
     assert.match(calls[0] ?? '', new RegExp(`root=${escapeRegExp(fixture.runtimeRoot)}$`))
     const [invocation] = readFakeMicromambaInvocations(fixture)
     assert.equal(invocation?.env.MAMBA_ROOT_PREFIX, fixture.runtimeRoot)

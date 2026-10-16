@@ -223,7 +223,7 @@ export class RemoteEnvironmentService {
     const previous = await this.storedEnvironment(input.environment, workspace, signal)
     const base = previous ?? (await this.baseEnvironment(input))
     const packages = uniquePackages([...base.packages, ...input.packages])
-    const channels = ['conda-forge']
+    const channels = base.channels.length ? [...base.channels] : ['conda-forge']
     const record = environmentRecord(workspace, input, packages, channels)
     let usedLocalCache = false
     await this.withLock(`${workspace.runtimeRoot}\0${record.envId}`, signal, async () => {
