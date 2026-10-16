@@ -527,6 +527,10 @@ import {
   parseFinalGeneratedNotebookCompletion,
   parseGeneratedNotebookCompletionSnapshot
 } from './agent/notebook/notebook-code-generation'
+import {
+  NotebookCompletionCollector,
+  type NotebookCompletionSelection
+} from './agent/notebook/notebook-completion'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import {
   createRemoteAnalysisNotebookBackend,
@@ -4166,72 +4170,6 @@ function isPermanentProviderRegionError(message: unknown): message is string {
   )
 }
 
-function notebookCompletionCandidatesFromEventSummary(summary: PhiAgentEventSummary): unknown[] {
-  const candidates: unknown[] = []
-  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
-    ? summary.assistantMessageEvent
-    : undefined
-  if (summary.type === 'message_update' && assistantMessageEvent) {
-    candidates.push(assistantMessageEvent)
-    if (assistantMessageEvent.message) candidates.push(assistantMessageEvent.message)
-    if (assistantMessageEvent.partial) candidates.push(assistantMessageEvent.partial)
-    if (assistantMessageEvent.error) candidates.push(assistantMessageEvent.error)
-    if (assistantMessageEvent.data) candidates.push(assistantMessageEvent.data)
-    if (assistantMessageEvent.value) candidates.push(assistantMessageEvent.value)
-    if (assistantMessageEvent.content) candidates.push(assistantMessageEvent.content)
-    if (assistantMessageEvent.delta) candidates.push(assistantMessageEvent.delta)
-    if (assistantMessageEvent.result) candidates.push(assistantMessageEvent.result)
-    if (assistantMessageEvent.output) candidates.push(assistantMessageEvent.output)
-    if (assistantMessageEvent.outputs) candidates.push(assistantMessageEvent.outputs)
-  }
-
-  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
-  if (summary.type === 'message_end' && message?.role === 'assistant') {
-    candidates.push(message)
-  }
-
-  candidates.push(...assistantMessagesFrom(summary.messages))
-  candidates.push(...assistantMessagesFrom(summary.result))
-
-  return candidates
-}
-
-type NotebookCompletionSelection = {
-  cells: AnalysisNotebookGeneratedCell[]
-  text: string
-  score: number
-}
-
-function notebookCompletionCandidateText(candidate: unknown): string {
-  if (typeof candidate === 'string') return candidate.trim()
-  return extractAssistantText(candidate).trim() || extractMessageText(candidate).trim()
-}
-
-function notebookCompletionCellsScore(cells: AnalysisNotebookGeneratedCell[]): number {
-  const sourceLength = generatedNotebookCellsSource(cells).trim().length
-  const codeCellCount = cells.filter((cell) => cell.cellType === 'code').length
-  return sourceLength + cells.length * 1000 + codeCellCount * 1500
-}
-
-function chooseNotebookCompletion(
-  candidates: unknown[],
-  language: string,
-  parseCompletion: (candidate: unknown, defaultLanguage: string) => AnalysisNotebookGeneratedCell[]
-): NotebookCompletionSelection | null {
-  let best: NotebookCompletionSelection | null = null
-  for (const candidate of candidates) {
-    const cells = parseCompletion(candidate, language)
-    if (cells.length === 0) continue
-
-    const text = notebookCompletionCandidateText(candidate)
-    const score = notebookCompletionCellsScore(cells)
-    if (!best || score > best.score || (score === best.score && text.length > best.text.length)) {
-      best = { cells, text, score }
-    }
-  }
-  return best
-}
-
 function extractAssistantThinkingBlocks(message: unknown): string[] {
   if (!message || typeof message !== 'object') return []
   const record = message as { role?: string; content?: unknown }
@@ -6205,20 +6143,14 @@ async function repairNotebookGenerationCompletion(input: {
   onEvent?: (summary: PhiAgentEventSummary) => void
   onProgress?: (completion: NotebookCompletionSelection) => void
 }): Promise<NotebookCompletionSelection | null> {
-  let assistantText = ''
+  const completion = new NotebookCompletionCollector()
   let errorMessage = ''
-  const candidates: unknown[] = []
   const { session } = await createAgentSession(input.sessionOptions, (summary) => {
     input.onEvent?.(summary)
-    assistantText = assistantTextFromEventSummary(summary, assistantText)
-    candidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+    completion.observe(summary)
     errorMessage = assistantErrorMessageFromEventSummary(summary) ?? errorMessage
-    const completion = chooseNotebookCompletion(
-      [...candidates, assistantText.trim()],
-      input.language,
-      parseGeneratedNotebookCompletionSnapshot
-    )
-    if (completion?.cells.length) input.onProgress?.(completion)
+    const snapshot = completion.select(input.language, parseGeneratedNotebookCompletionSnapshot)
+    if (snapshot?.cells.length) input.onProgress?.(snapshot)
   })
 
   try {
@@ -6243,14 +6175,10 @@ async function repairNotebookGenerationCompletion(input: {
       throw new Error(errorMessage)
     }
 
-    const lastAssistantMessage = [...session.messages].reverse().find((message) => {
-      const record = message as { role?: string }
-      return record.role === 'assistant'
-    })
-    return chooseNotebookCompletion(
-      [...candidates, assistantText.trim(), lastAssistantMessage],
+    return completion.select(
       input.language,
-      parseFinalGeneratedNotebookCompletion
+      parseFinalGeneratedNotebookCompletion,
+      session.messages
     )
   } finally {
     await session.dispose()
@@ -6315,13 +6243,11 @@ async function generateAnalysisNotebookCode(
       sessionManager: createInMemoryRuntimeSessionManager(sessionCwd),
       ...(resolvedModel ? { model: resolvedModel.model } : {})
     }
-    let eventAssistantText = ''
+    const completion = new NotebookCompletionCollector()
     let eventErrorMessage = ''
-    const eventCompletionCandidates: unknown[] = []
     let lastProgressSource = ''
     const emitProgress = (): void => {
-      const selectedCompletion = chooseNotebookCompletion(
-        [...eventCompletionCandidates, eventAssistantText.trim()],
+      const selectedCompletion = completion.select(
         language,
         parseGeneratedNotebookCompletionSnapshot
       )
@@ -6346,10 +6272,9 @@ async function generateAnalysisNotebookCode(
     }
     const { session } = await createAgentSession(sessionOptions, (summary) => {
       job.observe(summary)
-      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
-      eventCompletionCandidates.push(...notebookCompletionCandidatesFromEventSummary(summary))
+      completion.observe(summary)
       eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
-      if (eventAssistantText || eventCompletionCandidates.length) job.update('generating')
+      if (completion.text) job.update('generating')
       emitProgress()
     })
 
@@ -6383,17 +6308,12 @@ async function generateAnalysisNotebookCode(
         const record = message as { role?: string }
         return record.role === 'assistant'
       })
-      const candidates = [
-        ...eventCompletionCandidates,
-        eventAssistantText.trim(),
-        lastAssistantMessage
-      ]
-      const selectedCompletion = chooseNotebookCompletion(
-        candidates,
+      const selectedCompletion = completion.select(
         language,
-        parseFinalGeneratedNotebookCompletion
+        parseFinalGeneratedNotebookCompletion,
+        session.messages
       )
-      let assistantText = selectedCompletion?.text || eventAssistantText.trim()
+      let assistantText = selectedCompletion?.text || completion.text
       assistantText ||= extractAssistantText(lastAssistantMessage).trim()
       let cells = selectedCompletion?.cells ?? []
       let completionText = assistantText

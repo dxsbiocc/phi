@@ -10,6 +10,17 @@ const NOTEBOOK_CELLS_COMPLETION_DATA_TYPES = new Set([
   'notebook-cells-completion'
 ])
 const CELL_COMPLETION_DATA_TYPES = new Set(['data-cell-completion', 'cell-completion'])
+const NON_COMPLETION_CONTENT_TYPES = new Set([
+  'thinking',
+  'thinking_delta',
+  'reasoning',
+  'reasoning_delta',
+  'tool_call',
+  'tool_use',
+  'tool_result',
+  'error',
+  'log'
+])
 
 type NotebookGenerationParseOptions = {
   allowOpenFence?: boolean
@@ -210,6 +221,7 @@ function parseStructuredNotebookCompletion(
 
   if (typeof completion !== 'object') return []
   const record = completion as Record<string, unknown>
+  if (isNonCompletionContent(record)) return []
   const type = stringField(record.type)
   if (type === 'text' || type === 'output_text' || type === 'input_text') return []
   if (type && NOTEBOOK_CELLS_COMPLETION_DATA_TYPES.has(type)) {
@@ -274,6 +286,7 @@ function completionText(completion: unknown): string {
   }
 
   const record = completion as Record<string, unknown>
+  if (isNonCompletionContent(record)) return ''
   const type = stringField(record.type)
   if (
     (type === undefined ||
@@ -296,6 +309,15 @@ function completionText(completion: unknown): string {
     completionText(record.output) ||
     completionText(record.outputs) ||
     completionText(record.message)
+  )
+}
+
+function isNonCompletionContent(record: Record<string, unknown>): boolean {
+  const role = stringField(record.role)
+  const type = stringField(record.type)
+  return Boolean(
+    (role !== undefined && role !== 'assistant') ||
+    (type !== undefined && NON_COMPLETION_CONTENT_TYPES.has(type))
   )
 }
 
@@ -329,7 +351,7 @@ function normalizeGeneratedNotebookCell(
     (hasIpynbSource ? stringField(record.cell_type) : undefined) ??
     stringField(record.type) ??
     stringField(record.kind)
-  const cellType = normalizeGeneratedCellType(rawCellType, language, defaultLanguage)
+  const cellType = normalizeGeneratedCellType(rawCellType, language)
   const rawSource = hasMarimoCode
     ? (sourceField(record.code) ?? '')
     : (sourceField(record.source) ?? '')
@@ -345,6 +367,12 @@ function normalizeGeneratedNotebookCellWithNestedContent(
   defaultLanguage: string,
   options: NotebookGenerationParseOptions = {}
 ): AnalysisNotebookGeneratedCell[] {
+  const cell = normalizeGeneratedNotebookCell(input, defaultLanguage)
+  if (cell) {
+    const nestedCells = nestedGeneratedNotebookCellsFromCell(cell, defaultLanguage, options)
+    return nestedCells.length > 0 ? nestedCells : [cell]
+  }
+
   if (options.allowProseAroundFences) {
     const rawSource = sourceFromGeneratedNotebookInput(input)
     const embeddedCells = rawSource
@@ -358,10 +386,7 @@ function normalizeGeneratedNotebookCellWithNestedContent(
     if (embeddedCells.length > 0) return embeddedCells
   }
 
-  const cell = normalizeGeneratedNotebookCell(input, defaultLanguage)
-  if (!cell) return []
-  const nestedCells = nestedGeneratedNotebookCellsFromCell(cell, defaultLanguage, options)
-  return nestedCells.length > 0 ? nestedCells : [cell]
+  return []
 }
 
 function nestedGeneratedNotebookCellsFromCell(
@@ -457,6 +482,7 @@ function parseRawCodeNotebookCell(
   assistantText: string,
   defaultLanguage: string
 ): AnalysisNotebookGeneratedCell[] {
+  if (markdownLanguages.has(normalizeNotebookGenerationLanguage(defaultLanguage))) return []
   const source = cleanGeneratedCellSource(assistantText, 'code')
   if (!source.trim()) return []
   if (source.includes('```')) return []
@@ -502,9 +528,14 @@ function looksLikeCodeLine(line: string, language: string): boolean {
     return /^(?:select|with|insert|update|delete|create|alter|drop)\b/i.test(line)
   }
   return (
-    /^(?:import|from|def|class|for|while|if|elif|else:|try:|except|with|return|raise|assert)\b/.test(
-      line
-    ) ||
+    /^(?:import\s+\w[\w.]*|from\s+[\w.]+\s+import\s+\S)/.test(line) ||
+    /^(?:async\s+)?def\s+\w+\s*\(.*\)\s*(?:->\s*.+)?\s*:/.test(line) ||
+    /^class\s+\w+\s*(?:\(.*\))?\s*:/.test(line) ||
+    /^(?:async\s+)?for\s+.+\s+in\s+.+:/.test(line) ||
+    /^(?:(?:async\s+)?with|while|if|elif)\s+.+:/.test(line) ||
+    /^(?:else|try|finally)\s*:/.test(line) ||
+    /^except(?:\s+.+)?\s*:/.test(line) ||
+    /^(?:return|raise|assert)(?:\s|$)/.test(line) ||
     /^\w[\w.]*\s*(?:=|\+=|-=|\*=|\/=|:=)\s*\S/.test(line) ||
     /^(?:\w+\.)*\w+\s*\([^)]*\)/.test(line) ||
     /^\w[\w.]*\[[^\]]+\]\s*(?:=|\+=|-=|\*=|\/=)\s*\S/.test(line)
@@ -649,8 +680,7 @@ function unwrapMarimoMarkdown(source: string): string {
 
 function normalizeGeneratedCellType(
   rawCellType: string | undefined,
-  language: string,
-  defaultLanguage: string
+  language: string
 ): 'code' | 'markdown' {
   const normalized = rawCellType?.trim().toLowerCase()
   if (normalized === 'markdown' || normalized === 'md') return 'markdown'
@@ -662,12 +692,7 @@ function normalizeGeneratedCellType(
   ) {
     return 'code'
   }
-  if (
-    markdownLanguages.has(language) ||
-    markdownLanguages.has(normalizeNotebookGenerationLanguage(defaultLanguage))
-  ) {
-    return 'markdown'
-  }
+  if (markdownLanguages.has(language)) return 'markdown'
   return 'code'
 }
 

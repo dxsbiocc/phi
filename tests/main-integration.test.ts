@@ -36,6 +36,7 @@ import * as path from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
+import * as notebookCompletion from '../src/main/agent/notebook/notebook-completion'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
@@ -2537,6 +2538,7 @@ async function harness(
     },
     './agent/engine/rpc/remote-library-service': remoteLibrary,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
+    './agent/notebook/notebook-completion': notebookCompletion,
     './agent/notebook/notebook-output-protocol': {
       registerNotebookOutputScheme: noop,
       installNotebookOutputProtocol: noop
@@ -9563,6 +9565,73 @@ test('main IPC: notebook AI generation preserves markdown and code cells', async
       'def greedy(values):\n    return sorted(values, reverse=True)'
   )
 })
+
+for (const thinking of [
+  'with exit code 1 and',
+  '```python\nprint("diagnostic only")\n```',
+  `\`\`\`python\n${'print("long reasoning draft")\n'.repeat(200)}\`\`\``,
+  JSON.stringify({ cells: [{ language: 'python', code: 'print("thinking only")' }] })
+]) {
+  test(`main IPC: notebook AI generation inserts the final Markdown instead of reasoning ${thinking.slice(0, 30)}`, async () => {
+    const source =
+      '## 为什么三个数据集的过滤参数不同\n\nQC_PARAMS 不是三套任意阈值，而是由 **矩阵含义** 决定哪些指标能当过滤器。GSE151530 / GSE189903 的 `X` 是 10x 原始 UMI counts；GSE229772 的 `X` 已归一化。'
+    const finalText = JSON.stringify({ cells: [{ language: 'markdown', code: source }] })
+    const finalMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking },
+        { type: 'text', text: finalText }
+      ]
+    }
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.skipFinalAssistantMessage = true
+      session.messages.push(finalMessage)
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: thinking }
+        },
+        {
+          type: 'message_update',
+          assistantMessageEvent: { type: 'thinking_end', contentIndex: 0, content: thinking }
+        },
+        ...[finalText.slice(0, 45), finalText.slice(45)].map((delta) => ({
+          type: 'message_update',
+          assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta }
+        })),
+        { type: 'message_end', message: finalMessage }
+      ]
+      return session
+    })
+    const document = notebookDocument.parseNotebook({ nbformat: 4, metadata: {}, cells: [] })
+    const result = (await app.invoke(
+      'analysis:generateNotebookCode',
+      '/projects/research',
+      'notebooks/qc.ipynb',
+      document,
+      {
+        prompt: '为什么不同数据集使用不同的过滤参数',
+        language: 'markdown',
+        requestId: 'qc-markdown'
+      }
+    )) as { cells: Array<{ cellType: string; source: string }>; source: string }
+
+    assert.deepEqual(result.cells, [{ cellType: 'markdown', source }])
+    assert.equal(result.source, source)
+    assert.equal(app.sessions.length, 1, 'a valid final Markdown response needs no repair')
+    const progress = app.events.filter(
+      (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
+    ) as Array<{ data: { cells: Array<{ cellType: string; source: string }> } }>
+    assert.ok(progress.length > 0)
+    assert.ok(progress.every((event) => event.data.cells.every((cell) => cell.source === source)))
+    const [job] = (await app.invoke(
+      'analysis:listNotebookAiGenerationJobs'
+    )) as NotebookAiGenerationJob[]
+    assert.equal(job.entries?.find((entry) => entry.kind === 'thinking')?.text, thinking)
+    assert.equal(job.sourcePreview, source)
+  })
+}
 
 test('main IPC: notebook AI generation chooses the full done message over a short streaming partial', async () => {
   let sessionCount = 0

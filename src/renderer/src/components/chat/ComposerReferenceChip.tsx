@@ -73,13 +73,6 @@ export function ComposerReferenceChip({
   disabled?: boolean
 }): React.JSX.Element {
   const label = LABELS[reference.kind]
-  const notebookReference = [
-    'module',
-    'variable',
-    'dataframe',
-    'data_source',
-    'cell_output'
-  ].includes(reference.kind)
   return (
     <Badge
       data-phi-reference-badge={reference.kind}
@@ -140,7 +133,7 @@ export function ComposerReferenceChip({
       <Chip
         data-phi-reference-kind={reference.kind}
         icon={referenceIcon(reference)}
-        label={notebookReference ? `@${reference.name}` : reference.name}
+        label={reference.name}
         variant="filled"
         onClick={disabled ? undefined : reference.onOpen}
         title={reference.text}

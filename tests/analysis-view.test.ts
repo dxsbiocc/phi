@@ -1253,7 +1253,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(preloadSource, /analysis:notebookCodeGenerationProgress/)
   assert.match(mainSource, /ipcMain\.handle\(\s*'analysis:generateNotebookCode'/)
   assert.match(mainSource, /analysis:notebookCodeGenerationProgress/)
-  assert.match(mainSource, /chooseNotebookCompletion/)
+  assert.match(mainSource, /new NotebookCompletionCollector\(\)/)
   assert.match(mainSource, /noTools: 'all'/)
 })
 

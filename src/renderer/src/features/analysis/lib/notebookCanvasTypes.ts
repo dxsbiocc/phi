@@ -11,6 +11,7 @@ import type {
   ModelOption
 } from '../../../types'
 import type { NotebookListEntry } from './notebookViewModel'
+import type { NotebookViewStateStore } from './notebookViewState'
 
 export type AnalysisNotebookAgentFocus = {
   requestId: string
@@ -47,6 +48,8 @@ export type NotebookCanvasProps = {
   cellExecutionError?: string | null
   availableNotebooks?: NotebookListEntry[]
   projectCwd?: string | null
+  viewStateStore?: NotebookViewStateStore
+  viewStateScope?: string
   onSaveNotebook?: (
     file: AnalysisNotebookFile,
     document: NotebookDocument
