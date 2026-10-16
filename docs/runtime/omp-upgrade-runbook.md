@@ -1,10 +1,10 @@
 # OMP 升级操作手册
 
-更新日期：2026-10-15。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
+更新日期：2026-10-16。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
 
 本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
-本轮限定状态（2026-10-15）：原 T11 history 三场景通过，补五项断言后只复验 vendor/KV 一例；辅助 opaque 仍需上游公共修复，完整 T11 未关闭。原 T16 终端修复已 main `10f979bc`，原压力五阶段和 15 项纯测试、primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本及原 `d670` bundle 的无 provider RPC foundation 通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred）、不作功能失败。
+上一批限定状态（2026-10-15）：原 T11 history 三场景通过，补五项断言后只复验 vendor/KV 一例；辅助 opaque 仍需上游公共修复，完整 T11 未关闭。原 T16 终端修复已 main `10f979bc`，原压力五阶段和 15 项纯测试、primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本及原 `d670` bundle 的无 provider RPC foundation 通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred）、不作功能失败。
 
 源码 `19da6594` 已合入 `db09181f`。该整合候选的生产类型、构建、lint、asar 均退出 0（68.75 秒）；2704 个跟踪文件、HEAD、tree 及共享资源引用前后稳定。未重跑该整合候选的全库测试。以上结果仅指本轮限定范围，不代表当前全库或双主机 R8。历史步骤和证据保留，最新升级合同见文末。
 
@@ -169,8 +169,8 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 | 子智能体 | 并行/后台四路、status/wait/steer/stop、模型/资源、审批、停止及完成消费/正确 Phi 唤醒 | 本轮隔离 SDK/CLI 与本机服务有定向证据；真实 SSH/provider/PTY 与人工使用仍待 T16 |
 | 打包版               | asar 解包、Finder 启动、worker／代理启动、终端与退出                                                      | Finder／真实打包启动待验证；构建／闭包及本机 PTY smoke 已通过 |
 | 旧远程路径           | 一轮 read／edit／bash 对话，未启用新 RPC 时行为稳定                                                       | 真实服务器待授权验证                                          |
-| 新远程运行时 | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复 | GPU 官方 18.10.3 安装/隔离版本及无 provider RPC foundation 通过；上传中断恢复及完整 R8 未覆盖，cluster deferred |
-| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | GPU 目前仅 foundation 通过，完整 R8 尚未通过；node2/node3/yzhang 按用户要求 deferred，不当作 failed/pass |
+| 新远程运行时 | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复 | GPU 官方 18.10.3 安装/隔离版本、无 provider RPC foundation 及本次 App 受控 4 场景通过；上传中断恢复及完整 R8 未覆盖，cluster deferred |
+| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | GPU 基础通信与本次 App 受控 4 场景通过，完整 R8 尚未通过；node2/node3/yzhang 按用户要求 deferred，不当作 failed/pass |
 
 只有 SDK／二进制 manifest 版本一致、RPC 协议兼容、模型代理与隧道、宿主工具、主／子会话审批、存储恢复及 R8 实机清单均验收后，才讨论远程默认切换。R1 27 项测试或本地 RPC 基础测试不能代替这些门槛。旧远程实现的删除属于稳定一个升级周期后的 R9。
 
@@ -237,3 +237,12 @@ T10b 最终自动化补证（`e4447c5d`）：全套串行 4930 项，4905 通过
 公开 queued 取消升级合同必须重新核验：official cancel 明确 false 后，只有仍 verified/active/owned 的 queued Cursor 可走原 signed control `cancel_queued`，原 11 字段/预算不变。捕获的真实 ref/session/private queue nonce 在每次 await 前后重证，公开 lifecycle release 与 abort 都 settled、原 ref 真实 aborted/session=null 才 ACK；Node 仍须实际 SDK aborted，不能恢复已撤销执行/模型权限。必须验证唯一新增公开子模块的两处精确文件引用，以及 compiled CLI 的同实例 registry、canonical USER_INTERRUPT_LABEL、park CAS/tombstone 和真实 queued stop；新增两项精确文件后 allowlist 总计 47，不扩大为 wildcard。SDK 即使小升级，也不能据 exports 存在就假定这些同实例/代次语义安全。队列 followUp 不等于已执行，停止成功及历史必须符合真实 SDK journal 终态，不能用文本、控制 ACK 或合成消息替代 journal truth。
 
 最终产品 bundle `f964cf799034b298411610e7dd6e4aabc20e94ee4520089b086b3bfd8e25af7a`（66 文件）的 stream stop 18.561 秒、queued stop 18.701 秒有真实通过证据，queued 透明 observer 单独记录；旧 `d670` 四正常及 later-Main negative 等仍按旧范围保留，不记成最终 bundle 全八例重跑。GPU compiled 公共模块探针（诊断 bundle `baac72ac…`，64.366 秒、0 普通模型、cleanup=true）只证明 sameRegistry/release/label，不是最终产品/R8；最终 `f964` foundation：最终生产扩展 `f964cf79` 另在 GPU 完成真实 attestation/get_state/物理关闭与清理，61.202 秒、agentInvocations=0、无用户 Phi adoption。receipt：`.omx/T16-gpu-rpc-smoke.t16-rpc-1ea1d722-9f51-40e3-bceb-2dbfb313563b.json`；29 个冻结文件与当时 HEAD 稳定。该结果仅为无 provider 的最终扩展/RPC 基础验证，完整 R8 仍未覆盖。
+
+
+## T16 App 平台探测与 SSH 启动边界（2026-10-16）
+
+- App 的 remote workspace 必须经绑定 SSH 的既有 fast stdin probe 取得真实平台，再创建 project/runtime Host；不能以夹具注入、renderer 提示或硬编码 Linux/x64 代替。只传平台事实，未知/失败/截断/取消均拒绝并释放原连接，fast 10 秒与 root 30 秒不变。
+- 本次源码 `e62d22cc` 的相关 19 项、实际 GPU App 4 场景及独立审查通过；生产类型/构建/lint/asar 70.73 秒均退出 0，2704 个文件与候选 HEAD/tree 稳定。实际扩展仍为 `f964cf79`，验收范围及审计保留见 `.omx/T16-gpu-workflow-final-receipt.json`，不迁成完整 R8/厂商验证或当前全库通过。
+- 审批必须由实际 Runner mark 方法作为唯一持久 writer：write/bash 各 requested→approved，拒绝为 requested→denied，停止为 requested→cancelled；迟到批准不能执行。恢复保留同 OMP ID/journal，恢复阶段无隐式 provider/tool 重放，后续明确请求单独计数。
+- node3 本轮只授权登录诊断，自动无 TTY 命令当前也成功（9.732 秒）。[Bash 官方启动规则](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files)说明 SSH 的非交互调用也可能读取 `.bashrc`；重型环境初始化应与交互启动区分。不能把 TTY、Ctrl+C 或增加期限当作无损 RPC 启动修复。本次未改服务器配置，历史配额告警未修复；安装/工作流仍暂缓。
+- 本次未改终端或 Phi 扩展代码，既有打包终端证据保留其原候选版本，不重复记作新候选实测。RPC 默认关闭；完整 T11/R8 和稳定周期之后才执行 T18。

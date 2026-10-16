@@ -1,5 +1,7 @@
 # OMP 远程运行时验收记录
 
+本次原 T16 增量（2026-10-16）：真实 App routing/runtime-adapter/SessionRunner → SSH → 官方 OMP 18.10.3 的 GPU 受控闭环 4/4 通过，覆盖读写/Bash、审批拒绝与待批停止、同 journal 新代显式恢复。模型仅为合成 loopback provider，不代表完整 R8 或真实厂商验收。源码 `e62d22cc` 补齐 App 工作区未探测平台而导致资产选择失败的接点；相关 19/19（包含 workspace 6 项）及独立审查通过，固定候选生产类型/构建/lint/asar 均退出 0（70.73 秒），2704 个跟踪文件、HEAD、tree 与共享资源引用前后稳定。
+
 更新：2026-10-15。此记录区分已验收的基础代码、集成验证与尚未完成的产品能力。
 
 阶段 1 原已合入 main `6d9d9ef3`；T8 及后续成果曾按用户要求暂留分支。用户于 2026-10-14 另行要求开始合并，已将验收过的阶段成果及 main 最新聊天布局整合为本地 main `631671e6`。OMP 为 18.10.3，远程 RPC 及前台专家默认仍关闭；没有推送、发布、连接真实服务器或读取真实提供商凭据。
@@ -10,7 +12,7 @@
 
 本轮原 T14/T15 的实现与限定验证已补齐，当前整合提交 `03da779e`、合入 `a70d403b`，功能候选 `d9b5d776` 的零失败标准全量与组合限定检查分别见下文；首轮 `b7720a84` 的 13 项失败完整保留。RPC/专家仍是 main-owned 显式 opt-in，真实环境与默认开放保留 T16 门槛。
 
-本轮最新限定进展（2026-10-15）：T11 history 三个实际场景已通过，新增五项断言后仅 vendor/KV 一例复验；完整 T11 因辅助 opaque 上游接缝仍未关闭。T16 终端修复已 main `10f979bc`，原 15 项纯测试、原压力五阶段及 primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本和原 `d670` bundle 的无 provider RPC foundation 已通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred），本轮未覆盖，不记功能失败。
+上一批限定进展（2026-10-15）：T11 history 三个实际场景已通过，新增五项断言后仅 vendor/KV 一例复验；完整 T11 因辅助 opaque 上游接缝仍未关闭。T16 终端修复已 main `10f979bc`，原 15 项纯测试、原压力五阶段及 primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本和原 `d670` bundle 的无 provider RPC foundation 已通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred），本轮未覆盖，不记功能失败。
 
 源码 `19da6594` 已合入 `db09181f`。该整合候选的生产类型、构建、lint、asar 均退出 0（68.75 秒）；2704 个跟踪文件、HEAD、tree 及共享资源引用前后稳定。未重跑该整合候选的全库测试。以上结果只绑定本轮范围；不宣称当前全库或完整双主机 R8 通过，RPC 默认关闭。旧验收原样保留，最新证据与限制见文末。
 
@@ -308,7 +310,7 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 - **T13/R5：** 主运行权限及生产主会话组合已验收。审查复现的宿主桥致命故障悬挂和假就绪问题已修复，独立故障回归通过；实际 CLI 覆盖写入、拒绝、取消及恢复。真实 PhiEngine 路由、存储 adopter 与公共事件投影的 16 文件增量已通过独立 27 项复验，修复旧代清理误停新运行、模型清单不一致、损坏引用触发本地 I/O，以及丢失维护事件四项问题。打包闭包先以 `35ac4c49` 独立保存，应用路由保存为 `8ffb187d`；独立副本仅包含这 18 文件及已提交基础代码，构建、lint、生产类型、asar 检查及 30 项真实回归通过，18 文件哈希一致。上下文与名称控制已另行独立验收为 `356b3583`，19 项真实回归通过；真实前台 task 应用组合已保存为 `f148a977`；`3423a650` 已接通实际应用显式 opt-in。模型/思考级别与异步 UI 控制及默认策略修正随后已合入 `365b2db`，见上文 T13 增量；压缩 `eea33bd3` 与 persona/memory/context/公共入口 `9f723379` 均已完成；原 T13 Phi 功能已全部验收，默认 RPC 仍关闭。关联主宿主审批的终态重入已随 `2837875b` 修复并独立验证，仅复核受影响接点，未重开旧阶段审查。
 - **T14/R6：** 本轮已接入独立模型/思考、原生 edit/搜索、受信资源/环境/服务、Task 并行/后台四路、原四控制工具与正确 Phi 完成消费/唤醒。最终固定源码与全量/合入状态见本轮 T14/T15 节；browser 子 typeText 仍明确 unsupported，持续后台需当前代存活，默认不开放。
 - **T15/R7：** 本轮已接入显式原 journal 恢复、模型失效后的明确替换、安全错误路径与 D5 摘要新会话、Wrapper 冷 origin 严格绑定。冷 SDK 子任务仅恢复来源 metadata：旧活动且无终态证明的记录标 interrupted，已保存 completed/failed/aborted 终态保留，全部不可控制且无完整历史；不复活 handle 或开放旧子历史；保留 SDK 500,000 字符字段截断与首次 shake 基线/同 UID 替换的既有边界。最终固定验收状态见本轮节。
-- **T16/R8：** GPU 已实际安装/隔离执行官方 18.10.3，并通过无 provider RPC foundation；它不代替完整 R8、真实 provider/OAuth、人工 UI/Finder。node2/node3/yzhang 组按用户要求 deferred，本轮未覆盖。终端 failed→exited 精确竞争已在 `10f979bc` 修复并通过原压力检查；历史失败及各版静态资产证据保留，最新限定结果见文末。
+- **T16/R8：** GPU 已实际安装/隔离执行官方 18.10.3，并通过无 provider RPC foundation 与下文 2026-10-16 的 App 受控 4 场景；仍不代替完整 R8、真实 provider/OAuth、人工 UI/Finder。node2/node3/yzhang 组按用户要求 deferred，本轮未覆盖。终端 failed→exited 精确竞争已在 `10f979bc` 修复并通过原压力检查；历史失败及各版静态资产证据保留，最新限定结果见文末。
 
 ## 后续门槛
 
@@ -348,3 +350,21 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 结构判断：`rpc-subagents.ts` 746 行保留，同一 Sub state/active/profile/teardown 内聚，复用原权限谓词而不复制；`subagents/production-child-runtime.ts` 611 行保留同代 ledger/ACK/teardown。remote runtime 1288 行延续原 1284 行的临时 legacy 例外，只作必要透传，不夹带大入口拆分。
 
 以上证据分别绑定其冻结源码与具体执行范围，不相加成全量、不覆盖旧版本验收。T12–T15 继续复用；真实 provider/OAuth/MCP、人工 UI/Finder 和完整 R8 仍保留原门槛。RPC 默认关闭，T18 须待新路径完成 T16、默认切换并稳定一个升级周期。
+
+
+## T16 GPU 实际 App 闭环与 node3 登录诊断（2026-10-16）
+
+实际链路复用 App installer、runtime-adapter、SessionRunner、审批持久 writer、远端存储 adopter 与真实 SshHost，没有替换成 direct facade 或 local fake SSH。此前实际 workspace 创建的 Host 平台为 remote/unknown，夹具预先注入平台而遮住部署阻断；本次复用原 fast stdin probe/parser，只把真实平台传给 project/runtime 两个 Host，不扩大工具链权限，不增加依赖或 SDK 修改。保留 fast 10 秒、root 30 秒及每场景 120 秒预算。
+
+| 实际场景 | 本次冻结结果 |
+|---|---|
+| 读 → 写 → Bash | 真实 GPU 文件效果、本机 anchor 无执行效果；provider 请求 4。write、bash 各有独立 approvalId，分别 requested→approved，一共 4 条唯一持久事件。 |
+| 显式同 journal 恢复 | 新代次保留原 OMP ID、journal 与公共历史；恢复本身 0 provider 重放；随后明确 read→final 产生 2 次新请求并读取 GPU 原产物。 |
+| 拒绝 | 真实 Runtime/Runner failed，requested→denied 唯一；GPU 与本地目标文件均不存在。实际 provider 请求 2，不写成拒绝后 0 模型请求。 |
+| 待批停止及迟到批准 | stopped，requested→cancelled 唯一，迟到 allow 未发布批准或执行写入；GPU/本地目标文件 0 效果，provider 请求 1。 |
+
+固定 OMP 18.10.3、扩展 bundle `f964cf79`；4/4 自然退出 0，8 个私有 operator 文件与 2704 个跟踪文件运行前后哈希稳定，当时 HEAD 为 `b64b5fc0`，其中两处平台修复字节与源码提交 `e62d22cc` 一致。4/4 reverse tunnel 关闭、4 个代次目录和自有测试根目录删除。包含合成模型数据的真实 SDK journal 与隔离本地审计 store 按计划保留，不冒称所有审计数据删除。最终 receipt：`.omx/T16-gpu-workflow-final-receipt.json`（SHA256 `f8ec22ae45daa4ee5a5c80fbdb306b12cbb7bff2456bf5d930edafb69711c941`）；生产检查绑定 `.omx/T16-workspace-candidate-gates.json`，未重跑当前全库。
+
+node3 只读登录诊断经用户重新授权完成：交互登录认证成功，Ctrl+C 后得到可用提示符；独立无 TTY 的输出标记也在 9.732 秒成功，stdout 无额外内容。当前启动链包含 `.bashrc` 的系统 profile、Conda hook 与 brew shellenv，交互分支再进入 Zsh 的 Conda 初始化；单独 hook 测量为 Bash 7.656 秒、Zsh 0.920 秒、brew 0.910 秒。该结果支持启动链慢/有波动，不能唯一归因此前的 20 秒超时，也不说明自动 SSH 必须使用 TTY 或注入 Ctrl+C。没有修改远端启动文件或恢复 node3 安装/工作流。
+
+另观察到 zsh history 的 `disk quota exceeded` 告警；共享盘整体用量 7%、inode 用量 1%，quota -s 未报告用户配额，告警原因未闭合，不据此声称整盘满或配额已修复。只读证据在主工作区 `.omx/omp-recovery/pm/reports/T16-node3-startup-readonly-2026-10-16.json`。完整 R8 的 Notebook/Wrapper、子任务/其余科学工具、真实 provider/OAuth、人工 UI/Finder 仍待验证；T11 opaque、默认 RPC 开关和 T18 门槛保持原状态。
