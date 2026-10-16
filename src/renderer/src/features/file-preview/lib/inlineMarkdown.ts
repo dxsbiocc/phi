@@ -1,6 +1,8 @@
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
+import { markdownInlineDecorations } from './markdownInlineDecorations'
+import { markdownBlockDecorations, markdownBlockTheme } from './markdownBlockDecorations'
 
 type MarkdownBlock = { from: number; to: number; name: string }
 type RegisterWidget = (dom: HTMLElement, text: string) => void
@@ -112,25 +114,31 @@ class MarkdownBlockWidget extends WidgetType {
     readonly source: string,
     readonly references: string,
     readonly register: RegisterWidget,
-    readonly unregister: (dom: HTMLElement) => void
+    readonly unregister: (dom: HTMLElement) => void,
+    readonly inline = false
   ) {
     super()
   }
 
   eq(other: MarkdownBlockWidget): boolean {
-    return this.source === other.source && this.references === other.references
+    return (
+      this.source === other.source &&
+      this.references === other.references &&
+      this.inline === other.inline
+    )
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const dom = view.dom.ownerDocument.createElement('div')
-    dom.className = 'phi-inline-markdown-block'
+    const dom: HTMLElement = view.dom.ownerDocument.createElement(this.inline ? 'span' : 'div')
+    dom.className = this.inline ? 'phi-inline-markdown-fragment' : 'phi-inline-markdown-block'
     dom.dataset.sourcePreview = this.source
     dom.addEventListener('mousedown', (event) => {
       if (
         event.button !== 0 ||
         view.state.readOnly ||
         (event.target instanceof Element &&
-          event.target.closest('a,button,input,textarea,select,[role="button"]'))
+          (event.target.closest('button,input,textarea,select,[role="button"]') ||
+            ((event.metaKey || event.ctrlKey) && event.target.closest('a'))))
       )
         return
       const offset = Math.min(this.source.length, clickedOffset(dom, this.source, event))
@@ -177,8 +185,40 @@ export function inlineMarkdownExtension(
           }).range(block.from, block.to)
         ]
       }
+      const inline = [
+        ...markdownInlineDecorations(state, block.from, block.to, focused),
+        ...markdownBlockDecorations(state, block.from, block.to, focused)
+      ]
+      syntaxTree(state).iterate({
+        from: block.from,
+        to: block.to,
+        enter(node) {
+          if (node.name !== 'Image') return
+          if (node.from < block.from || node.to > block.to) return false
+          if (
+            !markdownBlockIsSelected(
+              { from: node.from, to: node.to, name: node.name },
+              state,
+              focused
+            )
+          )
+            inline.push(
+              Decoration.replace({
+                widget: new MarkdownBlockWidget(
+                  { from: node.from, to: node.to, name: node.name },
+                  state.sliceDoc(node.from, node.to),
+                  references,
+                  register,
+                  unregister,
+                  true
+                )
+              }).range(node.from, node.to)
+            )
+          return false
+        }
+      })
       const heading = /^(?:ATX|Setext)Heading([1-6])$/.exec(block.name)
-      if (!heading) return []
+      if (!heading) return inline
       const line = state.doc.lineAt(block.from)
       const headingDecorations = [
         Decoration.line({ class: `phi-inline-heading phi-inline-heading-${heading[1]}` }).range(
@@ -186,16 +226,33 @@ export function inlineMarkdownExtension(
         )
       ]
       const prefix = /^ {0,3}#{1,6}[ \t]+/.exec(line.text)
-      if (
-        prefix &&
-        state.selection.ranges.every((range) => range.empty) &&
-        state.selection.main.from >= line.from + prefix[0].length
-      ) {
+      const syntaxSelected = (from: number, to: number): boolean =>
+        state.selection.ranges.some((range) =>
+          range.empty
+            ? focused && range.from >= from && range.from < to
+            : range.from < to && range.to > from
+        )
+      if (prefix && !syntaxSelected(line.from, line.from + prefix[0].length)) {
         headingDecorations.push(
           Decoration.replace({ inclusive: false }).range(line.from, line.from + prefix[0].length)
         )
       }
-      return headingDecorations
+      if (block.name.startsWith('Setext')) {
+        const node = syntaxTree(state)
+          .topNode.getChildren(block.name)
+          .find((node) => node.from === block.from)
+        const marker = node?.getChild('HeaderMark')
+        if (marker && !syntaxSelected(marker.from, marker.to)) {
+          const underline = state.doc.lineAt(marker.from)
+          headingDecorations.push(
+            Decoration.replace({ block: true, inclusive: true }).range(
+              underline.from,
+              Math.min(state.doc.length, underline.to + 1)
+            )
+          )
+        }
+      }
+      return [...headingDecorations, ...inline]
     })
     return Decoration.set(decorations, true)
   }
@@ -250,6 +307,7 @@ export function inlineMarkdownExtension(
   }
   return [
     field,
+    markdownBlockTheme,
     EditorView.domEventHandlers({
       focus: (_event, view) => {
         queueEffect(view, 'focus', true)
@@ -291,5 +349,20 @@ export const inlineMarkdownTheme = EditorView.theme({
   '.phi-inline-heading-2': { fontSize: '1rem', lineHeight: '1.5' },
   '.phi-inline-heading-3': { fontSize: '0.875rem', lineHeight: '1.57' },
   '.phi-inline-heading-4': { fontSize: '1rem' },
-  '.phi-inline-heading-5, .phi-inline-heading-6': { fontSize: '1em' }
+  '.phi-inline-heading-5, .phi-inline-heading-6': { fontSize: '1em' },
+  '.phi-inline-strong': { fontWeight: '700' },
+  '.phi-inline-emphasis': { fontStyle: 'italic' },
+  '.phi-inline-strike': { textDecoration: 'line-through' },
+  '.phi-inline-code': {
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.9em',
+    padding: '0.1em 0.3em',
+    borderRadius: '4px'
+  },
+  '.phi-inline-link': { textDecoration: 'underline' },
+  '.phi-inline-markdown-fragment [data-phi-markdown-rendered], .phi-inline-markdown-fragment [data-phi-markdown-rendered] > div, .phi-inline-markdown-fragment p':
+    {
+      display: 'inline',
+      margin: '0 !important'
+    }
 })

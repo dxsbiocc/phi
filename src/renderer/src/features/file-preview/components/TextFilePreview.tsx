@@ -10,7 +10,8 @@ import {
   DialogTitle,
   CircularProgress,
   IconButton,
-  TextField,
+  InputBase,
+  Paper,
   ToggleButton,
   Tooltip,
   Typography
@@ -205,6 +206,123 @@ export function TextFilePreview({
     </Box>
   )
 
+  const searchPanel = searchOpen && (
+    <Paper
+      elevation={3}
+      role="search"
+      aria-label="文件内搜索"
+      data-phi-text-file-search="true"
+      sx={{
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 3,
+        width: 360,
+        maxWidth: 'calc(100% - 16px)',
+        boxSizing: 'border-box',
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1.5,
+        '&:focus-within': { borderColor: 'primary.main' },
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.25,
+        px: 0.75,
+        py: 0.5,
+        flexWrap: 'wrap'
+      }}
+    >
+      <InputBase
+        placeholder="在源码中搜索"
+        value={query}
+        inputRef={searchInput}
+        inputProps={{ 'aria-label': '搜索文本', spellCheck: false }}
+        onChange={(event) => {
+          const value = event.target.value
+          setQuery(value)
+          const matches = findTextFileMatches(searchContent, value, caseSensitive).matches
+          selectMatch(matches, matches.length ? 0 : -1)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            navigate(event.shiftKey ? -1 : 1)
+          }
+        }}
+        sx={{ flex: '1 1 0', minWidth: 0, height: 28, px: 0.5, fontSize: '0.8125rem' }}
+      />
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        aria-live="polite"
+        data-phi-search-count="true"
+        sx={{ minWidth: 34, textAlign: 'center', whiteSpace: 'nowrap' }}
+      >
+        {!query
+          ? '输入关键词'
+          : search.matches.length
+            ? `${currentMatch + 1} / ${search.matches.length}${search.limited ? '+' : ''}`
+            : '无匹配'}
+      </Typography>
+      <Tooltip title="区分大小写">
+        <ToggleButton
+          size="small"
+          value="case"
+          selected={caseSensitive}
+          aria-label="区分大小写"
+          onChange={() => {
+            const value = !caseSensitive
+            setCaseSensitive(value)
+            const matches = findTextFileMatches(searchContent, query, value).matches
+            selectMatch(matches, matches.length ? 0 : -1)
+          }}
+          sx={{
+            p: 0.25,
+            minWidth: 26,
+            height: 26,
+            border: 0,
+            borderRadius: 1,
+            fontSize: '0.75rem'
+          }}
+        >
+          Aa
+        </ToggleButton>
+      </Tooltip>
+      <IconButton
+        size="small"
+        sx={{ p: 0.5, width: 26, height: 26 }}
+        aria-label="上一个匹配"
+        disabled={!search.matches.length}
+        onClick={() => navigate(-1)}
+      >
+        <ChevronUp sx={{ fontSize: 17 }} />
+      </IconButton>
+      <IconButton
+        size="small"
+        sx={{ p: 0.5, width: 26, height: 26 }}
+        aria-label="下一个匹配"
+        disabled={!search.matches.length}
+        onClick={() => navigate(1)}
+      >
+        <ChevronDown sx={{ fontSize: 17 }} />
+      </IconButton>
+      <IconButton
+        size="small"
+        sx={{ p: 0.5, width: 26, height: 26 }}
+        aria-label="关闭搜索"
+        onClick={closeSearch}
+      >
+        <Close sx={{ fontSize: 17 }} />
+      </IconButton>
+      {(file.truncated || search.limited) && (
+        <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
+          {file.truncated ? '仅搜索已加载的文件片段。' : ''}
+          {search.limited ? '匹配过多，请缩小搜索范围。' : ''}
+        </Typography>
+      )}
+    </Paper>
+  )
+
   return (
     <Box
       ref={container}
@@ -246,97 +364,6 @@ export function TextFilePreview({
         : !actionsHost.inHeader
           ? actions
           : null}
-      {searchOpen && (
-        <Box
-          data-phi-text-file-search="true"
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.5,
-            px: 1.5,
-            py: 0.75,
-            borderBottom: 1,
-            borderColor: 'divider',
-            flexWrap: 'wrap'
-          }}
-        >
-          <TextField
-            size="small"
-            placeholder="在源码中搜索"
-            value={query}
-            inputRef={searchInput}
-            slotProps={{ htmlInput: { 'aria-label': '搜索文本', spellCheck: false } }}
-            onChange={(event) => {
-              const value = event.target.value
-              setQuery(value)
-              const matches = findTextFileMatches(searchContent, value, caseSensitive).matches
-              selectMatch(matches, matches.length ? 0 : -1)
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                event.preventDefault()
-                navigate(event.shiftKey ? -1 : 1)
-              }
-            }}
-            sx={{ flex: '1 1 150px', minWidth: 100 }}
-          />
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            aria-live="polite"
-            data-phi-search-count="true"
-            sx={{ minWidth: 58, textAlign: 'center' }}
-          >
-            {!query
-              ? '输入关键词'
-              : search.matches.length
-                ? `${currentMatch + 1} / ${search.matches.length}${search.limited ? '+' : ''}`
-                : '无匹配'}
-          </Typography>
-          <Tooltip title="区分大小写">
-            <ToggleButton
-              size="small"
-              value="case"
-              selected={caseSensitive}
-              aria-label="区分大小写"
-              onChange={() => {
-                const value = !caseSensitive
-                setCaseSensitive(value)
-                const matches = findTextFileMatches(searchContent, query, value).matches
-                selectMatch(matches, matches.length ? 0 : -1)
-              }}
-              sx={{ px: 0.8, minWidth: 30 }}
-            >
-              Aa
-            </ToggleButton>
-          </Tooltip>
-          <IconButton
-            size="small"
-            aria-label="上一个匹配"
-            disabled={!search.matches.length}
-            onClick={() => navigate(-1)}
-          >
-            <ChevronUp sx={{ fontSize: 17 }} />
-          </IconButton>
-          <IconButton
-            size="small"
-            aria-label="下一个匹配"
-            disabled={!search.matches.length}
-            onClick={() => navigate(1)}
-          >
-            <ChevronDown sx={{ fontSize: 17 }} />
-          </IconButton>
-          <IconButton size="small" aria-label="关闭搜索" onClick={closeSearch}>
-            <Close sx={{ fontSize: 17 }} />
-          </IconButton>
-          {(file.truncated || search.limited) && (
-            <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
-              {file.truncated ? '仅搜索已加载的文件片段。' : ''}
-              {search.limited ? '匹配过多，请缩小搜索范围。' : ''}
-            </Typography>
-          )}
-        </Box>
-      )}
       {draft?.error && (
         <Alert
           severity="error"
@@ -365,8 +392,16 @@ export function TextFilePreview({
       {sourceVisible ? (
         <Box
           ref={sourceContainer}
-          sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          sx={{
+            position: 'relative',
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column'
+          }}
         >
+          {searchPanel}
           <SourceTextEditor
             path={file.path}
             value={content}

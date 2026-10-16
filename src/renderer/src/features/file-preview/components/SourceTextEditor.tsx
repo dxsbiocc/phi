@@ -180,7 +180,22 @@ export function SourceTextEditor(props: SourceTextEditorProps): React.JSX.Elemen
           '&.cm-editor .phi-inline-heading-3': {
             fontSize: theme.typography.subtitle2.fontSize ?? '0.875rem',
             lineHeight: String(theme.typography.subtitle2.lineHeight ?? 1.57)
-          }
+          },
+          '&.cm-editor .phi-inline-code': {
+            backgroundColor: alpha(theme.palette.primary.main, 0.06),
+            color: theme.palette.text.primary
+          },
+          '&.cm-editor .phi-inline-link': {
+            color: theme.palette.primary.main
+          },
+          '&.cm-editor .phi-inline-quote-line': {
+            color: theme.palette.text.secondary
+          },
+          '&.cm-editor .phi-inline-fenced-line, &.cm-editor .cm-line:has(.phi-inline-fenced-text)':
+            {
+              backgroundColor: alpha(theme.palette.primary.main, 0.04),
+              fontSize: '0.85rem'
+            }
         },
         { dark: theme.palette.mode === 'dark' }
       )
