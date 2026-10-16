@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, stat, symlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, link, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import {
   deriveProductionChildBinding,
   createProductionChildConfig,
   publishProductionChildConfig,
-  assertPreparedProductionChildConfig
+  assertPreparedProductionChildConfig,
+  type CreateProductionChildConfigOptions
 } from '../src/main/agent/engine/rpc/subagents/production-child-config'
 import { loadRpcChildRuntimeConfig } from '../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
@@ -15,6 +16,7 @@ import type { RpcRuntimePreparationContext } from '../src/main/agent/engine/rpc/
 import { prepareRemoteSessionStorageFixture } from './helpers/remoteSessionStorageFixture'
 import { productionChildOptions } from './helpers/productionChildNodeFixture'
 import { definition } from './helpers/rpcAgentDefinitionFixture'
+import { shellQuote } from '../src/main/agent/wrappers/remote-ssh-session'
 
 test('child deployment binding cross-checks actual selected profile/project configuration, never alias-only identity', () => {
   const cacheKey = JSON.stringify([
@@ -138,12 +140,22 @@ test('child model fallback and selecting a different available model both reject
     )
 })
 
-async function publication(t: test.TestContext): Promise<{
+async function publication(
+  t: test.TestContext,
+  overrides: Partial<CreateProductionChildConfigOptions> = {}
+): Promise<{
   prepared: Awaited<ReturnType<typeof createProductionChildConfig>>
   context: RpcRuntimePreparationContext
   f: Awaited<ReturnType<typeof prepareRemoteSessionStorageFixture>>
 }> {
   const f = await prepareRemoteSessionStorageFixture(t)
+  const upload = f.host.transfer!.uploadFile.bind(f.host.transfer)
+  f.host.transfer!.uploadFile = (source, destination, options) =>
+    upload(source, destination, {
+      ...options,
+      agentDir: join(f.root, 'local-state'),
+      hostKey: f.root
+    })
   const nonce = '12345678-1234-4234-8234-123456789012'
   const identity = {
     nonce,
@@ -154,6 +166,7 @@ async function publication(t: test.TestContext): Promise<{
   }
   const prepared = await createProductionChildConfig(
     productionChildOptions({
+      ...overrides,
       identity,
       binding: {
         serverId: f.scope.hostProfileId,
@@ -194,7 +207,7 @@ async function publication(t: test.TestContext): Promise<{
     homePath,
     agentDir,
     storage: f.preparation,
-    signal: new AbortController().signal
+    signal: t.signal
   }
   return { f, prepared, context }
 }
@@ -233,6 +246,279 @@ test(
       publishProductionChildConfig({ prepared, context, host: f.host }),
       /Cannot publish/
     )
+  }
+)
+
+test(
+  'child publication keeps metadata round trips bounded across four files and full profile selection',
+  { timeout: 30000 },
+  async (t) => {
+    for (const agents of [1, 16]) {
+      const { f, prepared, context } = await publication(t, {
+        allowBackground: true,
+        definitions: Array.from({ length: agents }, (_, index) =>
+          definition({ name: 'Inspector' + index, tools: ['read'], skills: [] })
+        )
+      })
+      let runs = 0
+      const run = f.host.exec.run.bind(f.host.exec)
+      f.host.exec.run = (command, options) => {
+        runs++
+        assert.equal(options.timeoutMs, 30000)
+        assert.equal(options.maxOutputBytes, 1024)
+        return run(command, options)
+      }
+      await publishProductionChildConfig({ prepared, context, host: f.host })
+      t.diagnostic(`${prepared.config.files.length + 1} files: ${runs} metadata round trips`)
+      assert.ok(runs <= 3, 'per-file metadata jobs must not consume the RPC startup budget')
+      assert.equal(prepared.config.profiles.length, agents * 2)
+      assert.equal(
+        (await stat(join(context.generationDirectory, 'child-runtime.json'))).mode & 0o777,
+        0o600
+      )
+    }
+  }
+)
+
+test(
+  'child publication verifies all artifacts before exposing the sidecar',
+  { timeout: 30000 },
+  async (t) => {
+    const { f, prepared, context } = await publication(t, { allowBackground: true })
+    const upload = f.host.transfer!.uploadFile.bind(f.host.transfer)
+    const destinations: string[] = []
+    let damaged: string | undefined
+    let staging: string | undefined
+    f.host.transfer!.uploadFile = async (source, destination, options) => {
+      staging = dirname(source)
+      destinations.push(destination)
+      await upload(source, destination, options)
+      if (destinations.length === 2) {
+        damaged = destinations[0]
+        await writeFile(damaged, 'TAMPERED_AFTER_EARLIER_UPLOAD')
+      }
+    }
+    await assert.rejects(
+      publishProductionChildConfig({ prepared, context, host: f.host }),
+      /Cannot publish/
+    )
+    assert.ok(damaged, 'the corruption must occur after the real second upload')
+    assert.ok(!destinations.some((path) => path.endsWith('/child-runtime.json')))
+    await assert.rejects(readFile(join(context.generationDirectory, 'child-runtime.json')), {
+      code: 'ENOENT'
+    })
+    assert.ok(staging)
+    await assert.rejects(stat(staging), { code: 'ENOENT' })
+  }
+)
+
+test(
+  'child publication cannot overwrite a sidecar appearing after the initial preflight',
+  { timeout: 30000 },
+  async (t) => {
+    const { f, prepared, context } = await publication(t, { allowBackground: true })
+    const sidecar = join(context.generationDirectory, 'child-runtime.json')
+    const upload = f.host.transfer!.uploadFile.bind(f.host.transfer)
+    let calls = 0,
+      injected = false
+    f.host.transfer!.uploadFile = async (...args) => {
+      calls++
+      await upload(...args)
+      if (calls === 2) {
+        await writeFile(sidecar, 'EXISTING_SIDECAR', { mode: 0o600, flag: 'wx' })
+        injected = true
+      }
+    }
+    await assert.rejects(
+      publishProductionChildConfig({
+        prepared,
+        context,
+        host: f.host,
+        uploadOptions: { reuseVerifiedDestination: true }
+      }),
+      /Cannot publish/
+    )
+    assert.ok(injected, 'the real preflight must finish before the sidecar appears')
+    assert.equal(await readFile(sidecar, 'utf8'), 'EXISTING_SIDECAR')
+    assert.equal(calls, prepared.config.files.length)
+  }
+)
+
+test(
+  'child publication rejects changed artifact kind, links or digest before sidecar publication',
+  { timeout: 30000 },
+  async (t) => {
+    for (const fault of ['symlink', 'hardlink', 'digest'])
+      await t.test(fault, async (t) => {
+        const { f, prepared, context } = await publication(t, { allowBackground: true })
+        const upload = f.host.transfer!.uploadFile.bind(f.host.transfer)
+        const destinations: string[] = []
+        let injected = false
+        f.host.transfer!.uploadFile = async (source, destination, options) => {
+          assert.equal(
+            options?.expectedSha256,
+            createHash('sha256')
+              .update(await readFile(source))
+              .digest('hex')
+          )
+          destinations.push(destination)
+          await upload(source, destination, options)
+          if (destinations.length !== 1) return
+          if (fault === 'symlink') {
+            await rm(destination)
+            await symlink(f.scope.projectRoot, destination)
+          } else if (fault === 'hardlink') await link(destination, join(f.root, 'extra-link'))
+          else await writeFile(destination, 'TAMPERED_ARTIFACT')
+          injected = true
+        }
+        await assert.rejects(
+          publishProductionChildConfig({ prepared, context, host: f.host }),
+          /Cannot publish/
+        )
+        assert.ok(injected, 'the real upload must finish before the fault is introduced')
+        assert.ok(!destinations.some((path) => path.endsWith('/child-runtime.json')))
+      })
+  }
+)
+
+test(
+  'child publication stops at the original cancellation or lease boundary without a later upload',
+  { timeout: 30000 },
+  async (t) => {
+    for (const boundary of ['before', 'upload', 'verified', 'lease'])
+      await t.test(boundary, async (t) => {
+        const { f, prepared, context } = await publication(t, { allowBackground: true })
+        const controller = new AbortController()
+        let reason: unknown = new Error('OWNED_PUBLICATION_CANCELLED')
+        let calls = 0,
+          verified = false
+        const upload = f.host.transfer!.uploadFile.bind(f.host.transfer)
+        f.host.transfer!.uploadFile = async (...args) => {
+          calls++
+          await upload(...args)
+          if (calls === 1 && boundary === 'upload') controller.abort(reason)
+          if (calls === 1 && boundary === 'lease') {
+            await f.preparation.lease.release()
+            reason = f.preparation.lease.signal.reason
+          }
+        }
+        const lastArtifact = join(context.agentDir, prepared.config.files.at(-1)!.path)
+        const run = f.host.exec.run.bind(f.host.exec)
+        f.host.exec.run = async (command, options) => {
+          const result = await run(command, options)
+          if (
+            boundary === 'verified' &&
+            command[2].includes(`private_file ${shellQuote(lastArtifact)}`)
+          ) {
+            verified = true
+            controller.abort(reason)
+          }
+          return result
+        }
+        if (boundary === 'before') controller.abort(reason)
+        await assert.rejects(
+          publishProductionChildConfig({
+            prepared,
+            context: { ...context, signal: AbortSignal.any([context.signal, controller.signal]) },
+            host: f.host
+          }),
+          (error) => error === reason
+        )
+        assert.equal(
+          calls,
+          boundary === 'before' ? 0 : boundary === 'verified' ? prepared.config.files.length : 1
+        )
+        assert.equal(verified, boundary === 'verified')
+        await assert.rejects(readFile(join(context.generationDirectory, 'child-runtime.json')), {
+          code: 'ENOENT'
+        })
+      })
+  }
+)
+
+test(
+  'child publication retains metadata result guards before the ready sidecar',
+  { timeout: 30000 },
+  async (t) => {
+    for (const fault of ['code', 'truncated', 'terminated'])
+      await t.test(fault, async (t) => {
+        const { f, prepared, context } = await publication(t)
+        let reached = false
+        const run = f.host.exec.run.bind(f.host.exec)
+        f.host.exec.run = async (command, options) => {
+          const result = await run(command, options)
+          if (!command[2].includes("fail 'Private child artifact was corrupted'")) return result
+          reached = true
+          return {
+            ...result,
+            ...(fault === 'code'
+              ? { code: 1 }
+              : fault === 'truncated'
+                ? { truncated: true }
+                : { terminationReason: 'cancelled' as const })
+          }
+        }
+        await assert.rejects(
+          publishProductionChildConfig({ prepared, context, host: f.host }),
+          /Cannot publish/
+        )
+        assert.ok(reached, 'the real resource verification must complete before the result fault')
+        await assert.rejects(readFile(join(context.generationDirectory, 'child-runtime.json')), {
+          code: 'ENOENT'
+        })
+      })
+  }
+)
+
+test(
+  'child publication chunks large resource inventories within the original command and output budgets',
+  { timeout: 30000 },
+  async (t) => {
+    const skills = Array.from({ length: 128 }, (_, index) => ({
+      name: 'method-' + index,
+      description: 'Selected method',
+      markdown: '# Unique method ' + index
+    }))
+    const { f, prepared, context } = await publication(t, {
+      definitions: [
+        definition({ name: 'Reader', tools: ['read'], skills: skills.map((skill) => skill.name) })
+      ],
+      availableTools: [{ name: 'read', site: 'native' }],
+      availableSkills: skills.map((skill) => skill.name),
+      resources: { hostTools: [], skills }
+    })
+    let calls = 0
+    const run = f.host.exec.run.bind(f.host.exec)
+    f.host.exec.run = (command, options) => {
+      calls++
+      assert.ok(Buffer.byteLength(command[2]) <= 32 * 1024)
+      assert.equal(options.timeoutMs, 30000)
+      assert.equal(options.maxOutputBytes, 1024)
+      return run(command, options)
+    }
+    const destinations: string[] = []
+    f.host.transfer!.uploadFile = async (source, destination, options) => {
+      assert.equal(
+        options?.expectedSha256,
+        createHash('sha256')
+          .update(await readFile(source))
+          .digest('hex')
+      )
+      destinations.push(destination)
+      await copyFile(source, destination)
+    }
+    await publishProductionChildConfig({ prepared, context, host: f.host })
+    assert.ok(calls > 3, 'the valid inventory must actually exercise command chunking')
+    assert.equal(destinations.length, prepared.config.files.length + 1)
+    assert.equal(destinations.at(-1), join(context.generationDirectory, 'child-runtime.json'))
+    for (const file of prepared.config.files)
+      assert.equal(
+        createHash('sha256')
+          .update(await readFile(join(context.agentDir, file.path)))
+          .digest('hex'),
+        file.sha256
+      )
+    t.diagnostic(`${destinations.length} files: ${calls} bounded metadata round trips`)
   }
 )
 
