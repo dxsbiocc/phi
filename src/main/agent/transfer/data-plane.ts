@@ -41,6 +41,10 @@ export interface TransferDataPlaneSession {
   hashPartial(chunkSize: number, signal?: AbortSignal): Promise<string>
   publish(): Promise<void>
   discard(): Promise<void>
+  /** Release this transfer's owned resources before terminal state/queue release. */
+  close?(): Promise<void>
+  /** Optional positive proof for adapters whose local transport can close ambiguously. */
+  isCloseConfirmed?(): boolean
 }
 
 export interface TransferDataPlane {

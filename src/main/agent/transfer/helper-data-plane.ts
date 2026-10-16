@@ -127,7 +127,9 @@ export class HelperTransferDataPlane implements TransferDataPlane {
     await connection.client.close()
     this.updateStatus({ state: 'available' })
     if (request.direction === 'upload') {
-      return new HelperUploadSession(request, this.options, () => this.openNegotiatedConnection())
+      return new HelperUploadSession(request, this.options, (onOpened) =>
+        this.openNegotiatedConnection(onOpened)
+      )
     }
     if (request.direction === 'download') {
       return new HelperDownloadSession(request, this.options, () => this.openNegotiatedConnection())
@@ -146,7 +148,9 @@ export class HelperTransferDataPlane implements TransferDataPlane {
     return this.options.fallback.open(request)
   }
 
-  private async openNegotiatedConnection(): Promise<NegotiatedHelperConnection> {
+  private async openNegotiatedConnection(
+    onOpened?: (client: HelperDataPlaneProtocolClient) => void
+  ): Promise<NegotiatedHelperConnection> {
     let process: RemoteStdioProcess
     try {
       process = await this.options.connect()
@@ -157,6 +161,7 @@ export class HelperTransferDataPlane implements TransferDataPlane {
       requestTimeoutMs: this.options.controlTimeoutMs
     })
     try {
+      onOpened?.(client)
       const negotiated = await client.request<NegotiationResult>('protocol.negotiate', {
         minVersion: DATA_PLANE_PROTOCOL_VERSION,
         maxVersion: DATA_PLANE_PROTOCOL_VERSION
@@ -169,7 +174,8 @@ export class HelperTransferDataPlane implements TransferDataPlane {
         maxWindow: negotiated.capabilities.transferDataPlane!.maxWindow
       }
     } catch (error) {
-      await client.close().catch(() => undefined)
+      if (onOpened) await client.drain().catch(() => undefined)
+      else await client.close().catch(() => undefined)
       throw error
     }
   }

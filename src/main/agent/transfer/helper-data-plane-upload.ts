@@ -122,11 +122,23 @@ export class HelperUploadSession implements TransferDataPlaneSession {
   readonly manifestLocator: string
   private sourceIdentity?: TransferSourceIdentity
   private partialHash?: string
+  private signal?: AbortSignal
+  private metadata?: Promise<NegotiatedHelperConnection>
+  private cleanupMetadata?: Promise<NegotiatedHelperConnection>
+  private readonly ownedMetadata = new Set<HelperDataPlaneProtocolClient>()
+  private metadataFailure?: Readonly<{ reason: unknown; cancelled: boolean }>
+  private closing = false
+  private drainSettled = false
+  private cleanupClosing = false
+  private closeFailed?: Readonly<{ reason: unknown }>
+  private closePromise?: Promise<void>
 
   constructor(
     private readonly request: TransferRequest,
     private readonly options: HelperTransferDataPlaneOptions,
-    private readonly connect: () => Promise<NegotiatedHelperConnection>
+    private readonly connect: (
+      onOpened?: (client: HelperDataPlaneProtocolClient) => void
+    ) => Promise<NegotiatedHelperConnection>
   ) {
     if (
       request.source.kind !== 'local-path' ||
@@ -152,6 +164,7 @@ export class HelperUploadSession implements TransferDataPlaneSession {
 
   async preflight(signal: AbortSignal): Promise<TransferPreflight> {
     if (signal.aborted) throw transferAbortError()
+    this.signal ??= signal
     const identity = await localSourceIdentity(this.sourcePath)
     const [inspection, destination] = await Promise.all([
       this.rpc<TransferInspection>('transfer.inspect', { path: this.paths.partial }, signal),
@@ -206,7 +219,13 @@ export class HelperUploadSession implements TransferDataPlaneSession {
   }
 
   async inspectPartial(): Promise<PartialInspection> {
-    const inspection = await this.inspect(this.paths.partial)
+    // Retention bookkeeping is an explicit, read-only cleanup operation after pause/cancel.
+    const inspection = await this.rpc<TransferInspection>(
+      'transfer.inspect',
+      { path: this.paths.partial },
+      undefined,
+      true
+    )
     return {
       kind: inspection.kind,
       size: inspection.size,
@@ -435,8 +454,38 @@ export class HelperUploadSession implements TransferDataPlaneSession {
   }
 
   async discard(): Promise<void> {
-    await this.rpc('transfer.remove', { path: this.paths.partial })
-    await this.rpc('transfer.remove', { path: this.paths.manifest })
+    await this.rpc('transfer.remove', { path: this.paths.partial }, undefined, true)
+    await this.rpc('transfer.remove', { path: this.paths.manifest }, undefined, true)
+  }
+
+  close(): Promise<void> {
+    this.closing = true
+    this.cleanupClosing = true
+    this.closePromise ??= Promise.resolve().then(async () => {
+      // Publish the drain promise before touching an opening/late client's close callbacks.
+      const started = [...this.ownedMetadata].map((client) => client.drain())
+      // Observe rejection immediately while an initialization is still settling.
+      const early = Promise.allSettled(started)
+      await Promise.allSettled([this.metadata, this.cleanupMetadata])
+      const outcomes = [
+        ...(await early),
+        ...(await Promise.allSettled([...this.ownedMetadata].map((client) => client.drain())))
+      ]
+      this.drainSettled = true
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          this.closeFailed = { reason: outcome.reason }
+          throw outcome.reason
+        }
+      }
+    })
+    return this.closePromise
+  }
+
+  isCloseConfirmed(): boolean {
+    return (
+      this.drainSettled && [...this.ownedMetadata].every((client) => client.isRemoteExitConfirmed())
+    )
   }
 
   private inspect(path: string): Promise<TransferInspection> {
@@ -446,15 +495,104 @@ export class HelperUploadSession implements TransferDataPlaneSession {
   private async rpc<T = unknown>(
     method: string,
     params: Readonly<Record<string, unknown>>,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    cleanup = false
   ): Promise<T> {
-    const { client } = await this.connect()
+    const effectiveSignal = cleanup ? undefined : (signal ?? this.signal)
+    if (!cleanup) this.assertNormal(effectiveSignal)
+    const { client } = await this.metadataConnection(cleanup)
+    if (!cleanup) this.assertNormal(effectiveSignal)
+    else if (this.cleanupClosing || this.closeFailed) throw transferAbortError()
     try {
-      return await client.request<T>(method, params, { signal })
+      return await client.request<T>(method, params, { signal: effectiveSignal })
     } catch (error) {
+      this.recordMetadataFailure(error)
       throw mappedHelperError(error)
-    } finally {
-      await client.close().catch(() => undefined)
     }
+  }
+
+  private assertNormal(signal?: AbortSignal): void {
+    if (this.closing || signal?.aborted) throw transferAbortError()
+    if (this.metadataFailure) throw this.metadataFailure.reason
+  }
+
+  private recordMetadataFailure(error: unknown, opening = false): void {
+    if (this.metadataFailure) return
+    // A domain rejection does not imply a broken stream; cleanup can still use that client.
+    if (!opening && error instanceof HelperProtocolError && error.domainCode !== undefined) return
+    this.metadataFailure = {
+      reason: error,
+      cancelled:
+        (error instanceof Error && error.name === 'AbortError') ||
+        (error instanceof TransferError && error.code === 'ABORTED')
+    }
+  }
+
+  private async metadataConnection(cleanup: boolean): Promise<NegotiatedHelperConnection> {
+    if (this.closeFailed) throw this.closeFailed.reason
+    if (this.metadataFailure && !this.metadataFailure.cancelled) throw this.metadataFailure.reason
+    if (
+      cleanup &&
+      (this.cleanupMetadata ||
+        this.closing ||
+        this.metadataFailure ||
+        (!this.metadata && this.signal?.aborted))
+    ) {
+      if (this.cleanupMetadata && !this.cleanupClosing) return this.cleanupMetadata
+      if (!this.signal?.aborted) throw transferAbortError()
+      // The old writer must exit before even inspecting/removing its sidecars. Each explicit
+      // cleanup phase (paused retention, then a later discard) owns a separately drained client.
+      await this.close()
+      if (this.cleanupMetadata && !this.cleanupClosing) return this.cleanupMetadata
+      this.closePromise = undefined
+      this.drainSettled = false
+      this.cleanupClosing = false
+      this.cleanupMetadata = Promise.resolve().then(async () => {
+        const connection = await this.connect((client) => {
+          this.ownedMetadata.add(client)
+          if (this.cleanupClosing) throw transferAbortError()
+        })
+        this.ownedMetadata.add(connection.client)
+        if (this.cleanupClosing) {
+          await connection.client.drain()
+          throw transferAbortError()
+        }
+        return connection
+      })
+      return this.cleanupMetadata
+    }
+    this.metadata ??= Promise.resolve()
+      .then(async () => {
+        let cancelled: (() => void) | undefined
+        try {
+          const connection = await this.connect((client) => {
+            this.ownedMetadata.add(client)
+            if (this.closing) throw transferAbortError()
+            cancelled = () => {
+              this.recordMetadataFailure(transferAbortError())
+              void client.close().catch(() => undefined)
+            }
+            this.signal?.addEventListener('abort', cancelled, { once: true })
+            if (this.signal?.aborted) {
+              cancelled()
+              throw transferAbortError()
+            }
+          })
+          this.ownedMetadata.add(connection.client)
+          if (this.closing) {
+            await connection.client.drain()
+            throw transferAbortError()
+          }
+          return connection
+        } finally {
+          if (cancelled) this.signal?.removeEventListener('abort', cancelled)
+        }
+      })
+      .catch((error: unknown) => {
+        this.recordMetadataFailure(error, true)
+        if (this.metadataFailure?.cancelled && this.signal?.aborted) throw transferAbortError()
+        throw error
+      })
+    return this.metadata
   }
 }

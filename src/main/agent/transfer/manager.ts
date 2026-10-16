@@ -1,5 +1,5 @@
 import type { TransferDataPlane, TransferDataPlaneSession } from './data-plane'
-import { asTransferError, TransferError } from './errors'
+import { asTransferError, safeTransferText, TransferError } from './errors'
 import { sameSourceIdentity, TRANSFER_MANIFEST_VERSION, type TransferManifest } from './manifest'
 import { FileTransferRegistry, type TransferRegistryStatus } from './registry'
 import { transitionTransferState } from './state-machine'
@@ -41,7 +41,14 @@ type Job = {
   discardPartial: boolean
   retentionEstablished: boolean
   retentionCreatedAt: number
+  cancelFinishing?: Promise<void>
+  quarantined?: boolean
 }
+
+type RunOutcome =
+  | Readonly<{ state: 'saved'; result: TransferResult }>
+  | Readonly<{ state: 'paused' }>
+  | Readonly<{ state: 'cancelled' | 'failed'; error: TransferError }>
 
 export type FileTransferManagerOptions = Readonly<{
   registry: FileTransferRegistry
@@ -71,6 +78,19 @@ function validateRequest(request: TransferRequest): void {
   if (request.expectedSha256 !== undefined && !/^[a-f0-9]{64}$/.test(request.expectedSha256)) {
     throw new TransferError('INVALID_REQUEST', 'Expected SHA-256 is invalid')
   }
+}
+
+function withCleanupFailure(primary: TransferError, secondary: unknown): TransferError {
+  const first = new TransferError(primary.code, primary.message)
+  const cleanup = asTransferError(secondary)
+  const safeCleanup = new TransferError(cleanup.code, cleanup.message)
+  primary.message = `${safeTransferText(primary.message, 640)}; cleanup unconfirmed: ${safeTransferText(safeCleanup, 320)}`
+  Object.defineProperty(primary, 'cause', {
+    value: new AggregateError([first, safeCleanup], 'Transfer cleanup unconfirmed'),
+    configurable: true,
+    writable: true
+  })
+  return primary
 }
 
 function manifestMatchesRequest(
@@ -105,6 +125,7 @@ export class FileTransferManager {
   private readonly active = new Set<string>()
   private readonly activeHosts = new Map<string, number>()
   private readonly activeDestinations = new Map<string, number>()
+  private readonly quarantinedHosts = new Set<string>()
   private scheduling = false
 
   constructor(options: FileTransferManagerOptions) {
@@ -171,7 +192,7 @@ export class FileTransferManager {
 
   resume(transferId: string): void {
     const job = this.jobs.get(transferId)
-    if (job === undefined || job.state !== 'paused') {
+    if (job === undefined || job.state !== 'paused' || job.cancelRequested || job.cancelFinishing) {
       throw new TransferError('INVALID_REQUEST', 'Only a paused transfer can be resumed')
     }
     job.controller = new AbortController()
@@ -187,8 +208,14 @@ export class FileTransferManager {
   }
 
   forget(transferId: string): boolean {
-    const state = this.jobs.get(transferId)?.state
-    if (state === undefined || !['saved', 'cancelled', 'failed'].includes(state)) return false
+    const job = this.jobs.get(transferId)
+    if (
+      job === undefined ||
+      job.quarantined ||
+      !['saved', 'cancelled', 'failed'].includes(job.state)
+    ) {
+      return false
+    }
     return this.jobs.delete(transferId)
   }
 
@@ -201,28 +228,38 @@ export class FileTransferManager {
       const wasPaused = job.state === 'paused'
       const index = this.queue.indexOf(transferId)
       if (index >= 0) this.queue.splice(index, 1)
-      const finish = async (): Promise<void> => {
-        let error: TransferError = new TransferError('ABORTED', 'Transfer cancelled')
-        try {
-          if (wasPaused && job.session !== null) {
-            if (job.discardPartial) {
-              await job.session.discard()
-              await this.registry.remove(job.request.transferId)
-              job.retentionEstablished = false
-            } else if (job.retentionEstablished) {
-              await this.record(job, job.session, 'cancelled', job.retentionCreatedAt)
-            }
-          }
-        } catch (cleanupError) {
-          error = asTransferError(cleanupError)
-        }
-        this.transition(job, 'cancelled', error)
-        job.deferred.reject(error)
-      }
-      void finish()
+      void this.finishCancelled(job, wasPaused)
       return
     }
     job.controller.abort()
+  }
+
+  private finishCancelled(job: Job, wasPaused: boolean): Promise<void> {
+    job.cancelFinishing ??= Promise.resolve().then(async () => {
+      let error: TransferError = new TransferError('ABORTED', 'Transfer cancelled')
+      try {
+        if (wasPaused && job.session !== null) {
+          if (job.discardPartial) {
+            await job.session.discard()
+            await this.registry.remove(job.request.transferId)
+            job.retentionEstablished = false
+          } else if (job.retentionEstablished) {
+            await this.record(job, job.session, 'cancelled', job.retentionCreatedAt)
+          }
+        }
+      } catch (cleanupError) {
+        error = withCleanupFailure(error, cleanupError)
+      }
+      try {
+        await this.closeSession(job, job.session)
+      } catch (closeError) {
+        error = withCleanupFailure(error, closeError)
+      }
+      if (!job.quarantined) job.session = null
+      this.transition(job, 'cancelled', error)
+      job.deferred.reject(error)
+    })
+    return job.cancelFinishing
   }
 
   private pause(transferId: string): void {
@@ -259,6 +296,7 @@ export class FileTransferManager {
 
   private hasCapacity(job: Job): boolean {
     return (
+      !this.quarantinedHosts.has(job.request.hostKey) &&
       (this.activeHosts.get(job.request.hostKey) ?? 0) < this.policy.perHostConcurrency &&
       (this.activeDestinations.get(job.destinationKey) ?? 0) < this.policy.perDestinationConcurrency
     )
@@ -274,10 +312,30 @@ export class FileTransferManager {
   }
 
   private release(job: Job): void {
+    if (job.quarantined) return
     this.active.delete(job.request.transferId)
     this.decrement(this.activeHosts, job.request.hostKey)
     this.decrement(this.activeDestinations, job.destinationKey)
     this.schedule()
+  }
+
+  private async closeSession(job: Job, session: TransferDataPlaneSession | null): Promise<void> {
+    if (session === null) return
+    let failed = false
+    try {
+      await session.close?.()
+    } catch (error) {
+      failed = true
+      throw error
+    } finally {
+      const confirmed = session.isCloseConfirmed?.()
+      if (confirmed === false || (failed && confirmed !== true)) {
+        // Keep the original owner/queue reservation when a local close cannot prove remote exit.
+        job.quarantined = true
+        this.quarantinedHosts.add(job.request.hostKey)
+        if (!this.active.has(job.request.transferId)) this.reserve(job)
+      }
+    }
   }
 
   private decrement(counts: Map<string, number>, key: string): void {
@@ -288,6 +346,7 @@ export class FileTransferManager {
 
   private async run(job: Job): Promise<void> {
     let session: TransferDataPlaneSession | null = null
+    let outcome: RunOutcome | undefined
     let createdAt = this.now()
     let partialCreatedByRun = false
     try {
@@ -446,16 +505,17 @@ export class FileTransferManager {
       await session.publish()
       await session.removeManifest()
       await this.registry.remove(job.request.transferId)
-      job.session = null
       job.retentionEstablished = false
-      this.transition(job, 'saved')
-      job.deferred.resolve({
-        transferId: job.request.transferId,
+      outcome = {
         state: 'saved',
-        bytes: preflight.expectedSize,
-        resumedFrom: job.resumedFrom,
-        sha256: targetSha256
-      })
+        result: {
+          transferId: job.request.transferId,
+          state: 'saved',
+          bytes: preflight.expectedSize,
+          resumedFrom: job.resumedFrom,
+          sha256: targetSha256
+        }
+      }
     } catch (unknownError) {
       let error = asTransferError(unknownError)
       if (job.pauseRequested && !job.cancelRequested) {
@@ -463,11 +523,10 @@ export class FileTransferManager {
           if (session !== null && job.retentionEstablished) {
             await this.record(job, session, 'paused', createdAt)
           }
-          this.transition(job, 'paused')
+          outcome = { state: 'paused' }
         } catch (retentionError) {
-          error = asTransferError(retentionError)
-          this.transition(job, 'failed', error)
-          job.deferred.reject(error)
+          error = withCleanupFailure(error, retentionError)
+          outcome = { state: 'failed', error }
         }
       } else if (job.cancelRequested || error.code === 'ABORTED') {
         try {
@@ -481,10 +540,9 @@ export class FileTransferManager {
             }
           }
         } catch (retentionError) {
-          error = asTransferError(retentionError)
+          error = withCleanupFailure(error, retentionError)
         }
-        this.transition(job, 'cancelled', error)
-        job.deferred.reject(error)
+        outcome = { state: 'cancelled', error }
       } else {
         try {
           if (session !== null && job.retentionEstablished) {
@@ -493,13 +551,38 @@ export class FileTransferManager {
             await session.discard()
           }
         } catch (retentionError) {
-          error = asTransferError(retentionError)
+          error = withCleanupFailure(error, retentionError)
         }
-        this.transition(job, 'failed', error)
-        job.deferred.reject(error)
+        outcome = { state: 'failed', error }
       }
     } finally {
-      this.release(job)
+      try {
+        try {
+          await this.closeSession(job, session)
+        } catch (error) {
+          if (outcome?.state === 'saved' || outcome?.state === 'paused') {
+            outcome = { state: 'failed', error: asTransferError(error) }
+          } else if (outcome) {
+            withCleanupFailure(outcome.error, error)
+          }
+        }
+        if (outcome?.state === 'paused' && job.cancelRequested) {
+          await this.finishCancelled(job, true)
+        } else if (outcome?.state === 'saved') {
+          if (!job.quarantined) job.session = null
+          this.transition(job, 'saved')
+          job.deferred.resolve(outcome.result)
+        } else if (outcome?.state === 'paused') {
+          // Retain only the drained session for explicit paused cleanup; resume opens a new one.
+          this.transition(job, 'paused')
+        } else if (outcome) {
+          if (!job.quarantined) job.session = null
+          this.transition(job, outcome.state, outcome.error)
+          job.deferred.reject(outcome.error)
+        }
+      } finally {
+        this.release(job)
+      }
     }
   }
 

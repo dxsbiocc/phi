@@ -231,6 +231,9 @@ export class HelperDataPlaneProtocolClient {
   private buffer = Buffer.alloc(0)
   private nextId = 1
   private closed = false
+  private processClose?: Promise<void>
+  private drainPromise?: Promise<void>
+  private remoteExitConfirmed = false
   private writes: Promise<void> = Promise.resolve()
   private readonly disconnectController = new AbortController()
 
@@ -245,8 +248,10 @@ export class HelperDataPlaneProtocolClient {
     process.stdin.once('error', (error) => this.fail(error))
     process.stderr.on('data', () => undefined)
     void process.closed.then(
-      ({ code, signal }) =>
-        this.fail(new HelperProtocolError(`remote helper exited (${signal ?? code ?? 'unknown'})`)),
+      ({ code, signal }) => {
+        this.remoteExitConfirmed = code === 0 && signal === null
+        this.fail(new HelperProtocolError(`remote helper exited (${signal ?? code ?? 'unknown'})`))
+      },
       (error: unknown) => this.fail(error instanceof Error ? error : new Error(String(error)))
     )
   }
@@ -334,7 +339,36 @@ export class HelperDataPlaneProtocolClient {
     const error = new HelperProtocolError('remote helper connection is closed')
     this.disconnectController.abort(error)
     this.rejectPending(error)
-    await this.process.close()
+    await this.closeProcess()
+  }
+
+  /** Join this client's original close attempt and the actual process close event. */
+  drain(): Promise<void> {
+    this.drainPromise ??= Promise.resolve().then(async () => {
+      const closing = this.close()
+      const outcomes = await Promise.allSettled([
+        closing,
+        this.processClose ?? closing,
+        this.process.closed
+      ])
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') throw outcome.reason
+      }
+      if (!this.remoteExitConfirmed) {
+        throw new HelperProtocolError('Remote helper exit was not confirmed')
+      }
+    })
+    return this.drainPromise
+  }
+
+  /** A local SSH close/signal or exit 255 cannot prove that a remote writer exited. */
+  isRemoteExitConfirmed(): boolean {
+    return this.remoteExitConfirmed
+  }
+
+  private closeProcess(): Promise<void> {
+    this.processClose ??= Promise.resolve().then(() => this.process.close())
+    return this.processClose
   }
 
   private receive(chunk: Buffer): void {
@@ -422,7 +456,7 @@ export class HelperDataPlaneProtocolClient {
     this.closed = true
     this.disconnectController.abort(error)
     this.rejectPending(error)
-    void this.process.close().catch(() => undefined)
+    void this.closeProcess().catch(() => undefined)
   }
 
   private rejectPending(error: Error): void {
