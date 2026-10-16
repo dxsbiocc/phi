@@ -11,7 +11,7 @@
 | 项 | 现状 | 位置 |
 |---|---|---|
 | 应用标识 | 已冻结为 `appId: cn.phiscience.phi`、`productName: Phi` | `electron-builder.yml` |
-| 包元数据 | 已更新为 Phi Science、`https://phiscience.cn`、版本 `0.1.0` | `package.json` |
+| 包元数据 | 已更新为 Phi Science、`https://phi.omicsagent.cn/`、版本 `0.1.0` | `package.json` |
 | Linux x64 | 已配置 AppImage 与 deb、品牌/桌面元数据、内置 bun 强制检查；真实 Linux 构建与干净容器启动尚未验证 | `electron-builder.yml`、`scripts/build/after-pack.mjs` |
 | 自动更新 | `publish.url: https://example.com/auto-updates`；源码里没有 `electron-updater` 或 `autoUpdater` | `electron-builder.yml`、`src/main` |
 | macOS 签名 | 未配置 identity；`notarize: false` | `electron-builder.yml` |

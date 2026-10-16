@@ -921,6 +921,7 @@ declare global {
       acknowledgeSession: (path: string) => Promise<PreloadSessionSummary | null>
       deleteSession: (path: string) => Promise<void>
       renameSession: (path: string, name: string) => Promise<void>
+      generateSessionTitle: (path: string) => Promise<string>
       exportSession: (sessionId: string) => Promise<SessionExportResult | null>
       listProjects: () => Promise<PreloadProject[]>
       pickProjectDirectory: () => Promise<string | null>

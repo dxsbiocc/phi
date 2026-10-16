@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./out/main/index.mjs",
   "author": "Phi Science",
-  "homepage": "https://phiscience.cn",
+  "homepage": "https://phi.omicsagent.cn/",
   "license": "MIT",
   "scripts": {
     "format": "prettier --write .",

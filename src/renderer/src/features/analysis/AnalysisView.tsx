@@ -4,6 +4,7 @@ import { type Theme } from '@mui/material/styles'
 import { LeftRail, type LeftPanel } from './components/AnalysisLeftRail'
 import NotebookCanvas from './notebook/NotebookCanvas'
 import type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
+import type { NotebookViewStateStore } from './lib/notebookViewState'
 import { type NotebookDocument } from '../../../../shared/notebookDocument'
 import {
   notebookFileEntry,
@@ -36,6 +37,8 @@ export type AnalysisWorkspaceFileTab = {
 export type AnalysisViewProps = {
   notebookRegistry?: AnalysisNotebookRegistry | null
   notebookFile?: AnalysisNotebookFile | null
+  notebookViewStateStore?: NotebookViewStateStore
+  notebookViewStateScope?: string
   workspaceFileTabs?: AnalysisWorkspaceFileTab[]
   activeWorkspaceFilePath?: string | null
   hideLeftRail?: boolean
@@ -148,6 +151,8 @@ function ResizeSeparator({
 export default function AnalysisView({
   notebookRegistry,
   notebookFile,
+  notebookViewStateStore,
+  notebookViewStateScope,
   workspaceFileTabs,
   activeWorkspaceFilePath,
   hideLeftRail = false,
@@ -342,6 +347,8 @@ export default function AnalysisView({
           availableNotebooks={notebooks}
           projectCwd={notebookRegistry?.projectCwd ?? null}
           notebookFile={notebookFile}
+          viewStateStore={notebookViewStateStore}
+          viewStateScope={notebookViewStateScope}
           initialDocument={notebookFile?.document ?? null}
           isOpening={isOpeningNotebook}
           error={notebookContentError}

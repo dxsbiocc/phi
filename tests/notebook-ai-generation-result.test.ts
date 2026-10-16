@@ -3,6 +3,35 @@ import test from 'node:test'
 
 import { notebookAiGeneratedCellsFromResult } from '../src/renderer/src/features/analysis/lib/notebookAiGenerationResult'
 
+const qcExplanation = [
+  '## 为什么三个数据集的过滤参数不同',
+  '',
+  'QC_PARAMS 不是一套任意阈值，而是由 **矩阵含义** 决定哪些指标能当过滤器。GSE151530 / GSE189903 的 `X` 是 10x 原始 UMI counts；GSE229772 的 `X` 已是归一化表达。过滤规则必须跟这个物理量对齐，不能共用一套 count 门槛。'
+].join('\n')
+
+test('the reported Markdown response reaches the renderer with the complete explanation', () => {
+  const cells = notebookAiGeneratedCellsFromResult(
+    {
+      language: 'markdown',
+      source: JSON.stringify({ cells: [{ language: 'markdown', code: qcExplanation }] })
+    },
+    'markdown'
+  )
+  assert.deepEqual(cells, [{ cellType: 'markdown', source: qcExplanation }])
+  assert.doesNotMatch(cells.map((cell) => cell.source).join('\n'), /with exit code 1 and/)
+})
+
+test('explicit Markdown retains its prose and embedded code example as one Markdown cell', () => {
+  const explanation = `${qcExplanation}\n\n例如：\n\n\u0060\u0060\u0060python\nmin_counts = None\n\u0060\u0060\u0060\n\n归一化矩阵不使用原始计数阈值。`
+  assert.deepEqual(
+    notebookAiGeneratedCellsFromResult(
+      { language: 'markdown', source: '', cells: [{ cellType: 'markdown', source: explanation }] },
+      'markdown'
+    ),
+    [{ cellType: 'markdown', source: explanation }]
+  )
+})
+
 test('notebook AI result fallback parses raw NotebookCellsCompletion JSON source into multiple cells', () => {
   const cells = notebookAiGeneratedCellsFromResult(
     {

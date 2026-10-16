@@ -36,10 +36,12 @@ import * as path from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import * as notebookCodeGeneration from '../src/main/agent/notebook/notebook-code-generation'
+import * as notebookCompletion from '../src/main/agent/notebook/notebook-completion'
 import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
 import * as sessionTitle from '../src/shared/sessionTitle'
+import * as sessionTitleGeneration from '../src/main/agent/session/session-title-generation'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
@@ -392,6 +394,8 @@ type HostContext = {
 }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
+  titleRequest?: sessionTitleGeneration.SessionTitleGeneratorOptions['request']
+  useTitleRuntime?: boolean
   holdRendererReady?: boolean
   environmentGet?: () => Promise<unknown>
   modelRuntimeGet?: () => Promise<void>
@@ -1840,6 +1844,19 @@ async function harness(
         getCwd: () => runtimeSessionCwds.get(file) ?? `/projects/${file}`
       })
     },
+    './agent/session/session-title-generation': {
+      ...sessionTitleGeneration,
+      SessionTitleGenerator: class extends sessionTitleGeneration.SessionTitleGenerator {
+        constructor(input: sessionTitleGeneration.SessionTitleGeneratorOptions) {
+          super({
+            ...input,
+            request:
+              harnessOptions.titleRequest ??
+              (harnessOptions.useTitleRuntime ? input.request : async () => '')
+          })
+        }
+      }
+    },
     './agent/session/session-manager': {
       createAgentSession: async (
         options: {
@@ -2537,6 +2554,7 @@ async function harness(
     },
     './agent/engine/rpc/remote-library-service': remoteLibrary,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
+    './agent/notebook/notebook-completion': notebookCompletion,
     './agent/notebook/notebook-output-protocol': {
       registerNotebookOutputScheme: noop,
       installNotebookOutputProtocol: noop
@@ -9564,6 +9582,73 @@ test('main IPC: notebook AI generation preserves markdown and code cells', async
   )
 })
 
+for (const thinking of [
+  'with exit code 1 and',
+  '```python\nprint("diagnostic only")\n```',
+  `\`\`\`python\n${'print("long reasoning draft")\n'.repeat(200)}\`\`\``,
+  JSON.stringify({ cells: [{ language: 'python', code: 'print("thinking only")' }] })
+]) {
+  test(`main IPC: notebook AI generation inserts the final Markdown instead of reasoning ${thinking.slice(0, 30)}`, async () => {
+    const source =
+      '## 为什么三个数据集的过滤参数不同\n\nQC_PARAMS 不是三套任意阈值，而是由 **矩阵含义** 决定哪些指标能当过滤器。GSE151530 / GSE189903 的 `X` 是 10x 原始 UMI counts；GSE229772 的 `X` 已归一化。'
+    const finalText = JSON.stringify({ cells: [{ language: 'markdown', code: source }] })
+    const finalMessage = {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking },
+        { type: 'text', text: finalText }
+      ]
+    }
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.skipFinalAssistantMessage = true
+      session.messages.push(finalMessage)
+      session.toolEvents = [
+        {
+          type: 'message_update',
+          assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: thinking }
+        },
+        {
+          type: 'message_update',
+          assistantMessageEvent: { type: 'thinking_end', contentIndex: 0, content: thinking }
+        },
+        ...[finalText.slice(0, 45), finalText.slice(45)].map((delta) => ({
+          type: 'message_update',
+          assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta }
+        })),
+        { type: 'message_end', message: finalMessage }
+      ]
+      return session
+    })
+    const document = notebookDocument.parseNotebook({ nbformat: 4, metadata: {}, cells: [] })
+    const result = (await app.invoke(
+      'analysis:generateNotebookCode',
+      '/projects/research',
+      'notebooks/qc.ipynb',
+      document,
+      {
+        prompt: '为什么不同数据集使用不同的过滤参数',
+        language: 'markdown',
+        requestId: 'qc-markdown'
+      }
+    )) as { cells: Array<{ cellType: string; source: string }>; source: string }
+
+    assert.deepEqual(result.cells, [{ cellType: 'markdown', source }])
+    assert.equal(result.source, source)
+    assert.equal(app.sessions.length, 1, 'a valid final Markdown response needs no repair')
+    const progress = app.events.filter(
+      (event) => event.channel === 'analysis:notebookCodeGenerationProgress'
+    ) as Array<{ data: { cells: Array<{ cellType: string; source: string }> } }>
+    assert.ok(progress.length > 0)
+    assert.ok(progress.every((event) => event.data.cells.every((cell) => cell.source === source)))
+    const [job] = (await app.invoke(
+      'analysis:listNotebookAiGenerationJobs'
+    )) as NotebookAiGenerationJob[]
+    assert.equal(job.entries?.find((entry) => entry.kind === 'thinking')?.text, thinking)
+    assert.equal(job.sourcePreview, source)
+  })
+}
+
 test('main IPC: notebook AI generation chooses the full done message over a short streaming partial', async () => {
   let sessionCount = 0
   const app = await harness(async (_cwd, file) => {
@@ -14381,6 +14466,353 @@ test('T13 main rename: busy RPC refuses writes while local Phi names preserve ex
   assert.deepEqual(local.renamedSessions, [{ path: current.path, name: 'Local title' }])
   await local.invoke('agent:stop')
   await localRun
+})
+
+test('AI session titles: the first successful reply names its original conversation in the background', async () => {
+  const gate = deferred<string>()
+  const requests: sessionTitleGeneration.SessionTitleRequest[] = []
+  const app = await harness(undefined, {
+    titleRequest: async (input) => {
+      requests.push(input)
+      return gate.promise
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string; phiSessionId: string }
+  await app.invoke('agent:prompt', '帮我合并三个单细胞数据集，然后检查质控参数')
+  await tick()
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].sessionPath, owner.path)
+  assert.deepEqual(app.renamedSessions, [])
+  const peer = (await app.invoke('sessions:create')) as { path: string }
+  gate.resolve('单细胞合并与质控')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '单细胞合并与质控' }])
+  assert.ok(
+    app.updatedSessionManifests.some(
+      (entry) => entry.sessionId === owner.phiSessionId && entry.patch.titleSource === 'auto'
+    )
+  )
+  assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, peer.path)
+  assert.equal(app.sessions.length, 1, 'title requests do not create visible chat sessions')
+})
+
+test('AI session titles: a manual rename cancels and wins over a delayed automatic title', async () => {
+  const gate = deferred<string>()
+  let signal: AbortSignal | undefined
+  const app = await harness(undefined, {
+    titleRequest: async (input) => {
+      signal = input.signal
+      return gate.promise
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string; phiSessionId: string }
+  await app.invoke('agent:prompt', '整理项目里的分析代码')
+  await tick()
+  await app.invoke('sessions:rename', owner.path, '我自己的项目标题')
+  assert.equal(signal?.aborted, true)
+  gate.resolve('迟到的自动标题')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '我自己的项目标题' }])
+  assert.ok(
+    app.updatedSessionManifests.some(
+      (entry) => entry.sessionId === owner.phiSessionId && entry.patch.titleSource === 'user'
+    )
+  )
+  await app.invoke('agent:prompt', '继续检查')
+  await tick()
+  assert.equal(app.renamedSessions.length, 1)
+})
+
+test('AI session titles: deleting a conversation cancels pending title work', async () => {
+  const gate = deferred<string>()
+  let signal: AbortSignal | undefined
+  const app = await harness(undefined, {
+    titleRequest: async (input) => {
+      signal = input.signal
+      return gate.promise
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', '分析项目中的错误')
+  await tick()
+  await app.invoke('sessions:delete', owner.path)
+  assert.equal(signal?.aborted, true)
+  gate.resolve('已删除对话的标题')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [])
+})
+
+test('AI session titles: a failed request leaves the fallback and retries on a later successful turn', async () => {
+  let attempts = 0
+  const app = await harness(undefined, {
+    titleRequest: async () => {
+      if (++attempts === 1) throw new Error('provider unavailable')
+      return '项目分析修复'
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', '修复项目分析流程中的异常')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [])
+  await app.invoke('agent:prompt', '继续定位原因')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '项目分析修复' }])
+  await app.invoke('agent:prompt', '查看最终结果')
+  await tick()
+  assert.equal(attempts, 2, 'successful AI titles are generated once')
+})
+
+test('AI session titles: manual generation suggests an editable title without saving it', async () => {
+  const requests: sessionTitleGeneration.SessionTitleRequest[] = []
+  const app = await harness(undefined, {
+    titleRequest: async (input) => {
+      requests.push(input)
+      return '单细胞质控分析'
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('sessions:rename', owner.path, '已有的手动标题')
+  await app.invoke('agent:prompt', '检查单细胞质控参数\n\n引用文件：\n- `/private/data.h5ad`')
+  await tick()
+  assert.equal(requests.length, 0, 'manual titles are protected from automatic requests')
+  assert.equal(await app.invoke('sessions:generateTitle', owner.path), '单细胞质控分析')
+  assert.equal(requests.length, 1)
+  assert.match(requests[0].prompt, /检查单细胞质控参数/)
+  assert.doesNotMatch(requests[0].prompt, /private\/data/)
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '已有的手动标题' }])
+  await assert.rejects(app.invokeFromForeign('sessions:generateTitle', owner.path), /authorized/)
+  await assert.rejects(app.invoke('sessions:generateTitle', {}), /路径无效/)
+  await assert.rejects(app.invoke('sessions:generateTitle', 'phi-session:missing'), /打开/)
+})
+
+test('AI session titles: a busy conversation refuses manual generation', async () => {
+  const session = new FakeSession('title-busy.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  const running = app.invoke('agent:prompt', '正在处理的项目任务')
+  await tick()
+  await assert.rejects(app.invoke('sessions:generateTitle', owner.path), /运行结束/)
+  await app.invoke('agent:stop')
+  await running
+})
+
+test('AI session titles: runtime generation uses the selected model and disposable tool-free memory', async () => {
+  const app = await harness(
+    async (_cwd, file) => {
+      const session = new FakeSession(file)
+      if (file === 'in-memory') {
+        session.skipFinalAssistantMessage = true
+        session.messages.push({
+          role: 'assistant',
+          content: [{ type: 'text', text: '“单细胞质控分析”' }]
+        })
+      }
+      return session
+    },
+    { useTitleRuntime: true }
+  )
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('models:select', 'openai', 'gpt-test')
+  await app.invoke('agent:prompt', '分析单细胞数据并检查质控参数')
+  await tick()
+  const options = app.createdAgentOptions.find((entry) => entry.noTools === 'all')
+  assert.ok(options)
+  assert.equal((options.model as { provider: string }).provider, 'openai')
+  assert.equal((options.model as { id: string }).id, 'gpt-test')
+  assert.equal(options.thinkingLevel, 'minimal')
+  const titleSession = app.sessions.find((entry) => entry.sessionFile === 'in-memory')
+  assert.ok(titleSession?.disposed)
+  assert.match(titleSession.promptTexts[0], /分析单细胞数据/)
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '单细胞质控分析' }])
+  assert.equal(
+    app.appendedSessionEvents.filter((entry) => entry.event.type === 'user_message').length,
+    1
+  )
+})
+
+test('AI session titles: greetings defer naming until the user gives a concrete topic', async () => {
+  const requests: sessionTitleGeneration.SessionTitleRequest[] = []
+  const app = await harness(undefined, {
+    titleRequest: async (input) => {
+      requests.push(input)
+      return '单细胞数据质控'
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  app.createdPhiSessions[0].title = '你好！'
+  await app.invoke('agent:prompt', '你好！')
+  await tick()
+  assert.equal(requests.length, 0)
+  await app.invoke('agent:prompt', '检查单细胞数据的质控流程')
+  await tick()
+  assert.equal(requests.length, 1)
+  assert.match(requests[0].prompt, /检查单细胞数据/)
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '单细胞数据质控' }])
+})
+
+for (const scenario of [
+  'thinking-only',
+  'error-final',
+  'error-stream',
+  'body-after-thinking'
+] as const)
+  test(`AI session titles: runtime collection accepts only successful assistant body (${scenario})`, async () => {
+    const app = await harness(
+      async (_cwd, file) => {
+        const session = new FakeSession(file)
+        if (file !== 'in-memory') return session
+        session.skipFinalAssistantMessage = true
+        if (scenario === 'error-final') {
+          session.messages.push({
+            role: 'assistant',
+            stopReason: 'error',
+            errorMessage: 'Quota exceeded',
+            content: [{ type: 'text', text: 'Quota exceeded for this model' }]
+          })
+        } else {
+          session.toolEvents = [
+            {
+              type: 'message_update',
+              assistantMessageEvent: {
+                type: 'thinking_delta',
+                delta: 'The conversation concerns single-cell QC'
+              }
+            }
+          ]
+          if (scenario === 'body-after-thinking' || scenario === 'error-stream') {
+            session.toolEvents.push({
+              type: 'message_update',
+              assistantMessageEvent: {
+                type: 'text_delta',
+                delta: 'Single Cell Quality Control'
+              }
+            })
+          }
+          if (scenario === 'error-stream') {
+            session.toolEvents.push({
+              type: 'message_end',
+              message: {
+                role: 'assistant',
+                stopReason: 'error',
+                errorMessage: '429 quota exceeded',
+                content: []
+              }
+            })
+          }
+        }
+        return session
+      },
+      { useTitleRuntime: true }
+    )
+    const owner = (await app.invoke('sessions:create')) as { path: string }
+    await app.invoke('models:select', 'openai', 'gpt-test')
+    await app.invoke('agent:prompt', '检查单细胞数据质控流程')
+    await tick()
+    if (scenario === 'body-after-thinking') {
+      assert.deepEqual(app.renamedSessions, [
+        { path: owner.path, name: 'Single Cell Quality Control' }
+      ])
+    } else {
+      assert.deepEqual(app.renamedSessions, [])
+      await assert.rejects(app.invoke('sessions:generateTitle', owner.path), /暂时无法/)
+    }
+  })
+
+test('AI session titles: old inactive automatic-model conversations can use the configured SDK default', async () => {
+  const app = await harness(
+    async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.skipFinalAssistantMessage = true
+      session.messages.push({
+        role: 'assistant',
+        content: [{ type: 'text', text: '单细胞质量控制' }]
+      })
+      return session
+    },
+    { useTitleRuntime: true }
+  )
+  const owner = (await app.invoke('sessions:create')) as { path: string; phiSessionId: string }
+  app.createdPhiSessions[0].model = null
+  app.appendedSessionEvents.push({
+    sessionId: owner.phiSessionId,
+    event: {
+      type: 'user_message',
+      content: '之前讨论过的单细胞数据质量控制流程'
+    }
+  })
+  assert.equal(await app.invoke('sessions:generateTitle', owner.path), '单细胞质量控制')
+  assert.deepEqual(app.renamedSessions, [])
+  const options = app.createdAgentOptions.find((entry) => entry.noTools === 'all')
+  assert.ok(options)
+  assert.equal(options.model, undefined)
+  assert.ok(app.sessions[0].disposed)
+})
+
+test('AI session titles: a new prompt prevents a late title write and naming retries after it finishes', async () => {
+  const gate = deferred<string>()
+  const session = new FakeSession('title-new-turn.jsonl')
+  let requests = 0
+  const app = await harness(async () => session, {
+    titleRequest: async () => {
+      requests++
+      return requests === 1 ? gate.promise : '项目分析整理'
+    }
+  })
+  const owner = (await app.invoke('sessions:create')) as { path: string }
+  await app.invoke('agent:prompt', '整理项目分析代码')
+  await tick()
+  session.hold = true
+  const running = app.invoke('agent:prompt', '再检查输入文件')
+  await tick()
+  gate.resolve('运行期间不应写入')
+  await tick()
+  assert.deepEqual(app.renamedSessions, [])
+  session.finish.resolve()
+  await running
+  await tick()
+  assert.equal(requests, 2)
+  assert.deepEqual(app.renamedSessions, [{ path: owner.path, name: '项目分析整理' }])
+})
+
+test('AI session titles: a remote host rebind discards the old generation result', async () => {
+  let routed = false
+  let host = 'original'
+  const gate = deferred<string>()
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    remoteHostBinding: () => host,
+    titleRequest: async () => gate.promise
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', '检查远程项目中的数据')
+  await tick()
+  routed = true
+  host = 'replacement'
+  gate.resolve('过期的远程标题')
+  await tick()
+  assert.deepEqual(app.sessions[0].sessionNameCalls, [])
+  assert.deepEqual(app.renamedSessions, [])
+})
+
+test('AI session titles: an attached RPC conversation uses confirmed rename rather than local history writes', async () => {
+  let routed = false
+  const gate = deferred<string>()
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    routedRuntime: () => routed,
+    titleRequest: async () => gate.promise
+  })
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await app.invoke('agent:prompt', '检查远程项目里的分析流程')
+  await tick()
+  routed = true
+  gate.resolve('远程项目分析')
+  await tick()
+  assert.deepEqual(app.sessions[0].sessionNameCalls, ['远程项目分析'])
+  assert.deepEqual(app.renamedSessions, [])
+  assert.ok(app.updatedSessionManifests.some((entry) => entry.patch.titleSource === 'auto'))
 })
 
 test('T13 main memory: adapter receives only the selected project policy and local anchor, then joins resource cleanup', async () => {

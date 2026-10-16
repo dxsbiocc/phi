@@ -5,6 +5,7 @@ import {
   titleFromMessages,
   truncateSessionTitle
 } from '../src/renderer/src/lib/sessionTitles'
+import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
 import { messageContentTitleText } from '../src/shared/sessionTitle'
 import type { ChatItem, SessionSummary } from '../src/renderer/src/types'
 
@@ -66,6 +67,30 @@ test('session title ignores multiline composer file reference metadata', () => {
       { id: 'assistant-1', role: 'assistant', content: '收到' }
     ]),
     '画一张汇总图'
+  )
+})
+
+test('session titles hide next-action guidance left by older runtime messages', () => {
+  const userText = '当前可以调用哪些agent'
+  const legacyMessage = `${userText}\n\n<phi_next_action_instruction>\n当这次回复有明确、有用的后续操作时，请推荐下一步。\n</phi_next_action_instruction>`
+  const truncatedStoredTitle = `${userText} <phi_next_action_instruction> 当这次回复有明确、有用的后续操作时...`
+
+  assert.equal(messageContentTitleText(legacyMessage), userText)
+  assert.equal(messageContentTitleText(truncatedStoredTitle), userText)
+  assert.equal(sessionDisplayTitle({ ...baseSession, name: truncatedStoredTitle }), userText)
+  assert.equal(editableSessionTitle({ ...baseSession, name: truncatedStoredTitle }), userText)
+  assert.equal(sessionTitle({ ...baseSession, name: truncatedStoredTitle }), userText)
+  assert.equal(
+    sessionDisplayTitle({
+      ...baseSession,
+      name: '<phi_next_action_instruction>旧指导',
+      firstMessage: userText
+    }),
+    userText
+  )
+  assert.equal(
+    titleFromMessages([{ id: 'user-1', role: 'user', content: legacyMessage }]),
+    userText
   )
 })
 

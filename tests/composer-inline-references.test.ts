@@ -114,7 +114,7 @@ test('inline chips reuse artwork and expose independent detail and removal actio
   assert.doesNotMatch(markup, /composer-reference-chips/)
 })
 
-test('Notebook chips keep the @ prefix and use distinct artwork for every context kind', () => {
+test('Notebook chips show names without the @ prefix and use distinct artwork for every context kind', () => {
   const kinds: NotebookInlineReferenceKind[] = [
     'module',
     'variable',
@@ -130,7 +130,9 @@ test('Notebook chips keep the @ prefix and use distinct artwork for every contex
       })
     )
     assert.match(markup, new RegExp(`data-phi-reference-kind="${kind}"`))
-    assert.match(markup, />@context<\/span>/)
+    assert.match(markup, />context<\/span>/)
+    assert.doesNotMatch(markup, />@context<\/span>/)
+    assert.match(markup, /title="@context"/)
     assert.match(markup, /aria-label="移除.+引用 context"/)
     const svg = /<svg[^>]*>([\s\S]*?)<\/svg>/u.exec(markup)
     assert.ok(svg, `${kind} needs an icon`)
@@ -147,6 +149,6 @@ test('read-only reference chips keep their label without editable actions', () =
       onRemove: () => assert.fail('disabled reference cannot be removed')
     })
   )
-  assert.match(markup, />@df<\/span>/)
+  assert.match(markup, />df<\/span>/)
   assert.doesNotMatch(markup, /data-phi-reference-remove=|MuiChip-deletable/)
 })

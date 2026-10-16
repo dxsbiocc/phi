@@ -555,12 +555,15 @@ export const SessionRow = memo(function SessionRow({
         </MenuItem>
       </Menu>
       <SessionRenamePanel
+        key={session.path}
         open={renameOpen}
         title={editingName}
         compactHoverPreview={compactHoverPreview}
         onTitleChange={setEditingName}
         onClose={() => setRenameOpen(false)}
         onSave={commitRename}
+        onGenerateTitle={() => window.api.generateSessionTitle(session.path)}
+        generateTitleDisabledReason={exportDisabled ? '对话运行结束后可生成标题' : undefined}
       />
     </>
   )

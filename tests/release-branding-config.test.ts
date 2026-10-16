@@ -46,7 +46,7 @@ test('release branding freezes the Phi identity while preserving the future upda
     version: '0.1.0',
     description: 'A local desktop workbench for scientific AI workflows',
     author: 'Phi Science',
-    homepage: 'https://phiscience.cn'
+    homepage: 'https://phi.omicsagent.cn/'
   })
 
   assert.equal(builder.publish?.url, 'https://example.com/auto-updates')

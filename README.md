@@ -1,206 +1,94 @@
-# Phi
+<div align="center">
+  <img src="build/icon.png" alt="Phi app icon" width="104" />
+  <h1>Phi</h1>
+  <p><strong>A local-first AI workbench for scientific work.</strong></p>
+  <p>Move from a research question to code, a notebook, a reproducible run, and an inspectable result—without losing the project that connects them.</p>
+  <p>Managed environments · AI with Jupyter kernels · Specialist plugins · Reproducible pipelines</p>
+  <p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
+  <p>
+    <a href="https://phi.omicsagent.cn/">Website</a> ·
+    <a href="https://phi.omicsagent.cn/docs">Documentation</a> ·
+    <a href="https://phi.omicsagent.cn/docs/quickstart">Quick start</a> ·
+    <a href="https://github.com/dxsbiocc/phi/releases">Releases</a> ·
+    <a href="https://github.com/dxsbiocc/phi/issues">Issues</a>
+  </p>
+  <p>
+    <a href="#availability"><img alt="Internal beta" src="https://img.shields.io/badge/status-internal%20beta-0f766e" /></a>
+    <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
+  </p>
+</div>
 
-A local desktop AI workbench for small-circle internal beta users who already rely on
-Pi/OMX-style local agent workflows. Phi is built with Electron, React, TypeScript,
-and the Pi Coding Agent SDK.
+Phi is for researchers whose work does not end with an answer in a chat window. A useful result may need project files, a Python or R notebook, a specialist tool, an external data source, or a Nextflow run on a server. Phi keeps those pieces in one desktop workspace, with visible permissions and durable local history.
 
-The renderer calls a typed preload API; the main process owns model authentication,
-agent sessions, project directories, tool approvals, and package resources. Phi stores
-its configuration and conversation history in `~/.phi`, separately from the Pi CLI.
-Ordinary conversations use `~/.phi/workspace`; local project conversations use the
-selected directory. Remote project conversations keep their history locally while
-project file and command operations use the selected SSH server. MCP listings show
-configuration, not a live connectivity check.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/notebook-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/notebook-light.png">
+  <img alt="Phi notebook workspace showing a research analysis in progress" src="assets/readme/notebook-light.png" width="100%">
+</picture>
 
-The **Connectors** activity-bar entry shows installed MCP services in collapsible
-groups. **Discover** opens a directory of common productivity, communication, design,
-and life-science services, plus a custom HTTPS MCP URL form. Adding a connector saves
-it in Phi's global `~/.phi/mcp.json`; new local conversations load it through the MCP
-runtime. **Installed** means the configuration is saved, not that the server is
-connected or authorized. The public PubMed, bioRxiv, and Clinical Trials servers can
-be added now, and official MCP servers that publish OAuth can be authorized from the
-directory. API-key connectors ask for that key first. Google Drive, Gmail, and Slack
-stay listed, but their providers require a pre-registered OAuth client that Phi does
-not configure, so they cannot be authorized from the directory yet. Remote project
-conversations do not load MCP in this beta. For public biological databases, the main
-agent reads public REST URLs; database file downloads use `download_file` directly.
-The directory reads the current tool list from each public MCP server when its detail
-page opens; services awaiting authorization do not display guessed tool lists.
+<sub>Notebook workspace in the Phi desktop beta, shown in your GitHub theme with demonstration data.</sub>
 
-## Internal Beta Scope
+## What makes Phi different
 
-This beta is for project-bound agent work: multiple conversations can keep
-running, project sessions default to approval mode, resources are visible, and support
-diagnostics can be copied without full chat or tool output. It is not a public
-distribution build, a full plugin marketplace, a Git client, or a dedicated OMX
-team/swarm dashboard.
+### Environments follow the task
 
-### Built-in Browser
+Phi prepares versioned, managed Python, R, Jupyter, and Nextflow environments when work needs them. Executable Skills, specialist agents, notebook kernels, and Wrappers use declared runtimes instead of depending on an accidental collection of host packages. A ready environment can be reused; the Runtime panel shows its state and offers repair and cleanup. The first build may download dependencies, and host services such as Slurm remain separately managed.
 
-Ordinary HTTP(S) links in chats open in Phi's built-in browser by default. Hold
-Cmd on macOS or Ctrl on Windows/Linux while clicking to use the system browser,
-or use the browser toolbar's system-browser action. The built-in browser supports
-normal tabs, an address bar, back, forward, reload, stop, localhost pages, and
-opening safe popups as new tabs.
+### The agent can work with a Jupyter kernel
 
-Each Phi session has its own tabs. Sessions in the same canonical project share
-ephemeral site storage. Switching sessions hides the previous browser without
-interrupting background work. After restarting Phi, saved pages appear as restore
-choices and do not connect to the network until you restore them. Browser checkpoints
-contain stable tab IDs, titles, URLs, order, and the active selection; deleting
-`~/.phi` removes them along with the rest of the beta data.
+The agent can read a `.ipynb` notebook, insert or revise a code or Markdown cell, run a code cell through Jupyter, inspect its execution status and output summary, and save the notebook. You see the same cells and results in the editor, with write and run actions subject to Phi's approval controls. Phi offers managed Python and R kernels; Python is the default, while a host kernel requires explicit selection.
 
-The agent can take screenshots and use bounded coordinate clicks, scrolling,
-navigation keys, and ordinary text fields. Every agent input on an external site needs
-a new one-time approval. Password, file, and one-time-code fields always require
-you to take over. Purchases, account creation, CAPTCHAs, uploads, permission grants,
-and destructive actions also require takeover; external POST submissions cannot be
-automated. This beta does not provide downloads, a password manager, extensions, or
-a persistent browser profile. Quitting Phi clears ephemeral web state.
+### Plugins bring a specialist and its tools together
 
-Local Git sessions show a bounded file-change summary after each run. It compares the
-working tree at run start and finish, so earlier edits are excluded; ignored files and
-non-Git folders are outside this summary. Existing files in the card open in Phi's
-file preview. Small text changes also keep a read-only per-file diff under the Phi
-session's artifacts; binary and large files show counts only when available.
+A Phi plugin can bundle a focused agent, its Skills, callable script tools, and an environment binding. This makes the specialist's actual capabilities visible in the app and keeps its work connected to the main conversation. The official package catalog supplies installable plugins and other research resources.
 
-For a separate final report, figure, notebook, or data table, the agent can mark up to
-four existing local workspace files as deliverables. Phi keeps a delivery card in the
-conversation with file descriptions and preview actions. The card points to the
-current source files; it does not copy their contents or upload them. This action is
-not available for remote project files in the internal beta.
+### Scientific figures, with editable sources
 
-For a task that needs a reviewed plan, select **先计划** in the chat composer before
-sending it. The agent can inspect the local workspace and draft a session-local plan,
-while this turn's working-tree writes remain blocked. The plan appears in the conversation for
-**继续执行** or **修改计划**; Phi records the choice, and approval restores the usual
-tools. Remote project conversations do not offer this mode in the beta.
+The **Visualization** plugin is a concrete example. Its specialist uses the `omics-visualization` Skill to shortlist real templates against a result table, show previews before a choice, prepare an editable project-local `plot.R`, and render PNG, PDF, or SVG with the shared managed R environment. It can revise an existing figure and is instructed to inspect the result for clipped labels, missing legends, and misleading encodings. [Explore the plugin](https://phi.omicsagent.cn/plugins).
 
-The activity bar's **后台任务** button combines running background Agent tasks and
-Wrapper runs, with progress, links back to their conversation or Wrapper page,
-and stop actions only where the existing runner supports cancellation. It also
-shows a short recent list while those run records remain available; this is a
-compact task view rather than an OMX team dashboard.
+<p align="center"><img src="assets/readme/visualization-template.png" alt="Clustered heatmap template supplied with the Visualization plugin" width="72%"></p>
 
-Use a conversation row's export action to choose a local folder for a complete
-session backup. Phi creates a new subfolder containing its timeline, tool outputs,
-artifacts, underlying runtime history, and referenced image blobs. This export can
-contain secrets and thinking text; it does not copy project files or import back
-into Phi. Wait for the conversation to finish before exporting.
+<sub>An actual bundled heatmap template preview, not a plot of user data. As a scientific figure, its white canvas is intentional in both GitHub themes.</sub>
 
-Beta data is intentionally resettable. Phi-owned state lives under `~/.phi`, including
-sessions, project registry, logs, and tool output references. If the beta data model
-changes, removing `~/.phi` is the supported clean reset path; repositories themselves
-are not deleted by Phi project removal.
+## From question to result
 
-Updates are manual during the internal beta. Pull or receive the next build from the
-project owner, install dependencies when needed, and rerun the verification commands
-below before handing a build to another tester.
+1. **Choose the workspace.** Start an ordinary conversation or bind a conversation to a local or SSH project. Project files remain where they belong.
+2. **Work with an agent.** Select a model, add relevant Skills or agents, and review tool actions under the project's permission mode. A plan can be reviewed before execution.
+3. **Use the right surface.** Explore in a notebook, inspect files and results, or choose a packaged Wrapper when the task calls for a repeatable pipeline.
+4. **Pick up where you left off.** Conversations, run history, approvals, and background tasks stay connected even as you move between projects and panels.
 
-The local agent worker needs Bun 1.3.14 or newer for image reads: the Pi SDK uses
-`Bun.Image`, which older Bun versions do not provide. Check with `bun --version`
-and `bun -e 'console.log(typeof Bun.Image)'` when a valid local image is reported
-as undecodable.
+### Reproducible workflows instead of one-off commands
 
-Unsigned or locally built macOS apps may show Gatekeeper/security prompts. For this
-beta, formal signing, notarization, and automatic updates are deferred; release notes
-should tell testers to expect the standard macOS warning flow for local builds.
+Wrappers package known tools and workflows behind discoverable inputs and run plans. Phi can prepare a run, show its status and logs, and help inspect resulting files. Remote execution includes configured SSH and Slurm paths, with host-specific validation still required before relying on a particular cluster.
 
-## Remote Projects (Internal Beta)
+The [interface gallery](https://phi.omicsagent.cn/#ui-shots) shows the Wrapper catalog and other desktop views.
 
-**Settings → 远程** lists hosts discovered from `~/.ssh/config` alongside older
-Phi server records. Discovered hosts are immediately available when creating a remote
-project. **添加服务器** writes a new `Host` entry to `~/.ssh/config`; editing a
-discovered host updates its entry there. Phi validates the resulting OpenSSH
-configuration before atomically replacing it and keeps a private backup next to the
-file. The form contains only alias, address, user, port and local private-key path;
-blank optional fields keep OpenSSH defaults. Phi stores the key **path**, not the key
-itself. On macOS and Linux, **用密码设置免密登录** can use a server password once
-after explicit host-fingerprint confirmation, install a dedicated key, verify key
-login, and preview the `Host` block before writing it. Phi does not save that password
-or the private-key passphrase; later connections always use the configured key.
-Jump hosts, MFA/OTP, and Windows bootstrap are not supported. Existing non-interactive
-key or `ssh-agent` authentication remains available. Then create a
-project with **Remote server** and an absolute, readable and writable directory
-on that server. Testing a project connection checks its directory and reports
-missing server tools. A remote project always runs its Wrappers on its bound
-server and project path; its Wrapper page offers Slurm and runtime settings.
-The server list's **测试连接** checks SSH connectivity and authentication only.
-Use **检查运行环境** in Wrapper settings to inspect the project directory and
-Nextflow, Java, Slurm, and the selected runtime. Missing Nextflow offers a
-confirmed installation into the SSH account's `~/.local/bin` or the
-[official manual steps](https://docs.seqera.io/nextflow/install); Java, Slurm,
-and container runtimes remain administrator or user-managed.
+### Connected research resources
 
-The remote settings page manages servers only. A local project stays local even
-when it has a saved server compute target. The target can be configured from the
-Wrapper page or a run plan, and is used only when remote execution is explicitly
-requested. Local inputs must already exist at mapped server paths; Phi does not
-upload project data automatically.
+Skills provide task guidance, MCP connectors reach external services, and Wrappers define reproducible command-line work. The official [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog supplies installable domain content. Phi shows resource scope and availability so you can see what is configured before asking the agent to use it.
 
-In a remote project, the usual `read`, `glob`, `grep`, `write`, `edit`, and `bash` agent
-tools operate on the server. File browsing and small result previews also read from
-the server; downloading a result requires an explicit save action. File edits and
-commands still follow the project's approval setting. The window, conversations,
-model calls, approval history, and run records remain on this computer in `~/.phi`.
-The local session directory is metadata storage, never a copy of the remote project.
+See [plugin and connector previews](https://phi.omicsagent.cn/#ui-shots) on the product site.
 
-If the network or server is unavailable, Phi reports the connection problem and
-keeps the local conversation and draft. It does not execute the operation locally.
-After an uncertain write, command, or submission, check the server or run record
-before retrying; Phi does not automatically repeat it. Closing Phi detaches a remote
-Wrapper run. A submitted Slurm job remains managed by Slurm; use an explicit cancel
-action to stop it. Remote Notebook/Jupyter, project Skills/MCP, and Git operations
-are outside this beta's remote project support.
+The surrounding workbench includes a terminal, an in-app browser, file previews, and a background-task panel. You can keep a conversation open while inspecting a result or following a longer run.
 
-The remote workflow has automated coverage and a local SSH identity check. Acceptance
-on a user-managed SSH host and a real Slurm cluster is still pending. See the
-[E01 validation record](docs/roadmap/remote-e01-validation.md) before treating this
-as a verified remote beta release.
+## Local-first, with explicit boundaries
 
-## Phi Wrapper
+Phi stores its settings, conversations, approvals, logs, and package state under `~/.phi`. It does not turn a selected project into an application data directory. Local project files stay in the selected folder; remote project file and command operations target the selected SSH host rather than silently falling back to the desktop.
 
-Phi Wrapper is a reproducible execution layer for bioinformatics and other heavy
-command-line tools: fixed, verified wrapper definitions the agent can call instead of
-assembling ad hoc shell commands. It has its own sidebar entry ("Wrappers"), its own
-storage under `~/.phi/wrappers`, and its own chat-timeline plan/run cards, independent
-of ordinary tool calls.
+Local-first does not mean offline inference: model requests go to the provider you configure, and an enabled connector may contact its service. Project actions remain subject to the permission controls shown in Phi. Exported sessions can include tool output and sensitive conversation content, so handle them as private data.
 
-Wrapper runs can target the local computer or a configured SSH server. On a remote
-target, the Nextflow controller can run detached on the login host or as a Slurm
-head job. Phi records status and logs for reattachment after the app reopens. It
-also offers remote result browsing, bounded previews, and explicit downloads.
-Real external-host and Slurm acceptance remains pending as noted above. See
-[`docs/design/phi-wrapper-product-prd.md`](docs/design/phi-wrapper-product-prd.md)
-for the full phased scope and [`docs/design/phi-wrapper-authoring-guide.md`](docs/design/phi-wrapper-authoring-guide.md)
-for how to point Phi at your own wrapper during development.
+## Get started
 
-Prefer a wrapper over Phi's notebook/Jupyter analysis path when a community- or
-lab-standard pipeline already exists for the task and reproducibility or resource cost
-matters; prefer the notebook path for exploratory work or custom one-off logic. See the
-PRD's "Relationship To Notebook Analysis" section for the full comparison.
+For a desktop build, use the official [installation guide](https://phi.omicsagent.cn/docs/install) and [quick-start guide](https://phi.omicsagent.cn/docs/quickstart). The [product documentation](https://phi.omicsagent.cn/docs) also covers Skills, MCP connectors, Wrappers, and common questions.
 
-## Development
+To run this repository from source, use **Bun 1.3.14+**. The test runner needs **Node.js 22.15+ or 24+**. The first launch may fetch pinned runtime assets.
 
 ```bash
 bun install
 bun run dev
 ```
 
-Development startup does not download Go or compile the remote Helper. The first
-remote operation prepares only the server's architecture when development sources
-are present; unchanged artifacts are reused after source and checksum validation.
-Packaged builds include both Linux Helper binaries, so remote connections use those
-prebuilt files. `bun run build:helper` remains available for explicit preparation.
-
-`bun run dev` includes Vite compilation and hot reload. To preview an existing
-build without that compilation step, use `bun run start` after `bun run build`.
-
-## Verification
-
-Use Node.js 22.15+ (or 24+) for the regression test loader. Dependencies must already
-be installed; the tests use Node's built-in test runner and the existing TypeScript
-compiler, without a separate test framework.
+After launch, configure a model provider in Settings and choose a project. To verify a source checkout before packaging:
 
 ```bash
 bun run test
@@ -209,25 +97,8 @@ bun run typecheck
 bun run build
 ```
 
-Tests isolate external model calls and Electron APIs. They do not verify real provider
-authentication, live model responses, or a signed application installer. Before a
-release, also check switching conversations during streaming, stopping a response,
-closing an approval window, restoring tool output, and switching between projects
-with different Skills/MCP configuration.
+## Availability
 
-## Packaging
+Phi is an **internal beta**. It is not yet a signed, notarized public desktop release. macOS is the primary development target; Linux x64 packaging is configured but still needs clean-machine acceptance, and Windows distribution is not yet validated. Remote SSH, Jupyter, and Slurm workflows need real-host validation for each environment. Updates are manual during the beta.
 
-```bash
-bun run build:win
-bun run build:mac
-bun run build:linux
-```
-
-The packaging configuration still contains development identifiers and a placeholder
-update URL. Production signing, macOS notarization, and update hosting must be
-configured for the intended publisher before distributing a release.
-
-## License
-
-Phi is released under the [MIT License](LICENSE). Third-party code notices are in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The source is licensed under [MIT](LICENSE). Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Feature requests and bug reports belong in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).

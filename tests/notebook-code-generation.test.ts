@@ -545,6 +545,111 @@ test('notebook AI generation final parser accepts raw R code as a fallback', () 
   ])
 })
 
+test('notebook AI generation final parser rejects the diagnostic fragment from a failed tool', () => {
+  for (const language of ['markdown', 'python']) {
+    assert.deepEqual(parseFinalGeneratedNotebookCompletion('with exit code 1 and', language), [])
+  }
+})
+
+test('notebook AI generation final parser keeps an explicitly typed markdown cell as markdown', () => {
+  const sources = [
+    'with different thresholds, each dataset keeps the relevant observations.',
+    '## 为什么三个数据集的过滤参数不同\n\nQC_PARAMS 不是三套任意阈值，而是由 **矩阵含义** 决定哪些指标能当过滤器。GSE151530 / GSE189903 的 `X` 是 10x 原始 UMI counts；GSE229772 的 `X` 已是归一化表达。',
+    'Inspect the following example:\n\n```python\nprint("example")\n```'
+  ]
+  for (const source of sources) {
+    for (const cell of [
+      { language: 'markdown', code: source },
+      { cellType: 'markdown', source },
+      { cell_type: 'markdown', source: [source] },
+      { type: 'markdown', code: source }
+    ]) {
+      assert.deepEqual(parseFinalGeneratedNotebookCompletion({ cells: [cell] }, 'python'), [
+        { cellType: 'markdown', source }
+      ])
+    }
+  }
+})
+
+test('notebook AI generation final parser honors explicit cell languages under a markdown target', () => {
+  const cells = [
+    { language: 'markdown', code: '## Summary' },
+    { language: 'python', code: 'print("example")' },
+    { language: 'r', code: 'plot(values)' }
+  ]
+  for (const completion of [{ cells }, JSON.stringify({ cells })]) {
+    assert.deepEqual(parseFinalGeneratedNotebookCompletion(completion, 'markdown'), [
+      { cellType: 'markdown', source: '## Summary' },
+      { cellType: 'code', source: 'print("example")', language: 'python' },
+      { cellType: 'code', source: 'plot(values)', language: 'r' }
+    ])
+  }
+})
+
+test('notebook AI generation parsers do not unwrap reasoning or tool output as completion content', () => {
+  const cells = [{ language: 'markdown', code: '## Only an internal example' }]
+  for (const parse of [
+    parseFinalGeneratedNotebookCompletion,
+    parseGeneratedNotebookCompletionSnapshot
+  ]) {
+    for (const type of ['thinking', 'reasoning', 'tool_result', 'tool_call', 'error']) {
+      assert.deepEqual(parse({ type, content: JSON.stringify({ cells }) }, 'python'), [])
+      assert.deepEqual(
+        parse(
+          { type, data: { type: 'data-notebook-cells-completion', data: { cells } } },
+          'python'
+        ),
+        []
+      )
+    }
+    assert.deepEqual(parse({ role: 'tool', content: JSON.stringify({ cells }) }, 'python'), [])
+  }
+})
+
+test('notebook AI generation raw fallback does not turn a markdown request into executable code', () => {
+  assert.deepEqual(parseFinalGeneratedNotebookCompletion('print("example")', 'markdown'), [])
+})
+
+test('notebook AI generation raw Python fallback requires complete control-flow headers', () => {
+  for (const source of [
+    'if the command failed',
+    'for a better result',
+    'while the agent is working',
+    'def the problem first',
+    'class the samples separately'
+  ]) {
+    assert.deepEqual(parseFinalGeneratedNotebookCompletion(source, 'python'), [])
+  }
+
+  for (const source of [
+    'with open("data.csv") as handle:\n    rows = handle.readlines()',
+    'if value > 1:\n    print(value)',
+    'for value in values:\n    print(value)',
+    'def summarize(values):\n    return sum(values)',
+    'class Summary:\n    count = 1'
+  ]) {
+    assert.deepEqual(parseFinalGeneratedNotebookCompletion(source, 'python'), [
+      { cellType: 'code', source, language: 'python' }
+    ])
+  }
+})
+
+test('notebook AI generation raw fallback retains R control flow and SQL statements', () => {
+  const examples = [
+    { language: 'r', source: 'if (length(values) > 0) {\n  print(mean(values))\n}' },
+    { language: 'sql', source: 'SELECT name, count(*) FROM samples GROUP BY name;' },
+    {
+      language: 'sql',
+      source: 'WITH summary AS (SELECT name FROM samples)\nSELECT * FROM summary;'
+    }
+  ]
+  for (const { language, source } of examples) {
+    assert.deepEqual(parseFinalGeneratedNotebookCompletion(source, language), [
+      { cellType: 'code', source, language }
+    ])
+  }
+})
+
 test('notebook AI generation final parser still rejects ordinary prose', () => {
   const cells = parseFinalGeneratedNotebookCompletion('这个图可以使用更高对比度的配色。', 'python')
 

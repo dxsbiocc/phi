@@ -63,13 +63,14 @@ import {
 } from '../lib/notebookViewModel'
 import {
   normalizedNotebookVirtualRowHeight,
-  notebookVirtualWindow,
-  type NotebookVirtualViewport
+  notebookVirtualWindow
 } from '../lib/notebookVirtualization'
+import { notebookVirtualListScrollTop } from '../lib/notebookViewState'
 import type { AnalysisNotebookContextReference, ModelOption } from '../../../types'
 import { NotebookHeader } from '../components/NotebookHeader'
 import { useNotebookSourceServices } from '../hooks/useNotebookSourceServices'
 import { useNotebookAutosave } from '../hooks/useNotebookAutosave'
+import { useNotebookViewState } from '../hooks/useNotebookViewState'
 import { shouldPreserveNotebookDraftOnSave } from '../lib/notebookAutosave'
 import NotebookAiPromptCell, {
   type NotebookAiPromptReferenceAddOptions
@@ -88,23 +89,6 @@ const notebookSiblingSpacingSelector =
   '& > [data-phi-notebook-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-prompt-cell], & > [data-phi-notebook-ai-prompt-cell] + [data-phi-notebook-cell], & > [data-phi-notebook-cell] + [data-phi-notebook-ai-preview-actions], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-cell], & > [data-phi-notebook-ai-preview-actions] + [data-phi-notebook-ai-prompt-cell]'
 
 const AddIcon = PhiIcons.action.add
-const initialVirtualViewport: NotebookVirtualViewport = { scrollTop: 0, viewportHeight: 0 }
-
-type NotebookVirtualRowHeightState = {
-  documentKey: string | null
-  heights: Record<string, number>
-}
-
-function notebookVirtualListScrollTop(
-  scrollViewport: HTMLElement,
-  virtualList: HTMLElement | null
-): number {
-  if (!virtualList) return 0
-  const viewportRect = scrollViewport.getBoundingClientRect()
-  const listRect = virtualList.getBoundingClientRect()
-  return Math.max(0, scrollViewport.scrollTop + listRect.top - viewportRect.top)
-}
-
 function NotebookVirtualRowShell({
   cellId,
   index,
@@ -246,6 +230,8 @@ export default function NotebookCanvas({
   cellExecutionError,
   availableNotebooks,
   projectCwd,
+  viewStateStore,
+  viewStateScope,
   onSaveNotebook,
   onSyncNotebookDraft,
   onNotebookDirtyChange,
@@ -292,21 +278,6 @@ export default function NotebookCanvas({
     sync: NonNullable<NotebookCanvasProps['onSyncNotebookDraft']>
   } | null>(null)
   const lastReportedDirtyRef = useRef<{ path: string; dirty: boolean } | null>(null)
-  const [virtualViewport, setVirtualViewport] =
-    useState<NotebookVirtualViewport>(initialVirtualViewport)
-  const [virtualRowHeightState, setVirtualRowHeightState] = useState<NotebookVirtualRowHeightState>(
-    {
-      documentKey: notebookDocumentKey,
-      heights: {}
-    }
-  )
-  const virtualRowHeights = useMemo(
-    () =>
-      virtualRowHeightState.documentKey === notebookDocumentKey
-        ? virtualRowHeightState.heights
-        : {},
-    [notebookDocumentKey, virtualRowHeightState]
-  )
   const [floatingActionAnchor, setFloatingActionAnchor] = useState<NotebookFloatingActionAnchor>({
     right: notebookFloatingActionInset,
     bottom: notebookFloatingActionInset
@@ -321,6 +292,16 @@ export default function NotebookCanvas({
     () => notebookCellsWithAiPreview(cells, aiPromptDraft, insertCodeLanguage),
     [aiPromptDraft, cells, insertCodeLanguage]
   )
+  const { virtualViewport, virtualRowHeights, recordRowHeight, captureViewState } =
+    useNotebookViewState({
+      store: viewStateStore,
+      scope: viewStateScope ?? projectCwd ?? '',
+      path: notebookDocumentKey,
+      ready: Boolean(!isOpening && draftDocument && draftNotebookPath === notebookFile?.path),
+      cells: displayCells,
+      scrollViewportRef,
+      virtualListRef
+    })
   const virtualCells = useMemo(
     () => notebookVirtualWindow(displayCells, virtualRowHeights, virtualViewport),
     [displayCells, virtualRowHeights, virtualViewport]
@@ -337,6 +318,7 @@ export default function NotebookCanvas({
     return () => {
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current)
+        scrollFrameRef.current = null
       }
       for (const observer of virtualRowObservers.values()) {
         observer.disconnect()
@@ -345,21 +327,7 @@ export default function NotebookCanvas({
     }
   }, [])
 
-  const syncVirtualViewport = useCallback((): void => {
-    const scrollViewport = scrollViewportRef.current
-    if (!scrollViewport) return
-    const listTop = notebookVirtualListScrollTop(scrollViewport, virtualListRef.current)
-    const nextViewport = {
-      scrollTop: Math.max(0, scrollViewport.scrollTop - listTop),
-      viewportHeight: scrollViewport.clientHeight
-    }
-    setVirtualViewport((current) =>
-      current.scrollTop === nextViewport.scrollTop &&
-      current.viewportHeight === nextViewport.viewportHeight
-        ? current
-        : nextViewport
-    )
-  }, [])
+  const syncVirtualViewport = captureViewState
 
   const findOutlineCellElement = useCallback((cellId: string): HTMLElement | null => {
     const scrollViewport = scrollViewportRef.current
@@ -463,16 +431,7 @@ export default function NotebookCanvas({
 
       const updateHeight = (): void => {
         const height = normalizedNotebookVirtualRowHeight(element.getBoundingClientRect().height)
-        setVirtualRowHeightState((current) => {
-          const currentHeights = current.documentKey === notebookDocumentKey ? current.heights : {}
-          if (current.documentKey === notebookDocumentKey && currentHeights[cellId] === height) {
-            return current
-          }
-          return {
-            documentKey: notebookDocumentKey,
-            heights: { ...currentHeights, [cellId]: height }
-          }
-        })
+        recordRowHeight(cellId, height)
       }
       updateHeight()
 
@@ -481,7 +440,7 @@ export default function NotebookCanvas({
       observer.observe(element)
       virtualRowObserversRef.current.set(cellId, observer)
     },
-    [notebookDocumentKey]
+    [recordRowHeight]
   )
 
   const updateNotebookScrollState = useCallback(() => {
@@ -497,7 +456,10 @@ export default function NotebookCanvas({
     })
   }, [updateNotebookScrollState])
 
-  const handleNotebookScroll = scheduleNotebookScrollState
+  const handleNotebookScroll = useCallback(() => {
+    captureViewState()
+    scheduleNotebookScrollState()
+  }, [captureViewState, scheduleNotebookScrollState])
 
   useEffect(() => {
     scheduleNotebookScrollState()

@@ -53,6 +53,7 @@ export interface PhiSessionManifest {
   cwd: string
   cwdRealPath: string
   title?: string
+  titleSource?: 'auto' | 'user'
   forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
   runtimeRef?: PhiRuntimeRef
@@ -185,6 +186,7 @@ function writeManifest(manifest: PhiSessionManifest): void {
 function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessionManifest {
   const next = { ...manifest }
   if (next.title === undefined) delete next.title
+  if (next.titleSource === undefined) delete next.titleSource
   if (next.forkedFrom === undefined) delete next.forkedFrom
   if (next.projectLocation === undefined) delete next.projectLocation
   if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath

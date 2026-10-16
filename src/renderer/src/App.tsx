@@ -1,4 +1,5 @@
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
+import type { NotebookViewStateStore } from './features/analysis/lib/notebookViewState'
 import {
   lazy,
   Suspense,
@@ -761,6 +762,7 @@ function App(): React.JSX.Element {
   } = useSessionStore()
   const messages = agentEventState.messages
   const [chatScrollPositionStore] = useState(() => new Map<string, number>())
+  const [notebookViewStateStore] = useState<NotebookViewStateStore>(() => new Map())
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
@@ -4655,6 +4657,13 @@ function App(): React.JSX.Element {
         hideLeftRail
         notebookRegistry={analysisNotebookRegistry}
         notebookFile={activeAnalysisNotebook}
+        notebookViewStateStore={notebookViewStateStore}
+        notebookViewStateScope={JSON.stringify([
+          activeProjectId,
+          activeCwd,
+          activeProjectLocation,
+          activeProject?.remoteHostAlias
+        ])}
         workspaceFileTabs={workspaceFileTabs}
         activeWorkspaceFilePath={activeWorkspaceFilePath}
         onSelectWorkspaceFileTab={onSelectWorkspaceFileTab}
