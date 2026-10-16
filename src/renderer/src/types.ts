@@ -4,6 +4,7 @@ import type {
   NotebookOutput
 } from '../../shared/notebookDocument'
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
+import type { AppUpdateCheck } from '../../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../../shared/browserTypes'
 import type { WebLinkPreview } from '../../shared/webLinkPreviewTypes'
@@ -301,47 +302,20 @@ export interface AuthProgressEvent {
 }
 
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type AgentUserInteractionOption = {
-  label: string
-  description: string
-  preview?: string
-}
+import type {
+  AgentUserInteractionAnswer,
+  AgentUserInteractionOption,
+  AgentUserInteractionQuestion,
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse
+} from '../../shared/agentInteractionTypes'
 
-export type AgentUserInteractionQuestion = {
-  question: string
-  header: string
-  options: AgentUserInteractionOption[]
-  multiSelect?: boolean
-}
-
-export type AgentUserInteractionRequest = {
-  requestId: string
-  questions: AgentUserInteractionQuestion[]
-  planReview?: { title: string; content: string; planFilePath: string }
-  sessionId?: string
-  sessionPath?: string
-  sessionGeneration?: number
-  runId?: string
-  cwd?: string
-  projectName?: string
-}
-
-export type AgentUserInteractionAnswer = {
-  questionIndex: number
-  question: string
-  kind: 'option' | 'custom' | 'multi'
-  answer: string | null
-  selected?: string[]
-  notes?: string
-  preview?: string
-}
-
-export type AgentUserInteractionResponse = {
-  requestId: string
-  answers: AgentUserInteractionAnswer[]
-  cancelled?: boolean
-  globalNote?: string
-  error?: string
+export type {
+  AgentUserInteractionAnswer,
+  AgentUserInteractionOption,
+  AgentUserInteractionQuestion,
+  AgentUserInteractionRequest,
+  AgentUserInteractionResponse
 }
 
 export type FilePreviewKind = 'text' | 'html' | 'image' | 'pdf' | 'metadata'
@@ -779,6 +753,8 @@ export interface RendererApi
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
+  checkForAppUpdates: () => Promise<AppUpdateCheck>
+  openAppReleasesPage: (url?: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>

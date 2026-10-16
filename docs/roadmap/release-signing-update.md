@@ -1,6 +1,6 @@
 # 任务说明：发布、签名与更新
 
-状态：部分实施（品牌化、内置 bun 与 Linux x64 手动构建配置已完成；签名、发布与更新未开始）。来源：与 wisp-science 的对照，以及"当前状态能否直接发安装包、点击即装"的问题。
+状态：部分实施（品牌化、内置 bun、Linux x64 构建已完成；发布流水线与未签名预览版已就绪，正式签名、公证与自动更新等 Apple Developer 账号）。来源：与 wisp-science 的对照，以及"当前状态能否直接发安装包、点击即装"的问题。
 结论先行：现在**不能**发"点击安装即用"的第一版，原因见下面的阻塞项。
 
 路线图归属：`internal-beta-implementation.md` 明确把"公开分发、签名、公证、自动更新"列为暂缓项。
@@ -13,11 +13,11 @@
 | 应用标识 | 已冻结为 `appId: cn.phiscience.phi`、`productName: Phi` | `electron-builder.yml` |
 | 包元数据 | 已更新为 Phi Science、`https://phi.omicsagent.cn/`、版本 `0.1.0` | `package.json` |
 | Linux x64 | 已配置 AppImage 与 deb、品牌/桌面元数据、内置 bun 强制检查；真实 Linux 构建与干净容器启动尚未验证 | `electron-builder.yml`、`scripts/build/after-pack.mjs` |
-| 自动更新 | `publish.url: https://example.com/auto-updates`；源码里没有 `electron-updater` 或 `autoUpdater` | `electron-builder.yml`、`src/main` |
-| macOS 签名 | 未配置 identity；`notarize: false` | `electron-builder.yml` |
+| 更新 | `publish` 指向 GitHub Releases（草稿）；设置 → 通用 → 检查更新 只比较版本并打开下载页，不自动安装（macOS 自动更新要求正式签名） | `electron-builder.yml`、`src/main/app-update-check.ts` |
+| macOS 签名 | 发布流水线：有 `CSC_LINK` 等 secrets 时正式签名并公证，否则临时签名（ad-hoc） | `.github/workflows/release.yml` |
 | Windows 签名 | 未配置 | `electron-builder.yml` |
 | macOS 权限声明 | 摄像头、麦克风描述是模板文案，与产品不符 | `electron-builder.yml` 的 `extendInfo` |
-| CI | 新增仅 `workflow_dispatch` 的 Linux x64 构建并上传产物工作流；不发布，尚未实际触发验证 | `.github/workflows/package-linux.yml` |
+| CI | `release.yml`：推送 `v*` tag 时构建 macOS arm64 与 Linux x64，跑打包后 worker 冒烟测试，并创建草稿 Release；`package-linux.yml` 已在 2026-10-12 首次跑通 | `.github/workflows/` |
 | 内置运行时 | bun 已固定 `darwin-arm64`、`linux-x64`；micromamba 清单覆盖 `darwin-arm64`、`darwin-x64`、`linux-x64` | `resources/runtime/manifest.json` |
 | OfficeCLI | 已随原生 Office 功能删除（2026-10-12），不再有源码、脚本或安装包内容 | — |
 | 图标 | 有 `.icns`、`.ico`、`.png` | `build/` |
@@ -101,6 +101,11 @@ Windows 未签名会触发 SmartScreen 警告。证书与账号由用户提供�
 - `~/.phi` 数据模型当前是"可重置"，公开发布后要有向后兼容或迁移策略，需用户决策。
 - 许可证：确认依赖许可（尤其内置的 bun、micromamba、Pi/OMP 相关包）允许再分发；阶段 B 若分发 OfficeCLI，另行核对其许可。
 - 文档：README 里"内测、手动更新、Gatekeeper 警告"的描述要同步改写。
+
+## 未签名预览版（2026-10-12）
+
+没有 Apple Developer 账号时先发预览版：macOS 包做临时签名，可在 Apple Silicon 上打开，但首次启动需要用户在「系统设置 → 隐私与安全性」点「仍要打开」（README 有说明）；Linux 包不受影响。
+账号下来后只需在仓库 secrets 配置 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`，流水线自动改为正式签名并公证，代码不用改。
 
 ## 需要用户提供或决策
 

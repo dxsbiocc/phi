@@ -37,6 +37,7 @@ import type {
 import type { OpenSshHostInput } from '../shared/remoteHostProfile'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
+import type { AppUpdateCheck } from '../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type {
   RemoteDirectoryListRequest,
@@ -823,6 +824,8 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
   getAppSettings: () => Promise<PhiAppSettings>
+  checkForAppUpdates: () => Promise<AppUpdateCheck>
+  openAppReleasesPage: (url?: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   getWebSearchSettings: () => Promise<WebSearchSettings>
   updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
@@ -1396,6 +1399,9 @@ const api: RendererAuthApi = {
     }
   },
   getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke('settings:get'),
+  checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke('app:checkForUpdates'),
+  openAppReleasesPage: (url?: string): Promise<void> =>
+    ipcRenderer.invoke('app:openReleasesPage', url),
   updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
     ipcRenderer.invoke('settings:update', patch),
   getWebSearchSettings: (): Promise<WebSearchSettings> =>

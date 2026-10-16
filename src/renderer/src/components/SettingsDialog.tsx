@@ -33,6 +33,7 @@ import { RemoteHostSettingsSection } from '../features/wrapper/components/Remote
 import { EnvironmentSettingsPanel } from '../features/environment/components/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
 import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
+import { AppUpdateSection } from '../features/settings/components/AppUpdateSection'
 import { PermissionSettingsSection } from './PermissionView'
 import { MemorySettingsPanel } from '../features/memory/MemorySettingsPanel'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
@@ -490,6 +491,8 @@ function GeneralSection({
         compactDisabled={compactDisabled}
         onCompact={onCompactContext}
       />
+
+      <AppUpdateSection />
     </Stack>
   )
 }

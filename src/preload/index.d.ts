@@ -3,6 +3,7 @@
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
 import type { RemoteJupyterStartJob } from '../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../shared/notebookAiJobTypes'
+import type { AppUpdateCheck } from '../shared/appUpdateTypes'
 import type { ProjectMemorySettings, ProjectMemorySnapshot } from '../shared/projectMemoryTypes'
 import type { BrowserRendererBridge } from '../shared/browserTypes'
 import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
@@ -809,6 +810,8 @@ declare global {
         ) => void
       ) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
+      checkForAppUpdates: () => Promise<AppUpdateCheck>
+      openAppReleasesPage: (url?: string) => Promise<void>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
       getWebSearchSettings: () => Promise<WebSearchSettings>
       updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>

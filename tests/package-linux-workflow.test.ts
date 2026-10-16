@@ -40,13 +40,19 @@ test('Linux packaging workflow is manual, least-privilege, and uploads checked x
   assert.equal(steps[2]?.with?.['node-version'], '22.15.0')
   assert.deepEqual(
     steps.filter((step) => step.run).map((step) => step.run),
-    ['bun install --frozen-lockfile', 'bun run typecheck', 'bun run build:linux', steps[6]?.run]
+    [
+      'bun install --frozen-lockfile',
+      'bun run typecheck',
+      'bun run build:linux',
+      'node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources',
+      steps[7]?.run
+    ]
   )
-  assert.match(steps[6]?.run ?? '', /dist\/\*\.AppImage/u)
-  assert.match(steps[6]?.run ?? '', /dist\/\*\.deb/u)
-  assert.match(steps[6]?.run ?? '', /sha256sum/u)
-  assert.equal(steps[7]?.with?.['if-no-files-found'], 'error')
-  assert.equal(steps[7]?.with?.path, 'dist/*.AppImage\ndist/*.deb\n')
+  assert.match(steps[7]?.run ?? '', /dist\/\*\.AppImage/u)
+  assert.match(steps[7]?.run ?? '', /dist\/\*\.deb/u)
+  assert.match(steps[7]?.run ?? '', /sha256sum/u)
+  assert.equal(steps[8]?.with?.['if-no-files-found'], 'error')
+  assert.equal(steps[8]?.with?.path, 'dist/*.AppImage\ndist/*.deb\n')
 
   for (const forbidden of ['pull_request:', 'push:', 'bun run lint', 'publish', 'release']) {
     assert.equal(

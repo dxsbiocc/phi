@@ -554,6 +554,7 @@ import {
   createAppRemoteSessionManager,
   type AppRemoteSessionRoutingOptions
 } from './agent/remote-session-routing'
+import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from './app-update-check'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import {
   normalizeProjectMemorySettings,
@@ -10100,6 +10101,16 @@ app.whenReady().then(async () => {
     await getAuthManager().resolveInteraction(requestId, value)
   })
 
+  ipcMain.handle('app:checkForUpdates', async () => checkForAppUpdate(app.getVersion()))
+  ipcMain.handle('app:openReleasesPage', async (_, url: unknown) => {
+    // Only Phi's own release pages; anything else falls back to the latest release.
+    const target =
+      typeof url === 'string' &&
+      url.startsWith(`https://github.com/${RELEASES_REPOSITORY}/releases/`)
+        ? url
+        : RELEASES_PAGE_URL
+    await shell.openExternal(target)
+  })
   ipcMain.handle('settings:get', async () => readAppSettings())
   ipcMain.handle('settings:update', async (_, patch: unknown) => {
     const settings = updateAppSettings(patch)

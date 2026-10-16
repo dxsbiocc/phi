@@ -101,4 +101,11 @@ bun run build
 
 Phi is an **internal beta**. It is not yet a signed, notarized public desktop release. macOS is the primary development target; Linux x64 packaging is configured but still needs clean-machine acceptance, and Windows distribution is not yet validated. Remote SSH, Jupyter, and Slurm workflows need real-host validation for each environment. Updates are manual during the beta.
 
+Preview builds, when published, are on the [latest release](https://github.com/dxsbiocc/phi/releases/latest) page: macOS Apple Silicon (`.dmg`, `.zip`) and Linux x64 (`.AppImage`, `.deb`). Settings and conversations in `~/.phi` are kept when you install a newer version, and Settings → General → 检查更新 tells you when a newer release exists.
+
+- **macOS**: open the `.dmg` and drag Phi to Applications. Preview builds are not yet notarized, so macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security**, click **Open Anyway** next to the Phi message, and confirm; you do this once per installed version. Alternatively run `xattr -dr com.apple.quarantine /Applications/Phi.app`.
+- **Linux**: install the `.deb` with `sudo apt install ./phi_*.deb`, or make the AppImage executable (`chmod +x Phi-*.AppImage`) and run it.
+
+Maintainers build releases from a `v*` tag; packaging and signing are described in [release-signing-update.md](docs/roadmap/release-signing-update.md).
+
 The source is licensed under [MIT](LICENSE). Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Feature requests and bug reports belong in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).

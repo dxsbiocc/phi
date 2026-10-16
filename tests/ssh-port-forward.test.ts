@@ -112,7 +112,8 @@ async function fakeSshSandbox(): Promise<{ binary: string; argsPath: string }> {
       '#!/bin/bash',
       'printf "%s\\n" "$@" >> "$PHI_FAKE_SSH_ARGS"',
       "trap 'exit 0' TERM INT",
-      'while :; do sleep 1; done',
+      // A foreground sleep would delay the trap up to a second; wait is interrupted at once.
+      'while :; do sleep 1 & wait $!; done',
       ''
     ].join('\n')
   )
