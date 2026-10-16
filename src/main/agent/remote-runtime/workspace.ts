@@ -5,10 +5,15 @@ import {
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
 import { SshHost } from '../workspace-host/ssh-host'
+import {
+  HOST_CAPABILITY_FAST_PROBE_SCRIPT,
+  parseHostCapabilityProbe
+} from '../workspace-host/probe'
 import { createRemoteRuntimeInputExec } from './input-exec'
 import type { RemoteRuntimeWorkspace } from './types'
 
 const REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS = 30_000
+const REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS = 10_000
 
 export interface RemoteRuntimeTarget {
   runtimeSessionId: string
@@ -27,7 +32,28 @@ export async function openRemoteRuntimeWorkspace(
   }) => RemoteWorkspaceHostBinding = resolveRemoteWorkspaceHostBinding
 ): Promise<RemoteRuntimeWorkspace> {
   const binding = resolveBinding({ sessionId: target.sessionId, projectId: target.projectId })
-  const projectHost = new SshHost(binding.config)
+  const execWithInput = createRemoteRuntimeInputExec(binding.config.connect)
+  signal?.throwIfAborted()
+  const result = await execWithInput(HOST_CAPABILITY_FAST_PROBE_SCRIPT, {
+    signal,
+    timeoutMs: REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS,
+    maxOutputBytes: 64 * 1024
+  })
+  signal?.throwIfAborted()
+  const profile = parseHostCapabilityProbe(result.stdout)
+  if (
+    result.code !== 0 ||
+    result.terminationReason ||
+    result.truncated ||
+    profile.probe.state === 'unavailable' ||
+    profile.platform.os === 'unknown' ||
+    profile.platform.arch === 'unknown'
+  ) {
+    throw new Error('无法安全探测服务器系统与架构；请检查 SSH 连接后重试。')
+  }
+  // Only platform identity is needed here; fast detection grants no additional host capabilities.
+  const platform = profile.platform
+  const projectHost = new SshHost({ ...binding.config, platform })
   try {
     const runtimeRoot = await resolveRemoteRuntimeRoot(
       projectHost,
@@ -35,10 +61,12 @@ export async function openRemoteRuntimeWorkspace(
       target.configuredRoot,
       signal
     )
+    signal?.throwIfAborted()
     const runtimeHost = new SshHost({
       remoteRoot: runtimeRoot,
       canonicalRoot: runtimeRoot,
-      connect: binding.config.connect
+      connect: binding.config.connect,
+      platform
     })
     return {
       projectHost,
@@ -46,7 +74,7 @@ export async function openRemoteRuntimeWorkspace(
       projectRoot: binding.canonicalRoot,
       runtimeRoot,
       ...(target.micromambaPath ? { micromambaPath: target.micromambaPath } : {}),
-      execWithInput: createRemoteRuntimeInputExec(binding.config.connect),
+      execWithInput,
       close: async () => {
         await Promise.all([projectHost.close(), runtimeHost.close()])
       }
