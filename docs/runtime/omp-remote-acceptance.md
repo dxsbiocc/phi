@@ -1,8 +1,10 @@
 # OMP 远程运行时验收记录
 
-本次原 T16 增量（2026-10-16）：真实 App routing/runtime-adapter/SessionRunner → SSH → 官方 OMP 18.10.3 的 GPU 受控闭环 4/4 通过，覆盖读写/Bash、审批拒绝与待批停止、同 journal 新代显式恢复。模型仅为合成 loopback provider，不代表完整 R8 或真实厂商验收。源码 `e62d22cc` 补齐 App 工作区未探测平台而导致资产选择失败的接点；相关 19/19（包含 workspace 6 项）及独立审查通过，固定候选生产类型/构建/lint/asar 均退出 0（70.73 秒），2704 个跟踪文件、HEAD、tree 与共享资源引用前后稳定。
+最新原 T16 限定状态（2026-10-16）：三项已审修复已本地 fast-forward 合入 main `db18ec7c`，保留其他工作、未推送；该固定候选 GPU Notebook 原强场景 3/3 与生产 gates 已绿。原 child-enabled R8、node3 extension、services 环境拒绝结果和标准全量仍有下述缺口。T16 仍 partial，原任务编号与默认开关不变。
 
-更新：2026-10-15。此记录区分已验收的基础代码、集成验证与尚未完成的产品能力。
+上一批原 T16 限定增量（2026-10-16）：真实 App routing/runtime-adapter/SessionRunner → SSH → 官方 OMP 18.10.3 的 GPU 受控闭环 4/4 通过，覆盖读写/Bash、审批拒绝与待批停止、同 journal 新代显式恢复。模型仅为合成 loopback provider，不代表完整 R8 或真实厂商验收。源码 `e62d22cc` 补齐 App 工作区未探测平台而导致资产选择失败的接点；相关 19/19（包含 workspace 6 项）及独立审查通过，固定候选生产类型/构建/lint/asar 均退出 0（70.73 秒），2704 个跟踪文件、HEAD、tree 与共享资源引用前后稳定。
+
+更新：2026-10-16。此记录区分已验收的基础代码、集成验证与尚未完成的产品能力。
 
 阶段 1 原已合入 main `6d9d9ef3`；T8 及后续成果曾按用户要求暂留分支。用户于 2026-10-14 另行要求开始合并，已将验收过的阶段成果及 main 最新聊天布局整合为本地 main `631671e6`。OMP 为 18.10.3，远程 RPC 及前台专家默认仍关闭；没有推送、发布、连接真实服务器或读取真实提供商凭据。
 
@@ -365,6 +367,17 @@ MCP 原首次大结果 fixture 以默认 32K context 触发了真实 SDK 自动�
 
 固定 OMP 18.10.3、扩展 bundle `f964cf79`；4/4 自然退出 0，8 个私有 operator 文件与 2704 个跟踪文件运行前后哈希稳定，当时 HEAD 为 `b64b5fc0`，其中两处平台修复字节与源码提交 `e62d22cc` 一致。4/4 reverse tunnel 关闭、4 个代次目录和自有测试根目录删除。包含合成模型数据的真实 SDK journal 与隔离本地审计 store 按计划保留，不冒称所有审计数据删除。最终 receipt：`.omx/T16-gpu-workflow-final-receipt.json`（SHA256 `f8ec22ae45daa4ee5a5c80fbdb306b12cbb7bff2456bf5d930edafb69711c941`）；生产检查绑定 `.omx/T16-workspace-candidate-gates.json`，未重跑当前全库。
 
-node3 只读登录诊断经用户重新授权完成：交互登录认证成功，Ctrl+C 后得到可用提示符；独立无 TTY 的输出标记也在 9.732 秒成功，stdout 无额外内容。当前启动链包含 `.bashrc` 的系统 profile、Conda hook 与 brew shellenv，交互分支再进入 Zsh 的 Conda 初始化；单独 hook 测量为 Bash 7.656 秒、Zsh 0.920 秒、brew 0.910 秒。该结果支持启动链慢/有波动，不能唯一归因此前的 20 秒超时，也不说明自动 SSH 必须使用 TTY 或注入 Ctrl+C。没有修改远端启动文件或恢复 node3 安装/工作流。
+此前 node3 只读登录诊断经用户重新授权完成：交互登录认证成功，Ctrl+C 后得到可用提示符；独立无 TTY 的输出标记也在 9.732 秒成功，stdout 无额外内容。当前启动链包含 `.bashrc` 的系统 profile、Conda hook 与 brew shellenv，交互分支再进入 Zsh 的 Conda 初始化；单独 hook 测量为 Bash 7.656 秒、Zsh 0.920 秒、brew 0.910 秒。该结果支持启动链慢/有波动，不能唯一归因此前的 20 秒超时，也不说明自动 SSH 必须使用 TTY 或注入 Ctrl+C。该诊断阶段没有修改远端启动文件或恢复安装/工作流；后续受控授权与部署结果见下节。
 
 另观察到 zsh history 的 `disk quota exceeded` 告警；共享盘整体用量 7%、inode 用量 1%，quota -s 未报告用户配额，告警原因未闭合，不据此声称整盘满或配额已修复。只读证据在主工作区 `.omx/omp-recovery/pm/reports/T16-node3-startup-readonly-2026-10-16.json`。完整 R8 的 Notebook/Wrapper、子任务/其余科学工具、真实 provider/OAuth、人工 UI/Finder 仍待验证；T11 opaque、默认 RPC 开关和 T18 门槛保持原状态。
+
+
+## T16 科研闭环与受控验收增量（2026-10-16）
+
+三项产品窄修已独立审查：`81ab246c` 保留可信环境所选 channel 的次序和空列表的既有默认；`ed7cd6a6` 让已知 starting 的同一 Notebook kernel 接受首个执行，保持互斥、停止及未知状态拒绝；`d7730679` 在原启动预算内串行发布子任务文件并最后发布 sidecar。publisher 四文件夹具的 metadata 往返为 9→3；后续同源真实阶段诊断也确认 3 个 metadata 命令、4 次资源上传全部完成，发布窗口 5.554 秒。该实证不等于整个 attach 成功，见下文。三项已审修复已本地 fast-forward 合入 main `db18ec7c`，自有产品字节与 index 已核对、其他工作保留，未推送；该固定候选生产类型/构建、asar、完整 lint 通过（80.39 秒，2715 跟踪文件、HEAD/tree 与共享资源稳定）；该候选标准全量尚未执行。
+
+同一 `db18ec7c`、官方 OMP 18.10.3/产品 bundle `f964cf79` 的真实 GPU Notebook 3/3 自然退出 0：执行并保存 55.831 秒；同 journal 新代显式恢复/读取 58.279 秒，恢复不重放、执行计数不变；所属 kernel 停止及 live peer 105.582 秒，物理 interrupt 已结算、peer 可继续执行/保存、无迟到磁盘副作用或本机回落。4/4 隧道、4 个代次目录、自有 Jupyter 与测试根清理确认，2715 源文件和 10+3 私有/复用文件哈希稳定。原 13927 批次的 Notebook author/save 两场景保留其版本范围。默认 OFF 的真实 GPU legacy read/edit/bash 与精确历史恢复另验通过；本地自动及手动压缩第二轮通过，正 usage 明确为合成估算且首红保留；80 MiB 真实 SSH 上传在持久 checkpoint 后 caller 取消、同 ID 续传并独立核最终 SHA，通过且自有清理确认。这些结果互不冒充完整 R8、随机断网或真实厂商计费证据。
+
+原双主机门仍未闭合：`db18ec7c` 的原 child-enabled R8 在初始 attach/adoption 超时（50.982 秒，0 完成场景、源码稳定及 cleanup=true），原首红之后的阶段诊断已实证上述发布完成，并观察到真实 RPC ready 和 bootstrap attestation；attach 在后续确认时超时，0 ordinary prompt。具体后续确认原因仍待定位，诊断不代替原场景成功，也不签启动修复验收。node3 经用户恢复受控授权后，官方 binary 18.10.3/隔离版本已通过，extension 在原 900 秒期限超时；物理连接已关闭，但探针/测试根回收未确认，保留待回收，不能签运行时 ready。services 第四轮在 `env_request` 明确拒绝断言失败，实际为通用 host result delivery error；原红及源码/清理证据保留，待诊断，不倒签整轮或先前零完成场景为通过。
+
+13927 打包 GUI 的已配置 Cursor 短文本真实请求成功；DeepSeek 余额不足、Moonshot 404 为失败观察，Cursor 的 API key/OAuth 路径未单独 attest。终端中文 paste、40×36→40×59 实际拖动、collapse 保留输出及正常退出后的自有进程消失已确认；完整 IME、有效模型 draft/解释及 fresh OAuth 仍未验。阶段性本地证据索引为 `.omx/omp-recovery/pm/reports/T16-current-evidence-ledger.json`，应与后续原始 receipt 一起核对；该索引及 `.omx/` receipt 当前为 gitignored 私有审计资料，不作为仓库长期分发附件。T16 保持 partial，增量合入不构成关单；T11 opaque、RPC 默认 OFF 与 T18 稳定周期门保持原状态。

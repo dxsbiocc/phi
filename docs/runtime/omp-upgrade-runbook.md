@@ -4,6 +4,8 @@
 
 本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
+最新原 T16 限定状态（2026-10-16）：三项已审修复已本地 fast-forward 合入 main `db18ec7c`（保留其他工作、未推送）；该固定候选 GPU Notebook 3/3 和生产 types/build/asar/lint 通过，标准全量未跑；原 child-enabled R8 初始 attach、node3 extension 和 services 环境拒绝仍有实测红。详细范围见 [T16 科研闭环增量](omp-remote-acceptance.md#t16-科研闭环与受控验收增量2026-10-16)，T16 仍 partial。
+
 上一批限定状态（2026-10-15）：原 T11 history 三场景通过，补五项断言后只复验 vendor/KV 一例；辅助 opaque 仍需上游公共修复，完整 T11 未关闭。原 T16 终端修复已 main `10f979bc`，原压力五阶段和 15 项纯测试、primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本及原 `d670` bundle 的无 provider RPC foundation 通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred）、不作功能失败。
 
 源码 `19da6594` 已合入 `db09181f`。该整合候选的生产类型、构建、lint、asar 均退出 0（68.75 秒）；2704 个跟踪文件、HEAD、tree 及共享资源引用前后稳定。未重跑该整合候选的全库测试。以上结果仅指本轮限定范围，不代表当前全库或双主机 R8。历史步骤和证据保留，最新升级合同见文末。
@@ -164,13 +166,13 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | 本地真实 provider    | 一轮对话、read／edit／bash 等工具、中断、旧会话恢复                                                       | 待人工验证；隔离 loopback 契约已通过                          |
 | API key／OAuth       | 实际登录、浏览器／device 交换、刷新、注销和重新发送                                                       | 待验证；合成存储与回调通过不等于真实交换通过                  |
-| 自动压缩             | 实际触发压缩后继续对话，历史和设置符合预期                                                                | 隔离真实 CLI/应用已通过；外部 provider 与人工 UI 仍待 T16                                |
+| 自动压缩             | 实际触发压缩后继续对话，历史和设置符合预期                                                                | 实际本地自动/手动压缩已通过，usage 为 synthetic；外部 provider 与人工 UI 未验                                |
 | MCP                  | 一个真实 HTTPS OAuth 连接器及一个本地 stdio 连接器                                                        | 外部 HTTPS OAuth 待验证；自动化 stdio 生命周期已通过          |
 | 子智能体 | 并行/后台四路、status/wait/steer/stop、模型/资源、审批、停止及完成消费/正确 Phi 唤醒 | 本轮隔离 SDK/CLI 与本机服务有定向证据；真实 SSH/provider/PTY 与人工使用仍待 T16 |
-| 打包版               | asar 解包、Finder 启动、worker／代理启动、终端与退出                                                      | Finder／真实打包启动待验证；构建／闭包及本机 PTY smoke 已通过 |
-| 旧远程路径           | 一轮 read／edit／bash 对话，未启用新 RPC 时行为稳定                                                       | 真实服务器待授权验证                                          |
-| 新远程运行时 | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复 | GPU 官方 18.10.3 安装/隔离版本、无 provider RPC foundation 及本次 App 受控 4 场景通过；上传中断恢复及完整 R8 未覆盖，cluster deferred |
-| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | GPU 基础通信与本次 App 受控 4 场景通过，完整 R8 尚未通过；node2/node3/yzhang 按用户要求 deferred，不当作 failed/pass |
+| 打包版               | asar 解包、Finder 启动、worker／代理启动、终端与退出                                                      | 13927 GUI 真实 Cursor 短轮、终端局部及正常退出已观察；Finder 来源/隔离限制、完整人工项见增量记录 |
+| 旧远程路径           | 一轮 read／edit／bash 对话，未启用新 RPC 时行为稳定                                                       | 默认 OFF 的真实 GPU read/edit/bash、精确历史恢复及零重放已通过（13927，auto 权限）                                          |
+| 新远程运行时 | 真正下载／运行官方资产，glibc／挂载 noexec／权限检查，SSH 上传中断恢复 | GPU 安装/foundation/App4 与 80 MiB caller 取消续传通过；node3 binary18.10.3 通过，extension 原期限超时，测试根待回收 |
+| R8 node3 与 GPU 单机 | 搜索 → 阅读 → 修改 → 运行；审批批准／拒绝；宿主工具；子智能体；断线重连恢复；记录启动、工具往返与部署耗时 | GPU Notebook3 通过，但 db18 原 child-enabled R8 初始 attach 超时；node3 extension 未 ready，完整双主机 R8 未闭合 |
 
 只有 SDK／二进制 manifest 版本一致、RPC 协议兼容、模型代理与隧道、宿主工具、主／子会话审批、存储恢复及 R8 实机清单均验收后，才讨论远程默认切换。R1 27 项测试或本地 RPC 基础测试不能代替这些门槛。旧远程实现的删除属于稳定一个升级周期后的 R9。
 
@@ -244,5 +246,12 @@ T10b 最终自动化补证（`e4447c5d`）：全套串行 4930 项，4905 通过
 - App 的 remote workspace 必须经绑定 SSH 的既有 fast stdin probe 取得真实平台，再创建 project/runtime Host；不能以夹具注入、renderer 提示或硬编码 Linux/x64 代替。只传平台事实，未知/失败/截断/取消均拒绝并释放原连接，fast 10 秒与 root 30 秒不变。
 - 本次源码 `e62d22cc` 的相关 19 项、实际 GPU App 4 场景及独立审查通过；生产类型/构建/lint/asar 70.73 秒均退出 0，2704 个文件与候选 HEAD/tree 稳定。实际扩展仍为 `f964cf79`，验收范围及审计保留见 `.omx/T16-gpu-workflow-final-receipt.json`，不迁成完整 R8/厂商验证或当前全库通过。
 - 审批必须由实际 Runner mark 方法作为唯一持久 writer：write/bash 各 requested→approved，拒绝为 requested→denied，停止为 requested→cancelled；迟到批准不能执行。恢复保留同 OMP ID/journal，恢复阶段无隐式 provider/tool 重放，后续明确请求单独计数。
-- node3 本轮只授权登录诊断，自动无 TTY 命令当前也成功（9.732 秒）。[Bash 官方启动规则](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files)说明 SSH 的非交互调用也可能读取 `.bashrc`；重型环境初始化应与交互启动区分。不能把 TTY、Ctrl+C 或增加期限当作无损 RPC 启动修复。本次未改服务器配置，历史配额告警未修复；安装/工作流仍暂缓。
+- 此前 node3 登录诊断阶段，自动无 TTY 命令成功（9.732 秒）。[Bash 官方启动规则](https://www.gnu.org/software/bash/manual/html_node/Bash-Startup-Files)说明 SSH 的非交互调用也可能读取 `.bashrc`；重型环境初始化应与交互启动区分。不能把 TTY、Ctrl+C 或增加期限当作无损 RPC 启动修复。该阶段未改服务器配置，历史配额告警未修复；后续受控授权、binary 与 extension 结果以上方最新状态及验收增量为准。
 - 本次未改终端或 Phi 扩展代码，既有打包终端证据保留其原候选版本，不重复记作新候选实测。RPC 默认关闭；完整 T11/R8 和稳定周期之后才执行 T18。
+
+
+## T16 继续执行的验证边界（2026-10-16）
+
+可信环境 channel 保序、Notebook starting 准入与 bounded child publication 分别按 `81ab246c`／`ed7cd6a6`／`d7730679` 保留相关回归和独立审查；coherent 固定版本 `db18ec7c` 已本地合入 main，保留其他工作、未推送。publisher 的 9→3 夹具回归之后，同源实机阶段诊断已确认 3 个 metadata 命令及 4 次上传全完成（5.554 秒），真实 RPC ready/attestation 到达而 attach 在后续确认超时，0 ordinary prompt；这仍不签整体启动或原 child-enabled R8 已通过。原 R8 初始 attach 50.982 秒超时、node3 extension 原 900 秒超时及探针/根回收、services 第四轮环境拒绝的通用 delivery error 继续按原场景和期限诊断，不放宽断言或重建已有 T12–T15。标准全量尚未执行，后续结果必须绑定其真实固定候选。
+
+本地压缩使用明确 synthetic usage；上传续传只证明受控 caller abort；GUI139 的 Cursor 短轮不证明独立 API key/OAuth 路径，中文 paste/实拖动/collapse/正常 quit 不证明 full IME、有效 draft/解释或崩溃清理。原始 receipt 与阶段性账本当前在 gitignored `.omx/`，不是随仓库分发的长期附件。上述修复可作为有独立验证的 T16 增量交付，任务继续；T11 opaque、默认 OFF、完整双主机 R8 与 T18 稳定周期门不变。
