@@ -184,7 +184,7 @@ outputs:
   }
 })
 
-test('rejects legacy packages that would install several wrappers at once', async () => {
+test('installs, upgrades and uninstalls grouped wrappers as one package', async () => {
   const { root, agentDir, registryDir } = sandbox()
   try {
     const adapter = (name: string): string => `id: nf-core/modules/samtools-${name}
@@ -205,13 +205,53 @@ outputs:
     })
     const source = registry(registryDir, [entry])
 
-    await assert.rejects(
-      installPackages(planInstall(source, { type: 'wrapper', id: entry.id }, { agentDir }), {
-        agentDir
-      }),
-      /包含 2 个 wrapper/
+    await installPackages(planInstall(source, { type: 'wrapper', id: entry.id }, { agentDir }), {
+      agentDir
+    })
+
+    assert.deepEqual(readWrapperTreeState(agentDir).packages[entry.id]?.paths, [
+      'modules/nf-core/samtools/index/wrapper/wrapper.yaml',
+      'modules/nf-core/samtools/sort/wrapper/wrapper.yaml'
+    ])
+    assert.deepEqual(
+      listWrapperCompositionCatalogStatus({ agentDir }).map((item) => [
+        item.id,
+        item.packageId,
+        item.packageSelected,
+        item.packageEnabled
+      ]),
+      [
+        ['nf-core/modules/samtools-index', entry.id, true, true],
+        ['nf-core/modules/samtools-sort', entry.id, true, true]
+      ]
     )
+
+    const upgraded = wrapperEntry(registryDir, entry.id, {
+      version: '2.0.0',
+      files: {
+        'modules/nf-core/samtools/sort/wrapper/wrapper.yaml': adapter('sort'),
+        'modules/nf-core/samtools/view/wrapper/wrapper.yaml': adapter('view')
+      }
+    })
+    await upgradePackage(
+      registry(registryDir, [entry, upgraded]),
+      {
+        type: 'wrapper',
+        id: entry.id
+      },
+      { agentDir }
+    )
+    assert.equal(readWrapperTreeState(agentDir).packages[entry.id]?.version, '2.0.0')
+    assert.equal(existsSync(join(agentDir, 'wrappers/tree/modules/nf-core/samtools/index')), false)
+    assert.deepEqual(
+      listWrapperCompositionCatalog({ agentDir }).map((item) => item.manifest.id),
+      ['nf-core/modules/samtools-sort', 'nf-core/modules/samtools-view']
+    )
+
+    uninstallPackage('wrapper', entry.id, { agentDir })
     assert.deepEqual(readWrapperTreeState(agentDir).packages, {})
+    assert.deepEqual(listWrapperCompositionCatalogStatus({ agentDir }), [])
+    assert.equal(existsSync(join(agentDir, 'wrappers/tree/modules')), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -295,6 +335,25 @@ outputs:
     const second = wrapperEntry(registryDir, 'module-acme-beta', {
       files: { 'modules/acme/beta/wrapper/wrapper.yaml': manifest('Beta') }
     })
+    const grouped = wrapperEntry(registryDir, 'module-acme-grouped', {
+      files: {
+        'modules/acme/grouped/alpha/wrapper/wrapper.yaml': manifest('Alpha'),
+        'modules/acme/grouped/beta/wrapper/wrapper.yaml': manifest('Beta')
+      }
+    })
+    await assert.rejects(
+      installPackages(
+        planInstall(
+          registry(registryDir, [grouped]),
+          { type: 'wrapper', id: grouped.id },
+          { agentDir }
+        ),
+        { agentDir }
+      ),
+      /wrapper id 'acme\/modules\/duplicate'/
+    )
+    assert.deepEqual(readWrapperTreeState(agentDir).packages, {})
+    assert.equal(existsSync(join(agentDir, 'wrappers/tree/modules')), false)
     const source = registry(registryDir, [first, second])
     await assert.rejects(
       installPackages(

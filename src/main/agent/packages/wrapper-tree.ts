@@ -190,12 +190,6 @@ export function installStagedWrapperPackages(
         throw new Error(`expected a wrapper package manifest, received ${manifest.type}`)
       }
       const paths = listPackageTreeFiles(staged.dir)
-      const adapterCount = paths.filter((path) => path.endsWith('/wrapper/wrapper.yaml')).length
-      if (adapterCount > 1) {
-        throw new Error(
-          `软件包 ${staged.entry.id} 包含 ${adapterCount} 个 wrapper；请更新目录后逐个安装。`
-        )
-      }
       assertNoOwnershipConflicts(registry, staged.entry.id, paths, candidate)
       const previous = registry.packages[staged.entry.id]
       if (previous) removeOwnedFiles(candidate, previous.paths)
