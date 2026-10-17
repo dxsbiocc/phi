@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { shellQuote as q } from '../../../wrappers/remote-ssh-session'
+import { createPhiExtensionArchive } from './archive'
 import { validatePhiExtensionBundle } from './bundle'
-import { bundleDirectories, privateRemotePrefix, verifyBundleCommand } from './remote-commands'
+import { unpackBundleCommand } from './remote-archive'
+import { privateRemotePrefix, verifyBundleCommand } from './remote-commands'
 import type { ExtensionDeploymentOptions, PhiExtensionDeployment } from './types'
 import { cacheExtensionSnapshot } from './snapshot-cache'
 import { acquireExtensionLock, type ExtensionLock } from './remote-lock'
@@ -77,6 +79,9 @@ async function deploy(options: ExtensionDeploymentOptions): Promise<PhiExtension
     })
   )
   const manifestHash = createHash('sha256').update(manifest).digest('hex')
+  const archive = createPhiExtensionArchive(bundle, manifest)
+  const archivePath = posix.join(staging, 'bundle.tar')
+  const workArchive = posix.join(base, `.archive-${transaction}.tar`)
   const run = async (
     command: string,
     operationSignal: AbortSignal | null | undefined = signal
@@ -119,43 +124,50 @@ async function deploy(options: ExtensionDeploymentOptions): Promise<PhiExtension
       return result(true)
     }
     if (!host.transfer) throw new Error('Runtime host has no streaming file transfer transport')
-    await run(
-      `private_dir ${q(staging)}\n${bundleDirectories(bundle)
-        .map((path) => `private_dir ${q(posix.join(staging, path))}`)
-        .join('\n')}`
-    )
+    await run(`private_dir ${q(staging)}`)
     const files = [...sourceFiles, { path: 'manifest.json', bytes: manifest, sha256: manifestHash }]
     for (const file of files) {
       signal?.throwIfAborted()
-      const localPath = await cacheExtensionSnapshot(
-        options.cacheDir,
-        file.bytes,
-        file.sha256,
-        signal
-      )
-      options.onProgress?.({ phase: 'uploading', file: file.path })
-      await host.transfer.uploadFile(localPath, posix.join(staging, file.path), {
-        ...options.uploadOptions,
-        transferId: `phi-ext-${createHash('sha256')
-          .update(options.uploadOptions?.hostKey ?? '')
-          .update('\0')
-          .update(staging)
-          .update('\0')
-          .update(file.path)
-          .update('\0')
-          .update(file.sha256)
-          .digest('hex')
-          .slice(0, 40)}`,
-        reuseVerifiedDestination: true,
-        signal,
-        expectedSha256: file.sha256,
-        onEvent: (transfer) =>
-          options.onProgress?.({ phase: 'uploading', file: file.path, transfer })
-      })
+      await cacheExtensionSnapshot(options.cacheDir, file.bytes, file.sha256, signal)
     }
+    const localPath = await cacheExtensionSnapshot(
+      options.cacheDir,
+      archive.bytes,
+      archive.sha256,
+      signal
+    )
+    options.onProgress?.({ phase: 'uploading', file: 'bundle.tar' })
+    await host.transfer.uploadFile(localPath, archivePath, {
+      ...options.uploadOptions,
+      transferId: `phi-ext-${createHash('sha256')
+        .update(options.uploadOptions?.hostKey ?? '')
+        .update('\0')
+        .update(archivePath)
+        .update('\0')
+        .update(archive.sha256)
+        .digest('hex')
+        .slice(0, 40)}`,
+      reuseVerifiedDestination: true,
+      signal,
+      expectedSha256: archive.sha256,
+      onEvent: (transfer) =>
+        options.onProgress?.({ phase: 'uploading', file: 'bundle.tar', transfer })
+    })
     signal?.throwIfAborted()
     options.onProgress?.({ phase: 'verifying' })
-    if ((await run(verifyBundleCommand(staging, bundle, manifestHash))) !== 'PHI_EXTENSION_VALID')
+    if (
+      (await run(
+        unpackBundleCommand({
+          staging,
+          archive: archivePath,
+          archiveHash: archive.sha256,
+          workArchive,
+          bundle,
+          manifestHash,
+          manifestSize: manifest.length
+        })
+      )) !== 'PHI_EXTENSION_VALID'
+    )
       throw new Error('Uploaded Phi extension bundle did not pass complete-file verification')
     await run(`[ ! -L ${q(directory)} ] || fail 'Symbolic extension destination'
 if [ -e ${q(directory)} ]; then owned ${q(directory)}; mv -- ${q(directory)} ${q(quarantine)}; fi

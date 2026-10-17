@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import {
   chmod,
@@ -23,6 +24,167 @@ import { createLocalShellSession } from './helpers/localShellSession'
 import { createPhiExtensionDeploymentFixture } from './helpers/phiExtensionDeploymentFixture'
 import { localSourceIdentity } from '../src/main/agent/transfer/ssh-data-plane-local'
 import { sameSourceIdentity } from '../src/main/agent/transfer/manifest'
+import { createPhiExtensionArchive } from '../src/main/agent/engine/rpc/extension-deployment/archive'
+import { unpackBundleCommand } from '../src/main/agent/engine/rpc/extension-deployment/remote-archive'
+import { privateRemotePrefix } from '../src/main/agent/engine/rpc/extension-deployment/remote-commands'
+
+function changedFirstTarHeader(source: Buffer, change: { path?: string; type?: string }): Buffer {
+  const archive = Buffer.from(source)
+  if (change.path) {
+    const path = Buffer.from(change.path, 'ascii')
+    assert.ok(path.length <= 100)
+    archive.fill(0, 0, 100)
+    path.copy(archive)
+    archive.fill(0, 345, 500)
+  }
+  if (change.type) archive[156] = change.type.charCodeAt(0)
+  archive.fill(0x20, 148, 156)
+  const checksum = archive.subarray(0, 512).reduce((sum, byte) => sum + byte, 0)
+  archive.write(`${checksum.toString(8).padStart(6, '0')}\0 `, 148, 8, 'ascii')
+  return archive
+}
+
+async function measureDeployment(extraFiles: number): Promise<{
+  commands: number
+  elapsedMs: number
+}> {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  const session = createLocalShellSession(fixture.runtimeRoot)
+  let commands = 0
+  const countingSession = {
+    ...session,
+    async execBounded(
+      command: Parameters<NonNullable<typeof session.execBounded>>[0],
+      options: Parameters<NonNullable<typeof session.execBounded>>[1]
+    ) {
+      commands++
+      return session.execBounded!(command, options)
+    },
+    async openStdio(command: string) {
+      commands++
+      return session.openStdio!(command)
+    }
+  }
+  const host = new SshHost({
+    remoteRoot: fixture.runtimeRoot,
+    canonicalRoot: fixture.runtimeRoot,
+    transferHostKey: fixture.root,
+    capabilityProfile: fixture.host.capabilities(),
+    connect: async () => countingSession
+  })
+  const run = host.exec.run
+  host.exec.run = async (...args) => {
+    commands++
+    return run(...args)
+  }
+  try {
+    for (let index = 0; index < extraFiles; index++)
+      await writeFile(
+        join(fixture.sourceRoot, `extra-${index}.ts`),
+        `export const extra${index} = ${index}\n`
+      )
+    const bundle = await createPhiExtensionBundle(fixture.sourceRoot)
+    const started = performance.now()
+    await ensurePhiExtensionDeployment({
+      ...fixture.deploymentOptions,
+      runtimeHost: host,
+      bundle
+    })
+    return { commands, elapsedMs: performance.now() - started }
+  } finally {
+    await host.close()
+    await session.close()
+    await fixture.cleanup()
+  }
+}
+
+test('deployment remote command count is constant across bundle file counts', async (t) => {
+  const small = await measureDeployment(0)
+  const large = await measureDeployment(5)
+  t.diagnostic(
+    `small commands=${small.commands} elapsed=${small.elapsedMs.toFixed(1)}ms; large commands=${large.commands} elapsed=${large.elapsedMs.toFixed(1)}ms`
+  )
+  assert.equal(large.commands, small.commands)
+})
+
+test('archive validation refuses unsafe paths, links, devices and unexpected entries', async (t) => {
+  const cases = [
+    { name: 'absolute path', change: { path: '/absolute.ts' }, error: /absolute path/ },
+    { name: 'parent path', change: { path: '../escape.ts' }, error: /parent path/ },
+    { name: 'symbolic link', change: { type: '2' }, error: /symbolic link/ },
+    { name: 'hard link', change: { type: '1' }, error: /hard link/ },
+    { name: 'character device', change: { type: '3' }, error: /character device/ },
+    { name: 'block device', change: { type: '4' }, error: /block device/ },
+    { name: 'unexpected entry', change: { path: 'unexpected.ts' }, error: /unexpected entry/ }
+  ] as const
+  for (const attack of cases) {
+    await t.test(attack.name, async (t) => {
+      const fixture = await createPhiExtensionDeploymentFixture()
+      t.after(fixture.cleanup)
+      const files = [...fixture.bundle.files].sort((a, b) => a.path.localeCompare(b.path, 'en'))
+      const manifest = Buffer.from(
+        JSON.stringify({
+          schema: 1,
+          contentHash: fixture.bundle.contentHash,
+          entryPoint: fixture.bundle.entryPoint,
+          files: files.map(({ path, sha256, bytes }) => ({ path, sha256, size: bytes.length }))
+        })
+      )
+      const original = createPhiExtensionArchive(fixture.bundle, manifest)
+      const malicious = changedFirstTarHeader(original.bytes, attack.change)
+      const base = join(fixture.runtimeRoot, 'extensions')
+      const staging = join(base, `.staging-${fixture.bundle.contentHash}`)
+      const archivePath = join(staging, 'bundle.tar')
+      const workArchive = join(base, '.archive-refusal-test.tar')
+      await mkdir(staging, { recursive: true })
+      await writeFile(archivePath, malicious, { mode: 0o600 })
+      const result = await fixture.host.exec.run(
+        [
+          'sh',
+          '-c',
+          `${privateRemotePrefix(fixture.runtimeRoot)}\nprivate_dir ${shellQuote(base)}\nprivate_dir ${shellQuote(staging)}\n${unpackBundleCommand(
+            {
+              staging,
+              archive: archivePath,
+              archiveHash: createHash('sha256').update(malicious).digest('hex'),
+              workArchive,
+              bundle: fixture.bundle,
+              manifestHash: createHash('sha256').update(manifest).digest('hex'),
+              manifestSize: manifest.length
+            }
+          )}`
+        ],
+        { cwd: fixture.runtimeRoot, timeoutMs: 30_000, maxOutputBytes: 16 * 1024 }
+      )
+      assert.notEqual(result.code, 0)
+      assert.match(result.stderr, attack.error)
+      assert.deepEqual(await readdir(staging), ['bundle.tar'])
+    })
+  }
+})
+
+test('a verified archive replaces an owned legacy per-file staging directory', async (t) => {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  t.after(fixture.cleanup)
+  const staging = join(fixture.runtimeRoot, 'extensions', `.staging-${fixture.bundle.contentHash}`)
+  await mkdir(join(staging, 'lib'), { recursive: true, mode: 0o700 })
+  await writeFile(join(staging, 'rpc-entry.ts'), 'old partial file', { mode: 0o600 })
+  await writeFile(join(staging, 'lib/guard.ts'), 'old partial file', { mode: 0o600 })
+  await writeFile(join(staging, 'legacy-only.ts'), 'old partial file', { mode: 0o600 })
+
+  const deployed = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
+
+  assert.equal(deployed.reused, false)
+  assert.equal(fixture.session.uploads.length, 1)
+  assert.deepEqual(
+    await readFile(deployed.entryPath),
+    fixture.bundle.files.find((file) => file.path === 'rpc-entry.ts')!.bytes
+  )
+  await assert.rejects(stat(join(deployed.directory, 'legacy-only.ts')), { code: 'ENOENT' })
+  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'extensions')), [
+    fixture.bundle.contentHash
+  ])
+})
 
 test('first deployment verifies every file and manifest, reuses exact content and restores private permissions', async (t) => {
   const fixture = await createPhiExtensionDeploymentFixture()
@@ -37,7 +199,7 @@ test('first deployment verifies every file and manifest, reuses exact content an
   assert.equal(result.contentHash, fixture.bundle.contentHash)
   assert.deepEqual([...new Set(progress)], ['checking', 'uploading', 'verifying', 'ready'])
   const count = fixture.session.uploads.length
-  assert.equal(count, fixture.bundle.files.length + 1)
+  assert.equal(count, 1)
   const manifest = JSON.parse(await readFile(join(result.directory, 'manifest.json'), 'utf8'))
   assert.equal(manifest.contentHash, result.contentHash)
   for (const file of fixture.bundle.files)
@@ -132,7 +294,7 @@ test('same-content concurrent transactions upload once, including separate host 
     ensurePhiExtensionDeployment(fixture.deploymentOptions)
   ])
   assert.equal(results.filter((result) => !result.reused).length, 1)
-  assert.equal(fixture.session.uploads.length, fixture.bundle.files.length + 1)
+  assert.equal(fixture.session.uploads.length, 1)
   assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'extensions')), [
     fixture.bundle.contentHash
   ])
