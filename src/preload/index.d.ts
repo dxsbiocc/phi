@@ -70,10 +70,6 @@ import type {
 import type { WorkspaceDiffReference } from '../shared/workspaceChangeTypes'
 import type { HomeActivitySummary } from '../shared/homeActivityTypes'
 import type {
-  AgentNameConflictQueueState,
-  AgentNameConflictResolutionRequest
-} from '../shared/agentNameConflictTypes'
-import type {
   WrapperRetargetRequest,
   WrapperInputPathMapping,
   WrapperRun,
@@ -233,7 +229,6 @@ type PreloadProject = {
   defaultRemoteConnectionId?: string
   remoteWorkspaceRoot?: string
   memory?: ProjectMemorySettings
-  rpcAgentAliases?: Record<string, string>
   createdAt: string
 }
 
@@ -945,9 +940,6 @@ declare global {
       onRemoteProjectConnectionChanged: (
         cb: (change: RemoteProjectConnectionChange) => void
       ) => () => void
-      getPendingAgentNameConflict: () => Promise<AgentNameConflictQueueState>
-      onAgentNameConflictChanged: (cb: (state: AgentNameConflictQueueState) => void) => () => void
-      respondAgentNameConflict: (request: AgentNameConflictResolutionRequest) => Promise<void>
       deleteProject: (id: string) => Promise<void>
       updateProjectPermissionMode: (
         id: string,

@@ -209,11 +209,9 @@ function UserInteractionPanel({
               需要选择
             </Typography>
           </Box>
-          {request.allowCancel !== false && (
-            <Button color="inherit" size="small" onClick={cancel} sx={{ minHeight: 30 }}>
-              取消
-            </Button>
-          )}
+          <Button color="inherit" size="small" onClick={cancel} sx={{ minHeight: 30 }}>
+            取消
+          </Button>
         </Box>
 
         <Stack spacing={0.75}>
@@ -302,15 +300,13 @@ function UserInteractionPanel({
               {preview}
             </Box>
           ))}
-          {request.allowCustomAnswer !== false && (
-            <TextField
-              fullWidth
-              size="small"
-              label="自定义答案"
-              value={customValue}
-              onChange={(event) => setCustomAnswer(activeQuestionIndex, event.target.value)}
-            />
-          )}
+          <TextField
+            fullWidth
+            size="small"
+            label="自定义答案"
+            value={customValue}
+            onChange={(event) => setCustomAnswer(activeQuestionIndex, event.target.value)}
+          />
         </Stack>
 
         <MobileStepper

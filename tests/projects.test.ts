@@ -13,7 +13,6 @@ import {
   readProjectGitStatus,
   updateProjectDefaults,
   updateProjectPermissionMode,
-  updateProjectRpcAgentAliases,
   updateProjectRemoteConnection,
   updateProjectRemoteDefaults,
   updateProjectWrapperDefault
@@ -57,23 +56,6 @@ test('createProject stores display path and realpath identity without creating p
       [project.id]
     )
     assert.equal(getProjectByCwd(projectDir)?.id, project.id)
-  })
-})
-
-test('project RPC agent aliases persist in Phi-owned project state', () => {
-  withPhiDir(({ root }) => {
-    const projectDir = join(root, 'demo')
-    mkdirSync(projectDir)
-    const project = createProject({
-      name: 'Demo',
-      workingDirectory: projectDir,
-      permissionMode: 'ask'
-    })
-    const sourceName = 'Research'
-    const alias = `${sourceName}-phi`
-    updateProjectRpcAgentAliases(project.id, { [sourceName]: alias })
-    assert.deepEqual(listProjects()[0].rpcAgentAliases, { [sourceName]: alias })
-    assert.throws(() => updateProjectRpcAgentAliases(project.id, { '../agent': alias }), /别名无效/)
   })
 })
 

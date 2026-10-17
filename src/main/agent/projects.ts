@@ -93,8 +93,6 @@ export interface Project {
   remoteWorkspaceRoot?: string
   /** Absent means both memory switches are off. */
   memory?: ProjectMemorySettings
-  /** Source Phi agent name -> user-confirmed logical alias for this project. */
-  rpcAgentAliases?: Record<string, string>
 }
 
 function getProjectsPath(): string {
@@ -338,33 +336,6 @@ export function updateProjectDefaults(
     if (defaults.defaultThinkingLevel === null) delete project.defaultThinkingLevel
     else project.defaultThinkingLevel = defaults.defaultThinkingLevel
   }
-  projects[index] = project
-  writeProjects(projects)
-  return normalizeProjectAvailability(project)
-}
-
-export function updateProjectRpcAgentAliases(
-  id: string,
-  aliases: Readonly<Record<string, string>>
-): Project {
-  const entries = Object.entries(aliases)
-  if (
-    entries.length > 128 ||
-    entries.some(
-      ([name, alias]) =>
-        !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(name) ||
-        !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(alias)
-    ) ||
-    new Set(entries.map(([, alias]) => alias)).size !== entries.length
-  ) {
-    throw new Error('项目 Agent 别名无效')
-  }
-  const projects = readProjects()
-  const index = projects.findIndex((project) => project.id === id)
-  if (index < 0) throw new Error('项目不存在')
-  const project = { ...projects[index] }
-  if (entries.length) project.rpcAgentAliases = Object.fromEntries(entries)
-  else delete project.rpcAgentAliases
   projects[index] = project
   writeProjects(projects)
   return normalizeProjectAvailability(project)

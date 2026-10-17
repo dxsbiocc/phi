@@ -305,6 +305,11 @@ test('foreground native name preparation is strict and paired, while disabled po
     {
       nativeTools: ['read', 'task'],
       childRuntimeRequired: true,
+      foregroundChildNativeNames: ['remote-markdown-name']
+    },
+    {
+      nativeTools: ['read', 'task'],
+      childRuntimeRequired: true,
       foregroundChildNativeNames: Array.from(
         { length: 33 },
         (_, i) => `phi_${i.toString(16).padStart(24, '0')}_0_fg`

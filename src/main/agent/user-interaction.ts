@@ -24,8 +24,6 @@ export type AgentUserInteractionInput = {
   runId?: string
   cwd?: string
   projectName?: string
-  allowCustomAnswer?: boolean
-  allowCancel?: boolean
 }
 
 const pendingInteractions = new Map<string, PendingInteraction>()
@@ -91,11 +89,7 @@ export function waitForAgentUserInteraction(
         : {}),
       ...(input.runId ? { runId: input.runId } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.projectName ? { projectName: input.projectName } : {}),
-      ...(input.allowCustomAnswer === undefined
-        ? {}
-        : { allowCustomAnswer: input.allowCustomAnswer }),
-      ...(input.allowCancel === undefined ? {} : { allowCancel: input.allowCancel })
+      ...(input.projectName ? { projectName: input.projectName } : {})
     }
     let settled = false
     const cleanupFns: Array<() => void> = []

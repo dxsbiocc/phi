@@ -1,55 +1,12 @@
 import assert from 'node:assert/strict'
-import { exec as execCallback } from 'node:child_process'
-import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { access, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { promisify } from 'node:util'
 import {
   taskAdmissionCli,
   taskProbeFrames,
   type TaskAdmissionFixture
 } from './helpers/rpcTaskAdmissionCli'
-import {
-  detectNearestOmpAgentDefinitions,
-  renameDetectedOmpAgent
-} from '../src/main/agent/engine/rpc/subagents/agent-conflict-remote'
-import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
-
-const exec = promisify(execCallback)
-
-function localShellSession(): RemoteSshSession {
-  const run = async (
-    command: string
-  ): Promise<{ stdout: string; stderr: string; code: number | null; signal: string | null }> => {
-    try {
-      const result = await exec(command, { encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 })
-      return { stdout: result.stdout, stderr: result.stderr, code: 0, signal: null }
-    } catch (error) {
-      const value = error as Error & { stdout?: string; stderr?: string; code?: number }
-      return {
-        stdout: value.stdout ?? '',
-        stderr: value.stderr ?? '',
-        code: typeof value.code === 'number' ? value.code : null,
-        signal: null
-      }
-    }
-  }
-  return {
-    exec: run,
-    execBounded: async (command) => ({
-      ...(await run(command)),
-      stdoutTruncated: false,
-      stderrTruncated: false
-    }),
-    readTextFile: async () => '',
-    writeTextFile: async () => undefined,
-    mkdirp: async () => undefined,
-    exists: async () => false,
-    uploadFile: async () => undefined,
-    close: async () => undefined
-  }
-}
-
 function startup(fixture: TaskAdmissionFixture): Record<string, unknown>[] {
   const snapshot = taskProbeFrames(fixture, 'phi_task_startup_snapshot').at(-1)
   return (snapshot?.observations ?? []) as Record<string, unknown>[]
@@ -346,104 +303,17 @@ test('actual compiled CLI tolerates ambient resources while hardened dispatch ke
   }
 })
 
-test('actual compiled CLI uses Phi after the confirmed rename script changes only the other frontmatter name', async () => {
-  let renamedPath = ''
-  const fixture = await taskAdmissionCli({
-    admission: true,
-    prepare: async ({ cwd, defaultNativeName }) => {
-      const directory = join(cwd, '.omp/agents')
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      renamedPath = join(directory, `${defaultNativeName}.md`)
-      await writeFile(
-        renamedPath,
-        `---\nname: ${defaultNativeName}\ndescription: Shadow\ntools: [bash]\n---\nOTHER_BODY\n`
-      )
-      const session = localShellSession()
-      const [detection] = await detectNearestOmpAgentDefinitions(session, cwd, [])
-      await renameDetectedOmpAgent(session, detection, `${defaultNativeName}-project`)
-    }
-  })
-  try {
-    await fixture.connection.prompt('Run Phi after renaming the project definition')
-    await fixture.connection.prompt('/phi-task-startup-observe')
-    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 1)
-    assert.match(
-      await readFile(renamedPath, 'utf8'),
-      new RegExp(`^---\\nname: ${fixture.defaultNativeName}-project\\n`, 'u')
-    )
-  } finally {
-    await fixture.close()
-  }
-})
-
-test('actual compiled CLI runs the Phi alias while leaving the conflicting project file untouched', async () => {
-  let conflictPath = ''
-  let original = ''
-  const fixture = await taskAdmissionCli({
-    admission: true,
-    aliasPhi: true,
-    prepare: async ({ cwd, defaultNativeName }) => {
-      const directory = join(cwd, '.omp/agents')
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      conflictPath = join(directory, `${defaultNativeName}.md`)
-      original = `---\nname: ${defaultNativeName}\ndescription: Shadow\ntools: [bash]\n---\nOTHER_BODY\n`
-      await writeFile(conflictPath, original)
-    }
-  })
-  try {
-    assert.notEqual(fixture.nativeName, fixture.defaultNativeName)
-    assert.match(fixture.nativeName, /-phi(?:-\d+)?$/u)
-    await fixture.connection.prompt('Run the aliased Phi definition')
-    await fixture.connection.prompt('/phi-task-startup-observe')
-    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 1)
-    assert.equal(await readFile(conflictPath, 'utf8'), original)
-    assert.ok(
-      startup(fixture).some(
-        (value) => value.kind === 'sub' && (value.tools as string[] | undefined)?.[0] === 'write'
-      )
-    )
-  } finally {
-    await fixture.close()
-  }
-})
-
-test('actual compiled CLI keeps the session alive and names the deferred conflict when that Phi child is requested', async () => {
-  let conflictPath = ''
-  const fixture = await taskAdmissionCli({
-    admission: true,
-    blockedConflict: true,
-    prepare: async ({ cwd, defaultNativeName }) => {
-      const directory = join(cwd, '.omp/agents')
-      await mkdir(directory, { recursive: true, mode: 0o700 })
-      conflictPath = join(directory, `${defaultNativeName}.md`)
-      await writeFile(
-        conflictPath,
-        `---\nname: ${defaultNativeName}\ndescription: Shadow\ntools: [bash]\n---\nOTHER_BODY\n`
-      )
-    }
-  })
-  try {
-    await fixture.connection.prompt('Try the deferred conflicting child')
-    await fixture.connection.prompt('/phi-task-startup-observe')
-    assert.equal(fixture.requests.filter((request) => request.actor === 'child').length, 0)
-    assert.ok(refusalNamesPath(fixture, conflictPath))
-    assert.ok(startup(fixture).some((value) => value.kind === 'main'))
-  } finally {
-    await fixture.close()
-  }
-})
-
 test('actual compiled CLI fails closed before spawning a block-scalar project shadow', async () => {
   let conflictPath = ''
   const fixture = await taskAdmissionCli({
     admission: true,
-    prepare: async ({ cwd, defaultNativeName }) => {
+    prepare: async ({ cwd, nativeName }) => {
       const directory = join(cwd, '.omp/agents')
       await mkdir(directory, { recursive: true, mode: 0o700 })
       conflictPath = join(directory, 'block-shadow.md')
       await writeFile(
         conflictPath,
-        `---\nname: >-\n  ${defaultNativeName}\ndescription: Block scalar shadow\ntools: [bash]\n---\nOTHER_BODY\n`
+        `---\nname: >-\n  ${nativeName}\ndescription: Block scalar shadow\ntools: [bash]\n---\nOTHER_BODY\n`
       )
     }
   })

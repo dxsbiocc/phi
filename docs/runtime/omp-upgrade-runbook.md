@@ -64,6 +64,7 @@
 - 私有 `startup-policy.json` 固定禁用 `native`、`claude`、`codex`、`omp-plugins`、`claude-plugins` 五个 capability provider。升级时确认官方发现流程仍读取该设置，根会话与子会话均不自动导入项目工具。这里也会过滤同名模型 provider，必须保留明确冲突报错。
 - 项目 `.omp/plugins` 的工具发现不经过上述 provider 过滤。启动前的只读预检必须与目标 SDK 的 lockfile、overrides、manifest、feature-tools 及符号链接语义对齐，并在 `openStdio` 前拒绝可加载工具模块。普通 `.claude`／`.codex` 配置目录应继续可用。
 - 保留真实 CLI sentinel 回归，确认项目工具在 Phi 守卫前没有被导入；配置字段存在或 shell 预检通过本身不等于这一行为通过。检查完成到启动之间的同 UID 文件替换竞态仍是已记录残余风险，不宣称已消除。
+- 项目或祖先目录里的 `.claude`／`.omp` 资源不再使整个子会话能力被拒绝。子会话派发前，`rpc-task-definition-verifier.ts` 通过 OMP 自己的公共 `task`／`task/agents` 发现与解析，核对实际解析到的专家定义必须是 Phi 发布的文件及其哈希；不一致（例如项目 `.omp/agents` 中的同名文件遮住了它）时只拒绝该次任务并在原因中给出遮住它的文件，会话继续。Phi 不做后台同名检测、改名或别名发布；子会话只能启动 Phi 受信任档案中的名字。升级 OMP 时须重跑真实编译 CLI 的 shadow 与 negative-control 测试，并确认这两个宿主模块仍由固定版本提供。
 - Cursor 的原生断流恢复会随 SDK 变化。本地 18.10.3 已验证纯文本错误分类可能使原生重试与 Phi 续答叠加；RPC 路径必须单独验证纯文本截断、已完成工具后的截断、完整答案后断连和主动停止，不能仅因为扩展随包上传就假定已加载或行为相同。
 
 对应回归为 `engine-rpc-ssh-stdio-factory.test.ts`、`engine-rpc-task-admission-native.test.ts`、`cursor-stream-recovery.test.ts` 与 `engine-rpc-cursor-stream-recovery.test.ts`。PM-3 已保存为 `044bac9b`：模型网关只为可信 Cursor API 保留精确的固定截断分类，RPC 恢复绑定实际 session registry；专项 23 项、独立真实 RPC 5 项及错误隐私 2 项通过。Cursor 子任务、真实 SSH/provider 仍待验证，不能从此限定结果推定。

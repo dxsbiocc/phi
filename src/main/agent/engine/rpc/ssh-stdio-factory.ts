@@ -141,7 +141,9 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
     ? [...raw.foregroundChildNativeNames]
     : raw.foregroundChildNativeNames
   const foregroundName = (name: unknown): name is string =>
-    typeof name === 'string' && name.length <= 128 && /^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(name)
+    typeof name === 'string' &&
+    name.length <= 128 &&
+    /^phi_[a-f0-9]{24}_[0-9]+_(?:fg|bg)$/u.test(name)
   if (
     names !== undefined &&
     (!Array.isArray(names) ||

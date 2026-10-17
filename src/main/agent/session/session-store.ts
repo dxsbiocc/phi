@@ -62,11 +62,6 @@ export interface PhiSessionManifest {
   model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
   autoCompaction?: AutoCompactionOverrides
-  /** Session-scoped "Not now" decisions; current scans provide the live refusal path/hash. */
-  rpcAgentConflictDeferrals?: Record<
-    string,
-    { readonly filePath: string; readonly contentHash: string; readonly name: string }
-  >
   status: SessionStatus
   unreadKind: UnreadKind | null
   currentRunId?: string
@@ -198,7 +193,6 @@ function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessio
   if (next.model === undefined) delete next.model
   if (next.thinkingLevel === undefined) delete next.thinkingLevel
   if (next.autoCompaction === undefined) delete next.autoCompaction
-  if (next.rpcAgentConflictDeferrals === undefined) delete next.rpcAgentConflictDeferrals
   if (next.currentRunId === undefined) delete next.currentRunId
   if (next.currentRunStartedAt === undefined) delete next.currentRunStartedAt
   if (next.lastRunOutcome === undefined) delete next.lastRunOutcome

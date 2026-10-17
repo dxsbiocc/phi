@@ -5,7 +5,6 @@ import { approvalIdentifier, createApprovalEnvelope } from '../lib/rpc-approval-
 import type { AgentSession, ExtensionContext, ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import {
   validateRpcForegroundTaskInput,
-  rpcChildDispatchConflictReason,
   childConfigDigest,
   type RpcForegroundTaskInput,
   type RpcChildRuntimeConfig
@@ -463,8 +462,6 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
         })
         const effective = validateRpcForegroundTaskInput(call.args, options.config)
         if (JSON.stringify(raw) !== JSON.stringify(effective)) return refused
-        const conflictReason = rpcChildDispatchConflictReason(effective, options.config)
-        if (conflictReason) return { block: true, reason: conflictReason }
         resources(session)
         if (options.verifyResolvedDefinitions !== false)
           await assertRpcTaskDefinitionsResolved(

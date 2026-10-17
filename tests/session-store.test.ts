@@ -89,31 +89,6 @@ test('AI and manual title provenance survives reloading a session manifest', () 
   })
 })
 
-test('agent conflict deferrals survive session reload but do not propagate to a fork', () => {
-  withPhiDir(() => {
-    const session = createPhiSession({
-      kind: 'project',
-      projectId: 'project-1',
-      cwd: '/workspace',
-      cwdRealPath: '/workspace',
-      permissionMode: 'ask'
-    })
-    const deferral = {
-      filePath: '/workspace/.omp/agents/shadow.md',
-      contentHash: 'a'.repeat(64),
-      name: 'Shadow'
-    }
-    updateSessionManifest(session.sessionId, {
-      rpcAgentConflictDeferrals: { Shadow: deferral }
-    })
-    const reloaded = listPhiSessions().find((entry) => entry.sessionId === session.sessionId)!
-    assert.deepEqual(reloaded.rpcAgentConflictDeferrals, { Shadow: deferral })
-    const turn = appendSessionEvent(session.sessionId, { type: 'user_message', content: 'hello' })
-    const fork = forkPhiSession(session.sessionId, turn.eventId, '/runtime/fork.jsonl')
-    assert.equal(fork.manifest.rpcAgentConflictDeferrals, undefined)
-  })
-})
-
 test('explicit automatic model selection survives saving, reloading, and forking', () => {
   withPhiDir(() => {
     const session = createPhiSession({

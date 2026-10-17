@@ -30,7 +30,6 @@ import type { RpcAgentToolDescriptor } from './types'
 import type { RpcAgentResourceCatalogInput, CompileRpcAgentDefinitionsOptions } from './types'
 import { projectRpcChildModel } from '../../phi-extension/lib/rpc-child-protocol'
 import { CHILD_SKILL_DIRECTORY } from '../../phi-extension/lib/rpc-child-resources'
-import { planRpcPublishedAgentNames } from './published-agent-names'
 
 export interface SelectedChildDeploymentBinding {
   readonly hostProfileId: string
@@ -86,11 +85,6 @@ export interface CreateProductionChildConfigOptions {
   readonly identity: RpcChildConfigIdentity
   readonly binding: RpcAgentServerBinding
   readonly definitions: readonly PhiAgentDefinition[]
-  /** Persisted project aliases keyed by the source Phi agent name. */
-  readonly aliases?: Readonly<Record<string, string>>
-  readonly blockedAgents?: Readonly<
-    Record<string, { readonly filePath: string; readonly contentHash: string }>
-  >
   readonly modelDescriptors: readonly SafeModelDescriptor[]
   readonly parentModel: ModelGatewayModelRef
   readonly parentThinkingLevel: PhiAgentThinkingLevel
@@ -113,7 +107,6 @@ export async function createProductionChildConfig(
   )
     throw new Error('Child compiler lacks its owned project binding')
   const definitions = structuredClone(options.definitions)
-  const publication = planRpcPublishedAgentNames(definitions, binding, options.aliases)
   const models = structuredClone(options.modelDescriptors)
   const parent = Object.freeze({ ...options.parentModel })
   const otherCapabilities = [...options.otherCapabilities]
@@ -170,7 +163,6 @@ export async function createProductionChildConfig(
     parentThinkingLevel,
     availableTools,
     availableSkills,
-    publishedNames: options.aliases ?? {},
     ...(resolveEnvironment ? { resolveEnvironment } : {})
   })
   if (compiled.warnings.length) throw new Error('Child model fallback is not supported')
@@ -180,10 +172,7 @@ export async function createProductionChildConfig(
   if (selected.length > 32) throw new Error('Child profiles exceed the existing count budget')
   const resources = prepareProductionChildResources(resourceSnapshot, selected)
   const profiles = selected.map((entry) => {
-    const sourceName = publication.find(
-      (candidate) => candidate.nativeName === entry.nativeName
-    )?.sourceName
-    const definition = definitions.find((source) => source.name === sourceName)
+    const definition = definitions.find((source) => source.name === entry.phiName)
     const model = models.find(
       (candidate) => candidate.provider === entry.model.provider && candidate.id === entry.model.id
     )
@@ -205,10 +194,6 @@ export async function createProductionChildConfig(
       productionChildProfileResources(entry, basePrompt, resources)
     )
   })
-  const profileNames = new Set(profiles.map((profile) => profile.definition.nativeName))
-  const blockedAgents = Object.entries(options.blockedAgents ?? {})
-    .filter(([nativeName]) => profileNames.has(nativeName))
-    .map(([nativeName, conflict]) => ({ nativeName, ...conflict }))
   const files = [
     ...compiled.files.filter(
       (file) =>
@@ -233,7 +218,6 @@ export async function createProductionChildConfig(
         models.find((model) => model.provider === parent.provider && model.id === parent.id)
       ),
       profiles,
-      ...(blockedAgents.length ? { blockedAgents } : {}),
       ...(resources.catalog ? { resources: resources.catalog } : {}),
       files: files.map(({ path, sha256 }) => ({ path, sha256 })),
       policy: {

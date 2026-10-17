@@ -21,8 +21,6 @@ export type AgentUserInteractionRequest = {
   runId?: string
   cwd?: string
   projectName?: string
-  allowCustomAnswer?: boolean
-  allowCancel?: boolean
 }
 
 export type AgentUserInteractionAnswer = {

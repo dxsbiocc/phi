@@ -10,7 +10,6 @@ import {
   assertPreparedProductionChildConfig,
   type CreateProductionChildConfigOptions
 } from '../src/main/agent/engine/rpc/subagents/production-child-config'
-import { rpcChildDispatchConflictReason } from '../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import type { RpcRuntimePreparationContext } from '../src/main/agent/engine/rpc/ssh-stdio-factory'
 import { RpcStartupTransactionBuilder } from '../src/main/agent/engine/rpc/startup-transaction'
@@ -88,59 +87,6 @@ test('trusted compiler preserves full source manifest but publishes only foregro
   assert.throws(
     () => assertPreparedProductionChildConfig({ config: prepared.config }),
     /not issued/
-  )
-})
-
-test('project alias publication stays in the attested file inventory and session deferral blocks only named profiles', async () => {
-  const base = productionChildOptions()
-  const options = productionChildOptions({
-    definitions: [
-      ...base.definitions,
-      definition({
-        ...base.definitions[0],
-        name: 'Reviewer',
-        systemPrompt: 'SECOND_PRIVATE_CHILD'
-      })
-    ]
-  })
-  const alias = 'Writer-phi'
-  const prepared = await createProductionChildConfig({
-    ...options,
-    aliases: { Writer: alias },
-    blockedAgents: {
-      [alias]: {
-        filePath: '/srv/project/.omp/agents/shadow.md',
-        contentHash: 'd'.repeat(64)
-      }
-    }
-  })
-  const aliased = prepared.config.profiles.find(
-    (profile) => profile.definition.nativeName === alias
-  )!
-  const other = prepared.config.profiles.find((profile) => profile.definition.nativeName !== alias)!
-  assert.equal(aliased.definition.phiName, 'Writer')
-  assert.equal(aliased.definition.displayName, alias)
-  assert.ok(prepared.config.files.some((file) => file.path === `agents/${alias}.md`))
-  assert.deepEqual(prepared.config.blockedAgents, [
-    {
-      nativeName: alias,
-      filePath: '/srv/project/.omp/agents/shadow.md',
-      contentHash: 'd'.repeat(64)
-    }
-  ])
-  assert.match(
-    rpcChildDispatchConflictReason(
-      { agent: alias, task: 'blocked', solutionSpace: 'test' },
-      prepared.config
-    )!,
-    /shadow\.md/u
-  )
-  assert.equal(
-    rpcChildDispatchConflictReason(
-      { agent: other.definition.nativeName, task: 'allowed', solutionSpace: 'test' },
-      prepared.config
-    ),
-    undefined
   )
 })
 

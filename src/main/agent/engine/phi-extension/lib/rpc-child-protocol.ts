@@ -27,10 +27,7 @@ export interface RpcChildDefinition {
   readonly resourcesDigest?: string
   readonly environment?: { readonly ref: string; readonly pluginId?: string }
   readonly definitionHash: string
-  /** Immutable Phi catalogue identity used by trusted desktop resources. */
   readonly phiName: string
-  /** User-facing alias for this project/session, if the user chose one. */
-  readonly displayName?: string
   readonly nativeName: string
   readonly blocking: boolean
   readonly tools: readonly { readonly name: string; readonly site: 'native' | 'host' }[]
@@ -581,15 +578,13 @@ export function snapshotRpcChildProfile(value: RpcChildTrustedProfile): RpcChild
           'thinkingLevel'
         ]),
     ...(definition?.resourcesDigest === undefined ? [] : ['resourcesDigest']),
-    ...(definition?.environment === undefined ? [] : ['environment']),
-    ...(definition?.displayName === undefined ? [] : ['displayName'])
+    ...(definition?.environment === undefined ? [] : ['environment'])
   ])
   exact(definition.model, ['provider', 'id'])
   if (
     safe.expectedAgentSource !== 'user' ||
     !executionCapability(definition.definitionHash) ||
     !approvalIdentifier(definition.phiName) ||
-    (definition.displayName !== undefined && !approvalIdentifier(definition.displayName)) ||
     !approvalIdentifier(definition.nativeName) ||
     typeof definition.blocking !== 'boolean' ||
     definition.thinkingLevel === undefined ||
