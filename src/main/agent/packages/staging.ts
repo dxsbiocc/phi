@@ -29,6 +29,7 @@ import {
   sha256
 } from './installer-utils'
 import { readPackageManifest, validatePackage } from './manifest'
+import { safeRegistryDirectory } from './registry-assets'
 
 interface FilesList {
   version: 1
@@ -47,6 +48,10 @@ export function cleanupStalePackageStaging(
   const stagingRoot = join(agentDir, '.staging')
   let names: string[]
   try {
+    lstatSync(agentDir)
+    safeRegistryDirectory(agentDir, agentDir)
+    lstatSync(stagingRoot)
+    safeRegistryDirectory(agentDir, stagingRoot)
     names = readdirSync(stagingRoot)
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return []
@@ -92,7 +97,7 @@ export function stagePackage(
   }
 
   const stagingRoot = join(agentDir, '.staging')
-  mkdirSync(stagingRoot, { recursive: true })
+  safeRegistryDirectory(agentDir, stagingRoot, true)
   const dir = join(stagingRoot, randomUUID())
   mkdirSync(dir, { recursive: false })
   try {

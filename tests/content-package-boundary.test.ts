@@ -26,6 +26,14 @@ test('desktop packaging keeps the executable and engine while excluding installa
     'resources/skills/create-wrapper/references/guide.md'
   ]
   const excluded = [
+    '.omx/omp-recovery/previous/Phi.app/Contents/Resources/app.asar',
+    '.omx/logs/session.jsonl',
+    '.codegraph/codegraph.db',
+    '.codex/config.toml',
+    'docs/roadmap/internal-beta-implementation.md',
+    'tests/content-package-boundary.test.ts',
+    'src/main/agent/packages/official-website-registry.ts',
+    'untracked-development-notes.txt',
     'resources/skills/anndata/SKILL.md',
     'resources/skills/future-skill/scripts/run.py',
     'resources/connectors/cbioportal/phi-package.yaml',

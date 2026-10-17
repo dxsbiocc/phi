@@ -10,6 +10,7 @@ import { parseRegistrySignature, verifyRegistryIndex, type TrustedRegistryKey } 
 import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
 import { parseRegistryIconAsset } from './icon-assets'
 import { parseRegistryManifestAsset } from './manifest-assets'
+import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
 
 export interface ReadRegistryOptions {
   builtin?: boolean
@@ -36,6 +37,8 @@ export function readRegistry(dir: string, options: ReadRegistryOptions = {}): Lo
     throw new Error('本地软件包注册表 generatedAt 无效')
   }
   const packages = value.packages.map((entry, index) => parseRegistryEntry(entry, index))
+  const skillGroups =
+    value.skillGroups === undefined ? undefined : parseSkillGroups(value.skillGroups)
   const identities = new Set<string>()
   for (const entry of packages) {
     const key = packageVersionKey(entry)
@@ -48,7 +51,8 @@ export function readRegistry(dir: string, options: ReadRegistryOptions = {}): Lo
     trust,
     schemaVersion: 1,
     generatedAt: value.generatedAt,
-    packages
+    packages,
+    ...(skillGroups ? { skillGroups } : {})
   }
 }
 
@@ -123,6 +127,7 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
   if (manifestAsset && entry.type !== 'mcp') {
     throw new Error(`注册表 packages[${index}].manifestAsset 只适用于 connector`)
   }
+  const group = parseSkillGroupEntry(entry)
   return {
     id: entry.id,
     type: entry.type,
@@ -136,9 +141,62 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
     ...(typeof entry.minAppVersion === 'string' ? { minAppVersion: entry.minAppVersion } : {}),
     ...(requires ? { requires } : {}),
     ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+    ...group,
     ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {}),
     ...(iconAsset ? { iconAsset } : {}),
     ...(manifestAsset ? { manifestAsset } : {})
+  }
+}
+
+function validGroupLabel(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.length <= 200 &&
+    ![...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  )
+}
+
+function parseSkillGroups(value: unknown): CatalogSkillGroup[] {
+  if (!Array.isArray(value) || value.length > 501) throw new Error('注册表 skillGroups 无效')
+  const ids = new Set<string>()
+  return value.map((group) => {
+    if (
+      !isRecord(group) ||
+      typeof group.id !== 'string' ||
+      !/^[a-z][a-z0-9-]{0,63}$/.test(group.id) ||
+      ids.has(group.id) ||
+      !validGroupLabel(group.label) ||
+      !Number.isSafeInteger(group.count) ||
+      (group.count as number) < 0
+    )
+      throw new Error('注册表 skillGroups 字段无效')
+    ids.add(group.id)
+    return { id: group.id, label: group.label, count: group.count as number }
+  })
+}
+
+function parseSkillGroupEntry(
+  entry: Record<string, unknown>
+): Pick<RegistryPackageEntry, 'group' | 'groupLabel' | 'groupOrder'> {
+  if (entry.group === undefined && entry.groupLabel === undefined && entry.groupOrder === undefined)
+    return {}
+  if (
+    entry.type !== 'skill' ||
+    typeof entry.group !== 'string' ||
+    !/^[a-z][a-z0-9-]{0,63}$/.test(entry.group) ||
+    !validGroupLabel(entry.groupLabel) ||
+    (entry.groupOrder !== undefined &&
+      (!Number.isSafeInteger(entry.groupOrder) ||
+        (entry.groupOrder as number) < 0 ||
+        (entry.groupOrder as number) > 500))
+  ) {
+    throw new Error('注册表技能 group/groupLabel/groupOrder 无效')
+  }
+  return {
+    group: entry.group,
+    groupLabel: entry.groupLabel,
+    ...(typeof entry.groupOrder === 'number' ? { groupOrder: entry.groupOrder } : {})
   }
 }
 

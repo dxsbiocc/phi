@@ -7,7 +7,8 @@ import { readGithubSources, type GithubSourceRecord } from './github-source-stor
 import type { LocalRegistry, RegistryTrustTier } from './installer-types'
 import { errorMessage, isRecord } from './installer-utils'
 import { readRegistry } from './registry'
-import { OFFICIAL_REGISTRY_ID, syncOfficialRegistry } from './official-registry'
+import { OFFICIAL_REGISTRY_ID } from './official-registry'
+import { syncPreferredOfficialRegistry } from './official-website-registry'
 
 export const BUNDLED_REGISTRY_ID = 'builtin'
 
@@ -31,7 +32,7 @@ export interface KnownRegistryMutationOptions {
 }
 
 export interface KnownRegistryListOptions extends Pick<KnownRegistryMutationOptions, 'agentDir'> {
-  /** Isolated source override for tests; production always syncs the signed official catalog. */
+  /** Isolated source override for tests; production prefers complete website content. */
   loadOfficialRegistry?: () => Promise<LocalRegistry>
 }
 
@@ -95,7 +96,7 @@ export async function listKnownRegistries(
     official = {
       id: OFFICIAL_REGISTRY_ID,
       kind: 'official',
-      label: 'Phi Packages',
+      label: registry.label ?? 'Phi Packages',
       path: OFFICIAL_REGISTRY_ID,
       removable: false,
       trust: registry.trust,
@@ -171,7 +172,10 @@ export async function loadKnownRegistryIndexes(
 }
 
 function loadOfficialRegistry(options: KnownRegistryListOptions): Promise<LocalRegistry> {
-  return options.loadOfficialRegistry?.() ?? syncOfficialRegistry({ agentDir: options.agentDir })
+  return (
+    options.loadOfficialRegistry?.() ??
+    syncPreferredOfficialRegistry({ agentDir: options.agentDir })
+  )
 }
 
 export function addKnownRegistry(

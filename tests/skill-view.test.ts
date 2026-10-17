@@ -130,6 +130,34 @@ function packageEntry(
   }
 }
 
+test('skill discovery renders the website API groups in declared order including zero-count groups', () => {
+  const markup = renderSkillCatalog({
+    registry: {
+      id: 'phi-packages',
+      dir: '/website',
+      trust: 'imported',
+      kind: 'official',
+      schemaVersion: 1,
+      generatedAt: '2026-10-17',
+      skillGroups: [
+        { id: 'all', label: '全部', count: 2 },
+        { id: 'science', label: '科学分析', count: 1 },
+        { id: 'meta', label: '元能力', count: 1 },
+        { id: 'other', label: '其他', count: 0 }
+      ],
+      packages: [
+        packageEntry('find-skills', { group: 'meta', groupLabel: '元能力', groupOrder: 2 }),
+        packageEntry('scanpy', { group: 'science', groupLabel: '科学分析', groupOrder: 1 })
+      ]
+    }
+  })
+  assert.match(markup, /aria-label="技能目录分组"/)
+  assert.ok(markup.indexOf('科学分析') < markup.indexOf('元能力'))
+  assert.ok(markup.indexOf('元能力') < markup.indexOf('其他'))
+  assert.match(markup, /其他/)
+  assert.doesNotMatch(markup, />软件包</)
+})
+
 test('skill view groups skills by source category and exposes the skill markdown panel', () => {
   const markup = renderSkillView()
 

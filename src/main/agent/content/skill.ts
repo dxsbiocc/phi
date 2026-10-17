@@ -18,7 +18,17 @@ const validatePhiBlock = ajv.compile(phiSkillBlockSchema)
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/
 const ARG_NAME = /^[a-z][a-z0-9_]*$/
 const SCRIPT_EXTENSIONS = new Set(['.py', '.R', '.r', '.sh', '.js', '.mjs', '.pl'])
-const RESERVED_TOOL_PREFIXES = new Set(['skill', 'env', 'http', 'wrapper', 'agent', 'db', 'mcp'])
+const RESERVED_TOOL_PREFIXES = new Set([
+  'skill',
+  'env',
+  'http',
+  'wrapper',
+  'agent',
+  'db',
+  'mcp',
+  'capability',
+  'find'
+])
 const TOOL_PREFIX_PATTERN = /^[a-z][a-z0-9]{1,11}$/
 
 /** Skill contract § 2.2: pattern and engine-reserved prefixes. */

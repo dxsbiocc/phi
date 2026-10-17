@@ -91,9 +91,11 @@ export async function installPackages(
     for (const staged of stages) {
       const lease = await prepareStagedMcpApplication(staged, { ...options, agentDir })
       if (lease) installationLeases.push(lease)
+      options.beforeCommit?.()
     }
     for (let index = 0; index < stages.length;) {
       const staged = stages[index]
+      options.beforeCommit?.()
       if (staged.entry.type === 'wrapper') {
         const wrappers: StagedPackage[] = []
         while (stages[index]?.entry.type === 'wrapper') {
@@ -111,6 +113,13 @@ export async function installPackages(
       })
       installedNow.push({ type: staged.entry.type, id: staged.entry.id })
       index += 1
+    }
+    if (
+      !stages.some(
+        (staged) => staged.entry.type === plan.root.type && staged.entry.id === plan.root.id
+      )
+    ) {
+      options.beforeCommit?.()
     }
     promoteRootToUser(plan.root, agentDir)
     return listInstalledPackages({ agentDir })
@@ -194,7 +203,17 @@ async function commitStagedPackage(
     const result = current
       ? await upgradePlugin(staged.dir, {
           ...common,
-          ...(options.build ? { build: options.build } : {}),
+          ...(options.build
+            ? {
+                build: options.beforeCommit
+                  ? async (...args) => {
+                      const result = await options.build!(...args)
+                      options.beforeCommit?.()
+                      return result
+                    }
+                  : options.build
+              }
+            : {}),
           ...(options.garbageCollect ? { garbageCollect: options.garbageCollect } : {})
         })
       : installPlugin(staged.dir, common)

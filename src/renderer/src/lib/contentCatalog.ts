@@ -8,6 +8,7 @@ import type {
 } from '../../../shared/packageManagerTypes'
 
 type ContentCatalogApi = {
+  readOfficialContentCatalog?: (forceRefresh?: boolean) => Promise<PackageRegistryView>
   listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
   readPackageRegistry: (path: string) => Promise<PackageRegistryView>
 }
@@ -23,14 +24,48 @@ function message(cause: unknown): string {
 }
 
 /** Load the official source first; a failed source remains visible as feedback. */
-export async function loadContentCatalog(api: ContentCatalogApi): Promise<ContentCatalogResult> {
-  const knownSources = await api.listPackageRegistries()
+export async function loadContentCatalog(
+  api: ContentCatalogApi,
+  options: { forceRefresh?: boolean } = {}
+): Promise<ContentCatalogResult> {
+  let officialRegistry: PackageRegistryView | undefined
+  const errors: string[] = []
+  const notices: string[] = []
+  if (api.readOfficialContentCatalog) {
+    try {
+      officialRegistry = await api.readOfficialContentCatalog(options.forceRefresh)
+    } catch (cause) {
+      errors.push(`Phi 官网目录更新失败：${message(cause)}`)
+      notices.push('正在回退到原 Phi Packages 软件源目录。')
+    }
+  }
+  let knownSources: KnownPackageRegistryView[] = []
+  try {
+    knownSources = await api.listPackageRegistries()
+  } catch (cause) {
+    errors.push(`读取本地软件源列表失败：${message(cause)}`)
+  }
   const backendNeedsRestart =
+    !api.readOfficialContentCatalog &&
     knownSources.some((source) => source.kind === 'bundled') &&
     !knownSources.some((source) => source.kind === 'official')
   const sources = knownSources
-    .filter((source) => source.kind !== 'bundled')
+    .filter(
+      (source) => source.kind !== 'bundled' && !(officialRegistry && source.kind === 'official')
+    )
     .sort((left, right) => Number(right.kind === 'official') - Number(left.kind === 'official'))
+  if (api.readOfficialContentCatalog && !officialRegistry) {
+    const index = sources.findIndex((source) => source.kind === 'official')
+    const fallback: KnownPackageRegistryView = {
+      id: 'phi-packages',
+      kind: 'official',
+      path: 'phi-packages',
+      label: 'Phi Packages',
+      removable: false
+    }
+    if (index < 0) sources.unshift(fallback)
+    else sources[index] = fallback
+  }
   const results = await Promise.all(
     sources.map(async (source) => {
       const label = source.label ?? (source.kind === 'official' ? 'Phi Packages' : source.id)
@@ -58,14 +93,33 @@ export async function loadContentCatalog(api: ContentCatalogApi): Promise<Conten
     })
   )
   return {
-    registries: results.flatMap((result) => (result.registry ? [result.registry] : [])),
+    registries: [
+      ...(officialRegistry
+        ? [
+            {
+              ...officialRegistry,
+              kind: 'official' as const,
+              label: officialRegistry.label ?? 'Phi Packages'
+            }
+          ]
+        : []),
+      ...results.flatMap((result) => (result.registry ? [result.registry] : []))
+    ],
     errors: [
+      ...errors,
       ...(backendNeedsRestart
         ? ['Phi 后台仍在运行旧版本，请完整退出并重新启动 Phi 后加载官方内容源。']
         : []),
       ...results.flatMap((result) => (result.error ? [result.error] : []))
     ],
-    notices: results.flatMap((result) => (result.notice ? [result.notice] : []))
+    notices: [
+      ...notices,
+      ...(officialRegistry?.notice ? [officialRegistry.notice] : []),
+      ...(officialRegistry?.status === 'cached' && !officialRegistry.notice
+        ? [`${officialRegistry.label ?? 'Phi Packages'}：正在使用离线缓存。`]
+        : []),
+      ...results.flatMap((result) => (result.notice ? [result.notice] : []))
+    ]
   }
 }
 

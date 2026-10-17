@@ -1,4 +1,5 @@
 import type {
+  CatalogSkillGroup,
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
@@ -30,20 +31,25 @@ export function knownSkillCatalogPackages(
 }
 
 function packageCategory(entry: SkillCatalogPackage): string {
-  return entry.category?.trim() || '软件包'
+  return entry.groupLabel?.trim() || entry.category?.trim() || '软件包'
 }
 
 export function skillCatalogItems(packages: readonly SkillCatalogPackage[]): SkillCatalogItem[] {
   return packages.map((entry): SkillCatalogItem => ({
     kind: 'package',
-    groupId: `category:${packageCategory(entry)}`,
+    groupId: entry.group ? `group:${entry.group}` : `category:${packageCategory(entry)}`,
     entry
   }))
 }
 
-export function skillCatalogGroups(items: readonly SkillCatalogItem[]): SkillCatalogGroup[] {
+export function skillCatalogGroups(
+  items: readonly SkillCatalogItem[],
+  definitions: readonly CatalogSkillGroup[] = []
+): SkillCatalogGroup[] {
   const categories = new Map<string, SkillCatalogGroup>()
+  const order = new Map<string, number>()
   for (const item of items) {
+    if (item.entry.groupOrder !== undefined) order.set(item.groupId, item.entry.groupOrder)
     const current = categories.get(item.groupId)
     if (current) current.count += 1
     else
@@ -53,10 +59,26 @@ export function skillCatalogGroups(items: readonly SkillCatalogItem[]): SkillCat
         count: 1
       })
   }
+  const declared = definitions
+    .filter((group) => group.id !== 'all')
+    .map((group) => {
+      const id = `group:${group.id}`
+      const count = categories.get(id)?.count ?? 0
+      categories.delete(id)
+      return { id, label: group.label, count }
+    })
   return [
-    { id: 'all', label: '全部技能', count: items.length },
-    ...[...categories.values()].sort((left, right) =>
-      left.label.localeCompare(right.label, 'zh-CN')
+    {
+      id: 'all',
+      label: definitions.find((group) => group.id === 'all')?.label ?? '全部技能',
+      count: items.length
+    },
+    ...declared,
+    ...[...categories.values()].sort(
+      (left, right) =>
+        (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) ||
+        left.label.localeCompare(right.label, 'zh-CN')
     )
   ]
 }
@@ -74,6 +96,7 @@ export function filterSkillCatalogItems(
       item.entry.id,
       item.entry.title,
       item.entry.summary,
+      item.entry.group,
       packageCategory(item.entry),
       item.entry.registryLabel
     ]

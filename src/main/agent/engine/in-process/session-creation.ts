@@ -26,6 +26,7 @@ import {
 import { resolveRemoteRuntimePromptContext } from '../../remote-runtime-context'
 import { translateOmpEvent } from '../events'
 import { createCursorStreamRecoveryExtension } from '../phi-extension/extensions/cursor-stream-recovery'
+import { createSpecialistFallbackExtension } from '../phi-extension/extensions/specialist-fallback'
 import { isRecord, stringValue } from './common'
 import { createInProcessExtensionHost, phiExtensionAgents } from './extension-host'
 import { requestHost, sendEvent } from './ipc'
@@ -139,6 +140,7 @@ export async function createSession(params: unknown): Promise<unknown> {
   const remoteMcpAccess: RemoteMcpAccess | undefined = remoteRoot
     ? { localProjectAnchor: cwd }
     : undefined
+  const agentPolicies = phiExtensionAgents(phiAgents)
   const extensionConfig: PhiExtensionConfig = {
     cwd,
     projectBound: Boolean(record.projectBound),
@@ -146,7 +148,7 @@ export async function createSession(params: unknown): Promise<unknown> {
     enableToolApproval: Boolean(record.enableToolApproval),
     sessionId,
     useBrowserTextVault: true,
-    phiAgents: phiExtensionAgents(phiAgents)
+    phiAgents: agentPolicies
   }
   const extensionHost = createInProcessExtensionHost({
     cwd,
@@ -161,6 +163,10 @@ export async function createSession(params: unknown): Promise<unknown> {
   })
   const extensionFactories = [
     ...createMainSessionExtensions(extensionConfig, extensionHost),
+    // Keep a policy guard even when a later approved plugin supplies the first specialist.
+    ...(agentPolicies.length === 0
+      ? [createSpecialistFallbackExtension(agentPolicies, extensionHost)]
+      : []),
     createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent)
   ]
   const { resources, customTools, stopAgentRunNotices } = await createSessionToolRegistry({
@@ -183,6 +189,9 @@ export async function createSession(params: unknown): Promise<unknown> {
     memoryTarget,
     agentRuns,
     phiAgents,
+    onAgentsChanged: () => {
+      agentPolicies.splice(0, agentPolicies.length, ...phiExtensionAgents(phiAgents))
+    },
     remoteSkillToolNames
   })
 

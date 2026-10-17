@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PromptAgentSummary, SkillSummary } from '../../../types'
 import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
 
@@ -30,11 +30,22 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
   const [busySkillId, setBusySkillId] = useState<string | null>(null)
   const skillsRequestRef = useRef(0)
   const promptAgentsRequestRef = useRef(0)
+  const mountedRef = useRef(true)
   const skillsReadRef = useRef<{
     cwd: string
     request: number
     promise: Promise<SkillSummary[]>
   } | null>(null)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      skillsRequestRef.current += 1
+      promptAgentsRequestRef.current += 1
+      skillsReadRef.current = null
+    }
+  }, [])
 
   const applySkills = useCallback((list: SkillSummary[]): void => {
     setSkills(list)
@@ -48,12 +59,13 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
       const promise = Promise.resolve()
         .then(() => window.api.listSkills(cwd))
         .then((list) => {
-          if (request === skillsRequestRef.current && cwd === getActiveCwd()) applySkills(list)
+          if (mountedRef.current && request === skillsRequestRef.current && cwd === getActiveCwd())
+            applySkills(list)
           return list
         })
         .finally(() => {
           if (skillsReadRef.current?.request === request) skillsReadRef.current = null
-          if (request === skillsRequestRef.current) setIsLoadingSkills(false)
+          if (mountedRef.current && request === skillsRequestRef.current) setIsLoadingSkills(false)
         })
       skillsReadRef.current = { cwd, request, promise }
       return promise
@@ -75,9 +87,19 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
     const request = ++promptAgentsRequestRef.current
     const cwd = getActiveCwd()
     const list = await window.api.listPromptAgents(cwd)
-    if (request !== promptAgentsRequestRef.current || cwd !== getActiveCwd()) return
+    if (!mountedRef.current || request !== promptAgentsRequestRef.current || cwd !== getActiveCwd())
+      return
     setPromptAgents(list)
   }, [getActiveCwd])
+
+  useEffect(
+    () =>
+      window.api.onPackageResourcesChanged?.(() => {
+        if (!mountedRef.current) return
+        void Promise.allSettled([refreshSkills(), refreshPromptAgents()])
+      }),
+    [refreshPromptAgents, refreshSkills]
+  )
 
   const updateEnablement = useCallback(
     async (
@@ -93,7 +115,7 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
           ? await readSkills(cwd, true)
           : await window.api.listSkills(cwd)
       } finally {
-        setBusySkillId((current) => (current === skill.id ? null : current))
+        if (mountedRef.current) setBusySkillId((current) => (current === skill.id ? null : current))
       }
     },
     [getActiveCwd, readSkills]
@@ -123,7 +145,7 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
       setBusySkillId(skill.id)
       try {
         const list = await window.api.deleteSkill(skill.filePath, cwd)
-        if (cwd === getActiveCwd()) {
+        if (mountedRef.current && cwd === getActiveCwd()) {
           skillsRequestRef.current += 1
           skillsReadRef.current = null
           setIsLoadingSkills(false)
@@ -131,7 +153,7 @@ export function useSkillCatalog(getActiveCwd: () => string): SkillCatalogState {
         }
         return list
       } finally {
-        setBusySkillId((current) => (current === skill.id ? null : current))
+        if (mountedRef.current) setBusySkillId((current) => (current === skill.id ? null : current))
       }
     },
     [applySkills, getActiveCwd]

@@ -22,6 +22,7 @@ import {
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
 import { buildLibraryCustomTools } from '../../library/library-tools'
+import { buildCapabilityTools, CAPABILITY_HOST_METHODS } from '../../packages/capability-tools'
 import { createHostJobClient } from '../../wrappers/composition/job-host-client'
 import { WRAPPER_JOB_HOST_METHODS } from '../../wrappers/composition/job-types'
 import { buildWrapperCompositionTools } from '../../wrappers/composition/tools'
@@ -113,7 +114,8 @@ const CANCELLATIONS = new Set([
   'skills.cancel',
   'environments.cancel',
   'remoteWorkspace.cancelDownload',
-  'library.cancel'
+  'library.cancel',
+  CAPABILITY_HOST_METHODS.cancel
 ])
 const coordinatedTools = new WeakSet<PhiTool>()
 
@@ -270,6 +272,7 @@ export function createRpcDesktopToolScope(
   const downloadRequest = requestFor(['remoteWorkspace.download', 'remoteWorkspace.cancelDownload'])
   const skillRequest = requestFor(['skills.run', 'skills.scriptTool', 'skills.cancel'])
   const environmentRequest = requestFor(['environments.request', 'environments.cancel'])
+  const capabilityRequest = requestFor(Object.values(CAPABILITY_HOST_METHODS))
   const wrapperRequest = requestFor(Object.values(WRAPPER_JOB_HOST_METHODS))
   const libraryRequest = requestFor(['library.execute', 'library.cancel'])
   const download: RemoteDownloadBackend = async (request, signal) => {
@@ -324,6 +327,9 @@ export function createRpcDesktopToolScope(
       interactionRequest('agentInteraction.request', request)
     ),
     buildRenderBlocksTool(),
+    ...((options.toolOwner ?? 'main') === 'main'
+      ? buildCapabilityTools(capabilityRequest, { runtimeSessionId: identity.runtimeSessionId })
+      : []),
     ...(webSearch ? [webSearch.tool] : []),
     ...(mcp ? mcp.tools : []),
     ...(memory ? memory.tools : []),
@@ -447,7 +453,12 @@ export function createRpcDesktopToolScope(
         }
       }
       Object.freeze(wrapped)
-      if (tool.name === 'browser' || tool.name === 'env_request') coordinatedTools.add(wrapped)
+      if (
+        tool.name === 'browser' ||
+        tool.name === 'env_request' ||
+        tool.name === 'capability_install'
+      )
+        coordinatedTools.add(wrapped)
       return wrapped
     })
   )

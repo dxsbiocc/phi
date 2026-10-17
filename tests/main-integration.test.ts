@@ -66,6 +66,10 @@ import { validRemoteAbsolutePath } from '../src/main/agent/remote-workspace-boun
 import { isRemotePathInside } from '../src/main/agent/remote-path-containment'
 import * as electronBrowserEngine from '../src/main/browser/electron-browser-engine'
 import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
+import * as capabilityApproval from '../src/main/agent/packages/capability-approval'
+import * as capabilityHost from '../src/main/agent/packages/capability-host'
+import * as capabilityService from '../src/main/agent/packages/capability-service'
+import * as externalSkills from '../src/main/agent/packages/external-skills'
 
 const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
 
@@ -396,6 +400,11 @@ type HostContext = {
 }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
+  capabilityServiceCreate?: typeof capabilityService.createCapabilityService
+  moduleApproval?: (
+    request: Record<string, unknown>,
+    signal: AbortSignal
+  ) => Promise<'approved' | 'denied' | 'cancelled'>
   lastSelectedModel?: { providerId: string; modelId: string } | null
   remoteDefaultModel?: { providerId: string; modelId: string } | null
   titleRequest?: sessionTitleGeneration.SessionTitleGeneratorOptions['request']
@@ -2646,7 +2655,8 @@ async function harness(
       getRuntimeRoot: (): string => '/isolated/runtime'
     },
     './agent/tool-approval': {
-      requestRuntimeToolApproval: async () => 'cancelled',
+      requestRuntimeToolApproval: async (request: Record<string, unknown>, signal: AbortSignal) =>
+        options.moduleApproval?.(request, signal) ?? 'cancelled',
       bashApprovalDigest: fakeBashApprovalDigest,
       writeApprovalDigest: fakeWriteApprovalDigest,
       editApprovalDigest: fakeEditApprovalDigest,
@@ -2735,6 +2745,16 @@ async function harness(
       }): Promise<unknown> => {
         await options.fetch('https://example.invalid/catalog/index.json')
         return officialRegistryFixture
+      }
+    },
+    './agent/packages/official-website-registry': {
+      syncPreferredOfficialRegistry: async (options: {
+        agentDir?: string
+        fetch: typeof fetch
+        forceRefresh?: boolean
+      }): Promise<unknown> => {
+        await options.fetch('https://phi.omicsagent.cn/api/catalog')
+        return { ...officialRegistryFixture, label: 'Phi 官网' }
       }
     },
     './agent/packages/content-source': {
@@ -3371,6 +3391,17 @@ async function harness(
     },
     './agent/packages/mutation-queue': {
       runPackageMutation: <T>(task: () => Promise<T>): Promise<T> => task()
+    },
+    './agent/packages/capability-approval': capabilityApproval,
+    './agent/packages/capability-host': capabilityHost,
+    './agent/packages/capability-service': {
+      ...capabilityService,
+      createCapabilityService: (deps: capabilityService.CapabilityServiceDependencies) =>
+        (options.capabilityServiceCreate ?? capabilityService.createCapabilityService)(deps)
+    },
+    './agent/packages/external-skills': externalSkills,
+    './agent/packages/official-catalog-api': {
+      searchOfficialCatalog: async () => ({ matches: [], available: false })
     },
     './agent/packages/wrapper-removal': {
       removeWrapperPackage: (id: string): { kind: 'uninstalled'; id: string } => ({
@@ -4903,6 +4934,83 @@ test('main run completion and stop dispose their dedicated browser tabs', async 
     assert.equal(view.webContents.closeCalls, 1)
     const snapshot = (await app.invoke('browser:snapshot')) as { tabs: unknown[] }
     assert.deepEqual(snapshot.tabs, [])
+  }
+})
+
+test('agent module installation always requests bound approval in automatic permission mode', async () => {
+  const session = new FakeSession('module-install-auto.jsonl')
+  session.hold = true
+  const approvals: Record<string, unknown>[] = []
+  const app = await harness(async () => session, {
+    moduleApproval: async (request, signal) => {
+      assert.equal(signal.aborted, false)
+      approvals.push(request)
+      return 'denied'
+    },
+    capabilityServiceCreate: (deps) => ({
+      ...capabilityService.createCapabilityService(deps),
+      install: async (params, context) => {
+        const runtimeSessionId = (params as { runtimeSessionId: string }).runtimeSessionId
+        const approved = await deps.confirm(
+          {
+            runtimeSessionId,
+            candidateId: 'fixture-candidate',
+            root: { type: 'skill', id: 'fixture-analysis', version: '1.2.3' },
+            action: 'install',
+            reason: '当前样本分析需要这个技能',
+            source: 'Phi Packages',
+            trust: 'official',
+            totalSize: 1024,
+            environments: [],
+            packages: [
+              {
+                type: 'skill',
+                id: 'fixture-analysis',
+                version: '1.2.3',
+                title: '分析技能',
+                source: 'Phi Packages',
+                trust: 'official',
+                size: 1024,
+                alreadyInstalled: false
+              }
+            ]
+          },
+          context
+        )
+        assert.equal(approved, false)
+        return { ok: false, installed: false, status: 'denied', message: 'denied' }
+      }
+    })
+  })
+  const current = (await app.invoke('projects:newSession', '/projects/modules-auto', 'auto')) as {
+    phiSessionId: string
+  }
+  const prompt = app.invoke('agent:prompt', '分析当前样本')
+  while (!session.started) await tick()
+  try {
+    const install = app.hostHandlers.get('capabilities.install')
+    assert.ok(install)
+    const result = await install(
+      {
+        runtimeSessionId: session.runtimeSessionId,
+        toolCallId: 'module-call',
+        requestId: 'module-request',
+        candidateId: 'fixture-candidate',
+        reason: 'needed'
+      },
+      { originSessionId: session.runtimeSessionId, toolCallId: 'module-call' }
+    )
+    assert.deepEqual(result, { ok: false, installed: false, status: 'denied', message: 'denied' })
+    assert.equal(approvals.length, 1)
+    assert.equal(approvals[0].sessionId, current.phiSessionId)
+    assert.equal(approvals[0].toolCallId, 'module-call')
+    assert.equal(approvals[0].toolName, 'capability_install')
+    assert.match(String(approvals[0].summary), /fixture-analysis @ 1.2.3/)
+    assert.equal(session.disposed, false)
+    assert.equal(session.log.includes('abort'), false)
+  } finally {
+    session.finish.resolve()
+    await prompt
   }
 })
 

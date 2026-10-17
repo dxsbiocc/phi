@@ -1,4 +1,14 @@
-const READ_ONLY_TOOLS = new Set(['read', 'glob', 'grep', 'find', 'ls', 'todo', 'ask_user_question'])
+const READ_ONLY_TOOLS = new Set([
+  'read',
+  'glob',
+  'grep',
+  'find',
+  'ls',
+  'todo',
+  'ask_user_question',
+  'capability_search',
+  'find_skills'
+])
 
 export function planModeToolDecision(
   active: boolean,

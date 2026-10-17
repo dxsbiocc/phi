@@ -5,9 +5,13 @@ import {
   OFFICIAL_REGISTRY_ID,
   isOfficialRegistryDirectory,
   prepareOfficialPackageInstall,
-  syncOfficialRegistry,
   type OfficialRegistryOptions
 } from './official-registry'
+import {
+  isOfficialWebsiteRegistryDirectory,
+  readOfficialWebsiteRegistry,
+  syncPreferredOfficialRegistry
+} from './official-website-registry'
 
 /** Resolve the fixed official source without persisting its cache as a user directory. */
 export async function readContentRegistry(
@@ -15,7 +19,10 @@ export async function readContentRegistry(
   options: OfficialRegistryOptions = {}
 ): Promise<LocalRegistry> {
   if (source === OFFICIAL_REGISTRY_ID || isOfficialRegistryDirectory(source, options.agentDir)) {
-    return syncOfficialRegistry(options)
+    return syncPreferredOfficialRegistry(options)
+  }
+  if (isOfficialWebsiteRegistryDirectory(source, options.agentDir)) {
+    return readOfficialWebsiteRegistry(source, options)
   }
   const registry = readRegistry(source)
   addKnownRegistry(registry.dir, options)

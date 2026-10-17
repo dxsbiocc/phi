@@ -3,6 +3,10 @@ productName: Phi
 directories:
   buildResources: build
 files:
+  # Ship only application output and runtime resources. Development caches can
+  # contain prior app bundles, indexes and session data.
+  - out/**
+  - resources/**
   - '!**/.vscode/*'
   - '!src/*'
   - '!scripts/**'

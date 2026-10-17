@@ -411,6 +411,7 @@ function attributeIncludeDependencies(
       .sort(compareText)) {
       const mainNf = join(wrappersRoot, ...path.split('/'))
       for (const include of collectIncludeReferences(mainNf)) {
+        if (include.pluginId) continue
         let reason: UnattributedWrapperInclude['reason'] | undefined
         let targetPath: string | undefined
         if (!include.resolvedFile) {

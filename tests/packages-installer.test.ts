@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
-import { stringify as stringifyYaml } from 'yaml'
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import { buildRegistry } from '../scripts/packages/build-registry'
 import { createDeterministicTarGz, parseTarGz } from '../src/main/agent/packages/archive'
@@ -35,6 +35,11 @@ import { createRuntimeResourceLoader } from '../src/main/agent/runtime/runtime-a
 import { loadedPlugins } from '../src/main/agent/plugins/loader'
 import { pluginVersionDir } from '../src/main/agent/plugins/store'
 import { readEnvironmentIndex } from '../src/main/agent/envs'
+import { currentPlatform, updateEnvironmentEntry } from '../src/main/agent/envs'
+import { describeEnvironment, buildEnvironment } from '../src/main/agent/content/environment-refs'
+import { createCapabilityService } from '../src/main/agent/packages/capability-service'
+import { copyMinimal, installReady } from './helpers/fakeEnvironment'
+import { removeTree } from '../src/main/agent/envs/ensure'
 
 interface SkillOptions {
   version?: string
@@ -591,6 +596,290 @@ test('removes stale staging directories and preserves fresh ones', () => {
     assert.deepEqual(cleanupStalePackageStaging({ agentDir, now: () => now }), [stale])
     assert.equal(existsSync(stale), false)
     assert.equal(existsSync(fresh), true)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('an aborted capability installation cannot commit after asynchronous MCP preparation', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const platform = currentPlatform()
+    const binary = Buffer.from('#!/bin/sh\nprintf "ready\\n"\n')
+    const files = [
+      {
+        path: 'phi-package.yaml',
+        data: Buffer.from(
+          stringifyYaml({
+            schemaVersion: 1,
+            id: 'managed-analysis',
+            type: 'mcp',
+            version: '1.0.0',
+            title: 'Managed analysis',
+            summary: 'Analysis fixture',
+            minAppVersion: '1.0.1',
+            connector: {
+              transport: 'stdio',
+              publisher: 'Test',
+              category: '科研数据',
+              environment: './environment.yml',
+              command: 'managed-analysis',
+              args: []
+            }
+          })
+        )
+      },
+      {
+        path: 'environment.yml',
+        data: Buffer.from(
+          stringifyYaml({
+            name: 'managed-analysis',
+            channels: [],
+            dependencies: [],
+            installation: {
+              backend: 'native',
+              executable: 'managed-analysis',
+              artifacts: {
+                [platform]: {
+                  url: 'https://example.test/analysis',
+                  sha256: sha256(binary),
+                  size: binary.length,
+                  format: 'file'
+                }
+              }
+            }
+          })
+        )
+      },
+      { path: `locks/${platform}.txt`, data: Buffer.from('@EXPLICIT\n') }
+    ]
+    const archive = createDeterministicTarGz([
+      ...files,
+      {
+        path: 'files.json',
+        data: Buffer.from(
+          JSON.stringify({
+            version: 1,
+            files: files
+              .map(({ path, data }) => ({
+                path,
+                sha256: sha256(data),
+                size: data.length
+              }))
+              .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+          })
+        )
+      }
+    ])
+    const archiveName = 'managed-analysis.tar.gz'
+    writeFileSync(join(registryDir, archiveName), archive)
+    const registry = writeIndex(registryDir, [
+      {
+        id: 'managed-analysis',
+        type: 'mcp',
+        version: '1.0.0',
+        title: 'Managed analysis',
+        summary: 'Analysis fixture',
+        archive: archiveName,
+        sha256: sha256(archive),
+        size: archive.length,
+        dependsOn: []
+      }
+    ])
+    const abort = new AbortController()
+    let release!: () => void
+    let prepared!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const verified = new Promise<void>((resolve) => {
+      prepared = resolve
+    })
+    let refreshed = false
+    const service = createCapabilityService({
+      agentDir,
+      appVersion: '1.0.1',
+      loadRegistries: async () => ({ registries: [registry], errors: [] }),
+      confirm: async () => true,
+      installerOptions: async () => ({
+        runtimeRoot: join(root, 'runtime'),
+        platform,
+        buildMcpEnvironment: (descriptor) =>
+          buildEnvironment(join(root, 'runtime'), descriptor, {
+            fetch: async () => new Response(Uint8Array.from(binary))
+          }),
+        verifyMcpStdio: async () => {
+          prepared()
+          await waiting
+          return ['analysis_tool']
+        }
+      }),
+      afterInstall: async () => {
+        refreshed = true
+      }
+    })
+    const context = { signal: abort.signal }
+    const { candidates } = await service.search(
+      { runtimeSessionId: 'run-a', query: 'Managed analysis' },
+      context
+    )
+    const installing = service.install(
+      {
+        runtimeSessionId: 'run-a',
+        candidateId: candidates[0].candidateId,
+        reason: 'Need scientific analysis'
+      },
+      context
+    )
+    await verified
+    assert.deepEqual(listInstalledPackages({ agentDir }), [])
+    abort.abort()
+    release()
+    const result = await installing
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.equal(result.status, 'cancelled')
+    assert.deepEqual(listInstalledPackages({ agentDir }), [])
+    assert.equal(existsSync(join(agentDir, 'mcp.json')), false)
+    assert.equal(existsSync(join(agentDir, 'state', 'enabled.json')), false)
+    assert.equal(refreshed, false)
+  } finally {
+    removeTree(root)
+  }
+})
+
+test('a retired capability run cannot activate a plugin after an asynchronous upgrade build', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    initializeFixtureRepository(root)
+    const sourceDir = join(root, 'resources', 'plugins', 'alpha-plugin')
+    const manifestPath = join(sourceDir, 'phi-package.yaml')
+    const manifest = parseYaml(readFileSync(manifestPath, 'utf8'))
+    manifest.environments = { analysis: { spec: 'environments/analysis/environment.yml' } }
+    writeFileSync(manifestPath, stringifyYaml(manifest))
+    copyMinimal(join(sourceDir, 'environments', 'analysis'), 'analysis')
+    execFileSync('git', ['add', 'resources'], { cwd: root })
+    const firstDir = join(root, 'first-registry')
+    buildRegistry({ repoRoot: root, outDir: firstDir })
+    const first = readRegistry(firstDir)
+    const options = { agentDir, runtimeRoot: join(root, 'runtime'), platform: currentPlatform() }
+    await installPackages(
+      planInstall(first, { type: 'plugin', id: 'alpha-plugin' }, options),
+      options
+    )
+    const descriptor = describeEnvironment('plugin:analysis', {
+      pluginId: 'alpha-plugin',
+      agentDir,
+      platform: options.platform
+    })
+    const envId = installReady(options.runtimeRoot, descriptor, {})
+    updateEnvironmentEntry(options.runtimeRoot, envId, { status: 'ready' })
+    manifest.version = '1.1.0'
+    writeFileSync(manifestPath, stringifyYaml(manifest))
+    const lock = join(sourceDir, 'environments', 'analysis', 'locks', `${options.platform}.txt`)
+    writeFileSync(
+      lock,
+      `${readFileSync(lock, 'utf8')}\nhttps://example.invalid/changed.conda#0123456789abcdef0123456789abcdef\n`
+    )
+    buildRegistry({ repoRoot: root, outDir: registryDir })
+    const registry = readRegistry(registryDir)
+    let release!: () => void
+    let building!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      building = resolve
+    })
+    let active = true
+    let refreshed = false
+    const service = createCapabilityService({
+      agentDir,
+      appVersion: '0.1.0',
+      loadRegistries: async () => ({ registries: [registry], errors: [] }),
+      confirm: async () => true,
+      assertCurrent: () => {
+        if (!active) throw new Error('run retired')
+      },
+      installerOptions: async () => ({
+        ...options,
+        build: async () => {
+          building()
+          await waiting
+        }
+      }),
+      afterInstall: async () => {
+        refreshed = true
+      }
+    })
+    const { candidates } = await service.search(
+      { runtimeSessionId: 'run-a', query: 'Alpha plugin' },
+      {}
+    )
+    const installing = service.install(
+      {
+        runtimeSessionId: 'run-a',
+        candidateId: candidates[0].candidateId,
+        reason: 'Need plugin analysis'
+      },
+      {}
+    )
+    await entered
+    active = false
+    release()
+    await assert.rejects(installing, /run retired/)
+    assert.equal(
+      listInstalledPackages({ agentDir }).find((item) => item.type === 'plugin')?.version,
+      '1.0.0'
+    )
+    assert.equal(existsSync(pluginVersionDir('alpha-plugin', '1.0.0', agentDir)), true)
+    assert.equal(existsSync(pluginVersionDir('alpha-plugin', '1.1.0', agentDir)), false)
+    assert.equal(existsSync(join(agentDir, 'state', 'enabled.json')), false)
+    assert.equal(refreshed, false)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test('a capability run is rechecked after the installer returns before enabling or refreshing', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const registry = writeIndex(registryDir, [skillEntry(registryDir, 'analysis-skill')])
+    let active = true
+    let refreshed = false
+    const service = createCapabilityService({
+      agentDir,
+      appVersion: '0.1.0',
+      loadRegistries: async () => ({ registries: [registry], errors: [] }),
+      confirm: async () => true,
+      assertCurrent: () => {
+        if (!active) throw new Error('run retired')
+      },
+      installPackages: async (plan, options) => {
+        const packages = await installPackages(plan, options)
+        active = false
+        return packages
+      },
+      afterInstall: async () => {
+        refreshed = true
+      }
+    })
+    const { candidates } = await service.search(
+      { runtimeSessionId: 'run-a', query: 'analysis' },
+      {}
+    )
+    await assert.rejects(
+      service.install(
+        {
+          runtimeSessionId: 'run-a',
+          candidateId: candidates[0].candidateId,
+          reason: 'Need analysis'
+        },
+        {}
+      ),
+      /run retired/
+    )
+    assert.equal(existsSync(join(agentDir, 'state', 'enabled.json')), false)
+    assert.equal(refreshed, false)
   } finally {
     cleanup(root)
   }
