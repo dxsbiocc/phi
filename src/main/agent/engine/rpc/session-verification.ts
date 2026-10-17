@@ -45,6 +45,7 @@ function parseProof(
     'leafId',
     'model',
     'modelRole',
+    'journalFileIdentity',
     'journalDigest',
     'assetDigest',
     'entryCount',
@@ -62,6 +63,8 @@ function parseProof(
     value.journalPath !== posix.join(identity.journals, request.journalBasename) ||
     !(value.leafId === null || verificationText(value.leafId)) ||
     !(value.modelRole === null || verificationText(value.modelRole)) ||
+    typeof value.journalFileIdentity !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(value.journalFileIdentity) ||
     typeof value.journalDigest !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(value.journalDigest) ||
     typeof value.assetDigest !== 'string' ||
@@ -320,6 +323,7 @@ export function createRpcSessionVerifier(options: {
           (savedBaseline.journalPath !== proof.journalPath ||
             savedBaseline.ompSessionId !== proof.ompSessionId ||
             savedBaseline.assetDigest !== proof.assetDigest ||
+            savedBaseline.journalFileIdentity !== proof.journalFileIdentity ||
             savedBaseline.journalDigest !== proof.journalDigest)
         )
           verificationFailure('FILE_INVALID')
@@ -350,7 +354,8 @@ export function createRpcSessionVerifier(options: {
           savedBaseline &&
           (savedBaseline.ompSessionId !== proof.ompSessionId ||
             savedBaseline.journalPath !== proof.journalPath ||
-            savedBaseline.assetDigest !== proof.assetDigest)
+            savedBaseline.assetDigest !== proof.assetDigest ||
+            savedBaseline.journalFileIdentity !== proof.journalFileIdentity)
         )
           verificationFailure('FILE_INVALID')
         attachment = proof

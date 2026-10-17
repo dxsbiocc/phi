@@ -3,6 +3,12 @@ import { posix } from 'node:path'
 
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import type { WorkspaceHost } from '../workspace-host/types'
+import {
+  REMOTE_HELPER_READY_MARKER_FILENAME,
+  REMOTE_HELPER_READY_MARKER_MODE,
+  remoteHelperReadyMarkerSha256,
+  type RemoteHelperReadyMarkerIdentity
+} from '../remote-helper-marker'
 import { FileTransferCoordinator, getFileTransferCoordinator } from './coordinator'
 import { HelperTransferDataPlane } from './helper-data-plane'
 import { sameSourceIdentity } from './manifest'
@@ -131,22 +137,41 @@ export async function reuseVerifiedRemoteUploadDestination(
 export function createInstalledHelperTransferConnect(
   session: RemoteSshSession,
   remoteRoot: string,
-  version: string
+  identity: RemoteHelperReadyMarkerIdentity
 ): () => Promise<TransferStdioProcess> {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(version)) {
-    throw new Error('Remote helper version is invalid')
+  if (
+    identity.schema !== 1 ||
+    identity.kind !== 'remote-helper' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(identity.version) ||
+    !/^[a-f0-9]{64}$/.test(identity.sha256)
+  ) {
+    throw new Error('Remote helper identity is invalid')
   }
+  const expectedMarkerSha256 = remoteHelperReadyMarkerSha256(identity)
   let resolved: Promise<string> | undefined
   const locate = async (): Promise<string> => {
     if (!session.execBounded || !session.openStdio) throw new Error('Remote helper unavailable')
     const script = [
       'set -eu',
-      `version=${shellQuote(version)}`,
+      `version=${shellQuote(identity.version)}`,
+      `expected_helper_sha256=${shellQuote(identity.sha256)}`,
+      `expected_marker_sha256=${shellQuote(expectedMarkerSha256)}`,
       'uid=$(id -u)',
       'for candidate in "$HOME/.phi/remote/$version/phi-helper" "${TMPDIR:-/tmp}/phi-remote-$uid/$version/phi-helper"; do',
       '  [ -f "$candidate" ] && [ ! -L "$candidate" ] && [ -x "$candidate" ] || continue',
       '  owner=$(stat -Lc %u "$candidate" 2>/dev/null || stat -f %u "$candidate" 2>/dev/null) || continue',
       '  [ "$owner" = "$uid" ] || continue',
+      '  directory=${candidate%/*}',
+      `  marker="$directory/${REMOTE_HELPER_READY_MARKER_FILENAME}"`,
+      '  [ -d "$directory" ] && [ ! -L "$directory" ] && [ -O "$directory" ] || continue',
+      '  [ -f "$marker" ] && [ ! -L "$marker" ] && [ -O "$marker" ] || continue',
+      `  [ "$(stat -Lc %a -- "$marker" 2>/dev/null)" = ${shellQuote(REMOTE_HELPER_READY_MARKER_MODE.toString(8))} ] || continue`,
+      '  marker_sha256=$(sha256sum -- "$marker") || continue',
+      '  marker_sha256=${marker_sha256%% *}',
+      '  [ "$marker_sha256" = "$expected_marker_sha256" ] || continue',
+      '  helper_sha256=$(sha256sum -- "$candidate") || continue',
+      '  helper_sha256=${helper_sha256%% *}',
+      '  [ "$helper_sha256" = "$expected_helper_sha256" ] || continue',
       "  printf 'PHI_HELPER_HEX='",
       "  printf '%s' \"$candidate\" | od -An -tx1 -v | tr -d ' \\n'",
       "  printf '\\n'",

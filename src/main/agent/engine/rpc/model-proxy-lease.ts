@@ -151,7 +151,7 @@ export async function prepareModelProxyRpcSessionTransport(
             return result
           }
         : undefined,
-      prepareSession: async ({ params, agentDir, signal }) => {
+      prepareSession: async ({ params, agentDir, startup, signal }) => {
         const owned = generations.get(params)
         if (!owned?.gateway || !owned.tunnel)
           throw new Error('Model proxy generation was not prepared')
@@ -165,6 +165,7 @@ export async function prepareModelProxyRpcSessionTransport(
           sessionId: owned.gateway.sessionId,
           projectRoot: params.cwd,
           gatewayGeneration: owned.gateway.generation,
+          startup,
           signal
         })
         owned.controller.signal.throwIfAborted()
@@ -347,6 +348,7 @@ export async function prepareModelProxyRpcSessionTransport(
       // generation signal and preparation cleanup close the channel.
       await transport.initialize(context)
       owned.controller.signal.throwIfAborted()
-    }
+    },
+    startupPreflight: (params) => transport.startupPreflight(params)
   }
 }

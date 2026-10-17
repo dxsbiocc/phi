@@ -17,6 +17,7 @@ import {
   type RemoteMicromambaArtifactPlan
 } from './remote-micromamba-artifact'
 import { getPhiAgentDir } from './runtime-paths'
+import type { RemoteHelperReadyMarkerIdentity } from './remote-helper-marker'
 import { remoteTransferHostKey } from './transfer'
 import {
   readLatestCapabilityProfileForHost,
@@ -163,7 +164,11 @@ function installationInput(
   artifact: RemoteMicromambaArtifact & { url?: string; urls?: readonly string[] },
   obtainLocalArtifact: (() => Promise<RemoteMicromambaArtifact>) | undefined,
   checkRuntimeRoot: CheckRemoteRuntimeRoot,
-  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
+  transfer: Readonly<{
+    hostKey: string
+    helperIdentity?: RemoteHelperReadyMarkerIdentity
+    agentDir: string
+  }>
 ): Parameters<typeof ensureRemoteMicromamba>[1] {
   return {
     runtimeRoot: request.runtimeRoot,
@@ -172,7 +177,7 @@ function installationInput(
     obtainLocalArtifact,
     checkRuntimeRoot,
     transferHostKey: transfer.hostKey,
-    helperVersion: transfer.helperVersion,
+    helperIdentity: transfer.helperIdentity,
     agentDir: transfer.agentDir,
     signal: request.signal,
     onProgress: (progress) =>
@@ -211,7 +216,11 @@ async function legacyInstallation(
   request: RemoteMicromambaSettingsRequest,
   dependencies: RemoteMicromambaSettingsDependencies,
   checkRuntimeRoot: CheckRemoteRuntimeRoot,
-  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
+  transfer: Readonly<{
+    hostKey: string
+    helperIdentity?: RemoteHelperReadyMarkerIdentity
+    agentDir: string
+  }>
 ): Promise<RemoteMicromambaResult> {
   const artifact = await obtainArtifact(platform, request, dependencies.getArtifact!)
   request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
@@ -228,7 +237,11 @@ async function runInstallation(
   dependencies: RemoteMicromambaSettingsDependencies,
   startedAt: number,
   checkRuntimeRoot: CheckRemoteRuntimeRoot,
-  transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
+  transfer: Readonly<{
+    hostKey: string
+    helperIdentity?: RemoteHelperReadyMarkerIdentity
+    agentDir: string
+  }>
 ): Promise<RemoteMicromambaResult> {
   try {
     if (dependencies.getArtifact && !dependencies.describeArtifact) {
@@ -320,8 +333,8 @@ export async function installRemoteMicromambaForHost(
       {
         hostKey: remoteTransferHostKey(profile.hostAlias),
         agentDir,
-        ...(capability?.helperStatus?.state === 'available' && capability.helperVersion
-          ? { helperVersion: capability.helperVersion }
+        ...(capability?.helperStatus?.state === 'available' && capability.helperReadyMarker
+          ? { helperIdentity: capability.helperReadyMarker }
           : {})
       }
     )

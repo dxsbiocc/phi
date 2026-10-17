@@ -329,7 +329,7 @@ test('foreground native name preparation is strict and paired, while disabled po
       }),
       /Invalid composed native tool roster/
     )
-    assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+    await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   }
   const factory = await prepareSshRpcSessionTransport({
     session: fixture.session,
@@ -367,7 +367,7 @@ test('stdio acquisition failure removes owned configuration and preserves the co
     fixture.factory.open(fixture.params, new AbortController().signal),
     /stdio refused/
   )
-  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+  await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   assert.equal(fixture.session.closed, false)
 })
 
@@ -413,14 +413,14 @@ test('abort during delayed stdio acquisition closes the late owned channel witho
         throw new Error('Pending stdio cancellation did not settle before gate release')
       })
     ])
-    assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+    await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
     assert.equal(closed, false)
   } finally {
     release()
   }
   await closedLate
   assert.equal(closed, true)
-  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+  await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   assert.equal(fixture.session.closed, false)
 })
 
@@ -457,7 +457,7 @@ test('R3 preparation receives only the owned private generation and its failure 
   )
   assert.equal(prepared, true)
   assert.equal(opened, false)
-  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'rpc-sessions')), [])
+  await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   assert.equal(fixture.session.closed, false)
 })
 
@@ -573,47 +573,55 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
     runtime: fixture.options,
     bundle,
     projectId: 'project-1',
-    prepareSession: async ({ agentDir }) => {
-      await writeFile(
-        join(agentDir, 'models.yml'),
-        JSON.stringify({
-          providers: {
-            'phi-contract': {
-              baseUrl: provider.url,
-              api: 'openai-completions',
-              apiKey: 'contract-only-key',
-              models: [
-                {
-                  id: 'contract-model',
-                  name: 'Contract Model',
-                  reasoning: false,
-                  input: ['text'],
-                  contextWindow: 32768,
-                  maxTokens: 256,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-                }
-              ]
+    prepareSession: async ({ agentDir, startup }) => {
+      startup.addFile({
+        item: 'slow-models',
+        path: join(agentDir, 'models.yml'),
+        bytes: Buffer.from(
+          JSON.stringify({
+            providers: {
+              'phi-contract': {
+                baseUrl: provider.url,
+                api: 'openai-completions',
+                apiKey: 'contract-only-key',
+                models: [
+                  {
+                    id: 'contract-model',
+                    name: 'Contract Model',
+                    reasoning: false,
+                    input: ['text'],
+                    contextWindow: 32768,
+                    maxTokens: 256,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+                  }
+                ]
+              }
             }
-          }
-        }),
-        { mode: 0o600 }
-      )
-      await writeFile(
-        join(agentDir, 'config.yml'),
-        JSON.stringify({
-          defaultProvider: 'phi-contract',
-          defaultModel: 'contract-model',
-          compaction: { enabled: false },
-          memory: { enabled: false },
-          extensions: [],
-          skills: []
-        }),
-        { mode: 0o600 }
-      )
+          })
+        ),
+        mode: 0o600,
+        ifAbsent: true
+      })
+      startup.addFile({
+        item: 'slow-config',
+        path: join(agentDir, 'config.yml'),
+        bytes: Buffer.from(
+          JSON.stringify({
+            defaultProvider: 'phi-contract',
+            defaultModel: 'contract-model',
+            compaction: { enabled: false },
+            memory: { enabled: false },
+            extensions: [],
+            skills: []
+          })
+        ),
+        mode: 0o600,
+        ifAbsent: true
+      })
     }
   })
-  assert.equal(delayed, true)
-  assert.ok(performance.now() - preparationStarted >= 5250)
+  assert.equal(delayed, false)
+  assert.ok(performance.now() - preparationStarted < 1000)
   let stderr = ''
   const open = fixture.session.openStdio!
   fixture.session.openStdio = async (command) => {
@@ -633,6 +641,7 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
   const created = await backend.create(fixture.params).catch((error: unknown) => {
     throw new Error(`Real CLI bootstrap failed: ${stderr}`, { cause: error })
   })
+  assert.equal(delayed, true)
   assert.equal(created.sessionId, fixture.params.sessionId)
   assert.equal(created.state.cwd, fixture.cwd)
   assert.deepEqual(phases, ['ready'])
@@ -645,7 +654,7 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
   assert.equal((await fixture.session.exec('printf still-connected')).stdout, 'still-connected')
 })
 
-test('shared preparation has independent cancellation and never opens a session channel or private config when cancelled', async (t) => {
+test('repair preparation has independent cancellation and never opens a session channel or private config when cancelled', async (t) => {
   const fixture = await createPhiExtensionDeploymentFixture()
   t.after(fixture.cleanup)
   const session = createLocalShellSession(fixture.runtimeRoot)
@@ -655,7 +664,7 @@ test('shared preparation has independent cancellation and never opens a session 
     entered = resolve
   })
   const controller = new AbortController()
-  const preparing = prepareSshRpcSessionTransport(
+  const factory = await prepareSshRpcSessionTransport(
     {
       session,
       runtime: {
@@ -674,11 +683,18 @@ test('shared preparation has independent cancellation and never opens a session 
     },
     controller.signal
   )
+  const opening = factory.open(
+    { sessionId: 'cancelled-session', cwd: fixture.root, agentDir: 'unused' },
+    controller.signal
+  )
   await started
-  const rejected = assert.rejects(preparing, { name: 'AbortError' })
+  const rejected = assert.rejects(opening, { name: 'AbortError' })
   controller.abort()
   await rejected
-  assert.equal(session.commands.length, 0)
+  assert.equal(
+    session.commands.some((command) => command.includes('exec env -i')),
+    false
+  )
   assert.equal(session.closed, false)
   await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   assert.deepEqual(await readdir(join(fixture.options.cacheDir, 'omp/18.10.3/linux-x64')), [])
@@ -765,43 +781,51 @@ test('neutral private startup prevents SDK dotenv injection even with runtime in
     runtime: fixture.options,
     bundle: await createPhiExtensionBundle(source),
     projectId: 'project-1',
-    prepareSession: async ({ agentDir }) => {
-      await writeFile(
-        join(agentDir, 'models.yml'),
-        JSON.stringify({
-          providers: {
-            'phi-env-fixture': {
-              baseUrl: provider.url,
-              api: 'openai-completions',
-              apiKey: 'synthetic-only-key',
-              models: [
-                {
-                  id: 'no-call',
-                  name: 'No-call fixture',
-                  reasoning: false,
-                  input: ['text'],
-                  contextWindow: 32768,
-                  maxTokens: 256,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-                }
-              ]
+    prepareSession: async ({ agentDir, startup }) => {
+      startup.addFile({
+        item: 'environment-models',
+        path: join(agentDir, 'models.yml'),
+        bytes: Buffer.from(
+          JSON.stringify({
+            providers: {
+              'phi-env-fixture': {
+                baseUrl: provider.url,
+                api: 'openai-completions',
+                apiKey: 'synthetic-only-key',
+                models: [
+                  {
+                    id: 'no-call',
+                    name: 'No-call fixture',
+                    reasoning: false,
+                    input: ['text'],
+                    contextWindow: 32768,
+                    maxTokens: 256,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+                  }
+                ]
+              }
             }
-          }
-        }),
-        { mode: 0o600 }
-      )
-      await writeFile(
-        join(agentDir, 'config.yml'),
-        JSON.stringify({
-          defaultProvider: 'phi-env-fixture',
-          defaultModel: 'no-call',
-          compaction: { enabled: false },
-          memory: { enabled: false },
-          extensions: [],
-          skills: []
-        }),
-        { mode: 0o600 }
-      )
+          })
+        ),
+        mode: 0o600,
+        ifAbsent: true
+      })
+      startup.addFile({
+        item: 'environment-config',
+        path: join(agentDir, 'config.yml'),
+        bytes: Buffer.from(
+          JSON.stringify({
+            defaultProvider: 'phi-env-fixture',
+            defaultModel: 'no-call',
+            compaction: { enabled: false },
+            memory: { enabled: false },
+            extensions: [],
+            skills: []
+          })
+        ),
+        mode: 0o600,
+        ifAbsent: true
+      })
     }
   })
   const params = Object.freeze({ ...fixture.params })

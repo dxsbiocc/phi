@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -18,6 +19,12 @@ import type {
   RemoteExecResult
 } from '../../src/main/agent/wrappers/remote-ssh-session'
 import { SshHost } from '../../src/main/agent/workspace-host/ssh-host'
+import {
+  remoteHelperReadyMarkerIdentity,
+  remoteHelperReadyMarkerSha256,
+  serializeRemoteHelperReadyMarker,
+  type RemoteHelperInstallation
+} from '../../src/main/agent/remote-helper-marker'
 import type { RemoteRuntimeWorkspace } from '../../src/main/agent/remote-runtime/types'
 import { createRemoteRuntimeInputExec } from '../../src/main/agent/remote-runtime/input-exec'
 import {
@@ -122,9 +129,41 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     sessions.push(session)
     return session
   }
+  const runtimeHost = new SshHost({
+    remoteRoot: runtimeRoot,
+    canonicalRoot: runtimeRoot,
+    connect
+  })
+  const helperRoot = join(runtimeRoot, 'test-helper')
+  const helperDirectory = join(helperRoot, '0.1.0')
+  const helperPath = join(helperDirectory, 'phi-helper')
+  mkdirSync(helperDirectory, { recursive: true, mode: 0o700 })
+  chmodSync(helperRoot, 0o700)
+  chmodSync(helperDirectory, 0o700)
+  const guardScript = join(process.cwd(), 'tests/helpers/projectPluginGuardCli.ts')
+  const guardCommand = process.execPath.includes('bun')
+    ? `'${process.execPath}' '${guardScript}'`
+    : `'${process.execPath}' --import '${join(process.cwd(), 'scripts/test-loader.mjs')}' '${guardScript}'`
+  writeFileSync(helperPath, `#!/bin/sh\nexec ${guardCommand} "$@"\n`, { mode: 0o700 })
+  const helperIdentity = remoteHelperReadyMarkerIdentity({
+    version: '0.1.0',
+    sha256: createHash('sha256').update(readFileSync(helperPath)).digest('hex')
+  })
+  const readyMarkerPath = join(helperDirectory, '.phi-ready.json')
+  writeFileSync(readyMarkerPath, serializeRemoteHelperReadyMarker(helperIdentity), { mode: 0o600 })
+  const helperInstallation: RemoteHelperInstallation = {
+    managedRoot: helperRoot,
+    remotePath: helperPath,
+    remoteDirectory: helperDirectory,
+    readyMarkerPath,
+    markerIdentity: helperIdentity,
+    readyMarkerSha256: remoteHelperReadyMarkerSha256(helperIdentity)
+  }
+  runtimeHost.managedRemoteHelper = () => helperInstallation
+  runtimeHost.ensureManagedRemoteHelper = async () => helperInstallation
   const workspace: RemoteRuntimeWorkspace = {
     projectHost: sshHost(projectRoot, sessions, inheritedEnv),
-    runtimeHost: new SshHost({ remoteRoot: runtimeRoot, canonicalRoot: runtimeRoot, connect }),
+    runtimeHost,
     projectRoot,
     runtimeRoot,
     execWithInput: createRemoteRuntimeInputExec(connect)

@@ -6,6 +6,7 @@ import type { WorkspaceHost } from '../../workspace-host/types'
 import type { RemoteUploadFileOptions } from '../../transfer/remote-upload-types'
 import { shellQuote as q } from '../../wrappers/remote-ssh-session'
 import { privateRemotePrefix } from './extension-deployment/remote-commands'
+import type { RpcStartupTransactionWriter } from './startup-transaction'
 import {
   encodeHostResult,
   encodeHostResultEnvelope,
@@ -32,6 +33,7 @@ export interface HostResultCall {
 }
 export interface RpcHostResultDeliveryOptions {
   host: WorkspaceHost
+  startup: RpcStartupTransactionWriter
   /** Canonical, already attested, private generation directory; never from model input. */
   generationDirectory: string
   lease: HostResultLease
@@ -84,6 +86,7 @@ export class RpcHostResultDelivery {
   static async create(options: RpcHostResultDeliveryOptions): Promise<RpcHostResultDelivery> {
     if (
       !options.host.transfer ||
+      !options.startup ||
       !/^[a-f0-9]{64}$/.test(options.capability) ||
       !validHostResultIdentity({
         ...options.lease,
@@ -96,18 +99,10 @@ export class RpcHostResultDelivery {
       throw new Error('Host result transfer requires a streaming transport and private capability')
     const delivery = new RpcHostResultDelivery(options)
     options.signal.throwIfAborted()
-    try {
-      await delivery.run(
-        `[ ! -e ${q(delivery.directory)} ] && [ ! -L ${q(delivery.directory)} ] || fail 'Host result directory already exists'\nmkdir -- ${q(delivery.directory)}\nprivate_dir ${q(delivery.directory)}`,
-        options.signal
-      )
-      options.signal.addEventListener('abort', delivery.abort, { once: true })
-      options.signal.throwIfAborted()
-      return delivery
-    } catch (error) {
-      await delivery.dispose().catch(() => undefined)
-      throw error
-    }
+    options.startup.addDirectory({ path: delivery.directory, ifAbsent: true })
+    options.signal.addEventListener('abort', delivery.abort, { once: true })
+    options.signal.throwIfAborted()
+    return delivery
   }
   private abort = (): void => {
     void this.dispose().catch(() => undefined)

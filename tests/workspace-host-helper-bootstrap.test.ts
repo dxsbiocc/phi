@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 
@@ -149,7 +149,6 @@ async function helperResources(root: string): Promise<{ resourceRoot: string; ha
 }
 
 function failureSession(
-  root: string,
   canonicalRoot: string,
   failure: 'probe' | 'upload',
   counters: FailureCounters
@@ -161,7 +160,7 @@ function failureSession(
   session.exec = (command) =>
     command.includes('__PHI_HELPER_HOME__')
       ? Promise.resolve({
-          stdout: `__PHI_HELPER_HOME__${join(root, 'remote-home')}\n`,
+          stdout: `__PHI_HELPER_HOME__${join(dirname(canonicalRoot), 'remote-home/.phi/remote')}\n`,
           stderr: '',
           code: 0,
           signal: null
@@ -189,11 +188,12 @@ async function firstOperationWithFailure(failure: 'probe' | 'upload'): Promise<F
   const { resourceRoot } = await helperResources(root)
   const counters: FailureCounters = { connections: 0, probeSessions: 0, uploads: 0 }
   await mkdir(workspace)
+  await mkdir(join(root, 'remote-home/.phi/remote'), { recursive: true, mode: 0o700 })
   const canonicalRoot = await realpath(workspace)
   const host = new SshHost({
     remoteRoot: workspace,
     canonicalRoot,
-    connect: async () => failureSession(root, canonicalRoot, failure, counters),
+    connect: async () => failureSession(canonicalRoot, failure, counters),
     helperBootstrap: {
       profileKey: { hostAlias: `${failure}-failure`, projectRoot: workspace },
       agentDir,

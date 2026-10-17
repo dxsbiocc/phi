@@ -55,6 +55,21 @@ function countedHost(
         call('exec.spawnBackground', () => host.exec.spawnBackground(...args))
     },
     capabilities: () => host.capabilities(),
+    ...(host.transfer
+      ? {
+          transfer: {
+            uploadFile: (...args) =>
+              call('transfer.uploadFile', () => host.transfer!.uploadFile(...args))
+          }
+        }
+      : {}),
+    ...(host.managedRemoteHelper ? { managedRemoteHelper: () => host.managedRemoteHelper!() } : {}),
+    ...(host.ensureManagedRemoteHelper
+      ? {
+          ensureManagedRemoteHelper: (options) =>
+            call('helper.ensure', () => host.ensureManagedRemoteHelper!(options))
+        }
+      : {}),
     ...(host.pty ? { pty: host.pty } : {}),
     ...(host.watch ? { watch: host.watch } : {}),
     ...(host.forwardPort ? { forwardPort: host.forwardPort } : {}),

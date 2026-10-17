@@ -16,7 +16,6 @@ const reports: RemoteStartupDiagnostic[] = []
 const fixture = await facadeMetadataFixture({
   applicationRouting: {
     agents: [],
-    realWorkspace: true,
     commandDelayMs: delayMs,
     startupDiagnostics: (report) => reports.push(report)
   }

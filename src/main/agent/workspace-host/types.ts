@@ -1,5 +1,9 @@
 import type { RemoteRuntimeRootCapabilityProfile } from '../../../shared/remoteRuntimeRootTypes'
 import type { RemoteUploadFileOptions } from '../transfer/remote-upload-types'
+import type {
+  RemoteHelperInstallation,
+  RemoteHelperReadyMarkerIdentity
+} from '../remote-helper-marker'
 
 export type WorkspaceContent = string | Uint8Array
 
@@ -150,6 +154,9 @@ export interface HostCapabilityProfile {
     }
   }
   helperVersion?: string
+  helperReadyMarker?: RemoteHelperReadyMarkerIdentity
+  helperManagedRoot?: string
+  helperDirectory?: string
   helperStatus?: HostHelperStatus
   helperCompatibility?: HostCapability
   probedAt: string
@@ -249,6 +256,12 @@ export interface WorkspaceHost {
     ): Promise<void>
   }
   capabilities(): HostCapabilityProfile
+  /** Cached managed helper identity; validate its marker before use. */
+  managedRemoteHelper?(): RemoteHelperInstallation | undefined
+  /** Install or repair the helper and return only a marker-backed installation. */
+  ensureManagedRemoteHelper?(options?: {
+    force?: boolean
+  }): Promise<RemoteHelperInstallation | undefined>
   close?(): Promise<void>
 }
 

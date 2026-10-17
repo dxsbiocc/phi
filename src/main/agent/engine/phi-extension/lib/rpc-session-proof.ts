@@ -1,4 +1,6 @@
-import { lstat, realpath } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { constants } from 'node:fs'
+import { lstat, open, realpath } from 'node:fs/promises'
 import { posix } from 'node:path'
 import type { ExtensionAPI, SessionManager } from '@oh-my-pi/pi-coding-agent'
 import {
@@ -22,6 +24,48 @@ type SessionSdk = Pick<
   ExtensionAPI['pi'],
   'loadSessionFile' | 'SessionManager' | 'getRestorableSessionModels'
 >
+
+async function journalFileIdentity(
+  path: string,
+  physicalIdentity: string,
+  capability: SessionVerificationCapability
+): Promise<string> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  try {
+    const bytes = Buffer.alloc(16_385)
+    let length = 0
+    while (length < bytes.length) {
+      assertVerificationActive(capability)
+      const next = await handle.read(bytes, length, bytes.length - length, length)
+      if (!next.bytesRead) break
+      length += next.bytesRead
+    }
+    const prefix = bytes.subarray(0, length)
+    const lineEnd = (offset: number): number => {
+      const end = prefix.indexOf(10, offset)
+      if (end < 0 || end >= 16_384) verificationFailure('FILE_INVALID')
+      return end
+    }
+    const firstEnd = lineEnd(0)
+    let first: unknown
+    try {
+      first = JSON.parse(prefix.subarray(0, firstEnd).toString('utf8'))
+    } catch {
+      verificationFailure('FILE_INVALID')
+    }
+    const start = verificationRecord(first) && first.type === 'title' ? firstEnd + 1 : 0
+    const headerEnd = start ? lineEnd(start) : firstEnd
+    const deviceInode = physicalIdentity.split(':').slice(0, 2).join(':')
+    if (!/^[0-9]+:[0-9]+$/u.test(deviceInode)) verificationFailure('FILE_INVALID')
+    return createHash('sha256')
+      .update(deviceInode)
+      .update('\0')
+      .update(prefix.subarray(start, headerEnd))
+      .digest('hex')
+  } finally {
+    await handle.close()
+  }
+}
 
 /** Pinned SDK native Anthropic summary carrier; opaque content is never parsed. */
 function validNativeAnthropicCompaction(preserveData: unknown, consumeWork: () => void): boolean {
@@ -276,6 +320,7 @@ export async function proveSavedSession(
     verificationFailure('FILE_INVALID')
   await verifyManagedDirectories(capability)
   await verifyProjectCwd(capability.projectRoot, capability, projectIdentity)
+  const fileIdentity = await journalFileIdentity(path, before.identity, capability)
   return Object.freeze({
     ompSessionId: request.ompSessionId,
     phiSessionId: capability.phiSessionId,
@@ -285,6 +330,7 @@ export async function proveSavedSession(
     leafId: leaf,
     model,
     modelRole,
+    journalFileIdentity: fileIdentity,
     journalDigest: before.digest,
     assetDigest: assets.digest,
     entryCount: loaded.entries.length - 1,

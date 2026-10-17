@@ -1,8 +1,9 @@
 import { spawn, execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
 import { deriveRemoteSessionPaths } from '../../src/main/agent/engine/rpc/session-storage/paths'
@@ -309,10 +310,27 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
                 .filter(Boolean)
                 .map((line) => JSON.parse(line))
                 .find((entry) => entry.type === 'session') as { cwd: string }
+              const proofReference =
+                action.type === 'resume'
+                  ? action.reference
+                  : {
+                      ...scope,
+                      kind: 'remote-omp' as const,
+                      version: 1 as const,
+                      durableSessionKey: paths.durableSessionKey,
+                      ompVersion: '18.10.3',
+                      ompSessionId: identity.ompSessionId,
+                      journalBasename: basename(identity.journalPath)
+                    }
+              const preflight = await preflightRemoteJournal(preparation, proofReference)
               return {
                 ...identity,
                 projectRoot: await realpath(header.cwd),
-                leafId: entries.leafId
+                leafId: entries.leafId,
+                journalFileIdentity: preflight.fileIdentity,
+                journalDigest: createHash('sha256')
+                  .update(await readFile(identity.journalPath))
+                  .digest('hex')
               }
             },
             publish: async (reference, _checkpoint, signal) => {

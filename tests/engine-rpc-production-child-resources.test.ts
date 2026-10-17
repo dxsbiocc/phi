@@ -17,6 +17,10 @@ import {
 } from '../src/main/agent/engine/phi-extension/lib/rpc-child-resources'
 import { rpcChildPromptDigest } from '../src/main/agent/engine/phi-extension/lib/rpc-child-protocol'
 import type { RpcRuntimePreparationContext } from '../src/main/agent/engine/rpc/ssh-stdio-factory'
+import {
+  RpcStartupTransactionBuilder,
+  runRpcStartupTransaction
+} from '../src/main/agent/engine/rpc/startup-transaction'
 import type { RpcAgentEnvironmentDescriptor } from '../src/main/agent/engine/rpc/subagents/types'
 import { productionChildOptions } from './helpers/productionChildNodeFixture'
 import { definition } from './helpers/rpcAgentDefinitionFixture'
@@ -304,6 +308,11 @@ test(
       agentDir
     ])
       await mkdir(path, { mode: 0o700 })
+    const startup = new RpcStartupTransactionBuilder({
+      runtimeRoot: f.runtimeRoot,
+      projectRoot: f.scope.projectRoot,
+      markers: []
+    })
     const context: RpcRuntimePreparationContext = {
       params: {
         sessionId: f.scope.phiSessionId,
@@ -324,6 +333,7 @@ test(
       homePath,
       agentDir,
       storage: f.preparation,
+      startup,
       signal: new AbortController().signal
     }
     await publishProductionChildConfig({
@@ -332,6 +342,10 @@ test(
       host: f.host,
       uploadOptions: { agentDir: join(f.root, 'local-state'), hostKey: f.root }
     })
+    assert.equal(
+      (await runRpcStartupTransaction(f.session, startup.build())).result.status,
+      'ready'
+    )
     const skill = prepared.config.resources!.skills[0],
       path = join(agentDir, skill.path)
     assert.equal((await stat(join(agentDir, 'phi-child-skills'))).mode & 0o777, 0o700)

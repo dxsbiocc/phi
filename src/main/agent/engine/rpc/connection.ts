@@ -156,10 +156,6 @@ export class RpcConnection {
       queuedBytes: 0
     }
     this.current = state
-    if (this.startupMs)
-      state.timer = setTimeout(() => {
-        this.fail(state, new Error('RPC startup timed out'))
-      }, this.startupMs)
     // Reap an earlier channel before opening its replacement. A late factory
     // result is separately closed and cannot attach to a newer generation.
     void this.lastCleanup
@@ -172,6 +168,12 @@ export class RpcConnection {
             void this.closeTransport(process).catch(() => undefined)
             return
           }
+          // Transport acquisition may perform bounded deployment/repair. The
+          // startup deadline covers only the attached RPC handshake.
+          if (this.startupMs)
+            state.timer = setTimeout(() => {
+              this.fail(state, new Error('RPC startup timed out'))
+            }, this.startupMs)
           this.attach(state, process)
         },
         (error: unknown) => this.fail(state, asError(error))

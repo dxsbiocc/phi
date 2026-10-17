@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import type { SafeModelDescriptor } from '../model-gateway-types'
 import {
@@ -7,12 +6,14 @@ import {
   validateRpcModelMetadata,
   type RpcModelMetadata
 } from '../phi-extension/lib/rpc-model-metadata'
-import { shellQuote as q, type RemoteSshSession } from '../../wrappers/remote-ssh-session'
+import type { RemoteSshSession } from '../../wrappers/remote-ssh-session'
 import { assertTunnelPort } from '../../wrappers/remote-ssh-reverse-tunnel'
 import { privateRemotePrefix } from './extension-deployment/remote-commands'
+import type { RpcStartupTransactionWriter } from './startup-transaction'
 
 export interface RemoteModelProxyConfigOptions {
   readonly session: Pick<RemoteSshSession, 'execWithInput' | 'execBounded'>
+  readonly startup: RpcStartupTransactionWriter
   readonly agentDir: string
   readonly models: readonly SafeModelDescriptor[]
   readonly remotePort: number
@@ -176,101 +177,33 @@ export async function writeRemoteModelProxyConfig(
 async function publish(
   options: RemoteModelProxyConfigOptions
 ): Promise<ModelProxyConfigPublication> {
-  const { session, signal } = options
-  if (!session.execWithInput || !session.execBounded)
-    throw new Error('SSH connection lacks cancellable private stdin configuration writes')
-  const { root, nonce, directories } = generationPaths(options.agentDir)
+  const { signal } = options
+  const { nonce } = generationPaths(options.agentDir)
   const metadata = metadataFor(options, nonce)
   const modelsContent = `${serializeRemoteModelProxyConfig({ ...options, models: metadata.models })}\n`
   const metadataContent = `${JSON.stringify(metadata)}\n`
   if (Buffer.byteLength(metadataContent) > RPC_MODEL_METADATA_MAX_BYTES)
     throw new Error('Safe model metadata exceeds the private write limit')
-  const modelsHash = createHash('sha256').update(modelsContent).digest('hex')
-  const metadataHash = createHash('sha256').update(metadataContent).digest('hex')
-  const transaction = posix.join(options.agentDir, `.model-config-${randomUUID()}`)
-  const prefix = `cd -- ${q(root)} || exit 1\n${privateRemotePrefix(root)}\n${directories.map((directory) => `[ -d ${q(directory)} ] && [ ! -L ${q(directory)} ] || fail 'Private model generation directory is missing or symbolic'\nprivate_dir ${q(directory)}`).join('\n')}
-models=${q(posix.join(options.agentDir, 'models.yml'))}
-metadata=${q(posix.join(options.agentDir, RPC_MODEL_METADATA_FILENAME))}
-txn=${q(transaction)}
-models_hash=${q(modelsHash)}
-metadata_hash=${q(metadataHash)}`
-  const rollback = `restore_file() {
-  target=$1; label=$2; expected=$3
-  if [ -e "$target" ] || [ -L "$target" ]; then private_file "$target"; current_hash=$(hash_file "$target"); else current_hash=''; fi
-  if [ -f "$txn/old-$label.sha" ] && [ ! -L "$txn/old-$label.sha" ]; then
-    private_file "$txn/old-$label.sha"; private_file "$txn/old-$label"
-    old_hash=$(cat "$txn/old-$label.sha")
-    [ "$(hash_file "$txn/old-$label")" = "$old_hash" ] || fail 'Invalid private model backup'
-    if [ -z "$current_hash" ] || [ "$current_hash" = "$expected" ] || [ "$current_hash" = "$old_hash" ]; then mv -f -- "$txn/old-$label" "$target"; private_file "$target"; else fail 'Concurrent private model publication changed'; fi
-  elif [ "$current_hash" = "$expected" ]; then rm -f -- "$target"; fi
-}
-rollback() {
-  if [ -d "$txn" ] && [ ! -L "$txn" ]; then
-    private_dir "$txn"
-    if [ -f "$txn/publishing" ] && [ ! -L "$txn/publishing" ]; then
-      restore_file "$models" models "$models_hash"
-      restore_file "$metadata" metadata "$metadata_hash"
-    fi
-    rm -rf -- "$txn"
-  fi
-}`
-  const command = `${prefix}
-[ "$(cd -- ${q(options.projectRoot)} && pwd -P)" = ${q(options.projectRoot)} ] || fail 'Model project root is not canonical'
-[ ! -e "$txn" ] && [ ! -L "$txn" ] || fail 'Private model transaction already exists'
-private_dir "$txn"
-${rollback}
-success=0
-trap 'if [ "$success" != 1 ]; then rollback; fi' EXIT
-trap 'rollback; exit 1' HUP INT TERM
-for target in "$models" "$metadata"; do if [ -e "$target" ] || [ -L "$target" ]; then private_file "$target"; fi; done
-(set -C; : > "$txn/new-models"; : > "$txn/new-metadata") || fail 'Private model temporary files already exist'
-private_file "$txn/new-models"; private_file "$txn/new-metadata"
-awk -v models_file="$txn/new-models" -v metadata_file="$txn/new-metadata" 'NR==1 { print >models_file; next } NR==2 { print >metadata_file; next } { bad=1 } END { if (NR!=2 || bad) exit 1 }'
-[ "$(hash_file "$txn/new-models")" = "$models_hash" ] && [ "$(hash_file "$txn/new-metadata")" = "$metadata_hash" ] || fail 'Private model configuration input was incomplete'
-backup() {
-  target=$1; label=$2
-  if [ -e "$target" ] || [ -L "$target" ]; then
-    private_file "$target"; old_hash=$(hash_file "$target")
-    cp "$target" "$txn/old-$label"; private_file "$txn/old-$label"
-    [ "$(hash_file "$txn/old-$label")" = "$old_hash" ] || fail 'Cannot verify private model backup'
-    printf '%s' "$old_hash" > "$txn/old-$label.sha"
-  fi
-}
-backup "$models" models; backup "$metadata" metadata
-: > "$txn/publishing"
-mv -f -- "$txn/new-models" "$models"
-mv -f -- "$txn/new-metadata" "$metadata"
-private_file "$models"; private_file "$metadata"
-[ "$(hash_file "$models")" = "$models_hash" ] && [ "$(hash_file "$metadata")" = "$metadata_hash" ] || fail 'Private model publication was not confirmed'
-success=1
-printf 'PHI_MODEL_PROXY_READY\\n'`
-  try {
-    const result = await session.execWithInput(command, `${modelsContent}${metadataContent}`, {
-      signal,
-      timeoutMs: 10_000,
-      maxOutputBytes: 4096
-    })
-    signal?.throwIfAborted()
-    if (result.code !== 0 || result.signal || result.stdout !== 'PHI_MODEL_PROXY_READY\n')
-      throw new Error('Private model publication was not confirmed')
-    const cleaned = await session.execBounded(
-      `${prefix}\nif [ -d "$txn" ] && [ ! -L "$txn" ]; then private_dir "$txn"; rm -rf -- "$txn"; fi`,
-      { timeoutMs: 2000, maxOutputBytes: 4096, signal }
-    )
-    if (cleaned.code !== 0 || cleaned.signal || cleaned.stdoutTruncated || cleaned.stderrTruncated)
-      throw new Error('Private model publication cleanup was not confirmed')
-    signal?.throwIfAborted()
-    return Object.freeze({
-      nonce,
-      sessionId: metadata.sessionId,
-      projectRoot: metadata.projectRoot,
-      gatewayGeneration: metadata.gatewayGeneration
-    })
-  } catch {
-    await session
-      .execBounded(`${prefix}\n${rollback}\nrollback`, { timeoutMs: 2000, maxOutputBytes: 4096 })
-      .catch(() => undefined)
-    signal?.throwIfAborted()
-    throw new Error('Private model proxy configuration write failed')
-  }
+  signal?.throwIfAborted()
+  options.startup.addFile({
+    item: 'model-proxy-config',
+    path: posix.join(options.agentDir, 'models.yml'),
+    bytes: Buffer.from(modelsContent),
+    mode: 0o600,
+    ifAbsent: true
+  })
+  options.startup.addFile({
+    item: 'model-proxy-metadata',
+    path: posix.join(options.agentDir, RPC_MODEL_METADATA_FILENAME),
+    bytes: Buffer.from(metadataContent),
+    mode: 0o600,
+    ifAbsent: true
+  })
+  signal?.throwIfAborted()
+  return Object.freeze({
+    nonce,
+    sessionId: metadata.sessionId,
+    projectRoot: metadata.projectRoot,
+    gatewayGeneration: metadata.gatewayGeneration
+  })
 }

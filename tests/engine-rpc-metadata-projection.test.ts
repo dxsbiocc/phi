@@ -2,15 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createPersistentLauncherFixture } from './helpers/persistentLauncherFixture'
 import { createModelProxyConfigFixture } from './helpers/modelProxyConfigFixture'
 import { writeRemoteModelProxyConfig } from '../src/main/agent/engine/rpc/model-proxy-config'
-import {
-  loadRpcModelMetadata,
-  type RpcModelMetadata
-} from '../src/main/agent/engine/phi-extension/lib/rpc-model-metadata'
+import { loadRpcModelMetadata } from '../src/main/agent/engine/phi-extension/lib/rpc-model-metadata'
 import { selectRemoteModel } from '../src/main/agent/engine/rpc/model-selection'
 import {
   canonicalRemoteSessionName,
@@ -73,11 +70,11 @@ test(
       server.listen(0, '127.0.0.1', resolve)
     })
     t.after(() => new Promise<void>((resolve) => server.close(() => resolve())))
-    let metadata: RpcModelMetadata | undefined
     const factory = await f.factory({
-      prepareSession: async ({ agentDir }) => {
+      prepareSession: async ({ agentDir, startup }) => {
         await writeRemoteModelProxyConfig({
           session: writer.session,
+          startup,
           agentDir,
           sessionId: f.params.sessionId,
           projectRoot: f.scope.projectRoot,
@@ -86,24 +83,28 @@ test(
           gatewayBearer: 'N'.repeat(43),
           models: [safeModel]
         })
-        await writeFile(
-          join(agentDir, 'config.yml'),
-          JSON.stringify({
-            defaultProvider: safeModel.provider,
-            defaultModel: safeModel.id,
-            extensions: [],
-            skills: [],
-            memory: { enabled: false }
-          }),
-          { mode: 0o600 }
-        )
-        const config: RpcBootstrapConfig = JSON.parse(
-          await readFile(join(dirname(dirname(dirname(agentDir))), 'config.json'), 'utf8')
-        )
-        metadata = loadRpcModelMetadata(agentDir, config)
+        startup.addFile({
+          item: 'metadata-projection-config',
+          path: join(agentDir, 'config.yml'),
+          bytes: Buffer.from(
+            JSON.stringify({
+              defaultProvider: safeModel.provider,
+              defaultModel: safeModel.id,
+              extensions: [],
+              skills: [],
+              memory: { enabled: false }
+            })
+          ),
+          mode: 0o600,
+          ifAbsent: true
+        })
       }
     })
     const actual = await f.connect(factory)
+    const config: RpcBootstrapConfig = JSON.parse(
+      await readFile(join(dirname(actual.home), 'config.json'), 'utf8')
+    )
+    const metadata = loadRpcModelMetadata(join(actual.home, '.omp/agent'), config)
     assert.ok(metadata)
     await selectRemoteModel(actual.connection, metadata, safeModel, new AbortController().signal)
     const state = await actual.connection.request<{

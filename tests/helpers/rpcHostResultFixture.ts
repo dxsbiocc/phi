@@ -10,6 +10,7 @@ import {
   RpcHostResultDelivery,
   type HostResultLease
 } from '../../src/main/agent/engine/rpc/host-result-delivery'
+import type { RpcStartupTransactionWriter } from '../../src/main/agent/engine/rpc/startup-transaction'
 import { startHostResultModel } from './rpcHostResultModel'
 import { createBootstrapFixture } from '../engine-contract/bootstrap-stdio-fixture'
 
@@ -30,6 +31,16 @@ export function resultHost(
         await chmod(destination, 0o600)
         options?.signal?.throwIfAborted()
       }
+    }
+  }
+}
+export function resultStartup(): RpcStartupTransactionWriter {
+  return {
+    addDirectory({ path }) {
+      mkdirSync(path, { mode: 0o700 })
+    },
+    addFile() {
+      throw new Error('Host result fixture does not publish startup files')
     }
   }
 }
@@ -63,6 +74,7 @@ export async function rpcHostResultFixture(
   const capability = randomBytes(32).toString('hex')
   const delivery = await RpcHostResultDelivery.create({
     host: resultHost(f.root, options.beforeCopy),
+    startup: resultStartup(),
     generationDirectory,
     lease,
     capability,

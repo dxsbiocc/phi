@@ -645,6 +645,7 @@ export function createFacadeSessionFactory(
                 runtime: selected.runtime,
                 session: selected.session,
                 bundle: selected.bundle,
+                ...(action.type === 'resume' ? { resumeReference: action.reference } : {}),
                 startupDiagnostics: selected.startupDiagnostics,
                 gateway: options.bridge,
                 models: refs,
@@ -653,6 +654,7 @@ export function createFacadeSessionFactory(
                     runtimeHost: selected.runtime.runtimeHost,
                     scope,
                     signal: storageSignal,
+                    deferToStartup: true,
                     openLockStdio: (command) => selected.session.openStdio!(command)
                   })
               },

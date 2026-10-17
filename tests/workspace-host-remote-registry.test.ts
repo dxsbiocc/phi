@@ -7,6 +7,7 @@ import test from 'node:test'
 import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/remote-registry'
+import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { SshHostConfig } from '../src/main/agent/workspace-host/ssh-host-context'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
 
@@ -184,6 +185,85 @@ __PHI_CAPABILITY_PROBE_V1_END__
     assert.equal(captured?.helper?.artifact.version, '0.2.0')
     assert.equal(captured?.helper?.profile.helperVersion, undefined)
     assert.equal(captured?.helper?.profile.platform.os, 'darwin')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a host with an installed 0.2.0 helper is reinstalled instead of running 0.3.0 subcommands on it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-helper-registry-old-protocol-'))
+  const agentDir = join(root, 'agent')
+  const resourceRoot = join(root, 'resources')
+  const profileKey = { hostAlias: 'cluster-a', projectRoot: '/remote/project' }
+  let captured: SshHostConfig | undefined
+  try {
+    mkdirSync(resourceRoot)
+    // 0.3.0 added the project-plugin-guard and remote-session-preflight subcommands.
+    writeFileSync(
+      join(resourceRoot, 'manifest.json'),
+      `${JSON.stringify({ version: '0.3.0', platforms: {} })}\n`
+    )
+    const detected = parseHostCapabilityProbe(`
+__PHI_CAPABILITY_PROBE_V1_BEGIN__
+platform.os=Linux
+platform.arch=x86_64
+probe.complete=1
+__PHI_CAPABILITY_PROBE_V1_END__
+`)
+    const sha256 = 'a'.repeat(64)
+    saveCapabilityProfile(
+      profileKey,
+      {
+        ...detected,
+        helperVersion: '0.2.0',
+        helperReadyMarker: { schema: 1, kind: 'remote-helper', version: '0.2.0', sha256 },
+        helperManagedRoot: '/home/user/.phi/remote',
+        helperDirectory: '/home/user/.phi/remote/0.2.0',
+        helperStatus: { state: 'available', version: '0.2.0', affectedCapabilities: [] }
+      },
+      agentDir
+    )
+    const registry = new RemoteWorkspaceHostRegistry({
+      agentDir,
+      helperResourceRoot: resourceRoot,
+      resolveBinding: (request) => ({
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        hostAlias: profileKey.hostAlias,
+        remoteRoot: profileKey.projectRoot,
+        canonicalRoot: profileKey.projectRoot,
+        cacheKey: 'cluster-a:/remote/project',
+        config: {
+          remoteRoot: profileKey.projectRoot,
+          canonicalRoot: profileKey.projectRoot,
+          connect: async () => {
+            throw new Error('not used')
+          }
+        }
+      }),
+      createHost: (config) => {
+        captured = config
+        return {
+          fs: {} as WorkspaceHost['fs'],
+          exec: {} as WorkspaceHost['exec'],
+          capabilities: () => detected
+        }
+      }
+    })
+
+    await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+
+    assert.equal(captured?.helper?.artifact.version, '0.3.0')
+    const stale = captured?.helper?.profile
+    assert.equal(stale?.helperVersion, undefined)
+    assert.equal(stale?.helperReadyMarker, undefined)
+    assert.equal(stale?.helperManagedRoot, undefined)
+    assert.equal(stale?.helperDirectory, undefined)
+    // The real host built from that configuration must not hand the 0.2.0
+    // installation to startup: it has to install the current helper first.
+    const host = new SshHost(captured!)
+    assert.equal(host.managedRemoteHelper(), undefined)
+    await host.close()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

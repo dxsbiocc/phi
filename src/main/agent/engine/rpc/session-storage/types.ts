@@ -73,6 +73,8 @@ export interface PrepareRemoteSessionStorageOptions {
   readonly openLockStdio: (command: string) => Promise<RemoteStdioProcess>
   readonly signal?: AbortSignal
   readonly lockWaitMs?: number
+  /** Factory-owned startup transaction will create directories and attach the held lock. */
+  readonly deferToStartup?: boolean
 }
 
 export interface RemoteJournalPreflight {

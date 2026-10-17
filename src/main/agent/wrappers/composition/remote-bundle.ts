@@ -22,6 +22,7 @@ import type { RemoteSshSession, RemoteStdioProcess } from '../remote-ssh-session
 import { shellQuote } from '../remote-ssh-session'
 import type { FileTransferCoordinator, TransferEvent } from '../../transfer'
 import { hashLocalFile } from '../../transfer/ssh-data-plane-local'
+import type { RemoteHelperReadyMarkerIdentity } from '../../remote-helper-marker'
 
 /**
  * Ships the assembled installed wrapper tree (`~/.phi/wrappers/tree`) to the cluster once per
@@ -373,7 +374,7 @@ export async function ensureRemoteBundle(
     transferHostKey?: string
     transferWorkspaceId?: string
     helperConnect?: () => Promise<RemoteStdioProcess>
-    helperVersion?: string
+    helperIdentity?: RemoteHelperReadyMarkerIdentity
     agentDir?: string
     onTransferEvent?: (event: TransferEvent) => void
     transferCacheDir?: string
@@ -480,7 +481,7 @@ export async function ensureRemoteBundle(
       signal: input.signal,
       coordinator: input.transferCoordinator,
       helperConnect: input.helperConnect,
-      helperVersion: input.helperVersion,
+      helperIdentity: input.helperIdentity,
       agentDir: input.agentDir,
       onEvent: input.onTransferEvent,
       reuseVerifiedDestination: true,

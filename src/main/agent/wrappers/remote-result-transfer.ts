@@ -5,6 +5,7 @@ import { basename, dirname, join, posix } from 'node:path'
 
 import type { WrapperResultDownloadProgress } from '../../../shared/wrapperResultTypes'
 import {
+  createInstalledHelperTransferConnect,
   getFileTransferCoordinator,
   HelperTransferDataPlane,
   TransferError,
@@ -28,7 +29,7 @@ import { SshTransferDataPlane } from '../transfer/ssh-data-plane'
 import { readCapabilityProfile } from '../workspace-host/capability-profile-store'
 import type { WorkspaceHost } from '../workspace-host/types'
 import type { AuthorizedWrapperResultPath } from './remote-results'
-import { shellQuote, type RemoteSshSession, type RemoteStdioProcess } from './remote-ssh-session'
+import type { RemoteSshSession, RemoteStdioProcess } from './remote-ssh-session'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const CLEANUP_OWNER = 'wrapper-result'
@@ -230,60 +231,11 @@ function installedHelperConnect(
     },
     { agentDir: options.agentDir ?? getPhiAgentDir() }
   )
-  const version = profile?.helperVersion
-  if (
-    profile?.helperStatus?.state !== 'available' ||
-    typeof version !== 'string' ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(version)
-  ) {
+  const identity = profile?.helperReadyMarker
+  if (profile?.helperStatus?.state !== 'available' || !identity) {
     return undefined
   }
-  const useHome =
-    profile.storage?.homeWritable.state === 'available' &&
-    profile.storage.homeExecutable.state === 'available'
-  let remotePath: Promise<string> | undefined
-  const locate = async (): Promise<string> => {
-    const base = useHome ? 'base="$HOME/.phi/remote"' : 'base="${TMPDIR:-/tmp}/phi-remote-$(id -u)"'
-    const script = [
-      'set -eu',
-      `version=${shellQuote(version)}`,
-      base,
-      'candidate="$base/$version/phi-helper"',
-      '[ -f "$candidate" ] && [ ! -L "$candidate" ] && [ -x "$candidate" ] || exit 73',
-      "printf 'PHI_HELPER_HEX='",
-      "printf '%s' \"$candidate\" | od -An -tx1 -v | tr -d ' \\n'",
-      "printf '\\n'"
-    ].join('\n')
-    const result = await options.session.execBounded!(`sh -c ${shellQuote(script)}`, {
-      timeoutMs: 30_000,
-      maxOutputBytes: 16 * 1024,
-      signal: options.signal
-    })
-    if (result.code !== 0 || result.stdoutTruncated || result.stderrTruncated) {
-      throw new Error('Remote helper unavailable')
-    }
-    const match = /^PHI_HELPER_HEX=([a-f0-9]+)$/m.exec(result.stdout)
-    if (!match || match[1].length > 16 * 1024 || match[1].length % 2 !== 0) {
-      throw new Error('Remote helper path response is invalid')
-    }
-    const path = Buffer.from(match[1], 'hex').toString('utf8')
-    if (
-      !posix.isAbsolute(path) ||
-      posix.normalize(path) !== path ||
-      /[\0\r\n]/.test(path) ||
-      Buffer.from(path).toString('hex') !== match[1]
-    ) {
-      throw new Error('Remote helper path is invalid')
-    }
-    return path
-  }
-  return async () => {
-    remotePath ??= locate()
-    const path = await remotePath
-    return options.session.openStdio!(
-      `${shellQuote(path)} serve --root ${shellQuote(options.authorized.root)}`
-    )
-  }
+  return createInstalledHelperTransferConnect(options.session, options.authorized.root, identity)
 }
 
 class WrapperPublishingSession implements TransferDataPlaneSession {

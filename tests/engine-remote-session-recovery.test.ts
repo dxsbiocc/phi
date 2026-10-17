@@ -107,14 +107,19 @@ async function unit(
       cwd: scope.projectRoot,
       headerVersion: 3,
       verification: 'bounded-header',
-      fileIdentity: 'file-1',
-      fingerprint: 'revision-1'
+      fileIdentity: 'a'.repeat(64),
+      fingerprint: 'b'.repeat(64)
     }),
     verifySavedState: async () => ({ model: recoveryModel, modelRole: 'default' }),
     selectModel: async () => {
       selected++
     },
-    verifyAttachment: async (identity) => ({ ...identity, leafId: null }),
+    verifyAttachment: async (identity) => ({
+      ...identity,
+      leafId: null,
+      journalFileIdentity: 'a'.repeat(64),
+      journalDigest: 'c'.repeat(64)
+    }),
     publish: async () => {
       published++
     },
@@ -271,14 +276,13 @@ for (const code of ['FILE_MISSING', 'FILE_INVALID', 'PERMISSION_DENIED'] as cons
 test('deleted/replaced journal after switch cannot publish a new reference', async () => {
   const f = await unit()
   const preflight = f.options.preflight
-  let calls = 0
   try {
     await assert.rejects(
       recoverRemoteSession({
         ...f.options,
         preflight: async (reference, signal) => ({
           ...(await preflight(reference, signal)),
-          fileIdentity: ++calls === 1 ? 'original' : 'replacement'
+          fileIdentity: 'd'.repeat(64)
         })
       }),
       { code: 'IDENTITY_MISMATCH' }

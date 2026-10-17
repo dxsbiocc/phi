@@ -186,7 +186,7 @@ test('a verified archive replaces an owned legacy per-file staging directory', a
   ])
 })
 
-test('first deployment verifies every file and manifest, reuses exact content and restores private permissions', async (t) => {
+test('first deployment verifies every file and manifest, then reuses its ready marker', async (t) => {
   const fixture = await createPhiExtensionDeploymentFixture()
   t.after(fixture.cleanup)
   const progress: string[] = []
@@ -204,13 +204,6 @@ test('first deployment verifies every file and manifest, reuses exact content an
   assert.equal(manifest.contentHash, result.contentHash)
   for (const file of fixture.bundle.files)
     assert.deepEqual(await readFile(join(result.directory, file.path)), file.bytes)
-  for (const path of [
-    join(fixture.runtimeRoot, 'extensions'),
-    result.directory,
-    join(result.directory, 'lib')
-  ])
-    await chmod(path, 0o755)
-  await chmod(result.entryPath, 0o666)
   assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, true)
   assert.equal(fixture.session.uploads.length, count)
   for (const path of [
@@ -221,6 +214,64 @@ test('first deployment verifies every file and manifest, reuses exact content an
     assert.equal((await stat(path)).mode & 0o777, 0o700)
   assert.equal((await stat(result.entryPath)).mode & 0o777, 0o600)
 })
+
+test('successful extension publication includes its deterministic private ready marker', async (t) => {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  t.after(fixture.cleanup)
+
+  const deployed = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
+  const marker = join(deployed.directory, '.phi-ready.json')
+
+  assert.equal(
+    await readFile(marker, 'utf8'),
+    JSON.stringify({ schema: 1, kind: 'phi-extension', contentHash: fixture.bundle.contentHash })
+  )
+  assert.equal((await stat(marker)).mode & 0o777, 0o600)
+})
+
+test('an extension directory without its ready marker is replaced instead of reused', async (t) => {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  t.after(fixture.cleanup)
+  const first = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
+  const marker = join(first.directory, '.phi-ready.json')
+  await rm(marker)
+
+  const repaired = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
+
+  assert.equal(repaired.reused, false)
+  assert.equal(fixture.session.uploads.length, 2)
+  assert.equal((await stat(marker)).mode & 0o777, 0o600)
+})
+
+for (const scenario of [
+  {
+    name: 'wrong hash',
+    mutate: (marker: string) => writeFile(marker, '{"wrong":true}', { mode: 0o600 })
+  },
+  {
+    name: 'wrong mode',
+    mutate: (marker: string) => chmod(marker, 0o644)
+  },
+  {
+    name: 'symlink',
+    mutate: async (marker: string) => {
+      const target = `${marker}.target`
+      await writeFile(target, await readFile(marker), { mode: 0o600 })
+      await rm(marker)
+      await symlink(target, marker)
+    }
+  }
+] as const) {
+  test(`extension ${scenario.name} ready marker is repaired instead of used`, async (t) => {
+    const fixture = await createPhiExtensionDeploymentFixture()
+    t.after(fixture.cleanup)
+    const first = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
+    const marker = join(first.directory, '.phi-ready.json')
+    await scenario.mutate(marker)
+    assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, false)
+    assert.equal(fixture.session.uploads.length, 2)
+  })
+}
 
 test('missing, corrupt and unexpected bundle files each require complete verified repair', async (t) => {
   const fixture = await createPhiExtensionDeploymentFixture()
@@ -234,6 +285,7 @@ test('missing, corrupt and unexpected bundle files each require complete verifie
     () => mkdir(join(first.directory, 'unexpected-directory'))
   ]) {
     await corrupt()
+    await rm(join(first.directory, '.phi-ready.json'))
     assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, false)
     assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, true)
   }
@@ -267,9 +319,11 @@ test('managed symlink roots and destinations fail without changing outside targe
   await writeFile(sentinel, 'unchanged', { mode: 0o644 })
   await rm(deployed.entryPath)
   await symlink(sentinel, deployed.entryPath)
+  await rm(join(deployed.directory, '.phi-ready.json'))
   assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, false)
   await rm(deployed.entryPath)
   await link(sentinel, deployed.entryPath)
+  await rm(join(deployed.directory, '.phi-ready.json'))
   assert.equal((await ensurePhiExtensionDeployment(fixture.deploymentOptions)).reused, false)
   assert.equal(await readFile(sentinel, 'utf8'), 'unchanged')
   assert.equal((await stat(sentinel)).mode & 0o777, 0o644)
@@ -521,6 +575,7 @@ test('failed permission changes cannot count as reuse or publish a broadly reada
   const first = await ensurePhiExtensionDeployment(fixture.deploymentOptions)
   await chmod(first.directory, 0o755)
   await chmod(first.entryPath, 0o666)
+  await rm(join(first.directory, '.phi-ready.json'))
   const directory = join(fixture.root, 'chmod-shim')
   await mkdir(directory)
   const binary = execFileSync('sh', ['-c', 'command -v chmod'], { encoding: 'utf8' }).trim()

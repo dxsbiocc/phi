@@ -16,6 +16,7 @@ import type {
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import type { RemoteStdioProcess } from '../wrappers/remote-ssh-session'
 import type { FileTransferCoordinator, TransferEvent } from '../transfer'
+import type { RemoteHelperReadyMarkerIdentity } from '../remote-helper-marker'
 import { checkRemoteRuntimeRoot } from './runtime-root-check'
 import {
   expectedRemoteMicromambaInfoPlatform,
@@ -65,7 +66,7 @@ export interface EnsureRemoteMicromambaOptions extends RemoteMicromambaInstallRe
   transferHostKey?: string
   transferWorkspaceId?: string
   helperConnect?: () => Promise<RemoteStdioProcess>
-  helperVersion?: string
+  helperIdentity?: RemoteHelperReadyMarkerIdentity
   agentDir?: string
   onTransferEvent?: (event: TransferEvent) => void
 }
@@ -195,7 +196,7 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
     transferHostKey: context.options.transferHostKey,
     transferWorkspaceId: context.options.transferWorkspaceId,
     helperConnect: context.options.helperConnect,
-    helperVersion: context.options.helperVersion,
+    helperIdentity: context.options.helperIdentity,
     agentDir: context.options.agentDir,
     onTransferEvent: context.options.onTransferEvent
   })

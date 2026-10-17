@@ -15,6 +15,7 @@ import { assertEncryptedIdentityLoaded } from './ssh-agent-identity'
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
 import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
 import type { RemoteUploadFileOptions, TransferStdioProcess } from '../transfer/remote-upload-types'
+import type { RemoteHelperInstallation } from '../remote-helper-marker'
 import {
   createInstalledHelperTransferConnect,
   remoteTransferHostKey,
@@ -70,6 +71,8 @@ export type { RemoteUploadFileOptions } from '../transfer/remote-upload-types'
 
 /** The POSIX remote operations used by detached and Slurm wrapper runners. */
 export interface RemoteSshSession {
+  /** Present only after a managed helper and its ready marker have both been verified and published. */
+  remoteHelper?: RemoteHelperInstallation
   exec(command: string): Promise<RemoteExecResult>
   /** Optional transport-native page reader; the shared SSH log reader has a bounded exec fallback. */
   readFileChunk?: (path: string, options: RemoteFileChunkOptions) => Promise<RemoteFileChunk>
@@ -791,11 +794,11 @@ export async function connectRemoteSshSession(
             .slice(0, 40)}`
         const helperConnect =
           options?.helperConnect ??
-          (options?.helperVersion
+          (options?.helperIdentity
             ? createInstalledHelperTransferConnect(
                 connectedSession,
                 canonicalRoot,
-                options.helperVersion
+                options.helperIdentity
               )
             : undefined)
         await uploadRemoteFile({

@@ -2,8 +2,11 @@ import { posix } from 'node:path'
 
 export const RPC_SAVED_STATE_COMMAND = 'phi-rpc-saved-state'
 export const RPC_CHECKPOINT_COMMAND = 'phi-rpc-checkpoint'
+export const RPC_MANIFEST_COMMAND = 'phi-rpc-publish-manifest'
 export const RPC_SESSION_VERIFICATION_DESCRIPTION = 'Phi RPC session verification v1'
 export const RPC_SESSION_VERIFICATION_TYPE = 'phi_rpc_session_verification'
+export const RPC_SESSION_MANIFEST_DESCRIPTION = 'Phi RPC session manifest publication v1'
+export const RPC_SESSION_MANIFEST_TYPE = 'phi_rpc_session_manifest'
 
 export type SessionVerificationCode =
   | 'FILE_INVALID'
@@ -25,6 +28,7 @@ export class SessionVerificationError extends Error {
 export interface SessionVerificationIdentity {
   readonly nonce: string
   readonly phiSessionId: string
+  readonly projectId: string
   readonly generation: number
   readonly projectRoot: string
   readonly directory: string
@@ -62,6 +66,8 @@ export interface SessionVerificationProof {
   readonly leafId: string | null
   readonly model: { readonly provider: string; readonly id: string } | null
   readonly modelRole: string | null
+  /** Device/inode plus exact logical session-header digest. */
+  readonly journalFileIdentity: string
   readonly journalDigest: string
   readonly assetDigest: string
   readonly entryCount: number
@@ -72,6 +78,35 @@ export interface SessionVerificationNotification {
   readonly type: typeof RPC_SESSION_VERIFICATION_TYPE
   readonly request: SessionVerificationRequest
   readonly proof?: SessionVerificationProof
+  readonly error?: SessionVerificationCode
+}
+export interface SessionManifestValue {
+  readonly schemaVersion: 1
+  readonly kind: 'remote-omp'
+  readonly version: 1
+  readonly hostProfileId: string
+  readonly bindingHash: string
+  readonly projectId: string
+  readonly projectRoot: string
+  readonly runtimeRoot: string
+  readonly phiSessionId: string
+  readonly durableSessionKey: string
+  readonly ompVersion: string
+  readonly ompSessionId: string
+  readonly journalBasename: string
+}
+export interface SessionManifestRequest {
+  readonly schemaVersion: 1
+  readonly requestId: string
+  readonly nonce: string
+  readonly phiSessionId: string
+  readonly generation: number
+  readonly manifest: SessionManifestValue
+}
+export interface SessionManifestNotification {
+  readonly type: typeof RPC_SESSION_MANIFEST_TYPE
+  readonly request: SessionManifestRequest
+  readonly sha256?: string
   readonly error?: SessionVerificationCode
 }
 export const SESSION_VERIFICATION_DEFAULT_BUDGETS: SessionVerificationBudgets = Object.freeze({
@@ -101,6 +136,7 @@ export function validateVerificationIdentity(value: SessionVerificationIdentity)
   if (
     !/^[A-Za-z0-9_-]{16,128}$/u.test(value.nonce) ||
     !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(value.phiSessionId) ||
+    !verificationText(value.projectId) ||
     !Number.isSafeInteger(value.generation) ||
     value.generation < 1 ||
     [value.projectRoot, value.directory, value.journals, value.blobs].some(
@@ -111,6 +147,55 @@ export function validateVerificationIdentity(value: SessionVerificationIdentity)
     value.blobs !== posix.join(value.directory, 'data/omp/blobs')
   )
     verificationFailure('IDENTITY_MISMATCH')
+}
+
+export function parseSessionManifestRequest(
+  input: string,
+  identity: SessionVerificationIdentity
+): SessionManifestRequest {
+  if (Buffer.byteLength(input) > 16 * 1024) verificationFailure('VERIFICATION_LIMIT')
+  let raw: unknown
+  try {
+    raw = JSON.parse(input)
+  } catch {
+    verificationFailure('IDENTITY_MISMATCH')
+  }
+  if (
+    !verificationRecord(raw) ||
+    Object.keys(raw).sort().join(',') !==
+      'generation,manifest,nonce,phiSessionId,requestId,schemaVersion' ||
+    raw.schemaVersion !== 1 ||
+    raw.nonce !== identity.nonce ||
+    raw.phiSessionId !== identity.phiSessionId ||
+    raw.generation !== identity.generation ||
+    typeof raw.requestId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(raw.requestId) ||
+    !verificationRecord(raw.manifest) ||
+    Object.keys(raw.manifest).sort().join(',') !==
+      'bindingHash,durableSessionKey,hostProfileId,journalBasename,kind,ompSessionId,ompVersion,phiSessionId,projectId,projectRoot,runtimeRoot,schemaVersion,version' ||
+    raw.manifest.schemaVersion !== 1 ||
+    raw.manifest.kind !== 'remote-omp' ||
+    raw.manifest.version !== 1 ||
+    raw.manifest.projectId !== identity.projectId ||
+    raw.manifest.projectRoot !== identity.projectRoot ||
+    raw.manifest.phiSessionId !== identity.phiSessionId ||
+    !verificationText(raw.manifest.hostProfileId) ||
+    typeof raw.manifest.bindingHash !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(raw.manifest.bindingHash) ||
+    !verificationText(raw.manifest.runtimeRoot, 4096) ||
+    !posix.isAbsolute(raw.manifest.runtimeRoot) ||
+    !verificationText(raw.manifest.durableSessionKey, 1024) ||
+    !verificationText(raw.manifest.ompVersion) ||
+    !verificationText(raw.manifest.ompSessionId) ||
+    typeof raw.manifest.journalBasename !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}\.jsonl$/u.test(raw.manifest.journalBasename) ||
+    raw.manifest.journalBasename.includes('..')
+  )
+    verificationFailure('IDENTITY_MISMATCH')
+  return Object.freeze({
+    ...(raw as unknown as SessionManifestRequest),
+    manifest: Object.freeze({ ...(raw.manifest as unknown as SessionManifestValue) })
+  })
 }
 export function parseSessionVerificationRequest(
   input: string,

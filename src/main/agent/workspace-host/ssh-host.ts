@@ -6,6 +6,11 @@ import {
   type RemoteSshSession,
   type RemoteUploadFileOptions
 } from '../wrappers/remote-ssh-session'
+import {
+  REMOTE_HELPER_READY_MARKER_FILENAME,
+  remoteHelperReadyMarkerSha256,
+  type RemoteHelperInstallation
+} from '../remote-helper-marker'
 import { uploadRemoteFile } from '../transfer'
 import { refreshCapabilityProfile, saveCapabilityProfile } from './capability-profile-store'
 import { openHelperWorkspaceHost, type HelperWorkspaceHost } from './helper-host'
@@ -57,6 +62,31 @@ function missingArtifactProfile(profile: ProbedHostCapabilityProfile): ProbedHos
   }
 }
 
+function profileHelperInstallation(
+  profile: HostCapabilityProfile | undefined
+): RemoteHelperInstallation | undefined {
+  const identity = profile?.helperReadyMarker
+  const managedRoot = profile?.helperManagedRoot
+  const remoteDirectory = profile?.helperDirectory
+  if (
+    !identity ||
+    !managedRoot ||
+    !remoteDirectory ||
+    !posix.isAbsolute(managedRoot) ||
+    posix.normalize(managedRoot) !== managedRoot ||
+    remoteDirectory !== posix.join(managedRoot, identity.version)
+  )
+    return undefined
+  return {
+    managedRoot,
+    remoteDirectory,
+    remotePath: posix.join(remoteDirectory, 'phi-helper'),
+    readyMarkerPath: posix.join(remoteDirectory, REMOTE_HELPER_READY_MARKER_FILENAME),
+    markerIdentity: identity,
+    readyMarkerSha256: remoteHelperReadyMarkerSha256(identity)
+  }
+}
+
 export class SshHost implements WorkspaceHost {
   readonly fs: WorkspaceHost['fs']
   readonly exec: WorkspaceHost['exec']
@@ -72,6 +102,7 @@ export class SshHost implements WorkspaceHost {
   private helperConfig?: SshHelperConfig
   private helper?: HelperWorkspaceHost
   private helperRemotePath?: string
+  private helperInstallation?: RemoteHelperInstallation
   private helperInitialization?: Promise<void>
   private helperDisabled = false
   private disposed = false
@@ -91,10 +122,30 @@ export class SshHost implements WorkspaceHost {
     this.profile = workspaceProfile(
       config.helper?.profile ?? config.capabilityProfile ?? this.pureCapabilities()
     )
+    this.helperInstallation = profileHelperInstallation(config.helper?.profile)
   }
 
   capabilities(): HostCapabilityProfile {
     return this.profile
+  }
+
+  managedRemoteHelper(): RemoteHelperInstallation | undefined {
+    return this.helperInstallation
+  }
+
+  async ensureManagedRemoteHelper(
+    options: {
+      force?: boolean
+    } = {}
+  ): Promise<RemoteHelperInstallation | undefined> {
+    if (this.helperInstallation && !options.force) return this.helperInstallation
+    if (options.force) {
+      this.helperInstallation = undefined
+      this.helperInitialization = undefined
+      this.helperDisabled = false
+    }
+    await this.selected()
+    return this.helperInstallation
   }
 
   async close(): Promise<void> {
@@ -206,6 +257,7 @@ export class SshHost implements WorkspaceHost {
     })
     this.helperProfile = installed.profile
     this.profile = workspaceProfile(installed.profile)
+    this.helperInstallation = installed.installation
     if (installed.state !== 'available' || !installed.remotePath) {
       this.helperDisabled = true
       await session.close()
@@ -235,6 +287,7 @@ export class SshHost implements WorkspaceHost {
     })
     this.helperProfile = profile
     this.profile = workspaceProfile(profile)
+    this.helperInstallation = profileHelperInstallation(profile)
     const preparation = resolveRemoteHelperPreparation(profile, {
       resourceRoot: bootstrap.resourceRoot,
       developmentRoot: bootstrap.developmentRoot

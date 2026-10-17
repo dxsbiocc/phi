@@ -26,6 +26,7 @@ export async function createModelGatewayCliFixture(lease: ModelGatewayLease): Pr
   const local = await createModelProxyConfigFixture()
   const publication = await writeRemoteModelProxyConfig({
     session: local.session,
+    startup: local.startup,
     agentDir: local.agentDir,
     models: lease.models,
     remotePort: lease.localPort,

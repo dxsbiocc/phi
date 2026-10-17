@@ -7,6 +7,7 @@ import { afterEach, test } from 'node:test'
 
 import {
   installRemoteHelper,
+  REMOTE_HELPER_READY_MARKER_FILENAME,
   reconcileRemoteHelperProfile,
   remoteHelperResourceCandidates,
   resolveRemoteHelperArtifact
@@ -58,6 +59,7 @@ function unusedSession(): RemoteSshSession {
 interface InstallerSessionOptions {
   hash?: string
   selftest?: RemoteExecResult
+  markerPublication?: RemoteExecResult
   uploadFailures?: number
 }
 
@@ -79,7 +81,8 @@ class InstallerSession implements RemoteSshSession {
 
   async exec(command: string): Promise<RemoteExecResult> {
     this.commands.push(command)
-    if (command.includes('__PHI_HELPER_HOME__')) return ok('__PHI_HELPER_HOME__/home/test\n')
+    if (command.includes('__PHI_HELPER_HOME__'))
+      return ok('__PHI_HELPER_HOME__/home/test/.phi/remote\n')
     if (command.includes('__PHI_HELPER_ALTERNATE__')) {
       return ok('__PHI_HELPER_ALTERNATE__/tmp/phi-remote-1000\n')
     }
@@ -87,6 +90,9 @@ class InstallerSession implements RemoteSshSession {
       return ok(`${this.options.hash ?? this.expectedHash}  uploaded\n`)
     }
     if (command.includes('--selftest')) return this.options.selftest ?? ok('{"ok":true}\n')
+    if (command.includes('mktemp') && command.includes(REMOTE_HELPER_READY_MARKER_FILENAME)) {
+      return this.options.markerPublication ?? ok()
+    }
     return ok()
   }
 
@@ -220,6 +226,19 @@ test('helper installation retries an interrupted upload and activates the verifi
 
   assert.equal(result.state, 'available')
   assert.equal(result.remotePath, '/home/test/.phi/remote/0.1.0/phi-helper')
+  assert.equal(result.remoteDirectory, '/home/test/.phi/remote/0.1.0')
+  assert.equal(
+    result.readyMarkerPath,
+    `/home/test/.phi/remote/0.1.0/${REMOTE_HELPER_READY_MARKER_FILENAME}`
+  )
+  assert.deepEqual(result.markerIdentity, {
+    schema: 1,
+    kind: 'remote-helper',
+    version: '0.1.0',
+    sha256: fixture.artifact.sha256
+  })
+  assert.deepEqual(session.remoteHelper, result.installation)
+  assert.equal(result.readyMarkerSha256?.length, 64)
   assert.equal(session.uploads.length, 2)
   assert.equal(session.uploads[0]?.remotePath, session.uploads[1]?.remotePath)
   assert.equal(session.uploads[0]?.options?.forceSsh, true)
@@ -230,7 +249,16 @@ test('helper installation retries an interrupted upload and activates the verifi
   assert.equal(helperConnections, 0)
   assert.ok(session.commands.some((command) => command.includes('sha256sum ')))
   assert.ok(session.commands.some((command) => command.includes('chmod 700 ')))
-  assert.ok(session.commands.some((command) => command.includes('--selftest')))
+  const selftestIndex = session.commands.findIndex((command) => command.includes('--selftest'))
+  const markerIndex = session.commands.findIndex(
+    (command) => command.includes('mktemp') && command.includes(REMOTE_HELPER_READY_MARKER_FILENAME)
+  )
+  assert.ok(selftestIndex >= 0)
+  assert.ok(markerIndex > selftestIndex)
+  const markerCommand = session.commands[markerIndex] ?? ''
+  assert.match(markerCommand, /chmod 600/)
+  assert.match(markerCommand, /mv -f/)
+  assert.ok(markerCommand.includes(JSON.stringify(result.markerIdentity)))
   assert.equal(result.profile.helperStatus?.state, 'available')
   assert.deepEqual(result.profile.helperStatus?.affectedCapabilities, [])
   assert.equal(result.profile.fs.state, 'available')
@@ -248,7 +276,12 @@ test('helper installation retries a hash mismatch once before degrading', async 
   })
 
   assert.equal(session.uploads.length, 2)
-  assert.equal(session.commands.filter((command) => command.startsWith('rm -f ')).length, 2)
+  assert.equal(
+    session.commands.filter(
+      (command) => command.startsWith('rm -f ') && command.includes('.upload-')
+    ).length,
+    2
+  )
   assert.equal(result.state, 'degraded')
   assert.match(result.reason, /sha256 mismatch/)
 })
@@ -265,7 +298,12 @@ test('helper installation degrades after two interrupted uploads', async () => {
   })
 
   assert.equal(session.uploads.length, 2)
-  assert.equal(session.commands.filter((command) => command.startsWith('rm -f ')).length, 2)
+  assert.equal(
+    session.commands.filter(
+      (command) => command.startsWith('rm -f ') && command.includes('.upload-')
+    ).length,
+    2
+  )
   assert.equal(result.state, 'degraded')
   assert.match(result.reason, /upload interrupted/)
 })
@@ -315,6 +353,26 @@ test('helper selftest failure degrades without replaying the upload', async () =
   assert.equal(session.uploads.length, 1)
   assert.equal(result.state, 'degraded')
   assert.match(result.reason, /selftest failed/)
+  assert.equal(session.remoteHelper, undefined)
+})
+
+test('helper marker publication failure leaves the verified binary unavailable for reuse', async () => {
+  const fixture = artifact()
+  const session = new InstallerSession(fixture.artifact.sha256, {
+    markerPublication: { stdout: '', stderr: 'disk full', code: 1, signal: null }
+  })
+  const result = await installRemoteHelper({
+    session,
+    profile: profile('Linux', 'x86_64'),
+    profileKey: { hostAlias: 'cluster', projectRoot: '/work/project' },
+    artifact: fixture.artifact,
+    agentDir: temporaryDirectory()
+  })
+
+  assert.equal(result.state, 'degraded')
+  assert.match(result.reason, /ready marker publication failed/)
+  assert.equal(result.profile.helperReadyMarker, undefined)
+  assert.equal(session.remoteHelper, undefined)
 })
 
 test('cancelling helper artifact verification does not persist a degraded profile', async () => {

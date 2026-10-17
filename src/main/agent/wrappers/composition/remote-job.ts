@@ -50,6 +50,7 @@ import {
 } from '../../workspace-host/capability-profile-store'
 import { getPhiAgentDir } from '../../runtime-paths'
 import { remoteTransferHostKey } from '../../transfer'
+import type { RemoteHelperReadyMarkerIdentity } from '../../remote-helper-marker'
 
 /**
  * Runs one composition wrapper on an HPC login host and exposes it as the same
@@ -208,7 +209,7 @@ class Control {
 function transferContext(target: RemoteTarget): Readonly<{
   hostKey: string
   workspaceId: string
-  helperVersion?: string
+  helperIdentity?: RemoteHelperReadyMarkerIdentity
 }> {
   const agentDir = target.agentDir ?? getPhiAgentDir()
   const profile =
@@ -223,8 +224,8 @@ function transferContext(target: RemoteTarget): Readonly<{
   return {
     hostKey,
     workspaceId: createHash('sha256').update(target.workspaceRoot).digest('hex'),
-    ...(profile?.helperStatus?.state === 'available' && profile.helperVersion
-      ? { helperVersion: profile.helperVersion }
+    ...(profile?.helperStatus?.state === 'available' && profile.helperReadyMarker
+      ? { helperIdentity: profile.helperReadyMarker }
       : {})
   }
 }
@@ -591,7 +592,7 @@ async function stageImagesForRun(
       signal: control.signal,
       transferHostKey: transfer.hostKey,
       transferWorkspaceId: transfer.workspaceId,
-      helperVersion: transfer.helperVersion,
+      helperIdentity: transfer.helperIdentity,
       agentDir: options.target.agentDir ?? getPhiAgentDir()
     })
     for (const { fileName, reason } of failed) {
@@ -699,7 +700,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
       signal: control.signal,
       transferHostKey: transfer.hostKey,
       transferWorkspaceId: transfer.workspaceId,
-      helperVersion: transfer.helperVersion,
+      helperIdentity: transfer.helperIdentity,
       agentDir: target.agentDir ?? getPhiAgentDir()
     })
     const layout = remoteRunLayout({

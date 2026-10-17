@@ -1,8 +1,5 @@
-import {
-  acquireOwnedRemoteLock,
-  RemoteLockBusyError,
-  type ExtensionLock
-} from '../extension-deployment/remote-lock'
+import type { RpcStartupHeldLock } from '../startup-transaction'
+import { acquireOwnedRemoteLock, RemoteLockBusyError } from '../extension-deployment/remote-lock'
 import { deriveRemoteSessionPaths } from './paths'
 import { registerStorageHost, runStorageCommand, storagePrefix } from './remote-preflight'
 import {
@@ -12,79 +9,84 @@ import {
   type RemoteSessionWriterLease
 } from './types'
 
+interface DeferredWriterLease {
+  readonly controller: AbortController
+  readonly rejectLost: (error: Error) => void
+  released: boolean
+  lock?: RpcStartupHeldLock
+  releasePromise?: Promise<void>
+}
+
+const deferred = new WeakMap<RemoteSessionStoragePreparation, DeferredWriterLease>()
+
+/**
+ * Build the verified storage scope locally. The consolidated startup channel
+ * creates/checks the directories and acquires the server lock later, after all
+ * generation files have been queued.
+ */
 export async function prepareRemoteSessionStorage(
   options: PrepareRemoteSessionStorageOptions
 ): Promise<RemoteSessionStoragePreparation> {
   const scope = Object.freeze({ ...options.scope })
   const paths = deriveRemoteSessionPaths(scope)
   const controller = new AbortController()
-  const cancel = (): void => controller.abort(options.signal?.reason)
-  options.signal?.addEventListener('abort', cancel, { once: true })
-  if (options.signal?.aborted) cancel()
-  let lock: ExtensionLock | undefined
-  let released = false
-  let releasePromise: Promise<void> | undefined
+  let rejectLost!: (error: Error) => void
+  const lost = new Promise<never>((_, reject) => {
+    rejectLost = reject
+  })
+  void lost.catch(() => undefined)
+  const state: DeferredWriterLease = { controller, rejectLost, released: false }
   const assertActive = (): void => {
     if (controller.signal.aborted) throw controller.signal.reason
-    if (released)
+    if (state.released)
       throw new RemoteSessionStorageError('LEASE_LOST', 'Session writer lease was released')
   }
-  const release = (): Promise<void> => {
-    released = true
-    controller.abort(
-      new RemoteSessionStorageError('LEASE_LOST', 'Session writer lease was released')
-    )
+  const retire = (reason: unknown): Promise<void> => {
+    if (state.releasePromise) return state.releasePromise
+    state.released = true
+    controller.abort(reason)
     options.signal?.removeEventListener('abort', cancel)
-    releasePromise ??= lock?.release() ?? Promise.resolve()
-    return releasePromise
+    state.releasePromise = state.lock?.release() ?? Promise.resolve()
+    return state.releasePromise
   }
+  const release = (): Promise<void> =>
+    retire(new RemoteSessionStorageError('LEASE_LOST', 'Session writer lease was released'))
+  const cancel = (): void => {
+    void retire(options.signal?.reason).catch(() => undefined)
+  }
+  options.signal?.addEventListener('abort', cancel, { once: true })
+  if (options.signal?.aborted) cancel()
+  const lease: RemoteSessionWriterLease = Object.freeze({
+    signal: controller.signal,
+    lost,
+    assertActive,
+    release
+  })
+  const preparation = Object.freeze({ scope, paths, lease })
+  deferred.set(preparation, state)
+  registerStorageHost(preparation, options.runtimeHost)
   try {
-    await runStorageCommand(
-      options.runtimeHost,
-      scope,
-      storagePrefix(scope, paths, true),
-      controller.signal
-    )
     assertActive()
-    lock = await acquireOwnedRemoteLock({
-      root: scope.runtimeRoot,
-      directory: paths.directory,
-      basename: 'lease.lock',
-      openStdio: options.openLockStdio,
-      signal: controller.signal,
-      waitMs: options.lockWaitMs
-    })
-    const lost = lock.lost.catch((cause: unknown): never => {
-      const error = new RemoteSessionStorageError(
-        'LEASE_LOST',
-        'Session writer transport disconnected',
-        { cause }
+    if (!options.deferToStartup) {
+      await runStorageCommand(
+        options.runtimeHost,
+        scope,
+        storagePrefix(scope, paths, true),
+        controller.signal
       )
-      controller.abort(error)
-      throw error
-    })
-    void lost.catch(() => undefined)
-    const lease: RemoteSessionWriterLease = Object.freeze({
-      signal: controller.signal,
-      lost,
-      assertActive,
-      release
-    })
-    const preparation = Object.freeze({ scope, paths, lease })
-    registerStorageHost(preparation, options.runtimeHost)
-    // Abort retires authority immediately and closes only this owned lock channel.
-    controller.signal.addEventListener(
-      'abort',
-      () => {
-        void release().catch(() => undefined)
-      },
-      { once: true }
-    )
-    assertActive()
+      const lock = await acquireOwnedRemoteLock({
+        root: scope.runtimeRoot,
+        directory: paths.directory,
+        basename: 'lease.lock',
+        openStdio: options.openLockStdio,
+        signal: controller.signal,
+        waitMs: options.lockWaitMs
+      })
+      await activateRemoteSessionStorageLease(preparation, lock)
+    }
     return preparation
   } catch (error) {
     await release().catch(() => undefined)
-    if (options.signal?.aborted) throw options.signal.reason
     if (error instanceof RemoteLockBusyError)
       throw new RemoteSessionStorageError(
         'SESSION_BUSY',
@@ -93,4 +95,31 @@ export async function prepareRemoteSessionStorage(
       )
     throw error
   }
+}
+
+/** Attach the one startup channel's held flock to the already-issued writer authority. */
+export async function activateRemoteSessionStorageLease(
+  preparation: RemoteSessionStoragePreparation,
+  lock: RpcStartupHeldLock
+): Promise<void> {
+  const state = deferred.get(preparation)
+  if (!state || state.lock) {
+    await lock.release().catch(() => undefined)
+    throw new RemoteSessionStorageError('INVALID_SCOPE', 'Unknown or active storage lease')
+  }
+  if (state.released || state.controller.signal.aborted) {
+    await lock.release().catch(() => undefined)
+    preparation.lease.assertActive()
+  }
+  state.lock = lock
+  void lock.lost.catch((cause: unknown) => {
+    const error = new RemoteSessionStorageError(
+      'LEASE_LOST',
+      'Session writer transport disconnected',
+      { cause }
+    )
+    state.controller.abort(error)
+    state.rejectLost(error)
+  })
+  preparation.lease.assertActive()
 }

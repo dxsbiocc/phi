@@ -6,11 +6,59 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import {
+  createInstalledHelperTransferConnect,
   FileTransferCoordinator,
   FileTransferRegistry,
   uploadRemoteFile
 } from '../src/main/agent/transfer'
+import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
+
+test('installed helper reuse refuses a directory without its expected ready marker', async () => {
+  const commands: string[] = []
+  let helperStarts = 0
+  const session = {
+    async execBounded(command: string) {
+      commands.push(command)
+      if (command.includes('.phi-ready.json')) {
+        return {
+          stdout: '',
+          stderr: '',
+          code: 73,
+          signal: null,
+          stdoutTruncated: false,
+          stderrTruncated: false
+        }
+      }
+      return {
+        stdout: `PHI_HELPER_HEX=${Buffer.from('/home/test/.phi/remote/0.1.0/phi-helper').toString('hex')}\n`,
+        stderr: '',
+        code: 0,
+        signal: null,
+        stdoutTruncated: false,
+        stderrTruncated: false
+      }
+    },
+    async openStdio() {
+      helperStarts += 1
+      return {} as never
+    }
+  } as RemoteSshSession
+
+  await assert.rejects(
+    () =>
+      createInstalledHelperTransferConnect(session, '/work/project', {
+        schema: 1,
+        kind: 'remote-helper',
+        version: '0.1.0',
+        sha256: 'a'.repeat(64)
+      })(),
+    /remote helper unavailable/i
+  )
+  assert.equal(commands.length, 1)
+  assert.match(commands[0] ?? '', /\.phi-ready\.json/)
+  assert.equal(helperStarts, 0)
+})
 
 test('remote upload adapter streams through pure SSH and reports transfer progress', async () => {
   const localRoot = mkdtempSync(join(tmpdir(), 'phi-upload-adapter-local-'))

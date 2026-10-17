@@ -19,6 +19,7 @@ import type { RemoteSshSession, RemoteStdioProcess } from '../remote-ssh-session
 import { shellQuote } from '../remote-ssh-session'
 import type { FileTransferCoordinator, TransferEvent } from '../../transfer'
 import { hashLocalFile } from '../../transfer/ssh-data-plane-local'
+import type { RemoteHelperReadyMarkerIdentity } from '../../remote-helper-marker'
 import { collectIncludedFiles } from './includes'
 
 /**
@@ -61,7 +62,7 @@ export interface StageImagesOptions {
   transferHostKey?: string
   transferWorkspaceId?: string
   helperConnect?: () => Promise<RemoteStdioProcess>
-  helperVersion?: string
+  helperIdentity?: RemoteHelperReadyMarkerIdentity
   agentDir?: string
   onTransferEvent?: (event: TransferEvent) => void
   transferCacheDir?: string
@@ -234,7 +235,7 @@ async function fetchHereAndUpload(
         signal: options.signal,
         coordinator: options.transferCoordinator,
         helperConnect: options.helperConnect,
-        helperVersion: options.helperVersion,
+        helperIdentity: options.helperIdentity,
         agentDir: options.agentDir,
         reuseVerifiedDestination: true,
         onEvent: options.onTransferEvent

@@ -471,6 +471,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     registerRpcSessionVerification(pi, {
       nonce: config.nonce,
       phiSessionId: config.sessionId,
+      projectId: config.projectId,
       generation: runtime.generation,
       projectRoot: config.projectRoot,
       directory: runtime.directory,

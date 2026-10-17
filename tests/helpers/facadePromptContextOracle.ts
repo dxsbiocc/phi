@@ -164,16 +164,18 @@ try {
       runtimeId = params.sessionId
       return original(params)
     })
-    const exec = f.f.host.exec.run.bind(f.f.host.exec)
+    const openStdio = f.hostSession.openStdio!.bind(f.hostSession)
     const late =
       mode === 'late-rebind'
-        ? mock.method(f.f.host.exec, 'run', async (command, options) => {
-            const result = await exec(command, options)
-            if (JSON.stringify(command).includes('Private RPC startup policy was corrupted')) {
+        ? mock.method(f.hostSession, 'openStdio', async (command: string) => {
+            const channel = await openStdio(command)
+            // The merged startup transaction replaced the per-file startup-policy
+            // publication; hold the same in-flight startup at that command.
+            if (command.includes('PHI_RPC_STARTUP_RESULT_END')) {
               held = true
               await gate
             }
-            return result
+            return channel
           })
         : undefined
     const pending = create(),

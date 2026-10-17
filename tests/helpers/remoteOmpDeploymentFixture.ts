@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, realpath, rm, stat } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SshHost } from '../../src/main/agent/workspace-host/ssh-host'
@@ -8,6 +8,12 @@ import type {
   RemoteOmpManifest
 } from '../../src/main/agent/engine/rpc/runtime-deployment'
 import { createLocalShellSession, installSetsidShim } from './localShellSession'
+import {
+  remoteHelperReadyMarkerIdentity,
+  remoteHelperReadyMarkerSha256,
+  serializeRemoteHelperReadyMarker,
+  type RemoteHelperInstallation
+} from '../../src/main/agent/remote-helper-marker'
 
 export async function createRemoteOmpDeploymentFixture(payload?: string): Promise<{
   root: string
@@ -37,6 +43,37 @@ export async function createRemoteOmpDeploymentFixture(payload?: string): Promis
     ...profile,
     platform: { os: 'Linux', arch: 'x86_64', libc: { name: 'glibc' } }
   })
+  const helperRoot = join(runtimeRoot, 'test-helper')
+  const helperDirectory = join(helperRoot, '0.1.0')
+  const helperPath = join(helperDirectory, 'phi-helper')
+  await mkdir(helperDirectory, { recursive: true, mode: 0o700 })
+  await chmod(helperRoot, 0o700)
+  await chmod(helperDirectory, 0o700)
+  const guardScript = join(process.cwd(), 'tests/helpers/projectPluginGuardCli.ts')
+  const guardCommand = process.execPath.includes('bun')
+    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(guardScript)}`
+    : `${JSON.stringify(process.execPath)} --import ${JSON.stringify(join(process.cwd(), 'scripts/test-loader.mjs'))} ${JSON.stringify(guardScript)}`
+  await writeFile(helperPath, `#!/bin/sh\nexec ${guardCommand} "$@"\n`, { mode: 0o700 })
+  const helperIdentity = remoteHelperReadyMarkerIdentity({
+    version: '0.1.0',
+    sha256: createHash('sha256')
+      .update(await readFile(helperPath))
+      .digest('hex')
+  })
+  const readyMarkerPath = join(helperDirectory, '.phi-ready.json')
+  await writeFile(readyMarkerPath, serializeRemoteHelperReadyMarker(helperIdentity), {
+    mode: 0o600
+  })
+  const helperInstallation: RemoteHelperInstallation = {
+    managedRoot: helperRoot,
+    remotePath: helperPath,
+    remoteDirectory: helperDirectory,
+    readyMarkerPath,
+    markerIdentity: helperIdentity,
+    readyMarkerSha256: remoteHelperReadyMarkerSha256(helperIdentity)
+  }
+  host.managedRemoteHelper = () => helperInstallation
+  host.ensureManagedRemoteHelper = async () => helperInstallation
   host.transfer.uploadFile = async (local, remote, options) => {
     options?.signal?.throwIfAborted()
     await session.uploadFile(local, remote, options)

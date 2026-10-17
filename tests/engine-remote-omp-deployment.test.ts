@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'n
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import {
+  deploymentReadyMarkerPath,
   ensureRemoteOmpDeployment,
   REMOTE_OMP_MANIFEST,
   selectRemoteOmpAsset,
@@ -81,7 +82,29 @@ test('deploys under selected runtime root with streaming progress, isolated vers
   assert.equal(upload.options?.reuseVerifiedDestination, true)
   assert.match(upload.options?.transferId ?? '', /^omp-[a-f0-9]{40}$/)
   assert.ok(progress.some((event) => event.transfer?.state === 'saved'))
-  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'omp', '18.10.3')), ['omp'])
+  assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'omp', '18.10.3')), [
+    '.phi-ready.json',
+    'omp'
+  ])
+})
+
+test('successful OMP activation publishes its deterministic private ready marker last', async (t) => {
+  const fixture = await createRemoteOmpDeploymentFixture()
+  t.after(fixture.cleanup)
+
+  const deployed = await ensureRemoteOmpDeployment(fixture.options)
+  const marker = join(dirname(deployed.executablePath), '.phi-ready.json')
+
+  assert.equal(
+    await readFile(marker, 'utf8'),
+    JSON.stringify({
+      schema: 1,
+      kind: 'remote-omp',
+      version: fixture.options.manifest!.version,
+      sha256: fixture.options.manifest!.assets['linux-x64'].sha256
+    })
+  )
+  assert.equal((await stat(marker)).mode & 0o777, 0o600)
 })
 
 test('fully verified installed version is reused without download or upload', async (t) => {
@@ -99,11 +122,56 @@ test('fully verified installed version is reused without download or upload', as
   assert.equal(fixture.session.uploads.length, 1)
 })
 
+test('an OMP directory without its ready marker is repaired instead of reused', async (t) => {
+  const fixture = await createRemoteOmpDeploymentFixture()
+  t.after(fixture.cleanup)
+  const first = await ensureRemoteOmpDeployment(fixture.options)
+  const marker = deploymentReadyMarkerPath(dirname(first.executablePath))
+  await rm(marker)
+
+  const repaired = await ensureRemoteOmpDeployment(fixture.options)
+
+  assert.equal(repaired.reused, false)
+  assert.equal(fixture.session.uploads.length, 2)
+  assert.equal((await stat(marker)).mode & 0o777, 0o600)
+})
+
+for (const scenario of [
+  {
+    name: 'wrong hash',
+    mutate: (marker: string) => writeFile(marker, '{"wrong":true}', { mode: 0o600 })
+  },
+  {
+    name: 'wrong mode',
+    mutate: (marker: string) => chmod(marker, 0o644)
+  },
+  {
+    name: 'symlink',
+    mutate: async (marker: string) => {
+      const target = `${marker}.target`
+      await writeFile(target, await readFile(marker), { mode: 0o600 })
+      await rm(marker)
+      await symlink(target, marker)
+    }
+  }
+] as const) {
+  test(`OMP ${scenario.name} ready marker is repaired instead of used`, async (t) => {
+    const fixture = await createRemoteOmpDeploymentFixture()
+    t.after(fixture.cleanup)
+    const first = await ensureRemoteOmpDeployment(fixture.options)
+    const marker = deploymentReadyMarkerPath(dirname(first.executablePath))
+    await scenario.mutate(marker)
+    assert.equal((await ensureRemoteOmpDeployment(fixture.options)).reused, false)
+    assert.equal(fixture.session.uploads.length, 2)
+  })
+}
+
 test('corrupt or outdated installation is replaced while verified desktop cache is reused', async (t) => {
   const fixture = await createRemoteOmpDeploymentFixture()
   t.after(fixture.cleanup)
   const first = await ensureRemoteOmpDeployment(fixture.options)
   await writeFile(first.executablePath, '#!/bin/sh\nprintf "18.1.10\\n"\n')
+  await rm(deploymentReadyMarkerPath(dirname(first.executablePath)))
   const next = await ensureRemoteOmpDeployment(fixture.options)
   assert.equal(next.reused, false)
   assert.equal(fixture.downloads(), 1)
@@ -123,6 +191,7 @@ test('matching hash with wrong installed --version forces redeployment', async (
   const first = await ensureRemoteOmpDeployment(fixture.options)
   const marker = join(first.homePath, 'wrong-version')
   await writeFile(marker, '')
+  await rm(deploymentReadyMarkerPath(dirname(first.executablePath)))
   const upload = fixture.host.transfer.uploadFile
   fixture.host.transfer.uploadFile = async (...args) => {
     // The existing binary's bytes still match; its real --version output is outdated.
@@ -154,6 +223,7 @@ test('corrupt desktop cache is downloaded again', async (t) => {
   t.after(fixture.cleanup)
   const first = await ensureRemoteOmpDeployment(fixture.options)
   await rm(first.executablePath)
+  await rm(deploymentReadyMarkerPath(dirname(first.executablePath)))
   await writeFile(fixture.session.uploads[0].localPath, 'corrupt local cache')
   await ensureRemoteOmpDeployment(fixture.options)
   assert.equal(fixture.downloads(), 2)
@@ -362,6 +432,7 @@ test('real WorkspaceHost streaming transfer integrates without a new upload stac
   assert.ok(progress.some((event) => event.transfer?.state === 'transferring'))
   assert.ok(progress.some((event) => event.transfer?.state === 'saved'))
   await chmod(result.executablePath, 0o600)
+  await rm(deploymentReadyMarkerPath(dirname(result.executablePath)))
   assert.equal(
     (await ensureRemoteOmpDeployment({ ...fixture.options, runtimeHost: host })).reused,
     false

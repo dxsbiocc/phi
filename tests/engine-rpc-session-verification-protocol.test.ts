@@ -18,6 +18,7 @@ import type { RemoteSessionReference } from '../src/main/agent/engine/rpc/sessio
 const identity = {
   nonce: 'n'.repeat(32),
   phiSessionId: 'phi',
+  projectId: 'project',
   generation: 1,
   projectRoot: '/project',
   directory: '/private/durable',
@@ -119,6 +120,7 @@ async function fixture(
           leafId: null,
           model: null,
           modelRole: null,
+          journalFileIdentity: 'c'.repeat(64),
           journalDigest: 'a'.repeat(64),
           assetDigest: 'b'.repeat(64),
           entryCount: 0,

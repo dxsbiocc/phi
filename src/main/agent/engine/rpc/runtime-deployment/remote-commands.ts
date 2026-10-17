@@ -2,6 +2,12 @@ import { posix } from 'node:path'
 import { shellQuote } from '../../../wrappers/remote-ssh-session'
 import type { WorkspaceHost } from '../../../workspace-host/types'
 import {
+  deploymentReadyMarkerCheckCommand,
+  deploymentReadyMarkerPath,
+  remoteOmpReadyMarkerIdentity,
+  serializeDeploymentReadyMarker
+} from '../deployment-ready-marker'
+import {
   RemoteOmpDeploymentError,
   type DeploymentErrorCode,
   type RemoteOmpDeployment
@@ -12,6 +18,7 @@ export interface DeploymentPaths {
   directory: string
   executable: string
   staging: string
+  readyMarker: string
   home: string
   agentDir: string
 }
@@ -35,6 +42,7 @@ export function deploymentPaths(root: string, version: string, sha256: string): 
     directory,
     executable: posix.join(directory, 'omp'),
     staging: posix.join(directory, `.omp-${sha256}.staging`),
+    readyMarker: deploymentReadyMarkerPath(directory),
     home,
     agentDir: posix.join(home, 'agent')
   }
@@ -82,15 +90,11 @@ chmod 700 ${shellQuote(posix.join(paths.root, 'omp'))} ${shellQuote(paths.direct
 
 export function reuseCommand(paths: DeploymentPaths, sha256: string, version: string): string {
   return `${prefix(paths)}
-if [ -f ${shellQuote(paths.executable)} ] && [ ! -L ${shellQuote(paths.executable)} ] && [ -x ${shellQuote(paths.executable)} ]; then
-  if actual=$(hash_file ${shellQuote(paths.executable)} 2>/dev/null); then
-    case "$actual" in ${shellQuote(sha256)}' '*)
-    if reported=$(${versionCommand(paths, paths.executable)} 2>/dev/null); then
-      case "$reported" in ${shellQuote(version)}|${shellQuote(`omp/${version}`)}) printf 'PHI_OMP_REUSABLE\\n';; esac
-    fi;;
-    esac
-  fi
-fi`
+${deploymentReadyMarkerCheckCommand(
+  paths.readyMarker,
+  remoteOmpReadyMarkerIdentity(version, sha256),
+  'PHI_OMP_REUSABLE'
+)}`
 }
 
 export function spaceCommand(paths: DeploymentPaths, size: number): string {
@@ -102,6 +106,7 @@ case "$available" in ''|*[!0-9]*) fail REMOTE_COMMAND_FAILED "Cannot determine r
 }
 
 export function activateCommand(paths: DeploymentPaths, sha256: string, version: string): string {
+  const marker = serializeDeploymentReadyMarker(remoteOmpReadyMarkerIdentity(version, sha256))
   return `${prefix(paths)}
 [ -f ${shellQuote(paths.staging)} ] && [ ! -L ${shellQuote(paths.staging)} ] || fail HASH_MISMATCH "Uploaded OMP staging file is missing or not regular"
 actual=$(hash_file ${shellQuote(paths.staging)})
@@ -109,7 +114,16 @@ case "$actual" in ${shellQuote(sha256)}' '*) ;; *) fail HASH_MISMATCH "Uploaded 
 chmod 700 ${shellQuote(paths.staging)}
 ${versionCheck(paths, paths.staging, version)}
 [ ! -L ${shellQuote(paths.executable)} ] && [ ! -d ${shellQuote(paths.executable)} ] || fail PERMISSION_DENIED "OMP destination changed during deployment"
-mv -f -- ${shellQuote(paths.staging)} ${shellQuote(paths.executable)}`
+mv -f -- ${shellQuote(paths.staging)} ${shellQuote(paths.executable)}
+marker_tmp=${shellQuote(`${paths.readyMarker}.tmp-`)}$$
+rm -f -- "$marker_tmp" || fail PERMISSION_DENIED "Cannot clear OMP ready marker staging"
+(umask 077; printf '%s' ${shellQuote(marker)} > "$marker_tmp") || fail PERMISSION_DENIED "Cannot stage OMP ready marker"
+[ -f "$marker_tmp" ] && [ ! -L "$marker_tmp" ] || fail PERMISSION_DENIED "OMP ready marker staging is not a regular file"
+marker_owner=$(stat -c %u -- "$marker_tmp" 2>/dev/null || stat -f %u "$marker_tmp")
+[ "$marker_owner" = "$(id -u)" ] || fail PERMISSION_DENIED "OMP ready marker staging has another owner"
+chmod 600 "$marker_tmp" || fail PERMISSION_DENIED "Cannot make OMP ready marker private"
+[ ! -d ${shellQuote(paths.readyMarker)} ] || [ -L ${shellQuote(paths.readyMarker)} ] || fail PERMISSION_DENIED "OMP ready marker destination is a directory"
+mv -f -- "$marker_tmp" ${shellQuote(paths.readyMarker)} || fail PERMISSION_DENIED "Cannot publish OMP ready marker"`
 }
 
 export async function runDeploymentCommand(

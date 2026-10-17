@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createPhiExtensionBundle } from '../../src/main/agent/engine/rpc/extension-deployment'
@@ -17,6 +17,7 @@ import type {
   SshRpcSessionTransport,
   SshRpcSessionTransportOptions
 } from '../../src/main/agent/engine/rpc/ssh-stdio-factory'
+import type { RpcStartupTransactionWriter } from '../../src/main/agent/engine/rpc/startup-transaction'
 
 interface PersistentLauncherFixture extends Omit<
   Awaited<ReturnType<typeof createPhiExtensionDeploymentFixture>>,
@@ -70,6 +71,7 @@ export async function createPersistentLauncherFixture(
       runtimeHost: base.host,
       scope,
       signal,
+      deferToStartup: true,
       openLockStdio: (command) => session.openStdio!(command)
     })
     preparations.push(preparation)
@@ -137,48 +139,57 @@ export async function createPersistentLauncherFixture(
   }
 }
 
-export async function writePersistentLauncherModel(
+export function writePersistentLauncherModel(
+  startup: RpcStartupTransactionWriter,
   agentDir: string,
   url: string,
   key: string
-): Promise<void> {
-  await writeFile(
-    join(agentDir, 'models.yml'),
-    JSON.stringify({
-      providers: {
-        'phi-contract': {
-          baseUrl: url,
-          api: 'openai-completions',
-          apiKey: key,
-          models: [
-            {
-              id: 'contract-model',
-              name: 'Private launcher model',
-              reasoning: false,
-              input: ['text', 'image'],
-              contextWindow: 32768,
-              maxTokens: 256,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-            }
-          ]
+): void {
+  startup.addFile({
+    item: `fixture-models-${Buffer.from(agentDir).toString('hex').slice(-24)}`,
+    path: join(agentDir, 'models.yml'),
+    bytes: Buffer.from(
+      JSON.stringify({
+        providers: {
+          'phi-contract': {
+            baseUrl: url,
+            api: 'openai-completions',
+            apiKey: key,
+            models: [
+              {
+                id: 'contract-model',
+                name: 'Private launcher model',
+                reasoning: false,
+                input: ['text', 'image'],
+                contextWindow: 32768,
+                maxTokens: 256,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+              }
+            ]
+          }
         }
-      }
-    }),
-    { mode: 0o600 }
-  )
-  await writeFile(
-    join(agentDir, 'config.yml'),
-    JSON.stringify({
-      defaultProvider: 'phi-contract',
-      defaultModel: 'contract-model',
-      compaction: { enabled: false },
-      extensions: [],
-      skills: [],
-      memory: { enabled: false },
-      goal: { continuationModes: ['rpc'] }
-    }),
-    { mode: 0o600 }
-  )
+      })
+    ),
+    mode: 0o600,
+    ifAbsent: true
+  })
+  startup.addFile({
+    item: `fixture-config-${Buffer.from(agentDir).toString('hex').slice(-24)}`,
+    path: join(agentDir, 'config.yml'),
+    bytes: Buffer.from(
+      JSON.stringify({
+        defaultProvider: 'phi-contract',
+        defaultModel: 'contract-model',
+        compaction: { enabled: false },
+        extensions: [],
+        skills: [],
+        memory: { enabled: false },
+        goal: { continuationModes: ['rpc'] }
+      })
+    ),
+    mode: 0o600,
+    ifAbsent: true
+  })
 }
 
 export async function scanPersistentLauncherFiles(

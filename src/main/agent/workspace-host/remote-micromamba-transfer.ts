@@ -14,6 +14,7 @@ import {
   type RemoteSshSession
 } from '../wrappers/remote-ssh-session'
 import type { FileTransferCoordinator, TransferEvent } from '../transfer'
+import type { RemoteHelperReadyMarkerIdentity } from '../remote-helper-marker'
 import { runRemoteMicromambaScript } from './remote-micromamba-common'
 import {
   buildActivateScript,
@@ -60,7 +61,7 @@ interface TransferOptions {
   transferHostKey?: string
   transferWorkspaceId?: string
   helperConnect?: () => Promise<RemoteStdioProcess>
-  helperVersion?: string
+  helperIdentity?: RemoteHelperReadyMarkerIdentity
   agentDir?: string
   onTransferEvent?: (event: TransferEvent) => void
 }
@@ -266,7 +267,7 @@ async function uploadAttempt(
       signal: options.signal,
       coordinator: options.transferCoordinator,
       helperConnect: options.helperConnect,
-      helperVersion: options.helperVersion,
+      helperIdentity: options.helperIdentity,
       agentDir: options.agentDir,
       reuseVerifiedDestination: true,
       onEvent: (event) => {

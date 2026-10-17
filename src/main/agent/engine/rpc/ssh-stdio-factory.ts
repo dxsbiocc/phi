@@ -3,9 +3,7 @@ import {
   compactionPolicy,
   type RpcCompactionPolicy
 } from '../phi-extension/lib/rpc-compaction-control'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, posix } from 'node:path'
+import { posix } from 'node:path'
 import { RPC_BOOTSTRAP_OMP_VERSION, type RpcBootstrapConfig } from '../phi-extension/lib/rpc-config'
 import {
   shellQuote as q,
@@ -14,36 +12,62 @@ import {
 } from '../../wrappers/remote-ssh-session'
 import { attestBootstrap } from './bootstrap-attestation'
 import {
+  deploymentReadyMarkerPath,
   ensurePhiExtensionDeployment,
+  phiExtensionReadyMarkerIdentity,
+  serializeDeploymentReadyMarker,
   type ExtensionDeploymentOptions,
-  type PhiExtensionBundle
+  type PhiExtensionBundle,
+  type PhiExtensionDeployment
 } from './extension-deployment'
 import { assertRemoteRoot, privateRemotePrefix } from './extension-deployment/remote-commands'
-import { ensureRemoteOmpDeployment, type RemoteOmpDeploymentOptions } from './runtime-deployment'
+import {
+  ensureRemoteOmpDeployment,
+  REMOTE_OMP_MANIFEST,
+  remoteOmpReadyMarkerIdentity,
+  selectRemoteOmpAsset,
+  type RemoteOmpDeployment,
+  type RemoteOmpDeploymentOptions
+} from './runtime-deployment'
+import { deploymentPaths, deploymentResult } from './runtime-deployment/remote-commands'
 import type { RpcSessionCreateParams, RpcSessionInitializationContext } from './rpc-session-backend'
 import {
   acquirePersistentLaunchStorage,
   type PreparePersistentLaunchStorage
 } from './persistent-launch-storage'
-import { storagePrefix } from './session-storage/remote-preflight'
-import type { RemoteSessionStoragePreparation } from './session-storage/types'
-import { assertNoProjectPluginTools } from './project-plugin-tool-admission'
+import { activateRemoteSessionStorageLease } from './session-storage/writer-lease'
+import { storageDirectories } from './session-storage/remote-preflight'
+import { remoteJournalPath } from './session-storage/paths'
+import { serializeRemoteSessionManifest } from './session-storage/remote-manifest'
+import type {
+  RemoteSessionReference,
+  RemoteSessionStoragePreparation
+} from './session-storage/types'
 import {
   assertPhiModelProviderCompatible,
   PHI_DISABLED_CAPABILITY_PROVIDERS
 } from './rpc-startup-policy'
 import type { RemoteStartupDiagnostics } from './remote-startup-diagnostics'
+import {
+  RpcStartupTransactionBuilder,
+  runRpcStartupTransaction,
+  type RpcStartupMarkerCheck,
+  type RpcStartupTransactionWriter
+} from './startup-transaction'
+import { serializeRemoteHelperReadyMarker } from '../../remote-helper-marker'
 
 export interface SshRpcSessionTransportOptions {
   /** Main-only last dispatch fence; never serialized into CLI or SSH protocol options. */
   beforeLaunch?: () => void
   /** The selected, already connected session: the factory never owns its SSH master. */
-  session: Pick<RemoteSshSession, 'openStdio'>
+  session: Pick<RemoteSshSession, 'openStdio' | 'execWithInput' | 'remoteHelper'>
   runtime: Omit<RemoteOmpDeploymentOptions, 'signal'>
   bundle: PhiExtensionBundle
   projectId: string
   onExtensionProgress?: ExtensionDeploymentOptions['onProgress']
   readonly startupDiagnostics?: RemoteStartupDiagnostics
+  /** Existing durable reference proved by the startup transaction before OMP launches. */
+  readonly resumeReference?: RemoteSessionReference
   /** Factory owns the returned writer lease until this generation closes, including failed/late opens. */
   preparePersistentStorage?: PreparePersistentLaunchStorage
   /** R3 may write proxy model configuration here. Desktop credentials are never copied. */
@@ -51,6 +75,7 @@ export interface SshRpcSessionTransportOptions {
     readonly params: Readonly<RpcSessionCreateParams>
     readonly homePath: string
     readonly agentDir: string
+    readonly startup: RpcStartupTransactionWriter
     readonly signal: AbortSignal
   }) => Promise<void>
   /** Composes capabilities after model publication; the factory retains launch/storage ownership. */
@@ -155,6 +180,7 @@ export interface RpcRuntimePreparationContext {
   readonly homePath: string
   readonly agentDir: string
   readonly storage: RemoteSessionStoragePreparation | undefined
+  readonly startup: RpcStartupTransactionWriter
   readonly signal: AbortSignal
 }
 
@@ -165,6 +191,9 @@ export interface SshRpcSessionTransport {
     generation?: number
   ) => Promise<RemoteStdioProcess>
   readonly initialize: (context: RpcSessionInitializationContext) => Promise<void>
+  readonly startupPreflight: (
+    params: Readonly<RpcSessionCreateParams>
+  ) => import('./session-storage/types').RemoteJournalPreflight | undefined
 }
 
 function identity(value: string, label: string): void {
@@ -194,6 +223,73 @@ async function cancelled<T>(operation: Promise<T>, signal: AbortSignal): Promise
   }
 }
 
+function expectedRemoteOmpDeployment(options: SshRpcSessionTransportOptions['runtime']): {
+  deployment: RemoteOmpDeployment
+  marker: RpcStartupMarkerCheck
+} {
+  const manifest = options.manifest ?? REMOTE_OMP_MANIFEST
+  const { asset } = selectRemoteOmpAsset(
+    manifest,
+    options.desktopVersion,
+    options.runtimeHost.capabilities().platform
+  )
+  const paths = deploymentPaths(options.runtimeRoot, manifest.version, asset.sha256)
+  return {
+    deployment: deploymentResult(paths, manifest.version, true),
+    marker: {
+      item: 'omp',
+      managedRoot: options.runtimeRoot,
+      directory: paths.directory,
+      path: paths.readyMarker,
+      bytes: Buffer.from(
+        serializeDeploymentReadyMarker(remoteOmpReadyMarkerIdentity(manifest.version, asset.sha256))
+      )
+    }
+  }
+}
+
+function expectedPhiExtensionDeployment(
+  runtimeRoot: string,
+  bundle: PhiExtensionBundle
+): { deployment: PhiExtensionDeployment; marker: RpcStartupMarkerCheck } {
+  const directory = posix.join(runtimeRoot, 'extensions', bundle.contentHash)
+  return {
+    deployment: {
+      contentHash: bundle.contentHash,
+      directory,
+      entryPath: posix.join(directory, bundle.entryPoint),
+      reused: true
+    },
+    marker: {
+      item: 'extension',
+      managedRoot: runtimeRoot,
+      directory,
+      path: deploymentReadyMarkerPath(directory),
+      bytes: Buffer.from(
+        serializeDeploymentReadyMarker(phiExtensionReadyMarkerIdentity(bundle.contentHash))
+      )
+    }
+  }
+}
+
+function startupMarkers(options: SshRpcSessionTransportOptions): RpcStartupMarkerCheck[] {
+  const markers = [
+    expectedRemoteOmpDeployment(options.runtime).marker,
+    expectedPhiExtensionDeployment(options.runtime.runtimeRoot, options.bundle).marker
+  ]
+  const helper = options.runtime.runtimeHost.managedRemoteHelper?.()
+  if (helper) {
+    markers.push({
+      item: 'helper',
+      managedRoot: helper.managedRoot,
+      directory: helper.remoteDirectory,
+      path: helper.readyMarkerPath,
+      bytes: Buffer.from(serializeRemoteHelperReadyMarker(helper.markerIdentity))
+    })
+  }
+  return markers
+}
+
 /** Each open owns only its channel and generation-specific private configuration. */
 export async function prepareSshRpcSessionTransport(
   options: SshRpcSessionTransportOptions,
@@ -210,24 +306,21 @@ export async function prepareSshRpcSessionTransport(
   preparationSignal?.throwIfAborted()
   const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
     options.startupDiagnostics?.step(name, operation) ?? operation()
-  const runtime = await step('runtime_binary', () =>
-    ensureRemoteOmpDeployment({ ...options.runtime, signal: preparationSignal })
-  )
-  const extension = await step('extension_deployment', () =>
-    ensurePhiExtensionDeployment({
-      runtimeHost: options.runtime.runtimeHost,
-      runtimeRoot: options.runtime.runtimeRoot,
-      cacheDir: options.runtime.cacheDir,
-      openLockStdio: (command) => options.session.openStdio!(command),
-      bundle: options.bundle,
-      uploadOptions: options.runtime.uploadOptions,
-      onProgress: options.onExtensionProgress,
-      signal: preparationSignal
-    })
-  )
+  // Paths and marker identities are content-addressed and can be derived locally.
+  // Deployment work is deferred until the consolidated transaction reports the
+  // specific item that needs repair.
+  const runtime = expectedRemoteOmpDeployment(options.runtime).deployment
+  const extension = expectedPhiExtensionDeployment(
+    options.runtime.runtimeRoot,
+    options.bundle
+  ).deployment
   preparationSignal?.throwIfAborted()
   const prepared = new WeakMap<Readonly<RpcSessionCreateParams>, RpcBootstrapConfig>()
   const preparedGenerations = new WeakMap<Readonly<RpcSessionCreateParams>, number>()
+  const preparedPreflights = new WeakMap<
+    Readonly<RpcSessionCreateParams>,
+    import('./session-storage/types').RemoteJournalPreflight
+  >()
   return {
     async open(params, callerSignal, generation = 1) {
       if (!Number.isSafeInteger(generation) || generation < 1)
@@ -240,10 +333,11 @@ export async function prepareSshRpcSessionTransport(
       if (params.model) assertPhiModelProviderCompatible(params.model.provider)
       callerSignal.throwIfAborted()
       const { runtimeHost: host, runtimeRoot: root } = options.runtime
-      if (!host.transfer) throw new Error('Runtime host has no streaming file transfer transport')
-      await step('project_plugin_guard', () =>
-        assertNoProjectPluginTools({ host, cwd: params.cwd, runtimeRoot: root, signal })
-      )
+      let startupHelper = host.managedRemoteHelper?.()
+      if (host.ensureManagedRemoteHelper) {
+        startupHelper = await step('remote_helper', () => host.ensureManagedRemoteHelper!())
+        if (!startupHelper) throw new Error('Remote RPC startup requires the managed helper guard')
+      }
       const nonce = randomUUID()
       const sessionBase = posix.join(root, 'rpc-sessions')
       const sessionDirectory = posix.join(sessionBase, nonce)
@@ -258,7 +352,7 @@ export async function prepareSshRpcSessionTransport(
       const configPath = posix.join(sessionDirectory, 'config.json')
       const startupPolicyPath = posix.join(sessionDirectory, 'startup-policy.json')
       const prefix = privateRemotePrefix(root)
-      let local: string | undefined
+      let startup: RpcStartupTransactionBuilder
       let channel: RemoteStdioProcess | undefined
       let storage: RemoteSessionStoragePreparation | undefined
       const loseLease = (): void => controller.abort(storage?.lease.signal.reason)
@@ -285,6 +379,7 @@ export async function prepareSshRpcSessionTransport(
             storage?.lease.signal.removeEventListener('abort', loseLease)
             prepared.delete(params)
             preparedGenerations.delete(params)
+            preparedPreflights.delete(params)
             await run(
               `if [ -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ]; then owned ${q(sessionBase)}; owned ${q(sessionDirectory)}; rm -rf -- ${q(sessionDirectory)}; fi`
             ).catch(() => undefined)
@@ -314,22 +409,56 @@ export async function prepareSshRpcSessionTransport(
           storage.lease.signal.addEventListener('abort', loseLease, { once: true })
           if (storage.lease.signal.aborted) loseLease()
           storage.lease.assertActive()
-          await step('persistent_storage', () =>
-            run(storagePrefix(storage!.scope, storage!.paths), signal)
-          )
         }
-        await step('rpc_private_generation', async () => {
-          await run(
-            `[ "$(cd -- ${q(params.cwd)} && pwd -P)" = ${q(params.cwd)} ] || fail 'Project root must be a canonical existing directory'
-private_dir ${q(sessionBase)}
-[ ! -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ] || fail 'Session generation already exists'
-private_dir ${q(sessionDirectory)}
-private_dir ${q(homePath)}
-${storage ? `private_dir ${q(posix.join(homePath, '.omp'))}\nprivate_dir ${q(statePath)}\nprivate_dir ${q(posix.join(statePath, 'omp'))}\nprivate_dir ${q(cachePath)}\nprivate_dir ${q(posix.join(cachePath, 'omp'))}\nprivate_dir ${q(tempPath)}` : ''}
-private_dir ${q(agentDir)}`,
-            signal
-          )
+        const resume =
+          options.resumeReference && storage
+            ? (() => {
+                const supplied = options.resumeReference!
+                const journalPath = remoteJournalPath(storage!.scope, supplied)
+                const reference: RemoteSessionReference = {
+                  ...storage!.scope,
+                  kind: 'remote-omp',
+                  version: 1,
+                  durableSessionKey: supplied.durableSessionKey,
+                  ompVersion: supplied.ompVersion,
+                  ompSessionId: supplied.ompSessionId,
+                  journalBasename: supplied.journalBasename
+                }
+                const manifest = serializeRemoteSessionManifest(storage!, reference)
+                return {
+                  manifestPath: storage!.paths.manifest,
+                  manifestSha256: createHash('sha256').update(manifest).digest('hex'),
+                  manifestBytes: manifest.length,
+                  journalPath,
+                  ompSessionId: reference.ompSessionId
+                }
+              })()
+            : undefined
+        if (options.resumeReference && !resume)
+          throw new Error('Remote resume requires persistent startup storage')
+        startup = new RpcStartupTransactionBuilder({
+          runtimeRoot: root,
+          projectRoot: params.cwd,
+          ...(startupHelper ? { projectPluginGuardHelper: startupHelper.remotePath } : {}),
+          ...(storage ? { lock: { path: storage.paths.lock } } : {}),
+          ...(resume ? { resume } : {}),
+          markers: startupMarkers(options)
         })
+        if (storage)
+          for (const path of storageDirectories(storage.scope, storage.paths))
+            startup.addDirectory({ path })
+        startup.addDirectory({ path: sessionBase })
+        startup.addDirectory({ path: sessionDirectory, ifAbsent: true })
+        startup.addDirectory({ path: homePath })
+        if (storage) {
+          startup.addDirectory({ path: posix.join(homePath, '.omp') })
+          startup.addDirectory({ path: statePath })
+          startup.addDirectory({ path: posix.join(statePath, 'omp') })
+          startup.addDirectory({ path: cachePath })
+          startup.addDirectory({ path: posix.join(cachePath, 'omp') })
+          startup.addDirectory({ path: tempPath })
+        }
+        startup.addDirectory({ path: agentDir })
         const config: RpcBootstrapConfig = {
           schema: 1,
           nonce,
@@ -340,24 +469,19 @@ private_dir ${q(agentDir)}`,
           contentHash: extension.contentHash
         }
         const bytes = Buffer.from(JSON.stringify(config))
-        local = await mkdtemp(join(tmpdir(), 'phi-rpc-config-'))
-        const source = join(local, 'config.json')
-        await writeFile(source, bytes, { mode: 0o600, flag: 'wx' })
-        const sha256 = createHash('sha256').update(bytes).digest('hex')
-        await step('rpc_bootstrap_config', async () => {
-          await host.transfer!.uploadFile(source, configPath, {
-            ...options.runtime.uploadOptions,
-            signal,
-            expectedSha256: sha256
-          })
-          await run(
-            `private_file ${q(configPath)}\n[ "$(hash_file ${q(configPath)})" = ${q(sha256)} ] || fail 'Private RPC configuration was corrupted'`,
-            signal
-          )
+        startup.addFile({
+          item: 'bootstrap-config',
+          path: configPath,
+          bytes,
+          mode: 0o600,
+          ifAbsent: true
         })
         if (options.prepareSession)
           await step('model_proxy_publication', () =>
-            cancelled(options.prepareSession!({ params, homePath, agentDir, signal }), signal)
+            cancelled(
+              options.prepareSession!({ params, homePath, agentDir, startup, signal }),
+              signal
+            )
           )
         const preparedRuntime = options.prepareRuntime
           ? await cancelled(
@@ -370,6 +494,7 @@ private_dir ${q(agentDir)}`,
                   homePath,
                   agentDir,
                   storage,
+                  startup,
                   signal
                 })
               ),
@@ -428,20 +553,68 @@ private_dir ${q(agentDir)}`,
             ...(storage ? { goal: { continuationModes: [] } } : {})
           })
         )
-        const policySource = join(local, 'startup-policy.json')
-        await writeFile(policySource, policyBytes, { mode: 0o600, flag: 'wx' })
-        const policyHash = createHash('sha256').update(policyBytes).digest('hex')
-        await step('rpc_startup_policy', async () => {
-          await host.transfer!.uploadFile(policySource, startupPolicyPath, {
-            ...options.runtime.uploadOptions,
-            signal,
-            expectedSha256: policyHash
-          })
-          await run(
-            `private_file ${q(startupPolicyPath)}\n[ "$(hash_file ${q(startupPolicyPath)})" = ${q(policyHash)} ] || fail 'Private RPC startup policy was corrupted'`,
-            signal
-          )
+        startup.addFile({
+          item: 'startup-policy',
+          path: startupPolicyPath,
+          bytes: policyBytes,
+          mode: 0o600,
+          ifAbsent: true
         })
+
+        const launch = async (): Promise<void> => {
+          const first = await step('rpc_startup_transaction', () =>
+            runRpcStartupTransaction(options.session, startup.build(), signal)
+          )
+          if (first.result.status === 'ready') {
+            if (first.result.resume) preparedPreflights.set(params, first.result.resume.journal)
+            if (storage) {
+              if (!first.lock) throw new Error('Remote RPC startup did not retain its writer lock')
+              await activateRemoteSessionStorageLease(storage, first.lock)
+            }
+            return
+          }
+          for (const item of first.result.markers.filter((marker) => marker.status === 'repair')) {
+            if (item.item === 'omp') {
+              await step('runtime_binary', () =>
+                ensureRemoteOmpDeployment({ ...options.runtime, signal })
+              )
+            } else if (item.item === 'extension') {
+              await step('extension_deployment', () =>
+                ensurePhiExtensionDeployment({
+                  runtimeHost: host,
+                  runtimeRoot: root,
+                  cacheDir: options.runtime.cacheDir,
+                  openLockStdio: (command) => options.session.openStdio!(command),
+                  bundle: options.bundle,
+                  uploadOptions: options.runtime.uploadOptions,
+                  onProgress: options.onExtensionProgress,
+                  signal
+                })
+              )
+            } else if (item.item === 'helper') {
+              const repaired = await host.ensureManagedRemoteHelper?.({ force: true })
+              if (!repaired) throw new Error('Remote helper marker repair failed')
+            } else {
+              throw new Error(`Unknown remote startup repair item: ${item.item}`)
+            }
+          }
+          const repaired = await step('rpc_startup_transaction', () =>
+            runRpcStartupTransaction(options.session, startup.build(), signal)
+          )
+          if (repaired.result.status !== 'ready') {
+            const failures = repaired.result.markers
+              .filter((item) => item.status === 'repair')
+              .map((item) => `${item.item}:${item.reason ?? 'invalid'}`)
+              .join(', ')
+            throw new Error(`Remote RPC startup repair was not confirmed: ${failures}`)
+          }
+          if (repaired.result.resume) preparedPreflights.set(params, repaired.result.resume.journal)
+          if (storage) {
+            if (!repaired.lock) throw new Error('Remote RPC startup did not retain its writer lock')
+            await activateRemoteSessionStorageLease(storage, repaired.lock)
+          }
+        }
+        await launch()
         const args = [
           '--cwd',
           params.cwd,
@@ -507,8 +680,6 @@ private_dir ${q(agentDir)}`,
         await cleanup()
         signal.throwIfAborted()
         throw error
-      } finally {
-        if (local) await rm(local, { recursive: true, force: true })
       }
     },
     async initialize({ connection, params, signal }) {
@@ -517,6 +688,7 @@ private_dir ${q(agentDir)}`,
       if (preparedGenerations.get(params) !== connection.bindControl().generation)
         throw new Error('Prepared RPC channel generation does not match')
       await step('bootstrap_attestation', () => attestBootstrap(connection, config, signal))
-    }
+    },
+    startupPreflight: (params) => preparedPreflights.get(params)
   }
 }

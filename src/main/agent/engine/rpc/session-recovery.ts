@@ -144,7 +144,12 @@ export interface RemoteSessionRecoveryOptions {
   readonly verifyAttachment: (
     identity: Omit<RemoteRecoveryAttachment, 'leafId'>,
     signal: AbortSignal
-  ) => Promise<RemoteRecoveryAttachment>
+  ) => Promise<
+    RemoteRecoveryAttachment & {
+      readonly journalFileIdentity: string
+      readonly journalDigest: string
+    }
+  >
   readonly publish: (
     reference: RemoteSessionReference,
     checkpoint: RemoteHistoryCheckpoint,
@@ -391,7 +396,12 @@ export async function recoverRemoteSession(
       projectRoot: scope.projectRoot,
       generation: control.generation
     })
-    const checkpoint = async (): Promise<RemoteHistoryCheckpoint> => {
+    const checkpoint = async (): Promise<
+      RemoteHistoryCheckpoint & {
+        readonly journalFileIdentity: string
+        readonly journalDigest: string
+      }
+    > => {
       const current = await readState()
       if (current.sessionId !== reference!.ompSessionId || current.sessionFile !== journalPath)
         failure('IDENTITY_MISMATCH', 'Attached session differs from the durable reference')
@@ -404,23 +414,21 @@ export async function recoverRemoteSession(
         !(
           attachment.leafId === null ||
           (typeof attachment.leafId === 'string' && attachment.leafId.length > 0)
-        )
+        ) ||
+        !/^[a-f0-9]{64}$/u.test(attachment.journalFileIdentity) ||
+        !/^[a-f0-9]{64}$/u.test(attachment.journalDigest)
       )
         failure('IDENTITY_MISMATCH', 'Attached manager scope differs from the verified reference')
       return Object.freeze({
         ...identity,
         leafId: attachment.leafId,
-        messageCount: current.messageCount as number
+        messageCount: current.messageCount as number,
+        journalFileIdentity: attachment.journalFileIdentity,
+        journalDigest: attachment.journalDigest
       })
     }
     const verified = await checkpoint()
-    const after = await run(() => options.preflight(reference!, controller.signal))
-    if (
-      after.journalPath !== journalPath ||
-      after.ompSessionId !== reference.ompSessionId ||
-      after.cwd !== scope.projectRoot ||
-      (before && before.fileIdentity !== after.fileIdentity)
-    )
+    if (before && before.fileIdentity !== verified.journalFileIdentity)
       failure('IDENTITY_MISMATCH', 'Journal was deleted, replaced or rebound during recovery')
     // SDK may append an interrupted-turn marker or explicit model_change during switch.
     // A changed revision is allowed only after the same inode/header and final state are re-proved.
@@ -433,10 +441,10 @@ export async function recoverRemoteSession(
         signal: controller.signal
       })
     )
-    const finalFile = await run(() => options.preflight(reference!, controller.signal))
+    const finalFile = await checkpoint()
     if (
-      finalFile.fileIdentity !== after.fileIdentity ||
-      finalFile.fingerprint !== after.fingerprint
+      finalFile.journalFileIdentity !== verified.journalFileIdentity ||
+      finalFile.journalDigest !== verified.journalDigest
     )
       failure('IDENTITY_MISMATCH', 'Journal changed while history was read')
     await run(() => options.publish(reference!, verified, controller.signal))

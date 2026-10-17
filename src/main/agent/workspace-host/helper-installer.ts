@@ -13,8 +13,25 @@ import {
 import type { FileTransferCoordinator, TransferEvent } from '../transfer'
 import { remoteTransferHostKey } from '../transfer'
 import { hashLocalFile } from '../transfer/ssh-data-plane-local'
+import {
+  REMOTE_HELPER_READY_MARKER_FILENAME,
+  REMOTE_HELPER_READY_MARKER_MODE,
+  remoteHelperReadyMarkerIdentity,
+  remoteHelperReadyMarkerSha256,
+  serializeRemoteHelperReadyMarker,
+  type RemoteHelperInstallation,
+  type RemoteHelperReadyMarkerIdentity
+} from '../remote-helper-marker'
 import { saveCapabilityProfile, type CapabilityProfileKey } from './capability-profile-store'
 import type { ProbedHostCapabilityProfile } from './probe-parse'
+
+export {
+  REMOTE_HELPER_READY_MARKER_FILENAME,
+  REMOTE_HELPER_READY_MARKER_MODE,
+  REMOTE_HELPER_READY_MARKER_SCHEMA,
+  remoteHelperReadyMarkerIdentity,
+  type RemoteHelperReadyMarkerIdentity
+} from '../remote-helper-marker'
 
 const AFFECTED_CAPABILITIES = ['fs', 'exec', 'background'] as const
 
@@ -45,6 +62,11 @@ export interface RemoteHelperInstallResult {
   state: 'available' | 'degraded'
   reason: string
   remotePath?: string
+  remoteDirectory?: string
+  readyMarkerPath?: string
+  markerIdentity?: RemoteHelperReadyMarkerIdentity
+  readyMarkerSha256?: string
+  installation?: RemoteHelperInstallation
   profile: ProbedHostCapabilityProfile
 }
 
@@ -60,6 +82,9 @@ function fallbackProfile(
   return {
     ...profile,
     helperVersion: artifact.version,
+    helperReadyMarker: undefined,
+    helperManagedRoot: undefined,
+    helperDirectory: undefined,
     helperStatus: {
       state: 'degraded',
       reason,
@@ -102,11 +127,16 @@ async function checkedArtifact(
 
 function successfulProfile(
   profile: ProbedHostCapabilityProfile,
-  artifact: RemoteHelperArtifact
+  artifact: RemoteHelperArtifact,
+  managedRoot: string,
+  directory: string
 ): ProbedHostCapabilityProfile {
   return {
     ...profile,
     helperVersion: artifact.version,
+    helperReadyMarker: remoteHelperReadyMarkerIdentity(artifact),
+    helperManagedRoot: managedRoot,
+    helperDirectory: directory,
     helperStatus: {
       state: 'available',
       version: artifact.version,
@@ -131,8 +161,21 @@ function outputPath(result: RemoteExecResult, marker: string): string {
 async function installationBase(options: RemoteHelperInstallOptions): Promise<string> {
   const storage = options.profile.storage
   if (storage.homeWritable.state === 'available' && storage.homeExecutable.state === 'available') {
-    const result = await options.session.exec(`printf '${HOME_MARKER}%s\\n' "$HOME"`)
-    return posix.join(outputPath(result, HOME_MARKER), '.phi', 'remote')
+    const script = [
+      'set -eu',
+      'home=$(cd -- "$HOME" && pwd -P)',
+      '[ "$home" = "$HOME" ] && [ -d "$home" ] && [ ! -L "$home" ] && [ -O "$home" ] || exit 1',
+      'current=$home',
+      'for leaf in .phi remote; do',
+      '  next=$current/$leaf',
+      '  if [ -e "$next" ] || [ -L "$next" ]; then [ -d "$next" ] && [ ! -L "$next" ] && [ -O "$next" ] || exit 1; else mkdir -m 700 -- "$next" || exit 1; fi',
+      '  chmod 700 "$next" || exit 1',
+      '  current=$(cd -- "$next" && pwd -P)',
+      '  [ "$current" = "$next" ] && [ -O "$current" ] || exit 1',
+      'done',
+      `printf '${HOME_MARKER}%s\\n' "$current"`
+    ].join('\n')
+    return outputPath(await options.session.exec(`sh -c ${shellQuote(script)}`), HOME_MARKER)
   }
   const script = [
     'set -eu',
@@ -228,6 +271,35 @@ async function selftest(session: RemoteSshSession, remotePath: string): Promise<
     const reason = error instanceof Error ? error.message : 'invalid JSON'
     throw new Error(`remote helper selftest returned invalid output: ${reason}`)
   }
+}
+
+async function publishReadyMarker(
+  session: RemoteSshSession,
+  remoteDirectory: string,
+  remotePath: string,
+  identity: RemoteHelperReadyMarkerIdentity
+): Promise<string> {
+  const markerPath = posix.join(remoteDirectory, REMOTE_HELPER_READY_MARKER_FILENAME)
+  const temporaryTemplate = posix.join(
+    remoteDirectory,
+    `${REMOTE_HELPER_READY_MARKER_FILENAME}.tmp.XXXXXX`
+  )
+  const document = serializeRemoteHelperReadyMarker(identity)
+  const script = [
+    'set -eu',
+    `actual=$(sha256sum ${shellQuote(remotePath)})`,
+    'actual=${actual%% *}',
+    `[ "$actual" = ${shellQuote(identity.sha256)} ] || exit 74`,
+    `temporary=$(mktemp ${shellQuote(temporaryTemplate)})`,
+    `trap 'rm -f -- "$temporary"' EXIT HUP INT TERM`,
+    `printf '%s' ${shellQuote(document)} > "$temporary"`,
+    `chmod ${REMOTE_HELPER_READY_MARKER_MODE.toString(8)} "$temporary"`,
+    `mv -f -- "$temporary" ${shellQuote(markerPath)}`,
+    'trap - EXIT HUP INT TERM'
+  ].join('\n')
+  const result = await session.exec(`bash -c ${shellQuote(script)}`)
+  if (result.code !== 0) throw new Error('remote helper ready marker publication failed')
+  return markerPath
 }
 
 function reasonOf(error: unknown): string {
@@ -349,6 +421,9 @@ function profileWithoutStaleHelper(
   return {
     ...profile,
     helperVersion: undefined,
+    helperReadyMarker: undefined,
+    helperManagedRoot: undefined,
+    helperDirectory: undefined,
     helperStatus: undefined,
     fs: { state: 'available' },
     exec: { state: 'available' },
@@ -376,14 +451,24 @@ export function reconcileRemoteHelperProfile(
 export async function installRemoteHelper(
   options: RemoteHelperInstallOptions
 ): Promise<RemoteHelperInstallResult> {
+  options.session.remoteHelper = undefined
   const unsupported = unsupportedReason(options.profile)
   const reason = unsupported ?? (await checkedArtifact(options.artifact, options.signal))
   if (reason) return recordRemoteHelperFallback(options, reason)
   try {
-    const directory = posix.join(await installationBase(options), options.artifact.version)
-    const created = await options.session.exec(`umask 077; mkdir -p ${shellQuote(directory)}`)
-    if (created.code !== 0) throw new Error('remote helper directory creation failed')
+    const managedRoot = await installationBase(options)
+    const directory = posix.join(managedRoot, options.artifact.version)
+    const created = await options.session.exec(
+      `set -eu; umask 077; directory=${shellQuote(directory)}; if [ -e "$directory" ] || [ -L "$directory" ]; then [ -d "$directory" ] && [ ! -L "$directory" ] && [ -O "$directory" ] || exit 1; else mkdir -m 700 -- "$directory"; fi; chmod 700 "$directory"; [ "$(cd -- "$directory" && pwd -P)" = "$directory" ]`
+    )
+    if (created.code !== 0)
+      throw new Error(
+        `remote helper directory creation failed: ${created.stderr.trim() || created.code}`
+      )
     const remotePath = posix.join(directory, 'phi-helper')
+    const markerPath = posix.join(directory, REMOTE_HELPER_READY_MARKER_FILENAME)
+    const invalidated = await options.session.exec(`rm -f ${shellQuote(markerPath)}`)
+    if (invalidated.code !== 0) throw new Error('remote helper ready marker invalidation failed')
     await uploadWithRetry(options, remotePath)
     try {
       await selftest(options.session, remotePath)
@@ -391,9 +476,36 @@ export async function installRemoteHelper(
       await options.session.exec(`rm -f ${shellQuote(remotePath)}`).catch(() => undefined)
       throw error
     }
-    const profile = successfulProfile(options.profile, options.artifact)
+    const markerIdentity = remoteHelperReadyMarkerIdentity(options.artifact)
+    const readyMarkerPath = await publishReadyMarker(
+      options.session,
+      directory,
+      remotePath,
+      markerIdentity
+    )
+    const readyMarkerSha256 = remoteHelperReadyMarkerSha256(markerIdentity)
+    const installation: RemoteHelperInstallation = {
+      managedRoot,
+      remotePath,
+      remoteDirectory: directory,
+      readyMarkerPath,
+      markerIdentity,
+      readyMarkerSha256
+    }
+    options.session.remoteHelper = installation
+    const profile = successfulProfile(options.profile, options.artifact, managedRoot, directory)
     saveCapabilityProfile(options.profileKey, profile, options.agentDir)
-    return { state: 'available', reason: '', remotePath, profile }
+    return {
+      state: 'available',
+      reason: '',
+      remotePath,
+      remoteDirectory: directory,
+      readyMarkerPath,
+      markerIdentity,
+      readyMarkerSha256,
+      installation,
+      profile
+    }
   } catch (error) {
     return recordRemoteHelperFallback(options, reasonOf(error))
   }

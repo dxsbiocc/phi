@@ -90,6 +90,28 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
         child.on('close', (code, signal) => resolve({ stdout, stderr, code, signal }))
       })
     },
+    execWithInput(command, input, options) {
+      session.commands.push(command)
+      options?.signal?.throwIfAborted()
+      return new Promise((resolve, reject) => {
+        const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+        let stdout = ''
+        let stderr = ''
+        const stop = (): void => child.kill('SIGTERM')
+        const timer = options?.timeoutMs ? setTimeout(stop, options.timeoutMs) : undefined
+        options?.signal?.addEventListener('abort', stop, { once: true })
+        child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf-8')))
+        child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf-8')))
+        child.once('error', reject)
+        child.once('close', (code, signal) => {
+          if (timer) clearTimeout(timer)
+          options?.signal?.removeEventListener('abort', stop)
+          resolve({ stdout, stderr, code, signal })
+        })
+        child.stdin.on('error', () => undefined)
+        child.stdin.end(input)
+      })
+    },
     async execBounded(command, options) {
       options.signal?.throwIfAborted()
       const result = await session.exec(command)

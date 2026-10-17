@@ -1,5 +1,6 @@
 import type { Readable, Writable } from 'node:stream'
 
+import type { RemoteHelperReadyMarkerIdentity } from '../remote-helper-marker'
 import type { FileTransferCoordinator } from './coordinator'
 import type { TransferEvent } from './types'
 
@@ -24,7 +25,7 @@ export interface RemoteUploadFileOptions {
   coordinator?: FileTransferCoordinator
   agentDir?: string
   helperConnect?: () => Promise<TransferStdioProcess>
-  helperVersion?: string
+  helperIdentity?: RemoteHelperReadyMarkerIdentity
   reuseVerifiedDestination?: boolean
   forceSsh?: boolean
 }

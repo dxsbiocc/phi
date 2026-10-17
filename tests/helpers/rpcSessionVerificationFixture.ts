@@ -40,6 +40,7 @@ export async function createSessionVerificationFixture(
   const identity: SessionVerificationIdentity = {
     nonce: 'n'.repeat(32),
     phiSessionId: 'phi-proof',
+    projectId: 'project',
     generation: 1,
     projectRoot,
     directory,

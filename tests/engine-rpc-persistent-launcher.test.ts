@@ -29,6 +29,7 @@ import { shellQuote } from '../src/main/agent/wrappers/remote-ssh-session'
 import { startLoopbackModel } from './engine-contract/loopback-model'
 import { createModelProxyConfigFixture } from './helpers/modelProxyConfigFixture'
 import { deferred } from './helpers/rpc-initialization-wire'
+import type { RpcStartupFile } from '../src/main/agent/engine/rpc/startup-transaction'
 import {
   createPersistentLauncherFixture,
   scanPersistentLauncherFiles,
@@ -52,6 +53,7 @@ test('private config writer and metadata reader support default SDK agent layout
   const agentDir = join(home, '.omp/agent')
   await mkdir(agentDir, { recursive: true, mode: 0o700 })
   const nonce = dirname(home).split('/').at(-1)!
+  const queued: RpcStartupFile[] = []
   const options = {
     session: f.session,
     agentDir,
@@ -60,9 +62,17 @@ test('private config writer and metadata reader support default SDK agent layout
     gatewayGeneration: 1,
     remotePort: 41000,
     gatewayBearer: 'Z'.repeat(43),
-    models: [safeModel]
+    models: [safeModel],
+    startup: {
+      addDirectory: () => undefined,
+      addFile(file: RpcStartupFile) {
+        queued.push(file)
+      }
+    }
   }
   const published = await writeRemoteModelProxyConfig(options)
+  for (const file of queued)
+    await writeFile(file.path, file.bytes, { mode: file.mode, flag: file.ifAbsent ? 'wx' : 'w' })
   assert.equal(published.nonce, nonce)
   const config: RpcBootstrapConfig = {
     schema: 1,
@@ -88,7 +98,6 @@ test('private config writer and metadata reader support default SDK agent layout
   await rename(dirname(agentDir), old)
   await symlink(old, dirname(agentDir))
   assert.throws(() => loadRpcModelMetadata(agentDir, config), /canonical/)
-  await assert.rejects(writeRemoteModelProxyConfig(options), /write failed/)
 })
 
 test('persistent mode binds derived storage and keeps generation secrets ephemeral while its lease belongs to the channel', async (t) => {
@@ -203,10 +212,10 @@ test(
     t.after(provider.close)
     const bearers: string[] = []
     const factory = await f.factory({
-      prepareSession: async ({ agentDir }) => {
+      prepareSession: async ({ agentDir, startup }) => {
         const bearer = `synthetic-launcher-${randomBytes(24).toString('hex')}`
         bearers.push(bearer)
-        await writePersistentLauncherModel(agentDir, provider.url, bearer)
+        writePersistentLauncherModel(startup, agentDir, provider.url, bearer)
       }
     })
     const first = await f.connect(factory)
@@ -341,7 +350,7 @@ test('registered storage for another Phi session, project or runtime is released
   )
 })
 
-test('proxy preparation failure releases acquired storage and preserves journals and SSH master', async (t) => {
+test('proxy preparation failure releases acquired storage without creating remote startup paths', async (t) => {
   const f = await createPersistentLauncherFixture()
   t.after(f.cleanup)
   const factory = await f.factory({
@@ -354,8 +363,8 @@ test('proxy preparation failure releases acquired storage and preserves journals
     /Synthetic proxy preparation failure/
   )
   assert.equal(f.preparations[0].lease.signal.aborted, true)
-  assert.deepEqual(await readdir(join(f.runtimeRoot, 'rpc-sessions')), [])
-  assert.ok((await stat(f.paths.journals)).isDirectory())
+  await assert.rejects(readdir(join(f.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
+  await assert.rejects(stat(f.paths.journals), { code: 'ENOENT' })
   assert.equal(
     f.session.commands.some((command) => command.includes('exec env -i')),
     false
@@ -408,9 +417,8 @@ test(
     t.after(f.cleanup)
     const writer = await createModelProxyConfigFixture()
     t.after(writer.cleanup)
-    let metadata: ReturnType<typeof loadRpcModelMetadata>
     const factory = await f.factory({
-      prepareSession: async ({ agentDir }) => {
+      prepareSession: async ({ agentDir, startup }) => {
         await writeRemoteModelProxyConfig({
           session: writer.session,
           agentDir,
@@ -419,27 +427,32 @@ test(
           gatewayGeneration: 1,
           remotePort: 41000,
           gatewayBearer: 'N'.repeat(43),
-          models: [safeModel]
+          models: [safeModel],
+          startup
         })
-        await writeFile(
-          join(agentDir, 'config.yml'),
-          JSON.stringify({
-            defaultProvider: safeModel.provider,
-            defaultModel: safeModel.id,
-            compaction: { enabled: false },
-            extensions: [],
-            skills: [],
-            memory: { enabled: false }
-          }),
-          { mode: 0o600 }
-        )
-        const config = JSON.parse(
-          await readFile(join(dirname(dirname(dirname(agentDir))), 'config.json'), 'utf8')
-        ) as RpcBootstrapConfig
-        metadata = loadRpcModelMetadata(agentDir, config)
+        startup.addFile({
+          item: 'fixture-agent-config',
+          path: join(agentDir, 'config.yml'),
+          bytes: Buffer.from(
+            JSON.stringify({
+              defaultProvider: safeModel.provider,
+              defaultModel: safeModel.id,
+              compaction: { enabled: false },
+              extensions: [],
+              skills: [],
+              memory: { enabled: false }
+            })
+          ),
+          mode: 0o600,
+          ifAbsent: true
+        })
       }
     })
     const first = await f.connect(factory)
+    const config = JSON.parse(
+      await readFile(join(dirname(first.home), 'config.json'), 'utf8')
+    ) as RpcBootstrapConfig
+    const metadata = loadRpcModelMetadata(join(first.home, '.omp/agent'), config)
     assert.ok(metadata)
     await selectRemoteModel(first.connection, metadata, safeModel, new AbortController().signal)
     const state = await first.connection.request<{
@@ -464,12 +477,12 @@ test(
     let defaultAgent = ''
     let legacyAgent = ''
     const factory = await f.factory({
-      prepareSession: async ({ homePath, agentDir }) => {
+      prepareSession: async ({ homePath, agentDir, startup }) => {
         defaultAgent = agentDir
         legacyAgent = join(homePath, 'agent')
-        await mkdir(legacyAgent, { mode: 0o700 })
-        await writePersistentLauncherModel(agentDir, provider.url, 'synthetic-default-control')
-        await writePersistentLauncherModel(legacyAgent, provider.url, 'synthetic-legacy-control')
+        startup.addDirectory({ path: legacyAgent, ifAbsent: true })
+        writePersistentLauncherModel(startup, agentDir, provider.url, 'synthetic-default-control')
+        writePersistentLauncherModel(startup, legacyAgent, provider.url, 'synthetic-legacy-control')
       }
     })
     // Negative control changes only the emitted CLI agent-dir environment. The SDK is untouched.

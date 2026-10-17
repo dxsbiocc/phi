@@ -40,7 +40,13 @@ func runCLI(args []string, input io.Reader, output, errorOutput io.Writer) error
 	if len(args) > 0 && args[0] == "serve" {
 		return serveCLI(args[1:], input, output, errorOutput)
 	}
-	return fmt.Errorf("usage: phi-helper [--version|--selftest|serve --root <path>]")
+	if len(args) > 0 && args[0] == "project-plugin-guard" {
+		return projectPluginGuardCLI(args[1:], output, errorOutput)
+	}
+	if len(args) > 0 && args[0] == "remote-session-preflight" {
+		return remoteSessionPreflightCLI(args[1:], output, errorOutput)
+	}
+	return fmt.Errorf("usage: phi-helper [--version|--selftest|project-plugin-guard --root <path>|remote-session-preflight ...|serve --root <path>]")
 }
 
 func serveCLI(args []string, input io.Reader, output, errorOutput io.Writer) error {

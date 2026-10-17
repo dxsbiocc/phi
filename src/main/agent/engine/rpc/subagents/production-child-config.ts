@@ -1,13 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, posix } from 'node:path'
+import { posix } from 'node:path'
 import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../../agents/definition'
 import { AGENT_REPORT_PROTOCOL } from '../../../agents/report'
 import type { RemoteWorkspaceHostBinding } from '../../../remote-workspace-boundary'
 import type { WorkspaceHost } from '../../../workspace-host/types'
 import type { RemoteUploadFileOptions } from '../../../transfer/remote-upload-types'
-import { shellQuote as q } from '../../../wrappers/remote-ssh-session'
 import type { ModelGatewayModelRef, SafeModelDescriptor } from '../../model-gateway-types'
 import {
   MAX_RPC_CHILD_CONFIG_BYTES,
@@ -17,7 +14,6 @@ import {
   type RpcChildRuntimeConfig
 } from '../../phi-extension/lib/rpc-child-config'
 import { validateRpcChildRoute } from '../../phi-extension/lib/rpc-child-protocol'
-import { privateRemotePrefix } from '../extension-deployment/remote-commands'
 import type { PhiExtensionFile } from '../extension-deployment/types'
 import { storageHost } from '../session-storage/remote-preflight'
 import type { RpcRuntimePreparationContext } from '../ssh-stdio-factory'
@@ -272,7 +268,8 @@ export async function publishProductionChildConfig(options: {
   const storage = context.storage
   const config = prepared.config
   const transfer = host.transfer
-  if (!files || !storage || storageHost(storage) !== host || !transfer)
+  const startup = context.startup
+  if (!files || !storage || storageHost(storage) !== host || !transfer || !startup)
     throw new Error('Child publication requires its compiler output and registered writer host')
   storage.lease.assertActive()
   context.signal.throwIfAborted()
@@ -297,101 +294,30 @@ export async function publishProductionChildConfig(options: {
   const sidecar = Buffer.from(JSON.stringify(config))
   if (sidecar.length > MAX_RPC_CHILD_CONFIG_BYTES)
     throw new Error('Child configuration exceeds its supported byte limit')
-  const prefix = privateRemotePrefix(storage.scope.runtimeRoot)
-  const run = async (command: string): Promise<void> => {
-    storage.lease.assertActive()
-    context.signal.throwIfAborted()
-    const result = await host.exec.run(['sh', '-c', `${prefix}\n${command}`], {
-      cwd: storage.scope.runtimeRoot,
-      signal: context.signal,
-      timeoutMs: 30000,
-      maxOutputBytes: 1024
-    })
-    if (result.code !== 0 || result.truncated || result.terminationReason)
-      throw new Error('Cannot publish private child runtime configuration')
-    storage.lease.assertActive()
-    context.signal.throwIfAborted()
-  }
-  const runChecks = async (checks: readonly string[]): Promise<void> => {
-    // Leave room below Linux's 128 KiB single-argument limit for shell wrapping.
-    const maximum = 32 * 1024
-    let batch: string[] = []
-    let bytes = Buffer.byteLength(prefix) + 1
-    for (const check of checks) {
-      const size = Buffer.byteLength(check) + 1
-      if (Buffer.byteLength(prefix) + 1 + size > maximum)
-        throw new Error('Private child metadata check exceeds its command byte limit')
-      if (bytes + size > maximum) {
-        await run(batch.join('\n'))
-        batch = []
-        bytes = Buffer.byteLength(prefix) + 1
-      }
-      batch.push(check)
-      bytes += size
-    }
-    if (batch.length) await run(batch.join('\n'))
-  }
   const publication = [
     ...files.map((file) => ({ ...file, destination: posix.join(context.agentDir, file.path) })),
     {
       path: RPC_CHILD_RUNTIME_FILE,
       bytes: sidecar,
-      sha256: createHash('sha256').update(sidecar).digest('hex'),
       destination: posix.join(context.generationDirectory, RPC_CHILD_RUNTIME_FILE)
     }
   ]
+  if (files.some((file) => createHash('sha256').update(file.bytes).digest('hex') !== file.sha256))
+    throw new Error('Private child artifact differs from its compiler digest')
   const agentDirectory = posix.join(context.agentDir, 'agents')
   const skillDirectory = posix.join(context.agentDir, CHILD_SKILL_DIRECTORY)
-  const checks = [
-    `private_dir ${q(context.generationDirectory)}`,
-    `[ "$(cd -- ${q(context.generationDirectory)} && pwd -P)" = ${q(context.generationDirectory)} ] || fail 'Child generation directory is not canonical'`,
-    `private_dir ${q(context.agentDir)}`,
-    `[ "$(cd -- ${q(context.agentDir)} && pwd -P)" = ${q(context.agentDir)} ] || fail 'Child agent directory is not canonical'`,
-    `[ ! -e ${q(agentDirectory)} ] && [ ! -L ${q(agentDirectory)} ] || fail 'Child generation directory already exists'`,
-    `private_dir ${q(agentDirectory)}`
-  ]
+  startup.addDirectory({ path: agentDirectory, ifAbsent: true })
   if (files.some((file) => file.path.startsWith(CHILD_SKILL_DIRECTORY + '/')))
-    checks.push(
-      `[ ! -e ${q(skillDirectory)} ] && [ ! -L ${q(skillDirectory)} ] || fail 'Child skill directory already exists'`,
-      `private_dir ${q(skillDirectory)}`
-    )
-  await runChecks([
-    ...checks,
-    ...publication.map(
-      (file) =>
-        `[ ! -e ${q(file.destination)} ] && [ ! -L ${q(file.destination)} ] || fail 'Child generation file already exists'`
-    )
-  ])
-  const local = await mkdtemp(join(tmpdir(), 'phi-child-publication-'))
-  try {
-    const upload = async (file: (typeof publication)[number], index: number): Promise<void> => {
-      storage.lease.assertActive()
-      context.signal.throwIfAborted()
-      const source = join(local, String(index))
-      await writeFile(source, file.bytes, { mode: 0o600, flag: 'wx' })
-      storage.lease.assertActive()
-      context.signal.throwIfAborted()
-      await transfer.uploadFile(source, file.destination, {
-        ...options.uploadOptions,
-        signal: context.signal,
-        expectedSha256: file.sha256
-      })
-      storage.lease.assertActive()
-      context.signal.throwIfAborted()
-    }
-    const verify = (file: (typeof publication)[number]): string =>
-      `private_file ${q(file.destination)}\n[ "$(hash_file ${q(file.destination)})" = ${q(file.sha256)} ] || fail 'Private child artifact was corrupted'`
-    const artifacts = publication.slice(0, -1)
-    const last = publication[publication.length - 1]
-    for (const [index, file] of artifacts.entries()) await upload(file, index)
-    await runChecks([
-      ...artifacts.map(verify),
-      `[ ! -e ${q(last.destination)} ] && [ ! -L ${q(last.destination)} ] || fail 'Child generation file already exists'`
-    ])
-    // The sidecar is a readiness barrier: no consumer may see it before artifacts verify.
-    await upload(last, publication.length - 1)
-    await runChecks([verify(last)])
-  } finally {
-    await rm(local, { recursive: true, force: true })
+    startup.addDirectory({ path: skillDirectory, ifAbsent: true })
+  for (const [index, file] of publication.entries()) {
+    startup.addFile({
+      item: index === publication.length - 1 ? 'child-runtime' : `child-artifact-${index}`,
+      path: file.destination,
+      bytes: file.bytes,
+      mode: 0o600,
+      ifAbsent: true
+    })
   }
+  storage.lease.assertActive()
+  context.signal.throwIfAborted()
 }

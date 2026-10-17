@@ -44,7 +44,7 @@ import {
 } from './session-recovery'
 import { createRpcSessionVerifier } from './session-verification'
 import { preflightRemoteJournal } from './session-storage/remote-preflight'
-import { publishRemoteSessionManifest } from './session-storage/remote-manifest'
+import { publishRemoteSessionManifestOverRpc } from './session-manifest-publication'
 import type { RemoteSessionStoragePreparation } from './session-storage/types'
 import type { RpcSessionCreateParams } from './rpc-session-backend'
 import type { RpcConnectionOptions, RpcPromptOptions, RpcPromptResult, RpcFrame } from './types'
@@ -673,6 +673,7 @@ export class RemoteSessionRuntime {
                 cwd: context.params.cwd
               },
               capability: resultCapability,
+              startup: context.startup,
               signal: context.signal,
               uploadOptions: options.transport.runtime.uploadOptions
             })
@@ -776,6 +777,7 @@ export class RemoteSessionRuntime {
       identity: {
         nonce: config.nonce,
         phiSessionId: config.phiSessionId,
+        projectId: config.projectId,
         generation: config.generation,
         projectRoot: config.projectRoot,
         directory: config.directory,
@@ -784,6 +786,7 @@ export class RemoteSessionRuntime {
       },
       assertActive: this.active
     })
+    let startupPreflight = this.transport.startupPreflight(this.params)
     const result = await recoverRemoteSession({
       action: options.action,
       storage,
@@ -791,8 +794,14 @@ export class RemoteSessionRuntime {
       control,
       signal: this.lifetime.signal,
       availableModels: options.transport.models,
-      preflight: (reference) =>
-        step('journal_preflight', () => preflightRemoteJournal(storage, reference)),
+      preflight: (reference) => {
+        if (startupPreflight) {
+          const proof = startupPreflight
+          startupPreflight = undefined
+          return Promise.resolve(proof)
+        }
+        return step('journal_preflight', () => preflightRemoteJournal(storage, reference))
+      },
       verifySavedState: (reference, signal) =>
         step('journal_saved_state', () => this.verifier!.verifySavedState(reference, signal)),
       selectModel: async (_reference, selection, signal) => {
@@ -868,7 +877,23 @@ export class RemoteSessionRuntime {
       },
       publish: async (reference, _checkpoint, signal) => {
         await step('manifest_publication', () =>
-          publishRemoteSessionManifest(storage, reference, signal)
+          publishRemoteSessionManifestOverRpc({
+            connection: this.connection,
+            control,
+            identity: {
+              nonce: config.nonce,
+              phiSessionId: config.phiSessionId,
+              projectId: config.projectId,
+              generation: config.generation,
+              projectRoot: config.projectRoot,
+              directory: config.directory,
+              journals: config.journals,
+              blobs: config.blobs
+            },
+            reference,
+            signal,
+            assertActive: this.active
+          })
         )
       },
       interrupt: (error) => this.close(error)
@@ -1016,7 +1041,12 @@ export class RemoteSessionRuntime {
       })
     }
   }
-  private async verifyCurrent(snapshot: RemoteRuntimeSnapshot): Promise<RemoteHistoryCheckpoint> {
+  private async verifyCurrent(snapshot: RemoteRuntimeSnapshot): Promise<
+    RemoteHistoryCheckpoint & {
+      readonly journalFileIdentity: string
+      readonly journalDigest: string
+    }
+  > {
     this.active()
     const proof = await this.verifier!.verifyAttachment(snapshot.checkpoint, this.lifetime.signal)
     const state = await this.connection.request<{
@@ -1053,7 +1083,9 @@ export class RemoteSessionRuntime {
     return Object.freeze({
       ...snapshot.checkpoint,
       leafId: proof.leafId,
-      messageCount: state.messageCount
+      messageCount: state.messageCount,
+      journalFileIdentity: proof.journalFileIdentity,
+      journalDigest: proof.journalDigest
     })
   }
   async prompt(
@@ -1148,7 +1180,6 @@ export class RemoteSessionRuntime {
       ...(sessionName === undefined ? {} : { sessionName })
     }
     const checkpoint = await this.verifyCurrent(old)
-    const before = await preflightRemoteJournal(this.storage!, old.reference)
     const messages = await readRemoteHistory({
       connection: this.connection,
       control: this.connection.bindControl(),
@@ -1157,8 +1188,11 @@ export class RemoteSessionRuntime {
       readCheckpoint: () => this.verifyCurrent(old)
     })
     assertSafeBrowserHistory(messages)
-    const after = await preflightRemoteJournal(this.storage!, old.reference)
-    if (before.fileIdentity !== after.fileIdentity || before.fingerprint !== after.fingerprint)
+    const after = await this.verifyCurrent(old)
+    if (
+      checkpoint.journalFileIdentity !== after.journalFileIdentity ||
+      checkpoint.journalDigest !== after.journalDigest
+    )
       throw new Error('Remote journal changed during checkpoint')
     const snapshot = Object.freeze({
       ...old,
@@ -1166,7 +1200,23 @@ export class RemoteSessionRuntime {
       messages,
       modelPolicy: 'maintained' as const
     })
-    await publishRemoteSessionManifest(this.storage!, old.reference, this.lifetime.signal)
+    await publishRemoteSessionManifestOverRpc({
+      connection: this.connection,
+      control: this.connection.bindControl(),
+      identity: {
+        nonce: this.config!.nonce,
+        phiSessionId: this.config!.phiSessionId,
+        projectId: this.config!.projectId,
+        generation: this.config!.generation,
+        projectRoot: this.config!.projectRoot,
+        directory: this.config!.directory,
+        journals: this.config!.journals,
+        blobs: this.config!.blobs
+      },
+      reference: old.reference,
+      signal: this.lifetime.signal,
+      assertActive: this.active
+    })
     await withRemoteSignal(
       Promise.resolve().then(() => {
         this.active()

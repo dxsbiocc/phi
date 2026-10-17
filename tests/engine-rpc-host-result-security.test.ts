@@ -32,7 +32,7 @@ import {
   RpcHostToolBridge,
   type RpcHostToolRun
 } from '../src/main/agent/engine/rpc/host-tool-bridge'
-import { resultHost } from './helpers/rpcHostResultFixture'
+import { resultHost, resultStartup } from './helpers/rpcHostResultFixture'
 import { hostToolWire, hostUntil } from './helpers/rpc-host-tool-wire'
 
 function fixture(): {
@@ -204,6 +204,47 @@ test('private file consumes once and aborted reads never admit payload', () => {
     f.close()
   }
 })
+
+test('host result startup queues its private directory without a remote command', async () => {
+  const f = fixture()
+  const lifetime = new AbortController()
+  const host = resultHost(f.root)
+  let runs = 0
+  let queued: { readonly path: string; readonly ifAbsent?: boolean } | undefined
+  const run = host.exec.run.bind(host.exec)
+  host.exec.run = (...args) => {
+    runs++
+    return run(...args)
+  }
+  const delivery = await RpcHostResultDelivery.create({
+    host,
+    startup: {
+      addDirectory(directory) {
+        queued = directory
+      },
+      addFile() {
+        assert.fail('Host result startup must not enqueue a file')
+      }
+    },
+    generationDirectory: f.root,
+    lease: {
+      leaseId: 'lease',
+      generation: 1,
+      phiSessionId: 'phi',
+      projectId: 'project',
+      cwd: f.root
+    },
+    capability: f.capability,
+    signal: lifetime.signal
+  })
+  try {
+    assert.equal(runs, 0)
+    assert.deepEqual(queued, { path: delivery.directory, ifAbsent: true })
+  } finally {
+    await delivery.dispose()
+    f.close()
+  }
+})
 test('receipt HMAC binds every authority field and rejects paths, stale generations and other capabilities', () => {
   const f = fixture()
   try {
@@ -331,6 +372,7 @@ test('cancelled queued publication cannot upload, publish or revive a retired ge
   })
   const delivery = await RpcHostResultDelivery.create({
     host,
+    startup: resultStartup(),
     generationDirectory: f.root,
     lease: {
       leaseId: 'lease',
@@ -389,6 +431,7 @@ test('publication reserves a bounded queue before waiting behind ordered progres
     host: resultHost(f.root, async () => {
       uploads++
     }),
+    startup: resultStartup(),
     generationDirectory: f.root,
     lease: {
       leaseId: 'lease',
@@ -454,6 +497,7 @@ test('complete result byte reservations reject aggregate overflow before any upl
     host: resultHost(f.root, async () => {
       uploads++
     }),
+    startup: resultStartup(),
     generationDirectory: f.root,
     lease: {
       leaseId: 'lease',
@@ -505,6 +549,7 @@ test('opt-in delivery preserves legacy small-success serialization without uploa
     host: resultHost(f.root, async () => {
       uploads++
     }),
+    startup: resultStartup(),
     generationDirectory: f.root,
     lease: {
       leaseId: 'lease',
@@ -568,24 +613,23 @@ test('opt-in delivery preserves legacy small-success serialization without uploa
   }
 })
 
-test('retirement during private directory creation preserves the primary abort and cleans staging', async () => {
+test('retirement while queueing the private directory preserves the primary abort', async () => {
   const f = fixture()
   const lifetime = new AbortController()
   const host = resultHost(f.root)
-  const run = host.exec.run.bind(host.exec)
-  let first = true
-  host.exec.run = async (...args) => {
-    const result = await run(...args)
-    if (first) {
-      first = false
-      lifetime.abort(new Error('initialization retired'))
-    }
-    return result
-  }
+  const reason = new Error('initialization retired')
   try {
     await assert.rejects(
       RpcHostResultDelivery.create({
         host,
+        startup: {
+          addDirectory() {
+            lifetime.abort(reason)
+          },
+          addFile() {
+            assert.fail('Host result startup must not enqueue a file')
+          }
+        },
         generationDirectory: f.root,
         lease: {
           leaseId: 'lease',
@@ -597,7 +641,7 @@ test('retirement during private directory creation preserves the primary abort a
         capability: f.capability,
         signal: lifetime.signal
       }),
-      /initialization retired/
+      (error) => error === reason
     )
     assert.deepEqual(readdirSync(f.root), [f.directory.split('/').at(-1)])
   } finally {
@@ -611,6 +655,7 @@ test('terminal receipt cleanup uses the captured run even after the desktop run 
   const wire = await hostToolWire()
   const delivery = await RpcHostResultDelivery.create({
     host: resultHost(f.root),
+    startup: resultStartup(),
     generationDirectory: f.root,
     lease: {
       leaseId: 'lease',

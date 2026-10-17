@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +8,7 @@ import type {
   RemoteExecResult,
   RemoteSshSession
 } from '../../src/main/agent/wrappers/remote-ssh-session'
+import type { RpcStartupTransactionWriter } from '../../src/main/agent/engine/rpc/startup-transaction'
 
 export async function createModelProxyConfigFixture(): Promise<{
   root: string
@@ -14,6 +16,7 @@ export async function createModelProxyConfigFixture(): Promise<{
   projectRoot: string
   agentDir: string
   session: Required<Pick<RemoteSshSession, 'execWithInput' | 'execBounded'>>
+  startup: RpcStartupTransactionWriter
   records: Array<{ command: string; input?: string }>
   generation(): Promise<string>
   setPath(path: string): void
@@ -80,6 +83,17 @@ export async function createModelProxyConfigFixture(): Promise<{
       stderrTruncated: false
     })
   }
+  const startup: RpcStartupTransactionWriter = {
+    addDirectory(directory) {
+      mkdirSync(directory.path, { recursive: false, mode: 0o700 })
+    },
+    addFile(file) {
+      writeFileSync(file.path, file.bytes, {
+        mode: file.mode,
+        flag: file.ifAbsent ? 'wx' : 'w'
+      })
+    }
+  }
   return {
     root,
     runtimeRoot,
@@ -87,6 +101,7 @@ export async function createModelProxyConfigFixture(): Promise<{
     agentDir: await generation(),
     generation,
     session,
+    startup,
     records,
     setPath(value) {
       path = value

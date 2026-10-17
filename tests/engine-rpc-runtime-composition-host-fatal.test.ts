@@ -87,6 +87,7 @@ for (const observerThrows of [false, true])
               runtimeHost: f.f.host,
               scope: { ...f.f.scope, phiSessionId: otherId },
               signal,
+              deferToStartup: true,
               openLockStdio: (command) => f.f.session.openStdio!(command)
             })
             f.f.preparations.push(storage)

@@ -1,10 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { shellQuote as q } from '../../../wrappers/remote-ssh-session'
+import {
+  deploymentReadyMarkerCheckCommand,
+  deploymentReadyMarkerPath,
+  phiExtensionReadyMarkerIdentity,
+  writeDeploymentReadyMarkerCommand
+} from '../deployment-ready-marker'
 import { createPhiExtensionArchive } from './archive'
 import { validatePhiExtensionBundle } from './bundle'
 import { unpackBundleCommand } from './remote-archive'
-import { privateRemotePrefix, verifyBundleCommand } from './remote-commands'
+import { privateRemotePrefix } from './remote-commands'
 import type { ExtensionDeploymentOptions, PhiExtensionDeployment } from './types'
 import { cacheExtensionSnapshot } from './snapshot-cache'
 import { acquireExtensionLock, type ExtensionLock } from './remote-lock'
@@ -117,8 +123,15 @@ async function deploy(options: ExtensionDeploymentOptions): Promise<PhiExtension
       signal
     })
     void lock.lost.catch((error: unknown) => controller.abort(error))
+    await run(`[ ! -L ${q(directory)} ] || fail 'Symbolic extension destination'`)
     if (
-      (await run(verifyBundleCommand(directory, bundle, manifestHash))) === 'PHI_EXTENSION_VALID'
+      (await run(
+        deploymentReadyMarkerCheckCommand(
+          deploymentReadyMarkerPath(directory),
+          phiExtensionReadyMarkerIdentity(bundle.contentHash),
+          'PHI_EXTENSION_VALID'
+        )
+      )) === 'PHI_EXTENSION_VALID'
     ) {
       options.onProgress?.({ phase: 'ready' })
       return result(true)
@@ -169,6 +182,12 @@ async function deploy(options: ExtensionDeploymentOptions): Promise<PhiExtension
       )) !== 'PHI_EXTENSION_VALID'
     )
       throw new Error('Uploaded Phi extension bundle did not pass complete-file verification')
+    await run(
+      writeDeploymentReadyMarkerCommand(
+        deploymentReadyMarkerPath(staging),
+        phiExtensionReadyMarkerIdentity(bundle.contentHash)
+      )
+    )
     await run(`[ ! -L ${q(directory)} ] || fail 'Symbolic extension destination'
 if [ -e ${q(directory)} ]; then owned ${q(directory)}; mv -- ${q(directory)} ${q(quarantine)}; fi
 if mv -- ${q(staging)} ${q(directory)}; then rm -rf -- ${q(quarantine)};

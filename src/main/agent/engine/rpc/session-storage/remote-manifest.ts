@@ -53,6 +53,17 @@ export function validateRemoteSessionManifest(
   return Object.freeze({ ...manifest })
 }
 
+export function serializeRemoteSessionManifest(
+  preparation: RemoteSessionStoragePreparation,
+  reference: RemoteSessionReference
+): Buffer {
+  const manifest = validateRemoteSessionManifest(preparation, { ...reference, schemaVersion: 1 })
+  const content = Buffer.from(`${JSON.stringify(manifest)}\n`)
+  if (content.length > MANIFEST_MAX_BYTES)
+    throw new RemoteSessionStorageError('FILE_INVALID', 'Remote manifest exceeds its byte limit')
+  return content
+}
+
 export async function readRemoteSessionManifest(
   preparation: RemoteSessionStoragePreparation,
   signal?: AbortSignal
@@ -96,9 +107,7 @@ export async function publishRemoteSessionManifest(
   signal?: AbortSignal
 ): Promise<Readonly<RemoteSessionServerManifest>> {
   const manifest = validateRemoteSessionManifest(preparation, { ...reference, schemaVersion: 1 })
-  const content = `${JSON.stringify(manifest)}\n`
-  if (Buffer.byteLength(content) > MANIFEST_MAX_BYTES)
-    throw new RemoteSessionStorageError('FILE_INVALID', 'Remote manifest exceeds its byte limit')
+  const content = serializeRemoteSessionManifest(preparation, reference).toString('utf8')
   const operationSignal = signal
     ? AbortSignal.any([preparation.lease.signal, signal])
     : preparation.lease.signal

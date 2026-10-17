@@ -29,11 +29,11 @@ export function goBinaryPath(cacheRoot = goCacheRoot()) {
 export function goToolchainEnvironment(baseEnv = process.env, cacheRoot = goCacheRoot()) {
   return {
     ...baseEnv,
-    GOCACHE: path.join(cacheRoot, 'gocache'),
+    GOCACHE: baseEnv.GOCACHE || path.join(cacheRoot, 'gocache'),
     GOENV: 'off',
     GOFLAGS: '-mod=readonly',
-    GOMODCACHE: path.join(cacheRoot, 'gopath', 'pkg', 'mod'),
-    GOPATH: path.join(cacheRoot, 'gopath'),
+    GOMODCACHE: baseEnv.GOMODCACHE || path.join(cacheRoot, 'gopath', 'pkg', 'mod'),
+    GOPATH: baseEnv.GOPATH || path.join(cacheRoot, 'gopath'),
     GOPROXY: 'off',
     GOSUMDB: 'off',
     GOTOOLCHAIN: 'local',
