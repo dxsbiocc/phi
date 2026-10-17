@@ -34,6 +34,7 @@ import type {
   PhiEngine,
   PhiSessionCreateParams
 } from '../../src/main/agent/engine/types'
+import type { PhiAgentDefinition } from '../../src/main/agent/agents/definition'
 
 export interface FacadeRegressionFixture {
   f: Awaited<ReturnType<typeof createPersistentLauncherFixture>>
@@ -178,6 +179,17 @@ export async function facadeRoutingRegressionFixture(): Promise<FacadeRegression
     return found
   }
   const bundle = await createPhiExtensionBundle(join(repo, 'src/main/agent/engine/phi-extension'))
+  const childDefinition: PhiAgentDefinition = {
+    name: 'DisconnectFixture',
+    description: 'Keep the production child runtime attached during transport loss',
+    tools: ['read'],
+    skills: [],
+    visibility: 'entry',
+    warnings: [],
+    source: 'phi',
+    filePath: '/trusted-fixture/DisconnectFixture.md',
+    systemPrompt: 'DISCONNECT_FIXTURE'
+  }
   const session: SelectedFacadeRuntime['session'] = {
     ...f.session,
     async execWithInput(command, input, options) {
@@ -263,6 +275,9 @@ export async function facadeRoutingRegressionFixture(): Promise<FacadeRegression
       recovery,
       recentUserImages: () => [],
       desktopToolNames: [],
+      ...(process.env.PHI_FACADE_REGRESSION_MODE === 'disconnect-dispose-resume'
+        ? { foregroundChildren: { definitions: [childDefinition] } }
+        : {}),
       approval: { shouldGate: () => true, requestToolApproval: () => 'denied' }
     })
   })

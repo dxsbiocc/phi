@@ -1223,7 +1223,11 @@ export class RemoteSessionRuntime {
         stopError = error
       }
       try {
-        if (this.children && !this.connection.bindControl().signal.aborted) {
+        if (
+          this.children &&
+          !this.connection.isClosed &&
+          !this.connection.bindControl().signal.aborted
+        ) {
           const parents = new Set(
             this.children
               .listRuns()

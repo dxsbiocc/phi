@@ -32,6 +32,7 @@ export interface LocalShellSession extends RemoteSshSession {
     options: RemoteUploadFileOptions | undefined
   }>
   closed: boolean
+  killLatestStdio(signal?: NodeJS.Signals): void
 }
 
 function signalStdioProcess(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -52,6 +53,11 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
     commands: [],
     uploads: [],
     closed: false,
+    killLatestStdio(signal = 'SIGKILL') {
+      const child = [...stdioProcesses].at(-1)
+      if (!child) throw new Error('No local stdio process is available')
+      signalStdioProcess(child, signal)
+    },
     exec(command: string): Promise<RemoteExecResult> {
       session.commands.push(command)
       // The macOS test sandbox denies `ps`. Simulate its run-script identity

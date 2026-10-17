@@ -115,6 +115,10 @@ export class RpcConnection {
     return this.current?.phase === 'ready'
   }
 
+  get isClosed(): boolean {
+    return this.current?.phase === 'closed'
+  }
+
   onEvent(listener: (frame: RpcFrame) => void): () => void {
     this.events.add(listener)
     return () => {
@@ -256,6 +260,10 @@ export class RpcConnection {
   }
 
   async abort(): Promise<void> {
+    const state = this.current
+    // A failed generation has no command channel left to stop. Once an abort is
+    // submitted, however, send() still owns its real response/failure/timeout.
+    if (state?.phase === 'closed') return
     await this.request({ type: 'abort' })
   }
 

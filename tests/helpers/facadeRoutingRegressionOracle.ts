@@ -228,6 +228,73 @@ try {
         0,
         'malformed private reference must deny desktop legacy delegation'
       )
+    } else if (mode === 'disconnect-dispose-resume') {
+      assert.equal(f.channels.length, 1, 'exact actual mode-rpc CLI channel captured')
+      const priorHistory = structuredClone(old.messages)
+      const providerRequests = f.provider.requests.length
+      const failedRunId = createRunId()
+      f.f.session.killLatestStdio('SIGKILL')
+      await f.channels[0].closed
+      const rejected = f.runners.startRun({
+        sessionId: f.phi.sessionId,
+        runId: failedRunId,
+        execute: () => old.prompt('must fail on the disconnected generation')
+      })
+      await rejected.done
+      assert.equal(rejected.outcome, 'failed')
+      assert.equal(
+        f.provider.requests.length,
+        providerRequests,
+        'transport loss must not replay or reconnect the rejected prompt'
+      )
+      const failedEvent = readSessionEvents(f.phi.sessionId).find(
+        (event) => event.type === 'run_failed' && event.runId === failedRunId
+      )
+      assert.ok(failedEvent?.type === 'run_failed')
+
+      await old.dispose()
+      assert.match(
+        failedEvent.errorMessage,
+        /RPC (?:output stream ended|process exited)|EPIPE|closed/,
+        'the failed run must retain its original transport-loss cause'
+      )
+      await waitFor(async () => !(await f.exists(oldPrivate)))
+      await f.leases[0].closed
+      await f.tunnels[0].closed
+
+      f.resume()
+      const fresh = await createProxy()
+      const resumed = findPhiSessionById(f.phi.sessionId)!.runtimeRef!
+      assert.equal(resumed.ompSessionId, original.ompSessionId)
+      assert.equal(resumed.journalBasename, original.journalBasename)
+      assert.deepEqual(fresh.messages, priorHistory)
+      assert.equal(
+        f.provider.requests.length,
+        providerRequests,
+        'explicit resume must not invoke the provider'
+      )
+      assert.equal(f.channels.length, 2, 'explicit resume must launch a fresh RPC generation')
+
+      f.provider.enqueue('explicit request on generation B')
+      const current = f.runners.startRun({
+        sessionId: f.phi.sessionId,
+        runId: createRunId(),
+        execute: () => fresh.prompt('new explicit request after transport loss')
+      })
+      await current.done
+      assert.equal(current.outcome, 'completed')
+      assert.equal(f.provider.requests.length, providerRequests + 1)
+      assert.ok(
+        fresh.messages.some((value) =>
+          JSON.stringify(value).includes('explicit request on generation B')
+        )
+      )
+      await fresh.dispose()
+      await f.leases.at(-1)!.closed
+      await f.tunnels.at(-1)!.closed
+      assert.equal((await f.privateDirectories()).length, 0)
+      assert.equal(await f.exists(remoteOmpJournalPath(original)), true)
+      assert.equal(f.f.session.closed, false)
     } else {
       // Actual generation A loses its CLI; the old proxy intentionally remains alive.
       assert.equal(f.channels.length, 1, 'exact actual mode-rpc CLI channel captured')

@@ -445,6 +445,8 @@ export interface PhiEngine {
     ): Promise<RuntimeAutoCompactionReceipt>
     enterPlanMode(params: { sessionId: string }): Promise<unknown>
     has(sessionId: string): boolean
+    /** In-process diagnostic for a retained routed generation; never reconnects it. */
+    interruption?(sessionId: string): Error | undefined
   }
   history: {
     list(params: { agentDir: string; cwd: string }): Promise<SessionInfo[]>

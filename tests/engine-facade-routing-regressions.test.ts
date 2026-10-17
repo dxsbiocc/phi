@@ -8,6 +8,7 @@ import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 
 for (const mode of [
   'model-policy',
+  'disconnect-dispose-resume',
   'old-abort',
   'old-dispose',
   'damaged-reference',

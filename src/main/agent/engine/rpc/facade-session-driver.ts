@@ -466,7 +466,7 @@ export function createFacadeSessionFactory(
         let runtime: RemoteSessionRuntime | undefined
         let detach: (() => void) | undefined
         let closing: Promise<void> | undefined
-        let interrupted = false
+        let interrupted: Error | undefined
         let metadataPending = false
         let selectionAbort: AbortController | undefined
         let selectionPending: Promise<WorkerSessionState> | undefined
@@ -797,7 +797,7 @@ export function createFacadeSessionFactory(
               },
               onInterrupted: (error) => {
                 if (epoch !== runtimeEpoch) return
-                interrupted = true
+                interrupted = error
                 tools?.dispose()
                 adoption?.release()
                 detach?.()
@@ -994,7 +994,8 @@ export function createFacadeSessionFactory(
               return currentState()
             } catch (error) {
               if (retired) {
-                interrupted = true
+                interrupted =
+                  error instanceof Error ? error : new Error('Remote runtime interrupted')
                 tools?.dispose()
                 adoption?.release()
                 await candidate?.close(error).catch(() => undefined)
@@ -1024,6 +1025,7 @@ export function createFacadeSessionFactory(
             return operation
           }
           return {
+            interruption: () => interrupted,
             hasActiveAgentRuns: () => !closing && !interrupted && runtime!.hasActiveAgentRuns(),
             agentRuns: {
               list: () =>
@@ -1050,15 +1052,18 @@ export function createFacadeSessionFactory(
               if (!run || run.sessionId !== phiSessionId || run.signal.aborted)
                 throw new Error('Remote prompt requires the actual active Phi run')
               const prompt = promptOptions(raw)
-              if (submittedRun || metadataPending || closing || interrupted || !runtime!.isReady)
+              if (submittedRun || metadataPending || closing || interrupted || !runtime!.isReady) {
+                if (interrupted) throw interrupted
                 throw new Error('Remote runtime cannot admit this prompt')
+              }
               submittedRun = run
               try {
                 let result
                 try {
                   result = await runtime!.prompt(run.runId, text, prompt, run.signal)
                 } catch (error) {
-                  interrupted = true
+                  interrupted =
+                    error instanceof Error ? error : new Error('Remote runtime interrupted')
                   tools?.dispose()
                   adoption?.release()
                   throw error
@@ -1182,7 +1187,8 @@ export function createFacadeSessionFactory(
               } catch (error) {
                 if (completed || !owner.isReady) {
                   await owner.close(error).catch(() => undefined)
-                  interrupted = true
+                  interrupted =
+                    error instanceof Error ? error : new Error('Remote runtime interrupted')
                   tools?.dispose()
                   adoption?.release()
                   await disposeSelected().catch(() => undefined)

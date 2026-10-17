@@ -51,6 +51,7 @@ export interface RoutedSessionDriver {
     control?: RuntimeSelectionControl
   ): Promise<AutoCompactionDefaults>
   readonly isLive: boolean
+  interruption?(): Error | undefined
   state(): WorkerSessionState
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
   contextUsage(): Promise<ContextUsageSnapshot | null>
@@ -289,6 +290,10 @@ export class SessionRoutingEngine implements PhiEngine {
       return owner
         ? !owner.retired && owner.driver?.isLive === true
         : this.legacy.sessions.has(sessionId)
+    },
+    interruption: (sessionId) => {
+      const owner = this.owned(sessionId)
+      return owner && !owner.retired ? owner.driver?.interruption?.() : undefined
     },
     setModel: async (params, control) => {
       if (this.owns(params.sessionId)) {

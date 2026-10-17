@@ -292,6 +292,38 @@ test('abort keeps one transport reusable and prompt error outcomes preserve meta
   }
 })
 
+test('abort skips only an already closed generation and preserves live request failures', async () => {
+  const neverStarted = new RpcConnection(() => new Peer())
+  await assert.rejects(neverStarted.abort(), /not ready/)
+
+  const failed = await connected()
+  const commandsBeforeFailure = failed.peer.commands.length
+  failed.peer.stdout.end()
+  await until(() => !failed.connection.isReady)
+  await failed.connection.abort()
+  assert.equal(failed.peer.commands.length, commandsBeforeFailure)
+  await failed.connection.close()
+
+  const refused = await connected()
+  refused.peer.onCommand = (command) =>
+    refused.peer.send({
+      type: 'response',
+      id: command.id,
+      command: command.type,
+      success: false,
+      error: 'abort refused'
+    })
+  await assert.rejects(refused.connection.abort(), /abort refused/)
+  assert.equal(refused.connection.isReady, true)
+  await refused.connection.close()
+
+  const timedOut = await connected({ requestTimeoutMs: 30 })
+  timedOut.peer.onCommand = () => undefined
+  await assert.rejects(timedOut.connection.abort(), /abort response timed out/)
+  assert.equal(timedOut.connection.isReady, false)
+  await timedOut.connection.close()
+})
+
 test('negotiate acknowledgement and official chunks coalesced in one read succeed', async () => {
   const peer = new Peer()
   const value = { type: 'notice', message: 'x'.repeat(1050000) }

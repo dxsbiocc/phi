@@ -885,6 +885,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
    */
   private async ensureLive(): Promise<void> {
     if (!this.recreate || this.engine.sessions.has(this.sessionId)) return
+    const interruption = this.engine.sessions.interruption?.(this.sessionId)
+    if (interruption) throw interruption
     if (ownsRemoteRuntimeSession(this.sessionId))
       throw new RuntimeReferenceError(
         'REMOTE_OPERATION_REQUIRED',
