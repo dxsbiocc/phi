@@ -10,8 +10,9 @@ import {
   HOST_CAPABILITY_FAST_PROBE_SCRIPT,
   parseHostCapabilityProbe
 } from '../workspace-host/probe'
+import { shellQuote } from '../wrappers/remote-ssh-session'
 import { createRemoteRuntimeInputExec } from './input-exec'
-import type { RemoteRuntimeWorkspace } from './types'
+import type { RemoteRuntimeInputExec, RemoteRuntimeWorkspace } from './types'
 import type { RemoteStartupDiagnostics } from '../engine/rpc/remote-startup-diagnostics'
 
 const REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS = 30_000
@@ -73,7 +74,7 @@ export async function openRemoteRuntimeWorkspace(
   const projectHost = new SshHost({ ...binding.config, platform })
   try {
     const resolveRoot = (): Promise<string> =>
-      resolveRemoteRuntimeRoot(projectHost, binding, target.configuredRoot, signal)
+      resolveRemoteRuntimeRoot(execWithInput, target.configuredRoot, signal)
     const runtimeRoot = await (startupDiagnostics?.step('runtime_root', resolveRoot) ??
       resolveRoot())
     signal?.throwIfAborted()
@@ -107,25 +108,30 @@ export async function openRemoteRuntimeWorkspace(
   }
 }
 
+/**
+ * Resolves the configured runtime root with ONE stdin-script command. It deliberately avoids the
+ * project host's exec: that path launches a detached job (run directory, claim, launch script,
+ * status polls, log reads, cleanup) and costs ~19 remote commands for a single `cd -P`.
+ */
 export async function resolveRemoteRuntimeRoot(
-  host: SshHost,
-  binding: RemoteWorkspaceHostBinding,
+  execWithInput: RemoteRuntimeInputExec,
   configuredRoot: string,
   signal?: AbortSignal
 ): Promise<string> {
   const configured = normalizeRemoteRuntimeRoot(configuredRoot)
   const script = [
     'set -eu',
-    'case "$1" in',
-    '  /*) phi_root=$1 ;;',
-    "  '~/'*) phi_root=${HOME:?}/${1#\\~/} ;;",
+    `phi_configured=${shellQuote(configured)}`,
+    'case "$phi_configured" in',
+    '  /*) phi_root=$phi_configured ;;',
+    "  '~/'*) phi_root=${HOME:?}/${phi_configured#\\~/} ;;",
     '  *) exit 20 ;;',
     'esac',
     'CDPATH= cd -P -- "$phi_root"',
-    'printf %s "$PWD"'
+    'printf %s "$PWD"',
+    ''
   ].join('\n')
-  const result = await host.exec.run(['sh', '-c', script, 'phi-runtime-root', configured], {
-    cwd: binding.canonicalRoot,
+  const result = await execWithInput(script, {
     signal,
     timeoutMs: REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS,
     maxOutputBytes: 4096
@@ -134,7 +140,7 @@ export async function resolveRemoteRuntimeRoot(
   if (result.terminationReason === 'timeout') {
     throw new Error('服务器响应慢，运行时根目录检查超时，请稍后重试。')
   }
-  if (result.code !== 0 || !validRemoteAbsolutePath(root)) {
+  if (result.code !== 0 || result.truncated || !validRemoteAbsolutePath(root)) {
     throw new Error(
       '服务器运行时根目录不存在或无法安全解析；请在远程主机设置中检查该目录与 micromamba 安装。'
     )

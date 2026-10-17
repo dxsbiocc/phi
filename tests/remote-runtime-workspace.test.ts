@@ -107,7 +107,8 @@ test('remote runtime workspace expands a tilde root through the SSH host', async
     }
     assert.equal((await workspace.runtimeHost.fs.stat('.')).kind, 'directory')
     await workspace.close?.()
-    assert.equal(connections.filter((session) => session.commands.includes('sh -s')).length, 1)
+    // Platform probe and runtime-root resolution: one stdin script each (the test's own stat is the third connection).
+    assert.equal(connections.filter((session) => session.commands.includes('sh -s')).length, 2)
     assert.ok(connections.every((session) => session.closed))
   } finally {
     restoreSetsid()
@@ -118,25 +119,17 @@ test('remote runtime workspace expands a tilde root through the SSH host', async
 
 test('remote runtime root resolution identifies a slow server timeout', async () => {
   await assert.rejects(
-    resolveRemoteRuntimeRoot(
-      {
-        exec: {
-          run: async (_command: unknown, options: { timeoutMs: number }) => {
-            assert.equal(options.timeoutMs, 30000)
-            return {
-              stdout: '',
-              stderr: '',
-              code: null,
-              signal: 'SIGTERM',
-              truncated: false,
-              terminationReason: 'timeout' as const
-            }
-          }
-        }
-      } as never,
-      { canonicalRoot: '/project' } as never,
-      '/runtime'
-    ),
+    resolveRemoteRuntimeRoot(async (_script, options) => {
+      assert.equal(options.timeoutMs, 30000)
+      return {
+        stdout: '',
+        stderr: '',
+        code: null,
+        signal: 'SIGTERM',
+        truncated: false,
+        terminationReason: 'timeout' as const
+      }
+    }, '/runtime'),
     /服务器响应慢.*稍后重试/u
   )
 })

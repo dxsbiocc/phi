@@ -8,11 +8,16 @@ import {
 } from '../wrappers/remote-ssh-session'
 import {
   REMOTE_HELPER_READY_MARKER_FILENAME,
+  remoteHelperReadyMarkerIdentity,
   remoteHelperReadyMarkerSha256,
   type RemoteHelperInstallation
 } from '../remote-helper-marker'
 import { uploadRemoteFile } from '../transfer'
-import { refreshCapabilityProfile, saveCapabilityProfile } from './capability-profile-store'
+import {
+  readCapabilityProfile,
+  refreshCapabilityProfile,
+  saveCapabilityProfile
+} from './capability-profile-store'
 import { openHelperWorkspaceHost, type HelperWorkspaceHost } from './helper-host'
 import { resolveRemoteHelperPreparation } from './helper-development'
 import { installRemoteHelper, recordRemoteHelperFallback } from './helper-installer'
@@ -140,6 +145,13 @@ export class SshHost implements WorkspaceHost {
     } = {}
   ): Promise<RemoteHelperInstallation | undefined> {
     if (this.helperInstallation && !options.force) return this.helperInstallation
+    if (!options.force) {
+      const recorded = this.recordedHelperInstallation()
+      if (recorded) {
+        this.helperInstallation = recorded
+        return recorded
+      }
+    }
     if (options.force) {
       this.helperInstallation = undefined
       this.helperInitialization = undefined
@@ -148,6 +160,33 @@ export class SshHost implements WorkspaceHost {
     }
     await this.selected(true)
     return this.helperInstallation
+  }
+
+  /**
+   * The installation a previous successful install recorded for this host, if it still names the
+   * helper this desktop would install. It is a claim, not proof: the startup transaction validates
+   * the managed path and ready marker on the host and reports `helper` for repair when they do
+   * not match, which forces the full probe/install path above. Nothing is sent to the host here.
+   */
+  private recordedHelperInstallation(): RemoteHelperInstallation | undefined {
+    const bootstrap = this.context.helperBootstrap
+    if (!bootstrap || this.context.helper) return undefined
+    const recorded = readCapabilityProfile(bootstrap.profileKey, { agentDir: bootstrap.agentDir })
+    if (!recorded || recorded.platform.os !== this.context.platform.os) return undefined
+    const artifact = resolveRemoteHelperPreparation(recorded, {
+      resourceRoot: bootstrap.resourceRoot,
+      developmentRoot: bootstrap.developmentRoot
+    })?.artifact
+    const installation = profileHelperInstallation(recorded)
+    if (
+      !artifact?.localPath ||
+      !installation ||
+      recorded.helperVersion !== artifact.version ||
+      remoteHelperReadyMarkerSha256(installation.markerIdentity) !==
+        remoteHelperReadyMarkerSha256(remoteHelperReadyMarkerIdentity(artifact))
+    )
+      return undefined
+    return installation
   }
 
   /** Why the managed helper could not be installed, once an install was attempted. */

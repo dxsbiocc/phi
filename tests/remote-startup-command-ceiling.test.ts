@@ -47,7 +47,24 @@ test(
         report.steps.some((step) => step.step === 'project_plugin_guard'),
         false
       )
-      for (const name of ['runtime_binary', 'extension_deployment', 'remote_helper']) {
+      // The measurement drives the real openRemoteRuntimeWorkspace and the real SshHost helper
+      // bootstrap, so these steps must really have run (not been injected) and stayed cheap.
+      for (const [name, commands] of [
+        ['platform_probe', 1],
+        ['runtime_root', 1]
+      ] as const) {
+        const step = report.steps.find((candidate) => candidate.step === name)
+        assert.ok(step, `${name} did not run: the measurement is not on the real path`)
+        assert.equal(step.remoteCommands, commands, `${name} issued extra remote commands`)
+      }
+      const helperStep = report.steps.find((step) => step.step === 'remote_helper')
+      assert.ok(helperStep, 'remote_helper did not run: the measurement is not on the real path')
+      assert.equal(
+        helperStep.remoteCommands,
+        0,
+        'remote_helper probed or installed on a prepared host'
+      )
+      for (const name of ['runtime_binary', 'extension_deployment']) {
         const install = report.steps.find((step) => step.step === name)
         if (install) assert.equal(install.remoteCommands, 0, `${name} ran on a prepared host`)
       }
