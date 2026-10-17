@@ -105,6 +105,7 @@ export class SshHost implements WorkspaceHost {
   private helperInstallation?: RemoteHelperInstallation
   private helperInitialization?: Promise<void>
   private helperDisabled = false
+  private helperFailure?: string
   private disposed = false
   private readonly preparation = new AbortController()
 
@@ -143,9 +144,15 @@ export class SshHost implements WorkspaceHost {
       this.helperInstallation = undefined
       this.helperInitialization = undefined
       this.helperDisabled = false
+      this.helperFailure = undefined
     }
-    await this.selected()
+    await this.selected(true)
     return this.helperInstallation
+  }
+
+  /** Why the managed helper could not be installed, once an install was attempted. */
+  managedRemoteHelperFailure(): string | undefined {
+    return this.helperInstallation ? undefined : this.helperFailure
   }
 
   async close(): Promise<void> {
@@ -207,9 +214,17 @@ export class SshHost implements WorkspaceHost {
     }
   }
 
-  private async selected(): Promise<Pick<WorkspaceHost, 'fs' | 'exec'>> {
+  private async selected(ensureHelper = false): Promise<Pick<WorkspaceHost, 'fs' | 'exec'>> {
     if (this.disposed) throw new Error('SSH workspace host is closed')
     if ((!this.context.helper && !this.context.helperBootstrap) || this.helperDisabled) {
+      return { fs: this.pureFs, exec: this.pureExec }
+    }
+    if (
+      !ensureHelper &&
+      !this.helperInitialization &&
+      !this.context.helper &&
+      this.context.helperBootstrap?.onDemand
+    ) {
       return { fs: this.pureFs, exec: this.pureExec }
     }
     this.helperInitialization ??= this.initializeHelper()
@@ -259,6 +274,7 @@ export class SshHost implements WorkspaceHost {
     this.profile = workspaceProfile(installed.profile)
     this.helperInstallation = installed.installation
     if (installed.state !== 'available' || !installed.remotePath) {
+      this.helperFailure = installed.reason
       this.helperDisabled = true
       await session.close()
       return
@@ -297,6 +313,7 @@ export class SshHost implements WorkspaceHost {
       this.helperProfile = fallback
       this.profile = workspaceProfile(fallback)
       saveCapabilityProfile(bootstrap.profileKey, fallback, bootstrap.agentDir)
+      this.helperFailure = 'bundled remote helper artifact is unavailable'
       this.helperDisabled = true
       return undefined
     }
@@ -386,10 +403,12 @@ export class SshHost implements WorkspaceHost {
   }
 
   private disableHelper(error: unknown): void {
-    const config = this.helperConfig
-    if (!config || this.helperDisabled) return
-    this.helperDisabled = true
+    if (this.helperDisabled) return
     const reason = error instanceof Error ? error.message : 'remote helper transport failed'
+    this.helperFailure = reason
+    const config = this.helperConfig
+    if (!config) return
+    this.helperDisabled = true
     const fallback = recordRemoteHelperFallback(
       { ...config, profile: this.helperProfile ?? config.profile },
       reason

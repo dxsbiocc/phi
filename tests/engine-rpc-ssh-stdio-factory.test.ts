@@ -376,6 +376,19 @@ test('stdio acquisition failure removes owned configuration and preserves the co
   assert.equal(fixture.session.closed, false)
 })
 
+test('a missing managed helper fails startup with the recorded install reason', async (t) => {
+  const fixture = await fixtureWithFactory()
+  t.after(fixture.cleanup)
+  const host = fixture.options.runtimeHost
+  host.ensureManagedRemoteHelper = async () => undefined
+  host.managedRemoteHelperFailure = () => 'helper upload failed: connection reset'
+  await assert.rejects(
+    fixture.factory.open(fixture.params, new AbortController().signal),
+    /requires the managed helper guard: helper upload failed: connection reset/
+  )
+  await assert.rejects(access(join(fixture.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
+})
+
 test('abort during delayed stdio acquisition closes the late owned channel without closing the master', async (t) => {
   const fixture = await fixtureWithFactory()
   t.after(fixture.cleanup)

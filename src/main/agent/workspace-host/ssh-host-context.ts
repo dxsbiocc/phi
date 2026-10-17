@@ -26,6 +26,11 @@ export interface SshHelperBootstrapConfig {
   agentDir?: string
   resourceRoot?: string
   developmentRoot?: string
+  /**
+   * Leave fs/exec on pure SSH until `ensureManagedRemoteHelper()` is called, so callers that
+   * never need the helper pay no probe or install. Once ensured, the helper serves fs/exec.
+   */
+  onDemand?: boolean
 }
 
 export interface SshHostConfig {

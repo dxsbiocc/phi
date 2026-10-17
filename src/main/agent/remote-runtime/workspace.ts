@@ -5,6 +5,7 @@ import {
   type RemoteWorkspaceHostBinding
 } from '../remote-workspace-boundary'
 import { SshHost } from '../workspace-host/ssh-host'
+import type { SshHelperBootstrapConfig } from '../workspace-host/ssh-host-context'
 import {
   HOST_CAPABILITY_FAST_PROBE_SCRIPT,
   parseHostCapabilityProbe
@@ -24,6 +25,12 @@ export interface RemoteRuntimeTarget {
   micromambaPath?: string
 }
 
+/** Overrides for where the runtime host finds its helper; production passes none (same defaults as the registry). */
+export type RemoteRuntimeHelperLocations = Pick<
+  SshHelperBootstrapConfig,
+  'agentDir' | 'resourceRoot' | 'developmentRoot'
+>
+
 export async function openRemoteRuntimeWorkspace(
   target: RemoteRuntimeTarget,
   signal?: AbortSignal,
@@ -31,7 +38,8 @@ export async function openRemoteRuntimeWorkspace(
     sessionId: string
     projectId: string
   }) => RemoteWorkspaceHostBinding = resolveRemoteWorkspaceHostBinding,
-  startupDiagnostics?: RemoteStartupDiagnostics
+  startupDiagnostics?: RemoteStartupDiagnostics,
+  helperLocations: RemoteRuntimeHelperLocations = {}
 ): Promise<RemoteRuntimeWorkspace> {
   const binding = resolveBinding({ sessionId: target.sessionId, projectId: target.projectId })
   const execWithInput = createRemoteRuntimeInputExec(binding.config.connect)
@@ -73,7 +81,14 @@ export async function openRemoteRuntimeWorkspace(
       remoteRoot: runtimeRoot,
       canonicalRoot: runtimeRoot,
       connect: binding.config.connect,
-      platform
+      platform,
+      // RPC startup runs the helper guard on this host, so it must be able to install the managed
+      // helper exactly as the registry's hosts do. The project host never needs it.
+      helperBootstrap: {
+        profileKey: { hostAlias: binding.hostAlias, projectRoot: runtimeRoot },
+        onDemand: true,
+        ...helperLocations
+      }
     })
     return {
       projectHost,

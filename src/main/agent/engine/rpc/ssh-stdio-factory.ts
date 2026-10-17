@@ -338,7 +338,12 @@ export async function prepareSshRpcSessionTransport(
       let startupHelper = host.managedRemoteHelper?.()
       if (host.ensureManagedRemoteHelper) {
         startupHelper = await step('remote_helper', () => host.ensureManagedRemoteHelper!())
-        if (!startupHelper) throw new Error('Remote RPC startup requires the managed helper guard')
+        if (!startupHelper) {
+          const reason = host.managedRemoteHelperFailure?.()
+          throw new Error(
+            `Remote RPC startup requires the managed helper guard${reason ? `: ${reason}` : ''}`
+          )
+        }
       }
       const nonce = randomUUID()
       const sessionBase = posix.join(root, 'rpc-sessions')

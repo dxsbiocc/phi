@@ -262,6 +262,8 @@ export interface WorkspaceHost {
   ensureManagedRemoteHelper?(options?: {
     force?: boolean
   }): Promise<RemoteHelperInstallation | undefined>
+  /** Why the managed helper is unavailable (install or transport failure), if known. */
+  managedRemoteHelperFailure?(): string | undefined
   close?(): Promise<void>
 }
 
