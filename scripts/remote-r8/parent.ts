@@ -6,15 +6,24 @@ import { homedir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { REMOTE_OMP_MANIFEST } from '../../src/main/agent/engine/rpc/runtime-deployment'
+import type { RemoteOmpManifest } from '../../src/main/agent/engine/rpc/runtime-deployment/types'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
 import { getRemoteHostProfile, sshConfigHostProfileId } from '../../src/main/agent/remote-hosts'
 import type { R8Args } from './args'
+import {
+  ASSET_CACHE_DIRECTORY,
+  EMPTY_ASSET_CACHE_REPORT,
+  seedRunAssetCache,
+  storeRunAssetCache,
+  type AssetCacheReport
+} from './asset-cache'
 import { productionBundleHash } from './bundle'
 import { readPrivateJson } from './private-json'
 import { buildReceipt, renderSummary, type R8Receipt } from './receipt'
 import type { R8RunResult } from './runner'
 import { assertTrackedTreeClean, currentCommit, modifiedTrackedFiles, type GitRunner } from './tree'
-import { SCRATCH_DIRECTORY, TOTAL_MS, type R8Input } from './types'
+import { SCRATCH_DIRECTORY, totalMsFor, type R8Input } from './types'
 
 export interface ParentDependencies {
   readonly repoRoot: string
@@ -25,6 +34,8 @@ export interface ParentDependencies {
   readonly runChild: (inputPath: string, input: R8Input) => Promise<number | null>
   readonly now: () => Date
   readonly print: (text: string) => void
+  /** The release manifest the production code uses; defaults to the real one. */
+  readonly assetManifest?: RemoteOmpManifest
 }
 
 export function defaultParentDependencies(repoRoot: string, git: GitRunner): ParentDependencies {
@@ -107,7 +118,7 @@ function spawnChild(inputPath: string, input: R8Input): Promise<number | null> {
   }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
-  const timer = setTimeout(stop, TOTAL_MS + 60_000)
+  const timer = setTimeout(stop, totalMsFor(input.prepareMs) + 60_000)
   return new Promise<number | null>((resolve, reject) => {
     child.once('error', reject)
     child.once('close', (code) => resolve(code))
@@ -160,10 +171,26 @@ export async function executeParent(
     runtimeRootExplicit: args.runtimeRootExplicit,
     bundleHash,
     commit,
-    realBun: resolveBunExecutable()
+    realBun: resolveBunExecutable(),
+    prepareMs: args.prepareTimeoutMinutes * 60_000
   }
   const inputPath = join(localRoot, 'input.json')
   await writeFile(inputPath, JSON.stringify(input) + '\n', { mode: 0o600, flag: 'wx' })
+
+  // Persistent assets are reused only after their SHA-256 matches the production manifest.
+  const manifest = deps.assetManifest ?? REMOTE_OMP_MANIFEST
+  const persistentDir = join(scratch, ASSET_CACHE_DIRECTORY)
+  const agentDir = join(localRoot, 'agent')
+  let assetCache: AssetCacheReport = EMPTY_ASSET_CACHE_REPORT
+  let assetCacheFailure: string | undefined
+  let seeded: readonly string[] = []
+  try {
+    const seed = await seedRunAssetCache({ persistentDir, agentDir, manifest })
+    seeded = seed.reused
+    assetCache = { ...assetCache, ...seed }
+  } catch (error) {
+    assetCacheFailure = error instanceof Error ? error.message : 'Asset cache seeding failed'
+  }
 
   let childExitCode: number | null = null
   let childFailure: string | undefined
@@ -173,13 +200,21 @@ export async function executeParent(
     childFailure = error instanceof Error ? error.message : 'The run process failed to start'
   }
   const result = await readResult(localRoot)
+  try {
+    assetCache = {
+      ...assetCache,
+      ...(await storeRunAssetCache({ persistentDir, agentDir, manifest, seeded }))
+    }
+  } catch (error) {
+    assetCacheFailure ??= error instanceof Error ? error.message : 'Asset cache save failed'
+  }
   const commitAfter = currentCommit(deps.git)
   const bundleHashAfter = await deps.bundleHash()
   const trackedFilesModifiedAfter = modifiedTrackedFiles(deps.git).length
   const finishedAt = deps.now()
 
   const succeeded = Boolean(result?.ok) && childExitCode === 0
-  // The downloaded OMP asset is large and reproducible; everything else is synthetic.
+  // The verified asset now lives in the persistent cache; everything else is synthetic.
   await rm(join(localRoot, 'agent/cache'), { recursive: true, force: true })
   let localRunDirectoryRemoved = false
   if (succeeded && commit === commitAfter && bundleHash === bundleHashAfter) {
@@ -200,7 +235,8 @@ export async function executeParent(
     trackedFilesModifiedAfter,
     childExitCode,
     childFailure,
-    localRunDirectoryRemoved
+    localRunDirectoryRemoved,
+    assetCache: { ...assetCache, ...(assetCacheFailure ? { failure: assetCacheFailure } : {}) }
   })
   const stamp = startedAt.toISOString().replace(/[:.]/g, '-')
   const receiptPath = join(scratch, 'receipts', `${stamp}-${args.host}-${runId}.json`)

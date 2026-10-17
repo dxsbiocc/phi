@@ -29,6 +29,11 @@ export interface R8Application {
   /** One production startup profile per session creation or explicit resume, in order. */
   readonly startupReports: RemoteStartupDiagnostic[]
   readonly ompVersion: string
+  /**
+   * One real production startup, disposed again, so that anything missing on the server (OMP
+   * binary, extension, helper, ready markers) is installed through the normal path.
+   */
+  prepare(): Promise<void>
   create(): { sessionId: string }
   attach(phiSessionId: string, resume: boolean): Promise<{ session: AgentProxy }>
   approval(value: ApprovalPolicy): void

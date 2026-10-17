@@ -1,3 +1,4 @@
+import { EMPTY_ASSET_CACHE_REPORT, type AssetCacheReport } from './asset-cache'
 import type { R8RunResult } from './runner'
 
 export interface R8Receipt {
@@ -24,7 +25,11 @@ export interface R8Receipt {
   readonly cases: ReadonlyArray<{ name: string; elapsedMs: number | null; detail: unknown }>
   readonly providerRequests: number | null
   readonly providerPurposes: R8RunResult['providerPurposes'] | null
+  /** The prepare phase: one production startup, measured apart from the cases. */
+  readonly prepare: R8RunResult['prepare'] | null
+  /** Cases' startups only (the prepare startup is in `prepare`). */
   readonly startup: R8RunResult['startup']
+  readonly assetCache: AssetCacheReport & { readonly failure?: string }
   readonly rpcStartup: NonNullable<R8RunResult['rpcStartup']>
   readonly remoteOperations: NonNullable<R8RunResult['remoteOperations']>
   readonly tunnels: R8RunResult['tunnels'] | null
@@ -47,6 +52,7 @@ export interface ReceiptParts {
   readonly childExitCode: number | null
   readonly childFailure?: string
   readonly localRunDirectoryRemoved: boolean
+  readonly assetCache?: AssetCacheReport & { readonly failure?: string }
 }
 
 const EMPTY_CLEANUP: R8RunResult['cleanup'] = {
@@ -109,7 +115,9 @@ export function buildReceipt(parts: ReceiptParts): R8Receipt {
     })),
     providerRequests: result?.providerRequests ?? null,
     providerPurposes: result?.providerPurposes ?? null,
+    prepare: result?.prepare ?? null,
     startup: result?.startup ?? [],
+    assetCache: parts.assetCache ?? EMPTY_ASSET_CACHE_REPORT,
     rpcStartup: result?.rpcStartup ?? [],
     remoteOperations: result?.remoteOperations ?? [],
     tunnels: result?.tunnels ?? null,
@@ -129,6 +137,10 @@ export function renderSummary(receipt: R8Receipt, receiptPath: string): string {
     `  commit ${receipt.commit.slice(0, 12)}, extension bundle ${receipt.bundleHash.slice(0, 12)}, OMP ${receipt.ompVersion ?? 'n/a'}`,
     `  runtime root ${receipt.runtimeRoot ?? receipt.runtimeRootConfigured}${receipt.runtimeRootCreated ? ' (created by this run)' : ''}`
   ]
+  if (receipt.prepare)
+    lines.push(
+      `  prepare: ${receipt.prepare.status}, ${seconds(receipt.prepare.elapsedMs)}, ${receipt.prepare.remoteCommands} remote commands, ${receipt.prepare.installedOrRepaired ? 'installed or repaired something' : 'nothing to install'}`
+    )
   for (const entry of receipt.cases) lines.push(`  case ${entry.name}: ${seconds(entry.elapsedMs)}`)
   for (const report of receipt.startup) {
     lines.push(

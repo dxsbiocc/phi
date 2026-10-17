@@ -196,6 +196,38 @@ export async function createSshApplication(
       { resolveBinding: binding }
     )
 
+    const createNewSession = (): { sessionId: string } =>
+      createPhiSession({
+        kind: 'project',
+        projectId: project.id,
+        projectLocation: location,
+        cwd: anchor,
+        cwdRealPath: anchor,
+        permissionMode: 'ask',
+        model: { providerId: PROVIDER_ID, modelId: MODEL_ID },
+        thinkingLevel: 'high'
+      })
+    const attachSession: R8Application['attach'] = async (phiSessionId, resume) => {
+      const saved = findPhiSessionById(phiSessionId)
+      assert.ok(saved?.model)
+      const at = performance.now()
+      const created = await createRuntimeAgentSession({
+        cwd: anchor,
+        agentDir,
+        model,
+        thinkingLevel: 'high',
+        ...(saved.autoCompaction ? { autoCompaction: saved.autoCompaction } : {}),
+        projectBound: true,
+        sessionManager: createAppRemoteSessionManager(anchor, phiSessionId, resume),
+        remoteProject: { phiSessionId, projectId: project.id, location, contextFiles: [] }
+      })
+      remote.metrics.push({
+        kind: resume ? 'app-explicit-resume-ready' : 'app-create-ready',
+        elapsedMs: performance.now() - at
+      })
+      return created
+    }
+
     let closing: Promise<void> | undefined
     return {
       runners,
@@ -205,38 +237,12 @@ export async function createSshApplication(
       purposes,
       startupReports,
       ompVersion: REMOTE_OMP_MANIFEST.version,
-      create() {
-        return createPhiSession({
-          kind: 'project',
-          projectId: project.id,
-          projectLocation: location,
-          cwd: anchor,
-          cwdRealPath: anchor,
-          permissionMode: 'ask',
-          model: { providerId: PROVIDER_ID, modelId: MODEL_ID },
-          thinkingLevel: 'high'
-        })
+      async prepare() {
+        const { session } = await attachSession(createNewSession().sessionId, false)
+        await session.dispose()
       },
-      async attach(phiSessionId, resume) {
-        const saved = findPhiSessionById(phiSessionId)
-        assert.ok(saved?.model)
-        const at = performance.now()
-        const created = await createRuntimeAgentSession({
-          cwd: anchor,
-          agentDir,
-          model,
-          thinkingLevel: 'high',
-          ...(saved.autoCompaction ? { autoCompaction: saved.autoCompaction } : {}),
-          projectBound: true,
-          sessionManager: createAppRemoteSessionManager(anchor, phiSessionId, resume),
-          remoteProject: { phiSessionId, projectId: project.id, location, contextFiles: [] }
-        })
-        remote.metrics.push({
-          kind: resume ? 'app-explicit-resume-ready' : 'app-create-ready',
-          elapsedMs: performance.now() - at
-        })
-        return created
-      },
+      create: createNewSession,
+      attach: attachSession,
       approval(value) {
         policy = value
       },

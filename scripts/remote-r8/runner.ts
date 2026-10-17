@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { redactSensitiveText } from '../../src/main/agent/redaction'
 import { shellQuote } from '../../src/main/agent/wrappers/remote-ssh-session'
 import { runR8Cases } from './scenarios'
-import { bounded } from './types'
+import { bounded, DEFAULT_PREPARE_MINUTES } from './types'
 import type { R8Application } from './application-types'
 import type { R8Workspace } from './workspace'
 
@@ -20,6 +20,8 @@ export interface R8RunDependencies {
   currentBundleHash(): Promise<string>
   openWorkspace(signal: AbortSignal): Promise<R8Workspace>
   createApplication(workspace: R8Workspace): Promise<R8Application>
+  /** Bound of the prepare phase; defaults to 15 minutes. */
+  readonly prepareMs?: number
 }
 
 export interface CleanupRecord {
@@ -30,6 +32,22 @@ export interface CleanupRecord {
   ownedTestRootRemoved: boolean
   transportsClosed: boolean
   failures: Array<{ name: string; reason: string }>
+}
+
+/** Steps whose duration reveals an install or repair on the server (reuse takes a few commands). */
+const INSTALL_STEPS = ['runtime_binary', 'extension_deployment', 'remote_helper'] as const
+const INSTALL_THRESHOLD_MS = 3000
+
+export interface PrepareRecord {
+  status: 'ready' | 'failed' | 'unknown'
+  /** Wall time of the whole phase, including session creation and disposal. */
+  elapsedMs: number
+  startupMs: number | null
+  remoteCommands: number
+  steps: unknown[]
+  /** Heuristic from the startup steps; the local download is in the receipt's `assetCache`. */
+  installedOrRepaired: boolean
+  installEvidence: string[]
 }
 
 export interface R8RunResult {
@@ -50,11 +68,46 @@ export interface R8RunResult {
   providerPurposes?: { root: number; child: number; summary: number }
   rpcGenerations?: number
   tunnels?: { opened: number; closed: number }
+  prepare?: PrepareRecord
   startup: Array<Record<string, unknown>>
   remoteOperations?: Array<{ kind: string; elapsedMs: number }>
   rpcStartup?: Array<{ nonce: string | null; stdioOpenToAttestationMs: number | null }>
   cleanup: CleanupRecord
   elapsedMs: number
+}
+
+/** One real production startup, disposed again: it installs whatever the server lacks. */
+async function prepareHost(
+  result: R8RunResult,
+  app: R8Application,
+  prepareMs: number
+): Promise<void> {
+  const at = performance.now()
+  try {
+    await bounded(app.prepare(), prepareMs, 'prepare (host installation startup)')
+  } finally {
+    result.prepare = prepareRecord(app.startupReports[0], performance.now() - at)
+  }
+}
+
+function prepareRecord(
+  report: R8Application['startupReports'][number] | undefined,
+  elapsedMs: number
+): PrepareRecord {
+  const steps = report?.steps ?? []
+  const evidence = steps
+    .filter((step) => INSTALL_STEPS.some((name) => name === step.step))
+    .filter((step) => step.durationMs >= INSTALL_THRESHOLD_MS)
+    .map((step) => `${step.step} took ${(step.durationMs / 1000).toFixed(1)}s`)
+  return {
+    status: report?.status ?? 'unknown',
+    elapsedMs,
+    startupMs: report?.totalMs ?? null,
+    remoteCommands: steps.reduce((total, step) => total + step.remoteCommands, 0),
+    steps: [...steps],
+    installedOrRepaired: evidence.length > 0,
+    installEvidence: evidence
+  }
 }
 
 function describe(error: unknown): { name: string; reason: string } {
@@ -116,6 +169,8 @@ export async function executeR8(
     log('application-runtime')
     app = await deps.createApplication(workspace)
     result.ompVersion = app.ompVersion
+    log('prepare')
+    await prepareHost(result, app, deps.prepareMs ?? DEFAULT_PREPARE_MINUTES * 60_000)
     log('cases')
     result.cases = await runR8Cases(identity.runId, workspace, app)
     assert.equal(app.provider.requests.length, 12)
@@ -183,7 +238,8 @@ export async function executeR8(
     result.cleanup.tunnelsClosed = await attempt('tunnels', async () => {
       const counts = await remote.tunnelCounts()
       result.tunnels = counts
-      if (result.ok) assert.ok(counts.opened >= 2, 'The reverse model tunnel must be used')
+      if (result.ok)
+        assert.ok(counts.opened >= 3, 'The reverse model tunnel must be used by every startup')
       assert.equal(counts.closed, counts.opened, 'Every reverse tunnel must be closed')
     })
     result.cleanup.transportsClosed = await attempt('transports', () =>
@@ -202,7 +258,14 @@ export async function executeR8(
     result.cleanup.ownedTestRootRemoved = !setupUnconfirmed
     result.cleanup.transportsClosed = !setupUnconfirmed
   }
-  if (app) result.startup = app.startupReports.map((report, index) => summarize(report, index))
+  if (app) {
+    // The prepare startup is reported on its own; the cases' startups are create, then resume.
+    const [, ...caseReports] = app.startupReports
+    if (result.prepare === undefined && app.startupReports.length) {
+      result.prepare = prepareRecord(app.startupReports[0], 0)
+    }
+    result.startup = caseReports.map((report, index) => summarize(report, index))
+  }
 
   const cleanupOk =
     failures.length === 0 &&

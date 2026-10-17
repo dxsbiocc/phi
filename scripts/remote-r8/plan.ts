@@ -1,3 +1,4 @@
+import { ASSET_CACHE_DIRECTORY } from './asset-cache'
 import { CASE_MS, CASE_NAMES, REMOTE_WORK_PARENT, SCRATCH_DIRECTORY, TOTAL_MS } from './types'
 import type { R8Args } from './args'
 
@@ -17,6 +18,8 @@ export interface R8Plan {
   readonly retains: readonly string[]
   readonly cases: readonly { readonly name: string; readonly budgetMs: number }[]
   readonly totalBudgetMs: number
+  readonly prepare: { readonly budgetMs: number; readonly description: string }
+  readonly assetCacheDirectory: string
   readonly startsNothing: string
 }
 
@@ -38,7 +41,7 @@ export function buildPlan(args: R8Args, facts: R8PlanFacts): R8Plan {
     runtimeRootExplicit: args.runtimeRootExplicit,
     ...facts,
     connects: [
-      `ssh ${args.host}: one OpenSSH master per runtime generation (the first run, then the recovery run)`,
+      `ssh ${args.host}: one OpenSSH master per runtime generation (prepare, the first case run, then the recovery run)`,
       'a reverse tunnel from the server to a loopback synthetic model provider on this machine',
       'the production startup transaction installs anything missing on the server: OMP binary, Phi extension, remote helper'
     ],
@@ -47,12 +50,13 @@ export function buildPlan(args: R8Args, facts: R8PlanFacts): R8Plan {
       `server: ${work}/project with one seed file and an owner token`,
       `server: ${root}/rpc-sessions/<nonce> and the durable synthetic session journal (production-owned)`,
       `local: ${SCRATCH_DIRECTORY}/runs/<run-id>/{home,agent,tmp} (private HOME, agent dir, synthetic auth)`,
+      `local: ${SCRATCH_DIRECTORY}/${ASSET_CACHE_DIRECTORY}/omp/${facts.ompVersion}/<platform>/omp (release asset kept between runs; reused only after its SHA-256 matches the release manifest)`,
       `local: ${SCRATCH_DIRECTORY}/receipts/<timestamp>-${args.host}-<run-id>.json`
     ],
     removes: [
       `server: ${work} (only after the owner token, UID, mode, link-count and canonical-path checks)`,
       `server: every attested ${root}/rpc-sessions/<nonce> (confirmed gone, never force-removed)`,
-      `local: ${SCRATCH_DIRECTORY}/runs/<run-id>/agent/cache (downloaded OMP asset)`
+      `local: ${SCRATCH_DIRECTORY}/runs/<run-id>/agent/cache (the run's private copy of the OMP asset)`
     ],
     retains: [
       `server: ${root} with the installed binary, extension and helper; durable synthetic journals`,
@@ -60,6 +64,12 @@ export function buildPlan(args: R8Args, facts: R8PlanFacts): R8Plan {
     ],
     cases: CASE_NAMES.map((name) => ({ name, budgetMs: CASE_MS })),
     totalBudgetMs: TOTAL_MS,
+    prepare: {
+      budgetMs: args.prepareTimeoutMinutes * 60_000,
+      description:
+        'one real production startup, then disposed: installs whatever the server lacks (OMP binary, extension, helper, ready markers) before the cases'
+    },
+    assetCacheDirectory: `${SCRATCH_DIRECTORY}/${ASSET_CACHE_DIRECTORY}`,
     startsNothing: 'Plan mode starts no SSH, SDK, provider or model process.'
   }
 }
@@ -83,7 +93,11 @@ export function renderPlan(plan: R8Plan): string {
     'Would keep:',
     ...list(plan.retains),
     '',
-    'Cases (each bounded to 120 s, whole run to 15 min):',
+    `Prepare phase (bounded to ${plan.prepare.budgetMs / 60_000} min, runs before the cases; its duration, remote commands and startup steps are recorded separately):`,
+    `  - ${plan.prepare.description}`,
+    `Asset cache:     ${plan.assetCacheDirectory} (persistent; SHA-256 verified before reuse)`,
+    '',
+    'Cases (each bounded to 120 s, case phase to 15 min after the prepare phase):',
     ...plan.cases.map((entry, index) => `  ${index + 1}. ${entry.name}`),
     '',
     plan.startsNothing,

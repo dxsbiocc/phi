@@ -139,6 +139,10 @@ export async function createLocalR8(runId: string, bundleHash: string): Promise<
     purposes,
     startupReports,
     ompVersion: REMOTE_OMP_MANIFEST.version,
+    async prepare() {
+      const { session } = await application.attach(sessionId, false)
+      await session.dispose()
+    },
     create: () => ({ sessionId }),
     async attach(phiSessionId, resume) {
       if (phiSessionId !== sessionId) throw new Error('The local fixture owns one session')

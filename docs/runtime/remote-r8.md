@@ -11,18 +11,23 @@ R8 是对一台真实 SSH 主机的验收：真实应用组合（App 路由、`c
 ## 运行
 
 ```bash
-# 计划模式（默认）：只打印将连接、创建、删除什么，以及三个用例；不启动任何 SSH、SDK、provider 或模型进程
-bun scripts/remote-r8.ts --host GPU
-bun scripts/remote-r8.ts --host yzhang-node3 --runtime-root /tmp/phi-t16-node3-1021-626b199b-9f4d-4f2b-af98-f4de6fcd0ccd
+# 计划模式（默认）：只打印将连接、创建、删除什么，prepare 阶段、资产缓存位置和三个用例；不启动任何 SSH、SDK、provider 或模型进程
+node --import ./scripts/test-loader.mjs scripts/remote-r8.ts --host GPU
+node --import ./scripts/test-loader.mjs scripts/remote-r8.ts --host yzhang-node3 \
+  --runtime-root /tmp/phi-t16-node3-1021-626b199b-9f4d-4f2b-af98-f4de6fcd0ccd
 
 # 真实运行
-bun scripts/remote-r8.ts --host GPU --execute
-bun scripts/remote-r8.ts --host yzhang-node3 \
+node --import ./scripts/test-loader.mjs scripts/remote-r8.ts --host GPU --execute
+node --import ./scripts/test-loader.mjs scripts/remote-r8.ts --host yzhang-node3 \
   --runtime-root /tmp/phi-t16-node3-1021-626b199b-9f4d-4f2b-af98-f4de6fcd0ccd --execute
 ```
 
+脚本必须在 Node 下运行，与生产应用（Electron）一致；在 Bun 下启动会直接以退出码 2 拒绝并打印上面的 node 命令
+（Bun 的 fetch 流式下载行为与生产不同，不做兼容）。
+
 - `--host` 是 `~/.ssh/config` 里的任意别名。
 - `--runtime-root` 选择服务器运行时根目录（绝对路径或 `~/...`），默认 `~/.phi/runtime`。
+- `--prepare-timeout-minutes <1-30>` 是 prepare 阶段的上限，默认 15 分钟。
 - 退出码：0 通过（或计划）、1 运行失败或被拒绝、2 参数错误。
 
 ## 完整性
@@ -34,7 +39,16 @@ bun scripts/remote-r8.ts --host yzhang-node3 \
    （`resolvePhiExtensionSourceRoot` + `createPhiExtensionBundle`），子进程启动前、运行后各算一次；
    运行后 `HEAD` 或 bundle hash 变化都判失败。
 
-## 三个用例（各限 120 秒，整次运行限 15 分钟）
+## Prepare 阶段
+
+三个用例之前先做一次 prepare：一次真实的生产启动（创建一个 Phi 会话、attach、再 dispose），
+服务器上缺失的 OMP 二进制、Phi 扩展、helper 和 ready 标记都经正常生产路径安装或修复。
+该阶段有自己的上限（`--prepare-timeout-minutes`，默认 15、最大 30 分钟），耗时、远程命令数和各启动步骤单独记入回执的 `prepare`，
+并给出是否安装/修复过东西（`installedOrRepaired`，依据 `runtime_binary`/`extension_deployment`/`remote_helper` 步骤耗时 ≥ 3 s 的启发式，
+`installEvidence` 列出依据；本机是否下载见 `assetCache.downloaded`）。三个用例的启动因此度量的是“已准备好的主机”的正常启动，其耗时预算不变。
+prepare 失败则整次运行失败（`failure.phase = prepare`），清理照常执行。prepare 的反向隧道和 `rpc-sessions/<nonce>` 目录与用例的一样计数与确认。
+
+## 三个用例（各限 120 秒，用例阶段与清理限 15 分钟，另加 prepare 上限）
 
 1. **native-search-read-edit-bash**：`glob` → `grep` → `read` → `edit` → `bash`，edit 与 bash 经真实 ask 模式审批；
    服务器上的效果可见，本地 anchor 的哨兵文件不变，每个工具都成功，审批事件恰为 requested/approved 两对。
@@ -60,17 +74,19 @@ bun scripts/remote-r8.ts --host yzhang-node3 \
 
 每次运行在 `.phi-acceptance/receipts/<时间>-<主机>-<run-id>.json`（已加入 `.gitignore`）写一个 JSON，主要字段：
 
-| 字段                                                     | 内容                                                                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `ok`、`failure`                                          | 总结果；失败时的阶段、类型与原因（已脱敏）                                    |
-| `host`、`runtimeRoot`、`runtimeRootCreated`              | 主机别名、服务器规范根目录、本次是否创建                                      |
-| `commit`、`commitAfter`、`bundleHash`、`bundleHashAfter` | 运行前后的提交与扩展 bundle                                                   |
-| `ompVersion`                                             | 桌面清单中的 OMP 版本（启动事务安装并校验）                                   |
-| `cases[]`                                                | 每个用例的名称、耗时和完整断言细节                                            |
-| `startup[]`                                              | 每次创建/恢复的 `PHI_REMOTE_STARTUP_DIAGNOSTICS` 画像：各步骤耗时与远程命令数 |
-| `rpcStartup[]`、`remoteOperations[]`                     | stdio 打开到 attestation 的耗时；SSH 连接、上传、App 创建/恢复耗时            |
-| `providerRequests`、`providerPurposes`、`tunnels`        | 请求数（按 root/child/summary）与反向隧道开关次数                             |
-| `cleanup`                                                | 各项关闭/删除的确认结果和失败列表                                             |
+| 字段                                                     | 内容                                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `ok`、`failure`                                          | 总结果；失败时的阶段、类型与原因（已脱敏）                                            |
+| `host`、`runtimeRoot`、`runtimeRootCreated`              | 主机别名、服务器规范根目录、本次是否创建                                              |
+| `commit`、`commitAfter`、`bundleHash`、`bundleHashAfter` | 运行前后的提交与扩展 bundle                                                           |
+| `ompVersion`                                             | 桌面清单中的 OMP 版本（启动事务安装并校验）                                           |
+| `cases[]`                                                | 每个用例的名称、耗时和完整断言细节                                                    |
+| `prepare`                                                | prepare 阶段：状态、耗时、远程命令数、启动步骤、`installedOrRepaired` 与依据          |
+| `assetCache`                                             | 本机资产缓存：`reused`、`rejected`、`stored`、`downloaded`                            |
+| `startup[]`                                              | 用例阶段每次创建/恢复的 `PHI_REMOTE_STARTUP_DIAGNOSTICS` 画像：各步骤耗时与远程命令数 |
+| `rpcStartup[]`、`remoteOperations[]`                     | stdio 打开到 attestation 的耗时；SSH 连接、上传、App 创建/恢复耗时                    |
+| `providerRequests`、`providerPurposes`、`tunnels`        | 请求数（按 root/child/summary）与反向隧道开关次数                                     |
+| `cleanup`                                                | 各项关闭/删除的确认结果和失败列表                                                     |
 
 运行成功且清理确认时删除 `.phi-acceptance/runs/<run-id>`；失败时保留以便诊断。结束时打印简短摘要。
 
@@ -78,6 +94,8 @@ bun scripts/remote-r8.ts --host yzhang-node3 \
 
 - 需要本机 `ssh` 能免交互登录该别名（受管身份已加载进 ssh-agent）；身份用真实 HOME 解析后传给隔离子进程。
 - 源码检出模式下 helper 按需构建（需要 Go 工具链，见 `bun run build:helper`）；可先构建以缩短首次运行。
-- 每次运行都会把官方 OMP 资产下载到私有 agent 目录（运行后删除），不使用任何共享缓存。
+- 官方 OMP 资产（约 276 MB）缓存在 `.phi-acceptance/cache/omp/<版本>/<平台>/omp`（已被 `.phi-acceptance/` 忽略），重复运行不再重新下载。
+  复用前必须用 SHA-256 对照生产使用的发布清单（`REMOTE_OMP_MANIFEST`）校验，匹配才会在启动前复制进本次运行的私有 agent 缓存；
+  不匹配的文件从不使用（记入回执 `assetCache.rejected`，随后由生产路径重新下载并在校验通过后替换）。其余内容仍是每次运行私有。
 - 自动化测试（`tests/remote-r8.test.ts`）用本地 shell 主机代替 SSH 跑同样的三个用例、清理和回执；
   SSH master 的 SIGKILL、GNU `stat`/`rm` 校验脚本由 shim 测试覆盖，真实 SSH 只能在真机上验证。

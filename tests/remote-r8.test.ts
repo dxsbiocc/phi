@@ -15,10 +15,17 @@ import {
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import test from 'node:test'
 
-import { main, type MainDependencies } from '../scripts/remote-r8'
+import { main, NODE_COMMAND, type MainDependencies } from '../scripts/remote-r8'
 import { parseR8Args, R8UsageError } from '../scripts/remote-r8/args'
+import {
+  persistentAssetPath,
+  privateAssetPath,
+  sha256OfFile
+} from '../scripts/remote-r8/asset-cache'
+import { seedRunAssetCache, storeRunAssetCache } from '../scripts/remote-r8/asset-cache'
 import { executeParent } from '../scripts/remote-r8/parent'
 import { cleanupScript, parsePreparation, prepareScript } from '../scripts/remote-r8/ssh-workspace'
 import { assertTrackedTreeClean, currentCommit, gitRunner } from '../scripts/remote-r8/tree'
@@ -26,6 +33,7 @@ import type { R8Input } from '../scripts/remote-r8/types'
 import type { R8RunResult } from '../scripts/remote-r8/runner'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 
+const sha256Of = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 const COMMIT = 'a'.repeat(40)
 const BUNDLE = 'b'.repeat(64)
 
@@ -79,6 +87,35 @@ test('plan mode prints host, root, commit, bundle and cases and starts nothing',
     assert.match(text, new RegExp(name))
   assert.match(text, /starts no SSH, SDK, provider or model process/)
   assert.ok(!calls.includes('runChild') && !calls.includes('resolveProfile'))
+})
+
+test('plan mode lists the prepare phase, its bound and the asset cache', async () => {
+  const { deps, out } = fakeDeps()
+  assert.equal(await main(['--host', 'GPU', '--prepare-timeout-minutes', '20'], deps), 0)
+  const text = out.join('\n')
+  assert.match(text, /Prepare phase \(bounded to 20 min/)
+  assert.match(text, /one real production startup/)
+  assert.match(text, /Asset cache:\s+\.phi-acceptance\/cache/)
+  const defaulted = fakeDeps()
+  assert.equal(await main(['--host', 'GPU'], defaulted.deps), 0)
+  assert.match(defaulted.out.join('\n'), /Prepare phase \(bounded to 15 min/)
+})
+
+test('under Bun the script refuses with exit code 2 and names the node command', async () => {
+  const { deps, calls, out } = fakeDeps()
+  const errors: string[] = []
+  const original = console.error
+  console.error = (message?: unknown) => void errors.push(String(message))
+  try {
+    assert.equal(await main(['--host', 'GPU'], deps, true), 2)
+  } finally {
+    console.error = original
+  }
+  assert.match(errors.join('\n'), /must run under Node/)
+  assert.ok(errors.join('\n').includes(NODE_COMMAND))
+  assert.match(NODE_COMMAND, /^node --import \.\/scripts\/test-loader\.mjs scripts\/remote-r8\.ts/)
+  assert.deepEqual(calls, [])
+  assert.deepEqual(out, [])
 })
 
 test('plan mode reports modified tracked files but does not refuse', async () => {
@@ -140,14 +177,20 @@ test('argument validation', () => {
     host: 'GPU',
     runtimeRoot: '~/.phi/runtime',
     runtimeRootExplicit: false,
-    execute: false
+    execute: false,
+    prepareTimeoutMinutes: 15
   })
   assert.deepEqual(parseR8Args(['--execute', '--host', 'a.b-c', '--runtime-root', '/tmp/x/']), {
     host: 'a.b-c',
     runtimeRoot: '/tmp/x',
     runtimeRootExplicit: true,
-    execute: true
+    execute: true,
+    prepareTimeoutMinutes: 15
   })
+  assert.equal(
+    parseR8Args(['--host', 'GPU', '--prepare-timeout-minutes', '30']).prepareTimeoutMinutes,
+    30
+  )
   for (const bad of [
     [],
     ['--host'],
@@ -161,7 +204,12 @@ test('argument validation', () => {
     ['--host', 'GPU', '--runtime-root'],
     ['--host', 'GPU', '--execute', '--execute'],
     ['--host', 'GPU', '--expected-bundle-sha256', 'x'],
-    ['--host=GPU']
+    ['--host=GPU'],
+    ['--host', 'GPU', '--prepare-timeout-minutes', '0'],
+    ['--host', 'GPU', '--prepare-timeout-minutes', '31'],
+    ['--host', 'GPU', '--prepare-timeout-minutes', '1.5'],
+    ['--host', 'GPU', '--prepare-timeout-minutes', 'x'],
+    ['--host', 'GPU', '--prepare-timeout-minutes']
   ])
     assert.throws(() => parseR8Args(bad), R8UsageError, JSON.stringify(bad))
 })
@@ -189,7 +237,8 @@ test('the remote preparation and cleanup scripts are valid shell and keep their 
     runtimeRootExplicit: explicit,
     bundleHash: BUNDLE,
     commit: COMMIT,
-    realBun: '/bin/bun'
+    realBun: '/bin/bun',
+    prepareMs: 900_000
   })
   const scripts = [
     prepareScript(input(false, '~/.phi/runtime')),
@@ -225,7 +274,8 @@ function scriptInput(explicit: boolean, root: string): R8Input {
     runtimeRootExplicit: explicit,
     bundleHash: BUNDLE,
     commit: COMMIT,
-    realBun: '/bin/bun'
+    realBun: '/bin/bun',
+    prepareMs: 900_000
   }
 }
 
@@ -368,7 +418,13 @@ async function runParent(options: { commits: string[]; childOk?: boolean }): Pro
   const printed: string[] = []
   const commits = [...options.commits]
   const outcome = await executeParent(
-    { host: 'GPU', runtimeRoot: '~/.phi/runtime', runtimeRootExplicit: false, execute: true },
+    {
+      host: 'GPU',
+      runtimeRoot: '~/.phi/runtime',
+      runtimeRootExplicit: false,
+      execute: true,
+      prepareTimeoutMinutes: 15
+    },
     {
       repoRoot,
       git: (args) => (args[0] === 'rev-parse' ? `${commits.shift() ?? COMMIT}\n` : ''),
@@ -486,7 +542,11 @@ test(
       )
       assert.equal(result.providerRequests, 12)
       assert.deepEqual(result.providerPurposes, { root: 10, child: 2, summary: 0 })
-      assert.equal(result.rpcGenerations, 2)
+      // The prepare startup, the first case startup and the explicit resume.
+      assert.equal(result.rpcGenerations, 3)
+      assert.equal(result.prepare?.status, 'ready')
+      assert.ok((result.prepare?.remoteCommands ?? 0) > 0)
+      assert.deepEqual(result.tunnels, { opened: 3, closed: 3 })
       assert.deepEqual(result.cleanup, {
         applicationClosed: true,
         rpcClosed: true,
@@ -506,3 +566,67 @@ test(
     }
   }
 )
+
+test('the persistent asset cache is reused only after its SHA-256 matches the manifest', async () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'phi-r8-assets-')))
+  try {
+    const good = Buffer.from('release-bytes')
+    const manifest = {
+      version: '1.2.3',
+      assets: {
+        'linux-x64': { url: 'https://example.invalid/x64', sha256: sha256Of(good) },
+        'linux-arm64': {
+          url: 'https://example.invalid/arm64',
+          sha256: sha256Of(Buffer.from('arm'))
+        }
+      }
+    }
+    const persistent = join(base, 'persistent')
+    const agent = join(base, 'run/agent')
+    mkdirSync(agent, { recursive: true })
+    for (const [key, bytes] of [
+      ['linux-x64', good],
+      ['linux-arm64', Buffer.from('tampered')]
+    ] as const) {
+      const path = persistentAssetPath(persistent, '1.2.3', key)
+      mkdirSync(join(path, '..'), { recursive: true })
+      writeFileSync(path, bytes)
+    }
+    const seeded = await seedRunAssetCache({ persistentDir: persistent, agentDir: agent, manifest })
+    assert.deepEqual(seeded, { reused: ['linux-x64'], rejected: ['linux-arm64'] })
+    const reusedPath = privateAssetPath(agent, '1.2.3', 'linux-x64')
+    assert.equal(await sha256OfFile(reusedPath), manifest.assets['linux-x64'].sha256)
+    assert.equal(statSync(reusedPath).mode & 0o777, 0o600)
+    assert.equal(statSync(join(reusedPath, '..')).mode & 0o777, 0o700)
+    // The mismatching entry never reaches the run cache.
+    assert.throws(() => statSync(privateAssetPath(agent, '1.2.3', 'linux-arm64')))
+    // A download in the run replaces the bad persistent entry only with a verified file.
+    const downloaded = privateAssetPath(agent, '1.2.3', 'linux-arm64')
+    mkdirSync(join(downloaded, '..'), { recursive: true })
+    writeFileSync(downloaded, 'arm')
+    const stored = await storeRunAssetCache({
+      persistentDir: persistent,
+      agentDir: agent,
+      manifest,
+      seeded: seeded.reused
+    })
+    assert.deepEqual(stored, { stored: ['linux-arm64'], downloaded: ['linux-arm64'] })
+    assert.equal(
+      await sha256OfFile(persistentAssetPath(persistent, '1.2.3', 'linux-arm64')),
+      manifest.assets['linux-arm64'].sha256
+    )
+    // A run-cache file that does not match the manifest is never stored.
+    writeFileSync(downloaded, 'corrupt')
+    rmSync(persistentAssetPath(persistent, '1.2.3', 'linux-arm64'))
+    const none = await storeRunAssetCache({
+      persistentDir: persistent,
+      agentDir: agent,
+      manifest,
+      seeded: seeded.reused
+    })
+    assert.deepEqual(none.stored, [])
+    assert.throws(() => statSync(persistentAssetPath(persistent, '1.2.3', 'linux-arm64')))
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})

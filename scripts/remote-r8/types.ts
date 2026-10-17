@@ -2,8 +2,14 @@ import { isAbsolute } from 'node:path'
 
 /** Per-case budget, copied unchanged from the frozen operators. */
 export const CASE_MS = 120_000
-/** Overall watchdog for one acceptance run. */
+/** Watchdog for the three cases and cleanup; the prepare phase has its own, additional bound. */
 export const TOTAL_MS = 15 * 60_000
+export const DEFAULT_PREPARE_MINUTES = 15
+export const MAX_PREPARE_MINUTES = 30
+/** Overall watchdog for one acceptance run: the prepare bound plus the case/cleanup budget. */
+export function totalMsFor(prepareMs: number): number {
+  return prepareMs + TOTAL_MS
+}
 /** The one private read-only agent the child case delegates to. */
 export const INSPECTOR_AGENT = 'R8Inspector'
 export const SCRATCH_DIRECTORY = '.phi-acceptance'
@@ -35,6 +41,8 @@ export interface R8Input {
   readonly bundleHash: string
   readonly commit: string
   readonly realBun: string
+  /** Bound of the prepare phase (one production startup that installs what the server lacks). */
+  readonly prepareMs: number
 }
 
 export function assertInput(input: R8Input): void {
@@ -43,6 +51,9 @@ export function assertInput(input: R8Input): void {
     ![input.repoRoot, input.localRoot, input.realBun].every(isAbsolute) ||
     !input.localRoot.startsWith(`${input.repoRoot}/${SCRATCH_DIRECTORY}/runs/${input.runId}`) ||
     input.profile.hostAlias !== input.host ||
+    !Number.isInteger(input.prepareMs) ||
+    input.prepareMs < 60_000 ||
+    input.prepareMs > MAX_PREPARE_MINUTES * 60_000 ||
     !/^[a-f0-9]{64}$/.test(input.bundleHash) ||
     !/^[a-f0-9]{40}$/.test(input.commit)
   if (invalid) throw new Error('Invalid isolated R8 input')
