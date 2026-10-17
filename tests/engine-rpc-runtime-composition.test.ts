@@ -48,14 +48,33 @@ test(
     await first.close()
     await assert.rejects(access(join(f.f.runtimeRoot, 'rpc-sessions', homes[0])))
     await access(initial.checkpoint.journalPath)
+    const journalBeforeRestore = (await readFile(initial.checkpoint.journalPath, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
     const count = (await f.sdk.snapshot()).providerRequests.length
     const second = await f.create({
-      action: { type: 'resume', reference: turn.snapshot.reference, savedModel: f.ref }
+      action: { type: 'resume', reference: turn.snapshot.reference, savedModel: f.ref },
+      initialSelection: {
+        model: f.defaults.params.model!,
+        thinkingLevel: 'high',
+        assertCurrent: () => undefined,
+        signal: new AbortController().signal
+      }
     })
     assert.equal(second.currentSnapshot().reference.ompSessionId, initial.reference.ompSessionId)
     assert.equal(second.currentSnapshot().checkpoint.journalPath, initial.checkpoint.journalPath)
-    assert.equal(second.currentSnapshot().modelPolicy, 'restored')
+    assert.equal(second.currentSnapshot().modelPolicy, 'maintained')
     assert.equal((await f.sdk.snapshot()).providerRequests.length, count)
+    const appendedOnRestore = (await readFile(initial.checkpoint.journalPath, 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .slice(journalBeforeRestore.length)
+    assert.deepEqual(
+      appendedOnRestore.filter((entry) => entry.type === 'model_change'),
+      []
+    )
     const nextHomes = await readdir(join(f.f.runtimeRoot, 'rpc-sessions'))
     const nextConfig = JSON.parse(
       await readFile(join(f.f.runtimeRoot, 'rpc-sessions', nextHomes[0], 'runtime.json'), 'utf8')

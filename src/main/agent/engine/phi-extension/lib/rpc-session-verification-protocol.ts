@@ -61,6 +61,7 @@ export interface SessionVerificationProof {
   readonly journalPath: string
   readonly leafId: string | null
   readonly model: { readonly provider: string; readonly id: string } | null
+  readonly modelRole: string | null
   readonly journalDigest: string
   readonly assetDigest: string
   readonly entryCount: number

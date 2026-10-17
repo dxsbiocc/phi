@@ -11,6 +11,7 @@ import {
 } from '../workspace-host/probe'
 import { createRemoteRuntimeInputExec } from './input-exec'
 import type { RemoteRuntimeWorkspace } from './types'
+import type { RemoteStartupDiagnostics } from '../engine/rpc/remote-startup-diagnostics'
 
 const REMOTE_RUNTIME_ROOT_RESOLUTION_TIMEOUT_MS = 30_000
 const REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS = 10_000
@@ -29,16 +30,24 @@ export async function openRemoteRuntimeWorkspace(
   resolveBinding: (input: {
     sessionId: string
     projectId: string
-  }) => RemoteWorkspaceHostBinding = resolveRemoteWorkspaceHostBinding
+  }) => RemoteWorkspaceHostBinding = resolveRemoteWorkspaceHostBinding,
+  startupDiagnostics?: RemoteStartupDiagnostics
 ): Promise<RemoteRuntimeWorkspace> {
   const binding = resolveBinding({ sessionId: target.sessionId, projectId: target.projectId })
   const execWithInput = createRemoteRuntimeInputExec(binding.config.connect)
   signal?.throwIfAborted()
-  const result = await execWithInput(HOST_CAPABILITY_FAST_PROBE_SCRIPT, {
-    signal,
-    timeoutMs: REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS,
-    maxOutputBytes: 64 * 1024
-  })
+  const result = await (startupDiagnostics?.step('platform_probe', () =>
+    execWithInput(HOST_CAPABILITY_FAST_PROBE_SCRIPT, {
+      signal,
+      timeoutMs: REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS,
+      maxOutputBytes: 64 * 1024
+    })
+  ) ??
+    execWithInput(HOST_CAPABILITY_FAST_PROBE_SCRIPT, {
+      signal,
+      timeoutMs: REMOTE_RUNTIME_PLATFORM_PROBE_TIMEOUT_MS,
+      maxOutputBytes: 64 * 1024
+    }))
   signal?.throwIfAborted()
   const profile = parseHostCapabilityProbe(result.stdout)
   if (
@@ -55,12 +64,10 @@ export async function openRemoteRuntimeWorkspace(
   const platform = profile.platform
   const projectHost = new SshHost({ ...binding.config, platform })
   try {
-    const runtimeRoot = await resolveRemoteRuntimeRoot(
-      projectHost,
-      binding,
-      target.configuredRoot,
-      signal
-    )
+    const resolveRoot = (): Promise<string> =>
+      resolveRemoteRuntimeRoot(projectHost, binding, target.configuredRoot, signal)
+    const runtimeRoot = await (startupDiagnostics?.step('runtime_root', resolveRoot) ??
+      resolveRoot())
     signal?.throwIfAborted()
     const runtimeHost = new SshHost({
       remoteRoot: runtimeRoot,

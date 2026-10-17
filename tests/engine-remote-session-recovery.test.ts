@@ -31,6 +31,7 @@ async function unit(
   controller: AbortController
   published(): number
   interrupted(): number
+  selected(): number
 }> {
   const scope = {
     hostProfileId: 'host',
@@ -81,6 +82,7 @@ async function unit(
   const controller = new AbortController()
   let published = 0
   let interrupted = 0
+  let selected = 0
   const options: RemoteSessionRecoveryOptions = {
     action: { type: 'resume', reference, savedModel: recoveryModel },
     connection,
@@ -108,8 +110,10 @@ async function unit(
       fileIdentity: 'file-1',
       fingerprint: 'revision-1'
     }),
-    verifySavedState: async () => ({ model: recoveryModel }),
-    selectModel: async () => undefined,
+    verifySavedState: async () => ({ model: recoveryModel, modelRole: 'default' }),
+    selectModel: async () => {
+      selected++
+    },
     verifyAttachment: async (identity) => ({ ...identity, leafId: null }),
     publish: async () => {
       published++
@@ -125,7 +129,8 @@ async function unit(
     connection,
     controller,
     published: () => published,
-    interrupted: () => interrupted
+    interrupted: () => interrupted,
+    selected: () => selected
   }
 }
 
@@ -144,10 +149,25 @@ test('resume omits model selectors and returns immutable safe adoption outcome',
     assert.equal(Object.isFrozen(result.checkpoint), true)
     assert.equal(Object.isFrozen(result.reference), true)
     assert.equal(f.published(), 1)
+    assert.equal(f.selected(), 0)
     assert.equal(
       f.wire.commands.some((command) => command.type === 'prompt'),
       false
     )
+  } finally {
+    await f.connection.close()
+  }
+})
+
+test('resume reselects the same model when the remotely proven role is not default', async () => {
+  const f = await unit()
+  try {
+    const result = await recoverRemoteSession({
+      ...f.options,
+      verifySavedState: async () => ({ model: recoveryModel, modelRole: 'smol' })
+    })
+    assert.equal(result.modelPolicy, 'restored')
+    assert.equal(f.selected(), 1)
   } finally {
     await f.connection.close()
   }
@@ -292,6 +312,124 @@ async function scanFiles(root: string): Promise<Array<{ path: string; bytes: Buf
   }
   return files
 }
+
+test(
+  'real persistent CLI explicit restore appends no model change when model and role are unchanged',
+  { timeout: 60000 },
+  async () => {
+    const f = await createRemoteSessionRecoveryFixture()
+    try {
+      const first = await f.open()
+      const created = await recoverRemoteSession(
+        first.options({ type: 'new', model: recoveryModel })
+      )
+      await first.close()
+      const before = (await readFile(created.checkpoint.journalPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+      const savedSelection = before.findLast((entry) => entry.type === 'model_change')
+      assert.deepEqual(
+        { model: savedSelection?.model, role: savedSelection?.role },
+        { model: `${recoveryModel.provider}/${recoveryModel.id}`, role: 'default' }
+      )
+
+      const second = await f.open()
+      await recoverRemoteSession(
+        second.options({
+          type: 'resume',
+          reference: created.reference,
+          savedModel: recoveryModel
+        })
+      )
+      const appended = (await readFile(created.checkpoint.journalPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .slice(before.length)
+
+      assert.deepEqual(
+        appended.filter((entry) => entry.type === 'model_change'),
+        []
+      )
+    } finally {
+      await f.close()
+    }
+  }
+)
+
+test(
+  'real persistent CLI explicit replacement still records the different desired model',
+  { timeout: 60000 },
+  async () => {
+    const f = await createRemoteSessionRecoveryFixture()
+    try {
+      const first = await f.open()
+      const created = await recoverRemoteSession(
+        first.options({ type: 'new', model: recoveryModel })
+      )
+      await first.close()
+      const before = (await readFile(created.checkpoint.journalPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean).length
+
+      const second = await f.open()
+      const restored = await recoverRemoteSession(
+        second.options({
+          type: 'resume',
+          reference: created.reference,
+          savedModel: recoveryModel,
+          replacement: replacementModel
+        })
+      )
+      const appended = (await readFile(created.checkpoint.journalPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .slice(before)
+
+      assert.equal(restored.modelPolicy, 'explicit-replacement')
+      assert.deepEqual(restored.model, replacementModel)
+      assert.ok(
+        appended.some(
+          (entry) =>
+            entry.type === 'model_change' &&
+            entry.model === `${replacementModel.provider}/${replacementModel.id}` &&
+            entry.role === 'default'
+        )
+      )
+    } finally {
+      await f.close()
+    }
+  }
+)
+
+test(
+  'real persistent CLI fresh sessions still record the selected model',
+  { timeout: 60000 },
+  async () => {
+    const f = await createRemoteSessionRecoveryFixture()
+    try {
+      const channel = await f.open()
+      const created = await recoverRemoteSession(
+        channel.options({ type: 'new', model: recoveryModel })
+      )
+      const modelChanges = (await readFile(created.checkpoint.journalPath, 'utf8'))
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((entry) => entry.type === 'model_change')
+
+      assert.equal(created.modelPolicy, 'fresh')
+      assert.deepEqual(
+        modelChanges.map(({ model, role }) => ({ model, role })),
+        [{ model: `${recoveryModel.provider}/${recoveryModel.id}`, role: 'default' }]
+      )
+    } finally {
+      await f.close()
+    }
+  }
+)
 
 test(
   'real persistent CLI resumes the same journal with fresh HOME and hydrated image history',
@@ -577,7 +715,7 @@ test('strict saved-state proof rejects a different journal model before any swit
     await assert.rejects(
       recoverRemoteSession({
         ...f.options,
-        verifySavedState: async () => ({ model: replacementModel })
+        verifySavedState: async () => ({ model: replacementModel, modelRole: 'default' })
       }),
       { code: 'MODEL_UNAVAILABLE' }
     )

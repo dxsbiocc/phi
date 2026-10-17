@@ -240,9 +240,13 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
                 };
                 await walk(records);
                 const manager = await SessionManager.open(file, undefined, undefined, { throwIfMissing:true, suppressBreadcrumb:true });
-                const selectors = getRestorableSessionModels(manager.buildSessionContext().models, manager.getLastModelChangeRole());
+                const context = manager.buildSessionContext();
+                const lastRole = manager.getLastModelChangeRole();
+                const selectors = getRestorableSessionModels(context.models, lastRole);
                 const selector = selectors[0]; const split = selector?.indexOf('/');
-                console.log(JSON.stringify({model: selector && split > 0 ? {provider:selector.slice(0,split),id:selector.slice(split+1)} : null}));
+                const model = selector && split > 0 ? {provider:selector.slice(0,split),id:selector.slice(split+1)} : null;
+                const modelRole = model ? (lastRole && lastRole !== 'fallback' && context.models[lastRole] === selector ? lastRole : 'default') : null;
+                console.log(JSON.stringify({model, modelRole}));
               `
               try {
                 const result = await promisify(execFile)(
@@ -268,7 +272,10 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
                     }
                   }
                 )
-                return JSON.parse(result.stdout) as { model: typeof recoveryModel | null }
+                return JSON.parse(result.stdout) as {
+                  model: typeof recoveryModel | null
+                  modelRole: string | null
+                }
               } catch (error) {
                 if (signal.aborted) throw signal.reason
                 const details = error as { stderr?: string }

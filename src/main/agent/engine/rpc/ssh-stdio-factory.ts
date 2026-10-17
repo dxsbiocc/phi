@@ -32,6 +32,7 @@ import {
   assertPhiModelProviderCompatible,
   PHI_DISABLED_CAPABILITY_PROVIDERS
 } from './rpc-startup-policy'
+import type { RemoteStartupDiagnostics } from './remote-startup-diagnostics'
 
 export interface SshRpcSessionTransportOptions {
   /** Main-only last dispatch fence; never serialized into CLI or SSH protocol options. */
@@ -42,6 +43,7 @@ export interface SshRpcSessionTransportOptions {
   bundle: PhiExtensionBundle
   projectId: string
   onExtensionProgress?: ExtensionDeploymentOptions['onProgress']
+  readonly startupDiagnostics?: RemoteStartupDiagnostics
   /** Factory owns the returned writer lease until this generation closes, including failed/late opens. */
   preparePersistentStorage?: PreparePersistentLaunchStorage
   /** R3 may write proxy model configuration here. Desktop credentials are never copied. */
@@ -206,17 +208,23 @@ export async function prepareSshRpcSessionTransport(
   // Download/upload preparation has its own caller-owned cancellation and transfer
   // budget. RpcConnection.start's deadline begins only after this factory returns.
   preparationSignal?.throwIfAborted()
-  const runtime = await ensureRemoteOmpDeployment({ ...options.runtime, signal: preparationSignal })
-  const extension = await ensurePhiExtensionDeployment({
-    runtimeHost: options.runtime.runtimeHost,
-    runtimeRoot: options.runtime.runtimeRoot,
-    cacheDir: options.runtime.cacheDir,
-    openLockStdio: (command) => options.session.openStdio!(command),
-    bundle: options.bundle,
-    uploadOptions: options.runtime.uploadOptions,
-    onProgress: options.onExtensionProgress,
-    signal: preparationSignal
-  })
+  const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
+    options.startupDiagnostics?.step(name, operation) ?? operation()
+  const runtime = await step('runtime_binary', () =>
+    ensureRemoteOmpDeployment({ ...options.runtime, signal: preparationSignal })
+  )
+  const extension = await step('extension_deployment', () =>
+    ensurePhiExtensionDeployment({
+      runtimeHost: options.runtime.runtimeHost,
+      runtimeRoot: options.runtime.runtimeRoot,
+      cacheDir: options.runtime.cacheDir,
+      openLockStdio: (command) => options.session.openStdio!(command),
+      bundle: options.bundle,
+      uploadOptions: options.runtime.uploadOptions,
+      onProgress: options.onExtensionProgress,
+      signal: preparationSignal
+    })
+  )
   preparationSignal?.throwIfAborted()
   const prepared = new WeakMap<Readonly<RpcSessionCreateParams>, RpcBootstrapConfig>()
   const preparedGenerations = new WeakMap<Readonly<RpcSessionCreateParams>, number>()
@@ -233,7 +241,9 @@ export async function prepareSshRpcSessionTransport(
       callerSignal.throwIfAborted()
       const { runtimeHost: host, runtimeRoot: root } = options.runtime
       if (!host.transfer) throw new Error('Runtime host has no streaming file transfer transport')
-      await assertNoProjectPluginTools({ host, cwd: params.cwd, runtimeRoot: root, signal })
+      await step('project_plugin_guard', () =>
+        assertNoProjectPluginTools({ host, cwd: params.cwd, runtimeRoot: root, signal })
+      )
       const nonce = randomUUID()
       const sessionBase = posix.join(root, 'rpc-sessions')
       const sessionDirectory = posix.join(sessionBase, nonce)
@@ -290,30 +300,36 @@ export async function prepareSshRpcSessionTransport(
       signal.addEventListener('abort', abort, { once: true })
       try {
         if (options.preparePersistentStorage) {
-          storage = await acquirePersistentLaunchStorage(
-            options.preparePersistentStorage,
-            { params, signal },
-            {
-              host,
-              projectId: options.projectId,
-              runtimeRoot: root
-            }
+          storage = await step('persistent_storage', () =>
+            acquirePersistentLaunchStorage(
+              options.preparePersistentStorage!,
+              { params, signal },
+              {
+                host,
+                projectId: options.projectId,
+                runtimeRoot: root
+              }
+            )
           )
           storage.lease.signal.addEventListener('abort', loseLease, { once: true })
           if (storage.lease.signal.aborted) loseLease()
           storage.lease.assertActive()
-          await run(storagePrefix(storage.scope, storage.paths), signal)
+          await step('persistent_storage', () =>
+            run(storagePrefix(storage!.scope, storage!.paths), signal)
+          )
         }
-        await run(
-          `[ "$(cd -- ${q(params.cwd)} && pwd -P)" = ${q(params.cwd)} ] || fail 'Project root must be a canonical existing directory'
+        await step('rpc_private_generation', async () => {
+          await run(
+            `[ "$(cd -- ${q(params.cwd)} && pwd -P)" = ${q(params.cwd)} ] || fail 'Project root must be a canonical existing directory'
 private_dir ${q(sessionBase)}
 [ ! -e ${q(sessionDirectory)} ] && [ ! -L ${q(sessionDirectory)} ] || fail 'Session generation already exists'
 private_dir ${q(sessionDirectory)}
 private_dir ${q(homePath)}
 ${storage ? `private_dir ${q(posix.join(homePath, '.omp'))}\nprivate_dir ${q(statePath)}\nprivate_dir ${q(posix.join(statePath, 'omp'))}\nprivate_dir ${q(cachePath)}\nprivate_dir ${q(posix.join(cachePath, 'omp'))}\nprivate_dir ${q(tempPath)}` : ''}
 private_dir ${q(agentDir)}`,
-          signal
-        )
+            signal
+          )
+        })
         const config: RpcBootstrapConfig = {
           schema: 1,
           nonce,
@@ -328,17 +344,21 @@ private_dir ${q(agentDir)}`,
         const source = join(local, 'config.json')
         await writeFile(source, bytes, { mode: 0o600, flag: 'wx' })
         const sha256 = createHash('sha256').update(bytes).digest('hex')
-        await host.transfer.uploadFile(source, configPath, {
-          ...options.runtime.uploadOptions,
-          signal,
-          expectedSha256: sha256
+        await step('rpc_bootstrap_config', async () => {
+          await host.transfer!.uploadFile(source, configPath, {
+            ...options.runtime.uploadOptions,
+            signal,
+            expectedSha256: sha256
+          })
+          await run(
+            `private_file ${q(configPath)}\n[ "$(hash_file ${q(configPath)})" = ${q(sha256)} ] || fail 'Private RPC configuration was corrupted'`,
+            signal
+          )
         })
-        await run(
-          `private_file ${q(configPath)}\n[ "$(hash_file ${q(configPath)})" = ${q(sha256)} ] || fail 'Private RPC configuration was corrupted'`,
-          signal
-        )
         if (options.prepareSession)
-          await cancelled(options.prepareSession({ params, homePath, agentDir, signal }), signal)
+          await step('model_proxy_publication', () =>
+            cancelled(options.prepareSession!({ params, homePath, agentDir, signal }), signal)
+          )
         const preparedRuntime = options.prepareRuntime
           ? await cancelled(
               options.prepareRuntime(
@@ -411,15 +431,17 @@ private_dir ${q(agentDir)}`,
         const policySource = join(local, 'startup-policy.json')
         await writeFile(policySource, policyBytes, { mode: 0o600, flag: 'wx' })
         const policyHash = createHash('sha256').update(policyBytes).digest('hex')
-        await host.transfer.uploadFile(policySource, startupPolicyPath, {
-          ...options.runtime.uploadOptions,
-          signal,
-          expectedSha256: policyHash
+        await step('rpc_startup_policy', async () => {
+          await host.transfer!.uploadFile(policySource, startupPolicyPath, {
+            ...options.runtime.uploadOptions,
+            signal,
+            expectedSha256: policyHash
+          })
+          await run(
+            `private_file ${q(startupPolicyPath)}\n[ "$(hash_file ${q(startupPolicyPath)})" = ${q(policyHash)} ] || fail 'Private RPC startup policy was corrupted'`,
+            signal
+          )
         })
-        await run(
-          `private_file ${q(startupPolicyPath)}\n[ "$(hash_file ${q(startupPolicyPath)})" = ${q(policyHash)} ] || fail 'Private RPC startup policy was corrupted'`,
-          signal
-        )
         const args = [
           '--cwd',
           params.cwd,
@@ -452,7 +474,7 @@ private_dir ${q(agentDir)}`,
           ? ` XDG_DATA_HOME=${q(storage.paths.data)} XDG_STATE_HOME=${q(statePath)} XDG_CACHE_HOME=${q(cachePath)} TMPDIR=${q(tempPath)} TEMP=${q(tempPath)} TMP=${q(tempPath)}`
           : ''
         const command = `umask 077 && cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
-        const opening = options.session.openStdio!(command)
+        const opening = step('rpc_stdio_open', () => options.session.openStdio!(command))
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.
         void opening.then(
@@ -494,7 +516,7 @@ private_dir ${q(agentDir)}`,
       if (!config) throw new Error('Missing prepared Phi RPC bootstrap generation')
       if (preparedGenerations.get(params) !== connection.bindControl().generation)
         throw new Error('Prepared RPC channel generation does not match')
-      await attestBootstrap(connection, config, signal)
+      await step('bootstrap_attestation', () => attestBootstrap(connection, config, signal))
     }
   }
 }

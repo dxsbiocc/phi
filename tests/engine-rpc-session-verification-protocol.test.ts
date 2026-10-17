@@ -118,6 +118,7 @@ async function fixture(
           journalPath: '/private/durable/journals/fixture.jsonl',
           leafId: null,
           model: null,
+          modelRole: null,
           journalDigest: 'a'.repeat(64),
           assetDigest: 'b'.repeat(64),
           entryCount: 0,
@@ -171,7 +172,8 @@ for (const change of [
   'unexpected',
   'path',
   'digest',
-  'model'
+  'model',
+  'modelRole'
 ]) {
   test('Node verifier rejects changed ' + change, async (t) => {
     const f = await fixture(t, {
@@ -185,6 +187,7 @@ for (const change of [
         if (change === 'path') proof.journalPath = '/outside'
         if (change === 'digest') proof.assetDigest = 'bad'
         if (change === 'model') proof.model = { provider: 'x', id: 'y', apiKey: 'secret' }
+        if (change === 'modelRole') proof.modelRole = 'default'
         return { ...raw, request, proof }
       }
     })

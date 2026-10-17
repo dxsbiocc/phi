@@ -165,6 +165,76 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
   return session
 }
 
+/** Adds test-only remote-shell startup latency without changing command contents or results. */
+export function withRemoteCommandDelay(
+  session: RemoteSshSession,
+  delayMs: number
+): RemoteSshSession {
+  if (!Number.isFinite(delayMs) || delayMs < 0) throw new Error('Invalid remote command delay')
+  if (delayMs === 0) return session
+  const wait = (): Promise<void> => delay(delayMs).then(() => undefined)
+  return {
+    exec: async (command) => {
+      await wait()
+      return session.exec(command)
+    },
+    readTextFile: async (path) => {
+      await wait()
+      return session.readTextFile(path)
+    },
+    writeTextFile: async (path, content) => {
+      await wait()
+      return session.writeTextFile(path, content)
+    },
+    mkdirp: async (path) => {
+      await wait()
+      return session.mkdirp(path)
+    },
+    exists: async (path) => {
+      await wait()
+      return session.exists(path)
+    },
+    uploadFile: (localPath, remotePath, options) =>
+      session.uploadFile(localPath, remotePath, options),
+    close: () => session.close(),
+    ...(session.readFileChunk
+      ? {
+          readFileChunk: async (path, options) => {
+            await wait()
+            return session.readFileChunk!(path, options)
+          }
+        }
+      : {}),
+    ...(session.execWithInput
+      ? {
+          execWithInput: async (command, input, options) => {
+            await wait()
+            return session.execWithInput!(command, input, options)
+          }
+        }
+      : {}),
+    ...(session.execBounded
+      ? {
+          execBounded: async (command, options) => {
+            await wait()
+            return session.execBounded!(command, options)
+          }
+        }
+      : {}),
+    ...(session.openStdio
+      ? {
+          openStdio: async (command) => {
+            await wait()
+            return session.openStdio!(command)
+          }
+        }
+      : {}),
+    ...(session.openReverseTunnel
+      ? { openReverseTunnel: session.openReverseTunnel.bind(session) }
+      : {})
+  }
+}
+
 /**
  * macOS has no `setsid`, which the remote launch relies on (the cluster is Linux).
  * This puts a perl stand-in first on PATH so the same launch string runs locally;

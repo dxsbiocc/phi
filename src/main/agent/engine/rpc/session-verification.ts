@@ -44,6 +44,7 @@ function parseProof(
     'journalPath',
     'leafId',
     'model',
+    'modelRole',
     'journalDigest',
     'assetDigest',
     'entryCount',
@@ -60,6 +61,7 @@ function parseProof(
     value.projectRoot !== identity.projectRoot ||
     value.journalPath !== posix.join(identity.journals, request.journalBasename) ||
     !(value.leafId === null || verificationText(value.leafId)) ||
+    !(value.modelRole === null || verificationText(value.modelRole)) ||
     typeof value.journalDigest !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(value.journalDigest) ||
     typeof value.assetDigest !== 'string' ||
@@ -73,7 +75,8 @@ function parseProof(
         Object.keys(value.model).sort().join(',') === 'id,provider' &&
         verificationText(value.model.provider, 1024) &&
         verificationText(value.model.id, 1024))
-    )
+    ) ||
+    (value.model === null) !== (value.modelRole === null)
   )
     verificationFailure('IDENTITY_MISMATCH')
   return Object.freeze({

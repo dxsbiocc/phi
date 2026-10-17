@@ -227,6 +227,7 @@ export async function proveSavedSession(
   const assets = await verifySessionAssets(refs, path, capability)
   let inspected: SessionManager | undefined
   let model: SessionVerificationProof['model'] = null
+  let modelRole: SessionVerificationProof['modelRole'] = null
   try {
     inspected = await sdk.SessionManager.open(path, capability.journals, undefined, {
       throwIfMissing: true,
@@ -236,11 +237,13 @@ export async function proveSavedSession(
     await verifyManager(inspected, path, request, capability, leaf, projectIdentity)
     if (liveManager)
       await verifyManager(liveManager, path, request, capability, leaf, projectIdentity)
+    const context = inspected.buildSessionContext({ maxFrameDataBytes: 0 })
+    const lastModelChangeRole = inspected.getLastModelChangeRole()
     const candidates = sdk.getRestorableSessionModels(
       // Models do not require materializing snapcompact frames. Assets have
       // already been verified independently; this does not change live context.
-      inspected.buildSessionContext({ maxFrameDataBytes: 0 }).models,
-      inspected.getLastModelChangeRole()
+      context.models,
+      lastModelChangeRole
     )
     if (candidates.length) {
       const value = candidates[0],
@@ -248,6 +251,12 @@ export async function proveSavedSession(
       if (separator < 1 || separator === value.length - 1 || !verificationText(value, 1024))
         verificationFailure('FILE_INVALID')
       model = Object.freeze({ provider: value.slice(0, separator), id: value.slice(separator + 1) })
+      modelRole =
+        lastModelChangeRole &&
+        lastModelChangeRole !== 'fallback' &&
+        context.models[lastModelChangeRole] === value
+          ? lastModelChangeRole
+          : 'default'
     }
   } finally {
     await inspected?.close()
@@ -275,6 +284,7 @@ export async function proveSavedSession(
     journalPath: path,
     leafId: leaf,
     model,
+    modelRole,
     journalDigest: before.digest,
     assetDigest: assets.digest,
     entryCount: loaded.entries.length - 1,

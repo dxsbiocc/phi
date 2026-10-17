@@ -15,7 +15,7 @@ import { mkdir, writeFile, chmod, readdir, access, mkdtemp, realpath, rm } from 
 import { createServer, connect, type Socket, type AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { createPersistentLauncherFixture } from './persistentLauncherFixture'
-import { createLocalShellSession } from './localShellSession'
+import { createLocalShellSession, withRemoteCommandDelay } from './localShellSession'
 import { startHostResultModel } from './rpcHostResultModel'
 import type { RemoteSessionRuntimeOptions } from '../../src/main/agent/engine/rpc/remote-session-runtime'
 import { saveRemoteHostProfile } from '../../src/main/agent/remote-hosts'
@@ -95,9 +95,12 @@ export async function facadeMetadataFixture(
       | 'loadPromptContext'
       | 'loadAgentResources'
       | 'resolveAgentEnvironment'
+      | 'startupDiagnostics'
     > & {
       agents: import('../../src/main/agent/agents/definition').PhiAgentDefinition[]
       beforeConnect?: (phiSessionId: string) => Promise<void>
+      realWorkspace?: boolean
+      commandDelayMs?: number
     }
   } = {}
 ): Promise<FacadeMetadataFixture> {
@@ -245,7 +248,7 @@ export async function facadeMetadataFixture(
   const bundle = await createPhiExtensionBundle(join(repo, 'src/main/agent/engine/phi-extension'))
   const session: SelectedFacadeRuntime['session'] = {
     ...f.session,
-    async execWithInput(command, input, options) {
+    async execWithInput(command, input, runOptions) {
       const channel = await f.session.openStdio!(command)
       let stdout = '',
         stderr = ''
@@ -258,14 +261,22 @@ export async function facadeMetadataFixture(
       const abort = (): void => {
         void channel.close()
       }
-      options?.signal?.addEventListener('abort', abort, { once: true })
+      runOptions?.signal?.addEventListener('abort', abort, { once: true })
       channel.stdin.end(input)
       try {
         const result = await channel.closed
-        options?.signal?.throwIfAborted()
-        return { ...result, stdout, stderr }
+        runOptions?.signal?.throwIfAborted()
+        const normalizedStdout =
+          options.applicationRouting?.realWorkspace &&
+          input.includes('__PHI_CAPABILITY_PROBE_V2_FAST_BEGIN__')
+            ? stdout
+                .replace(/^platform\.os=.*$/m, 'platform.os=Linux')
+                .replace(/^platform\.arch=.*$/m, 'platform.arch=aarch64')
+                .replace(/^libc\.name=.*$/m, 'libc.name=glibc')
+            : stdout
+        return { ...result, stdout: normalizedStdout, stderr }
       } finally {
-        options?.signal?.removeEventListener('abort', abort)
+        runOptions?.signal?.removeEventListener('abort', abort)
       }
     },
     async openReverseTunnel(options) {
@@ -312,6 +323,7 @@ export async function facadeMetadataFixture(
     }
   }
   let recovery: 'new' | 'resume' = 'new'
+  let applicationConnections = 0
   let approval: RemoteSessionRuntimeOptions['approval'] = {
     shouldGate: () => true,
     requestToolApproval: () => 'denied'
@@ -335,6 +347,7 @@ export async function facadeMetadataFixture(
           resolveAgentEnvironment: options.applicationRouting.resolveAgentEnvironment,
           foregroundAgentNames: options.applicationRouting.foregroundAgentNames,
           onChildApprovalEvent: options.applicationRouting.onChildApprovalEvent,
+          startupDiagnostics: options.applicationRouting.startupDiagnostics,
           approval: {
             shouldGate: (request) => approval.shouldGate(request),
             requestToolApproval: (request, signal) => approval.requestToolApproval(request, signal),
@@ -350,20 +363,31 @@ export async function facadeMetadataFixture(
                 ...binding.config,
                 connect: async () => {
                   await options.applicationRouting?.beforeConnect?.(identity.sessionId)
-                  return { ...f.session, ...session, close: async () => undefined }
+                  const connected = { ...f.session, ...session, close: async () => undefined }
+                  const delayed = options.applicationRouting?.commandDelayMs
+                    ? withRemoteCommandDelay(connected, options.applicationRouting.commandDelayMs)
+                    : connected
+                  applicationConnections++
+                  return options.applicationRouting?.realWorkspace && applicationConnections <= 2
+                    ? { ...delayed, openStdio: undefined }
+                    : delayed
                 }
               }
             }
           },
-          openWorkspace: async () => ({
-            projectHost: f.host,
-            runtimeHost: f.host,
-            projectRoot: f.scope.projectRoot,
-            runtimeRoot: f.runtimeRoot,
-            execWithInput: async () => {
-              throw new Error('unexpected raw workspace input')
-            }
-          }),
+          ...(options.applicationRouting.realWorkspace
+            ? {}
+            : {
+                openWorkspace: async () => ({
+                  projectHost: f.host,
+                  runtimeHost: f.host,
+                  projectRoot: f.scope.projectRoot,
+                  runtimeRoot: f.runtimeRoot,
+                  execWithInput: async () => {
+                    throw new Error('unexpected raw workspace input')
+                  }
+                })
+              }),
           deployment: {
             manifest: f.options.manifest,
             fetchImpl: f.options.fetchImpl,

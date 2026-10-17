@@ -49,6 +49,7 @@ test('production saved proof uses real SDK title, current branch and role restor
       proof.model === null ? null : proof.model.provider + '/' + proof.model.id,
       created.expectedModel
     )
+    assert.equal(proof.modelRole, kind === 'header' ? null : kind === 'role' ? 'smol' : 'default')
     assert.equal(proof.ompSessionId, created.id)
     assert.deepEqual(await readFile(created.path as string), before)
     assert.ok(before.byteLength > (kind === 'unicode' ? 1_000_000 : 0))

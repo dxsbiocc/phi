@@ -546,6 +546,8 @@ export class RemoteSessionRuntime {
   }
   private async initializeCheckpoint(): Promise<void> {
     const { options } = this
+    const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
+      options.transport.startupDiagnostics?.step(name, operation) ?? operation()
     this.hostPolicy = createRpcRuntimeHostPolicy({
       tools: options.tools,
       currentRun: () => this.authority?.currentRun(),
@@ -614,67 +616,76 @@ export class RemoteSessionRuntime {
             resultCapability = randomBytes(32).toString('hex'),
             leaseId = randomBytes(32).toString('hex')
           if (options.foregroundChildren) {
-            if (!context.params.model) throw new Error('Child runtime requires its parent model')
-            this.preparedChildren = await createProductionChildConfig({
-              identity: {
-                nonce: context.bootstrap.nonce,
-                phiSessionId: context.params.sessionId,
-                projectId: context.bootstrap.projectId,
-                projectRoot: context.params.cwd,
-                generation: context.generation
-              },
-              binding: options.foregroundChildren.binding,
-              definitions: options.foregroundChildren.definitions,
-              aliases: options.foregroundChildren.aliases,
-              blockedAgents: options.foregroundChildren.blockedAgents,
-              availableTools: [
-                ...roster
-                  .filter((tool) => tool.site === 'native' && tool.name !== 'task')
-                  .map(({ name, site }) => ({ name, site })),
-                ...(options.foregroundChildren.resources?.hostTools ?? []).map(({ name }) => ({
-                  name,
-                  site: 'host' as const
-                }))
-              ],
-              availableSkills: options.foregroundChildren.resources?.skills.map(({ name }) => name),
-              resources: options.foregroundChildren.resources,
-              resolveEnvironment: options.foregroundChildren.resolveEnvironment,
-              allowBackground: options.foregroundChildren.allowBackground,
-              allowParallel: options.foregroundChildren.allowParallel,
-              modelDescriptors: context.modelDescriptors,
-              parentModel: options.initialSelection?.model ?? context.params.model,
-              parentThinkingLevel: options.foregroundChildren.parentThinkingLevel,
-              native: context.native,
-              otherCapabilities: [executionCapability, resultCapability]
-            })
-            await publishProductionChildConfig({
-              prepared: this.preparedChildren,
-              context,
-              host: options.transport.runtime.runtimeHost,
-              uploadOptions: options.transport.runtime.uploadOptions
+            const parentModel = context.params.model
+            if (!parentModel) throw new Error('Child runtime requires its parent model')
+            await step('child_publication', async () => {
+              this.preparedChildren = await createProductionChildConfig({
+                identity: {
+                  nonce: context.bootstrap.nonce,
+                  phiSessionId: context.params.sessionId,
+                  projectId: context.bootstrap.projectId,
+                  projectRoot: context.params.cwd,
+                  generation: context.generation
+                },
+                binding: options.foregroundChildren!.binding,
+                definitions: options.foregroundChildren!.definitions,
+                aliases: options.foregroundChildren!.aliases,
+                blockedAgents: options.foregroundChildren!.blockedAgents,
+                availableTools: [
+                  ...roster
+                    .filter((tool) => tool.site === 'native' && tool.name !== 'task')
+                    .map(({ name, site }) => ({ name, site })),
+                  ...(options.foregroundChildren!.resources?.hostTools ?? []).map(({ name }) => ({
+                    name,
+                    site: 'host' as const
+                  }))
+                ],
+                availableSkills: options.foregroundChildren!.resources?.skills.map(
+                  ({ name }) => name
+                ),
+                resources: options.foregroundChildren!.resources,
+                resolveEnvironment: options.foregroundChildren!.resolveEnvironment,
+                allowBackground: options.foregroundChildren!.allowBackground,
+                allowParallel: options.foregroundChildren!.allowParallel,
+                modelDescriptors: context.modelDescriptors,
+                parentModel: options.initialSelection?.model ?? parentModel,
+                parentThinkingLevel: options.foregroundChildren!.parentThinkingLevel,
+                native: context.native,
+                otherCapabilities: [executionCapability, resultCapability]
+              })
+              await publishProductionChildConfig({
+                prepared: this.preparedChildren,
+                context,
+                host: options.transport.runtime.runtimeHost,
+                uploadOptions: options.transport.runtime.uploadOptions
+              })
             })
           }
-          this.delivery = await RpcHostResultDelivery.create({
-            host: options.transport.runtime.runtimeHost,
-            generationDirectory: context.generationDirectory,
-            lease: {
-              leaseId,
-              generation: context.generation,
-              phiSessionId: context.params.sessionId,
-              projectId: context.bootstrap.projectId,
-              cwd: context.params.cwd
-            },
-            capability: resultCapability,
-            signal: context.signal,
-            uploadOptions: options.transport.runtime.uploadOptions
-          })
+          this.delivery = await step('host_delivery_publication', () =>
+            RpcHostResultDelivery.create({
+              host: options.transport.runtime.runtimeHost,
+              generationDirectory: context.generationDirectory,
+              lease: {
+                leaseId,
+                generation: context.generation,
+                phiSessionId: context.params.sessionId,
+                projectId: context.bootstrap.projectId,
+                cwd: context.params.cwd
+              },
+              capability: resultCapability,
+              signal: context.signal,
+              uploadOptions: options.transport.runtime.uploadOptions
+            })
+          )
           const promptPolicyHash = options.promptPolicy
-            ? await publishRpcPromptPolicy({
-                context,
-                runtime: options.transport.runtime,
-                policy: options.promptPolicy,
-                assertCurrent: this.active
-              })
+            ? await step('prompt_policy_publication', () =>
+                publishRpcPromptPolicy({
+                  context,
+                  runtime: options.transport.runtime,
+                  policy: options.promptPolicy!,
+                  assertCurrent: this.active
+                })
+              )
             : undefined
           context.signal.throwIfAborted()
           this.active()
@@ -711,12 +722,14 @@ export class RemoteSessionRuntime {
             }),
             native: context.native
           })
-          await publishRpcRuntimeConfig({
-            context,
-            host: options.transport.runtime.runtimeHost,
-            config: this.config,
-            uploadOptions: options.transport.runtime.uploadOptions
-          })
+          await step('runtime_config_publication', () =>
+            publishRpcRuntimeConfig({
+              context,
+              host: options.transport.runtime.runtimeHost,
+              config: this.config!,
+              uploadOptions: options.transport.runtime.uploadOptions
+            })
+          )
           return {
             ...(options.compaction ? { compaction: options.compaction } : {}),
             nativeTools,
@@ -778,8 +791,10 @@ export class RemoteSessionRuntime {
       control,
       signal: this.lifetime.signal,
       availableModels: options.transport.models,
-      preflight: (reference) => preflightRemoteJournal(storage, reference),
-      verifySavedState: (reference, signal) => this.verifier!.verifySavedState(reference, signal),
+      preflight: (reference) =>
+        step('journal_preflight', () => preflightRemoteJournal(storage, reference)),
+      verifySavedState: (reference, signal) =>
+        step('journal_saved_state', () => this.verifier!.verifySavedState(reference, signal)),
       selectModel: async (_reference, selection, signal) => {
         await this.transport.selectModel(
           { connection: this.connection, params: this.params, signal },
@@ -808,7 +823,9 @@ export class RemoteSessionRuntime {
             resultDelivery: this.delivery,
             onError: (error) => this.interrupt(error)
           })
-          await attestRpcRuntime(this.connection, config, identity.ompSessionId, signal)
+          await step('runtime_attestation', () =>
+            attestRpcRuntime(this.connection, config, identity.ompSessionId, signal)
+          )
           this.approvals = new RpcApprovalBridge({
             ...options.approval,
             connection: this.connection,
@@ -843,12 +860,16 @@ export class RemoteSessionRuntime {
             signal
           })
         }
-        const verified = await this.verifier!.verifyAttachment(identity, signal)
+        const verified = await step('attachment_verification', () =>
+          this.verifier!.verifyAttachment(identity, signal)
+        )
         if (!options.initialSelection) await this.attachForegroundChildren(identity)
         return verified
       },
       publish: async (reference, _checkpoint, signal) => {
-        await publishRemoteSessionManifest(storage, reference, signal)
+        await step('manifest_publication', () =>
+          publishRemoteSessionManifest(storage, reference, signal)
+        )
       },
       interrupt: (error) => this.close(error)
     })
@@ -857,11 +878,17 @@ export class RemoteSessionRuntime {
     if (options.initialSelection) {
       this.snapshot = result
       this.active()
-      await this.transport.selectModel(
-        { connection: this.connection, params: this.params, signal: this.lifetime.signal },
-        options.initialSelection.model
-      )
-      this.active()
+      if (
+        result.modelPolicy !== 'restored' ||
+        result.model.provider !== options.initialSelection.model.provider ||
+        result.model.id !== options.initialSelection.model.id
+      ) {
+        await this.transport.selectModel(
+          { connection: this.connection, params: this.params, signal: this.lifetime.signal },
+          options.initialSelection.model
+        )
+        this.active()
+      }
       await confirmInitialThinking(
         this.connection,
         options.initialSelection.model,
@@ -893,15 +920,17 @@ export class RemoteSessionRuntime {
       await this.checkpointUnderGate(options.sessionName)
       return
     }
-    await withRemoteSignal(
-      Promise.resolve().then(() => {
-        this.active()
-        return options.adopt(result, this.lifetime.signal)
-      }),
-      this.lifetime.signal
+    await step('phi_adoption', () =>
+      withRemoteSignal(
+        Promise.resolve().then(() => {
+          this.active()
+          return options.adopt(result, this.lifetime.signal)
+        }),
+        this.lifetime.signal
+      )
     )
     this.active()
-    const final = await this.verifyCurrent(result)
+    const final = await step('adoption_verification', () => this.verifyCurrent(result))
     if (
       final.leafId !== result.checkpoint.leafId ||
       final.messageCount !== result.checkpoint.messageCount

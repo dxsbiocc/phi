@@ -77,6 +77,7 @@ import { FacadeChildToolScopes, childJobView } from './facade-child-tool-scopes'
 import { recordChildRunRecovery } from '../../session/child-run-recovery'
 import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
 import { createFacadeAgentRunTools } from './facade-agent-run-tools'
+import type { RemoteStartupDiagnostics } from './remote-startup-diagnostics'
 export type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
 
 export interface SelectedFacadeRuntime {
@@ -92,6 +93,7 @@ export interface SelectedFacadeRuntime {
   readonly session: RemoteSessionRuntimeOptions['transport']['session']
   readonly bundle: RemoteSessionRuntimeOptions['transport']['bundle']
   readonly recovery: 'new' | 'resume'
+  readonly startupDiagnostics?: RemoteStartupDiagnostics
   readonly approval: RemoteSessionRuntimeOptions['approval']
   /** Explicit curated desktop tools; unready browser/privacy/child adapters cannot be enabled. */
   readonly desktopToolNames: readonly string[]
@@ -643,6 +645,7 @@ export function createFacadeSessionFactory(
                 runtime: selected.runtime,
                 session: selected.session,
                 bundle: selected.bundle,
+                startupDiagnostics: selected.startupDiagnostics,
                 gateway: options.bridge,
                 models: refs,
                 preparePersistentStorage: ({ signal: storageSignal }) =>
@@ -1024,6 +1027,7 @@ export function createFacadeSessionFactory(
             }
             return operation
           }
+          selected.startupDiagnostics?.finish('ready')
           return {
             interruption: () => interrupted,
             hasActiveAgentRuns: () => !closing && !interrupted && runtime!.hasActiveAgentRuns(),
@@ -1353,6 +1357,7 @@ export function createFacadeSessionFactory(
           throw error
         }
       } catch (error) {
+        selected.startupDiagnostics?.finish('failed')
         await disposeSelected().catch(() => undefined)
         throw error
       }

@@ -111,6 +111,8 @@ export async function prepareModelProxyRpcSessionTransport(
   const models = Object.freeze(
     options.models.map(({ provider, id }) => Object.freeze({ provider, id }))
   )
+  const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
+    options.startupDiagnostics?.step(name, operation) ?? operation()
   const generations = new WeakMap<Readonly<RpcSessionCreateParams>, Generation>()
   const transport = await prepareSshRpcSessionTransport(
     {
@@ -235,17 +237,19 @@ export async function prepareModelProxyRpcSessionTransport(
       signal.addEventListener('abort', abort, { once: true })
       if (signal.aborted) abort()
       try {
-        owned.gateway = await acquire(
-          options.gateway.createModelGatewayLease(
-            {
-              sessionId: params.sessionId,
-              generation: ++modelProxyGeneration,
-              models
-            },
-            controller.signal
-          ),
-          controller.signal,
-          (lease) => lease.close()
+        owned.gateway = await step('model_gateway', () =>
+          acquire(
+            options.gateway.createModelGatewayLease(
+              {
+                sessionId: params.sessionId,
+                generation: ++modelProxyGeneration,
+                models
+              },
+              controller.signal
+            ),
+            controller.signal,
+            (lease) => lease.close()
+          )
         )
         controller.signal.throwIfAborted()
         void owned.gateway.closed.then(
@@ -256,28 +260,32 @@ export async function prepareModelProxyRpcSessionTransport(
           const { createBrowserModelGateway } = await import('./browser-model-gateway')
           if (!options.currentBrowserRunSignal)
             throw new Error('Browser model privacy requires a live run binding')
-          owned.browserGateway = await acquire(
-            createBrowserModelGateway({
-              lease: owned.gateway,
-              vault: options.browserTextVault,
-              currentRunSignal: options.currentBrowserRunSignal,
-              resolveChildRun: options.resolveBrowserChildRun,
-              signal: controller.signal
-            }),
-            controller.signal,
-            (listener) => listener.close()
+          owned.browserGateway = await step('browser_gateway', () =>
+            acquire(
+              createBrowserModelGateway({
+                lease: owned.gateway!,
+                vault: options.browserTextVault!,
+                currentRunSignal: options.currentBrowserRunSignal!,
+                resolveChildRun: options.resolveBrowserChildRun,
+                signal: controller.signal
+              }),
+              controller.signal,
+              (listener) => listener.close()
+            )
           )
         }
-        owned.tunnel = await acquire(
-          options.session.openReverseTunnel!({
-            localPort: owned.browserGateway?.port ?? owned.gateway.localPort,
-            signal: controller.signal,
-            onInvalidated: () => {
-              void owned.close(new Error('Model gateway forwarding was invalidated'))
-            }
-          }),
-          controller.signal,
-          (tunnel) => tunnel.close()
+        owned.tunnel = await step('model_proxy_tunnel', () =>
+          acquire(
+            options.session.openReverseTunnel!({
+              localPort: owned.browserGateway?.port ?? owned.gateway!.localPort,
+              signal: controller.signal,
+              onInvalidated: () => {
+                void owned.close(new Error('Model gateway forwarding was invalidated'))
+              }
+            }),
+            controller.signal,
+            (tunnel) => tunnel.close()
+          )
         )
         controller.signal.throwIfAborted()
         void owned.tunnel.closed.then(

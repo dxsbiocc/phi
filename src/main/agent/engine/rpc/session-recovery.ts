@@ -126,7 +126,10 @@ export interface RemoteSessionRecoveryOptions {
   readonly verifySavedState: (
     reference: RemoteSessionReference,
     signal: AbortSignal
-  ) => Promise<{ readonly model: RemoteRecoveryModel | null }>
+  ) => Promise<{
+    readonly model: RemoteRecoveryModel | null
+    readonly modelRole: string | null
+  }>
   /** Apply exact desktop model metadata to the attached target, preserving restored thinking. */
   readonly selectModel: (
     reference: RemoteSessionReference,
@@ -279,6 +282,7 @@ export async function recoverRemoteSession(
         before.cwd !== scope.projectRoot)
     )
       failure('IDENTITY_MISMATCH', 'Journal preflight differs from the requested reference')
+    let restoredModelRole: string | null = null
     if (action.type === 'resume') {
       const saved = await run(() => options.verifySavedState(reference!, controller.signal))
       if (
@@ -286,6 +290,7 @@ export async function recoverRemoteSession(
         (!saved.model && !action.replacement)
       )
         failure('MODEL_UNAVAILABLE', 'Journal selection differs from the exact saved model')
+      restoredModelRole = saved.modelRole
     }
     const change = await run(() =>
       connection.request<unknown>(
@@ -355,20 +360,26 @@ export async function recoverRemoteSession(
       failure('IDENTITY_MISMATCH', 'Switched session differs from the durable reference')
     const modelPolicy =
       action.type === 'new' ? 'fresh' : action.replacement ? 'explicit-replacement' : 'restored'
-    await run(() =>
-      options.selectModel(
-        reference!,
-        {
-          model: desired,
-          thinkingLevel:
-            typeof switchedState.thinkingLevel === 'string'
-              ? switchedState.thinkingLevel
-              : undefined,
-          policy: modelPolicy
-        },
-        controller.signal
+    const switchedModel = switchedState.model as { provider: string; id: string }
+    const restoredModelAlreadySelected =
+      modelPolicy === 'restored' &&
+      restoredModelRole === 'default' &&
+      sameModel(desired, switchedModel)
+    if (!restoredModelAlreadySelected)
+      await run(() =>
+        options.selectModel(
+          reference!,
+          {
+            model: desired,
+            thinkingLevel:
+              typeof switchedState.thinkingLevel === 'string'
+                ? switchedState.thinkingLevel
+                : undefined,
+            policy: modelPolicy
+          },
+          controller.signal
+        )
       )
-    )
     state = await readState()
     if (modelPolicy === 'restored' && state.thinkingLevel !== switchedState.thinkingLevel)
       failure('MODEL_UNAVAILABLE', 'Restored thinking selection changed during metadata binding')

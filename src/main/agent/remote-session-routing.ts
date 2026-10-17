@@ -22,6 +22,10 @@ import {
 } from './engine/rpc/extension-deployment'
 import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment'
 import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
+import {
+  RemoteStartupDiagnostics,
+  type RemoteStartupDiagnosticSink
+} from './engine/rpc/remote-startup-diagnostics'
 
 // The existing executor owns interruption through the captured kernel runtime and terminal ACK.
 export const APP_RPC_NOTEBOOK_TOOL_NAMES = NOTEBOOK_TOOL_NAMES
@@ -79,6 +83,8 @@ export function createAppRemoteSessionManager(
 
 export interface AppRemoteSessionRoutingOptions {
   enabled: boolean
+  /** Internal opt-in only; reports fixed names and numbers, never remote commands or paths. */
+  startupDiagnostics?: RemoteStartupDiagnosticSink
   /** Captured main-process opt-in. Names select whole trusted profiles; never renderer definitions. */
   foregroundAgentNames?: string
   agentDir: string
@@ -210,6 +216,17 @@ export function installAppRemoteSessionRouting(
     runners: options.runners,
     selected: async ({ runtimeSessionId, phiSessionId, projectId }, signal) => {
       signal.throwIfAborted()
+      const startupDiagnostics = options.startupDiagnostics
+        ? new RemoteStartupDiagnostics({ phiSessionId, emit: options.startupDiagnostics })
+        : undefined
+      const step = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
+        try {
+          return await (startupDiagnostics?.step(name, operation) ?? operation())
+        } catch (error) {
+          startupDiagnostics?.finish('failed')
+          throw error
+        }
+      }
       const manifest = findPhiSessionById(phiSessionId)
       const project = getProject(projectId)
       if (
@@ -219,10 +236,20 @@ export function installAppRemoteSessionRouting(
         manifest.projectId !== projectId
       )
         throw new Error('RPC runtime requires the selected Phi SSH project')
-      const binding = (dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
+      const resolvedBinding = (dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
         sessionId: phiSessionId,
         projectId
       })
+      const binding = startupDiagnostics
+        ? {
+            ...resolvedBinding,
+            config: {
+              ...resolvedBinding.config,
+              connect: async () =>
+                startupDiagnostics.instrumentSession(await resolvedBinding.config.connect())
+            }
+          }
+        : resolvedBinding
       const configuredRoot = options.configuredRoot(project)
       const manifestBinding = JSON.stringify([
         manifest.cwd,
@@ -254,33 +281,39 @@ export function installAppRemoteSessionRouting(
         }
       }
       assertSelected()
-      const definitions = names.length
-        ? selectAppForegroundAgents(
-            names,
-            await options.loadAgents({
-              sessionId: phiSessionId,
-              projectId,
-              cwd: manifest.cwd
-            }),
-            true
-          )
-        : []
+      const definitions = await step('desktop_agent_catalog', async () =>
+        names.length
+          ? selectAppForegroundAgents(
+              names,
+              await options.loadAgents({
+                sessionId: phiSessionId,
+                projectId,
+                cwd: manifest.cwd
+              }),
+              true
+            )
+          : []
+      )
       assertSelected()
       const conflictPolicy = definitions.length
-        ? await options.resolveAgentConflicts?.(
-            {
-              runtimeSessionId,
-              sessionId: phiSessionId,
-              projectId,
-              cwd: manifest.cwd
-            },
-            definitions,
-            signal
+        ? await step(
+            'desktop_agent_conflicts',
+            () =>
+              options.resolveAgentConflicts?.(
+                {
+                  runtimeSessionId,
+                  sessionId: phiSessionId,
+                  projectId,
+                  cwd: manifest.cwd
+                },
+                definitions,
+                signal
+              ) ?? Promise.resolve(undefined)
           )
         : undefined
       assertSelected()
-      const bundle = await createPhiExtensionBundle(
-        resolvePhiExtensionSourceRoot(options.appPaths())
+      const bundle = await step('extension_bundle', () =>
+        createPhiExtensionBundle(resolvePhiExtensionSourceRoot(options.appPaths()))
       )
       assertSelected()
       const workspace = await (dependencies.openWorkspace ?? openRemoteRuntimeWorkspace)(
@@ -290,21 +323,27 @@ export function installAppRemoteSessionRouting(
           projectId,
           configuredRoot
         },
-        signal
+        signal,
+        () => binding,
+        startupDiagnostics
       )
       let session: Awaited<ReturnType<typeof binding.config.connect>> | undefined
       let resources: AppRemoteDesktopResources | undefined
       try {
         assertSelected()
-        const promptContext = await options.loadPromptContext?.(
-          {
-            runtimeSessionId,
-            sessionId: phiSessionId,
-            projectId,
-            cwd: binding.canonicalRoot,
-            resourceCwd: manifest.cwd
-          },
-          signal
+        const promptContext = await step(
+          'desktop_prompt_context',
+          () =>
+            options.loadPromptContext?.(
+              {
+                runtimeSessionId,
+                sessionId: phiSessionId,
+                projectId,
+                cwd: binding.canonicalRoot,
+                resourceCwd: manifest.cwd
+              },
+              signal
+            ) ?? Promise.resolve(undefined)
         )
         assertSelected()
         const agentIdentity = {
@@ -315,21 +354,30 @@ export function installAppRemoteSessionRouting(
           resourceCwd: manifest.cwd
         }
         const agentResources = definitions.length
-          ? await options.loadAgentResources?.(agentIdentity, definitions, signal)
+          ? await step(
+              'desktop_agent_resources',
+              () =>
+                options.loadAgentResources?.(agentIdentity, definitions, signal) ??
+                Promise.resolve(undefined)
+            )
           : undefined
         assertSelected()
-        resources = await options.loadDesktopTools?.(
-          {
-            runtimeSessionId,
-            sessionId: phiSessionId,
-            projectId,
-            cwd: binding.canonicalRoot,
-            resourceCwd: manifest.cwd
-          },
-          signal
+        resources = await step(
+          'desktop_tool_resources',
+          () =>
+            options.loadDesktopTools?.(
+              {
+                runtimeSessionId,
+                sessionId: phiSessionId,
+                projectId,
+                cwd: binding.canonicalRoot,
+                resourceCwd: manifest.cwd
+              },
+              signal
+            ) ?? Promise.resolve(undefined)
         )
         assertSelected()
-        session = await binding.config.connect()
+        session = await step('ssh_session', () => binding.config.connect())
         assertSelected()
         if (
           !session.openStdio ||
@@ -357,6 +405,7 @@ export function installAppRemoteSessionRouting(
           desktopToolNames: appRpcDesktopToolNames(resources?.tools),
           desktopTools: resources?.tools,
           memory: resources?.memory,
+          startupDiagnostics,
           onMemoryError: () => options.onMemoryError?.({ sessionId: phiSessionId, projectId }),
           ...(promptContext ? { promptContext } : {}),
           recentUserImages: () => [],

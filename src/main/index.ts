@@ -1610,6 +1610,16 @@ function conflictChoiceFromAnswer(answer: unknown): AgentNameConflictChoice | un
 const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
 installAppRemoteSessionRouting({
   enabled: remoteOmpRpcEnabled,
+  ...(process.env.PHI_REMOTE_STARTUP_DIAGNOSTICS === '1'
+    ? {
+        startupDiagnostics: ({ phiSessionId, status, totalMs, steps }) =>
+          writeAppLog({
+            event: 'remote_session_startup_profile',
+            sessionId: phiSessionId,
+            metadata: { status, totalMs, steps }
+          })
+      }
+    : {}),
   foregroundAgentNames: process.env.PHI_REMOTE_OMP_AGENTS,
   agentDir: AGENT_DIR,
   runners: runnerRegistry,
