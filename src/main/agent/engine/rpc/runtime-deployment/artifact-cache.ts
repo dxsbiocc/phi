@@ -4,6 +4,7 @@ import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises
 import { isAbsolute, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import { desktopFetch } from '../../../desktop-fetch'
 import { hashLocalFile } from '../../../transfer/ssh-data-plane-local'
 
 import { RemoteOmpDeploymentError, type RemoteOmpAsset } from './types'
@@ -145,7 +146,7 @@ async function populateCache(
   }
   const staging = join(directory, `.omp-${randomUUID()}.part`)
   try {
-    const response = await (options.fetchImpl ?? fetch)(options.asset.url, {
+    const response = await desktopFetch(options.fetchImpl)(options.asset.url, {
       signal: options.signal,
       redirect: 'follow',
       credentials: 'omit'

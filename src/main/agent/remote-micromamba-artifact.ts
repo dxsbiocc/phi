@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { lstat, mkdir, rename, rm } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 
 import type { RemoteMicromambaArtifact } from '../../shared/remoteMicromambaTypes'
+import { desktopFetch } from './desktop-fetch'
 import { hashFile, transferFile } from './download/file-transfer'
 import { getBundledResourceDir } from './runtime/runtime-adapter'
 import { getPhiAgentDir } from './runtime-paths'
@@ -15,7 +15,6 @@ export type { RemoteMicromambaArtifact } from '../../shared/remoteMicromambaType
 export const REMOTE_MICROMAMBA_TARGETS = ['linux-x64', 'linux-arm64'] as const
 export type RemoteMicromambaTarget = (typeof REMOTE_MICROMAMBA_TARGETS)[number]
 const artifactDownloads = new Map<string, Promise<RemoteMicromambaArtifact>>()
-const nodeRequire = createRequire(import.meta.url)
 
 export interface RemoteMicromambaArtifactPlan extends RemoteMicromambaArtifact {
   url: string
@@ -61,21 +60,6 @@ export interface GetRemoteMicromambaOptions extends DescribeRemoteMicromambaOpti
   timeoutMs?: number
   signal?: AbortSignal
   onProgress?: (progress: RemoteMicromambaDownloadProgress) => void
-}
-
-type ElectronNet = { net?: { fetch: typeof globalThis.fetch } }
-
-function desktopFetch(override?: typeof globalThis.fetch): typeof globalThis.fetch {
-  if (override) return override
-  try {
-    const electron = nodeRequire('electron') as ElectronNet | string
-    if (typeof electron === 'object' && electron.net?.fetch) {
-      return electron.net.fetch.bind(electron.net)
-    }
-  } catch {
-    // Plain Node and isolated tests do not expose Electron's Chromium network stack.
-  }
-  return globalThis.fetch
 }
 
 async function fetchWithTimeout(
