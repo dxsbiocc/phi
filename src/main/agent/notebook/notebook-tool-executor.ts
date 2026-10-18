@@ -65,7 +65,10 @@ type ConstructorOptions = {
   resolveWorkspaceByCwd: (cwd: string) => NotebookWorkspaceRef | null | undefined
   resolveNotebookWorkspaceByCwd?: (cwd: string) => NotebookWorkspace | null | undefined
   resolveKernelsByCwd?: (cwd: string) => ReturnType<typeof detectConfiguredAnalysisKernels>
-  ensureJupyterServerReady: (projectCwd: string) => Promise<void>
+  ensureJupyterServerReady: (
+    projectCwd: string,
+    control?: NotebookToolDispatchControl
+  ) => Promise<void>
   notebookSessionRegistry: AnalysisNotebookSessionRegistry
   notebookExecutor: AnalysisNotebookExecutor
   onDraftChanged?: (change: NotebookDraftChange) => void
@@ -514,7 +517,7 @@ export class AnalysisNotebookToolExecutor {
     state: NotebookWorkspaceState,
     control: NotebookToolDispatchControl
   ): Promise<{ sessionStatus: NotebookSessionStatus; target: NotebookExecutionTarget }> {
-    const kernels = this.resolveKernelsByCwd(project.workingDirectory)
+    let kernels = this.resolveKernelsByCwd(project.workingDirectory)
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
       notebookPath: state.file.path,
@@ -528,8 +531,10 @@ export class AnalysisNotebookToolExecutor {
     )
     if (!target) {
       this.checkDispatch(control)
-      await this.ensureJupyterServerReady(project.workingDirectory)
+      await this.ensureJupyterServerReady(project.workingDirectory, control)
       this.checkDispatch(control)
+      // A server started just now publishes its kernels only after it is ready.
+      kernels = this.resolveKernelsByCwd(project.workingDirectory)
       sessionStatus = await this.notebookSessionRegistry.ensureSession({
         projectCwd: project.workingDirectory,
         notebookPath: state.file.path,

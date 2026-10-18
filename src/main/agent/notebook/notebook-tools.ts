@@ -35,7 +35,14 @@ export type NotebookToolRequest = {
 export type NotebookToolDispatchControl = {
   signal?: AbortSignal
   beforeDispatch?: () => void
+  /**
+   * Asks the user once before the agent starts a remote Jupyter server on their behalf.
+   * Resolves false when the user denies; rejects when the run is cancelled.
+   */
+  approveRemoteJupyterStart?: (info: RemoteJupyterStartApprovalInfo) => Promise<boolean>
 }
+
+export type RemoteJupyterStartApprovalInfo = { serverLabel: string; projectName: string }
 
 export type NotebookToolHostExecutor = (
   request: NotebookToolRequest,

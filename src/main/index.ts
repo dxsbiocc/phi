@@ -1821,7 +1821,15 @@ getPhiEngine().host.register('notebookTool.execute', async (params, context) => 
       throw new Error('远程 Notebook 后端不可用：运行或项目绑定已改变；没有回退到本机执行。')
   }
   beforeDispatch()
-  return notebookToolHostRouter.execute(request, { signal: context?.signal, beforeDispatch })
+  return notebookToolHostRouter.execute(request, {
+    signal: context?.signal,
+    beforeDispatch,
+    ...(identity && context
+      ? {
+          approveRemoteJupyterStart: (info) => approveRemoteJupyterStart(identity, info, context)
+        }
+      : {})
+  })
 })
 const skillHost = createSkillHost({
   listSkillDirs: async (cwd) => {
@@ -3728,6 +3736,41 @@ async function confirmAgentModuleInstallation(
   context: import('./agent/engine/types').PhiHostRequestContext
 ): Promise<boolean> {
   capabilityHost.assertCurrent(context)
+  const approved = await confirmHostToolApproval(
+    runtimeSessionId,
+    'capability_install',
+    summary,
+    context
+  )
+  capabilityHost.assertCurrent(context)
+  return approved
+}
+
+/** Starting a server on the user's host: ask mode prompts once; auto mode follows the exec-class policy. */
+async function approveRemoteJupyterStart(
+  identity: { runtimeSessionId: string; sessionId: string },
+  info: { serverLabel: string; projectName: string },
+  context: import('./agent/engine/types').PhiHostRequestContext
+): Promise<boolean> {
+  const manifest = findPhiSessionById(identity.sessionId)
+  if (!manifest) throw new Error('远程 Jupyter 启动审批所属会话不可用')
+  // Starting a server process uses shared resources: ask in every permission mode.
+  const approved = await confirmHostToolApproval(
+    identity.runtimeSessionId,
+    'remote_jupyter_start',
+    `启动远程 Jupyter（会占用服务器资源）\n服务器：${info.serverLabel}\n项目：${info.projectName}`,
+    context
+  )
+  context.signal?.throwIfAborted()
+  return approved
+}
+
+async function confirmHostToolApproval(
+  runtimeSessionId: string,
+  toolName: string,
+  summary: string,
+  context: import('./agent/engine/types').PhiHostRequestContext
+): Promise<boolean> {
   const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
   if (!run || !context.signal || !context.toolCallId) return false
   const project = run.projectId ? getProject(run.projectId) : getProjectByCwd(run.cwd)
@@ -3740,7 +3783,7 @@ async function confirmAgentModuleInstallation(
     cwd: run.cwd,
     ...(project?.name ? { projectName: project.name } : {}),
     toolCallId: context.toolCallId,
-    toolName: 'capability_install',
+    toolName,
     summary
   }
   runnerRegistry.markNeedsApproval(run.phiSessionId, request.requestId, request)
@@ -3754,7 +3797,6 @@ async function confirmAgentModuleInstallation(
     sendToAllWindows('tool:approval-cancelled', request.requestId)
   }
   notifySessionChanged()
-  capabilityHost.assertCurrent(context)
   return decision === 'approved'
 }
 

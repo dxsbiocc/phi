@@ -273,6 +273,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   writeFile: '写入文件',
   editFile: '修改文件',
   browserAction: '浏览器操作',
+  startRemoteJupyter: '启动远程 Jupyter（会占用服务器资源）',
   permissionApproval: '权限审批',
   openConversation: '打开会话',
   reject: '拒绝',

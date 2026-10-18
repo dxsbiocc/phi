@@ -28,7 +28,7 @@ import {
 } from './remote-jupyter-start-jobs'
 import type { RemoteJupyterResourcePolicyInput } from './remote-jupyter-resource-guard'
 import { AnalysisNotebookToolExecutor, type NotebookDraftChange } from './notebook-tool-executor'
-import type { NotebookToolRequest } from './notebook-tools'
+import type { NotebookToolDispatchControl, NotebookToolRequest } from './notebook-tools'
 import {
   createNotebookWorkspace,
   type NotebookWorkspace,
@@ -50,8 +50,14 @@ export type RemoteNotebookServerStatus = {
   resources?: ReturnType<JupyterRuntimeBackend['status']>['resources']
 }
 
+/** Environment preparation can take minutes on a first start; the cap only bounds the agent's wait. */
+export const REMOTE_JUPYTER_AUTO_START_TIMEOUT_MS = 10 * 60_000
+const READY_POLL_MS = 250
+
 export class RemoteNotebookRuntimeController {
   private starting?: Promise<void>
+  private approval?: Promise<boolean>
+  private waiters = 0
   private lastError?: string
 
   constructor(
@@ -121,6 +127,84 @@ export class RemoteNotebookRuntimeController {
     return this.status()
   }
 
+  /**
+   * Lets the agent start the remote Jupyter after one user approval, through the same start
+   * path as the Runtime panel, then waits for it. Concurrent callers share the approval and
+   * the start; a cancelled run stops the start only when nobody else is waiting on it.
+   */
+  async ensureReady(
+    control: NotebookToolDispatchControl = {},
+    options: { projectName?: string; timeoutMs?: number } = {}
+  ): Promise<void> {
+    const signal = control.signal
+    signal?.throwIfAborted()
+    if (this.status().hasEndpoint) return
+    const state = this.status().state
+    if (state === 'reconciling' || this.status().cleanupUnconfirmed) {
+      throw new Error(
+        '远程 Jupyter 正在确认旧进程是否退出；请在 Runtime 面板查看状态并处理后再重试。没有回退到本机 Jupyter。'
+      )
+    }
+    let initiated = false
+    if (!this.starting) {
+      const approve = control.approveRemoteJupyterStart
+      if (!approve) {
+        throw new Error(
+          '远程 Jupyter 尚未就绪，且当前调用无法征求用户同意；请先在 Runtime 面板显式启动。没有回退到本机 Jupyter。'
+        )
+      }
+      this.approval ??= approve({
+        serverLabel: this.options.serverLabel,
+        projectName: options.projectName ?? this.options.projectCwd
+      }).finally(() => {
+        this.approval = undefined
+      })
+      const approved = await this.approval
+      signal?.throwIfAborted()
+      if (!approved) {
+        throw new Error(
+          '用户拒绝启动远程 Jupyter；没有启动，也没有回退到本机 Jupyter。需要时请在 Runtime 面板手动启动。'
+        )
+      }
+      if (!this.starting && !this.status().hasEndpoint) {
+        this.start()
+        initiated = true
+      }
+    }
+    this.waiters += 1
+    try {
+      await this.waitUntilReady(signal, options.timeoutMs ?? REMOTE_JUPYTER_AUTO_START_TIMEOUT_MS)
+    } catch (error) {
+      if (signal?.aborted && initiated && this.waiters === 1 && this.starting) {
+        await this.stop().catch(() => undefined)
+      }
+      throw error
+    } finally {
+      this.waiters -= 1
+    }
+  }
+
+  private async waitUntilReady(signal: AbortSignal | undefined, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      signal?.throwIfAborted()
+      if (this.status().hasEndpoint) return
+      if (!this.starting) {
+        throw new Error(
+          this.lastError
+            ? `远程 Jupyter 启动失败：${this.lastError}`
+            : '远程 Jupyter 未能启动；没有回退到本机 Jupyter。'
+        )
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          '等待远程 Jupyter 启动超时；启动仍在后台进行，可在 Runtime 面板查看进度，就绪后重试。'
+        )
+      }
+      await sleep(READY_POLL_MS, signal)
+    }
+  }
+
   requireReady(): void {
     if (this.status().hasEndpoint) return
     throw new Error(
@@ -138,6 +222,18 @@ export class RemoteNotebookRuntimeController {
     }
     return undefined
   }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms)
+    function done(): void {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
 }
 
 type RemoteBackendOptions = {
@@ -312,7 +408,8 @@ export class RemoteAnalysisNotebookBackend {
       }),
       resolveNotebookWorkspaceByCwd: () => this.workspace,
       resolveKernelsByCwd: () => this.kernels(),
-      ensureJupyterServerReady: async () => this.controller.requireReady(),
+      ensureJupyterServerReady: async (_cwd, control) =>
+        this.controller.ensureReady(control, { projectName: options.projectName }),
       notebookSessionRegistry: this.sessions,
       notebookExecutor: options.notebookExecutor,
       onDraftChanged: options.onDraftChanged

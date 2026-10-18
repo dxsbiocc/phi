@@ -284,6 +284,7 @@ export const chatEnglish = {
   writeFile: 'Write file',
   editFile: 'Edit file',
   browserAction: 'Browser action',
+  startRemoteJupyter: 'Start remote Jupyter (uses server resources)',
   permissionApproval: 'Permission approval',
   openConversation: 'Open conversation',
   reject: 'Reject',

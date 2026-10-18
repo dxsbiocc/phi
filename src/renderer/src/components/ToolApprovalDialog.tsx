@@ -20,6 +20,9 @@ const TOOL_LABELS: Record<string, string> = {
   get browser() {
     return chatCopy.browserAction
   },
+  get remote_jupyter_start() {
+    return chatCopy.startRemoteJupyter
+  },
   get capability_install() {
     return resourceCatalogCopy.capabilityInstall
   }
