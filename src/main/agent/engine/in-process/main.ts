@@ -167,12 +167,26 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
   }
 }
 
+// Bounded so a stuck cleanup cannot keep an orphaned worker alive after the host is gone.
+const HOST_EXIT_CLEANUP_TIMEOUT_MS = 1000
+
+let hostExitStarted = false
+function shutdownAfterHostExit(): void {
+  if (hostExitStarted) return
+  hostExitStarted = true
+  const cleanup = Promise.allSettled([
+    closeAllDesktopMcpScopes(),
+    closeAllDesktopProjectMemory(),
+    closeAllModelGatewayLeases()
+  ])
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, HOST_EXIT_CLEANUP_TIMEOUT_MS))
+  void Promise.race([cleanup, timeout]).finally(() => process.exit(0))
+}
+
 const input = createInterface({ input: process.stdin })
-input.once('close', () => {
-  void closeAllDesktopMcpScopes().catch(() => undefined)
-  void closeAllDesktopProjectMemory().catch(() => undefined)
-  void closeAllModelGatewayLeases().catch(() => undefined)
-})
+input.once('close', shutdownAfterHostExit)
+process.stdin.once('error', shutdownAfterHostExit)
+process.stdout.once('error', shutdownAfterHostExit)
 input.on('line', (line) => {
   void (async () => {
     let request: IncomingRequest | undefined

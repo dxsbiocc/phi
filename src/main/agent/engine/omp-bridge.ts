@@ -92,6 +92,66 @@ type HostRequestHandler = (
 
 const MAX_HOST_CONTEXT_ID_LENGTH = 512
 
+// Short control calls answer from memory or a small file; a worker that cannot
+// answer one within this window is hung. Methods that run a whole model turn,
+// load resources, or wait on a user (prompt, create, compact, login, mcp.*) have
+// no entry here on purpose.
+const CONTROL_CALL_TIMEOUT_MS = 15_000
+const MODEL_GATEWAY_TIMEOUT_MS = 15_000
+// After SIGTERM the worker gets this long to exit before SIGKILL; both waits stay
+// inside the app's 2s quit budget.
+const STOP_TERM_GRACE_MS = 1000
+const STOP_KILL_WAIT_MS = 500
+
+type RequestPolicy = { readonly timeoutMs: number; readonly stopsWorkerOnTimeout: boolean }
+
+const controlPolicy: RequestPolicy = {
+  timeoutMs: CONTROL_CALL_TIMEOUT_MS,
+  stopsWorkerOnTimeout: false
+}
+const REQUEST_POLICIES: ReadonlyMap<string, RequestPolicy> = new Map([
+  // An abort that cannot be delivered means the worker is stuck: stop it so the
+  // session fails visibly instead of spinning forever.
+  ['session.abort', { timeoutMs: CONTROL_CALL_TIMEOUT_MS, stopsWorkerOnTimeout: true }],
+  // A late lease from a timed-out create would be unowned, so drop the worker with it.
+  ['modelGateway.create', { timeoutMs: MODEL_GATEWAY_TIMEOUT_MS, stopsWorkerOnTimeout: true }],
+  ['modelGateway.revoke', { timeoutMs: MODEL_GATEWAY_TIMEOUT_MS, stopsWorkerOnTimeout: false }],
+  ['agentRun.stop', controlPolicy],
+  ['agentRun.steer', controlPolicy],
+  ['agentRuns.list', controlPolicy],
+  ['shellJobs.list', controlPolicy],
+  ['shellJobs.cancel', controlPolicy],
+  ['toolApproval.result', controlPolicy],
+  ['auth.promptResult', controlPolicy],
+  ['session.contextUsage', controlPolicy],
+  ['session.setThinkingLevel', controlPolicy],
+  ['session.rename', controlPolicy],
+  ['settings.autoCompactionDefaults', controlPolicy],
+  ['settings.webSearch.get', controlPolicy]
+])
+
+export interface OmpRequestOptions {
+  readonly timeoutMs?: number
+  readonly signal?: AbortSignal
+}
+
+export class OmpBridgeTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number
+  ) {
+    super(`OMP worker request timed out: ${method} (${timeoutMs}ms)`)
+    this.name = 'OmpBridgeTimeoutError'
+  }
+}
+
+export class OmpBridgeAbortError extends Error {
+  constructor(readonly method: string) {
+    super(`OMP worker request aborted: ${method}`)
+    this.name = 'OmpBridgeAbortError'
+  }
+}
+
 function isBridgeResponse(value: unknown): value is BridgeResponse {
   return (
     typeof value === 'object' &&
@@ -167,6 +227,26 @@ function resolveWorkerPath(): string {
   return candidates[0]
 }
 
+function hasExited(child: ChildProcessWithoutNullStreams): boolean {
+  return typeof child.exitCode === 'number' || typeof child.signalCode === 'string'
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams, ms: number): Promise<boolean> {
+  if (hasExited(child)) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.off('exit', onExit)
+      resolve(false)
+    }, ms)
+    timer.unref()
+    const onExit = (): void => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    child.once('exit', onExit)
+  })
+}
+
 function createBridgeError(message: string, stack?: string, detail?: string): Error {
   const error = detail
     ? new ConfiguredStdioProbeError(message, detail.slice(0, 4096))
@@ -209,6 +289,8 @@ export class OmpBridge extends EventEmitter {
     string,
     { child: ChildProcessWithoutNullStreams; invalidate(): void }
   >()
+  // Workers being stopped, kept until they really exit so none is orphaned.
+  private readonly stopping = new Map<ChildProcessWithoutNullStreams, Promise<void>>()
   private idleTimer: NodeJS.Timeout | null = null
   private stderrTail = ''
 
@@ -250,8 +332,13 @@ export class OmpBridge extends EventEmitter {
     return () => this.off(event, listener)
   }
 
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options: OmpRequestOptions = {}
+  ): Promise<T> {
     this.cancelIdleStop()
+    if (options.signal?.aborted) return Promise.reject(new OmpBridgeAbortError(method))
     let child: ChildProcessWithoutNullStreams
     try {
       child = this.ensureStarted()
@@ -260,20 +347,46 @@ export class OmpBridge extends EventEmitter {
       return Promise.reject(error)
     }
     const id = randomUUID()
+    const policy = REQUEST_POLICIES.get(method)
+    const timeoutMs = options.timeoutMs ?? policy?.timeoutMs
 
     const promise = new Promise<T>((resolve, reject) => {
+      let timer: NodeJS.Timeout | undefined
+      const onAbort = (): void => {
+        this.failPending(id, new OmpBridgeAbortError(method))
+      }
+      const cleanup = (): void => {
+        if (timer) clearTimeout(timer)
+        options.signal?.removeEventListener('abort', onAbort)
+      }
       this.pending.set(id, {
         child,
         keepsWorkerAlive: true,
         method,
         params,
-        resolve: (value) => resolve(value as T),
-        reject
+        resolve: (value) => {
+          cleanup()
+          resolve(value as T)
+        },
+        reject: (error) => {
+          cleanup()
+          reject(error)
+        }
       })
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          if (!this.failPending(id, new OmpBridgeTimeoutError(method, timeoutMs))) return
+          this.onRequestTimeout(child, method, policy)
+        }, timeoutMs)
+        timer.unref()
+      }
     })
 
     try {
-      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`)
+      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
+        if (error) this.retireChild(child, error)
+      })
     } catch (error) {
       const pending = this.pending.get(id)
       this.pending.delete(id)
@@ -281,6 +394,30 @@ export class OmpBridge extends EventEmitter {
       this.scheduleIdleStop()
     }
     return promise
+  }
+
+  /** Drop a still-pending request; a response arriving later finds no entry and is ignored. */
+  private failPending(id: string, error: Error): boolean {
+    const pending = this.pending.get(id)
+    if (!pending) return false
+    this.pending.delete(id)
+    pending.reject(error)
+    this.scheduleIdleStop()
+    return true
+  }
+
+  private onRequestTimeout(
+    child: ChildProcessWithoutNullStreams,
+    method: string,
+    policy: RequestPolicy | undefined
+  ): void {
+    writeAppLog({
+      level: 'error',
+      event: 'omp_worker_request_timeout',
+      metadata: { method, stopsWorker: policy?.stopsWorkerOnTimeout === true }
+    })
+    if (policy?.stopsWorkerOnTimeout && this.child === child)
+      void this.stop().catch(() => undefined)
   }
 
   /** The bearer stays inside the main process and its owning remote generation. */
@@ -441,20 +578,49 @@ export class OmpBridge extends EventEmitter {
 
   async stop(): Promise<void> {
     const child = this.child
-    this.child = null
     this.cancelIdleStop()
-    if (!child) return
+    if (!child) {
+      // A stop already in flight still has to finish before callers may proceed.
+      await Promise.all(this.stopping.values())
+      return
+    }
+    this.child = null
 
     this.stoppedChildren.add(child)
     this.activeSessions.clear()
     this.invalidateResources(child)
     this.invalidateGateways(child)
     this.rejectAll(new Error('OMP worker stopped'), child)
+    const stopped = this.terminate(child).finally(() => this.stopping.delete(child))
+    this.stopping.set(child, stopped)
+    await stopped
+  }
+
+  /** SIGTERM, then SIGKILL after the grace period, waiting for the real exit each time. */
+  private async terminate(child: ChildProcessWithoutNullStreams): Promise<void> {
+    if (hasExited(child)) return
     child.kill()
-    await new Promise<void>((resolve) => {
-      child.once('exit', () => resolve())
-      setTimeout(resolve, 1500).unref()
-    })
+    if (await waitForExit(child, STOP_TERM_GRACE_MS)) return
+    child.kill('SIGKILL')
+    if (!(await waitForExit(child, STOP_KILL_WAIT_MS))) {
+      writeAppLog({ level: 'error', event: 'omp_worker_kill_unconfirmed' })
+    }
+  }
+
+  /** The worker's pipe broke: treat it like a death of that generation. */
+  private retireChild(child: ChildProcessWithoutNullStreams, error: Error): void {
+    this.invalidateResources(child)
+    this.invalidateGateways(child)
+    if (this.child === child) {
+      this.child = null
+      this.activeSessions.clear()
+    }
+    this.stoppedChildren.add(child)
+    this.rejectAll(error, child)
+    if (!this.stopping.has(child)) {
+      const stopped = this.terminate(child).finally(() => this.stopping.delete(child))
+      this.stopping.set(child, stopped)
+    }
   }
 
   private ensureStarted(): ChildProcessWithoutNullStreams {
@@ -477,6 +643,9 @@ export class OmpBridge extends EventEmitter {
     child.stderr.on('data', (chunk: string) => {
       this.stderrTail = `${this.stderrTail}${chunk}`.slice(-8000)
     })
+
+    // A write after the worker died raises EPIPE here; unhandled it would crash the main process.
+    child.stdin.on('error', (error) => this.retireChild(child, error))
 
     child.on('error', (error) => {
       this.invalidateResources(child)

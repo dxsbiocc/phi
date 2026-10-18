@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
+import {
+  OmpBridge,
+  OmpBridgeAbortError,
+  OmpBridgeTimeoutError
+} from '../src/main/agent/engine/omp-bridge'
 
 const FAKE_WORKER = join(process.cwd(), 'tests/helpers/fakeOmpWorker.mjs')
 
@@ -193,6 +197,128 @@ test('host requests deliver runtime context separately from tool parameters', as
           toolCallId: 'tool-apply-1'
         }
       })
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function spawnFake(agentDir: string): ReturnType<typeof spawn> {
+  return spawn(process.execPath, [FAKE_WORKER], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
+}
+
+test('a stdin error rejects pending requests and retires the worker instead of crashing', async () => {
+  await withAgentDir(async () => {
+    const children: ReturnType<typeof spawn>[] = []
+    const bridge = new OmpBridge((_path, agentDir) => {
+      const child = spawnFake(agentDir)
+      children.push(child)
+      return child as never
+    })
+    try {
+      const hung = bridge.request('test.hang')
+      const rejection = assert.rejects(hung, /EPIPE/)
+      children[0].stdin?.emit('error', new Error('write EPIPE'))
+      await rejection
+      assert.equal(bridge.hasSession('s1'), false)
+      // The retired generation is replaced on the next request.
+      await bridge.request('session.create', { sessionId: 's2' })
+      assert.equal(children.length, 2)
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
+test('a write to a destroyed worker stdin rejects the request', async () => {
+  await withAgentDir(async () => {
+    const bridge = new OmpBridge((_path, agentDir) => {
+      const child = spawnFake(agentDir)
+      child.stdin?.destroy()
+      return child as never
+    })
+    try {
+      await assert.rejects(bridge.request('session.create', { sessionId: 's1' }))
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
+test('stop() escalates to SIGKILL when the worker ignores SIGTERM', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    const { pid } = await bridge.request<{ pid: number }>('test.ignoreSigterm')
+    assert.equal(isAlive(pid), true)
+    const startedAt = Date.now()
+    await bridge.stop()
+    assert.equal(isAlive(pid), false)
+    assert.ok(Date.now() - startedAt < 2000, 'stop stays inside the quit budget')
+  })
+})
+
+test('request timeout rejects with a typed error and ignores the late response', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    try {
+      const slow = bridge.request('test.slow', { delayMs: 150 }, { timeoutMs: 30 })
+      await assert.rejects(slow, (error: unknown) => {
+        assert.ok(error instanceof OmpBridgeTimeoutError)
+        assert.equal(error.method, 'test.slow')
+        return true
+      })
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      assert.deepEqual(await bridge.request('echo'), null)
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
+test('an aborted signal rejects the request and removes it', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    try {
+      const controller = new AbortController()
+      const hung = bridge.request('test.hang', undefined, { signal: controller.signal })
+      controller.abort()
+      await assert.rejects(hung, OmpBridgeAbortError)
+      await assert.rejects(
+        bridge.request('test.hang', undefined, { signal: controller.signal }),
+        OmpBridgeAbortError
+      )
+    } finally {
+      await bridge.stop()
+    }
+  })
+})
+
+test('a timed-out session.abort stops the worker so its sessions fail visibly', async () => {
+  await withAgentDir(async () => {
+    const bridge = newBridge()
+    try {
+      await bridge.request('session.create', { sessionId: 's1' })
+      await bridge.request('test.hangAbort')
+      const prompt = bridge.request('test.hang')
+      const promptRejection = assert.rejects(prompt, /OMP worker stopped/)
+      await assert.rejects(
+        bridge.request('session.abort', { sessionId: 's1' }, { timeoutMs: 50 }),
+        OmpBridgeTimeoutError
+      )
+      await promptRejection
+      assert.equal(bridge.hasSession('s1'), false)
     } finally {
       await bridge.stop()
     }

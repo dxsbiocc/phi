@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline'
 
 const sessions = new Map()
 const pendingHostRequests = new Map()
+let hangAbort = false
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`)
 
 createInterface({ input: process.stdin }).on('line', (line) => {
@@ -35,6 +36,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       if (!known()) return fail(`Unknown session: ${params.sessionId}`)
       return ok({ sessionFile: sessions.get(params.sessionId).manager?.path })
     case 'session.abort':
+      if (hangAbort) return undefined
       if (!known()) return fail(`Unknown session: ${params.sessionId}`)
       return ok({ sessionFile: sessions.get(params.sessionId).manager?.path })
     case 'session.dispose':
@@ -54,6 +56,16 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         context: params.context
       })
     }
+    case 'test.hang':
+      return undefined
+    case 'test.slow':
+      return void setTimeout(() => ok(null), params.delayMs ?? 100)
+    case 'test.ignoreSigterm':
+      process.on('SIGTERM', () => undefined)
+      return ok({ pid: process.pid })
+    case 'test.hangAbort':
+      hangAbort = true
+      return ok(null)
     case 'crash':
       process.stderr.write('fake worker crashed\n')
       return process.exit(3)
