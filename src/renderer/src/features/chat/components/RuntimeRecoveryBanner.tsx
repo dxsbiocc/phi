@@ -1,4 +1,5 @@
 import { chatCopy } from '../lib/chatCopy'
+import { alpha, type Theme } from '@mui/material/styles'
 import { useUiLanguage } from '../../../lib/i18n'
 import {
   Alert,
@@ -28,7 +29,9 @@ import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRec
 const bannerWidthSx = {
   mx: 0,
   boxShadow: 3,
-  bgcolor: 'background.paper',
+  // Slightly see-through, blurring the messages beneath so the text stays readable.
+  bgcolor: (theme: Theme) => alpha(theme.palette.background.paper, 0.82),
+  backdropFilter: 'blur(8px)',
   // Let the message fill the banner so its action row can sit at the bottom right.
   '& .MuiAlert-message': { flex: 1, minWidth: 0 }
 } as const
