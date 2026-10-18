@@ -4,6 +4,28 @@ import { resolveInsideProject } from './project-path'
 const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep', 'ast_edit', 'ast_grep'])
 const SHELL_TOOLS = new Set(['bash', 'powershell'])
 
+// Heredoc bodies are data (often source code), not shell words.
+function stripHeredocBodies(command: string): string {
+  const lines = command.split('\n')
+  const kept: string[] = []
+  let terminator: string | null = null
+  for (const line of lines) {
+    if (terminator !== null) {
+      if (line.trim() === terminator) terminator = null
+      continue
+    }
+    kept.push(line)
+    const start = /<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][\w]*))/.exec(line)
+    if (start) terminator = start[1] ?? start[2] ?? start[3]
+  }
+  return kept.join('\n')
+}
+
+// Operators such as Python's `//` or `///` are not paths; a lone `/` (cd /) still is.
+function looksLikePath(token: string): boolean {
+  return !/^\/{2,}$/.test(token)
+}
+
 function toolPaths(toolName: string, input: unknown): string[] {
   if (!isRecord(input)) return []
   const paths: string[] = []
@@ -18,11 +40,10 @@ function toolPaths(toolName: string, input: unknown): string[] {
   if (SHELL_TOOLS.has(toolName)) {
     if (typeof input.cwd === 'string') paths.push(input.cwd)
     if (typeof input.command === 'string') {
-      if (/(?:^|[\s'"=<>])\.\.(?=$|[\s'"/])/.test(input.command)) paths.push('..')
-      for (const match of input.command.matchAll(
-        /(?:^|[\s=<>])((?:\/|~\/|\.\.\/)[^\s'"<>|;&]*)/g
-      )) {
-        paths.push(match[1])
+      const command = stripHeredocBodies(input.command)
+      if (/(?:^|[\s'"=<>])\.\.(?=$|[\s'"/])/.test(command)) paths.push('..')
+      for (const match of command.matchAll(/(?:^|[\s=<>])((?:\/|~\/|\.\.\/)[^\s'"<>|;&]*)/g)) {
+        if (looksLikePath(match[1])) paths.push(match[1])
       }
     }
   }

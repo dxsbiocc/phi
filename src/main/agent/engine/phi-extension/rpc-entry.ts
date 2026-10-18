@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync, statSync } from 'node:fs'
+import { closeSync, lstatSync, openSync, readSync, realpathSync, statSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import { AgentLifecycleManager } from '@oh-my-pi/pi-coding-agent/registry/agent-lifecycle'
@@ -63,36 +63,65 @@ import {
 
 // Native read can invoke format converters, model summaries and URL/internal handlers.
 // Until R5 bridges those capabilities, only explicit existing text files are admitted.
-const textExtensions = new Set([
-  '.txt',
-  '.md',
-  '.json',
-  '.jsonl',
-  '.ts',
-  '.tsx',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-  '.py',
-  '.r',
-  '.sh',
-  '.yaml',
-  '.yml',
-  '.toml',
-  '.csv',
-  '.tsv',
-  '.log',
-  '.html',
-  '.css',
-  '.scss',
-  '.sql',
-  '.xml',
-  '.ini',
-  '.cfg',
-  '.rst',
-  '.tex'
+// Like the legacy remote read, text is decided by content (no NUL, valid UTF-8), not by extension,
+// so .ipynb, Dockerfile, Makefile, .smk, .nf and extensionless files stay readable.
+const BINARY_SNIFF_BYTES = 8192
+// Formats the native reader would convert or sniff as media; refused even if the bytes look textual.
+const nonTextExtensions = new Set([
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.odt',
+  '.ods',
+  '.odp',
+  '.epub',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.tif',
+  '.tiff',
+  '.ico',
+  '.heic',
+  '.svgz',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.tgz',
+  '.bz2',
+  '.xz',
+  '.7z',
+  '.rar',
+  '.parquet',
+  '.h5',
+  '.h5ad',
+  '.rds'
 ])
+
+function isTextFile(path: string): boolean {
+  if (nonTextExtensions.has(extname(path).toLowerCase())) return false
+  const fd = openSync(path, 'r')
+  try {
+    const head = Buffer.alloc(BINARY_SNIFF_BYTES)
+    const length = readSync(fd, head, 0, BINARY_SNIFF_BYTES, 0)
+    const bytes = head.subarray(0, length)
+    if (bytes.includes(0)) return false
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: true })
+    } catch {
+      return false
+    }
+    return true
+  } finally {
+    closeSync(fd)
+  }
+}
 
 function unsupportedPath(path: string): boolean {
   return (
@@ -208,8 +237,12 @@ const rpcExtension: ExtensionFactory = async (pi) => {
           reason:
             'Phi RPC read supports regular text files only; list directories with glob or bash'
         }
-      if (!textExtensions.has(extname(path).toLowerCase()))
-        return { block: true, reason: 'Phi RPC read supports text files only' }
+      if (!isTextFile(path))
+        return {
+          block: true,
+          reason:
+            'Phi RPC read supports text files only; this file looks binary, inspect it with bash'
+        }
       const rawPath = `${path}:raw`
       // The SDK probes fallback spellings as literal names before interpreting
       // :raw. No candidate may substitute for the exact authorized file.

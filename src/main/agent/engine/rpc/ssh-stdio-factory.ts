@@ -533,7 +533,11 @@ export async function prepareSshRpcSessionTransport(
               runtimePreparation?.childRuntimeRequired === true
                 ? { backend: 'off' }
                 : { enabled: false },
-            ...(options.prepareRuntime ? { tools: { xdev: false } } : {}),
+            // Plain old/new string replacement matches Phi's legacy edit tool; the default hashline
+            // mode needs anchored [PATH#HASH] input that models do not produce reliably.
+            ...(options.prepareRuntime
+              ? { tools: { xdev: false }, edit: { mode: 'replace' } }
+              : {}),
             ...(runtimePreparation?.childRuntimeRequired === true
               ? {
                   edit: { mode: 'replace' },

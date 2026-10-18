@@ -221,6 +221,9 @@ test(
     writeFileSync(allowed, 'PROJECT_VISIBLE_MARKER\n')
     writeFileSync(outside, 'OUTSIDE_PRIVATE_MARKER\n')
     writeFileSync(join(f.cwd, 'document.pdf'), 'converter-must-not-run')
+    writeFileSync(join(f.cwd, 'notes.ipynb'), '{"cells": ["NOTEBOOK_JSON_MARKER"]}\n')
+    writeFileSync(join(f.cwd, 'blob.dat'), Buffer.from([0x50, 0x00, 0x01, 0xff]))
+    writeFileSync(join(f.cwd, 'Snakefile'), 'SNAKEFILE_MARKER\n')
     symlinkSync(outside, link)
     writeFileSync(join(f.cwd, 'collision.txt'), 'COLLISION_VISIBLE_MARKER')
     symlinkSync(outside, join(f.cwd, 'collision.txt:raw'))
@@ -246,6 +249,17 @@ test(
     const read = await execute('read', { path: 'allowed.txt' }, 'allowed')
     assert.equal(read.isError, false, JSON.stringify(read))
     assert.match(JSON.stringify(read.result), /PROJECT_VISIBLE_MARKER/)
+    for (const [file, marker] of [
+      ['notes.ipynb', /NOTEBOOK_JSON_MARKER/],
+      ['Snakefile', /SNAKEFILE_MARKER/]
+    ] as const) {
+      const text = await execute('read', { path: file }, file)
+      assert.equal(text.isError, false, JSON.stringify(text))
+      assert.match(JSON.stringify(text.result), marker)
+    }
+    const binary = await execute('read', { path: 'blob.dat' }, 'binary content')
+    assert.equal(binary.isError, true, JSON.stringify(binary))
+    assert.match(JSON.stringify(binary.result), /looks binary/)
     for (const [label, name, args] of [
       ['absolute outside', 'read', { path: outside }],
       ['relative outside', 'read', { path: '../outside.txt' }],

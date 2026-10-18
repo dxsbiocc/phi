@@ -16,6 +16,7 @@ import {
   type SaveProjectNotebookInput
 } from './analysis-notebook-files'
 import { watchHostNotebook } from './analysis-notebook-watch'
+import { listNotebooksWithFind } from './notebook-fast-list'
 
 export const MAX_NOTEBOOK_FILE_BYTES = 1024 * 1024
 const [READ_CHUNK_BYTES, DEFAULT_POLL_INTERVAL_MS] = [256 * 1024, 2_000]
@@ -201,6 +202,22 @@ class HostNotebookWorkspace implements NotebookWorkspace {
     const maxDepth = options.maxDepth ?? 8
     const maxEntries = options.maxEntries ?? 2_000
     const maxNotebooks = options.maxNotebooks ?? 200
+    const fast =
+      this.host instanceof LocalHost
+        ? undefined
+        : await listNotebooksWithFind({
+            host: this.host,
+            projectCwd: this.projectCwd,
+            ignoredDirectories: IGNORED_DIRECTORIES,
+            maxDepth,
+            maxNotebooks
+          })
+    if (fast) {
+      fast.notebooks.sort((left, right) =>
+        notebookSortKey(left).localeCompare(notebookSortKey(right))
+      )
+      return fast
+    }
     const notebooks: AnalysisNotebookSummary[] = []
     const state = { visited: 0, truncated: false }
     await this.visit('.', 0, { maxDepth, maxEntries, maxNotebooks }, notebooks, state)
@@ -373,7 +390,12 @@ const IGNORED_DIRECTORIES = new Set([
   '.snakemake',
   'node_modules',
   'renv',
-  'work'
+  'work',
+  '__pycache__',
+  '.venv',
+  'venv',
+  '.mypy_cache',
+  '.conda'
 ])
 
 export function createNotebookWorkspace(input: {
