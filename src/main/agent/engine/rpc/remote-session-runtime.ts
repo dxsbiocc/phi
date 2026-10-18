@@ -1237,7 +1237,24 @@ export class RemoteSessionRuntime {
       return
     }
     await this.stopExecution()
+    // Background subagents outlive the main prompt run; stop means every run of this session.
+    await this.stopChildRuns()
     await this.pending
+  }
+  private async stopChildRuns(): Promise<void> {
+    if (!this.children || this.connection.isClosed || this.connection.bindControl().signal.aborted)
+      return
+    const parents = new Set(
+      this.children
+        .listRuns()
+        .filter((run) => run.completedAt === undefined)
+        .map((run) => run.parentRunId)
+    )
+    const results = await Promise.allSettled(
+      [...parents].map((parent) => Promise.resolve().then(() => this.children!.stopParent(parent)))
+    )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
   private stopExecution(): Promise<void> {
     if (this.stopping) return this.stopping
@@ -1290,25 +1307,7 @@ export class RemoteSessionRuntime {
         stopError = error
       }
       try {
-        if (
-          this.children &&
-          !this.connection.isClosed &&
-          !this.connection.bindControl().signal.aborted
-        ) {
-          const parents = new Set(
-            this.children
-              .listRuns()
-              .filter((run) => run.completedAt === undefined)
-              .map((run) => run.parentRunId)
-          )
-          const results = await Promise.allSettled(
-            [...parents].map((parent) =>
-              Promise.resolve().then(() => this.children!.stopParent(parent))
-            )
-          )
-          const failed = results.find((result) => result.status === 'rejected')
-          if (failed?.status === 'rejected') throw failed.reason
-        }
+        await this.stopChildRuns()
       } catch (error) {
         if (!stopFailed) {
           stopFailed = true

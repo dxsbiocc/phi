@@ -81,3 +81,29 @@ test('manual compaction cleanup is attempted even when current cancellation fail
   assert.equal(f.counts.physicalClose, 1)
   assert.equal(f.counts.drain, 1)
 })
+test('stop with only background subagents running stops every active child parent', async () => {
+  const f = fixture({})
+  Object.assign(f.runtime, {
+    pending: undefined,
+    children: {
+      listRuns: () => [
+        { parentRunId: 'older-a' },
+        { parentRunId: 'older-b', completedAt: 1 },
+        { parentRunId: 'older-c' }
+      ],
+      stopParent: async (id: string) => {
+        f.attempts.push(id)
+      }
+    },
+    stopExecution: () => Promise.resolve()
+  })
+  await f.runtime.stop()
+  assert.deepEqual(f.attempts.sort(), ['older-a', 'older-c'])
+  assert.equal(f.counts.physicalClose, 0)
+})
+test('stop propagates a background cancellation failure', async () => {
+  const first = new Error('background cancellation refused')
+  const f = fixture({ backgroundFailure: first })
+  Object.assign(f.runtime, { pending: undefined, stopExecution: () => Promise.resolve() })
+  await assert.rejects(f.runtime.stop(), (error) => error === first)
+})

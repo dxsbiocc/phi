@@ -1266,7 +1266,7 @@ export function createFacadeSessionFactory(
               let failed = false,
                 failure: unknown
               try {
-                if (run) await runtime!.stop()
+                if (run || runtime!.hasActiveAgentRuns()) await runtime!.stop()
               } catch (error) {
                 failed = true
                 failure = error
