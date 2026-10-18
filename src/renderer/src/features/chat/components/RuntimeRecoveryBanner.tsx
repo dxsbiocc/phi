@@ -25,7 +25,13 @@ import { useRuntimeRecovery } from '../hooks/useRuntimeRecovery'
 import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRecoveryState'
 
 // App places the banner in a floating column matching the composer; it fills that column.
-const bannerWidthSx = { mx: 0, boxShadow: 3, bgcolor: 'background.paper' } as const
+const bannerWidthSx = {
+  mx: 0,
+  boxShadow: 3,
+  bgcolor: 'background.paper',
+  // Let the message fill the banner so its action row can sit at the bottom right.
+  '& .MuiAlert-message': { flex: 1, minWidth: 0 }
+} as const
 
 export function RuntimeRecoveryBanner({
   api,
@@ -112,7 +118,11 @@ export function RuntimeRecoveryBanner({
               ))}
             </Select>
           ) : null}
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{ alignItems: 'center', justifyContent: 'flex-end' }}
+          >
             {busy ? <CircularProgress size={14} /> : null}
             <Button
               size="small"
