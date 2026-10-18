@@ -1,0 +1,408 @@
+{
+  "retrieved_on": "2026-10-18",
+  "repositories": {
+    "rfdiffusion": {
+      "repo": "RosettaCommons/RFdiffusion",
+      "commit": "86507b6538f51fce57b5a72477165f03999ed7ae"
+    },
+    "proteinmpnn": {
+      "repo": "dauparas/ProteinMPNN",
+      "commit": "8907e6671bfbfc92303b5f79c4b5e6ce47cdef57"
+    }
+  },
+  "files": [
+    {
+      "tool": "rfdiffusion",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/README.md",
+      "bytes": 48907,
+      "sha256": "d89eb9790ce805ce23e1b1a6804f4d67c81056025e4852b875f8ddfd87a08125"
+    },
+    {
+      "tool": "rfdiffusion",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/LICENSE",
+      "bytes": 1749,
+      "sha256": "eefc2ae77cb92b1414a6ac76b246642fae2189747b1b07747e92e5ddc696ec24"
+    },
+    {
+      "tool": "rfdiffusion",
+      "path": "config/inference/base.yaml",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/config/inference/base.yaml",
+      "bytes": 2648,
+      "sha256": "05c311be2b7f34297c499777a885b1cb09e4f6329dd2ce21b2305b54ddbeb12a"
+    },
+    {
+      "tool": "rfdiffusion",
+      "path": "env/SE3nv.yml",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/env/SE3nv.yml",
+      "bytes": 251,
+      "sha256": "34aff0710a22e54ffd152e286f80dbd4cd11c6ee9fdf94422c152895b29d579e"
+    },
+    {
+      "tool": "rfdiffusion",
+      "path": "env/SE3Transformer/requirements.txt",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/env/SE3Transformer/requirements.txt",
+      "bytes": 110,
+      "sha256": "c5250db96a9071645c6572bf84e2d8a12bfd77fe614f40824e3944b042a31e47"
+    },
+    {
+      "tool": "rfdiffusion",
+      "path": "scripts/run_inference.py",
+      "url": "https://raw.githubusercontent.com/RosettaCommons/RFdiffusion/86507b6538f51fce57b5a72477165f03999ed7ae/scripts/run_inference.py",
+      "bytes": 6469,
+      "sha256": "a22624d7d40d3d207d91e92163441da5a778c867ed6ea85aa546cc9fdbeb2105"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/README.md",
+      "bytes": 10277,
+      "sha256": "772ebe52d2ba5100a28a888910c6f0c9fd4ded1d1372e3d89f6f1c48707e0365"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/LICENSE",
+      "bytes": 1072,
+      "sha256": "82009d25ce585631f452b2b24589bdb29c559ccfefa2f200ef312ed5b501a586"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "protein_mpnn_run.py",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/protein_mpnn_run.py",
+      "bytes": 29312,
+      "sha256": "61f2c519a7f73fa12da9eb90da97b97ec2f8d5f31d42605639c7600cbd321cbe"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "protein_mpnn_utils.py",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/protein_mpnn_utils.py",
+      "bytes": 63491,
+      "sha256": "74c8f9b7553422a7a0bbd705874844ee103c8926c2c96f154a87e0b824071e1b"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "examples/submit_example_1.sh",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/examples/submit_example_1.sh",
+      "bytes": 690,
+      "sha256": "8e16a76274193a0d92f8eee99e7f26c77b719f1f2cfb310499d97a2d62a1514a"
+    }
+  ],
+  "schema_version": 1,
+  "kind": "source_and_execution_audit",
+  "scope": "RFdiffusion and ProteinMPNN prerequisites; not a skill package or solved environment lock",
+  "paper_reproduction_linkage_verified": false,
+  "license_evidence": [
+    {
+      "tool": "rfdiffusion",
+      "repository_license": "BSD-3-Clause",
+      "explicit_readme_checkpoint_coverage": true,
+      "source": "https://github.com/RosettaCommons/RFdiffusion/blob/86507b6538f51fce57b5a72477165f03999ed7ae/LICENSE"
+    },
+    {
+      "tool": "proteinmpnn",
+      "repository_license": "MIT",
+      "separate_checkpoint_or_external_data_license_statement_verified": false,
+      "source": "https://github.com/dauparas/ProteinMPNN/blob/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/LICENSE"
+    }
+  ],
+  "downloaded_inference_assets": [
+    {
+      "tool": "proteinmpnn",
+      "path": "vanilla_model_weights/v_48_020.pt",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/vanilla_model_weights/v_48_020.pt",
+      "bytes": 6681301,
+      "sha256": "c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd"
+    },
+    {
+      "tool": "proteinmpnn",
+      "path": "inputs/PDB_monomers/pdbs/5L33.pdb",
+      "url": "https://raw.githubusercontent.com/dauparas/ProteinMPNN/8907e6671bfbfc92303b5f79c4b5e6ce47cdef57/inputs/PDB_monomers/pdbs/5L33.pdb",
+      "bytes": 181116,
+      "sha256": "21eb06c843410732e0b60528b1a99934435ac66822b2a1a3f1d402f363b9e218"
+    }
+  ],
+  "rfdiffusion_checkpoint_locators": [
+    {
+      "task": "unconditional",
+      "name": "Base_ckpt.pt",
+      "url": "http://files.ipd.uw.edu/pub/RFdiffusion/6f5902ac237024bdd0c176cb93063dc4/Base_ckpt.pt",
+      "downloaded": false,
+      "sha256": null,
+      "loading_tested": false
+    },
+    {
+      "task": "protein_binder",
+      "name": "Complex_base_ckpt.pt",
+      "url": "http://files.ipd.uw.edu/pub/RFdiffusion/e29311f6f1bf1af907f9ef9f44b8328b/Complex_base_ckpt.pt",
+      "downloaded": false,
+      "sha256": null,
+      "loading_tested": false
+    },
+    {
+      "task": "small_motif",
+      "name": "ActiveSite_ckpt.pt",
+      "url": "http://files.ipd.uw.edu/pub/RFdiffusion/5532d2e1f3a4738decd58b19d633b3c3/ActiveSite_ckpt.pt",
+      "downloaded": false,
+      "sha256": null,
+      "loading_tested": false
+    }
+  ],
+  "proteinmpnn_cpu_smoke": {
+    "observed_on": "2026-10-18",
+    "scope": "ProteinMPNN CPU operational smoke, not paper benchmark or functional validation",
+    "source_commit": "8907e6671bfbfc92303b5f79c4b5e6ce47cdef57",
+    "runtime": {
+      "system": "Darwin",
+      "machine": "arm64",
+      "python": "3.12.9",
+      "torch": "2.5.1",
+      "numpy": "1.26.4",
+      "device": "cpu",
+      "omp_num_threads": 1,
+      "mkl_num_threads": 1,
+      "managed_environment_lock": null
+    },
+    "fixture": {
+      "path": "inputs/PDB_monomers/pdbs/5L33.pdb",
+      "chain": "A",
+      "sha256": "21eb06c843410732e0b60528b1a99934435ac66822b2a1a3f1d402f363b9e218",
+      "parsed_length": 106,
+      "fixed_positions": [1, 10, 20]
+    },
+    "checkpoint": {
+      "path": "vanilla_model_weights/v_48_020.pt",
+      "sha256": "c9cb4a671d79604111231f8dbfc7c590e06f1197453b7a6854ac6661a642f5bd"
+    },
+    "runs": [
+      {
+        "name": "plain_1",
+        "argv": [
+          "<PYTHON_INTERPRETER>",
+          "<SOURCE_ROOT>/protein_mpnn_run.py",
+          "--pdb_path",
+          "<SOURCE_ROOT>/inputs/PDB_monomers/pdbs/5L33.pdb",
+          "--pdb_path_chains",
+          "A",
+          "--path_to_model_weights",
+          "<SOURCE_ROOT>/vanilla_model_weights",
+          "--model_name",
+          "v_48_020",
+          "--num_seq_per_target",
+          "1",
+          "--batch_size",
+          "1",
+          "--sampling_temp",
+          "0.1",
+          "--seed",
+          "37",
+          "--backbone_noise",
+          "0.0",
+          "--save_score",
+          "1",
+          "--out_folder",
+          "<SOURCE_ROOT>/smoke_outputs/plain_1"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.316,
+        "checks": {
+          "one_generated_candidate": true,
+          "native_record_separate": true,
+          "sequence_length": true,
+          "valid_alphabet": true,
+          "seed_in_header": true,
+          "finite_scores": true
+        },
+        "records": [
+          {
+            "header": "5L33, score=1.5969, global_score=1.5969, fixed_chains=[], designed_chains=['A'], model_name=v_48_020, git_hash=unknown, seed=37",
+            "sequence": "HMPEEEKAARLFIEALEKGDPELMRKVISPDTRMEDNGREFTGDEVVEYVKEIQKRGEQWHLRRYTKEGNSWRFEVQVDNNGQTEQWEVQIEVRNGRIKRVTITHV"
+          },
+          {
+            "header": "T=0.1, sample=1, score=0.8576, global_score=0.8576, seq_recovery=0.3868",
+            "sequence": "SVDADTQKALDFVKALEEADPALMAKVITPDTEMTVNGKEYKGKEIVDFVKELAAKGVKYKLESYKKEGDEYVFTVTKSKDGKTYTITITIKVVDGKVKKVVIEEK"
+          }
+        ],
+        "fasta_sha256": "115bd2fa985e887433f0a5be2b51cba7695476b42da016a453e19136ac646eb2",
+        "diagnostics_present": true
+      },
+      {
+        "name": "plain_2",
+        "argv": [
+          "<PYTHON_INTERPRETER>",
+          "<SOURCE_ROOT>/protein_mpnn_run.py",
+          "--pdb_path",
+          "<SOURCE_ROOT>/inputs/PDB_monomers/pdbs/5L33.pdb",
+          "--pdb_path_chains",
+          "A",
+          "--path_to_model_weights",
+          "<SOURCE_ROOT>/vanilla_model_weights",
+          "--model_name",
+          "v_48_020",
+          "--num_seq_per_target",
+          "1",
+          "--batch_size",
+          "1",
+          "--sampling_temp",
+          "0.1",
+          "--seed",
+          "37",
+          "--backbone_noise",
+          "0.0",
+          "--save_score",
+          "1",
+          "--out_folder",
+          "<SOURCE_ROOT>/smoke_outputs/plain_2"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.271,
+        "checks": {
+          "one_generated_candidate": true,
+          "native_record_separate": true,
+          "sequence_length": true,
+          "valid_alphabet": true,
+          "seed_in_header": true,
+          "finite_scores": true
+        },
+        "records": [
+          {
+            "header": "5L33, score=1.5969, global_score=1.5969, fixed_chains=[], designed_chains=['A'], model_name=v_48_020, git_hash=unknown, seed=37",
+            "sequence": "HMPEEEKAARLFIEALEKGDPELMRKVISPDTRMEDNGREFTGDEVVEYVKEIQKRGEQWHLRRYTKEGNSWRFEVQVDNNGQTEQWEVQIEVRNGRIKRVTITHV"
+          },
+          {
+            "header": "T=0.1, sample=1, score=0.8576, global_score=0.8576, seq_recovery=0.3868",
+            "sequence": "SVDADTQKALDFVKALEEADPALMAKVITPDTEMTVNGKEYKGKEIVDFVKELAAKGVKYKLESYKKEGDEYVFTVTKSKDGKTYTITITIKVVDGKVKKVVIEEK"
+          }
+        ],
+        "fasta_sha256": "115bd2fa985e887433f0a5be2b51cba7695476b42da016a453e19136ac646eb2",
+        "diagnostics_present": true
+      },
+      {
+        "name": "fixed_positions",
+        "argv": [
+          "<PYTHON_INTERPRETER>",
+          "<SOURCE_ROOT>/protein_mpnn_run.py",
+          "--pdb_path",
+          "<SOURCE_ROOT>/inputs/PDB_monomers/pdbs/5L33.pdb",
+          "--pdb_path_chains",
+          "A",
+          "--path_to_model_weights",
+          "<SOURCE_ROOT>/vanilla_model_weights",
+          "--model_name",
+          "v_48_020",
+          "--num_seq_per_target",
+          "1",
+          "--batch_size",
+          "1",
+          "--sampling_temp",
+          "0.1",
+          "--seed",
+          "37",
+          "--backbone_noise",
+          "0.0",
+          "--save_score",
+          "1",
+          "--out_folder",
+          "<SOURCE_ROOT>/smoke_outputs/fixed_positions",
+          "--fixed_positions_jsonl",
+          "<SOURCE_ROOT>/smoke-fixed-positions.jsonl"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 1.23,
+        "checks": {
+          "one_generated_candidate": true,
+          "native_record_separate": true,
+          "sequence_length": true,
+          "valid_alphabet": true,
+          "seed_in_header": true,
+          "finite_scores": true,
+          "fixed_positions_preserved": true
+        },
+        "records": [
+          {
+            "header": "5L33, score=1.5626, global_score=1.5805, fixed_chains=[], designed_chains=['A'], model_name=v_48_020, git_hash=unknown, seed=37",
+            "sequence": "HMPEEEKAARLFIEALEKGDPELMRKVISPDTRMEDNGREFTGDEVVEYVKEIQKRGEQWHLRRYTKEGNSWRFEVQVDNNGQTEQWEVQIEVRNGRIKRVTITHV"
+          },
+          {
+            "header": "T=0.1, sample=1, score=0.8897, global_score=0.9271, seq_recovery=0.4757",
+            "sequence": "HMDPEEEKARRFIEALERADPELMKKVITPDTEMEVNGKKYKGEEIVEYVKELAERGVRYELLSYERKGDKYVFTVRKSEDGVTRTVTIEIKVVDGKIKEVVITEE"
+          }
+        ],
+        "fasta_sha256": "ccfe47c19bbc37ef179d1c3e5a21fcc891d093acbd6f307eace7484190130666",
+        "diagnostics_present": true
+      }
+    ],
+    "identical_repeat_fasta": true,
+    "passed": true
+  },
+  "initial_sandbox_attempt": {
+    "passed": false,
+    "error": "OpenMP Error 179: Function Cannot open SHM",
+    "resolution": "Repeated the same pinned upstream inference outside the sandbox; three runs passed; no upstream source change"
+  },
+  "readiness": {
+    "proteinmpnn_cpu_operational_smoke": "passed",
+    "managed_environment_lock": null,
+    "rfdiffusion_inference": "not_run",
+    "structural_prediction_validation": "not_run",
+    "cross_tool_pipeline": "not_run",
+    "negative_input_and_cancellation_tests": "not_run",
+    "same_budget_scientific_benchmark": "not_run",
+    "wet_lab_validation": "not_run"
+  },
+  "notes": [
+    "Source SHA independently records provenance because downloaded scripts without .git print git_hash=unknown in native FASTA headers.",
+    "Numerical results and repeated FASTA identity apply only to this input and observed runtime.",
+    "The native FASTA record is excluded from generated candidate counts."
+  ],
+  "supplementary_materials": [
+    {
+      "tool": "proteinmpnn",
+      "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC9997061/supplementaryFiles",
+      "downloaded_bytes": 10794499,
+      "bundle_sha256": "b1f7afacdef09e304564da81a86417497d59abd2e33cbb269418204ef91eb22c",
+      "pdfs": [
+        {
+          "member": "NIHMS1874648-supplement-Supp_T1.pdf",
+          "bytes": 76839,
+          "sha256": "d3a107de70e89342fbd0ed043d81bc76c2f76a8e1255d47f81a116494891859c"
+        },
+        {
+          "member": "NIHMS1874648-supplement-Supp_Methods_and_S1-S9.pdf",
+          "bytes": 6736004,
+          "sha256": "20b993c4850d9c54be5d2177f877d5205540b3c063aec1b760c2822bbb56bbce"
+        }
+      ],
+      "methods_pdf_pages_read": [5, 6, 12],
+      "rendered_page_checked": 6
+    },
+    {
+      "tool": "rfdiffusion",
+      "url": "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC10468394/supplementaryFiles",
+      "downloaded_bytes": 62505267,
+      "bundle_sha256": "9373952c82533d10b8d24063a138ee5d0a13a013cc2efac898b3a75fe3358783",
+      "pdfs": [
+        {
+          "member": "41586_2023_6415_MOESM1_ESM.pdf",
+          "bytes": 61629912,
+          "sha256": "9a9e914f9dbbb8aa11e9d44f021489f686b49b462457f1f7ecec4ee5ca486b4b"
+        },
+        {
+          "member": "41586_2023_6415_MOESM2_ESM.pdf",
+          "bytes": 121666,
+          "sha256": "fb47fb1175e5169a92453d4655c857338e1572417ac7d9f62920264d79531b68"
+        }
+      ],
+      "methods_pdf_pages_read": [80, 81, 82, 96, 97, 98, 109],
+      "rendered_page_checked": 81
+    }
+  ],
+  "path_normalization": {
+    "note": "Machine-specific paths in recorded argv have been normalized for publication. Versions, parameters, source/asset hashes and scientific outputs are unchanged.",
+    "placeholders": {
+      "<PYTHON_INTERPRETER>": "Python executable from the recorded ProteinMPNN runtime.",
+      "<SOURCE_ROOT>": "ProteinMPNN checkout at repositories.proteinmpnn.commit, including its recorded local smoke outputs."
+    }
+  }
+}
