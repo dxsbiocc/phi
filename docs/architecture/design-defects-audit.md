@@ -68,6 +68,21 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 3. **RPC 默认开启的门槛**(2026-10-18 用户确认,已加入 [升级计划 §6.5](../roadmap/omp-decoupling-upgrade-plan.md)):SSH-05/X-02 结构化错误码、SSH-02、OMP-13、OMP-10、SSH-01 剩余部分、SSH-04 剩余部分。错误码分类与 SSH 连接池需要先定设计。
 4. **结构项**:OMP-05/01、X-01/04/05 并入整洁度方案的主进程拆分。
 
+#### 设计决定(2026-10-18 用户确认)
+
+**错误码:共享错误码,先迁远程和引擎。**
+
+- `src/shared` 定义一个小的错误码枚举,每个码带 `retryable`;IPC 边界序列化为 `{ code, retryable, message }`。
+- 初始码:`TRANSPORT_LOST`(确认传输失效 → offline、释放 host)、`TIMEOUT_UNKNOWN`(只让本次调用失败,结果未知,不动连接)、`PROVIDER_ERROR`(可重试或换模型)、`APPROVAL_DENIED`、`ABORTED`(两者不计为失败)、`DOMAIN_*`(只展示,不动连接)、`UNKNOWN`(未迁移的旧代码)。
+- 本轮只迁 SSH、RPC、OMP bridge 与远程 turn 失败(覆盖 SSH-05、SSH-02、SSH-06);其余代码保持 `UNKNOWN`,随整洁度方案逐步迁移。不做全量迁移。
+- 连接状态机只按 code 判断,删除中文文案正则;只有 `TRANSPORT_LOST` 才释放 host。
+
+**连接复用:helper 优先,兜底路径复用连接。**
+
+- 远程项目打开时即启动 helper,不再按需启动;正常情况下所有 fs/exec 走 helper 的常驻连接。
+- helper 不可用时的纯 SSH 兜底:每个 host 一条带引用计数的共享 SSH master(会话池);前台命令在该连接上单通道流式执行,不再"先 detach 再轮询";只有真正的后台任务轮询,间隔放宽并复用同一连接。
+- 改动集中在 `workspace-host/ssh-host-context.ts`、`ssh-host-exec.ts` 与 `ssh-host.ts` 的 helper 启动时机。
+
 ---
 
 ## 1. 严重度总览
