@@ -371,7 +371,7 @@ test('HTTP featured tools preserve the existing auth request without starting a 
 
 test('uninstalled, foreign, and non-package stdio entries reject before launching a worker', async () => {
   const f = harness(false)
-  await assert.rejects(f.invoke('mcp:featuredTools', 'local'), /先安装/)
+  await assert.rejects(f.invoke('mcp:featuredTools', 'local'), /Install this local Connector first/)
   f.state.installed = true
   for (const entry of [
     { command: 'user-server' },
@@ -379,13 +379,16 @@ test('uninstalled, foreign, and non-package stdio entries reject before launchin
     undefined
   ]) {
     f.state.entry = entry
-    await assert.rejects(f.invoke('mcp:featuredTools', 'local'), /先安装/)
+    await assert.rejects(
+      f.invoke('mcp:featuredTools', 'local'),
+      /Install this local Connector first/
+    )
   }
   await assert.rejects(
     f.invoke('mcp:featuredTools', { id: 'local', command: 'renderer-command' }),
-    /标识无效/
+    /Invalid Connector ID/
   )
-  await assert.rejects(f.invoke('mcp:featuredTools', 'missing'), /目录中找不到/)
+  await assert.rejects(f.invoke('mcp:featuredTools', 'missing'), /was not found in the catalog/)
   assert.equal(f.requests.length, 0)
   assert.equal(f.calls.includes('environment:build'), false)
 })
@@ -406,8 +409,8 @@ test(
       ['downloading', 'installing', 'environment', 'starting']
     )
     assert.equal((await f.snapshot())?.phase, 'starting')
-    await assert.rejects(f.invoke('mcp:featuredTools', 'local'), /进行中/)
-    await assert.rejects(f.invoke('mcp:uninstallConnector', 'local'), /进行中/)
+    await assert.rejects(f.invoke('mcp:featuredTools', 'local'), /setup is in progress/)
+    await assert.rejects(f.invoke('mcp:uninstallConnector', 'local'), /setup is in progress/)
     assert.equal(f.calls.includes('package:uninstall'), false)
     assert.equal(f.state.installed, true)
     assert.equal(f.requests.filter(({ method }) => method === 'mcp.configuredStdioTools').length, 1)

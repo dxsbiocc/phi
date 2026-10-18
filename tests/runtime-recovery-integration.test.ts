@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
+import { appCopy } from '../src/renderer/src/lib/appCopy'
 import {
   rpcPromptPolicy,
   rpcPromptPolicyHash
@@ -177,6 +178,7 @@ test('SSH fork capability is absent and a stale App callback also refuses its IP
   const module = { exports: undefined as unknown }
   new Function(
     'module',
+    'appCopy',
     'useSessionStore',
     'forkInProgressRef',
     'rendererApi',
@@ -187,6 +189,7 @@ test('SSH fork capability is absent and a stale App callback also refuses its IP
     compiled
   )(
     module,
+    appCopy,
     { getState: () => current },
     { current: false },
     {

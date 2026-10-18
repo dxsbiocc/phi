@@ -5,6 +5,8 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { wrapperCopy } from '../src/renderer/src/features/wrapper/lib/wrapperCopy'
 import { FileTreeRootRow } from '../src/renderer/src/features/file-preview/components/FileTreeRootRow'
 import { FileTreeRow } from '../src/renderer/src/features/file-preview/components/FileTreeRow'
 
@@ -57,5 +59,10 @@ test('Wrapper input upload is a feature-private dialog and targeted drop surface
   assert.match(card, /projectLocation\.kind === 'ssh'/)
   assert.match(dialog, /data-phi-file-drop-target="wrapper-input"/)
   assert.match(dialog, /completeWrapperInputUpload/)
-  assert.match(dialog, /取消上传/)
+  assert.match(dialog, /wrapperCopy\.cancelUpload/)
+  setUiLanguage('en')
+  assert.equal(wrapperCopy.cancelUpload, 'Cancel upload')
+  setUiLanguage('zh-CN')
+  assert.equal(wrapperCopy.cancelUpload, '取消上传')
+  setUiLanguage('en')
 })

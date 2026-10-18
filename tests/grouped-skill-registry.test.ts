@@ -18,6 +18,9 @@ import {
   skillCatalogGroups,
   skillCatalogItems
 } from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 const roots: string[] = []
 test.after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })))

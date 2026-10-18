@@ -13074,7 +13074,7 @@ test('main IPC: a background wrapper run that ends is reported in the conversati
 })
 
 test('main IPC: a run that ends while Phi is in the background raises a system notification', async () => {
-  const app = await harness()
+  const app = await harness(undefined, { uiLanguage: 'zh-CN' })
   await app.invoke('projects:newSession', '/projects/wrapper-notice', 'ask')
   await app.invoke('agent:prompt', 'hi')
   const runtimeSessionId = (app.sessions[0] as unknown as { runtimeSessionId: string })
@@ -13100,7 +13100,7 @@ test('main IPC: a run that ends while Phi is in the background raises a system n
 })
 
 test('main IPC: a run from a session Phi does not know is announced by system notification only', async () => {
-  const app = await harness()
+  const app = await harness(undefined, { uiLanguage: 'zh-CN' })
   await app.invoke('projects:newSession', '/projects/wrapper-notice', 'ask')
   await app.invoke('agent:prompt', 'hi')
 
@@ -13150,11 +13150,11 @@ async function waitUntil(condition: () => boolean, timeoutMs = 2000): Promise<vo
   }
 }
 
-async function idleConversation(): Promise<{
+async function idleConversation(options: HarnessOptions = {}): Promise<{
   app: Awaited<ReturnType<typeof harness>>
   session: FakeSession
 }> {
-  const app = await harness()
+  const app = await harness(undefined, options)
   await app.invoke('projects:newSession', '/projects/wrapper-continue', 'ask')
   await app.invoke('agent:prompt', 'run fastqc on my reads')
   await tick()
@@ -13501,7 +13501,7 @@ test('main IPC: agent and wrapper runs share one wake-up cap, and one wake-up ca
 })
 
 test('main IPC: a run that ends while Phi is in the background raises a system notification too', async () => {
-  const { app, session } = await idleConversation()
+  const { app, session } = await idleConversation({ uiLanguage: 'zh-CN' })
   app.setAppFocused(false)
   await agentRunFinished(app, session.runtimeSessionId)
   assert.equal(app.osNotifications.length, 1)

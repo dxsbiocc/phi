@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import type { WebLinkPreview } from '../src/shared/webLinkPreviewTypes'
 import { WebLinkPreviewCard } from '../src/renderer/src/components/markdown/WebLinkHoverCard'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 const url = 'https://example.com/docs?lang=zh#setup'
 const preview: WebLinkPreview = {

@@ -175,16 +175,22 @@ test('SSH project starts the same wrapper on its server without a target argumen
       assert.equal(result.ok, true, JSON.stringify(result))
       if (!result.ok) return
       assert.equal(result.status.remote?.host, 'login.hpc.test')
-      assert.match(result.status.targetReason ?? '', /远程项目固定使用/)
+      assert.match(
+        result.status.targetReason ?? '',
+        /remote project uses its bound server and project directory/
+      )
       const done = await m.wait(result.status.runId, 60_000)
       assert.equal(done?.state, 'completed')
-      assert.match(formatJobStatus(done!), /Target: 远程项目固定使用/)
+      assert.match(formatJobStatus(done!), /Target: The remote project uses its bound server/)
       const saved = readWrapperRun(result.status.runId, sb.agentDir)
       assert.equal(saved?.executor, 'slurm')
       assert.equal(saved?.remote?.projectId, project.id)
       assert.equal(saved?.inputReferences?.[0]?.source, 'remote')
       assert.deepEqual(saved?.inputReferences?.[0]?.remotePaths, [remoteGff])
-      assert.match(saved?.targetReason ?? '', /远程项目固定使用/)
+      assert.match(
+        saved?.targetReason ?? '',
+        /remote project uses its bound server and project directory/
+      )
     })
   })
 })
@@ -211,7 +217,7 @@ test('SSH project rejects explicit local and failed remote checks before recordi
       })
       const local = await m.start({ id: WRAPPER_ID, overrides: {}, target: 'local' })
       assert.equal(local.ok, false)
-      assert.match(local.ok ? '' : local.error, /不能在本机执行/)
+      assert.match(local.ok ? '' : local.error, /cannot run on this device/)
       assert.equal(resolvedCount, 0)
       const offline = await m.start({
         id: WRAPPER_ID,
@@ -368,7 +374,10 @@ test('local references without a saved mapping fail before recording a remote ru
         originSessionId: 'runtime-local'
       })
       assert.equal(result.ok, false)
-      assert.match(result.ok ? '' : result.error, /没有配置本机→服务器路径映射/)
+      assert.match(
+        result.ok ? '' : result.error,
+        /references a local path without a local-to-server path mapping/
+      )
       assert.equal(listWrapperRuns(sb.agentDir).length, 0)
     })
   })

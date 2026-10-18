@@ -1,9 +1,10 @@
 import * as i18n from '../../src/renderer/src/lib/i18n'
+import { pluginCopy } from '../../src/renderer/src/features/phi-plugin/lib/pluginCopy'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
-import { formatPhiPluginProblems } from '../../src/renderer/src/features/phi-plugin/lib/phiPlugins'
+import * as phiPluginsLib from '../../src/renderer/src/features/phi-plugin/lib/phiPlugins'
 import { retainSelectedCatalogId } from '../../src/renderer/src/lib/catalogSelection'
 
 export interface Deferred<T> {
@@ -134,7 +135,8 @@ export function hookHarness<State>(
       if (specifier.endsWith('/i18n')) return { ...i18n, useUiLanguage: i18n.getUiLanguage }
       if (Object.hasOwn(imports, specifier)) return imports[specifier]
       if (specifier.endsWith('/catalogSelection')) return { retainSelectedCatalogId }
-      if (specifier === '../lib/phiPlugins') return { formatPhiPluginProblems }
+      if (specifier.endsWith('/pluginCopy')) return { pluginCopy }
+      if (specifier === '../lib/phiPlugins') return phiPluginsLib
       throw new Error(`Unexpected runtime import: ${specifier}`)
     },
     window: {

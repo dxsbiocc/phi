@@ -4,6 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
 import { McpFeaturedConnectorDetails } from '../src/renderer/src/features/mcp/components/McpFeaturedConnectorDetails'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 function render(verified = false, configured = true): string {
   return renderToStaticMarkup(
@@ -54,17 +57,17 @@ function render(verified = false, configured = true): string {
 test('a saved connector without a verified key offers verification rather than key replacement', () => {
   const markup = render()
   assert.match(markup, /已配置/)
-  assert.match(markup, /API key 未验证/)
-  assert.match(markup, /验证 API key/)
-  assert.doesNotMatch(markup, /更换密钥/)
+  assert.match(markup, /API 密钥未验证/)
+  assert.match(markup, /验证 API 密钥/)
+  assert.doesNotMatch(markup, /替换密钥/)
   assert.match(markup, /已停用/)
 })
 
 test('a previously verified key without a configured connector offers adding the connector', () => {
   const markup = render(true, false)
   assert.match(markup, /添加连接器/)
-  assert.match(markup, /可直接添加连接器/)
-  assert.doesNotMatch(markup, /更换密钥/)
+  assert.match(markup, /可以直接添加连接器/)
+  assert.doesNotMatch(markup, /替换密钥/)
 })
 
 test('a configured disabled connector with valid credentials offers an enable action', () => {

@@ -7,6 +7,9 @@ import { toolTargetFromArgs } from '../src/renderer/src/lib/toolTargets'
 import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
 import { ToolCallDetail } from '../src/renderer/src/components/tool-call/ToolCallDetail'
 import type { ToolCallItem } from '../src/renderer/src/types'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 test('toolTargetFromArgs extracts edit and write targets', () => {
   assert.deepEqual(

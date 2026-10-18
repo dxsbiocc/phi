@@ -9,6 +9,9 @@ import {
 } from '../src/shared/remoteWorkspacePath'
 import { absoluteWorkspacePath } from '../src/renderer/src/lib/workspacePaths'
 import { remoteFileRequestForUri } from '../src/renderer/src/useWorkspaceFileTabs'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 const scope = {
   sessionId: 'phi-a',

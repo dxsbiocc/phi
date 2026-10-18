@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 import { CompanionChatToggle } from '../src/renderer/src/features/chat/components/CompanionChatToggle'
 import { sidebarStateForFileOpenConversationLayout } from '../src/renderer/src/features/chat/lib/fileOpenConversationLayout'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 test('only the side-by-side conversation preference requests a sidebar change', () => {
   assert.deepEqual(sidebarStateForFileOpenConversationLayout('sidebar'), {

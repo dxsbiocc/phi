@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import { deferred, flush, hookHarness, type Deferred } from './helpers/resourceCatalogHarness'
 import type { McpServerSummary, PromptAgentSummary, SkillSummary } from '../src/renderer/src/types'
 import type { PhiPluginListItem, PhiPluginMutationResult } from '../src/shared/phiPluginTypes'
@@ -29,6 +30,8 @@ function skill(name: string, enabled = false): SkillSummary {
     disabled: !enabled
   }
 }
+
+setUiLanguage('zh-CN')
 
 function plugin(enabled = false): PhiPluginListItem {
   return {
@@ -353,7 +356,7 @@ test('plugin initial and overlapping navigation reads share IPC while public ref
   const second = state.refreshForNavigation()
   assert.equal(harness.read().error, null)
   await flush()
-  assert.deepEqual(calls, ['plugins', 'environments', 'packages', 'builds'])
+  assert.deepEqual(calls, ['plugins', 'packages', 'environments', 'builds'])
   reads[0].reject(new Error('plugin read failed'))
   await Promise.all([first, second])
   assert.match(harness.read().error ?? '', /plugin read failed/)

@@ -5,10 +5,13 @@ import { runInNewContext } from 'node:vm'
 import { createElement, type ReactElement, type ReactNode } from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import ts from 'typescript'
+import { getUiLanguage, setUiLanguage } from '../src/renderer/src/lib/i18n'
 import {
   workspaceSidebarModeIsExpanded,
   type WorkspaceSidebarMode
 } from '../src/renderer/src/lib/workspaceSidebar'
+
+setUiLanguage('zh-CN')
 
 type Panel = ReactElement<{
   'data-phi-retained-sidebar'?: WorkspaceSidebarMode
@@ -197,6 +200,7 @@ function activityButton(): (props: Record<string, unknown>) => ReactElement<{
       assert.equal(module, 'react/jsx-runtime')
       return jsxRuntime
     },
+    useUiLanguage: getUiLanguage,
     IconButton: 'button',
     Tooltip: 'tooltip',
     activityBarButtonSx: () => ({})

@@ -10,6 +10,9 @@ import {
 } from '../src/renderer/src/features/file-preview/lib/textFileDrafts'
 import type { FilePreview } from '../src/renderer/src/types'
 import type { FileTreeActions } from '../src/renderer/src/features/file-preview/lib/fileTreeActions'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 function renderFile(
   name: string,

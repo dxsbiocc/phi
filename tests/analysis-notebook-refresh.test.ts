@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
 import * as runtimeUtils from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import * as notebookSession from '../src/renderer/src/features/analysis/lib/notebookSession'
 import * as notebookDocument from '../src/shared/notebookDocument'
@@ -12,6 +14,8 @@ import * as executionMetadata from '../src/shared/notebookExecutionMetadata'
 import type { AnalysisNotebookFile, RendererApi } from '../src/renderer/src/types'
 import type { AnalysisNotebookRuntimeState } from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeTypes'
 import { AnalysisNotebookFileWatcher } from '../src/main/agent/notebook/analysis-notebook-watch'
+
+setUiLanguage('zh-CN')
 
 type Cleanup = (() => void) | void
 type Slot = { value?: unknown; dependencies?: unknown[]; cleanup?: Cleanup }
@@ -97,6 +101,7 @@ function runtimeHarness(): {
       left.every((value, i) => Object.is(value, right[i]))
     )
   const hook = runInNewContext(`${code}\nuseAnalysisNotebookRuntime`, {
+    analysisCopy,
     ...runtimeUtils,
     ...notebookSession,
     ...notebookDocument,

@@ -308,7 +308,7 @@ test('only local projects can save a valid local-root to server-root input mappi
           ...patch,
           inputPathMapping: { localRoot: 'relative', remoteRoot: '/cluster/project' }
         }),
-      /本地映射根/
+      /local mapping root must be an absolute path/
     )
     const sshRecord = {
       ...project,

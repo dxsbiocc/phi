@@ -5,6 +5,9 @@ import {
   assertWorkspaceFilesSaved,
   renamedWorkspacePath
 } from '../src/renderer/src/features/file-preview/lib/workspaceFileMutations'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+setUiLanguage('zh-CN')
 
 test('folder operations affect descendants but preserve similarly named siblings', () => {
   for (const root of ['/work/data', 'ssh://cluster/work/data']) {

@@ -6,6 +6,8 @@ import test from 'node:test'
 import { createElement, Suspense, type ComponentType, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { appCopy } from '../src/renderer/src/lib/appCopy'
 
 const appSource = readFileSync(resolve('src/renderer/src/App.tsx'), 'utf8')
 const require = createRequire(import.meta.url)
@@ -51,6 +53,8 @@ function viewFallbacks(): Partial<Record<ViewName, string>> {
   return fallbacks
 }
 
+setUiLanguage('zh-CN')
+
 function loadAppModule(): {
   views: Record<ViewName, ComponentType<{ marker: string }>>
   fallbacks: Partial<Record<ViewName, ReactNode>>
@@ -89,6 +93,7 @@ function loadAppModule(): {
           createElement('article', { 'data-view': viewName }, marker)
       }
     }
+    if (name === './lib/appCopy') return { appCopy }
     if (name === './lib/windowChromeLayout') return { WINDOW_TITLEBAR_HEIGHT: 44 }
     return {}
   }, exports)
