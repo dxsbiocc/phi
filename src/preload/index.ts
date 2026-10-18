@@ -1077,6 +1077,8 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   pickPackageRegistryDirectory: () => Promise<string | null>
   pickPackageArchive: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+  readOfficialContentCatalog: (forceRefresh?: boolean) => Promise<PackageRegistryView>
+  onPackageResourcesChanged: (cb: () => void) => Unsubscribe
   listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
   removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
   previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>
@@ -1891,6 +1893,13 @@ const api: RendererAuthApi = {
   pickPackageArchive: (): Promise<string | null> => ipcRenderer.invoke('packages:pickArchive'),
   readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
     ipcRenderer.invoke('packages:registry', dir),
+  readOfficialContentCatalog: (forceRefresh?: boolean): Promise<PackageRegistryView> =>
+    ipcRenderer.invoke('packages:contentCatalog', forceRefresh),
+  onPackageResourcesChanged: (cb: () => void): Unsubscribe => {
+    const listener = (): void => cb()
+    ipcRenderer.on('packages:resourcesChanged', listener)
+    return () => ipcRenderer.removeListener('packages:resourcesChanged', listener)
+  },
   listPackageRegistries: (): Promise<KnownPackageRegistryView[]> =>
     ipcRenderer.invoke('packages:listRegistries'),
   removePackageRegistry: (id: string): Promise<KnownPackageRegistryView[]> =>

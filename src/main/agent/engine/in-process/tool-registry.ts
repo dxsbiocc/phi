@@ -25,6 +25,7 @@ import { buildBrowserTool } from '../../browser/browser-tool'
 import { BrowserTextVault } from '../../browser/browser-text-vault'
 import { BrowserOutcome } from '../../../../shared/browserTypes'
 import { type PhiAgentDefinition } from '../../agents/definition'
+import { discoverPhiAgents } from '../../agents/discovery'
 import { type PhiTool } from '../types'
 import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
 import { AgentRunRegistry } from '../../agents/registry'
@@ -36,12 +37,23 @@ import { remoteAgentToolRegistrationVerified } from '../phi-extension'
 import { filterPersonaContextFile } from '../../main-system-prompt'
 import { buildEnvRequestTool } from '../../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../../content/skill-tools'
+import { buildCapabilityTools } from '../../packages/capability-tools'
+import { readDirectSkills } from '../../runtime/direct-skills'
 import { filterEnabledMainSkills, filterMainScriptTools } from '../../enablement'
 import { RuntimeContext, UnknownRecord, isRecord, stringValue } from './common'
 import { readLoadedSkillResource, requestHost } from './ipc'
 import { resourceOptions } from './resources'
+import { mergeRemoteProjectSkills } from '../remote-project-skills'
 import { DefaultResourceLoader, SettingsManager } from './session-factory'
-import { RemoteMcpAccess } from './state'
+import { RemoteMcpAccess, sessions } from './state'
+import { applyConnectorEnabledForSession } from './mcp-runtime'
+import {
+  createCapabilityToolRegistrar,
+  createLiveSkillSnapshot,
+  installedCapabilitySkillFiles,
+  isInstalledCapabilitySkillFile,
+  refreshInstalledCapabilities
+} from './capability-refresh'
 import { createPhiAgentSession } from './subagents'
 import { loadSkillScriptTools } from './tool-support'
 
@@ -65,6 +77,7 @@ export async function createSessionToolRegistry(deps: {
   memoryTarget?: { agentDir: string; cwd: string }
   agentRuns: AgentRunRegistry
   phiAgents: PhiAgentDefinition[]
+  onAgentsChanged?: () => void
   remoteSkillToolNames: Set<string>
 }): Promise<{
   resources: DefaultResourceLoader | undefined
@@ -91,37 +104,49 @@ export async function createSessionToolRegistry(deps: {
     memoryTarget,
     agentRuns,
     phiAgents,
+    onAgentsChanged,
     remoteSkillToolNames
   } = deps
-  let sessionSkillNames: Set<string> | undefined
+  const liveSkills = createLiveSkillSnapshot<
+    ReturnType<DefaultResourceLoader['getSkills']>['skills'][number]
+  >((skills) =>
+    filterEnabledMainSkills(
+      skills,
+      mainSkillEnablementOptions(cwd, agentDir, remoteRoot ?? undefined)
+    )
+  )
+  const capabilityRegistrar = createCapabilityToolRegistrar(() => parentRef.current?.session)
+  const sessionExtensionFactories = [...extensionFactories, capabilityRegistrar.extension]
+  let sessionResourceOptions = record.resourceOptions
   const contentResourceOptions = resourceOptions({
     ...(isRecord(record.resourceOptions) ? record.resourceOptions : {}),
     cwd: settingsCwd,
     agentDir
   })
   const resources =
-    isRecord(record.resourceOptions) || extensionFactories.length > 0
+    isRecord(record.resourceOptions) || sessionExtensionFactories.length > 0
       ? new DefaultResourceLoader({
           ...contentResourceOptions,
           settingsManager: SettingsManager.create(settingsCwd, agentDir),
           skillsOverride: (base) => {
             const resolved = contentResourceOptions.skillsOverride?.(base) ?? base
-            if (!sessionSkillNames) {
-              const enabled = new Set(
-                filterEnabledMainSkills(
-                  resolved.skills,
-                  mainSkillEnablementOptions(cwd, agentDir, remoteRoot ?? undefined)
-                ).map((skill) => skill.name)
-              )
-              sessionSkillNames = new Set(
-                resolved.skills
-                  .filter((skill) => skill.source === 'server-project' || enabled.has(skill.name))
-                  .map((skill) => skill.name)
-              )
-            }
+            const installed = contentResourceOptions.noSkills
+              ? []
+              : readDirectSkills(
+                  installedCapabilitySkillFiles(agentDir, remoteRoot ? undefined : cwd)
+                )
+            const installedPaths = new Set(installed.map((skill) => skill.filePath))
+            const available = resolved.skills.filter(
+              (skill) => !isInstalledCapabilitySkillFile(skill.filePath, agentDir)
+            )
+            const merged = mergeRemoteProjectSkills(
+              available.filter((skill) => !installedPaths.has(skill.filePath)),
+              installed,
+              resolved.skills.filter((skill) => skill.source === 'server-project')
+            )
             return {
               ...resolved,
-              skills: resolved.skills.filter((skill) => sessionSkillNames?.has(skill.name))
+              skills: liveSkills.sync(merged)
             }
           },
           ...(personaMarkdown
@@ -130,7 +155,7 @@ export async function createSessionToolRegistry(deps: {
                   filterPersonaContextFile(base, join(agentDir, 'AGENTS.md'))
               }
             : {}),
-          ...(extensionFactories.length > 0 ? { extensionFactories } : {})
+          extensionFactories: sessionExtensionFactories
         })
       : undefined
 
@@ -138,11 +163,8 @@ export async function createSessionToolRegistry(deps: {
     await resources.reload()
   }
 
-  // Registered via the SDK's `customTools` option, not `resources`'
-  // `extensionFactories` — that path is the tool-call *approval* hook (see
-  // `createBridgeToolApprovalExtension` above), unrelated to adding a new
-  // LLM-callable tool. See docs/design/phi-wrapper-technical-design.md,
-  // "Integration With The Existing Runtime (Confirmed By Milestone P1.0)".
+  // Initial tools use the SDK customTools option. The capability extension above
+  // only registers additions after an approved installation while the run continues.
   // Never let a wrapper-catalog problem block an otherwise-ordinary chat
   // session from starting.
   // The main agent leads: it gets one delegation tool per scanned Phi agent,
@@ -150,7 +172,7 @@ export async function createSessionToolRegistry(deps: {
   // the specialists' own tool functions, so internal catalogs and query tools
   // stay out of the main conversation. Definitions come from the main process's scan.
   // A failed listing is logged and registers nothing; it must not block the session.
-  const skillTools = await loadSkillScriptTools(
+  let skillTools = await loadSkillScriptTools(
     cwd,
     remoteProjectIdentity
       ? {
@@ -160,11 +182,8 @@ export async function createSessionToolRegistry(deps: {
         }
       : undefined
   )
-  const enabledMainSkillNames = new Set(
-    resources?.getSkills().skills.map((skill) => skill.name) ?? []
-  )
   const mainSkillTools = skillTools
-    ? filterMainScriptTools(skillTools, enabledMainSkillNames)
+    ? filterMainScriptTools(skillTools, liveSkills.allowedSkills)
     : undefined
   for (const tool of mainSkillTools ?? []) remoteSkillToolNames.add(tool.name)
   const remoteWorkspaceIdentity = {
@@ -175,7 +194,7 @@ export async function createSessionToolRegistry(deps: {
     ? buildRemoteWorkspaceRead(requestHost, remoteWorkspaceIdentity)
     : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
-  const agentCustomTools = phiAgents.map((definition) =>
+  const createAgentTool = (definition: PhiAgentDefinition): PhiTool =>
     buildAgentTool(
       definition,
       createAgentRunner({
@@ -188,7 +207,7 @@ export async function createSessionToolRegistry(deps: {
             cwd,
             agentDir,
             ctx,
-            resourceOptions: record.resourceOptions,
+            resourceOptions: sessionResourceOptions,
             enableToolApproval: Boolean(record.enableToolApproval),
             ...(runId ? { agentRunId: runId } : {}),
             ...(remoteRoot
@@ -221,7 +240,7 @@ export async function createSessionToolRegistry(deps: {
       agentRuns,
       { cwd, ...(remoteRoot ? { remote: true } : {}) }
     )
-  )
+  const agentCustomTools = phiAgents.map(createAgentTool)
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []
   // A background run outlives the tool call that started it, so its end is reported to the
   // main process, which owns the conversation: it notes it in the timeline and can wake the
@@ -323,11 +342,95 @@ export async function createSessionToolRegistry(deps: {
       requireEnvironment: true,
       ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {})
     }),
+    ...buildCapabilityTools(requestHost, {
+      runtimeSessionId: sessionId,
+      onInstalled: (result, signal) =>
+        refreshInstalledCapabilities(
+          result,
+          {
+            reloadResources: async () => {
+              if (!resources || !parentRef.current || sessions.get(sessionId)?.disposing) {
+                throw new Error('当前任务已关闭，无法加载新模块')
+              }
+              const files = installedCapabilitySkillFiles(agentDir, remoteRoot ? undefined : cwd)
+              const previous = isRecord(sessionResourceOptions) ? sessionResourceOptions : {}
+              const previousFiles = Array.isArray(previous.additionalSkillFiles)
+                ? previous.additionalSkillFiles.filter(
+                    (file): file is string => typeof file === 'string'
+                  )
+                : []
+              sessionResourceOptions = {
+                ...previous,
+                additionalSkillFiles: [
+                  ...new Set([
+                    ...previousFiles.filter(
+                      (file) => !isInstalledCapabilitySkillFile(file, agentDir)
+                    ),
+                    ...files
+                  ])
+                ]
+              }
+              await resources.reload()
+            },
+            refreshSkills: async () => {
+              await parentRef.current?.session.refreshSkills()
+            },
+            refreshTools: async (signal) => {
+              const refreshed = await loadSkillScriptTools(
+                cwd,
+                remoteProjectIdentity
+                  ? { runtimeSessionId: sessionId, ...remoteProjectIdentity }
+                  : undefined
+              )
+              if (!refreshed) throw new Error('无法读取已安装模块的脚本工具')
+              signal?.throwIfAborted()
+              skillTools = refreshed
+              const enabled = filterMainScriptTools(refreshed, liveSkills.allowedSkills)
+              for (const tool of enabled) remoteSkillToolNames.add(tool.name)
+              const discovered = discoverPhiAgents({
+                cwd,
+                agentDir,
+                ...(remoteRoot ? { scope: 'remote-local' as const } : {})
+              }).agents.filter(
+                (agent) => !phiAgents.some((existing) => existing.name === agent.name)
+              )
+              const tools = [
+                buildSkillRunTool(requestHost, {
+                  runtimeSessionId: sessionId,
+                  allowedSkills: liveSkills.allowedSkills,
+                  ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {})
+                }),
+                ...buildScriptTools(
+                  enabled.filter((tool) => tool.attachTo.includes('main')),
+                  requestHost,
+                  remoteProjectIdentity
+                    ? { runtimeSessionId: sessionId, remoteProject: remoteProjectIdentity }
+                    : sessionId
+                ),
+                ...discovered.map(createAgentTool),
+                ...(discovered.length > 0 && phiAgents.length === 0
+                  ? buildAgentRunTools(agentRuns)
+                  : [])
+              ]
+              const added = new Set(await capabilityRegistrar.register(tools, signal))
+              customTools.push(...tools.filter((tool) => added.has(tool.name)))
+              phiAgents.push(...discovered.filter((agent) => added.has(agent.name)))
+              onAgentsChanged?.()
+            },
+            refreshConnector: async (name) => {
+              const entry = sessions.get(sessionId)
+              if (!entry || entry.disposing) throw new Error('当前任务已关闭，无法加载新连接器')
+              await applyConnectorEnabledForSession(entry, name)
+            }
+          },
+          signal
+        )
+    }),
     ...(mainSkillTools
       ? [
           buildSkillRunTool(requestHost, {
             runtimeSessionId: sessionId,
-            allowedSkills: [...enabledMainSkillNames],
+            allowedSkills: liveSkills.allowedSkills,
             ...(remoteProjectIdentity ? { remoteProject: remoteProjectIdentity } : {})
           }),
           ...buildScriptTools(

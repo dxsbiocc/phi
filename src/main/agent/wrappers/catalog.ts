@@ -486,9 +486,7 @@ export async function ensureBundledWrappersInstalled(
             bundledPackageNeedsInstall(source, installedTree[source.manifest.id], marker, agentDir),
           ...(options.generatedAt ? { generatedAt: options.generatedAt } : {})
         })
-        const unresolvedLocal = built.diagnostics.unattributedIncludes.filter(
-          (include) => !include.target.startsWith('plugin/')
-        )
+        const unresolvedLocal = built.diagnostics.unattributedIncludes
         if (unresolvedLocal.length > 0) {
           throw new Error(
             `legacy pack has unresolved local includes: ${unresolvedLocal

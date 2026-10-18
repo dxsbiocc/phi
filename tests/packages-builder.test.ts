@@ -591,7 +591,7 @@ test('computes deterministic wrapper dependencies from recursive includes and re
     root,
     'nf-core',
     'alignment_pipeline',
-    `include { ALIGN } from '../align_reads/main'\ninclude { VIEW } from '../../../modules/nf-core/samtools/view/main'\ninclude { schema } from 'plugin/nf-schema'\nworkflow RUN {}\n`
+    `include { ALIGN } from '../align_reads/main'\ninclude { VIEW } from '../../../modules/nf-core/samtools/view/main'\ninclude { schema } from 'plugin/nf-schema'\ninclude { MISSING } from './missing'\nworkflow RUN {}\n`
   )
   trackResources(root)
 
@@ -615,9 +615,12 @@ test('computes deterministic wrapper dependencies from recursive includes and re
     first.report.unattributedIncludes.some(
       (include) =>
         include.packageId === 'subworkflow-nf-core-alignment-pipeline' &&
-        include.target === 'plugin/nf-schema' &&
+        include.target === './missing' &&
         include.reason === 'not-found'
     )
+  )
+  assert.ok(
+    first.report.unattributedIncludes.every((include) => include.target !== 'plugin/nf-schema')
   )
   assert.deepEqual(first, second)
   for (const entry of first.index.packages) {

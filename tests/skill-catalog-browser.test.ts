@@ -75,6 +75,78 @@ test('skill catalog groups use actual categories and count only offered items', 
   )
 })
 
+test('official API groups retain their ids, labels, order and empty groups ahead of source categories', () => {
+  const definitions = [
+    { id: 'all', label: '全部', count: 17 },
+    { id: 'science', label: '科学分析', count: 10 },
+    { id: 'nextflow', label: '工作流', count: 5 },
+    { id: 'meta', label: '元能力', count: 2 },
+    { id: 'other', label: '其他', count: 0 }
+  ]
+  const packages = [
+    ...Array.from({ length: 2 }, (_, index) =>
+      entry(`meta-${index}`, {
+        group: 'meta',
+        groupLabel: '元能力',
+        groupOrder: 3,
+        category: '旧分类'
+      })
+    ),
+    ...Array.from({ length: 5 }, (_, index) =>
+      entry(`workflow-${index}`, {
+        group: 'nextflow',
+        groupLabel: '工作流',
+        groupOrder: 2
+      })
+    ),
+    ...Array.from({ length: 10 }, (_, index) =>
+      entry(`science-${index}`, {
+        group: 'science',
+        groupLabel: '科学分析',
+        groupOrder: 1
+      })
+    )
+  ]
+  const items = skillCatalogItems(packages)
+  assert.deepEqual(skillCatalogGroups(items, definitions), [
+    { id: 'all', label: '全部', count: 17 },
+    { id: 'group:science', label: '科学分析', count: 10 },
+    { id: 'group:nextflow', label: '工作流', count: 5 },
+    { id: 'group:meta', label: '元能力', count: 2 },
+    { id: 'group:other', label: '其他', count: 0 }
+  ])
+  assert.equal(filterSkillCatalogItems(items, 'group:meta', '').length, 2)
+  assert.equal(filterSkillCatalogItems(items, 'all', '元能力').length, 2)
+  assert.equal(filterSkillCatalogItems(items, 'all', 'nextflow').length, 5)
+  assert.equal(filterSkillCatalogItems(items, 'group:science', 'workflow').length, 0)
+})
+
+test('group labels may change without losing selection and displayed counts follow available items', () => {
+  const items = skillCatalogItems([
+    entry('scanpy', { group: 'science', groupLabel: '新名称', groupOrder: 1 }),
+    entry('custom-skill', { category: '自定义' })
+  ])
+  const groups = skillCatalogGroups(items, [
+    { id: 'all', label: '全部', count: 17 },
+    { id: 'science', label: '新名称', count: 10 }
+  ])
+  assert.deepEqual(groups, [
+    { id: 'all', label: '全部', count: 2 },
+    { id: 'group:science', label: '新名称', count: 1 },
+    { id: 'category:自定义', label: '自定义', count: 1 }
+  ])
+  const state = { ...initialSkillCatalogBrowserState, groupId: 'group:science' }
+  assert.equal(
+    skillCatalogBrowserReducer(state, {
+      type: 'reconcile',
+      groupIds: groups.map(({ id }) => id),
+      ready: true,
+      page: 0
+    }).groupId,
+    'group:science'
+  )
+})
+
 test('skill catalog search stays within its selected group and includes source metadata', () => {
   const items = skillCatalogItems([
     entry('scanpy', { summary: 'Single Cell Analysis', category: '生物信息' }),

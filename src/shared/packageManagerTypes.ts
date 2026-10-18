@@ -4,6 +4,12 @@ import type { WrapperModuleDetails } from './wrapperModuleDetailsTypes'
 export type PackageManagerType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 export type PackageTrust = 'builtin' | 'official' | 'imported'
 
+export interface CatalogSkillGroup {
+  id: string
+  label: string
+  count: number
+}
+
 export interface PackageRegistryEntryView {
   icon?: ResourceIconRef
   id: string
@@ -18,6 +24,9 @@ export interface PackageRegistryEntryView {
   dependsOn: Array<{ id: string; type: PackageManagerType; version: string }>
   requires?: { coreTools?: string[] }
   category?: string
+  group?: string
+  groupLabel?: string
+  groupOrder?: number
   preview?: string
 }
 
@@ -33,6 +42,7 @@ export interface PackageRegistryView {
   schemaVersion: 1
   generatedAt: string
   packages: PackageRegistryEntryView[]
+  skillGroups?: CatalogSkillGroup[]
 }
 
 export interface PackageInstallPlanView {

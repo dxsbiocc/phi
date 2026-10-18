@@ -303,6 +303,11 @@ import {
 import { getRuntimeRoot } from './agent/envs/runtime'
 import { collectGarbage } from './agent/envs/gc'
 import { cleanupInactiveMcpVersions } from './agent/packages/mcp-version-cleanup'
+import { capabilityApprovalSummary } from './agent/packages/capability-approval'
+import { createCapabilityHost } from './agent/packages/capability-host'
+import { createCapabilityService } from './agent/packages/capability-service'
+import { createExternalSkillService } from './agent/packages/external-skills'
+import { searchOfficialCatalog } from './agent/packages/official-catalog-api'
 import {
   BUILD_NOW,
   confirmedEnvironmentBuild,
@@ -374,7 +379,7 @@ import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
 import { withConnectorMetadata } from './agent/mcp-server-view'
 import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
-import { syncOfficialRegistry } from './agent/packages/official-registry'
+import { syncPreferredOfficialRegistry } from './agent/packages/official-website-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
 import {
   addGithubSource,
@@ -1036,11 +1041,11 @@ function officialContentSourceOptions(): {
 
 function knownContentSourceOptions(): {
   agentDir: string
-  loadOfficialRegistry: () => ReturnType<typeof syncOfficialRegistry>
+  loadOfficialRegistry: () => ReturnType<typeof syncPreferredOfficialRegistry>
 } {
   return {
     agentDir: AGENT_DIR,
-    loadOfficialRegistry: () => syncOfficialRegistry(officialContentSourceOptions())
+    loadOfficialRegistry: () => syncPreferredOfficialRegistry(officialContentSourceOptions())
   }
 }
 
@@ -2497,6 +2502,68 @@ getPhiEngine().host.register('environments.cancel', (params, context) =>
     ? remoteRuntimeController.environments.cancel(params)
     : undefined
 )
+const capabilityService = createCapabilityService({
+  agentDir: AGENT_DIR,
+  appVersion: app.getVersion(),
+  loadRegistries: loadPackageRegistries,
+  searchOfficial: (query, type, signal) =>
+    searchOfficialCatalog(query, type, signal, { fetch: officialRegistryFetch }),
+  confirm: (request, context) =>
+    confirmAgentModuleInstallation(
+      request.runtimeSessionId,
+      capabilityApprovalSummary(request),
+      context
+    ),
+  prepare: (registry, request, _options, signal) =>
+    prepareContentPackageInstall(registry, request, {
+      ...officialContentSourceOptions(),
+      fetch: (input, init) =>
+        officialRegistryFetch(input, {
+          ...init,
+          signal: signal
+            ? AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])])
+            : init?.signal
+        })
+    }),
+  installerOptions: async () => ({
+    ...officialContentSourceOptions(),
+    runtimeRoot: getRuntimeRoot(),
+    names: await installedPluginNamespace(),
+    build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+  }),
+  assertCurrent: (context) => capabilityHost.assertCurrent(context)
+})
+const externalSkillService = createExternalSkillService({
+  agentDir: AGENT_DIR,
+  appVersion: app.getVersion(),
+  fetch: officialRegistryFetch,
+  confirm: (request, context) =>
+    confirmAgentModuleInstallation(request.runtimeSessionId, request.question, context),
+  assertCurrent: (context) => capabilityHost.assertCurrent(context)
+})
+const capabilityHost: ReturnType<typeof createCapabilityHost> = createCapabilityHost({
+  service: capabilityService,
+  external: externalSkillService,
+  onInstalled: (_result, context) => {
+    const run = context.originSessionId
+      ? findActivePromptRunByRuntimeSessionId(context.originSessionId)
+      : undefined
+    if (run) loadedSkillNamesBySession.delete(run.phiSessionId)
+    sendToAllWindows('packages:resourcesChanged')
+  },
+  resolveRun: (runtimeSessionId) => {
+    const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+    if (!run || run.cancelled) throw new Error('模块操作所属任务已结束')
+    return {
+      assertCurrent: () => {
+        if (run.cancelled || findActivePromptRunByRuntimeSessionId(runtimeSessionId) !== run)
+          throw new Error('模块操作所属任务已结束或改变')
+      }
+    }
+  }
+})
+for (const [method, handler] of Object.entries(capabilityHost.handlers))
+  getPhiEngine().host.register(method, handler)
 getPhiEngine().host.register('agentInteraction.request', handleAgentInteractionRequest)
 getPhiEngine().host.register(
   'settings.nextActionSuggestionsEnabled',
@@ -3594,6 +3661,42 @@ async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Pr
   } catch {
     return false
   }
+}
+
+async function confirmAgentModuleInstallation(
+  runtimeSessionId: string,
+  summary: string,
+  context: import('./agent/engine/types').PhiHostRequestContext
+): Promise<boolean> {
+  capabilityHost.assertCurrent(context)
+  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
+  if (!run || !context.signal || !context.toolCallId) return false
+  const project = run.projectId ? getProject(run.projectId) : getProjectByCwd(run.cwd)
+  const request = {
+    requestId: createRunId(),
+    sessionId: run.phiSessionId,
+    sessionPath: phiOnlySessionPath(run.phiSessionId),
+    sessionGeneration: run.sessionGeneration,
+    runId: run.runId,
+    cwd: run.cwd,
+    ...(project?.name ? { projectName: project.name } : {}),
+    toolCallId: context.toolCallId,
+    toolName: 'capability_install',
+    summary
+  }
+  runnerRegistry.markNeedsApproval(run.phiSessionId, request.requestId, request)
+  const decision = await requestRuntimeToolApproval(request, context.signal, getActiveWindow)
+  if (decision === 'approved')
+    runnerRegistry.markApprovalApproved(run.phiSessionId, request.requestId)
+  else if (decision === 'denied')
+    runnerRegistry.markApprovalDenied(run.phiSessionId, request.requestId)
+  else {
+    runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
+    sendToAllWindows('tool:approval-cancelled', request.requestId)
+  }
+  notifySessionChanged()
+  capabilityHost.assertCurrent(context)
+  return decision === 'approved'
 }
 
 async function handleAgentInteractionRequest(
@@ -11606,6 +11709,15 @@ app.whenReady().then(async () => {
       })
     }
     return result.registries
+  })
+  ipcMain.handle('packages:contentCatalog', async (_, forceRefresh?: unknown) => {
+    if (forceRefresh !== undefined && typeof forceRefresh !== 'boolean')
+      throw new Error('目录刷新参数无效')
+    const registry = await syncPreferredOfficialRegistry({
+      ...officialContentSourceOptions(),
+      forceRefresh: forceRefresh === true
+    })
+    return packageRegistryIconView(registry)
   })
   ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
     if (typeof id !== 'string') throw new Error('软件源标识无效')

@@ -50,6 +50,133 @@ const official: KnownPackageRegistryView = {
   removable: false
 }
 
+test('catalog browsing uses the website API generation instead of retaining the old registry skill list', async () => {
+  const reads: string[] = []
+  const latest = registry('/verified-latest', 'official')
+  latest.packages[0] = { ...latest.packages[0], id: 'new-skill', title: 'New skill' }
+  const api = {
+    readOfficialContentCatalog: async () => {
+      reads.push('website-api')
+      return latest
+    },
+    listPackageRegistries: async () => [official],
+    readPackageRegistry: async () => {
+      reads.push('old-registry')
+      return registry('/verified-old', 'official')
+    }
+  }
+  const catalog = await loadContentCatalog(api)
+  assert.deepEqual(
+    knownSkillCatalogPackages(catalog.registries).map((item) => item.id),
+    ['new-skill']
+  )
+  assert.equal(reads[0], 'website-api')
+})
+
+test('a fresh website generation replaces unavailable official snapshots and preserves imported sources and trust', async () => {
+  const reads: unknown[] = []
+  const latest = { ...registry('/website-generation', 'official'), trust: 'imported' as const }
+  const result = await loadContentCatalog(
+    {
+      readOfficialContentCatalog: async (force) => {
+        reads.push(['website', force])
+        return latest
+      },
+      listPackageRegistries: async () => {
+        reads.push('known-sources')
+        return [
+          { ...official, status: 'unavailable', error: 'Outdated source state' },
+          { id: 'local', kind: 'directory', path: '/local', removable: true }
+        ]
+      },
+      readPackageRegistry: async (path) => {
+        reads.push(path)
+        return registry(path, 'directory')
+      }
+    },
+    { forceRefresh: true }
+  )
+  assert.deepEqual(reads, [['website', true], 'known-sources', '/local'])
+  assert.deepEqual(
+    result.registries.map((entry) => entry.dir),
+    ['/website-generation', '/local']
+  )
+  assert.equal(result.registries[0].trust, 'imported')
+  assert.deepEqual(result.errors, [])
+})
+
+test('website API failure retries the original official source and reports the fallback', async () => {
+  const paths: string[] = []
+  const result = await loadContentCatalog({
+    readOfficialContentCatalog: async () => {
+      throw new Error('Website temporarily unavailable')
+    },
+    listPackageRegistries: async () => [
+      { ...official, status: 'unavailable', error: 'Old status' }
+    ],
+    readPackageRegistry: async (path) => {
+      paths.push(path)
+      return registry('/original-verified-generation', 'official')
+    }
+  })
+  assert.deepEqual(paths, ['phi-packages'])
+  assert.equal(result.registries[0].dir, '/original-verified-generation')
+  assert.match(result.errors.join('\n'), /官网目录更新失败.*Website temporarily unavailable/)
+  assert.match(result.notices.join('\n'), /回退.*Phi Packages/)
+})
+
+test('both official source failures remain visible while a user directory is still usable', async () => {
+  const result = await loadContentCatalog({
+    readOfficialContentCatalog: async () => {
+      throw new Error('Website offline')
+    },
+    listPackageRegistries: async () => [
+      { id: 'local', kind: 'directory', path: '/local', removable: true }
+    ],
+    readPackageRegistry: async (path) => {
+      if (path === 'phi-packages') throw new Error('Signature verification failed')
+      return registry(path, 'directory')
+    }
+  })
+  assert.deepEqual(
+    result.registries.map((entry) => entry.dir),
+    ['/local']
+  )
+  assert.match(result.errors.join('\n'), /Website offline/)
+  assert.match(result.errors.join('\n'), /Phi Packages.*Signature verification failed/)
+})
+
+test('a successful website catalog survives a failed local source inventory', async () => {
+  const result = await loadContentCatalog({
+    readOfficialContentCatalog: async () => registry('/fresh', 'official'),
+    listPackageRegistries: async () => {
+      throw new Error('Local directory list failed')
+    },
+    readPackageRegistry: async () => {
+      throw new Error('Do not read the old official snapshot')
+    }
+  })
+  assert.equal(result.registries[0].dir, '/fresh')
+  assert.match(result.errors.join('\n'), /Local directory list failed/)
+})
+
+test('website provider cache feedback reaches the catalog without claiming signed trust', async () => {
+  const result = await loadContentCatalog({
+    readOfficialContentCatalog: async () => ({
+      ...registry('/website-cache', 'official'),
+      trust: 'imported',
+      status: 'cached',
+      notice: '官网目录离线，正在使用固定来源缓存。'
+    }),
+    listPackageRegistries: async () => [official],
+    readPackageRegistry: async () => {
+      throw new Error('Do not replace the API cache')
+    }
+  })
+  assert.equal(result.registries[0].trust, 'imported')
+  assert.deepEqual(result.notices, ['官网目录离线，正在使用固定来源缓存。'])
+})
+
 test('an old backend returning only a bundled source reports restart instead of an empty catalog', async () => {
   const result = await loadContentCatalog({
     listPackageRegistries: async () => [

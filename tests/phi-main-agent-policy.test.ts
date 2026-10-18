@@ -48,6 +48,12 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
   assert.match(rendered, /Keep this operational tool contract/)
   assert.match(rendered, /present_files/)
   assert.match(rendered, /render_blocks/)
+  assert.match(
+    rendered,
+    /use capability_search.*Phi-provided wrappers, connectors, skills or plugins first/
+  )
+  assert.match(rendered, /explicit user approval.*automatic permission mode/)
+  assert.match(rendered, /Only when the application catalog has no suitable module.*find_skills/)
   assert.match(rendered, /tabular results.*QC metrics.*progress/i)
   assert.match(rendered, /otherwise use Markdown/i)
   assert.match(rendered, /A parent directory alone is not a file list/)

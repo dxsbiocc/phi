@@ -5,12 +5,15 @@ import { createDeterministicTarGz, type ArchiveFile } from './archive'
 import type { LocalRegistry, RegistryPackageEntry, RegistryTrustTier } from './installer-types'
 import { sha256 } from './installer-utils'
 import { writeRegistryManifestAsset } from './manifest-assets'
-import { validatePackage } from './manifest'
+import { validatePackage, type PackageType } from './manifest'
+import { findPackageIcon, writeRegistryIconAsset } from './icon-assets'
 
 export interface MaterializeRegistryOptions {
   id: string
   trust?: RegistryTrustTier
   generatedAt?: string
+  /** GitHub connector imports stay MCP-only unless a trusted caller explicitly opts in. */
+  allowedTypes?: readonly PackageType[]
 }
 
 export function materializeRegistry(
@@ -35,9 +38,12 @@ export function materializeRegistry(
       )
     }
     const manifest = validation.package.manifest
-    if (manifest.type !== 'mcp') throw new Error(`连接器源不是 MCP 软件包: ${packageDir}`)
-    if (ids.has(manifest.id)) throw new Error(`软件源包含重复软件包: ${manifest.id}`)
-    ids.add(manifest.id)
+    if (!(options.allowedTypes ?? ['mcp']).includes(manifest.type)) {
+      throw new Error(`连接器源不是 MCP 软件包或不属于允许类型: ${packageDir}`)
+    }
+    const identity = `${manifest.type}:${manifest.id}`
+    if (ids.has(identity)) throw new Error(`软件源包含重复软件包: ${manifest.id}`)
+    ids.add(identity)
 
     const files = regularPackageFiles(packageDir)
     const fileList = files.map(({ path, data }) => ({
@@ -47,12 +53,12 @@ export function materializeRegistry(
     }))
     const filesJson = Buffer.from(`${JSON.stringify({ version: 1, files: fileList }, null, 2)}\n`)
     const archive = createDeterministicTarGz([...files, { path: 'files.json', data: filesJson }])
-    const archiveName = `mcp-${manifest.id}-${manifest.version}.tar.gz`
+    const archiveName = `${manifest.type}-${manifest.id}-${manifest.version}.tar.gz`
     writeFileSync(join(outDir, archiveName), archive)
 
     const entry: RegistryPackageEntry = {
       id: manifest.id,
-      type: 'mcp',
+      type: manifest.type,
       version: manifest.version,
       title: manifest.title,
       summary: manifest.summary,
@@ -60,14 +66,20 @@ export function materializeRegistry(
       sha256: sha256(archive),
       size: archive.length,
       dependsOn: manifest.dependsOn ?? [],
+      ...(manifest.type === 'mcp' ? { category: manifest.connector.category } : {}),
       ...(manifest.minAppVersion ? { minAppVersion: manifest.minAppVersion } : {}),
       ...(manifest.requires ? { requires: manifest.requires } : {})
     }
-    entry.manifestAsset = writeRegistryManifestAsset(
-      entry,
-      readFileSync(join(packageDir, 'phi-package.yaml')),
-      outDir
-    )
+    if (entry.type === 'mcp') {
+      entry.manifestAsset = writeRegistryManifestAsset(
+        entry,
+        readFileSync(join(packageDir, 'phi-package.yaml')),
+        outDir
+      )
+    }
+    const fileMap = new Map(files.map(({ path, data }) => [path, data]))
+    const iconAsset = writeRegistryIconAsset(entry, findPackageIcon(fileMap), fileMap, outDir)
+    if (iconAsset) entry.iconAsset = iconAsset
     return entry
   })
   packages.sort((left, right) =>
@@ -116,5 +128,6 @@ export function regularPackageFiles(root: string): ArchiveFile[] {
     }
   }
   walk(root)
-  return files.sort((left, right) => left.path.localeCompare(right.path))
+  // Installer files.json ordering is bytewise; locale collation moves SKILL.md after lowercase paths.
+  return files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
 }

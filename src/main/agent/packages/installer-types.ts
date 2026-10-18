@@ -5,6 +5,7 @@ import type { RegistryIconAsset } from '../../../shared/resourceIconTypes'
 import type { RegistryManifestAsset } from './manifest-assets'
 import type { EnvironmentDescriptor } from '../content/environment-refs'
 import type { EnvHandle } from '../envs/execution'
+import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
 
 export type RegistryTrust = 'builtin' | 'official' | 'imported'
 export type RegistryTrustTier = RegistryTrust
@@ -22,6 +23,9 @@ export interface RegistryPackageEntry {
   dependsOn: PackageDependency[]
   requires?: PackageRequirements
   category?: string
+  group?: string
+  groupLabel?: string
+  groupOrder?: number
   preview?: string
   iconAsset?: RegistryIconAsset
   manifestAsset?: RegistryManifestAsset
@@ -40,6 +44,7 @@ export interface LocalRegistry {
   schemaVersion: 1
   generatedAt: string
   packages: RegistryPackageEntry[]
+  skillGroups?: CatalogSkillGroup[]
 }
 
 export interface PackageRequest {
@@ -92,6 +97,8 @@ export interface InstalledPackage {
 
 export interface InstallerOptions {
   agentDir?: string
+  /** Revalidate a caller's cancellation/run authorization at every commit boundary. */
+  beforeCommit?: () => void
   /** Retire old wrapper owners in the same tree transaction as their replacements. */
   retireWrapperPackageIds?: readonly string[]
   appVersion?: string

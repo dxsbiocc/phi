@@ -22,6 +22,16 @@ This contract defines a Phi skill: its files, its frontmatter, how its scripts r
 
 The directory name equals `name`. Nothing is executed from `references/` or `assets/`.
 
+Standalone source repositories may use either `resources/skills/<skill-name>/` or
+`resources/skills/<group>/.../<skill-name>/`. Discovery locates `SKILL.md` at any
+supported group depth and treats that directory as one complete skill; embedded
+reference examples are not additional skills. For sources without official API
+grouping, a skill's `metadata.category` takes precedence over its root-relative
+parent group path in the catalog. Official `group`/`groupLabel` metadata takes
+priority when available. Group paths
+do not change the skill name, package ID, or managed installation path. Same-name
+skills in separate groups are rejected rather than overwriting each other.
+
 ## 2. Frontmatter
 
 `SKILL.md` starts with YAML frontmatter. Standard [Agent Skills](https://agentskills.io/specification)
@@ -67,7 +77,7 @@ phi:
 | ------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `environment` | when the skill has scripts (§ 3.1)                          | an environment reference: `phi:<name>@<major>`, `plugin:<name>`, `project:<name>`, or `./environment.yml`                                                                                                                    |
 | `attachTo`    | no                                                          | list of agent names (PascalCase) and/or `main`; default `[main]`. Script tools are registered for these agents only                                                                                                          |
-| `toolPrefix`  | when `scripts` is set and the skill is not part of a plugin | `^[a-z][a-z0-9]{1,11}$`, not an engine-reserved prefix (`skill`, `env`, `http`, `wrapper`, `agent`, `db`, `mcp`); inside a plugin the plugin's `toolPrefix` is used and this field is rejected                               |
+| `toolPrefix`  | when `scripts` is set and the skill is not part of a plugin | `^[a-z][a-z0-9]{1,11}$`, not an engine-reserved prefix (`skill`, `env`, `http`, `wrapper`, `agent`, `db`, `mcp`, `capability`, `find`); inside a plugin the plugin's `toolPrefix` is used and this field is rejected         |
 | `scripts`     | no                                                          | list of script tool declarations (§ 5)                                                                                                                                                                                       |
 | `deprecated`  | no                                                          | 1–300 characters (1.1.0): the skill still works but is being replaced; the message names the replacement. The UI marks it on the Skills page and in the catalog, where it sorts last. Enablement and behaviour are unchanged |
 

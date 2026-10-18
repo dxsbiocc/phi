@@ -1148,6 +1148,8 @@ declare global {
       pickPackageRegistryDirectory: () => Promise<string | null>
       pickPackageArchive: () => Promise<string | null>
       readPackageRegistry: (dir: string) => Promise<PackageRegistryView>
+      readOfficialContentCatalog: (forceRefresh?: boolean) => Promise<PackageRegistryView>
+      onPackageResourcesChanged: (cb: () => void) => () => void
       listPackageRegistries: () => Promise<KnownPackageRegistryView[]>
       removePackageRegistry: (id: string) => Promise<KnownPackageRegistryView[]>
       previewPackageImport: (path: string) => Promise<OfflinePackageImportPreview>

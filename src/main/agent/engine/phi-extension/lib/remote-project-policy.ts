@@ -53,6 +53,9 @@ const SAFE_PHI_REMOTE_TOOLS = new Set([
   'Wrapper',
   'browser',
   'ask_user_question',
+  'capability_search',
+  'capability_install',
+  'find_skills',
   'palette_suggest',
   'render_blocks',
   'agent_status',
@@ -78,6 +81,9 @@ const VERIFIED_REMOTE_TOOL_DESCRIPTIONS = new Map([
 ])
 const MAIN_SESSION_ONLY_REMOTE_TOOLS = new Set([
   'Wrapper',
+  'capability_search',
+  'capability_install',
+  'find_skills',
   'agent_status',
   'agent_wait',
   'agent_steer',

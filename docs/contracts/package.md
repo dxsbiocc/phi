@@ -104,14 +104,16 @@ the trusted first-party public keys. Reading a registry gives it a **trust tier*
 
 | Registry                                                                    | Tier         |
 | --------------------------------------------------------------------------- | ------------ |
-| explicitly engine-owned legacy migration registry                         | `builtin`    |
+| explicitly engine-owned legacy migration registry                           | `builtin`    |
 | valid signature by an embedded key                                          | `official`   |
 | no `index.sig.json`, or signed by a key Phi does not know                   | `imported`   |
 | `index.sig.json` unreadable, or an embedded key's signature does not verify | **rejected** |
 
 Archives are covered by the signature through their `sha256` in the index. A remote
-(`https://`) registry must be `official`; the fixed Phi Packages source now implements this requirement;
-a local directory registry may be `imported`, because the user chose it.
+(`https://`) package registry must be `official`; the signed Phi Packages release
+implements this requirement. Local directory registries and locally materialized
+repository snapshots retain `imported` trust and require an explicit installation
+choice. Website discovery metadata does not grant signature trust.
 
 Current builds ship no bundled domain-content registry. `builtin` remains for
 legacy installations and explicit engine-owned migrations. A raw connector source
@@ -136,23 +138,40 @@ metadata. Installed icons remain verified package files. Absence of `iconAsset`
 keeps older registry entries valid and uses the type fallback. See
 [content icon convention and attribution](../content-icons.md).
 
-### 4.3 Official remote catalog (1.4.0)
+### 4.3 Official catalog sources (1.4.0)
 
-Phi Packages is the primary domain-content source at
-`https://github.com/dxsbiocc/phi-packages/releases/download/catalog-v1/`.
-A signed index, connector `manifestAsset: { path, sha256, size }` YAML sidecars,
-and optional icon sidecars are cached below
-`~/.phi/cache/registries/phi-packages/generations/<index-sha256>/`.
-`current.json` selects a complete verified generation atomically. The source has
-the stable identity `phi-packages`; physical generation paths are never saved as
-user-added directory sources.
+Phi first reads `https://phi.omicsagent.cn/api/catalog`. Its commit identifies a
+fixed snapshot of `dxsbiocc/phi-packages`. Phi validates and materializes the complete
+skills, connectors, plugins, and wrappers into its local package format without
+executing repository code. Short skill metadata versions such as `1.3` become
+`1.3.0`. This source retains `imported` trust because it has no release signature.
+Skills may be flat or nested under group directories. Each `SKILL.md` directory
+becomes its own package, with `metadata.category` or its parent group path retained
+as catalog metadata; grouped API identifiers resolve to that leaf package ID.
+When `/api/catalog` declares `skillGroups`, Phi reads the complete paginated
+`/api/skills` list and preserves `group`, `groupLabel`, declared group order and
+empty groups. These official fields override source categories. Classification
+changes publish a new immutable index generation even when the repository commit
+is unchanged, reusing verified archive bytes without reinstalling the packages.
 
-Catalog browsing downloads metadata, not all archives. Installation and updates
-fetch only their dependency plan, verify each archive, then use the existing staging
-and installation rules. A verified cache remains available offline; network or
-signature failures never fall back to local `resources/` domain content. The engine
-runtime, palettes, system agents, and `create-wrapper` authoring skill remain supplied
-by Phi. Installed, project, and user-authored content continues to load normally.
+Website generations live under
+`~/.phi/cache/registries/phi-packages-website/generations/<commit>-<index-sha256>/`.
+The index and every prepared archive, manifest, and icon are checked against their
+recorded sizes and hashes before use; `current.json` selects a complete generation
+atomically. Opening a catalog explicitly refreshes website metadata. Successful
+agent installations notify open resource views to reread their installed state.
+The index and cache metadata also record `materializerRevision`. A newer content
+builder rebuilds older generations from the pinned snapshot even when the commit
+is unchanged, so recomputed diagnostics replace stale notices atomically.
+Nextflow `plugin/<id>` imports are runtime plugin dependencies; their declarations
+remain in the packaged configuration and are not missing local wrapper files.
+
+If the website is unavailable, Phi uses a valid website cache, then falls back to
+`https://github.com/dxsbiocc/phi-packages/releases/download/catalog-v1/` with visible
+source feedback. Signed release generations remain under
+`~/.phi/cache/registries/phi-packages/generations/<index-sha256>/`; their archives
+are fetched only for the selected dependency plan. Both sources use the stable
+identity `phi-packages`; managed generation paths are not user-added directories.
 
 ## 5. Install
 
@@ -179,11 +198,37 @@ by Phi. Installed, project, and user-authored content continues to load normally
 6. **Environments** are not built at install (built on first use, or from the
    environment panel), except as the plugin contract's upgrade rule requires.
 
+The main agent can discover additional capabilities with `capability_search` and
+request their installation with `capability_install`. Discovery queries the
+[official catalog API](https://phi.omicsagent.cn/api/catalog) first, then resolves
+the results against the application's prepared registries. Website `packageUrl`
+fields describe individual content files; complete resources come from the fixed
+official repository commit. Package archives and dependencies are validated through
+the existing installer, and signed release trust is never fabricated for a snapshot.
+
+Agent-initiated installation and enablement always require the user's explicit
+approval, including in automatic permission mode. The approval identifies the
+source, exact versions, dependencies, download size, and task-specific reason.
+Candidates belong to their originating session, and the installer rechecks the plan
+after approval and queueing. Rejection, cancellation, or a retired run cannot start
+an installation. Plan mode permits discovery but blocks installation.
+
+`find_skills` checks the application catalog before searching external skills.
+External installation requires a separate approval naming the repository, skill,
+and fixed Git commit, and imports the skill through the same package validator and
+installer with `imported` trust. Live in-process sessions refresh skills, specialist
+tools, and connectors after installation without restarting their current task.
+The experimental RPC route returns `requiresSessionRefresh` instead and tells the
+user to reopen the conversation before using newly installed resources.
+Connector installation does not supply credentials or complete authentication.
+
 **Upgrade** installs the new version beside the old and switches atomically; the
 old version is removed after the switch. **Uninstall** refuses while another
 installed package depends on it; it removes the package, drops its environment
 references, and removes packages that were installed only as its dependencies and
 are no longer needed. A staging directory older than one day is removed on start.
+Cleanup and extraction reject symbolic links at the agent and staging roots before
+reading, writing, or removing staged content.
 
 ## 6. Registries, updates, and offline import (1.2.0)
 

@@ -76,6 +76,7 @@ export function SkillCatalogDialog({
   const [actionError, setActionError] = useState<string | null>(null)
   const [installedDuringSession, setInstalledDuringSession] = useState<Set<string>>(new Set())
   const [removedDuringSession, setRemovedDuringSession] = useState<Set<string>>(new Set())
+  const [installedSnapshot, setInstalledSnapshot] = useState<Set<string> | null>(null)
   const [updateIds, setUpdateIds] = useState<Set<string>>(new Set())
   const [knownRegistries, setKnownRegistries] = useState<PackageRegistryView[]>([])
   const [loadingKnownRegistries, setLoadingKnownRegistries] = useState(false)
@@ -94,42 +95,56 @@ export function SkillCatalogDialog({
   useEffect(() => {
     if (!open) return
     let active = true
-    void window.api
-      .listPackageUpdates()
-      .then((updates) => {
-        if (active) {
-          setUpdateIds(
-            new Set(updates.filter((update) => update.type === 'skill').map((update) => update.id))
+    let revision = 0
+    const reload = (): void => {
+      if (!active) return
+      const request = ++revision
+      const current = (): boolean => active && request === revision
+      void Promise.resolve().then(() => {
+        if (current()) setLoadingKnownRegistries(true)
+      })
+      void loadContentCatalog(window.api, { forceRefresh: true })
+        .then((catalog) => {
+          if (!current()) return
+          setKnownRegistries(catalog.registries)
+          setSourceError(catalog.errors.join('\n') || null)
+          setSourceNotice(catalog.notices.join('\n') || null)
+        })
+        .catch((cause) => {
+          if (current()) setSourceError(errorMessage(cause))
+        })
+        .finally(() => {
+          if (current()) setLoadingKnownRegistries(false)
+        })
+      void Promise.resolve()
+        .then(() => window.api.listPackageUpdates?.())
+        .then((updates) => {
+          if (current() && updates) {
+            setUpdateIds(
+              new Set(
+                updates.filter((update) => update.type === 'skill').map((update) => update.id)
+              )
+            )
+          }
+        })
+        .catch(() => undefined)
+      void Promise.resolve()
+        .then(() => window.api.listInstalledPackages?.())
+        .then((installed) => {
+          if (!current() || !installed) return
+          setInstalledSnapshot(
+            new Set(installed.filter((entry) => entry.type === 'skill').map((entry) => entry.id))
           )
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      active = false
+          setInstalledDuringSession(new Set())
+          setRemovedDuringSession(new Set())
+        })
+        .catch(() => undefined)
     }
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void Promise.resolve().then(() => {
-      if (active) setLoadingKnownRegistries(true)
-    })
-    void loadContentCatalog(window.api)
-      .then((catalog) => {
-        if (!active) return
-        setKnownRegistries(catalog.registries)
-        setSourceError(catalog.errors.join('\n') || null)
-        setSourceNotice(catalog.notices.join('\n') || null)
-      })
-      .catch((cause) => {
-        if (active) setSourceError(errorMessage(cause))
-      })
-      .finally(() => {
-        if (active) setLoadingKnownRegistries(false)
-      })
+    reload()
+    const unsubscribe = window.api.onPackageResourcesChanged?.(reload)
     return () => {
       active = false
+      unsubscribe?.()
     }
   }, [open])
 
@@ -139,8 +154,13 @@ export function SkillCatalogDialog({
     [displayedRegistry, knownRegistries]
   )
   const installedPackageIds = useMemo(
-    () => installedSkillPackageIds(skills, installedDuringSession, removedDuringSession),
-    [installedDuringSession, removedDuringSession, skills]
+    () =>
+      installedSkillPackageIds(
+        installedSnapshot ? [] : skills,
+        new Set([...(installedSnapshot ?? []), ...installedDuringSession]),
+        removedDuringSession
+      ),
+    [installedDuringSession, installedSnapshot, removedDuringSession, skills]
   )
   const afterRemoval = useCallback(async (): Promise<void> => {
     await onRefresh?.()
@@ -156,7 +176,13 @@ export function SkillCatalogDialog({
   const loading = loadingRegistry || loadingKnownRegistries || isRegistryLoading
   const error = actionError ?? registryError ?? sourceError ?? removal.error
   const items = useMemo(() => skillCatalogItems(loading ? [] : packages), [loading, packages])
-  const groups = useMemo(() => skillCatalogGroups(items), [items])
+  const groupDefinitions =
+    knownRegistries.find((source) => source.kind === 'official')?.skillGroups ??
+    displayedRegistry?.skillGroups
+  const groups = useMemo(
+    () => skillCatalogGroups(items, groupDefinitions),
+    [items, groupDefinitions]
+  )
   const selectedGroupId = groups.some((group) => group.id === browser.groupId)
     ? browser.groupId
     : 'all'

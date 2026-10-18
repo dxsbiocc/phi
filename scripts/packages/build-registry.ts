@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import semver from 'semver'
@@ -12,6 +12,10 @@ import { stringify as stringifyYaml } from 'yaml'
 import { offendingResourcePaths } from '../check-resources.mjs'
 import { requirePackageSourceRoot } from '../content/source-roots.mjs'
 import { parseSkillFile, validateSkill } from '../../src/main/agent/content/skill'
+import {
+  discoverSkillSources,
+  skillSourceCategory
+} from '../../src/main/agent/content/skill-sources'
 import {
   createDeterministicTarGz,
   parseTarGz,
@@ -28,6 +32,7 @@ import {
 } from '../../src/main/agent/packages/manifest'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
 import { signRegistryIndex } from '../../src/main/agent/packages/signature'
+import { safeRegistryDirectory } from '../../src/main/agent/packages/registry-assets'
 import { findPackageIcon, writeRegistryIconAsset } from '../../src/main/agent/packages/icon-assets'
 import type { RegistryIconAsset } from '../../src/shared/resourceIconTypes'
 import {
@@ -90,6 +95,7 @@ interface PackageSource {
   root: string
   manifest: PackageManifest
   files: Map<string, Buffer>
+  category?: string
 }
 
 const DEFAULT_VERSION = '1.0.0'
@@ -123,7 +129,7 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
       ])
     )
   ].sort(compareText)
-  const roots = packageRoots(tracked)
+  const roots = packageRoots(repoRoot, tracked)
   const sources = roots.map((root) => loadPackageSource(repoRoot, root, tracked))
 
   mkdirSync(outDir, { recursive: true })
@@ -192,11 +198,16 @@ function createBuildReport(
   }
 }
 
-function packageRoots(tracked: string[]): string[] {
+function packageRoots(repoRoot: string, tracked: string[]): string[] {
   const roots = new Set<string>()
   for (const path of tracked) {
-    const match = /^(resources\/(?:connectors|plugins|skills)\/[^/]+)(?:\/|$)/.exec(path)
+    const match = /^(resources\/(?:connectors|plugins)\/[^/]+)(?:\/|$)/.exec(path)
     if (match?.[1]) roots.add(match[1])
+  }
+  const trackedSet = new Set(tracked)
+  for (const source of discoverSkillSources(join(repoRoot, 'resources/skills'))) {
+    const root = relative(repoRoot, source.dir).split('\\').join('/')
+    if (trackedSet.has(`${root}/SKILL.md`)) roots.add(root)
   }
   return [...roots].sort(compareText)
 }
@@ -208,6 +219,7 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
       ? 'mcp'
       : 'skill'
   const absoluteRoot = join(repoRoot, root)
+  safeRegistryDirectory(repoRoot, absoluteRoot)
   const relativeFiles = tracked
     .filter((path) => path.startsWith(`${root}/`))
     .map((path) => path.slice(root.length + 1))
@@ -243,6 +255,7 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
   if (manifest.id !== basename(root)) {
     throw new Error(`package id '${manifest.id}' must equal directory name '${basename(root)}'`)
   }
+  let category: string | undefined
   if (type === 'skill') {
     const result = validateSkill(absoluteRoot)
     if (!result.ok) throwValidation(root, result.errors)
@@ -251,6 +264,10 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
         `package id '${manifest.id}' must equal skill name '${result.skill?.name ?? ''}'`
       )
     }
+    category = skillSourceCategory(
+      result.skill?.frontmatter,
+      relative('resources/skills', dirname(root)).split('\\').join('/') || undefined
+    )
   } else if (type === 'plugin') {
     const result = validatePlugin(absoluteRoot)
     if (!result.ok) throwValidation(root, result.errors)
@@ -262,7 +279,7 @@ function loadPackageSource(repoRoot: string, root: string, tracked: string[]): P
   const manifestText = stringifyYaml(manifest)
   manifest = parsePackageManifestText(manifestText)
   files.set('phi-package.yaml', Buffer.from(manifestText, 'utf8'))
-  return { root, manifest, files }
+  return { root, manifest, files, ...(category ? { category } : {}) }
 }
 
 function generatedSkillManifest(skillDir: string): PackageManifest {
@@ -314,6 +331,7 @@ function writePackage(source: PackageSource, outDir: string): RegistryIndexEntry
   }
   if (source.manifest.minAppVersion) entry.minAppVersion = source.manifest.minAppVersion
   if (source.manifest.requires) entry.requires = source.manifest.requires
+  if (source.category) entry.category = source.category
   const iconAsset = writeRegistryIconAsset(
     entry,
     findPackageIcon(source.files),

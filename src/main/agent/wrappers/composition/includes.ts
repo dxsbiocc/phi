@@ -10,7 +10,12 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 
 const INCLUDE = /include\s*\{[\s\S]*?\}\s*from\s*['"]([^'"]+)['"]/g
 
+function pluginIncludeId(target: string): string | undefined {
+  return /^plugin\/([a-zA-Z0-9][a-zA-Z0-9_.-]*)$/.exec(target)?.[1]
+}
+
 function resolveInclude(fromFile: string, target: string): string | undefined {
+  if (target.startsWith('plugin/')) return undefined
   const base = resolve(dirname(fromFile), target)
   for (const candidate of [base, `${base}.nf`, join(base, 'main.nf')]) {
     if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
@@ -23,6 +28,8 @@ export interface WrapperIncludeReference {
   fromFile: string
   /** Include target exactly as written in the source. */
   target: string
+  /** A Nextflow plugin import resolved by the runtime, rather than the wrapper filesystem. */
+  pluginId?: string
   /** Absolute resolved file path, when the target exists locally. */
   resolvedFile?: string
 }
@@ -40,8 +47,14 @@ export function collectIncludeReferences(mainNf: string): WrapperIncludeReferenc
     seen.add(file)
     for (const match of readFileSync(file, 'utf-8').matchAll(INCLUDE)) {
       const target = match[1]
+      const pluginId = pluginIncludeId(target)
       const resolvedFile = resolveInclude(file, target)
-      references.push({ fromFile: file, target, ...(resolvedFile ? { resolvedFile } : {}) })
+      references.push({
+        fromFile: file,
+        target,
+        ...(pluginId ? { pluginId } : {}),
+        ...(resolvedFile ? { resolvedFile } : {})
+      })
       if (resolvedFile) visit(resolvedFile)
     }
   }

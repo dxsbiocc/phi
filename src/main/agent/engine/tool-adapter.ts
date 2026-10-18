@@ -7,7 +7,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function recentUserImages(context: unknown): PhiToolImage[] {
+export function recentUserImages(context: unknown): PhiToolImage[] {
   if (!isRecord(context) || !isRecord(context.sessionManager)) return []
   const getBranch = context.sessionManager.getBranch
   if (typeof getBranch !== 'function') return []

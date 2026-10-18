@@ -320,6 +320,11 @@ test('toolPrefix is required standalone, rejected in a plugin, and reserved pref
 
   const reserved = skillDir([scriptEntry()], { toolPrefix: 'skill' })
   assert.deepEqual(errorsOf(reserved), ["phi.toolPrefix: toolPrefix 'skill' is reserved"])
+  for (const prefix of ['capability', 'find']) {
+    assert.deepEqual(errorsOf(skillDir([scriptEntry()], { toolPrefix: prefix })), [
+      `phi.toolPrefix: toolPrefix '${prefix}' is reserved`
+    ])
+  }
   assert.deepEqual(errorsOf(reserved, { insidePlugin: true }).sort(), [
     "phi.toolPrefix: toolPrefix 'skill' is reserved",
     'phi.toolPrefix: toolPrefix is rejected inside a plugin'

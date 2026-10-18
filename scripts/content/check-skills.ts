@@ -2,9 +2,10 @@
 // Plugin skills are validated with insidePlugin. Exits 1 when any skill has errors.
 
 import { readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { validateSkill } from '../../src/main/agent/content/skill'
+import { discoverSkillSources } from '../../src/main/agent/content/skill-sources'
 import { validatePlugin } from '../../src/main/agent/plugins/validate'
 import { parseContentSourceArgs, requireSourceDirectory } from './source-roots.mjs'
 
@@ -30,9 +31,9 @@ function skillDirs(skillsRoot: string): string[] {
 
 const skillsRoot = requireSourceDirectory(root, 'resources/skills')
 const pluginsRoot = requireSourceDirectory(root, 'resources/plugins')
-const checks: SkillCheck[] = skillDirs(skillsRoot).map((name) => ({
-  label: name,
-  dir: join(root, 'resources', 'skills', name),
+const checks: SkillCheck[] = discoverSkillSources(skillsRoot).map(({ dir }) => ({
+  label: relative(skillsRoot, dir).split('\\').join('/'),
+  dir,
   insidePlugin: false
 }))
 
