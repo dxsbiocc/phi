@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import {
   chmod,
   link,
@@ -112,7 +113,7 @@ test('persistent mode binds derived storage and keeps generation secrets ephemer
   const [nonce] = await readdir(join(f.runtimeRoot, 'rpc-sessions'))
   const generation = join(f.runtimeRoot, 'rpc-sessions', nonce)
   const home = join(generation, 'home')
-  const command = f.session.commands.find((command) => command.includes('exec env -i'))!
+  const command = f.session.commands.find((command) => command.includes(' env -i PATH='))!
   assert.ok(command.includes(`cd -- ${shellQuote(home)}`))
   assert.ok(command.includes(`PI_CODING_AGENT_DIR=${shellQuote(join(home, '.omp/agent'))}`))
   assert.ok(command.includes(`XDG_DATA_HOME=${shellQuote(f.paths.data)}`))
@@ -181,7 +182,7 @@ test('cancelled late storage acquisition is observed and releases its lease with
   for (let i = 0; i < 100 && !storage.lease.signal.aborted; i++) await delay(10)
   assert.equal(storage.lease.signal.aborted, true)
   assert.equal(
-    f.session.commands.some((command) => command.includes('exec env -i')),
+    f.session.commands.some((command) => command.includes(' env -i PATH=')),
     false
   )
   assert.equal(f.session.closed, false)
@@ -196,7 +197,7 @@ test('an unregistered storage-shaped locator cannot become launch authority', as
     code: 'INVALID_SCOPE'
   })
   assert.equal(
-    f.session.commands.some((command) => command.includes('exec env -i')),
+    f.session.commands.some((command) => command.includes(' env -i PATH=')),
     false
   )
   assert.equal(storage.lease.signal.aborted, true)
@@ -249,7 +250,7 @@ test(
     }
     assert.ok(
       f.session.commands.some(
-        (command) => command.startsWith('umask 022\n') && command.includes('exec env -i')
+        (command) => command.startsWith('umask 022\n') && command.includes(' env -i PATH=')
       )
     )
     await verifyPrivateStorage(0)
@@ -345,7 +346,7 @@ test('registered storage for another Phi session, project or runtime is released
     assert.equal(storage.lease.signal.aborted, true)
   }
   assert.equal(
-    f.session.commands.some((command) => command.includes('exec env -i')),
+    f.session.commands.some((command) => command.includes(' env -i PATH=')),
     false
   )
 })
@@ -366,7 +367,7 @@ test('proxy preparation failure releases acquired storage without creating remot
   await assert.rejects(readdir(join(f.runtimeRoot, 'rpc-sessions')), { code: 'ENOENT' })
   await assert.rejects(stat(f.paths.journals), { code: 'ENOENT' })
   assert.equal(
-    f.session.commands.some((command) => command.includes('exec env -i')),
+    f.session.commands.some((command) => command.includes(' env -i PATH=')),
     false
   )
   assert.equal(f.session.closed, false)
@@ -381,7 +382,7 @@ test('lease revocation during delayed OMP channel acquisition retires the late o
   const gate = deferred<void>()
   const closedLate = deferred<void>()
   f.session.openStdio = async (command) => {
-    if (!command.includes('exec env -i')) return original(command)
+    if (!command.includes(' env -i PATH=')) return original(command)
     entered.resolve()
     await gate.promise
     const channel = await original(command)
@@ -489,7 +490,7 @@ test(
     const open = f.session.openStdio!
     f.session.openStdio = (command) =>
       open(
-        command.includes('exec env -i')
+        command.includes(' env -i PATH=')
           ? command.replace(
               `PI_CODING_AGENT_DIR=${shellQuote(defaultAgent)}`,
               `PI_CODING_AGENT_DIR=${shellQuote(legacyAgent)}`
@@ -520,3 +521,23 @@ test(
     await channel.connection.close()
   }
 )
+
+test('persistent launch makes OMP hold the run lock itself and reports a stopped previous run', async (t) => {
+  const f = await createPersistentLauncherFixture()
+  t.after(f.cleanup)
+  const takeovers: unknown[] = []
+  const factory = await f.factory({ onRunTakeover: (event) => takeovers.push(event) })
+  const channel = await factory.open(f.params, new AbortController().signal)
+  t.after(() => channel.close())
+  const command = f.session.commands.find((value) => value.includes(' env -i PATH='))!
+  assert.ok(command.includes('exec /bin/sh -c '), 'guard runs under /bin/sh, not the login shell')
+  assert.ok(command.includes('flock -x -n 8'))
+  assert.match(command, /PHI_RUN_NONCE=[0-9a-f]{32}/u)
+  assert.ok(command.indexOf('flock -x -n 8') < command.indexOf(' env -i PATH='))
+  // The channel resolves once spawned; the launch shell writes the record just after.
+  for (let i = 0; i < 100 && !existsSync(f.paths.runRecord); i++) await delay(50)
+  const record = (await readFile(f.paths.runRecord, 'utf8')).trimEnd().split('\t')
+  assert.equal(record[0], 'PHI_RUN_V1')
+  assert.equal(record[1], record[2])
+  assert.deepEqual(takeovers, [])
+})

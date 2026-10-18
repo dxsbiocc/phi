@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
   compactionPolicy,
   type RpcCompactionPolicy
@@ -11,6 +11,7 @@ import {
   type RemoteStdioProcess
 } from '../../wrappers/remote-ssh-session'
 import { attestBootstrap } from './bootstrap-attestation'
+import { RUN_NONCE_ENV, RUN_STOPPED_NOTICE, buildRunGuardWrapper } from './run-guard'
 import {
   deploymentReadyMarkerPath,
   ensurePhiExtensionDeployment,
@@ -65,6 +66,8 @@ export interface SshRpcSessionTransportOptions {
   bundle: PhiExtensionBundle
   projectId: string
   onExtensionProgress?: ExtensionDeploymentOptions['onProgress']
+  /** A previous run that outlived its SSH connection was stopped before this launch. */
+  onRunTakeover?: (event: { readonly stoppedPid: number; readonly message: string }) => void
   readonly startupDiagnostics?: RemoteStartupDiagnostics
   /** Existing durable reference proved by the startup transaction before OMP launches. */
   readonly resumeReference?: RemoteSessionReference
@@ -447,7 +450,9 @@ export async function prepareSshRpcSessionTransport(
           runtimeRoot: root,
           projectRoot: params.cwd,
           ...(startupHelper ? { projectPluginGuardHelper: startupHelper.remotePath } : {}),
-          ...(storage ? { lock: { path: storage.paths.lock } } : {}),
+          ...(storage
+            ? { lock: { path: storage.paths.lock, runExecutable: runtime.executablePath } }
+            : {}),
           ...(resume ? { resume } : {}),
           markers: startupMarkers(options)
         })
@@ -568,11 +573,23 @@ export async function prepareSshRpcSessionTransport(
           ifAbsent: true
         })
 
+        const reportTakeover = (takeover: { readonly stoppedPid: number } | undefined): void => {
+          if (!takeover) return
+          try {
+            options.onRunTakeover?.({
+              stoppedPid: takeover.stoppedPid,
+              message: RUN_STOPPED_NOTICE
+            })
+          } catch {
+            // A failed notice must never abort the launch that already took over.
+          }
+        }
         const launch = async (): Promise<void> => {
           const first = await step('rpc_startup_transaction', () =>
             runRpcStartupTransaction(options.session, startup.build(), signal)
           )
           if (first.result.status === 'ready') {
+            reportTakeover(first.result.takeover)
             if (first.result.resume) preparedPreflights.set(params, first.result.resume.journal)
             if (storage) {
               if (!first.lock) throw new Error('Remote RPC startup did not retain its writer lock')
@@ -615,6 +632,7 @@ export async function prepareSshRpcSessionTransport(
               .join(', ')
             throw new Error(`Remote RPC startup repair was not confirmed: ${failures}`)
           }
+          reportTakeover(repaired.result.takeover)
           if (repaired.result.resume) preparedPreflights.set(params, repaired.result.resume.journal)
           if (storage) {
             if (!repaired.lock) throw new Error('Remote RPC startup did not retain its writer lock')
@@ -653,7 +671,16 @@ export async function prepareSshRpcSessionTransport(
         const persistentEnv = storage
           ? ` XDG_DATA_HOME=${q(storage.paths.data)} XDG_STATE_HOME=${q(statePath)} XDG_CACHE_HOME=${q(cachePath)} TMPDIR=${q(tempPath)} TEMP=${q(tempPath)} TMP=${q(tempPath)}`
           : ''
-        const command = `umask 077 && cd -- ${q(homePath)} && exec env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0 HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
+        const runNonce = randomBytes(16).toString('hex')
+        const runGuard = storage
+          ? buildRunGuardWrapper({
+              runLock: storage.paths.runLock,
+              runRecord: storage.paths.runRecord,
+              nonce: runNonce
+            })
+          : ''
+        const runEnv = storage ? ` ${RUN_NONCE_ENV}=${runNonce}` : ''
+        const command = `umask 077 && cd -- ${q(homePath)} && ${runGuard || 'exec '}env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0${runEnv} HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
         const opening = step('rpc_stdio_open', () => options.session.openStdio!(command))
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.

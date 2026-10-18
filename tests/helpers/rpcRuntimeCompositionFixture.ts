@@ -46,7 +46,7 @@ export async function runtimeCompositionFixture(
   let beforeLaunch: ((configPath: string) => Promise<void>) | undefined
   const openStdio = f.session.openStdio!
   f.session.openStdio = async (command) => {
-    if (command.includes('exec env -i')) {
+    if (command.includes(' env -i PATH=')) {
       const candidates = await readdir(join(f.runtimeRoot, 'rpc-sessions'))
       const path = candidates
         .map((nonce) => join(f.runtimeRoot, 'rpc-sessions', nonce, 'config.json'))
@@ -54,7 +54,7 @@ export async function runtimeCompositionFixture(
       if (beforeLaunch && path) await beforeLaunch(path)
     }
     const channel = await openStdio(command)
-    if (command.includes('exec env -i'))
+    if (command.includes(' env -i PATH='))
       channel.stderr.on('data', (chunk: Buffer) => {
         stderr = (stderr + chunk.toString()).slice(-32768)
       })

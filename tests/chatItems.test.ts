@@ -1671,3 +1671,17 @@ test('presented files keep a valid artifact and drop invalid artifact metadata',
   })
   assert.deepEqual(partial?.files[0]?.artifact, { kind: 'table', title: 'Counts' })
 })
+
+test('a stopped previous remote run is shown as a warning item', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'remote_run_stopped',
+      eventId: 'run-stopped-1',
+      noticeText: '已停止上一次未结束的远端运行'
+    }
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].role, 'warning')
+  assert.equal(items[0].content, '已停止上一次未结束的远端运行')
+})

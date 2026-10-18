@@ -53,7 +53,7 @@ export async function createPersistentLauncherFixture(
   const openStdio = session.openStdio!
   // Model a normal remote account explicitly; preparation-shell umasks do not carry over.
   session.openStdio = (command) =>
-    openStdio(command.includes('exec env -i') ? `umask 022\n${command}` : command)
+    openStdio(command.includes(' env -i PATH=') ? `umask 022\n${command}` : command)
   const scope: RemoteSessionScope = {
     hostProfileId: 'launcher-fixture-host',
     bindingHash: 'a'.repeat(64),

@@ -85,6 +85,8 @@ export interface AppRemoteSessionRoutingOptions {
   enabled: boolean
   /** Internal opt-in only; reports fixed names and numbers, never remote commands or paths. */
   startupDiagnostics?: RemoteStartupDiagnosticSink
+  /** A previous remote run that outlived its SSH connection was stopped before this session launched. */
+  onRunTakeover?(event: { sessionId: string; message: string }): void
   /** Captured main-process opt-in. Names select whole trusted profiles; never renderer definitions. */
   foregroundAgentNames?: string
   agentDir: string
@@ -374,6 +376,12 @@ export function installAppRemoteSessionRouting(
           desktopTools: resources?.tools,
           memory: resources?.memory,
           startupDiagnostics,
+          ...(options.onRunTakeover
+            ? {
+                onRunTakeover: ({ message }: { message: string }) =>
+                  options.onRunTakeover!({ sessionId: phiSessionId, message })
+              }
+            : {}),
           onMemoryError: () => options.onMemoryError?.({ sessionId: phiSessionId, projectId }),
           ...(promptContext ? { promptContext } : {}),
           recentUserImages: () => [],

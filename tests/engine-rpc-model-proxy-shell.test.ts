@@ -186,7 +186,7 @@ test('actual OMP restores nullable limits on initial and later choices and isola
   assert.ok(!session.commands.some((command) => command.includes(gateways[0].bearerToken)))
   assert.ok(
     session.commands.some(
-      (command) => command.includes('exec env -i') && command.includes('PI_REQ_DEBUG=0')
+      (command) => command.includes(' env -i PATH=') && command.includes('PI_REQ_DEBUG=0')
     )
   )
   await engine.dispose(params)

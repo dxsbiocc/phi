@@ -22,6 +22,9 @@ export interface RemoteSessionPaths {
   readonly data: string
   readonly blobs: string
   readonly lock: string
+  /** Held by the OMP process itself (inherited fd); see run-guard.ts. */
+  readonly runLock: string
+  readonly runRecord: string
 }
 
 /** A durable locator contains no connection generation or gateway authority. */

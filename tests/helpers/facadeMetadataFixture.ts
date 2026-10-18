@@ -192,7 +192,7 @@ export async function facadeMetadataFixture(
   const openStdio = f.session.openStdio!
   f.session.openStdio = async (command) => {
     const channel = await openStdio(command)
-    if (command.includes('exec env -i') && command.includes("'--mode' 'rpc'")) {
+    if (command.includes(' env -i PATH=') && command.includes("'--mode' 'rpc'")) {
       channels.push(channel)
       let pending = ''
       const decoder = new StringDecoder('utf8')

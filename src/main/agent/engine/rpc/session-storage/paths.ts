@@ -42,7 +42,9 @@ export function deriveRemoteSessionPaths(scope: RemoteSessionScope): Readonly<Re
     journals: posix.join(directory, 'journals'),
     data,
     blobs: posix.join(data, 'omp', 'blobs'),
-    lock: posix.join(directory, 'lease.lock')
+    lock: posix.join(directory, 'lease.lock'),
+    runLock: posix.join(directory, 'run.lock'),
+    runRecord: posix.join(directory, 'run.record')
   })
 }
 

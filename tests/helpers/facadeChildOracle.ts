@@ -110,7 +110,7 @@ const f = await facadeMetadataFixture({
       session: {
         ...selected.session,
         async openStdio(command) {
-          if (command.includes('exec env -i') && command.includes("'--mode' 'rpc'"))
+          if (command.includes(' env -i PATH=') && command.includes("'--mode' 'rpc'"))
             for (const nonce of await readdir(join(selected.runtime.runtimeRoot, 'rpc-sessions'))) {
               const path = join(
                 selected.runtime.runtimeRoot,

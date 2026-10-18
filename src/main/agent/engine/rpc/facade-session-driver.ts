@@ -95,6 +95,7 @@ export interface SelectedFacadeRuntime {
   readonly bundle: RemoteSessionRuntimeOptions['transport']['bundle']
   readonly recovery: 'new' | 'resume'
   readonly startupDiagnostics?: RemoteStartupDiagnostics
+  readonly onRunTakeover?: RemoteSessionRuntimeOptions['transport']['onRunTakeover']
   readonly approval: RemoteSessionRuntimeOptions['approval']
   /** Explicit curated desktop tools; unready browser/privacy/child adapters cannot be enabled. */
   readonly desktopToolNames: readonly string[]
@@ -638,6 +639,7 @@ export function createFacadeSessionFactory(
                 bundle: selected.bundle,
                 ...(action.type === 'resume' ? { resumeReference: action.reference } : {}),
                 startupDiagnostics: selected.startupDiagnostics,
+                ...(selected.onRunTakeover ? { onRunTakeover: selected.onRunTakeover } : {}),
                 gateway: options.bridge,
                 models: refs,
                 preparePersistentStorage: ({ signal: storageSignal }) =>

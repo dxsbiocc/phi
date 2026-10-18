@@ -480,6 +480,11 @@ export function chatItemFromPhiTimelineEvent(event: {
       ...createdAtField(event.createdAt)
     }
   }
+  if (event.type === 'remote_run_stopped') {
+    const text = typeof event.noticeText === 'string' ? event.noticeText.slice(0, 200) : ''
+    const content = text || '已停止上一次未结束的远端运行'
+    return { id, role: 'warning', content, ...createdAtField(event.createdAt) }
+  }
   if (event.type === 'context_maintenance_notice') {
     // Successful maintenance has its own compacted status; its process diagnostics stay in storage.
     if (event.noticeLevel !== 'warning' && event.noticeLevel !== 'error') return null

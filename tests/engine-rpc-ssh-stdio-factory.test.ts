@@ -97,7 +97,7 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   ])
     assert.equal((await stat(path)).mode & 0o777, 0o700)
   assert.deepEqual(await readdir(join(privateRoot, 'home/agent')), [])
-  const command = fixture.session.commands.find((value) => value.includes('exec env -i'))!
+  const command = fixture.session.commands.find((value) => value.includes(' env -i PATH='))!
   assert.ok(command.includes(`cd -- ${shellQuote(join(privateRoot, 'home'))}`))
   assert.ok(command.includes(`'--cwd' ${shellQuote(fixture.cwd)}`))
   assert.ok(command.includes(`PHI_RPC_CONFIG=${shellQuote(configPath)}`))
@@ -165,7 +165,7 @@ test('project plugin tools are refused before the OMP stdio process starts', asy
     }
   )
   assert.equal(
-    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    fixture.session.commands.filter((command) => command.includes(' env -i PATH=')).length,
     0
   )
 })
@@ -219,7 +219,7 @@ test('enabled project plugin feature tools are refused after directory resolutio
     }
   )
   assert.equal(
-    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    fixture.session.commands.filter((command) => command.includes(' env -i PATH=')).length,
     0
   )
 })
@@ -283,7 +283,7 @@ test('foreground child opt-in writes explicit backend and per-compiled-name poli
   assert.deepEqual(policy.task.agentAdvisor, { [name]: 'off' })
   assert.deepEqual(policy.task.agentPrewalk, { [name]: 'off' })
   assert.equal((await stat(path)).mode & 0o777, 0o600)
-  const command = fixture.session.commands.find((value) => value.includes('exec env -i'))!
+  const command = fixture.session.commands.find((value) => value.includes(' env -i PATH='))!
   assert.ok(command.includes("'--tools' 'read,task'"))
   assert.ok(!command.includes("'--tools' 'read,task,bash'"))
   assert.ok(command.includes(`'--config' ${shellQuote(path)}`))
@@ -449,7 +449,7 @@ test('R3 preparation receives only the owned private generation and its failure 
   let opened = false
   const open = fixture.session.openStdio!
   fixture.session.openStdio = async (command) => {
-    if (command.includes('exec env -i')) {
+    if (command.includes(' env -i PATH=')) {
       opened = true
       throw new Error('unexpected RPC channel')
     }
@@ -528,7 +528,7 @@ test('reserved discovery provider names cannot silently disable the selected Phi
     /model provider "native" conflicts with Phi's disabled capability providers/i
   )
   assert.equal(
-    fixture.session.commands.filter((command) => command.includes('exec env -i')).length,
+    fixture.session.commands.filter((command) => command.includes(' env -i PATH=')).length,
     0
   )
 })
@@ -710,7 +710,7 @@ test('repair preparation has independent cancellation and never opens a session 
   controller.abort()
   await rejected
   assert.equal(
-    session.commands.some((command) => command.includes('exec env -i')),
+    session.commands.some((command) => command.includes(' env -i PATH=')),
     false
   )
   assert.equal(session.closed, false)
@@ -867,7 +867,7 @@ test('neutral private startup prevents SDK dotenv injection even with runtime in
   const privateRoot = join(fixture.runtimeRoot, 'rpc-sessions', generation)
   const launch = fixture.session.commands.find(
     (command) =>
-      command.includes('exec env -i') &&
+      command.includes(' env -i PATH=') &&
       command.includes(`HOME=${shellQuote(join(privateRoot, 'home'))}`)
   )!
   const direct = launch.replace(

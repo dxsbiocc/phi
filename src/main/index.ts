@@ -1588,6 +1588,14 @@ installAppRemoteSessionRouting({
           })
       }
     : {}),
+  onRunTakeover: ({ sessionId, message }) => {
+    const stored = appendSessionEvent(sessionId, {
+      type: 'remote_run_stopped',
+      noticeLevel: 'warning',
+      noticeText: message
+    })
+    broadcastSessionTimelineEvent(sessionId, stored)
+  },
   foregroundAgentNames: process.env.PHI_REMOTE_OMP_AGENTS,
   agentDir: AGENT_DIR,
   runners: runnerRegistry,

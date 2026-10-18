@@ -7,6 +7,8 @@ import type {
   RemoteStdioProcess
 } from '../../wrappers/remote-ssh-session'
 import { shellQuote as q } from '../../wrappers/remote-ssh-session'
+import { CodedError } from '../../../../shared/errorCodes'
+import { RUN_GUARD_SCRIPT, RUN_HELD_MESSAGE } from './run-guard'
 import type { RemoteJournalPreflight } from './session-storage/types'
 
 const STARTUP_PROTOCOL = 'PHI_RPC_STARTUP_V1'
@@ -14,6 +16,8 @@ const RESULT_PROTOCOL = 'PHI_RPC_STARTUP_RESULT_V1'
 const MAX_MARKER_BYTES = 4 * 1024
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_TOTAL_FILE_BYTES = 16 * 1024 * 1024
+/** 30s lock wait + 10s TERM wait + 5s KILL wait + margin. */
+const STARTUP_LOCK_CHANNEL_TIMEOUT_MS = 50_000
 const itemPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
 export interface RpcStartupMarkerCheck {
@@ -40,6 +44,12 @@ export interface RpcStartupFile {
 export interface RpcStartupLock {
   readonly path: string
   readonly waitMs?: number
+  /**
+   * Absolute OMP executable of this deployment. When set, a busy sibling
+   * `run.lock` (a previous OMP that outlived its SSH connection) is verified
+   * and stopped inside this same remote command before the lock is handed over.
+   */
+  readonly runExecutable?: string
 }
 
 export interface RpcStartupResumeCheck {
@@ -63,6 +73,8 @@ export interface RpcStartupTransaction {
 
 export interface RpcStartupTransactionResult {
   readonly status: 'ready' | 'repair'
+  /** A previous run of this session was still alive and has been stopped. */
+  readonly takeover?: { readonly stoppedPid: number }
   readonly checks: readonly {
     readonly item: 'project_plugin_guard'
     readonly status: 'ready' | 'skipped'
@@ -173,6 +185,8 @@ function serialize(transaction: RpcStartupTransaction): string {
   if (transaction.lock) {
     canonicalAbsolute(transaction.lock.path, 'RPC startup lock')
     const waitMs = transaction.lock.waitMs ?? 30_000
+    if (transaction.lock.runExecutable !== undefined)
+      canonicalAbsolute(transaction.lock.runExecutable, 'RPC startup run executable')
     if (
       !inside(transaction.runtimeRoot, transaction.lock.path) ||
       !Number.isSafeInteger(waitMs) ||
@@ -204,7 +218,8 @@ function serialize(transaction: RpcStartupTransaction): string {
       encoded(transaction.projectRoot),
       transaction.projectPluginGuardHelper ? encoded(transaction.projectPluginGuardHelper) : '-',
       transaction.lock ? encoded(transaction.lock.path) : '-',
-      String(transaction.lock?.waitMs ?? 30_000)
+      String(transaction.lock?.waitMs ?? 30_000),
+      transaction.lock?.runExecutable ? encoded(transaction.lock.runExecutable) : '-'
     ].join('\t')
   ]
   for (const marker of transaction.markers) {
@@ -356,11 +371,12 @@ managed_path() {
   done
   [ "$current" = "$managed_directory" ]
 }
-IFS="$tab" read -r protocol runtime64 project64 guard64 lock64 lock_wait_ms || fail INPUT_HEADER
+IFS="$tab" read -r protocol runtime64 project64 guard64 lock64 lock_wait_ms run_exe64 || fail INPUT_HEADER
 [ "$protocol" = PHI_RPC_STARTUP_V1 ] || fail INPUT_PROTOCOL
 runtime_root=$(decode "$runtime64") || fail INPUT_ROOT
 project_root=$(decode "$project64") || fail INPUT_PROJECT
 project_plugin_guard=$(decode_optional "$guard64") || fail INPUT_PROJECT_GUARD
+run_exe=$(decode_optional "$run_exe64") || fail INPUT_RUN
 lock_path=$(decode_optional "$lock64") || fail INPUT_LOCK
 case "$lock_wait_ms" in ''|*[!0-9]*) fail INPUT_LOCK ;; esac
 case "$runtime_root" in /*) ;; *) fail INPUT_ROOT ;; esac
@@ -440,6 +456,7 @@ while IFS="$tab" read -r tag path64 absent; do
   if [ "$absent" = 1 ] && { [ -e "$path" ] || [ -L "$path" ]; }; then fail DIRECTORY_EXISTS; fi
   private_dir "$path"
 done
+run_stopped=''
 if [ -n "$lock_path" ]; then
   case "$lock_path" in "$runtime_root"/*) ;; *) fail LOCK_SCOPE ;; esac
   lock_parent=__PHI_DOLLAR_LBRACE__lock_path%/*}
@@ -453,6 +470,7 @@ if [ -n "$lock_path" ]; then
     [ "$(date +%s)" -lt "$deadline" ] || fail LOCK_BUSY
     sleep 0.05
   done
+  __PHI_RUN_GUARD__
 fi
 resume_output=''
 if [ -n "$resume_manifest" ]; then
@@ -496,19 +514,29 @@ printf '%s\n' PHI_RPC_STARTUP_RESULT_V1
 printf '%s' "$marker_output"
 printf 'CHECK\tproject_plugin_guard\t%s\n' "$project_plugin_status"
 if [ -n "$resume_output" ]; then printf 'RESUME\t%s\n' "$resume_output"; fi
+if [ -n "$run_stopped" ]; then printf 'TAKEOVER\t%s\n' "$run_stopped"; fi
 printf '%s\n' 'STATUS	ready'
 printf '%s\n' PHI_RPC_STARTUP_RESULT_END
-if [ -n "$lock_path" ]; then while IFS= read -r _line; do :; done; fi`.replaceAll(
-  '__PHI_DOLLAR_LBRACE__',
-  '${'
-)
+if [ -n "$lock_path" ]; then while IFS= read -r _line; do :; done; fi`
+  .replace('__PHI_RUN_GUARD__', () => RUN_GUARD_SCRIPT)
+  .replaceAll('__PHI_DOLLAR_LBRACE__', '${')
+
+/** Run-guard refusals are domain conflicts the user must see, never generic startup failures. */
+function startupFailure(message: string, stderr: string): Error {
+  if (/PHI_STARTUP:RUN_(?:HELD_UNVERIFIED|STOP_FAILED)/u.test(stderr))
+    return new CodedError('DOMAIN_CONFLICT', RUN_HELD_MESSAGE, { cause: new Error(message) })
+  return new Error(message)
+}
 
 function parseResult(
   result: RemoteExecResult,
   transaction: RpcStartupTransaction
 ): RpcStartupTransactionResult {
   if (result.code !== 0 || result.signal) {
-    throw new Error(`Remote RPC startup transaction failed: ${result.stderr.trim() || result.code}`)
+    throw startupFailure(
+      `Remote RPC startup transaction failed: ${result.stderr.trim() || result.code}`,
+      result.stderr
+    )
   }
   const lines = result.stdout.trimEnd().split('\n')
   if (lines.shift() !== RESULT_PROTOCOL) throw new Error('Invalid remote RPC startup result')
@@ -518,6 +546,7 @@ function parseResult(
   const checks: Array<RpcStartupTransactionResult['checks'][number]> = []
   let resume: RpcStartupTransactionResult['resume']
   let status: RpcStartupTransactionResult['status'] | undefined
+  let takeover: RpcStartupTransactionResult['takeover']
   for (const line of lines) {
     const fields = line.split('\t')
     if (fields[0] === 'ITEM') {
@@ -584,6 +613,13 @@ function parseResult(
         journal: journal as unknown as RemoteJournalPreflight
       }
     } else if (
+      fields[0] === 'TAKEOVER' &&
+      fields.length === 2 &&
+      /^[1-9][0-9]{0,9}$/u.test(fields[1] ?? '') &&
+      takeover === undefined
+    ) {
+      takeover = { stoppedPid: Number(fields[1]) }
+    } else if (
       fields[0] === 'STATUS' &&
       fields.length === 2 &&
       (fields[1] === 'ready' || fields[1] === 'repair') &&
@@ -614,6 +650,7 @@ function parseResult(
     throw new Error('Inconsistent remote RPC startup result')
   return Object.freeze({
     status,
+    ...(takeover ? { takeover: Object.freeze(takeover) } : {}),
     checks: Object.freeze(checks.map((item) => Object.freeze(item))),
     ...(resume
       ? {
@@ -697,12 +734,12 @@ async function runRpcStartupTransactionWithLock(
   const abort = (): void => rejectOutput(signal?.reason ?? new Error('RPC startup cancelled'))
   signal?.addEventListener('abort', abort, { once: true })
   const ended = channel.closed.then<never>(() => {
-    throw new Error(`Remote RPC startup transaction ended early: ${stderr.trim()}`)
+    throw startupFailure(`Remote RPC startup transaction ended early: ${stderr.trim()}`, stderr)
   })
   void ended.catch(() => undefined)
   const timer = setTimeout(
     () => rejectOutput(new Error(`Remote RPC startup transaction timed out: ${stderr.trim()}`)),
-    35_000
+    STARTUP_LOCK_CHANNEL_TIMEOUT_MS
   )
   try {
     await writeStartupInput(channel, serialize(transaction))

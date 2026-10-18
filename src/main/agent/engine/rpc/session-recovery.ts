@@ -12,6 +12,7 @@ import {
 import type { RpcControlChannel } from './types'
 import { RuntimeReferenceError } from '../../session/runtime-reference'
 import { SessionVerificationError } from '../phi-extension/lib/rpc-session-verification-protocol'
+import { CodedError } from '../../../../shared/errorCodes'
 import type { RuntimeRecoveryIssue } from '../../../../shared/runtimeRecoveryTypes'
 
 export interface RemoteRecoveryModel {
@@ -60,6 +61,8 @@ export function describeRemoteRecoveryFailure(error: unknown): {
     error instanceof SessionVerificationError
       ? error.code
       : undefined
+  if (error instanceof CodedError && error.code === 'DOMAIN_CONFLICT')
+    return { issue: 'disconnected', message: error.message }
   if (code === 'MODEL_UNAVAILABLE')
     return {
       issue: 'model-unavailable',
