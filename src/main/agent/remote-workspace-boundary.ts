@@ -1,5 +1,6 @@
 import { posix, resolve } from 'node:path'
 
+import { CodedError } from '../../shared/errorCodes'
 import type { Project } from './projects'
 import { getProject } from './projects'
 import {
@@ -305,6 +306,14 @@ const RESOLVE_ERRORS: Record<number, string> = {
   36: '服务器缺少路径规范化命令'
 }
 
+/** The saved project root moved or became unreadable: a project-level fault, not a transport one. */
+export class RemoteProjectRootChangedError extends CodedError {
+  constructor() {
+    super('DOMAIN_CONFLICT', `远程路径授权失败：${RESOLVE_ERRORS[30]}`)
+    this.name = 'RemoteProjectRootChangedError'
+  }
+}
+
 /** T01's server-side realpath check, reusable for a run-scoped result root. */
 export async function resolveRemotePathOnSession(
   session: RemoteSshSession,
@@ -340,6 +349,7 @@ export async function resolveRemotePathOnSession(
   }
   if (result.code !== 0) {
     if (result.code === 31) throw new RemoteWorkspaceTargetMissingError(candidate)
+    if (result.code === 30) throw new RemoteProjectRootChangedError()
     throw new Error(`远程路径授权失败：${RESOLVE_ERRORS[result.code ?? -1] ?? '远程检查未完成'}`)
   }
   const nul = result.stdout.indexOf('\0')

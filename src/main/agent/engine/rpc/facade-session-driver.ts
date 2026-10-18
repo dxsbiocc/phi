@@ -78,6 +78,7 @@ import { recordChildRunRecovery } from '../../session/child-run-recovery'
 import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
 import { createFacadeAgentRunTools } from './facade-agent-run-tools'
 import type { RemoteStartupDiagnostics } from './remote-startup-diagnostics'
+import { remoteTurnFailure } from './turn-failure'
 export type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
 
 export interface SelectedFacadeRuntime {
@@ -1083,8 +1084,7 @@ export function createFacadeSessionFactory(
                     }
                   }
                 }
-                if (result.outcome === 'failed')
-                  throw new Error('Remote turn failed or approval was denied')
+                if (result.outcome === 'failed') throw remoteTurnFailure(result)
                 return currentState()
               } finally {
                 try {

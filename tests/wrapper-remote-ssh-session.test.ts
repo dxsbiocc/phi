@@ -15,6 +15,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { errorCodeOf } from '../src/shared/errorCodes'
+
 import {
   SSH_OPTIONS,
   buildControlArgs,
@@ -540,4 +542,49 @@ test('closing the connection aborts an in-flight local SSH command with an unkno
     fixture.calls.some((call) => call.args.at(-1)?.startsWith('kill ')),
     false
   )
+})
+
+test('SSH layer errors carry structured codes instead of relying on message text', async () => {
+  const fixture = fakeOpenSsh({ slowExec: true })
+  const session = await connectRemoteSshSession(
+    { host: 'lab-hpc', execTimeoutMs: 40 },
+    fixture.runtime
+  )
+  try {
+    assert.ok(session.execBounded)
+    await assert.rejects(
+      () => session.execBounded!('sleep 5', { timeoutMs: 40, maxOutputBytes: 256 }),
+      (error: unknown) => errorCodeOf(error) === 'TIMEOUT_UNKNOWN'
+    )
+    await assert.rejects(
+      () => session.exec('sleep 5'),
+      (error: unknown) => errorCodeOf(error) === 'TIMEOUT_UNKNOWN'
+    )
+    const controller = new AbortController()
+    const cancelled = session.execBounded!('sleep 5', {
+      timeoutMs: 5_000,
+      maxOutputBytes: 256,
+      signal: controller.signal
+    })
+    setTimeout(() => controller.abort(), 20)
+    await assert.rejects(cancelled, (error: unknown) => errorCodeOf(error) === 'ABORTED')
+  } finally {
+    await session.close()
+  }
+  await assert.rejects(
+    () => session.exec('printf ok'),
+    (error: unknown) => errorCodeOf(error) === 'TRANSPORT_LOST'
+  )
+})
+
+test('closing an in-flight SSH command is a TRANSPORT_LOST error', async () => {
+  const fixture = fakeOpenSsh({ slowExec: true })
+  const session = await connectRemoteSshSession({ host: 'lab-hpc' }, fixture.runtime)
+  const running = session.exec('sleep 5')
+  const rejection = assert.rejects(
+    running,
+    (error: unknown) => errorCodeOf(error) === 'TRANSPORT_LOST'
+  )
+  await session.close()
+  await rejection
 })

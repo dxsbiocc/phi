@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { errorCodeOf } from '../src/shared/errorCodes'
 import { createWorkspaceHostRemoteSession } from '../src/main/agent/workspace-host/remote-session'
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
-import type { HostCommand, WorkspaceHost } from '../src/main/agent/workspace-host/types'
+import {
+  WorkspaceHostError,
+  type HostCommand,
+  type WorkspaceHost
+} from '../src/main/agent/workspace-host/types'
 import { FileTransferCoordinator, FileTransferRegistry } from '../src/main/agent/transfer'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 
@@ -354,4 +359,103 @@ test('SshHost carries legacy stdin writes through host filesystem and execution'
     await rm(shim, { recursive: true, force: true })
     await rm(root, { recursive: true, force: true })
   }
+})
+
+function hostWithExec(
+  result: Awaited<ReturnType<WorkspaceHost['exec']['run']>>,
+  fs: Partial<WorkspaceHost['fs']> = {}
+): WorkspaceHost {
+  return {
+    fs: fs as WorkspaceHost['fs'],
+    exec: {
+      async run() {
+        return result
+      },
+      async spawnBackground() {
+        throw new Error('not used')
+      }
+    },
+    capabilities() {
+      throw new Error('not used')
+    }
+  } satisfies WorkspaceHost
+}
+
+const TIMED_OUT = {
+  stdout: '',
+  stderr: '',
+  code: null,
+  signal: 'SIGKILL',
+  truncated: false,
+  terminationReason: 'timeout' as const
+}
+
+test('timeouts and closed connections throw coded errors', async () => {
+  const session = createWorkspaceHostRemoteSession(hostWithExec(TIMED_OUT), '/remote/project')
+  await assert.rejects(
+    session.execBounded!('grep -r x .', { timeoutMs: 50, maxOutputBytes: 1024 }),
+    (error: unknown) => errorCodeOf(error) === 'TIMEOUT_UNKNOWN'
+  )
+  await assert.rejects(
+    session.exec('sleep 60'),
+    (error: unknown) => errorCodeOf(error) === 'TIMEOUT_UNKNOWN'
+  )
+  const closed = createWorkspaceHostRemoteSession(
+    hostWithExec({ ...TIMED_OUT, signal: 'SIGTERM', terminationReason: 'cancelled' }),
+    '/remote/project'
+  )
+  await assert.rejects(
+    closed.exec('sleep 60'),
+    (error: unknown) => errorCodeOf(error) === 'TRANSPORT_LOST'
+  )
+  await assert.rejects(
+    closed.execBounded!('sleep 60', { timeoutMs: 50, maxOutputBytes: 1024 }),
+    (error: unknown) => errorCodeOf(error) === 'ABORTED'
+  )
+})
+
+test('onFailure fires only for a lost transport, not for timeouts or domain errors', async () => {
+  const failures: unknown[] = []
+  const options = { onFailure: (error: unknown) => failures.push(error) }
+
+  const timedOut = createWorkspaceHostRemoteSession(
+    hostWithExec(TIMED_OUT),
+    '/remote/project',
+    options
+  )
+  await assert.rejects(timedOut.execBounded!('grep', { timeoutMs: 50, maxOutputBytes: 1024 }))
+  await assert.rejects(timedOut.exec('sleep'))
+  assert.equal(failures.length, 0)
+
+  const domain = createWorkspaceHostRemoteSession(
+    hostWithExec(TIMED_OUT, {
+      async readRange() {
+        throw new WorkspaceHostError('hash mismatch', 'HASH_MISMATCH')
+      },
+      async stat() {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+    }),
+    '/remote/project',
+    options
+  )
+  await assert.rejects(domain.readTextFile('/remote/project/a.txt'))
+  assert.equal(failures.length, 0)
+
+  const closed = createWorkspaceHostRemoteSession(
+    hostWithExec({ ...TIMED_OUT, signal: 'SIGTERM', terminationReason: 'cancelled' }),
+    '/remote/project',
+    options
+  )
+  await assert.rejects(closed.exec('sleep'))
+  assert.equal(failures.length, 1)
+
+  const unknownResult = createWorkspaceHostRemoteSession(
+    hostWithExec({ ...TIMED_OUT, signal: null, terminationReason: undefined }),
+    '/remote/project',
+    options
+  )
+  await unknownResult.exec('true')
+  assert.equal(failures.length, 2)
+  assert.equal(errorCodeOf(failures[1]), 'TRANSPORT_LOST')
 })

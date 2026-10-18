@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { CodedError, errorCodeOf } from '../../../../shared/errorCodes'
 import { validateControlFrame } from './control-frame'
 import { RpcRequestError, validRpcErrorCode } from './errors'
 import {
@@ -57,6 +58,13 @@ interface Generation {
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
+}
+/** Stream and process failures prove the channel is dead; keep the original message and cause. */
+function transportError(value: unknown): Error {
+  const error = asError(value)
+  return errorCodeOf(error) === 'UNKNOWN'
+    ? new CodedError('TRANSPORT_LOST', error.message, { cause: error })
+    : error
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -256,7 +264,12 @@ export class RpcConnection {
         }
         this.finishPrompt(state, id)
       },
-      (error: unknown) => this.rejectPrompt(state, id, asError(error))
+      (error: unknown) => {
+        const failure = asError(error)
+        // The server may have started the prompt: an unconfirmed admission cannot be retried safely.
+        if (errorCodeOf(failure) === 'TIMEOUT_UNKNOWN') this.fail(state, failure)
+        this.rejectPrompt(state, id, failure)
+      }
     )
     return completion
   }
@@ -266,7 +279,13 @@ export class RpcConnection {
     // A failed generation has no command channel left to stop. Once an abort is
     // submitted, however, send() still owns its real response/failure/timeout.
     if (state?.phase === 'closed') return
-    await this.request({ type: 'abort' })
+    try {
+      await this.request({ type: 'abort' })
+    } catch (error) {
+      // An unanswered abort leaves a run we cannot stop; abandoning the generation is the only way to stop it.
+      if (state && errorCodeOf(error) === 'TIMEOUT_UNKNOWN') this.fail(state, asError(error))
+      throw error
+    }
   }
 
   async close(): Promise<void> {
@@ -292,7 +311,7 @@ export class RpcConnection {
 
   private attach(state: Generation, process: RpcTransport): void {
     state.process = process
-    const failure = (error: Error): void => this.fail(state, error)
+    const failure = (error: Error): void => this.fail(state, transportError(error))
     const eof = (): void => {
       if (!this.active(state)) return
       try {
@@ -301,7 +320,7 @@ export class RpcConnection {
         this.fail(state, asError(error))
         return
       }
-      this.fail(state, new Error('RPC output stream ended'))
+      this.fail(state, new CodedError('TRANSPORT_LOST', 'RPC output stream ended'))
     }
     const data = (chunk: unknown): void => {
       if (!this.active(state)) return
@@ -330,8 +349,11 @@ export class RpcConnection {
     }
     void process.closed.then(
       ({ code, signal }) =>
-        this.fail(state, new Error(`RPC process exited (${signal ?? code ?? 'unknown'})`)),
-      (error: unknown) => this.fail(state, asError(error))
+        this.fail(
+          state,
+          new CodedError('TRANSPORT_LOST', `RPC process exited (${signal ?? code ?? 'unknown'})`)
+        ),
+      (error: unknown) => this.fail(state, transportError(error))
     )
     process.stdout.on('data', data)
   }
@@ -442,11 +464,17 @@ export class RpcConnection {
       const pending: PendingResponse = { command: command.type, resolve, reject }
       state.responses.set(id, pending)
       if (ms)
-        pending.timer = setTimeout(
-          () => this.fail(state, new Error(`RPC ${command.type} response timed out`)),
-          ms
-        )
-      void this.write(state, bytes).catch((error: unknown) => this.fail(state, asError(error)))
+        // A slow reply fails this request only: the channel may be healthy and a late
+        // response finds no pending entry. Callers that must abandon the generation
+        // on a timeout (abort, prompt admission) do so explicitly.
+        pending.timer = setTimeout(() => {
+          if (state.responses.get(id) !== pending) return
+          state.responses.delete(id)
+          reject(new CodedError('TIMEOUT_UNKNOWN', `RPC ${command.type} response timed out`))
+        }, ms)
+      void this.write(state, bytes).catch((error: unknown) =>
+        this.fail(state, transportError(error))
+      )
     })
   }
 

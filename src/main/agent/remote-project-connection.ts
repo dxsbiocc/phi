@@ -1,6 +1,10 @@
+import { errorCodeOf } from '../../shared/errorCodes'
 import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
-import { resolveRemoteWorkspacePath } from './remote-workspace-boundary'
+import {
+  RemoteProjectRootChangedError,
+  resolveRemoteWorkspacePath
+} from './remote-workspace-boundary'
 import { findPhiSessionById, type PhiSessionManifest } from './session/session-store'
 import { RemoteSshConnectionError } from './wrappers/remote-ssh-diagnostics'
 import { remoteWorkspaceHosts } from './workspace-host/remote-registry'
@@ -16,6 +20,11 @@ function connectionState(
     ...(suggestion ? { suggestion } : {}),
     checkedAt: new Date().toISOString()
   }
+}
+
+/** Only a confirmed dead transport (or a rejected SSH identity) may drop the shared hosts. */
+function releasesHosts(error: unknown): boolean {
+  return error instanceof RemoteSshConnectionError || errorCodeOf(error) === 'TRANSPORT_LOST'
 }
 
 /** Only transport/root failures change the shared connection state; a missing file does not. */
@@ -36,15 +45,14 @@ export function classifyRemoteProjectConnectionError(
             : 'offline'
     return connectionState(phase, diagnosis.message, diagnosis.suggestion)
   }
-  const message = error instanceof Error ? error.message : ''
-  if (/SSH.*(?:连接已关闭|命令超时|超时)/i.test(message) && !/调用已取消/.test(message)) {
+  if (errorCodeOf(error) === 'TRANSPORT_LOST') {
     return connectionState(
       'offline',
       'SSH 连接中断或超时',
       '检查网络和服务器后重试读取；写入或命令结果未知时先到服务器核对。'
     )
   }
-  if (/远程路径授权失败：项目根目录已变化或不可访问/.test(message)) {
+  if (error instanceof RemoteProjectRootChangedError) {
     return connectionState(
       'permission_failed',
       '远程项目目录已变化或不可访问',
@@ -125,7 +133,7 @@ export class RemoteProjectConnectionTracker {
       this.set(projectId, ready, revision)
       return ready
     } catch (error) {
-      this.releaseHosts(projectId)
+      if (releasesHosts(error)) this.releaseHosts(projectId)
       const failed =
         classifyRemoteProjectConnectionError(error) ??
         connectionState(
@@ -168,7 +176,7 @@ export class RemoteProjectConnectionTracker {
     } catch (error) {
       const failed = classifyRemoteProjectConnectionError(error)
       if (failed) {
-        this.releaseHosts(projectId)
+        if (releasesHosts(error)) this.releaseHosts(projectId)
         this.set(projectId, failed, revision)
       }
       throw error

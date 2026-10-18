@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { CodedError } from '../src/shared/errorCodes'
 import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/remote-registry'
@@ -75,7 +76,7 @@ test('remote workspace host registry releases a host after its connection fails'
         fs: {} as WorkspaceHost['fs'],
         exec: {
           async run() {
-            throw new Error('SSH connection lost')
+            throw new CodedError('TRANSPORT_LOST', 'SSH connection lost')
           },
           async spawnBackground() {
             throw new Error('not used')

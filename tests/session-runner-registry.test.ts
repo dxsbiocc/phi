@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { CodedError } from '../src/shared/errorCodes'
 import { SessionRunnerRegistry } from '../src/main/agent/session/session-runner-registry'
 import {
   createPhiSession,
@@ -398,5 +399,35 @@ test('runner records approval approval and denial decisions', async () => {
       readSessionEvents(deniedSessionId).map((event) => event.type),
       ['run_started', 'approval_requested', 'approval_denied', 'run_failed']
     )
+  })
+})
+
+test('a coded failure keeps its code and retryable flag on the persisted run_failed event', async () => {
+  await withPhiDir(async () => {
+    const registry = new SessionRunnerRegistry()
+    const coded = createTestSession()
+    const plain = createTestSession()
+    await registry.startRun({
+      sessionId: coded,
+      runId: createRunId(),
+      execute: async () => {
+        throw new CodedError('PROVIDER_ERROR', 'Remote turn failed: 429', { retryable: true })
+      }
+    }).done
+    await registry.startRun({
+      sessionId: plain,
+      runId: createRunId(),
+      execute: async () => {
+        throw new Error('boom')
+      }
+    }).done
+
+    const failed = readSessionEvents(coded).find((event) => event.type === 'run_failed')
+    assert.equal(failed?.errorMessage, 'Remote turn failed: 429')
+    assert.equal(failed?.errorCode, 'PROVIDER_ERROR')
+    assert.equal(failed?.retryable, true)
+    const legacy = readSessionEvents(plain).find((event) => event.type === 'run_failed')
+    assert.equal(legacy?.errorMessage, 'boom')
+    assert.equal('errorCode' in (legacy ?? {}), false)
   })
 })

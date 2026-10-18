@@ -12,6 +12,7 @@ import {
   type RemoteSshAuthGate
 } from './remote-ssh-auth-gate'
 import { assertEncryptedIdentityLoaded } from './ssh-agent-identity'
+import { CodedError } from '../../../shared/errorCodes'
 import { diagnoseSshConnectionFailure, RemoteSshConnectionError } from './remote-ssh-diagnostics'
 import type { RemoteFileChunk, RemoteFileChunkOptions } from './remote-ssh-log'
 import type { RemoteUploadFileOptions, TransferStdioProcess } from '../transfer/remote-upload-types'
@@ -413,12 +414,12 @@ function runProcess(
       force.unref()
     }
     const onAbort = (): void => {
-      fail(new Error('SSH 连接已关闭；远端操作结果可能尚未确认'))
+      fail(new CodedError('TRANSPORT_LOST', 'SSH 连接已关闭；远端操作结果可能尚未确认'))
     }
     signal?.addEventListener('abort', onAbort, { once: true })
     if (signal?.aborted) onAbort()
     const timer = setTimeout(() => {
-      fail(new Error(`${binary} 超时；远端操作结果可能尚未确认`))
+      fail(new CodedError('TIMEOUT_UNKNOWN', `${binary} 超时；远端操作结果可能尚未确认`))
     }, timeoutMs)
 
     const collect = (target: Buffer[], chunk: Buffer): void => {
@@ -485,11 +486,12 @@ function runProcessBounded(
       }, 2_000)
       force.unref()
     }
-    const onAbort = (): void => fail(new Error('SSH 调用已取消；远端命令结果可能尚未确认'))
+    const onAbort = (): void =>
+      fail(new CodedError('ABORTED', 'SSH 调用已取消；远端命令结果可能尚未确认'))
     options.signal?.addEventListener('abort', onAbort, { once: true })
     if (options.signal?.aborted) onAbort()
     const timer = setTimeout(
-      () => fail(new Error('SSH 命令超时；远端命令结果可能尚未确认')),
+      () => fail(new CodedError('TIMEOUT_UNKNOWN', 'SSH 命令超时；远端命令结果可能尚未确认')),
       options.timeoutMs
     )
     const collect = (target: Buffer[], chunk: Buffer, stream: 'stdout' | 'stderr'): void => {
@@ -630,7 +632,8 @@ export async function connectRemoteSshSession(
   let closed = false
   let closing: Promise<void> | undefined
   const checkOpen = (): void => {
-    if (closed || masterClosed) throw new Error('SSH 连接已关闭；远端操作结果可能尚未确认')
+    if (closed || masterClosed)
+      throw new CodedError('TRANSPORT_LOST', 'SSH 连接已关闭；远端操作结果可能尚未确认')
   }
   const call = async (command: string, input?: string): Promise<RemoteExecResult> => {
     checkOpen()

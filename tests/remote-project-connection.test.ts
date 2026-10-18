@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { CodedError } from '../src/shared/errorCodes'
 import type { RemoteProjectConnectionState } from '../src/shared/projectLocation'
 import type { Project } from '../src/main/agent/projects'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
@@ -8,6 +9,7 @@ import {
   classifyRemoteProjectConnectionError,
   RemoteProjectConnectionTracker
 } from '../src/main/agent/remote-project-connection'
+import { RemoteProjectRootChangedError } from '../src/main/agent/remote-workspace-boundary'
 import {
   RemoteSshConnectionError,
   sshConnectionDiagnosis
@@ -96,7 +98,7 @@ test('network, changed host key, authentication and project-root errors remain d
     assert.equal(status.message?.includes('ssh -o'), false)
   }
   const denied = fixture(async () => {
-    throw new Error('远程路径授权失败：项目根目录已变化或不可访问')
+    throw new RemoteProjectRootChangedError()
   })
   assert.equal((await denied.tracker.check('session-a', 'project-a')).phase, 'permission_failed')
 })
@@ -174,9 +176,67 @@ test('only recognized SSH transport failures change the shared connection phase'
     null
   )
   assert.equal(
-    classifyRemoteProjectConnectionError(new Error('SSH 连接已关闭；结果可能未知'))?.phase,
+    classifyRemoteProjectConnectionError(new CodedError('TRANSPORT_LOST', '结果可能未知'))?.phase,
     'offline'
   )
+})
+
+test('connection state follows the error code, not the message text', () => {
+  assert.equal(
+    classifyRemoteProjectConnectionError(new Error('SSH 连接已关闭；远端操作结果可能尚未确认')),
+    null
+  )
+  assert.equal(
+    classifyRemoteProjectConnectionError(new CodedError('TIMEOUT_UNKNOWN', 'SSH 命令超时')),
+    null
+  )
+  assert.equal(
+    classifyRemoteProjectConnectionError(new CodedError('DOMAIN_NOT_FOUND', '目标不存在')),
+    null
+  )
+  assert.equal(
+    classifyRemoteProjectConnectionError(new CodedError('TRANSPORT_LOST', 'x'))?.phase,
+    'offline'
+  )
+})
+
+test('a search timeout neither marks the project offline nor releases hosts; a closed connection does', async () => {
+  const f = fixture()
+  await assert.rejects(
+    f.tracker.observe('project-a', async () => {
+      throw new CodedError('TIMEOUT_UNKNOWN', 'SSH 命令超时；远端命令结果可能尚未确认')
+    })
+  )
+  await assert.rejects(
+    f.tracker.observe('project-a', async () => {
+      throw new CodedError('DOMAIN_NOT_FOUND', '目标不存在')
+    })
+  )
+  assert.equal(f.updates.length, 0)
+  assert.deepEqual(f.releasedProjects, [])
+
+  await assert.rejects(
+    f.tracker.observe('project-a', async () => {
+      throw new CodedError('TRANSPORT_LOST', 'SSH 连接已关闭；远端操作结果可能尚未确认')
+    })
+  )
+  assert.equal(f.updates.at(-1)?.phase, 'offline')
+  assert.deepEqual(f.releasedProjects, ['project-a'])
+})
+
+test('a connection check that times out or hits a domain error does not release hosts', async () => {
+  for (const code of ['TIMEOUT_UNKNOWN', 'DOMAIN_INVALID'] as const) {
+    const f = fixture(async () => {
+      throw new CodedError(code, 'x')
+    })
+    await f.tracker.check('session-a', 'project-a')
+    assert.deepEqual(f.releasedProjects, [])
+  }
+  const lost = fixture(async () => {
+    throw new CodedError('TRANSPORT_LOST', 'x')
+  })
+  assert.equal((await lost.tracker.check('session-a', 'project-a')).phase, 'offline')
+  assert.deepEqual(lost.releasedProjects, ['project-a'])
 })
 
 test('project connection state preserves sanitized cooldown guidance', () => {

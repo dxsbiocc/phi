@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { CodedError } from '../../../shared/errorCodes'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
@@ -135,19 +136,19 @@ export interface OmpRequestOptions {
   readonly signal?: AbortSignal
 }
 
-export class OmpBridgeTimeoutError extends Error {
+export class OmpBridgeTimeoutError extends CodedError {
   constructor(
     readonly method: string,
     readonly timeoutMs: number
   ) {
-    super(`OMP worker request timed out: ${method} (${timeoutMs}ms)`)
+    super('TIMEOUT_UNKNOWN', `OMP worker request timed out: ${method} (${timeoutMs}ms)`)
     this.name = 'OmpBridgeTimeoutError'
   }
 }
 
-export class OmpBridgeAbortError extends Error {
+export class OmpBridgeAbortError extends CodedError {
   constructor(readonly method: string) {
-    super(`OMP worker request aborted: ${method}`)
+    super('ABORTED', `OMP worker request aborted: ${method}`)
     this.name = 'OmpBridgeAbortError'
   }
 }

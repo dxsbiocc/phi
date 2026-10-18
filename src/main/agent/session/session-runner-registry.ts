@@ -8,6 +8,7 @@ import {
 } from './session-store'
 import { writeAppLog } from '../app-logger'
 import { redactSensitiveText } from '../redaction'
+import { errorCodeOf, isRetryable } from '../../../shared/errorCodes'
 
 export interface SessionRunContext {
   signal: AbortSignal
@@ -52,6 +53,12 @@ const DEFAULT_MAX_ACTIVE_RUNS = 4
 
 function errorMessage(error: unknown): string {
   return redactSensitiveText(error instanceof Error ? error.message : String(error))
+}
+
+/** Additive failure classification for the persisted event; uncoded errors stay as before. */
+function failureCode(error: unknown): { errorCode?: string; retryable?: boolean } {
+  const errorCode = errorCodeOf(error)
+  return errorCode === 'UNKNOWN' ? {} : { errorCode, retryable: isRetryable(error) }
 }
 
 function createStopReason(): Error {
@@ -235,7 +242,8 @@ export class SessionRunnerRegistry {
           runId: input.runId,
           createdAt: completedAt,
           durationMs: runDurationMs(run, completedAt),
-          errorMessage: errorMessage(error)
+          errorMessage: errorMessage(error),
+          ...failureCode(error)
         })
         writeAppLog({
           level: run.outcome === 'failed' ? 'error' : 'info',

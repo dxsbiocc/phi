@@ -3,6 +3,7 @@ import { PassThrough, Writable } from 'node:stream'
 import { setImmediate as turn } from 'node:timers/promises'
 import test from 'node:test'
 import { RpcConnection } from '../src/main/agent/engine/rpc/connection'
+import { errorCodeOf } from '../src/shared/errorCodes'
 import type {
   RpcConnectionOptions,
   RpcFrame,
@@ -647,5 +648,49 @@ test('prompt result validates declared metadata types while preserving unknown f
   }
   assert.deepEqual(await connection.prompt('valid metadata'), expected)
   assert.equal(connection.isReady, true)
+  await connection.close()
+})
+
+test('a single request timeout rejects only that request and keeps the generation alive', async () => {
+  const { peer, connection } = await connected({ requestTimeoutMs: 30 })
+  const disconnects: unknown[] = []
+  connection.onDisconnect((event) => disconnects.push(event))
+  const stalled: Command[] = []
+  peer.onCommand = (command) => stalled.push(command)
+  await assert.rejects(
+    connection.request({ type: 'get_state' }),
+    (error: unknown) =>
+      errorCodeOf(error) === 'TIMEOUT_UNKNOWN' &&
+      /get_state response timed out/.test((error as Error).message)
+  )
+  assert.equal(connection.isReady, true)
+  assert.equal(connection.isClosed, false)
+  assert.equal(disconnects.length, 0)
+  // The late response for the timed-out request is ignored and the channel still works.
+  peer.respond(stalled[0], { late: true })
+  peer.onCommand = (command) => peer.respond(command, { sessionId: 'next' })
+  assert.deepEqual(await connection.request({ type: 'get_state' }), { sessionId: 'next' })
+  assert.equal(peer.closeCalls, 0)
+  await connection.close()
+})
+
+test('a prompt whose admission times out abandons the generation', async () => {
+  const { peer, connection } = await connected({ requestTimeoutMs: 30 })
+  peer.onCommand = () => undefined
+  await assert.rejects(
+    connection.prompt('hold'),
+    (error: unknown) => errorCodeOf(error) === 'TIMEOUT_UNKNOWN'
+  )
+  assert.equal(connection.isReady, false)
+  await connection.close()
+})
+
+test('transport loss still fails every pending request with a TRANSPORT_LOST error', async () => {
+  const { peer, connection } = await connected()
+  peer.onCommand = () => undefined
+  const pending = connection.request({ type: 'get_state' })
+  peer.stdout.end()
+  await assert.rejects(pending, (error: unknown) => errorCodeOf(error) === 'TRANSPORT_LOST')
+  assert.equal(connection.isClosed, true)
   await connection.close()
 })

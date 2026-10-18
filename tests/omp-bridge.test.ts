@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { errorCodeOf } from '../src/shared/errorCodes'
+
 import {
   OmpBridge,
   OmpBridgeAbortError,
@@ -323,4 +325,15 @@ test('a timed-out session.abort stops the worker so its sessions fail visibly', 
       await bridge.stop()
     }
   })
+})
+
+test('bridge timeout and abort errors carry structured codes', () => {
+  const timeout = new OmpBridgeTimeoutError('session.abort', 15_000)
+  const abort = new OmpBridgeAbortError('session.abort')
+  assert.equal(errorCodeOf(timeout), 'TIMEOUT_UNKNOWN')
+  assert.equal(errorCodeOf(abort), 'ABORTED')
+  assert.equal(timeout.message, 'OMP worker request timed out: session.abort (15000ms)')
+  assert.equal(abort.message, 'OMP worker request aborted: session.abort')
+  assert.equal(timeout.method, 'session.abort')
+  assert.equal(timeout.timeoutMs, 15_000)
 })

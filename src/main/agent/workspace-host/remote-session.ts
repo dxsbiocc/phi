@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 
+import { CodedError, errorCodeOf } from '../../../shared/errorCodes'
 import type {
   RemoteExecBoundedOptions,
   RemoteExecBoundedResult,
@@ -24,9 +25,14 @@ async function monitored<T>(run: () => Promise<T>, options: RemoteSessionOptions
   try {
     return await run()
   } catch (error) {
-    options.onFailure?.(error)
+    // Only a confirmed dead transport may release the session's host; timeouts and domain errors must not.
+    if (errorCodeOf(error) === 'TRANSPORT_LOST') options.onFailure?.(error)
     throw error
   }
+}
+
+function unknownResultError(): CodedError {
+  return new CodedError('TRANSPORT_LOST', 'SSH connection result is unknown')
 }
 
 function executionOptions(
@@ -44,7 +50,7 @@ function executionOptions(
 
 function remoteResult(result: CommandResult, options: RemoteSessionOptions = {}): RemoteExecResult {
   if (result.code === null && result.signal === null) {
-    options.onFailure?.(new Error('SSH connection result is unknown'))
+    options.onFailure?.(unknownResultError())
   }
   return {
     stdout: result.stdout,
@@ -92,19 +98,19 @@ function combinedSignal(sessionSignal: AbortSignal, signal?: AbortSignal): Abort
 
 function throwForControlTermination(result: CommandResult): void {
   if (result.terminationReason === 'timeout') {
-    throw new Error('ssh 超时；远端操作结果可能尚未确认')
+    throw new CodedError('TIMEOUT_UNKNOWN', 'ssh 超时；远端操作结果可能尚未确认')
   }
   if (result.terminationReason === 'cancelled') {
-    throw new Error('SSH 连接已关闭；远端操作结果可能尚未确认')
+    throw new CodedError('TRANSPORT_LOST', 'SSH 连接已关闭；远端操作结果可能尚未确认')
   }
 }
 
 function throwForBoundedTermination(result: CommandResult): void {
   if (result.terminationReason === 'timeout') {
-    throw new Error('SSH 命令超时；远端命令结果可能尚未确认')
+    throw new CodedError('TIMEOUT_UNKNOWN', 'SSH 命令超时；远端命令结果可能尚未确认')
   }
   if (result.terminationReason === 'cancelled') {
-    throw new Error('SSH 调用已取消；远端命令结果可能尚未确认')
+    throw new CodedError('ABORTED', 'SSH 调用已取消；远端命令结果可能尚未确认')
   }
 }
 
@@ -144,7 +150,7 @@ export function createWorkspaceHostRemoteSession(
         throwForBoundedTermination(result)
         const bounded = boundedResult(result, runOptions)
         if (bounded.code === null && bounded.signal === null) {
-          sessionOptions.onFailure?.(new Error('SSH connection result is unknown'))
+          sessionOptions.onFailure?.(unknownResultError())
         }
         return bounded
       }, sessionOptions)
