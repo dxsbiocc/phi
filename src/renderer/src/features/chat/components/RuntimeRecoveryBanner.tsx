@@ -24,6 +24,13 @@ import type {
 import { useRuntimeRecovery } from '../hooks/useRuntimeRecovery'
 import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRecoveryState'
 
+// Same column as the conversation and composer, keeping a 16px gutter on narrow windows.
+const bannerWidthSx = {
+  mx: 'auto',
+  width: 'min(var(--phi-chat-content-max-width), calc(100% - 32px))',
+  boxSizing: 'border-box'
+} as const
+
 export function RuntimeRecoveryBanner({
   api,
   target,
@@ -51,7 +58,7 @@ export function RuntimeRecoveryBanner({
       <Alert
         severity="warning"
         action={<Button onClick={() => void recovery.refresh()}>{chatCopy.refreshStatus}</Button>}
-        sx={{ mx: 2, my: 1 }}
+        sx={{ ...bannerWidthSx, my: 1 }}
       >
         {recovery.error}
       </Alert>
@@ -59,7 +66,7 @@ export function RuntimeRecoveryBanner({
   if (state.phase === 'not-started') return null
   if (state.phase === 'connected')
     return recovery.error ? (
-      <Alert severity="warning" sx={{ mx: 2, my: 1 }}>
+      <Alert severity="warning" sx={{ ...bannerWidthSx, my: 1 }}>
         <Typography variant="body2">
           {chatCopy.conversationConnectedReopenItToRefreshItsContents}
         </Typography>
@@ -78,7 +85,7 @@ export function RuntimeRecoveryBanner({
             : 'warning'
         }
         variant="outlined"
-        sx={{ mx: 2, my: 1, flexShrink: 0 }}
+        sx={{ ...bannerWidthSx, my: 1, flexShrink: 0 }}
       >
         <Stack spacing={1}>
           <Typography variant="body2">{state.message}</Typography>
