@@ -1,9 +1,16 @@
 import {
   OFFICIAL_REGISTRY_ID,
   isOfficialRegistryDirectory,
+  officialRegistryDirectory,
+  syncOfficialRegistry,
   type OfficialRegistryOptions
 } from './packages/official-registry'
-import { prepareContentPackageInstall, readContentRegistry } from './packages/content-source'
+import { prepareContentPackageInstall } from './packages/content-source'
+import {
+  isOfficialConnectorRegistryDirectory,
+  readOfficialConnectorRegistry,
+  syncOfficialConnectorRegistry
+} from './packages/official-connector-registry'
 import { readRegistryManifestAsset } from './packages/manifest-assets'
 import {
   existsSync,
@@ -131,6 +138,7 @@ interface CatalogSource {
   iconAsset?: RegistryIconAsset
   source?: FeaturedMcpConnector['source']
   notice?: string
+  directoryAuthBlocked?: boolean
 }
 
 /** Catalog data from supplied verified indexes and installed connectors. */
@@ -207,66 +215,78 @@ export function listConnectorCatalog(
   }
 
   return [...selected.values()]
-    .map(({ manifest, registryDir, packageDir, iconAsset, source, notice }) => {
-      const connector = manifest.connector
-      const entry = servers[manifest.id]
-      const marker = readManagedMarker(entry)
-      const installedRoot = installedRoots.get(manifest.id)
-      const icon =
-        (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
-        (packageDir ? findResourceIcon(packageDir) : undefined) ??
-        (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined) ??
-        (installedRoot ? resolveCuratedResourceIcon('mcp', manifest.id) : undefined)
-      const unavailableReason =
-        manifest.minAppVersion && semver.lt(appVersion, manifest.minAppVersion)
+    .map(
+      ({ manifest, registryDir, packageDir, iconAsset, source, notice, directoryAuthBlocked }) => {
+        const connector = manifest.connector
+        const entry = servers[manifest.id]
+        const marker = readManagedMarker(entry)
+        const installedRoot = installedRoots.get(manifest.id)
+        const icon =
+          (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
+          (packageDir ? findResourceIcon(packageDir) : undefined) ??
+          (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined) ??
+          (installedRoot ? resolveCuratedResourceIcon('mcp', manifest.id) : undefined)
+        const needsNewerApp = manifest.minAppVersion
+          ? semver.lt(appVersion, manifest.minAppVersion)
+          : false
+        const unavailableKind = needsNewerApp
+          ? 'app-version'
+          : directoryAuthBlocked
+            ? 'authorization'
+            : undefined
+        const unavailableReason = needsNewerApp
           ? `需要 Phi ${manifest.minAppVersion} 或更高版本`
-          : undefined
-      const result: FeaturedMcpConnector = {
-        id: manifest.id,
-        ...(icon ? { icon } : {}),
-        version: manifest.version,
-        name: manifest.title,
-        description: manifest.summary,
-        publisher: connector.publisher,
-        category: connector.category,
-        signIn:
-          connector.transport === 'http'
-            ? connector.auth === 'none'
-              ? '无需登录'
-              : connector.auth === 'header'
-                ? '需要 API key'
-                : '需要登录'
-            : '本地服务',
-        transport: connector.transport,
-        homepageUrl: connector.homepage,
-        minAppVersion: manifest.minAppVersion,
-        registryDir,
-        added: entry !== undefined,
-        unavailableReason,
-        ...(source ? { source } : {}),
-        ...(notice ? { notice } : {})
-      }
-      if (connector.transport === 'http') {
-        result.auth = connector.auth
-        result.url = connector.url
-        result.oauthAuthorizationOrigin = mcpOAuthAuthorizationOrigin(manifest.id, connector.url)
-        if (connector.auth === 'header') {
-          try {
-            const known = apiKeyConnector(manifest.id)
-            if (known.url === connector.url) result.apiKey = known.apiKey
-          } catch {
-            // Third-party header-auth packages remain visible, but v1 lacks the
-            // fields needed for Phi's provider-specific credential UI.
-          }
+          : directoryAuthBlocked
+            ? '此连接器的目录授权暂不可用'
+            : undefined
+        const result: FeaturedMcpConnector = {
+          id: manifest.id,
+          ...(icon ? { icon } : {}),
+          version: manifest.version,
+          name: manifest.title,
+          description: manifest.summary,
+          publisher: connector.publisher,
+          category: connector.category,
+          signIn:
+            connector.transport === 'http'
+              ? connector.auth === 'none'
+                ? '无需登录'
+                : connector.auth === 'header'
+                  ? '需要 API key'
+                  : '需要登录'
+              : '本地服务',
+          transport: connector.transport,
+          homepageUrl: connector.homepage,
+          minAppVersion: manifest.minAppVersion,
+          registryDir,
+          added: entry !== undefined,
+          unavailableReason,
+          unavailableKind,
+          ...(source ? { source } : {}),
+          ...(notice ? { notice } : {})
         }
-      } else {
-        result.environment = connector.environment
-        result.command = connector.command
-        result.args = [...(connector.args ?? [])]
-        if (entry !== undefined) result.environmentState = marker?.pending ? 'not-built' : 'ready'
+        if (connector.transport === 'http') {
+          result.auth = connector.auth
+          result.url = connector.url
+          result.oauthAuthorizationOrigin = mcpOAuthAuthorizationOrigin(manifest.id, connector.url)
+          if (connector.auth === 'header') {
+            try {
+              const known = apiKeyConnector(manifest.id)
+              if (known.url === connector.url) result.apiKey = known.apiKey
+            } catch {
+              // Third-party header-auth packages remain visible, but v1 lacks the
+              // fields needed for Phi's provider-specific credential UI.
+            }
+          }
+        } else {
+          result.environment = connector.environment
+          result.command = connector.command
+          result.args = [...(connector.args ?? [])]
+          if (entry !== undefined) result.environmentState = marker?.pending ? 'not-built' : 'ready'
+        }
+        return result
       }
-      return result
-    })
+    )
     .sort(
       (left, right) =>
         left.category.localeCompare(right.category) || left.name.localeCompare(right.name)
@@ -283,12 +303,26 @@ export async function installCatalogConnector(
       onPhase?: (phase: Extract<McpConnectorSetupPhase, 'downloading' | 'installing'>) => void
     } = {}
 ): Promise<InstalledPackage[]> {
+  if (isOfficialConnectorRegistryDirectory(registryDir, options.agentDir)) {
+    const registry = readOfficialConnectorRegistry(registryDir, options)
+    options.onPhase?.('installing')
+    return installConnectorFromRegistry(registry, id, version, options)
+  }
   if (
     registryDir === OFFICIAL_REGISTRY_ID ||
     isOfficialRegistryDirectory(registryDir, options.agentDir)
   ) {
     options.onPhase?.('downloading')
-    const registry = await readContentRegistry(registryDir, options)
+    const registry =
+      registryDir === OFFICIAL_REGISTRY_ID
+        ? await syncOfficialConnectorRegistry(options)
+        : resolve(registryDir) === resolve(officialRegistryDirectory(options.agentDir))
+          ? await syncOfficialRegistry(options)
+          : {
+              ...readRegistry(registryDir, options),
+              id: OFFICIAL_REGISTRY_ID,
+              kind: 'official' as const
+            }
     const prepared = await prepareContentPackageInstall(
       registry,
       { type: 'mcp', id, ...(version ? { version } : {}) },
@@ -578,6 +612,9 @@ function catalogSourcesFromRegistry(dir: string): CatalogSource[] {
 }
 
 function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource[] {
+  const official =
+    registry.id === OFFICIAL_REGISTRY_ID &&
+    (registry.kind === 'official' || registry.trust === 'official')
   const source: FeaturedMcpConnector['source'] = registry.source
     ? {
         kind: 'github',
@@ -586,8 +623,8 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
         sourceId: registry.source.id,
         sha: registry.source.sha
       }
-    : registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
-      ? { kind: 'official', label: 'Phi Packages', trust: 'official' }
+    : official
+      ? { kind: 'official', label: registry.label ?? 'Phi Packages', trust: registry.trust }
       : {
           kind: 'directory',
           label: registry.label ?? '用户软件源',
@@ -596,11 +633,10 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
   return registry.packages
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({
-      ...(registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
-        ? { official: true }
-        : {}),
+      ...(official ? { official: true } : {}),
       manifest: manifestFromRegistryEntry(registry, entry),
       registryDir: registry.dir,
+      directoryAuthBlocked: entry.directoryAuthBlocked,
       source,
       ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
     }))

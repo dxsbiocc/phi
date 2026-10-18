@@ -175,6 +175,26 @@ test('search exposes all four package types, prefers official sources and their 
   }
 })
 
+test('search forwards the requested package type so MCP discovery can skip other providers', async () => {
+  const f = fixture()
+  try {
+    const loadedTypes: Array<RegistryPackageEntry['type'] | undefined> = []
+    const service = createCapabilityService({
+      ...f.deps,
+      loadRegistries: async (type) => {
+        loadedTypes.push(type)
+        return { registries: [], errors: [] }
+      }
+    })
+    await service.search({ ...session, query: 'analysis', type: 'mcp' }, context)
+    await service.search({ ...session, query: 'analysis', type: 'skill' }, context)
+    await service.search({ ...session, query: 'analysis' }, context)
+    assert.deepEqual(loadedTypes, ['mcp', 'skill', undefined])
+  } finally {
+    f.cleanup()
+  }
+})
+
 test('official API is consulted first and matches signed grouped wrappers while retaining other app matches', async () => {
   const f = fixture()
   try {

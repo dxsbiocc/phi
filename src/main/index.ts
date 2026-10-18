@@ -374,12 +374,14 @@ import {
 } from './agent/packages/installer'
 import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
 import type { InstallerOptions } from './agent/packages/installer-types'
+import type { PackageType } from './agent/packages/manifest'
 import { readSkillPackageDetail } from './agent/packages/skill-detail'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
 import { withConnectorMetadata } from './agent/mcp-server-view'
 import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncPreferredOfficialRegistry } from './agent/packages/official-website-registry'
+import { syncOfficialConnectorRegistry } from './agent/packages/official-connector-registry'
 import { packageRegistryIconView } from './agent/packages/icon-views'
 import {
   addGithubSource,
@@ -1039,18 +1041,52 @@ function officialContentSourceOptions(): {
   }
 }
 
-function knownContentSourceOptions(): {
+function knownContentSourceOptions(
+  type?: PackageType,
+  forceRefresh = false
+): {
   agentDir: string
   loadOfficialRegistry: () => ReturnType<typeof syncPreferredOfficialRegistry>
 } {
   return {
     agentDir: AGENT_DIR,
-    loadOfficialRegistry: () => syncPreferredOfficialRegistry(officialContentSourceOptions())
+    loadOfficialRegistry: () =>
+      (type === 'mcp' ? syncOfficialConnectorRegistry : syncPreferredOfficialRegistry)({
+        ...officialContentSourceOptions(),
+        forceRefresh
+      })
   }
 }
 
-function loadPackageRegistries(): ReturnType<typeof loadKnownRegistryIndexes> {
-  return loadKnownRegistryIndexes(knownContentSourceOptions())
+async function loadPackageRegistries(
+  type?: PackageType,
+  forceRefresh = false
+): ReturnType<typeof loadKnownRegistryIndexes> {
+  const loaded = await loadKnownRegistryIndexes(
+    knownContentSourceOptions(type ?? 'mcp', forceRefresh)
+  )
+  if (type) return loaded
+  try {
+    const website = await syncPreferredOfficialRegistry({
+      ...officialContentSourceOptions(),
+      forceRefresh
+    })
+    return {
+      ...loaded,
+      registries: [
+        ...loaded.registries,
+        { ...website, packages: website.packages.filter((entry) => entry.type !== 'mcp') }
+      ]
+    }
+  } catch (error) {
+    return {
+      ...loaded,
+      errors: [
+        ...loaded.errors,
+        `Phi 官网其他模块：${error instanceof Error ? error.message : String(error)}`
+      ]
+    }
+  }
 }
 
 function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] {
@@ -2575,7 +2611,7 @@ getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
     agentDir: AGENT_DIR,
     appVersion: app.getVersion(),
     runtimeRoot: getRuntimeRoot(),
-    registries: (await loadPackageRegistries()).registries
+    registries: (await loadPackageRegistries('mcp')).registries
   }).find((entry) => entry.id === request.id)
   const authorizationOrigin = catalogConnector?.url
     ? mcpOAuthAuthorizationOrigin(request.id, catalogConnector.url)
@@ -12221,12 +12257,14 @@ app.whenReady().then(async () => {
     undefined,
     { path: join(AGENT_DIR, 'state', 'connector-setup.json') }
   )
-  const connectorCatalog = async (): Promise<ReturnType<typeof listConnectorCatalog>> =>
+  const connectorCatalog = async (
+    forceRefresh = false
+  ): Promise<ReturnType<typeof listConnectorCatalog>> =>
     listConnectorCatalog({
       agentDir: AGENT_DIR,
       appVersion: app.getVersion(),
       runtimeRoot: getRuntimeRoot(),
-      registries: (await loadPackageRegistries()).registries
+      registries: (await loadPackageRegistries('mcp', forceRefresh)).registries
     }).map((connector) => ({ ...connector, setup: connectorSetups.get(connector.id) }))
   const localConnectorJobs = createLocalConnectorJobs({
     tracker: connectorSetups,
@@ -12299,7 +12337,7 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
   })
-  ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog())
+  ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog(true))
   ipcMain.handle(
     'mcp:installConnector',
     async (_, id: unknown, version?: unknown, registryDir?: unknown) => {

@@ -14,6 +14,7 @@ function render(options: {
   enabled?: boolean
   updateAvailable?: boolean
   unavailableReason?: string
+  unavailableKind?: FeaturedMcpConnector['unavailableKind']
 }): string {
   const connector = {
     id: 'biomcp',
@@ -27,6 +28,7 @@ function render(options: {
     command: 'biomcp',
     args: ['serve'],
     added: options.configured,
+    unavailableKind: options.unavailableKind,
     ...(options.unavailableReason ? { unavailableReason: options.unavailableReason } : {})
   } as unknown as FeaturedMcpConnector
   return renderToStaticMarkup(
@@ -65,6 +67,20 @@ test('a connector that is not added yet and needs a newer Phi cannot be added', 
   const markup = render({ configured: false, unavailableReason: UNAVAILABLE })
   assert.match(markup, /需要新版 Phi/)
   assert.doesNotMatch(markup, />移除</)
+})
+
+test('authorization restrictions explain why adding or updating is unavailable', () => {
+  for (const configured of [false, true]) {
+    const markup = render({
+      configured,
+      updateAvailable: configured,
+      unavailableReason: '此连接器的目录授权暂不可用',
+      unavailableKind: 'authorization'
+    })
+    assert.match(markup, /授权暂不可用/)
+    assert.doesNotMatch(markup, /需要新版 Phi/)
+    if (configured) assert.match(markup, />移除</)
+  }
 })
 
 test('an added connector can always be removed, even when the catalog version needs a newer Phi', () => {

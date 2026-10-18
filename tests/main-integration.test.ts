@@ -70,6 +70,10 @@ import * as capabilityApproval from '../src/main/agent/packages/capability-appro
 import * as capabilityHost from '../src/main/agent/packages/capability-host'
 import * as capabilityService from '../src/main/agent/packages/capability-service'
 import * as externalSkills from '../src/main/agent/packages/external-skills'
+import type {
+  LocalRegistry,
+  RegistryPackageEntry
+} from '../src/main/agent/packages/installer-types'
 
 const fixtureStateDir = mkdtempSync(path.join(tmpdir(), 'phi-main-integration-'))
 
@@ -110,6 +114,13 @@ const officialRegistryFixture = {
   schemaVersion: 1,
   generatedAt: '2026-10-08T00:00:00.000Z',
   packages: []
+}
+const officialConnectorRegistryFixture = {
+  ...officialRegistryFixture,
+  dir: `/isolated/cache/registries/phi-connectors-api/generations/${'b'.repeat(64)}`,
+  kind: 'official',
+  trust: 'imported',
+  label: 'Phi 官网'
 }
 const installedFigurePreviewFixture =
   '/installed/packages/plugin/visualization/1.0.0/skills/omics-visualization/preview.png'
@@ -401,6 +412,8 @@ type HostContext = {
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
   capabilityServiceCreate?: typeof capabilityService.createCapabilityService
+  officialPackageEntries?: RegistryPackageEntry[]
+  customPackageRegistries?: LocalRegistry[]
   moduleApproval?: (
     request: Record<string, unknown>,
     signal: AbortSignal
@@ -2748,13 +2761,31 @@ async function harness(
       }
     },
     './agent/packages/official-website-registry': {
-      syncPreferredOfficialRegistry: async (options: {
+      syncPreferredOfficialRegistry: async (registryOptions: {
         agentDir?: string
         fetch: typeof fetch
         forceRefresh?: boolean
       }): Promise<unknown> => {
-        await options.fetch('https://phi.omicsagent.cn/api/catalog')
-        return { ...officialRegistryFixture, label: 'Phi 官网' }
+        await registryOptions.fetch('https://phi.omicsagent.cn/api/catalog')
+        return {
+          ...officialRegistryFixture,
+          label: 'Phi 官网',
+          packages: options.officialPackageEntries ?? []
+        }
+      }
+    },
+    './agent/packages/official-connector-registry': {
+      syncOfficialConnectorRegistry: async (options: {
+        agentDir?: string
+        fetch: typeof fetch
+        forceRefresh?: boolean
+      }): Promise<unknown> => {
+        operationLog.push({
+          type: 'connector.api.sync',
+          forceRefresh: options.forceRefresh === true
+        })
+        await options.fetch('https://phi.omicsagent.cn/api/mcp')
+        return officialConnectorRegistryFixture
       }
     },
     './agent/packages/content-source': {
@@ -2829,9 +2860,15 @@ async function harness(
         await options.loadOfficialRegistry()
         return { registries: [officialSourceDetailsFixture] }
       },
-      loadKnownRegistryIndexes: async (options: {
+      loadKnownRegistryIndexes: async (registryOptions: {
         loadOfficialRegistry: () => Promise<unknown>
-      }): Promise<unknown> => ({ registries: [await options.loadOfficialRegistry()], errors: [] }),
+      }): Promise<unknown> => ({
+        registries: [
+          await registryOptions.loadOfficialRegistry(),
+          ...(options.customPackageRegistries ?? [])
+        ],
+        errors: []
+      }),
       listPackageUpdates: (): unknown[] => [],
       applyPackageUpdate: async (): Promise<unknown[]> => [],
       applyPackageUpdates: async (): Promise<unknown[]> => [],
@@ -7488,6 +7525,106 @@ test('main dedicated MCP installation passes Chromium fetch and the selected off
   }
   assert.ok(
     persisted.records.some((record) => record.id === 'pubmed' && record.phase === 'installed')
+  )
+})
+
+test('main MCP catalog, server metadata and OAuth load only the official connector API', async () => {
+  const app = await harness()
+  await tick()
+  app.contentFetchRequests.length = 0
+  app.operationLog.length = 0
+  await app.invoke('mcp:listConnectorCatalog')
+  assert.deepEqual(app.contentFetchRequests, ['https://phi.omicsagent.cn/api/mcp'])
+  assert.equal(
+    app.operationLog.find((entry) => entry.type === 'connector.api.sync')?.forceRefresh,
+    true
+  )
+  app.contentFetchRequests.length = 0
+  app.operationLog.length = 0
+  await app.invoke('mcp:listServers')
+  const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')!
+  await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
+  assert.deepEqual(app.contentFetchRequests, [
+    'https://phi.omicsagent.cn/api/mcp',
+    'https://phi.omicsagent.cn/api/mcp'
+  ])
+  assert(
+    app.operationLog
+      .filter((entry) => entry.type === 'connector.api.sync')
+      .every((entry) => entry.forceRefresh === false)
+  )
+})
+
+test('main agent registry loading scopes MCP to its API and merges all types without stale official connectors', async () => {
+  const packageEntry = (type: RegistryPackageEntry['type'], id: string): RegistryPackageEntry => ({
+    type,
+    id,
+    version: '1.0.0',
+    title: id,
+    summary: id,
+    archive: `${id}.tar.gz`,
+    sha256: 'a'.repeat(64),
+    size: 100,
+    dependsOn: []
+  })
+  const custom: LocalRegistry = {
+    ...officialRegistryFixture,
+    schemaVersion: 1,
+    id: '/user/github/registry',
+    dir: '/user/github/registry',
+    trust: 'imported',
+    source: { kind: 'github', id: 'custom', repo: 'user/connectors', sha: 'c'.repeat(40) },
+    packages: [packageEntry('mcp', 'custom-connector')]
+  }
+  let dependencies!: capabilityService.CapabilityServiceDependencies
+  const app = await harness(undefined, {
+    officialPackageEntries: [
+      packageEntry('mcp', 'stale-official-connector'),
+      packageEntry('skill', 'website-skill')
+    ],
+    customPackageRegistries: [custom],
+    capabilityServiceCreate: (deps) => {
+      dependencies = deps
+      return capabilityService.createCapabilityService(deps)
+    }
+  })
+  await tick()
+  app.contentFetchRequests.length = 0
+  const mcp = await dependencies.loadRegistries('mcp')
+  assert.deepEqual(app.contentFetchRequests, ['https://phi.omicsagent.cn/api/mcp'])
+  assert.equal(mcp.registries[0].dir, officialConnectorRegistryFixture.dir)
+  assert(mcp.registries.some((registry) => registry.dir === custom.dir))
+  app.contentFetchRequests.length = 0
+  const skill = await dependencies.loadRegistries('skill')
+  assert.deepEqual(app.contentFetchRequests, ['https://phi.omicsagent.cn/api/catalog'])
+  assert(
+    skill.registries.some((registry) =>
+      registry.packages.some((entry) => entry.id === 'website-skill')
+    )
+  )
+  app.contentFetchRequests.length = 0
+  const all = await dependencies.loadRegistries()
+  assert.equal(all.registries[0].dir, officialConnectorRegistryFixture.dir)
+  assert.deepEqual(
+    new Set(app.contentFetchRequests),
+    new Set(['https://phi.omicsagent.cn/api/mcp', 'https://phi.omicsagent.cn/api/catalog'])
+  )
+  assert(
+    !all.registries.some((registry) =>
+      registry.packages.some((entry) => entry.id === 'stale-official-connector')
+    )
+  )
+  assert(
+    all.registries.some((registry) =>
+      registry.packages.some((entry) => entry.id === 'website-skill')
+    )
+  )
+  assert(
+    all.registries.some(
+      (registry) =>
+        registry.source?.repo === 'user/connectors' &&
+        registry.packages.some((entry) => entry.id === 'custom-connector')
+    )
   )
 })
 

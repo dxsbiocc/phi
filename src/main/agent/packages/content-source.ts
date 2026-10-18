@@ -2,6 +2,10 @@ import type { InstallerOptions, LocalRegistry, PackageRequest } from './installe
 import { addKnownRegistry } from './registries'
 import { readRegistry } from './registry'
 import {
+  isOfficialConnectorRegistryDirectory,
+  readOfficialConnectorRegistry
+} from './official-connector-registry'
+import {
   OFFICIAL_REGISTRY_ID,
   isOfficialRegistryDirectory,
   prepareOfficialPackageInstall,
@@ -18,6 +22,9 @@ export async function readContentRegistry(
   source: string,
   options: OfficialRegistryOptions = {}
 ): Promise<LocalRegistry> {
+  if (isOfficialConnectorRegistryDirectory(source, options.agentDir)) {
+    return readOfficialConnectorRegistry(source, options)
+  }
   if (source === OFFICIAL_REGISTRY_ID || isOfficialRegistryDirectory(source, options.agentDir)) {
     return syncPreferredOfficialRegistry(options)
   }

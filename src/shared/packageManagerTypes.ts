@@ -24,6 +24,7 @@ export interface PackageRegistryEntryView {
   dependsOn: Array<{ id: string; type: PackageManagerType; version: string }>
   requires?: { coreTools?: string[] }
   category?: string
+  directoryAuthBlocked?: boolean
   group?: string
   groupLabel?: string
   groupOrder?: number

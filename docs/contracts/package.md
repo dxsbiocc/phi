@@ -140,6 +140,15 @@ keeps older registry entries valid and uses the type fallback. See
 
 ### 4.3 Official catalog sources (1.4.0)
 
+HTTP connectors use `https://phi.omicsagent.cn/api/mcp` and the fixed per-ID detail
+API directly. Validated complete HTTP manifests and same-origin icons become local
+installable packages in `~/.phi/cache/registries/phi-connectors-api/`; the normal
+connector path does not fetch a GitHub snapshot. These API packages retain
+`imported` trust and are shown as `Phi 官网`. Authorization-blocked entries remain
+visible with their restriction. API failure uses a validated connector cache,
+then the original signed release source with an explicit fallback notice. User
+GitHub imports retain their own provenance and remain available.
+
 Phi first reads `https://phi.omicsagent.cn/api/catalog`. Its commit identifies a
 fixed snapshot of `dxsbiocc/phi-packages`. Phi validates and materializes the complete
 skills, connectors, plugins, and wrappers into its local package format without

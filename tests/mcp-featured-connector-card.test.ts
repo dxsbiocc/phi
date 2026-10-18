@@ -175,6 +175,16 @@ test('catalog cards expose unavailable and not-built environment states', () => 
   assert.match(pending, /aria-label="构建 Local stdio 环境"/)
 })
 
+test('an authorization restriction is not presented as an app version requirement', () => {
+  const markup = render('google-drive', false, false, {
+    unavailableReason: '此连接器的目录授权暂不可用',
+    unavailableKind: 'authorization'
+  })
+  assert.match(markup, /授权暂不可用/)
+  assert.doesNotMatch(markup, /需要新版 Phi/)
+  assert.match(markup, /暂不能授权 Google Drive/)
+})
+
 test('authorization in progress shows a waiting indicator instead of an add or completion icon', () => {
   for (const [installed, authenticated, updateAvailable] of [
     [false, false, false],

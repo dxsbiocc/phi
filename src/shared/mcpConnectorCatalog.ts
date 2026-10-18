@@ -91,6 +91,7 @@ export interface FeaturedMcpConnector {
   registryDir?: string
   added: boolean
   unavailableReason?: string
+  unavailableKind?: 'app-version' | 'authorization'
   environmentState?: 'ready' | 'not-built'
   source?: McpConnectorCatalogSource
   notice?: string

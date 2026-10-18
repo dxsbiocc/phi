@@ -92,7 +92,7 @@ export interface CapabilityService {
 export interface CapabilityServiceDependencies {
   agentDir: string
   appVersion: string
-  loadRegistries: () => Promise<LoadedKnownRegistries>
+  loadRegistries: (type?: PackageType) => Promise<LoadedKnownRegistries>
   assertCurrent?: (context: PhiHostRequestContext) => void
   searchOfficial?: (
     query: string,

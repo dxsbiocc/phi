@@ -161,9 +161,17 @@ export function McpFeaturedConnectorCard({
           {installed && authorized && !enabled && (
             <Chip size="small" variant="outlined" label="已停用" />
           )}
-          {connector.unavailableReason && (!installed || updateAvailable) && (
-            <Chip size="small" variant="outlined" label="需要新版 Phi" />
-          )}
+          {connector.unavailableReason &&
+            (!installed || updateAvailable) &&
+            (connector.unavailableKind !== 'authorization' || loginLabel !== '授权暂不可用') && (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={
+                  connector.unavailableKind === 'authorization' ? '授权暂不可用' : '需要新版 Phi'
+                }
+              />
+            )}
           {connector.transport === 'stdio' &&
             connector.setup &&
             connector.setup.phase !== 'removed' && (

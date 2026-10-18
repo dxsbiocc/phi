@@ -56,10 +56,10 @@ export function McpFeaturedConnectorDetails({
     ) : null
   let actions: React.JSX.Element
   if (connector.unavailableReason && !server) {
-    // The version requirement only stops a new install; a connector that is already added works.
+    // Catalog restrictions stop a new install; already configured connectors remain usable.
     actions = (
-      <Button variant="outlined" disabled>
-        需要新版 Phi
+      <Button variant="outlined" disabled title={connector.unavailableReason}>
+        {connector.unavailableKind === 'authorization' ? '授权暂不可用' : '需要新版 Phi'}
       </Button>
     )
   } else if (connector.environmentState === 'not-built') {
@@ -76,7 +76,7 @@ export function McpFeaturedConnectorDetails({
       <Stack direction="row" spacing={1}>
         {connector.unavailableReason ? (
           <Button variant="outlined" disabled title={connector.unavailableReason}>
-            更新需要新版 Phi
+            {connector.unavailableKind === 'authorization' ? '授权暂不可用' : '更新需要新版 Phi'}
           </Button>
         ) : (
           <Button variant="contained" disabled={busy} onClick={onAdd}>
