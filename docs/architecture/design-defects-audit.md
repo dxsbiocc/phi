@@ -27,14 +27,14 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 | 编号 | 分支状态 | 备注 |
 | --- | --- | --- |
 | OMP-01 | 仍在 | `in-process/session-creation.ts:304-305` 每个事件仍附整段 `sessionState` |
-| OMP-02 | 仍在 | `omp-bridge.ts:443-458` 先置空句柄,1.5s 后放弃等待;worker 无父死退出 |
-| OMP-03 | 仍在 | `omp-bridge.ts:253` `request()` 无超时、无 signal |
+| OMP-02 | 已修 | `ab123b20`:`stop()` 跟踪子进程直到真正退出,SIGTERM 1s 后升级 SIGKILL;worker 在宿主断开后清理并退出 |
+| OMP-03 | 已修 | `ab123b20`:`request()` 支持 `timeoutMs`/`signal`;短控制调用默认 15s,`session.abort` 与 `modelGateway.create` 超时即停 worker;长调用不设超时 |
 | OMP-04 | 仍在 | `omp-bridge.ts:170` 只还原 `ConfiguredStdioProbeError` |
 | OMP-05 | 仍在 | `events.ts:1` 仍从 OMP 派生;`facade-event-projection.ts:261` 远端形状不符仍 throw |
 | OMP-06 | 仍在 | 实测 73 个文件、45 个私有子路径;`package.json` 只声明 `pi-coding-agent`、`pi-natives` |
-| OMP-07 | 仍在 | `omp-bridge.ts:276,600` 写 stdin 无 `error` 监听 |
+| OMP-07 | 已修 | `ab123b20`:stdin 错误与写回调错误都让该代 worker 退役,不再抛出未捕获的 EPIPE |
 | OMP-08 | 仍在 | `omp-bridge.ts:559` 非事件静默丢弃,无握手 |
-| OMP-09 | 仍在 | 12 个文件含 `18.10.3`;`engine/mcp/owned-stdio-transports.ts:14,35`(原文路径少了 `engine/`) |
+| OMP-09 | 已修 | `a82ef561`:桌面端统一用 `engine/omp-version.ts`;`package.json` 与远端扩展的字面量由 `tests/omp-version-pin.test.ts` 校验 |
 | OMP-10 | 仍在 | `remote-session-runtime.ts:1246` 无主 run 时 `stopExecution()` 直接返回,子代理只在 `close()` 里 `stopParent` |
 | OMP-11 | 仍在 | `session-factory.ts:8,54`;`owned-stdio-transports.ts:28-36` |
 | OMP-12 | 仍在 | `host-service-registry.ts:8` 键只有方法名;facade 在 `:489,612` 共用同一 registry |
