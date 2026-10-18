@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useEffect, useId, useState } from 'react'
 import {
   Alert,
@@ -52,6 +55,8 @@ export function McpCustomConnectorDialog({
   onSubmit,
   onSubmitLocal
 }: McpCustomConnectorDialogProps): React.JSX.Element {
+  useUiLanguage()
+
   const [tab, setTab] = useState<ConnectorTab>(initialDraft?.tab ?? 'remote')
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -158,7 +163,7 @@ export function McpCustomConnectorDialog({
           else submitRemote()
         }}
       >
-        <DialogTitle>添加自定义连接器</DialogTitle>
+        <DialogTitle>{connectorCopy.addCustomConnector}</DialogTitle>
         <Tabs
           value={resolvedTab}
           onChange={(_event, value: ConnectorTab) => {
@@ -166,11 +171,13 @@ export function McpCustomConnectorDialog({
             setLocalConfirmRequest(null)
             setLocalError(null)
           }}
-          aria-label="连接器类型"
+          aria-label={connectorCopy.connectorType}
           sx={{ px: 3 }}
         >
-          <Tab value="remote" label="远程 (HTTPS)" disabled={busy} />
-          {localAvailable ? <Tab value="local" label="本地 (stdio)" disabled={busy} /> : null}
+          <Tab value="remote" label={connectorCopy.remoteHttps} disabled={busy} />
+          {localAvailable ? (
+            <Tab value="local" label={connectorCopy.localStdio} disabled={busy} />
+          ) : null}
         </Tabs>
         <DialogContent>
           {localTab ? (
@@ -186,8 +193,8 @@ export function McpCustomConnectorDialog({
                 localDraft.runtime.kind === 'environment' &&
                 !localDraft.runtime.ref
                   ? initialDraft.runtimeHint === 'bun'
-                    ? '未找到 Phi 内置 Bun，请检查应用安装是否完整'
-                    : '请选择已就绪的 Phi 运行环境'
+                    ? connectorCopy.bunMissing
+                    : connectorCopy.chooseReadyRuntime
                   : undefined
               }
             />
@@ -197,16 +204,16 @@ export function McpCustomConnectorDialog({
                 autoFocus
                 disabled={busy}
                 fullWidth
-                label="名称"
+                label={resourceUi.name}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                helperText="使用字母、数字、下划线或连字符"
+                helperText={connectorCopy.remoteNameHint}
                 sx={{ mt: 1, mb: 2 }}
               />
               <TextField
                 fullWidth
                 disabled={busy}
-                label="服务器地址"
+                label={connectorCopy.serverUrl}
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 placeholder="https://example.com/mcp"
@@ -226,26 +233,24 @@ export function McpCustomConnectorDialog({
                 }
                 sx={{ mt: 2, mb: advancedOpen ? 1 : 0, color: 'text.primary' }}
               >
-                高级设置
+                {connectorCopy.advancedSettings}
               </Button>
               <Collapse in={advancedOpen} id={authenticationId}>
                 <TextField
                   fullWidth
                   disabled={busy}
-                  label="OAuth Client ID（可选）"
+                  label={connectorCopy.optionalClientId}
                   value={clientId}
                   onChange={(event) => setClientId(event.target.value)}
                   autoComplete="off"
                   error={missingClientId}
-                  helperText={
-                    missingClientId ? '使用 Client Secret 时需要填写 Client ID' : undefined
-                  }
+                  helperText={missingClientId ? connectorCopy.clientIdRequired : undefined}
                   sx={{ mt: 1, mb: 2 }}
                 />
                 <TextField
                   fullWidth
                   disabled={busy}
-                  label="OAuth Client Secret（可选）"
+                  label={connectorCopy.optionalClientSecret}
                   type="password"
                   value={clientSecret}
                   onChange={(event) => setClientSecret(event.target.value)}
@@ -262,7 +267,7 @@ export function McpCustomConnectorDialog({
         </DialogContent>
         <DialogActions>
           <Button type="button" onClick={onClose} disabled={busy && !authorizing}>
-            {authorizing ? '取消授权' : '取消'}
+            {authorizing ? connectorCopy.cancelAuthorization : resourceUi.cancel}
           </Button>
           <Button
             variant="contained"
@@ -274,13 +279,13 @@ export function McpCustomConnectorDialog({
           >
             {localTab
               ? busy
-                ? '正在开始…'
-                : '添加'
+                ? connectorCopy.starting
+                : connectorCopy.add
               : authorizing
-                ? '正在授权…'
+                ? connectorCopy.authorizing
                 : busy
-                  ? '正在添加…'
-                  : '添加'}
+                  ? connectorCopy.adding
+                  : connectorCopy.add}
           </Button>
         </DialogActions>
       </Box>

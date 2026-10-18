@@ -1,3 +1,5 @@
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from './connectorCopy'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { McpServerSummary } from '../../../types'
 
@@ -7,8 +9,8 @@ export interface CustomConnectorServerEntry {
   kind: 'server'
   name: string
   subtitle: string
-  origin: '自建·本地' | '自建·远程'
-  status: '已启用' | '已停用'
+  origin: typeof connectorCopy.customLocal | typeof connectorCopy.customRemote
+  status: typeof resourceUi.enabled | typeof resourceUi.disabled
   enabled: boolean
   server: McpServerSummary
 }
@@ -17,8 +19,9 @@ export interface CustomConnectorJobEntry {
   kind: 'job'
   name: string
   subtitle: string
-  origin: '自建·本地'
-  status: '正在添加…' | '需要先配置' | '添加失败'
+  origin: typeof connectorCopy.customLocal
+  status:
+    typeof connectorCopy.adding | typeof connectorCopy.needsSetup | typeof connectorCopy.addFailed
   job: McpConnectorSetupProgress
 }
 
@@ -64,8 +67,8 @@ export function customConnectorEntries(
       kind: 'server' as const,
       name: server.name,
       subtitle: server.userStdio ? commandLine(server) : server.url!,
-      origin: server.userStdio ? ('自建·本地' as const) : ('自建·远程' as const),
-      status: server.enabled === false ? ('已停用' as const) : ('已启用' as const),
+      origin: server.userStdio ? connectorCopy.customLocal : connectorCopy.customRemote,
+      status: server.enabled === false ? resourceUi.disabled : resourceUi.enabled,
       enabled: server.enabled !== false,
       server
     }))
@@ -82,13 +85,13 @@ export function customConnectorEntries(
       kind: 'job' as const,
       name: job.title?.trim() || job.id,
       subtitle: job.summary?.trim() || job.id,
-      origin: '自建·本地' as const,
+      origin: connectorCopy.customLocal,
       status:
         job.phase === 'starting'
-          ? ('正在添加…' as const)
+          ? connectorCopy.adding
           : job.failureKind === 'needs-setup'
-            ? ('需要先配置' as const)
-            : ('添加失败' as const),
+            ? connectorCopy.needsSetup
+            : connectorCopy.addFailed,
       job
     }))
     .sort((left, right) => {

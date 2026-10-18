@@ -1,3 +1,4 @@
+import { chatCopy } from '../lib/chatCopy'
 import { useCallback, useState, type ClipboardEvent } from 'react'
 
 import {
@@ -10,7 +11,7 @@ import {
 function readClipboardImage(file: File): Promise<PromptImageInput> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error('无法读取剪贴板图片'))
+    reader.onerror = () => reject(new Error(chatCopy.unableToReadClipboardImage))
     reader.onload = () => {
       const value = reader.result
       const match =
@@ -18,7 +19,7 @@ function readClipboardImage(file: File): Promise<PromptImageInput> {
           ? /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/.exec(value)
           : null
       if (!match) {
-        reject(new Error('不支持的剪贴板图片格式'))
+        reject(new Error(chatCopy.unsupportedClipboardImageFormat))
         return
       }
       resolve({ mimeType: match[1] as PromptImageMimeType, data: match[2] })
@@ -48,22 +49,24 @@ export function usePastedImages(input: {
       event.preventDefault()
       setPasteError(null)
       if (input.supportsImages === false) {
-        setPasteError('当前模型不支持图片，请先切换模型')
+        setPasteError(chatCopy.theCurrentModelDoesNotSupportImagesChooseAnotherModel)
         return
       }
       if (input.images.length + files.length > MAX_PROMPT_IMAGES) {
-        setPasteError(`一次最多粘贴 ${MAX_PROMPT_IMAGES} 张图片`)
+        setPasteError(chatCopy.pasteUpToValueImagesAtATime(MAX_PROMPT_IMAGES))
         return
       }
       if (files.some((file) => file.size === 0 || file.size > MAX_PROMPT_IMAGE_BYTES)) {
-        setPasteError('每张图片必须小于 8 MB')
+        setPasteError(chatCopy.eachImageMustBeSmallerThan8MB)
         return
       }
       setIsReading(true)
       void Promise.all(files.map(readClipboardImage))
         .then((images) => input.onImagesAdded?.(images))
         .catch((error: unknown) =>
-          setPasteError(error instanceof Error ? error.message : '无法读取剪贴板图片')
+          setPasteError(
+            error instanceof Error ? error.message : chatCopy.unableToReadClipboardImage
+          )
         )
         .finally(() => setIsReading(false))
     },

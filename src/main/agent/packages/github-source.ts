@@ -589,7 +589,8 @@ export async function readBoundedResponse(
   timeoutMs: number
 ): Promise<Buffer> {
   const declared = Number(response.headers.get('content-length'))
-  if (Number.isFinite(declared) && declared > maxBytes) throw new Error(`${label}超过大小限制`)
+  if (Number.isFinite(declared) && declared > maxBytes)
+    throw new Error(`${label} exceeds the size limit`)
   if (!response.body) return Buffer.alloc(0)
   const reader = response.body.getReader()
   const chunks: Buffer[] = []
@@ -601,7 +602,7 @@ export async function readBoundedResponse(
       if (result.done) break
       const chunk = Buffer.from(result.value)
       size += chunk.length
-      if (size > maxBytes) throw new Error(`${label}超过大小限制`)
+      if (size > maxBytes) throw new Error(`${label} exceeds the size limit`)
       chunks.push(chunk)
     }
   } finally {
@@ -616,13 +617,13 @@ async function readWithDeadline(
   label: string
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   const remaining = deadline - Date.now()
-  if (remaining <= 0) throw new Error(`${label}读取超时`)
+  if (remaining <= 0) throw new Error(`${label} read timed out`)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       reader.read(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label}读取超时`)), remaining)
+        timer = setTimeout(() => reject(new Error(`${label} read timed out`)), remaining)
         timer.unref?.()
       })
     ])

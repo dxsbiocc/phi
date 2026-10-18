@@ -1,3 +1,4 @@
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { WrapperPackageMember } from '../../../../../shared/packageManagerTypes'
@@ -65,7 +66,7 @@ export function useWrapperPackageMembers(
       wrappers: [],
       bundled: false,
       skipped: 0,
-      error: '这个 wrapper 没有可查看详情的来源。'
+      error: wrapperCopy.noDetailSource
     }
   }
   if (!remote || remote.key !== key)

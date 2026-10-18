@@ -43,7 +43,7 @@ export function buildWrapperReproducibilityBundle(
 ): WrapperReproducibilityBundle {
   const run = readWrapperRun(runId, agentDir)
   if (!run) {
-    throw new Error(`run 不存在: ${runId}`)
+    throw new Error(`Run not found: ${runId}`)
   }
 
   const plan = readWrapperPlan(run.planId, agentDir)

@@ -238,3 +238,29 @@ test('a throwing continue hook never breaks notification', () => {
   })
   assert.equal(h.notified.length, 1)
 })
+
+test('native wrapper notifications follow live language while preserving persisted event IDs', () => {
+  let language: 'en' | 'zh-CN' = 'en'
+  const h = harness({ focused: false })
+  h.deps.getUiLanguage = () => language
+  for (const next of ['en', 'zh-CN', 'en'] as const) {
+    language = next
+    deliverWrapperRunFinished(run(), STATUS, h.deps)
+  }
+  assert.deepEqual(
+    h.notified.map((item) => item.title),
+    ['Wrapper run completed', 'Wrapper 运行已完成', 'Wrapper run completed']
+  )
+  assert.match(h.notified[0].body, /2 min 5 s/)
+  assert.match(h.notified[1].body, /2 分 5 秒/)
+  assert.deepEqual(h.persisted[0].event, h.persisted[1].event)
+  assert.deepEqual(h.persisted[1].event, h.persisted[2].event)
+  assert.deepEqual(
+    h.sent.map((item) => [item.eventId, item.wrapperRunId]),
+    [
+      ['evt-1', 'wrun_abc'],
+      ['evt-1', 'wrun_abc'],
+      ['evt-1', 'wrun_abc']
+    ]
+  )
+})

@@ -1,3 +1,5 @@
+import { settingsUi } from '../lib/settingsUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState } from 'react'
 import {
   Alert,
@@ -44,22 +46,26 @@ import { TabLabel } from './TabCountBadge'
 function authDescription(provider: WebSearchProviderOption): string {
   switch (provider.auth) {
     case 'none':
-      return '免认证'
+      return settingsUi.noAuthentication
     case 'optional':
-      return '可选 Key'
+      return settingsUi.optionalKey
     case 'api-key':
       return 'API Key'
     case 'oauth-or-key':
-      return 'Key / 授权'
+      return settingsUi.keyAuthorization
     case 'oauth':
-      return '账号授权'
+      return settingsUi.accountAuthorization
     case 'endpoint':
-      return '实例地址'
+      return settingsUi.instanceURL
   }
 }
 
 function costLabel(access: WebSearchProviderOption['access']): string {
-  return access === 'free' ? '免费' : access === 'metered' ? '可能收费' : '自建'
+  return access === 'free'
+    ? settingsUi.free
+    : access === 'metered'
+      ? settingsUi.mayRequirePayment
+      : settingsUi.custom
 }
 
 export function SearchProviderList({
@@ -83,6 +89,7 @@ export function SearchProviderList({
   onClearApiKey?: (id: string) => Promise<WebSearchKeyStatus>
   onOpenProviderSettings?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [costFilter, setCostFilter] = useState<SearchProviderCostFilter>('all')
   const [enabledFilter, setEnabledFilter] = useState<SearchProviderEnabledFilter>('all')
   const [query, setQuery] = useState('')
@@ -159,15 +166,15 @@ export function SearchProviderList({
           }}
           variant="scrollable"
           scrollButtons="auto"
-          aria-label="按费用类型筛选搜索服务"
+          aria-label={settingsUi.filterSearchProvidersByCost}
           sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
         >
-          <Tab value="all" label={<TabLabel text="全部" count={providers.length} />} />
+          <Tab value="all" label={<TabLabel text={settingsUi.all} count={providers.length} />} />
           <Tab
             value="free"
             label={
               <TabLabel
-                text="免凭据"
+                text={settingsUi.noCredentials}
                 count={providers.filter((provider) => provider.access === 'free').length}
                 tone="success"
               />
@@ -177,7 +184,7 @@ export function SearchProviderList({
             value="metered"
             label={
               <TabLabel
-                text="账号 / API"
+                text={settingsUi.accountAPI}
                 count={providers.filter((provider) => provider.access === 'metered').length}
                 tone="warning"
               />
@@ -187,7 +194,7 @@ export function SearchProviderList({
             value="self-hosted"
             label={
               <TabLabel
-                text="自建"
+                text={settingsUi.custom}
                 count={providers.filter((provider) => provider.access === 'self-hosted').length}
               />
             }
@@ -199,25 +206,25 @@ export function SearchProviderList({
           sx={{ px: 3, py: 2.5, borderBottom: 1, borderColor: 'divider', alignItems: 'center' }}
         >
           <FormControl size="small" sx={{ minWidth: 145 }}>
-            <InputLabel id="web-search-enabled-filter-label">启用状态</InputLabel>
+            <InputLabel id="web-search-enabled-filter-label">{settingsUi.enabledStatus}</InputLabel>
             <Select
               labelId="web-search-enabled-filter-label"
-              label="启用状态"
+              label={settingsUi.enabledStatus}
               value={enabledFilter}
               onChange={(event) => {
                 setEnabledFilter(event.target.value as SearchProviderEnabledFilter)
                 setPage(0)
               }}
             >
-              <MenuItem value="all">全部状态</MenuItem>
-              <MenuItem value="enabled">已启用</MenuItem>
-              <MenuItem value="disabled">已关闭</MenuItem>
+              <MenuItem value="all">{settingsUi.allStatuses}</MenuItem>
+              <MenuItem value="enabled">{settingsUi.enabled}</MenuItem>
+              <MenuItem value="disabled">{settingsUi.disabled}</MenuItem>
             </Select>
           </FormControl>
           <TextField
             fullWidth
             size="small"
-            placeholder="搜索服务名称或 ID"
+            placeholder={settingsUi.searchProviderNameOrID}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value)
@@ -242,17 +249,17 @@ export function SearchProviderList({
               '& th:first-of-type, & td:first-of-type': { pl: 3 },
               '& th:last-of-type, & td:last-of-type': { pr: 3 }
             }}
-            aria-label="网页搜索服务来源列表"
+            aria-label={settingsUi.webSearchProviders}
           >
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
-                <TableCell sx={{ width: 68 }}>使用</TableCell>
-                <TableCell sx={{ width: 160 }}>服务</TableCell>
-                <TableCell sx={{ width: 100 }}>费用</TableCell>
-                <TableCell>认证方式</TableCell>
-                <TableCell sx={{ width: 75 }}>优先级</TableCell>
+                <TableCell sx={{ width: 68 }}>{settingsUi.use}</TableCell>
+                <TableCell sx={{ width: 160 }}>{settingsUi.provider}</TableCell>
+                <TableCell sx={{ width: 100 }}>{settingsUi.cost}</TableCell>
+                <TableCell>{settingsUi.authentication}</TableCell>
+                <TableCell sx={{ width: 75 }}>{settingsUi.priority}</TableCell>
                 <TableCell align="right" sx={{ width: 68 }}>
-                  操作
+                  {settingsUi.actions}
                 </TableCell>
               </TableRow>
             </TableHead>
@@ -275,7 +282,9 @@ export function SearchProviderList({
                         checked={enabled}
                         disabled={disabled || (enabled && enabledIds.length === 1)}
                         onChange={() => onToggle(provider.id)}
-                        slotProps={{ input: { 'aria-label': `启用 ${provider.label} 搜索` } }}
+                        slotProps={{
+                          input: { 'aria-label': settingsUi.enableValueSearch(provider.label) }
+                        }}
                       />
                     </TableCell>
                     <TableCell>
@@ -299,9 +308,11 @@ export function SearchProviderList({
                       </Typography>
                       {(hasKey || provider.oauthConfigured) && (
                         <Stack direction="row" spacing={0.5} sx={{ mt: 0.25 }}>
-                          {hasKey && <Chip size="small" color="success" label="已配置 Key" />}
+                          {hasKey && (
+                            <Chip size="small" color="success" label={settingsUi.keyConfigured} />
+                          )}
                           {provider.oauthConfigured && (
-                            <Chip size="small" color="success" label="已授权" />
+                            <Chip size="small" color="success" label={settingsUi.authorized} />
                           )}
                         </Stack>
                       )}
@@ -313,7 +324,7 @@ export function SearchProviderList({
                               disabled={disabled || busy}
                               onClick={() => setKeyProvider(provider)}
                             >
-                              {hasKey ? '更换 Key' : '填写 Key'}
+                              {hasKey ? settingsUi.changeKey : settingsUi.enterKey}
                             </Button>
                           )}
                           {canLogin && onOpenProviderSettings && (
@@ -322,7 +333,7 @@ export function SearchProviderList({
                               disabled={disabled || busy}
                               onClick={onOpenProviderSettings}
                             >
-                              账号授权
+                              {settingsUi.accountAuthorization}
                             </Button>
                           )}
                         </Stack>
@@ -332,7 +343,7 @@ export function SearchProviderList({
                     <TableCell align="right">
                       <IconButton
                         size="small"
-                        aria-label={`更多 ${provider.label} 操作`}
+                        aria-label={settingsUi.moreActionsForValue(provider.label)}
                         disabled={disabled || busy}
                         onClick={(event) => {
                           setMenuProvider(provider)
@@ -348,7 +359,7 @@ export function SearchProviderList({
               {result.rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                    没有符合条件的搜索服务
+                    {settingsUi.noMatchingSearchProviders}
                   </TableCell>
                 </TableRow>
               )}
@@ -366,7 +377,7 @@ export function SearchProviderList({
             setPage(0)
           }}
           rowsPerPageOptions={[5, 10, 20]}
-          labelRowsPerPage="每页"
+          labelRowsPerPage={settingsUi.perPage}
           labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
           sx={{ '& .MuiTablePagination-toolbar': { pl: 3 } }}
         />
@@ -380,7 +391,7 @@ export function SearchProviderList({
               closeMenu()
             }}
           >
-            置顶
+            {settingsUi.moveToTop}
           </MenuItem>
         )}
         {menuProvider && menuIndex > 0 && (
@@ -390,7 +401,7 @@ export function SearchProviderList({
               closeMenu()
             }}
           >
-            上移
+            {settingsUi.moveUp}
           </MenuItem>
         )}
         {menuProvider && menuIndex >= 0 && menuIndex < enabledIds.length - 1 && (
@@ -400,7 +411,7 @@ export function SearchProviderList({
               closeMenu()
             }}
           >
-            下移
+            {settingsUi.moveDown}
           </MenuItem>
         )}
         {menuProvider && menuCanSetKey && onSetApiKey && (
@@ -412,8 +423,8 @@ export function SearchProviderList({
             }}
           >
             {(keyStatus[menuProvider.id]?.apiKeyConfigured ?? menuProvider.apiKeyConfigured)
-              ? '更换 API Key'
-              : '填写 API Key'}
+              ? settingsUi.changeAPIKey
+              : settingsUi.enterAPIKey}
           </MenuItem>
         )}
         {menuProvider && menuHasStoredKey && onClearApiKey && (
@@ -423,7 +434,7 @@ export function SearchProviderList({
               closeMenu()
             }}
           >
-            清除 Key
+            {settingsUi.clearKey}
           </MenuItem>
         )}
         {menuProvider && menuCanLogin && onOpenProviderSettings && (
@@ -433,11 +444,11 @@ export function SearchProviderList({
               onOpenProviderSettings()
             }}
           >
-            账号授权
+            {settingsUi.accountAuthorization}
           </MenuItem>
         )}
         {menuProvider && menuIndex < 0 && !menuCanSetKey && !menuCanLogin && (
-          <MenuItem disabled>使用开关启用</MenuItem>
+          <MenuItem disabled>{settingsUi.useTheSwitchToEnable}</MenuItem>
         )}
       </Menu>
       <Dialog
@@ -466,7 +477,7 @@ export function SearchProviderList({
                 size="small"
                 sx={{ alignSelf: 'flex-start', pl: 0 }}
               >
-                前往 {keyProvider.label} 获取 Key ↗
+                {settingsUi.visit} {keyProvider.label} {settingsUi.getAKey}
               </Button>
             )}
             <TextField
@@ -477,7 +488,9 @@ export function SearchProviderList({
               value={key}
               onChange={(event) => setKey(event.target.value)}
               helperText={
-                keyProvider?.apiKeyEnv ? `全局凭据 · 也可设置 ${keyProvider.apiKeyEnv}` : '全局凭据'
+                keyProvider?.apiKeyEnv
+                  ? settingsUi.globalCredentialsYouCanAlsoSetValue(keyProvider.apiKeyEnv)
+                  : settingsUi.globalCredentials
               }
             />
             {error && <Alert severity="error">{error}</Alert>}
@@ -492,10 +505,10 @@ export function SearchProviderList({
               setError(null)
             }}
           >
-            取消
+            {settingsUi.cancel}
           </Button>
           <Button variant="contained" disabled={busy || !key.trim()} onClick={() => void saveKey()}>
-            保存
+            {settingsUi.save}
           </Button>
         </DialogActions>
       </Dialog>

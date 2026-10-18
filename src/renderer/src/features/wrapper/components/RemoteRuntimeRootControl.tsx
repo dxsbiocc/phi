@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Alert, Button, Stack, TextField, Typography } from '@mui/material'
 
 import type { ResolvedRemoteRuntimeRoot } from '../../../../../shared/remoteRuntimeRootTypes'
@@ -10,9 +12,15 @@ import {
 import { RemoteRuntimeRootResults } from './RemoteRuntimeRootResults'
 
 const SOURCE_LABELS: Record<ResolvedRemoteRuntimeRoot['source'], string> = {
-  project: '项目',
-  host: '主机',
-  default: '默认'
+  get project() {
+    return remoteSetupCopy.project
+  },
+  get host() {
+    return remoteSetupCopy.host
+  },
+  get default() {
+    return remoteSetupCopy.default
+  }
 }
 
 export interface RemoteRuntimeRootControlProps {
@@ -43,20 +51,21 @@ function RuntimeRootActions({
   checkBlocked: boolean
   needsConfirmation: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
       {onSave && !needsConfirmation && (
         <Button size="small" variant="contained" disabled={busy || hardBlocked} onClick={onSave}>
-          保存
+          {remoteSetupCopy.save}
         </Button>
       )}
       {onClear && (
         <Button size="small" disabled={busy} onClick={onClear}>
-          清除
+          {remoteSetupCopy.clear}
         </Button>
       )}
       <Button size="small" variant="outlined" disabled={busy || checkBlocked} onClick={onCheck}>
-        检测
+        {remoteSetupCopy.check}
       </Button>
     </Stack>
   )
@@ -71,6 +80,7 @@ function ConfiguredRootField({
   RemoteRuntimeRootControlProps,
   'label' | 'value' | 'valueError' | 'onChange'
 >): React.JSX.Element {
+  useUiLanguage()
   return (
     <TextField
       size="small"
@@ -80,7 +90,9 @@ function ConfiguredRootField({
       placeholder="~/.phi/runtime"
       onChange={(event) => onChange(event.target.value)}
       error={Boolean(valueError)}
-      helperText={valueError ?? '绝对路径或以 ~/ 开头；留空时使用上一级设置。'}
+      helperText={
+        valueError ? localizeRemoteSetupMessage(valueError) : remoteSetupCopy.runtimeRootHelp
+      }
       sx={{ '& input': { fontFamily: 'var(--font-mono)' } }}
     />
   )
@@ -100,6 +112,7 @@ export function RemoteRuntimeRootControl({
   onClear,
   valueError
 }: RemoteRuntimeRootControlProps): React.JSX.Element {
+  useUiLanguage()
   const status = remoteRuntimeRootUiStatus(doctorState, doctorTargetKey)
   const hardBlocked = Boolean(valueError) || runtimeRootHasHardErrors(doctorState, doctorTargetKey)
   const needsConfirmation = runtimeRootNeedsWarningConfirmation(doctorState, doctorTargetKey)
@@ -112,7 +125,10 @@ export function RemoteRuntimeRootControl({
         onChange={onChange}
       />
       <Typography variant="caption" color="text.secondary">
-        当前生效：{effective.configured}，来自 {SOURCE_LABELS[effective.source]}
+        {remoteSetupCopy.effectiveValuePrefix}
+        {effective.configured}
+        {remoteSetupCopy.valueSourcePrefix}
+        {SOURCE_LABELS[effective.source]}
       </Typography>
       <RuntimeRootActions
         busy={busy}
@@ -124,7 +140,7 @@ export function RemoteRuntimeRootControl({
         onClear={onClear}
       />
       {hardBlocked && status.phase === 'checked' && (
-        <Alert severity="error">存在硬性错误，修正后才能保存。</Alert>
+        <Alert severity="error">{remoteSetupCopy.runtimeRootBlockingError}</Alert>
       )}
       <RemoteRuntimeRootResults
         status={status}

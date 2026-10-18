@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -19,6 +20,9 @@ const baseSession: SessionSummary = {
   status: 'idle',
   unreadKind: null
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('session title prefers explicit session name over first message', () => {
   assert.equal(sessionDisplayTitle({ ...baseSession, name: '手动标题' }), '手动标题')

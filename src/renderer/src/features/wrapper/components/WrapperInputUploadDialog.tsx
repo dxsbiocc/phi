@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { localizeWrapperMessage, wrapperCopy } from '../lib/wrapperCopy'
 import {
   Alert,
   Button,
@@ -35,6 +38,7 @@ export function WrapperInputUploadDialog({
   onClose: () => void
   onUploaded: (plan: WrapperRunPlan) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
   const [job, setJob] = useState<RemoteProjectUploadJob | null>(null)
   const [busy, setBusy] = useState(false)
@@ -57,7 +61,7 @@ export function WrapperInputUploadDialog({
     return window.api.onInputFilesDropped((paths, dropTarget) => {
       if (dropTarget.kind !== 'wrapper-input') return
       if (paths.length !== 1) {
-        setError('每个 Wrapper 输入一次请选择或拖入一个文件或目录。')
+        setError(wrapperCopy.chooseOneInput)
         return
       }
       setError('')
@@ -78,7 +82,7 @@ export function WrapperInputUploadDialog({
       const paths = await window.api.pickLocalUploadFiles()
       if (paths.length === 0) return
       if (paths.length !== 1) {
-        setError('每个 Wrapper 输入一次请选择一个文件或目录。')
+        setError(wrapperCopy.chooseOneInput)
         return
       }
       setSourcePaths(paths)
@@ -89,11 +93,11 @@ export function WrapperInputUploadDialog({
 
   const upload = async (): Promise<void> => {
     if (!target || projectLocation?.kind !== 'ssh' || destinationDirectory === null) {
-      setError('Wrapper 计划没有可用的 SSH 项目上传落点。')
+      setError(wrapperCopy.missingUploadTarget)
       return
     }
     if (sourcePaths.length !== 1) {
-      setError('请先选择一个本机文件或目录。')
+      setError(wrapperCopy.chooseInputFirst)
       return
     }
     setBusy(true)
@@ -107,7 +111,10 @@ export function WrapperInputUploadDialog({
       let confirmed = !prepared.requiresConfirmation
       if (prepared.requiresConfirmation) {
         confirmed = window.confirm(
-          `将上传 ${prepared.totalFiles} 个文件（${(prepared.totalBytes / 1024 ** 3).toFixed(2)} GiB），是否继续？`
+          wrapperCopy.confirmUpload(
+            prepared.totalFiles,
+            (prepared.totalBytes / 1024 ** 3).toFixed(2)
+          )
         )
       }
       if (!confirmed) {
@@ -141,42 +148,42 @@ export function WrapperInputUploadDialog({
   const percent = job && job.totalBytes > 0 ? (job.bytesTransferred / job.totalBytes) * 100 : 0
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="sm">
-      <DialogTitle>为 {inputId} 选择本机输入</DialogTitle>
+      <DialogTitle>{wrapperCopy.inputTitle(inputId)}</DialogTitle>
       <DialogContent data-phi-file-drop-target="wrapper-input" sx={{ pt: 1, minHeight: 180 }}>
         <Stack spacing={1.5}>
           <Typography variant="body2" color="text.secondary">
-            选择文件或目录，或拖到此对话框。SSH 项目会先上传并校验，再允许提交 Wrapper。
+            {wrapperCopy.uploadHelp}
           </Typography>
           <Button variant="outlined" onClick={() => void choose()} disabled={busy}>
-            选择本机文件或目录
+            {wrapperCopy.chooseLocalInput}
           </Button>
           <Typography variant="caption" sx={{ overflowWrap: 'anywhere' }}>
-            {sourcePaths[0] ?? '尚未选择'}
+            {sourcePaths[0] ?? wrapperCopy.notSelected}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            落点：{destinationDirectory ? `项目/${destinationDirectory}` : '远程项目根目录'}
+            {wrapperCopy.uploadDestination(destinationDirectory ?? '')}
           </Typography>
           {job && ['queued', 'uploading', 'verifying'].includes(job.status) && (
             <LinearProgress variant="determinate" value={Math.min(100, percent)} />
           )}
-          {error && <Alert severity="error">{error}</Alert>}
+          {error && <Alert severity="error">{localizeWrapperMessage(error)}</Alert>}
         </Stack>
       </DialogContent>
       <DialogActions>
         {job && ['queued', 'uploading', 'verifying'].includes(job.status) && (
           <Button color="error" onClick={() => void cancel()}>
-            取消上传
+            {wrapperCopy.cancelUpload}
           </Button>
         )}
         <Button onClick={onClose} disabled={busy}>
-          关闭
+          {resourceUi.close}
         </Button>
         <Button
           variant="contained"
           onClick={() => void upload()}
           disabled={busy || sourcePaths.length !== 1}
         >
-          {busy ? '上传中…' : '上传并绑定输入'}
+          {busy ? wrapperCopy.uploading : wrapperCopy.uploadAndBind}
         </Button>
       </DialogActions>
     </Dialog>

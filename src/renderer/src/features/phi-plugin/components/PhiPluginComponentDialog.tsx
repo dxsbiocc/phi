@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { pluginCopy } from '../lib/pluginCopy'
 import { useId } from 'react'
 import {
   Alert,
@@ -48,6 +51,8 @@ export function PhiPluginComponentDialog({
   icon: React.ReactNode
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const titleId = useId()
   const environments = phiPluginComponentEnvironments(plugin, component)
   return (
@@ -62,7 +67,7 @@ export function PhiPluginComponentDialog({
               color="text.secondary"
               sx={{ display: 'block' }}
             >
-              {PHI_PLUGIN_COMPONENT_LABELS[component.kind]}详情
+              {pluginCopy.componentDetails(PHI_PLUGIN_COMPONENT_LABELS[component.kind])}
             </Typography>
             <Typography
               component="span"
@@ -76,36 +81,40 @@ export function PhiPluginComponentDialog({
               {component.name}
             </Typography>
           </Box>
-          <IconButton aria-label="关闭组件详情" onClick={onClose} size="small">
+          <IconButton aria-label={pluginCopy.closeComponentDetails} onClick={onClose} size="small">
             <PhiIcons.action.close size={18} />
           </IconButton>
         </Stack>
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ pt: 1 }}>
-          <DetailField label="说明">
+          <DetailField label={resourceUi.description}>
             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-              {component.description || '此组件未提供说明。'}
+              {component.description || pluginCopy.noDescription}
             </Typography>
           </DetailField>
-          <DetailField label="所属插件">
+          <DetailField label={pluginCopy.ownerPlugin}>
             <Typography variant="body2">
               {plugin.title} · v{plugin.version}
             </Typography>
           </DetailField>
           {component.kind === 'script' && (
             <>
-              <DetailField label="审批">
+              <DetailField label={pluginCopy.approval}>
                 <Typography variant="body2">
-                  {component.approval ? PHI_PLUGIN_APPROVAL_LABELS[component.approval] : '未声明'}
+                  {component.approval
+                    ? PHI_PLUGIN_APPROVAL_LABELS[component.approval]
+                    : pluginCopy.notDeclared}
                 </Typography>
               </DetailField>
-              <DetailField label="所属技能">
-                <Typography variant="body2">{component.skillName || '未声明'}</Typography>
+              <DetailField label={pluginCopy.ownerSkill}>
+                <Typography variant="body2">
+                  {component.skillName || pluginCopy.notDeclared}
+                </Typography>
               </DetailField>
             </>
           )}
-          <DetailField label="关联环境">
+          <DetailField label={pluginCopy.relatedEnvironments}>
             {environments.length > 0 ? (
               <Stack spacing={0.75}>
                 {environments.map((environment, index) => {
@@ -128,7 +137,7 @@ export function PhiPluginComponentDialog({
               </Stack>
             ) : (
               <Typography variant="body2" color="text.secondary">
-                未声明关联环境
+                {pluginCopy.noRelatedEnvironment}
               </Typography>
             )}
           </DetailField>

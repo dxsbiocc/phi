@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from './remoteSetupCopy'
 import type { Dispatch, SetStateAction } from 'react'
 
 import type {
@@ -174,8 +175,8 @@ export function installedControllerPatch(
     installStatus: {
       severity: 'success',
       message: result.alreadyInstalled
-        ? `已发现 Nextflow：${result.path}。请保存运行方式。`
-        : `Nextflow 已安装到 ${result.path}。请保存运行方式。`
+        ? remoteSetupCopy.nextflowFound(result.path)
+        : remoteSetupCopy.nextflowInstalled(result.path)
     },
     environmentState: { phase: 'running', key }
   }
@@ -206,30 +207,31 @@ export function controllerSaveError(state: ControllerState, derived: DerivedStat
   const serverRoot = state.remoteInputRoot.trim()
   if (!state.hosts.some((item) => item.id === state.hostProfileId)) {
     return derived.isRemoteProject
-      ? '项目绑定的 SSH 服务器已不可用，请先恢复服务器配置'
-      : '请选择 SSH 服务器'
+      ? remoteSetupCopy.boundSshUnavailable
+      : remoteSetupCopy.sshServerRequired
   }
-  if (!root.startsWith('/') || /[\r\n\0]/.test(root)) return '服务器工作目录必须是绝对路径'
+  if (!root.startsWith('/') || /[\r\n\0]/.test(root))
+    return remoteSetupCopy.workingDirectoryAbsolutePathError
   const runtimeRootError = remoteRuntimeRootValueError(state.runtimeRootOverride)
   if (runtimeRootError) return runtimeRootError
   const runtimeStatus = remoteRuntimeRootUiStatus(state.environmentState, derived.environmentKey)
   if (runtimeStatus.phase === 'checked' && runtimeStatus.result.hardErrors.length > 0) {
-    return runtimeStatus.result.hardErrors[0]?.message ?? '运行时根目录存在硬性错误'
+    return runtimeStatus.result.hardErrors[0]?.message ?? remoteSetupCopy.runtimeRootHasHardErrors
   }
   if (
     runtimeRootNeedsWarningConfirmation(state.environmentState, derived.environmentKey) &&
     state.runtimeRootConfirmedKey !== runtimeRootCandidateKey(state)
   ) {
-    return '运行时根目录存在提醒，请先点击“仍然使用”确认。'
+    return remoteSetupCopy.runtimeRootWarningsNeedApproval
   }
   if (!derived.isRemoteProject && Boolean(localRoot) !== Boolean(serverRoot)) {
-    return '本机和服务器输入根目录需要同时填写'
+    return remoteSetupCopy.bothInputRootsRequired
   }
   if (!derived.isRemoteProject && localRoot && !localRoot.startsWith('/')) {
-    return '本机输入根目录必须是绝对路径'
+    return remoteSetupCopy.localInputRootAbsolutePathError
   }
   if (!derived.isRemoteProject && serverRoot && !serverRoot.startsWith('/')) {
-    return '服务器输入根目录必须是绝对路径'
+    return remoteSetupCopy.serverInputRootAbsolutePathError
   }
   return hpcDraftError(state.hpc)
 }

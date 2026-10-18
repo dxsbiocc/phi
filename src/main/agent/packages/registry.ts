@@ -113,6 +113,12 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
     throw new Error(`注册表 packages[${index}].minAppVersion 无效`)
   }
   const dependsOn = parseDependencies(entry.dependsOn, index)
+  if (
+    entry.directoryAuthBlocked !== undefined &&
+    (entry.type !== 'mcp' || typeof entry.directoryAuthBlocked !== 'boolean')
+  ) {
+    throw new Error(`注册表 packages[${index}].directoryAuthBlocked 无效`)
+  }
   const requires = parseRequirements(entry.requires, index)
   let iconAsset: RegistryPackageEntry['iconAsset']
   if (entry.iconAsset !== undefined) {
@@ -141,6 +147,9 @@ function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry
     ...(typeof entry.minAppVersion === 'string' ? { minAppVersion: entry.minAppVersion } : {}),
     ...(requires ? { requires } : {}),
     ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+    ...(typeof entry.directoryAuthBlocked === 'boolean'
+      ? { directoryAuthBlocked: entry.directoryAuthBlocked }
+      : {}),
     ...group,
     ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {}),
     ...(iconAsset ? { iconAsset } : {}),

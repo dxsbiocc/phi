@@ -1,3 +1,4 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   filterInputFileReferenceCandidates,
@@ -91,7 +92,7 @@ export function useInputFileReferenceMenu({
           status: 'error',
           query,
           directoryPath,
-          message: error instanceof Error ? error.message : '无法读取目录'
+          message: error instanceof Error ? error.message : chatCopy.unableToReadDirectory
         })
       })
 

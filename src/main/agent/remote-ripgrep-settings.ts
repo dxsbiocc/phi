@@ -67,10 +67,10 @@ async function runRequest(
   checkRuntimeRoot: CheckRemoteRuntimeRoot
 ): Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult> {
   if (request.action === 'status') {
-    request.onProgress?.({ stage: 'checking-existing', message: '正在检查远程 ripgrep…' })
+    request.onProgress?.({ stage: 'checking-existing', message: 'Checking remote ripgrep…' })
     return (dependencies.status ?? getRemoteRipgrepStatus)(session, request.runtimeRoot)
   }
-  request.onProgress?.({ stage: 'preparing-directory', message: '正在准备远程 ripgrep…' })
+  request.onProgress?.({ stage: 'preparing-directory', message: 'Preparing remote ripgrep…' })
   return (dependencies.ensure ?? ensureRemoteRipgrep)(session, {
     runtimeRoot: request.runtimeRoot,
     confirmedWarnings: request.confirmedWarnings ?? [],
@@ -88,7 +88,7 @@ export async function runRemoteRipgrepForHost(
 ): Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult> {
   const agentDir = dependencies.agentDir ?? getPhiAgentDir()
   const profile = (dependencies.getHostProfile ?? getRemoteHostProfile)(hostProfileId, agentDir)
-  if (!profile) throw new Error('SSH 服务器档案不存在，请重新选择服务器')
+  if (!profile) throw new Error('SSH server profile not found. Select the server again.')
   const session = await (dependencies.connect ?? connectRemoteSshSession)({
     ...remoteConnectionConfigForProfile(profile),
     readyTimeoutMs: 15_000,

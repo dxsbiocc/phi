@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -48,6 +50,7 @@ export function TextFilePreview({
   renderMarkdownBlock?: (content: string) => ReactNode
   markdown?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const [sourceMode, setSourceMode] = useState(false)
   const actionsHost = useContext(FilePreviewActionsContext)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
@@ -137,7 +140,7 @@ export function TextFilePreview({
     } catch (error) {
       useTextFileDrafts
         .getState()
-        .failed(file.path, readableErrorMessage(error, '保存失败，请重试'))
+        .failed(file.path, readableErrorMessage(error, filePreviewCopy.saveFailed))
     } finally {
       const latest = useTextFileDrafts.getState().drafts[file.path]
       onDirtyChange?.(file.path, Boolean(latest?.saving || textFileDraftIsDirty(latest)))
@@ -148,10 +151,10 @@ export function TextFilePreview({
       data-phi-text-file-actions="true"
       sx={{ display: 'flex', alignItems: 'center', gap: 0.35 }}
     >
-      <Tooltip title="搜索文件内容（⌘/Ctrl + F）">
+      <Tooltip title={filePreviewCopy.searchContentShortcut}>
         <IconButton
           size="small"
-          aria-label="搜索文件内容"
+          aria-label={filePreviewCopy.searchContent}
           aria-pressed={searchOpen}
           onClick={openSearch}
         >
@@ -159,10 +162,10 @@ export function TextFilePreview({
         </IconButton>
       </Tooltip>
       {structured && (
-        <Tooltip title={sourceMode ? '显示预览' : '编辑源码'}>
+        <Tooltip title={sourceMode ? filePreviewCopy.showPreview : filePreviewCopy.editSource}>
           <IconButton
             size="small"
-            aria-label={sourceMode ? '显示预览' : '编辑源码'}
+            aria-label={sourceMode ? filePreviewCopy.showPreview : filePreviewCopy.editSource}
             aria-pressed={sourceMode}
             onClick={() => setSourceMode(!sourceMode)}
           >
@@ -171,11 +174,11 @@ export function TextFilePreview({
         </Tooltip>
       )}
       {dirty && (
-        <Tooltip title="放弃修改">
+        <Tooltip title={filePreviewCopy.discardChanges}>
           <span>
             <IconButton
               size="small"
-              aria-label="放弃修改"
+              aria-label={filePreviewCopy.discardChanges}
               disabled={saving}
               onClick={() => setConfirmDiscard(true)}
             >
@@ -185,11 +188,11 @@ export function TextFilePreview({
         </Tooltip>
       )}
       {editable && (
-        <Tooltip title={saving ? '正在保存…' : '保存（⌘/Ctrl + S）'}>
+        <Tooltip title={saving ? filePreviewCopy.saving : filePreviewCopy.saveShortcut}>
           <span>
             <IconButton
               size="small"
-              aria-label="保存文件"
+              aria-label={filePreviewCopy.saveFile}
               disabled={!dirty || saving}
               data-phi-file-save-button="true"
               onClick={() => void save()}
@@ -210,7 +213,7 @@ export function TextFilePreview({
     <Paper
       elevation={3}
       role="search"
-      aria-label="文件内搜索"
+      aria-label={filePreviewCopy.findInFile}
       data-phi-text-file-search="true"
       sx={{
         position: 'absolute',
@@ -233,10 +236,10 @@ export function TextFilePreview({
       }}
     >
       <InputBase
-        placeholder="在源码中搜索"
+        placeholder={filePreviewCopy.searchSource}
         value={query}
         inputRef={searchInput}
-        inputProps={{ 'aria-label': '搜索文本', spellCheck: false }}
+        inputProps={{ 'aria-label': filePreviewCopy.searchText, spellCheck: false }}
         onChange={(event) => {
           const value = event.target.value
           setQuery(value)
@@ -259,17 +262,17 @@ export function TextFilePreview({
         sx={{ minWidth: 34, textAlign: 'center', whiteSpace: 'nowrap' }}
       >
         {!query
-          ? '输入关键词'
+          ? filePreviewCopy.enterSearch
           : search.matches.length
             ? `${currentMatch + 1} / ${search.matches.length}${search.limited ? '+' : ''}`
-            : '无匹配'}
+            : filePreviewCopy.noMatches}
       </Typography>
-      <Tooltip title="区分大小写">
+      <Tooltip title={filePreviewCopy.matchCase}>
         <ToggleButton
           size="small"
           value="case"
           selected={caseSensitive}
-          aria-label="区分大小写"
+          aria-label={filePreviewCopy.matchCase}
           onChange={() => {
             const value = !caseSensitive
             setCaseSensitive(value)
@@ -291,7 +294,7 @@ export function TextFilePreview({
       <IconButton
         size="small"
         sx={{ p: 0.5, width: 26, height: 26 }}
-        aria-label="上一个匹配"
+        aria-label={filePreviewCopy.previousMatch}
         disabled={!search.matches.length}
         onClick={() => navigate(-1)}
       >
@@ -300,7 +303,7 @@ export function TextFilePreview({
       <IconButton
         size="small"
         sx={{ p: 0.5, width: 26, height: 26 }}
-        aria-label="下一个匹配"
+        aria-label={filePreviewCopy.nextMatch}
         disabled={!search.matches.length}
         onClick={() => navigate(1)}
       >
@@ -309,15 +312,15 @@ export function TextFilePreview({
       <IconButton
         size="small"
         sx={{ p: 0.5, width: 26, height: 26 }}
-        aria-label="关闭搜索"
+        aria-label={filePreviewCopy.closeSearch}
         onClick={closeSearch}
       >
         <Close sx={{ fontSize: 17 }} />
       </IconButton>
       {(file.truncated || search.limited) && (
         <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
-          {file.truncated ? '仅搜索已加载的文件片段。' : ''}
-          {search.limited ? '匹配过多，请缩小搜索范围。' : ''}
+          {file.truncated ? filePreviewCopy.searchTruncated : ''}
+          {search.limited ? filePreviewCopy.searchLimited : ''}
         </Typography>
       )}
     </Paper>
@@ -371,7 +374,7 @@ export function TextFilePreview({
           action={
             fileActions?.onReloadFile ? (
               <Button color="inherit" size="small" onClick={() => setConfirmDiscard(true)}>
-                重新读取
+                {filePreviewCopy.reload}
               </Button>
             ) : undefined
           }
@@ -386,7 +389,7 @@ export function TextFilePreview({
       )}
       {file.bytes > WORKSPACE_TEXT_MAX_BYTES && !file.truncated && (
         <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
-          当前支持编辑 320 KB 以内的文本文件，此文件可阅读和搜索。
+          {filePreviewCopy.textEditingLimit}
         </Alert>
       )}
       {sourceVisible ? (
@@ -406,7 +409,7 @@ export function TextFilePreview({
             path={file.path}
             value={content}
             readOnly={!editable}
-            ariaLabel={markdown ? 'Markdown 文档' : '文本内容'}
+            ariaLabel={markdown ? filePreviewCopy.markdownDocument : filePreviewCopy.textContent}
             query={searchOpen ? query : ''}
             caseSensitive={caseSensitive}
             selection={selection}
@@ -419,12 +422,12 @@ export function TextFilePreview({
         renderPreview(content)
       )}
       <ConfirmationDialog open={confirmDiscard} onClose={() => setConfirmDiscard(false)}>
-        <DialogTitle>放弃未保存的修改？</DialogTitle>
+        <DialogTitle>{filePreviewCopy.confirmDiscard}</DialogTitle>
         <DialogContent>
-          <DialogContentText>将放弃未保存的修改，并重新读取文件内容。</DialogContentText>
+          <DialogContentText>{filePreviewCopy.discardExplanation}</DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDiscard(false)}>取消</Button>
+          <Button onClick={() => setConfirmDiscard(false)}>{filePreviewCopy.cancel}</Button>
           <Button
             color="error"
             variant="contained"
@@ -435,7 +438,7 @@ export function TextFilePreview({
               fileActions?.onReloadFile?.(file.path)
             }}
           >
-            放弃修改
+            {filePreviewCopy.discardChanges}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

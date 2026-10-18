@@ -1,3 +1,4 @@
+import { getUiLocale } from '../../../lib/i18n'
 import {
   uiBlocksDetailsSchema,
   type TableUiBlock,
@@ -21,7 +22,7 @@ export function sortTableRows(
     const comparison =
       typeof leftValue === 'number' && typeof rightValue === 'number'
         ? leftValue - rightValue
-        : String(leftValue).localeCompare(String(rightValue), 'zh-CN', {
+        : String(leftValue).localeCompare(String(rightValue), getUiLocale(), {
             numeric: true,
             sensitivity: 'base'
           })

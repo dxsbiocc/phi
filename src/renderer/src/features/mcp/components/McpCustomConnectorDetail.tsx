@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { CustomConnectorServerEntry } from '../lib/customConnectorGroup'
 import { ConnectorIcon } from './ConnectorIcon'
@@ -21,8 +24,10 @@ export function McpCustomConnectorDetail({
   onCancelRemove: () => void
   onConfirmRemove: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const { server } = entry
-  const location = server.url || entry.subtitle || '未配置命令'
+  const location = server.url || entry.subtitle || connectorCopy.commandNotConfigured
   return (
     <Box sx={{ width: '100%', maxWidth: 760, mx: 'auto' }}>
       <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
@@ -37,10 +42,10 @@ export function McpCustomConnectorDetail({
           </Stack>
         </Box>
         <Button variant="outlined" disabled={busy} onClick={() => onEnabledChange(!entry.enabled)}>
-          {entry.enabled ? '停用' : '启用'}
+          {entry.enabled ? resourceUi.disable : resourceUi.enable}
         </Button>
         <Button color="error" variant="outlined" disabled={busy} onClick={onRequestRemove}>
-          移除
+          {resourceUi.remove}
         </Button>
       </Stack>
 
@@ -51,21 +56,21 @@ export function McpCustomConnectorDetail({
           action={
             <Stack direction="row" spacing={1}>
               <Button disabled={busy} onClick={onCancelRemove}>
-                取消
+                {resourceUi.cancel}
               </Button>
               <Button color="error" disabled={busy} onClick={onConfirmRemove}>
-                确认移除
+                {connectorCopy.confirmRemove}
               </Button>
             </Stack>
           }
         >
-          {server.userStdio ? '确认移除这个本地 stdio 连接器？' : '确认移除这个远程 HTTPS 连接器？'}
+          {server.userStdio ? connectorCopy.removeLocalConfirm : connectorCopy.removeRemoteConfirm}
         </Alert>
       ) : null}
 
       <Divider sx={{ my: 4 }} />
       <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-        {server.url ? 'MCP 地址' : '命令'}
+        {server.url ? connectorCopy.mcpUrl : connectorCopy.command}
       </Typography>
       <Typography
         component="code"
@@ -77,7 +82,7 @@ export function McpCustomConnectorDetail({
       {server.envKeys?.length ? (
         <>
           <Typography variant="h6" sx={{ mt: 4, mb: 1, fontWeight: 700 }}>
-            环境变量名称
+            {connectorCopy.environmentNames}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
             {server.envKeys.map((key) => (

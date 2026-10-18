@@ -262,9 +262,52 @@ test('approval presents exact source, dependency versions and task purpose', () 
   })
   assert.match(summary, /module-local-demo @ 2.0.0/)
   assert.match(summary, /module-nf-core-dependency @ 1.2.3/)
-  assert.match(summary, /官方签名软件源/)
+  assert.match(summary, /official signed source/)
+  assert.match(summary, /^Install Wrapper: /)
+  assert.match(summary, /Purpose: 分析当前样本/)
+  assert.match(summary, /Included packages and dependencies:/)
+  assert.match(summary, /Wrapper 依赖模块/)
+  assert.match(summary, /Estimated download: 0\.00 MB/)
   assert.match(summary, /分析当前样本/)
   assert.match(summary, /phi:nextflow@1/)
+})
+
+test('approval uses English resource types and host source labels while retaining author text', () => {
+  for (const [type, label] of [
+    ['skill', 'Skill'],
+    ['mcp', 'Connector'],
+    ['plugin', 'Plugin']
+  ] as const) {
+    const summary = capabilityApprovalSummary({
+      runtimeSessionId: 'runtime-1',
+      candidateId: 'candidate',
+      root: { type, id: 'test-resource', version: '1.0.0' },
+      action: 'enable',
+      reason: '分析当前样本',
+      source: 'Phi 官网',
+      trust: 'imported',
+      totalSize: 0,
+      environments: [],
+      packages: [
+        {
+          type,
+          id: 'test-resource',
+          version: '1.0.0',
+          title: '作者提供的名称',
+          source: '自建目录',
+          trust: 'imported',
+          size: 0,
+          alreadyInstalled: true
+        }
+      ]
+    })
+    assert.ok(summary.startsWith(`Enable ${label}: test-resource @ 1.0.0`))
+    assert.match(summary, /Source: Phi Website \(configured source\)/)
+    assert.ok(summary.includes(`${label} 作者提供的名称`))
+    assert.match(summary, /自建目录, already installed/)
+    assert.doesNotMatch(summary, /Phi 官网/)
+    assert.doesNotMatch(summary, /Required environments:/)
+  }
 })
 
 test('plan mode can discover modules while installation stays blocked until the plan is approved', () => {

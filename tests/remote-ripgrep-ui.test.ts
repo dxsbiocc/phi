@@ -1,3 +1,4 @@
+import { captureWrapperUi } from './helpers/captureWrapperUi'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -32,7 +33,7 @@ describe('remote ripgrep settings UI', () => {
           executablePath: '/home/secret/bin/rg',
           version: '14.1.1',
           durationMs: 1,
-          message: '远端已有系统 ripgrep。'
+          message: 'System ripgrep is available on the server.'
         }
       },
       onInstall: () => undefined
@@ -45,15 +46,15 @@ describe('remote ripgrep settings UI', () => {
           executablePath: '/home/secret/runtime/tools/ripgrep-14.1.1/bin/rg',
           version: '14.1.1',
           durationMs: 1,
-          message: '远端受管 ripgrep 已安装且可运行。'
+          message: 'Managed ripgrep is installed and usable on the server.'
         }
       },
       onInstall: () => undefined
     })
 
-    assert.match(system, /已有系统 rg（14\.1\.1）/)
-    assert.match(system, /安装受管版本/)
-    assert.match(managed, /受管 rg（14\.1\.1）/)
+    assert.match(system, /System rg \(14\.1\.1\)/)
+    assert.match(system, /Install managed version/)
+    assert.match(managed, /Managed rg \(14\.1\.1\)/)
     assert.doesNotMatch(`${system}${managed}`, /home\/secret/)
   })
 
@@ -66,12 +67,12 @@ describe('remote ripgrep settings UI', () => {
           status: 'system',
           version: '14.1.1',
           durationMs: 1,
-          message: '已有系统版本。'
+          message: 'A system version is available.'
         }
       },
       onInstall: (...args) => calls.push(args)
     }
-    const systemControl = RemoteRipgrepControl(systemProps)
+    const systemControl = captureWrapperUi(() => RemoteRipgrepControl(systemProps))
     const systemButton = (systemControl.props as { children: React.ReactElement[] }).children[2]
     ;(systemButton.props as { onClick: () => void }).onClick()
 
@@ -82,12 +83,12 @@ describe('remote ripgrep settings UI', () => {
           status: 'needs-confirmation',
           durationMs: 1,
           warningCodes: ['noexec'],
-          message: '需要确认。'
+          message: 'Confirmation required.'
         }
       },
       onInstall: (...args) => calls.push(args)
     }
-    const warningControl = RemoteRipgrepControl(warningProps)
+    const warningControl = captureWrapperUi(() => RemoteRipgrepControl(warningProps))
     const warningButton = (warningControl.props as { children: React.ReactElement[] }).children[2]
     ;(warningButton.props as { onClick: () => void }).onClick()
 
@@ -95,7 +96,7 @@ describe('remote ripgrep settings UI', () => {
       [undefined, true],
       [['noexec'], false]
     ])
-    assert.match(render(warningProps), />仍然使用</)
+    assert.match(render(warningProps), />Use anyway</)
   })
 
   it('keeps installation controls out of the simplified remote environment form', () => {
@@ -111,9 +112,9 @@ describe('remote ripgrep settings UI', () => {
       )
     )
 
-    assert.match(markup, /micromamba 路径/)
-    assert.doesNotMatch(markup, /安装\/更新 micromamba/)
-    assert.doesNotMatch(markup, /安装 ripgrep/)
-    assert.doesNotMatch(markup, /运行时根目录必须/)
+    assert.match(markup, /micromamba path/)
+    assert.doesNotMatch(markup, /Install \/ update micromamba/)
+    assert.doesNotMatch(markup, /Install ripgrep/)
+    assert.doesNotMatch(markup, /The runtime root must/)
   })
 })

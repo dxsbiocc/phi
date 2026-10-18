@@ -1,3 +1,4 @@
+import { terminalUi } from './terminalUi'
 import type { TerminalCommandDraft } from '../../../../../shared/terminalTypes'
 
 export const TERMINAL_DRAFT_SELECTION_MAX_BYTES = 16 * 1024
@@ -70,7 +71,10 @@ export function missingTerminalDraftInputs(
 }
 
 export function terminalDraftErrorMessage(message: string): string {
-  return message.includes('请先配置模型') ? '请先在设置中配置模型' : message
+  // The backend message is a compatibility value, independent of the active UI language.
+  return /请先配置模型|Configure a model first/i.test(message)
+    ? terminalUi.configureAModelInSettingsFirst
+    : message
 }
 
 export function terminalDraftRetentionRemovals(

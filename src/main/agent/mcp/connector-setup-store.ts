@@ -51,7 +51,7 @@ export function loadConnectorSetups(path: string, now: () => string): McpConnect
         phase: 'failed',
         revision: progress.revision + 1,
         updatedAt: now(),
-        error: '上次设置已中断，请重试。'
+        error: 'The previous setup was interrupted. Try again.'
       }
     })
   } catch {
@@ -116,7 +116,8 @@ export function saveConnectorSetups(
       return saved
     })
   const bytes = JSON.stringify({ version: 1, records: selected })
-  if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error('连接器状态超过保存限制')
+  if (Buffer.byteLength(bytes) > MAX_BYTES)
+    throw new Error('Connector state exceeds the storage limit')
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const temporary = `${path}.${randomUUID()}.tmp`
   writeFileSync(temporary, bytes, { mode: 0o600 })

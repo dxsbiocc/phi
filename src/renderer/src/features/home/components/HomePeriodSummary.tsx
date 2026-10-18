@@ -1,3 +1,5 @@
+import { homeCopy } from '../lib/homeCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, LinearProgress, Skeleton, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
@@ -10,9 +12,24 @@ interface HomePeriodSummaryProps {
 }
 
 const periodLabels = [
-  { key: 'week', label: '本周' },
-  { key: 'month', label: '本月' },
-  { key: 'year', label: '今年' }
+  {
+    key: 'week',
+    get label() {
+      return homeCopy.thisWeek
+    }
+  },
+  {
+    key: 'month',
+    get label() {
+      return homeCopy.thisMonth
+    }
+  },
+  {
+    key: 'year',
+    get label() {
+      return homeCopy.thisYear
+    }
+  }
 ] as const
 
 function PeriodRow({
@@ -24,6 +41,7 @@ function PeriodRow({
   period: HomeActivityPeriodSummary | undefined
   loading: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const rate = period ? completionRate(period) : 0
 
   return (
@@ -52,7 +70,7 @@ function PeriodRow({
             ) : period ? (
               formatActivityDuration(period.durationMs)
             ) : (
-              '暂无'
+              homeCopy.noneYet
             )}
           </Typography>
           <Typography
@@ -69,9 +87,9 @@ function PeriodRow({
                 sx={{ display: 'inline-block', verticalAlign: 'top', maxWidth: 156 }}
               />
             ) : period ? (
-              `${period.activeDays} 个活跃日 · ${period.totalRuns} 次运行`
+              homeCopy.valueActiveDaysValueRuns(period.activeDays, period.totalRuns)
             ) : (
-              '暂无活动记录'
+              homeCopy.noActivityYet
             )}
           </Typography>
         </Box>
@@ -95,7 +113,11 @@ function PeriodRow({
       <LinearProgress
         variant="determinate"
         value={rate}
-        aria-label={loading ? `${label}活动数据正在加载` : `${label}运行完成率 ${rate}%`}
+        aria-label={
+          loading
+            ? homeCopy.loadingValueActivity(label)
+            : homeCopy.valueCompletionRateValue(label, rate)
+        }
         sx={{
           mt: 1,
           ml: '59px',
@@ -113,6 +135,7 @@ export function HomePeriodSummary({
   activity,
   loading
 }: HomePeriodSummaryProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       sx={{
@@ -125,10 +148,10 @@ export function HomePeriodSummary({
       }}
     >
       <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-        工作节奏
+        {homeCopy.workRhythm}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, mb: 0.75 }}>
-        任务历时、活跃天数与完成率
+        {homeCopy.taskDurationActiveDaysAndCompletionRate}
       </Typography>
 
       <Box sx={{ mt: 0.75 }}>

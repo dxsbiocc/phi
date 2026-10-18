@@ -1,3 +1,5 @@
+import { homeCopy } from '../lib/homeCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Chip, Skeleton, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
@@ -14,6 +16,7 @@ import {
 } from '../lib/homeOverview'
 import { HomeResourceCategoryIcon } from './HomeResourceCategoryIcon'
 import { HomeWrapperRanking } from './HomeWrapperRanking'
+import { resourceCatalogCopy, resourceUi } from '../../../lib/resourceUi'
 
 interface HomeOverviewCardsProps {
   sessionsLoading?: boolean
@@ -35,10 +38,46 @@ interface HomeOverviewCardsProps {
 type HomeResourceKind = Exclude<ResourceIconProps['kind'], 'agent'>
 
 const resourceRows = [
-  { key: 'skills', label: 'Skills', activeLabel: '已启用', kind: 'skill' },
-  { key: 'wrappers', label: 'Wrappers', activeLabel: '可用', kind: 'wrapper' },
-  { key: 'connectors', label: 'Connectors', activeLabel: '已启用', kind: 'mcp' },
-  { key: 'plugins', label: 'Plugins', activeLabel: '已启用', kind: 'plugin' }
+  {
+    key: 'skills',
+    get label() {
+      return resourceUi.skills
+    },
+    get activeLabel() {
+      return resourceUi.enabled
+    },
+    kind: 'skill'
+  },
+  {
+    key: 'wrappers',
+    get label() {
+      return resourceUi.wrappers
+    },
+    get activeLabel() {
+      return resourceCatalogCopy.available
+    },
+    kind: 'wrapper'
+  },
+  {
+    key: 'connectors',
+    get label() {
+      return resourceUi.connectors
+    },
+    get activeLabel() {
+      return resourceUi.enabled
+    },
+    kind: 'mcp'
+  },
+  {
+    key: 'plugins',
+    get label() {
+      return resourceUi.plugins
+    },
+    get activeLabel() {
+      return resourceUi.enabled
+    },
+    kind: 'plugin'
+  }
 ] as const satisfies ReadonlyArray<{
   key: keyof HomeResourceCounts
   label: string
@@ -50,17 +89,47 @@ const statusPresentation: Record<
   SessionStatus,
   { label: string; color: 'default' | 'success' | 'warning' | 'error' | 'info' }
 > = {
-  idle: { label: '可继续', color: 'default' },
-  running: { label: '进行中', color: 'info' },
-  needs_approval: { label: '等待批准', color: 'warning' },
-  needs_input: { label: '等待回复', color: 'warning' },
-  failed: { label: '需处理', color: 'error' },
-  completed_unread: { label: '已完成', color: 'success' }
+  idle: {
+    get label() {
+      return homeCopy.readyToContinue
+    },
+    color: 'default'
+  },
+  running: {
+    get label() {
+      return homeCopy.inProgress
+    },
+    color: 'info'
+  },
+  needs_approval: {
+    get label() {
+      return homeCopy.awaitingApproval
+    },
+    color: 'warning'
+  },
+  needs_input: {
+    get label() {
+      return homeCopy.awaitingReply
+    },
+    color: 'warning'
+  },
+  failed: {
+    get label() {
+      return homeCopy.needsAttention
+    },
+    color: 'error'
+  },
+  completed_unread: {
+    get label() {
+      return homeCopy.completed
+    },
+    color: 'success'
+  }
 }
 
 function recentSessionStatus(session: SessionSummary): (typeof statusPresentation)[SessionStatus] {
   if (session.status === 'idle' && session.lastRunOutcome === 'completed') {
-    return { label: '已完成', color: 'success' }
+    return { label: homeCopy.completed, color: 'success' }
   }
   return statusPresentation[session.status]
 }
@@ -72,6 +141,7 @@ function ResourcePreview({
   resource: HomeResourceCounts[keyof HomeResourceCounts]
   kind: HomeResourceKind
 }): React.JSX.Element {
+  useUiLanguage()
   const icons = resource.icons ?? []
   return (
     <Box
@@ -142,6 +212,7 @@ export function HomeOverviewCards({
   wrapperRunCount,
   onOpenSession
 }: HomeOverviewCardsProps): React.JSX.Element {
+  useUiLanguage()
   const conversationsLoading = sessionsLoading || projectConversationsLoading
 
   return (
@@ -167,10 +238,10 @@ export function HomeOverviewCards({
         }}
       >
         <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
-          继续最近的工作
+          {homeCopy.continueRecentWork}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-          对话与所属项目放在一起，直接接着做。
+          {homeCopy.conversationsAndTheirProjectsReadyToPickUpWhereYou}
         </Typography>
         <Box
           sx={{
@@ -181,36 +252,45 @@ export function HomeOverviewCards({
             minHeight: { xs: 84, sm: 24 }
           }}
         >
-          <Chip size="small" variant="outlined" label={`${projectCount} 个项目`} />
+          <Chip size="small" variant="outlined" label={homeCopy.valueProjects(projectCount)} />
           <Chip
             size="small"
             variant="outlined"
-            aria-label={sessionsLoading ? '正在读取普通对话' : undefined}
-            label={`${sessionsLoading ? '—' : ordinaryConversationCount} 条普通对话`}
+            aria-label={sessionsLoading ? homeCopy.loadingOrdinaryConversations : undefined}
+            label={homeCopy.valueOrdinaryConversations(
+              sessionsLoading ? '—' : ordinaryConversationCount
+            )}
           />
           <Chip
             size="small"
             variant="outlined"
-            aria-label={projectConversationsLoading ? '正在读取项目对话' : undefined}
+            aria-label={
+              projectConversationsLoading ? homeCopy.loadingProjectConversations : undefined
+            }
             label={
               projectConversationsLoading
-                ? '— 条项目对话'
+                ? homeCopy.projectConversations
                 : projectConversationsIncomplete
                   ? projectConversationCount > 0
-                    ? `至少 ${projectConversationCount} 条项目对话`
-                    : '项目对话暂不可用'
-                  : `${projectConversationCount} 条项目对话`
+                    ? homeCopy.atLeastValueProjectConversations(projectConversationCount)
+                    : homeCopy.projectConversationsUnavailable
+                  : homeCopy.valueProjectConversations(projectConversationCount)
             }
           />
           {runningCount > 0 ? (
-            <Chip size="small" color="info" variant="soft" label={`${runningCount} 项运行中`} />
+            <Chip
+              size="small"
+              color="info"
+              variant="soft"
+              label={homeCopy.valueRunning(runningCount)}
+            />
           ) : null}
           {attentionCount > 0 ? (
             <Chip
               size="small"
               color="warning"
               variant="soft"
-              label={`${attentionCount} 项需关注`}
+              label={homeCopy.valueNeedAttention(attentionCount)}
             />
           ) : null}
         </Box>
@@ -233,12 +313,12 @@ export function HomeOverviewCards({
             const title = sessionDisplayTitle(session)
             const status = recentSessionStatus(session)
             const scope = project
-              ? `${project.name} · ${project.location.kind === 'ssh' ? '远程' : '本地'}`
-              : '普通对话'
+              ? `${project.name} · ${project.location.kind === 'ssh' ? homeCopy.remote : homeCopy.local}`
+              : homeCopy.ordinaryConversation
             return (
               <Button
                 key={session.path}
-                aria-label={`继续 ${title}，${scope}`}
+                aria-label={homeCopy.continueValueValue(title, scope)}
                 onClick={() => onOpenSession(session.path)}
                 sx={{
                   minWidth: 0,
@@ -280,7 +360,8 @@ export function HomeOverviewCards({
                     {title}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" noWrap title={scope}>
-                    {scope} · {formatSessionActivity(session)} · {session.messageCount} 条消息
+                    {scope} · {formatSessionActivity(session)} ·{' '}
+                    {`${session.messageCount} ${homeCopy.messages}`}
                   </Typography>
                 </Box>
                 <Chip
@@ -336,10 +417,10 @@ export function HomeOverviewCards({
               sx={{ flex: 1, display: 'grid', placeContent: 'center', textAlign: 'center', p: 2 }}
             >
               <Typography variant="body2" color="text.secondary">
-                暂无可继续的对话
+                {homeCopy.noConversationsToContinue}
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-                选择项目或新建对话开始。
+                {homeCopy.chooseAProjectOrStartANewConversation}
               </Typography>
             </Box>
           ) : null}
@@ -359,10 +440,10 @@ export function HomeOverviewCards({
         }}
       >
         <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
-          资源概览
+          {resourceCatalogCopy.resourceOverview}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          当前工作范围已启用 / 可用
+          {resourceCatalogCopy.resourceOverviewScope}
         </Typography>
         <Box
           sx={{
@@ -403,20 +484,25 @@ export function HomeOverviewCards({
                         sx={{ display: 'inline-block', verticalAlign: 'top' }}
                       />
                     ) : (
-                      `共 ${resource.total} 个`
+                      resourceCatalogCopy.total(resource.total)
                     )}
                   </Typography>
                 </Box>
                 <Box
                   aria-label={
                     resource.loading
-                      ? `${label} 正在加载`
-                      : `${label} ${resource.active} ${activeLabel}，共 ${resource.total} 个`
+                      ? resourceCatalogCopy.resourceLoading(label)
+                      : resourceCatalogCopy.resourceCounts(
+                          label,
+                          resource.active,
+                          activeLabel,
+                          resource.total
+                        )
                   }
                   sx={{
-                    width: 112,
+                    width: 144,
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(0, 1fr) 3em',
+                    gridTemplateColumns: 'minmax(0, 1fr) 5em',
                     columnGap: 0.5,
                     alignItems: 'center',
                     flexShrink: 0
@@ -447,7 +533,7 @@ export function HomeOverviewCards({
                   <Box
                     component="span"
                     sx={{
-                      width: '3em',
+                      width: '5em',
                       display: 'flex',
                       justifyContent: 'space-between',
                       whiteSpace: 'nowrap',

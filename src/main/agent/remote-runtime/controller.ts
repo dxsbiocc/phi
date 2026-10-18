@@ -40,7 +40,10 @@ export class RemoteRuntimeController {
       signal?: AbortSignal
     ): Promise<RemoteRuntimeWorkspace> => {
       const target = this.targets.get(runtimeSessionId)
-      if (!target) throw new Error('远程运行时会话归属无效；没有回退到本机执行。')
+      if (!target)
+        throw new Error(
+          'Invalid remote runtime session ownership. No local execution fallback was used.'
+        )
       const control = this.controls.getStore()
       const assertLive = (): void => {
         signal?.throwIfAborted()
@@ -156,7 +159,7 @@ export class RemoteRuntimeController {
       !Array.isArray(owner.allowedSkills) ||
       owner.allowedSkills.some((skill) => typeof skill !== 'string' || !skill)
     )
-      throw new Error('远程资源请求缺少可信工具归属。')
+      throw new Error('The remote resource request has no trusted tool ownership.')
     return Object.freeze({
       signal: control.signal,
       beforeDispatch: control.beforeDispatch.bind(control),
@@ -169,14 +172,19 @@ export class RemoteRuntimeController {
 
   private requireTarget(params: unknown): RemoteRuntimeTarget {
     const target = this.remember(params)
-    if (!target) throw new Error('远程运行时请求缺少会话归属；没有回退到本机执行。')
+    if (!target)
+      throw new Error(
+        'The remote runtime request has no session ownership. No local execution fallback was used.'
+      )
     return target
   }
 
   private remember(params: unknown): RemoteRuntimeTarget | undefined {
     const direct = this.options.resolveTarget(params)
     if (hasRemoteIdentity(params) && !direct) {
-      throw new Error('远程运行时请求的会话或项目身份无效；没有回退到本机执行。')
+      throw new Error(
+        'The remote runtime request has an invalid session or project identity. No local execution fallback was used.'
+      )
     }
     if (direct) {
       const existing = this.targets.get(direct.runtimeSessionId)
@@ -184,7 +192,9 @@ export class RemoteRuntimeController {
         existing &&
         (existing.sessionId !== direct.sessionId || existing.projectId !== direct.projectId)
       ) {
-        throw new Error('远程运行时会话身份发生变化；已拒绝执行且没有回退到本机。')
+        throw new Error(
+          'The remote runtime session identity changed. Execution was denied and no local fallback was used.'
+        )
       }
       this.targets.set(direct.runtimeSessionId, direct)
     }

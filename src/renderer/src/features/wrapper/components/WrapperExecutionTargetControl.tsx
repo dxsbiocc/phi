@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Button, Stack, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
@@ -35,15 +37,16 @@ function Trigger({
   isRemoteProject: boolean
   onOpen: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const label = isRemoteProject
-    ? 'Wrapper 运行方式'
+    ? remoteSetupCopy.wrapperExecutionMode
     : configuredLabel
       ? compact
-        ? `服务器：${configuredLabel}`
-        : `远程计算：${configuredLabel}`
+        ? remoteSetupCopy.serverTarget(configuredLabel)
+        : remoteSetupCopy.remoteTarget(configuredLabel)
       : compact
-        ? '选择服务器'
-        : '设置远程计算'
+        ? remoteSetupCopy.selectServer
+        : remoteSetupCopy.configureRemoteExecution
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
       <Button
@@ -58,8 +61,8 @@ function Trigger({
       {!compact && (
         <Typography variant="caption" color="text.secondary">
           {isRemoteProject
-            ? 'Wrapper 自动在本项目服务器运行；这里可设置 Slurm 和软件环境。'
-            : '本地项目仍默认在本机运行；仅在要求服务器运行时使用此目标。'}
+            ? remoteSetupCopy.remoteProjectExecutionHelp
+            : remoteSetupCopy.localProjectExecutionHelp}
         </Typography>
       )}
     </Stack>
@@ -73,6 +76,7 @@ export function WrapperExecutionTargetControl({
   compact = false,
   ...callbacks
 }: Props): React.JSX.Element {
+  useUiLanguage()
   const controller = useWrapperExecutionTargetController({ project, ...callbacks })
   return (
     <>

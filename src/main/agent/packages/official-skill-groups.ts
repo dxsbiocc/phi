@@ -27,10 +27,10 @@ export async function loadOfficialSkillGroups(
 ): Promise<OfficialSkillGroups | undefined> {
   if (!isRecord(catalog) || !Object.hasOwn(catalog, 'skillGroups')) return undefined
   if (!isRecord(catalog.counts) || !Number.isSafeInteger(catalog.counts.skills)) {
-    throw new Error('官网技能分组总数无效')
+    throw new Error('Invalid Phi Website Skill group total')
   }
   const total = catalog.counts.skills as number
-  if (total < 1 || total > 500) throw new Error('官网技能分组总数超出限制')
+  if (total < 1 || total > 500) throw new Error('Phi Website Skill group total exceeds the limit')
   const groups = parseGroups(catalog.skillGroups)
   const all = groups.find((group) => group.id === 'all')
   const categories = groups.filter((group) => group.id !== 'all')
@@ -39,7 +39,7 @@ export async function loadOfficialSkillGroups(
     all.count !== total ||
     categories.reduce((sum, group) => sum + group.count, 0) !== total
   ) {
-    throw new Error('官网技能分组计数不一致')
+    throw new Error('Phi Website Skill group count mismatch')
   }
   const byId = new Map(groups.map((group, order) => [group.id, { ...group, order }]))
   const assignments = new Map<string, SkillAssignment>()
@@ -60,17 +60,18 @@ export async function loadOfficialSkillGroups(
       (value.commit !== undefined && value.commit !== catalog.commit) ||
       (value.generatedAt !== undefined && value.generatedAt !== catalog.generatedAt)
     ) {
-      throw new Error('官网技能分组分页或更新时序不一致')
+      throw new Error('Inconsistent Phi Website Skill group pagination or update timing')
     }
     for (const item of value.items) {
-      if (!isRecord(item)) throw new Error('官网技能分组条目无效')
+      if (!isRecord(item)) throw new Error('Invalid Phi Website Skill group entry')
       const ids = skillPackageIds(item)
       const group = typeof item.group === 'string' ? byId.get(item.group) : undefined
       if (ids.length !== 1 || !group || group.id === 'all' || item.groupLabel !== group.label) {
-        throw new Error('官网技能分组标识或标签无效')
+        throw new Error('Invalid Phi Website Skill group identifier or label')
       }
       const id = ids[0]
-      if (assignments.has(id)) throw new Error(`官网技能分组包含重复技能：${id}`)
+      if (assignments.has(id))
+        throw new Error(`Phi Website Skill groups contain a duplicate Skill: ${id}`)
       assignments.set(id, { group: group.id, groupLabel: group.label, groupOrder: group.order })
       counts.set(group.id, (counts.get(group.id) ?? 0) + 1)
     }
@@ -79,7 +80,9 @@ export async function loadOfficialSkillGroups(
     assignments.size !== total ||
     categories.some((group) => counts.get(group.id) !== group.count)
   ) {
-    throw new Error('官网技能分组未完整覆盖目录或计数不一致')
+    throw new Error(
+      'Phi Website Skill groups do not cover the complete catalog or have inconsistent counts'
+    )
   }
   return { groups, assignments }
 }
@@ -95,7 +98,9 @@ export function applyOfficialSkillGroups(
     skills.length !== groups.assignments.size ||
     skills.some((entry) => !groups.assignments.has(entry.id))
   ) {
-    throw new Error('官网技能分组标识与固定提交的技能目录不一致')
+    throw new Error(
+      'Phi Website Skill group identifiers do not match the pinned commit’s Skill catalog'
+    )
   }
   const unchanged =
     JSON.stringify(registry.skillGroups) === JSON.stringify(groups.groups) &&
@@ -122,7 +127,7 @@ export function applyOfficialSkillGroups(
 
 function parseGroups(value: unknown): SkillGroup[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
-    throw new Error('官网技能分组列表无效')
+    throw new Error('Invalid Phi Website Skill group list')
   }
   const ids = new Set<string>()
   return value.map((item) => {
@@ -141,7 +146,7 @@ function parseGroups(value: unknown): SkillGroup[] {
       (item.count as number) > 500 ||
       ids.has(item.id)
     ) {
-      throw new Error('官网技能分组 ID、标签或计数无效')
+      throw new Error('Invalid Phi Website Skill group ID, label, or count')
     }
     ids.add(item.id)
     return { id: item.id, label: item.label, count: item.count as number }
@@ -160,7 +165,7 @@ async function fetchPage(page: number, deadline: number, fetcher: typeof fetch):
   const url = `https://phi.omicsagent.cn/api/skills?page=${page}&pageSize=100`
   const remaining = deadline - Date.now()
   if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 120_000)
-    throw new Error('官网技能分组请求超时配置无效')
+    throw new Error('Invalid Phi Website Skill group request timeout')
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let response: Response
@@ -175,7 +180,7 @@ async function fetchPage(page: number, deadline: number, fetcher: typeof fetch):
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           controller.abort()
-          reject(new Error('官网技能分组请求超时'))
+          reject(new Error('Phi Website Skill group request timed out'))
         }, remaining)
       })
     ])
@@ -183,11 +188,11 @@ async function fetchPage(page: number, deadline: number, fetcher: typeof fetch):
     if (timer !== undefined) clearTimeout(timer)
   }
   if (!response.ok || (response.url && response.url !== url))
-    throw new Error('官网技能分组请求失败或响应来源无效')
+    throw new Error('Phi Website Skill group request failed or returned an invalid origin')
   const bytes = await readBoundedResponse(
     response,
     1024 * 1024,
-    '官网技能分组',
+    'Phi Website Skill groups',
     Math.max(1, deadline - Date.now())
   )
   return JSON.parse(bytes.toString('utf8')) as unknown

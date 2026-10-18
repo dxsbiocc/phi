@@ -46,7 +46,7 @@ const API_KEY_CONNECTORS: Record<ApiKeyConnectorId, ApiKeyConnectorConfig> = {
 
 export function apiKeyConnector(id: string): ApiKeyConnectorConfig {
   const connector = API_KEY_CONNECTORS[id as ApiKeyConnectorId]
-  if (!connector) throw new Error('该连接器不支持 API key')
+  if (!connector) throw new Error('This Connector does not support API keys')
   return connector
 }
 
@@ -61,7 +61,7 @@ export function setFeaturedMcpApiKey(
   agentDir = getPhiAgentDir(),
   safeStorage?: SafeStorageLike
 ): void {
-  if (typeof key !== 'string' || /[\r\n\0]/.test(key)) throw new Error('API key 格式无效')
+  if (typeof key !== 'string' || /[\r\n\0]/.test(key)) throw new Error('Invalid API key format')
   storeCredentialSecret(credentialName(id), key, agentDir, safeStorage)
 }
 
@@ -87,7 +87,7 @@ export function featuredMcpApiKeyStatus(
 
 export function featuredApiKeyMcpConfig(id: string, key: string): MCPHttpServerConfig {
   const connector = apiKeyConnector(id)
-  if (!key || /[\r\n\0]/.test(key)) throw new Error('API key 格式无效')
+  if (!key || /[\r\n\0]/.test(key)) throw new Error('Invalid API key format')
   return {
     type: 'http',
     url: connector.url,

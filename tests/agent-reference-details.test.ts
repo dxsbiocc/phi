@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -24,6 +25,8 @@ const reviewer: PromptAgentSummary = {
   icon: { key: 'reviewer-icon' }
 }
 
+setUiLanguage('zh-CN')
+
 test('agent details show the real icon, source, invocation and path without mutation controls', () => {
   const markup = renderToStaticMarkup(createElement(AgentReferenceDetails, { agent: reviewer }))
   for (const value of [
@@ -38,7 +41,13 @@ test('agent details show the real icon, source, invocation and path without muta
   assert.match(markup, /来源/)
   assert.doesNotMatch(markup, /<button|启用|禁用|撤销信任/)
   let closed = false
-  const shell = AgentReferenceDialog({ agent: reviewer, onClose: () => (closed = true) })
+  let shell!: ReturnType<typeof AgentReferenceDialog>
+  renderToStaticMarkup(
+    createElement(function InspectDialog() {
+      shell = AgentReferenceDialog({ agent: reviewer, onClose: () => (closed = true) })
+      return null
+    })
+  )
   assert.equal(shell.props.open, true)
   shell.props.onClose()
   assert.equal(closed, true)

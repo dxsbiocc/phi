@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -64,3 +66,6 @@ test('root-row loading can finish without changing its expansion or drop destina
   const ready = renderToStaticMarkup(createElement(FileTreeRootRow, { ...props, isLoading: false }))
   assert.doesNotMatch(ready, /role="progressbar"|aria-busy="true"/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

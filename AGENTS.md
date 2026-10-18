@@ -17,5 +17,6 @@
 - Files over 600 lines require an explicit split-or-keep judgment. Files over 1000 lines are architecture debt unless they are documented as temporary legacy exceptions.
 - Splitting is for stability, readability, test boundaries, and maintainability. Do not split mechanically when a cohesive file is already small and clear.
 - Run `npm run check:architecture` after frontend structure changes; `npm run lint` also runs this check.
+- Interface localization: detect the system language for the initial English / Simplified Chinese default, then honor any saved manual choice. When adding UI copy or changing language behavior, read [ui-localization.md](docs/architecture/ui-localization.md) for dictionary ownership, live switching, state retention, and stable data identifiers.
 
 See `docs/architecture/frontend-feature-boundaries.md` for examples and migration guidance.

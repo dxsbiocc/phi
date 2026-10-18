@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { Alert, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material'
 
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
@@ -14,8 +17,9 @@ export function WrapperPackageControl({
   busy = false,
   onSetEnabled
 }: WrapperPackageControlProps): React.JSX.Element {
+  useUiLanguage()
   if (!wrapper.packageId) {
-    return <Chip size="small" variant="outlined" label="用户自定义" />
+    return <Chip size="small" variant="outlined" label={wrapperCopy.userDefined} />
   }
 
   const packageId = wrapper.packageId
@@ -26,7 +30,7 @@ export function WrapperPackageControl({
         <Chip
           size="small"
           variant="outlined"
-          label={`软件包 · ${packageId}`}
+          label={wrapperCopy.packageLabel(packageId)}
           sx={{ fontFamily: 'var(--font-mono)' }}
         />
         <FormControlLabel
@@ -37,12 +41,12 @@ export function WrapperPackageControl({
               checked={enabled}
               disabled={busy || !onSetEnabled}
               onChange={(_event, checked) => onSetEnabled?.(packageId, checked)}
-              slotProps={{ input: { 'aria-label': `启用 package ${packageId}` } }}
+              slotProps={{ input: { 'aria-label': wrapperCopy.enablePackage(packageId) } }}
             />
           }
           label={
             <Typography variant="caption" color="text.secondary">
-              {enabled ? '已启用' : '已停用'}
+              {enabled ? resourceUi.enabled : resourceUi.disabled}
             </Typography>
           }
         />

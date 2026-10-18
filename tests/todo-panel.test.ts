@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { extractTodoSnapshot, isTodoToolName } from '../src/renderer/src/lib/chatItems'
@@ -10,6 +11,8 @@ import {
 } from '../src/renderer/src/lib/todoPanel'
 import type { ChatItem } from '../src/renderer/src/types'
 import type { TodoSnapshot } from '../src/renderer/src/lib/todoTypes'
+
+setUiLanguage('zh-CN')
 
 test('isTodoToolName recognizes the todo tool only', () => {
   assert.equal(isTodoToolName('todo'), true)

@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import {
   Box,
   Button,
@@ -118,6 +120,7 @@ function UserInteractionPanel({
   request,
   onRespond
 }: UserInteractionPanelProps): React.JSX.Element {
+  useUiLanguage()
   const initialDraft = useMemo(() => (request ? defaultDraft(request) : null), [request])
   const [draftState, setDraftState] = useState<DraftState | null>(null)
 
@@ -191,7 +194,7 @@ function UserInteractionPanel({
     <Paper
       variant="outlined"
       role="alert"
-      aria-label="等待用户输入"
+      aria-label={chatCopy.awaitingUserInput}
       sx={{
         width: '100%',
         mb: 1,
@@ -206,11 +209,11 @@ function UserInteractionPanel({
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-              需要选择
+              {chatCopy.selectionNeeded}
             </Typography>
           </Box>
           <Button color="inherit" size="small" onClick={cancel} sx={{ minHeight: 30 }}>
-            取消
+            {chatCopy.cancel}
           </Button>
         </Box>
 
@@ -219,7 +222,7 @@ function UserInteractionPanel({
             <Typography variant="caption" color="primary" sx={{ fontWeight: 700, lineHeight: 1.4 }}>
               {activeQuestion.header}
             </Typography>
-            {activeQuestion.multiSelect && <Chip size="small" label="多选" />}
+            {activeQuestion.multiSelect && <Chip size="small" label={chatCopy.selectMultiple} />}
           </Box>
           <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
             {activeQuestion.question}
@@ -303,7 +306,7 @@ function UserInteractionPanel({
           <TextField
             fullWidth
             size="small"
-            label="自定义答案"
+            label={chatCopy.customAnswer}
             value={customValue}
             onChange={(event) => setCustomAnswer(activeQuestionIndex, event.target.value)}
           />
@@ -336,13 +339,13 @@ function UserInteractionPanel({
                 <StepArrowIcon sx={{ fontSize: 18, transform: 'rotate(180deg)', flexShrink: 0 }} />
               }
             >
-              上一步
+              {chatCopy.previous}
             </Button>
           }
           nextButton={
             isLastQuestion ? (
               <Button size="small" variant="contained" onClick={submit}>
-                提交
+                {chatCopy.submit}
               </Button>
             ) : (
               <Button
@@ -351,7 +354,7 @@ function UserInteractionPanel({
                 onClick={() => setActiveQuestion(activeQuestionIndex + 1)}
                 endIcon={<StepArrowIcon sx={{ fontSize: 18, flexShrink: 0 }} />}
               >
-                下一步
+                {chatCopy.next}
               </Button>
             )
           }

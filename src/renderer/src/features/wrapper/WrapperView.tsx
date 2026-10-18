@@ -1,3 +1,6 @@
+import { getUiLocale, useUiLanguage } from '../../lib/i18n'
+import { wrapperCopy } from './lib/wrapperCopy'
+import { resourceUi } from '../../lib/resourceUi'
 import { Alert, Box, Button, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
 import { useMemo, type MouseEvent, type ReactNode } from 'react'
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
@@ -67,11 +70,12 @@ function ResizeSeparator({
 }: {
   onMouseDown?: (event: MouseEvent<HTMLDivElement>) => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整侧边栏宽度"
+      aria-label={wrapperCopy.resizeSidebar}
       onMouseDown={onMouseDown}
       sx={{
         width: '1px',
@@ -102,6 +106,7 @@ function DetailPage({
   title: string
   children: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       component="main"
@@ -156,6 +161,7 @@ export function WrapperDetail({
   onOpenRemoteSettings,
   onSelectWrapper
 }: WrapperDetailProps): React.JSX.Element {
+  useUiLanguage()
   const selected = useMemo(
     () => catalog.find((entry) => entry.id === selectedId),
     [catalog, selectedId]
@@ -192,7 +198,7 @@ export function WrapperDetail({
         {!selected ? (
           <Box sx={{ px: { xs: 3, md: 5 }, pt: 3 }}>
             <Typography variant="body2" color="text.secondary">
-              从左侧选择一个 wrapper 查看详情。
+              {wrapperCopy.selectWrapper}
             </Typography>
           </Box>
         ) : (
@@ -224,11 +230,11 @@ export function WrapperDetail({
               }
             >
               <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-                运行记录
+                {wrapperCopy.runHistory}
               </Typography>
               {selectedRuns.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">
-                  还没有运行记录。
+                  {wrapperCopy.noRuns}
                 </Typography>
               ) : (
                 <Stack spacing={0.75}>
@@ -256,7 +262,7 @@ export function WrapperDetail({
                           </Typography>
                         ) : null}
                         <Typography variant="caption" color="text.secondary">
-                          {new Date(run.createdAt).toLocaleString()}
+                          {new Date(run.createdAt).toLocaleString(getUiLocale())}
                         </Typography>
                         {runProgressLabel(run) ? (
                           <Typography variant="caption" color="text.secondary">
@@ -268,16 +274,16 @@ export function WrapperDetail({
                           <Button
                             size="small"
                             color="error"
-                            aria-label="取消运行"
+                            aria-label={wrapperCopy.cancelRun}
                             onClick={() => onCancelRun?.(run.runId)}
                           >
-                            取消运行
+                            {wrapperCopy.cancelRun}
                           </Button>
                         ) : null}
-                        <Tooltip title="导出可复现性元数据">
+                        <Tooltip title={wrapperCopy.exportReproducibility}>
                           <span>
                             <IconButton
-                              aria-label="导出可复现性元数据"
+                              aria-label={wrapperCopy.exportReproducibility}
                               size="small"
                               onClick={() => onExportReproducibility?.(run.runId)}
                             >
@@ -329,6 +335,7 @@ export function WrapperViewContent({
   onOpenRemoteSettings,
   onStartSidebarResize
 }: WrapperViewContentProps): React.JSX.Element {
+  useUiLanguage()
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null
 
   return (
@@ -344,7 +351,7 @@ export function WrapperViewContent({
         onSetPackageEnabled={onSetPackageEnabled}
       />
       <ResizeSeparator onMouseDown={onStartSidebarResize} />
-      <DetailPage title={selected?.name ?? 'Wrappers'}>
+      <DetailPage title={selected?.name ?? resourceUi.wrappers}>
         <WrapperDetail
           catalog={catalog}
           runs={runs}
@@ -381,6 +388,7 @@ export default function WrapperView({
   onOpenRemoteResult,
   onStartSidebarResize
 }: WrapperViewProps): React.JSX.Element {
+  useUiLanguage()
   const {
     catalog,
     runs,

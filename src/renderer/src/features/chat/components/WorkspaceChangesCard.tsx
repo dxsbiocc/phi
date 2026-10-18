@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, IconButton, Paper, Tooltip, Typography } from '@mui/material'
 import { useEffect, useId, useState } from 'react'
 import { GoDiff, GoInfo } from 'react-icons/go'
@@ -8,7 +10,17 @@ import { fileIconForPath } from '../../../icons'
 import { getRendererApi } from '../../../lib/rendererApi'
 import { WorkspaceDiffDialog } from './WorkspaceDiffDialog'
 
-const STATUS_LABELS = { added: '新增', modified: '修改', deleted: '删除' } as const
+const STATUS_LABELS = {
+  get added() {
+    return chatCopy.added
+  },
+  get modified() {
+    return chatCopy.modified
+  },
+  get deleted() {
+    return chatCopy.delete
+  }
+} as const
 const VISIBLE_FILES = 4
 
 export function WorkspaceChangesCard({
@@ -18,6 +30,7 @@ export function WorkspaceChangesCard({
   item: WorkspaceChangeSummaryItem
   onOpenFile?: (path: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [selection, setSelection] = useState<{ path: string; ref: WorkspaceDiffReference } | null>(
     null
   )
@@ -39,7 +52,7 @@ export function WorkspaceChangesCard({
         if (active)
           setLoaded({
             id: selection.ref.id,
-            error: error instanceof Error ? error.message : '差异文件无法读取'
+            error: error instanceof Error ? error.message : chatCopy.unableToReadDiffFile
           })
       })
     return () => {
@@ -51,7 +64,7 @@ export function WorkspaceChangesCard({
     <>
       <Paper
         variant="outlined"
-        aria-label="运行期间文件变化"
+        aria-label={chatCopy.fileChangesDuringThisRun}
         sx={{
           mx: 1,
           my: 0.75,
@@ -90,14 +103,14 @@ export function WorkspaceChangesCard({
             }}
           >
             {item.truncated
-              ? `已发现 ${item.totalChanged} 个文件变化`
-              : `${item.totalChanged} 个文件变化`}
+              ? chatCopy.valueFileChangesFound(item.totalChanged)
+              : chatCopy.valueFileChanges(item.totalChanged)}
           </Typography>
-          <Tooltip title="仅显示 Git 可见文件的净变化；忽略的输出文件不列出，并行修改也可能出现。">
+          <Tooltip title={chatCopy.showsNetChangesToGitVisibleFilesOnlyIgnoredOutput}>
             <Box
               component="span"
               tabIndex={0}
-              aria-label="文件变化说明"
+              aria-label={chatCopy.aboutFileChanges}
               sx={{ color: 'text.secondary', display: 'inline-flex', cursor: 'help' }}
             >
               <GoInfo size={15} />
@@ -105,7 +118,7 @@ export function WorkspaceChangesCard({
           </Tooltip>
           {item.truncated && (
             <Typography variant="caption" sx={{ ml: 'auto', color: 'warning.main' }}>
-              列表截断
+              {chatCopy.listTruncated}
             </Typography>
           )}
         </Box>
@@ -166,7 +179,7 @@ export function WorkspaceChangesCard({
                   <Button
                     size="small"
                     onClick={() => onOpenFile(file.path)}
-                    aria-label={`预览改动文件 ${file.displayPath}`}
+                    aria-label={chatCopy.previewChangedFileValue(file.displayPath)}
                     title={file.path}
                     sx={{
                       minWidth: 0,
@@ -210,7 +223,11 @@ export function WorkspaceChangesCard({
                   </Typography>
                 )}
                 <Box
-                  title={file.added === null || file.deleted === null ? '行数不可用' : undefined}
+                  title={
+                    file.added === null || file.deleted === null
+                      ? chatCopy.lineCountsUnavailable
+                      : undefined
+                  }
                   sx={{
                     flexShrink: 0,
                     display: 'flex',
@@ -237,10 +254,10 @@ export function WorkspaceChangesCard({
                   )}
                 </Box>
                 {file.diff && (
-                  <Tooltip title="查看差异">
+                  <Tooltip title={chatCopy.viewDiff}>
                     <IconButton
                       size="small"
-                      aria-label={`查看 ${file.displayPath} 的本轮差异`}
+                      aria-label={chatCopy.viewThisRunSDiffForValue(file.displayPath)}
                       onClick={() => {
                         if (file.diff) setSelection({ path: file.displayPath, ref: file.diff })
                       }}
@@ -278,12 +295,12 @@ export function WorkspaceChangesCard({
               '@container phi-chat (max-width: 560px)': { mt: 0.25, px: 0.25, fontSize: '0.72rem' }
             }}
           >
-            {expanded ? '收起' : `⋯ 显示其余 ${hiddenCount} 项`}
+            {expanded ? chatCopy.collapse : chatCopy.showValueMore(hiddenCount)}
           </Button>
         )}
         {item.truncated && expanded && (
           <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
-            文件列表已截断。
+            {chatCopy.theFileListWasTruncated}
           </Typography>
         )}
       </Paper>

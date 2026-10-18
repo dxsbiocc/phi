@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
 import { useEffect, useState } from 'react'
 
 import type { SkillMarkdownState } from '../components/SkillDetailBody'
@@ -7,6 +9,7 @@ interface Loaded {
   key: string
   content: string | null
   error: string | null
+  missingMarkdown: boolean
 }
 
 /** The SKILL.md of a catalog package: from disk when installed, else its verified archive. */
@@ -14,6 +17,7 @@ export function useSkillPackageMarkdown(
   registryDir: string | undefined,
   id: string
 ): SkillMarkdownState {
+  useUiLanguage()
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const key = `${registryDir ?? ''}\n${id}`
 
@@ -27,7 +31,8 @@ export function useSkillPackageMarkdown(
         setLoaded({
           key,
           content: detail.skillMd === null ? null : skillMarkdownBody(detail.skillMd),
-          error: detail.skillMd === null ? '这个软件包里没有 SKILL.md。' : null
+          error: null,
+          missingMarkdown: detail.skillMd === null
         })
       })
       .catch((cause) => {
@@ -35,7 +40,8 @@ export function useSkillPackageMarkdown(
           setLoaded({
             key,
             content: null,
-            error: cause instanceof Error ? cause.message : String(cause)
+            error: cause instanceof Error ? cause.message : String(cause),
+            missingMarkdown: false
           })
         }
       })
@@ -45,8 +51,12 @@ export function useSkillPackageMarkdown(
   }, [registryDir, id, key])
 
   if (!registryDir) {
-    return { content: null, isLoading: false, error: '这个技能没有可查看详情的来源。' }
+    return { content: null, isLoading: false, error: skillCopy.missingDetailSource }
   }
   if (!loaded || loaded.key !== key) return { content: null, isLoading: true, error: null }
-  return { content: loaded.content, isLoading: false, error: loaded.error }
+  return {
+    content: loaded.content,
+    isLoading: false,
+    error: loaded.missingMarkdown ? skillCopy.missingMarkdown : loaded.error
+  }
 }

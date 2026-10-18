@@ -1,3 +1,5 @@
+import { settingsUi } from '../features/settings/lib/settingsUi'
+import { useUiLanguage } from '../lib/i18n'
 import { useState } from 'react'
 import {
   Alert,
@@ -19,17 +21,18 @@ type OnboardingDialogProps = {
 }
 
 function OnboardingDialog({ open, onComplete, onSkip }: OnboardingDialogProps): React.JSX.Element {
+  useUiLanguage()
   const [description, setDescription] = useState('')
   const [isSaving, setIsSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [hasError, setHasError] = useState(false)
 
   const handleComplete = async (): Promise<void> => {
     setIsSaving(true)
-    setError('')
+    setHasError(false)
     try {
       await onComplete(description)
     } catch {
-      setError('生成人设配置失败，请稍后在设置中重试')
+      setHasError(true)
     } finally {
       setIsSaving(false)
     }
@@ -46,16 +49,16 @@ function OnboardingDialog({ open, onComplete, onSkip }: OnboardingDialogProps): 
 
   return (
     <Dialog open={open} maxWidth="sm" fullWidth>
-      <DialogTitle>用一段话描述你希望的助手</DialogTitle>
+      <DialogTitle>{settingsUi.describeYourIdealAssistant}</DialogTitle>
       <DialogContent>
         <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="text.secondary">
-            性格、说话风格、回答偏好都可以写在这里，会据此生成一份专属配置。随时可以在「设置」中查看和修改。跳过则使用默认设置。
+            {settingsUi.describeItsPersonalityToneAndResponsePreferencesTo}
           </Typography>
         </Box>
         <TextField
           autoFocus
-          placeholder="例如：性格严谨但不失幽默，说话简洁口语化，回答问题先给结论再展开，代码要带注释……"
+          placeholder={settingsUi.forExamplePreciseWithASenseOfHumor}
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           fullWidth
@@ -63,15 +66,15 @@ function OnboardingDialog({ open, onComplete, onSkip }: OnboardingDialogProps): 
           minRows={8}
           disabled={isSaving}
         />
-        {error ? (
+        {hasError ? (
           <Alert severity="error" sx={{ mt: 2 }}>
-            {error}
+            {settingsUi.unableToGenerateAssistantPreferencesTryAgainLater}
           </Alert>
         ) : null}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={handleSkip} disabled={isSaving} sx={{ minHeight: 44 }}>
-          跳过，使用默认设置
+          {settingsUi.skipAndUseDefaults}
         </Button>
         <Button
           onClick={handleComplete}
@@ -80,7 +83,7 @@ function OnboardingDialog({ open, onComplete, onSkip }: OnboardingDialogProps): 
           startIcon={isSaving ? <CircularProgress size={16} color="inherit" /> : null}
           sx={{ minHeight: 44 }}
         >
-          {isSaving ? '生成中…' : '生成并开始'}
+          {isSaving ? settingsUi.generating : settingsUi.generateAndStart}
         </Button>
       </DialogActions>
     </Dialog>

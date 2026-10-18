@@ -1,3 +1,4 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
 import type {
   AgentExecutionItem,
   ChatItem,
@@ -317,9 +318,9 @@ function formatProcessingDuration(durationMs: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
 
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟 ${seconds} 秒`
-  if (minutes > 0) return `${minutes} 分钟 ${seconds} 秒`
-  return `${seconds} 秒`
+  if (hours > 0) return chatCopy.valueHValueMinValueS(hours, minutes, seconds)
+  if (minutes > 0) return chatCopy.valueMinValueS(minutes, seconds)
+  return chatCopy.valueS(seconds)
 }
 
 function fallbackDurationMs(items: ProcessingItem[]): number | null {
@@ -389,5 +390,5 @@ export function processingStatusText({
     })
   )
 
-  return isActive ? `正在处理，已耗时 ${elapsed}` : `已完成，总共用时 ${elapsed}`
+  return isActive ? chatCopy.processingElapsedValue(elapsed) : chatCopy.completedInValue(elapsed)
 }

@@ -9,6 +9,10 @@ import { TopRightControls } from '../src/renderer/src/App'
 import type { WorkspaceSidePanelMode } from '../src/renderer/src/lib/workspaceSidePanelMode'
 import { workspaceSidebarModeIsExpanded } from '../src/renderer/src/lib/workspaceSidebar'
 import { workspaceScopeLabelForCwd } from '../src/renderer/src/lib/workspaceScope'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 function renderControls(
   options: {
@@ -271,7 +275,7 @@ test('workspace file previews and chats can show the shared right side panel', (
     /activeWorkspaceFileTab\.kind !== 'notebook'[\s\S]{0,900}<WorkspaceSidePanel/
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
-  assert.match(appSource, /label="调整工作区面板宽度"/)
+  assert.match(appSource, /label=\{appCopy\.resizeWorkspace\}/)
   assert.match(
     appSource,
     /const \[workspaceSidePanelWidth, setWorkspaceSidePanelWidth\] = useState\(\s*workspaceSidePanelWidthDefault\s*\)/
@@ -412,7 +416,7 @@ test('workspace files are available from the left sidebar activity item', () => 
     /const NavRuntimeIcon = createActivityBarPhiIcon\(PhiIcons\.nav\.runtime\)/
   )
   assert.match(activitySource, /const NavSettingsIcon = createActivityBarReactIcon\(GoGear\)/)
-  assert.match(activitySource, /mode: 'files', label: '文件', icon: NavFilesIcon/)
+  assert.match(activitySource, /mode: 'files', label: navigationCopy\.file, icon: NavFilesIcon/)
   assert.match(activitySource, /navigationItems\.map\(\(\{ mode, label, icon \}\)/)
   assert.match(activitySource, /onSelectWorkspaceSidebarMode\(mode\)/)
   // The renderer now compares the sidebar mode through a `mode` parameter that defaults to the current one.

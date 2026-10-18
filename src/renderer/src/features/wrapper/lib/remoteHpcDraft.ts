@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from './remoteSetupCopy'
 import type {
   RemoteContainerRuntime,
   RemoteController,
@@ -96,22 +97,22 @@ export function hpcSettingsFromDraft(draft: HpcDraft): RemoteHpcSettings {
 /** The first problem with the draft, in the words shown to the user, or null. */
 export function hpcDraftError(draft: HpcDraft): string | null {
   if (draft.scheduler === 'local' && draft.controller === 'sbatch') {
-    return '直接在服务器运行时，Nextflow 主进程不能提交为 Slurm 作业'
+    return remoteSetupCopy.directControllerError
   }
   if (draft.queueSize.trim()) {
     const size = Number(draft.queueSize)
-    if (!Number.isInteger(size) || size <= 0) return '同时排队的作业数上限必须是正整数'
+    if (!Number.isInteger(size) || size <= 0) return remoteSetupCopy.queueSizeError
   }
   if (draft.controller === 'sbatch' && present(draft.controllerOptions)) {
     if (!draft.controllerOptions.trim().startsWith('-')) {
-      return '启动 Nextflow 的作业参数必须以 - 开头，例如 --time=7-00:00:00'
+      return remoteSetupCopy.controllerOptionsError
     }
   }
   if (present(draft.singularityCacheDir) && !draft.singularityCacheDir.trim().startsWith('/')) {
-    return 'Singularity 缓存目录必须是集群上的绝对路径'
+    return remoteSetupCopy.singularityCacheError
   }
   if (present(draft.nextflowBin) && !draft.nextflowBin.trim().startsWith('/')) {
-    return 'Nextflow 路径必须是集群上的绝对路径（已在 PATH 中就留空）'
+    return remoteSetupCopy.nextflowPathError
   }
   return null
 }

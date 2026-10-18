@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -72,6 +74,7 @@ function EnvironmentCard({
   onRebuild: () => void
   onRemove: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const hostResources = managedEnvironmentHostResources(environment, snapshot)
   const hasHostResources = hostResources.tools.length + hostResources.dependencies.length > 0
   const removable =
@@ -88,13 +91,13 @@ function EnvironmentCard({
   const description = environment.error
     ? environment.error
     : environment.source === 'orphaned'
-      ? '旧版遗留环境，当前无引用时可安全移除。'
-      : environment.description || '此环境没有补充说明。'
+      ? environmentUi.legacyEnvironmentItCanBeSafelyRemovedWhen
+      : environment.description || environmentUi.noAdditionalDescriptionForThisEnvironment
   const secondaryMetric =
     environment.state === 'absent'
       ? formatBuildEstimate(environment.estimate)
       : environment.overrideFrom?.length
-        ? `替代 ${environment.overrideFrom.join('、')}`
+        ? environmentUi.overridesValue(environment.overrideFrom.join('、'))
         : '\u00A0'
 
   return (
@@ -119,7 +122,7 @@ function EnvironmentCard({
       }}
     >
       <CardActionArea
-        aria-label={`查看 ${environmentTitle(environment)} 详情`}
+        aria-label={environmentUi.viewValueDetails(environmentTitle(environment))}
         onClick={onOpen}
         sx={{
           flex: 1,
@@ -213,12 +216,12 @@ function EnvironmentCard({
         <Box data-phi-environment-slot="metrics" sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1.5} sx={{ minWidth: 0 }}>
             <Typography variant="caption" color="text.secondary" noWrap>
-              占用 {formatEnvironmentSize(environment.sizeBytes)}
+              {environmentUi.diskUsage} {formatEnvironmentSize(environment.sizeBytes)}
             </Typography>
             <Typography variant="caption" color="text.secondary" noWrap>
               {environment.consumers.length
-                ? `${environment.consumers.length} 个使用方`
-                : '暂无使用方'}
+                ? environmentUi.valueConsumers(environment.consumers.length)
+                : environmentUi.noConsumers}
             </Typography>
           </Stack>
         </Box>
@@ -228,7 +231,7 @@ function EnvironmentCard({
         >
           {canBuild ? (
             <Button size="small" variant="contained" disabled={busy} onClick={onBuild}>
-              查看估算并构建
+              {environmentUi.reviewEstimateAndBuild}
             </Button>
           ) : null}
           {canRebuild ? (
@@ -239,12 +242,12 @@ function EnvironmentCard({
               onClick={onRebuild}
               startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}
             >
-              {busy ? '重新构建中…' : '重新构建'}
+              {busy ? environmentUi.rebuilding : environmentUi.rebuild}
             </Button>
           ) : null}
           {environment.state === 'building' ? (
             <Button size="small" variant="outlined" disabled>
-              构建中…
+              {environmentUi.building}
             </Button>
           ) : null}
           {!canBuild && !canRebuild && environment.state !== 'building' && removable ? (
@@ -255,7 +258,7 @@ function EnvironmentCard({
               disabled={busy}
               onClick={onRemove}
             >
-              移除
+              {environmentUi.remove}
             </Button>
           ) : null}
         </Box>
@@ -277,6 +280,7 @@ export function ManagedEnvironmentsSection({
   onClean,
   onOpen
 }: ManagedEnvironmentsSectionProps): React.JSX.Element {
+  useUiLanguage()
   const currentEnvironments = environments.filter(
     (environment) => environment.source !== 'orphaned'
   )
@@ -298,19 +302,23 @@ export function ManagedEnvironmentsSection({
       >
         <Box>
           <Typography id="managed-environments-title" variant="h6">
-            环境
+            {environmentUi.environments}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Phi 自动检测 Jupyter、Nextflow 和容器运行时；需要隔离时再按锁文件构建环境。
+            {environmentUi.phiAutomaticallyDetectsJupyterNextflowAndContainerRuntimes}
           </Typography>
         </Box>
         <Button size="small" color="warning" disabled={loading} onClick={onClean}>
-          清理未引用环境
+          {environmentUi.cleanUpUnreferencedEnvironments2}
         </Button>
       </Stack>
 
       {error ? (
-        <Alert severity="error" variant="outlined" action={<Button onClick={onRetry}>重试</Button>}>
+        <Alert
+          severity="error"
+          variant="outlined"
+          action={<Button onClick={onRetry}>{environmentUi.retry}</Button>}
+        >
           {error}
         </Alert>
       ) : null}
@@ -321,7 +329,7 @@ export function ManagedEnvironmentsSection({
         </Box>
       ) : currentEnvironments.length === 0 ? (
         <Alert severity="info" variant="outlined">
-          暂无可管理的环境。
+          {environmentUi.noEnvironmentsToManage}
         </Alert>
       ) : (
         <Box
@@ -352,15 +360,14 @@ export function ManagedEnvironmentsSection({
           variant="outlined"
           action={
             <Button color="warning" disabled={loading} onClick={onClean}>
-              清理遗留环境
+              {environmentUi.cleanUpLegacyEnvironments}
             </Button>
           }
         >
-          发现 {orphanedEnvironments.length} 个旧版遗留环境
-          {orphanedSizeBytes === undefined
-            ? '。'
-            : `，占用 ${formatEnvironmentSize(orphanedSizeBytes)}。`}
-          当前插件已不再使用这些环境。
+          {environmentUi.legacyEnvironmentNotice(
+            orphanedEnvironments.length,
+            orphanedSizeBytes === undefined ? undefined : formatEnvironmentSize(orphanedSizeBytes)
+          )}
         </Alert>
       ) : null}
     </Stack>

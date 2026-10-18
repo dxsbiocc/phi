@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Box, Stack } from '@mui/material'
@@ -16,6 +18,7 @@ const outlineMarkerActiveWidth = 22
 const outlineMarkerRestWidth = 10
 
 function NotebookOutlineTitle({ item }: { item: NotebookOutlineItem }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       component="span"
@@ -70,6 +73,7 @@ export default function NotebookScrollProgressRail({
   activeId: string | null
   onSelect: (item: NotebookOutlineItem) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   if (outline.length === 0) return null
@@ -77,7 +81,7 @@ export default function NotebookScrollProgressRail({
   return (
     <Box
       data-phi-notebook-outline="true"
-      aria-label="Notebook document outline"
+      aria-label={analysisCopy.notebookOutline}
       sx={{
         position: 'absolute',
         top: `${macTitlebarHeight + 72}px`,
@@ -121,7 +125,7 @@ export default function NotebookScrollProgressRail({
                 key={item.id}
                 component="button"
                 type="button"
-                aria-label={`跳转到 ${plainTitle}`}
+                aria-label={analysisCopy.jumpTo(plainTitle)}
                 title={plainTitle}
                 data-phi-notebook-scroll-marker={active ? 'active' : 'idle'}
                 data-phi-notebook-outline-marker="true"
@@ -193,7 +197,7 @@ export default function NotebookScrollProgressRail({
                   component="div"
                   role="button"
                   tabIndex={0}
-                  aria-label={`跳转到 ${plainTitle}`}
+                  aria-label={analysisCopy.jumpTo(plainTitle)}
                   title={plainTitle}
                   data-phi-notebook-outline-item="true"
                   data-phi-notebook-outline-active={active ? 'true' : 'false'}

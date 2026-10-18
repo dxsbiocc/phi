@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { GoScreenFull, GoScreenNormal, GoSync, GoX } from 'react-icons/go'
 import { PhiIcons } from '../icons'
+import { useUiLanguage } from '../lib/i18n'
+import { windowUiCopy } from '../lib/windowUiCopy'
 import {
   workspacePanelActionSize,
   workspacePanelGap,
@@ -17,11 +19,7 @@ import { ProjectFileTree } from '../features/file-preview/components/ProjectFile
 
 const DirectoryTreeIcon = PhiIcons.entity.directoryTree
 
-const workspacePanelLabels: Record<WorkspaceSidePanelMode, string> = {
-  jobs: '后台任务',
-  terminal: '终端',
-  browser: '浏览器'
-}
+const workspacePanelLabels = windowUiCopy.panels
 
 export interface WorkspaceSidePanelSlotRenderContext {
   headerActions: ReactNode
@@ -42,6 +40,7 @@ function WorkspaceSidePanelSlotActions({
   onToggleMaximized: () => void
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const label = workspacePanelLabels[mode]
   const actionSx = {
     width: workspacePanelActionSize,
@@ -66,10 +65,10 @@ function WorkspaceSidePanelSlotActions({
       sx={{ display: 'flex', alignItems: 'center', gap: 0.25, flexShrink: 0 }}
     >
       {showLayoutAction ? (
-        <Tooltip title={maximized ? '还原分屏' : `在右侧工作区展开${label}`}>
+        <Tooltip title={maximized ? windowUiCopy.restorePanels : windowUiCopy.expandPanel(label)}>
           <IconButton
             type="button"
-            aria-label={maximized ? '还原分屏' : `在右侧工作区展开${label}`}
+            aria-label={maximized ? windowUiCopy.restorePanels : windowUiCopy.expandPanel(label)}
             aria-pressed={maximized}
             onClick={onToggleMaximized}
             sx={actionSx}
@@ -79,14 +78,24 @@ function WorkspaceSidePanelSlotActions({
         </Tooltip>
       ) : null}
       {mode === 'jobs' && onRefreshJobs ? (
-        <Tooltip title="刷新后台任务">
-          <IconButton type="button" aria-label="刷新后台任务" onClick={onRefreshJobs} sx={actionSx}>
+        <Tooltip title={windowUiCopy.refreshJobs}>
+          <IconButton
+            type="button"
+            aria-label={windowUiCopy.refreshJobs}
+            onClick={onRefreshJobs}
+            sx={actionSx}
+          >
             <GoSync size={16} style={{ transform: 'scale(0.72)' }} />
           </IconButton>
         </Tooltip>
       ) : null}
-      <Tooltip title={`关闭${label}`}>
-        <IconButton type="button" aria-label={`关闭${label}`} onClick={onClose} sx={actionSx}>
+      <Tooltip title={windowUiCopy.closePanel(label)}>
+        <IconButton
+          type="button"
+          aria-label={windowUiCopy.closePanel(label)}
+          onClick={onClose}
+          sx={actionSx}
+        >
           <GoX size={16} />
         </IconButton>
       </Tooltip>
@@ -101,6 +110,7 @@ function WorkspaceSidePanelSlotHeader({
   mode: Exclude<WorkspaceSidePanelMode, 'browser'>
   actions: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       data-phi-workspace-side-panel-slot-header={mode}
@@ -150,6 +160,7 @@ export function WorkspaceFilesPane({
   onCancelDownload?: () => void
   onListDirectory?: (path: string) => Promise<DirectoryListing>
 }): React.JSX.Element {
+  useUiLanguage()
   if (!rootPath || !onOpenFile || !onListDirectory) {
     return (
       <Box
@@ -166,10 +177,10 @@ export function WorkspaceFilesPane({
         <Box sx={{ maxWidth: 260 }}>
           <DirectoryTreeIcon sx={{ fontSize: 28, color: 'text.disabled', mb: 1 }} />
           <Typography variant="body2" sx={{ fontWeight: 800 }}>
-            还没有工作空间
+            {windowUiCopy.noWorkspace}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-            选择项目会话后显示当前工作路径的文件树。
+            {windowUiCopy.selectWorkspace}
           </Typography>
         </Box>
       </Box>
@@ -216,6 +227,7 @@ export function WorkspaceSidePanel({
     context: WorkspaceSidePanelSlotRenderContext
   ) => ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   const selectedMode = maximized ?? singleVisibleMode
   const visibleSlots = selectedMode ? slots.filter((mode) => mode === selectedMode) : slots
   return (

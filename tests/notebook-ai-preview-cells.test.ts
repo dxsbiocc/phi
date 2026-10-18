@@ -1,3 +1,6 @@
+import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -105,6 +108,7 @@ function progressHarness(initialDraft: NotebookAiPromptDraft | null): {
     notebookAiGeneratedCellsFromResult,
     notebookAiEmptyGenerationMessage,
     notebookAiPromptError,
+    analysisCopy,
     notebookPromptContextReferences,
     onGenerateNotebookCode: () => generation,
     onNotebookCodeGenerationProgress: (callback: typeof onProgress) => {
@@ -515,10 +519,13 @@ test('AI preview exposes accept and reject actions only after generation finishe
   assert.match(completeMarkup, /data-phi-notebook-ai-preview-reject="true"/)
   assert.match(completeMarkup, /aria-label="接受 AI 生成内容"/)
   assert.match(completeMarkup, /aria-label="拒绝 AI 生成内容"/)
-  assert.match(completeMarkup, />Accept</)
-  assert.match(completeMarkup, />Reject</)
+  assert.match(completeMarkup, />接受</)
+  assert.match(completeMarkup, />拒绝</)
 
   assert.match(generatingMarkup, /data-phi-notebook-ai-preview-generating="true"/)
   assert.doesNotMatch(generatingMarkup, /data-phi-notebook-ai-preview-accept="true"/)
   assert.doesNotMatch(generatingMarkup, /data-phi-notebook-ai-preview-reject="true"/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

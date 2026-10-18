@@ -1,5 +1,5 @@
-import { agentRunNotice, type AgentRunFinishedEvent } from '../../../shared/agentRunNotice'
-import { wrapperRunNotice, type WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
+import { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
+export { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
@@ -26,10 +26,7 @@ import {
 } from '../features/chat/lib/runtimeToolRecovery'
 import { storedPromptImages } from '../features/chat/lib/storedPromptImages'
 import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
-import {
-  applyApprovalTimelineEvent,
-  approvalItemFromEvent
-} from '../features/chat/lib/approvalTimeline'
+import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook.'
@@ -397,170 +394,6 @@ export function hasEquivalentErrorMessage(
 export function isDisplayableAssistantText(text: string): boolean {
   const trimmed = text.trim()
   return trimmed.length > 0 && trimmed !== '.'
-}
-
-export function chatItemFromPhiTimelineEvent(event: {
-  type?: string
-  eventId?: string
-  runId?: string
-  approvalId?: string
-  phiSessionId?: string
-  sessionId?: string
-  toolCallId?: string
-  toolName?: unknown
-  summary?: unknown
-  shortSummary?: unknown
-  reason?: unknown
-  action?: unknown
-  tokensBefore?: unknown
-  tokensAfter?: unknown
-  noticeText?: unknown
-  noticeLevel?: unknown
-  errorMessage?: unknown
-  createdAt?: string
-  fromProviderId?: unknown
-  fromModelId?: unknown
-  toProviderId?: unknown
-  toModelId?: unknown
-  toModelName?: unknown
-}): ChatItem | null {
-  const approval = approvalItemFromEvent(event)
-  if (approval) return approval
-  const id = event.eventId ?? `${event.type ?? 'phi'}-${event.runId ?? event.approvalId ?? 'event'}`
-  if (event.type === 'run_interrupted') {
-    return {
-      id,
-      role: 'warning',
-      content: event.reason === 'app_restarted' ? '上次运行因应用重启而中断。' : '运行已中断。',
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'run_failed') {
-    const error = typeof event.errorMessage === 'string' ? event.errorMessage.trim() : ''
-    return {
-      id,
-      role: 'error',
-      content: error || '运行失败。',
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'context_compacted') {
-    return {
-      id,
-      role: 'warning',
-      content: '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。',
-      contextCompaction: {
-        action: typeof event.action === 'string' ? event.action : 'unknown',
-        ...(typeof event.reason === 'string' ? { reason: event.reason } : {}),
-        ...(typeof event.tokensBefore === 'number' &&
-        Number.isFinite(event.tokensBefore) &&
-        event.tokensBefore >= 0
-          ? { tokensBefore: event.tokensBefore }
-          : {}),
-        ...(typeof event.tokensAfter === 'number' &&
-        Number.isFinite(event.tokensAfter) &&
-        event.tokensAfter >= 0
-          ? { tokensAfter: event.tokensAfter }
-          : {}),
-        ...(typeof event.summary === 'string' ? { summary: event.summary } : {}),
-        ...(typeof event.shortSummary === 'string' ? { shortSummary: event.shortSummary } : {})
-      },
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'context_shaken') {
-    return {
-      id,
-      role: 'warning',
-      content: '上下文已压缩',
-      contextCompaction: { action: 'shake' },
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'remote_run_stopped') {
-    const text = typeof event.noticeText === 'string' ? event.noticeText.slice(0, 200) : ''
-    const content = text || '已停止上一次未结束的远端运行'
-    return { id, role: 'warning', content, ...createdAtField(event.createdAt) }
-  }
-  if (event.type === 'context_maintenance_notice') {
-    // Successful maintenance has its own compacted status; its process diagnostics stay in storage.
-    if (event.noticeLevel !== 'warning' && event.noticeLevel !== 'error') return null
-    const raw = typeof event.noticeText === 'string' ? event.noticeText : ''
-    const images = raw.match(/dropped (\d+) attached images?/i)
-    const content = images
-      ? `SDK 为继续压缩，从模型上下文移除了 ${images[1]} 张历史图片；聊天记录中的图片仍可查看。`
-      : `SDK 上下文整理提示：${raw || '没有更多详情'}`
-    return {
-      id,
-      role: event.noticeLevel === 'error' ? 'error' : 'warning',
-      content,
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'context_compaction_failed') {
-    const error = typeof event.errorMessage === 'string' ? `：${event.errorMessage}` : ''
-    return {
-      id,
-      role: 'error',
-      content: `上下文压缩失败${error}`,
-      contextCompaction: {
-        action: typeof event.action === 'string' ? event.action : 'unknown',
-        ...(typeof event.reason === 'string' ? { reason: event.reason } : {})
-      },
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'model_selection_migrated' || event.type === 'model_fallback') {
-    const from =
-      typeof event.fromProviderId === 'string' && typeof event.fromModelId === 'string'
-        ? `${event.fromProviderId}/${event.fromModelId}`
-        : '旧模型'
-    const to =
-      typeof event.toProviderId === 'string' && typeof event.toModelId === 'string'
-        ? `${event.toProviderId}/${event.toModelId}`
-        : typeof event.toModelName === 'string'
-          ? event.toModelName
-          : '可用模型'
-    return {
-      id,
-      role: 'warning',
-      content:
-        event.type === 'model_fallback'
-          ? `${from} 请求失败，正在尝试 ${to}。`
-          : `${from} 当前不可用，已切换到 ${to}。`,
-      ...runIdField(event.runId),
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'wrapper_run_finished') {
-    const finished = event as unknown as WrapperRunFinishedEvent
-    const notice = wrapperRunNotice(finished)
-    return {
-      id,
-      role: 'warning',
-      content: `${notice.title}\n${notice.body}`,
-      backgroundJobNotice: { state: finished.state },
-      ...createdAtField(event.createdAt)
-    }
-  }
-  if (event.type === 'agent_run_finished') {
-    const finished = event as unknown as AgentRunFinishedEvent
-    const notice = agentRunNotice(finished)
-    const stateMap = { done: 'completed', error: 'failed', cancelled: 'cancelled' } as const
-    return {
-      id,
-      role: 'warning',
-      content: `${notice.title}\n${notice.body}`,
-      backgroundJobNotice: { state: stateMap[finished.state] },
-      ...createdAtField(event.createdAt)
-    }
-  }
-  return null
 }
 
 export function runLifecycleItemFromPhiTimelineEvent(event: {

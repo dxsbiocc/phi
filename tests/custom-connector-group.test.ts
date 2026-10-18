@@ -46,7 +46,7 @@ test('presents a user stdio connector without exposing environment values', () =
   if (entry?.kind !== 'server') return
   assert.equal(entry.name, 'local-fixture')
   assert.equal(entry.subtitle, 'bun run server.ts')
-  assert.equal(entry.origin, '自建·本地')
+  assert.equal(entry.origin, 'Custom · Local')
   assert.equal(entry.enabled, true)
   assert.deepEqual(entry.server.envKeys, ['SECRET_TOKEN'])
   assert.doesNotMatch(JSON.stringify(entry), /secret-value/i)
@@ -83,7 +83,7 @@ test('includes only remote connectors that are neither package-owned nor catalog
 
   assert.deepEqual(
     entries.map((entry) => [entry.name, entry.subtitle, entry.origin]),
-    [['Remote Custom', 'https://custom.example/mcp', '自建·远程']]
+    [['Remote Custom', 'https://custom.example/mcp', 'Custom · Remote']]
   )
 })
 
@@ -102,9 +102,9 @@ test('presents pending local jobs with setup-aware status labels', () => {
   assert.deepEqual(
     entries.map((entry) => [entry.kind, entry.name, entry.status]),
     [
-      ['job', 'failed', '添加失败'],
-      ['job', 'needs-setup', '需要先配置'],
-      ['job', 'starting', '正在添加…']
+      ['job', 'failed', 'Add failed'],
+      ['job', 'needs-setup', 'Setup required'],
+      ['job', 'starting', 'Adding…']
     ]
   )
 })

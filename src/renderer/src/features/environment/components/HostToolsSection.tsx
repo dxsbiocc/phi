@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState, type ReactNode } from 'react'
 import Alert from '@mui/material/Alert'
 import Chip from '@mui/material/Chip'
@@ -20,7 +22,7 @@ const ansiEscape = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, 
 
 async function pickEnvironmentBinary(): Promise<string | null> {
   if (typeof window.api.pickEnvironmentBinary !== 'function') {
-    throw new Error('文件选择接口不可用，请完全退出并重新打开 Phi 后再试')
+    throw new Error(environmentUi.theFilePickerIsUnavailableQuitAndReopen)
   }
   return window.api.pickEnvironmentBinary()
 }
@@ -32,7 +34,7 @@ function readableToolError(cause: unknown): string {
     .replace(/^Error invoking remote method '[^']+': Error:\s*/u, '')
     .trim()
   if (/Unable to locate a Java Runtime|Nextflow needs a Java virtual machine/iu.test(clean)) {
-    return '无法启用本机 Nextflow：没有找到 Java。请选择包含 Java 的 Nextflow 环境，或继续使用 Phi 托管环境。'
+    return environmentUi.cannotEnableLocalNextflowBecauseJavaWasNot
   }
   return clean
 }
@@ -60,6 +62,7 @@ function HostToolChoiceCard({
   children,
   onSavePath
 }: HostToolChoiceCardProps): React.JSX.Element {
+  useUiLanguage()
   const [draft, setDraft] = useState(tool.path ?? tool.detectedPath ?? '')
   const [saving, setSaving] = useState(false)
   const [picking, setPicking] = useState(false)
@@ -99,14 +102,14 @@ function HostToolChoiceCard({
       title={title}
       summary={summary}
       status={status}
-      contextLabel="本机工具"
+      contextLabel={environmentUi.localTools}
       choiceSelected={tool.selected}
       action={
         <Switch
           checked={tool.selected}
           disabled={working || (!tool.selected && !draft.trim())}
           onChange={(_, checked) => void save(checked ? draft.trim() : null)}
-          slotProps={{ input: { 'aria-label': `启用本机 ${title}` } }}
+          slotProps={{ input: { 'aria-label': environmentUi.enableLocalValue(title) } }}
         />
       }
       details={
@@ -120,7 +123,9 @@ function HostToolChoiceCard({
             onChange={(event) => setDraft(event.target.value)}
             placeholder={placeholder}
             helperText={
-              tool.selected ? '切换到 Phi 托管环境后可修改路径' : '开启右侧开关以使用此路径'
+              tool.selected
+                ? environmentUi.switchToThePhiManagedEnvironmentToEdit
+                : environmentUi.enableTheSwitchOnTheRightToUse
             }
             slotProps={{
               input: {
@@ -130,7 +135,7 @@ function HostToolChoiceCard({
                     <IconButton
                       edge="end"
                       size="small"
-                      aria-label={`浏览选择 ${title}`}
+                      aria-label={environmentUi.browseForValue(title)}
                       disabled={working || tool.selected}
                       onClick={() => void pickBinary()}
                     >
@@ -167,14 +172,15 @@ function NextflowHostToolCard({
   busy: boolean
   onSavePath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   const version = hostToolDisplayVersion(tool)
-  const summary = version ? `版本 ${version}` : undefined
+  const summary = version ? environmentUi.versionValue(version) : undefined
   return (
     <HostToolChoiceCard
       tool={tool}
       title="Nextflow"
       icon={<TbRoute aria-hidden size={23} />}
-      pathLabel="本机 Nextflow 路径"
+      pathLabel={environmentUi.localNextflowPath}
       placeholder="/absolute/path/to/nextflow"
       summary={summary}
       busy={busy}
@@ -192,35 +198,39 @@ function JupyterHostToolCard({
   busy: boolean
   onSavePath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   const kernels = tool.kernels ?? []
   const summary = tool.selected
-    ? [tool.version ? `版本 ${tool.version}` : undefined, `${kernels.length} 个 kernel`]
+    ? [
+        tool.version ? environmentUi.versionValue(tool.version) : undefined,
+        environmentUi.valueKernels(kernels.length)
+      ]
         .filter(Boolean)
         .join(' · ')
     : tool.status === 'ready'
       ? tool.detectedPath
-        ? `${kernels.length} 个 kernel · 本机 Server 可用`
-        : `${kernels.length} 个本机 kernel`
+        ? environmentUi.valueKernelsLocalServerAvailable(kernels.length)
+        : environmentUi.valueLocalKernels(kernels.length)
       : tool.detectedPath
-        ? '已找到 Jupyter，但 Server 不可用'
-        : '未发现本机 Jupyter'
+        ? environmentUi.jupyterFoundButTheServerIsUnavailable
+        : environmentUi.noLocalJupyterFound
   return (
     <HostToolChoiceCard
       tool={tool}
       title="Jupyter"
       icon={<PhiIcons.nav.runtime size={22} />}
-      pathLabel="本机 Jupyter 路径"
+      pathLabel={environmentUi.localJupyterPath}
       placeholder="/absolute/path/to/jupyter"
       summary={summary}
       busy={busy}
       onSavePath={onSavePath}
     >
       <Typography variant="caption" color="text.secondary">
-        本机 kernels · {kernels.length} 个
+        {environmentUi.localKernels} {kernels.length} {environmentUi.countSuffix}
       </Typography>
       {kernels.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          未发现本机 kernels。
+          {environmentUi.noLocalKernelsFound}
         </Typography>
       ) : (
         <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap', rowGap: 0.75 }}>
@@ -247,10 +257,11 @@ export function HostToolsList({
   busy: boolean
   onSavePath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   if (tools.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        尚未完成本机工具检测。
+        {environmentUi.localToolDetectionHasNotFinished}
       </Typography>
     )
   }

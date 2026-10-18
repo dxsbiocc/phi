@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { useMemo, useState } from 'react'
 import { Box, InputAdornment, List, ListItemButton, TextField, Typography } from '@mui/material'
 
@@ -18,12 +20,13 @@ export function WrapperPackageRail<T extends WrapperCompositionManifest>({
   selectedId: string | null
   onSelect: (entry: T) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [query, setQuery] = useState('')
   const visible = useMemo(() => filterWrapperMembers(members, query), [members, query])
   return (
     <Box
       component="nav"
-      aria-label={`${familyName} 包内工具`}
+      aria-label={wrapperCopy.packageTools(familyName)}
       data-phi-wrapper-package-rail={familyName}
       sx={{
         width: 240,
@@ -41,7 +44,7 @@ export function WrapperPackageRail<T extends WrapperCompositionManifest>({
           {familyName}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          {members.length} 个工具
+          {wrapperCopy.toolCount(members.length)}
         </Typography>
       </Box>
       {members.length > 6 ? (
@@ -50,10 +53,10 @@ export function WrapperPackageRail<T extends WrapperCompositionManifest>({
             fullWidth
             size="small"
             value={query}
-            placeholder="搜索工具"
+            placeholder={wrapperCopy.searchTools}
             onChange={(event) => setQuery(event.target.value)}
             slotProps={{
-              htmlInput: { 'aria-label': '搜索包内工具' },
+              htmlInput: { 'aria-label': wrapperCopy.searchPackageTools },
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
@@ -87,7 +90,7 @@ export function WrapperPackageRail<T extends WrapperCompositionManifest>({
         ))}
         {visible.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ p: 1.5 }}>
-            没有匹配的工具
+            {wrapperCopy.noMatchingTools}
           </Typography>
         ) : null}
       </List>

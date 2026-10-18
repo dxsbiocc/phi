@@ -250,7 +250,9 @@ export class RemoteSkillService {
         dir = join(temporaryRoot, 'skill')
         materializeSkillSnapshot(dir, files)
       } else if (source.remoteProject) {
-        throw new Error('服务器项目 Skill 缺少已发现的文件快照；没有回退到本机。')
+        throw new Error(
+          'The server project Skill has no discovered file snapshot. No local fallback was used.'
+        )
       }
       const result = validateSkill(dir, {
         insidePlugin: source.insidePlugin,
@@ -259,7 +261,7 @@ export class RemoteSkillService {
       if (result.ok && result.skill) {
         if (result.skill.phi?.environment === './environment.yml') {
           problems.push(
-            `${source.name}: 远程 Skill 暂不构建 ./environment.yml；请改用 phi: 基础环境，或先在可联网机器预构建并迁移。没有回退到本机。`
+            `${source.name}: Remote Skills do not yet build ./environment.yml. Use a phi: base environment, or prebuild on a machine with network access and transfer it. No local fallback was used.`
           )
           return undefined
         }
@@ -331,7 +333,7 @@ export class RemoteSkillService {
     }
     if (!source?.files || !sameSkillSnapshot(remembered.source.files, source.files)) {
       throw new Error(
-        `Skill '${remembered.source.name}' 不再受信任或内容已变化；请刷新并重新信任后再运行。`
+        `Skill '${remembered.source.name}' is no longer trusted or its content has changed. Refresh and trust it again before running.`
       )
     }
     return { ...remembered, source }
@@ -390,10 +392,17 @@ export class RemoteSkillService {
     } catch (error) {
       signal.throwIfAborted()
       const message = errorText(error)
-      if (!/^远程 Skill bundle (?:校验|上传)失败：/u.test(message)) throw error
+      if (
+        !/^(?:Remote Skill bundle (?:verification|upload) failed: |远程 Skill bundle (?:校验|上传)失败：)/u.test(
+          message
+        )
+      )
+        throw error
+      // Classify server output, not Phi's English failure label.
+      const detail = message.replace(/^Remote Skill bundle (?:verification|upload) failed: /u, '')
       const diagnosis = await this.diagnoseFailure(
         workspace,
-        { code: 1, stdout: '', stderr: message, signal: null, truncated: false },
+        { code: 1, stdout: '', stderr: detail, signal: null, truncated: false },
         signal
       )
       if (diagnosis && diagnosis.kind !== 'other') {

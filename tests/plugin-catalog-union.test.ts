@@ -15,6 +15,8 @@ import {
   phiPluginCatalogAction,
   type PhiPluginCatalogEntry
 } from '../src/renderer/src/features/phi-plugin/lib/phiPluginCatalog'
+import { phiPluginDisplayTitle } from '../src/renderer/src/features/phi-plugin/lib/phiPlugins'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 
 function installed(id: string, title: string): PhiPluginDisplayItem {
   return {
@@ -83,33 +85,33 @@ function render(overrides: Partial<PhiPluginCatalogContentProps> = {}): string {
 
 test('all plugins includes installed Office when only visualization is available remotely', () => {
   const markup = render()
-  assert.match(markup, /全部插件 · 2/)
-  assert.match(markup, /已安装 · 2/)
-  assert.match(markup, /其他 · 2/)
+  assert.match(markup, /All Plugins · 2/)
+  assert.match(markup, /Installed · 2/)
+  assert.match(markup, /Other · 2/)
   assert.match(markup, /办公文档/)
   assert.match(markup, /科研绘图/)
-  assert.equal(markup.match(/>科研绘图</g)?.length, 1)
-  assert.match(markup, /办公文档[\s\S]*?<button[^>]*disabled=""[^>]*>已安装<\/button>/)
+  assert.equal(markup.match(/>Visualization</g)?.length, 1)
+  assert.match(markup, /办公文档[\s\S]*?<button[^>]*disabled=""[^>]*>Installed<\/button>/)
 })
 
 test('installed plugins remain in all plugins when no remote entries are available', () => {
   const markup = render({ entries: [] })
-  assert.match(markup, /全部插件 · 2/)
-  assert.match(markup, /其他 · 2/)
+  assert.match(markup, /All Plugins · 2/)
+  assert.match(markup, /Other · 2/)
   assert.match(markup, /办公文档/)
   assert.match(markup, /科研绘图/)
-  assert.doesNotMatch(markup, /这个分组目前没有插件/)
+  assert.doesNotMatch(markup, /No plugins in this group/)
 })
 
 test('all and category counts include installed-only plugins without duplicating remote IDs', () => {
   const markup = render({
     entries: [...entries, available('reviewer', '审稿助手', '科研')]
   })
-  assert.match(markup, /全部插件 · 3/)
-  assert.match(markup, /已安装 · 2/)
-  assert.match(markup, /其他 · 2/)
-  assert.match(markup, /科研 · 1/)
-  assert.equal(markup.match(/>科研绘图</g)?.length, 1)
+  assert.match(markup, /All Plugins · 3/)
+  assert.match(markup, /Installed · 2/)
+  assert.match(markup, /Other · 2/)
+  assert.match(markup, /Research · 1/)
+  assert.equal(markup.match(/>Visualization</g)?.length, 1)
   const category = render({ initialCategory: '其他' })
   assert.match(category, /办公文档/)
   assert.match(category, /科研绘图/)
@@ -130,6 +132,32 @@ test('search and category filtering use the same union as catalog counts', () =>
   )
   assert.deepEqual(filterPhiPluginCatalog(catalog, '科研', '办公'), [])
   assert.equal(filterPhiPluginCatalog(catalog, '科研', '').length, 2)
+  assert.deepEqual(
+    filterPhiPluginCatalog(catalog, 'all', 'research').map((item) => item.id),
+    ['visualization', 'reviewer']
+  )
+  assert.equal(filterPhiPluginCatalog(catalog, '科研', '科研').length, 2)
+  assert.equal(catalog[0].title, 'Visualization')
+  assert.equal(catalog[0].category, '科研')
+})
+
+test('the legacy Visualization title stays English in both UI languages without changing package metadata', () => {
+  const legacy = installed('visualization', '科研绘图')
+  const author = installed('custom-visualization', '我的绘图工具')
+  try {
+    for (const language of ['en', 'zh-CN'] as const) {
+      setUiLanguage(language)
+      assert.equal(phiPluginDisplayTitle(legacy), 'Visualization')
+      const catalog = buildPhiPluginCatalog([legacy, author], [])
+      assert.equal(catalog[0].title, 'Visualization')
+      assert.equal(catalog[1].title, '我的绘图工具')
+      assert.equal(legacy.title, '科研绘图')
+      assert.equal(legacy.id, 'visualization')
+      assert.equal(legacy.version, '1.0.0')
+    }
+  } finally {
+    setUiLanguage('en')
+  }
 })
 
 test('installed-only rows keep their icon and source without fabricated installation metadata', () => {
@@ -138,7 +166,7 @@ test('installed-only rows keep their icon and source without fabricated installa
   assert.ok(row)
   assert.equal(row.entry, undefined)
   assert.deepEqual(row.icon, office.icon)
-  assert.equal(row.source, '软件源')
+  assert.equal(row.source, 'Registry')
   assert.equal(row.version, office.version)
 })
 

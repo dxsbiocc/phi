@@ -45,23 +45,36 @@ function findElement(
   return undefined
 }
 
+function inspectTree<T>(build: () => T): T {
+  let result!: T
+  renderToStaticMarkup(
+    createElement(function InspectTree() {
+      result = build()
+      return null
+    })
+  )
+  return result
+}
+
 test('connector job detail dialog renders complete failure fields and copy payload', () => {
   const failed = setup()
-  const content = ConnectorJobDetailContent({
-    setup: failed,
-    nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
-    copied: false,
-    onCopy: () => undefined,
-    onClose: () => undefined,
-    onRetry: () => undefined
-  })
+  const content = inspectTree(() =>
+    ConnectorJobDetailContent({
+      setup: failed,
+      nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
+      copied: false,
+      onCopy: () => undefined,
+      onClose: () => undefined,
+      onRetry: () => undefined
+    })
+  )
   const markup = renderToStaticMarkup(
     createElement(ThemeProvider, { theme: createTheme() }, content)
   )
   assert.equal(typeof ConnectorJobDetailDialog, 'function')
-  assert.match(markup, /连接器详情/)
+  assert.match(markup, /Connector Details/)
   assert.match(markup, /QQ 邮箱/)
-  assert.match(markup, /失败/)
+  assert.match(markup, /Failed/)
   assert.match(markup, /bun x --bun qq-email-mcp@0\.1\.1/)
   assert.match(markup, /--stdio/)
   assert.match(markup, /MCP subprocess closed stdout before responding/)
@@ -69,12 +82,12 @@ test('connector job detail dialog renders complete failure fields and copy paylo
   assert.match(markup, /01:05/)
 
   const payload = buildConnectorJobDetailText(failed, Date.parse('2026-10-11T08:02:00.000Z'))
-  assert.match(payload, /^连接器名称：QQ 邮箱/m)
-  assert.match(payload, /^状态：失败/m)
-  assert.match(payload, /命令：\nbun x --bun qq-email-mcp@0\.1\.1\n--stdio/)
-  assert.match(payload, /^耗时：01:05/m)
-  assert.match(payload, /错误：\nMCP subprocess closed stdout before responding/)
-  assert.match(payload, /进程输出：\nConfig not found, run init first/)
+  assert.match(payload, /^Connector name: QQ 邮箱/m)
+  assert.match(payload, /^Status: Failed/m)
+  assert.match(payload, /Command:\nbun x --bun qq-email-mcp@0\.1\.1\n--stdio/)
+  assert.match(payload, /^Duration: 01:05/m)
+  assert.match(payload, /Error:\nMCP subprocess closed stdout before responding/)
+  assert.match(payload, /Process output:\nConfig not found, run init first/)
 
   const dialogShell = renderToStaticMarkup(
     createElement(
@@ -99,43 +112,47 @@ test('connector detail shows empty output, successful tools, and retry only for 
     detail: undefined,
     toolNames: ['send_mail', 'list_mail']
   })
-  const readyContent = ConnectorJobDetailContent({
-    setup: ready,
-    nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
-    copied: false,
-    onCopy: () => undefined,
-    onClose: () => undefined,
-    onRetry: () => undefined
-  })
+  const readyContent = inspectTree(() =>
+    ConnectorJobDetailContent({
+      setup: ready,
+      nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
+      copied: false,
+      onCopy: () => undefined,
+      onClose: () => undefined,
+      onRetry: () => undefined
+    })
+  )
   const readyMarkup = renderToStaticMarkup(
     createElement(ThemeProvider, { theme: createTheme() }, readyContent)
   )
-  assert.match(readyMarkup, /已完成/)
-  assert.match(readyMarkup, /没有进程输出/)
-  assert.match(readyMarkup, /send_mail、list_mail/)
+  assert.match(readyMarkup, /Completed/)
+  assert.match(readyMarkup, /No process output/)
+  assert.match(readyMarkup, /send_mail, list_mail/)
   assert.ok(
     findElement(
       readyContent,
-      (element) => (element.props as { children?: ReactNode }).children === '复制详情'
+      (element) => (element.props as { children?: ReactNode }).children === 'Copy details'
     )
   )
   assert.equal(
     findElement(
       readyContent,
-      (element) => (element.props as { children?: ReactNode }).children === '重试'
+      (element) => (element.props as { children?: ReactNode }).children === 'Retry'
     ),
     undefined
   )
 
-  const failedContent = ConnectorJobDetailContent({
-    setup: setup(),
-    nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
-    copied: true,
-    onCopy: () => undefined,
-    onClose: () => undefined,
-    onRetry: () => undefined
-  })
-  for (const label of ['已复制', '重试', '关闭']) {
+  const failedContent = inspectTree(() =>
+    ConnectorJobDetailContent({
+      setup: setup(),
+      nowMs: Date.parse('2026-10-11T08:02:00.000Z'),
+      copied: true,
+      onCopy: () => undefined,
+      onClose: () => undefined,
+      onRetry: () => undefined
+    })
+  )
+  for (const label of ['Copied', 'Retry', 'Close']) {
     assert.ok(
       findElement(
         failedContent,
@@ -143,15 +160,32 @@ test('connector detail shows empty output, successful tools, and retry only for 
       )
     )
   }
-  assert.equal(connectorJobStartedAtLabel(setup({ startedAt: undefined })), '未知')
-  assert.equal(connectorJobToolsLabel(ready), 'send_mail、list_mail')
-  assert.equal(connectorJobToolsLabel({ ...ready, toolNames: [] }), '没有发现工具')
+  for (const error of ['已取消', 'Cancelled']) {
+    const cancelledContent = inspectTree(() =>
+      ConnectorJobDetailContent({
+        setup: setup({ error, failureKind: 'needs-setup' }),
+        nowMs: 0,
+        copied: false,
+        onCopy: () => undefined,
+        onClose: () => undefined,
+        onRetry: () => undefined
+      })
+    )
+    const cancelledMarkup = renderToStaticMarkup(
+      createElement(ThemeProvider, { theme: createTheme() }, cancelledContent)
+    )
+    assert.match(cancelledMarkup, /Cancelled/)
+    assert.doesNotMatch(cancelledMarkup, /Connector setup guide/)
+  }
+  assert.equal(connectorJobStartedAtLabel(setup({ startedAt: undefined })), 'Unknown')
+  assert.equal(connectorJobToolsLabel(ready), 'send_mail, list_mail')
+  assert.equal(connectorJobToolsLabel({ ...ready, toolNames: [] }), 'No tools found')
   assert.match(
     buildConnectorJobDetailText(
       { ...ready, startedAt: undefined, summary: undefined, error: undefined, detail: undefined },
       Date.parse('2026-10-11T08:02:00.000Z')
     ),
-    /开始时间：未知[\s\S]*错误：\n没有错误[\s\S]*进程输出：\n没有进程输出/
+    /Started at: Unknown[\s\S]*Error:\nNo errors[\s\S]*Process output:\nNo process output/
   )
 })
 
@@ -165,25 +199,32 @@ test('failed connector guide offers Agent and manual setup without executing com
       commands: ['npx -y qq-email-mcp init']
     }
   })
-  const guide = ConnectorJobSetupGuide({
-    setup: failed,
-    retrying: false,
-    onOpenAgent: (prompt) => events.push(`agent:${prompt}`),
-    onCopyCommand: (command) => events.push(`copy:${command}`),
-    onOpenTerminal: (command) => events.push(`terminal:${command}`),
-    onRetry: () => events.push('retry')
-  })
+  const guide = inspectTree(() =>
+    ConnectorJobSetupGuide({
+      setup: failed,
+      retrying: false,
+      onOpenAgent: (prompt) => events.push(`agent:${prompt}`),
+      onCopyCommand: (command) => events.push(`copy:${command}`),
+      onOpenTerminal: (command) => events.push(`terminal:${command}`),
+      onRetry: () => events.push('retry')
+    })
+  )
   const markup = renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, guide))
-  assert.match(markup, /怎么处理/)
-  assert.match(markup, /交给 Agent 处理/)
-  assert.match(markup, /自己手动处理/)
+  assert.match(markup, /Next steps/)
+  assert.match(markup, /Ask Agent to set up/)
+  assert.match(markup, /Set up manually/)
   assert.match(markup, /npx -y qq-email-mcp init/)
-  assert.match(markup, /复制命令/)
-  assert.match(markup, /在终端打开/)
-  assert.match(markup, /我已完成，重试/)
+  assert.match(markup, /Copy command/)
+  assert.match(markup, /Open in Terminal/)
+  assert.match(markup, /Setup complete, retry/)
   assert.match(markup, /target="_blank"/)
 
-  for (const label of ['交给 Agent 处理', '复制命令', '在终端打开', '我已完成，重试']) {
+  for (const label of [
+    'Ask Agent to set up',
+    'Copy command',
+    'Open in Terminal',
+    'Setup complete, retry'
+  ]) {
     const button = findElement(
       guide,
       (element) => (element.props as { children?: ReactNode }).children === label
@@ -200,16 +241,18 @@ test('failed connector guide offers Agent and manual setup without executing com
 })
 
 test('generic failures use the Agent investigation title and manual fallback', () => {
-  const guide = ConnectorJobSetupGuide({
-    setup: setup({ failureKind: 'generic', setupHint: undefined }),
-    retrying: false,
-    onOpenAgent: () => undefined,
-    onCopyCommand: () => undefined,
-    onOpenTerminal: () => undefined,
-    onRetry: () => undefined
-  })
+  const guide = inspectTree(() =>
+    ConnectorJobSetupGuide({
+      setup: setup({ failureKind: 'generic', setupHint: undefined }),
+      retrying: false,
+      onOpenAgent: () => undefined,
+      onCopyCommand: () => undefined,
+      onOpenTerminal: () => undefined,
+      onRetry: () => undefined
+    })
+  )
   const markup = renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, guide))
-  assert.match(markup, /交给 Agent 排查/)
-  assert.match(markup, /运行服务文档里的初始化命令/)
-  assert.doesNotMatch(markup, /复制命令|在终端打开|查看 README/)
+  assert.match(markup, /Ask Agent to investigate/)
+  assert.match(markup, /Run the setup command from the service documentation/)
+  assert.doesNotMatch(markup, /Copy command|Open in Terminal|View README/)
 })

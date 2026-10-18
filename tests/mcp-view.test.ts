@@ -50,16 +50,16 @@ test('connector sidebar groups installed services and toggles them with a switch
     )
   )
 
-  assert.match(markup, /生产力 · 1/)
-  assert.match(markup, /健康与生命科学 · 1/)
-  assert.match(markup, /其他 · 1/)
-  assert.doesNotMatch(markup, /个已配置/)
-  assert.match(markup, /Google Drive · 已配置 · 已启用/)
-  assert.match(markup, /disabled-local-service · 已配置 · 已停用/)
+  assert.match(markup, /Productivity · 1/)
+  assert.match(markup, /Health &amp; Life Sciences · 1/)
+  assert.match(markup, /Other · 1/)
+  assert.doesNotMatch(markup, /个Configured/)
+  assert.match(markup, /Google Drive · Configured · Enabled/)
+  assert.match(markup, /disabled-local-service · Configured · Disabled/)
   assert.match(markup, /disabled-local-service/)
-  assert.match(markup, /启用 disabled-local-service/)
-  assert.match(markup, /关闭 Google Drive/)
-  assert.match(markup, /关闭 PubMed/)
+  assert.match(markup, /Enable disabled-local-service/)
+  assert.match(markup, /Disable Google Drive/)
+  assert.match(markup, /Disable PubMed/)
   assert.match(markup, /data-phi-resource-icon-key="owned-google-drive-icon"/)
   assert.match(markup, /data-phi-resource-icon-key="owned-pubmed-icon"/)
   assert.equal(markup.match(/data-phi-resource-icon="mcp"/g)?.length, 3)
@@ -142,8 +142,8 @@ test('installed connector detail centers content and retains its catalog introdu
   assert.match(markup, /检索靶点、疾病、药物及其关联数据/)
   assert.match(markup, /https:\/\/mcp\.platform\.opentargets\.org\/mcp/)
   assert.match(markup, /\/tmp\/mcp\.json/)
-  assert.match(markup, /移除/)
-  assert.match(markup, /服务端工具/)
+  assert.match(markup, /Remove/)
+  assert.match(markup, /Server tools/)
 })
 
 test('local connector form shows host warning and exact argv preview without inline confirmation', () => {
@@ -168,7 +168,7 @@ test('local connector form shows host warning and exact argv preview without inl
     )
   )
 
-  assert.match(markup, /将直接在本机运行，不使用 Phi 隔离环境/)
+  assert.match(markup, /Runs directly on this device without a Phi isolated environment/)
   assert.match(
     markup,
     /&#x27;\/opt\/My Server\/bin\/mcp&#x27; --title &#x27;value with spaces&#x27;/
@@ -199,12 +199,12 @@ test('local Bun draft explains why its runtime is unselected when built-in Bun i
           envRows: [],
           cwd: ''
         },
-        runtimeHelperText: '未找到 Phi 内置 Bun，请检查应用安装是否完整',
+        runtimeHelperText: "Phi's bundled Bun was not found. Check the application installation.",
         onDraftChange: () => undefined
       })
     )
   )
-  assert.match(markup, /未找到 Phi 内置 Bun，请检查应用安装是否完整/)
+  assert.match(markup, /Phi&#x27;s bundled Bun was not found. Check the application installation./)
 })
 
 test('local connector form presents Bun subcommands, compatibility warning, and preview', () => {
@@ -214,7 +214,7 @@ test('local connector form presents Bun subcommands, compatibility warning, and 
       { theme: createTheme() },
       createElement(McpLocalConnectorForm, {
         busy: false,
-        runtimes: [{ ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }],
+        runtimes: [{ ref: 'bun', label: 'Phi bundled Bun', kind: 'bun' }],
         runtimesLoading: false,
         draft: {
           name: 'qq-email-mcp',
@@ -229,12 +229,18 @@ test('local connector form presents Bun subcommands, compatibility warning, and 
     )
   )
 
-  assert.match(markup, /Phi 内置 Bun/)
-  assert.match(markup, /运行 npm 包/)
-  assert.match(markup, /运行脚本/)
-  assert.match(markup, /由 Phi 内置 Bun 以 Node 兼容模式运行；个别依赖可能不兼容。/)
-  assert.match(markup, /x 方式每次启动会联网解析依赖，版本不锁定。/)
-  assert.match(markup, /例如 --bun 加 包名@版本，每行一个/)
+  assert.match(markup, /Phi bundled Bun/)
+  assert.match(markup, /run npm package/)
+  assert.match(markup, /run runs a script/)
+  assert.match(
+    markup,
+    /Runs with Phi&#x27;s bundled Bun in Node compatibility mode; some dependencies may be incompatible\./
+  )
+  assert.match(
+    markup,
+    /The x command resolves dependencies online at every start without locking versions./
+  )
+  assert.match(markup, /For example, --bun and package@version, one per line/)
   assert.match(markup, /bun x --bun qq-email-mcp@0.1.1/)
 })
 
@@ -274,8 +280,8 @@ test('user stdio detail alone exposes its ownership badge and removal action', (
     )
   )
 
-  assert.match(owned, /自建·本地/)
-  assert.match(owned, /移除/)
-  assert.doesNotMatch(unowned, /自建·本地/)
-  assert.doesNotMatch(unowned, />移除</)
+  assert.match(owned, /Custom · Local/)
+  assert.match(owned, /Remove/)
+  assert.doesNotMatch(unowned, /Custom · Local/)
+  assert.doesNotMatch(unowned, />Remove</)
 })

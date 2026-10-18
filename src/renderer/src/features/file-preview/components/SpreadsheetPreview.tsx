@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
 import { Box, Typography } from '@mui/material'
 import { Fragment } from 'react'
 import {
@@ -10,6 +12,7 @@ export function SpreadsheetPreview({
 }: {
   model: SpreadsheetPreviewModel
 }): React.JSX.Element {
+  useUiLanguage()
   const firstCell = model.rows[0]?.[0] ?? ''
   const columns = Array.from({ length: model.columnCount }, (_, index) =>
     spreadsheetColumnLabel(index)
@@ -201,7 +204,7 @@ export function SpreadsheetPreview({
           color="text.secondary"
           sx={{ px: 1.25, py: 0.6, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}
         >
-          已显示前 {model.rows.length} 行、{model.columnCount} 列
+          {filePreviewCopy.spreadsheetLimit(model.rows.length, model.columnCount)}
         </Typography>
       ) : null}
     </Box>

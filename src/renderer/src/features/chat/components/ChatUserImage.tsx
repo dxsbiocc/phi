@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 
@@ -14,6 +16,7 @@ export function ChatUserImage({
   image: MessageImage
   index: number
 }): React.JSX.Element {
+  useUiLanguage()
   const [loaded, setLoaded] = useState<{ key: string; source?: string; failed?: boolean } | null>(
     null
   )
@@ -45,23 +48,23 @@ export function ChatUserImage({
         ? loaded.source
         : null
   if (loaded?.key === key && loaded.failed) {
-    return <Typography variant="caption">图片无法读取</Typography>
+    return <Typography variant="caption">{chatCopy.unableToReadImage}</Typography>
   }
-  if (!source) return <Typography variant="caption">正在加载图片…</Typography>
+  if (!source) return <Typography variant="caption">{chatCopy.loadingImage}</Typography>
   return (
     <>
       <Box
         component="button"
         type="button"
-        aria-label={`预览消息图片 ${index + 1}`}
-        title="点击预览图片"
+        aria-label={chatCopy.previewMessageImageValue(index + 1)}
+        title={chatCopy.clickToPreviewImage}
         onClick={() => setPreviewOpen(true)}
         sx={{ display: 'block', p: 0, border: 0, bgcolor: 'transparent', cursor: 'zoom-in' }}
       >
         <Box
           component="img"
           src={source}
-          alt={`消息图片 ${index + 1}`}
+          alt={chatCopy.messageImageValue(index + 1)}
           sx={{
             display: 'block',
             maxWidth: 320,
@@ -74,7 +77,7 @@ export function ChatUserImage({
       </Box>
       <ImagePreviewDialog
         source={previewOpen ? source : null}
-        alt={`消息图片 ${index + 1}`}
+        alt={chatCopy.messageImageValue(index + 1)}
         onClose={() => setPreviewOpen(false)}
       />
     </>

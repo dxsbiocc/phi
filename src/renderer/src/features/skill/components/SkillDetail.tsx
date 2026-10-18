@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
+import { resourceUi, resourceSourceLabel } from '../../../lib/resourceUi'
 import { useEffect, useState, type MouseEvent } from 'react'
 import {
   Button,
@@ -25,8 +28,7 @@ import {
   skillDirectory,
   skillIsEnabled,
   skillSourceCategoryLabels,
-  skillSourceLabel,
-  DEPRECATED_SKILL_LABEL
+  skillSourceLabel
 } from '../lib/skillCatalog'
 
 const SkillIcon = PhiIcons.entity.skill
@@ -101,7 +103,7 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
     return {
       content: null,
       isLoading: false,
-      error: '需要重启 Phi 以加载完整 SKILL.md 读取接口。'
+      error: skillCopy.restartForMarkdown
     }
   }
 
@@ -120,9 +122,9 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
 }
 
 function deleteDisabledReason(skill: SkillSummary): string | null {
-  if (skill.sourceCategory === 'bundled') return '内置技能不可卸载'
-  if (skill.sourceCategory === 'installed-package') return '已安装技能请通过软件包目录管理'
-  if (skill.sourceCategory === 'plugin') return '插件技能请在插件页管理'
+  if (skill.sourceCategory === 'bundled') return skillCopy.cannotUninstallBuiltIn
+  if (skill.sourceCategory === 'installed-package') return skillCopy.manageInstalled
+  if (skill.sourceCategory === 'plugin') return skillCopy.managePlugin
   return null
 }
 
@@ -141,6 +143,8 @@ function SkillEnablementActions({
 }: Omit<SkillDetailProps, 'selectedSkill' | 'onDeleteSkill'> & {
   skill: SkillSummary
 }): React.JSX.Element {
+  useUiLanguage()
+
   const busy = busySkillId === skill.id
   const globalEnabled =
     typeof skill.globalEnabled === 'boolean' ? skill.globalEnabled : skillIsEnabled(skill)
@@ -161,17 +165,17 @@ function SkillEnablementActions({
           if (skill.sourceId) onNavigateToPlugin?.(skill.sourceId)
         }}
       >
-        前往插件
+        {skillCopy.goToPlugin}
       </Button>
     )
   }
 
   if (skill.core) {
     return (
-      <Tooltip title="核心技能由 Phi 依赖，不可关闭">
+      <Tooltip title={skillCopy.coreRequired}>
         <span>
           <Button size="small" variant="outlined" startIcon={<LockIcon size={16} />} disabled>
-            核心技能已锁定
+            {skillCopy.coreLocked}
           </Button>
         </span>
       </Tooltip>
@@ -182,15 +186,15 @@ function SkillEnablementActions({
     <Stack spacing={1.25} sx={{ minWidth: 210 }} onClick={stopActionEvent}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', justifyContent: 'flex-end' }}>
         <Typography variant="body2" color="text.secondary">
-          全局启用
+          {skillCopy.enableGlobally}
         </Typography>
-        <Tooltip title={globalEnabled ? '全局关闭技能' : '全局启用技能'}>
+        <Tooltip title={globalEnabled ? skillCopy.disableGlobalSkill : skillCopy.enableGlobalSkill}>
           <span>
             <Switch
               size="small"
               checked={globalEnabled}
               disabled={busy || !setGlobalEnabled}
-              slotProps={{ input: { 'aria-label': '全局启用技能' } }}
+              slotProps={{ input: { 'aria-label': skillCopy.enableGlobalSkill } }}
               onChange={(_event, checked) => void setGlobalEnabled?.(checked)}
             />
           </span>
@@ -200,7 +204,7 @@ function SkillEnablementActions({
         <TextField
           select
           size="small"
-          label="当前项目"
+          label={skillCopy.currentProject}
           value={
             skill.projectOverride === null
               ? 'inherit'
@@ -209,15 +213,15 @@ function SkillEnablementActions({
                 : 'disabled'
           }
           disabled={busy || !onSetProjectOverride}
-          slotProps={{ select: { inputProps: { 'aria-label': '项目技能覆盖' } } }}
+          slotProps={{ select: { inputProps: { 'aria-label': skillCopy.projectOverride } } }}
           onChange={(event) => {
             const value = event.target.value
             void onSetProjectOverride?.(skill, value === 'inherit' ? null : value === 'enabled')
           }}
         >
-          <MenuItem value="inherit">跟随全局</MenuItem>
-          <MenuItem value="enabled">项目启用</MenuItem>
-          <MenuItem value="disabled">项目关闭</MenuItem>
+          <MenuItem value="inherit">{skillCopy.inheritGlobal}</MenuItem>
+          <MenuItem value="enabled">{skillCopy.projectEnabled}</MenuItem>
+          <MenuItem value="disabled">{skillCopy.projectDisabled}</MenuItem>
         </TextField>
       ) : null}
     </Stack>
@@ -235,12 +239,14 @@ function SkillDeleteDialog({
   onClose: () => void
   onConfirm: (skill: SkillSummary) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <ConfirmationDialog open={Boolean(skill)} onClose={isDeleting ? undefined : onClose}>
-      <DialogTitle>卸载技能</DialogTitle>
+      <DialogTitle>{skillCopy.uninstallSkill}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1 }}>
-          确定卸载技能「{skill?.name}」吗？这个操作会删除它所在的技能目录。
+          {skillCopy.confirmUninstall(skill?.name ?? '')}
         </Typography>
         <Typography
           component="code"
@@ -257,7 +263,7 @@ function SkillDeleteDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={isDeleting}>
-          取消
+          {resourceUi.cancel}
         </Button>
         <Button
           color="error"
@@ -267,7 +273,7 @@ function SkillDeleteDialog({
             if (skill) void onConfirm(skill)
           }}
         >
-          卸载
+          {resourceUi.uninstall}
         </Button>
       </DialogActions>
     </ConfirmationDialog>
@@ -285,6 +291,8 @@ export function SkillDetail({
   onDeleteSkill,
   onRefresh
 }: SkillDetailProps): React.JSX.Element {
+  useUiLanguage()
+
   const skillContent = useSkillContent(selectedSkill)
   const [deleteCandidate, setDeleteCandidate] = useState<SkillSummary | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -306,7 +314,7 @@ export function SkillDetail({
     return (
       <Stack spacing={1} sx={{ height: '100%', alignItems: 'center', justifyContent: 'center' }}>
         <SkillIcon color="disabled" />
-        <Typography color="text.secondary">没有找到技能</Typography>
+        <Typography color="text.secondary">{skillCopy.noSkills}</Typography>
       </Stack>
     )
   }
@@ -328,7 +336,7 @@ export function SkillDetail({
               <Chip
                 size="small"
                 color={enabled ? 'success' : 'default'}
-                label={enabled ? '已启用' : '已关闭'}
+                label={enabled ? resourceUi.enabled : resourceUi.disabled}
               />
             ) : null}
             {selectedSkill.deprecated ? (
@@ -336,7 +344,7 @@ export function SkillDetail({
                 size="small"
                 color="warning"
                 variant="outlined"
-                label={DEPRECATED_SKILL_LABEL}
+                label={skillCopy.deprecated}
                 title={selectedSkill.deprecated}
               />
             ) : null}
@@ -344,7 +352,11 @@ export function SkillDetail({
               <Chip
                 size="small"
                 variant="outlined"
-                label={selectedSkill.projectOverride ? '项目已启用' : '项目已关闭'}
+                label={
+                  selectedSkill.projectOverride
+                    ? skillCopy.projectEnabled
+                    : skillCopy.projectDisabled
+                }
               />
             ) : null}
           </>
@@ -352,7 +364,10 @@ export function SkillDetail({
         notice={
           <>
             {remoteProjectSkill ? (
-              <RemoteProjectTrustStatus resource={selectedSkill} sourceLabel="服务器项目" />
+              <RemoteProjectTrustStatus
+                resource={selectedSkill}
+                sourceLabel={skillCopy.serverProject}
+              />
             ) : null}
             {selectedSkill.deprecated ? (
               <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
@@ -380,7 +395,7 @@ export function SkillDetail({
                 onNavigateToPlugin={onNavigateToPlugin}
                 onSetSkillDisabled={onSetSkillDisabled}
               />
-              <Tooltip title={cannotDelete ?? '卸载技能'}>
+              <Tooltip title={cannotDelete ?? skillCopy.uninstallSkill}>
                 <span>
                   <IconButton
                     size="small"
@@ -388,7 +403,7 @@ export function SkillDetail({
                     disabled={
                       busySkillId === selectedSkill.id || !onDeleteSkill || Boolean(cannotDelete)
                     }
-                    aria-label={`卸载技能 ${selectedSkill.name}`}
+                    aria-label={skillCopy.uninstallNamed(selectedSkill.name)}
                     onClick={() => setDeleteCandidate(selectedSkill)}
                   >
                     <DeleteIcon fontSize="small" />
@@ -399,7 +414,7 @@ export function SkillDetail({
           )
         }
         description={selectedSkill.description}
-        sourceText={`${skillSourceCategoryLabels[selectedSkill.sourceCategory]} · ${selectedSkill.source}`}
+        sourceText={`${skillSourceCategoryLabels[selectedSkill.sourceCategory]} · ${resourceSourceLabel(selectedSkill.source)}`}
         location={selectedSkill.filePath}
         markdown={skillContent}
         markdownCwd={remoteProjectSkill ? undefined : skillDirectory(selectedSkill.filePath)}

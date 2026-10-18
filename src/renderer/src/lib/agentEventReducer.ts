@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { chatEventCopy } from '../features/chat/lib/chatEventCopy'
 import type { AgentEventSummary, AgentExecutionItem, AgentExecutionStep, ChatItem } from '../types'
 import {
   chatItemFromPhiTimelineEvent,
@@ -515,7 +517,9 @@ export function reduceAgentEventState(
     next.push({
       id: createBlockId('warning', 0, nextId),
       role: 'warning',
-      content: `这个项目里还有 ${count} 个会话正在运行或等待权限。当前会话会继续启动，切换会话不会打断后台进程。`,
+      get content() {
+        return chatEventCopy.parallelWarning(count)
+      },
       ...createdAtField(event.createdAt)
     })
     nextId += 1
@@ -574,14 +578,15 @@ export function reduceAgentEventState(
     if (event.skipped) {
       return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
     }
-    const content =
-      event.aborted || event.errorMessage
-        ? `上下文压缩失败：${event.errorMessage ?? '已取消'}`
-        : '上下文已压缩，较早内容已汇总给模型；聊天时间线会继续保留可见历史。'
+
     next.push({
       id: createBlockId(event.aborted || event.errorMessage ? 'error' : 'warning', 0, nextId),
       role: event.aborted || event.errorMessage ? 'error' : 'warning',
-      content,
+      get content() {
+        return event.aborted || event.errorMessage
+          ? chatEventCopy.compactionFailure(event.errorMessage ?? chatCopy.cancelled)
+          : chatEventCopy.contextCompacted
+      },
       contextCompaction: { action: typeof event.action === 'string' ? event.action : 'unknown' },
       ...createdAtField(event.createdAt)
     })
@@ -867,7 +872,7 @@ export function reduceAgentEventState(
 
   if (event.type === 'message_end' && event.message?.role === 'assistant') {
     const isError = event.message.stopReason === 'error'
-    const errorText = isError ? event.message.errorMessage || '请求失败' : ''
+    const errorText = isError ? event.message.errorMessage || chatEventCopy.requestFailed : ''
     const textIds = [...textBlockIds.values()]
 
     if (isError) {
@@ -889,7 +894,9 @@ export function reduceAgentEventState(
           next[index] = {
             ...current,
             role: 'error',
-            content,
+            get content() {
+              return current.content || event.message?.errorMessage || chatEventCopy.requestFailed
+            },
             ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
             ...completedAtField(event.createdAt)
           }
@@ -898,7 +905,9 @@ export function reduceAgentEventState(
         next.push({
           id: createBlockId('error', 0, nextId),
           role: 'error',
-          content: errorText,
+          get content() {
+            return event.message?.errorMessage || chatEventCopy.requestFailed
+          },
           ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
           ...createdAtField(event.createdAt)
         })

@@ -1,3 +1,5 @@
+import { settingsUi } from '../features/settings/lib/settingsUi'
+import { useUiLanguage } from '../lib/i18n'
 import {
   Alert,
   Box,
@@ -40,11 +42,19 @@ type PermissionViewProps = {
 }
 
 const TOOL_LABELS: Record<string, string> = {
-  bash: '终端命令',
+  get bash() {
+    return settingsUi.terminalCommand
+  },
   powershell: 'PowerShell',
-  write: '写入文件',
-  edit: '修改文件',
-  browser: '浏览器操作'
+  get write() {
+    return settingsUi.writeFile
+  },
+  get edit() {
+    return settingsUi.editFile
+  },
+  get browser() {
+    return settingsUi.browserAction
+  }
 }
 const ApproveIcon = PhiIcons.action.approve
 const DenyIcon = PhiIcons.state.denied
@@ -55,16 +65,28 @@ const FullPermissionIcon = PhiIcons.state.full
 
 const PERMISSION_MODE_DETAILS = {
   ask: {
-    label: '询问',
-    description: '执行命令、写入或修改文件前暂停，等待你批准。'
+    get label() {
+      return settingsUi.ask
+    },
+    get description() {
+      return settingsUi.pauseForApprovalBeforeExecutingCommandsOrWriting
+    }
   },
   auto: {
-    label: '自动',
-    description: '自动执行常规允许工具；遇到受限操作仍会被运行时拦截。'
+    get label() {
+      return settingsUi.auto
+    },
+    get description() {
+      return settingsUi.runRoutinelyPermittedToolsAutomaticallyRestrictedActionsAre
+    }
   },
   full: {
-    label: '完全访问',
-    description: '放宽项目工具限制，只适合你信任的本地任务。'
+    get label() {
+      return settingsUi.fullAccess
+    },
+    get description() {
+      return settingsUi.relaxProjectToolRestrictionsUseOnlyForLocal
+    }
   }
 } satisfies Record<PermissionMode, { label: string; description: string }>
 
@@ -94,6 +116,7 @@ export function PermissionSettingsSection({
   onOpenApprovalSession,
   onRespondApproval
 }: PermissionViewProps): React.JSX.Element {
+  useUiLanguage()
   const askCount = projects.filter((project) => project.permissionMode === 'ask').length
   const fullCount = projects.filter((project) => project.permissionMode === 'full').length
   const autoCount = projects.length - askCount - fullCount
@@ -101,32 +124,32 @@ export function PermissionSettingsSection({
   return (
     <Stack spacing={3}>
       <Box>
-        <Typography variant="h5">权限</Typography>
+        <Typography variant="h5">{settingsUi.permissions}</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, maxWidth: 760 }}>
-          控制项目会话执行命令、写入文件和修改文件时的审批策略。项目策略会影响后续运行；默认模型和思考等级只作为新会话起点。
+          {settingsUi.chooseTheApprovalPolicyForCommandsAndFile}
         </Typography>
         <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap', rowGap: 1 }}>
-          <Chip size="small" label={`${projects.length} 个项目`} />
+          <Chip size="small" label={settingsUi.valueProjects(projects.length)} />
           <Chip
             size="small"
             color="success"
             icon={<AskPermissionIcon />}
             variant="outlined"
-            label={`${askCount} 询问`}
+            label={settingsUi.valueAsk(askCount)}
           />
           <Chip
             size="small"
             color="warning"
             icon={<AutoPermissionIcon />}
             variant="outlined"
-            label={`${autoCount} 自动`}
+            label={settingsUi.valueAuto(autoCount)}
           />
           <Chip
             size="small"
             color="error"
             icon={<FullPermissionIcon />}
             variant="outlined"
-            label={`${fullCount} 完全访问`}
+            label={settingsUi.valueFullAccess(fullCount)}
           />
         </Stack>
       </Box>
@@ -139,7 +162,7 @@ export function PermissionSettingsSection({
           >
             <Box>
               <Typography variant="overline" sx={{ letterSpacing: 0, fontWeight: 700 }}>
-                待审批
+                {settingsUi.awaitingApproval}
               </Typography>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
                 {TOOL_LABELS[pendingApproval.toolName] ?? pendingApproval.toolName}
@@ -151,7 +174,7 @@ export function PermissionSettingsSection({
                   variant="outlined"
                   onClick={() => onOpenApprovalSession(pendingApproval.sessionPath as string)}
                 >
-                  打开会话
+                  {settingsUi.openSession}
                 </Button>
               )}
               <Button
@@ -160,14 +183,14 @@ export function PermissionSettingsSection({
                 startIcon={<DenyIcon />}
                 onClick={() => onRespondApproval(pendingApproval.requestId, false)}
               >
-                拒绝
+                {settingsUi.deny}
               </Button>
               <Button
                 variant="contained"
                 startIcon={<ApproveIcon />}
                 onClick={() => onRespondApproval(pendingApproval.requestId, true)}
               >
-                {pendingApproval.toolName === 'browser' ? '仅允许这一次' : '批准'}
+                {pendingApproval.toolName === 'browser' ? settingsUi.allowOnce : settingsUi.approve}
               </Button>
             </Stack>
           </Stack>
@@ -191,24 +214,24 @@ export function PermissionSettingsSection({
         </Paper>
       ) : (
         <Alert severity="info" variant="outlined" sx={{ borderRadius: 1 }}>
-          当前没有待审批操作
+          {settingsUi.noActionsAwaitingApproval}
         </Alert>
       )}
 
       <Paper variant="outlined" sx={{ borderRadius: 1, overflow: 'hidden' }}>
         <Box sx={{ px: 2.5, py: 2 }}>
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            项目权限
+            {settingsUi.projectPermissions}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            安全策略放在最前面；模型设置会在项目中新建会话时作为默认值。
+            {settingsUi.chooseASafetyPolicyFirstModelSettingsBecome}
           </Typography>
         </Box>
         <Divider />
 
         {projects.length === 0 ? (
           <Box sx={{ p: 3 }}>
-            <Typography color="text.secondary">还没有项目</Typography>
+            <Typography color="text.secondary">{settingsUi.noProjectsYet}</Typography>
           </Box>
         ) : (
           <Stack divider={<Divider flexItem />}>
@@ -297,7 +320,7 @@ export function PermissionSettingsSection({
                         color="text.secondary"
                         sx={{ display: 'block', mb: 0.75 }}
                       >
-                        安全策略
+                        {settingsUi.safetyPolicy}
                       </Typography>
                       <ToggleButtonGroup
                         exclusive
@@ -324,7 +347,7 @@ export function PermissionSettingsSection({
                           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
                             <AskPermissionIcon fontSize="small" />
                             <Typography component="span" variant="body2" noWrap>
-                              询问
+                              {settingsUi.ask}
                             </Typography>
                           </Stack>
                         </ToggleButton>
@@ -332,7 +355,7 @@ export function PermissionSettingsSection({
                           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
                             <AutoPermissionIcon fontSize="small" />
                             <Typography component="span" variant="body2" noWrap>
-                              自动
+                              {settingsUi.auto}
                             </Typography>
                           </Stack>
                         </ToggleButton>
@@ -340,7 +363,7 @@ export function PermissionSettingsSection({
                           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
                             <FullPermissionIcon fontSize="small" />
                             <Typography component="span" variant="body2" noWrap>
-                              完全访问
+                              {settingsUi.fullAccess}
                             </Typography>
                           </Stack>
                         </ToggleButton>
@@ -353,7 +376,7 @@ export function PermissionSettingsSection({
                         color="text.secondary"
                         sx={{ display: 'block', mb: 0.75 }}
                       >
-                        默认模型
+                        {settingsUi.defaultModel}
                       </Typography>
                       <Select
                         size="small"
@@ -384,7 +407,7 @@ export function PermissionSettingsSection({
                           }
                         }}
                       >
-                        <MenuItem value="">跟随全局模型</MenuItem>
+                        <MenuItem value="">{settingsUi.useGlobalModel}</MenuItem>
                         {models.map((model) => (
                           <MenuItem
                             key={`${model.providerId}/${model.modelId}`}
@@ -402,7 +425,7 @@ export function PermissionSettingsSection({
                         color="text.secondary"
                         sx={{ display: 'block', mb: 0.75 }}
                       >
-                        思考等级
+                        {settingsUi.reasoningLevel}
                       </Typography>
                       <Select
                         size="small"
@@ -416,7 +439,7 @@ export function PermissionSettingsSection({
                           })
                         }}
                       >
-                        <MenuItem value="">跟随全局</MenuItem>
+                        <MenuItem value="">{settingsUi.useGlobalDefault}</MenuItem>
                         {THINKING_LEVELS.map((level) => (
                           <MenuItem key={level} value={level}>
                             {THINKING_LEVEL_LABELS[level]}
@@ -444,6 +467,7 @@ export function PermissionSettingsSection({
 }
 
 export default function PermissionView(props: PermissionViewProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh', overflow: 'auto' }}>
       <Box sx={{ maxWidth: 980, px: { xs: 3, md: 5 }, py: 5 }}>
@@ -463,7 +487,7 @@ export default function PermissionView(props: PermissionViewProps): React.JSX.El
             <ShieldIcon />
           </Box>
           <Typography variant="h4" sx={{ fontWeight: 700 }}>
-            权限
+            {settingsUi.permissions}
           </Typography>
         </Stack>
         <PermissionSettingsSection {...props} />

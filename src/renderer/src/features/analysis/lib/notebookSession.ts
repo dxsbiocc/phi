@@ -1,3 +1,4 @@
+import { analysisCopy } from './analysisUiCopy'
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 import type {
   AnalysisJupyterRuntimeStatus,
@@ -84,7 +85,7 @@ export function pendingNotebookKernelSession({
     kernelName: match?.name ?? spec.name,
     kernelDisplayName: match?.displayName ?? spec.displayName ?? spec.name,
     state: 'busy',
-    message: '正在连接 kernel'
+    message: analysisCopy.connectingKernel
   }
 }
 

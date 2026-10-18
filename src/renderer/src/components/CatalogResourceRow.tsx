@@ -1,8 +1,10 @@
+import { useUiLanguage } from '../lib/i18n'
 import { useState, type ReactNode } from 'react'
 import { Box, IconButton, ListItemButton } from '@mui/material'
 import { CatalogEnableSwitch } from './CatalogEnableSwitch'
 import { PhiIcons } from '../icons'
 import { catalogSidebarRowSx } from '../lib/catalogSidebarStyles'
+import { resourceCatalogCopy } from '../lib/resourceUi'
 
 export type CatalogResourceRowProps = {
   id: string
@@ -35,6 +37,8 @@ export function CatalogResourceRow({
   onEnabledChange,
   onRemove
 }: CatalogResourceRowProps): React.JSX.Element {
+  useUiLanguage()
+
   const [pending, setPending] = useState<boolean | null>(null)
   const active = pending ?? enabled
   const updating = pending !== null || busy
@@ -89,7 +93,7 @@ export function CatalogResourceRow({
       ]}
     >
       <ListItemButton
-        aria-label={`打开 ${label}，${active ? '已启用' : '已关闭'}`}
+        aria-label={resourceCatalogCopy.openResource(label, active)}
         aria-current={selected ? 'true' : undefined}
         onClick={onSelect}
         sx={{
@@ -157,8 +161,8 @@ export function CatalogResourceRow({
         {onRemove ? (
           <IconButton
             size="small"
-            aria-label={`卸载 ${label}`}
-            title={`卸载 ${label}`}
+            aria-label={resourceCatalogCopy.uninstallResource(label)}
+            title={resourceCatalogCopy.uninstallResource(label)}
             disabled={updating}
             onClick={() => void onRemove()}
             sx={{ width: 28, height: 28 }}
@@ -170,7 +174,7 @@ export function CatalogResourceRow({
           checked={active}
           busy={updating}
           disabled={updating || Boolean(disabledReason) || !onEnabledChange}
-          label={disabledReason ?? (active ? `关闭 ${label}` : `启用 ${label}`)}
+          label={disabledReason ?? resourceCatalogCopy.toggleResource(label, active)}
           onChange={(checked) => void toggle(checked)}
         />
       </Box>

@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -5,6 +6,9 @@ import {
   isProviderBillingError,
   redactProviderErrorMessage
 } from '../src/renderer/src/lib/providerErrors'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 test('provider errors recognize insufficient balance responses as billing failures', () => {
   const message =

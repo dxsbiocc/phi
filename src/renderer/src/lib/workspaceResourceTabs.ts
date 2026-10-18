@@ -1,5 +1,7 @@
+import { navigationCopy } from './navigationCopy'
 import type { WorkspaceSidebarMode } from './workspaceSidebar'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
+import { resourceUi } from './resourceUi'
 
 export type WorkspaceResourceKind = 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 export type WorkspaceFileTabKind = 'file' | 'directory' | 'notebook'
@@ -45,18 +47,48 @@ export type WorkspaceFileWorkspaceTab = {
 export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab
 
 const resourceLabels: Record<WorkspaceResourceKind, string> = {
-  runtime: '运行时',
-  plugins: '插件',
-  skills: '技能',
-  mcp: 'MCP',
-  wrappers: 'Wrappers'
+  get runtime() {
+    return navigationCopy.runtime
+  },
+  get plugins() {
+    return resourceUi.plugins
+  },
+  get skills() {
+    return resourceUi.skills
+  },
+  get mcp() {
+    return resourceUi.connectors
+  },
+  get wrappers() {
+    return resourceUi.wrappers
+  }
 }
 
 const tabLabels: Record<WorkspaceTabKind, string> = {
-  session: '会话',
-  ...resourceLabels,
-  file: '文件',
-  directory: '文件夹',
+  get session() {
+    return navigationCopy.conversation
+  },
+  get runtime() {
+    return resourceLabels.runtime
+  },
+  get plugins() {
+    return resourceLabels.plugins
+  },
+  get skills() {
+    return resourceLabels.skills
+  },
+  get mcp() {
+    return resourceLabels.mcp
+  },
+  get wrappers() {
+    return resourceLabels.wrappers
+  },
+  get file() {
+    return navigationCopy.file
+  },
+  get directory() {
+    return navigationCopy.folder
+  },
   notebook: 'Notebook'
 }
 

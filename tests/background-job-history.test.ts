@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -166,6 +167,9 @@ function empty(): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
 function render(element: React.ReactElement): string {
   return renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('terminal metadata from all seven sources survives a real storage round-trip without raw content', () => {
   const storage = new MemoryStorage()
@@ -348,4 +352,46 @@ test('display metadata redacts credential-like title and path fragments before p
   history.observe(live.recent)
   assert.doesNotMatch(storage.value!, /private-title-token|private-bearer-value/)
   assert.match(storage.value!, /已隐藏/)
+})
+
+test('English history fields survive storage without retaining private job evidence', () => {
+  setUiLanguage('en')
+  try {
+    const storage = new MemoryStorage()
+    const history = new BackgroundJobHistory(storage)
+    history.observe(terminalJobs())
+    assert.doesNotMatch(storage.value ?? '', /PRIVATE_/)
+    const restored = new BackgroundJobHistory(storage).select({ active: [], recent: [] })
+    assert.ok(restored.recent.length > 0)
+    const labels = restored.recent.flatMap((item) =>
+      item.kind === 'history' ? item.snapshot.fields.map((field) => field.label) : []
+    )
+    assert.ok(labels.includes('Status'))
+    assert.ok(labels.includes('Finished'))
+    assert.ok(labels.includes('Project'))
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+})
+
+test('new background export metadata uses localized titles and redaction markers', () => {
+  for (const language of ['en', 'zh-CN', 'en'] as const) {
+    setUiLanguage(language)
+    const storage = new MemoryStorage()
+    const history = new BackgroundJobHistory(storage)
+    const live = selectBackgroundJobs(
+      [
+        agent({
+          agentName: 'api_key=private-title-token',
+          sessionTitle: 'Authorization: Bearer private-bearer-value'
+        })
+      ],
+      []
+    )
+    history.observe([...live.recent, ...terminalJobs().filter((item) => item.kind === 'shell')])
+    assert.doesNotMatch(storage.value!, /private-title-token|private-bearer-value|PRIVATE_/)
+    assert.ok(storage.value!.includes(language === 'en' ? '[redacted]' : '[已隐藏]'))
+    assert.ok(storage.value!.includes(language === 'en' ? 'Background command' : '后台命令'))
+  }
+  setUiLanguage('zh-CN')
 })

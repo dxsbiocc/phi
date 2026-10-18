@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
@@ -41,6 +44,8 @@ export function McpDetailPanel({
   onRefreshServers,
   initialCatalog = []
 }: McpDetailPanelProps): React.JSX.Element {
+  useUiLanguage()
+
   const [catalog, setCatalog] = useState<FeaturedMcpConnector[]>(() => [...initialCatalog])
   useEffect(() => {
     let active = true
@@ -271,17 +276,17 @@ export function McpDetailPanel({
                     {selectedServer.name}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                    {selectedServer.sourcePath ?? '本地配置'}
+                    {selectedServer.sourcePath ?? connectorCopy.localConfiguration}
                   </Typography>
                   <Chip
                     size="small"
                     variant="outlined"
                     label={
                       remoteProjectServer
-                        ? '服务器项目'
+                        ? connectorCopy.serverProject
                         : selectedServer.enabled === false
-                          ? '已停用'
-                          : '已配置'
+                          ? resourceUi.disabled
+                          : connectorCopy.configured
                     }
                     sx={{ mt: 1.5 }}
                   />
@@ -290,7 +295,7 @@ export function McpDetailPanel({
                       size="small"
                       color="primary"
                       variant="outlined"
-                      label="自建·本地"
+                      label={connectorCopy.customLocal}
                       sx={{ ml: 1 }}
                     />
                   ) : null}
@@ -300,7 +305,7 @@ export function McpDetailPanel({
                       disabled={busy}
                       onClick={() => void setEnabled(selectedServer.enabled === false)}
                     >
-                      {selectedServer.enabled === false ? '启用' : '停用'}
+                      {selectedServer.enabled === false ? resourceUi.enable : resourceUi.disable}
                     </Button>
                   )}
                 </Box>
@@ -316,7 +321,7 @@ export function McpDetailPanel({
                         } else void remove()
                       }}
                     >
-                      移除
+                      {resourceUi.remove}
                     </Button>
                   )}
               </Stack>
@@ -327,26 +332,28 @@ export function McpDetailPanel({
                   action={
                     <Stack direction="row" spacing={1}>
                       <Button disabled={busy} onClick={() => setRemoveConfirmationServerId(null)}>
-                        取消
+                        {resourceUi.cancel}
                       </Button>
                       <Button color="error" disabled={busy} onClick={() => void remove()}>
-                        确认移除
+                        {connectorCopy.confirmRemove}
                       </Button>
                     </Stack>
                   }
                 >
-                  确认移除这个本地 stdio 连接器？
+                  {connectorCopy.removeLocalConfirm}
                 </Alert>
               ) : null}
               <Divider sx={{ my: 4 }} />
               <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-                {selectedServer.url ? 'MCP 地址' : '命令'}
+                {selectedServer.url ? connectorCopy.mcpUrl : connectorCopy.command}
               </Typography>
               <Typography
                 component="code"
                 sx={{ display: 'block', overflowWrap: 'anywhere', fontFamily: 'var(--font-mono)' }}
               >
-                {selectedServer.url || commandLine(selectedServer) || '未配置命令'}
+                {selectedServer.url ||
+                  commandLine(selectedServer) ||
+                  connectorCopy.commandNotConfigured}
               </Typography>
               {selectedServer.envKeys?.length ? (
                 <Stack direction="row" spacing={1} sx={{ mt: 3, flexWrap: 'wrap' }}>
@@ -358,10 +365,7 @@ export function McpDetailPanel({
             </>
           )}
           {remoteProjectServer ? (
-            <RemoteProjectMcpTrustPanel
-              server={remoteProjectServer}
-              onChanged={onRefreshServers}
-            />
+            <RemoteProjectMcpTrustPanel server={remoteProjectServer} onChanged={onRefreshServers} />
           ) : null}
           {error && (
             <Alert severity="error" sx={{ mt: 3 }}>
@@ -372,7 +376,7 @@ export function McpDetailPanel({
       ) : (
         <Stack spacing={1} sx={{ height: '100%', alignItems: 'center', justifyContent: 'center' }}>
           <PhiIcons.entity.mcp color="disabled" />
-          <Typography color="text.secondary">没有找到 MCP 服务器</Typography>
+          <Typography color="text.secondary">{connectorCopy.noServer}</Typography>
         </Stack>
       )}
       <McpApiKeyDialog

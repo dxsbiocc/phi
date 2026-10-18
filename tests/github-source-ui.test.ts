@@ -1,3 +1,4 @@
+import { componentTree } from './helpers/renderComponentTree'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { Children, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -47,7 +48,7 @@ test('renderer pre-validation mirrors the strict GitHub URL policy', () => {
     'https://github.com/acme/connectors/issues',
     'https://github.com/acme/%2e%2e'
   ]) {
-    assert.match(githubImportUrlError(url) ?? '', /GitHub|仓库|地址|分支/)
+    assert.match(githubImportUrlError(url) ?? '', /GitHub|repository|URL|branch/i)
   }
 })
 
@@ -68,7 +69,7 @@ test('GitHub catalog cards show the pinned source and unsigned trust', () => {
     )
   )
   assert.match(markup, /GitHub · acme\/connectors@abcdef0/)
-  assert.match(markup, /未签名/)
+  assert.match(markup, /Unsigned/)
 })
 
 test('imported install confirmation exposes exact local launch data and HTTP URL', () => {
@@ -84,7 +85,7 @@ test('imported install confirmation exposes exact local launch data and HTTP URL
       })
     )
   )
-  assert.match(stdio, /将在这台机器上运行/)
+  assert.match(stdio, /may run commands on this device/)
   assert.match(stdio, /\.\/server\.sh/)
   assert.match(stdio, /--stdio/)
   assert.match(stdio, /value with spaces/)
@@ -130,12 +131,12 @@ test('catalog wiring exposes import, preview warnings, update diff, and safe rem
     'src/renderer/src/features/mcp/components/McpCatalogAddMenu.tsx',
     'utf8'
   )
-  assert.match(addMenu, /从 GitHub 导入…/)
-  assert.match(addMenu, /添加自定义连接器…/)
+  assert.match(addMenu, /connectorCopy.importGithubMenu/)
+  assert.match(addMenu, /connectorCopy.addCustomMenu/)
   assert.match(catalog, /McpImportedInstallDialog/)
-  assert.match(importer, /导入软件源/)
-  assert.match(importer, /仓库地址/)
-  assert.match(importer, /未签名·用户导入。安装连接器时才会运行其中的命令。/)
+  assert.match(importer, /connectorCopy.importSource/)
+  assert.match(importer, /connectorCopy.repositoryUrl/)
+  assert.match(importer, /connectorCopy.unsignedImportHint/)
   assert.match(importer, /skipped/)
   assert.match(importer, /warnings/)
   assert.match(importer, /McpProjectHintPanel/)
@@ -143,9 +144,9 @@ test('catalog wiring exposes import, preview warnings, update diff, and safe rem
   assert.match(importer, /onUseLocalDraft/)
   assert.match(catalog, /initialDraft/)
   assert.match(catalog, /onUseLocalDraft/)
-  assert.match(sources, /更新/)
+  assert.match(sources, /resourceUi.update/)
   assert.match(sources, /diff/)
-  assert.match(sources, /已安装的连接器会保留/)
+  assert.match(sources, /connectorCopy.removeSourceHint/)
 })
 
 function findElement(
@@ -185,26 +186,28 @@ const localDraft: GithubLocalConnectorDraft = {
 }
 
 test('project hint panel explains the repo and keeps actions out of the info panel', () => {
-  const panel = McpProjectHintPanel({
-    hint: projectHint
-  })
+  const panel = componentTree(() =>
+    McpProjectHintPanel({
+      hint: projectHint
+    })
+  )
   const markup = renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, panel))
   assert.match(markup, /Node\.js 项目 qq-email-mcp 0\.1\.1/)
-  assert.match(markup, /入口 dist\/index\.js/)
+  assert.match(markup, /Entry point dist\/index\.js/)
   assert.match(markup, /Node &gt;=20\.19/)
-  assert.match(markup, /需要构建/)
-  assert.match(markup, /已发布到 npm/)
+  assert.match(markup, /Build required/)
+  assert.match(markup, /Published on npm/)
   assert.match(markup, /README/)
   assert.match(markup, /target="_blank"/)
   // The npm repository field is self-declared, so let the user check who actually published it.
   assert.match(markup, /href="https:\/\/www\.npmjs\.com\/package\/qq-email-mcp"/)
-  assert.match(markup, /核对发布者/)
+  assert.match(markup, /Verify publisher/)
   assert.doesNotMatch(markup, /MuiAlert-root/)
 
   assert.equal(
     findElement(
       panel,
-      (element) => (element.props as { children?: ReactNode }).children === '按本地 stdio 添加…'
+      (element) => (element.props as { children?: ReactNode }).children === 'Add as local stdio…'
     ),
     undefined
   )
@@ -225,7 +228,7 @@ test('project hint panel renders explanation without a local action when no draf
     )
   )
   assert.match(markup, /Python 项目暂不支持自动安装/)
-  assert.doesNotMatch(markup, /按本地 stdio 添加/)
+  assert.doesNotMatch(markup, /Add as local stdio/)
   assert.doesNotMatch(markup, /npmjs\.com/)
 })
 
@@ -241,26 +244,28 @@ const emptyPreview = {
 
 test('GitHub import footer uses the local stdio action for a non-Phi repository', () => {
   let received: GithubLocalConnectorDraft | undefined
-  const actions = McpGithubImportActions({
-    preview: emptyPreview,
-    url: 'https://github.com/xieningqing/qq-email-mcp',
-    busy: null,
-    onClose: () => undefined,
-    onPreview: () => undefined,
-    onImport: () => undefined,
-    onUseLocalDraft: (draft) => {
-      received = draft
-    }
-  })
+  const actions = componentTree(() =>
+    McpGithubImportActions({
+      preview: emptyPreview,
+      url: 'https://github.com/xieningqing/qq-email-mcp',
+      busy: null,
+      onClose: () => undefined,
+      onPreview: () => undefined,
+      onImport: () => undefined,
+      onUseLocalDraft: (draft) => {
+        received = draft
+      }
+    })
+  )
   const actionMarkup = renderToStaticMarkup(
     createElement(ThemeProvider, { theme: createTheme() }, actions)
   )
-  assert.match(actionMarkup, /取消/)
-  assert.match(actionMarkup, /按本地 stdio 添加…/)
-  assert.doesNotMatch(actionMarkup, />导入</)
+  assert.match(actionMarkup, /Cancel/)
+  assert.match(actionMarkup, /Add as local stdio…/)
+  assert.doesNotMatch(actionMarkup, />Import</)
   const localButton = findElement(
     actions,
-    (element) => (element.props as { children?: ReactNode }).children === '按本地 stdio 添加…'
+    (element) => (element.props as { children?: ReactNode }).children === 'Add as local stdio…'
   )
   assert.ok(localButton)
   ;(localButton.props as { onClick: () => void }).onClick()
@@ -270,45 +275,54 @@ test('GitHub import footer uses the local stdio action for a non-Phi repository'
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      McpGithubImportActions({
-        preview: { ...emptyPreview, localDraft: undefined },
-        url: 'https://github.com/x/y',
-        busy: null,
-        onClose: () => undefined,
-        onPreview: () => undefined,
-        onImport: () => undefined,
-        onUseLocalDraft: () => undefined
-      })
+      componentTree(() =>
+        McpGithubImportActions({
+          preview: { ...emptyPreview, localDraft: undefined },
+          url: 'https://github.com/x/y',
+          busy: null,
+          onClose: () => undefined,
+          onPreview: () => undefined,
+          onImport: () => undefined,
+          onUseLocalDraft: () => undefined
+        })
+      )
     )
   )
-  assert.match(noDraftMarkup, /取消/)
-  assert.doesNotMatch(noDraftMarkup, /按本地 stdio 添加|>导入</)
+  assert.match(noDraftMarkup, /Cancel/)
+  assert.doesNotMatch(noDraftMarkup, /Add as local stdio|>Import</)
 })
 
 test('GitHub import footer keeps import for Phi packages and explains catalog behavior', () => {
-  const actions = McpGithubImportActions({
-    preview: { ...emptyPreview, packages: [importedStdio] },
-    url: 'https://github.com/acme/connectors',
-    busy: null,
-    onClose: () => undefined,
-    onPreview: () => undefined,
-    onImport: () => undefined,
-    onUseLocalDraft: () => undefined
-  })
+  const actions = componentTree(() =>
+    McpGithubImportActions({
+      preview: {
+        ...emptyPreview,
+        packages: [
+          { ...importedStdio, title: importedStdio.name, summary: importedStdio.description }
+        ]
+      },
+      url: 'https://github.com/acme/connectors',
+      busy: null,
+      onClose: () => undefined,
+      onPreview: () => undefined,
+      onImport: () => undefined,
+      onUseLocalDraft: () => undefined
+    })
+  )
   const actionMarkup = renderToStaticMarkup(
     createElement(ThemeProvider, { theme: createTheme() }, actions)
   )
-  assert.match(actionMarkup, /取消/)
-  assert.match(actionMarkup, />导入</)
-  assert.doesNotMatch(actionMarkup, /按本地 stdio 添加/)
+  assert.match(actionMarkup, /Cancel/)
+  assert.match(actionMarkup, />Import</)
+  assert.doesNotMatch(actionMarkup, /Add as local stdio/)
   const importButton = findElement(
     actions,
-    (element) => (element.props as { children?: ReactNode }).children === '导入'
+    (element) => (element.props as { children?: ReactNode }).children === 'Import'
   )
   assert.equal((importButton?.props as { disabled?: boolean }).disabled, false)
   const source = readFileSync(
     'src/renderer/src/features/mcp/components/McpGithubImportDialog.tsx',
     'utf8'
   )
-  assert.match(source, /导入后，仓库里的连接器会出现在目录中，安装时仍需确认。/)
+  assert.match(source, /connectorCopy.importSourceHint/)
 })

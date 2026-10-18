@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   useCallback,
   useEffect,
@@ -100,6 +102,7 @@ function NotebookVirtualRowShell({
   onMeasure: (cellId: string, element: HTMLDivElement | null) => void
   children: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   const onRowRef = useCallback(
     (element: HTMLDivElement | null) => onMeasure(cellId, element),
     [cellId, onMeasure]
@@ -128,6 +131,7 @@ function EmptyNotebookState({
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCreateNotebook?: (cwd: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const visibleNotebooks = notebooks.slice(0, 5)
   const canCreateNotebook = Boolean(projectCwd && onCreateNotebook)
 
@@ -143,7 +147,7 @@ function EmptyNotebookState({
         color: 'text.secondary'
       }}
     >
-      <Typography variant="body2">选择或创建 notebook 后开始分析。</Typography>
+      <Typography variant="body2">{analysisCopy.chooseNotebook}</Typography>
       {visibleNotebooks.length > 0 ? (
         <Box
           data-phi-notebook-empty-options="true"
@@ -205,7 +209,7 @@ function EmptyNotebookState({
           }}
           sx={{ mt: visibleNotebooks.length > 0 ? 1.25 : 2, textTransform: 'none' }}
         >
-          新建 notebook
+          {analysisCopy.newNotebook}
         </Button>
       ) : null}
     </Box>
@@ -251,6 +255,7 @@ export default function NotebookCanvas({
   onCloseNotebook,
   agentFocus
 }: NotebookCanvasProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
   const [draftDocument, setDraftDocument] = useState<NotebookDocument | null>(initialDocument)
   const [draftNotebookPath, setDraftNotebookPath] = useState<string | null>(
     notebookFile?.path ?? null
@@ -286,7 +291,9 @@ export default function NotebookCanvas({
     () => (draftDocument ? documentCells(draftDocument, executingCellId) : []),
     [draftDocument, executingCellId]
   )
-  const aiContextOptions = useMemo(() => buildNotebookAiContextOptions(cells), [cells])
+  // Context previews contain localized labels; update them without replacing notebook state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const aiContextOptions = useMemo(() => buildNotebookAiContextOptions(cells), [cells, uiLanguage])
   const insertCodeLanguage = draftDocument ? notebookSyntaxLanguage(draftDocument) : 'plain'
   const displayCells = useMemo(
     () => notebookCellsWithAiPreview(cells, aiPromptDraft, insertCodeLanguage),
@@ -684,7 +691,7 @@ export default function NotebookCanvas({
         notebookSessionStatus?.kernelName ??
         notebookLanguage(draftDocument))
       : `${notebookLanguage(draftDocument)} notebook`
-    : 'No notebook'
+    : analysisCopy.noNotebook
   const kernelStatusLabel = notebookSessionStatus
     ? notebookSessionStateLabel(notebookSessionStatus)
     : kernelAvailabilityLabel(
@@ -924,8 +931,8 @@ export default function NotebookCanvas({
         current?.id === draft.id
           ? {
               ...current,
-              error: 'Notebook AI 生成 API 尚未加载',
-              errorDetail: 'Notebook AI 生成 API 尚未加载',
+              error: analysisCopy.notebookAiUnavailable,
+              errorDetail: analysisCopy.notebookAiUnavailable,
               isGenerating: false
             }
           : current
@@ -948,12 +955,7 @@ export default function NotebookCanvas({
     try {
       const prompt =
         draft.mode === 'refactor'
-          ? [
-              'Refactor the selected notebook cell according to the user request.',
-              'Return replacement notebook cell(s) for the selected cell only.',
-              '',
-              `User request: ${draft.prompt.trim()}`
-            ].join('\n')
+          ? analysisCopy.refactorRequest(draft.prompt.trim())
           : draft.prompt.trim()
       const result = await onGenerateNotebookCode(notebookFile, draftDocument, {
         prompt,
@@ -971,7 +973,7 @@ export default function NotebookCanvas({
       })
       const generatedCells = notebookAiGeneratedCellsFromResult(result, draft.language)
       if (generatedCells.length === 0) {
-        throw new Error(notebookAiEmptyGenerationMessage)
+        throw new Error(notebookAiEmptyGenerationMessage())
       }
 
       setAiPromptDraft((current) =>
@@ -1338,7 +1340,9 @@ export default function NotebookCanvas({
             }
           }}
         >
-          {isOpening ? <Typography color="text.secondary">正在打开 notebook...</Typography> : null}
+          {isOpening ? (
+            <Typography color="text.secondary">{analysisCopy.openingNotebook}</Typography>
+          ) : null}
           {error || saveError ? (
             <Typography color="error.main" sx={{ mb: 2 }}>
               {error || saveError}

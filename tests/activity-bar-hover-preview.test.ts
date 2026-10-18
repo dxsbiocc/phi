@@ -27,7 +27,10 @@ test('workspace activity buttons apply selected theme color to every icon implem
   assert.match(activityBarSource, /function activityBarButtonSx\(active: boolean\)/)
   assert.match(activityBarSource, /color: active \? 'primary\.main' : 'text\.secondary'/)
   assert.match(activityBarSource, /'& svg': \{\s*color: 'inherit'\s*\}/)
-  assert.match(activityBarSource, /mode: 'wrappers', label: 'Wrappers', icon: NavWrappersIcon/)
+  assert.match(
+    activityBarSource,
+    /mode: 'wrappers', label: resourceUi\.wrappers, icon: NavWrappersIcon/
+  )
   assert.match(activityBarSource, /active=\{isWorkspaceSidebarModeExpanded\(mode\)\}/)
   assert.match(
     activityBarSource,

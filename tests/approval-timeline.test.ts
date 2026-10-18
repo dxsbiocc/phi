@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Children, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -42,6 +43,9 @@ function live(events: AgentEventSummary[]): ChatMessage[] {
   return events.reduce(reduceAgentEventState, createAgentEventReducerState())
     .messages as ChatMessage[]
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('live and restored approval requests update one collapsed record for every terminal state', () => {
   for (const status of ['approved', 'denied', 'cancelled'] as const) {
@@ -154,11 +158,22 @@ test('decided approval timeline stays collapsed while the pending approval shows
 
 test('pending approval retains the exact approve, refuse and open-session actions', () => {
   const actions: Array<string | boolean> = []
-  const tree = ToolApprovalDialog({
-    request: { requestId: 'approval-1', toolName: 'bash', summary, sessionPath: '/sessions/one' },
-    onRespond: (id, approved) => actions.push(id, approved),
-    onOpenSession: (path) => actions.push(path)
-  })
+  let tree: ReactNode
+  renderToStaticMarkup(
+    createElement(function InspectApproval() {
+      tree = ToolApprovalDialog({
+        request: {
+          requestId: 'approval-1',
+          toolName: 'bash',
+          summary,
+          sessionPath: '/sessions/one'
+        },
+        onRespond: (id, approved) => actions.push(id, approved),
+        onOpenSession: (path) => actions.push(path)
+      })
+      return null
+    })
+  )
   const find = (
     node: ReactNode,
     text: string

@@ -1,3 +1,5 @@
+import { jobsCopy } from '../lib/jobsCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
@@ -43,6 +45,7 @@ export function BackgroundJobRow({
   onStop: (item: UnifiedBackgroundJob) => void
   onRetry?: (item: UnifiedBackgroundJob) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const title = jobTitle(item)
   const status = jobStatus(item)
   const detail = jobDetail(item, nowMs)
@@ -53,7 +56,7 @@ export function BackgroundJobRow({
     <Box
       role="button"
       tabIndex={0}
-      aria-label={`查看 ${title} 详情`}
+      aria-label={jobsCopy.viewDetailsForValue(title)}
       data-phi-background-job={item.key}
       onClick={() => onOpen(item)}
       onKeyDown={(event) => {
@@ -124,7 +127,9 @@ export function BackgroundJobRow({
         <LinearProgress
           variant={percent === undefined ? 'indeterminate' : 'determinate'}
           value={percent ?? 0}
-          aria-label={item.kind === 'upload' ? '文件上传进度' : '环境构建进度'}
+          aria-label={
+            item.kind === 'upload' ? jobsCopy.fileUploadProgress : jobsCopy.environmentBuildProgress
+          }
           sx={{ mt: 0.75, height: 2, borderRadius: 1 }}
         />
       )}
@@ -139,7 +144,7 @@ export function BackgroundJobRow({
                 onRetry(item)
               }}
             >
-              重试
+              {jobsCopy.retry}
             </Button>
           )}
           {canStop && (

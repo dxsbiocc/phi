@@ -21,12 +21,12 @@ function checkBinary(
   try {
     const result = spawnSync(binary, versionArgs, { encoding: 'utf-8', timeout: 5000 })
     if (result.error || result.status !== 0) {
-      return { id, label, ok: false, detail: `未找到可执行的 ${label}（${binary}）` }
+      return { id, label, ok: false, detail: `Executable ${label} (${binary}) was not found` }
     }
     const detail = (result.stdout || result.stderr || '').trim().split('\n')[0]
     return { id, label, ok: true, detail }
   } catch {
-    return { id, label, ok: false, detail: `未找到可执行的 ${label}（${binary}）` }
+    return { id, label, ok: false, detail: `Executable ${label} (${binary}) was not found` }
   }
 }
 

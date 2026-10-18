@@ -23,6 +23,7 @@ export interface RegistryPackageEntry {
   dependsOn: PackageDependency[]
   requires?: PackageRequirements
   category?: string
+  directoryAuthBlocked?: boolean
   group?: string
   groupLabel?: string
   groupOrder?: number

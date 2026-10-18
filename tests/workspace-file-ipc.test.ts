@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import type { BrowserWindow, IpcMainInvokeEvent, SaveDialogOptions } from 'electron'
+import type { UiLanguage } from '../src/shared/uiLanguage'
 
 import { registerWorkspaceFileIpc } from '../src/main/workspace-file-ipc'
 
@@ -179,6 +180,8 @@ test('download IPC validates input before save dialog and cancellation never sta
   const handlers = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>()
   let dialogs = 0
   let transfers = 0
+  let language: UiLanguage = 'en'
+  const shownOptions: SaveDialogOptions[] = []
   registerWorkspaceFileIpc({
     ipcMain: {
       handle: (channel, listener) => {
@@ -187,9 +190,11 @@ test('download IPC validates input before save dialog and cancellation never sta
     },
     requireRenderer: () => ({}) as BrowserWindow,
     requireLocalWorkspaceRoot: () => undefined,
+    getUiLanguage: () => language,
     dialog: {
-      showSaveDialog: async () => {
+      showSaveDialog: async (...args) => {
         dialogs += 1
+        shownOptions.push((args.length === 2 ? args[1] : args[0]) as SaveDialogOptions)
         return { canceled: true, filePath: '' }
       }
     },
@@ -215,5 +220,16 @@ test('download IPC validates input before save dialog and cancellation never sta
   assert.equal(dialogs, 0)
   assert.deepEqual(await download(event, request), { status: 'cancelled' })
   assert.equal(dialogs, 1)
+  assert.equal(transfers, 0)
+  assert.equal(shownOptions.at(-1)?.title, 'Save remote file')
+  assert.equal(shownOptions.at(-1)?.buttonLabel, 'Save')
+  assert.equal(shownOptions.at(-1)?.defaultPath, 'file.txt')
+  language = 'zh-CN'
+  assert.deepEqual(await download(event, { ...request, path: '/project/作者原始文件.txt' }), {
+    status: 'cancelled'
+  })
+  assert.equal(shownOptions.at(-1)?.title, '保存远程文件')
+  assert.equal(shownOptions.at(-1)?.buttonLabel, '保存')
+  assert.equal(shownOptions.at(-1)?.defaultPath, '作者原始文件.txt')
   assert.equal(transfers, 0)
 })

@@ -31,7 +31,7 @@ export function createRemoteRuntimeInputExec(
       options.beforeExec?.()
       if (session.openStdio) return await runStdio(session, script, options)
       if (session.execWithInput) return await runLegacyInput(session, script, options)
-      throw new Error('当前 SSH 连接不支持安全 stdin 脚本')
+      throw new Error('The current SSH connection does not support secure stdin scripts')
     } finally {
       await session.close().catch(() => undefined)
     }

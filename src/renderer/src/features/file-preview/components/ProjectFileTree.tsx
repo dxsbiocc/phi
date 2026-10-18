@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, InputAdornment, TextField } from '@mui/material'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../../icons'
@@ -82,6 +84,7 @@ function FileTreeVirtualRowShell({
   onMeasure: (rowId: string, element: HTMLDivElement | null) => void
   children: ReactNode
 }): ReactNode {
+  useUiLanguage()
   const onRowRef = useCallback(
     (element: HTMLDivElement | null) => onMeasure(rowId, element),
     [rowId, onMeasure]
@@ -105,10 +108,11 @@ export function ProjectFileTree({
   initialListing,
   genericDirectoryIcons = false,
   revealPath,
-  searchPlaceholder = '筛选文件...',
+  searchPlaceholder = filePreviewCopy.filterFiles,
   stateKey,
   variant = 'sidebar'
 }: ProjectFileTreeProps): React.JSX.Element {
+  useUiLanguage()
   const treeStateKey = stateKey ?? `${variant}:${rootPath}`
   const [query, setQuery] = useState(() => rememberedTreeStates.get(treeStateKey)?.query ?? '')
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
@@ -187,7 +191,7 @@ export function ProjectFileTree({
             ...prev,
             [path]: {
               status: 'error',
-              message: error instanceof Error ? error.message : '无法读取目录'
+              message: error instanceof Error ? error.message : filePreviewCopy.readDirectoryFailed
             }
           }))
         })
@@ -546,7 +550,7 @@ export function ProjectFileTree({
 
   return (
     <Box
-      aria-label="项目目录树"
+      aria-label={filePreviewCopy.projectFileTree}
       sx={{
         height: '100%',
         width: '100%',

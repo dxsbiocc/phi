@@ -1,16 +1,52 @@
+import { chatCopy } from './chatCopy'
 import type {
   ContextUsageCategoryId,
   ContextUsageSnapshot
 } from '../../../../../shared/contextUsageTypes'
 
 const CATEGORY_META: Record<ContextUsageCategoryId, { label: string; color: string }> = {
-  systemPrompt: { label: '系统提示词', color: '#9CA3AF' },
-  toolDefinitions: { label: '工具定义（未细分）', color: '#9684E8' },
-  systemTools: { label: '系统工具', color: '#9684E8' },
-  mcpTools: { label: 'MCP 工具', color: '#E8604C' },
-  systemContext: { label: '系统上下文', color: '#42A574' },
-  skills: { label: '技能', color: '#F1B562' },
-  conversation: { label: '对话', color: '#DE807C' }
+  systemPrompt: {
+    get label() {
+      return chatCopy.systemPrompt
+    },
+    color: '#9CA3AF'
+  },
+  toolDefinitions: {
+    get label() {
+      return chatCopy.toolDefinitionsNotItemized
+    },
+    color: '#9684E8'
+  },
+  systemTools: {
+    get label() {
+      return chatCopy.systemTools
+    },
+    color: '#9684E8'
+  },
+  mcpTools: {
+    get label() {
+      return chatCopy.mCPTools
+    },
+    color: '#E8604C'
+  },
+  systemContext: {
+    get label() {
+      return chatCopy.systemContext
+    },
+    color: '#42A574'
+  },
+  skills: {
+    get label() {
+      return chatCopy.skills
+    },
+    color: '#F1B562'
+  },
+  conversation: {
+    get label() {
+      return chatCopy.conversation
+    },
+    color: '#DE807C'
+  }
 }
 
 export function contextUsageCategories(usage: ContextUsageSnapshot | null): Array<{

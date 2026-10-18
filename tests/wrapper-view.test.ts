@@ -137,8 +137,8 @@ test('a local project offers server compute only inside the Wrapper view', () =>
     createdAt: '2026-09-27T00:00:00.000Z'
   }
   const local = renderView({ project })
-  assert.match(local, /设置远程计算/)
-  assert.match(local, /本地项目仍默认在本机运行/)
+  assert.match(local, /Configure remote execution/)
+  assert.match(local, /Local projects run on this device by default/)
 
   const remote = renderView({
     project: {
@@ -151,9 +151,9 @@ test('a local project offers server compute only inside the Wrapper view', () =>
       }
     }
   })
-  assert.doesNotMatch(remote, /设置远程计算/)
-  assert.match(remote, /Wrapper 运行方式/)
-  assert.match(remote, /Wrapper 自动在本项目服务器运行/)
+  assert.doesNotMatch(remote, /Configure remote execution/)
+  assert.match(remote, /Wrapper execution mode/)
+  assert.match(remote, /Wrappers run on this project’s server automatically/)
 })
 
 test('a local plan waits for a saved server before offering remote retarget', () => {
@@ -184,20 +184,20 @@ test('a local plan waits for a saved server before offering remote retarget', ()
       )
     )
 
-  assert.match(renderActions(false), /先选择服务器和工作目录/)
-  assert.doesNotMatch(renderActions(false), /改用远程服务器并重新校验计划/)
-  assert.match(renderActions(true), /改用远程服务器并重新校验计划/)
+  assert.match(renderActions(false), /Select a server and working directory/)
+  assert.doesNotMatch(renderActions(false), /Switch to remote server and revalidate plan/)
+  assert.match(renderActions(true), /Switch to remote server and revalidate plan/)
 })
 
 test('wrapper view shows an empty state when no wrappers are found', () => {
   const markup = renderView({ catalog: [], selectedId: null })
-  assert.match(markup, /尚未添加 wrapper。点击“发现”浏览目录。/)
+  assert.match(markup, /No Wrappers added yet. Select Discover to browse the catalog./)
 })
 
 test('wrapper view groups catalog entries by tier', () => {
   const markup = renderView({ catalog: [moduleEntry(), workflowEntry()] })
-  assert.match(markup, /模块/)
-  assert.match(markup, /工作流/)
+  assert.match(markup, /Modules/)
+  assert.match(markup, /Workflows/)
 })
 
 test('wrapper view shows package enablement and dependency-hidden reasons', () => {
@@ -211,17 +211,17 @@ test('wrapper view shows package enablement and dependency-hidden reasons', () =
     ],
     onSetPackageEnabled: () => undefined
   })
-  assert.match(markup, /软件包 · subworkflow-nf-core-demo/)
-  assert.match(markup, /已启用/)
+  assert.match(markup, /Package · subworkflow-nf-core-demo/)
+  assert.match(markup, /Enabled/)
   assert.match(markup, /依赖 module-nf-core-fastqc 不可用/)
-  assert.doesNotMatch(markup, /aria-label="启用 package subworkflow-nf-core-demo"[^>]*disabled/)
+  assert.doesNotMatch(markup, /aria-label="Enable package subworkflow-nf-core-demo"[^>]*disabled/)
 })
 
 test('wrapper view run history shows state and links to the output directory', () => {
   const markup = renderView({ runs: [sampleRun()] })
-  assert.match(markup, /已完成/)
+  assert.match(markup, /Completed/)
   assert.match(markup, /wrun_abc123/)
-  assert.match(markup, /打开输出目录/)
+  assert.match(markup, /Open output directory/)
 })
 
 test('remote run history opens its scoped directory and primary report without local reveal', () => {
@@ -253,20 +253,20 @@ test('remote run history opens its scoped directory and primary report without l
     }
   })
   assert.match(markup, /SSH cluster-a/)
-  assert.match(markup, /打开输出目录/)
-  assert.match(markup, /查看报告/)
+  assert.match(markup, /Open output directory/)
+  assert.match(markup, /View report/)
   const older = renderView({
     runs: [
       sampleRun({ ...remoteRun, remote: { host: 'cluster-a', runDir: remoteRun.remote!.runDir } })
     ]
   })
-  assert.match(older, /这条旧运行记录缺少远端结果授权信息/)
-  assert.doesNotMatch(older, /查看报告/)
+  assert.match(older, /This older run has no remote result authorization information/)
+  assert.doesNotMatch(older, /View report/)
 })
 
 test('wrapper view run history exposes a reproducibility export action', () => {
   const markup = renderView({ runs: [sampleRun()] })
-  assert.match(markup, /导出可复现性元数据/)
+  assert.match(markup, /Export reproducibility metadata/)
 })
 
 test('wrapper view run history filters runs to the selected wrapper only', () => {
@@ -283,7 +283,7 @@ test('wrapper view run history filters runs to the selected wrapper only', () =>
       })
     ]
   })
-  assert.match(markup, /还没有运行记录/)
+  assert.match(markup, /No runs yet/)
   assert.doesNotMatch(markup, /wrun_other/)
 })
 
@@ -350,16 +350,19 @@ test('plan target summary and submit confirmation use the saved SSH target, not 
     }
   } as WrapperRunPlan
   const lines = wrapperPlanTargetLines(plan).join('\n')
-  assert.match(lines, /执行位置：远程服务器 cluster-a/)
-  assert.match(lines, /Slurm 控制作业/)
+  assert.match(lines, /Execution location: Remote server cluster-a/)
+  assert.match(lines, /Slurm controller job/)
   assert.match(lines, /Nextflow singularity/)
-  assert.match(lines, /输入 reads：\/data\/project\/reads/)
-  assert.match(lines, /输出位置：\/data\/project\/wrappers\/runs\/<运行 ID>\/output/)
+  assert.match(lines, /Input reads: \/data\/project\/reads/)
+  assert.match(lines, /Output location: \/data\/project\/wrappers\/runs\/<run ID>\/output/)
   const externalLines = wrapperPlanTargetLines({
     ...plan,
     params: { outdir: '/scratch/shared/report-output' }
   }).join('\n')
-  assert.match(externalLines, /外部输出授权范围：\/scratch\/shared\/report-output（仅本次运行）/)
+  assert.match(
+    externalLines,
+    /External output authorization: \/scratch\/shared\/report-output \(this run only\)/
+  )
   assert.equal(
     wrapperPlanSubmitConfirmation({
       ...plan,
@@ -376,7 +379,7 @@ test('plan target summary and submit confirmation use the saved SSH target, not 
       })
     )
   )
-  assert.match(externalSummary, /外部输出授权范围/)
+  assert.match(externalSummary, /External output authorization/)
   assert.match(lines, /16 CPU · 64 GB/)
   assert.deepEqual(wrapperPlanSubmitConfirmation(plan), {
     expectedRevision: 3,
@@ -392,15 +395,18 @@ test('plan target summary and submit confirmation use the saved SSH target, not 
       createElement(WrapperPlanTargetSummary, { plan })
     )
   )
-  assert.match(summary, /远程服务器 cluster-a/)
+  assert.match(summary, /Remote server cluster-a/)
   const project = {
     id: 'project-a',
     location,
     remoteHostAlias: 'cluster-a',
     remoteConnection: { phase: 'offline' }
   } as Project
-  assert.match(wrapperPlanSubmitBlockReason(plan, project, true) ?? '', /服务器连接尚未就绪/)
-  assert.match(wrapperPlanSubmitBlockReason(plan, project, false) ?? '', /正在确认/)
+  assert.match(
+    wrapperPlanSubmitBlockReason(plan, project, true) ?? '',
+    /The server connection is not ready/
+  )
+  assert.match(wrapperPlanSubmitBlockReason(plan, project, false) ?? '', /Checking project/)
   assert.equal(
     wrapperPlanSubmitBlockReason(
       plan,
@@ -422,7 +428,7 @@ test('plan target summary and submit confirmation use the saved SSH target, not 
       },
       true
     ) ?? '',
-    /服务器或目录已变化/
+    /server or directory has changed/
   )
 })
 
@@ -462,7 +468,7 @@ test('local fallback control shows confirmation and sends the exact plan revisio
       })
     )
   )
-  assert.match(markup, /确认改在本机运行/)
+  assert.match(markup, /Confirm switch to local execution/)
   assert.match(markup, /服务器离线/)
   assert.match(
     wrapperPlanSubmitBlockReason(
@@ -473,7 +479,7 @@ test('local fallback control shows confirmation and sends the exact plan revisio
       } as Project,
       true
     ) ?? '',
-    /项目目录已变化/
+    /project directory has changed/
   )
 })
 
@@ -534,10 +540,10 @@ test('a running background run shows its progress and a cancel button', () => {
       })
     ]
   })
-  assert.match(markup, /运行中/)
+  assert.match(markup, /Running/)
   assert.match(markup, /2\/6/)
   assert.match(markup, /HISAT2_ALIGN/)
-  assert.match(markup, /取消运行/)
+  assert.match(markup, /Cancel run/)
 })
 
 test('progress without a known total still shows how many steps have started', () => {
@@ -550,23 +556,23 @@ test('progress without a known total still shows how many steps have started', (
       })
     ]
   })
-  assert.match(markup, /已开始 3 步/)
+  assert.match(markup, /3 steps started/)
   assert.match(markup, /FASTQC/)
 })
 
 test('only a running background run can be cancelled from the run history', () => {
   const finished = renderView({ runs: [sampleRun({ state: 'completed', origin: 'composition' })] })
-  assert.doesNotMatch(finished, /取消运行/)
+  assert.doesNotMatch(finished, /Cancel run/)
 
   const cancelling = renderView({
     runs: [sampleRun({ state: 'cancelling', origin: 'composition' })]
   })
-  assert.match(cancelling, /取消中/)
-  assert.doesNotMatch(cancelling, /取消运行/)
+  assert.match(cancelling, /Cancelling/)
+  assert.doesNotMatch(cancelling, /Cancel run/)
 
   // A plan-based local run has no kill support, so no cancel button is offered.
   const legacy = renderView({ runs: [sampleRun({ state: 'running' })] })
-  assert.doesNotMatch(legacy, /取消运行/)
+  assert.doesNotMatch(legacy, /Cancel run/)
 })
 
 test('a completed run does not show a progress count', () => {

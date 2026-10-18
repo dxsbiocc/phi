@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { BackgroundAgentJob } from '../src/shared/backgroundJobTypes'
@@ -23,6 +24,8 @@ const cold: BackgroundAgentJob = {
   canControl: false,
   historyAvailable: false
 }
+setUiLanguage('zh-CN')
+
 test('cold agent jobs remain visible after restart, with stable Phi keys and no live controls', () => {
   const result = selectBackgroundJobs(
     [cold, { ...cold, sessionId: 'B', sessionPath: 'phi-session:B' }],

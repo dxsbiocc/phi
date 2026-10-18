@@ -19,48 +19,55 @@ export interface SshConnectionDiagnosis {
 
 const DIAGNOSES: Record<SshConnectionIssueCode, Omit<SshConnectionDiagnosis, 'code'>> = {
   host_key_changed: {
-    message: 'SSH 主机密钥与已信任的记录不一致',
-    suggestion: '先向服务器管理员核对新指纹，再按你现有的 SSH 信任流程更新 known_hosts。'
+    message: 'The SSH host key does not match the trusted record',
+    suggestion:
+      'Verify the new fingerprint with the server administrator, then update known_hosts using your existing SSH trust process.'
   },
   host_key_unknown: {
-    message: 'SSH 主机密钥尚未被信任',
-    suggestion: '先在终端核对服务器指纹并完成首次信任；Phi 不会自动接受新密钥。'
+    message: 'The SSH host key is not trusted yet',
+    suggestion:
+      'Verify the server fingerprint in a terminal and establish trust first. Phi does not automatically accept new keys.'
   },
   host_key_unverified: {
-    message: 'SSH 主机身份校验失败',
-    suggestion: '在终端检查 known_hosts 和服务器指纹，确认身份后再重试。'
+    message: 'SSH host identity verification failed',
+    suggestion:
+      'Check known_hosts and the server fingerprint in a terminal. Confirm the identity before retrying.'
   },
   authentication_failed: {
-    message: 'SSH 非交互认证失败',
-    suggestion: '检查 ~/.ssh/config 的用户和密钥、SSH agent，以及服务器是否要求交互式 MFA。'
+    message: 'Non-interactive SSH authentication failed',
+    suggestion:
+      'Check the user and key in ~/.ssh/config, the SSH agent, and whether the server requires interactive MFA.'
   },
   identity_not_loaded: {
-    message: 'SSH 私钥尚未加载到 ssh-agent',
-    suggestion: '请在设置中重新加载这把密钥；Phi 已在连接前停止，不会触发认证失败冷却。'
+    message: 'The SSH private key is not loaded in ssh-agent',
+    suggestion:
+      'Reload this key in Settings. Phi stopped before connecting, so no authentication failure cooldown was triggered.'
   },
   proxy_unreachable: {
-    message: 'SSH 跳板机或代理连接失败',
-    suggestion: '检查 ~/.ssh/config 中的 ProxyJump 或 ProxyCommand，并确认跳板机可达。'
+    message: 'The SSH jump host or proxy connection failed',
+    suggestion:
+      'Check ProxyJump or ProxyCommand in ~/.ssh/config and ensure the jump host is reachable.'
   },
   ssh_missing: {
-    message: '系统 OpenSSH 程序不可用',
-    suggestion: '确认系统可运行 ssh 和 sftp，并检查应用的 PATH。'
+    message: 'System OpenSSH is unavailable',
+    suggestion: 'Ensure the system can run ssh and sftp, and check the application PATH.'
   },
   configuration_invalid: {
-    message: 'SSH 配置无法使用',
-    suggestion: '检查你自己的 ~/.ssh/config 语法、主机别名和引用的文件。'
+    message: 'The SSH configuration is unusable',
+    suggestion: 'Check the syntax, host alias, and referenced files in your ~/.ssh/config.'
   },
   network_unreachable: {
-    message: 'SSH 服务器无法连接',
-    suggestion: '检查网络、服务器地址、端口及防火墙设置。'
+    message: 'The SSH server is unreachable',
+    suggestion: 'Check the network, server address, port, and firewall settings.'
   },
   timeout: {
-    message: 'SSH 连接超时',
-    suggestion: '检查网络和服务器状态；若使用跳板机，也请确认跳板机可达。'
+    message: 'SSH connection timed out',
+    suggestion: 'Check the network and server status. If using a jump host, ensure it is reachable.'
   },
   unknown: {
-    message: 'SSH 连接失败',
-    suggestion: '在终端使用同一主机别名检查 ~/.ssh/config 与连接状态。'
+    message: 'SSH connection failed',
+    suggestion:
+      'Use the same host alias in a terminal to check ~/.ssh/config and the connection status.'
   }
 }
 
@@ -127,7 +134,7 @@ export class RemoteSshConnectionError extends Error {
   readonly diagnosis: Readonly<SshConnectionDiagnosis>
 
   constructor(diagnosis: SshConnectionDiagnosis) {
-    super(`${diagnosis.message}。${diagnosis.suggestion}`)
+    super(`${diagnosis.message}. ${diagnosis.suggestion}`)
     this.name = 'RemoteSshConnectionError'
     this.code = diagnosis.code
     this.diagnosis = Object.freeze({ ...diagnosis })

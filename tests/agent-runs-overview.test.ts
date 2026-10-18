@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -44,6 +45,8 @@ const card = (overrides: Partial<AgentExecutionItem> = {}): AgentExecutionItem =
 })
 
 // ── which agents are running ─────────────────────────────────────────────
+
+setUiLanguage('zh-CN')
 
 test('only running agent cards are listed, in timeline order', () => {
   const messages: ChatItem[] = [

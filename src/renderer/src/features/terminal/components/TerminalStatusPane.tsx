@@ -1,3 +1,5 @@
+import { terminalUi } from '../lib/terminalUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Typography } from '@mui/material'
 import { workspacePanelText } from '../../../layout'
 
@@ -21,40 +23,40 @@ function statusCopy(props: TerminalStatusPaneProps): {
 } {
   switch (props.kind) {
     case 'starting':
-      return { title: '正在启动 Shell…' }
+      return { title: terminalUi.startingShell }
     case 'exited':
       return {
-        title: props.message || `Shell 已退出（代码 ${props.exitCode ?? '—'}）`,
+        title: props.message || terminalUi.shellExitedCodeValue(props.exitCode ?? '—'),
         canCreate: true
       }
     case 'failed':
       return {
-        title: props.message || 'Shell 启动失败',
-        detail: '可以新建一个终端后重试。',
+        title: props.message || terminalUi.shellFailedToStart,
+        detail: terminalUi.createANewTerminalAndTryAgain,
         alert: true,
         canCreate: true
       }
     case 'remote':
-      return { title: '请先打开远程项目会话' }
+      return { title: terminalUi.openARemoteProjectSessionFirst }
     case 'unsupported':
-      return { title: '当前平台暂不支持终端', alert: true }
+      return { title: terminalUi.terminalIsNotSupportedOnThisPlatform, alert: true }
     case 'limit':
       return {
-        title: `已达到终端数量上限（当前 ${props.terminalCount ?? 0} 个）`,
-        detail: '请先结束一个终端后再新建。',
+        title: terminalUi.terminalLimitReachedValueOpen(props.terminalCount ?? 0),
+        detail: terminalUi.closeATerminalBeforeCreatingAnother,
         alert: true
       }
     case 'unavailable':
       return {
-        title: '终端需要重启 Phi',
-        detail:
-          '当前窗口的后台程序版本较旧，请完全退出并重新打开 Phi（开发模式下请重新启动开发服务器）后再使用终端。',
+        title: terminalUi.restartPhiToUseTheTerminal,
+        detail: terminalUi.thisWindowUsesAnOlderBackgroundProcessQuit,
         alert: true
       }
   }
 }
 
 export function TerminalStatusPane(props: TerminalStatusPaneProps): React.JSX.Element {
+  useUiLanguage()
   const copy = statusCopy(props)
   return (
     <Box
@@ -94,7 +96,7 @@ export function TerminalStatusPane(props: TerminalStatusPaneProps): React.JSX.El
         ) : null}
         {copy.canCreate && props.onCreate ? (
           <Button size="small" variant="outlined" onClick={props.onCreate} sx={{ mt: 1.25 }}>
-            新建终端
+            {terminalUi.newTerminal}
           </Button>
         ) : null}
       </Box>

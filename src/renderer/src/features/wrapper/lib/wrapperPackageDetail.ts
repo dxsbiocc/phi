@@ -1,3 +1,4 @@
+import { wrapperCopy } from './wrapperCopy'
 import type {
   WrapperCompositionCatalogItem,
   WrapperCompositionManifest,
@@ -28,9 +29,9 @@ export function filterWrapperMembers<T extends WrapperCompositionManifest>(
 
 /** Human readable enum or numeric range, empty when the parameter is unconstrained. */
 export function wrapperParamConstraint(param: WrapperCompositionParam): string {
-  if (param.enum && param.enum.length > 0) return `可选值：${param.enum.join('、')}`
+  if (param.enum && param.enum.length > 0) return wrapperCopy.enumValues(param.enum)
   if (param.minimum !== undefined || param.maximum !== undefined) {
-    return `范围：${param.minimum ?? '−∞'} – ${param.maximum ?? '∞'}`
+    return wrapperCopy.numericRange(param.minimum, param.maximum)
   }
   return ''
 }

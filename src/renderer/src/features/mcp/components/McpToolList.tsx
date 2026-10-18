@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useState } from 'react'
 import { Alert, Box, Button, Chip, CircularProgress, Stack, Typography } from '@mui/material'
 
@@ -18,6 +21,8 @@ export function McpToolList({
   error: string | null
   onRetry: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const [expanded, setExpanded] = useState(false)
   const visibleNames =
     names && !expanded && names.length > COLLAPSED_TOOL_COUNT
@@ -27,33 +32,38 @@ export function McpToolList({
     <>
       <Stack direction="row" sx={{ mb: 1, alignItems: 'center' }}>
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>
-          服务端工具{names ? ` · ${names.length}` : ''}
+          {connectorCopy.serverTools}
+          {names ? ` · ${names.length}` : ''}
         </Typography>
         {names !== null && (
           <Button size="small" disabled={loading} onClick={onRetry}>
-            刷新工具
+            {connectorCopy.refreshTools}
           </Button>
         )}
       </Stack>
       {requiresSignIn ? (
         <Typography color="text.secondary" sx={{ mb: 4 }}>
-          {signInMessage ?? '尚未验证授权，无法读取此服务当前提供的工具。'}
+          {signInMessage ?? connectorCopy.unverifiedToolsHint}
         </Typography>
       ) : loading ? (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 4 }}>
           <CircularProgress size={18} />
-          <Typography color="text.secondary">正在读取服务端工具…</Typography>
+          <Typography color="text.secondary">{connectorCopy.loadingTools}</Typography>
         </Stack>
       ) : error ? (
-        <Alert severity="warning" action={<Button onClick={onRetry}>重试</Button>} sx={{ mb: 4 }}>
-          无法读取当前工具列表：{error}
+        <Alert
+          severity="warning"
+          action={<Button onClick={onRetry}>{resourceUi.retry}</Button>}
+          sx={{ mb: 4 }}
+        >
+          {connectorCopy.readToolsFailure(error)}
         </Alert>
       ) : (
         <Box sx={{ mb: 4 }}>
           {names === null ? (
-            <Typography color="text.secondary">尚未读取服务端工具。</Typography>
+            <Typography color="text.secondary">{connectorCopy.toolsUnread}</Typography>
           ) : names.length === 0 ? (
-            <Typography color="text.secondary">服务端当前未公开工具。</Typography>
+            <Typography color="text.secondary">{connectorCopy.noServerTools}</Typography>
           ) : (
             <>
               <Box
@@ -80,7 +90,7 @@ export function McpToolList({
                   onClick={() => setExpanded((current) => !current)}
                   sx={{ mt: 1.5, px: 0 }}
                 >
-                  {expanded ? '收起' : '显示全部'}
+                  {expanded ? connectorCopy.collapse : connectorCopy.showAll}
                 </Button>
               )}
             </>

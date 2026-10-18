@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useMemo, useState, type MouseEvent } from 'react'
 import { Box, Button, Checkbox, InputBase, Menu, MenuItem, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -37,6 +39,7 @@ export default function NotebookHtmlTableOutput({
   html: string
   notebookPath?: string | null
 }): React.JSX.Element {
+  useUiLanguage()
   const parsedTable = useMemo(() => parseHtmlTable(html), [html])
   const [query, setQuery] = useState('')
   const [columnsAnchor, setColumnsAnchor] = useState<HTMLElement | null>(null)
@@ -103,8 +106,8 @@ export default function NotebookHtmlTableOutput({
           <InputBase
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search..."
-            inputProps={{ 'aria-label': 'Search table rows' }}
+            placeholder={analysisCopy.search}
+            inputProps={{ 'aria-label': analysisCopy.searchTableRows }}
             sx={{
               flex: 1,
               minWidth: 0,
@@ -121,7 +124,7 @@ export default function NotebookHtmlTableOutput({
           startIcon={<TbColumns3 size={15} />}
           sx={{ minWidth: 0, px: 1, color: 'text.secondary', textTransform: 'none' }}
         >
-          Columns
+          {analysisCopy.columns}
         </Button>
         <Button
           size="small"
@@ -130,7 +133,7 @@ export default function NotebookHtmlTableOutput({
           startIcon={<PhiIcons.action.download fontSize="small" />}
           sx={{ minWidth: 0, px: 1, color: 'text.secondary', textTransform: 'none' }}
         >
-          Export
+          {analysisCopy.export}
         </Button>
       </Box>
       <Box sx={{ maxHeight: 460, overflow: 'auto' }}>
@@ -221,10 +224,10 @@ export default function NotebookHtmlTableOutput({
         }}
       >
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {filteredRows.length} rows, {visibleColumnIndexes.length} columns
+          {analysisCopy.tableShape(filteredRows.length, visibleColumnIndexes.length)}
         </Typography>
         <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
-          No selection
+          {analysisCopy.noSelection}
         </Typography>
       </Box>
       <Menu

@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -21,6 +22,9 @@ const card = (overrides: Partial<AgentExecutionItem> = {}): AgentExecutionItem =
   agentSessionId: 'runtime-9',
   ...overrides
 })
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('a running card that knows its run and session can be steered and stopped', () => {
   assert.deepEqual(agentRunControlTarget(card()), {

@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { Box } from '@mui/material'
+import { useUiLanguage } from '../lib/i18n'
+import { windowUiCopy } from '../lib/windowUiCopy'
 
 type WindowControl = {
+  id: string
   label: string
   color: string
   borderColor: string
@@ -16,14 +19,16 @@ function buildControls(handlers: {
 }): WindowControl[] {
   return [
     {
-      label: '关闭',
+      id: 'close',
+      label: windowUiCopy.close,
       color: '#FF5F57',
       borderColor: '#E24640',
       symbol: '×',
       action: handlers.onClose
     },
     {
-      label: '最小化',
+      id: 'minimize',
+      label: windowUiCopy.minimize,
       color: '#FFBD2E',
       borderColor: '#DFA123',
       symbol: '−',
@@ -34,7 +39,8 @@ function buildControls(handlers: {
       // a plus sign -- this is the closest plain-glyph match, keeping the
       // same plain-text rendering as the × and − so all three stay visually
       // consistent instead of mixing in a stroke-based icon font.
-      label: '全屏',
+      id: 'fullscreen',
+      label: windowUiCopy.fullscreen,
       color: '#28C840',
       borderColor: '#20A935',
       symbol: '⤢',
@@ -75,6 +81,7 @@ export default function MacWindowControls({
   onMinimize: () => void
   onToggleFullscreen: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [isHovered, setIsHovered] = useState(false)
   const controls = buildControls({ onClose, onMinimize, onToggleFullscreen })
 
@@ -92,7 +99,7 @@ export default function MacWindowControls({
     >
       {controls.map((control) => (
         <Box
-          key={control.label}
+          key={control.id}
           component="button"
           type="button"
           aria-label={control.label}

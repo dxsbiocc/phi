@@ -1,3 +1,5 @@
+import { projectCopy } from './lib/projectCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useState } from 'react'
 import {
   Alert,
@@ -44,6 +46,7 @@ function NewProjectDialog({
   onCreateRemote,
   onOpenRemoteSettings
 }: NewProjectDialogProps): React.JSX.Element {
+  useUiLanguage()
   const [locationMode, setLocationMode] = useState<'local' | 'ssh'>('local')
   const [name, setName] = useState('')
   const [workingDirectory, setWorkingDirectory] = useState('')
@@ -67,7 +70,7 @@ function NewProjectDialog({
         setHostProfileId((current) => (items.some((item) => item.id === current) ? current : ''))
       })
       .catch(() => {
-        if (!cancelled) setHostsError('无法读取服务器列表，请关闭后重试。')
+        if (!cancelled) setHostsError(projectCopy.unableToLoadServersCloseAndTryAgain)
       })
       .finally(() => {
         if (!cancelled) setHostsLoading(false)
@@ -118,7 +121,9 @@ function NewProjectDialog({
       reset()
       onClose()
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : '创建项目失败，请重试。')
+      setCreateError(
+        error instanceof Error ? error.message : projectCopy.unableToCreateProjectTryAgain
+      )
     } finally {
       setIsCreating(false)
     }
@@ -135,11 +140,11 @@ function NewProjectDialog({
       maxWidth="sm"
       fullWidth
     >
-      <DialogTitle>新建项目</DialogTitle>
+      <DialogTitle>{projectCopy.newProject}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <TextField
-            label="项目名称"
+            label={projectCopy.projectName}
             value={name}
             onChange={(event) => setName(event.target.value)}
             fullWidth
@@ -173,7 +178,7 @@ function NewProjectDialog({
           />
 
           <Stack spacing={1}>
-            <Typography variant="body2">权限审批</Typography>
+            <Typography variant="body2">{projectCopy.permissionApproval}</Typography>
             <ToggleButtonGroup
               exclusive
               fullWidth
@@ -188,7 +193,7 @@ function NewProjectDialog({
                     fontSize="small"
                     sx={{ color: PERMISSION_MODE_ICON_META.ask.color }}
                   />
-                  <span>重要操作前询问</span>
+                  <span>{projectCopy.askBeforeImportantActions}</span>
                 </Stack>
               </ToggleButton>
               <ToggleButton
@@ -204,7 +209,7 @@ function NewProjectDialog({
                     fontSize="small"
                     sx={{ color: PERMISSION_MODE_ICON_META.auto.color }}
                   />
-                  <span>帮我批准</span>
+                  <span>{projectCopy.approveForMe}</span>
                 </Stack>
               </ToggleButton>
               <ToggleButton value="full" sx={{ minHeight: 44, color: 'error.main' }}>
@@ -213,7 +218,7 @@ function NewProjectDialog({
                     fontSize="small"
                     sx={{ color: PERMISSION_MODE_ICON_META.full.color }}
                   />
-                  <span>完全访问权限</span>
+                  <span>{projectCopy.fullAccess}</span>
                 </Stack>
               </ToggleButton>
             </ToggleButtonGroup>
@@ -222,12 +227,12 @@ function NewProjectDialog({
               color={permissionMode === 'full' ? 'error.main' : 'text.secondary'}
             >
               {permissionMode === 'ask'
-                ? '执行命令、写入或修改文件前会先向你确认。'
+                ? projectCopy.askBeforeRunningCommandsWritingOrEditingFiles
                 : permissionMode === 'auto'
-                  ? '自动执行允许的工具，不会逐次确认。'
+                  ? projectCopy.runAllowedToolsAutomaticallyWithoutAskingEachTime
                   : locationMode === 'ssh'
-                    ? '可在所选服务器上访问当前账号有权限的文件并执行命令。'
-                    : '可不受限制地访问互联网和你电脑上的任何文件。'}
+                    ? projectCopy.accessFilesAndExecuteCommandsOnTheSelectedServerWith
+                    : projectCopy.unrestrictedAccessToTheInternetAndAnyFileOnYour}
             </Typography>
           </Stack>
           {createError && <Alert severity="error">{createError}</Alert>}
@@ -241,7 +246,7 @@ function NewProjectDialog({
           }}
           sx={{ minHeight: 44 }}
         >
-          取消
+          {projectCopy.cancel}
         </Button>
         <Button
           variant="contained"
@@ -259,7 +264,7 @@ function NewProjectDialog({
           onClick={() => void handleCreate()}
           sx={{ minHeight: 44 }}
         >
-          {isCreating ? <CircularProgress size={18} color="inherit" /> : '创建'}
+          {isCreating ? <CircularProgress size={18} color="inherit" /> : projectCopy.create}
         </Button>
       </DialogActions>
     </Dialog>

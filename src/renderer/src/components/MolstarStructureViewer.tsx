@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdown/markdownUiCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
@@ -34,12 +36,13 @@ function sourceKey(source: MolstarStructureSource | null): string {
 export function MolstarStructureViewer({
   source,
   height = 260,
-  emptyMessage = '没有可渲染的 PDB/mmCIF 标识'
+  emptyMessage = markdownCopy.noStructure
 }: {
   source: MolstarStructureSource | null
   height?: number
   emptyMessage?: string
 }): React.JSX.Element {
+  useUiLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const pluginRef = useRef<DisposableMolstarPlugin | null>(null)
   const activeSourceKey = sourceKey(source)
@@ -48,7 +51,7 @@ export function MolstarStructureViewer({
     loadState?.sourceKey === activeSourceKey
       ? loadState.status
       : source
-        ? '正在加载 Mol* 结构预览...'
+        ? markdownCopy.loadingStructure
         : emptyMessage
 
   useEffect(() => {
@@ -158,7 +161,8 @@ export function MolstarStructureViewer({
             left: 12,
             right: 12,
             bottom: 10,
-            color: status.startsWith('正在') ? 'text.secondary' : 'error.main',
+            color:
+              source && loadState?.sourceKey !== activeSourceKey ? 'text.secondary' : 'error.main',
             bgcolor: 'rgba(8, 30, 36, 0.82)',
             px: 1,
             py: 0.5,

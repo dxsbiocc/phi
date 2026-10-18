@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Alert, Button, Chip, LinearProgress, Stack, Typography } from '@mui/material'
 
 import type { RemoteRipgrepCapabilityProfile } from '../../../../../shared/remoteRuntimeRootTypes'
@@ -46,10 +48,10 @@ function visibleStatus(
 }
 
 function statusLabel(status: RemoteRipgrepCapabilityProfile): string {
-  if (status.status === 'system') return `已有系统 rg（${status.version}）`
-  if (status.status === 'managed') return `受管 rg（${status.version}）`
-  if (status.status === 'not-installed') return '未安装'
-  return '未检查'
+  if (status.status === 'system') return remoteSetupCopy.systemRipgrepVersion(status.version)
+  if (status.status === 'managed') return remoteSetupCopy.managedRipgrepVersion(status.version)
+  if (status.status === 'not-installed') return remoteSetupCopy.notInstalled
+  return remoteSetupCopy.notChecked
 }
 
 function statusColor(status: RemoteRipgrepCapabilityProfile): 'default' | 'success' | 'warning' {
@@ -64,6 +66,7 @@ function installResult(state: RemoteRipgrepUiState): RemoteRipgrepResult | undef
 }
 
 function StatusHeader({ status }: { status: RemoteRipgrepCapabilityProfile }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'flex-start' }}>
       <Stack spacing={0.25} sx={{ flex: 1 }}>
@@ -71,7 +74,7 @@ function StatusHeader({ status }: { status: RemoteRipgrepCapabilityProfile }): R
           ripgrep
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          为远程 grep/glob 提供完整的 .gitignore 与通配符支持。
+          {remoteSetupCopy.ripgrepHelp}
         </Typography>
       </Stack>
       <Chip
@@ -91,10 +94,13 @@ function Feedback({
   state: RemoteRipgrepUiState
   result?: RemoteRipgrepResult
 }): React.JSX.Element {
+  useUiLanguage()
   if (state.phase === 'running') {
     return (
       <Stack spacing={0.5}>
-        <Typography variant="caption">{state.progress?.message ?? '正在检查 ripgrep…'}</Typography>
+        <Typography variant="caption">
+          {state.progress?.message ?? remoteSetupCopy.checkingRipgrep}
+        </Typography>
         <LinearProgress />
       </Stack>
     )
@@ -115,6 +121,7 @@ export function RemoteRipgrepControl({
   disabled,
   onInstall
 }: RemoteRipgrepControlProps): React.JSX.Element {
+  useUiLanguage()
   const status = visibleStatus(cachedStatus, state)
   const result = installResult(state)
   const warnings = result?.status === 'needs-confirmation' ? result.warningCodes : undefined
@@ -123,7 +130,7 @@ export function RemoteRipgrepControl({
     <Stack spacing={1.25}>
       <StatusHeader status={status} />
       <Typography variant="caption" color="text.secondary">
-        服务器 PATH 中没有可用 rg 时，可用 micromamba 安装独立的 Phi 受管版本。
+        {remoteSetupCopy.managedRipgrepHelp}
       </Typography>
       <Button
         size="small"
@@ -132,7 +139,11 @@ export function RemoteRipgrepControl({
         onClick={() => onInstall(warnings, forceManaged)}
         sx={{ alignSelf: 'flex-start', minHeight: 44 }}
       >
-        {warnings ? '仍然使用' : forceManaged ? '安装受管版本' : '安装 ripgrep'}
+        {warnings
+          ? remoteSetupCopy.useAnyway
+          : forceManaged
+            ? remoteSetupCopy.installManagedVersion
+            : remoteSetupCopy.installRipgrep}
       </Button>
       <Feedback state={state} result={result} />
     </Stack>

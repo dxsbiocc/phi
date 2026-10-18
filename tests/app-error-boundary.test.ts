@@ -1,8 +1,12 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { AppErrorBoundary } from '../src/renderer/src/components/AppErrorBoundary'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 test('unrelated global errors do not replace the chat with the render error page', () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')

@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   Table,
@@ -8,6 +9,7 @@ import {
   TableRow,
   Typography
 } from '@mui/material'
+import { resourceCatalogCopy, resourceUi } from '../../lib/resourceUi'
 
 export interface CatalogResultRow {
   rowKey: string
@@ -37,6 +39,8 @@ export function CatalogResultsTable({
   /** When set, clicking a row (or pressing Enter on its name) opens that entry's detail. */
   onOpen?: (id: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <TableContainer
       data-phi-catalog-table-scroll="true"
@@ -52,13 +56,13 @@ export function CatalogResultsTable({
           <TableRow sx={{ bgcolor: 'action.hover' }}>
             <TableCell>{nameLabel}</TableCell>
             <TableCell sx={{ width: 112, display: { xs: 'none', sm: 'table-cell' } }}>
-              来源
+              {resourceUi.source}
             </TableCell>
             <TableCell sx={{ width: 144, display: { xs: 'none', sm: 'table-cell' } }}>
               {detailsLabel}
             </TableCell>
             <TableCell align="right" sx={{ width: 120 }}>
-              操作
+              {resourceCatalogCopy.actions}
             </TableCell>
           </TableRow>
         </TableHead>
@@ -78,7 +82,7 @@ export function CatalogResultsTable({
                     ? {
                         role: 'button',
                         tabIndex: 0,
-                        'aria-label': `查看 ${row.title} 详情`,
+                        'aria-label': resourceCatalogCopy.viewDetails(row.title),
                         onKeyDown: (event: React.KeyboardEvent) => {
                           if (event.key !== 'Enter' && event.key !== ' ') return
                           event.preventDefault()

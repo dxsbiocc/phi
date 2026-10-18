@@ -1,10 +1,11 @@
+import { resourceCategorySearchTerms, resourceSourceSearchTerms } from '../../../lib/resourceUi'
 import type {
   PackageRegistryEntryView,
   PackageTrust,
   PackageUpdateView
 } from '../../../../../shared/packageManagerTypes'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
-import { isSemanticUpgrade, phiPluginDistributionLabel } from './phiPlugins'
+import { isSemanticUpgrade, phiPluginDisplayTitle, phiPluginDistributionLabel } from './phiPlugins'
 
 export type PhiPluginCatalogEntry = PackageRegistryEntryView & {
   registryPath: string
@@ -43,7 +44,7 @@ export function buildPhiPluginCatalog(
   }
   const items: PhiPluginCatalogItem[] = [...available.values()].map((entry) => ({
     id: entry.id,
-    title: entry.title,
+    title: phiPluginDisplayTitle(entry),
     summary: entry.summary,
     version: entry.version,
     icon: entry.icon ?? installed.get(entry.id)?.icon,
@@ -56,7 +57,7 @@ export function buildPhiPluginCatalog(
     if (available.has(plugin.id)) continue
     items.push({
       id: plugin.id,
-      title: plugin.title,
+      title: phiPluginDisplayTitle(plugin),
       summary: plugin.summary,
       version: plugin.version,
       icon: plugin.icon,
@@ -76,9 +77,14 @@ export function filterPhiPluginCatalog(
   const normalizedQuery = query.trim().toLowerCase()
   return items.filter((item) => {
     if (category !== 'all' && item.category !== category) return false
-    return [item.title, item.id, item.version, item.summary, item.category].some((value) =>
-      value.toLowerCase().includes(normalizedQuery)
-    )
+    return [
+      item.title,
+      item.id,
+      item.version,
+      item.summary,
+      ...resourceCategorySearchTerms(item.category),
+      ...resourceSourceSearchTerms(item.source ?? '')
+    ].some((value) => value.toLowerCase().includes(normalizedQuery))
   })
 }
 

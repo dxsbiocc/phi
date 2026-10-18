@@ -1,3 +1,4 @@
+import { browserUi } from './browserUi'
 import type {
   BrowserError,
   BrowserOutcome,
@@ -12,6 +13,7 @@ export interface BrowserWorkspaceViewState {
   loading: boolean
   busy: boolean
   error: string | null
+  errorCode?: BrowserError['code']
 }
 
 export interface BrowserWorkspaceController {
@@ -20,21 +22,21 @@ export interface BrowserWorkspaceController {
   dispose(): void
 }
 
-export function browserErrorMessage(error?: BrowserError): string {
+export function browserErrorMessage(error?: Pick<BrowserError, 'code'>): string {
   switch (error?.code) {
     case 'NAVIGATION_FAILED':
-      return '页面加载失败，请重试。'
+      return browserUi.pageFailedToLoadPleaseTryAgain
     case 'RENDERER_CRASHED':
-      return '页面停止响应，请重试。'
+      return browserUi.pageStoppedRespondingPleaseTryAgain
     case 'INVALID_URL':
     case 'SCHEME_BLOCKED':
-      return '这个网址无法在应用内打开。'
+      return browserUi.thisAddressCannotBeOpenedInTheApp
     case 'TAB_NOT_FOUND':
-      return '当前页面已经关闭。'
+      return browserUi.thisPageHasBeenClosed
     case 'ACTION_CANCELLED':
-      return '浏览操作已取消。'
+      return browserUi.browserActionCancelled
     default:
-      return '浏览器暂时不可用，请稍后重试。'
+      return browserUi.browserIsTemporarilyUnavailablePleaseTryAgainLater
   }
 }
 
@@ -66,6 +68,7 @@ export function createBrowserWorkspaceController(options: {
   const publish = (patch: Partial<BrowserWorkspaceViewState>): void => {
     if (disposed) return
     state = { ...state, ...patch }
+    if (patch.error === null) state.errorCode = undefined
     options.onState({ ...state })
   }
   const acceptSnapshot = (
@@ -80,7 +83,11 @@ export function createBrowserWorkspaceController(options: {
     publish({ snapshot, loading: false })
     return 'newer'
   }
-  const acceptFeedback = (revision: number, sequence: number, error: string | null): void => {
+  const acceptFeedback = (
+    revision: number,
+    sequence: number,
+    error: Pick<BrowserError, 'code'> | null
+  ): void => {
     if (revision < highestObservedRevision) return
     highestObservedRevision = Math.max(highestObservedRevision, revision)
     if (
@@ -90,7 +97,11 @@ export function createBrowserWorkspaceController(options: {
       return
     }
     acceptedFeedback = { revision, sequence }
-    publish({ error, loading: false })
+    publish({
+      error: error ? browserErrorMessage(error) : null,
+      errorCode: error?.code,
+      loading: false
+    })
   }
 
   return {
@@ -107,15 +118,11 @@ export function createBrowserWorkspaceController(options: {
               acceptFeedback(envelope.event.snapshot.revision, sequence, null)
             }
           } else if (envelope.event.type === 'error') {
-            acceptFeedback(
-              envelope.event.revision,
-              sequence,
-              browserErrorMessage(envelope.event.error)
-            )
+            acceptFeedback(envelope.event.revision, sequence, envelope.event.error)
           }
         })
       } catch {
-        publish({ error: browserErrorMessage(), loading: false })
+        publish({ error: browserErrorMessage(), errorCode: 'ENGINE_UNAVAILABLE', loading: false })
       }
       const sequence = ++nextSequence
       void options.bridge
@@ -123,13 +130,17 @@ export function createBrowserWorkspaceController(options: {
         .then((snapshot) => {
           const relation = acceptSnapshot(snapshot)
           if (relation === 'foreign' && !disposed) {
-            publish({ error: browserErrorMessage(), loading: false })
+            publish({
+              error: browserErrorMessage(),
+              errorCode: 'ENGINE_UNAVAILABLE',
+              loading: false
+            })
           } else if (relation === 'newer' || relation === 'same') {
             acceptFeedback(snapshot.revision, sequence, null)
           }
         })
         .catch(() => {
-          if (!state.snapshot) acceptFeedback(0, sequence, browserErrorMessage())
+          if (!state.snapshot) acceptFeedback(0, sequence, { code: 'ENGINE_UNAVAILABLE' })
         })
     },
     execute: async (command) => {
@@ -143,7 +154,7 @@ export function createBrowserWorkspaceController(options: {
         if (disposed) return outcome
         const relation = acceptSnapshot(outcome.snapshot)
         if (relation === 'foreign') {
-          publish({ error: browserErrorMessage() })
+          publish({ error: browserErrorMessage(), errorCode: 'ENGINE_UNAVAILABLE' })
         } else if (relation !== 'older') {
           const authoritativeSnapshot =
             relation === 'same' && state.snapshot ? state.snapshot : outcome.snapshot
@@ -152,12 +163,12 @@ export function createBrowserWorkspaceController(options: {
             sequence,
             outcome.ok || snapshotHasTabRecovery(authoritativeSnapshot)
               ? null
-              : browserErrorMessage(outcome.error)
+              : (outcome.error ?? { code: 'ENGINE_UNAVAILABLE' })
           )
         }
         return outcome
       } catch {
-        acceptFeedback(Math.max(0, startedAtRevision), sequence, browserErrorMessage())
+        acceptFeedback(Math.max(0, startedAtRevision), sequence, { code: 'ENGINE_UNAVAILABLE' })
         return null
       } finally {
         pendingCommands = Math.max(0, pendingCommands - 1)
@@ -188,7 +199,7 @@ export function browserTabDisplayTitle(tab: BrowserTabSnapshot): string {
   const title = tab.title.trim()
   if (title) return title
   const url = tab.url.trim()
-  if (!url || url === 'about:blank') return '新标签页'
+  if (!url || url === 'about:blank') return browserUi.newTab
   try {
     const host = new URL(url).host.trim()
     if (host) return host

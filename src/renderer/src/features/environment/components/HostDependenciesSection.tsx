@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { TbContainer } from 'react-icons/tb'
@@ -13,9 +15,10 @@ function dependencyStatus(dependency: EnvironmentHostDependency): {
   label: string
   color: 'success' | 'warning' | 'default'
 } {
-  if (dependency.status === 'ready') return { label: '可用', color: 'success' }
-  if (dependency.status === 'unavailable') return { label: '不可用', color: 'warning' }
-  return { label: '未检测到', color: 'default' }
+  if (dependency.status === 'ready') return { label: environmentUi.available, color: 'success' }
+  if (dependency.status === 'unavailable')
+    return { label: environmentUi.unavailable, color: 'warning' }
+  return { label: environmentUi.notDetected, color: 'default' }
 }
 
 function dependencyIcon(id: EnvironmentHostDependencyId): React.JSX.Element {
@@ -28,10 +31,11 @@ export function HostDependenciesList({
 }: {
   dependencies: readonly EnvironmentHostDependency[]
 }): React.JSX.Element {
+  useUiLanguage()
   if (dependencies.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        尚未完成容器运行时检测。
+        {environmentUi.containerRuntimeDetectionHasNotFinished}
       </Typography>
     )
   }
@@ -53,7 +57,7 @@ export function HostDependenciesList({
             id={dependency.id}
             icon={dependencyIcon(dependency.id)}
             title={dependency.label}
-            summary={summary || '未检测到可用路径'}
+            summary={summary || environmentUi.noUsablePathDetected}
             status={status}
           />
         )

@@ -1,13 +1,17 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Box, Chip, Link, List, ListItem, Stack, Typography } from '@mui/material'
 
 import type { GithubProjectHint } from '../../../../../shared/githubSourceTypes'
 
 export function McpProjectHintPanel({ hint }: { hint: GithubProjectHint }): React.JSX.Element {
+  useUiLanguage()
+
   const facts = [
-    hint.entry ? `入口 ${hint.entry}` : undefined,
+    hint.entry ? connectorCopy.entryPoint(hint.entry) : undefined,
     hint.nodeEngine ? `Node ${hint.nodeEngine}` : undefined,
-    hint.needsBuild ? '需要构建' : undefined,
-    hint.npm ? '已发布到 npm' : undefined
+    hint.needsBuild ? connectorCopy.buildRequired : undefined,
+    hint.npm ? connectorCopy.publishedNpm : undefined
   ].filter((fact): fact is string => Boolean(fact))
 
   return (
@@ -46,7 +50,7 @@ export function McpProjectHintPanel({ hint }: { hint: GithubProjectHint }): Reac
             rel="noreferrer"
             sx={{ alignSelf: 'flex-start' }}
           >
-            查看 README ↗
+            {connectorCopy.viewReadme}
           </Link>
         ) : null}
         {hint.npm ? (
@@ -56,7 +60,7 @@ export function McpProjectHintPanel({ hint }: { hint: GithubProjectHint }): Reac
             rel="noreferrer"
             sx={{ alignSelf: 'flex-start' }}
           >
-            在 npmjs.com 核对发布者 ↗
+            {connectorCopy.verifyNpmPublisher}
           </Link>
         ) : null}
       </Stack>

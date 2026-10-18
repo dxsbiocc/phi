@@ -11,8 +11,10 @@ export {
   remoteMcpToolCallReason
 } from '../engine/phi-extension'
 
-const HTTPS_REQUIRED_REASON = '远程项目只允许应用级 HTTPS MCP；请把连接器地址改为 HTTPS 后重试。'
-const INVALID_CONFIG_REASON = '该应用级 MCP 配置没有有效的 HTTPS 或 stdio transport，已拒绝。'
+const HTTPS_REQUIRED_REASON =
+  'Remote projects only allow application-level HTTPS MCP. Change the Connector URL to HTTPS and try again.'
+const INVALID_CONFIG_REASON =
+  'This application-level MCP configuration has no valid HTTPS or stdio transport and was rejected.'
 export interface McpSourceLike {
   path?: unknown
   level?: unknown

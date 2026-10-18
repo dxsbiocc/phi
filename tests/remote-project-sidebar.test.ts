@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -16,6 +17,9 @@ import {
   resolveProjectExpandedIds
 } from '../src/renderer/src/lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from '../src/renderer/src/lib/workspaceScope'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 const remote: Project = {
   id: 'remote-1',

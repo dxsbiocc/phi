@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, ListItemButton, ListItemIcon, ListItemText, Paper, Typography } from '@mui/material'
 import { useEffect, useRef } from 'react'
 import type { ResourceIconRef } from '../../../../shared/resourceIconTypes'
@@ -33,12 +35,12 @@ type InputInvocationReferenceMenuProps = {
 }
 
 function menuTitle(state: InputInvocationReferenceMenuState): string {
-  const label = state.kind === 'skill' ? 'Skill' : '智能体'
+  const label = state.kind === 'skill' ? 'Skill' : chatCopy.agent
   return `${state.operator}${state.query || label}`
 }
 
 function emptyText(kind: InputInvocationReferenceKind): string {
-  return kind === 'skill' ? '没有匹配 Skill' : '没有匹配智能体'
+  return kind === 'skill' ? chatCopy.noMatchingSkills : chatCopy.noMatchingAgents
 }
 
 function InputInvocationReferenceRow({
@@ -56,6 +58,7 @@ function InputInvocationReferenceRow({
   onSelect: () => void
   onTrustChanged?: () => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box>
       <ListItemButton
@@ -112,6 +115,7 @@ export function InputInvocationReferenceMenu({
   onSelect,
   onTrustChanged
 }: InputInvocationReferenceMenuProps): React.JSX.Element {
+  useUiLanguage()
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -123,7 +127,7 @@ export function InputInvocationReferenceMenu({
       ref={menuRef}
       variant="outlined"
       role="listbox"
-      aria-label="引用 Skill 或智能体"
+      aria-label={chatCopy.referenceASkillOrAgent}
       sx={{
         width: '100%',
         mb: 1,

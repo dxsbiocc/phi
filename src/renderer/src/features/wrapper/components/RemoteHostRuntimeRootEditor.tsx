@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useMemo, useState } from 'react'
 import { Divider, Stack, Typography } from '@mui/material'
 
@@ -43,9 +45,10 @@ function RuntimeRootEditorControl(props: {
   onCheck: () => void
   onClear: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <RemoteRuntimeRootControl
-      label="运行时根目录"
+      label={remoteSetupCopy.runtimeRoot}
       value={props.value}
       effective={
         props.host.runtimeRoot
@@ -77,6 +80,7 @@ function MicromambaEditor(props: {
   onInstall?: RemoteHostRuntimeRootEditorProps['onMicromambaInstall']
   onMirrorSave?: RemoteHostRuntimeRootEditorProps['onMicromambaMirrorSave']
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (!props.onInstall) return null
   const capabilityProfile =
     props.doctorState.phase === 'done' && props.doctorState.key === props.targetKey
@@ -101,6 +105,7 @@ function MicromambaEditor(props: {
 export function RemoteHostRuntimeRootEditor(
   props: RemoteHostRuntimeRootEditorProps
 ): React.JSX.Element {
+  useUiLanguage()
   const [value, setValue] = useState(props.host.runtimeRoot ?? '')
   const [downloadMirrorPrefix, setDownloadMirrorPrefix] = useState(
     props.host.downloadMirrorPrefix ?? ''
@@ -119,7 +124,7 @@ export function RemoteHostRuntimeRootEditor(
     <Stack spacing={2.25} sx={{ py: 1 }}>
       <Stack spacing={1}>
         <Typography variant="subtitle2" sx={{ fontWeight: 750 }}>
-          运行目录
+          {remoteSetupCopy.runtimeDirectory}
         </Typography>
         <RuntimeRootEditorControl
           {...props}

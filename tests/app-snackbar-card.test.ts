@@ -1,3 +1,5 @@
+import { componentTree } from './helpers/renderComponentTree'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -10,6 +12,9 @@ import AppSnackbarCard, {
   type SnackbarSeverity
 } from '../src/renderer/src/components/AppSnackbarCard'
 import { snackbarAutoHideDuration } from '../src/renderer/src/lib/snackbarDuration'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 function render(severity: SnackbarSeverity, message: string): string {
   return renderToStaticMarkup(
@@ -62,18 +67,20 @@ test('the card is compact', () => {
 
 test('an action renders as an accessible text button and closes after firing', () => {
   const events: string[] = []
-  const tree = AppSnackbarCardContent({
-    notice: {
-      id: 2,
-      severity: 'info',
-      message: '后台任务已开始',
-      action: {
-        label: '查看后台任务',
-        onClick: () => events.push('action')
-      }
-    },
-    onClose: () => events.push('close')
-  })
+  const tree = componentTree(() =>
+    AppSnackbarCardContent({
+      notice: {
+        id: 2,
+        severity: 'info',
+        message: '后台任务已开始',
+        action: {
+          label: '查看后台任务',
+          onClick: () => events.push('action')
+        }
+      },
+      onClose: () => events.push('close')
+    })
+  )
   const action = descendants(tree).find(
     (element) =>
       element.type === Button &&

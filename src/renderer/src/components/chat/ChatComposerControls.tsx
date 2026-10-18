@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Accordion,
   AccordionDetails,
@@ -27,12 +29,24 @@ const ExpandIcon = PhiIcons.action.expand
 
 const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  minimal: 'Minimal',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'X-High',
-  max: 'Max'
+  get minimal() {
+    return chatCopy.thinkingMinimal
+  },
+  get low() {
+    return chatCopy.thinkingLow
+  },
+  get medium() {
+    return chatCopy.thinkingMedium
+  },
+  get high() {
+    return chatCopy.thinkingHigh
+  },
+  get xhigh() {
+    return chatCopy.thinkingXhigh
+  },
+  get max() {
+    return chatCopy.thinkingMax
+  }
 }
 
 function modelMatchesQuery(option: ModelOption, query: string): boolean {
@@ -52,6 +66,7 @@ export function ThinkingLevelControl({
   disabled?: boolean
   compact?: boolean
 }): ReactNode {
+  useUiLanguage()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const popoverId = useId()
 
@@ -67,17 +82,19 @@ export function ThinkingLevelControl({
     maxIndex
   )
   const disabled = disabledBySession || modelDisabled
-  const label = modelDisabled ? 'Off' : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]
+  const label = modelDisabled
+    ? chatCopy.thinkingOff
+    : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]
 
   return (
     <>
-      <Tooltip title={`思考：${label}`} enterDelay={400}>
+      <Tooltip title={chatCopy.thinkingValue(label)} enterDelay={400}>
         {compact ? (
           <IconButton
             size="small"
             onClick={(event) => setAnchorEl(event.currentTarget)}
             disabled={disabled}
-            aria-label={`选择思考等级：${label}`}
+            aria-label={chatCopy.chooseThinkingLevelValue(label)}
             aria-describedby={popoverId}
             sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
           >
@@ -154,6 +171,7 @@ export function ModelSelectorControl({
   disabled?: boolean
   compact?: boolean
 }): ReactNode {
+  useUiLanguage()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
@@ -197,11 +215,11 @@ export function ModelSelectorControl({
     setQuery('')
     setExpandedProviderId(null)
   }
-  const label = selectedModel ? selectedModel.name : '自动选择'
+  const label = selectedModel ? selectedModel.name : chatCopy.automatic
 
   return (
     <>
-      <Tooltip title={`模型：${label}`} enterDelay={400}>
+      <Tooltip title={chatCopy.modelValue(label)} enterDelay={400}>
         {compact ? (
           <IconButton
             size="small"
@@ -209,7 +227,7 @@ export function ModelSelectorControl({
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
-            aria-label={`选择模型：${label}`}
+            aria-label={chatCopy.chooseModelValue(label)}
             sx={{
               ...compactComposerIconButtonSx,
               color: 'text.secondary',
@@ -229,7 +247,7 @@ export function ModelSelectorControl({
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
-            aria-label="选择模型"
+            aria-label={chatCopy.chooseModel}
             startIcon={
               <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
             }
@@ -283,7 +301,7 @@ export function ModelSelectorControl({
             autoFocus
             fullWidth
             size="small"
-            placeholder="搜索模型"
+            placeholder={chatCopy.searchModels}
             value={query}
             onChange={(event) => handleQueryChange(event.target.value)}
           />
@@ -298,11 +316,11 @@ export function ModelSelectorControl({
         >
           {models.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
-              无可用模型 — 请先在设置中配置 Provider
+              {chatCopy.noModelsAvailableConfigureAProviderInSettingsFirst}
             </Typography>
           ) : grouped.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
-              没有匹配的模型
+              {chatCopy.noMatchingModels}
             </Typography>
           ) : (
             grouped.map(([providerId, options]) => (
@@ -383,21 +401,39 @@ const PERMISSION_MODES: Array<{
 }> = [
   {
     mode: 'ask',
-    label: '请求批准',
-    compactLabel: 'Ask',
-    description: '执行命令、写入或修改文件前先询问'
+    get label() {
+      return chatCopy.requestApproval
+    },
+    get compactLabel() {
+      return chatCopy.permissionAsk
+    },
+    get description() {
+      return chatCopy.askBeforeExecutingCommandsWritingOrEditingFiles
+    }
   },
   {
     mode: 'auto',
-    label: '帮我批准',
-    compactLabel: 'Auto',
-    description: '自动执行允许的工具'
+    get label() {
+      return chatCopy.approveForMe
+    },
+    get compactLabel() {
+      return chatCopy.permissionAuto
+    },
+    get description() {
+      return chatCopy.runAllowedToolsAutomatically
+    }
   },
   {
     mode: 'full',
-    label: '完全访问权限',
-    compactLabel: 'Full',
-    description: '可不受限制地访问互联网和你电脑上的任何文件',
+    get label() {
+      return chatCopy.fullAccess
+    },
+    get compactLabel() {
+      return chatCopy.permissionFull
+    },
+    get description() {
+      return chatCopy.unrestrictedAccessToTheInternetAndAnyFileOnYour
+    },
     danger: true
   }
 ]
@@ -413,6 +449,7 @@ export function PermissionModeControl({
   onSelectPermissionMode: (mode: PermissionMode) => void
   compact?: boolean
 }): ReactNode {
+  useUiLanguage()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const popoverId = useId()
   const selectedMode =
@@ -424,11 +461,11 @@ export function PermissionModeControl({
 
   return (
     <>
-      <Tooltip title={`权限：${selectedMode.compactLabel}`} enterDelay={400}>
+      <Tooltip title={chatCopy.permissionsValue(selectedMode.compactLabel)} enterDelay={400}>
         {compact ? (
           <IconButton
             size="small"
-            aria-label={`选择权限模式：权限 ${selectedMode.compactLabel}`}
+            aria-label={chatCopy.choosePermissionModeValue(selectedMode.compactLabel)}
             aria-describedby={popoverId}
             disabled={disabled}
             onClick={(event) => setAnchorEl(event.currentTarget)}
@@ -442,7 +479,7 @@ export function PermissionModeControl({
         ) : (
           <Button
             size="small"
-            aria-label="选择权限模式"
+            aria-label={chatCopy.choosePermissionMode}
             aria-describedby={popoverId}
             disabled={disabled}
             onClick={(event) => setAnchorEl(event.currentTarget)}
@@ -457,7 +494,7 @@ export function PermissionModeControl({
               px: 1
             }}
           >
-            权限 {selectedMode.compactLabel}
+            {chatCopy.permissions} {selectedMode.compactLabel}
           </Button>
         )}
       </Tooltip>

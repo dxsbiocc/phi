@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -7,6 +8,8 @@ import { ContextUsageIndicator } from '../src/renderer/src/features/chat/compone
 import { ContextUsageBreakdownPanel } from '../src/renderer/src/features/chat/components/ContextUsageBreakdownPanel'
 import { contextUsageCategories } from '../src/renderer/src/features/chat/lib/contextUsageBreakdown'
 import { contextUsagePresentation } from '../src/renderer/src/features/chat/lib/contextUsagePresentation'
+
+setUiLanguage('zh-CN')
 
 test('context usage displays the active model capacity without guessing when unavailable', () => {
   assert.deepEqual(contextUsagePresentation(null, false), {

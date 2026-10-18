@@ -1,3 +1,5 @@
+import { jobsCopy } from '../lib/jobsCopy'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { useLayoutEffect, useRef } from 'react'
 
@@ -8,15 +10,25 @@ import type {
 import { workspacePanelText } from '../../../layout'
 
 const KIND_LABEL: Record<NotebookAiGenerationActivity['kind'], string> = {
-  phase: '进度',
-  thinking: '思考',
-  text: '回复',
-  action: '行动'
+  get phase() {
+    return jobsCopy.progress
+  },
+  get thinking() {
+    return jobsCopy.thinking
+  },
+  get text() {
+    return jobsCopy.response
+  },
+  get action() {
+    return jobsCopy.action
+  }
 }
 
 function time(at: string): string {
   const date = new Date(at)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('zh-CN', { hour12: false })
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleTimeString(getUiLocale(), { hour12: false })
 }
 
 /** Follow new events only while the reader has kept the activity viewport at its end. */
@@ -25,6 +37,7 @@ export function NotebookJobActivity({
 }: {
   job: NotebookAiGenerationJob
 }): React.JSX.Element | null {
+  useUiLanguage()
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const followRef = useRef(true)
   useLayoutEffect(() => {
@@ -40,13 +53,13 @@ export function NotebookJobActivity({
         color="text.secondary"
         sx={{ ...workspacePanelText.label, display: 'block', mb: 0.5 }}
       >
-        运行过程
+        {jobsCopy.runActivity2}
       </Typography>
       <Box
         ref={viewportRef}
         data-phi-notebook-job-activity
         role="log"
-        aria-label="Notebook AI 运行过程"
+        aria-label={jobsCopy.notebookAIActivity}
         aria-live="polite"
         aria-relevant="additions text"
         onScroll={(event) => {
@@ -97,7 +110,7 @@ export function NotebookJobActivity({
               </Typography>
               {entry.status === 'running' && (
                 <Box
-                  aria-label="进行中"
+                  aria-label={jobsCopy.inProgress}
                   sx={{
                     width: 5,
                     height: 5,

@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from './remoteSetupCopy'
 import type {
   SshBootstrapAgentState,
   SshBootstrapCredentialRequest,
@@ -152,17 +153,39 @@ export type RemoteHostPasswordBootstrapClient = Pick<
 >
 
 const PUBLIC_ERROR_MESSAGES: Record<SshBootstrapPublicErrorCode, string> = {
-  proxy_unsupported: '此服务器通过 ProxyJump 或 ProxyCommand 连接，当前版本不支持引导。',
-  keyboard_interactive_unsupported: '服务器要求键盘交互、MFA 或一次性密码，当前版本不支持引导。',
-  pubkey_auth_disabled: '服务器已禁用公钥认证，无法设置免密登录。',
-  openssh_too_old: '系统 OpenSSH 版本低于 8.4，无法安全使用一次性密码引导。',
-  host_key_changed: '服务器主机密钥与 known_hosts 中的记录不一致，已停止且不会覆盖。',
-  authentication_failed: '服务器拒绝了密码认证。请检查密码后重试。',
-  password_attempts_exhausted: '本次引导已达到 3 次密码尝试上限，请稍后再试。',
-  linux_agent_missing: '请先启动 ssh-agent 后重新检查，或明确选择无口令密钥。',
-  key_not_loaded: '专用密钥尚未加载到 ssh-agent，请重新加载后再连接。',
-  unsupported_platform: '此功能仅支持 macOS 和 Linux。',
-  unexpected: '引导失败。为保护凭据，不显示底层命令输出；请重试。'
+  get proxy_unsupported() {
+    return remoteSetupCopy.bootstrapProxyUnsupported
+  },
+  get keyboard_interactive_unsupported() {
+    return remoteSetupCopy.bootstrapInteractiveUnsupported
+  },
+  get pubkey_auth_disabled() {
+    return remoteSetupCopy.bootstrapPublicKeyDisabled
+  },
+  get openssh_too_old() {
+    return remoteSetupCopy.bootstrapOpenSshTooOld
+  },
+  get host_key_changed() {
+    return remoteSetupCopy.bootstrapHostKeyChanged
+  },
+  get authentication_failed() {
+    return remoteSetupCopy.bootstrapAuthenticationFailed
+  },
+  get password_attempts_exhausted() {
+    return remoteSetupCopy.bootstrapPasswordAttemptsExhausted
+  },
+  get linux_agent_missing() {
+    return remoteSetupCopy.bootstrapAgentMissing
+  },
+  get key_not_loaded() {
+    return remoteSetupCopy.bootstrapKeyNotLoaded
+  },
+  get unsupported_platform() {
+    return remoteSetupCopy.bootstrapPlatformUnsupported
+  },
+  get unexpected() {
+    return remoteSetupCopy.bootstrapUnexpected
+  }
 }
 
 export function sshBootstrapErrorMessage(code: SshBootstrapPublicErrorCode): string {
@@ -185,7 +208,7 @@ export function passwordSshBootstrapUiModel(
     error,
     agentState,
     password: '',
-    validationMessage: '请输入服务器密码'
+    validationMessage: remoteSetupCopy.serverPasswordRequired
   }
 }
 
@@ -193,14 +216,13 @@ export function credentialValidationMessage(
   draft: SshBootstrapCredentialDraft,
   options: { passwordlessAvailable?: boolean; passwordlessAcknowledged?: boolean } = {}
 ): string | null {
-  if (!draft.password) return '请输入服务器密码'
+  if (!draft.password) return remoteSetupCopy.serverPasswordRequired
   if (options.passwordlessAvailable) {
-    return options.passwordlessAcknowledged
-      ? null
-      : '请先启动 ssh-agent 后重新检查，或明确选择无口令密钥'
+    return options.passwordlessAcknowledged ? null : remoteSetupCopy.agentRequired
   }
-  if (!draft.passphrase) return '请输入私钥口令'
-  if (draft.passphrase !== draft.passphraseConfirmation) return '两次输入的私钥口令不一致'
+  if (!draft.passphrase) return remoteSetupCopy.keyPassphraseRequired
+  if (draft.passphrase !== draft.passphraseConfirmation)
+    return remoteSetupCopy.keyPassphrasesMismatch
   return null
 }
 
@@ -209,12 +231,11 @@ export function keyProtectionValidationMessage(
   options: { passwordlessAvailable?: boolean; passwordlessAcknowledged?: boolean } = {}
 ): string | null {
   if (options.passwordlessAvailable) {
-    return options.passwordlessAcknowledged
-      ? null
-      : '请先启动 ssh-agent 后重新检查，或明确选择无口令密钥'
+    return options.passwordlessAcknowledged ? null : remoteSetupCopy.agentRequired
   }
-  if (!draft.passphrase) return '请输入私钥口令'
-  if (draft.passphrase !== draft.passphraseConfirmation) return '两次输入的私钥口令不一致'
+  if (!draft.passphrase) return remoteSetupCopy.keyPassphraseRequired
+  if (draft.passphrase !== draft.passphraseConfirmation)
+    return remoteSetupCopy.keyPassphrasesMismatch
   return null
 }
 

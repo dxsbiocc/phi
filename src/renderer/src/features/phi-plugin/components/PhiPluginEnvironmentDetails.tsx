@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { pluginCopy } from '../lib/pluginCopy'
 import { Alert, Box, Button, Chip, CircularProgress, Stack, Typography } from '@mui/material'
 
 import type { ManagedEnvironmentState } from '../../../../../shared/environmentTypes'
@@ -31,24 +33,25 @@ function environmentColor(
 
 function environmentBuildProgress(environment: PhiPluginEnvironmentStatus): string {
   const build = environment.build
-  if (!build) return '正在启动构建…'
-  return `${build.message} · ${build.progress.packagesDone} / ${build.progress.packages} 个包`
+  if (!build) return pluginCopy.startingBuild
+  return pluginCopy.buildProgress(
+    build.message,
+    build.progress.packagesDone,
+    build.progress.packages
+  )
 }
 
 function environmentTitle(environment: PhiPluginEnvironmentStatus): string {
   if (environment.scope !== 'builtin') return environment.name
   if (environment.ref.startsWith('phi:python@')) {
-    return `内置 Python 环境 · ${environment.name}`
+    return `${pluginCopy.builtInPython} · ${environment.name}`
   }
-  if (environment.ref.startsWith('phi:r@')) return `内置 R 环境 · ${environment.name}`
-  return `内置环境 · ${environment.name}`
+  if (environment.ref.startsWith('phi:r@')) return `${pluginCopy.builtInR} · ${environment.name}`
+  return `${pluginCopy.builtInEnvironment} · ${environment.name}`
 }
 
 function environmentScopeLabel(environment: PhiPluginEnvironmentStatus): string {
-  if (environment.scope === 'builtin') return '与其他内置技能共享'
-  if (environment.scope === 'private') return '插件私有'
-  if (environment.scope === 'project') return '项目环境'
-  return '技能专用'
+  return pluginCopy.environmentScopes[environment.scope]
 }
 
 function EnvironmentUsage({
@@ -61,7 +64,7 @@ function EnvironmentUsage({
   if (names.length === 0) return null
   return (
     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-      {label}：{names.join('、')}
+      {label}: {names.join(', ')}
     </Typography>
   )
 }
@@ -126,6 +129,8 @@ function EnvironmentCardContent({
   environment: PhiPluginEnvironmentStatus
   building: boolean
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
       <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
@@ -144,8 +149,8 @@ function EnvironmentCardContent({
           {environment.description}
         </Typography>
       ) : null}
-      <EnvironmentUsage label="使用技能" names={environment.skillNames} />
-      <EnvironmentUsage label="使用智能体" names={environment.agentNames} />
+      <EnvironmentUsage label={pluginCopy.usedBySkills} names={environment.skillNames} />
+      <EnvironmentUsage label={pluginCopy.usedByAgents} names={environment.agentNames} />
       <EnvironmentMessages environment={environment} building={building} />
     </Box>
   )
@@ -161,11 +166,13 @@ function EnvironmentCardActions({
   onRebuild
 }: Omit<EnvironmentCardProps, 'busyEnvironment'> &
   ReturnType<typeof environmentActionState>): React.JSX.Element {
+  useUiLanguage()
+
   const stateLabel = building
     ? phiPluginEnvironmentStateLabel('building')
     : environment.state
       ? phiPluginEnvironmentStateLabel(environment.state)
-      : '状态未知'
+      : pluginCopy.unknownState
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
       <Chip
@@ -182,7 +189,7 @@ function EnvironmentCardActions({
           startIcon={building ? <CircularProgress size={14} color="inherit" /> : undefined}
           onClick={() => onBuild(environment)}
         >
-          {building ? '构建中…' : '查看估算并构建'}
+          {building ? pluginCopy.building : pluginCopy.estimateAndBuild}
         </Button>
       ) : null}
       {rebuildable ? (
@@ -192,7 +199,7 @@ function EnvironmentCardActions({
           disabled={building || busyPluginId !== null}
           onClick={() => onRebuild(environment)}
         >
-          {environment.state === 'failed' ? '重新构建' : '修复环境'}
+          {environment.state === 'failed' ? pluginCopy.rebuild : pluginCopy.repairEnvironment}
         </Button>
       ) : null}
     </Stack>
@@ -222,6 +229,8 @@ function EnvironmentCard(props: EnvironmentCardProps): React.JSX.Element {
 }
 
 function EnvironmentDetailsContent(props: PhiPluginEnvironmentDetailsProps): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box sx={{ minWidth: 0 }}>
       {props.actionError ? (
@@ -241,7 +250,7 @@ function EnvironmentDetailsContent(props: PhiPluginEnvironmentDetailsProps): Rea
         </Stack>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          此插件不需要托管环境。
+          {pluginCopy.noManagedEnvironment}
         </Typography>
       )}
     </Box>
@@ -251,6 +260,8 @@ function EnvironmentDetailsContent(props: PhiPluginEnvironmentDetailsProps): Rea
 export function PhiPluginEnvironmentDetails({
   ...props
 }: PhiPluginEnvironmentDetailsProps): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box
       component="section"
@@ -268,7 +279,7 @@ export function PhiPluginEnvironmentDetails({
         color="text.secondary"
         sx={{ fontWeight: 700, lineHeight: '24px' }}
       >
-        环境
+        {pluginCopy.environments}
       </Typography>
       <EnvironmentDetailsContent {...props} />
     </Box>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { RemoteProjectConnectionChange } from '../../shared/projectLocation'
 import type { PermissionMode, Project, ProjectRemoteConnection, ThinkingLevel } from './types'
+import { appCopy } from './lib/appCopy'
 
 export function applyRemoteProjectConnectionChange(
   projects: Project[],
@@ -109,7 +110,7 @@ export function useProjects(
         const project = await window.api.updateProjectDefaults(projectId, defaults)
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
-        showSnackbarError(error, '更新项目默认模型失败')
+        showSnackbarError(error, appCopy.updateProjectModelFailed)
       } finally {
         setUpdatingPermissionProjectId(null)
       }
@@ -132,7 +133,7 @@ export function useProjects(
         )
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
-        showSnackbarError(error, '更新远程连接失败')
+        showSnackbarError(error, appCopy.updateRemoteConnectionFailed)
         throw error
       } finally {
         setUpdatingRemoteProjectId(null)
@@ -154,7 +155,7 @@ export function useProjects(
         const project = await window.api.updateProjectRemoteDefaults(projectId, defaults)
         setProjects((prev) => prev.map((item) => (item.id === project.id ? project : item)))
       } catch (error) {
-        showSnackbarError(error, '更新远程执行默认设置失败')
+        showSnackbarError(error, appCopy.updateRemoteDefaultsFailed)
         throw error
       } finally {
         setUpdatingRemoteProjectId(null)

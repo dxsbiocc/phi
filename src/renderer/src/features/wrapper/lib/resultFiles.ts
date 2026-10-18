@@ -81,7 +81,7 @@ export function wrapperResultScopeForPath(
 
 export function wrapperResultUri(scope: WrapperResultFileScope, path = scope.root): string {
   if (!remotePathInsideRoot(path, scope.root)) {
-    throw new Error('Wrapper 结果路径不属于该运行的授权范围')
+    throw new Error('The Wrapper result path is outside the authorized scope of this run')
   }
   return remoteWorkspaceUri(scope.hostAlias, path)
 }
@@ -91,7 +91,7 @@ export function wrapperResultRequestForUri(
   scope: WrapperResultFileScope
 ): WrapperResultDirectoryRequest {
   const path = remotePathWithinProjectUri(uri, scope.hostAlias, scope.root)
-  if (!path) throw new Error('Wrapper 结果不属于当前运行或服务器')
+  if (!path) throw new Error('The Wrapper result does not belong to the current run or server')
   return {
     projectId: scope.projectId,
     hostProfileId: scope.hostProfileId,

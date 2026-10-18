@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -585,7 +587,7 @@ test('file preview title tab renders in the top split area', () => {
 
   assert.match(markup, /role="tab"/)
   assert.match(markup, /aria-selected="true"/)
-  assert.match(markup, /aria-label="当前文件：App\.tsx"/)
+  assert.match(markup, /aria-label="当前文件: App\.tsx"/)
   assert.match(markup, /width:66\.666%/)
   assert.match(markup, /flex-basis:66\.666%/)
   assert.match(markup, /max-width:calc\(100% - 320px\)/)
@@ -677,7 +679,7 @@ test('file preview title tab renders directories distinctly', () => {
     })
   )
 
-  assert.match(markup, /aria-label="当前目录：src"/)
+  assert.match(markup, /aria-label="当前目录: src"/)
   assert.match(markup, /data-phi-file-kind="directory"/)
   assert.match(markup, /src/)
 })
@@ -796,3 +798,6 @@ test('file preview panel shows loading, errors, and truncation', () => {
     /文件较大，已预览前 7 B \/ 4\.0 KB/
   )
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

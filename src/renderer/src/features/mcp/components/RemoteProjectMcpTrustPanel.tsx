@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import {
   Alert,
   Box,
@@ -26,10 +29,10 @@ import {
 } from '../lib/remoteProjectMcpTrust'
 
 function itemLabel(item: RemoteProjectMcpConfirmationItem): string {
-  if (item.kind === 'stdio-command') return '命令'
-  if (item.kind === 'stdio-arg') return `参数 ${(item.index ?? 0) + 1}`
-  if (item.kind === 'stdio-env') return '环境变量名'
-  return 'HTTPS 地址'
+  if (item.kind === 'stdio-command') return connectorCopy.command
+  if (item.kind === 'stdio-arg') return connectorCopy.argumentNumber(item.index ?? 0)
+  if (item.kind === 'stdio-env') return connectorCopy.environmentVariableName
+  return connectorCopy.httpsUrl
 }
 
 export function RemoteProjectMcpTrustDialog({
@@ -43,6 +46,8 @@ export function RemoteProjectMcpTrustDialog({
   onClose: () => void
   onTrusted: (confirmedItemIds: string[]) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
+
   const [checked, setChecked] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -79,12 +84,10 @@ export function RemoteProjectMcpTrustDialog({
 
   return (
     <ConfirmationDialog open={open} onClose={busy ? undefined : close} disablePortal>
-      <DialogTitle>信任服务器项目 MCP 配置</DialogTitle>
+      <DialogTitle>{connectorCopy.trustServerConfig}</DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
-          <Alert severity="warning">
-            stdio 连接器会在服务器上执行任意命令。请逐项核对完整命令、每个参数和环境变量名。
-          </Alert>
+          <Alert severity="warning">{connectorCopy.remoteCommandWarning}</Alert>
           <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
             {server.sourcePath}
           </Typography>
@@ -139,10 +142,10 @@ export function RemoteProjectMcpTrustDialog({
       </DialogContent>
       <DialogActions>
         <Button disabled={busy} onClick={close}>
-          取消
+          {resourceUi.cancel}
         </Button>
         <Button variant="contained" disabled={busy || !allChecked} onClick={() => void trust()}>
-          确认并信任
+          {connectorCopy.confirmTrust}
         </Button>
       </DialogActions>
     </ConfirmationDialog>
@@ -161,6 +164,8 @@ export function RemoteProjectMcpTrustPanel({
   server: McpServerSummary
   onChanged?: () => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
+
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -183,7 +188,7 @@ export function RemoteProjectMcpTrustPanel({
   }
   return (
     <Stack spacing={1.25} sx={{ mt: 2 }}>
-      <RemoteProjectTrustStatus resource={server} sourceLabel="服务器项目 MCP" />
+      <RemoteProjectTrustStatus resource={server} sourceLabel={connectorCopy.serverProjectMcp} />
       {server.trustState !== 'invalid' ? (
         <Box>
           <Button
@@ -196,10 +201,10 @@ export function RemoteProjectMcpTrustPanel({
             }}
           >
             {server.trustState === 'trusted'
-              ? '撤销信任'
+              ? connectorCopy.revokeTrust
               : server.trustState === 'changed'
-                ? '重新信任'
-                : '信任'}
+                ? connectorCopy.trustAgain
+                : connectorCopy.trust}
           </Button>
         </Box>
       ) : null}

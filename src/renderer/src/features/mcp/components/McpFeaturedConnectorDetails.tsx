@@ -1,3 +1,7 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { resourceCategoryLabel } from '../../../lib/resourceUi'
+import { connectorCopy, connectorSignInLabel } from '../lib/connectorCopy'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import type { McpServerSummary } from '../../../types'
@@ -47,26 +51,30 @@ export function McpFeaturedConnectorDetails({
   onEnabledChange?: (enabled: boolean) => void
   onRetry: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const localPrerequisite = localConnectorToolsPrerequisite(connector)
   const removeButton =
     server?.managed && onRemove ? (
       <Button color="error" variant="outlined" disabled={busy} onClick={onRemove}>
-        移除
+        {resourceUi.remove}
       </Button>
     ) : null
   let actions: React.JSX.Element
   if (connector.unavailableReason && !server) {
-    // The version requirement only stops a new install; a connector that is already added works.
+    // Catalog restrictions stop a new install; already configured connectors remain usable.
     actions = (
-      <Button variant="outlined" disabled>
-        需要新版 Phi
+      <Button variant="outlined" disabled title={connector.unavailableReason}>
+        {connector.unavailableKind === 'authorization'
+          ? connectorCopy.authorizationUnavailable
+          : connectorCopy.newerPhiRequired}
       </Button>
     )
   } else if (connector.environmentState === 'not-built') {
     actions = (
       <Stack direction="row" spacing={1}>
         <Button variant="contained" disabled={busy} onClick={onBuildEnvironment}>
-          构建环境
+          {connectorCopy.buildEnvironment}
         </Button>
         {removeButton}
       </Stack>
@@ -76,11 +84,13 @@ export function McpFeaturedConnectorDetails({
       <Stack direction="row" spacing={1}>
         {connector.unavailableReason ? (
           <Button variant="outlined" disabled title={connector.unavailableReason}>
-            更新需要新版 Phi
+            {connector.unavailableKind === 'authorization'
+              ? connectorCopy.authorizationUnavailable
+              : connectorCopy.updateNewerPhiRequired}
           </Button>
         ) : (
           <Button variant="contained" disabled={busy} onClick={onAdd}>
-            更新
+            {resourceUi.update}
           </Button>
         )}
         {removeButton}
@@ -94,7 +104,7 @@ export function McpFeaturedConnectorDetails({
     actions = (
       <Stack direction="row" spacing={1}>
         <Button variant="contained" disabled={busy} onClick={onRetry}>
-          重试连接
+          {connectorCopy.retryConnection}
         </Button>
         {removeButton}
       </Stack>
@@ -103,7 +113,11 @@ export function McpFeaturedConnectorDetails({
     actions = (
       <Stack direction="row" spacing={1}>
         <Button variant={server ? 'outlined' : 'contained'} disabled={busy} onClick={onApiKey}>
-          {server ? (authStatus === 'authenticated' ? '更换密钥' : '验证 API key') : '添加连接器'}
+          {server
+            ? authStatus === 'authenticated'
+              ? connectorCopy.replaceKey
+              : connectorCopy.verifyApiKey
+            : connectorCopy.addConnector}
         </Button>
         {removeButton}
       </Stack>
@@ -113,15 +127,17 @@ export function McpFeaturedConnectorDetails({
       <Stack direction="row" spacing={1}>
         {authorizing ? (
           <Button variant="contained" onClick={onCancelAuthorize}>
-            取消授权
+            {connectorCopy.cancelAuthorization}
           </Button>
         ) : authStatus === 'authenticated' && !server ? (
           <Button variant="contained" disabled={busy} onClick={onAdd}>
-            添加连接器
+            {connectorCopy.addConnector}
           </Button>
         ) : (
           <Button variant="contained" disabled={busy} onClick={onAuthorize}>
-            {authStatus === 'authenticated' ? '重新授权' : '授权登录'}
+            {authStatus === 'authenticated'
+              ? connectorCopy.reauthorize
+              : connectorCopy.authorizeSignIn}
           </Button>
         )}
         {removeButton}
@@ -132,13 +148,13 @@ export function McpFeaturedConnectorDetails({
   } else if (connector.signIn === '需要登录' && !server) {
     actions = (
       <Button variant="outlined" disabled>
-        授权登录暂不可用
+        {connectorCopy.signInUnavailable}
       </Button>
     )
   } else {
     actions = (
       <Button variant="contained" disabled={Boolean(server) || busy} onClick={onAdd}>
-        {server ? '已配置' : '添加连接器'}
+        {server ? connectorCopy.configured : connectorCopy.addConnector}
       </Button>
     )
   }
@@ -163,11 +179,11 @@ export function McpFeaturedConnectorDetails({
           )}
           {server && (
             <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-              <Chip size="small" variant="outlined" label="已配置" />
+              <Chip size="small" variant="outlined" label={connectorCopy.configured} />
               <Chip
                 size="small"
                 variant="outlined"
-                label={server.enabled === false ? '已停用' : '已启用'}
+                label={server.enabled === false ? resourceUi.disabled : resourceUi.enabled}
               />
             </Stack>
           )}
@@ -186,7 +202,7 @@ export function McpFeaturedConnectorDetails({
               }
               onClick={() => onEnabledChange(server.enabled === false)}
             >
-              {server.enabled === false ? '启用' : '停用'}
+              {server.enabled === false ? resourceUi.enable : resourceUi.disable}
             </Button>
           )}
           {actions}
@@ -195,20 +211,20 @@ export function McpFeaturedConnectorDetails({
       {connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           {connector.id === 'gmail'
-            ? 'Gmail MCP 需要先在 Google Cloud 启用服务并为 Phi 配置 OAuth 客户端。Phi 目前尚未提供该配置，暂不能从目录授权或添加。'
+            ? connectorCopy.gmailAuthUnavailable
             : connector.id === 'slack'
-              ? 'Slack MCP 需要预先注册 Slack 应用并配置 OAuth 客户端。Phi 目前尚未提供该流程，暂不能从目录授权或添加。'
-              : '此服务需要 OAuth 登录。Phi 尚未接入该授权流程，暂不能从目录添加使用。'}
+              ? connectorCopy.slackAuthUnavailable
+              : connectorCopy.oauthUnavailable}
         </Alert>
       )}
       {connector.id === 'composio' && (
         <Alert severity="info" sx={{ mb: 3 }}>
-          登录 Composio 后，可在使用具体应用时逐个授权。第三方账号由 Composio 管理。
+          {connectorCopy.composioAuthHint}
         </Alert>
       )}
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-          服务介绍
+          {connectorCopy.serviceOverview}
         </Typography>
         <Typography color="text.secondary">
           {connector.overview ?? connector.description}
@@ -218,21 +234,21 @@ export function McpFeaturedConnectorDetails({
         <Alert severity="info" sx={{ mb: 3 }}>
           {authStatus === 'authenticated'
             ? server
-              ? 'API key 已通过验证并加密保存在本机。需要更换时，点击右上角的「更换密钥」。'
-              : 'API key 已通过验证并加密保存在本机，可直接添加连接器。'
+              ? connectorCopy.verifiedKeyReplaceHint
+              : connectorCopy.verifiedKeyAddHint
             : authStatus === 'checking'
-              ? '正在检查 API key 验证状态…'
+              ? connectorCopy.checkingKey
               : authStatus === 'unavailable'
-                ? '暂时无法检查 API key 状态，请稍后重试验证。'
+                ? connectorCopy.keyStatusUnavailable
                 : server
-                  ? '配置已保存，API key 未验证。点击右上角的「验证 API key」完成验证后才可使用。'
-                  : '此连接器需要 API key。点击右上角的「添加连接器」进行验证和保存。'}
+                  ? connectorCopy.unverifiedKeyHint
+                  : connectorCopy.keyNeededHint}
         </Alert>
       )}
       <McpConnectorSetupStatus setup={connector.setup} />
       {connector.transport === 'stdio' && !connector.added && !connector.setup && (
         <Alert severity="info" sx={{ mb: 3 }}>
-          添加后会准备运行环境并启动本地服务；首次启动可能需要下载所需文件。
+          {connectorCopy.localStartHint}
         </Alert>
       )}
       <McpToolList
@@ -245,9 +261,9 @@ export function McpFeaturedConnectorDetails({
         signInMessage={
           localPrerequisite ??
           (connector.apiKey
-            ? '验证 API key 后可读取服务端工具。'
+            ? connectorCopy.toolsAfterKey
             : connector.oauthAuthorizationOrigin
-              ? '登录后可读取服务端工具。'
+              ? connectorCopy.toolsAfterSignIn
               : undefined)
         }
         loading={toolsLoading}
@@ -259,13 +275,13 @@ export function McpFeaturedConnectorDetails({
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
         <Box>
           <Typography variant="overline" color="text.secondary">
-            提供方
+            {connectorCopy.publisher}
           </Typography>
           <Typography>{connector.publisher}</Typography>
         </Box>
         <Box>
           <Typography variant="overline" color="text.secondary">
-            {connector.transport === 'stdio' ? '启动命令' : 'MCP 地址'}
+            {connector.transport === 'stdio' ? connectorCopy.launchCommand : connectorCopy.mcpUrl}
           </Typography>
           <Typography sx={{ overflowWrap: 'anywhere', fontFamily: 'monospace' }}>
             {connector.url ??
@@ -274,34 +290,34 @@ export function McpFeaturedConnectorDetails({
         </Box>
         <Box>
           <Typography variant="overline" color="text.secondary">
-            类别
+            {connectorCopy.category}
           </Typography>
-          <Typography>{connector.category}</Typography>
+          <Typography>{resourceCategoryLabel(connector.category)}</Typography>
         </Box>
         <Box>
           <Typography variant="overline" color="text.secondary">
-            登录
+            {connectorCopy.signIn}
           </Typography>
           <Typography>
             {connector.apiKey && authStatus === 'authenticated'
-              ? 'API key 已验证'
+              ? connectorCopy.apiKeyVerified
               : connector.apiKey
                 ? authStatus === 'checking'
-                  ? '检查中'
+                  ? connectorCopy.checking
                   : authStatus === 'unavailable'
-                    ? '状态不可用'
-                    : 'API key 未验证'
+                    ? connectorCopy.statusUnavailable
+                    : connectorCopy.apiKeyUnverified
                 : authorizing
-                  ? '等待授权'
+                  ? connectorCopy.waitingAuthorization
                   : connector.oauthAuthorizationOrigin && authStatus === 'authenticated'
-                    ? '已登录'
-                    : connector.signIn}
+                    ? connectorCopy.signedIn
+                    : connectorSignInLabel(connector.signIn)}
           </Typography>
         </Box>
         {server?.sourcePath && (
           <Box>
             <Typography variant="overline" color="text.secondary">
-              配置位置
+              {connectorCopy.configurationLocation}
             </Typography>
             <Typography sx={{ overflowWrap: 'anywhere' }}>{server.sourcePath}</Typography>
           </Box>
@@ -309,7 +325,7 @@ export function McpFeaturedConnectorDetails({
         {connector.homepageUrl && (
           <Box>
             <Typography variant="overline" color="text.secondary">
-              更多信息
+              {connectorCopy.moreInformation}
             </Typography>
             <Button
               component="a"
@@ -319,7 +335,7 @@ export function McpFeaturedConnectorDetails({
               size="small"
               sx={{ pl: 0 }}
             >
-              连接器说明 ↗
+              {connectorCopy.connectorDocs}
             </Button>
           </Box>
         )}

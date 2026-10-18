@@ -31,14 +31,20 @@ function configuredRootError(configuredRoot: string): RemoteRuntimeRootHardError
   if (!configuredRoot || configuredRoot.includes('\0') || /[\r\n]/.test(configuredRoot)) {
     return {
       code: 'invalid-configured-root',
-      message: '运行时根目录不能为空，也不能包含 NUL 或换行。'
+      message: 'Runtime root must not be empty or contain NUL or newline characters.'
     }
   }
   if (!(configuredRoot.startsWith('/') || configuredRoot.startsWith('~/'))) {
-    return { code: 'invalid-configured-root', message: '运行时根目录必须是绝对路径或以 ~/ 开头。' }
+    return {
+      code: 'invalid-configured-root',
+      message: 'Runtime root must be an absolute path or start with ~/.'
+    }
   }
   if (configuredRoot.split('/').includes('..')) {
-    return { code: 'invalid-configured-root', message: '运行时根目录不能包含 .. 路径段。' }
+    return {
+      code: 'invalid-configured-root',
+      message: 'Runtime root must not contain .. path segments.'
+    }
   }
   return undefined
 }

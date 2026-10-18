@@ -1,3 +1,4 @@
+import { terminalUi } from '../lib/terminalUi'
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 
 import type {
@@ -118,7 +119,7 @@ export function useTerminalWorkspace(
   return {
     controller,
     target,
-    projectName: activeProject?.name ?? '普通工作区',
+    projectName: activeProject?.name ?? terminalUi.generalWorkspace,
     initialDirectory:
       activeProject?.location.kind === 'ssh'
         ? activeProject.location.remoteRoot

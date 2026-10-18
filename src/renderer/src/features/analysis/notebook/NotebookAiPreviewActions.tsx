@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, CircularProgress, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
@@ -16,6 +18,7 @@ export default function NotebookAiPreviewActions({
   onAccept: () => void
   onReject: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       data-phi-notebook-ai-preview-actions="true"
@@ -52,7 +55,7 @@ export default function NotebookAiPreviewActions({
             }}
           >
             <CircularProgress size={14} thickness={4} color="inherit" />
-            正在生成预览
+            {analysisCopy.generatingPreview}
           </Typography>
         ) : (
           <>
@@ -61,24 +64,24 @@ export default function NotebookAiPreviewActions({
               variant="outlined"
               color="success"
               startIcon={<AcceptIcon sx={{ fontSize: 16 }} />}
-              aria-label="接受 AI 生成内容"
+              aria-label={analysisCopy.acceptGenerated}
               data-phi-notebook-ai-preview-accept="true"
               onClick={onAccept}
               sx={{ minWidth: 94, borderRadius: 1, fontWeight: 800, textTransform: 'none' }}
             >
-              Accept
+              {analysisCopy.accept}
             </Button>
             <Button
               size="small"
               variant="outlined"
               color="error"
               startIcon={<RejectIcon sx={{ fontSize: 16 }} />}
-              aria-label="拒绝 AI 生成内容"
+              aria-label={analysisCopy.rejectGenerated}
               data-phi-notebook-ai-preview-reject="true"
               onClick={onReject}
               sx={{ minWidth: 94, borderRadius: 1, fontWeight: 800, textTransform: 'none' }}
             >
-              Reject
+              {analysisCopy.reject}
             </Button>
           </>
         )}

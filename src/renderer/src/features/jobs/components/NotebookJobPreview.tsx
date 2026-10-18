@@ -1,3 +1,5 @@
+import { jobsCopy } from '../lib/jobsCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState } from 'react'
 import {
   Box,
@@ -26,6 +28,7 @@ function fencedCode(cell: AnalysisNotebookGeneratedCell): string {
 }
 
 function NotebookPreviewCell({ cell }: { cell: AnalysisNotebookGeneratedCell }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box data-phi-notebook-job-preview-cell={cell.cellType} sx={{ minWidth: 0, mb: 1.5 }}>
       {cell.cellType === 'markdown' ? (
@@ -57,6 +60,7 @@ export function NotebookJobPreview({
 }: {
   job: NotebookAiGenerationJob
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [open, setOpen] = useState(false)
   const cells = notebookJobPreviewCells(job)
   if (cells.length === 0) return null
@@ -65,10 +69,14 @@ export function NotebookJobPreview({
     <Box data-phi-notebook-job-preview="true" sx={{ minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={workspacePanelText.label}>
-          生成内容预览
+          {jobsCopy.generatedContentPreview}
         </Typography>
-        <Button size="small" onClick={() => setOpen(true)} aria-label="展开生成内容预览">
-          查看内容
+        <Button
+          size="small"
+          onClick={() => setOpen(true)}
+          aria-label={jobsCopy.expandGeneratedContentPreview}
+        >
+          {jobsCopy.viewContent}
         </Button>
       </Box>
       <Box sx={{ maxHeight: 160, overflow: 'hidden', minWidth: 0 }}>
@@ -92,9 +100,13 @@ export function NotebookJobPreview({
           sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
         >
           <Typography component="span" sx={{ ...workspacePanelText.heading, flex: 1 }}>
-            生成内容预览 · {job.notebookName}
+            {jobsCopy.generatedContentPreview2} {job.notebookName}
           </Typography>
-          <IconButton aria-label="关闭生成内容预览" onClick={() => setOpen(false)} size="small">
+          <IconButton
+            aria-label={jobsCopy.closeGeneratedContentPreview}
+            onClick={() => setOpen(false)}
+            size="small"
+          >
             <CloseIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </DialogTitle>

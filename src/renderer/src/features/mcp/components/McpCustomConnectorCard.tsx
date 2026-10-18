@@ -1,12 +1,16 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Box, Button, Chip, Stack, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../../icons'
 import type { CustomConnectorEntry } from '../lib/customConnectorGroup'
 
 export function McpCustomConnectorEmptyState(): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Typography color="text.secondary" sx={{ mt: 2 }}>
-      还没有自建连接器。点击右上角的＋添加本地或远程连接器。
+      {connectorCopy.customEmpty}
     </Typography>
   )
 }
@@ -22,6 +26,8 @@ export function McpCustomConnectorCard({
   onOpen: () => void
   onViewJob: (jobId: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const isServer = entry.kind === 'server'
   return (
     <Box
@@ -86,9 +92,9 @@ export function McpCustomConnectorCard({
             size="small"
             variant="outlined"
             color={
-              entry.status === '添加失败'
+              entry.status === connectorCopy.addFailed
                 ? 'error'
-                : entry.status === '需要先配置'
+                : entry.status === connectorCopy.needsSetup
                   ? 'warning'
                   : 'default'
             }
@@ -99,7 +105,7 @@ export function McpCustomConnectorCard({
       {isServer && entry.enabled ? (
         <Box
           role="img"
-          aria-label={`已添加 ${entry.name}`}
+          aria-label={connectorCopy.addedNamed(entry.name)}
           data-phi-connector-state="added"
           sx={{
             width: 34,
@@ -126,7 +132,7 @@ export function McpCustomConnectorCard({
           }}
           sx={{ flexShrink: 0 }}
         >
-          查看进度
+          {connectorCopy.viewProgress}
         </Button>
       ) : null}
     </Box>

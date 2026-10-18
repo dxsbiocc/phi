@@ -24,23 +24,23 @@ test('the skill body shows description, source and the SKILL.md text', () => {
   const markup = themed(createElement(SkillDetailBody, base))
   for (const text of [
     'anndata',
-    '说明',
+    'Description',
     'Annotated matrices',
-    '来源',
+    'Source',
     'Phi Packages',
     'SKILL.md',
     'Hello'
   ]) {
     assert.ok(markup.includes(text), `missing: ${text}`)
   }
-  assert.ok(!markup.includes('文件'))
+  assert.ok(!markup.includes('File'))
 })
 
 test('the folder section appears only for a skill that is on disk', () => {
   const markup = themed(
     createElement(SkillDetailBody, { ...base, location: '/skills/anndata/SKILL.md' })
   )
-  assert.ok(markup.includes('文件'))
+  assert.ok(markup.includes('File'))
   assert.ok(markup.includes('/skills/anndata/SKILL.md'))
 })
 
@@ -51,7 +51,7 @@ test('loading and failed SKILL.md reads are stated, not blank', () => {
         ...base,
         markdown: { content: null, isLoading: true, error: null }
       })
-    ).includes('正在读取 SKILL.md')
+    ).includes('Loading SKILL.md')
   )
   assert.ok(
     themed(
@@ -86,13 +86,13 @@ test('the catalog preview keeps identity and every chip in the content, not the 
     })
   )
   for (const text of [
-    '返回技能目录',
+    'Back to skill catalog',
     'anndata',
     'v1.0.0',
     '19 KB',
     'Phi Packages',
-    '未安装',
-    '说明',
+    'Not installed',
+    'Description',
     'ACTION-SLOT'
   ]) {
     assert.ok(markup.includes(text), `missing: ${text}`)
@@ -100,6 +100,6 @@ test('the catalog preview keeps identity and every chip in the content, not the 
   // The name appears once (in the content header); the top bar no longer repeats it.
   assert.equal(markup.match(/>anndata</g)?.length, 1)
   // Version, size and status chips sit together in one row.
-  const chipRow = markup.slice(markup.indexOf('v1.0.0') - 400, markup.indexOf('未安装') + 20)
+  const chipRow = markup.slice(markup.indexOf('v1.0.0') - 400, markup.indexOf('Not installed') + 20)
   assert.ok(chipRow.includes('19 KB') && chipRow.includes('Phi Packages'))
 })

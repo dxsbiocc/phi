@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import type { FileTreeActions } from '../lib/fileTreeActions'
 import { Alert, Box, Button, CircularProgress, Typography } from '@mui/material'
 import { spreadsheetPreviewModel } from '../../../lib/spreadsheetPreview'
@@ -25,7 +27,7 @@ function binaryPreviewMessage(mimeType: string): string {
           .replace(/[^a-z0-9]+/gi, ' ')
           .trim()
           .toUpperCase()
-  return `二进制文件（${label}），不支持文本预览；原文件保留在服务器上。`
+  return filePreviewCopy.binaryFile(label)
 }
 
 type FilePreviewBodyProps = {
@@ -45,6 +47,7 @@ export function FilePreviewBody({
   fileActions,
   treeRevision = 0
 }: FilePreviewBodyProps): React.JSX.Element {
+  useUiLanguage()
   if (state.status === 'loading') {
     return (
       <Box
@@ -60,7 +63,9 @@ export function FilePreviewBody({
       >
         <CircularProgress size={18} />
         <Typography variant="body2">
-          {state.pathKind === 'directory' ? '正在读取目录' : '正在读取文件'}
+          {state.pathKind === 'directory'
+            ? filePreviewCopy.readingFolder
+            : filePreviewCopy.readingFile}
         </Typography>
       </Box>
     )
@@ -110,11 +115,15 @@ export function FilePreviewBody({
   if (state.file.kind === 'metadata') {
     return (
       <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-        <Typography variant="body2">大小：{formatBytes(state.file.bytes)}</Typography>
-        <Typography variant="body2">类型：{state.file.mimeType}</Typography>
+        <Typography variant="body2">
+          {filePreviewCopy.sizeLabel} {formatBytes(state.file.bytes)}
+        </Typography>
+        <Typography variant="body2">
+          {filePreviewCopy.typeLabel} {state.file.mimeType}
+        </Typography>
         <Alert severity="info" variant="outlined">
           {state.file.reason === 'large_file'
-            ? '文件较大，预览仅显示元数据；完整文件仍保留在服务器上。'
+            ? filePreviewCopy.metadataOnly
             : binaryPreviewMessage(state.file.mimeType)}
         </Alert>
         <Button
@@ -124,7 +133,7 @@ export function FilePreviewBody({
           onClick={() => onDownloadFile?.(state.file.path)}
           sx={{ alignSelf: 'flex-start' }}
         >
-          下载文件
+          {filePreviewCopy.downloadFile}
         </Button>
       </Box>
     )
@@ -138,8 +147,10 @@ export function FilePreviewBody({
     <>
       {state.file.truncated ? (
         <Alert severity="info" variant="outlined" sx={{ m: 1.5, mb: 0 }}>
-          文件较大，已预览前 {formatBytes(state.file.previewBytes)} /{' '}
-          {formatBytes(state.file.bytes)}
+          {filePreviewCopy.previewPortion(
+            formatBytes(state.file.previewBytes),
+            formatBytes(state.file.bytes)
+          )}
         </Alert>
       ) : null}
       {state.file.kind === 'text' && isMarkdownFilePath(state.file.path) ? (

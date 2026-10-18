@@ -1,3 +1,4 @@
+import { getUiLocale } from '../../../lib/i18n'
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
@@ -71,6 +72,9 @@ export function rankHomeWrapperRuns(
   }
 
   return [...ranking.values()]
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh-CN'))
+    .sort(
+      (left, right) =>
+        right.count - left.count || left.name.localeCompare(right.name, getUiLocale())
+    )
     .slice(0, limit)
 }

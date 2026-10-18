@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type { Project, ProjectRemoteConnection } from '../../../types'
@@ -98,10 +99,12 @@ function createEnvironmentCheck(
   return async (nextflowBin = state.hpc.nextflowBin) => {
     const root = state.remoteRoot.trim()
     if (!state.hosts.some((host) => host.id === state.hostProfileId)) {
-      return patchControllerState(setState, { error: '请选择可用的 SSH 服务器' })
+      return patchControllerState(setState, { error: remoteSetupCopy.availableSshServerRequired })
     }
     if (!root.startsWith('/') || /[\r\n\0]/.test(root)) {
-      return patchControllerState(setState, { error: '服务器工作目录必须是绝对路径' })
+      return patchControllerState(setState, {
+        error: remoteSetupCopy.workingDirectoryAbsolutePathError
+      })
     }
     const runtimeRootError = remoteRuntimeRootValueError(state.runtimeRootOverride)
     if (runtimeRootError) return patchControllerState(setState, { error: runtimeRootError })
@@ -123,7 +126,7 @@ function createEnvironmentCheck(
           environmentState: {
             phase: 'failed',
             key,
-            message: '运行环境检查未完成，请确认服务器和网络状态后重试。'
+            message: remoteSetupCopy.environmentCheckIncomplete
           }
         })
       }
@@ -143,7 +146,7 @@ function handleInstallFailure(
       environmentState: {
         phase: 'failed',
         key,
-        message: '运行环境检查未完成，请确认服务器和网络状态后重试。'
+        message: remoteSetupCopy.environmentCheckIncomplete
       }
     })
   }
@@ -151,7 +154,7 @@ function handleInstallFailure(
     patchControllerState(setState, {
       installStatus: {
         severity: 'error',
-        message: cause instanceof Error ? cause.message : 'Nextflow 安装未完成，请改为手动安装'
+        message: cause instanceof Error ? cause.message : remoteSetupCopy.nextflowInstallIncomplete
       }
     })
   }

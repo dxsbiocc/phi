@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useState } from 'react'
 import { Box, Fab, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
@@ -46,6 +48,7 @@ function NotebookKernelIcon({
 }: {
   kind: ReturnType<typeof notebookKernelIconKind>
 }): React.JSX.Element {
+  useUiLanguage()
   if (kind === 'python') return <PythonIcon fontSize="small" />
   if (kind === 'r') return <RIcon fontSize="small" />
   return <NotebookIcon fontSize="small" />
@@ -66,6 +69,7 @@ export function NotebookKernelControl({
   kernelDiagnostics?: AnalysisKernelDiagnostics | null
   onKernelChange?: (kernelName: string) => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
   const kernelOptions = kernelDiagnostics?.kernels ?? []
   const requestedKernelName = draftDocument ? notebookKernelName(draftDocument) : ''
   const selectedKernel =
@@ -81,7 +85,7 @@ export function NotebookKernelControl({
     ? kernelLabel
     : selectedKernel
       ? kernelOptionLabel(selectedKernel)
-      : selectedKernelName || 'Auto'
+      : selectedKernelName || analysisCopy.auto
   const kernelIconKind = notebookKernelIconKind(selectedKernel, draftDocument, kernelLabel)
   const closeKernelMenu = (): void => setKernelMenuAnchor(null)
   const chooseKernel = (kernelName: string): void => {

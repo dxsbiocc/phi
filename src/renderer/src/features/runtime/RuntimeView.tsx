@@ -1,3 +1,5 @@
+import { runtimeUi } from './lib/runtimeUi'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   Chip,
@@ -120,6 +122,7 @@ function RuntimeKernelIcon({
 }: {
   kind: ReturnType<typeof runtimeKernelIconKind>
 }): React.JSX.Element {
+  useUiLanguage()
   if (kind === 'python') return <PythonIcon sx={{ fontSize: 22 }} />
   if (kind === 'r') return <RIcon sx={{ fontSize: 22 }} />
   return <NotebookIcon sx={{ fontSize: 22 }} />
@@ -127,17 +130,19 @@ function RuntimeKernelIcon({
 
 function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null): string {
   if (status?.runtimeKind === 'ssh') {
-    const server = status.serverLabel || 'SSH 服务器'
-    return status.message ? `${server} · 登录节点 · ${status.message}` : `${server} · 登录节点`
+    const server = status.serverLabel || runtimeUi.sSHServer
+    return status.message
+      ? runtimeUi.valueLoginNodeValue(server, status.message)
+      : runtimeUi.valueLoginNode(server)
   }
   const parts = [
     status?.pid ? `PID ${status.pid}` : null,
-    status?.port ? `Port ${status.port}` : null
+    status?.port ? runtimeUi.port(status.port) : null
   ].filter(Boolean)
 
   if (parts.length > 0) return parts.join(' · ')
-  if (status?.hasEndpoint) return 'Endpoint ready'
-  return 'No endpoint'
+  if (status?.hasEndpoint) return runtimeUi.endpointReady
+  return runtimeUi.noEndpoint
 }
 
 export function RuntimeSidebar({
@@ -152,6 +157,7 @@ export function RuntimeSidebar({
   onStopJupyter,
   onStopNotebookKernel
 }: RuntimeSidebarProps): React.JSX.Element {
+  useUiLanguage()
   const server = runtimeStatus?.server ?? null
   const notebooks = runtimeStatus?.notebooks ?? null
   const notebookSessions = (notebooks?.sessions ?? []).filter(isListedNotebookKernel)
@@ -278,7 +284,7 @@ export function RuntimeSidebar({
                     }}
                     sx={{ fontSize: '0.78rem', mt: 0.25, display: 'inline-block' }}
                   >
-                    查看启动日志
+                    {runtimeUi.viewStartupLog}
                   </Link>
                 ) : null}
               </>
@@ -294,11 +300,11 @@ export function RuntimeSidebar({
             spacing={0.25}
             sx={{ ...runtimeSidebarHoverActionSx, ml: 0.75, flexShrink: 0 }}
           >
-            <Tooltip title="刷新 Server 状态">
+            <Tooltip title={runtimeUi.refreshServerStatus}>
               <span>
                 <IconButton
                   size="small"
-                  aria-label="刷新 Server 状态"
+                  aria-label={runtimeUi.refreshServerStatus}
                   disabled={!projectCwd || actionBusy}
                   onClick={(event) => {
                     event.stopPropagation()
@@ -310,11 +316,11 @@ export function RuntimeSidebar({
               </span>
             </Tooltip>
             {showStopServerAction ? (
-              <Tooltip title="停止 Jupyter server">
+              <Tooltip title={runtimeUi.stopJupyterServer}>
                 <span>
                   <IconButton
                     size="small"
-                    aria-label="停止 Jupyter server"
+                    aria-label={runtimeUi.stopJupyterServer}
                     disabled={!canStop || (actionBusy && server?.runtimeKind !== 'ssh')}
                     onClick={(event) => {
                       event.stopPropagation()
@@ -329,11 +335,11 @@ export function RuntimeSidebar({
                 </span>
               </Tooltip>
             ) : (
-              <Tooltip title="启动 Jupyter server">
+              <Tooltip title={runtimeUi.startJupyterServer}>
                 <span>
                   <IconButton
                     size="small"
-                    aria-label="启动 Jupyter server"
+                    aria-label={runtimeUi.startJupyterServer}
                     disabled={!canStart || actionBusy}
                     onClick={(event) => {
                       event.stopPropagation()
@@ -349,11 +355,11 @@ export function RuntimeSidebar({
               </Tooltip>
             )}
             {showAbandonCleanupAction ? (
-              <Tooltip title="放弃本地状态（服务器侧仍未确认）">
+              <Tooltip title={runtimeUi.discardLocalStateServerStateIsStillUnconfirmed}>
                 <span>
                   <IconButton
                     size="small"
-                    aria-label="放弃未确认的远程 Jupyter 本地状态"
+                    aria-label={runtimeUi.discardUnconfirmedLocalStateForRemoteJupyter}
                     disabled={!projectCwd || actionBusy}
                     onClick={(event) => {
                       event.stopPropagation()
@@ -382,7 +388,7 @@ export function RuntimeSidebar({
           }}
         >
           <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
-            Notebook Kernels
+            {runtimeUi.notebookKernels}
           </Typography>
           <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
             <Chip
@@ -477,11 +483,11 @@ export function RuntimeSidebar({
                   spacing={0.25}
                   sx={{ ...runtimeSidebarHoverActionSx, ml: 0.75, flexShrink: 0 }}
                 >
-                  <Tooltip title="关闭 kernel">
+                  <Tooltip title={runtimeUi.stopKernel}>
                     <span>
                       <IconButton
                         size="small"
-                        aria-label={`关闭 ${notebookName} kernel`}
+                        aria-label={runtimeUi.stopValueKernel(notebookName)}
                         data-phi-runtime-sidebar-kernel-close="true"
                         data-phi-runtime-sidebar-kernel-close-state={
                           closingNotebookPath === session.notebookPath ? 'closing' : 'ready'
@@ -511,7 +517,9 @@ export function RuntimeSidebar({
             data-phi-runtime-sidebar-empty-kernels="true"
             sx={{ px: 2, py: 2, color: 'text.secondary' }}
           >
-            <Typography variant="body2">当前项目还没有运行中的 notebook kernel。</Typography>
+            <Typography variant="body2">
+              {runtimeUi.noNotebookKernelsAreRunningInThisProject}
+            </Typography>
           </Box>
         )}
       </List>

@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
+import { resourceUi } from '../../../lib/resourceUi'
 import { Alert, Box, CircularProgress, Divider, Stack, Typography } from '@mui/material'
 
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
@@ -45,6 +48,8 @@ export function SkillDetailBody({
   markdown,
   markdownCwd
 }: SkillDetailBodyProps): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
       <Box sx={{ width: '100%', maxWidth: 860, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
@@ -87,14 +92,14 @@ export function SkillDetailBody({
 
         <Divider sx={{ my: 4 }} />
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-          说明
+          {resourceUi.description}
         </Typography>
         <Typography variant="body1" sx={{ maxWidth: 720 }}>
-          {description || '这个技能没有提供说明。'}
+          {description || skillCopy.noDescription}
         </Typography>
 
         <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-          来源
+          {resourceUi.source}
         </Typography>
         <Typography variant="body2" color="text.secondary">
           {sourceText}
@@ -103,7 +108,7 @@ export function SkillDetailBody({
         {location ? (
           <>
             <Typography variant="h6" sx={{ fontWeight: 700, mt: 4, mb: 1 }}>
-              文件
+              {skillCopy.file}
             </Typography>
             <Typography
               component="code"
@@ -140,7 +145,7 @@ export function SkillDetailBody({
             <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>
               <CircularProgress size={20} />
               <Typography variant="body2" color="text.secondary">
-                正在读取 SKILL.md
+                {skillCopy.readingMarkdown}
               </Typography>
             </Stack>
           ) : markdown.error ? (
@@ -159,7 +164,7 @@ export function SkillDetailBody({
             </Box>
           ) : (
             <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-              选择技能后会在这里显示完整源文。
+              {skillCopy.selectForMarkdown}
             </Typography>
           )}
         </Box>

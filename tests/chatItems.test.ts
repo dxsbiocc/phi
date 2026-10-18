@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { presentedFilesItemFromPhiTimelineEvent } from '../src/renderer/src/features/chat/lib/presentedFiles'
@@ -9,6 +10,9 @@ import {
   isNotebookToolName,
   isWrapperToolName
 } from '../src/renderer/src/lib/chatItems'
+
+// Existing Chinese timeline assertions select their locale explicitly.
+setUiLanguage('zh-CN')
 
 test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => {
   assert.equal(isWrapperToolName('wrapper_phi_ngs_fastq_qc'), true)
@@ -1683,5 +1687,5 @@ test('a stopped previous remote run is shown as a warning item', () => {
   ])
   assert.equal(items.length, 1)
   assert.equal(items[0].role, 'warning')
-  assert.equal(items[0].content, '已停止上一次未结束的远端运行')
+  assert.equal(items[0].content, '已停止上一次未结束的远端运行。')
 })

@@ -1,9 +1,12 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { useEffect, useState } from 'react'
 import type { FilePreview } from '../../../types'
 import { pdfObjectUrlFromDataUrl } from '../lib/pdfObjectUrl'
 
 function PdfPreview({ file }: { file: Extract<FilePreview, { kind: 'pdf' }> }): React.JSX.Element {
+  useUiLanguage()
   const [preview, setPreview] = useState<{ source: string; url: string } | null>(null)
   const [errorSource, setErrorSource] = useState<string | null>(null)
 
@@ -30,7 +33,7 @@ function PdfPreview({ file }: { file: Extract<FilePreview, { kind: 'pdf' }> }): 
     <Box
       data-phi-media-preview="pdf"
       role="region"
-      aria-label={`PDF 预览：${file.name}`}
+      aria-label={filePreviewCopy.pdfPreview(file.name)}
       sx={{
         flex: 1,
         minWidth: 0,
@@ -44,7 +47,7 @@ function PdfPreview({ file }: { file: Extract<FilePreview, { kind: 'pdf' }> }): 
           component="iframe"
           src={url}
           title={file.name}
-          aria-label={`PDF 预览：${file.name}`}
+          aria-label={filePreviewCopy.pdfPreview(file.name)}
           sx={{
             flex: 1,
             width: '100%',
@@ -55,7 +58,7 @@ function PdfPreview({ file }: { file: Extract<FilePreview, { kind: 'pdf' }> }): 
         />
       ) : (
         <Typography variant="body2" color="text.secondary" sx={{ m: 'auto' }}>
-          {errorSource === file.dataUrl ? 'PDF 预览失败' : '正在准备 PDF 预览…'}
+          {errorSource === file.dataUrl ? filePreviewCopy.pdfFailed : filePreviewCopy.preparingPdf}
         </Typography>
       )}
     </Box>
@@ -67,6 +70,7 @@ export function MediaPreview({
 }: {
   file: Extract<FilePreview, { kind: 'image' | 'pdf' }>
 }): React.JSX.Element {
+  useUiLanguage()
   if (file.kind === 'image') {
     return (
       <Box

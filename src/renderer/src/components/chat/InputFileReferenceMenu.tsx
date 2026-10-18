@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   CircularProgress,
@@ -24,6 +26,7 @@ type InputFileReferenceMenuProps = {
 }
 
 function InputFileReferenceStatusRow({ children }: { children: ReactNode }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Typography
       variant="body2"
@@ -53,6 +56,7 @@ function InputFileReferenceRow({
   onHighlight: () => void
   onSelect: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const iconMeta =
     entry.kind === 'directory'
       ? directoryIconForPath(entry.path, false)
@@ -102,11 +106,12 @@ export function InputFileReferenceMenu({
   onHighlight,
   onSelect
 }: InputFileReferenceMenuProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Paper
       variant="outlined"
       role="listbox"
-      aria-label="引用当前工作路径文件"
+      aria-label={chatCopy.referenceFilesInTheCurrentWorkingDirectory}
       sx={{
         width: '100%',
         mb: 1,
@@ -123,19 +128,20 @@ export function InputFileReferenceMenu({
           color="text.secondary"
           sx={{ fontSize: '0.8rem', fontWeight: 800, letterSpacing: 0 }}
         >
-          @{state.query || '当前工作路径'}
+          @{state.query || chatCopy.currentWorkingDirectory}
         </Typography>
       </Box>
       {state.status === 'loading' ? (
         <InputFileReferenceStatusRow>
-          <CircularProgress size={14} color="inherit" /> 正在读取文件
+          <CircularProgress size={14} color="inherit" />
+          {chatCopy.loadingFiles}
         </InputFileReferenceStatusRow>
       ) : null}
       {state.status === 'error' ? (
         <InputFileReferenceStatusRow>{state.message}</InputFileReferenceStatusRow>
       ) : null}
       {state.status === 'ready' && state.entries.length === 0 ? (
-        <InputFileReferenceStatusRow>没有匹配文件</InputFileReferenceStatusRow>
+        <InputFileReferenceStatusRow>{chatCopy.noMatchingFiles}</InputFileReferenceStatusRow>
       ) : null}
       {state.status === 'ready'
         ? state.entries.map((entry, index) => (

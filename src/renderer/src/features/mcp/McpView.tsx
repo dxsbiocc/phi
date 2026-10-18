@@ -1,3 +1,7 @@
+import { useUiLanguage } from '../../lib/i18n'
+import { resourceUi } from '../../lib/resourceUi'
+import { resourceCategoryLabel, resourceCategorySearchTerms } from '../../lib/resourceUi'
+import { connectorCopy } from './lib/connectorCopy'
 import {
   useCallback,
   useEffect,
@@ -68,11 +72,13 @@ function ResizeSeparator({
 }: {
   onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整侧边栏宽度"
+      aria-label={connectorCopy.resizeSidebar}
       onMouseDown={onMouseDown}
       sx={{
         width: '1px',
@@ -154,6 +160,8 @@ export function McpSidebar({
   onRegisterConnectorDialogCloser,
   onOpenConnectorJob
 }: McpSidebarProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
+
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [catalogPending, setCatalogPending] = useState(false)
@@ -208,6 +216,8 @@ export function McpSidebar({
   })
   const normalizedQuery = query.trim().toLowerCase()
   const filteredServers = useMemo(() => {
+    void uiLanguage // Invalidate labels and localized search without changing selection.
+
     if (!normalizedQuery) return servers
     return servers.filter((server) =>
       [
@@ -216,13 +226,15 @@ export function McpSidebar({
         server.command,
         server.url,
         server.sourcePath,
+        server.category,
+        ...resourceCategorySearchTerms(serverCategory(server)),
         ...(server.args ?? []),
         ...(server.envKeys ?? [])
       ]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(normalizedQuery))
     )
-  }, [normalizedQuery, servers])
+  }, [normalizedQuery, servers, uiLanguage])
   const selectedServer = selectedServerFromList(filteredServers, activeServerId)
   const groups = useMemo(() => {
     const categoryOrder: readonly string[] = [...mcpConnectorCategories, '其他']
@@ -248,13 +260,13 @@ export function McpSidebar({
 
   return (
     <CatalogSidebar
-      title="连接器"
+      title={resourceUi.connectors}
       resource="connectors"
       width={sidebarWidth}
       query={query}
       onQueryChange={setQuery}
-      searchPlaceholder="搜索连接器"
-      summary={`${servers.length} 个连接器`}
+      searchPlaceholder={connectorCopy.searchConnectors}
+      summary={connectorCopy.connectorCount(servers.length)}
       notice={notice}
       action={
         onRefreshServers ? (
@@ -275,20 +287,23 @@ export function McpSidebar({
         {groups.length === 0 ? (
           <Box sx={{ px: 1.5, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              {normalizedQuery ? '没有匹配的已配置连接器' : '尚未配置连接器。点击“发现”浏览目录。'}
+              {normalizedQuery ? connectorCopy.noConfiguredMatches : connectorCopy.noConfigured}
             </Typography>
           </Box>
         ) : (
           groups.map((group) => (
             <SidebarAccordionGroup
-              key={group.category}
+              key={resourceCategoryLabel(group.category)}
               expanded={visibleCategory === group.category}
               onExpandedChange={(isExpanded) =>
                 setExpandedCategory(isExpanded ? group.category : '')
               }
               title={
-                <Box component="span" aria-label={`${group.category} · ${group.entries.length}`}>
-                  {group.category}
+                <Box
+                  component="span"
+                  aria-label={`${resourceCategoryLabel(group.category)} · ${group.entries.length}`}
+                >
+                  {resourceCategoryLabel(group.category)}
                 </Box>
               }
               count={group.entries.length}
@@ -317,7 +332,7 @@ export function McpSidebar({
                     icon={<ConnectorIcon icon={server.icon} size={32} />}
                   >
                     <Tooltip
-                      title={`${label} · 已配置 · ${active ? '已启用' : '已停用'}`}
+                      title={connectorCopy.configuredTooltip(label, active)}
                       enterDelay={450}
                     >
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
@@ -340,7 +355,7 @@ export function McpSidebar({
                           {label}
                         </Typography>
                         {server.userStdio ? (
-                          <Chip size="small" variant="outlined" label="自建·本地" />
+                          <Chip size="small" variant="outlined" label={connectorCopy.customLocal} />
                         ) : null}
                       </Box>
                     </Tooltip>

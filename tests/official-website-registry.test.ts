@@ -202,7 +202,7 @@ test('offline requests use only a fully validated immutable website cache', asyn
   assert.equal(cached.status, 'cached')
   assert.equal(cached.dir, original.dir)
   assert.equal(cached.trust, 'imported')
-  assert.match(cached.notice ?? '', /官网内容缓存/)
+  assert.match(cached.notice ?? '', /verified website cache/)
 })
 
 test('failed replacement leaves the previous pointer and complete generation unchanged', async () => {
@@ -216,7 +216,7 @@ test('failed replacement leaves the previous pointer and complete generation unc
   const cached = await syncPreferredOfficialRegistry(f.options)
   assert.equal(cached.dir, original.dir)
   assert.equal(readFileSync(pointer, 'utf8'), before)
-  assert.match(cached.notice ?? '', /技能数量/)
+  assert.match(cached.notice ?? '', /Skill count/)
 })
 
 test('archive corruption and index symlinks are rejected before cached installation', async () => {
@@ -318,7 +318,7 @@ test('unavailable classification API falls back to signature-verified release me
     }
   })
   assert.equal(registry.trust, 'official')
-  assert.match(registry.notice ?? '', /签名发布目录/)
+  assert.match(registry.notice ?? '', /signed release catalog/)
   assert.ok(
     requests.some((url) =>
       url.startsWith('https://github.com/dxsbiocc/phi-packages/releases/download/catalog-v1/')
@@ -517,7 +517,7 @@ test('same-commit API skill grouping refreshes immutable metadata without downlo
   })
   assert.equal(invalid.dir, retimed.dir)
   assert.equal(invalid.status, 'cached')
-  assert.match(invalid.notice ?? '', /分组/)
+  assert.match(invalid.notice ?? '', /Skill group/)
   const offline = await syncPreferredOfficialRegistry({
     ...options,
     fetch: async (input, init) =>
@@ -528,7 +528,7 @@ test('same-commit API skill grouping refreshes immutable metadata without downlo
   assert.equal(offline.dir, retimed.dir)
   assert.equal(offline.status, 'cached')
   assert.equal(offline.packages[0].groupLabel, '科学计算')
-  assert.match(offline.notice ?? '', /官网内容缓存/)
+  assert.match(offline.notice ?? '', /verified website cache/)
 })
 
 test('general registry materialization requires explicit consent to include non-MCP types', () => {
@@ -545,7 +545,7 @@ test('general registry materialization requires explicit consent to include non-
   )
   assert.throws(
     () => materializeRegistry([source], join(f.agentDir, 'default'), { id: 'test' }),
-    /不是 MCP/
+    /not an MCP package/
   )
   assert.equal(
     materializeRegistry([source], join(f.agentDir, 'opt-in'), {

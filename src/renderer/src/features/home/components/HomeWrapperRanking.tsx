@@ -1,7 +1,10 @@
+import { homeCopy } from '../lib/homeCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
 import type { RankedWrapper } from '../lib/homeOverview'
+import { resourceCatalogCopy } from '../../../lib/resourceUi'
 
 interface HomeWrapperRankingProps {
   ranking: RankedWrapper[]
@@ -14,6 +17,7 @@ export function HomeWrapperRanking({
   totalRuns,
   embedded = false
 }: HomeWrapperRankingProps): React.JSX.Element {
+  useUiLanguage()
   const maximum = ranking[0]?.count ?? 1
 
   return (
@@ -34,14 +38,14 @@ export function HomeWrapperRanking({
       }}
     >
       <Typography variant={embedded ? 'body2' : 'subtitle1'} sx={{ fontWeight: 750 }}>
-        Wrapper 运行排行
+        {resourceCatalogCopy.wrapperRanking}
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
-        本机保存的 {totalRuns} 次运行记录
+        {resourceCatalogCopy.savedRuns(totalRuns)}
       </Typography>
       {ranking.length === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ mt: embedded ? 1 : 3 }}>
-          暂无运行记录，开始一次 Wrapper 任务后会显示排行。
+          {resourceCatalogCopy.noWrapperRuns}
         </Typography>
       ) : (
         <Box sx={{ mt: embedded ? 1.25 : 2.5 }}>
@@ -58,7 +62,7 @@ export function HomeWrapperRanking({
                   variant="body2"
                   sx={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}
                 >
-                  {entry.count} 次
+                  {`${entry.count} ${homeCopy.runs}`}
                 </Typography>
               </Box>
               <Box

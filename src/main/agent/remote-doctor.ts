@@ -167,8 +167,11 @@ async function commandCheck(
     return {
       id: input.id,
       status: input.missingStatus,
-      message: error instanceof DoctorTimeoutError ? '远程检查超时' : '远程检查未完成',
-      suggestion: '检查 SSH 连接和服务器状态后重试。'
+      message:
+        error instanceof DoctorTimeoutError
+          ? 'Remote check timed out'
+          : 'Remote check did not complete',
+      suggestion: 'Check the SSH connection and server status, then retry.'
     }
   }
 }
@@ -188,8 +191,8 @@ export async function remoteDoctor(
     checks.push({
       id: 'ssh',
       status: 'error',
-      message: '找不到 SSH 服务器档案',
-      suggestion: '先在远程设置中添加服务器，或重新选择一个现有档案。'
+      message: 'SSH server profile not found',
+      suggestion: 'Add a server in remote settings, or select an existing profile again.'
     })
     return report(hostProfileId, checks, now)
   }
@@ -227,7 +230,7 @@ export async function remoteDoctor(
     return report(hostProfileId, checks, now)
   }
 
-  checks.push({ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' })
+  checks.push({ id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' })
   try {
     const rootResolution = selectedRemoteDoctorRuntimeRoot(
       selected,
@@ -251,12 +254,12 @@ export async function remoteDoctor(
     }
     checks.push(
       (dependencies.sftpAvailable ?? systemSftpAvailable)()
-        ? { id: 'sftp', status: 'ok', message: '系统 SFTP 程序可用' }
+        ? { id: 'sftp', status: 'ok', message: 'System SFTP is available' }
         : {
             id: 'sftp',
             status: 'error',
-            message: '系统 SFTP 程序不可用',
-            suggestion: '确认系统可运行 sftp；远程 Wrapper 上传需要此程序。'
+            message: 'System SFTP is unavailable',
+            suggestion: 'Ensure the system can run sftp; remote Wrapper uploads require it.'
           }
     )
     if (remotePath !== undefined) {
@@ -264,17 +267,17 @@ export async function remoteDoctor(
         checks.push({
           id: 'path',
           status: 'error',
-          message: '候选目录必须是远端绝对路径',
-          suggestion: '填写以 / 开头的服务器目录路径。'
+          message: 'The candidate directory must be an absolute remote path',
+          suggestion: 'Enter a server directory path starting with /.'
         })
       } else {
         const directory = await commandCheck(session, checkTimeoutMs, {
           id: 'path',
           command: `test -d ${shellQuote(remotePath)}`,
-          success: '候选目录存在',
-          missing: '候选目录不存在或不是目录',
+          success: 'The candidate directory exists',
+          missing: 'The candidate path is missing or is not a directory',
           missingStatus: 'error',
-          suggestion: '检查服务器上的绝对路径。'
+          suggestion: 'Check the absolute path on the server.'
         })
         checks.push(directory)
         if (directory.status === 'ok') {
@@ -282,20 +285,20 @@ export async function remoteDoctor(
             await commandCheck(session, checkTimeoutMs, {
               id: 'path_read',
               command: `test -r ${shellQuote(remotePath)} && test -x ${shellQuote(remotePath)}`,
-              success: '候选目录可读取和进入',
-              missing: '候选目录不可读取或进入',
+              success: 'The candidate directory can be read and entered',
+              missing: 'The candidate directory cannot be read or entered',
               missingStatus: 'error',
-              suggestion: '检查服务器目录的读取和执行权限。'
+              suggestion: 'Check read and execute permissions on the server directory.'
             })
           )
           checks.push(
             await commandCheck(session, checkTimeoutMs, {
               id: 'path_write',
               command: `test -w ${shellQuote(remotePath)}`,
-              success: '候选目录可写入',
-              missing: '候选目录不可写入',
+              success: 'The candidate directory is writable',
+              missing: 'The candidate directory is not writable',
               missingStatus: 'error',
-              suggestion: '选择有写入权限的工作目录。'
+              suggestion: 'Choose a writable working directory.'
             })
           )
         }
@@ -305,10 +308,10 @@ export async function remoteDoctor(
     const shell = await commandCheck(session, checkTimeoutMs, {
       id: 'shell',
       command: `bash -lc ${shellQuote('printf phi-doctor-ready')}`,
-      success: 'Bash 登录 shell 可用',
-      missing: 'Bash 登录 shell 不可用',
+      success: 'Bash login shell is available',
+      missing: 'Bash login shell is unavailable',
       missingStatus: 'error',
-      suggestion: '确认登录 shell 可启动 Bash；Wrapper 预检使用 Bash。'
+      suggestion: 'Ensure the login shell can start Bash; Wrapper preflight checks use Bash.'
     })
     checks.push(shell)
     if (shell.status !== 'ok') {

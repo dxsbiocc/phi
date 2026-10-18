@@ -1,3 +1,5 @@
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import {
   Alert,
   Box,
@@ -17,25 +19,53 @@ import { RemoteCapabilityProfileSummary } from './RemoteCapabilityProfileSummary
 import { RemoteRuntimeRootResults } from './RemoteRuntimeRootResults'
 
 const CHECK_LABELS: Record<string, string> = {
-  ssh: 'SSH 连接',
-  sftp: '文件上传工具',
-  path: '远端目录',
-  path_read: '目录读取权限',
-  path_write: '目录写入权限',
-  shell: '登录 shell',
+  get ssh() {
+    return remoteSetupCopy.sshConnection
+  },
+  get sftp() {
+    return remoteSetupCopy.fileUploadTool
+  },
+  get path() {
+    return remoteSetupCopy.remoteDirectory
+  },
+  get path_read() {
+    return remoteSetupCopy.directoryReadAccess
+  },
+  get path_write() {
+    return remoteSetupCopy.directoryWriteAccess
+  },
+  get shell() {
+    return remoteSetupCopy.loginShell
+  },
   nextflow: 'Nextflow',
   java: 'Java',
-  slurm_submit: 'Slurm 提交',
-  slurm_status: 'Slurm 状态',
-  slurm_detail: 'Slurm 详情',
-  slurm_cancel: 'Slurm 取消',
-  runtime: '容器或 Conda 运行时'
+  get slurm_submit() {
+    return remoteSetupCopy.slurmSubmit
+  },
+  get slurm_status() {
+    return remoteSetupCopy.slurmStatus
+  },
+  get slurm_detail() {
+    return remoteSetupCopy.slurmDetails
+  },
+  get slurm_cancel() {
+    return remoteSetupCopy.slurmCancel
+  },
+  get runtime() {
+    return remoteSetupCopy.containerOrCondaRuntime
+  }
 }
 
 const STATUS_LABELS: Record<RemoteDoctorStatus, string> = {
-  ok: '正常',
-  warning: '提醒',
-  error: '需处理'
+  get ok() {
+    return remoteSetupCopy.ok
+  },
+  get warning() {
+    return remoteSetupCopy.warning
+  },
+  get error() {
+    return remoteSetupCopy.needsAttention
+  }
 }
 
 const STATUS_COLORS: Record<RemoteDoctorStatus, 'success' | 'warning' | 'error'> = {
@@ -53,11 +83,12 @@ export function RemoteDoctorPanel({
   targetKey: string
   onOpenRemoteSettings?: () => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (state.phase === 'idle' || state.key !== targetKey) return null
   if (state.phase === 'running') {
     return (
       <Alert severity="info" icon={<CircularProgress size={18} />} sx={{ mt: 1.5 }}>
-        正在检查服务器、远端目录和运行环境…
+        {remoteSetupCopy.checkingServer}
       </Alert>
     )
   }
@@ -69,12 +100,12 @@ export function RemoteDoctorPanel({
         action={
           onOpenRemoteSettings ? (
             <Button size="small" onClick={onOpenRemoteSettings}>
-              设置 → 远程
+              {remoteSetupCopy.remoteSettings}
             </Button>
           ) : undefined
         }
       >
-        {state.message}
+        {localizeRemoteSetupMessage(state.message)}
       </Alert>
     )
   }
@@ -97,12 +128,12 @@ export function RemoteDoctorPanel({
     cachedRootIssue ||
     Boolean(rootCheck && (rootCheck.status !== 'checked' || rootCheck.warnings.length > 0))
   const summary = !sshOk
-    ? '无法建立 SSH 连接'
+    ? remoteSetupCopy.sshFailed
     : !report.ok || runtimeRootError
-      ? 'SSH 已连接，部分检查仍需处理'
+      ? remoteSetupCopy.sshPartial
       : hasWarning
-        ? '检查完成，存在提醒'
-        : '检查通过'
+        ? remoteSetupCopy.checkCompletedWithWarnings
+        : remoteSetupCopy.checkPassed
   const checkedAt = new Date(report.checkedAt)
 
   return (
@@ -112,12 +143,14 @@ export function RemoteDoctorPanel({
           {summary}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          检查时间：
-          {Number.isNaN(checkedAt.getTime()) ? report.checkedAt : checkedAt.toLocaleString()}
+          {remoteSetupCopy.checkedAtPrefix}
+          {Number.isNaN(checkedAt.getTime())
+            ? report.checkedAt
+            : checkedAt.toLocaleString(getUiLocale())}
         </Typography>
         {!sshOk && onOpenRemoteSettings ? (
           <Button size="small" onClick={onOpenRemoteSettings}>
-            设置 → 远程
+            {remoteSetupCopy.remoteSettings}
           </Button>
         ) : null}
       </Stack>
@@ -131,7 +164,7 @@ export function RemoteDoctorPanel({
       {report.runtimeRootCheck && (
         <>
           <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
-            运行时根目录检测
+            {remoteSetupCopy.runtimeRootCheck}
           </Typography>
           <RemoteRuntimeRootResults
             status={remoteRuntimeRootResultStatus(report.runtimeRootCheck)}
@@ -141,7 +174,7 @@ export function RemoteDoctorPanel({
       )}
       {runtimeRootUnchecked && !report.capabilityProfile && (
         <>
-          <Typography variant="caption">运行时根目录：未检查</Typography>
+          <Typography variant="caption">{remoteSetupCopy.runtimeRootUnchecked}</Typography>
           <Divider sx={{ my: 1 }} />
         </>
       )}
@@ -156,7 +189,7 @@ export function RemoteDoctorPanel({
                 label={STATUS_LABELS[check.status]}
               />
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {CHECK_LABELS[check.id] ?? check.id}：{check.message}
+                {CHECK_LABELS[check.id] ?? check.id}: {check.message}
               </Typography>
             </Stack>
             {check.suggestion && (

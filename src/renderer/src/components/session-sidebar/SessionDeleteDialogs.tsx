@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Button, DialogActions, DialogContent, DialogContentText, DialogTitle } from '@mui/material'
 import type { Theme } from '@mui/material/styles'
 import { ConfirmationDialog } from '../ConfirmationDialog'
@@ -25,6 +27,7 @@ export function SessionDeleteDialogs({
   onCancelProjectDelete,
   onConfirmProjectDelete
 }: SessionDeleteDialogsProps): React.JSX.Element {
+  useUiLanguage()
   const previewDialogSx = compactHoverPreview
     ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 2 }
     : undefined
@@ -36,14 +39,16 @@ export function SessionDeleteDialogs({
         onClose={onCancelSessionDelete}
         sx={previewDialogSx}
       >
-        <DialogTitle>删除这段对话？</DialogTitle>
+        <DialogTitle>{navigationCopy.deleteThisConversation}</DialogTitle>
         <DialogContent>
-          <DialogContentText>{deleteSessionTitle} 将被永久删除，无法恢复。</DialogContentText>
+          <DialogContentText>
+            {deleteSessionTitle} {navigationCopy.willBePermanentlyDeletedAndCannotBeRecovered}
+          </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onCancelSessionDelete}>取消</Button>
+          <Button onClick={onCancelSessionDelete}>{navigationCopy.cancel}</Button>
           <Button color="error" variant="contained" onClick={onConfirmSessionDelete}>
-            删除
+            {navigationCopy.delete}
           </Button>
         </DialogActions>
       </ConfirmationDialog>
@@ -53,16 +58,18 @@ export function SessionDeleteDialogs({
         onClose={onCancelProjectDelete}
         sx={previewDialogSx}
       >
-        <DialogTitle>移除这个项目？</DialogTitle>
+        <DialogTitle>{navigationCopy.removeThisProject}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            仅从列表中移除「{deleteProjectName}」，不会删除工作目录或对话记录。
+            {navigationCopy.remove}
+            {deleteProjectName}
+            {navigationCopy.fromTheListOnlyTheWorkingDirectoryAndConversationHistory}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onCancelProjectDelete}>取消</Button>
+          <Button onClick={onCancelProjectDelete}>{navigationCopy.cancel}</Button>
           <Button color="error" variant="contained" onClick={onConfirmProjectDelete}>
-            移除
+            {navigationCopy.remove2}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

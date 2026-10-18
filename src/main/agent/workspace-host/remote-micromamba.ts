@@ -131,11 +131,18 @@ function baseResult(
 }
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw new InstallFailure('aborted', '操作已取消，未继续修改远端运行时。')
+  if (signal?.aborted)
+    throw new InstallFailure(
+      'aborted',
+      'Operation cancelled. No further changes were made to the remote runtime.'
+    )
 }
 
 async function prepareDirectories(context: OperationContext): Promise<void> {
-  emit(context.options, { stage: 'preparing-directory', message: '正在准备远端运行时目录…' })
+  emit(context.options, {
+    stage: 'preparing-directory',
+    message: 'Preparing the remote runtime directory…'
+  })
   assertNotAborted(context.options.signal)
   const result = await runRemoteMicromambaScript(
     context.session,
@@ -144,7 +151,7 @@ async function prepareDirectories(context: OperationContext): Promise<void> {
   if (result.code !== 0) {
     throw new InstallFailure(
       'directory-creation-failed',
-      '无法创建远端运行时目录，请检查写入权限。'
+      'Unable to create the remote runtime directory. Check write permissions.'
     )
   }
 }
@@ -169,7 +176,7 @@ async function verifyInstalled(context: OperationContext): Promise<RemoteMicroma
 
 async function installOrReuse(context: OperationContext): Promise<RemoteMicromambaResult> {
   await prepareDirectories(context)
-  emit(context.options, { stage: 'checking-existing', message: '正在检查已安装版本…' })
+  emit(context.options, { stage: 'checking-existing', message: 'Checking installed versions…' })
   const existingHash = await readRemoteMicromambaHash(context.session, context.installPath)
   if (existingHash === context.options.artifact.sha256) {
     const verification = await verifyInstalled(context)
@@ -178,7 +185,7 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
         ...baseResult(context.options, context.startedAt, context.warningCodes),
         status: 'already-installed',
         installPath: context.installPath,
-        message: '远端 micromamba 已是所需版本。',
+        message: 'Remote micromamba is already at the required version.',
         verification,
         transferMethod: 'existing'
       }
@@ -200,7 +207,10 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
     agentDir: context.options.agentDir,
     onTransferEvent: context.options.onTransferEvent
   })
-  emit(context.options, { stage: 'verifying-installation', message: '正在验证远端 micromamba…' })
+  emit(context.options, {
+    stage: 'verifying-installation',
+    message: 'Verifying remote micromamba…'
+  })
   const verification = await verifyInstalled(context)
   if (!verification.runnable || !verification.versionMatches || !verification.platformMatches) {
     const runFailed =
@@ -208,18 +218,18 @@ async function installOrReuse(context: OperationContext): Promise<RemoteMicromam
     throw new InstallFailure(
       runFailed ? 'run-verification-failed' : 'verification-failed',
       runFailed
-        ? 'micromamba 已传输，但 micromamba run 激活验证失败。'
-        : 'micromamba 已传输，但版本或平台验证失败。',
+        ? 'micromamba was transferred, but micromamba run activation verification failed.'
+        : 'micromamba was transferred, but version or platform verification failed.',
       verification,
       transfer
     )
   }
-  emit(context.options, { stage: 'complete', message: '远端 micromamba 安装完成。' })
+  emit(context.options, { stage: 'complete', message: 'Remote micromamba installation complete.' })
   return {
     ...baseResult(context.options, context.startedAt, context.warningCodes),
     status: 'installed',
     installPath: context.installPath,
-    message: '远端 micromamba 安装并验证成功。',
+    message: 'Remote micromamba installed and verified successfully.',
     verification,
     ...transfer
   }
@@ -240,7 +250,8 @@ function checkFailureResult(
       ...common,
       status: 'failed',
       errorCode: 'runtime-root-hard-error',
-      message: '远端运行时根目录不满足安装要求，请修改位置后重试。'
+      message:
+        'The remote runtime root does not meet installation requirements. Change the location and retry.'
     }
   }
   if (check.status !== 'checked' || !check.expandedPath) {
@@ -250,8 +261,8 @@ function checkFailureResult(
       errorCode: 'runtime-root-check-failed',
       message:
         check.status === 'timed-out'
-          ? '服务器响应慢，运行时根目录检查超时，请稍后重试。'
-          : '无法确认远端运行时根目录，请重新检查连接与目录权限。'
+          ? 'The server is responding slowly and the runtime root check timed out. Retry later.'
+          : 'Unable to verify the remote runtime root. Check the connection and directory permissions.'
     }
   }
   const confirmed = new Set(options.confirmedWarnings)
@@ -263,8 +274,8 @@ function checkFailureResult(
       status: 'needs-confirmation',
       installPath: remoteMicromambaPath(check.expandedPath, options.artifact.version),
       message: hasNoexec
-        ? '该位置为 noexec，micromamba 将无法运行；建议更换可执行位置。确认“仍然使用”后仍可尝试安装并如实验证。'
-        : '运行时根目录存在需要确认的风险，确认“仍然使用”后才能安装。'
+        ? 'This location is mounted noexec, so micromamba cannot run. Choose a location that allows execution. Select “Use anyway” to attempt installation and verify the result.'
+        : 'The runtime root has risks requiring confirmation. Select “Use anyway” to install.'
     }
   }
   return undefined
@@ -283,11 +294,11 @@ export async function ensureRemoteMicromamba(
       errorCode: invalid,
       message:
         invalid === 'unsupported-platform'
-          ? '该远端平台不受 micromamba 安装支持。'
-          : 'micromamba 安装包信息无效。'
+          ? 'micromamba installation does not support this remote platform.'
+          : 'Invalid micromamba installation artifact metadata.'
     }
   }
-  emit(options, { stage: 'checking-runtime-root', message: '正在检查远端运行时根目录…' })
+  emit(options, { stage: 'checking-runtime-root', message: 'Checking the remote runtime root…' })
   const check = await (options.checkRuntimeRoot ?? checkRemoteRuntimeRoot)(
     session,
     options.runtimeRoot
@@ -321,5 +332,5 @@ function normalizeInstallFailure(error: unknown): InstallFailure | RemoteMicroma
   if (error instanceof InstallFailure || error instanceof RemoteMicromambaTransferFailure) {
     return error
   }
-  return new InstallFailure('upload-failed', '安装远端 micromamba 失败。')
+  return new InstallFailure('upload-failed', 'Remote micromamba installation failed.')
 }

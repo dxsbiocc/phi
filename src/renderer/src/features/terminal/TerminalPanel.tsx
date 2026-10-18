@@ -1,3 +1,5 @@
+import { terminalUi } from './lib/terminalUi'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Box, Menu, MenuItem, Typography, useTheme } from '@mui/material'
 import '@xterm/xterm/css/xterm.css'
@@ -61,6 +63,7 @@ const noop = (): void => undefined
 function UnavailableTerminalPanel(
   props: Pick<TerminalPanelProps, 'headerActions'>
 ): React.JSX.Element {
+  useUiLanguage()
   const theme = useTheme()
   const terminalTheme = createTerminalTheme(theme.palette.mode, theme.palette.background.paper)
 
@@ -100,6 +103,7 @@ function UnavailableTerminalPanel(
 }
 
 export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Element {
+  useUiLanguage()
   if (!isTerminalBridgeAvailable(props.bridge)) {
     return <UnavailableTerminalPanel headerActions={props.headerActions} />
   }
@@ -114,6 +118,7 @@ export default function TerminalPanel(props: TerminalPanelProps): React.JSX.Elem
 }
 
 function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.Element {
+  useUiLanguage()
   const theme = useTheme()
   const { requestedInput, onRequestedInputHandled } = props
   const workspace = useTerminalWorkspace(props.bridge, props.projects)
@@ -253,7 +258,7 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
     if (!isTerminalInputWithinLimit(visiblePaste.text)) {
       workspace.controller.discardPaste(visiblePaste.terminalId)
       setPendingPaste(null)
-      setNotice('粘贴内容超过 64 KiB，未发送')
+      setNotice(terminalUi.pasteExceeds64KiBAndWasNotSent)
       return
     }
     setPasteBusy(true)
@@ -295,7 +300,9 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
       })
   }
   const copyDraft = (source: string): void => {
-    void navigator.clipboard.writeText(source).catch(() => setNotice('无法复制到剪贴板'))
+    void navigator.clipboard
+      .writeText(source)
+      .catch(() => setNotice(terminalUi.unableToCopyToClipboard))
   }
 
   let status: PanelStatus | null = null
@@ -332,7 +339,9 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
       kind: 'exited',
       compact: true,
       exitCode: workspace.activeTerminal.exitCode,
-      ...(workspace.activeTerminal.host === 'ssh' ? { message: '连接已断开，可重新打开终端' } : {})
+      ...(workspace.activeTerminal.host === 'ssh'
+        ? { message: terminalUi.disconnectedYouCanReopenTheTerminal }
+        : {})
     }
   } else if (workspace.activeTerminal?.state === 'failed') {
     status = {
@@ -343,7 +352,7 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
   } else if (!workspace.activeTerminal && error) {
     status = { kind: 'failed', compact: false, message: error.message }
   } else if (!workspace.activeTerminal && !workspace.snapshot.pending) {
-    status = { kind: 'failed', compact: false, message: '当前没有终端' }
+    status = { kind: 'failed', compact: false, message: terminalUi.noTerminalOpen }
   }
 
   const canCreate =
@@ -525,7 +534,7 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
             anchorPosition={
               contextMenu ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined
             }
-            slotProps={{ list: { 'aria-label': '终端右键操作' } }}
+            slotProps={{ list: { 'aria-label': terminalUi.terminalContextMenu } }}
           >
             <MenuItem
               disabled={!contextMenu?.selection}
@@ -535,7 +544,7 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
                 explainSelection(selection)
               }}
             >
-              让 Agent 解释
+              {terminalUi.askAgentToExplain}
             </MenuItem>
           </Menu>
         </Box>

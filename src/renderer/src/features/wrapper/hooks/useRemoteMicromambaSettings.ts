@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type { RemoteHostProfile } from '../../../types'
@@ -18,7 +19,7 @@ function failedState(): RemoteMicromambaUiState {
       durationMs: 0,
       warningCodes: [],
       errorCode: 'status-check-failed',
-      message: 'micromamba 安装未完成，请检查 SSH 连接后重试。'
+      message: remoteSetupCopy.micromambaInstallIncomplete
     }
   }
 }
@@ -38,7 +39,7 @@ async function runInstall(
     ...previous,
     [host.id]: {
       phase: 'running',
-      progress: { requestId, stage: 'probe', message: '正在检测服务器平台…' }
+      progress: { requestId, stage: 'probe', message: remoteSetupCopy.probingServerPlatform }
     }
   }))
   try {

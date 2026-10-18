@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Box,
   CircularProgress,
@@ -24,6 +26,7 @@ export function WorkspaceDiffDialog({
   error: string | null
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const lines = patch?.split('\n') ?? []
   const visibleLines = lines.slice(0, MAX_RENDERED_LINES)
 
@@ -31,9 +34,9 @@ export function WorkspaceDiffDialog({
     <Dialog open={path !== null} onClose={onClose} maxWidth="lg" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Typography component="span" variant="h6" noWrap sx={{ flex: 1 }}>
-          本轮差异 · {path}
+          {chatCopy.runDiff} {path}
         </Typography>
-        <IconButton type="button" aria-label="关闭差异预览" onClick={onClose}>
+        <IconButton type="button" aria-label={chatCopy.closeDiffPreview} onClick={onClose}>
           <CloseIcon fontSize="small" />
         </IconButton>
       </DialogTitle>
@@ -45,12 +48,12 @@ export function WorkspaceDiffDialog({
         ) : !patch ? (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 2 }}>
             <CircularProgress size={18} />
-            <Typography variant="body2">正在读取差异…</Typography>
+            <Typography variant="body2">{chatCopy.loadingDiff}</Typography>
           </Box>
         ) : (
           <Box
             component="pre"
-            aria-label="逐文件差异"
+            aria-label={chatCopy.diffByFile}
             sx={{
               m: 0,
               p: 1.5,
@@ -81,7 +84,7 @@ export function WorkspaceDiffDialog({
             ))}
             {lines.length > MAX_RENDERED_LINES && (
               <Typography variant="caption" color="text.secondary">
-                仅显示前 {MAX_RENDERED_LINES} 行。
+                {chatCopy.visibleDiffLineLimit(MAX_RENDERED_LINES)}
               </Typography>
             )}
           </Box>

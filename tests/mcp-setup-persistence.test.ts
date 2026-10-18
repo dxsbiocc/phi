@@ -209,7 +209,7 @@ test('an interrupted install restores as failed and permits a fresh explicit ret
     const failed = tracker.get('biomcp')!
     assert.equal(failed.phase, 'failed')
     assert.equal(failed.failedPhase, 'installing')
-    assert.match(failed.error!, /中断/)
+    assert.match(failed.error!, /interrupted/)
     assert.equal(failed.revision, 3)
     await tracker.run('biomcp', (report) => report('starting'))
     const ready = tracker.get('biomcp')!

@@ -144,7 +144,7 @@ test('remote Jupyter preparation keeps the env_request missing-micromamba guidan
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+设置.+micromamba 路径.+没有.+本机/u
+      /无法安装含 Jupyter \+ ipykernel.+Settings.+micromamba path.+did not fall back.+locally/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
@@ -190,7 +190,7 @@ test('remote Jupyter preparation keeps the env_request offline-source guidance',
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+无法访问 conda.+镜像.+可联网机器.+没有回退/u
+      /无法安装含 Jupyter \+ ipykernel.+cannot reach the conda.+mirror.+machine with network access.+did not fall back/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
@@ -224,7 +224,7 @@ test('remote Jupyter preparation surfaces a silent runtime-root quota failure', 
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+写入空间或文件数配额已用尽.+设置 → 远程主机/u
+      /无法安装含 Jupyter \+ ipykernel.+Disk space or the file count quota is exhausted.+Settings → Remote Hosts/u
     )
   } finally {
     fixture.cleanup()
@@ -241,7 +241,7 @@ test('remote Jupyter preparation keeps the env_request environment-creation erro
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+micromamba 创建环境失败：solver failed/u
+      /无法安装含 Jupyter \+ ipykernel.+micromamba environment creation failed on the server: solver failed/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {

@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState } from 'react'
 import {
   Fab,
@@ -78,6 +80,7 @@ export default function NotebookFloatingActions({
   isFormatting?: boolean
   onStopNotebookSession?: (file: AnalysisNotebookFile) => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [settingsAnchor, setSettingsAnchor] = useState<HTMLElement | null>(null)
   const currentSaveState = saveState ?? (isDirty ? 'pending' : 'saved')
   const saveColor =
@@ -85,12 +88,12 @@ export default function NotebookFloatingActions({
   const hasSaveActivity = currentSaveState !== 'saved'
   const saveHint =
     currentSaveState === 'saving'
-      ? '正在自动保存…'
+      ? analysisCopy.autosaving
       : currentSaveState === 'error'
-        ? '自动保存失败，点击查看设置'
+        ? analysisCopy.autosaveFailed
         : currentSaveState === 'pending'
-          ? '修改将自动保存'
-          : '已自动保存 · Notebook 设置'
+          ? analysisCopy.autosavePending
+          : analysisCopy.autosavedSettings
   const canDisconnectNotebookSession = Boolean(
     notebookFile && onStopNotebookSession && hasLiveNotebookSession(notebookSessionStatus)
   )
@@ -153,7 +156,7 @@ export default function NotebookFloatingActions({
                 }
                 data-phi-notebook-floating-action="settings"
                 size="small"
-                aria-label="Notebook 设置"
+                aria-label={analysisCopy.notebookSettings}
                 aria-haspopup="menu"
                 aria-expanded={settingsAnchor ? 'true' : undefined}
                 onClick={(event) => setSettingsAnchor(event.currentTarget)}
@@ -194,7 +197,7 @@ export default function NotebookFloatingActions({
               <ListItemIcon>
                 <SaveIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText primary={isDirty ? '保存 notebook' : '已保存'} />
+              <ListItemText primary={isDirty ? analysisCopy.saveNotebook : analysisCopy.saved} />
               <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
                 {notebookCommandLabel('save')}
               </Typography>
@@ -210,7 +213,11 @@ export default function NotebookFloatingActions({
               <ListItemIcon>
                 <FormatIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText primary={isFormatting ? '正在格式化 notebook' : '格式化 notebook'} />
+              <ListItemText
+                primary={
+                  isFormatting ? analysisCopy.formattingNotebook : analysisCopy.formatNotebook
+                }
+              />
               <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
                 {notebookCommandLabel('format')}
               </Typography>
@@ -226,7 +233,7 @@ export default function NotebookFloatingActions({
               <ListItemIcon>
                 <StopIcon fontSize="small" />
               </ListItemIcon>
-              <ListItemText primary="断开 kernel" />
+              <ListItemText primary={analysisCopy.disconnectKernel} />
             </MenuItem>
           </Menu>
         </>

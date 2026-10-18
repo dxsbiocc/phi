@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Alert, AlertTitle, Box, Button, Typography } from '@mui/material'
 import { memo, type ReactNode } from 'react'
 import MarkdownContent, { type LocalPathKind } from '../MarkdownContent'
@@ -58,6 +60,7 @@ export const ChatBubble = memo(function ChatBubble({
   onContentResize,
   cwd = ''
 }: ChatBubbleProps): ReactNode {
+  useUiLanguage()
   if (message.approval) {
     return (
       <ApprovalTimelineCard
@@ -85,7 +88,7 @@ export const ChatBubble = memo(function ChatBubble({
       >
         <Icon aria-hidden sx={{ fontSize: 16, flexShrink: 0 }} />
         <Typography component="span" variant="body2" noWrap>
-          {failed ? '上下文压缩失败' : '上下文已压缩'}
+          {failed ? chatCopy.contextCompactionFailed : chatCopy.contextCompacted}
         </Typography>
       </Box>
     )
@@ -111,7 +114,8 @@ export const ChatBubble = memo(function ChatBubble({
         </Typography>
         {display.showRawMessage ? (
           <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-            原始错误：{display.rawMessage}
+            {chatCopy.originalError}
+            {display.rawMessage}
           </Typography>
         ) : null}
       </Alert>
@@ -127,7 +131,7 @@ export const ChatBubble = memo(function ChatBubble({
           onClick={onOpenBackgroundJobs}
           sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
         >
-          {message.content.split('\n', 1)[0]} · 查看后台任务
+          {`${message.content.split('\n', 1)[0]} ${chatCopy.viewBackgroundJobs}`}
         </Button>
       )
     }

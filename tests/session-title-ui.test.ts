@@ -1,3 +1,5 @@
+import { navigationCopy } from '../src/renderer/src/lib/navigationCopy'
+import { getUiLanguage, setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -94,6 +96,8 @@ function panel(overrides: Partial<PanelProps> = {}): {
     (name: string) => {
       if (name === 'react') return hookBindings
       if (name === 'react/jsx-runtime') return jsxRuntime
+      if (name.endsWith('/i18n')) return { useUiLanguage: getUiLanguage }
+      if (name.endsWith('/navigationCopy')) return { navigationCopy }
       return new Proxy({}, { get: (_target, property) => String(property) })
     },
     componentModule,
@@ -134,6 +138,9 @@ function panel(overrides: Partial<PanelProps> = {}): {
     title: () => props.title
   }
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('AI title suggestions populate the editable field and require an explicit save', async () => {
   const request = deferred<string>()
@@ -238,5 +245,24 @@ test('session rows bind suggestions to their own path while preserving manual sa
   assert.match(source, /window\.api\.generateSessionTitle\(session\.path\)/)
   assert.match(source, /<SessionRenamePanel\s+key=\{session\.path\}/)
   assert.match(source, /onSave=\{commitRename\}/)
-  assert.match(source, /generateTitleDisabledReason=\{exportDisabled/)
+  assert.match(source, /generateTitleDisabledReason=\{[\s\S]*exportDisabled/)
+})
+
+test('changing interface language retains a rename draft and the pending title request', async () => {
+  const request = deferred<string>()
+  const view = panel({ title: '用户保留的草稿', onGenerateTitle: () => request.promise })
+  await view.generate()
+  setUiLanguage('en')
+  try {
+    assert.equal(view.find('Button', 'Generate title with AI').props.disabled, true)
+    assert.equal(view.find('Button', 'Save').props.disabled, true)
+    assert.equal(view.title(), '用户保留的草稿')
+    request.resolve('AI generated title')
+    await request.promise
+    assert.equal(view.title(), 'AI generated title')
+    assert.equal(view.saved(), 0)
+    assert.equal(view.find('Button', 'Save').props.disabled, false)
+  } finally {
+    setUiLanguage('zh-CN')
+  }
 })

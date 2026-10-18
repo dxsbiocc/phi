@@ -1,3 +1,5 @@
+import { projectCopy } from '../lib/projectCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
 
 import type { RemoteProjectConnectionState } from '../../../../../shared/projectLocation'
@@ -15,6 +17,7 @@ export function RemoteConnectionNotice({
   onOpenRemoteSettings?: () => void
   compact?: boolean
 }): React.JSX.Element | null {
+  useUiLanguage()
   const phase = connection?.phase ?? 'unchecked'
   if (phase === 'reachable') return null
   const connecting = phase === 'connecting'
@@ -28,7 +31,9 @@ export function RemoteConnectionNotice({
     phase === 'authentication_failed' ||
     phase === 'configuration_failed'
   const showCooldownGuidance = Boolean(connection?.suggestion?.includes('测试连接可立即重试'))
-  const message = connection?.message ?? (connecting ? '正在连接服务器' : '连接尚未检查')
+  const message =
+    connection?.message ??
+    (connecting ? projectCopy.connectingToServer : projectCopy.connectionNotChecked)
   return (
     <Alert
       severity={blocked ? 'error' : phase === 'offline' ? 'warning' : 'info'}
@@ -37,11 +42,11 @@ export function RemoteConnectionNotice({
       action={
         <Stack direction={compact ? 'column' : 'row'} spacing={0.5}>
           <Button size="small" disabled={connecting} onClick={onRetry}>
-            重新连接
+            {projectCopy.reconnect}
           </Button>
           {settingsRelevant && onOpenRemoteSettings ? (
             <Button size="small" onClick={onOpenRemoteSettings}>
-              设置 → 远程
+              {projectCopy.settingsRemote}
             </Button>
           ) : null}
         </Stack>
@@ -61,7 +66,7 @@ export function RemoteConnectionNotice({
       ) : null}
       {!compact && phase === 'offline' ? (
         <Typography variant="caption" sx={{ display: 'block' }}>
-          对话历史和草稿仍可查看；写入或命令结果未知时先在服务器核对。
+          {projectCopy.historyAndDraftsRemainAvailableVerifyUncertainFileChangesOr}
         </Typography>
       ) : null}
     </Alert>

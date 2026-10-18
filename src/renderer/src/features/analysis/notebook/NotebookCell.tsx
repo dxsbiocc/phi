@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   memo,
   useEffect,
@@ -157,6 +159,7 @@ function NotebookCellImpl({
   agentHighlighted = false,
   provisional = false
 }: NotebookCellProps): React.JSX.Element {
+  useUiLanguage()
   const isMarkdown = cell.type === 'markdown'
   const [isEditing, setIsEditing] = useState(false)
   const [initialEditorSelection, setInitialEditorSelection] = useState<number | undefined>()
@@ -186,15 +189,15 @@ function NotebookCellImpl({
       : null
   const showExecutionMeta = isRunning || isCellActive
   const primaryActionLabel = isRenderedMarkdown
-    ? '编辑 Markdown'
+    ? analysisCopy.editMarkdown
     : isRunning
-      ? '停止 cell'
+      ? analysisCopy.stopCell
       : isCodeCell
-        ? '运行 cell'
-        : '此 cell 无需运行'
+        ? analysisCopy.runCell
+        : analysisCopy.cellNoRun
   const primaryActionTitle =
     isCodeCell && !isRunning && !isRenderedMarkdown
-      ? `${primaryActionLabel}（${notebookCommandLabel('run-and-advance')} / ${notebookCommandLabel('run')}）`
+      ? `${primaryActionLabel} (${notebookCommandLabel('run-and-advance')} / ${notebookCommandLabel('run')})`
       : primaryActionLabel
   const isPrimaryActionDisabled = isRenderedMarkdown ? !editable : isRunning ? !canStop : !canRun
   const showPrimaryActionAccent = !isRunning && (isRenderedMarkdown || canRun)
@@ -383,11 +386,11 @@ function NotebookCellImpl({
         }}
       >
         {editable ? (
-          <Tooltip title="上方插入 Code cell">
+          <Tooltip title={analysisCopy.insertCodeAbove}>
             <IconButton
               className="cell-insert-button"
               size="small"
-              aria-label="上方插入 Code cell"
+              aria-label={analysisCopy.insertCodeAbove}
               onClick={() => onInsertBefore?.(cell.id, 'code')}
               sx={{
                 ...insertionButtonSx,
@@ -419,11 +422,11 @@ function NotebookCellImpl({
           </Typography>
         ) : null}
         {editable ? (
-          <Tooltip title="下方插入 Code cell">
+          <Tooltip title={analysisCopy.insertCodeBelow}>
             <IconButton
               className="cell-insert-button"
               size="small"
-              aria-label="下方插入 Code cell"
+              aria-label={analysisCopy.insertCodeBelow}
               onClick={() => onInsertAfter?.(cell.id, 'code')}
               sx={{
                 ...insertionButtonSx,
@@ -512,11 +515,11 @@ function NotebookCellImpl({
           }}
         >
           {editable && onDeleteCell ? (
-            <Tooltip title={isRunning ? '运行中的 cell 不能删除' : '删除 cell'}>
+            <Tooltip title={isRunning ? analysisCopy.runningCellNoDelete : analysisCopy.deleteCell}>
               <IconButton
                 className="cell-delete-button"
                 size="small"
-                aria-label="删除 cell"
+                aria-label={analysisCopy.deleteCell}
                 aria-disabled={isRunning ? 'true' : undefined}
                 data-phi-notebook-cell-delete="marimo"
                 onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
@@ -781,10 +784,10 @@ function NotebookCellImpl({
                   </IconButton>
                 </span>
               </Tooltip>
-              <Tooltip title="Cell 操作">
+              <Tooltip title={analysisCopy.cellActions}>
                 <IconButton
                   size="small"
-                  aria-label="Cell 操作"
+                  aria-label={analysisCopy.cellActions}
                   data-phi-notebook-cell-action-surface="opaque"
                   onClick={(event: MouseEvent<HTMLButtonElement>) =>
                     setMenuAnchor(event.currentTarget)
@@ -805,13 +808,13 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <CodeIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="下方添加 Code cell" />
+                <ListItemText primary={analysisCopy.addCodeBelow} />
               </MenuItem>
               <MenuItem onClick={() => runMenuAction(() => onInsertAfter?.(cell.id, 'markdown'))}>
                 <ListItemIcon>
                   <FileIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="下方添加 Markdown cell" />
+                <ListItemText primary={analysisCopy.addMarkdownBelow} />
               </MenuItem>
               <Divider />
               <MenuItem
@@ -821,7 +824,7 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <CodeIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="转为 Code" />
+                <ListItemText primary={analysisCopy.convertToCode} />
               </MenuItem>
               <MenuItem
                 disabled={cell.type === 'markdown'}
@@ -830,7 +833,7 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <FileIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="转为 Markdown" />
+                <ListItemText primary={analysisCopy.convertToMarkdown} />
               </MenuItem>
               <MenuItem
                 disabled={!hasOutputs}
@@ -839,7 +842,7 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <RefreshIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="清空输出" />
+                <ListItemText primary={analysisCopy.clearOutput} />
               </MenuItem>
               <MenuItem
                 disabled={cell.type !== 'code' || !onFormatSource}
@@ -850,7 +853,7 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <FormatIcon sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="格式化 cell" />
+                <ListItemText primary={analysisCopy.formatCell} />
               </MenuItem>
               <Divider />
               <MenuItem
@@ -864,7 +867,7 @@ function NotebookCellImpl({
                 <ListItemIcon>
                   <DeleteIcon color="error" sx={{ fontSize: 17 }} />
                 </ListItemIcon>
-                <ListItemText primary="删除 cell" />
+                <ListItemText primary={analysisCopy.deleteCell} />
               </MenuItem>
             </Menu>
           </>
@@ -912,11 +915,11 @@ function NotebookCellImpl({
           <Box sx={{ minHeight: 18 }} />
         )}
         {canMove ? (
-          <Tooltip title="拖动 cell">
+          <Tooltip title={analysisCopy.dragCell}>
             <IconButton
               className="cell-drag-handle"
               size="small"
-              aria-label="拖动 cell"
+              aria-label={analysisCopy.dragCell}
               draggable
               data-phi-notebook-cell-drag-handle="true"
               onDragStart={(event: DragEvent<HTMLButtonElement>) => {

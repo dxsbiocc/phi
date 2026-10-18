@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -57,8 +59,8 @@ function errorMessage(cause: unknown): string {
 
 function actionDialogTitle(action: DestructiveAction): string {
   if (action.kind === 'remove')
-    return `移除 ${action.environment.label ?? action.environment.ref}？`
-  return '清理未引用环境？'
+    return environmentUi.removeValue(action.environment.label ?? action.environment.ref)
+  return environmentUi.cleanUpUnreferencedEnvironments
 }
 
 function DestructiveActionDialog({
@@ -72,24 +74,25 @@ function DestructiveActionDialog({
   onClose: () => void
   onConfirm: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <ConfirmationDialog open={action !== null} onClose={working ? undefined : onClose}>
       <DialogTitle>{action ? actionDialogTitle(action) : ''}</DialogTitle>
       <DialogContent>
         {action?.kind === 'remove' ? (
           <DialogContentText>
-            将删除此环境前缀并释放本机空间。只有无引用且未在构建的环境可以移除。
+            {environmentUi.thisDeletesTheEnvironmentDirectoryAndFreesLocal}
           </DialogContentText>
         ) : null}
         {action?.kind === 'clean' ? (
           <DialogContentText>
-            将通过 Phi 的垃圾回收移除所有未引用环境和可清理日志；被锁定或正在构建的环境会跳过。
+            {environmentUi.phiWillRemoveUnreferencedEnvironmentsAndEligibleLogs}
           </DialogContentText>
         ) : null}
       </DialogContent>
       <DialogActions>
         <Button disabled={working} onClick={onClose}>
-          取消
+          {environmentUi.cancel}
         </Button>
         <Button
           color="error"
@@ -98,7 +101,7 @@ function DestructiveActionDialog({
           onClick={onConfirm}
           startIcon={working ? <CircularProgress size={14} color="inherit" /> : undefined}
         >
-          {working ? '处理中…' : '确认'}
+          {working ? environmentUi.working : environmentUi.confirm}
         </Button>
       </DialogActions>
     </ConfirmationDialog>
@@ -112,6 +115,7 @@ export function EnvironmentSettingsPanel({
   onRedetect,
   onSavePath
 }: EnvironmentSettingsPanelProps): React.JSX.Element {
+  useUiLanguage()
   const projectCwd = useSessionStore((state) =>
     state.activeProjectLocation?.kind === 'local' ? state.activeCwd || undefined : undefined
   )
@@ -121,12 +125,12 @@ export function EnvironmentSettingsPanel({
     ...(cachedManaged ?? [])
   ])
   const [managedLoading, setManagedLoading] = useState(() => !cachedManaged)
-  const [managedError, setManagedError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [managedError, setManagedError] = useState<(() => string) | null>(null)
+  const [notice, setNotice] = useState<(() => string) | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionWorking, setActionWorking] = useState(false)
   const [busyEnvId, setBusyEnvId] = useState<string | null>(null)
-  const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<(() => string) | null>(null)
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null)
 
   const loadManaged = useCallback(
@@ -140,7 +144,7 @@ export function EnvironmentSettingsPanel({
       setManagedError(null)
       try {
         if (typeof window.api.listManagedEnvironments !== 'function') {
-          throw new Error('环境管理接口尚未加载，请完全退出并重新打开 Phi 后再试')
+          throw new Error(environmentUi.environmentManagementIsNotLoadedQuitAndReopen)
         }
         const environments = await refreshManagedEnvironmentCache(
           projectCwd,
@@ -151,7 +155,9 @@ export function EnvironmentSettingsPanel({
         setManaged([...environments])
       } catch (cause) {
         if (request !== requestRef.current) return
-        setManagedError(`无法读取托管环境：${errorMessage(cause)}`)
+        setManagedError(
+          () => () => environmentUi.unableToLoadManagedEnvironmentsValue(errorMessage(cause))
+        )
       } finally {
         if (request === requestRef.current) setManagedLoading(false)
       }
@@ -189,7 +195,7 @@ export function EnvironmentSettingsPanel({
       await onRedetect()
       await loadManaged({ force: true })
     } catch (cause) {
-      setRefreshError(`重新检测失败：${errorMessage(cause)}`)
+      setRefreshError(() => () => environmentUi.detectionFailedValue(errorMessage(cause)))
     }
   }
 
@@ -200,10 +206,12 @@ export function EnvironmentSettingsPanel({
     setNotice(null)
     try {
       await window.api.rebuildManagedEnvironment(environment.envId)
-      setNotice(`已重新构建 ${environment.label ?? environment.ref}。`)
+      setNotice(() => () => environmentUi.rebuiltValue(environment.label ?? environment.ref))
       await loadManaged({ force: true })
     } catch (cause) {
-      setManagedError(`无法重新构建环境：${errorMessage(cause)}`)
+      setManagedError(
+        () => () => environmentUi.unableToRebuildEnvironmentValue(errorMessage(cause))
+      )
     } finally {
       setBusyEnvId(null)
       setActionWorking(false)
@@ -225,27 +233,40 @@ export function EnvironmentSettingsPanel({
           action.environment.pluginId
         )
         setNotice(
-          `已开始构建 ${action.environment.label ?? action.environment.ref}，请到后台任务查看进度。`
+          () => () =>
+            environmentUi.startedBuildingValueViewProgressInBackgroundJobs(
+              action.environment.label ?? action.environment.ref
+            )
         )
       } else if (action.kind === 'remove') {
         const result = await window.api.removeManagedEnvironment(action.environment.envId)
         setNotice(
-          result.removed
-            ? `已移除 ${action.environment.label ?? action.environment.ref}。`
-            : '环境未被移除。'
+          () => () =>
+            result.removed
+              ? environmentUi.removedValue(action.environment.label ?? action.environment.ref)
+              : environmentUi.theEnvironmentWasNotRemoved
         )
       } else {
         const result = await window.api.cleanManagedEnvironments()
         setNotice(
-          `清理完成：移除 ${result.removed.length} 个环境，释放 ${formatEnvironmentSize(result.bytesFreed)}` +
-            (result.skipped.length ? `，跳过 ${result.skipped.length} 个。` : '。')
+          () => () =>
+            environmentUi.cleanupComplete(
+              result.removed.length,
+              formatEnvironmentSize(result.bytesFreed),
+              result.skipped.length
+            )
         )
       }
       setPendingAction(null)
       await loadManaged({ force: true })
     } catch (cause) {
-      const verb = action.kind === 'build' ? '构建' : action.kind === 'remove' ? '移除' : '清理'
-      setManagedError(`${verb}失败：${errorMessage(cause)}`)
+      const verb = (): string =>
+        action.kind === 'build'
+          ? environmentUi.build
+          : action.kind === 'remove'
+            ? environmentUi.remove
+            : environmentUi.cleanUp
+      setManagedError(() => () => environmentUi.valueFailedValue(verb(), errorMessage(cause)))
       setPendingAction(null)
     } finally {
       setBusyEnvId(null)
@@ -258,7 +279,7 @@ export function EnvironmentSettingsPanel({
       <Stack spacing={2.5}>
         {notice ? (
           <Alert severity="success" variant="outlined" onClose={() => setNotice(null)}>
-            {notice}
+            {notice()}
           </Alert>
         ) : null}
         <ManagedEnvironmentDetail
@@ -266,7 +287,7 @@ export function EnvironmentSettingsPanel({
           hostResources={selectedHostResources}
           hostBusy={loading || redetecting}
           busy={actionWorking || busyEnvId === selectedEnvironment.envId}
-          error={managedError}
+          error={managedError?.() ?? null}
           onBack={() => setSelectedEnvironmentId(null)}
           onBuild={() => setPendingAction({ kind: 'build', environment: selectedEnvironment })}
           onRebuild={() => void rebuild(selectedEnvironment)}
@@ -301,13 +322,14 @@ export function EnvironmentSettingsPanel({
         }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="h5">环境</Typography>
+          <Typography variant="h5">{environmentUi.environments}</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            管理 Phi 的可复现环境。Jupyter、Nextflow 与容器运行时会自动检测，并显示在对应环境中。
+            {environmentUi.manageReproduciblePhiEnvironmentsJupyterNextflowAndContainer}
           </Typography>
           {snapshot?.scannedAt ? (
             <Typography variant="caption" color="text.secondary">
-              最近检测 {new Date(snapshot.scannedAt).toLocaleString()}
+              {environmentUi.lastChecked}{' '}
+              {new Date(snapshot.scannedAt).toLocaleString(getUiLocale())}
             </Typography>
           ) : null}
         </Box>
@@ -319,18 +341,18 @@ export function EnvironmentSettingsPanel({
           startIcon={redetecting ? <CircularProgress size={14} color="inherit" /> : undefined}
           sx={{ minHeight: 40, flexShrink: 0 }}
         >
-          重新检测
+          {environmentUi.detectAgain}
         </Button>
       </Box>
 
       {refreshError ? (
         <Alert severity="error" variant="outlined">
-          {refreshError}
+          {refreshError()}
         </Alert>
       ) : null}
       {notice ? (
         <Alert severity="success" variant="outlined" onClose={() => setNotice(null)}>
-          {notice}
+          {notice()}
         </Alert>
       ) : null}
 
@@ -338,7 +360,7 @@ export function EnvironmentSettingsPanel({
         environments={managedEnvironments}
         snapshot={snapshot}
         loading={managedLoading || actionWorking}
-        error={managedError}
+        error={managedError?.() ?? null}
         busyEnvId={busyEnvId}
         onRetry={() => void loadManaged({ force: true })}
         onBuild={(environment) => setPendingAction({ kind: 'build', environment })}

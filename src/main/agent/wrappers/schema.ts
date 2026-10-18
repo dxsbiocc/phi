@@ -29,7 +29,7 @@ export function validateWrapperParams(
 
   const errors = (validate.errors ?? []).map((error) => {
     const path = error.instancePath || '(root)'
-    return `${path} ${error.message ?? '不满足参数约束'}`.trim()
+    return `${path} ${error.message ?? 'does not satisfy parameter constraints'}`.trim()
   })
   return { valid: false, errors }
 }

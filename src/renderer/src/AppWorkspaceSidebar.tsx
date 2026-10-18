@@ -1,3 +1,5 @@
+import { navigationCopy } from './lib/navigationCopy'
+import { useUiLanguage } from './lib/i18n'
 import type { FileTreeActions } from './features/file-preview/lib/fileTreeActions'
 import type { FileDownloadState } from './features/file-preview/lib/filePreviewState'
 import { memo, type MouseEvent, type ReactNode } from 'react'
@@ -236,6 +238,7 @@ function AppWorkspaceSidebarImpl({
   onFetchProjectSessions,
   getSessionRuntimeState
 }: AppWorkspaceSidebarProps): React.JSX.Element | null {
+  useUiLanguage()
   if (!isSidebarOpen && compactHoverPreview) return null
 
   const navigate = (action: () => void | Promise<void>): void => {
@@ -374,7 +377,9 @@ function AppWorkspaceSidebarImpl({
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex' }}>
           {isRemoteProject && !workspaceRootPath ? (
             <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-              服务器档案或会话不可用，暂时无法显示远程文件。
+              {
+                navigationCopy.serverProfileOrConversationUnavailableRemoteFilesCannotCurrentlyBe
+              }{' '}
             </Typography>
           ) : (
             <WorkspaceFilesPane
@@ -550,7 +555,7 @@ function AppWorkspaceSidebarImpl({
       <Box
         role="separator"
         aria-orientation="vertical"
-        aria-label="调整侧边栏宽度"
+        aria-label={navigationCopy.resizeSidebar}
         onMouseDown={onStartSidebarResize}
         sx={{
           display: isSidebarOpen ? 'block' : 'none',

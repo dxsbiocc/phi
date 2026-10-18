@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Dialog, IconButton, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
@@ -13,12 +15,13 @@ export function ImagePreviewDialog({
   alt: string
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Dialog
       open={source !== null}
       onClose={onClose}
       maxWidth={false}
-      aria-label="图片预览"
+      aria-label={chatCopy.imagePreview}
       slotProps={{
         paper: {
           sx: { width: 'min(96vw, 1400px)', maxHeight: '94vh', m: 1 }
@@ -34,8 +37,8 @@ export function ImagePreviewDialog({
           py: 1
         }}
       >
-        <Typography variant="subtitle1">图片预览</Typography>
-        <IconButton type="button" aria-label="关闭图片预览" onClick={onClose}>
+        <Typography variant="subtitle1">{chatCopy.imagePreview}</Typography>
+        <IconButton type="button" aria-label={chatCopy.closeImagePreview} onClick={onClose}>
           <CloseIcon fontSize="small" />
         </IconButton>
       </Box>

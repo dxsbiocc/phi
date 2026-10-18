@@ -167,7 +167,7 @@ test('large catalogs stop at a bounded page budget and report truncated metadata
   })
   assert.deepEqual(requests, [1, 2, 3, 4, 5])
   assert.equal(result.available, true)
-  assert.match(result.notice ?? '', /截断/)
+  assert.match(result.notice ?? '', /truncated/)
 })
 
 test('malformed pages and failed requests remain unavailable for local signed-catalog fallback', async () => {
@@ -211,7 +211,7 @@ test('oversized declared and streamed responses are bounded', async () => {
       fetch: async () => response
     })
     assert.equal(result.available, false)
-    assert.match(result.notice ?? '', /官网/)
+    assert.match(result.notice ?? '', /Phi Website/)
   }
 })
 
@@ -221,7 +221,7 @@ test('timeouts bound fetchers that do not implement cancellation', async () => {
     fetch: async () => new Promise<Response>(() => {})
   })
   assert.equal(result.available, false)
-  assert.match(result.notice ?? '', /超时/)
+  assert.match(result.notice ?? '', /timed out/)
 })
 
 test('caller aborts are propagated without being mistaken for offline fallback', async () => {

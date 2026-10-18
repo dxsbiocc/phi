@@ -1,3 +1,10 @@
+import { beforeEach, afterEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+// Keep these legacy behavioral assertions explicit about their presentation language.
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -167,8 +174,10 @@ test('settings dialog integrates palette and brightness radio rows under appeara
   assert.match(markup, /role="radiogroup"/)
   assert.match(markup, /配色/)
   assert.match(markup, /Minimal（默认）/)
-  assert.match(markup, /君の名は/)
-  const checkedRadio = markup.match(/<input[^>]*type="radio"[^>]*checked=""[^>]*>/)?.[0]
+  assert.match(markup, /你的名字/)
+  const checkedRadio = markup.match(
+    /<input[^>]*name="theme-palette"[^>]*checked=""[^>]*>|<input[^>]*checked=""[^>]*name="theme-palette"[^>]*>/
+  )?.[0]
   assert.ok(checkedRadio?.includes('value="asana"'))
 })
 

@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { defaultKeymap, history, historyKeymap, insertNewline } from '@codemirror/commands'
 import {
   Annotation,
@@ -88,6 +90,7 @@ function ReferenceWidgetContent({
   theme: Theme
   disabled: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   useLayoutEffect(() => {
     view.requestMeasure()
   }, [reference, view])
@@ -215,6 +218,7 @@ export function ComposerTextEditor({
   inputRef,
   ...props
 }: ComposerTextEditorProps): React.JSX.Element {
+  useUiLanguage()
   const {
     value,
     resources,
@@ -280,6 +284,7 @@ export function ComposerTextEditor({
   )
   useImperativeHandle(inputRef, () => handle, [handle])
 
+  const accessibleLabel = ariaLabel ?? chatCopy.messageInput
   const visualExtensions = useMemo(
     () => [
       editorPlaceholder(placeholder ?? ''),
@@ -289,7 +294,7 @@ export function ComposerTextEditor({
         'data-phi-focus': focusKey ?? 'chat-input',
         role: 'textbox',
         'aria-multiline': 'true',
-        'aria-label': ariaLabel ?? '消息输入框',
+        'aria-label': accessibleLabel,
         'aria-disabled': disabled ? 'true' : 'false',
         'data-phi-placeholder-kind': placeholderKind ?? 'default',
         spellcheck: 'true'
@@ -322,7 +327,7 @@ export function ComposerTextEditor({
         }
       })
     ],
-    [placeholder, placeholderKind, disabled, ariaLabel, focusKey, theme]
+    [placeholder, placeholderKind, disabled, accessibleLabel, focusKey, theme]
   )
 
   // Native editor events must see the callbacks from the latest React commit.

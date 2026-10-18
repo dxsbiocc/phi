@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import test from 'node:test'
+import test, { beforeEach, afterEach } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import type { ModelOption, ThinkingLevel } from '../src/renderer/src/types'
 import type { ModelSelectionState } from '../src/renderer/src/useModelSelection'
 import { sessionStateKey } from '../src/renderer/src/stores/sessionStore'
+import { appCopy } from '../src/renderer/src/lib/appCopy'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
 
 function deferred<T>(): {
   promise: Promise<T>
@@ -174,6 +179,7 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
     exports: module.exports,
     require(name: string): unknown {
       if (name === 'react') return react
+      if (name === './lib/appCopy') return { appCopy }
       throw new Error(`Unexpected runtime import: ${name}`)
     },
     window: { api },

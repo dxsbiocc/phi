@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Collapse, Tooltip, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../icons'
@@ -11,15 +13,17 @@ const ChevronRightIcon = PhiIcons.action.back
 const PsychologyIcon = PhiIcons.state.thinking
 
 function formatThinkingDuration(durationMs?: number): string {
-  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return '思考'
-  if (durationMs < 1000) return '思考了 1 s'
+  if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return chatCopy.thinking
+  if (durationMs < 1000) return chatCopy.thoughtFor1S
 
   const totalSeconds = Math.max(1, Math.round(durationMs / 1000))
-  if (totalSeconds < 60) return `思考了 ${totalSeconds} s`
+  if (totalSeconds < 60) return chatCopy.thoughtForValueS(totalSeconds)
 
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
-  return seconds > 0 ? `思考了 ${minutes} m ${seconds} s` : `思考了 ${minutes} m`
+  return seconds > 0
+    ? chatCopy.thoughtForValueMValueS(minutes, seconds)
+    : chatCopy.thoughtForValueM(minutes)
 }
 
 export function ThinkingBlock({
@@ -31,6 +35,7 @@ export function ThinkingBlock({
   durationMs?: number
   onContentResize?: ChatContentResizeHandler
 }): ReactNode {
+  useUiLanguage()
   const [expanded, setExpanded] = useState(false)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
@@ -109,12 +114,13 @@ export function ThinkingBlock({
 }
 
 function ThinkingIcon({ size = 16 }: { size?: number }): ReactNode {
+  useUiLanguage()
   return (
-    <Tooltip title="思考" enterDelay={500}>
+    <Tooltip title={chatCopy.thinking} enterDelay={500}>
       <Box
         component="span"
         role="img"
-        aria-label="思考"
+        aria-label={chatCopy.thinking}
         sx={{
           width: size + 2,
           height: size + 2,

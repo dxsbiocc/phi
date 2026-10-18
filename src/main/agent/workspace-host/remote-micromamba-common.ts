@@ -13,6 +13,6 @@ export async function runRemoteMicromambaScript(
   session: RemoteSshSession,
   script: string
 ): Promise<RemoteExecResult> {
-  if (!session.execWithInput) throw new Error('安全脚本通道不可用')
+  if (!session.execWithInput) throw new Error('Secure script channel is unavailable')
   return session.execWithInput('sh -s', script)
 }

@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { useMemo } from 'react'
 import { Box } from '@mui/material'
 import { highlightLine, languageForPath, type SyntaxToken } from '../../../lib/syntaxHighlight'
@@ -17,6 +19,7 @@ export function CodePreview({
 }: {
   file: Extract<FilePreview, { kind: 'text' }>
 }): React.JSX.Element {
+  useUiLanguage()
   const language = languageForPath(file.path)
   const lines = useMemo(
     () => (file.content.length > 0 ? file.content.split('\n') : ['']),
@@ -116,11 +119,14 @@ export function CodePreview({
             whiteSpace: 'normal'
           }}
         >
-          大文件已使用轻量文本预览
+          {filePreviewCopy.lightweightPreview}
           {hiddenLineCount > 0
-            ? `，仅渲染前 ${renderedLines.length.toLocaleString('zh-CN')} 行（共 ${lines.length.toLocaleString('zh-CN')} 行）`
+            ? filePreviewCopy.lineLimit(
+                renderedLines.length.toLocaleString(getUiLocale()),
+                lines.length.toLocaleString(getUiLocale())
+              )
             : ''}
-          。
+          .
         </Box>
       ) : null}
     </Box>

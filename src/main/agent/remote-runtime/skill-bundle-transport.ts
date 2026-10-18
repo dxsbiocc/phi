@@ -26,10 +26,11 @@ export async function validateRemoteSkillBundle(
     maxOutputBytes: SCRIPT_OUTPUT_BYTES
   })
   signal?.throwIfAborted()
-  if (result.terminationReason === 'timeout') throw new Error('远程 Skill bundle 校验超时')
+  if (result.terminationReason === 'timeout')
+    throw new Error('Remote Skill bundle verification timed out')
   if (result.code !== 0) {
     throw new Error(
-      `远程 Skill bundle 校验失败：${result.stderr.trim() || `exit code ${result.code}`}`
+      `Remote Skill bundle verification failed: ${result.stderr.trim() || `exit code ${result.code}`}`
     )
   }
   return validationReply(result.stdout)
@@ -47,11 +48,13 @@ export async function publishRemoteSkillBundle(
     maxOutputBytes: SCRIPT_OUTPUT_BYTES
   })
   signal?.throwIfAborted()
-  if (result.terminationReason === 'timeout') throw new Error('远程 Skill bundle 上传超时')
-  if (result.code === 42) throw new Error('远程 Skill bundle 目标包含不安全的符号链接')
+  if (result.terminationReason === 'timeout')
+    throw new Error('Remote Skill bundle upload timed out')
+  if (result.code === 42)
+    throw new Error('Remote Skill bundle destination contains an unsafe symlink')
   if (result.code !== 0) {
     throw new Error(
-      `远程 Skill bundle 上传失败：${result.stderr.trim() || `exit code ${result.code}`}`
+      `Remote Skill bundle upload failed: ${result.stderr.trim() || `exit code ${result.code}`}`
     )
   }
 }
@@ -237,7 +240,7 @@ function wrappedBase64(content: Buffer): string {
 function validationReply(stdout: string): ValidationReply {
   const value = JSON.parse(stdout.trim()) as Partial<ValidationReply>
   if (!['reusable', 'repair', 'unsafe'].includes(value.status ?? '')) {
-    throw new Error('远程 Skill bundle 校验返回无效状态')
+    throw new Error('Remote Skill bundle verification returned an invalid status')
   }
   return value as ValidationReply
 }

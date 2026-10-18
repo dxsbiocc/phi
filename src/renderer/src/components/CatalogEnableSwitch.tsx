@@ -1,5 +1,7 @@
+import { useUiLanguage } from '../lib/i18n'
 import { Tooltip } from '@mui/material'
 import { styled } from '@mui/material/styles'
+import { resourceUi } from '../lib/resourceUi'
 
 const SwitchRoot = styled('span')(({ theme }) => ({
   position: 'relative',
@@ -67,8 +69,10 @@ export function CatalogEnableSwitch({
   label: string
   onChange: (checked: boolean) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
-    <Tooltip title={busy ? '正在更新…' : label} enterDelay={400} describeChild>
+    <Tooltip title={busy ? resourceUi.updating : label} enterDelay={400} describeChild>
       <SwitchRoot
         onPointerDown={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.stopPropagation()}

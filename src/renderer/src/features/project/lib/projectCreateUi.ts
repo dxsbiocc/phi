@@ -1,3 +1,4 @@
+import { projectCopy } from './projectCopy'
 import type { RemoteProjectCreateInput } from '../../../../../shared/projectLocation'
 
 export interface NewProjectDraft {
@@ -26,7 +27,7 @@ export async function submitNewProjectDraft(
     createRemote: (input: RemoteProjectCreateInput) => Promise<void>
   }
 ): Promise<void> {
-  if (!canSubmitNewProject(draft)) throw new Error('请先选择项目位置')
+  if (!canSubmitNewProject(draft)) throw new Error(projectCopy.chooseAProjectLocationFirst)
   if (draft.locationMode === 'ssh') {
     await handlers.createRemote({
       name: draft.name,

@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -764,3 +766,6 @@ test('markdown rendering drops raw html', () => {
   assert.doesNotMatch(markup, /onerror/)
   assert.doesNotMatch(markup, /<script/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

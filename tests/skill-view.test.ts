@@ -151,22 +151,22 @@ test('skill discovery renders the website API groups in declared order including
       ]
     }
   })
-  assert.match(markup, /aria-label="技能目录分组"/)
-  assert.ok(markup.indexOf('科学分析') < markup.indexOf('元能力'))
-  assert.ok(markup.indexOf('元能力') < markup.indexOf('其他'))
-  assert.match(markup, /其他/)
-  assert.doesNotMatch(markup, />软件包</)
+  assert.match(markup, /aria-label="Skill Catalog groups"/)
+  assert.ok(markup.indexOf('Scientific Analysis') < markup.indexOf('Meta Capabilities'))
+  assert.ok(markup.indexOf('Meta Capabilities') < markup.indexOf('Other'))
+  assert.match(markup, /Other/)
+  assert.doesNotMatch(markup, />Packages</)
 })
 
 test('skill view groups skills by source category and exposes the skill markdown panel', () => {
   const markup = renderSkillView()
 
-  assert.match(markup, /内置/)
-  assert.match(markup, /项目/)
-  assert.match(markup, /内置·核心/)
+  assert.match(markup, /Built-in/)
+  assert.match(markup, /Project/)
+  assert.match(markup, /Built-in · Core/)
   assert.match(markup, /SKILL\.md/)
-  assert.match(markup, /需要重启 Phi/)
-  assert.match(markup, /aria-label="发现"/)
+  assert.match(markup, /Restart Phi/)
+  assert.match(markup, /aria-label="Discover"/)
 })
 
 test('skill detail centers capped content while retaining scrolling and responsive padding', () => {
@@ -209,19 +209,19 @@ test('remote project skill detail reuses the server trust interaction instead of
     })
   )
 
-  assert.match(markup, /服务器项目/)
-  assert.match(markup, /未信任/)
-  assert.match(markup, />信任</)
-  assert.doesNotMatch(markup, /全局启用/)
-  assert.doesNotMatch(markup, /卸载技能 server-demo/)
+  assert.match(markup, /Server project/)
+  assert.match(markup, /Not trusted/)
+  assert.match(markup, />Trust</)
+  assert.doesNotMatch(markup, /Enable globally/)
+  assert.doesNotMatch(markup, /Uninstall skill server-demo/)
 })
 
 test('skill sidebar keeps management actions out of the browsing list', () => {
   const markup = renderSkillSidebar()
 
   assert.match(markup, /create-wrapper/)
-  assert.doesNotMatch(markup, /卸载技能/)
-  assert.doesNotMatch(markup, /全局启用技能/)
+  assert.doesNotMatch(markup, /Uninstall skill/)
+  assert.doesNotMatch(markup, /Enable skill globally/)
 })
 
 test('skills reuse their own icon in sidebar, detail, and package catalog rows', async () => {
@@ -269,11 +269,11 @@ test('skill sidebar uses effective enablement and keeps core switches locked', (
     })
   )
 
-  assert.match(markup, /aria-label="打开 scanpy，已启用"/)
-  assert.match(markup, /role="switch"[^>]*aria-label="关闭 scanpy"[^>]*aria-checked="true"/)
+  assert.match(markup, /aria-label="Open scanpy, enabled"/)
+  assert.match(markup, /role="switch"[^>]*aria-label="Disable scanpy"[^>]*aria-checked="true"/)
   assert.match(
     markup,
-    /role="switch"[^>]*disabled=""[^>]*aria-label="核心技能由 Phi 依赖，不可关闭"/
+    /role="switch"[^>]*disabled=""[^>]*aria-label="Phi requires this core skill; it cannot be disabled"/
   )
   assert.equal(markup.match(/data-phi-catalog-status="enabled"/g)?.length, 2)
 })
@@ -300,8 +300,8 @@ test('skill sidebar keeps group headers fixed while expanded group content scrol
 test('core skills render a locked state instead of enablement controls', () => {
   const markup = renderSkillView()
 
-  assert.match(markup, /核心技能已锁定/)
-  assert.doesNotMatch(markup, /aria-label="全局启用技能"/)
+  assert.match(markup, /Core skill locked/)
+  assert.doesNotMatch(markup, /aria-label="Enable skill globally"/)
 })
 
 test('ordinary skills expose global enablement and project override controls', () => {
@@ -323,9 +323,9 @@ test('ordinary skills expose global enablement and project override controls', (
     })
   )
 
-  assert.match(markup, /aria-label="全局启用技能"/)
-  assert.match(markup, /当前项目/)
-  assert.match(markup, /跟随全局/)
+  assert.match(markup, /aria-label="Enable skill globally"/)
+  assert.match(markup, /Current project/)
+  assert.match(markup, /Use global setting/)
 })
 
 test('plugin skills navigate to their plugin instead of exposing a toggle', () => {
@@ -347,9 +347,9 @@ test('plugin skills navigate to their plugin instead of exposing a toggle', () =
     })
   )
 
-  assert.match(markup, /插件: visualization/)
-  assert.match(markup, /前往插件/)
-  assert.doesNotMatch(markup, /aria-label="全局启用技能"/)
+  assert.match(markup, /Plugin: visualization/)
+  assert.match(markup, /Go to Plugin/)
+  assert.doesNotMatch(markup, /aria-label="Enable skill globally"/)
 })
 
 test('skill markdown body hides YAML front matter', () => {
@@ -377,23 +377,23 @@ test('skill catalog renders ten package rows per page with navigation instead of
       packages: Array.from({ length: 12 }, (_, index) => packageEntry(`catalog-${index}`))
     }
   })
-  assert.match(markup, /aria-label="技能目录分组"/)
-  assert.match(markup, /全部技能/)
-  assert.doesNotMatch(markup, /内置技能/)
-  assert.match(markup, /aria-label="搜索技能名称或说明"/)
+  assert.match(markup, /aria-label="Skill Catalog groups"/)
+  assert.match(markup, /All Skills/)
+  assert.doesNotMatch(markup, /Built-in skills/)
+  assert.match(markup, /aria-label="Search skill names or descriptions"/)
   assert.equal(markup.match(/data-phi-skill-catalog-card=/g)?.length, 10)
-  assert.doesNotMatch(markup, /加载更多/)
-  assert.match(markup, /aria-label="目录分页"/)
+  assert.doesNotMatch(markup, /Load more/)
+  assert.match(markup, /aria-label="Catalog pagination"/)
   assert.match(markup, /1–10 \/ 12/)
-  assert.match(markup, /每页/)
-  assert.match(markup, /aria-label="下一页"/)
-  assert.match(markup, /aria-label="上一页"/)
-  assert.match(markup, /<table[^>]*aria-label="技能目录结果"/)
+  assert.match(markup, /Rows per page/)
+  assert.match(markup, /aria-label="Next page"/)
+  assert.match(markup, /aria-label="Previous page"/)
+  assert.match(markup, /<table[^>]*aria-label="Skill catalog results"/)
   assert.equal(markup.match(/<tr[^>]*data-phi-skill-catalog-card=/g)?.length, 10)
-  assert.match(markup, />来源</)
-  assert.match(markup, /版本 \/ 大小/)
-  assert.doesNotMatch(markup, />状态</)
-  assert.match(markup, />操作</)
+  assert.match(markup, />Source</)
+  assert.match(markup, /Version \/ Size/)
+  assert.doesNotMatch(markup, />Status</)
+  assert.match(markup, />Actions</)
   assert.equal(markup.match(/>Phi Packages</g)?.length, 10)
 })
 
@@ -419,19 +419,19 @@ test('skill catalog preserves official packages sharing bundled names and instal
     registryDir: '/explicit'
   })
 
-  assert.match(markup, /成像/)
-  assert.match(markup, /软件包/)
-  assert.match(markup, /添加/)
-  assert.equal(markup.match(/>卸载</g)?.length, 1)
-  assert.doesNotMatch(markup, />已安装</)
-  assert.match(markup, /软件包/)
+  assert.match(markup, /Imaging/)
+  assert.match(markup, /Packages/)
+  assert.match(markup, /Add/)
+  assert.equal(markup.match(/>Uninstall</g)?.length, 1)
+  assert.doesNotMatch(markup, />Installed</)
+  assert.match(markup, /Packages/)
   assert.match(markup, /v1\.0\.0 · 1 KB/)
-  assert.doesNotMatch(markup, /未安装/)
+  assert.doesNotMatch(markup, /Not installed/)
   assert.equal(markup.match(/data-phi-skill-catalog-card=/g)?.length, 3)
   assert.match(markup, /data-phi-skill-catalog-card="available"/)
   assert.match(markup, /data-phi-skill-catalog-card="shadowed"/)
   assert.doesNotMatch(markup, /data-phi-skill-catalog-card="wrapper-only"/)
-  assert.doesNotMatch(markup, /加载更多/)
+  assert.doesNotMatch(markup, /Load more/)
 })
 
 test('installed skill packages can be uninstalled from the catalog and every row opens its detail', () => {
@@ -449,11 +449,11 @@ test('installed skill packages can be uninstalled from the catalog and every row
     },
     registryDir: '/explicit'
   })
-  assert.match(markup, /<button[^>]*>卸载<\/button>/)
-  assert.equal(markup.match(/>卸载</g)?.length, 1)
-  assert.equal(markup.match(/>安装</g)?.length, 1)
-  assert.match(markup, /aria-label="查看 installed 详情"/)
-  assert.match(markup, /aria-label="查看 available 详情"/)
+  assert.match(markup, /<button[^>]*>Uninstall<\/button>/)
+  assert.equal(markup.match(/>Uninstall</g)?.length, 1)
+  assert.equal(markup.match(/>Install</g)?.length, 1)
+  assert.match(markup, /aria-label="View installed details"/)
+  assert.match(markup, /aria-label="View available details"/)
 })
 
 test('skill catalog keeps loading and registry errors visible within the browser', () => {
@@ -471,11 +471,11 @@ test('skill catalog keeps loading and registry errors visible within the browser
     }
   })
 
-  assert.match(markup, /正在读取已安装技能/)
-  assert.match(markup, /正在读取 Phi Packages 和本地目录/)
+  assert.match(markup, /Loading installed skills/)
+  assert.match(markup, /Loading Phi Packages and local catalogs/)
   assert.match(markup, /Directory unavailable/)
   assert.doesNotMatch(markup, /data-phi-skill-catalog-card="stale-package"/)
-  assert.doesNotMatch(markup, /没有匹配的技能/)
+  assert.doesNotMatch(markup, /No matching skills/)
 })
 
 test('bundled domain skills cannot become catalog enable actions', () => {
@@ -502,8 +502,8 @@ test('bundled domain skills cannot become catalog enable actions', () => {
   })
   assert.match(markup, /data-phi-skill-catalog-card="scanpy"/)
   assert.doesNotMatch(markup, /data-phi-skill-catalog-card="\/resources\/scanpy/)
-  assert.match(markup, />安装<\/button>/)
-  assert.doesNotMatch(markup, />启用<\/button>/)
+  assert.match(markup, />Install<\/button>/)
+  assert.doesNotMatch(markup, />Enable<\/button>/)
 })
 
 test('skill catalog offers the newest explicit package version with a stable row key', () => {

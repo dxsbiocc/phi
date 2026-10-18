@@ -1,3 +1,5 @@
+import { homeCopy } from '../lib/homeCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Skeleton, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
@@ -15,20 +17,40 @@ interface HomeActivityHeatmapProps {
 }
 
 const weekdayLabels = [
-  { row: 2, label: '一' },
-  { row: 4, label: '三' },
-  { row: 6, label: '五' }
+  {
+    row: 2,
+    get label() {
+      return homeCopy.mon
+    }
+  },
+  {
+    row: 4,
+    get label() {
+      return homeCopy.wed
+    }
+  },
+  {
+    row: 6,
+    get label() {
+      return homeCopy.fri
+    }
+  }
 ] as const
 
 function dayDescription(day: HomeActivityDay & { label: string }): string {
-  if (day.totalRuns === 0 && day.durationMs === 0) return `${day.label}，无活动`
-  return `${day.label}，${day.totalRuns} 次运行，${formatActivityDuration(day.durationMs)}`
+  if (day.totalRuns === 0 && day.durationMs === 0) return homeCopy.valueNoActivity(day.label)
+  return homeCopy.valueValueRunsValue(
+    day.label,
+    day.totalRuns,
+    formatActivityDuration(day.durationMs)
+  )
 }
 
 export function HomeActivityHeatmap({
   activity,
   loading
 }: HomeActivityHeatmapProps): React.JSX.Element {
+  useUiLanguage()
   const weeks = buildHomeActivityCalendar(activity?.dayBuckets ?? [])
   const activeDays = activity ? totalActiveDays(activity) : 0
 
@@ -56,7 +78,7 @@ export function HomeActivityHeatmap({
       >
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            过去一年的活跃度
+            {homeCopy.activityOverThePastYear}
           </Typography>
         </Box>
         <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
@@ -76,14 +98,14 @@ export function HomeActivityHeatmap({
             </Typography>
           )}
           <Typography variant="caption" color="text.secondary">
-            个活跃日
+            {homeCopy.activeDays}
           </Typography>
         </Box>
       </Box>
 
       <Box
         role="img"
-        aria-label={`过去一年共有 ${activeDays} 个活跃日`}
+        aria-label={homeCopy.valueActiveDaysInThePastYear(activeDays)}
         sx={{
           flex: 1,
           display: 'flex',
@@ -235,7 +257,7 @@ export function HomeActivityHeatmap({
         }}
       >
         <Typography variant="caption" color="text.secondary">
-          少
+          {homeCopy.less}
         </Typography>
         {[0, 1, 2, 3, 4].map((level) => (
           <Box
@@ -258,7 +280,7 @@ export function HomeActivityHeatmap({
           />
         ))}
         <Typography variant="caption" color="text.secondary">
-          多
+          {homeCopy.more}
         </Typography>
       </Box>
     </Box>

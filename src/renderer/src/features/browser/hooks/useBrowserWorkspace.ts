@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../../lib/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   BrowserOutcome,
@@ -5,6 +6,7 @@ import type {
   BrowserUiCommand
 } from '../../../../../shared/browserTypes'
 import {
+  browserErrorMessage,
   createBrowserRequestIdFactory,
   createBrowserWorkspaceController,
   type BrowserWorkspaceController,
@@ -33,6 +35,7 @@ export function useBrowserWorkspace(
   bridge: BrowserRendererBridge,
   activePhiSessionId: string | null
 ): BrowserWorkspaceHookValue {
+  useUiLanguage()
   const [sessionState, setSessionState] = useState<SessionBrowserState | null>(null)
   const controllerRef = useRef<BrowserWorkspaceController | null>(null)
   const controllerSessionRef = useRef<string | null>(null)
@@ -81,5 +84,10 @@ export function useBrowserWorkspace(
     : sessionState?.sessionId === activePhiSessionId
       ? sessionState.state
       : LOADING_STATE
-  return { ...state, execute, nextRequestId }
+  return {
+    ...state,
+    error: state.errorCode ? browserErrorMessage({ code: state.errorCode }) : state.error,
+    execute,
+    nextRequestId
+  }
 }

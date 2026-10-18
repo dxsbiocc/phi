@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import { spawn } from 'node:child_process'
 
 import type {
@@ -35,10 +36,18 @@ export function runSshBootstrapCommand(
   const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxOutputBytes = request.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return Promise.resolve({ exitCode: null, stdout: '', stderr: '命令超时参数无效' })
+    return Promise.resolve({
+      exitCode: null,
+      stdout: '',
+      stderr: sshBootstrapCopy.commandTimeoutInvalid
+    })
   }
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
-    return Promise.resolve({ exitCode: null, stdout: '', stderr: '命令输出上限无效' })
+    return Promise.resolve({
+      exitCode: null,
+      stdout: '',
+      stderr: sshBootstrapCopy.outputLimitInvalid
+    })
   }
 
   return new Promise((resolve) => {
@@ -55,7 +64,7 @@ export function runSshBootstrapCommand(
         stdio: ['pipe', 'pipe', 'pipe']
       })
     } catch {
-      resolve({ exitCode: null, stdout: '', stderr: '无法启动命令' })
+      resolve({ exitCode: null, stdout: '', stderr: sshBootstrapCopy.commandStartFailed })
       return
     }
     const timeout = setTimeout(() => {
@@ -77,13 +86,15 @@ export function runSshBootstrapCommand(
     })
     child.stdin.on('error', () => undefined)
     child.once('error', () => {
-      finish({ exitCode: null, stdout: '', stderr: '无法启动命令' })
+      finish({ exitCode: null, stdout: '', stderr: sshBootstrapCopy.commandStartFailed })
     })
     child.once('close', (exitCode) => {
       finish({
         exitCode,
         stdout: sanitizedOutput(stdout, secret, maxOutputBytes),
-        stderr: timedOut ? '命令执行超时' : sanitizedOutput(stderr, secret, maxOutputBytes)
+        stderr: timedOut
+          ? sshBootstrapCopy.commandTimedOut
+          : sanitizedOutput(stderr, secret, maxOutputBytes)
       })
     })
 

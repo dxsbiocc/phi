@@ -146,6 +146,6 @@ test('cache rejects revision metadata that disagrees with its immutable index', 
   writeFileSync(path, JSON.stringify(metadata))
   assert.throws(
     () => readOfficialWebsiteRegistry(registry.dir, { agentDir: f.agentDir }),
-    /revision|版本/
+    /revision/
   )
 })

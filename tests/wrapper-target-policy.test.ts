@@ -100,7 +100,7 @@ test('SSH project uses only its bound host and canonical project path', () => {
     hostAlias: 'cluster-a',
     remoteRoot: '/data/project',
     connectionId: 'connection-a',
-    reason: '远程项目固定使用自身服务器和项目目录。'
+    reason: 'The remote project uses its bound server and project directory.'
   })
   const noConnection = chooseWrapperTarget({ ...base, projectLocation: sshLocation })
   assert.equal(noConnection.kind, 'blocked')
@@ -116,7 +116,7 @@ test('SSH project uses only its bound host and canonical project path', () => {
     {
       kind: 'blocked',
       code: 'remote_project_local_target',
-      reason: '远程项目的 Wrapper 不能在本机执行。'
+      reason: 'Wrappers in remote projects cannot run on this device.'
     }
   )
   assert.equal(

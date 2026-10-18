@@ -46,15 +46,15 @@ test('configured stdio discovery defaults and clamps only integer main-process d
   assert.throws(() => resolveConfiguredStdioTimeoutMs('600000'), /timeout/i)
   assert.equal(
     configuredStdioTimeoutMessage(600_000),
-    '启动验证超时（已等待 10 分钟）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+    'Startup verification timed out after 10 minutes. The first run usually downloads dependencies. Downloaded files are kept; you can retry.'
   )
   assert.equal(
     configuredStdioTimeoutMessage(5_000),
-    '启动验证超时（已等待 5 秒）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+    'Startup verification timed out after 5 seconds. The first run usually downloads dependencies. Downloaded files are kept; you can retry.'
   )
   assert.equal(
     configuredStdioTimeoutMessage(90_000),
-    '启动验证超时（已等待 1.5 分钟）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。'
+    'Startup verification timed out after 1.5 minutes. The first run usually downloads dependencies. Downloaded files are kept; you can retry.'
   )
   assert.equal(configuredStdioRequestKey(undefined), undefined)
   assert.equal(configuredStdioRequestKey('request_1:key'), 'request_1:key')
@@ -74,7 +74,7 @@ test('configured stdio cancellation registry aborts known keys and forgets compl
   assert.equal(controller.signal.aborted, false)
   assert.equal(registry.cancel('request-1'), true)
   assert.equal(controller.signal.aborted, true)
-  assert.equal((controller.signal.reason as Error).message, '已取消')
+  assert.equal((controller.signal.reason as Error).message, 'Cancelled')
   registry.delete('request-1', new AbortController())
   assert.equal(registry.has('request-1'), true)
   registry.delete('request-1', controller)
@@ -318,7 +318,7 @@ test(
       assert.equal(statSync(join(logDir, logName)).mode & 0o777, 0o600)
       assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), true)
       await assert.rejects(discovery, (error: Error & { detail?: string }) => {
-        assert.equal(error.message, '已取消')
+        assert.equal(error.message, 'Cancelled')
         assert.match(error.detail ?? '', /waiting for configuration/)
         return true
       })
@@ -334,7 +334,7 @@ test(
           timeoutMs: 1
         }),
         (error: Error & { detail?: string }) => {
-          assert.match(error.message, /启动验证超时/)
+          assert.match(error.message, /Startup verification timed out/)
           assert.match(error.detail ?? '', /waiting for configuration/)
           return true
         }
@@ -713,7 +713,7 @@ test(
         false
       )
       assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), true)
-      await assert.rejects(discovery, /已取消/)
+      await assert.rejects(discovery, /Cancelled/)
       assert.equal(await bridge.request('mcp.cancelConfiguredStdioTools', { requestKey }), false)
       assertDeadAtReturn(snapshotPath)
       assert.equal(
@@ -735,7 +735,7 @@ test(
           requestKey: 'short-timeout-fixture',
           timeoutMs: 1
         }),
-        /启动验证超时（已等待 5 秒）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。/
+        /Startup verification timed out after 5 seconds. The first run usually downloads dependencies. Downloaded files are kept; you can retry./
       )
       if (existsSync(snapshotPath)) assertDeadAtReturn(snapshotPath)
       assert.equal(

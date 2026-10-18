@@ -1,3 +1,4 @@
+import { terminalUi } from './terminalUi'
 import {
   type TerminalErrorCode,
   type TerminalEvent,
@@ -32,8 +33,6 @@ import { bindTerminalInput, defaultTerminalControllerDependencies } from './term
 import { createTerminalTheme, TERMINAL_FONT_FAMILY } from './terminalTheme'
 
 const DEFAULT_SIZE: TerminalSize = { cols: 80, rows: 24 }
-const GAP_NOTICE = '\r\n\u001b[2m部分输出已超出保留范围\u001b[0m\r\n'
-const INPUT_TOO_LARGE_MESSAGE = '输入超过 64 KiB 限制'
 
 function workspaceClientKey(ref: TerminalWorkspaceRef): string {
   return ref.kind === 'project' ? `project:${ref.projectId}` : 'ordinary'
@@ -407,7 +406,7 @@ class RendererTerminalController implements TerminalController {
       const result = {
         ok: false,
         code: 'invalid',
-        message: INPUT_TOO_LARGE_MESSAGE
+        message: terminalUi.inputExceedsThe64KiBLimit
       } as const
       this.publishTerminalError(record, result)
       return Promise.resolve(result)
@@ -506,7 +505,7 @@ class RendererTerminalController implements TerminalController {
 
   private writeGapNotice(record: TerminalRecord): void {
     try {
-      record.terminal.write(GAP_NOTICE)
+      record.terminal.write(terminalUi.retainedOutputNotice)
     } catch {
       // A rendering failure must not disrupt the bridge event subscription.
     }

@@ -66,24 +66,27 @@ test('slurm-only fields are dropped when the scheduler is local', () => {
 test('queue size must be a positive whole number', () => {
   assert.equal(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '20' }), null)
   assert.equal(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '' }), null)
-  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: 'abc' }) ?? '', /排队/)
-  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '0' }) ?? '', /排队/)
-  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '2.5' }) ?? '', /排队/)
+  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: 'abc' }) ?? '', /queued/)
+  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '0' }) ?? '', /queued/)
+  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, queueSize: '2.5' }) ?? '', /queued/)
 })
 
 test('direct server execution cannot submit the Nextflow head as a Slurm job', () => {
   assert.match(
     hpcDraftError({ ...EMPTY_HPC_DRAFT, scheduler: 'local', controller: 'sbatch' }) ?? '',
-    /不能提交为 Slurm 作业/
+    /cannot be submitted as a Slurm job/
   )
 })
 
 test('cache dir and nextflow path must be absolute when given', () => {
   assert.match(
     hpcDraftError({ ...EMPTY_HPC_DRAFT, singularityCacheDir: 'relative/dir' }) ?? '',
-    /绝对路径/
+    /absolute path/
   )
-  assert.match(hpcDraftError({ ...EMPTY_HPC_DRAFT, nextflowBin: 'nextflow' }) ?? '', /绝对路径/)
+  assert.match(
+    hpcDraftError({ ...EMPTY_HPC_DRAFT, nextflowBin: 'nextflow' }) ?? '',
+    /absolute path/
+  )
   assert.equal(hpcDraftError({ ...EMPTY_HPC_DRAFT, singularityCacheDir: '/shared/sif' }), null)
 })
 
@@ -105,7 +108,7 @@ test('head-job options are only saved when the head process is a Slurm job', () 
 test('head-job options must be sbatch flags', () => {
   const draft = { ...EMPTY_HPC_DRAFT, controller: 'sbatch' as const }
   assert.equal(hpcDraftError({ ...draft, controllerOptions: '--time=1-00:00:00 --qos long' }), null)
-  assert.match(hpcDraftError({ ...draft, controllerOptions: 'time=1-00' }) ?? '', /以 - 开头/)
+  assert.match(hpcDraftError({ ...draft, controllerOptions: 'time=1-00' }) ?? '', /start with -/)
 })
 
 test('the connection-level Nextflow config round-trips and blank text is not saved', () => {

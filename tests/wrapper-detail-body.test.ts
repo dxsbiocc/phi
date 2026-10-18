@@ -49,19 +49,31 @@ test('the shared body shows identity, contract, module metadata and environment'
   for (const text of [
     'samtools sort',
     'nf-core/modules/samtools-sort',
-    '输入',
-    '选项',
-    '输出',
-    '范围：1 – 8',
-    '关于',
+    'Inputs',
+    'Options',
+    'Outputs',
+    'Range: 1 – 8',
+    'About',
     'Sort BAM files',
     'MIT',
-    '环境',
+    'Environment',
     'channels'
   ]) {
     assert.ok(markup.includes(text), `missing: ${text}`)
   }
-  assert.ok(!markup.includes('运行记录'))
+  assert.ok(!markup.includes('Run History'))
+})
+
+test('English management labels preserve the author-provided title, description and authors', () => {
+  const markup = render({
+    manifest: { ...manifest, name: '排序工具', summary: '作者提供的说明' },
+    moduleDetails: { ...details, meta: { ...details.meta, authors: ['张三', '@alice'] } }
+  })
+  assert.match(markup, /排序工具/)
+  assert.match(markup, /作者提供的说明/)
+  assert.match(markup, /Authors: 张三, @alice/)
+  assert.match(markup, /Inputs/)
+  assert.match(markup, /nf-core\/modules\/samtools-sort/)
 })
 
 test('page-specific slots render in order around the shared sections', () => {
@@ -70,7 +82,14 @@ test('page-specific slots render in order around the shared sections', () => {
     afterIdentity: createElement('p', null, 'AFTER-IDENTITY'),
     children: createElement('p', null, 'RUN-HISTORY')
   })
-  const order = ['IDENTITY-EXTRA', 'AFTER-IDENTITY', '输入', '关于', '环境', 'RUN-HISTORY']
+  const order = [
+    'IDENTITY-EXTRA',
+    'AFTER-IDENTITY',
+    'Inputs',
+    'About',
+    'Environment',
+    'RUN-HISTORY'
+  ]
   const positions = order.map((text) => markup.indexOf(text))
   assert.ok(
     positions.every((position) => position >= 0),
@@ -84,8 +103,8 @@ test('page-specific slots render in order around the shared sections', () => {
 
 test('extra chips join the provider and tier chips in the identity block', () => {
   const markup = render({ extraChips: createElement('span', null, 'EXTRA-V1') })
-  const tier = markup.indexOf('模块')
+  const tier = markup.indexOf('Modules')
   const extra = markup.indexOf('EXTRA-V1')
   assert.ok(tier >= 0 && extra > tier)
-  assert.ok(extra < markup.indexOf('输入'))
+  assert.ok(extra < markup.indexOf('Inputs'))
 })

@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, IconButton, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
@@ -16,23 +18,29 @@ export function PastedImagePreview({
   error: string | null
   onRemove?: (index: number) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [preview, setPreview] = useState<{ source: string; alt: string } | null>(null)
   if (images.length === 0 && !error) return null
   return (
     <>
       {images.length > 0 && (
-        <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }} aria-label="待发送图片">
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ mb: 1, flexWrap: 'wrap' }}
+          aria-label={chatCopy.imagesToSend}
+        >
           {images.map((image, index) => (
             <Box key={`${image.mimeType}-${index}`} sx={{ position: 'relative' }}>
               <Box
                 component="button"
                 type="button"
-                aria-label={`预览待发送图片 ${index + 1}`}
-                title="点击预览图片"
+                aria-label={chatCopy.previewPendingImageValue(index + 1)}
+                title={chatCopy.clickToPreviewImage}
                 onClick={() =>
                   setPreview({
                     source: `data:${image.mimeType};base64,${image.data}`,
-                    alt: `待发送图片 ${index + 1}`
+                    alt: chatCopy.pendingImageValue(index + 1)
                   })
                 }
                 sx={{
@@ -46,7 +54,7 @@ export function PastedImagePreview({
                 <Box
                   component="img"
                   src={`data:${image.mimeType};base64,${image.data}`}
-                  alt={`待发送图片 ${index + 1}`}
+                  alt={chatCopy.pendingImageValue(index + 1)}
                   sx={{
                     display: 'block',
                     width: 80,
@@ -58,7 +66,7 @@ export function PastedImagePreview({
               </Box>
               <IconButton
                 size="small"
-                aria-label={`移除图片 ${index + 1}`}
+                aria-label={chatCopy.removeImageValue(index + 1)}
                 onClick={() => onRemove?.(index)}
                 sx={{ position: 'absolute', top: 0, right: 0, bgcolor: 'background.paper' }}
               >

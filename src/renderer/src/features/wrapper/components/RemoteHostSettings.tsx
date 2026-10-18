@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Box, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -29,6 +31,7 @@ const EMPTY_HOST_DRAFT: RemoteHostDraft = {
 
 /** SSH servers are global; project execution targets are chosen in the Wrapper flow. */
 export function RemoteHostSettingsSection(): React.JSX.Element {
+  useUiLanguage()
   const [hosts, setHosts] = useState<RemoteHostProfile[]>([])
   const [openSshHosts, setOpenSshHosts] = useState<OpenSshHost[]>([])
   const [configLoading, setConfigLoading] = useState(true)
@@ -112,7 +115,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     setHostError(null)
     try {
       const rawPort = hostDraft.port.trim()
-      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error('SSH 端口必须为 1–65535 的整数')
+      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error(remoteSetupCopy.sshPortError)
       const connectionFields = {
         ...(hostDraft.user.trim() ? { user: hostDraft.user.trim() } : {}),
         ...(rawPort ? { port: Number(rawPort) } : {}),
@@ -196,15 +199,15 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
   function openPasswordBootstrap(): void {
     try {
       const rawPort = hostDraft.port.trim()
-      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error('SSH 端口必须为 1–65535 的整数')
+      if (rawPort && !/^\d+$/.test(rawPort)) throw new Error(remoteSetupCopy.sshPortError)
       const port = rawPort ? Number(rawPort) : 22
       if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-        throw new Error('SSH 端口必须为 1–65535 的整数')
+        throw new Error(remoteSetupCopy.sshPortError)
       }
       const alias = hostDraft.hostAlias.trim()
       const hostname = hostDraft.hostname.trim()
       const user = hostDraft.user.trim()
-      if (!alias || !hostname || !user) throw new Error('请填写 SSH 别名、服务器地址和用户名')
+      if (!alias || !hostname || !user) throw new Error(remoteSetupCopy.sshDetailsRequired)
       setHostError(null)
       setBootstrapResult(null)
       setBootstrapTarget({ alias, hostname, user, port })
@@ -217,7 +220,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
   return (
     <Stack spacing={3}>
       <Box>
-        <Typography variant="h5">远程</Typography>
+        <Typography variant="h5">{remoteSetupCopy.remote}</Typography>
       </Box>
       <RemoteHostProfilesPanel
         hosts={hosts}

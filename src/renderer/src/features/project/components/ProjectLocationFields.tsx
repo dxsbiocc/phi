@@ -1,3 +1,5 @@
+import { projectCopy } from '../lib/projectCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Button,
   Stack,
@@ -40,12 +42,13 @@ export function ProjectLocationFields({
   onRemoteRootChange: (path: string) => void
   onOpenRemoteSettings: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack spacing={2}>
       <Typography variant="body2" color="text.secondary">
         {mode === 'local'
-          ? '项目会记住一个本机工作目录；临时对话不需要选择目录。'
-          : '远程项目会记住所选服务器上的目录；对话中的项目文件和命令操作将在该服务器执行。'}
+          ? projectCopy.projectsRememberALocalWorkingDirectoryTemporaryConversationsDoNot
+          : projectCopy.remoteProjectsRememberADirectoryOnTheSelectedServerProject}
       </Typography>
       <ToggleButtonGroup
         exclusive
@@ -55,15 +58,15 @@ export function ProjectLocationFields({
           if (next) onModeChange(next)
         }}
       >
-        <ToggleButton value="local">本机文件夹</ToggleButton>
-        <ToggleButton value="ssh">远程服务器</ToggleButton>
+        <ToggleButton value="local">{projectCopy.localFolder}</ToggleButton>
+        <ToggleButton value="ssh">{projectCopy.remoteServer}</ToggleButton>
       </ToggleButtonGroup>
       {mode === 'local' ? (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <TextField
-            label="工作目录"
+            label={projectCopy.workingDirectory}
             value={workingDirectory}
-            placeholder="点击右侧按钮选择文件夹"
+            placeholder={projectCopy.useTheButtonOnTheRightToChooseAFolder}
             fullWidth
             slotProps={{ input: { readOnly: true } }}
           />
@@ -73,7 +76,7 @@ export function ProjectLocationFields({
             onClick={onPickDirectory}
             sx={{ minHeight: 44, whiteSpace: 'nowrap' }}
           >
-            选择文件夹
+            {projectCopy.chooseFolder}
           </Button>
         </Stack>
       ) : (

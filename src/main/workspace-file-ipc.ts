@@ -1,6 +1,8 @@
 import type { BrowserWindow, Dialog, IpcMain, IpcMainInvokeEvent, Shell } from 'electron'
 import { basename } from 'node:path'
 import type { WorkspaceTextSaveResult } from '../shared/workspaceFileOperations'
+import { DEFAULT_UI_LANGUAGE, type UiLanguage } from '../shared/uiLanguage'
+import { nativeUiCopy } from './native-ui-copy'
 
 import { validateWorkspaceMarkdownSaveRequest } from './workspace-markdown-file'
 import { saveWorkspaceTextFile, validateWorkspaceTextSaveRequest } from './workspace-text-file'
@@ -18,6 +20,7 @@ export function registerWorkspaceFileIpc(options: {
   ipcMain: Pick<IpcMain, 'handle'>
   dialog: Pick<Dialog, 'showSaveDialog'>
   shell: Pick<Shell, 'trashItem'>
+  getUiLanguage?: () => UiLanguage
   requireRenderer: (event: IpcMainInvokeEvent) => BrowserWindow
   requireLocalWorkspaceRoot: (rootPath: string) => void
   observeRemote: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>
@@ -69,7 +72,10 @@ export function registerWorkspaceFileIpc(options: {
     const request = validateRemoteWorkspaceDownloadRequest(input)
     const { requestId } = request
     if (options.downloads.has(requestId)) throw new Error('下载请求 ID 正在使用')
+    const copy = nativeUiCopy(options.getUiLanguage?.() ?? DEFAULT_UI_LANGUAGE)
     const chosen = await options.dialog.showSaveDialog(window, {
+      title: copy.saveRemoteFile,
+      buttonLabel: copy.save,
       defaultPath: basename(request.path) || 'remote-file'
     })
     if (chosen.canceled || !chosen.filePath) return { status: 'cancelled' as const }

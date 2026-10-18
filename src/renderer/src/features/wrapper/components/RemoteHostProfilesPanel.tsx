@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useState } from 'react'
 import {
   Alert,
@@ -93,20 +95,21 @@ function connectionStatus(
   color: 'default' | 'success' | 'warning' | 'error'
   icon: React.JSX.Element
 } {
-  if (checking) return { label: '检测中', color: 'default', icon: <GoSync /> }
+  if (checking) return { label: remoteSetupCopy.checkingStatus, color: 'default', icon: <GoSync /> }
   if (check.tone === 'success') {
-    return { label: '连接正常', color: 'success', icon: <GoCheckCircle /> }
+    return { label: remoteSetupCopy.connected, color: 'success', icon: <GoCheckCircle /> }
   }
   if (check.tone === 'warning') {
-    return { label: '需要注意', color: 'warning', icon: <GoAlert /> }
+    return { label: remoteSetupCopy.attentionRequired, color: 'warning', icon: <GoAlert /> }
   }
   if (check.tone === 'error') {
-    return { label: '连接失败', color: 'error', icon: <GoAlertFill /> }
+    return { label: remoteSetupCopy.connectionFailed, color: 'error', icon: <GoAlertFill /> }
   }
-  return { label: '未检测', color: 'default', icon: <GoPlug /> }
+  return { label: remoteSetupCopy.notChecked, color: 'default', icon: <GoPlug /> }
 }
 
 function HostIdentity({ row }: { row: HostRow }): React.JSX.Element {
+  useUiLanguage()
   const host = row.saved
   return (
     <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', minWidth: 0 }}>
@@ -151,13 +154,14 @@ function RemoteHostListRow({
   doctorState: RemoteDoctorUiState
   onOpen: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const host = row.saved
   const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
   const checking = doctorState.phase === 'running'
   const status = connectionStatus(remoteHostCheckPresentation(doctorState, key), checking)
   return (
     <ListItemButton
-      aria-label={`配置 ${host.label}`}
+      aria-label={remoteSetupCopy.configureHost(host.label)}
       onClick={onOpen}
       sx={{
         px: 1,
@@ -175,7 +179,7 @@ function RemoteHostListRow({
         <Chip
           size="small"
           variant="outlined"
-          label={host.source === 'ssh-config' ? 'OpenSSH' : '旧 Phi 档案'}
+          label={host.source === 'ssh-config' ? 'OpenSSH' : remoteSetupCopy.legacyPhiProfile}
         />
         <Chip size="small" variant="soft" color={status.color} label={status.label} />
         <GoChevronRight size={18} color="var(--mui-palette-action-active)" aria-hidden="true" />
@@ -195,6 +199,7 @@ function RemoteHostDetail({
   onTest,
   onEnvironmentSave
 }: RemoteHostDetailProps): React.JSX.Element {
+  useUiLanguage()
   const host = row.saved
   const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
   const check = remoteHostCheckPresentation(doctorState, key)
@@ -204,7 +209,7 @@ function RemoteHostDetail({
     <Stack spacing={2.5}>
       <Box>
         <Button autoFocus startIcon={<GoArrowLeft />} onClick={onBack} sx={{ minHeight: 44 }}>
-          返回服务器列表
+          {remoteSetupCopy.backToServers}
         </Button>
       </Box>
 
@@ -220,18 +225,25 @@ function RemoteHostDetail({
           <Chip
             size="small"
             variant="outlined"
-            label={host.source === 'ssh-config' ? 'OpenSSH' : '旧 Phi 档案'}
+            label={host.source === 'ssh-config' ? 'OpenSSH' : remoteSetupCopy.legacyPhiProfile}
           />
           <Chip size="small" variant="soft" color={status.color} label={status.label} />
-          <Tooltip title={check.tone === 'idle' ? '测试连接' : check.message} arrow>
+          <Tooltip
+            title={
+              check.tone === 'idle'
+                ? remoteSetupCopy.testConnection
+                : localizeRemoteSetupMessage(check.message)
+            }
+            arrow
+          >
             <span>
               <IconButton
                 aria-label={
                   check.tone === 'error'
-                    ? `连接失败，重新测试 ${host.label}`
+                    ? remoteSetupCopy.retestFailedHost(host.label)
                     : checking
-                      ? `正在测试 ${host.label}`
-                      : `测试 ${host.label}`
+                      ? remoteSetupCopy.testingHost(host.label)
+                      : remoteSetupCopy.testHost(host.label)
                 }
                 color={status.color}
                 disabled={busy || checking}
@@ -242,10 +254,10 @@ function RemoteHostDetail({
               </IconButton>
             </span>
           </Tooltip>
-          <Tooltip title="编辑服务器" arrow>
+          <Tooltip title={remoteSetupCopy.editServer} arrow>
             <span>
               <IconButton
-                aria-label={`编辑 ${host.label}`}
+                aria-label={remoteSetupCopy.editItem(host.label)}
                 disabled={busy || checking}
                 onClick={() => onEdit(host)}
                 sx={{ width: 44, height: 44 }}
@@ -255,10 +267,10 @@ function RemoteHostDetail({
             </span>
           </Tooltip>
           {host.source !== 'ssh-config' && (
-            <Tooltip title="删除旧 Phi 档案" arrow>
+            <Tooltip title={remoteSetupCopy.deleteLegacyProfile} arrow>
               <span>
                 <IconButton
-                  aria-label={`删除 ${host.label}`}
+                  aria-label={remoteSetupCopy.deleteItem(host.label)}
                   disabled={busy || checking}
                   onClick={() => {
                     onDelete(host.id)
@@ -276,7 +288,7 @@ function RemoteHostDetail({
 
       <Divider />
 
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="error">{localizeRemoteSetupMessage(error)}</Alert>}
       {onEnvironmentSave && (
         <RemoteHostEnvironmentEditor
           key={`${host.id}:${host.runtimeRoot ?? ''}:${JSON.stringify(host.toolPaths ?? {})}`}
@@ -332,6 +344,7 @@ export function RemoteHostProfilesPanel({
   onEnvironmentSave?: RemoteHostDetailProps['onEnvironmentSave']
   initialSelectedHostAlias?: string | null
 }): React.JSX.Element {
+  useUiLanguage()
   const rows = hostRows(hosts, openSshHosts)
   const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(
     initialSelectedHostAlias
@@ -362,19 +375,24 @@ export function RemoteHostProfilesPanel({
             <Box sx={{ flex: 1 }}>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                 <Typography variant="h6" sx={{ fontWeight: 750 }}>
-                  SSH 服务器
+                  {remoteSetupCopy.sshServer}
                 </Typography>
-                <Chip size="small" label={`${rows.length} 台`} />
+                <Chip size="small" label={remoteSetupCopy.serverCount(rows.length)} />
               </Stack>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                连接配置来自 ~/.ssh/config，选择服务器后管理运行环境。
+                {remoteSetupCopy.serverConfigurationHelp}
               </Typography>
             </Box>
             <Stack direction="row" spacing={0.5}>
-              <Tooltip title={configLoading ? '正在刷新服务器' : '刷新服务器'} arrow>
+              <Tooltip
+                title={
+                  configLoading ? remoteSetupCopy.refreshingServers : remoteSetupCopy.refreshServers
+                }
+                arrow
+              >
                 <span>
                   <IconButton
-                    aria-label="刷新服务器"
+                    aria-label={remoteSetupCopy.refreshServers}
                     disabled={configLoading}
                     onClick={onReloadConfig}
                     sx={{ width: 44, height: 44 }}
@@ -388,7 +406,7 @@ export function RemoteHostProfilesPanel({
                 </span>
               </Tooltip>
               <Button
-                aria-label="添加服务器"
+                aria-label={remoteSetupCopy.addServer}
                 variant="contained"
                 size="small"
                 startIcon={<GoPlus aria-hidden="true" />}
@@ -396,18 +414,20 @@ export function RemoteHostProfilesPanel({
                 onClick={onOpenAdd}
                 sx={{ minHeight: 44, px: 2 }}
               >
-                添加服务器
+                {remoteSetupCopy.addServer}
               </Button>
             </Stack>
           </Stack>
 
           {configError && <Alert severity="warning">{configError}</Alert>}
-          {error && !dialogOpen && <Alert severity="error">{error}</Alert>}
+          {error && !dialogOpen && (
+            <Alert severity="error">{localizeRemoteSetupMessage(error)}</Alert>
+          )}
           {configLoading && rows.length === 0 && (
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 3 }}>
               <CircularProgress size={18} />
               <Typography variant="body2" color="text.secondary">
-                正在读取 SSH 配置…
+                {remoteSetupCopy.readingSshConfiguration}
               </Typography>
             </Stack>
           )}
@@ -415,10 +435,10 @@ export function RemoteHostProfilesPanel({
             <Box sx={{ py: 5, textAlign: 'center', borderTop: 1, borderColor: 'divider' }}>
               <GoServer size={28} color="var(--mui-palette-text-disabled)" aria-hidden="true" />
               <Typography variant="subtitle2" sx={{ mt: 1 }}>
-                还没有 SSH 服务器
+                {remoteSetupCopy.noSshServers}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                添加服务器后，可以创建远程项目或从 Wrapper 选择远端计算。
+                {remoteSetupCopy.addServerHelp}
               </Typography>
             </Box>
           )}

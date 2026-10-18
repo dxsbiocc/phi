@@ -166,13 +166,13 @@ test('GitHub Bun drafts keep their runtime hint through catalog and missing-runt
   assert.match(catalog, /runtimeHint:\s*draft\.runtimeHint/)
   assert.match(catalog, /draft\.setup \? \{ setup: draft\.setup \} : \{\}/)
   assert.match(dialog, /initialDraft\.runtimeHint === 'bun'/)
-  assert.match(dialog, /未找到 Phi 内置 Bun，请检查应用安装是否完整/)
+  assert.match(dialog, /connectorCopy.bunMissing/)
 })
 
 test('local submit busy copy describes only the brief background start request', () => {
   const dialog = readFileSync(dialogPath, 'utf8')
   assert.doesNotMatch(dialog, /正在启动并验证…/)
-  assert.match(dialog, /正在开始…/)
+  assert.match(dialog, /connectorCopy.starting/)
 })
 
 test('local connector form has no inline confirmation controls', () => {

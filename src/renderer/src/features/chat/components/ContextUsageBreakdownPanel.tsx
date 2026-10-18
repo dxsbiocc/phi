@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, IconButton, Typography } from '@mui/material'
 import type { ContextUsageSnapshot } from '../../../../../shared/contextUsageTypes'
 import { PhiIcons } from '../../../icons'
@@ -13,6 +15,7 @@ export function ContextUsageBreakdownPanel({
   loading: boolean
   onClose?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const presentation = contextUsagePresentation(usage, loading)
   const categories = contextUsageCategories(usage)
   const barDenominator = usage ? Math.max(usage.contextWindow, usage.tokens) : 1
@@ -37,17 +40,22 @@ export function ContextUsageBreakdownPanel({
     >
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          上下文用量
+          {chatCopy.contextUsage}
         </Typography>
         {onClose && (
-          <IconButton size="small" aria-label="关闭上下文详情" onClick={onClose} sx={{ ml: 1 }}>
+          <IconButton
+            size="small"
+            aria-label={chatCopy.closeContextDetails}
+            onClick={onClose}
+            sx={{ ml: 1 }}
+          >
             <PhiIcons.action.close size={16} />
           </IconButton>
         )}
       </Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, mb: 1 }}>
         <Typography variant="body2" color="text.secondary">
-          {usage ? `${Math.round(usage.percent)}% 已使用` : presentation.label}
+          {usage ? chatCopy.valueUsed(Math.round(usage.percent)) : presentation.label}
         </Typography>
         {usage && (
           <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
@@ -57,7 +65,7 @@ export function ContextUsageBreakdownPanel({
       </Box>
       {usage && (
         <Box
-          aria-label="上下文分类占比"
+          aria-label={chatCopy.contextUsageByCategory}
           sx={{
             display: 'flex',
             width: '100%',
@@ -112,7 +120,7 @@ export function ContextUsageBreakdownPanel({
                 sx={{ flex: 1, minWidth: 0, fontWeight: category.id === largestId ? 700 : 400 }}
               >
                 {category.label}
-                {category.id === largestId ? ' · 最多' : ''}
+                {category.id === largestId ? chatCopy.largest : ''}
               </Typography>
               <Typography
                 variant="body2"
@@ -124,7 +132,7 @@ export function ContextUsageBreakdownPanel({
             </Box>
           ))}
           <Box
-            title="未使用容量包含自动压缩预留"
+            title={chatCopy.unusedCapacityIncludesTheAutoCompactionReserve}
             sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}
           >
             <Box
@@ -137,7 +145,7 @@ export function ContextUsageBreakdownPanel({
               }}
             />
             <Typography variant="body2" sx={{ flex: 1 }}>
-              未使用容量
+              {chatCopy.unusedCapacity}
             </Typography>
             <Typography
               variant="body2"
@@ -150,7 +158,7 @@ export function ContextUsageBreakdownPanel({
           {usage?.deferredMcpTokens !== undefined && (
             <Box
               data-phi-context-deferred-mcp="true"
-              title="完整 schema 的潜在开销，不计入当前用量；目录提示可能计入系统上下文"
+              title={chatCopy.potentialFullSchemaOverheadIsExcludedFromCurrentUsageCatalog}
               sx={{
                 display: 'flex',
                 alignItems: 'center',
@@ -171,7 +179,7 @@ export function ContextUsageBreakdownPanel({
                 }}
               />
               <Typography variant="body2" sx={{ flex: 1 }}>
-                MCP 工具（未注入）
+                {chatCopy.mCPToolsNotInjected}
               </Typography>
               <Typography
                 variant="body2"
@@ -185,7 +193,9 @@ export function ContextUsageBreakdownPanel({
         </Box>
       ) : (
         <Typography variant="body2" color="text.secondary">
-          {usage ? '当前运行时只提供总量，分类数据暂不可用。' : presentation.detail}
+          {usage
+            ? chatCopy.theCurrentRuntimeProvidesTotalsOnlyCategoryDetailsAreUnavailable
+            : presentation.detail}
         </Typography>
       )}
     </Box>

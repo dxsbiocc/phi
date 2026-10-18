@@ -59,7 +59,7 @@ connector:
     assert.equal(connectors[0].version, '1.1.0')
     assert.equal(connectors[0].signIn, '无需登录')
     assert.equal(connectors[0].added, false)
-    assert.equal(connectors[0].unavailableReason, '需要 Phi 2.0.0 或更高版本')
+    assert.equal(connectors[0].unavailableReason, 'Requires Phi 2.0.0 or later')
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
@@ -111,7 +111,7 @@ connector:
       sourceId: 'first-github',
       sha: 'a'.repeat(40)
     })
-    assert.match(connectors[0]?.notice ?? '', /同名|忽略/)
+    assert.match(connectors[0]?.notice ?? '', /duplicate|ignored/i)
 
     const official = writeMcpRegistryFixture(join(agentDir, 'official'), [
       manifest('0.5.0', 'Official')
@@ -208,7 +208,7 @@ test('remote MCP connectors preserve unrelated configuration and remove only mat
 
     assert.throws(
       () => removeRemoteMcpConnector('pubmed', 'https://other.example/mcp', agentDir),
-      /配置已变化/
+      /configuration changed/
     )
     removeRemoteMcpConnector('pubmed', 'https://pubmed.mcp.claude.com/mcp', agentDir)
     config = JSON.parse(readFileSync(path, 'utf8'))
@@ -272,12 +272,12 @@ test('remote MCP connector input rejects unsafe URLs and name collisions', () =>
     )
     assert.throws(
       () => addRemoteMcpConnector('../other', 'https://example.com/mcp', agentDir),
-      /名称/
+      /name/
     )
     addRemoteMcpConnector('pubmed', 'https://pubmed.mcp.claude.com/mcp', agentDir)
     assert.throws(
       () => addRemoteMcpConnector('pubmed', 'https://other.example/mcp', agentDir),
-      /已有/
+      /already exists/
     )
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
@@ -333,7 +333,7 @@ test('custom OAuth credentials are normalized, stored privately, and excluded fr
         addRemoteMcpConnector('cbioportal', url, agentDir, {
           oauth: { clientId: 'different-client' }
         }),
-      /不同认证信息/
+      /different authentication/
     )
     assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), config)
   } finally {
@@ -363,7 +363,7 @@ test('OAuth setup accepts an ID without secret and omits empty optional fields',
         addRemoteMcpConnector('no-auth', 'https://public.test/mcp', agentDir, {
           oauth: { clientId: 'client' }
         }),
-      /不同认证信息/
+      /different authentication/
     )
     assert.equal(JSON.parse(readFileSync(path, 'utf8')).mcpServers['no-auth'].oauth, undefined)
   } finally {
@@ -411,7 +411,7 @@ test('invalid OAuth setup is rejected before writing, without echoing the creden
         (error: unknown) => {
           assert.ok(error instanceof Error)
           assert.equal(error.message.includes('private-value'), false)
-          return /OAuth|认证设置/.test(error.message)
+          return /OAuth|authentication settings/.test(error.message)
         }
       )
       assert.equal(existsSync(join(agentDir, 'mcp.json')), false)
@@ -421,7 +421,7 @@ test('invalid OAuth setup is rejected before writing, without echoing the creden
         addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir, {
           oauth: { clientId: 'client' }
         }),
-      /使用 API key/
+      /uses an API key/
     )
     assert.equal(existsSync(join(agentDir, 'mcp.json')), false)
     addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir)
@@ -454,7 +454,7 @@ test('featured login selects only matching saved OAuth endpoints and rejects amb
     })
     assert.throws(
       () => readRemoteMcpOAuthCredentials('cbioportal', url, agentDir),
-      /多个 OAuth 配置/
+      /Multiple OAuth configurations/
     )
     assert.deepEqual(readRemoteMcpOAuthCredentials('my-cbioportal', url, agentDir), {
       clientId: 'alias-client'
@@ -476,7 +476,7 @@ test('custom authorization reads only the exact saved HTTP entry with an OAuth c
       url,
       oauth: { clientId: 'client', clientSecret: 'secret' }
     })
-    assert.throws(() => readCustomRemoteMcpConnector('missing', agentDir), /已保存/)
+    assert.throws(() => readCustomRemoteMcpConnector('missing', agentDir), /saved/)
     for (const entry of [
       { type: 'http', url },
       { type: 'http', url, oauth: { clientSecret: 'secret' } },
@@ -486,10 +486,10 @@ test('custom authorization reads only the exact saved HTTP entry with an OAuth c
       { type: 'stdio', command: 'exec', oauth: { clientId: 'client' } }
     ]) {
       writeFileSync(join(agentDir, 'mcp.json'), JSON.stringify({ mcpServers: { custom: entry } }))
-      assert.throws(() => readCustomRemoteMcpConnector('custom', agentDir), /自定义|Client ID/)
+      assert.throws(() => readCustomRemoteMcpConnector('custom', agentDir), /custom|Client ID/)
     }
     addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir)
-    assert.throws(() => readCustomRemoteMcpConnector('tavily', agentDir), /自定义/)
+    assert.throws(() => readCustomRemoteMcpConnector('tavily', agentDir), /custom/)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
@@ -527,7 +527,7 @@ test('an optimistic add retry can correct OAuth credentials and clear them witho
     assert.equal(statSync(path).mode & 0o777, 0o600)
     assert.throws(
       () => addRemoteMcpConnector('custom', url, agentDir, { oauth: first }),
-      /不同认证信息/
+      /different authentication/
     )
 
     addRemoteMcpConnector('custom', url, agentDir, { expectedOAuth: corrected })
@@ -554,7 +554,7 @@ test('OAuth add retry rejects stale guards, missing entries, package entries and
   try {
     assert.throws(
       () => addRemoteMcpConnector('custom', url, agentDir, { oauth: next, expectedOAuth: null }),
-      /配置已变化/
+      /configuration changed/
     )
     assert.equal(existsSync(path), false)
     for (const entry of [
@@ -569,7 +569,7 @@ test('OAuth add retry rejects stale guards, missing entries, package entries and
       const before = readFileSync(path, 'utf8')
       assert.throws(
         () => addRemoteMcpConnector('custom', url, agentDir, { oauth: next, expectedOAuth: first }),
-        /配置已变化/
+        /configuration changed/
       )
       assert.equal(readFileSync(path, 'utf8'), before)
     }
@@ -579,7 +579,7 @@ test('OAuth add retry rejects stale guards, missing entries, package entries and
     )
     assert.throws(
       () => addRemoteMcpConnector('custom', url, agentDir, { oauth: next, expectedOAuth: null }),
-      /配置已变化/
+      /configuration changed/
     )
     addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir)
     assert.throws(
@@ -587,7 +587,7 @@ test('OAuth add retry rejects stale guards, missing entries, package entries and
         addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir, {
           expectedOAuth: null
         }),
-      /配置已变化/
+      /configuration changed/
     )
   } finally {
     rmSync(agentDir, { recursive: true, force: true })

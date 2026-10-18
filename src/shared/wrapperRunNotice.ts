@@ -1,3 +1,4 @@
+import type { UiLanguage } from './uiLanguage'
 import type { WrapperRun } from './wrapperTypes'
 
 /**
@@ -24,7 +25,14 @@ export function isWrapperRunEndState(state: WrapperRun['state']): state is Wrapp
   return state === 'completed' || state === 'failed' || state === 'cancelled'
 }
 
-export function formatWrapperRunDuration(seconds: number): string {
+export function formatWrapperRunDuration(seconds: number, language: UiLanguage = 'zh-CN'): string {
+  if (language === 'en') {
+    if (seconds < 60) return `${seconds} s`
+    const minutes = Math.floor(seconds / 60)
+    return minutes < 60
+      ? `${minutes} min ${seconds % 60} s`
+      : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+  }
   if (seconds < 60) return `${seconds} 秒`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
@@ -56,7 +64,30 @@ const TITLES: Record<WrapperRunEndState, string> = {
   cancelled: 'Wrapper 运行已取消'
 }
 
-export function wrapperRunNotice(event: WrapperRunFinishedEvent): { title: string; body: string } {
+export function wrapperRunNotice(
+  event: WrapperRunFinishedEvent,
+  language: UiLanguage = 'zh-CN'
+): { title: string; body: string } {
+  if (language === 'en') {
+    const titles = {
+      completed: 'Wrapper run completed',
+      failed: 'Wrapper run failed',
+      cancelled: 'Wrapper run cancelled'
+    }
+    const lines = [
+      `${event.wrapperId} · Elapsed ${formatWrapperRunDuration(event.elapsedSeconds, language)}`
+    ]
+    if (event.state === 'failed')
+      lines.push(
+        event.missingOutputs?.length
+          ? `The workflow finished but expected outputs are missing: ${event.missingOutputs.join(', ')}`
+          : `Exit code ${event.exitCode ?? 'Unknown'}`
+      )
+    if (event.outDir) lines.push(`Output directory: ${event.outDir}`)
+    lines.push(`Run ID: ${event.wrapperRunId}`)
+    if (event.state === 'failed') lines.push('Ask Wrapper to inspect the logs for this run.')
+    return { title: titles[event.state], body: lines.join('\n') }
+  }
   const lines = [`${event.wrapperId} · 用时 ${formatWrapperRunDuration(event.elapsedSeconds)}`]
   if (event.state === 'failed') {
     lines.push(

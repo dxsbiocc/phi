@@ -139,9 +139,12 @@ test('agent discovery hides disabled packages and enabled dependents with a UI r
   const module = status.find((entry) => entry.id === 'nf-core/modules/fastqc')
   const subworkflow = status.find((entry) => entry.id === 'nf-core/subworkflows/qc')
   assert.equal(module?.packageEnabled, false)
-  assert.match(module?.hiddenReason ?? '', /module-nf-core-fastqc 已停用/)
+  assert.match(module?.hiddenReason ?? '', /module-nf-core-fastqc is disabled/)
   assert.equal(subworkflow?.packageEnabled, true)
-  assert.match(subworkflow?.hiddenReason ?? '', /依赖 module-nf-core-fastqc 不可用.*已停用/)
+  assert.match(
+    subworkflow?.hiddenReason ?? '',
+    /Dependency module-nf-core-fastqc is unavailable.*is disabled/
+  )
 })
 
 test('custom wrappers remain visible outside package ownership and enablement', () => {
@@ -237,7 +240,10 @@ test('an explicit disabled dependency blocks an opted-in root', () => {
     (entry) => entry.packageId === 'subworkflow-nf-core-qc'
   )
   assert.equal(root?.packageEnabled, true)
-  assert.match(root?.hiddenReason ?? '', /依赖 module-nf-core-fastqc 不可用.*已停用/)
+  assert.match(
+    root?.hiddenReason ?? '',
+    /Dependency module-nf-core-fastqc is unavailable.*is disabled/
+  )
 })
 
 test('custom wrappers can be disabled and restored through their stable enablement identifier', () => {
@@ -257,7 +263,7 @@ test('custom wrappers can be disabled and restored through their stable enableme
   )
   assert.equal(disabled?.packageSelected, true)
   assert.equal(disabled?.packageEnabled, false)
-  assert.match(disabled?.hiddenReason ?? '', /自定义 wrapper toy 已停用/)
+  assert.match(disabled?.hiddenReason ?? '', /Custom Wrapper toy is disabled/)
 
   setEnabled(key, true, { agentDir })
   resetWrapperCompositionCatalogCache()

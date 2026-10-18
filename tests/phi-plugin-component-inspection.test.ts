@@ -119,9 +119,9 @@ test('legacy component names remain inspectable without guessing missing metadat
 test('each component is a named native button with its matching icon and dialog affordance', () => {
   const markup = themed(createElement(PhiPluginComponentDetails, { plugin: plugin() }))
   for (const [key, label, kind] of [
-    ['agent:Visualization', '查看智能体 Visualization', 'agent'],
-    ['skill:omics-visualization', '查看技能 omics-visualization', 'skill'],
-    ['script:viz_render', '查看脚本工具 viz_render', 'script']
+    ['agent:Visualization', 'View Agent Visualization', 'agent'],
+    ['skill:omics-visualization', 'View Skill omics-visualization', 'skill'],
+    ['script:viz_render', 'View Script Tool viz_render', 'script']
   ]) {
     assert.match(
       markup,
@@ -153,14 +153,14 @@ test('plugin skill details omit enablement status while retaining description an
     for (const markup of [listMarkup, dialogMarkup]) {
       assert.match(markup, /omics-visualization/)
       assert.match(markup, /完整技能说明。/)
-      assert.doesNotMatch(markup, /已启用|已停用|状态未知/)
+      assert.doesNotMatch(markup, /Enabled|Disabled|Unknown status/)
     }
-    assert.match(dialogMarkup, /技能详情/)
+    assert.match(dialogMarkup, /Skill Details/)
     assert.match(dialogMarkup, /科研绘图 · v1.0.2/)
     assert.match(dialogMarkup, /绘图环境/)
     assert.match(dialogMarkup, /plugin:viz/)
     assert.match(dialogMarkup, /环境需要修复。/)
-    assert.doesNotMatch(dialogMarkup, />状态</)
+    assert.doesNotMatch(dialogMarkup, />Status</)
   }
 })
 
@@ -176,14 +176,14 @@ test('inspection dialog shows complete script description, owner, approval and e
       onClose: () => undefined
     })
   )
-  assert.match(markup, /脚本工具详情/)
+  assert.match(markup, /Script Tool Details/)
   assert.match(markup, /保留完整第二行说明/)
   assert.match(markup, /科研绘图 · v1.0.2/)
-  assert.match(markup, /写入/)
+  assert.match(markup, /Write/)
   assert.match(markup, /omics-visualization/)
   assert.match(markup, /绘图环境/)
   assert.match(markup, /plugin:viz/)
-  assert.match(markup, /aria-label="关闭组件详情"/)
+  assert.match(markup, /aria-label="Close component details"/)
   assert.doesNotMatch(markup, /data-phi-description-truncated/)
 })
 

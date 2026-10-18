@@ -1,3 +1,6 @@
+import { providerStatusText } from '../features/settings/lib/providerStatusText'
+import { settingsUi } from '../features/settings/lib/settingsUi'
+import { useUiLanguage } from '../lib/i18n'
 import { useState } from 'react'
 import {
   alpha,
@@ -67,15 +70,69 @@ export type SettingsCategory =
   | 'appearance'
 
 const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.Element }> = [
-  { id: 'general', label: '通用', icon: <GeneralIcon fontSize="small" /> },
-  { id: 'environment', label: '环境', icon: <RemoteExecutionIcon fontSize="small" /> },
-  { id: 'persona', label: '助手', icon: <PsychologyIcon fontSize="small" /> },
-  { id: 'providers', label: 'Provider', icon: <ProviderIcon fontSize="small" /> },
-  { id: 'web-search', label: '网页搜索', icon: <SearchIcon fontSize="small" /> },
-  { id: 'permissions', label: '权限', icon: <ShieldIcon fontSize="small" /> },
-  { id: 'memory', label: '记忆', icon: <MemoryIcon fontSize="small" /> },
-  { id: 'remote', label: '远程', icon: <RemoteExecutionIcon fontSize="small" /> },
-  { id: 'appearance', label: '外观', icon: <PaletteIcon fontSize="small" /> }
+  {
+    id: 'general',
+    get label() {
+      return settingsUi.general
+    },
+    icon: <GeneralIcon fontSize="small" />
+  },
+  {
+    id: 'environment',
+    get label() {
+      return settingsUi.environments
+    },
+    icon: <RemoteExecutionIcon fontSize="small" />
+  },
+  {
+    id: 'persona',
+    get label() {
+      return settingsUi.assistant
+    },
+    icon: <PsychologyIcon fontSize="small" />
+  },
+  {
+    id: 'providers',
+    get label() {
+      return settingsUi.providers
+    },
+    icon: <ProviderIcon fontSize="small" />
+  },
+  {
+    id: 'web-search',
+    get label() {
+      return settingsUi.webSearch
+    },
+    icon: <SearchIcon fontSize="small" />
+  },
+  {
+    id: 'permissions',
+    get label() {
+      return settingsUi.permissions
+    },
+    icon: <ShieldIcon fontSize="small" />
+  },
+  {
+    id: 'memory',
+    get label() {
+      return settingsUi.memory
+    },
+    icon: <MemoryIcon fontSize="small" />
+  },
+  {
+    id: 'remote',
+    get label() {
+      return settingsUi.remote
+    },
+    icon: <RemoteExecutionIcon fontSize="small" />
+  },
+  {
+    id: 'appearance',
+    get label() {
+      return settingsUi.appearance
+    },
+    icon: <PaletteIcon fontSize="small" />
+  }
 ]
 
 function CategoryIcon({
@@ -87,6 +144,7 @@ function CategoryIcon({
   selected: boolean
   children: React.JSX.Element
 }): React.JSX.Element {
+  useUiLanguage()
   const accent = accentAt(index)
   return (
     <Box
@@ -115,6 +173,7 @@ function PersonaSection({
   personaMarkdown: string | null
   onSavePersonaMarkdown: (markdown: string) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   const [markdown, setMarkdown] = useState(personaMarkdown ?? '')
   const [isSaving, setIsSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -132,9 +191,9 @@ function PersonaSection({
   return (
     <Stack spacing={2}>
       <Box>
-        <Typography variant="h5">助手</Typography>
+        <Typography variant="h5">{settingsUi.assistant}</Typography>
         <Typography variant="body2" color="text.secondary">
-          以 Markdown 形式描述助手的性格、说话风格与回答偏好，留空则使用默认设置。
+          {settingsUi.describeYourAssistantSPersonalityToneAndResponse}
         </Typography>
       </Box>
 
@@ -147,15 +206,15 @@ function PersonaSection({
         fullWidth
         multiline
         minRows={14}
-        placeholder={'# 助手\n\n性格：……\n说话风格：……\n回答偏好：……'}
+        placeholder={settingsUi.assistantPersonalityToneResponsePreferences}
         sx={{ '& textarea': { fontFamily: 'var(--font-mono)', fontSize: '0.9rem' } }}
       />
 
-      {saved ? <Alert severity="success">已保存</Alert> : null}
+      {saved ? <Alert severity="success">{settingsUi.saved}</Alert> : null}
 
       <Box>
         <Button variant="contained" disabled={isSaving} onClick={handleSave} sx={{ minHeight: 44 }}>
-          保存
+          {settingsUi.save}
         </Button>
       </Box>
     </Stack>
@@ -169,6 +228,7 @@ function ProviderCard({
   provider: ProviderAuthStatus
   onLogout: (providerId: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Paper variant="outlined" sx={{ px: 1.5, py: 1.25, borderRadius: 1 }}>
       <Stack
@@ -205,7 +265,11 @@ function ProviderCard({
             {provider.hasApiKey && <Chip size="small" icon={<KeyIcon />} label="API Key" />}
             {provider.hasOAuth && <Chip size="small" icon={<ShieldIcon />} label="OAuth" />}
             {provider.statusText && (
-              <Chip size="small" label={provider.statusText} variant="outlined" />
+              <Chip
+                size="small"
+                label={providerStatusText(provider.statusText)}
+                variant="outlined"
+              />
             )}
           </Stack>
         </Box>
@@ -222,7 +286,7 @@ function ProviderCard({
           <Chip
             size="small"
             color={provider.configured ? 'success' : 'default'}
-            label={provider.configured ? '已配置' : '未配置'}
+            label={provider.configured ? settingsUi.configured : settingsUi.notConfigured}
           />
           {provider.configured && (
             <Button
@@ -233,7 +297,7 @@ function ProviderCard({
               startIcon={<LogoutIcon />}
               sx={{ minHeight: 34, px: 1.25 }}
             >
-              登出
+              {settingsUi.logOut}
             </Button>
           )}
         </Stack>
@@ -253,6 +317,7 @@ function ProvidersSection({
   onOpenAddProvider: () => void
   onLogout: (providerId: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const configuredProviders = providers.filter((item) => item.configured)
 
   return (
@@ -266,20 +331,20 @@ function ProvidersSection({
           gap: 1
         }}
       >
-        <Typography variant="h5">Provider</Typography>
+        <Typography variant="h5">{settingsUi.providers}</Typography>
         <Stack direction="row" spacing={1}>
-          <Tooltip title="刷新状态">
+          <Tooltip title={settingsUi.refreshStatus}>
             <IconButton
-              aria-label="刷新状态"
+              aria-label={settingsUi.refreshStatus}
               onClick={() => void onRefresh()}
               sx={{ width: 40, height: 40, color: 'text.secondary' }}
             >
               <RefreshIcon size={19} />
             </IconButton>
           </Tooltip>
-          <Tooltip title="添加 Provider">
+          <Tooltip title={settingsUi.addProvider}>
             <IconButton
-              aria-label="添加 Provider"
+              aria-label={settingsUi.addProvider}
               color="primary"
               onClick={onOpenAddProvider}
               sx={{ width: 40, height: 40 }}
@@ -293,7 +358,7 @@ function ProvidersSection({
       {configuredProviders.length === 0 ? (
         <Paper sx={{ p: 3, borderRadius: 1 }}>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            <Typography variant="body1">尚未配置任何 Provider</Typography>
+            <Typography variant="body1">{settingsUi.noProvidersConfigured}</Typography>
           </Alert>
           <Button
             variant="contained"
@@ -301,7 +366,7 @@ function ProvidersSection({
             startIcon={<AddIcon />}
             sx={{ minHeight: 44 }}
           >
-            先添加 Provider
+            {settingsUi.addAProvider}
           </Button>
         </Paper>
       ) : (
@@ -346,12 +411,13 @@ function GeneralSection({
   compactDisabled?: boolean
   onCompactContext?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack spacing={2}>
       <Box>
-        <Typography variant="h5">通用</Typography>
+        <Typography variant="h5">{settingsUi.general}</Typography>
         <Typography variant="body2" color="text.secondary">
-          调整应用行为和当前会话设置。
+          {settingsUi.adjustApplicationBehaviorAndCurrentSessionSettings}
         </Typography>
       </Box>
 
@@ -366,10 +432,10 @@ function GeneralSection({
       >
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body1" sx={{ fontWeight: 600 }}>
-            无项目任务文件夹
+            {settingsUi.folderForTasksWithoutAProject}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            在项目外启动的任务默认存储数据的位置。
+            {settingsUi.defaultDataLocationForTasksStartedOutsideA}
           </Typography>
         </Box>
         <Stack
@@ -403,14 +469,16 @@ function GeneralSection({
             disabled={isSavingAppSettings}
             onClick={onPickNoProjectTaskFolder}
           >
-            更改
+            {settingsUi.change}
           </Button>
         </Stack>
       </Box>
 
       <Box>
         <FormControl disabled={isSavingAppSettings}>
-          <FormLabel id="file-open-conversation-layout-label">打开文件时的对话布局</FormLabel>
+          <FormLabel id="file-open-conversation-layout-label">
+            {settingsUi.conversationLayoutWhenOpeningFiles}
+          </FormLabel>
           <RadioGroup
             row
             aria-labelledby="file-open-conversation-layout-label"
@@ -421,11 +489,19 @@ function GeneralSection({
               })
             }
           >
-            <FormControlLabel value="sidebar" control={<Radio />} label="并排显示对话" />
-            <FormControlLabel value="tab" control={<Radio />} label="对话保留在标签区" />
+            <FormControlLabel
+              value="sidebar"
+              control={<Radio />}
+              label={settingsUi.showConversationAlongsideFiles}
+            />
+            <FormControlLabel
+              value="tab"
+              control={<Radio />}
+              label={settingsUi.keepConversationInTabs}
+            />
           </RadioGroup>
           <Typography variant="caption" color="text.secondary">
-            打开文件或 Notebook 后仍可通过布局按钮随时切换。
+            {settingsUi.youCanSwitchLayoutsAtAnyTimeAfter}
           </Typography>
         </FormControl>
       </Box>
@@ -441,10 +517,10 @@ function GeneralSection({
               }
             />
           }
-          label="允许读取项目外文件"
+          label={settingsUi.allowReadingFilesOutsideTheProject}
         />
         <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
-          仅用于文件悬停预览；不会授予写入、执行或删除权限。默认关闭。
+          {settingsUi.appliesOnlyToFileHoverPreviewsItDoes}
         </Typography>
       </Box>
 
@@ -459,10 +535,10 @@ function GeneralSection({
               }
             />
           }
-          label="运行任务时防止系统休眠"
+          label={settingsUi.preventSleepWhileTasksRun}
         />
         <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
-          仅在有会话运行、等待审批或等待输入时保持唤醒。
+          {settingsUi.keepTheSystemAwakeOnlyWhileSessionsRun}
         </Typography>
       </Box>
 
@@ -477,10 +553,10 @@ function GeneralSection({
               }
             />
           }
-          label="提示词建议"
+          label={settingsUi.promptSuggestions}
         />
         <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
-          允许助手在合适时给出一句可直接继续的下一步建议。
+          {settingsUi.allowTheAssistantToSuggestANextStep}
         </Typography>
       </Box>
 
@@ -590,6 +666,7 @@ function SettingsDialog({
   category,
   onCategoryChange
 }: SettingsDialogProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Dialog
       open={open}
@@ -624,7 +701,7 @@ function SettingsDialog({
             color: 'text.primary'
           }
         }}
-        aria-label="关闭设置"
+        aria-label={settingsUi.closeSettings}
       >
         <CloseIcon fontSize="small" />
       </IconButton>
@@ -749,6 +826,8 @@ function SettingsDialog({
               onSelectMode={onSelectThemeMode}
               palette={themePalette}
               onSelectPalette={onSelectThemePalette}
+              onSelectLanguage={(uiLanguage) => onUpdateAppSettings({ uiLanguage })}
+              savingLanguage={isSavingAppSettings}
             />
           )}
         </Box>

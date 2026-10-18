@@ -75,7 +75,7 @@ test('buildWrapperReproducibilityBundle throws a clear error for an unknown run'
   withHarness(({ agentDir }) => {
     assert.throws(
       () => buildWrapperReproducibilityBundle('wrun_does_not_exist', agentDir),
-      /run 不存在/
+      /Run not found/
     )
   })
 })

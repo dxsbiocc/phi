@@ -1,3 +1,5 @@
+import { settingsUi } from '../features/settings/lib/settingsUi'
+import { useUiLanguage } from '../lib/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Snackbar } from '@mui/material'
 import type { PackageUpdateView } from '../../../shared/packageManagerTypes'
@@ -8,6 +10,7 @@ function message(error: unknown): string {
 }
 
 export function PackageUpdateNotice(): React.JSX.Element {
+  useUiLanguage()
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [noticeOpen, setNoticeOpen] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -78,7 +81,7 @@ export function PackageUpdateNotice(): React.JSX.Element {
         onClose={(_, reason) => {
           if (reason !== 'clickaway') setNoticeOpen(false)
         }}
-        message={`有 ${updates.length} 个内容包可更新`}
+        message={settingsUi.valueContentPackageUpdatesAvailable(updates.length)}
         action={
           <Button
             color="primary"
@@ -88,7 +91,7 @@ export function PackageUpdateNotice(): React.JSX.Element {
               setDialogOpen(true)
             }}
           >
-            查看
+            {settingsUi.view}
           </Button>
         }
       />

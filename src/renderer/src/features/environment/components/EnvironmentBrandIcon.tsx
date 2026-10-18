@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import Box from '@mui/material/Box'
 import Chip from '@mui/material/Chip'
 import Stack from '@mui/material/Stack'
@@ -49,7 +51,12 @@ const BRAND_VISUALS: Record<EnvironmentBrandKey, BrandVisual> = {
   },
   java: { key: 'java', label: 'Java' },
   conda: { key: 'conda', label: 'Conda' },
-  generic: { key: 'generic', label: '环境' }
+  generic: {
+    key: 'generic',
+    get label() {
+      return environmentUi.environments
+    }
+  }
 }
 
 function keyFromText(value: string): EnvironmentBrandKey | null {
@@ -75,18 +82,48 @@ const CONSUMER_CAPABILITIES: Record<
   ManagedEnvironmentEntry['consumers'][number]['kind'],
   Capability
 > = {
-  skill: { key: 'skills', label: '技能运行时' },
-  agent: { key: 'agent', label: 'Agent 运行时' },
-  plugin: { key: 'plugin', label: '插件运行时' },
-  wrapper: { key: 'workflow', label: '工作流运行时' },
-  notebook: { key: 'notebook-server', label: 'Notebook 服务' },
-  kernel: { key: 'notebook-kernel', label: 'Notebook 内核' }
+  skill: {
+    key: 'skills',
+    get label() {
+      return environmentUi.skillRuntime
+    }
+  },
+  agent: {
+    key: 'agent',
+    get label() {
+      return environmentUi.agentRuntime
+    }
+  },
+  plugin: {
+    key: 'plugin',
+    get label() {
+      return environmentUi.pluginRuntime
+    }
+  },
+  wrapper: {
+    key: 'workflow',
+    get label() {
+      return environmentUi.workflowRuntime
+    }
+  },
+  notebook: {
+    key: 'notebook-server',
+    get label() {
+      return environmentUi.notebookServer
+    }
+  },
+  kernel: {
+    key: 'notebook-kernel',
+    get label() {
+      return environmentUi.notebookKernel
+    }
+  }
 }
 
 function environmentCapabilities(environment: ManagedEnvironmentEntry): Capability[] {
   const primaryKey = environmentPrimaryBrand(environment).key
   if (primaryKey === 'jupyter') {
-    return [{ key: 'notebook-server', label: 'Notebook 服务' }]
+    return [{ key: 'notebook-server', label: environmentUi.notebookServer }]
   }
   if (primaryKey === 'nextflow') {
     return [
@@ -97,14 +134,14 @@ function environmentCapabilities(environment: ManagedEnvironmentEntry): Capabili
   }
   if (primaryKey === 'python') {
     return [
-      { key: 'python-kernel', label: 'Python 内核' },
-      { key: 'skills', label: '技能运行时' }
+      { key: 'python-kernel', label: environmentUi.pythonKernel },
+      { key: 'skills', label: environmentUi.skillRuntime }
     ]
   }
   if (primaryKey === 'r') {
     return [
-      { key: 'r-kernel', label: 'R 内核' },
-      { key: 'visualization', label: '可视化运行时' }
+      { key: 'r-kernel', label: environmentUi.rKernel },
+      { key: 'visualization', label: environmentUi.visualizationRuntime }
     ]
   }
   const byKey = new Map<string, Capability>()
@@ -122,11 +159,12 @@ export function EnvironmentBrandIcon({
   environment: ManagedEnvironmentEntry
   size?: number
 }): React.JSX.Element {
+  useUiLanguage()
   const visual = environmentPrimaryBrand(environment)
   return (
     <Box
       role="img"
-      aria-label={`${visual.label} 官方图标`}
+      aria-label={environmentUi.valueOfficialIcon(visual.label)}
       sx={{
         width: size,
         height: size,
@@ -161,6 +199,7 @@ export function EnvironmentCapabilityChips({
   environment: ManagedEnvironmentEntry
   limit?: number
 }): React.JSX.Element {
+  useUiLanguage()
   const capabilities = environmentCapabilities(environment)
   const visible = capabilities.slice(0, limit)
   const hidden = capabilities.length - visible.length
@@ -204,10 +243,10 @@ function hostCapabilityChips(resources: ManagedEnvironmentHostResources): HostCa
   const dependencies = resources.dependencies.map((dependency): HostCapabilityChip => {
     const state =
       dependency.status === 'ready'
-        ? '可用'
+        ? environmentUi.available
         : dependency.status === 'unavailable'
-          ? '不可用'
-          : '未检测到'
+          ? environmentUi.unavailable
+          : environmentUi.notDetected
     return {
       id: dependency.id,
       label: `${dependency.label} ${state}`,
@@ -230,6 +269,7 @@ export function EnvironmentHostCapabilityChips({
   resources: ManagedEnvironmentHostResources
   limit?: number
 }): React.JSX.Element {
+  useUiLanguage()
   const capabilities = hostCapabilityChips(resources)
   const visible = capabilities.slice(0, limit)
   const hidden = capabilities.length - visible.length

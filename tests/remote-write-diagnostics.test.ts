@@ -36,7 +36,7 @@ test('injected write probes classify capacity failures and remove their director
       const diagnosis = parseRemoteWriteProbe(output, '', 0)
 
       assert.equal(diagnosis.kind, kind)
-      assert.match(diagnosis.message, /设置 → 远程主机/u)
+      assert.match(diagnosis.message, /Settings → Remote Hosts/u)
       assert.deepEqual(readdirSync(root), before)
     }
   } finally {
@@ -55,7 +55,7 @@ test('a silent command failure runs the write probe and returns quota guidance',
     )
 
     assert.equal(diagnosis?.kind, 'quota-exceeded')
-    assert.match(diagnosis?.message ?? '', /写入空间或文件数配额已用尽/u)
+    assert.match(diagnosis?.message ?? '', /Disk space or the file count quota is exhausted/u)
     assert.deepEqual(readdirSync(root), [])
   } finally {
     rmSync(root, { recursive: true, force: true })

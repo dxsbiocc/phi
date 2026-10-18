@@ -195,7 +195,7 @@ test('trust requires every disclosed field before stdio receives an injection-sa
         },
         setup.dependencies
       ),
-      /逐项确认/
+      /Confirm every/
     )
 
     await trustRemoteProjectMcp(
@@ -282,7 +282,7 @@ test('an invalid higher-priority remote config is diagnosed without hiding other
     const catalog = await loadRemoteProjectMcpCatalog(setup.context, setup.dependencies)
     assert.equal(catalog.summaries.length, 2)
     assert.equal(catalog.summaries[0]?.trustState, 'invalid')
-    assert.match(catalog.summaries[0]?.diagnostics[0] ?? '', /不是有效 JSON/)
+    assert.match(catalog.summaries[0]?.diagnostics[0] ?? '', /is not valid JSON/)
     assert.equal(catalog.summaries[1]?.name, 'literature')
     assert.equal(catalog.summaries[1]?.trustState, 'pending')
     assert.deepEqual(catalog.runtimeServers, [])
@@ -329,7 +329,7 @@ test('content changes withdraw runtime MCP until re-trusted and revoke returns t
         },
         setup.dependencies
       ),
-      /已变化/
+      /changed/
     )
 
     const next = changed.summaries[0]
@@ -375,7 +375,10 @@ test('project config symlinks cannot escape the canonical server project root', 
     const catalog = await loadRemoteProjectMcpCatalog(setup.context, setup.dependencies)
     assert.equal(catalog.summaries.length, 1)
     assert.equal(catalog.summaries[0]?.trustState, 'invalid')
-    assert.match(catalog.summaries[0]?.diagnostics[0] ?? '', /符号链接|项目|workspace|outside/u)
+    assert.match(
+      catalog.summaries[0]?.diagnostics[0] ?? '',
+      /symbolic link|project|workspace|outside/u
+    )
     assert.equal(
       catalog.summaries.some((server) => server.name === 'escaped'),
       false

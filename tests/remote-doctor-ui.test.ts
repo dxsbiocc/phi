@@ -1,3 +1,4 @@
+import { captureWrapperUi } from './helpers/captureWrapperUi'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement, isValidElement, type ReactNode } from 'react'
@@ -34,12 +35,12 @@ const report: RemoteDoctorReport = {
   checkedAt: '2026-09-24T00:00:00.000Z',
   ok: true,
   checks: [
-    { id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' },
+    { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' },
     {
       id: 'runtime',
       status: 'warning',
-      message: '登录节点未找到运行时',
-      suggestion: '请检查计算节点。'
+      message: 'Runtime not found on the login node',
+      suggestion: 'Check the compute nodes.'
     }
   ]
 }
@@ -50,27 +51,30 @@ const capabilityProfile = {
   fs: { state: 'available' },
   exec: { state: 'available' },
   background: { state: 'available' },
-  pty: { state: 'unavailable', reason: 'helper 未安装' },
-  watch: { state: 'unavailable', reason: 'helper 未安装' },
-  forwardPort: { state: 'unavailable', reason: 'helper 未安装' },
+  pty: { state: 'unavailable', reason: 'Helper not installed' },
+  watch: { state: 'unavailable', reason: 'Helper not installed' },
+  forwardPort: { state: 'unavailable', reason: 'Helper not installed' },
   probe: { state: 'available' },
   prerequisites: {
-    perl: { state: 'unavailable', reason: '未发现 Perl' },
+    perl: { state: 'unavailable', reason: 'Perl not found' },
     python3: { state: 'available', version: '3.11.9' },
     tar: { state: 'available' },
     sha256sum: { state: 'available' }
   },
   storage: {
     homeWritable: { state: 'available' },
-    homeExecutable: { state: 'unavailable', reason: '家目录禁止执行文件' },
+    homeExecutable: { state: 'unavailable', reason: 'Execution is disabled in the home directory' },
     availableSpaceKiB: 10 * 1024 * 1024,
-    sharedFileSystem: { state: 'degraded', reason: '无法判断是否为共享文件系统' }
+    sharedFileSystem: {
+      state: 'degraded',
+      reason: 'Could not determine whether this is a shared filesystem'
+    }
   },
   toolchain: {
     git: { state: 'available', version: '2.43.0' },
-    nextflow: { state: 'unavailable', reason: '未发现 Nextflow' },
+    nextflow: { state: 'unavailable', reason: 'Nextflow not found' },
     java: { state: 'available', version: '17.0.12' },
-    conda: { state: 'unavailable', reason: '未发现 Conda' },
+    conda: { state: 'unavailable', reason: 'Conda not found' },
     sbatch: { state: 'available', version: '23.11' },
     containerRuntime: { state: 'available', version: 'Apptainer 1.3.4' },
     module: { state: 'available', version: 'Modules 5.4.0' }
@@ -180,7 +184,7 @@ test('failed and timed-out checks show safe messages and can be retried', async 
   assert.equal(controller.getState().phase, 'failed')
   assert.doesNotMatch(JSON.stringify(controller.getState()), /secret|hunter2/)
   await controller.check(hostTarget)
-  assert.match(JSON.stringify(controller.getState()), /测试超时/)
+  assert.match(JSON.stringify(controller.getState()), /connection test timed out/)
   await controller.check(hostTarget)
   assert.equal(controller.getState().phase, 'done')
   assert.equal(calls, 3)
@@ -268,12 +272,19 @@ test('host failures keep a scoped warning message for the icon tooltip', () => {
       hostProfileId: 'ssh-config:gpu',
       checkedAt: '2026-09-27T00:00:00.000Z',
       ok: false,
-      checks: [{ id: 'ssh', status: 'error', message: 'SSH 认证失败', suggestion: '检查密钥' }]
+      checks: [
+        {
+          id: 'ssh',
+          status: 'error',
+          message: 'SSH authentication failed',
+          suggestion: 'Check the key'
+        }
+      ]
     }
   }
   assert.deepEqual(remoteHostCheckPresentation(failed, key), {
     tone: 'error',
-    message: 'SSH 认证失败 — 检查密钥'
+    message: 'SSH authentication failed — Check the key'
   })
   assert.deepEqual(
     remoteHostCheckPresentation(
@@ -284,22 +295,23 @@ test('host failures keep a scoped warning message for the icon tooltip', () => {
           ...report,
           ok: false,
           checks: [
-            { id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' },
-            { id: 'nextflow', status: 'error', message: '未找到 Nextflow' }
+            { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' },
+            { id: 'nextflow', status: 'error', message: 'Nextflow not found' }
           ]
         }
       },
       key
     ),
-    { tone: 'success', message: 'SSH 连接成功。点击可重新测试。' }
+    { tone: 'success', message: 'SSH connection succeeded. Select to retest.' }
   )
   assert.equal(remoteHostCheckPresentation(failed, 'another-host').tone, 'idle')
   assert.equal(
-    remoteHostCheckPresentation({ phase: 'failed', key, message: '测试超时' }, key).message,
-    '测试超时'
+    remoteHostCheckPresentation({ phase: 'failed', key, message: 'Connection test timed out' }, key)
+      .message,
+    'Connection test timed out'
   )
   const anotherKey = remoteDoctorTargetKey(remoteHostDoctorTarget('ssh-config:other', 'other'))
-  const first = withHostDoctorState({}, { phase: 'failed', key, message: '认证失败' })
+  const first = withHostDoctorState({}, { phase: 'failed', key, message: 'Authentication failed' })
   const second = withHostDoctorState(first, { phase: 'running', key: anotherKey })
   assert.equal(second['ssh-config:gpu']?.phase, 'failed')
   assert.equal(second['ssh-config:other']?.phase, 'running')
@@ -383,26 +395,28 @@ test('server card lists discovered aliases and keeps configuration fields in the
     })
   )
   for (const label of [
-    'aria-label="刷新服务器"',
-    'aria-label="添加服务器"',
+    'aria-label="Refresh servers"',
+    'aria-label="Add server"',
     'lab-hpc',
     'gpu.example.test'
   ]) {
     assert.match(markup, new RegExp(label))
   }
-  assert.doesNotMatch(markup, />添加<\/button>/)
+  assert.doesNotMatch(markup, />Add<\/button>/)
   assert.doesNotMatch(markup, /~\/\.phi\/runtime/)
-  assert.doesNotMatch(markup, />测试连接<\/button>/)
-  assert.match(markup, /aria-label="配置 gpu"/)
-  assert.doesNotMatch(markup, /服务器地址|私钥路径/)
+  assert.doesNotMatch(markup, />Test connection<\/button>/)
+  assert.match(markup, /aria-label="Configure gpu"/)
+  assert.doesNotMatch(markup, /Server address|Private key path/)
   const gpuKey = remoteDoctorTargetKey(remoteHostDoctorTarget('ssh-config:gpu', 'gpu'))
   const failedMarkup = render(
     createElement(RemoteHostProfilesPanel, {
       ...props,
-      hostDoctorStates: { 'ssh-config:gpu': { phase: 'failed', key: gpuKey, message: '测试超时' } }
+      hostDoctorStates: {
+        'ssh-config:gpu': { phase: 'failed', key: gpuKey, message: 'Connection test timed out' }
+      }
     })
   )
-  assert.match(failedMarkup, /连接失败/)
+  assert.match(failedMarkup, /Connection failed/)
   const labKey = remoteDoctorTargetKey(remoteHostDoctorTarget('host-1', 'lab-hpc'))
   const runningMarkup = render(
     createElement(RemoteHostProfilesPanel, {
@@ -410,7 +424,7 @@ test('server card lists discovered aliases and keeps configuration fields in the
       hostDoctorStates: { 'host-1': { phase: 'running', key: labKey } }
     })
   )
-  assert.match(runningMarkup, /检测中/)
+  assert.match(runningMarkup, /Checking/)
   const dialogMarkup = render(
     createElement(RemoteHostDialog, {
       ...props,
@@ -419,12 +433,12 @@ test('server card lists discovered aliases and keeps configuration fields in the
       onPasswordBootstrap: () => undefined
     })
   )
-  for (const label of ['SSH 别名', '服务器地址', '用户名', '端口', '认证方式']) {
+  for (const label of ['SSH alias', 'Server address', 'Username', 'Port', 'Authentication']) {
     assert.match(dialogMarkup, new RegExp(label))
   }
-  assert.doesNotMatch(dialogMarkup, /私钥路径/)
-  assert.doesNotMatch(dialogMarkup, /从 ~\/.ssh\/config 选择/)
-  assert.doesNotMatch(markup, /type="password"|口令输入/)
+  assert.doesNotMatch(dialogMarkup, /Private key path/)
+  assert.doesNotMatch(dialogMarkup, /Select from ~\/.ssh\/config/)
+  assert.doesNotMatch(markup, /type="password"|Passphrase input/)
 })
 
 test('server list navigates to a detail view with scoped actions', () => {
@@ -474,39 +488,51 @@ test('server list navigates to a detail view with scoped actions', () => {
     onEnvironmentSave: () => undefined
   }
   const markup = render(createElement(RemoteHostProfilesPanel, props))
-  for (const label of ['添加服务器', '配置 gpu', '配置 Lab', '刷新服务器']) {
+  for (const label of ['Add server', 'Configure gpu', 'Configure Lab', 'Refresh servers']) {
     assert.match(markup, new RegExp(`aria-label="${label}"`))
   }
-  assert.doesNotMatch(markup, /aria-label="测试 Lab"/)
+  assert.doesNotMatch(markup, /aria-label="Test Lab"/)
   const detailMarkup = render(
     createElement(RemoteHostProfilesPanel, { ...props, initialSelectedHostAlias: 'lab-hpc' })
   )
-  for (const label of ['编辑 Lab', '删除 Lab', '测试 Lab']) {
+  for (const label of ['Edit Lab', 'Delete Lab', 'Test Lab']) {
     assert.match(detailMarkup, new RegExp(`aria-label="${label}"`))
   }
-  assert.match(detailMarkup, /返回服务器列表/)
-  for (const label of ['环境配置', '默认运行环境', 'Nextflow', 'Jupyter', 'micromamba', 'Docker']) {
+  assert.match(detailMarkup, /Back to servers/)
+  for (const label of [
+    'Environment Settings',
+    'Default runtime environment',
+    'Nextflow',
+    'Jupyter',
+    'micromamba',
+    'Docker'
+  ]) {
     assert.match(detailMarkup, new RegExp(label))
   }
-  assert.match(detailMarkup, /留空时由 Phi 管理/)
-  assert.doesNotMatch(detailMarkup, /安装\/更新 micromamba|高级下载设置|服务器能力档案/)
+  assert.match(detailMarkup, /Leave blank for Phi management/)
+  assert.doesNotMatch(
+    detailMarkup,
+    /Install \/ update micromamba|Advanced Download Settings|Server Capability Profile/
+  )
   const discoveredDetailMarkup = render(
     createElement(RemoteHostProfilesPanel, { ...props, initialSelectedHostAlias: 'gpu' })
   )
-  assert.match(discoveredDetailMarkup, /aria-label="编辑 gpu"/)
-  assert.match(discoveredDetailMarkup, /aria-label="测试 gpu"/)
-  assert.doesNotMatch(discoveredDetailMarkup, /aria-label="删除 gpu"/)
-  const dialog = RemoteHostDialog({
-    open: true,
-    draft: props.draft,
-    busy: false,
-    error: null,
-    onDraftChange: props.onDraftChange,
-    onClose: props.onCloseDialog,
-    onSave: props.onSave
-  })
-  findAction(dialog, '取消')()
-  findAction(dialog, '添加服务器')()
+  assert.match(discoveredDetailMarkup, /aria-label="Edit gpu"/)
+  assert.match(discoveredDetailMarkup, /aria-label="Test gpu"/)
+  assert.doesNotMatch(discoveredDetailMarkup, /aria-label="Delete gpu"/)
+  const dialog = captureWrapperUi(() =>
+    RemoteHostDialog({
+      open: true,
+      draft: props.draft,
+      busy: false,
+      error: null,
+      onDraftChange: props.onDraftChange,
+      onClose: props.onCloseDialog,
+      onSave: props.onSave
+    })
+  )
+  findAction(dialog, 'Cancel')()
+  findAction(dialog, 'Add server')()
   assert.deepEqual(calls, ['close', 'save'])
 })
 
@@ -550,8 +576,8 @@ test('server detail keeps the connection status without exposing capability diag
       initialSelectedHostAlias: host.hostAlias
     })
   )
-  assert.match(markup, /连接正常/)
-  assert.doesNotMatch(markup, /服务器能力档案|Linux · x86_64|检查时间/)
+  assert.match(markup, /Connected/)
+  assert.doesNotMatch(markup, /Server Capability Profile|Linux · x86_64|Checked at/)
 })
 
 test('project connection test uses its own host, directory and HPC settings', () => {
@@ -562,27 +588,29 @@ test('project connection test uses its own host, directory and HPC settings', ()
     hostProfileId: 'host-1',
     hpc: { scheduler: 'slurm' as const, runtime: 'conda' as const, nextflowBin: '/opt/nf' }
   }
-  const row = RemoteProjectConnectionRow({
-    projectId: 'project-1',
-    connection,
-    host: { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' },
-    remotePath: '/cluster/project',
-    isDefault: true,
-    busy: false,
-    doctorState: { phase: 'idle' },
-    onTest: (target) => {
-      calls.push(JSON.stringify([target.hostProfileId, target.remotePath, target.options]))
-    },
-    onEdit: () => {
-      calls.push('edit')
-    },
-    onDelete: () => {
-      calls.push('delete')
-    }
-  })
-  findAction(row, '测试连接')()
-  findAction(row, '编辑 Cluster')()
-  findAction(row, '删除 Cluster')()
+  const row = captureWrapperUi(() =>
+    RemoteProjectConnectionRow({
+      projectId: 'project-1',
+      connection,
+      host: { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' },
+      remotePath: '/cluster/project',
+      isDefault: true,
+      busy: false,
+      doctorState: { phase: 'idle' },
+      onTest: (target) => {
+        calls.push(JSON.stringify([target.hostProfileId, target.remotePath, target.options]))
+      },
+      onEdit: () => {
+        calls.push('edit')
+      },
+      onDelete: () => {
+        calls.push('delete')
+      }
+    })
+  )
+  findAction(row, 'Test connection')()
+  findAction(row, 'Edit Cluster')()
+  findAction(row, 'Delete Cluster')()
   assert.deepEqual(calls, [
     JSON.stringify([
       'host-1',
@@ -598,30 +626,32 @@ test('project connection test uses its own host, directory and HPC settings', ()
     'delete'
   ])
   const markup = render(row)
-  assert.match(markup, /默认/)
+  assert.match(markup, /Default/)
   assert.match(markup, /lab-hpc/)
   assert.doesNotMatch(markup, /privateKeyPath|passphrase/)
 })
 
 test('a project connection with no host links directly to remote settings', () => {
   const calls: string[] = []
-  const row = RemoteProjectConnectionRow({
-    projectId: 'project-1',
-    connection: { id: 'conn-1', label: 'Missing', hostProfileId: 'missing-host' },
-    host: undefined,
-    remotePath: '/cluster/project',
-    isDefault: false,
-    busy: false,
-    doctorState: { phase: 'idle' },
-    onTest: () => undefined,
-    onEdit: () => undefined,
-    onDelete: () => undefined,
-    onOpenRemoteSettings: () => calls.push('settings')
-  })
+  const row = captureWrapperUi(() =>
+    RemoteProjectConnectionRow({
+      projectId: 'project-1',
+      connection: { id: 'conn-1', label: 'Missing', hostProfileId: 'missing-host' },
+      host: undefined,
+      remotePath: '/cluster/project',
+      isDefault: false,
+      busy: false,
+      doctorState: { phase: 'idle' },
+      onTest: () => undefined,
+      onEdit: () => undefined,
+      onDelete: () => undefined,
+      onOpenRemoteSettings: () => calls.push('settings')
+    })
+  )
 
-  findAction(row, '设置 → 远程')()
+  findAction(row, 'Settings → Remote')()
   assert.deepEqual(calls, ['settings'])
-  assert.match(render(row), /需重新配置 SSH 服务器/)
+  assert.match(render(row), /SSH server needs reconfiguration/)
 })
 
 test('result panel identifies each failed setting and shows a checked time and retry guidance', () => {
@@ -632,11 +662,11 @@ test('result panel identifies each failed setting and shows a checked time and r
       targetKey: key
     })
   )
-  assert.match(markup, /检查完成，存在提醒/)
-  assert.match(markup, /SSH 连接/)
-  assert.match(markup, /容器或 Conda 运行时/)
-  assert.match(markup, /请检查计算节点/)
-  assert.match(markup, /检查时间/)
+  assert.match(markup, /Check completed with warnings/)
+  assert.match(markup, /SSH connection/)
+  assert.match(markup, /Container or Conda runtime/)
+  assert.match(markup, /Check the compute nodes/)
+  assert.match(markup, /Checked at/)
   assert.equal(
     render(
       createElement(RemoteDoctorPanel, {
@@ -655,7 +685,8 @@ test('doctor authentication and cooldown failures link back to remote settings',
       state: {
         phase: 'failed',
         key,
-        message: 'SSH 认证失败后处于冷却期；在设置里点测试连接可立即重试。'
+        message:
+          'SSH authentication failed and is cooling down; select Test connection in settings to retry immediately.'
       },
       targetKey: key,
       onOpenRemoteSettings: () => undefined
@@ -669,7 +700,9 @@ test('doctor authentication and cooldown failures link back to remote settings',
         report: {
           ...report,
           ok: false,
-          checks: [{ id: 'ssh', status: 'error', message: 'SSH 非交互认证失败' }]
+          checks: [
+            { id: 'ssh', status: 'error', message: 'Non-interactive SSH authentication failed' }
+          ]
         }
       },
       targetKey: key,
@@ -677,9 +710,9 @@ test('doctor authentication and cooldown failures link back to remote settings',
     })
   )
 
-  assert.match(failedMarkup, /设置 → 远程/)
-  assert.match(failedMarkup, /测试连接可立即重试/)
-  assert.match(reportMarkup, /设置 → 远程/)
+  assert.match(failedMarkup, /Settings → Remote/)
+  assert.match(failedMarkup, /Test connection in settings to retry immediately/)
+  assert.match(reportMarkup, /Settings → Remote/)
 })
 
 test('result panel summarizes the safe server capability profile without rendering unknown fields', () => {
@@ -691,7 +724,7 @@ test('result panel summarizes the safe server capability profile without renderi
       platform: { os: 'darwin', arch: 'arm64' },
       helperCompatibility: {
         state: 'unavailable',
-        reason: 'macOS 远端暂不支持 helper'
+        reason: 'The helper is not supported on remote macOS hosts yet'
       },
       hostname: 'private.example.test',
       homePath: '/home/private-user'
@@ -703,15 +736,15 @@ test('result panel summarizes the safe server capability profile without renderi
       targetKey: key
     })
   )
-  assert.match(markup, /服务器能力档案/)
+  assert.match(markup, /Server Capability Profile/)
   assert.match(markup, /macOS · arm64/)
-  assert.match(markup, /macOS 远端暂不支持 helper/)
+  assert.match(markup, /The helper is not supported on remote macOS hosts yet/)
   assert.match(markup, /Git 2\.43\.0/)
-  assert.match(markup, /Nextflow：未发现 Nextflow/)
-  assert.match(markup, /Perl：未发现 Perl/)
-  assert.match(markup, /家目录禁止执行文件/)
-  assert.match(markup, /可用空间：10 GiB/)
-  assert.match(markup, /helper 未安装/)
+  assert.match(markup, /Nextflow: Nextflow not found/)
+  assert.match(markup, /Perl: Perl not found/)
+  assert.match(markup, /Execution is disabled in the home directory/)
+  assert.match(markup, /Available space: 10 GiB/)
+  assert.match(markup, /Helper not installed/)
   assert.doesNotMatch(markup, /private\.example\.test|\/home\/private-user/)
 })
 
@@ -721,24 +754,24 @@ test('result panel separates directory, Nextflow and Slurm failures', () => {
     ...report,
     ok: false,
     checks: [
-      { id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' },
+      { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' },
       {
         id: 'path_write',
         status: 'error',
-        message: '候选目录不可写入',
-        suggestion: '选择有写入权限的工作目录。'
+        message: 'Candidate directory is not writable',
+        suggestion: 'Choose a writable working directory.'
       },
       {
         id: 'nextflow',
         status: 'error',
-        message: '未找到 Nextflow',
-        suggestion: '检查 Nextflow 路径。'
+        message: 'Nextflow not found',
+        suggestion: 'Check the Nextflow path.'
       },
       {
         id: 'slurm_submit',
         status: 'error',
-        message: '未找到 Slurm 提交命令',
-        suggestion: '检查集群环境。'
+        message: 'Slurm submission command not found',
+        suggestion: 'Check the cluster environment.'
       }
     ]
   }
@@ -749,11 +782,11 @@ test('result panel separates directory, Nextflow and Slurm failures', () => {
     })
   )
   for (const label of [
-    'SSH 已连接，部分检查仍需处理',
-    '目录写入权限',
+    'SSH connected; some checks need attention',
+    'Directory write access',
     'Nextflow',
-    'Slurm 提交',
-    '选择有写入权限的工作目录'
+    'Slurm submission',
+    'Choose a writable working directory'
   ]) {
     assert.match(markup, new RegExp(label))
   }
@@ -769,8 +802,8 @@ test('result panel separates directory, Nextflow and Slurm failures', () => {
             {
               id: 'ssh',
               status: 'error',
-              message: 'SSH 主机密钥不一致',
-              suggestion: '先核对服务器指纹。'
+              message: 'SSH host key mismatch',
+              suggestion: 'Verify the server fingerprint first.'
             }
           ]
         }
@@ -778,6 +811,6 @@ test('result panel separates directory, Nextflow and Slurm failures', () => {
       targetKey: key
     })
   )
-  assert.match(identityMarkup, /无法建立 SSH 连接/)
-  assert.match(identityMarkup, /先核对服务器指纹/)
+  assert.match(identityMarkup, /Could not establish an SSH connection/)
+  assert.match(identityMarkup, /Verify the server fingerprint first/)
 })

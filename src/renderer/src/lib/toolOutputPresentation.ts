@@ -1,3 +1,4 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
 const SAVED_OUTPUT_MARKER = /\n?\.{3}（完整输出已保存到 .+）\s*$/s
 
 export const INLINE_OUTPUT_PREVIEW_CHARS = 12000
@@ -19,7 +20,7 @@ export function stripSavedOutputMarker(output: string): string {
 
 function truncatePreviewText(text: string, limit: number): string {
   if (text.length <= limit) return text
-  return `${text.slice(0, limit)}\n...（预览已截断）`
+  return chatCopy.valuePreviewTruncated(text.slice(0, limit))
 }
 
 export function outputPreviewText({

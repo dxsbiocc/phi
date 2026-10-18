@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -17,6 +18,8 @@ const proposal = {
   content: '# Analysis plan\n\n- Inspect data\n- Write report',
   planFilePath: 'local://analysis-plan.md'
 }
+
+setUiLanguage('zh-CN')
 
 test('plan review panel renders the proposal and both decisions', () => {
   const markup = renderToStaticMarkup(

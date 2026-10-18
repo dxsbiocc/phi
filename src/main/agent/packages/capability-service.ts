@@ -128,7 +128,7 @@ export function createCapabilityService(deps: CapabilityServiceDependencies): Ca
       }
     }
     assertCurrent(context)
-    const loaded = await deps.loadRegistries()
+    const loaded = await deps.loadRegistries(input.type)
     assertCurrent(context)
     const installed = listInstalled()
     const selected = selectEntries(loaded.registries, input, official.matches)

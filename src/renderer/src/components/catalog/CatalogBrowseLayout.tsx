@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useRef } from 'react'
 import {
   Box,
@@ -10,6 +11,7 @@ import {
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../../icons'
+import { resourceCatalogCopy } from '../../lib/resourceUi'
 
 export interface CatalogBrowseGroup {
   id: string
@@ -50,6 +52,8 @@ export function CatalogBrowseLayout({
   children: React.ReactNode
   footer?: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
+
   const resultsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const results = resultsRef.current
@@ -102,7 +106,7 @@ export function CatalogBrowseLayout({
       </Stack>
       <Box
         component="nav"
-        aria-label={`${title}分组`}
+        aria-label={resourceCatalogCopy.groups(title)}
         sx={{
           gridColumn: 1,
           gridRow: 2,

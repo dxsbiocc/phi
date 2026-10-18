@@ -1,3 +1,5 @@
+import { chatCopy } from '../src/renderer/src/features/chat/lib/chatCopy'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
@@ -13,6 +15,8 @@ import {
   runtimeRecoveryViewKey,
   selectedRecoveryModel
 } from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
+
+setUiLanguage('zh-CN')
 
 test('recovery UI: an owned generation advance preserves the view, while a peer or project switch changes it', () => {
   const original = {
@@ -151,6 +155,7 @@ async function hookHarness(
     exports: exported.exports,
     Promise,
     require: (name: string) => {
+      if (name.endsWith('/chatCopy')) return { chatCopy }
       if (name === 'react') return react
       if (name === '../lib/runtimeRecoveryState') return { runtimeRecoveryViewKey }
       throw new Error(`Unexpected import: ${name}`)

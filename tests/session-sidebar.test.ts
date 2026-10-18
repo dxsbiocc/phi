@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -34,6 +35,9 @@ const baseSession: SessionSummary = {
   status: 'idle',
   unreadKind: null
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('recent conversations move above older history after a refresh', () => {
   const older = { ...baseSession, path: 'older', modified: '2026-09-18T00:00:00Z' }
@@ -276,7 +280,7 @@ test('session rows keep rename, export, and delete inside one actions menu', () 
   assert.match(rowSource, /<MenuItem[\s\S]{0,100}disabled=\{exportDisabled\}/)
   assert.match(rowSource, /<SessionRenamePanel[\s\S]{0,80}open=\{renameOpen\}/)
   assert.match(renameSource, /<Dialog[\s\S]{0,100}open=\{open\}/)
-  assert.match(renameSource, /重命名聊天/)
+  assert.match(renameSource, /navigationCopy.renameConversation/)
 })
 
 test('rename dialog starts with the full conversation title', () => {

@@ -201,7 +201,7 @@ test('an external remote output root is shown in the plan and fixed in the submi
     assert.equal(plan.state, 'valid', plan.validation.errors.join('; '))
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /外部输出目录需要/
+      /external output directory must/
     )
     const run = submitWrapperRunPlan(plan.planId, {
       agentDir,
@@ -235,7 +235,7 @@ test('submit refuses a remote plan after its project path or run configuration c
     writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([changed]))
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /位置或主机已变化/
+      /location or host.*has changed/
     )
     writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([project]))
     const changedHpc = {
@@ -248,13 +248,13 @@ test('submit refuses a remote plan after its project path or run configuration c
     writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([changedHpc]))
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /运行方式与计划快照不一致/
+      /execution mode does not match the plan snapshot/
     )
     writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([project]))
     writeWrapperPlan({ ...plan, profile: 'local' }, agentDir)
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /Profile 与计划快照不一致/
+      /profile does not match the plan snapshot/
     )
     assert.equal(readWrapperPlan(plan.planId, agentDir)?.state, 'valid')
   })
@@ -297,7 +297,7 @@ test('submitWrapperRunPlan rejects an invalid plan', () => {
 
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /无法提交/
+      /cannot be submitted/
     )
   })
 })
@@ -320,7 +320,7 @@ test('submitWrapperRunPlan requires heavy workload acknowledgement first', () =>
 
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /需要先确认/
+      /Confirm local resources/
     )
     const run = submitWrapperRunPlan(plan.planId, {
       agentDir,
@@ -354,7 +354,7 @@ test('cancelWrapperRunPlan cancels an unsubmitted plan but refuses an already-su
       agentDir
     })
     submitWrapperRunPlan(secondPlan.planId, { agentDir, autoExecute: false })
-    assert.throws(() => cancelWrapperRunPlan(secondPlan.planId, agentDir), /已提交为运行/)
+    assert.throws(() => cancelWrapperRunPlan(secondPlan.planId, agentDir), /already been submitted/)
   })
 })
 
@@ -389,7 +389,7 @@ test('cancelWrapperRun cancels a not-yet-running run but refuses an already-runn
     writeWrapperRun(running, agentDir)
     assert.throws(
       () => cancelWrapperRun(run2.runId, agentDir),
-      /取消正在执行的进程需要对应执行器支持/
+      /Cancelling an executing process requires support from its executor/
     )
   })
 })
@@ -419,7 +419,10 @@ test('submitWrapperRunPlan rejects an unbound slurm-controller plan before creat
   withHarness(({ agentDir, projectDir }) => {
     const plan = slurmControllerPlan(agentDir, projectDir)
 
-    assert.throws(() => submitWrapperRunPlan(plan.planId, { agentDir }), /缺少项目和服务器快照/)
+    assert.throws(
+      () => submitWrapperRunPlan(plan.planId, { agentDir }),
+      /no project and server snapshot/
+    )
     assert.equal(readWrapperPlan(plan.planId, agentDir)?.state, 'valid')
   })
 })
@@ -430,7 +433,7 @@ test('autoExecute false does not bypass an unbound slurm-controller target', () 
 
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /缺少项目和服务器快照/
+      /no project and server snapshot/
     )
   })
 })
@@ -462,7 +465,10 @@ test('submitWrapperRunPlan rejects an unbound remote-background plan', () => {
   withHarness(({ agentDir, projectDir }) => {
     const plan = remoteBackgroundPlan(agentDir, projectDir)
 
-    assert.throws(() => submitWrapperRunPlan(plan.planId, { agentDir }), /缺少项目和服务器快照/)
+    assert.throws(
+      () => submitWrapperRunPlan(plan.planId, { agentDir }),
+      /no project and server snapshot/
+    )
   })
 })
 
@@ -472,7 +478,7 @@ test('autoExecute false does not bypass an unbound remote-background target', ()
 
     assert.throws(
       () => submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false }),
-      /缺少项目和服务器快照/
+      /no project and server snapshot/
     )
   })
 })
@@ -629,7 +635,7 @@ test('resolveRemoteSubmitOptions reports a generic reason when neither an overri
 
     assert.ok('reason' in resolved)
     if ('reason' in resolved) {
-      assert.match(resolved.reason, /缺少远程计算目标/)
+      assert.match(resolved.reason, /Remote execution target missing/)
     }
   })
 })
@@ -662,7 +668,7 @@ test('resolveRemoteSubmitOptions surfaces the project connection error as the re
 
     assert.ok('reason' in resolved)
     if ('reason' in resolved) {
-      assert.match(resolved.reason, /重新配置/)
+      assert.match(resolved.reason, /Configure it again/)
     }
   })
 })
@@ -873,7 +879,7 @@ test('remote cancellation stays unknown after the SSH signal reply is lost', asy
 
     const saved = readWrapperRun(run.runId, agentDir)
     assert.equal(saved?.state, 'lost')
-    assert.match(saved?.launchDiagnostic ?? '', /取消结果未知/)
+    assert.match(saved?.launchDiagnostic ?? '', /Cancellation outcome unknown/)
     assert.equal(saved?.cancelConfirmedAt, undefined)
   })
 })

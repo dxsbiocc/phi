@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
+import { resourceUi, resourceSourceLabel } from '../../../lib/resourceUi'
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { Alert, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
 import type {
@@ -70,6 +73,8 @@ export function SkillCatalogDialog({
   onApplyUpdate,
   onRefresh
 }: SkillCatalogDialogProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
+
   const [localRegistry, setLocalRegistry] = useState<PackageRegistryView | null>(null)
   const [loadingRegistry, setLoadingRegistry] = useState(false)
   const installing = useBusyKeys()
@@ -179,17 +184,17 @@ export function SkillCatalogDialog({
   const groupDefinitions =
     knownRegistries.find((source) => source.kind === 'official')?.skillGroups ??
     displayedRegistry?.skillGroups
-  const groups = useMemo(
-    () => skillCatalogGroups(items, groupDefinitions),
-    [items, groupDefinitions]
-  )
+  const groups = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return skillCatalogGroups(items, groupDefinitions)
+  }, [items, groupDefinitions, uiLanguage])
   const selectedGroupId = groups.some((group) => group.id === browser.groupId)
     ? browser.groupId
     : 'all'
-  const matchingItems = useMemo(
-    () => filterSkillCatalogItems(items, selectedGroupId, browser.query),
-    [items, selectedGroupId, browser.query]
-  )
+  const matchingItems = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return filterSkillCatalogItems(items, selectedGroupId, browser.query)
+  }, [items, selectedGroupId, browser.query, uiLanguage])
   const { page, rows: visibleItems } = getCatalogPage(
     matchingItems,
     browser.page,
@@ -222,7 +227,7 @@ export function SkillCatalogDialog({
       const nextRegistry = await onReadRegistry(dir)
       setLocalRegistry(nextRegistry)
     } catch (cause) {
-      setActionError(`读取本地目录失败：${errorMessage(cause)}`)
+      setActionError(skillCopy.readCatalogFailed(errorMessage(cause)))
     } finally {
       setLoadingRegistry(false)
     }
@@ -249,7 +254,7 @@ export function SkillCatalogDialog({
       })
       await onRefresh?.()
     } catch (cause) {
-      setActionError(`安装技能包失败：${errorMessage(cause)}`)
+      setActionError(skillCopy.installFailed(errorMessage(cause)))
     } finally {
       installing.finish(entry.id)
     }
@@ -262,15 +267,15 @@ export function SkillCatalogDialog({
     const working = installing.has(entry.id) || removal.isRemoving(entry.id)
     const label = installing.has(entry.id)
       ? updateAvailable
-        ? '正在更新…'
-        : '正在安装…'
+        ? resourceUi.updating
+        : resourceUi.installing
       : removal.isRemoving(entry.id)
-        ? '正在卸载…'
+        ? skillCopy.uninstalling
         : updateAvailable
-          ? '更新'
+          ? resourceUi.update
           : installed
-            ? '卸载'
-            : '安装'
+            ? resourceUi.uninstall
+            : resourceUi.install
     return (
       <Button
         size="small"
@@ -278,7 +283,7 @@ export function SkillCatalogDialog({
         color={removing ? 'error' : 'primary'}
         disabled={working || (!removing && (updateAvailable ? !onApplyUpdate : !onInstallPackage))}
         onClick={() => void (removing ? removal.remove(entry.id) : install(entry))}
-        aria-label={`${updateAvailable ? '更新' : installed ? '卸载' : '安装'} ${entry.title}`}
+        aria-label={`${updateAvailable ? resourceUi.update : installed ? resourceUi.uninstall : resourceUi.install} ${entry.title}`}
       >
         {label}
       </Button>
@@ -291,7 +296,7 @@ export function SkillCatalogDialog({
     icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
     title: entry.title,
     summary: entry.summary,
-    metadata: entry.registryLabel ?? '软件包',
+    metadata: resourceSourceLabel(entry.registryLabel ?? skillCopy.packagesGroup),
     details: `v${entry.version} · ${formatPackageSize(entry.size)}`,
     action: renderAction(entry)
   }))
@@ -301,7 +306,7 @@ export function SkillCatalogDialog({
     <Dialog
       open={open}
       onClose={installing.any ? undefined : close}
-      aria-label="技能目录"
+      aria-label={skillCopy.catalogTitle}
       maxWidth={false}
       slotProps={{
         paper: {
@@ -326,8 +331,8 @@ export function SkillCatalogDialog({
         />
       ) : (
         <CatalogBrowseLayout
-          title="技能目录"
-          closeLabel="关闭技能目录"
+          title={skillCopy.catalogTitle}
+          closeLabel={skillCopy.closeCatalog}
           groups={groups}
           selectedGroupId={selectedGroupId}
           onGroupChange={(groupId) => dispatchBrowser({ type: 'group', groupId })}
@@ -335,12 +340,12 @@ export function SkillCatalogDialog({
           onQueryChange={(query) => dispatchBrowser({ type: 'query', query })}
           page={page}
           rowsPerPage={browser.rowsPerPage}
-          searchLabel="搜索技能名称或说明"
+          searchLabel={skillCopy.searchCatalog}
           onClose={close}
           busy={installing.any}
           actions={
             <CatalogAddButton
-              label="添加技能目录"
+              label={skillCopy.addCatalog}
               disabled={loading || !onPickRegistryDirectory || !onReadRegistry}
               onClick={() => void chooseRegistry()}
             />
@@ -373,7 +378,7 @@ export function SkillCatalogDialog({
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
               <CircularProgress size={18} />
               <Typography variant="body2" color="text.secondary">
-                正在读取已安装技能
+                {skillCopy.loadingInstalled}
               </Typography>
             </Stack>
           ) : null}
@@ -381,7 +386,7 @@ export function SkillCatalogDialog({
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
               <CircularProgress size={18} />
               <Typography variant="body2" color="text.secondary">
-                正在读取 Phi Packages 和本地目录
+                {skillCopy.loadingCatalog}
               </Typography>
             </Stack>
           ) : null}
@@ -391,9 +396,9 @@ export function SkillCatalogDialog({
             </Alert>
           ) : null}
           <CatalogResultsTable
-            label="技能目录结果"
-            nameLabel="技能"
-            detailsLabel="版本 / 大小"
+            label={skillCopy.catalogResults}
+            nameLabel={resourceUi.skill}
+            detailsLabel={skillCopy.versionAndSize}
             rows={rows}
             rowAttribute="data-phi-skill-catalog-card"
             onOpen={setDetailId}
@@ -401,10 +406,10 @@ export function SkillCatalogDialog({
           {matchingItems.length === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
               {browser.query.trim()
-                ? '没有匹配的技能，请尝试其他关键词。'
+                ? skillCopy.noMatches
                 : displayedRegistry
-                  ? '目录中没有可安装的技能包'
-                  : '已知软件源中没有可安装的技能包'}
+                  ? skillCopy.emptyCatalog
+                  : skillCopy.emptySources}
             </Typography>
           ) : null}
         </CatalogBrowseLayout>

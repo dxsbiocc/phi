@@ -49,10 +49,13 @@ test('fixed MCP keys stay encrypted on disk and are never accepted for other IDs
     assert.equal(existsSync(join(agentDir, 'db-connectors')), false)
     assert.equal(featuredMcpApiKeyStatus('tavily', agentDir, safeStorage), true)
     assert.equal(readFeaturedMcpApiKey('tavily', agentDir, safeStorage), 'tvly-test-secret')
-    assert.throws(() => setFeaturedMcpApiKey('notion', 'secret', agentDir, safeStorage), /不支持/)
+    assert.throws(
+      () => setFeaturedMcpApiKey('notion', 'secret', agentDir, safeStorage),
+      /does not support API keys/
+    )
     assert.throws(
       () => setFeaturedMcpApiKey('tavily', 'bad\nheader', agentDir, safeStorage),
-      /格式/
+      /Invalid API key format/
     )
     clearFeaturedMcpApiKey('tavily', agentDir)
     assert.equal(featuredMcpApiKeyStatus('tavily', agentDir, safeStorage), false)
@@ -96,7 +99,7 @@ test('Linux basic_text storage is rejected even when encryption reports availabl
     assert.equal(isCredentialStorageAvailable(weakStorage), false)
     assert.throws(
       () => setFeaturedMcpApiKey('tavily', 'tvly-test-secret', agentDir, weakStorage),
-      /不支持加密存储/
+      /encrypted storage is unavailable/
     )
   } finally {
     Object.defineProperty(process, 'platform', platform)
@@ -118,7 +121,7 @@ test('API-key MCP entries are disabled on disk and require exact installed confi
     assert.equal(isFeaturedMcpApiKeyInstalled('tavily', agentDir), true)
     assert.throws(
       () => addRemoteMcpConnector('serpapi', 'https://example.com/mcp', agentDir),
-      /官方地址/
+      /official URL/
     )
 
     config.mcpServers.tavily.enabled = true
@@ -139,7 +142,7 @@ test('API-key MCP entries are disabled on disk and require exact installed confi
     assert.deepEqual(config.mcpServers.tavily.headers, { Authorization: 'manual-value' })
     assert.throws(
       () => addRemoteMcpConnector('tavily', 'https://mcp.tavily.com/mcp', agentDir),
-      /自定义 MCP 配置/
+      /Custom MCP configuration/
     )
   } finally {
     rmSync(agentDir, { recursive: true, force: true })

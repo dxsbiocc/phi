@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../lib/i18n'
+import { markdownCopy } from './markdownUiCopy'
 import { Box, Tooltip } from '@mui/material'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import type { MarkdownColorToken } from '../../lib/markdownColors'
@@ -12,6 +14,7 @@ const inlineCodeSx = {
 } as const
 
 export function InlineCodeShell({ children }: { children: ReactNode }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box component="code" sx={inlineCodeSx}>
       {children}
@@ -20,11 +23,12 @@ export function InlineCodeShell({ children }: { children: ReactNode }): React.JS
 }
 
 function ColorSwatch({ color }: { color: string }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       component="span"
       data-phi-slot="markdown-color-swatch"
-      aria-label={`颜色 ${color}`}
+      aria-label={markdownCopy.color(color)}
       title={color}
       sx={{
         display: 'inline-block',
@@ -47,6 +51,7 @@ function ColorSwatch({ color }: { color: string }): React.JSX.Element {
 }
 
 export function ColorCode({ color }: { color: string }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       component="span"
@@ -67,6 +72,7 @@ export function ColorCode({ color }: { color: string }): React.JSX.Element {
 }
 
 export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Element {
+  useUiLanguage()
   const [copiedColor, setCopiedColor] = useState<string | null>(null)
 
   useEffect(() => {
@@ -118,7 +124,7 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
         <Tooltip
           key={`${color}-${index}`}
           placement="top"
-          title={copiedColor === color ? `已复制 ${color}` : color}
+          title={copiedColor === color ? markdownCopy.copiedColor(color) : color}
           slotProps={{
             tooltip: {
               sx: {
@@ -139,7 +145,7 @@ export function ColorPalette({ colors }: { colors: string[] }): React.JSX.Elemen
             type="button"
             className="phi-color-swatch"
             data-color={color}
-            aria-label={`复制颜色 ${color}`}
+            aria-label={markdownCopy.copyColor(color)}
             onClick={() => void copyColor(color)}
             sx={{
               appearance: 'none',
@@ -170,6 +176,7 @@ export function MarkdownColorTokenView({
 }: {
   token: MarkdownColorToken
 }): React.JSX.Element {
+  useUiLanguage()
   if (token.kind === 'color') return <ColorCode color={token.color} />
   if (token.kind === 'palette') return <ColorPalette colors={token.colors} />
   return <Fragment>{token.text}</Fragment>

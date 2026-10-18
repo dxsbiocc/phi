@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 
 import { ROW_LABEL_FONT_SIZE, ROW_META_FONT_SIZE } from '../../lib/sessionSidebarShared'
@@ -13,13 +15,16 @@ export function ProjectHoverCard({
   sessionsReady: boolean
   sessionCount: number
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box data-phi-project-hover-details="true" sx={{ minWidth: 220, maxWidth: 320 }}>
       <Typography sx={{ fontSize: ROW_LABEL_FONT_SIZE, fontWeight: 700, overflowWrap: 'anywhere' }}>
         {project.name}
       </Typography>
       <Typography sx={{ mt: 0.25, fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}>
-        {project.location.kind === 'ssh' ? '远程项目' : '本地项目'}
+        {project.location.kind === 'ssh'
+          ? navigationCopy.remoteProject
+          : navigationCopy.localProject}
       </Typography>
       <Box
         sx={{

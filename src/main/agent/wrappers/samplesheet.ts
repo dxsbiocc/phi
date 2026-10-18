@@ -53,13 +53,13 @@ export function buildPairedEndFastqSamplesheet(
   for (const path of paths) {
     const match = MATE_PATTERN.exec(basename(path))
     if (!match) {
-      errors.push(`无法从文件名识别样本/mate 信息: ${basename(path)}`)
+      errors.push(`Cannot identify sample/mate information from filename: ${basename(path)}`)
       continue
     }
     const [, sampleRaw, marker] = match
     const mate = mateNumber(marker)
     if (!mate) {
-      errors.push(`无法识别 mate 编号: ${basename(path)}`)
+      errors.push(`Cannot identify mate number: ${basename(path)}`)
       continue
     }
     const sample = sampleRaw.replace(/[._-]$/, '')
@@ -72,7 +72,7 @@ export function buildPairedEndFastqSamplesheet(
   const rows: SamplesheetRow[] = []
   for (const [sample, entry] of [...bySample.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (!entry.fastq_1) {
-      errors.push(`样本 "${sample}" 缺少 R1 文件`)
+      errors.push(`Sample "${sample}" has no R1 file`)
       continue
     }
     rows.push({ sample, fastq_1: entry.fastq_1, fastq_2: entry.fastq_2 })

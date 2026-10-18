@@ -77,11 +77,11 @@ test('saving a host download mirror validates and returns the per-host prefix', 
     )
     assert.throws(
       () => saveRemoteMicromambaMirrorSetting(host.id, 'http://mirror.example/', agentDir),
-      /必须使用 https:\/\//
+      /must use https:\/\//
     )
     assert.throws(
       () => saveRemoteMicromambaMirrorSetting(host.id, 'https://mirror.example/path', agentDir),
-      /必须以 \/ 结尾/
+      /must end with \//
     )
     const cleared = saveRemoteMicromambaMirrorSetting(host.id, undefined, agentDir)
     assert.equal(cleared.downloadMirrorPrefix, undefined)
@@ -129,7 +129,7 @@ test('saving a host environment keeps Phi defaults implicit and persists only pa
           { toolPaths: { nextflow: 'relative/nextflow' } },
           agentDir
         ),
-      /绝对路径/
+      /absolute path/
     )
 
     const cleared = saveRemoteEnvironmentSetting(

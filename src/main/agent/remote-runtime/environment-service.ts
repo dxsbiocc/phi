@@ -33,7 +33,7 @@ const DEFAULT_OUTPUT_BYTES = 1024 * 1024
 const WRITE_PROBE_TIMEOUT_MS = 10_000
 const WRITE_PROBE_OUTPUT_BYTES = 32 * 1024
 const SETTINGS_GUIDANCE =
-  '请打开“设置 → 远程”，使用“安装 micromamba”按钮完成安装，或检查 micromamba 路径、恢复由 Phi 管理的默认值后重试。Phi 没有回退到本机创建环境。'
+  'Open Settings → Remote Hosts and select “Install micromamba”, or check the micromamba path and restore Phi-managed defaults before retrying. Phi did not fall back to creating the environment locally.'
 
 interface EnvironmentRecord extends RemoteEnvironmentHandle {
   baseRef: string
@@ -79,7 +79,11 @@ export class RemoteEnvironmentService {
         () => this.createOrReuse(workspace!, input, controller.signal)
       )
     } catch (error) {
-      return { error: controller.signal.aborted ? '远程环境创建已取消' : errorText(error) }
+      return {
+        error: controller.signal.aborted
+          ? 'Remote environment creation cancelled'
+          : errorText(error)
+      }
     } finally {
       await workspace?.close?.().catch(() => undefined)
       this.end(input.requestId, controller)
@@ -239,7 +243,7 @@ export class RemoteEnvironmentService {
       envId: record.envId,
       name: record.name,
       added: record.added,
-      ...(usedLocalCache ? { notice: '使用了本地缓存' } : {})
+      ...(usedLocalCache ? { notice: 'Used the local cache' } : {})
     }
   }
 
@@ -279,7 +283,9 @@ export class RemoteEnvironmentService {
       !workspace.micromambaPath &&
       !(await isFile(workspace, posix.relative(workspace.runtimeRoot, binary)))
     ) {
-      throw new Error(`服务器运行时根目录中没有可用的 micromamba。${SETTINGS_GUIDANCE}`)
+      throw new Error(
+        `No usable micromamba was found in the server runtime root. ${SETTINGS_GUIDANCE}`
+      )
     }
     const args = createArguments(record)
     const result = await this.runCreate(workspace, binary, args, signal)
@@ -463,8 +469,10 @@ function createArguments(record: EnvironmentRecord, offline = false): string[] {
 }
 
 function throwForTermination(result: CommandResult): void {
-  if (result.terminationReason === 'cancelled') throw new Error('远程环境创建已取消')
-  if (result.terminationReason === 'timeout') throw new Error('远程环境创建超时')
+  if (result.terminationReason === 'cancelled')
+    throw new Error('Remote environment creation cancelled')
+  if (result.terminationReason === 'timeout')
+    throw new Error('Remote environment creation timed out')
 }
 
 function isCondaConnectivityFailure(result: CommandResult): boolean {
@@ -474,13 +482,15 @@ function isCondaConnectivityFailure(result: CommandResult): boolean {
 
 function throwCondaConnectivityFailure(): never {
   throw new Error(
-    '服务器无法访问 conda 软件源，且 Phi 的本地缓存不足以满足请求。请使用服务器管理员提供的 conda 镜像配置，或先在可联网机器构建环境后再迁移到服务器；Phi 没有回退到本机创建环境。'
+    'The server cannot reach the conda source and the Phi local cache cannot satisfy this request. Use the conda mirror configuration provided by the server administrator, or build the environment on a machine with network access and transfer it to the server. Phi did not fall back to creating the environment locally.'
   )
 }
 
 function throwCreateFailure(result: CommandResult): never {
   const detail = `${result.stderr}\n${result.stdout}`.trim()
-  throw new Error(`服务器上的 micromamba 创建环境失败：${detail || `exit code ${result.code}`}`)
+  throw new Error(
+    `micromamba environment creation failed on the server: ${detail || `exit code ${result.code}`}`
+  )
 }
 
 function aliasPath(projectRoot: string, ref: string): string {
@@ -508,7 +518,11 @@ function remoteEnvironmentVariables(prefix: string): Record<string, string> {
 }
 
 function notReady(ref: string): { ref: string; envId: string; message: string } {
-  return { ref, envId: '', message: `远程环境 ${ref} 尚未创建；请先调用 env_request。` }
+  return {
+    ref,
+    envId: '',
+    message: `Remote environment ${ref} has not been created. Call env_request first.`
+  }
 }
 
 function uniquePackages(packages: readonly string[]): string[] {

@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box } from '@mui/material'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { isScrolledToEnd } from '../../lib/agentStepPresentation'
@@ -19,6 +21,7 @@ export function ScrollableToolDetail({
   contentKey: string
   children: ReactNode
 }): ReactNode {
+  useUiLanguage()
   const viewRef = useRef<HTMLDivElement | null>(null)
   const followingRef = useRef(true)
 
@@ -34,7 +37,7 @@ export function ScrollableToolDetail({
       // A scrolling region must be reachable from the keyboard, or its content is not.
       tabIndex={0}
       role="region"
-      aria-label="工具调用详情"
+      aria-label={chatCopy.toolCallDetails}
       onScroll={() => {
         if (viewRef.current) followingRef.current = isScrolledToEnd(viewRef.current)
       }}

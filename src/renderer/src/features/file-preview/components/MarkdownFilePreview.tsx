@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useDeferredValue, useMemo } from 'react'
 import { Box, Typography } from '@mui/material'
 import MarkdownContent from '../../../components/MarkdownContent'
@@ -26,6 +28,7 @@ function MarkdownRendered({
   onOpenFile: (path: string) => void
   inline?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const renderedContent = useDeferredValue(content)
   return (
     <Box
@@ -50,7 +53,7 @@ function MarkdownRendered({
           />
         </RemoteProjectFileContext.Provider>
       ) : (
-        <Typography color="text.secondary">空白 Markdown 文档</Typography>
+        <Typography color="text.secondary">{filePreviewCopy.blankMarkdown}</Typography>
       )}
     </Box>
   )
@@ -65,6 +68,7 @@ export function MarkdownFilePreview({
   fileActions?: FileTreeActions
   onOpenFile: (path: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const remoteScope = fileActions?.markdownRemoteContext
   const remoteContext = useMemo<RemoteProjectFileContextValue | null>(() => {
     if (!file.path.startsWith('ssh://')) return null

@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { pluginCopy } from '../lib/pluginCopy'
 import { useState } from 'react'
 import { Box, ButtonBase, Stack, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -17,12 +19,8 @@ const COMPONENT_ICONS = {
   skill: PhiIcons.entity.skill,
   script: PhiIcons.tool.command
 }
-const SECTION_LABELS = { agent: '智能体', skill: '技能', script: '脚本工具（最终名称）' }
-const EMPTY_LABELS = {
-  agent: '无专属智能体（由主智能体按技能调用）',
-  skill: '无插件技能',
-  script: '无脚本工具'
-}
+const SECTION_LABELS = pluginCopy.componentSections
+const EMPTY_LABELS = pluginCopy.emptyComponents
 
 function ComponentItem({
   component,
@@ -31,11 +29,16 @@ function ComponentItem({
   component: PhiPluginInspectableComponent
   onInspect: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const Icon = COMPONENT_ICONS[component.kind]
   return (
     <ButtonBase
       onClick={onInspect}
-      aria-label={`查看${PHI_PLUGIN_COMPONENT_LABELS[component.kind]} ${component.name}`}
+      aria-label={pluginCopy.inspectComponent(
+        PHI_PLUGIN_COMPONENT_LABELS[component.kind],
+        component.name
+      )}
       aria-haspopup="dialog"
       data-phi-plugin-component={component.key}
       sx={{
@@ -102,9 +105,11 @@ function ComponentItem({
             color="text.secondary"
             sx={{ display: 'block', mt: 0.5, overflowWrap: 'anywhere' }}
           >
-            {component.approval ? `审批：${PHI_PLUGIN_APPROVAL_LABELS[component.approval]}` : ''}
+            {component.approval
+              ? `${pluginCopy.approval}: ${PHI_PLUGIN_APPROVAL_LABELS[component.approval]}`
+              : ''}
             {component.approval && component.skillName ? ' · ' : ''}
-            {component.skillName ? `所属技能：${component.skillName}` : ''}
+            {component.skillName ? `${pluginCopy.ownerSkill}: ${component.skillName}` : ''}
           </Typography>
         )}
       </Box>
@@ -118,6 +123,8 @@ export function PhiPluginComponentDetails({
 }: {
   plugin: PhiPluginDisplayItem
 }): React.JSX.Element {
+  useUiLanguage()
+
   const components = phiPluginInspectableComponents(plugin)
   const owner = `${plugin.id}@${plugin.version}`
   const [selected, setSelected] = useState<{ owner: string; key: string } | null>(null)

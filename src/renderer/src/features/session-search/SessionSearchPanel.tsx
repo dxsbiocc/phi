@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box,
@@ -42,6 +44,7 @@ export function SessionSearchPanel({
   onFetchProjectSessions,
   onSelectSession
 }: SessionSearchPanelProps): React.JSX.Element {
+  useUiLanguage()
   const [query, setQuery] = useState('')
   // No default selection: nothing is highlighted until the user arrows into
   // the list or hovers an entry. Enter only opens an explicit selection.
@@ -103,7 +106,9 @@ export function SessionSearchPanel({
       await onSelectSession(path)
       onClose()
     } catch (error) {
-      setSelectionError(error instanceof Error ? error.message : '无法打开会话')
+      setSelectionError(
+        error instanceof Error ? error.message : navigationCopy.unableToOpenConversation
+      )
     } finally {
       setOpeningSession(false)
     }
@@ -113,7 +118,7 @@ export function SessionSearchPanel({
     <Dialog
       open
       onClose={onClose}
-      aria-label="查找会话"
+      aria-label={navigationCopy.findConversations}
       fullWidth
       maxWidth="sm"
       data-phi-session-search-dialog="true"
@@ -132,7 +137,7 @@ export function SessionSearchPanel({
           autoFocus
           fullWidth
           variant="standard"
-          placeholder="搜索会话"
+          placeholder={navigationCopy.searchConversations}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value)
@@ -159,7 +164,7 @@ export function SessionSearchPanel({
             }
           }}
           slotProps={{
-            htmlInput: { 'aria-label': '搜索会话' },
+            htmlInput: { 'aria-label': navigationCopy.searchConversations },
             input: {
               disableUnderline: true,
               startAdornment: (
@@ -175,7 +180,7 @@ export function SessionSearchPanel({
       <Divider />
       <Box sx={{ px: 1, py: 1, maxHeight: 'min(60vh, 520px)', overflowY: 'auto' }}>
         <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, fontWeight: 700 }}>
-          {query.trim() ? '会话' : '最近会话'}
+          {query.trim() ? navigationCopy.conversation : navigationCopy.recentConversations}
         </Typography>
         <List ref={resultListRef} dense disablePadding sx={{ mt: 0.5 }}>
           {results.map(({ session, projectName }, index) => (
@@ -192,24 +197,26 @@ export function SessionSearchPanel({
                 {sessionTitle(session)}
               </Typography>
               <Typography noWrap variant="caption" color="text.secondary" sx={{ maxWidth: 130 }}>
-                {projectName ?? '普通会话'}
+                {projectName ?? navigationCopy.ordinaryConversation}
               </Typography>
             </ListItemButton>
           ))}
         </List>
         {results.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ px: 1.5, py: 2 }}>
-            {snapshot.pending > 0 ? '正在查找项目会话…' : '没有匹配的会话'}
+            {snapshot.pending > 0
+              ? navigationCopy.findingProjectConversations
+              : navigationCopy.noMatchingConversations}
           </Typography>
         )}
         {snapshot.pending > 0 && results.length > 0 && (
           <Typography variant="caption" color="text.secondary" sx={{ px: 1.5, py: 1 }}>
-            正在查找其他项目…
+            {navigationCopy.searchingOtherProjects}
           </Typography>
         )}
         {snapshot.failed > 0 && (
           <Typography variant="caption" color="warning.main" sx={{ px: 1.5, py: 1 }}>
-            部分项目暂时无法读取
+            {navigationCopy.someProjectsAreTemporarilyUnavailable}
           </Typography>
         )}
         {selectionError && (

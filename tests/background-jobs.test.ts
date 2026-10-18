@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -63,6 +64,9 @@ function wrapper(overrides: Partial<WrapperRun> = {}): WrapperRun {
     ...overrides
   } as WrapperRun
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('job overview combines live Agent and Wrapper runs and caps recent results', () => {
   const result = selectBackgroundJobs(

@@ -1,3 +1,5 @@
+import { memoryUi } from '../lib/memoryUi'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { useCallback, useRef, useState } from 'react'
 import {
   Alert,
@@ -40,7 +42,7 @@ function errorMessage(error: unknown): string {
 function formatTime(value: string | null): string {
   if (!value) return ''
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(getUiLocale())
 }
 
 export function ProjectMemoryCard({
@@ -48,6 +50,7 @@ export function ProjectMemoryCard({
   settings,
   onSettingsSaved
 }: ProjectMemoryCardProps): React.JSX.Element {
+  useUiLanguage()
   const [saving, setSaving] = useState(false)
   const savingRef = useRef(false)
   const operationRef = useRef(false)
@@ -119,14 +122,18 @@ export function ProjectMemoryCard({
         <Typography variant="subtitle1" sx={{ fontWeight: 700, minWidth: 0 }}>
           {project.name}
         </Typography>
-        <Chip size="small" variant="outlined" label={remote ? '远程项目' : '本地项目'} />
+        <Chip
+          size="small"
+          variant="outlined"
+          label={remote ? memoryUi.remoteProject : memoryUi.localProject}
+        />
         <Box sx={{ flex: 1 }} />
         <Button
           size="small"
           onClick={toggleExpanded}
           endIcon={expanded ? <CollapseIcon /> : <ExpandIcon />}
         >
-          {expanded ? '收起' : '查看记忆'}
+          {expanded ? memoryUi.collapse : memoryUi.viewMemory}
         </Button>
       </Stack>
 
@@ -139,7 +146,7 @@ export function ProjectMemoryCard({
               onChange={(event) => void updateSettings('enabled', event.target.checked)}
             />
           }
-          label="项目记忆"
+          label={memoryUi.projectMemory}
         />
         <FormControlLabel
           control={
@@ -149,7 +156,7 @@ export function ProjectMemoryCard({
               onChange={(event) => void updateSettings('learn', event.target.checked)}
             />
           }
-          label="允许 agent 记录经验"
+          label={memoryUi.allowTheAgentToRecordLessons}
         />
       </Stack>
 
@@ -165,16 +172,16 @@ export function ProjectMemoryCard({
             <CircularProgress size={20} />
           ) : empty ? (
             <Typography variant="body2" color="text.secondary">
-              还没有记忆。开启后，项目里的对话结束并空闲一段时间，下次新建会话时会在后台生成总结。
+              {memoryUi.noMemoryYetWhenEnabledPhiGeneratesA}
             </Typography>
           ) : snapshot ? (
             <Stack spacing={2}>
               {snapshot.summary && (
                 <Box>
                   <Typography variant="caption" color="text.secondary">
-                    对话总结
+                    {memoryUi.conversationSummary}{' '}
                     {snapshot.summaryUpdatedAt
-                      ? ` · 更新于 ${formatTime(snapshot.summaryUpdatedAt)}`
+                      ? memoryUi.updatedValue(formatTime(snapshot.summaryUpdatedAt))
                       : ''}
                   </Typography>
                   <Typography
@@ -200,7 +207,7 @@ export function ProjectMemoryCard({
               {snapshot.lessons.length > 0 && (
                 <Box>
                   <Typography variant="caption" color="text.secondary">
-                    agent 记录的经验（{snapshot.lessons.length}）
+                    {memoryUi.lessonsCount(snapshot.lessons.length)}
                   </Typography>
                   <Stack spacing={0.5} sx={{ mt: 0.5 }}>
                     {snapshot.lessons.map((lesson) => (
@@ -213,11 +220,11 @@ export function ProjectMemoryCard({
                         <Typography variant="body2" sx={{ flex: 1, overflowWrap: 'anywhere' }}>
                           {lesson.text}
                         </Typography>
-                        <Tooltip title="删除这条经验">
+                        <Tooltip title={memoryUi.deleteThisLesson}>
                           <span>
                             <IconButton
                               size="small"
-                              aria-label="删除这条经验"
+                              aria-label={memoryUi.deleteThisLesson}
                               disabled={loading}
                               onClick={() => deleteLesson(lesson)}
                             >
@@ -238,10 +245,10 @@ export function ProjectMemoryCard({
               {confirmingClear ? (
                 <>
                   <Typography variant="body2" color="error.main">
-                    清空后，已有对话不会再被总结；只有之后的对话会形成新记忆。
+                    {memoryUi.clearingMemoryExcludesExistingConversationsFromFutureSummaries}
                   </Typography>
                   <Button size="small" onClick={() => setConfirmingClear(false)}>
-                    取消
+                    {memoryUi.cancel}
                   </Button>
                   <Button
                     size="small"
@@ -250,7 +257,7 @@ export function ProjectMemoryCard({
                     disabled={loading}
                     onClick={clearMemory}
                   >
-                    确认清空
+                    {memoryUi.confirmClear}
                   </Button>
                 </>
               ) : (
@@ -261,7 +268,7 @@ export function ProjectMemoryCard({
                   disabled={loading}
                   onClick={() => setConfirmingClear(true)}
                 >
-                  清空记忆
+                  {memoryUi.clearMemory}
                 </Button>
               )}
             </Stack>

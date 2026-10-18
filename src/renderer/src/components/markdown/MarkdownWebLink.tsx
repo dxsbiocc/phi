@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdownUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Link, Tooltip } from '@mui/material'
 import { useRef, type MouseEvent, type ReactNode } from 'react'
 import { FaGithub } from 'react-icons/fa'
@@ -18,6 +20,7 @@ export function MarkdownWebLink({
   children: ReactNode
   onOpenWebUrl?: (url: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const anchorRef = useRef<HTMLAnchorElement | null>(null)
   const text = textFromNode(children)
   const presentation = href ? describeWebLink(href, text) : null
@@ -34,19 +37,19 @@ export function MarkdownWebLink({
       ? [
           {
             id: 'open',
-            label: opensInApp ? '在 Phi 中打开' : '打开链接',
+            label: opensInApp ? markdownCopy.openInPhi : markdownCopy.openLink,
             icon: <FiGlobe aria-hidden size={16} />,
             onSelect: openLink
           },
           {
             id: 'copy-url',
-            label: '复制链接地址',
+            label: markdownCopy.copyLink,
             icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
             onSelect: () => navigator.clipboard.writeText(href)
           },
           {
             id: 'copy-text',
-            label: '复制显示文本',
+            label: markdownCopy.copyLinkText,
             icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
             onSelect: () => navigator.clipboard.writeText(presentation.label)
           }

@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import {
   Box,
   Button,
@@ -74,6 +76,7 @@ function AgentRunSteerBox({
   toolCallId: string
   onGone: () => void
 }): ReactNode {
+  useUiLanguage()
   const [text, setText] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -102,7 +105,7 @@ function AgentRunSteerBox({
           fullWidth
           value={text}
           disabled={pending}
-          placeholder="补充指示，Agent 会在当前工具调用结束后读取"
+          placeholder={chatCopy.additionalInstructionsWillBeReadAfterTheCurrentToolCall}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             // Enter also confirms a candidate while typing with an input method.
@@ -110,13 +113,15 @@ function AgentRunSteerBox({
             event.preventDefault()
             void submit()
           }}
-          slotProps={{ htmlInput: { 'aria-label': '给 Agent 补充指示', maxLength: 4000 } }}
+          slotProps={{
+            htmlInput: { 'aria-label': chatCopy.additionalInstructionsForAgent, maxLength: 4000 }
+          }}
         />
-        <Tooltip title="发送" enterDelay={400}>
+        <Tooltip title={chatCopy.send} enterDelay={400}>
           <span>
             <IconButton
               size="small"
-              aria-label="发送指示"
+              aria-label={chatCopy.sendInstructions}
               disabled={pending || !text.trim()}
               onClick={() => void submit()}
               sx={{ width: 32, height: 32 }}
@@ -137,11 +142,12 @@ function AgentRunSteerBox({
 
 /** What the user told the agent while it ran; part of the card's history, so it outlives the run. */
 function AgentSteerHistory({ item }: { item: AgentExecutionItem }): ReactNode {
+  useUiLanguage()
   if (!item.steers || item.steers.length === 0) return null
   return (
     <Box sx={{ mt: 1.25, minWidth: 0 }}>
       <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-        你的补充指示
+        {chatCopy.yourAdditionalInstructions}
       </Typography>
       {item.steers.map((steer, index) => (
         <Typography
@@ -163,6 +169,7 @@ function AgentSteerHistory({ item }: { item: AgentExecutionItem }): ReactNode {
 }
 
 function SavedFinalReportBlock({ item }: { item: AgentExecutionItem }): ReactNode {
+  useUiLanguage()
   if (!item.finalReportTruncated || !item.finalReportPath) return null
   const icon = fileIconForPath(item.finalReportPath)
   const OutputFileIcon = icon.Icon
@@ -180,7 +187,7 @@ function SavedFinalReportBlock({ item }: { item: AgentExecutionItem }): ReactNod
       <OutputFileIcon sx={{ color: icon.color, fontSize: 22 }} />
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          完整报告已保存
+          {chatCopy.fullReportSaved}
         </Typography>
         <Typography
           variant="caption"
@@ -208,7 +215,7 @@ function SavedFinalReportBlock({ item }: { item: AgentExecutionItem }): ReactNod
           })
         }}
       >
-        在文件夹显示
+        {chatCopy.revealInFolder}
       </Button>
     </Box>
   )
@@ -227,6 +234,7 @@ function AgentExecutionCard({
   onOpenLocalPath,
   onContentResize
 }: AgentExecutionCardProps): React.JSX.Element {
+  useUiLanguage()
   const [expanded, setExpanded] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   // The agent worker no longer has this run (e.g. Phi was restarted): stop offering controls.
@@ -292,7 +300,7 @@ function AgentExecutionCard({
           }
         }}
         aria-expanded={expanded}
-        aria-label={expanded ? '折叠 Agent 执行' : '展开 Agent 执行'}
+        aria-label={expanded ? chatCopy.collapseAgentExecution : chatCopy.expandAgentExecution}
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -319,26 +327,26 @@ function AgentExecutionCard({
         <AgentIcon sx={{ fontSize: 16, flexShrink: 0, color: 'primary.main' }} />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography component="div" variant="body2" noWrap sx={{ color: 'text.primary' }}>
-            委派给 {item.agentName}
+            {chatCopy.delegatedTo} {item.agentName}
             {item.task ? `：${item.task}` : ''}
           </Typography>
           <Typography component="div" variant="caption" noWrap sx={{ color: 'text.secondary' }}>
-            {agentRunStatusText(item, { lost })} · 耗时 {elapsed} · 步骤{' '}
+            {agentRunStatusText(item, { lost })} {chatCopy.duration} {elapsed} {chatCopy.steps}
             {item.steps.length > 0 ? `${stepIndex + 1}/${item.steps.length}` : '0/0'}
-            {currentStep ? ` · 当前：${currentStep.toolName}` : ''}
+            {currentStep ? chatCopy.currentValue2(currentStep.toolName) : ''}
           </Typography>
         </Box>
         {item.toolCalls !== undefined ? (
           <Typography variant="caption" sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
-            {item.toolCalls} tools
+            {chatCopy.valueToolCalls(item.toolCalls)}
           </Typography>
         ) : null}
         {controlTarget ? (
-          <Tooltip title="停止这个 Agent" enterDelay={400}>
+          <Tooltip title={chatCopy.stopThisAgent} enterDelay={400}>
             <span>
               <IconButton
                 size="small"
-                aria-label="停止 Agent"
+                aria-label={chatCopy.stopAgent}
                 disabled={stopping}
                 onClick={(event) => {
                   event.stopPropagation()
@@ -353,7 +361,10 @@ function AgentExecutionCard({
           </Tooltip>
         ) : null}
         {item.cancelled ? (
-          <StopIcon sx={{ fontSize: 14, color: 'text.secondary' }} aria-label="已取消" />
+          <StopIcon
+            sx={{ fontSize: 14, color: 'text.secondary' }}
+            aria-label={chatCopy.cancelled}
+          />
         ) : (
           <StatusIndicator status={lost ? 'error' : item.status} />
         )}
@@ -384,7 +395,7 @@ function AgentExecutionCard({
             {item.argsJson ? (
               <Box sx={{ mb: 1.25, minWidth: 0 }}>
                 <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                  委派任务参数
+                  {chatCopy.delegatedTaskArguments}
                 </Typography>
                 <Typography
                   component="pre"
@@ -416,7 +427,7 @@ function AgentExecutionCard({
               </Box>
             ) : (
               <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                等待内部工具步骤。
+                {chatCopy.waitingForInternalToolSteps}
               </Typography>
             )}
             <AgentSteerHistory item={item} />
@@ -430,7 +441,7 @@ function AgentExecutionCard({
             ) : null}
             {lost ? (
               <Typography variant="caption" component="div" sx={{ mt: 1, color: 'text.secondary' }}>
-                这个 Agent 已不在运行（可能 Phi 重启过），没有更多进展会显示。
+                {chatCopy.thisAgentIsNoLongerRunningPhiMayHaveRestarted}
               </Typography>
             ) : null}
             {finalReport ? (
@@ -438,9 +449,9 @@ function AgentExecutionCard({
                 <Divider sx={{ my: 1.25 }} />
                 <SavedFinalReportBlock item={item} />
                 <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-                  最终报告
+                  {chatCopy.finalReport}
                   {item.finalReportBytes ? ` · ${formatBytes(item.finalReportBytes)}` : ''}
-                  {item.finalReportTruncated ? ' · 已截断' : ''}
+                  {item.finalReportTruncated ? chatCopy.truncated : ''}
                 </Typography>
                 <Box sx={{ mt: 0.5 }}>
                   <MarkdownContent text={finalReport} cwd={cwd} onOpenLocalPath={onOpenLocalPath} />
@@ -463,10 +474,10 @@ function AgentExecutionCard({
               </Typography>
             ) : null}
             <Box sx={{ display: 'flex', justifyContent: 'flex-start', pt: 0.5 }}>
-              <Tooltip title="折叠 Agent 执行" enterDelay={400}>
+              <Tooltip title={chatCopy.collapseAgentExecution} enterDelay={400}>
                 <IconButton
                   size="small"
-                  aria-label="折叠 Agent 执行"
+                  aria-label={chatCopy.collapseAgentExecution}
                   onClick={toggle}
                   sx={{ width: 28, height: 28, color: 'text.secondary' }}
                 >

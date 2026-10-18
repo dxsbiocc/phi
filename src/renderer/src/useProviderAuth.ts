@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ActiveAuthPrompt, AuthInteractionEvent, ProviderAuthStatus } from './types'
 import { readableErrorMessage } from './lib/sessionNotifications'
+import type { AuthEvent } from './lib/authTypes'
+import { useUiLanguage } from './lib/i18n'
+import { settingsUi } from './features/settings/lib/settingsUi'
+
+function providerHintText(event: AuthEvent | null): string {
+  if (!event) return ''
+  switch (event.type) {
+    case 'auth_url':
+      return settingsUi.providerAuth.authorizationUrl(event.url)
+    case 'device_code':
+      return settingsUi.providerAuth.deviceCode(event.userCode)
+    case 'info':
+    case 'progress':
+      return event.message
+    default:
+      return settingsUi.providerAuth.hintReceived
+  }
+}
 
 export type ProviderAuthState = {
   providerStatuses: ProviderAuthStatus[]
@@ -29,9 +47,10 @@ export function useProviderAuth(
   setIsBusy: (busy: boolean) => void,
   notify: (message: string, severity: 'success' | 'error') => void
 ): ProviderAuthState {
+  useUiLanguage()
   const [providerStatuses, setProviderStatuses] = useState<ProviderAuthStatus[]>([])
   const [activePrompts, setActivePrompts] = useState<ActiveAuthPrompt[]>([])
-  const [providerHints, setProviderHints] = useState<Record<string, string>>({})
+  const [providerHintEvents, setProviderHintEvents] = useState<Record<string, AuthEvent | null>>({})
   const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false)
   const [providerDialogProviderId, setProviderDialogProviderId] = useState<string | null>(null)
 
@@ -67,11 +86,16 @@ export function useProviderAuth(
       try {
         const next = await window.api.loginApiKey(providerId, key)
         setProviderStatuses(next)
-        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
         setIsProviderDialogOpen(false)
-        notify('API Key 已保存，使用时验证', 'success')
+        notify(settingsUi.providerAuth.apiKeySaved, 'success')
       } catch (error) {
-        notify(`API Key 保存失败：${readableErrorMessage(error, '请重试')}`, 'error')
+        notify(
+          settingsUi.providerAuth.apiKeySaveFailed(
+            readableErrorMessage(error, settingsUi.providerAuth.retry)
+          ),
+          'error'
+        )
       } finally {
         setIsBusy(false)
       }
@@ -85,13 +109,18 @@ export function useProviderAuth(
       try {
         const next = await window.api.loginOAuth(providerId)
         setProviderStatuses(next)
-        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
+        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
         setActivePrompts((prev) => prev.filter((item) => item.providerId !== providerId))
         setIsProviderDialogOpen(false)
-        notify('Auth 登录成功', 'success')
+        notify(settingsUi.providerAuth.loginSucceeded, 'success')
       } catch (error) {
-        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
-        notify(`Auth 登录失败：${readableErrorMessage(error, '请重试')}`, 'error')
+        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
+        notify(
+          settingsUi.providerAuth.loginFailed(
+            readableErrorMessage(error, settingsUi.providerAuth.retry)
+          ),
+          'error'
+        )
       } finally {
         setIsBusy(false)
       }
@@ -104,10 +133,15 @@ export function useProviderAuth(
       try {
         await window.api.logout(providerId)
         await refreshAuthStatuses()
-        setProviderHints((prev) => ({ ...prev, [providerId]: '' }))
-        notify('Provider 已登出', 'success')
+        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
+        notify(settingsUi.providerAuth.loggedOut, 'success')
       } catch (error) {
-        notify(`登出失败：${readableErrorMessage(error, '请重试')}`, 'error')
+        notify(
+          settingsUi.providerAuth.logoutFailed(
+            readableErrorMessage(error, settingsUi.providerAuth.retry)
+          ),
+          'error'
+        )
       }
     },
     [notify, refreshAuthStatuses]
@@ -167,20 +201,9 @@ export function useProviderAuth(
       return true
     }
 
-    const hint =
-      event.event.type === 'auth_url'
-        ? `授权链接：${event.event.url}`
-        : event.event.type === 'info'
-          ? event.event.message
-          : event.event.type === 'progress'
-            ? event.event.message
-            : event.event.type === 'device_code'
-              ? `验证码：${event.event.userCode}`
-              : '收到授权提示'
-
-    setProviderHints((prev) => ({
+    setProviderHintEvents((prev) => ({
       ...prev,
-      [event.providerId]: hint
+      [event.providerId]: event.event
     }))
 
     setProviderDialogProviderId(event.providerId)
@@ -197,7 +220,9 @@ export function useProviderAuth(
   return {
     providerStatuses,
     activePrompts,
-    providerHints,
+    providerHints: Object.fromEntries(
+      Object.entries(providerHintEvents).map(([id, event]) => [id, providerHintText(event)])
+    ),
     isProviderDialogOpen,
     providerDialogProviderId,
     refreshAuthStatuses,

@@ -66,7 +66,7 @@ interface TransferOptions {
   onTransferEvent?: (event: TransferEvent) => void
 }
 
-type DirectSourceOutcome = '下载失败' | '校验失败'
+type DirectSourceOutcome = 'download failed' | 'verification failed'
 
 class DirectDownloadFailure extends Error {
   constructor(readonly outcome: DirectSourceOutcome) {
@@ -76,7 +76,7 @@ class DirectDownloadFailure extends Error {
 
 interface SourceResult {
   host: string
-  outcome: '不可用' | '缺少工具' | DirectSourceOutcome
+  outcome: 'unavailable' | 'missing tools' | DirectSourceOutcome
 }
 
 const UPLOAD_TIMEOUT_MS = 120_000
@@ -98,12 +98,15 @@ function candidateUrls(artifact: RemoteMicromambaArtifactPlan): readonly string[
 }
 
 function sourceResultSummary(results: readonly SourceResult[]): string {
-  return results.map(({ host, outcome }) => `${host}：${outcome}`).join('；')
+  return results.map(({ host, outcome }) => `${host}: ${outcome}`).join('; ')
 }
 
 function assertNotAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
-    throw new RemoteMicromambaTransferFailure('aborted', '操作已取消，未继续修改远端运行时。')
+    throw new RemoteMicromambaTransferFailure(
+      'aborted',
+      'Operation cancelled. No further changes were made to the remote runtime.'
+    )
   }
 }
 
@@ -120,7 +123,7 @@ export async function readRemoteMicromambaHash(
   if (parsed.error === 'missing-tool') {
     throw new RemoteMicromambaTransferFailure(
       'hash-tool-unavailable',
-      '服务器缺少 sha256sum、shasum、openssl 或 Perl Digest::SHA，无法校验文件。'
+      'The server has none of sha256sum, shasum, openssl, or Perl Digest::SHA, so files cannot be verified.'
     )
   }
   return parsed.hash
@@ -135,13 +138,16 @@ async function readRemoteFileSize(
 }
 
 async function activateStaging(options: TransferOptions, stagingPath: string): Promise<void> {
-  options.onProgress({ stage: 'activating', message: '正在原子激活新版本…' })
+  options.onProgress({ stage: 'activating', message: 'Activating the new version atomically…' })
   const activated = await runRemoteMicromambaScript(
     options.session,
     buildActivateScript(stagingPath, options.installPath)
   )
   if (activated.code !== 0) {
-    throw new RemoteMicromambaTransferFailure('activation-failed', '无法激活远端 micromamba。')
+    throw new RemoteMicromambaTransferFailure(
+      'activation-failed',
+      'Unable to activate remote micromamba.'
+    )
   }
 }
 
@@ -150,7 +156,7 @@ async function probeRemoteNetwork(
   url: string
 ): Promise<RemoteMicromambaDownloadCapability> {
   const host = sourceHost(url)
-  options.onProgress({ stage: 'probing-network', message: `正在测速下载源 ${host}…` })
+  options.onProgress({ stage: 'probing-network', message: `Testing download source ${host}…` })
   assertNotAborted(options.signal)
   try {
     const result = await runRemoteMicromambaScript(options.session, buildNetworkProbeScript(url))
@@ -185,7 +191,7 @@ async function downloadDirectly(
   try {
     options.onProgress({
       stage: 'remote-downloading',
-      message: `正在由服务器从 ${host} 下载 micromamba…`
+      message: `Downloading micromamba from ${host} on the server…`
     })
     assertNotAborted(options.signal)
     try {
@@ -194,17 +200,20 @@ async function downloadDirectly(
         options,
         buildDownloadScript(url, stagingPath, capability.tool, Math.ceil(timeoutMs / 1_000))
       )
-      if (downloaded.code !== 0) throw new DirectDownloadFailure('下载失败')
+      if (downloaded.code !== 0) throw new DirectDownloadFailure('download failed')
     } catch {
       assertNotAborted(options.signal)
-      throw new DirectDownloadFailure('下载失败')
+      throw new DirectDownloadFailure('download failed')
     }
     assertNotAborted(options.signal)
-    options.onProgress({ stage: 'verifying-upload', message: `正在校验 ${host} 下载的文件…` })
+    options.onProgress({
+      stage: 'verifying-upload',
+      message: `Verifying the file downloaded from ${host}…`
+    })
     const hash = await readRemoteMicromambaHash(options.session, stagingPath)
     const size = await readRemoteFileSize(options.session, stagingPath)
     if (hash !== options.artifact.sha256 || size !== options.artifact.size) {
-      throw new DirectDownloadFailure('校验失败')
+      throw new DirectDownloadFailure('verification failed')
     }
     await activateStaging(options, stagingPath)
   } catch (error) {
@@ -230,10 +239,16 @@ async function obtainRelayArtifact(options: TransferOptions): Promise<RemoteMicr
   try {
     artifact = options.obtainLocalArtifact ? await options.obtainLocalArtifact() : options.artifact
   } catch {
-    throw new RemoteMicromambaTransferFailure('upload-failed', '准备本机中转文件失败。')
+    throw new RemoteMicromambaTransferFailure(
+      'upload-failed',
+      'Unable to prepare the desktop relay file.'
+    )
   }
   if (!sameArtifact(options.artifact, artifact)) {
-    throw new RemoteMicromambaTransferFailure('invalid-artifact', '本机中转文件信息无效。')
+    throw new RemoteMicromambaTransferFailure(
+      'invalid-artifact',
+      'Invalid desktop relay file metadata.'
+    )
   }
   return artifact
 }
@@ -248,7 +263,7 @@ async function uploadAttempt(
   try {
     options.onProgress({
       stage: 'uploading',
-      message: '正在上传 micromamba…',
+      message: 'Uploading micromamba…',
       attempt,
       transferredBytes: 0,
       totalBytes: options.artifact.size
@@ -275,7 +290,7 @@ async function uploadAttempt(
         if (event.state === 'transferring' && event.bytesTransferred > 0) {
           options.onProgress({
             stage: 'uploading',
-            message: '正在上传 micromamba…',
+            message: 'Uploading micromamba…',
             attempt,
             transferredBytes: event.bytesTransferred,
             totalBytes: event.totalBytes ?? options.artifact.size
@@ -285,7 +300,7 @@ async function uploadAttempt(
     })
     options.onProgress({
       stage: 'uploading',
-      message: 'micromamba 上传完成。',
+      message: 'micromamba upload complete.',
       attempt,
       transferredBytes: options.artifact.size,
       totalBytes: options.artifact.size
@@ -293,21 +308,21 @@ async function uploadAttempt(
     assertNotAborted(options.signal)
     options.onProgress({
       stage: 'verifying-upload',
-      message: '正在校验上传文件…',
+      message: 'Verifying the uploaded file…',
       attempt
     })
     const hash = await readRemoteMicromambaHash(options.session, stagingPath)
     if (hash !== options.artifact.sha256) {
       throw new RemoteMicromambaTransferFailure(
         'remote-hash-mismatch',
-        '上传文件的 SHA-256 不匹配。'
+        'The uploaded file SHA-256 does not match.'
       )
     }
     await activateStaging(options, stagingPath)
   } catch (error) {
     await cleanupStaging(options.session, stagingPath)
     if (error instanceof RemoteMicromambaTransferFailure) throw error
-    throw new RemoteMicromambaTransferFailure('upload-failed', '上传 micromamba 失败。')
+    throw new RemoteMicromambaTransferFailure('upload-failed', 'micromamba upload failed.')
   }
 }
 
@@ -330,17 +345,19 @@ async function uploadWithRetry(options: TransferOptions, localPath: string): Pro
       failure =
         error instanceof RemoteMicromambaTransferFailure
           ? error
-          : new RemoteMicromambaTransferFailure('upload-failed', '上传 micromamba 失败。')
+          : new RemoteMicromambaTransferFailure('upload-failed', 'micromamba upload failed.')
       if (failure.code === 'aborted' || failure.code === 'hash-tool-unavailable') throw failure
     }
   }
-  throw failure ?? new RemoteMicromambaTransferFailure('upload-failed', '上传 micromamba 失败。')
+  throw failure ?? new RemoteMicromambaTransferFailure('upload-failed', 'micromamba upload failed.')
 }
 
 function relayMessage(capability?: RemoteMicromambaDownloadCapability): string {
-  if (capability?.status === 'unreachable') return '服务器无法直连发布地址，正在使用本机中转…'
-  if (capability?.status === 'no-tool') return '服务器缺少 curl/wget，正在使用本机中转…'
-  return '正在使用本机中转 micromamba…'
+  if (capability?.status === 'unreachable')
+    return 'The server cannot reach the release URL. Using desktop relay…'
+  if (capability?.status === 'no-tool')
+    return 'curl/wget is missing on the server. Using desktop relay…'
+  return 'Relaying micromamba through the desktop…'
 }
 
 async function relayFromDesktop(
@@ -357,7 +374,7 @@ async function relayFromDesktop(
     const failure =
       error instanceof RemoteMicromambaTransferFailure
         ? error
-        : new RemoteMicromambaTransferFailure('upload-failed', '上传 micromamba 失败。')
+        : new RemoteMicromambaTransferFailure('upload-failed', 'micromamba upload failed.')
     throw new RemoteMicromambaTransferFailure(
       failure.code,
       failure.message,
@@ -374,7 +391,10 @@ function terminalDirectFailure(
   const failure =
     error instanceof RemoteMicromambaTransferFailure
       ? error
-      : new RemoteMicromambaTransferFailure('upload-failed', '服务器直连下载失败。')
+      : new RemoteMicromambaTransferFailure(
+          'upload-failed',
+          'Direct download on the server failed.'
+        )
   return new RemoteMicromambaTransferFailure(
     failure.code,
     failure.message,
@@ -404,11 +424,17 @@ export async function transferRemoteMicromamba(
     toolDetected ||= capability.status !== 'no-tool'
     if (capability.status !== 'reachable') {
       missingTool ||= capability.status === 'no-tool'
-      results.push({ host, outcome: capability.status === 'no-tool' ? '缺少工具' : '不可用' })
+      results.push({
+        host,
+        outcome: capability.status === 'no-tool' ? 'missing tools' : 'unavailable'
+      })
       if (capability.status === 'no-tool') break
       continue
     }
-    options.onProgress({ stage: 'probing-network', message: `下载源 ${host} 可用。` })
+    options.onProgress({
+      stage: 'probing-network',
+      message: `Download source ${host} is available.`
+    })
     try {
       await downloadDirectly(options, capability, url)
       return { networkProbe: capability, transferMethod: 'remote-direct' }
@@ -417,11 +443,15 @@ export async function transferRemoteMicromamba(
       results.push({ host, outcome: error.outcome })
       options.onProgress({
         stage: 'probing-network',
-        message: `${host} ${error.outcome}，尝试下一下载源…`
+        message: `${host}: ${error.outcome}. Trying the next download source…`
       })
     }
   }
   const capability = exhaustedCapability(missingTool, toolDetected)
   const summary = sourceResultSummary(results)
-  return relayFromDesktop(options, capability, `下载源结果：${summary}。正在使用本机中转…`)
+  return relayFromDesktop(
+    options,
+    capability,
+    `Download source results: ${summary}. Using desktop relay…`
+  )
 }

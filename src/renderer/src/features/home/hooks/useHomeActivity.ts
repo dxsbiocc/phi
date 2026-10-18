@@ -1,3 +1,4 @@
+import { homeCopy } from '../lib/homeCopy'
 import { useEffect, useState } from 'react'
 
 import { getRendererApi } from '../../../lib/rendererApi'
@@ -30,7 +31,10 @@ export function useHomeActivity(refreshKey: string): HomeActivityState {
         if (!active) return
         setState({
           data: null,
-          error: error instanceof Error ? error.message : '暂时无法读取活动记录',
+          error:
+            error instanceof Error
+              ? error.message
+              : homeCopy.activityHistoryIsTemporarilyUnavailable,
           loading: false
         })
       })

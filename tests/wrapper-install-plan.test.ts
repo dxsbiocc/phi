@@ -52,9 +52,9 @@ test('dependencies are listed by tool name with their kind, largest-first order 
   assert.deepEqual(
     summary.dependencies.map((entry) => [entry.name, entry.kind]),
     [
-      ['bam-stats-samtools', '子流程'],
-      ['bowtie2', '模块'],
-      ['rnaseq', '工作流']
+      ['bam-stats-samtools', 'Subworkflow'],
+      ['bowtie2', 'Module'],
+      ['rnaseq', 'Workflow']
     ]
   )
   assert.equal(summary.root.name, 'align-bowtie2')

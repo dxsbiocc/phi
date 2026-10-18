@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
+import { resourceUi } from '../../../lib/resourceUi'
 import {
   useCallback,
   useEffect,
@@ -138,6 +141,7 @@ function LoadMoreSentinel({
   remainingCount: number
   onLoadMore: (tier: string, totalCount: number) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -159,7 +163,7 @@ function LoadMoreSentinel({
       sx={{ display: 'flex', justifyContent: 'center', py: 1, WebkitAppRegion: 'no-drag' }}
     >
       <Typography variant="caption" color="text.disabled">
-        还有 {remainingCount} 个 · 向下滚动加载
+        {wrapperCopy.loadMore(remainingCount)}
       </Typography>
     </Box>
   )
@@ -192,6 +196,7 @@ function WrapperTierGroupAccordion({
   onSetPackageEnabled?: WrapperSidebarProps['onSetPackageEnabled']
   onRemovePackage?: (packageId: string) => Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   const detailsRef = useRef<HTMLDivElement | null>(null)
 
   // Pagination must never hide the currently selected wrapper — if it's
@@ -223,14 +228,14 @@ function WrapperTierGroupAccordion({
       {packages.length === 0 ? (
         <Box sx={{ px: 2, py: 1.5 }}>
           <Typography variant="body2" color="text.disabled">
-            暂无{wrapperTierLabel(tier)} wrapper
+            {wrapperCopy.emptyTier(wrapperTierLabel(tier))}
           </Typography>
         </Box>
       ) : null}
       {visiblePackages.map((group) => {
         const lead = group.members[0]
         const { provider } = parseWrapperCompositionId(lead.id)
-        const detail = `${provider} · ${group.members.length} 个工具`
+        const detail = `${provider} · ${wrapperCopy.toolCount(group.members.length)}`
         return (
           <CatalogResourceRow
             key={group.key}
@@ -243,10 +248,10 @@ function WrapperTierGroupAccordion({
             onSelect={() => onSelect(group.open(selectedId))}
             disabledReason={
               busyPackageId && busyPackageId !== group.key
-                ? '正在更新 wrapper'
+                ? wrapperCopy.updatingWrapper
                 : group.managed
                   ? undefined
-                  : '用户自定义 wrapper 始终可用'
+                  : wrapperCopy.customAlwaysAvailable
             }
             onEnabledChange={
               onSetPackageEnabled && group.managed
@@ -326,6 +331,7 @@ export function WrapperSidebar({
   cancelTrustedOverlay,
   onPreviewInteractionChange
 }: WrapperSidebarProps): React.JSX.Element {
+  useUiLanguage()
   const removal = useWrapperPackageRemoval(onRefresh)
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -417,13 +423,16 @@ export function WrapperSidebar({
 
   return (
     <CatalogSidebar
-      title="Wrappers"
+      title={resourceUi.wrappers}
       resource="wrappers"
       width={sidebarWidth}
       query={query}
       onQueryChange={setQuery}
-      searchPlaceholder="搜索 wrapper"
-      summary={`${chosenPackages.length} 个工具 · ${chosenPackages.filter((group) => group.enabled).length} 已启用`}
+      searchPlaceholder={wrapperCopy.searchWrappers}
+      summary={wrapperCopy.sidebarSummary(
+        chosenPackages.length,
+        chosenPackages.filter((group) => group.enabled).length
+      )}
       action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} />}
     >
       {removal.error ? (
@@ -453,7 +462,7 @@ export function WrapperSidebar({
         ) : filteredCatalog.length === 0 ? (
           <Box sx={{ px: 1.5, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              {query.trim() ? '没有匹配的 wrapper' : '尚未添加 wrapper。点击“发现”浏览目录。'}
+              {query.trim() ? wrapperCopy.noMatches : wrapperCopy.noWrappers}
             </Typography>
           </Box>
         ) : (

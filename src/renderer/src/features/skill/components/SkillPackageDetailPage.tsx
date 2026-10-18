@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
+import { resourceUi, resourceSourceLabel } from '../../../lib/resourceUi'
 import { Chip } from '@mui/material'
 
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
@@ -19,15 +22,22 @@ export function SkillPackageDetailPage({
   action: React.ReactNode
   onBack: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const markdown = useSkillPackageMarkdown(entry.registryDir, entry.id)
-  const origin = entry.registryLabel ?? '软件包'
+  const origin = resourceSourceLabel(entry.registryLabel ?? skillCopy.packagesGroup)
   return (
-    <CatalogDetailFrame entryId={entry.id} backLabel="返回技能目录" action={action} onBack={onBack}>
+    <CatalogDetailFrame
+      entryId={entry.id}
+      backLabel={skillCopy.backToCatalog}
+      action={action}
+      onBack={onBack}
+    >
       <SkillDetailBody
         name={entry.title}
         icon={entry.icon}
         enabled
-        sourceLabel={`软件包 · ${origin}`}
+        sourceLabel={`${skillCopy.packageSource} · ${origin}`}
         chips={
           <>
             <Chip size="small" variant="outlined" label={origin} />
@@ -36,12 +46,12 @@ export function SkillPackageDetailPage({
             <Chip
               size="small"
               color={installed ? 'success' : 'default'}
-              label={installed ? '已安装' : '未安装'}
+              label={installed ? resourceUi.installed : skillCopy.notInstalled}
             />
           </>
         }
         description={entry.summary}
-        sourceText={`软件包 · ${origin} · v${entry.version}`}
+        sourceText={`${skillCopy.packageSource} · ${origin} · v${entry.version}`}
         markdown={markdown}
       />
     </CatalogDetailFrame>

@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, CircularProgress, IconButton, Popover, Tooltip } from '@mui/material'
 import { useId, useState } from 'react'
 import type { ContextUsageSnapshot } from '../../../../../shared/contextUsageTypes'
@@ -15,6 +17,7 @@ export function ContextUsageIndicator({
   usage: ContextUsageSnapshot | null
   loading: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const presentation = contextUsagePresentation(usage, loading)
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null)
   const detailId = useId()
@@ -22,14 +25,14 @@ export function ContextUsageIndicator({
   return (
     <>
       <Tooltip
-        title={`${presentation.label}，点击查看详情`}
+        title={chatCopy.valueClickForDetails(presentation.label)}
         placement="top"
         open={open ? false : undefined}
       >
         <IconButton
           type="button"
           size="small"
-          aria-label={`上下文用量：${presentation.label}，点击查看详情`}
+          aria-label={chatCopy.contextUsageValueClickForDetails(presentation.label)}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? detailId : undefined}
@@ -74,7 +77,7 @@ export function ContextUsageIndicator({
           paper: {
             id: detailId,
             role: 'dialog',
-            'aria-label': '上下文用量详情',
+            'aria-label': chatCopy.contextUsageDetails,
             sx: {
               bgcolor: 'background.paper',
               backgroundImage: 'none',

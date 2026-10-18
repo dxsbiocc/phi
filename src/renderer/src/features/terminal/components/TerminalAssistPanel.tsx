@@ -1,3 +1,5 @@
+import { terminalUi } from '../lib/terminalUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Box,
   Button,
@@ -35,6 +37,7 @@ export interface TerminalAssistPanelProps {
 }
 
 export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.Element {
+  useUiLanguage()
   const { state } = props
   const requiredInputs = state.draft?.requiredInputs ?? []
   const preview = substituteTerminalDraftInputs(state.command, requiredInputs, state.inputValues)
@@ -62,7 +65,9 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
     <Box
       data-phi-terminal-assist="true"
       role="region"
-      aria-label={state.kind === 'explain' ? '让 Agent 解释' : '帮我写命令'}
+      aria-label={
+        state.kind === 'explain' ? terminalUi.askAgentToExplain : terminalUi.helpWriteACommand
+      }
       sx={{
         flexShrink: 0,
         mx: 1.5,
@@ -81,14 +86,15 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="caption" sx={{ display: 'block', fontWeight: 800 }}>
-            {state.kind === 'explain' ? '让 Agent 解释' : '帮我写命令'}
+            {state.kind === 'explain' ? terminalUi.askAgentToExplain : terminalUi.helpWriteACommand}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            目标：{props.targetLabel} · 生成内容不会自动发送
+            {terminalUi.target}
+            {props.targetLabel} {terminalUi.generatedContentIsNotSentAutomatically}
           </Typography>
         </Box>
         <Button size="small" color="inherit" disabled={generating} onClick={props.onClose}>
-          关闭
+          {terminalUi.close}
         </Button>
       </Box>
 
@@ -98,7 +104,11 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
         minRows={2}
         maxRows={5}
         size="small"
-        label={state.kind === 'explain' ? '你想了解什么' : '描述你想完成的操作'}
+        label={
+          state.kind === 'explain'
+            ? terminalUi.whatWouldYouLikeToUnderstand
+            : terminalUi.describeWhatYouWantToDo
+        }
         value={state.request}
         disabled={generating}
         onChange={(event) => props.onRequestChange(event.currentTarget.value)}
@@ -114,7 +124,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
             minRows={2}
             maxRows={5}
             size="small"
-            label="附带的终端内容"
+            label={terminalUi.attachedTerminalContent}
             value={state.selection}
             disabled={generating}
             onChange={(event) => props.onSelectionChange(event.currentTarget.value)}
@@ -138,10 +148,12 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
               }
             >
               {selectionBoundary?.truncated
-                ? `超过 16 KiB；截断点在第 ${selectionBoundary.includedCharacters} 个字符，只发送此前内容`
+                ? terminalUi.exceeds16KiBOnlyTheFirstValueCharacters(
+                    selectionBoundary.includedCharacters
+                  )
                 : state.selectionTruncated
-                  ? '附带内容已截断至 16 KiB'
-                  : '只有这里的内容会随请求发送'}
+                  ? terminalUi.attachedContentTruncatedTo16KiB
+                  : terminalUi.onlyThisContentWillBeSentWithThe}
             </Typography>
             <Button
               size="small"
@@ -149,7 +161,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
               disabled={generating}
               onClick={() => props.onSelectionChange(undefined)}
             >
-              移除附带内容
+              {terminalUi.removeAttachedContent}
             </Button>
           </Box>
         </Box>
@@ -164,11 +176,11 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
             >
               <CircularProgress size={14} />
               <Typography variant="caption" color="text.secondary">
-                正在生成
+                {terminalUi.generating}
               </Typography>
             </Box>
             <Button size="small" color="inherit" onClick={props.onCancelGeneration}>
-              取消
+              {terminalUi.cancel}
             </Button>
           </>
         ) : (
@@ -178,7 +190,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
             disabled={props.generationBusy || !state.request.trim()}
             onClick={props.onGenerate}
           >
-            生成
+            {terminalUi.generate}
           </Button>
         )}
       </Box>
@@ -197,7 +209,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
             minRows={2}
             maxRows={8}
             size="small"
-            label="命令草稿"
+            label={terminalUi.commandDraft}
             value={state.command}
             disabled={state.submitted}
             onChange={(event) => props.onCommandChange(event.currentTarget.value)}
@@ -234,7 +246,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
           {requiredInputs.length > 0 ? (
             <Box sx={{ mt: 1 }}>
               <Typography variant="caption" color="text.secondary">
-                发送预览
+                {terminalUi.sendPreview}
               </Typography>
               <Typography
                 component="pre"
@@ -268,13 +280,13 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
                   onChange={(event) => props.onReadyForDirtyLineChange(event.target.checked)}
                 />
               }
-              label="我已准备好接收此命令（当前行已有输入）"
+              label={terminalUi.iAmReadyToReceiveThisCommandThe}
             />
           ) : null}
 
           {!props.targetOpen ? (
             <Typography role="alert" variant="caption" color="warning.main">
-              目标终端已关闭，无法发送
+              {terminalUi.theTargetTerminalIsClosedCannotSend}
             </Typography>
           ) : null}
 
@@ -285,7 +297,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
               disabled={!preview}
               onClick={() => props.onCopy(preview)}
             >
-              复制
+              {terminalUi.copy}
             </Button>
             <Button
               size="small"
@@ -293,7 +305,7 @@ export function TerminalAssistPanel(props: TerminalAssistPanelProps): React.JSX.
               disabled={sendDisabled}
               onClick={() => props.onSend(preview)}
             >
-              {state.submitted ? '已发送' : `发送到 ${props.targetLabel}`}
+              {state.submitted ? terminalUi.sent : terminalUi.sendToValue(props.targetLabel)}
             </Button>
           </Box>
         </Box>

@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import {
   Alert,
   Box,
@@ -63,6 +66,8 @@ export function McpLocalConnectorForm({
   onDraftChange,
   runtimeHelperText
 }: McpLocalConnectorFormProps): React.JSX.Element {
+  useUiLanguage()
+
   const args = parseLocalConnectorArgs(draft.argsText)
   const bunRuntime = draft.runtime.kind === 'bun'
   const preview = formatLocalConnectorArgv(
@@ -89,16 +94,16 @@ export function McpLocalConnectorForm({
         autoFocus
         fullWidth
         disabled={disabled}
-        label="名称"
+        label={resourceUi.name}
         value={draft.name}
         onChange={(event) => update({ name: event.target.value })}
-        helperText="使用 2–64 位字母、数字、下划线或连字符，并以字母开头"
+        helperText={connectorCopy.localNameHint}
       />
       <FormControl fullWidth disabled={disabled || runtimesLoading}>
-        <InputLabel id="mcp-local-runtime-label">运行位置</InputLabel>
+        <InputLabel id="mcp-local-runtime-label">{connectorCopy.runtimeLocation}</InputLabel>
         <Select
           labelId="mcp-local-runtime-label"
-          label="运行位置"
+          label={connectorCopy.runtimeLocation}
           value={runtimeValue(draft.runtime)}
           onChange={(event) => {
             const runtime = runtimeFromValue(event.target.value)
@@ -112,7 +117,7 @@ export function McpLocalConnectorForm({
         >
           {runtimeValue(draft.runtime) ? null : (
             <MenuItem value="" disabled>
-              请选择运行位置
+              {connectorCopy.chooseRuntime}
             </MenuItem>
           )}
           {runtimes.map((runtime) => (
@@ -120,56 +125,55 @@ export function McpLocalConnectorForm({
               key={runtime.ref}
               value={runtime.kind === 'bun' || runtime.ref === 'bun' ? '__bun__' : runtime.ref}
             >
-              {runtime.label}
+              {runtime.kind === 'bun' || runtime.ref === 'bun'
+                ? connectorCopy.bundledBun
+                : runtime.label}
             </MenuItem>
           ))}
-          <MenuItem value="__host__">本机命令（不隔离）</MenuItem>
+          <MenuItem value="__host__">{connectorCopy.hostRuntime}</MenuItem>
         </Select>
         <FormHelperText>
           {runtimesLoading
-            ? '正在加载可用运行环境…'
+            ? connectorCopy.loadingRuntimes
             : runtimeHelperText
               ? runtimeHelperText
               : runtimes.length === 0
-                ? '没有已就绪的 Phi 运行环境；可选择本机命令'
-                : 'Phi 环境仅列出已经构建并就绪的版本'}
+                ? connectorCopy.noReadyRuntime
+                : connectorCopy.readyRuntimesHint}
         </FormHelperText>
       </FormControl>
       {draft.runtime.kind === 'host' ? (
-        <Alert severity="warning">将直接在本机运行，不使用 Phi 隔离环境</Alert>
+        <Alert severity="warning">{connectorCopy.hostWarning}</Alert>
       ) : null}
-      {bunRuntime ? (
-        <Alert severity="warning">
-          由 Phi 内置 Bun 以 Node 兼容模式运行；个别依赖可能不兼容。x
-          方式每次启动会联网解析依赖，版本不锁定。
-        </Alert>
-      ) : null}
+      {bunRuntime ? <Alert severity="warning">{connectorCopy.bunWarning}</Alert> : null}
       {bunRuntime ? (
         <FormControl fullWidth disabled={disabled}>
-          <InputLabel id="mcp-local-bun-command-label">命令</InputLabel>
+          <InputLabel id="mcp-local-bun-command-label">{connectorCopy.command}</InputLabel>
           <Select
             labelId="mcp-local-bun-command-label"
-            label="命令"
+            label={connectorCopy.command}
             value={draft.command}
             onChange={(event) => update({ command: event.target.value })}
           >
-            <MenuItem value="x">x（运行 npm 包）</MenuItem>
-            <MenuItem value="run">run（运行脚本）</MenuItem>
+            <MenuItem value="x">{connectorCopy.bunX}</MenuItem>
+            <MenuItem value="run">{connectorCopy.bunRun}</MenuItem>
           </Select>
-          <FormHelperText>x（运行 npm 包）；run（运行脚本）</FormHelperText>
+          <FormHelperText>{connectorCopy.bunCommandHint}</FormHelperText>
         </FormControl>
       ) : (
         <TextField
           fullWidth
           disabled={disabled}
-          label="命令"
+          label={connectorCopy.command}
           value={draft.command}
           onChange={(event) => update({ command: event.target.value })}
-          placeholder={draft.runtime.kind === 'host' ? '/绝对路径/to/mcp-server' : 'mcp-server'}
+          placeholder={
+            draft.runtime.kind === 'host' ? connectorCopy.absoluteCommandExample : 'mcp-server'
+          }
           helperText={
             draft.runtime.kind === 'host'
-              ? '请输入可执行文件的绝对路径'
-              : '请输入环境 PATH 中的命令名'
+              ? connectorCopy.absoluteCommandHint
+              : connectorCopy.environmentCommandHint
           }
         />
       )}
@@ -178,21 +182,21 @@ export function McpLocalConnectorForm({
         disabled={disabled}
         multiline
         minRows={3}
-        label="参数"
+        label={connectorCopy.arguments}
         value={draft.argsText}
         onChange={(event) => update({ argsText: event.target.value })}
         helperText={
           bunRuntime
             ? draft.command === 'run'
-              ? '脚本绝对路径，每行一个参数'
-              : '例如 --bun 加 包名@版本，每行一个'
-            : '每行一个参数；空行会被忽略，不会经过 shell 解析'
+              ? connectorCopy.scriptArgsHint
+              : connectorCopy.bunXArgsHint
+            : connectorCopy.argsHint
         }
       />
       <Box>
         <Stack direction="row" sx={{ alignItems: 'center', mb: 1 }}>
           <Typography variant="subtitle2" sx={{ flex: 1 }}>
-            环境变量
+            {connectorCopy.environmentVariables}
           </Typography>
           <Button
             type="button"
@@ -201,7 +205,7 @@ export function McpLocalConnectorForm({
             onClick={addEnvironmentRow}
             startIcon={<PhiIcons.action.add size={16} />}
           >
-            添加变量
+            {connectorCopy.addVariable}
           </Button>
         </Stack>
         <Stack spacing={1}>
@@ -210,7 +214,7 @@ export function McpLocalConnectorForm({
               <TextField
                 disabled={disabled}
                 size="small"
-                label={`变量 ${index + 1} 名称`}
+                label={connectorCopy.variableName(index)}
                 value={row.name}
                 onChange={(event) =>
                   update({
@@ -224,7 +228,7 @@ export function McpLocalConnectorForm({
               <TextField
                 disabled={disabled}
                 size="small"
-                label={`变量 ${index + 1} 值`}
+                label={connectorCopy.variableValue(index)}
                 value={row.value}
                 onChange={(event) =>
                   update({
@@ -238,7 +242,7 @@ export function McpLocalConnectorForm({
               <IconButton
                 type="button"
                 disabled={disabled}
-                aria-label={`移除环境变量 ${index + 1}`}
+                aria-label={connectorCopy.removeVariable(index)}
                 onClick={() =>
                   update({ envRows: draft.envRows.filter((item) => item.id !== row.id) })
                 }
@@ -248,25 +252,25 @@ export function McpLocalConnectorForm({
             </Stack>
           ))}
         </Stack>
-        <FormHelperText>仅用于非敏感配置，不要在此填写密钥</FormHelperText>
+        <FormHelperText>{connectorCopy.nonSensitiveVariablesHint}</FormHelperText>
       </Box>
       <TextField
         fullWidth
         disabled={disabled}
-        label="工作目录（可选）"
+        label={connectorCopy.optionalWorkingDirectory}
         value={draft.cwd}
         onChange={(event) => update({ cwd: event.target.value })}
-        helperText="必须是已存在目录的绝对路径"
+        helperText={connectorCopy.workingDirectoryHint}
       />
       <Box>
         <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
-          命令预览
+          {connectorCopy.commandPreview}
         </Typography>
         <Typography
           component="code"
           sx={{ display: 'block', overflowWrap: 'anywhere', fontFamily: 'var(--font-mono)' }}
         >
-          {preview || '填写命令后显示完整 argv'}
+          {preview || connectorCopy.commandPreviewHint}
         </Typography>
       </Box>
     </Stack>

@@ -1,4 +1,8 @@
+import { appCopy } from './lib/appCopy'
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
+import { resourceActionMessages, resourceUi } from './lib/resourceUi'
+import { getUiLanguage, normalizeUiLanguage, setUiLanguage, useUiLanguage } from './lib/i18n'
+import { enUS, zhCN } from '@mui/material/locale'
 import {
   textFileHasUnsavedChanges,
   useTextFileDrafts
@@ -20,6 +24,7 @@ import {
   Box,
   Button,
   CssBaseline,
+  createTheme,
   IconButton,
   Stack,
   ThemeProvider,
@@ -271,9 +276,10 @@ export function TopRightControls({
   onRefreshSidePanel: () => void
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const runningBackgroundJobs = useActiveBackgroundJobCount()
   const backgroundJobsLabel =
-    runningBackgroundJobs > 0 ? `后台任务 · ${runningBackgroundJobs} 个运行中` : '后台任务'
+    runningBackgroundJobs > 0 ? appCopy.jobsRunning(runningBackgroundJobs) : appCopy.backgroundJobs
   if (!showSidePanelRefresh && !showSidePanelButtons) return null
 
   const buttonSx = {
@@ -324,12 +330,12 @@ export function TopRightControls({
       }}
     >
       {showSidePanelRefresh ? (
-        <Tooltip title="刷新文件树">
+        <Tooltip title={appCopy.refreshFiles}>
           <span>
             <IconButton
               data-phi-workspace-side-panel-refresh-button="true"
               size="small"
-              aria-label="刷新文件树"
+              aria-label={appCopy.refreshFiles}
               disabled={sidePanelRefreshDisabled}
               onClick={onRefreshSidePanel}
               sx={buttonSx}
@@ -383,12 +389,12 @@ export function TopRightControls({
         </Tooltip>
       ) : null}
       {showSidePanelButtons ? (
-        <Tooltip title="终端">
+        <Tooltip title={appCopy.terminal}>
           <IconButton
             data-phi-terminal-toggle-button="true"
             data-phi-workspace-panel-toggle="terminal"
             size="small"
-            aria-label="终端"
+            aria-label={appCopy.terminal}
             aria-pressed={activePanels.includes('terminal')}
             onClick={() => onTogglePanel('terminal')}
             sx={panelButtonSx(activePanels.includes('terminal'))}
@@ -398,12 +404,12 @@ export function TopRightControls({
         </Tooltip>
       ) : null}
       {showSidePanelButtons ? (
-        <Tooltip title="浏览器">
+        <Tooltip title={appCopy.browser}>
           <IconButton
             data-phi-browser-toggle-button="true"
             data-phi-workspace-panel-toggle="browser"
             size="small"
-            aria-label="浏览器"
+            aria-label={appCopy.browser}
             aria-pressed={activePanels.includes('browser')}
             onClick={() => onTogglePanel('browser')}
             sx={panelButtonSx(activePanels.includes('browser'))}
@@ -427,10 +433,11 @@ function WorkspaceFileTabs({
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       role="tablist"
-      aria-label="Open files"
+      aria-label={appCopy.openFiles}
       data-phi-workspace-file-tabs="true"
       sx={{
         flex: 1,
@@ -525,7 +532,7 @@ function WorkspaceFileTabs({
               <Box
                 component="span"
                 role="img"
-                aria-label="未保存修改"
+                aria-label={appCopy.unsaved}
                 sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
               />
             )}
@@ -533,7 +540,7 @@ function WorkspaceFileTabs({
               className="workspace-file-tab-close"
               component="span"
               role="button"
-              aria-label={`关闭 ${tab.name}`}
+              aria-label={appCopy.closeTab(tab.name)}
               tabIndex={0}
               onClick={(event: MouseEvent<HTMLElement>) => {
                 event.stopPropagation()
@@ -704,6 +711,7 @@ function AppResizeSeparator({
 }
 
 function App(): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
   useBackgroundJobRetention()
   const {
     mode: themeMode,
@@ -713,8 +721,12 @@ function App(): React.JSX.Element {
     setPalette: setThemePalette
   } = useThemeMode()
   const theme = useMemo(
-    () => createPaletteTheme(effectiveMode, themePalette),
-    [themePalette, effectiveMode]
+    () =>
+      createTheme(
+        createPaletteTheme(effectiveMode, themePalette),
+        uiLanguage === 'zh-CN' ? zhCN : enUS
+      ),
+    [themePalette, effectiveMode, uiLanguage]
   )
   useEffect(() => {
     syncWindowBackground(theme.palette.background.default)
@@ -820,6 +832,7 @@ function App(): React.JSX.Element {
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
+  const appSettingsRevisionRef = useRef(0)
   const [isUpdatingPermissionMode, setIsUpdatingPermissionMode] = useState(false)
   const permissionModeUpdateRef = useRef(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
@@ -925,11 +938,12 @@ function App(): React.JSX.Element {
 
   const blockRemoteLocalFileAction = useCallback((): boolean => {
     if (useSessionStore.getState().activeProjectLocation?.kind !== 'ssh') return false
-    showSnackbarError(new Error('远程项目的文件操作暂不可用'), '远程项目的文件操作暂不可用')
+    showSnackbarError(new Error(appCopy.remoteFilesUnavailable), appCopy.remoteFilesUnavailable)
     return true
   }, [showSnackbarError])
 
   const applyAppSettings = useCallback((settings: PhiAppSettings): void => {
+    setUiLanguage(normalizeUiLanguage(settings.uiLanguage))
     setNoProjectTaskFolder(settings.noProjectTaskFolder)
     setAllowExternalFileRead(settings.allowExternalFileRead)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
@@ -939,16 +953,17 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false
+    const revision = appSettingsRevisionRef.current
     void rendererApi
       .getAppSettings()
       .then((settings) => {
-        if (!cancelled) {
+        if (!cancelled && appSettingsRevisionRef.current === revision) {
           applyAppSettings(settings)
         }
       })
       .catch((error) => {
-        if (!cancelled) {
-          showSnackbarError(error, '读取通用设置失败')
+        if (!cancelled && appSettingsRevisionRef.current === revision) {
+          showSnackbarError(error, appCopy.loadSettingsFailed)
         }
       })
 
@@ -968,7 +983,7 @@ function App(): React.JSX.Element {
       })
       .catch((error) => {
         if (!cancelled) {
-          showSnackbarError(error, '读取工作台环境失败')
+          showSnackbarError(error, appCopy.loadEnvironmentFailed)
         }
       })
       .finally(() => {
@@ -987,7 +1002,7 @@ function App(): React.JSX.Element {
     try {
       setEnvironmentSnapshot(await rendererApi.redetectEnvironment())
     } catch (error) {
-      showSnackbarError(error, '重新检测环境失败')
+      showSnackbarError(error, appCopy.detectEnvironmentFailed)
     } finally {
       setIsRedetectingEnvironment(false)
     }
@@ -1005,17 +1020,21 @@ function App(): React.JSX.Element {
     try {
       setEnvironmentSnapshot(await rendererApi.dismissEnvironmentSummary())
     } catch (error) {
-      showSnackbarError(error, '关闭环境摘要失败')
+      showSnackbarError(error, appCopy.dismissEnvironmentFailed)
     }
   }, [rendererApi, showSnackbarError])
 
   const onUpdateAppSettings = useCallback(
     async (patch: PhiAppSettingsPatch): Promise<void> => {
+      const revision = ++appSettingsRevisionRef.current
+      const previousUiLanguage = getUiLanguage()
       const previousNoProjectTaskFolder = noProjectTaskFolder
       const previousAllowExternalFileRead = allowExternalFileRead
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
       const previousFileOpenConversationLayout = fileOpenConversationLayout
+
+      if (patch.uiLanguage !== undefined) setUiLanguage(patch.uiLanguage)
 
       if (patch.noProjectTaskFolder !== undefined) {
         setNoProjectTaskFolder(patch.noProjectTaskFolder)
@@ -1036,16 +1055,18 @@ function App(): React.JSX.Element {
       setIsSavingAppSettings(true)
       try {
         const settings = await rendererApi.updateAppSettings(patch)
-        applyAppSettings(settings)
+        if (appSettingsRevisionRef.current === revision) applyAppSettings(settings)
       } catch (error) {
+        if (appSettingsRevisionRef.current !== revision) return
+        setUiLanguage(previousUiLanguage)
         setNoProjectTaskFolder(previousNoProjectTaskFolder)
         setAllowExternalFileRead(previousAllowExternalFileRead)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
         setFileOpenConversationLayout(previousFileOpenConversationLayout)
-        showSnackbarError(error, '保存通用设置失败')
+        showSnackbarError(error, appCopy.saveSettingsFailed)
       } finally {
-        setIsSavingAppSettings(false)
+        if (appSettingsRevisionRef.current === revision) setIsSavingAppSettings(false)
       }
     },
     [
@@ -1066,7 +1087,7 @@ function App(): React.JSX.Element {
       if (!path) return
       await onUpdateAppSettings({ noProjectTaskFolder: path })
     } catch (error) {
-      showSnackbarError(error, '选择无项目任务文件夹失败')
+      showSnackbarError(error, appCopy.chooseTaskFolderFailed)
     }
   }, [onUpdateAppSettings, rendererApi, showSnackbarError])
 
@@ -1270,7 +1291,7 @@ function App(): React.JSX.Element {
     onFailure: showBrowserAppShellFailure
   })
   const showBrowserLinkFailure = useCallback((): void => {
-    showSnackbar('无法在内置浏览器打开该链接。为安全起见，Phi 未跳转到外部浏览器。')
+    showSnackbar(appCopy.browserOpenFailed)
   }, [showSnackbar])
   const browserLinkOpeningCoordinator = useMemo(() => {
     const nextRequestId = createBrowserRequestIdFactory()
@@ -1314,7 +1335,7 @@ function App(): React.JSX.Element {
     setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, 'browser'))
   }, [browserLinkOpeningCoordinator])
   const handleBrowserTrustedOverlayFailure = useCallback((): void => {
-    showSnackbar('无法安全显示应用对话框，请重试。')
+    showSnackbar(appCopy.dialogOpenFailed)
   }, [showSnackbar])
   const {
     suspended: browserOverlaySuspended,
@@ -1531,7 +1552,7 @@ function App(): React.JSX.Element {
   const onOpenConnectorSetupTerminal = useCallback(
     (command: string): void => {
       if (!command || command.length > 200 || /[\0\r\n]/u.test(command)) {
-        showSnackbar('初始化命令无效，请复制后手动检查。', 'error')
+        showSnackbar(appCopy.invalidSetupCommand, 'error')
         return
       }
       setRequestedTerminalInput({ id: globalThis.crypto.randomUUID(), text: command })
@@ -1665,9 +1686,9 @@ function App(): React.JSX.Element {
     try {
       const result = await rendererApi.exportSession(exportTarget.phiSessionId)
       setExportTarget(null)
-      if (result) showSnackbar(`会话已导出到 ${result.path}`, 'success')
+      if (result) showSnackbar(appCopy.sessionExported(result.path), 'success')
     } catch (error) {
-      showSnackbarError(error, '导出会话失败')
+      showSnackbarError(error, appCopy.exportFailed)
     } finally {
       setIsExportingSession(false)
     }
@@ -1708,7 +1729,7 @@ function App(): React.JSX.Element {
       }
       const scope = getActiveRemoteProject()
       if (scope && remotePathInsideRoot(path, scope.canonicalRoot)) return false
-      showSnackbarError(new Error('远程 notebook 不属于当前项目'), '无法打开 notebook')
+      showSnackbarError(new Error(appCopy.wrongRemoteNotebook), appCopy.openNotebookFailed)
       return true
     },
     [blockRemoteLocalFileAction, getActiveRemoteProject, showSnackbarError]
@@ -2239,7 +2260,7 @@ function App(): React.JSX.Element {
       setProjects(projectList)
       projectsRef.current = projectList
     })()
-      .catch((error: unknown) => showSnackbarError(error, '读取对话记录失败'))
+      .catch((error: unknown) => showSnackbarError(error, appCopy.readChatFailed))
       .finally(() => setIsLoadingHomeSessions(false))
   }, [
     applyCurrentSession,
@@ -2401,7 +2422,7 @@ function App(): React.JSX.Element {
         return false
       }
       if (images.length && selectedModel?.supportsImages === false) {
-        showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
+        showSnackbarError(new Error(appCopy.imagesUnsupported), appCopy.sendImagesFailed)
         return false
       }
       const readiness = getPromptReadiness({
@@ -2531,7 +2552,7 @@ function App(): React.JSX.Element {
         ) {
           return true
         }
-        showSnackbarError(error, '发送消息失败')
+        showSnackbarError(error, appCopy.sendMessageFailed)
         if (images.length && options.appendUserMessage !== false) {
           setDraftImagesBySession((prev) =>
             prev[activeDraftKey]?.length ? prev : { ...prev, [activeDraftKey]: images }
@@ -2589,7 +2610,7 @@ function App(): React.JSX.Element {
     const images = inputImages
     if (!text && images.length === 0) return
     if (images.length && selectedModel?.supportsImages === false) {
-      showSnackbarError(new Error('当前模型不支持图片，请切换到支持图片的模型'), '无法发送图片')
+      showSnackbarError(new Error(appCopy.imagesUnsupported), appCopy.sendImagesFailed)
       return
     }
     const target: PromptTarget = {
@@ -2673,7 +2694,7 @@ function App(): React.JSX.Element {
       })
       setProjectSessionRefreshKey((key) => key + 1)
     } catch (error) {
-      showSnackbarError(error, '切换权限模式失败')
+      showSnackbarError(error, appCopy.permissionsFailed)
     } finally {
       permissionModeUpdateRef.current = false
       setIsUpdatingPermissionMode(false)
@@ -2694,7 +2715,7 @@ function App(): React.JSX.Element {
     (path: string, kind: LocalPathKind): void => {
       const scope = getActiveRemoteProject()
       if (!scope) {
-        showSnackbarError(new Error('远程服务器档案或会话不可用'), '无法打开远程文件')
+        showSnackbarError(new Error(appCopy.remoteSessionUnavailable), appCopy.openRemoteFileFailed)
         return
       }
       const uri = path.startsWith('ssh://')
@@ -2703,7 +2724,7 @@ function App(): React.JSX.Element {
           ? remoteWorkspaceUri(scope.hostAlias, path)
           : null
       if (!uri || !remotePathWithinProjectUri(uri, scope.hostAlias, scope.canonicalRoot)) {
-        showSnackbarError(new Error('远程路径不属于当前项目'), '无法打开远程文件')
+        showSnackbarError(new Error(appCopy.remotePathOutsideProject), appCopy.openRemoteFileFailed)
         return
       }
       applyFileOpenConversationLayout()
@@ -2732,7 +2753,7 @@ function App(): React.JSX.Element {
             : null
         : null
       if (!serverPath) {
-        showSnackbarError(new Error('远程 notebook 不属于当前项目'), '无法打开 notebook')
+        showSnackbarError(new Error(appCopy.wrongRemoteNotebook), appCopy.openNotebookFailed)
         return true
       }
       onOpenNotebookWorkspaceFile(serverPath)
@@ -2773,12 +2794,12 @@ function App(): React.JSX.Element {
         !run.remote?.projectId ||
         run.remote.projectId !== useSessionStore.getState().activeProjectId
       ) {
-        showSnackbarError(new Error('请先进入这次运行所属的项目'), '无法打开远程结果')
+        showSnackbarError(new Error(appCopy.selectRunProject), appCopy.openRemoteResultFailed)
         return
       }
       const scope = wrapperResultScopeForPath(run, path)
       if (!scope) {
-        showSnackbarError(new Error('运行记录缺少该结果路径的授权范围'), '无法打开远程结果')
+        showSnackbarError(new Error(appCopy.resultScopeMissing), appCopy.openRemoteResultFailed)
         return
       }
       try {
@@ -2786,7 +2807,7 @@ function App(): React.JSX.Element {
         const uri = openWrapperResultPath(scope, path, kind)
         setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
       } catch (error) {
-        showSnackbarError(error, '无法打开远程结果')
+        showSnackbarError(error, appCopy.openRemoteResultFailed)
       }
     },
     [applyFileOpenConversationLayout, openWrapperResultPath, showSnackbarError]
@@ -2913,7 +2934,7 @@ function App(): React.JSX.Element {
   const onRetryRemoteConnection = useCallback((): void => {
     const state = useSessionStore.getState()
     if (!state.activePhiSessionId || !state.activeProjectId) {
-      showSnackbarError(new Error('远程项目会话不可用'), '无法重新连接')
+      showSnackbarError(new Error(appCopy.remoteChatUnavailable), appCopy.reconnectFailed)
       return
     }
     void rendererApi
@@ -2921,7 +2942,7 @@ function App(): React.JSX.Element {
         sessionId: state.activePhiSessionId,
         projectId: state.activeProjectId
       })
-      .catch((error) => showSnackbarError(error, '无法重新连接'))
+      .catch((error) => showSnackbarError(error, appCopy.reconnectFailed))
   }, [rendererApi, showSnackbarError])
 
   const onRevealPreviewPathInWorkspace = useCallback(
@@ -2944,7 +2965,7 @@ function App(): React.JSX.Element {
     try {
       return await rendererApi.pickInputFiles()
     } catch (error) {
-      showSnackbarError(error, '选择文件失败')
+      showSnackbarError(error, appCopy.selectFilesFailed)
       return []
     }
   }, [rendererApi, showSnackbarError])
@@ -3090,7 +3111,7 @@ function App(): React.JSX.Element {
   const onDropRemoteProjectFiles = useCallback(
     async (paths: string[], destinationPath: string): Promise<void> => {
       if (!activeProjectId || !activeRemoteFileScope) {
-        showSnackbarError(new Error('当前不是可上传的 SSH 项目'), '无法上传文件')
+        showSnackbarError(new Error(appCopy.uploadRequiresSsh), appCopy.uploadFailed)
         return
       }
       const destinationDirectory = remoteUploadDestinationDirectory(
@@ -3099,7 +3120,7 @@ function App(): React.JSX.Element {
         activeRemoteFileScope.canonicalRoot
       )
       if (destinationDirectory === null) {
-        showSnackbarError(new Error('上传落点不属于当前远程项目'), '无法上传文件')
+        showSnackbarError(new Error(appCopy.uploadDestinationOutsideProject), appCopy.uploadFailed)
         return
       }
       try {
@@ -3110,7 +3131,7 @@ function App(): React.JSX.Element {
         let confirmed = !job.requiresConfirmation
         if (job.requiresConfirmation) {
           confirmed = window.confirm(
-            `将上传 ${job.totalFiles} 个文件（${(job.totalBytes / 1024 ** 3).toFixed(2)} GiB），是否继续？`
+            appCopy.confirmUpload(job.totalFiles, (job.totalBytes / 1024 ** 3).toFixed(2))
           )
         }
         if (!confirmed) {
@@ -3118,9 +3139,9 @@ function App(): React.JSX.Element {
           return
         }
         await rendererApi.startRemoteProjectUpload(activeProjectId, job.id, { confirmed })
-        showSnackbar('上传已进入后台任务', 'info')
+        showSnackbar(appCopy.uploadQueued, 'info')
       } catch (error) {
-        showSnackbarError(error, '无法上传文件')
+        showSnackbarError(error, appCopy.uploadFailed)
       }
     },
     [activeProjectId, activeRemoteFileScope, rendererApi, showSnackbar, showSnackbarError]
@@ -3162,11 +3183,8 @@ function App(): React.JSX.Element {
           .slice(0, 3)
           .map((file) => file.destinationPath?.split('/').pop())
           .filter(Boolean)
-          .join('、')
-        showSnackbar(
-          `上传完成；${renamed.length} 个同名文件已改名${names ? `：${names}` : ''}`,
-          'info'
-        )
+          .join(getUiLanguage() === 'zh-CN' ? '、' : ', ')
+        showSnackbar(appCopy.uploadRenamed(renamed.length, names), 'info')
       }
     })
   }, [rendererApi, showSnackbar])
@@ -3175,29 +3193,30 @@ function App(): React.JSX.Element {
       ? `${activeProjectId ?? ''}:${activeRemoteFileScope?.hostAlias ?? ''}:${activeProjectLocation.canonicalRoot}`
       : null
   const previousRemoteFileIdentityRef = useRef<string | null>(null)
-  const currentSessionTab = useMemo<WorkspaceSessionTab>(
-    () => ({
+  const currentSessionTab = useMemo<WorkspaceSessionTab>(() => {
+    void uiLanguage // Default titles and scope labels follow the selected interface language.
+    return {
       key: workspaceSessionTabKey(activeSessionPath, activeSessionGeneration),
       kind: 'session',
       itemId: activeSessionPath ?? `fresh:${activeSessionGeneration}`,
       title: activeSession
         ? sessionDisplayTitle(activeSession)
-        : (titleFromMessages(messages) ?? truncateSessionTitle('新对话')),
+        : (titleFromMessages(messages) ?? truncateSessionTitle(appCopy.newChat)),
       subtitle: activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects),
       sessionPath: activeSessionPath,
       sessionGeneration: activeSessionGeneration,
       sidebarMode: activeProject ? 'projects' : 'conversations'
-    }),
-    [
-      activeCwd,
-      activeProject,
-      activeSession,
-      activeSessionGeneration,
-      activeSessionPath,
-      messages,
-      projects
-    ]
-  )
+    }
+  }, [
+    activeCwd,
+    activeProject,
+    activeSession,
+    activeSessionGeneration,
+    activeSessionPath,
+    messages,
+    projects,
+    uiLanguage
+  ])
   useLayoutEffect(() => {
     const previous = previousRemoteFileIdentityRef.current
     if (!shouldClearWorkspaceFilesForRemoteSwitch(previous, remoteFileIdentity)) {
@@ -3352,10 +3371,10 @@ function App(): React.JSX.Element {
       try {
         await rendererApi.compactCurrentSession(target)
         if (!isCurrentTarget()) return
-        showSnackbar('上下文已压缩', 'success')
+        showSnackbar(appCopy.contextCompacted, 'success')
         setContextUsageRefreshKey((value) => value + 1)
       } catch (error) {
-        if (isCurrentTarget()) showSnackbarError(error, '上下文压缩失败')
+        if (isCurrentTarget()) showSnackbarError(error, appCopy.compactFailed)
       } finally {
         compactingSessionKeysRef.current.delete(key)
         setCompactingSessions((previous) => {
@@ -3381,7 +3400,7 @@ function App(): React.JSX.Element {
           )
         )
       } catch (error) {
-        showSnackbarError(error, '无法重试图片消息')
+        showSnackbarError(error, appCopy.retryImageFailed)
         return
       }
       if (!text && images.length === 0) return
@@ -3411,7 +3430,7 @@ function App(): React.JSX.Element {
     async (eventId: string): Promise<void> => {
       if (forkInProgressRef.current) return
       if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        showSnackbar('远程会话暂不支持分叉，可从恢复提示中查看摘要并另建会话。', 'info')
+        showSnackbar(appCopy.remoteForkUnavailable, 'info')
         return
       }
       const sourceId = useSessionStore.getState().activePhiSessionId
@@ -3425,7 +3444,7 @@ function App(): React.JSX.Element {
         }
         await onSelectSession(fork.path)
       } catch (error) {
-        showSnackbarError(error, '无法分叉会话')
+        showSnackbarError(error, appCopy.forkFailed)
       } finally {
         forkInProgressRef.current = false
       }
@@ -3491,7 +3510,7 @@ function App(): React.JSX.Element {
       }
       await onSelectSession(result.path)
       await refreshSessions()
-      showSnackbar('已建立摘要新会话，尚未连接；下一条消息由你发送。', 'info')
+      showSnackbar(appCopy.summaryChatCreated, 'info')
     },
     [onSelectSession, refreshSessions, showSnackbar]
   )
@@ -3549,9 +3568,15 @@ function App(): React.JSX.Element {
     sendPromptText
   ])
   const activeWorkspaceTitle = useMemo(() => {
-    if (showProjectSessionPlaceholder) return '项目会话'
-    if (isChatWorkspaceView && visibleWorkspaceTabs.length === 0) return '首页'
+    void uiLanguage // Localized fallback titles are read through the shared copy proxy.
+    if (showProjectSessionPlaceholder) return appCopy.projectChat
+    if (isChatWorkspaceView && visibleWorkspaceTabs.length === 0) return appCopy.home
     if (isResourceWorkspaceView) {
+      if (
+        activeWorkspaceResourceTab?.kind === 'plugins' &&
+        activeWorkspaceResourceTab.itemId === 'installed'
+      )
+        return resourceUi.plugins
       return (
         activeWorkspaceResourceTab?.title ??
         workspaceResourceKindLabel(activeView as WorkspaceResourceKind)
@@ -3559,7 +3584,7 @@ function App(): React.JSX.Element {
     }
     if (!isChatWorkspaceView) return activeView
     if (activeSession) return sessionDisplayTitle(activeSession)
-    return titleFromMessages(messages) ?? truncateSessionTitle('新对话')
+    return titleFromMessages(messages) ?? truncateSessionTitle(appCopy.newChat)
   }, [
     activeSession,
     activeView,
@@ -3568,7 +3593,8 @@ function App(): React.JSX.Element {
     isResourceWorkspaceView,
     messages,
     showProjectSessionPlaceholder,
-    visibleWorkspaceTabs.length
+    visibleWorkspaceTabs.length,
+    uiLanguage
   ])
   const activeWorkspaceScopeLabel =
     activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects)
@@ -3743,7 +3769,7 @@ function App(): React.JSX.Element {
       const closingTab = workspaceFileTabs.find((tab) => tab.path === tabLike.path)
       if (!closingTab) return
       if (textFileHasUnsavedChanges(closingTab.path)) {
-        showSnackbar('请先保存或放弃此文本文件的修改。', 'warning')
+        showSnackbar(appCopy.saveFileFirst, 'warning')
         return
       }
       useTextFileDrafts.getState().release(closingTab.path)
@@ -3899,7 +3925,7 @@ function App(): React.JSX.Element {
     openWorkspaceResourceTab({
       kind: 'plugins',
       itemId: 'installed',
-      title: '插件'
+      title: resourceUi.plugins
     })
   }, [openWorkspaceResourceTab])
 
@@ -3934,9 +3960,17 @@ function App(): React.JSX.Element {
     async (skill: SkillSummary, disabled: boolean): Promise<void> => {
       try {
         await setSkillDisabled(skill, disabled)
-        showSnackbar(disabled ? '已关闭技能' : '已启用技能', 'success')
+        showSnackbar(
+          disabled ? resourceActionMessages.skillDisabled : resourceActionMessages.skillEnabled,
+          'success'
+        )
       } catch (error) {
-        showSnackbarError(error, disabled ? '关闭技能失败' : '启用技能失败')
+        showSnackbarError(
+          error,
+          disabled
+            ? resourceActionMessages.skillDisableFailed
+            : resourceActionMessages.skillEnableFailed
+        )
         throw error
       }
     },
@@ -3947,9 +3981,19 @@ function App(): React.JSX.Element {
     async (skill: SkillSummary, enabled: boolean): Promise<void> => {
       try {
         await setGlobalEnabled(skill, enabled)
-        showSnackbar(enabled ? '已全局启用技能' : '已全局关闭技能', 'success')
+        showSnackbar(
+          enabled
+            ? resourceActionMessages.skillGlobalEnabled
+            : resourceActionMessages.skillGlobalDisabled,
+          'success'
+        )
       } catch (error) {
-        showSnackbarError(error, enabled ? '启用技能失败' : '关闭技能失败')
+        showSnackbarError(
+          error,
+          enabled
+            ? resourceActionMessages.skillEnableFailed
+            : resourceActionMessages.skillDisableFailed
+        )
         throw error
       }
     },
@@ -3960,15 +4004,19 @@ function App(): React.JSX.Element {
     async (skill: SkillSummary, value: boolean | null): Promise<void> => {
       const projectCwd =
         activeProject?.location.kind === 'ssh' ? null : activeProject?.workingDirectory
-      if (!projectCwd) throw new Error('当前没有可用的本地项目')
+      if (!projectCwd) throw new Error(resourceActionMessages.noLocalProject)
       try {
         await setProjectOverride(skill, value, projectCwd)
         showSnackbar(
-          value === null ? '已跟随全局技能设置' : value ? '项目已启用技能' : '项目已关闭技能',
+          value === null
+            ? resourceActionMessages.skillFollowGlobal
+            : value
+              ? resourceActionMessages.skillProjectEnabled
+              : resourceActionMessages.skillProjectDisabled,
           'success'
         )
       } catch (error) {
-        showSnackbarError(error, '更新项目技能设置失败')
+        showSnackbarError(error, resourceActionMessages.skillProjectUpdateFailed)
         throw error
       }
     },
@@ -3989,7 +4037,7 @@ function App(): React.JSX.Element {
     async (registryDir: string, entry: PackageRegistryEntryView): Promise<void> => {
       await rendererApi.installPackage(registryDir, 'skill', entry.id, entry.version)
       await refreshSkills()
-      showSnackbar(`已安装并启用「${entry.title}」`, 'success')
+      showSnackbar(resourceActionMessages.installedAndEnabled(entry.title), 'success')
     },
     [refreshSkills, rendererApi, showSnackbar]
   )
@@ -3998,7 +4046,7 @@ function App(): React.JSX.Element {
     async (skill: SkillSummary): Promise<void> => {
       try {
         const nextSkills = await deleteSkill(skill)
-        showSnackbar('已卸载技能', 'success')
+        showSnackbar(resourceActionMessages.skillUninstalled, 'success')
         if (
           activeWorkspaceResourceTab?.kind === 'skills' &&
           activeWorkspaceResourceTab.itemId === skill.id
@@ -4011,7 +4059,7 @@ function App(): React.JSX.Element {
           }
         }
       } catch (error) {
-        showSnackbarError(error, '卸载技能失败')
+        showSnackbarError(error, resourceActionMessages.skillUninstallFailed)
         throw error
       }
     },
@@ -4136,11 +4184,12 @@ function App(): React.JSX.Element {
       if (server.userStdio) {
         await window.api.removeLocalMcpConnector(server.name)
       } else {
-        if (!server.managed || !server.url) throw new Error('此连接器不能从 Phi 中移除')
+        if (!server.managed || !server.url)
+          throw new Error(resourceActionMessages.connectorCannotRemove)
         await window.api.removeRemoteMcpConnector(server.name, server.url)
       }
       await refreshMcpServers()
-      showSnackbar('已移除连接器', 'success')
+      showSnackbar(resourceActionMessages.connectorRemoved, 'success')
       if (
         activeWorkspaceResourceTab?.kind === 'mcp' &&
         activeWorkspaceResourceTab.itemId === server.id
@@ -4342,7 +4391,7 @@ function App(): React.JSX.Element {
     ) : null
   ) : (
     <Stack spacing={1} sx={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-      <Typography color="text.secondary">从左侧选择一个项目打开 tab。</Typography>
+      <Typography color="text.secondary">{appCopy.selectProjectForTab}</Typography>
     </Stack>
   )
 
@@ -4451,7 +4500,7 @@ function App(): React.JSX.Element {
               sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             >
               <Typography variant="body2" color="text.secondary">
-                正在加载对话…
+                {appCopy.loadingChat}
               </Typography>
             </Box>
           }
@@ -4527,7 +4576,7 @@ function App(): React.JSX.Element {
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({
               id: item.id,
-              text: item.text || `图片 ${item.sendOptions?.images?.length ?? 0} 张`
+              text: item.text || appCopy.imageCount(item.sendOptions?.images?.length ?? 0)
             }))}
             queuedPromptsPaused={queuedPromptsPaused}
             onRespondApproval={onRespondToolApproval}
@@ -4575,10 +4624,10 @@ function App(): React.JSX.Element {
             }}
           >
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-              选择项目会话
+              {appCopy.selectProjectChat}
             </Typography>
             <Button variant="outlined" onClick={startPlaceholderProjectSession}>
-              {projects.length > 0 ? '新建项目对话' : '新建项目'}
+              {projects.length > 0 ? appCopy.newProjectChat : appCopy.newProject}
             </Button>
           </Box>
         </Box>
@@ -4658,7 +4707,7 @@ function App(): React.JSX.Element {
           sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           <Typography variant="body2" color="text.secondary">
-            正在加载分析工作区…
+            {appCopy.loadingAnalysis}
           </Typography>
         </Box>
       }
@@ -5039,7 +5088,7 @@ function App(): React.JSX.Element {
           onApplyUpdate={async (entry) => {
             await rendererApi.applyPackageUpdate('skill', entry.id)
             await refreshSkills()
-            showSnackbar(`已更新「${entry.title}」`, 'success')
+            showSnackbar(appCopy.updatedPackage(entry.title), 'success')
           }}
         />
 
@@ -5237,7 +5286,7 @@ function App(): React.JSX.Element {
           <>
             {!workspaceSidePanelOverlay ? (
               <AppResizeSeparator
-                label="调整工作区面板宽度"
+                label={appCopy.resizeWorkspace}
                 onMouseDown={onStartWorkspaceSidePanelResize}
               />
             ) : null}

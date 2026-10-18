@@ -72,7 +72,10 @@ test('opening a package prefers the member the user already has open', () => {
 })
 
 test('tool labels drop the family prefix of the wrapper id', () => {
-  assert.equal(wrapperToolLabel('samtools', 'nf-core/modules/samtools-addreplacerg'), 'addreplacerg')
+  assert.equal(
+    wrapperToolLabel('samtools', 'nf-core/modules/samtools-addreplacerg'),
+    'addreplacerg'
+  )
   assert.equal(wrapperToolLabel('gatk4', 'nf-core/modules/gatk4-mutect2'), 'mutect2')
   assert.equal(wrapperToolLabel('rnaseq', 'nf-core/workflows/rnaseq'), 'rnaseq')
   assert.equal(wrapperToolLabel('bowtie2', 'nf-core/modules/other-tool'), 'other-tool')

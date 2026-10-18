@@ -43,33 +43,33 @@ function isRuntimeCompatible(runtime: WrapperManifestRuntime, current: string): 
 function validateManifestShape(raw: unknown): { errors: string[]; manifest?: WrapperManifest } {
   const errors: string[] = []
   if (!isRecord(raw)) {
-    return { errors: ['manifest 根节点必须是一个对象'] }
+    return { errors: ['The manifest root must be an object'] }
   }
 
   if (raw.phiWrapperVersion !== SUPPORTED_PHI_WRAPPER_MANIFEST_VERSION) {
     errors.push(
-      `不支持的 phiWrapperVersion: ${String(raw.phiWrapperVersion)}（仅支持 ${SUPPORTED_PHI_WRAPPER_MANIFEST_VERSION}）`
+      `Unsupported phiWrapperVersion: ${String(raw.phiWrapperVersion)} (only ${SUPPORTED_PHI_WRAPPER_MANIFEST_VERSION} is supported)`
     )
   }
 
   if (typeof raw.id !== 'string' || !/^[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9-]+$/.test(raw.id)) {
-    errors.push('id 必须是形如 "namespace/group/short-id" 的规范化 wrapper id')
+    errors.push('id must be a canonical Wrapper ID such as "namespace/group/short-id"')
   }
 
   if (typeof raw.shortId !== 'string' || raw.shortId.trim().length === 0) {
-    errors.push('shortId 不能为空')
+    errors.push('shortId cannot be empty')
   }
 
   if (typeof raw.name !== 'string' || raw.name.trim().length === 0) {
-    errors.push('name 不能为空')
+    errors.push('name cannot be empty')
   }
 
   if (typeof raw.version !== 'string' || !semver.valid(raw.version)) {
-    errors.push(`version 必须是合法的 SemVer: ${String(raw.version)}`)
+    errors.push(`version must be valid SemVer: ${String(raw.version)}`)
   }
 
   if (typeof raw.summary !== 'string' || raw.summary.trim().length === 0) {
-    errors.push('summary 不能为空')
+    errors.push('summary cannot be empty')
   }
 
   const runtime = raw.runtime
@@ -78,7 +78,7 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
     typeof runtime.minVersion !== 'string' ||
     typeof runtime.maxVersion !== 'string'
   ) {
-    errors.push('runtime.minVersion / runtime.maxVersion 必须是字符串')
+    errors.push('runtime.minVersion / runtime.maxVersion must be strings')
   } else if (
     !isRuntimeCompatible(
       { minVersion: runtime.minVersion, maxVersion: runtime.maxVersion },
@@ -86,7 +86,7 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
     )
   ) {
     errors.push(
-      `wrapper 声明的运行时范围 [${runtime.minVersion}, ${runtime.maxVersion}] 与当前 Phi wrapper 运行时 ${PHI_WRAPPER_RUNTIME_VERSION} 不兼容`
+      `The declared Wrapper runtime range [${runtime.minVersion}, ${runtime.maxVersion}] is incompatible with Phi Wrapper runtime ${PHI_WRAPPER_RUNTIME_VERSION}`
     )
   }
 
@@ -94,30 +94,30 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
     typeof raw.resourceClass !== 'string' ||
     !RESOURCE_CLASSES.includes(raw.resourceClass as WrapperResourceClass)
   ) {
-    errors.push(`resourceClass 必须是以下之一: ${RESOURCE_CLASSES.join(', ')}`)
+    errors.push(`resourceClass must be one of: ${RESOURCE_CLASSES.join(', ')}`)
   }
 
   const engine = raw.engine
   if (!isRecord(engine)) {
-    errors.push('engine 不能为空')
+    errors.push('engine cannot be empty')
   } else {
     if (
       typeof engine.type !== 'string' ||
       !ENGINE_TYPES.includes(engine.type as WrapperEngineType)
     ) {
-      errors.push(`engine.type 必须是以下之一: ${ENGINE_TYPES.join(', ')}`)
+      errors.push(`engine.type must be one of: ${ENGINE_TYPES.join(', ')}`)
     }
     if (typeof engine.entrypoint !== 'string' || engine.entrypoint.trim().length === 0) {
-      errors.push('engine.entrypoint 不能为空')
+      errors.push('engine.entrypoint cannot be empty')
     }
     if (!Array.isArray(engine.profiles) || engine.profiles.length === 0) {
-      errors.push('engine.profiles 必须至少声明一个 profile')
+      errors.push('engine.profiles must declare at least one profile')
     }
   }
 
   if (raw.steps !== undefined) {
     if (!Array.isArray(raw.steps)) {
-      errors.push('steps 必须是数组')
+      errors.push('steps must be an array')
     } else {
       const stepIds = new Set<string>()
       raw.steps.forEach((step, index) => {
@@ -127,7 +127,7 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
           typeof step.label !== 'string' ||
           !Array.isArray(step.dependsOn)
         ) {
-          errors.push(`steps[${index}] 必须包含 id、label、dependsOn（字符串数组）`)
+          errors.push(`steps[${index}] must include id, label and dependsOn (an array of strings)`)
           return
         }
         stepIds.add(step.id)
@@ -137,7 +137,7 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
         for (const dependency of step.dependsOn) {
           if (typeof dependency !== 'string' || !stepIds.has(dependency)) {
             errors.push(
-              `steps 中 "${String(step.id)}" 的 dependsOn 引用了未声明的 step: ${String(dependency)}`
+              `dependsOn for step "${String(step.id)}" references an undeclared step: ${String(dependency)}`
             )
           }
         }
@@ -146,22 +146,22 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
   }
 
   if (!Array.isArray(raw.inputs)) {
-    errors.push('inputs 必须是数组')
+    errors.push('inputs must be an array')
   } else {
     raw.inputs.forEach((input, index) => {
       if (!isRecord(input) || typeof input.id !== 'string' || typeof input.type !== 'string') {
-        errors.push(`inputs[${index}] 必须包含 id 和 type`)
+        errors.push(`inputs[${index}] must include id and type`)
       }
     })
   }
 
   const parameters = raw.parameters
   if (!isRecord(parameters) || !isPlausibleJsonSchema(parameters.schema)) {
-    errors.push('parameters.schema 必须是一个 JSON Schema 对象')
+    errors.push('parameters.schema must be a JSON Schema object')
   }
 
   if (!Array.isArray(raw.outputs) || raw.outputs.length === 0) {
-    errors.push('outputs 必须至少声明一个输出')
+    errors.push('outputs must declare at least one output')
   } else {
     raw.outputs.forEach((output, index) => {
       if (
@@ -171,14 +171,14 @@ function validateManifestShape(raw: unknown): { errors: string[]; manifest?: Wra
         typeof output.type !== 'string' ||
         typeof output.path !== 'string'
       ) {
-        errors.push(`outputs[${index}] 必须包含 id、label、type、path`)
+        errors.push(`outputs[${index}] must include id, label, type and path`)
       }
     })
   }
 
   const resources = raw.resources
   if (!isRecord(resources) || !isRecord(resources.defaults)) {
-    errors.push('resources.defaults 不能为空')
+    errors.push('resources.defaults cannot be empty')
   }
 
   if (errors.length > 0) {
@@ -196,7 +196,7 @@ export function parseWrapperManifest(rawYamlText: string): ManifestParseResult {
   } catch (error) {
     return {
       valid: false,
-      errors: [`YAML 解析失败: ${error instanceof Error ? error.message : String(error)}`]
+      errors: [`YAML parsing failed: ${error instanceof Error ? error.message : String(error)}`]
     }
   }
 
@@ -241,7 +241,7 @@ export function isEngineExecutable(manifest: WrapperManifest): boolean {
 export function assertEngineExecutable(manifest: WrapperManifest): void {
   if (!isEngineExecutable(manifest)) {
     throw new Error(
-      `wrapper ${manifest.id} 使用的 engine.type "${manifest.engine.type}" 暂不支持执行，目前仅支持 nextflow`
+      `Wrapper ${manifest.id} uses unsupported engine.type "${manifest.engine.type}"; only nextflow execution is currently supported`
     )
   }
 }

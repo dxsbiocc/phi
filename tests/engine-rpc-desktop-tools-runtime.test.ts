@@ -136,6 +136,6 @@ test('an invalid remote runtime binding fails through existing controller withou
   })
   const result = await f.call('skill_run', { skill: 'remote-demo', script: 'run.sh' })
   assert.equal(result.isError, true)
-  assert.match(JSON.stringify(result.content), /没有回退/)
+  assert.match(JSON.stringify(result.content), /No local execution fallback was used/)
   assert.equal(opens, 0)
 })

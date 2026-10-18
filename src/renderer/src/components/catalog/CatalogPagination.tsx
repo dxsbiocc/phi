@@ -1,6 +1,6 @@
+import { useUiLanguage } from '../../lib/i18n'
 import { TablePagination } from '@mui/material'
-
-const pageLabels = { first: '第一页', previous: '上一页', next: '下一页', last: '最后一页' }
+import { resourceCatalogCopy } from '../../lib/resourceUi'
 
 export function CatalogPagination({
   count,
@@ -15,19 +15,21 @@ export function CatalogPagination({
   onPageChange: (page: number) => void
   onRowsPerPageChange: (rowsPerPage: number) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <TablePagination
       component="nav"
-      aria-label="目录分页"
+      aria-label={resourceCatalogCopy.pagination}
       count={count}
       page={page}
       rowsPerPage={rowsPerPage}
       onPageChange={(_, nextPage) => onPageChange(nextPage)}
       onRowsPerPageChange={(event) => onRowsPerPageChange(Number(event.target.value))}
       rowsPerPageOptions={[10, 20, 50]}
-      labelRowsPerPage="每页"
+      labelRowsPerPage={resourceCatalogCopy.rowsPerPage}
       labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
-      getItemAriaLabel={(type) => pageLabels[type]}
+      getItemAriaLabel={(type) => resourceCatalogCopy.pages[type]}
       showFirstButton
       showLastButton
       sx={{

@@ -1,5 +1,7 @@
 import { forwardRef, type CSSProperties, type ForwardedRef } from 'react'
 import { Box, Button, IconButton, Typography } from '@mui/material'
+import { appCopy } from '../lib/appCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { FiAlertTriangle, FiCheckCircle, FiInfo, FiX, FiXCircle } from 'react-icons/fi'
 
 export type SnackbarSeverity = 'error' | 'info' | 'success' | 'warning'
@@ -16,28 +18,36 @@ export type SnackbarNotice = {
 
 const appearance = {
   info: {
-    label: '提示',
+    get label() {
+      return appCopy.noticeInfo
+    },
     color: '#2455E8',
     softColor: '#D4DFFF',
     backgroundColor: '#F2F5FF',
     Icon: FiInfo
   },
   success: {
-    label: '成功',
+    get label() {
+      return appCopy.noticeSuccess
+    },
     color: '#16834A',
     softColor: '#D4F3E1',
     backgroundColor: '#F1FBF5',
     Icon: FiCheckCircle
   },
   warning: {
-    label: '警告',
+    get label() {
+      return appCopy.noticeWarning
+    },
     color: '#B76D00',
     softColor: '#FFE6C1',
     backgroundColor: '#FFF8EA',
     Icon: FiAlertTriangle
   },
   error: {
-    label: '错误',
+    get label() {
+      return appCopy.noticeError
+    },
     color: '#C81919',
     softColor: '#FFD2D0',
     backgroundColor: '#FFF3F3',
@@ -58,6 +68,7 @@ export function AppSnackbarCardContent(
   { notice, onClose, style }: AppSnackbarCardProps,
   ref?: ForwardedRef<HTMLDivElement>
 ): React.JSX.Element {
+  useUiLanguage()
   const { label, color, softColor, backgroundColor, Icon } = appearance[notice.severity]
 
   return (
@@ -143,7 +154,7 @@ export function AppSnackbarCardContent(
         </Button>
       ) : null}
       <IconButton
-        aria-label="关闭通知"
+        aria-label={appCopy.closeNotice}
         onClick={onClose}
         size="small"
         sx={{ flexShrink: 0, p: '4px', color: '#555555', '&:hover': { bgcolor: '#F2F2F2' } }}

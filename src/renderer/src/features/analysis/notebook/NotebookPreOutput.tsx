@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useContext, useMemo, useState } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import { NotebookOutputWrapContext } from './notebookOutputContext'
@@ -45,6 +47,7 @@ export default function NotebookPreOutput({
   text: string
   tone?: 'normal' | 'error'
 }): React.JSX.Element {
+  useUiLanguage()
   const [isExpanded, setIsExpanded] = useState(false)
   const wrapText = useContext(NotebookOutputWrapContext)
   const folded = useMemo(() => foldedOutput(text), [text])
@@ -121,7 +124,7 @@ export default function NotebookPreOutput({
           }}
         >
           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-            Output folded: {folded.totalLines} lines
+            {analysisCopy.foldedLines(folded.totalLines)}
           </Typography>
           <Button
             size="small"
@@ -130,7 +133,7 @@ export default function NotebookPreOutput({
             onClick={() => setIsExpanded((current) => !current)}
             sx={{ minWidth: 0, px: 0.75, py: 0.25, textTransform: 'none' }}
           >
-            {isExpanded ? '收起输出' : '展开完整输出'}
+            {isExpanded ? analysisCopy.collapseOutput : analysisCopy.expandOutput}
           </Button>
         </Box>
       ) : null}

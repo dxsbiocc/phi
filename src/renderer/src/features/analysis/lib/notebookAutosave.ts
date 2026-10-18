@@ -1,3 +1,4 @@
+import { analysisCopy } from './analysisUiCopy'
 import type { NotebookDocument } from '../../../../../shared/notebookDocument'
 import type { AnalysisNotebookFile } from '../../../types'
 
@@ -98,7 +99,7 @@ export function createNotebookAutosave({
     notify()
     try {
       const result = await save(entry.file, document)
-      if (result === false) throw new Error('自动保存失败，请检查错误后手动重试保存。')
+      if (result === false) throw new Error(analysisCopy.autosaveRetry)
       entry.file =
         typeof result === 'object' && result !== null
           ? result
@@ -116,7 +117,7 @@ export function createNotebookAutosave({
       // An external revision conflict is never retried silently. Keep the local
       // document and require an explicit retry with a deliberately chosen baseline.
       entry.blocked = true
-      entry.error = error instanceof Error ? error.message : '无法自动保存 notebook'
+      entry.error = error instanceof Error ? error.message : analysisCopy.autosaveUnavailable
       entry.ready = false
       cancelTimer(entry)
       settle(entry, false)

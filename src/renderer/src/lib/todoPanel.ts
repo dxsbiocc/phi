@@ -1,3 +1,4 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
 import type { ChatItem } from '../types'
 import { isTodoToolName } from './chatItems'
 import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
@@ -54,11 +55,21 @@ export function todoProgress(snapshot: TodoSnapshot): TodoProgress {
 }
 
 const TODO_STATUS_LABELS: Record<TodoTaskSnapshot['status'], string> = {
-  pending: '待办',
-  in_progress: '进行中',
-  completed: '已完成',
-  abandoned: '已放弃',
-  blocked: '已阻塞'
+  get pending() {
+    return chatCopy.toDo
+  },
+  get in_progress() {
+    return chatCopy.inProgress
+  },
+  get completed() {
+    return chatCopy.completed
+  },
+  get abandoned() {
+    return chatCopy.abandoned
+  },
+  get blocked() {
+    return chatCopy.blocked
+  }
 }
 
 export function todoStatusLabel(status: TodoTaskSnapshot['status']): string {

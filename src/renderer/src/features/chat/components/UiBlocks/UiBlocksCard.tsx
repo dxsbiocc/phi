@@ -1,3 +1,5 @@
+import { chatCopy } from '../../lib/chatCopy'
+import { useUiLanguage } from '../../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 
 import type { UiBlocksItem } from '../../lib/uiBlocks'
@@ -6,13 +8,14 @@ import { StepsBlock } from './StepsBlock'
 import { TableBlock } from './TableBlock'
 
 export function UiBlocksCard({ item }: { item: UiBlocksItem }): React.JSX.Element {
+  useUiLanguage()
   if (!item.blocks) {
     return (
       <Typography
         variant="caption"
         sx={{ display: 'block', mx: 1.5, my: 0.75, color: 'text.secondary' }}
       >
-        无法显示结构化内容
+        {chatCopy.unableToDisplayStructuredContent}
       </Typography>
     )
   }
@@ -20,7 +23,7 @@ export function UiBlocksCard({ item }: { item: UiBlocksItem }): React.JSX.Elemen
   return (
     <Box
       role="region"
-      aria-label="结构化结果"
+      aria-label={chatCopy.structuredResults}
       sx={{
         display: 'grid',
         gap: 1,

@@ -310,7 +310,7 @@ test('remote dynamic skill tool cannot execute after its trusted source disappea
     })
 
     assert.equal(result.ok, false)
-    if (!result.ok) assert.match(result.error, /不再受信任|untrusted/u)
+    if (!result.ok) assert.match(result.error, /no longer trusted|untrusted/u)
   } finally {
     setup.fixture.cleanup()
   }
@@ -334,7 +334,7 @@ for (const change of ['disabled', 'declaration', 'script'] as const)
         args: { message: 'must-not-run' }
       })
       assert.equal(result.ok, false)
-      if (!result.ok) assert.match(result.error, /不再受信任|内容已变化/u)
+      if (!result.ok) assert.match(result.error, /no longer trusted|content has changed/u)
       assert.deepEqual(readFakeMicromambaInvocations(setup.fixture), before)
     } finally {
       setup.fixture.cleanup()
@@ -354,7 +354,7 @@ test('remote catalog without a file snapshot never reads same-text desktop skill
     const before = readFakeMicromambaInvocations(setup.fixture)
     const listed = await service.scriptTools({ runtimeSessionId: 'runtime-1' })
     assert.deepEqual(listed.tools, [])
-    assert.match(listed.problems.join('\n'), /缺少已发现的文件快照/)
+    assert.match(listed.problems.join('\n'), /has no discovered file snapshot/)
     const result = await service.scriptTool({
       requestId: 'missing-snapshot',
       runtimeSessionId: 'runtime-1',
@@ -409,7 +409,7 @@ test('remote skill failures expose write-capacity guidance for runs and bundle u
     const run = await setup.skillService.run(runRequest({ requestId: 'silent-skill-run' }))
     assertCompletedSkillRun(run)
     assert.equal(run.exitCode, 1)
-    assert.match(run.stderr, /写入空间或文件数配额已用尽/u)
+    assert.match(run.stderr, /Disk space or the file count quota is exhausted/u)
 
     await setup.skillService.scriptTools()
     const dynamic = await setup.skillService.scriptTool({
@@ -419,7 +419,7 @@ test('remote skill failures expose write-capacity guidance for runs and bundle u
       args: { message: 'silent' }
     })
     assert.equal(dynamic.ok, false)
-    if (!dynamic.ok) assert.match(dynamic.error, /写入空间或文件数配额已用尽/u)
+    if (!dynamic.ok) assert.match(dynamic.error, /Disk space or the file count quota is exhausted/u)
     assert.equal(quotaProbes, 2)
   } finally {
     setup.fixture.cleanup()
@@ -444,7 +444,7 @@ test('remote skill bundle upload diagnoses a silent quota failure', async () => 
 
     await assert.rejects(
       () => setup.skillService.run(runRequest({ requestId: 'silent-bundle-upload' })),
-      /写入空间或文件数配额已用尽/u
+      /Disk space or the file count quota is exhausted/u
     )
     assert.equal(failedUpload, true)
   } finally {
@@ -620,7 +620,7 @@ test('remote dynamic project-path refuses a symlink that escapes the project', a
     })
 
     assert.equal(result.ok, false)
-    if (!result.ok) assert.match(result.error, /outside|符号链接|project-path/u)
+    if (!result.ok) assert.match(result.error, /outside|symlink|project-path/u)
     assert.equal(readFileSync(outside, 'utf8'), 'untouched')
   } finally {
     setup.fixture.cleanup()
@@ -650,7 +650,7 @@ test('remote dynamic input-path resolves only inside the remote project', async 
       args: { output: 'other.txt', content: 'blocked', input: setup.fixture.localAnchor }
     })
     assert.equal(local.ok, false)
-    if (!local.ok) assert.match(local.error, /项目相对路径.*没有回退/u)
+    if (!local.ok) assert.match(local.error, /project-relative paths.*No local fallback/u)
     assert.equal(existsSync(join(setup.fixture.localAnchor, 'other.txt')), false)
   } finally {
     setup.fixture.cleanup()
@@ -666,14 +666,14 @@ test('remote skill paths reject traversal, local absolute inputs, and escaping s
     )
     await assert.rejects(
       () => setup.skillService.run(runRequest({ args: [setup.fixture.localAnchor] })),
-      /项目相对路径.*没有回退/u
+      /project-relative paths.*No local fallback/u
     )
     const outside = join(setup.fixture.root, 'outside.txt')
     writeFileSync(outside, 'outside')
     symlinkSync(outside, join(setup.skill.dir, 'scripts', 'escape.txt'))
     await assert.rejects(
       () => setup.skillService.run(runRequest({ requestId: 'skill-request-escape' })),
-      /符号链接/u
+      /symlink/u
     )
     assert.equal(readFileSync(outside, 'utf8'), 'outside')
   } finally {

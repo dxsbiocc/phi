@@ -1,3 +1,4 @@
+import { filePreviewCopy } from './filePreviewUiCopy'
 import { WORKSPACE_TEXT_MAX_BYTES } from '../../../../../shared/workspaceFileOperations'
 import type { TextFileDraft } from './textFileDrafts'
 import { textContentsEqual } from './textFiles'
@@ -53,7 +54,7 @@ export function loadTextFileDrafts(
   try {
     raw = storage.getItem(TEXT_FILE_DRAFT_STORAGE_KEY) ?? storage.getItem('phi.markdown-drafts.v1')
   } catch {
-    throw new Error('无法读取本地文本草稿，请检查应用存储是否可用')
+    throw new Error(filePreviewCopy.readTextDraftFailed)
   }
   if (!raw) return {}
   let parsed: unknown
@@ -84,6 +85,6 @@ export function saveTextFileDrafts(
   try {
     storage.setItem(TEXT_FILE_DRAFT_STORAGE_KEY, JSON.stringify(pending))
   } catch {
-    throw new Error('无法保存本地文本草稿，存储空间可能已满；请手动保存文件后再关闭应用')
+    throw new Error(filePreviewCopy.saveTextDraftFailed)
   }
 }

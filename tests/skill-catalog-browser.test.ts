@@ -49,21 +49,21 @@ test('skill catalog groups use actual categories and count only offered items', 
   const items = skillCatalogItems(packages)
   const groups = skillCatalogGroups(items)
 
-  assert.deepEqual(groups[0], { id: 'all', label: '全部技能', count: 4 })
+  assert.deepEqual(groups[0], { id: 'all', label: 'All Skills', count: 4 })
   assert.ok(groups.every((group) => group.id !== 'bundled'))
   assert.deepEqual(
-    groups.find((group) => group.label === '生物信息'),
+    groups.find((group) => group.label === 'Bioinformatics'),
     {
       id: 'category:生物信息',
-      label: '生物信息',
+      label: 'Bioinformatics',
       count: 3
     }
   )
   assert.deepEqual(
-    groups.find((group) => group.label === '软件包'),
+    groups.find((group) => group.label === 'Packages'),
     {
       id: 'category:软件包',
-      label: '软件包',
+      label: 'Packages',
       count: 1
     }
   )
@@ -75,7 +75,7 @@ test('skill catalog groups use actual categories and count only offered items', 
   )
 })
 
-test('official API groups retain their ids, labels, order and empty groups ahead of source categories', () => {
+test('official API groups retain their ids, order and empty groups ahead of source categories', () => {
   const definitions = [
     { id: 'all', label: '全部', count: 17 },
     { id: 'science', label: '科学分析', count: 10 },
@@ -109,14 +109,15 @@ test('official API groups retain their ids, labels, order and empty groups ahead
   ]
   const items = skillCatalogItems(packages)
   assert.deepEqual(skillCatalogGroups(items, definitions), [
-    { id: 'all', label: '全部', count: 17 },
-    { id: 'group:science', label: '科学分析', count: 10 },
-    { id: 'group:nextflow', label: '工作流', count: 5 },
-    { id: 'group:meta', label: '元能力', count: 2 },
-    { id: 'group:other', label: '其他', count: 0 }
+    { id: 'all', label: 'All', count: 17 },
+    { id: 'group:science', label: 'Scientific Analysis', count: 10 },
+    { id: 'group:nextflow', label: 'Workflows', count: 5 },
+    { id: 'group:meta', label: 'Meta Capabilities', count: 2 },
+    { id: 'group:other', label: 'Other', count: 0 }
   ])
   assert.equal(filterSkillCatalogItems(items, 'group:meta', '').length, 2)
   assert.equal(filterSkillCatalogItems(items, 'all', '元能力').length, 2)
+  assert.equal(filterSkillCatalogItems(items, 'all', 'meta capabilities').length, 2)
   assert.equal(filterSkillCatalogItems(items, 'all', 'nextflow').length, 5)
   assert.equal(filterSkillCatalogItems(items, 'group:science', 'workflow').length, 0)
 })
@@ -131,9 +132,9 @@ test('group labels may change without losing selection and displayed counts foll
     { id: 'science', label: '新名称', count: 10 }
   ])
   assert.deepEqual(groups, [
-    { id: 'all', label: '全部', count: 2 },
+    { id: 'all', label: 'All', count: 2 },
     { id: 'group:science', label: '新名称', count: 1 },
-    { id: 'category:自定义', label: '自定义', count: 1 }
+    { id: 'category:自定义', label: 'Custom', count: 1 }
   ])
   const state = { ...initialSkillCatalogBrowserState, groupId: 'group:science' }
   assert.equal(
@@ -162,6 +163,9 @@ test('skill catalog search stays within its selected group and includes source m
   assert.equal(filterSkillCatalogItems(items, 'all', 'PACKAGE-ID').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'category:成像', 'workbench').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'category:成像', '成像').length, 1)
+  assert.equal(filterSkillCatalogItems(items, 'category:成像', 'IMAGING').length, 1)
+  assert.equal(items[1].entry.category, '成像')
+  assert.equal(items[1].entry.summary, 'Analysis tools')
   assert.equal(filterSkillCatalogItems(items, 'category:生物信息', 'workbench').length, 0)
   assert.equal(filterSkillCatalogItems(items, 'all', 'Phi Packages').length, 1)
   assert.equal(filterSkillCatalogItems(items, 'all', 'nothing').length, 0)

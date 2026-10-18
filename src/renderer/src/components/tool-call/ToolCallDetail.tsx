@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Button, Divider, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { fileIconForPath } from '../../icons'
@@ -18,6 +20,7 @@ import { NotebookToolSummaryBlock } from './NotebookToolSummary'
 import { DiffAwareOutput } from './ToolOutputText'
 
 export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string }): ReactNode {
+  useUiLanguage()
   const remoteProject = useRemoteProjectFileContext()
   const [showFullArgs, setShowFullArgs] = useState(false)
   const [showFullOutput, setShowFullOutput] = useState(false)
@@ -65,7 +68,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
       {webSummary?.query ? (
         <Box sx={{ mb: 1.25, minWidth: 0 }}>
           <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-            检索词
+            {chatCopy.searchTerms}
           </Typography>
           <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
             {webSummary.query}
@@ -89,7 +92,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
           ) : null}
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              目标文件
+              {chatCopy.targetFile}
             </Typography>
             <Typography
               variant="caption"
@@ -117,7 +120,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
                 variant="outlined"
                 onClick={() => remoteProject.openPath(remoteTargetUri, 'file')}
               >
-                在文件面板打开
+                {chatCopy.openInFilePanel}
               </Button>
             ) : null
           ) : (
@@ -130,7 +133,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
                 })
               }}
             >
-              在文件夹显示
+              {chatCopy.revealInFolder}
             </Button>
           )}
         </Box>
@@ -151,7 +154,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
           ) : null}
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              完整输出已保存
+              {chatCopy.fullOutputSaved}
             </Typography>
             <Typography
               variant="caption"
@@ -179,7 +182,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
               })
             }}
           >
-            在文件夹显示
+            {chatCopy.revealInFolder}
           </Button>
         </Box>
       ) : null}
@@ -200,7 +203,8 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
               component="div"
               sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 0 }}
             >
-              参数{argsCollapsedByPreview && !showFullArgs ? ' · 已折叠' : ''}
+              {chatCopy.arguments}
+              {argsCollapsedByPreview && !showFullArgs ? chatCopy.collapsed : ''}
             </Typography>
             {argsCollapsedByPreview ? (
               <Button
@@ -208,7 +212,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
                 variant="text"
                 onClick={() => setShowFullArgs((value) => !value)}
               >
-                {showFullArgs ? '收起参数' : '显示完整参数'}
+                {showFullArgs ? chatCopy.collapseArguments : chatCopy.showFullArguments}
               </Button>
             ) : null}
           </Box>
@@ -246,10 +250,10 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
               component="div"
               sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 0 }}
             >
-              {hasSavedOutput ? '输出预览' : '输出'}
+              {hasSavedOutput ? chatCopy.outputPreview : chatCopy.output}
               {item.outputBytes ? ` · ${formatBytes(item.outputBytes)}` : ''}
-              {item.outputTruncated ? ' · 已截断' : ''}
-              {outputCollapsedByPreview && !showFullOutput ? ' · 已折叠' : ''}
+              {item.outputTruncated ? chatCopy.truncated : ''}
+              {outputCollapsedByPreview && !showFullOutput ? chatCopy.collapsed : ''}
             </Typography>
             {outputCollapsedByPreview ? (
               <Button
@@ -257,7 +261,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
                 variant="text"
                 onClick={() => setShowFullOutput((value) => !value)}
               >
-                {showFullOutput ? '收起输出' : '显示完整输出'}
+                {showFullOutput ? chatCopy.collapseOutput : chatCopy.showFullOutput}
               </Button>
             ) : null}
           </Box>

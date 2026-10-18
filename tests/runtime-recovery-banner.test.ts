@@ -1,3 +1,6 @@
+import * as i18n from '../src/renderer/src/lib/i18n'
+import { chatCopy } from '../src/renderer/src/features/chat/lib/chatCopy'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -13,6 +16,8 @@ import type {
 } from '../src/shared/runtimeRecoveryTypes'
 import * as confirmationDialog from '../src/renderer/src/components/ConfirmationDialog'
 import * as recoveryState from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
+
+setUiLanguage('zh-CN')
 
 test('recovery banner: a confirmed connection shows a failed UI refresh without offering another SDK recovery', () => {
   const require = createRequire(import.meta.url)
@@ -54,6 +59,8 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
     module: exported,
     exports: exported.exports,
     require: (name: string) => {
+      if (name.endsWith('/chatCopy')) return { chatCopy }
+      if (name.endsWith('/i18n')) return i18n
       if (name === '../hooks/useRuntimeRecovery') return { useRuntimeRecovery: recovery }
       if (name === '../lib/runtimeRecoveryState') return recoveryState
       if (name === '../../../components/ConfirmationDialog') return confirmationDialog

@@ -58,7 +58,7 @@ export async function publishEnvironmentMarker(
   signal: AbortSignal
 ): Promise<void> {
   const target = posix.join(workspace.runtimeRoot, 'envs', envId, '.phi-remote-env.json')
-  await runMutation(workspace, atomicWriteScript(target, content), signal, '完成标记')
+  await runMutation(workspace, atomicWriteScript(target, content), signal, 'completion marker')
 }
 
 export async function ensureEnvironmentAliases(
@@ -70,7 +70,12 @@ export async function ensureEnvironmentAliases(
     path: posix.join(workspace.runtimeRoot, relative),
     content
   }))
-  await runMutation(workspace, aliasScript(workspace.runtimeRoot, entries), signal, '环境别名')
+  await runMutation(
+    workspace,
+    aliasScript(workspace.runtimeRoot, entries),
+    signal,
+    'environment alias'
+  )
 }
 
 async function runMutation(
@@ -85,9 +90,11 @@ async function runMutation(
     maxOutputBytes: 16 * 1024
   })
   signal.throwIfAborted()
-  if (result.code === 42) throw new Error(`远程${label}路径包含不安全的符号链接`)
+  if (result.code === 42) throw new Error(`The remote ${label} path contains an unsafe symlink`)
   if (result.code !== 0) {
-    throw new Error(`远程${label}写入失败：${result.stderr.trim() || `exit code ${result.code}`}`)
+    throw new Error(
+      `Unable to write the remote ${label}: ${result.stderr.trim() || `exit code ${result.code}`}`
+    )
   }
 }
 
@@ -226,10 +233,10 @@ function contentHash(content: string): string {
 }
 
 function probeReply(stdout: string, code: number | null): ProbeReply {
-  if (code !== 0) throw new Error(`远程环境校验失败：exit code ${code}`)
+  if (code !== 0) throw new Error(`Remote environment verification failed: exit code ${code}`)
   const value = JSON.parse(stdout.trim()) as Partial<ProbeReply>
   if (value.status !== 'ready' && value.status !== 'missing') {
-    throw new Error('远程环境校验返回无效状态')
+    throw new Error('Remote environment verification returned an invalid status')
   }
   return value as ProbeReply
 }

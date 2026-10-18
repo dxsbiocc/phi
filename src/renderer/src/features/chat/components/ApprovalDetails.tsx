@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Collapse, Typography } from '@mui/material'
 import { useId, useState, type ReactNode } from 'react'
 
@@ -13,13 +15,14 @@ const ChevronIcon = PhiIcons.action.back
 /** The full command stays available without expanding the timeline or hiding approval actions. */
 export function ApprovalDetails({
   summary,
-  label = '查看详情',
+  label = chatCopy.viewDetails,
   onContentResize
 }: {
   summary: string
   label?: ReactNode
   onContentResize?: ChatContentResizeHandler
 }): React.JSX.Element {
+  useUiLanguage()
   const [expanded, setExpanded] = useState(false)
   const detailsId = useId()
   const notifyResize = useCollapseResizeNotifier(onContentResize)
@@ -104,7 +107,7 @@ export function ApprovalDetails({
             overflow: 'auto'
           }}
         >
-          {summary || '没有更多详情。'}
+          {summary || chatCopy.noFurtherDetails}
         </Typography>
       </Collapse>
     </Box>

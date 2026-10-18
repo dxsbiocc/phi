@@ -1,9 +1,16 @@
 import {
   OFFICIAL_REGISTRY_ID,
   isOfficialRegistryDirectory,
+  officialRegistryDirectory,
+  syncOfficialRegistry,
   type OfficialRegistryOptions
 } from './packages/official-registry'
-import { prepareContentPackageInstall, readContentRegistry } from './packages/content-source'
+import { prepareContentPackageInstall } from './packages/content-source'
+import {
+  isOfficialConnectorRegistryDirectory,
+  readOfficialConnectorRegistry,
+  syncOfficialConnectorRegistry
+} from './packages/official-connector-registry'
 import { readRegistryManifestAsset } from './packages/manifest-assets'
 import {
   existsSync,
@@ -131,6 +138,7 @@ interface CatalogSource {
   iconAsset?: RegistryIconAsset
   source?: FeaturedMcpConnector['source']
   notice?: string
+  directoryAuthBlocked?: boolean
 }
 
 /** Catalog data from supplied verified indexes and installed connectors. */
@@ -139,7 +147,7 @@ export function listConnectorCatalog(
 ): FeaturedMcpConnector[] {
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const appVersion = options.appVersion ?? readAppVersion()
-  if (!semver.valid(appVersion)) throw new Error(`应用版本无效: ${appVersion}`)
+  if (!semver.valid(appVersion)) throw new Error(`Invalid app version: ${appVersion}`)
   const config = readMcpConfig(agentDir)
   const servers = config.mcpServers ?? {}
   const sources: CatalogSource[] = []
@@ -193,7 +201,7 @@ export function listConnectorCatalog(
   for (const source of sources) {
     const current = selected.get(source.manifest.id)
     if (current?.source?.kind === 'github' && source.source?.kind === 'github') {
-      current.notice ??= `已忽略来自 ${source.source.label} 的同名连接器`
+      current.notice ??= `Ignored a duplicate Connector from ${source.source.label}`
       continue
     }
     if (
@@ -207,66 +215,78 @@ export function listConnectorCatalog(
   }
 
   return [...selected.values()]
-    .map(({ manifest, registryDir, packageDir, iconAsset, source, notice }) => {
-      const connector = manifest.connector
-      const entry = servers[manifest.id]
-      const marker = readManagedMarker(entry)
-      const installedRoot = installedRoots.get(manifest.id)
-      const icon =
-        (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
-        (packageDir ? findResourceIcon(packageDir) : undefined) ??
-        (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined) ??
-        (installedRoot ? resolveCuratedResourceIcon('mcp', manifest.id) : undefined)
-      const unavailableReason =
-        manifest.minAppVersion && semver.lt(appVersion, manifest.minAppVersion)
-          ? `需要 Phi ${manifest.minAppVersion} 或更高版本`
-          : undefined
-      const result: FeaturedMcpConnector = {
-        id: manifest.id,
-        ...(icon ? { icon } : {}),
-        version: manifest.version,
-        name: manifest.title,
-        description: manifest.summary,
-        publisher: connector.publisher,
-        category: connector.category,
-        signIn:
-          connector.transport === 'http'
-            ? connector.auth === 'none'
-              ? '无需登录'
-              : connector.auth === 'header'
-                ? '需要 API key'
-                : '需要登录'
-            : '本地服务',
-        transport: connector.transport,
-        homepageUrl: connector.homepage,
-        minAppVersion: manifest.minAppVersion,
-        registryDir,
-        added: entry !== undefined,
-        unavailableReason,
-        ...(source ? { source } : {}),
-        ...(notice ? { notice } : {})
-      }
-      if (connector.transport === 'http') {
-        result.auth = connector.auth
-        result.url = connector.url
-        result.oauthAuthorizationOrigin = mcpOAuthAuthorizationOrigin(manifest.id, connector.url)
-        if (connector.auth === 'header') {
-          try {
-            const known = apiKeyConnector(manifest.id)
-            if (known.url === connector.url) result.apiKey = known.apiKey
-          } catch {
-            // Third-party header-auth packages remain visible, but v1 lacks the
-            // fields needed for Phi's provider-specific credential UI.
-          }
+    .map(
+      ({ manifest, registryDir, packageDir, iconAsset, source, notice, directoryAuthBlocked }) => {
+        const connector = manifest.connector
+        const entry = servers[manifest.id]
+        const marker = readManagedMarker(entry)
+        const installedRoot = installedRoots.get(manifest.id)
+        const icon =
+          (installedRoot ? findResourceIcon(installedRoot) : undefined) ??
+          (packageDir ? findResourceIcon(packageDir) : undefined) ??
+          (iconAsset ? registerResourceIconAsset(registryDir, iconAsset) : undefined) ??
+          (installedRoot ? resolveCuratedResourceIcon('mcp', manifest.id) : undefined)
+        const needsNewerApp = manifest.minAppVersion
+          ? semver.lt(appVersion, manifest.minAppVersion)
+          : false
+        const unavailableKind = needsNewerApp
+          ? 'app-version'
+          : directoryAuthBlocked
+            ? 'authorization'
+            : undefined
+        const unavailableReason = needsNewerApp
+          ? `Requires Phi ${manifest.minAppVersion} or later`
+          : directoryAuthBlocked
+            ? 'Authorization is currently unavailable for this Connector'
+            : undefined
+        const result: FeaturedMcpConnector = {
+          id: manifest.id,
+          ...(icon ? { icon } : {}),
+          version: manifest.version,
+          name: manifest.title,
+          description: manifest.summary,
+          publisher: connector.publisher,
+          category: connector.category,
+          signIn:
+            connector.transport === 'http'
+              ? connector.auth === 'none'
+                ? '无需登录'
+                : connector.auth === 'header'
+                  ? '需要 API key'
+                  : '需要登录'
+              : '本地服务',
+          transport: connector.transport,
+          homepageUrl: connector.homepage,
+          minAppVersion: manifest.minAppVersion,
+          registryDir,
+          added: entry !== undefined,
+          unavailableReason,
+          unavailableKind,
+          ...(source ? { source } : {}),
+          ...(notice ? { notice } : {})
         }
-      } else {
-        result.environment = connector.environment
-        result.command = connector.command
-        result.args = [...(connector.args ?? [])]
-        if (entry !== undefined) result.environmentState = marker?.pending ? 'not-built' : 'ready'
+        if (connector.transport === 'http') {
+          result.auth = connector.auth
+          result.url = connector.url
+          result.oauthAuthorizationOrigin = mcpOAuthAuthorizationOrigin(manifest.id, connector.url)
+          if (connector.auth === 'header') {
+            try {
+              const known = apiKeyConnector(manifest.id)
+              if (known.url === connector.url) result.apiKey = known.apiKey
+            } catch {
+              // Third-party header-auth packages remain visible, but v1 lacks the
+              // fields needed for Phi's provider-specific credential UI.
+            }
+          }
+        } else {
+          result.environment = connector.environment
+          result.command = connector.command
+          result.args = [...(connector.args ?? [])]
+          if (entry !== undefined) result.environmentState = marker?.pending ? 'not-built' : 'ready'
+        }
+        return result
       }
-      return result
-    })
+    )
     .sort(
       (left, right) =>
         left.category.localeCompare(right.category) || left.name.localeCompare(right.name)
@@ -283,12 +303,26 @@ export async function installCatalogConnector(
       onPhase?: (phase: Extract<McpConnectorSetupPhase, 'downloading' | 'installing'>) => void
     } = {}
 ): Promise<InstalledPackage[]> {
+  if (isOfficialConnectorRegistryDirectory(registryDir, options.agentDir)) {
+    const registry = readOfficialConnectorRegistry(registryDir, options)
+    options.onPhase?.('installing')
+    return installConnectorFromRegistry(registry, id, version, options)
+  }
   if (
     registryDir === OFFICIAL_REGISTRY_ID ||
     isOfficialRegistryDirectory(registryDir, options.agentDir)
   ) {
     options.onPhase?.('downloading')
-    const registry = await readContentRegistry(registryDir, options)
+    const registry =
+      registryDir === OFFICIAL_REGISTRY_ID
+        ? await syncOfficialConnectorRegistry(options)
+        : resolve(registryDir) === resolve(officialRegistryDirectory(options.agentDir))
+          ? await syncOfficialRegistry(options)
+          : {
+              ...readRegistry(registryDir, options),
+              id: OFFICIAL_REGISTRY_ID,
+              kind: 'official' as const
+            }
     const prepared = await prepareContentPackageInstall(
       registry,
       { type: 'mcp', id, ...(version ? { version } : {}) },
@@ -307,10 +341,10 @@ export async function installCatalogConnector(
   const packageDir = connectorSourceDir(source, id)
   const manifest = readPackageManifest(packageDir)
   if (manifest.type !== 'mcp' || manifest.id !== id) {
-    throw new Error(`连接器源与请求不匹配: mcp:${id}`)
+    throw new Error(`Connector source does not match the request: mcp:${id}`)
   }
   if (version && manifest.version !== version) {
-    throw new Error(`连接器 ${id} 没有版本 ${version}`)
+    throw new Error(`Connector ${id} has no version ${version}`)
   }
   const temporary = mkdtempSync(join(tmpdir(), 'phi-connector-registry-'))
   try {
@@ -337,15 +371,15 @@ export function connectorEnvironmentBuildAction(
   const installed = listInstalledPackages({ agentDir }).find(
     (entry) => entry.type === 'mcp' && entry.id === id
   )
-  if (!installed) throw new Error(`MCP 软件包 ${id} 尚未安装`)
+  if (!installed) throw new Error(`MCP package ${id} is not installed`)
   const manifest = readPackageManifest(installed.dir)
-  if (manifest.type !== 'mcp') throw new Error(`MCP 软件包 ${id} 清单类型无效`)
+  if (manifest.type !== 'mcp') throw new Error(`MCP package ${id} has an invalid manifest type`)
   const environment = describeMcpPackageEnvironment(manifest, installed.dir, {
     agentDir,
     environmentsDir: options.environmentsDir,
     platform: options.platform
   })
-  if (!environment) throw new Error(`HTTP 连接器 ${id} 没有可构建的环境`)
+  if (!environment) throw new Error(`HTTP Connector ${id} has no buildable environment`)
   return {
     descriptor: environment.descriptor,
     options: {
@@ -375,10 +409,10 @@ export function addRemoteMcpConnector(
   const oauth = validatedOptions.oauth
   const apiKeyConnectorEntry = knownApiKeyConnector(validatedName)
   if (apiKeyConnectorEntry && validatedUrl !== apiKeyConnectorEntry.url) {
-    throw new Error('API key 连接器地址与官方地址不匹配')
+    throw new Error('The API key Connector URL does not match the official URL')
   }
   if (apiKeyConnectorEntry && oauth) {
-    throw new Error('此连接器使用 API key，不支持 OAuth 客户端信息')
+    throw new Error('This Connector uses an API key and does not accept OAuth client details')
   }
   const config = readMcpConfig(agentDir)
   const servers = config.mcpServers ?? {}
@@ -394,7 +428,7 @@ export function addRemoteMcpConnector(
       (isRecord(existing.auth) && existing.auth.type === 'apikey') ||
       !oauthCredentialsMatch(existing.oauth, validatedOptions.expectedOAuth)
     ) {
-      throw new Error('连接器配置已变化，请刷新后重试')
+      throw new Error('Connector configuration changed. Refresh and try again.')
     }
     const updated = { ...existing }
     if (oauth) updated.oauth = oauth
@@ -412,11 +446,15 @@ export function addRemoteMcpConnector(
           existing.oauth.clientId !== oauth.clientId ||
           existing.oauth.clientSecret !== oauth.clientSecret)
       ) {
-        throw new Error(`已有名为 ${validatedName} 的连接器使用不同认证信息，请先移除或重命名`)
+        throw new Error(
+          `A Connector named ${validatedName} already uses different authentication. Remove or rename it first.`
+        )
       }
       if (apiKeyConnectorEntry) {
         if (!isPhiManagedApiKeyEntry(existing, validatedName, validatedUrl)) {
-          throw new Error(`已有名为 ${validatedName} 的自定义 MCP 配置，请先移除或重命名`)
+          throw new Error(
+            `Custom MCP configuration ${validatedName} already exists. Remove or rename it first.`
+          )
         }
         if (existing.enabled !== false) {
           writeMcpConfig(
@@ -433,7 +471,7 @@ export function addRemoteMcpConnector(
       }
       return
     }
-    throw new Error(`已有名为 ${validatedName} 的 MCP 配置`)
+    throw new Error(`MCP configuration ${validatedName} already exists`)
   }
   writeMcpConfig(
     {
@@ -470,7 +508,9 @@ export function readRemoteMcpOAuthCredentials(
   )
   const named = matches.find(([entryName]) => entryName === name)
   if (!named && matches.length > 1) {
-    throw new Error('同一服务地址有多个 OAuth 配置，请保留一个或使用目录中的连接器名称')
+    throw new Error(
+      'Multiple OAuth configurations use this service URL. Keep one or use the catalog Connector name.'
+    )
   }
   const entry = (named ?? matches[0])?.[1]
   if (!isRecord(entry) || !isRecord(entry.oauth)) return undefined
@@ -494,11 +534,11 @@ export function readCustomRemoteMcpConnector(
     knownApiKeyConnector(validatedName) ||
     (isRecord(entry.auth) && entry.auth.type === 'apikey')
   ) {
-    throw new Error('请选择已保存的自定义 HTTP 连接器')
+    throw new Error('Select a saved custom HTTP Connector')
   }
   const url = typeof entry.url === 'string' ? validateUrl(entry.url) : undefined
   const oauth = validateRemoteConnectorOptions({ oauth: entry.oauth }).oauth
-  if (!url || !oauth?.clientId) throw new Error('自定义连接器需要已保存的 OAuth Client ID')
+  if (!url || !oauth?.clientId) throw new Error('Custom Connectors require a saved OAuth Client ID')
   return { name: validatedName, url, oauth: { ...oauth, clientId: oauth.clientId } }
 }
 
@@ -517,7 +557,7 @@ export function removeRemoteMcpConnector(
     existing.url !== validatedUrl ||
     packageIdFromMcpEntry(existing) !== undefined
   ) {
-    throw new Error('连接器配置已变化，请刷新后重试')
+    throw new Error('Connector configuration changed. Refresh and try again.')
   }
   const remaining = { ...servers }
   delete remaining[validatedName]
@@ -540,9 +580,11 @@ function installConnectorFromRegistry(
       .filter((entry) => entry.type === 'mcp' && entry.id === id)
       .filter((entry) => !version || entry.version === version)
       .sort((left, right) => semver.rcompare(left.version, right.version))[0]
-    if (!candidate) throw new Error(`注册表中找不到软件包 mcp:${id}`)
+    if (!candidate) throw new Error(`Package mcp:${id} was not found in the registry`)
     if (!semver.gt(candidate.version, installed.version)) {
-      throw new Error(`升级版本必须高于 ${installed.version}，收到 ${candidate.version}`)
+      throw new Error(
+        `Upgrade version must be newer than ${installed.version}; received ${candidate.version}`
+      )
     }
   }
   const plan = planInstall(registry, request, {
@@ -564,7 +606,7 @@ function catalogSourcesFromDirectory(root: string): CatalogSource[] {
     const validation = validatePackage(dir)
     if (!validation.ok || validation.package?.manifest.type !== 'mcp') {
       throw new Error(
-        `连接器软件包无效 ${dir}: ${validation.errors
+        `Invalid Connector package ${dir}: ${validation.errors
           .map((problem) => `${problem.path}: ${problem.message}`)
           .join('; ')}`
       )
@@ -578,6 +620,9 @@ function catalogSourcesFromRegistry(dir: string): CatalogSource[] {
 }
 
 function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource[] {
+  const official =
+    registry.id === OFFICIAL_REGISTRY_ID &&
+    (registry.kind === 'official' || registry.trust === 'official')
   const source: FeaturedMcpConnector['source'] = registry.source
     ? {
         kind: 'github',
@@ -586,8 +631,8 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
         sourceId: registry.source.id,
         sha: registry.source.sha
       }
-    : registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
-      ? { kind: 'official', label: 'Phi Packages', trust: 'official' }
+    : official
+      ? { kind: 'official', label: registry.label ?? 'Phi Packages', trust: registry.trust }
       : {
           kind: 'directory',
           label: registry.label ?? '用户软件源',
@@ -596,11 +641,10 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
   return registry.packages
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({
-      ...(registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
-        ? { official: true }
-        : {}),
+      ...(official ? { official: true } : {}),
       manifest: manifestFromRegistryEntry(registry, entry),
       registryDir: registry.dir,
+      directoryAuthBlocked: entry.directoryAuthBlocked,
       source,
       ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
     }))
@@ -612,27 +656,29 @@ function manifestFromRegistryEntry(
 ): McpPackageManifest {
   const sidecar = readRegistryManifestAsset(registry.dir, entry)
   if (sidecar) {
-    if (sidecar.type !== 'mcp') throw new Error(`连接器清单类型无效: ${entry.id}`)
+    if (sidecar.type !== 'mcp') throw new Error(`Invalid Connector manifest type: ${entry.id}`)
     return sidecar
   }
   const archive = readFileSync(localArchivePath(registry, entry.archive))
   if (archive.length !== entry.size || sha256(archive) !== entry.sha256) {
-    throw new Error(`MCP 软件包归档校验失败: ${entry.id}@${entry.version}`)
+    throw new Error(`MCP package archive verification failed: ${entry.id}@${entry.version}`)
   }
   const manifestFile = parseTarGz(archive).find(
     (item) => item.type === 'file' && item.path === 'phi-package.yaml'
   )
-  if (!manifestFile) throw new Error(`MCP 软件包 ${entry.id} 缺少 phi-package.yaml`)
+  if (!manifestFile) throw new Error(`MCP package ${entry.id} is missing phi-package.yaml`)
   const manifest = parsePackageManifestText(manifestFile.data.toString('utf8'))
   if (manifest.type !== 'mcp' || manifest.id !== entry.id || manifest.version !== entry.version) {
-    throw new Error(`MCP 软件包清单与注册表不匹配: ${entry.id}@${entry.version}`)
+    throw new Error(
+      `MCP package manifest does not match the registry: ${entry.id}@${entry.version}`
+    )
   }
   return manifest
 }
 
 function connectorSourceDir(source: string, id: string): string {
   const direct = isPackageDirectory(source) ? source : join(source, id)
-  if (!isPackageDirectory(direct)) throw new Error(`连接器源不存在: ${id}`)
+  if (!isPackageDirectory(direct)) throw new Error(`Connector source does not exist: ${id}`)
   return direct
 }
 
@@ -662,7 +708,7 @@ function validateRemoteConnectorOptions(options: unknown): RemoteMcpConnectorOpt
     !isRecord(options) ||
     Object.keys(options).some((key) => key !== 'oauth' && key !== 'expectedOAuth')
   ) {
-    throw new Error('连接器认证设置无效')
+    throw new Error('Invalid Connector authentication settings')
   }
   const oauth = validateOAuthCredentials(options.oauth)
   const expectedOAuth =
@@ -683,11 +729,12 @@ function validateOAuthCredentials(value: unknown): RemoteMcpOAuthCredentials | u
     !isRecord(value) ||
     Object.keys(value).some((key) => key !== 'clientId' && key !== 'clientSecret')
   ) {
-    throw new Error('OAuth 客户端设置无效')
+    throw new Error('Invalid OAuth client settings')
   }
   const clientId = validateOAuthField(value.clientId, 'Client ID', 1024)
   const clientSecret = validateOAuthField(value.clientSecret, 'Client Secret', 4096)
-  if (clientSecret && !clientId) throw new Error('填写 OAuth Client Secret 时必须提供 Client ID')
+  if (clientSecret && !clientId)
+    throw new Error('OAuth Client ID is required when a Client Secret is provided')
   if (!clientId) return undefined
   return { clientId, ...(clientSecret ? { clientSecret } : {}) }
 }
@@ -714,7 +761,9 @@ function validateOAuthField(value: unknown, label: string, maxLength: number): s
       return code < 32 || code === 127
     })
   ) {
-    throw new Error(`OAuth ${label} 无效，不能包含控制字符且长度不能超过 ${maxLength}`)
+    throw new Error(
+      `Invalid OAuth ${label}: must not contain control characters or exceed ${maxLength} characters`
+    )
   }
   return value.trim() || undefined
 }
@@ -724,10 +773,10 @@ function validateUrl(value: string): string {
   try {
     url = new URL(value.trim())
   } catch {
-    throw new Error('请输入有效的 HTTPS MCP 地址')
+    throw new Error('Enter a valid HTTPS MCP URL')
   }
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
-    throw new Error('MCP 地址必须是无凭据、无片段的 HTTPS URL')
+    throw new Error('MCP URLs must use HTTPS without credentials or fragments')
   }
   return url.toString()
 }
@@ -798,9 +847,9 @@ function configPath(agentDir: string): string {
 function readConfig(path: string): McpConfig {
   if (!existsSync(path)) return { mcpServers: {} }
   const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  if (!isRecord(parsed)) throw new Error('MCP 配置文件格式无效')
+  if (!isRecord(parsed)) throw new Error('Invalid MCP configuration file format')
   if (parsed.mcpServers !== undefined && !isRecord(parsed.mcpServers)) {
-    throw new Error('MCP 配置中的 mcpServers 必须是对象')
+    throw new Error('mcpServers must be an object in the MCP configuration')
   }
   return parsed as McpConfig
 }
@@ -882,7 +931,7 @@ export function setMcpConnectorEnabled(
   sourcePath?: string,
   agentDir = getPhiAgentDir()
 ): void {
-  if (!MCP_SERVER_NAME.test(name)) throw new Error('连接器名称无效')
+  if (!MCP_SERVER_NAME.test(name)) throw new Error('Invalid Connector name')
   const userPath = configPath(agentDir)
   const userConfig = readConfig(userPath)
   const disabled = new Set(disabledServerNames(userConfig.disabledServers))

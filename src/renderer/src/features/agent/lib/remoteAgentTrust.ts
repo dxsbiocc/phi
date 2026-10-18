@@ -1,3 +1,4 @@
+import { agentCopy } from './agentCopy'
 import type { PromptAgentSummary } from '../../../types'
 
 function trustRequest(
@@ -14,7 +15,7 @@ function trustRequest(
     !agent.contentHash ||
     agent.trustState === 'invalid'
   ) {
-    throw new Error('该 agent 不能更改信任状态')
+    throw new Error(agentCopy.thisAgentSTrustStateCannotBeChanged)
   }
   return { cwd, relativePath: agent.relativePath, contentHash: agent.contentHash }
 }

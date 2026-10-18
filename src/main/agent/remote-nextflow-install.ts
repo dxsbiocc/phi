@@ -57,7 +57,7 @@ export async function installRemoteNextflow(
   dependencies: RemoteNextflowInstallDependencies = {}
 ): Promise<RemoteNextflowInstallResult> {
   const profile = getRemoteHostProfile(hostProfileId, dependencies.agentDir ?? getPhiAgentDir())
-  if (!profile) throw new Error('SSH 服务器档案不存在，请重新选择服务器')
+  if (!profile) throw new Error('SSH server profile not found. Select the server again.')
   const connect = dependencies.connectImpl ?? connectRemoteSshSession
   const session = await connect({
     ...remoteConnectionConfigForProfile(profile),
@@ -68,14 +68,16 @@ export async function installRemoteNextflow(
     const major = java.code === 0 ? javaMajor(`${java.stdout}\n${java.stderr}`) : null
     if (major === null || major < 17) {
       throw new Error(
-        '自动安装 Nextflow 需要服务器先提供 Java 17 或更新版本；请手动安装或加载环境模块'
+        'Automatic Nextflow installation requires Java 17 or newer on the server. Install Java manually or load an environment module.'
       )
     }
     const curl = await session.exec(
       `bash -lc ${shellQuote('test -x "$HOME/.local/bin/nextflow" || command -v nextflow >/dev/null 2>&1 || command -v curl >/dev/null 2>&1')}`
     )
     if (curl.code !== 0) {
-      throw new Error('服务器缺少 curl；请手动安装 Nextflow 或联系管理员')
+      throw new Error(
+        'curl is missing on the server. Install Nextflow manually or contact the administrator.'
+      )
     }
 
     const script = buildRemoteNextflowInstallScript()
@@ -85,11 +87,13 @@ export async function installRemoteNextflow(
       .filter((entry) => /^__PHI_NEXTFLOW_(EXISTING|INSTALLED)__:\//.test(entry))
       .at(-1)
     if (result.code !== 0 || !line) {
-      throw new Error('Nextflow 自动安装未完成；请检查服务器网络、个人目录权限，或改为手动安装')
+      throw new Error(
+        'Automatic Nextflow installation did not complete. Check the server network and home directory permissions, or install manually.'
+      )
     }
     const [kind, path] = line.split(':', 2)
     if (!path || !path.startsWith('/') || /[\r\n\0]/.test(path)) {
-      throw new Error('服务器未返回有效的 Nextflow 路径，请改为手动配置')
+      throw new Error('The server did not return a valid Nextflow path. Configure it manually.')
     }
     return { path, alreadyInstalled: kind === '__PHI_NEXTFLOW_EXISTING__' }
   } finally {

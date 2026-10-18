@@ -31,7 +31,7 @@ for (const resource of ['skills', 'wrappers', 'connectors', 'plugins'] as const)
     assert.match(markup, /:has\(:focus-visible\) \.catalog-enable-control/)
     assert.match(markup, /:has\(:focus-visible\) \.catalog-row-content/)
     assert.match(markup, /aria-current="true"/)
-    assert.match(markup, /aria-label="关闭 Example"/)
+    assert.match(markup, /aria-label="Disable Example"/)
   })
 }
 
@@ -57,7 +57,7 @@ test('a remove button appears beside the switch only when the row can be removed
     )
   assert.match(
     render(() => undefined),
-    /aria-label="卸载 Example"/
+    /aria-label="Uninstall Example"/
   )
-  assert.doesNotMatch(render(), /卸载/)
+  assert.doesNotMatch(render(), /Uninstall/)
 })

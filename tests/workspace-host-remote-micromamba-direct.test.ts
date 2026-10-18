@@ -290,7 +290,9 @@ it('falls back to relay only after all sources fail and reports host-only result
   assert.deepEqual(result.networkProbe, { status: 'unreachable' })
   assert.equal(session.uploads.length, 1)
   assert.ok(
-    messages.some((message) => /github\.com：下载失败.*gh-proxy\.com：不可用/.test(message))
+    messages.some((message) =>
+      /github\.com: download failed.*gh-proxy\.com: unavailable/.test(message)
+    )
   )
   assert.ok(
     messages.every((message) => !message.includes('mamba-org') && !message.includes('https://'))

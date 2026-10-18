@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -14,6 +15,9 @@ import {
   type WorkspaceResourceTab,
   type WorkspaceSessionTab
 } from '../src/renderer/src/lib/workspaceResourceTabs'
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('opening another item reuses the tab for its resource type', () => {
   const plugin: WorkspaceResourceTab = {

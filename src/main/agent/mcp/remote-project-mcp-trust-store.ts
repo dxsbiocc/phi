@@ -34,22 +34,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function checkedText(value: string, label: string): string {
-  if (!value || /[\0\r\n]/u.test(value)) throw new Error(`${label}无效`)
+  if (!value || /[\0\r\n]/u.test(value)) throw new Error(`Invalid ${label}`)
   return value
 }
 
 function normalizeIdentity(value: RemoteProjectMcpTrustIdentity): RemoteProjectMcpTrustIdentity {
-  const hostAlias = checkedText(value.hostAlias, '远程主机别名')
-  const projectRoot = posix.normalize(checkedText(value.projectRoot, '远程项目根目录'))
+  const hostAlias = checkedText(value.hostAlias, 'Remote host alias')
+  const projectRoot = posix.normalize(checkedText(value.projectRoot, 'Remote project root'))
   const relativePath = posix.normalize(
-    checkedText(value.relativePath, '远程 MCP 配置相对路径').replace(/^\.\//u, '')
+    checkedText(value.relativePath, 'Remote MCP configuration relative path').replace(/^\.\//u, '')
   )
-  const contentHash = checkedText(value.contentHash, '远程 MCP 配置内容哈希').toLowerCase()
+  const contentHash = checkedText(
+    value.contentHash,
+    'Remote MCP configuration content hash'
+  ).toLowerCase()
   if (!posix.isAbsolute(projectRoot) || projectRoot.includes('\\')) {
-    throw new Error('远程项目根目录无效')
+    throw new Error('Invalid remote project root')
   }
-  if (!CONFIG_PATHS.has(relativePath)) throw new Error('远程 MCP 配置相对路径无效')
-  if (!/^[a-f0-9]{64}$/u.test(contentHash)) throw new Error('远程 MCP 配置内容哈希无效')
+  if (!CONFIG_PATHS.has(relativePath))
+    throw new Error('Invalid remote MCP configuration relative path')
+  if (!/^[a-f0-9]{64}$/u.test(contentHash))
+    throw new Error('Invalid remote MCP configuration content hash')
   return {
     hostAlias,
     projectRoot: projectRoot === '/' ? projectRoot : projectRoot.replace(/\/+$/u, ''),

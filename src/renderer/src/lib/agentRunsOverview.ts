@@ -1,3 +1,4 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
 import type { AgentExecutionItem } from './agentExecutionTypes'
 import { agentRunControlTarget, type AgentRunControlTarget } from './agentExecutionControl'
 import type { RenderGroup } from './chatRenderGroups'
@@ -134,7 +135,7 @@ export function centeredScrollTop(input: {
 }
 
 export function agentRunOverviewLabel(count: number): string {
-  return `${count} 个 Agent 运行中`
+  return chatCopy.valueAgentsRunning(count)
 }
 
 export function formatAgentDuration(durationMs: number): string {
@@ -144,7 +145,7 @@ export function formatAgentDuration(durationMs: number): string {
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
 
-  if (hours > 0) return `${hours} 小时 ${minutes} 分钟 ${seconds} 秒`
-  if (minutes > 0) return `${minutes} 分钟 ${seconds} 秒`
-  return `${seconds} 秒`
+  if (hours > 0) return chatCopy.valueHValueMinValueS(hours, minutes, seconds)
+  if (minutes > 0) return chatCopy.valueMinValueS(minutes, seconds)
+  return chatCopy.valueS(seconds)
 }

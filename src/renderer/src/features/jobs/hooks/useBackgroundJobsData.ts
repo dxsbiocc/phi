@@ -1,3 +1,4 @@
+import { jobsCopy } from '../lib/jobsCopy'
 import { useEffect, useSyncExternalStore } from 'react'
 
 import type {
@@ -138,7 +139,7 @@ class BackgroundJobsStore {
     try {
       const api = window.api
       if (typeof api?.listAgentJobs !== 'function') {
-        this.state = { ...this.state, error: '请重启 Phi 以查看后台任务。', loaded: true }
+        this.state = { ...this.state, error: jobsCopy.restartPhiToViewBackgroundJobs, loaded: true }
         this.emit()
         return
       }
@@ -160,7 +161,7 @@ class BackgroundJobsStore {
         ...this.state,
         loaded: true,
         error: results.some((result) => result.status === 'rejected')
-          ? '部分任务状态暂时无法读取，稍后会自动重试。'
+          ? jobsCopy.someJobStatusesAreTemporarilyUnavailableTheyWillRetryAutomatically
           : ''
       }
       this.publish({

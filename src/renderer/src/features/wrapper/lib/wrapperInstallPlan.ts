@@ -1,3 +1,5 @@
+import { resourceUi } from '../../../lib/resourceUi'
+import { wrapperCopy } from './wrapperCopy'
 import type { PackageInstallPlanView } from '../../../../../shared/packageManagerTypes'
 import { wrapperFamilyName } from './wrapperFamily'
 
@@ -18,21 +20,25 @@ export interface WrapperInstallSummary {
   needsConfirmation: boolean
 }
 
-const KIND_LABEL: Array<[prefix: string, label: string]> = [
-  ['subworkflow-', '子流程'],
-  ['workflow-', '工作流'],
-  ['module-', '模块']
+const KIND_LABEL: Array<[prefix: string, key: 'subworkflow' | 'workflow' | 'module']> = [
+  ['subworkflow-', 'subworkflow'],
+  ['workflow-', 'workflow'],
+  ['module-', 'module']
 ]
 
 function kindOf(id: string): string {
-  return KIND_LABEL.find(([prefix]) => id.startsWith(prefix))?.[1] ?? '其他'
+  const key = KIND_LABEL.find(([prefix]) => id.startsWith(prefix))?.[1]
+  return key ? wrapperCopy[key] : resourceUi.other
 }
 
 function itemOf(entry: PackageInstallPlanView['packages'][number]): WrapperInstallItem {
   return {
     id: entry.id,
     name: wrapperFamilyName(entry.id),
-    kind: kindOf(entry.id),
+    // A confirmation dialog can stay open while the interface language changes.
+    get kind() {
+      return kindOf(entry.id)
+    },
     version: entry.version,
     size: entry.size
   }
@@ -46,7 +52,9 @@ export function summarizeWrapperInstallPlan(
   const root = entries.find((entry) => entry.id === rootId) ?? {
     id: rootId,
     name: wrapperFamilyName(rootId),
-    kind: kindOf(rootId),
+    get kind() {
+      return kindOf(rootId)
+    },
     version: plan.root.version,
     size: 0
   }

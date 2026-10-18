@@ -16,7 +16,9 @@ export function useWrapperPlanProject(plan: WrapperRunPlan | undefined): {
   const projectId = plan?.targetSelection?.projectId
   const needsRemoteSetup = Boolean(
     plan?.validation.errors.some((error) =>
-      /远程计算目标|服务器工作目录|远程连接|运行方式/.test(error)
+      /remote (?:execution|compute) target|server working directory|remote connection|execution mode|远程计算目标|服务器工作目录|远程连接|运行方式/i.test(
+        error
+      )
     )
   )
   const unboundLocalPlanCwd = !projectId && needsRemoteSetup ? plan?.cwd : undefined

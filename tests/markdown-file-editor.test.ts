@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -223,3 +225,6 @@ test('saving while the same preview is reloading cancels the old read and publis
   assert.equal(displayed?.status === 'ready' ? displayed.file.content : null, '# Saved')
   assert.equal(tabDirty, true)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

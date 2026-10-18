@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
 import { useState } from 'react'
 
@@ -16,6 +18,7 @@ export function PlanReviewPanel({
     cancelled?: boolean
   ) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [draft, setDraft] = useState({ requestId: request.requestId, note: '' })
   const plan = request.planReview
   if (!plan) return null
@@ -28,16 +31,16 @@ export function PlanReviewPanel({
     <Paper
       variant="outlined"
       role="alert"
-      aria-label="计划等待评审"
+      aria-label={chatCopy.planAwaitingReview}
       sx={{ width: '100%', mb: 1, p: 1.5, borderRadius: 2, minWidth: 0 }}
     >
       <Stack spacing={1.25}>
         <Box>
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-            计划等待评审 · {plan.title}
+            {chatCopy.planAwaitingReview2} {plan.title}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            确认前，本轮 Agent 只能探索和修改计划，不能通过本轮工具改动工作区。
+            {chatCopy.untilYouApproveTheAgentCanOnlyExploreAndRevise}
           </Typography>
         </Box>
         <Box
@@ -59,15 +62,15 @@ export function PlanReviewPanel({
           maxRows={4}
           value={note}
           onChange={(event) => setDraft({ requestId: request.requestId, note: event.target.value })}
-          placeholder="需要修改时，写下调整意见"
-          slotProps={{ htmlInput: { maxLength: 2000, 'aria-label': '计划修改意见' } }}
+          placeholder={chatCopy.enterRevisionNotesIfChangesAreNeeded}
+          slotProps={{ htmlInput: { maxLength: 2000, 'aria-label': chatCopy.planRevisionNotes } }}
         />
         <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
           <Button variant="outlined" disabled={!note.trim()} onClick={() => respond('revise')}>
-            修改计划
+            {chatCopy.revisePlan}
           </Button>
           <Button variant="contained" onClick={() => respond('approve')}>
-            继续执行
+            {chatCopy.continueExecution}
           </Button>
         </Stack>
       </Stack>

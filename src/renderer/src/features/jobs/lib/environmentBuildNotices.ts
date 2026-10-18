@@ -1,3 +1,4 @@
+import { jobsCopy } from './jobsCopy'
 import type { EnvironmentBuild } from '../../../../../shared/environmentBuildTypes'
 
 export type EnvironmentBuildNotice = {
@@ -13,16 +14,16 @@ export function environmentBuildNotice(
   if (previous === build.state) return null
   if (build.state === 'building') {
     return {
-      message: `正在构建环境 ${build.ref}，可在后台任务中查看进度`,
+      message: jobsCopy.buildingEnvironmentValueViewProgressInBackgroundJobs(build.ref),
       severity: 'info'
     }
   }
   if (build.state === 'ready') {
-    return { message: `环境 ${build.ref} 已就绪`, severity: 'success' }
+    return { message: jobsCopy.environmentValueIsReady(build.ref), severity: 'success' }
   }
   if (build.state === 'failed') {
     return {
-      message: `环境 ${build.ref} 构建失败：${build.error ?? ''}`,
+      message: jobsCopy.environmentValueBuildFailedValue(build.ref, build.error ?? ''),
       severity: 'error'
     }
   }

@@ -1,3 +1,4 @@
+import { captureWrapperUi } from './helpers/captureWrapperUi'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -53,10 +54,10 @@ describe('remote micromamba settings UI', () => {
     })
 
     assert.match(markup, />micromamba</)
-    assert.match(markup, /版本过期（2\.8\.0）/)
+    assert.match(markup, /Outdated \(2\.8\.0\)/)
     assert.match(markup, /17\.4 MiB/)
     assert.match(markup, /\/data\/lab runtime\/bin\/micromamba-2\.9\.0-0\/micromamba/)
-    assert.match(markup, /安装\/更新 micromamba/)
+    assert.match(markup, /Install \/ update micromamba/)
   })
 
   it('shows determinate transfer progress while the explicit operation is running', () => {
@@ -70,18 +71,18 @@ describe('remote micromamba settings UI', () => {
           stage: 'download',
           transferredBytes: 9_146_404,
           totalBytes: 18_292_808,
-          message: '正在下载 micromamba…'
+          message: 'Downloading micromamba…'
         }
       },
       onInstall: () => undefined
     })
 
-    assert.match(markup, /正在下载 micromamba/)
+    assert.match(markup, /Downloading micromamba/)
     assert.match(markup, /50%/)
     assert.match(markup, /progressbar/)
   })
 
-  it('shows Chinese validation for an unsafe mirror prefix without exposing credentials', () => {
+  it('shows English validation for an unsafe mirror prefix without exposing credentials', () => {
     const markup = render({
       capabilityProfile: CAPABILITY_PROFILE,
       runtimeRoot: '~/.phi/runtime',
@@ -90,8 +91,8 @@ describe('remote micromamba settings UI', () => {
       onInstall: () => undefined
     })
 
-    assert.match(markup, /下载镜像前缀不能包含用户名或密码/)
-    assert.match(markup, /下载镜像前缀（可选）/)
+    assert.match(markup, /Download mirror prefix must not contain a username or password/)
+    assert.match(markup, /Download mirror prefix \(optional\)/)
   })
 
   it('shows the newly installed status even before a capability profile exists', () => {
@@ -106,14 +107,14 @@ describe('remote micromamba settings UI', () => {
           durationMs: 20,
           installPath: '/srv/runtime/bin/micromamba-2.9.0-0/micromamba',
           warningCodes: [],
-          message: '远端 micromamba 安装并验证成功。'
+          message: 'Remote micromamba installed and verified.'
         }
       },
       onInstall: () => undefined
     })
 
     assert.match(markup, />micromamba</)
-    assert.match(markup, /已安装（2\.9\.0-0）/)
+    assert.match(markup, /Installed \(2\.9\.0-0\)/)
   })
 
   it('shows a friendly failure reason and suggestion', () => {
@@ -129,14 +130,14 @@ describe('remote micromamba settings UI', () => {
           durationMs: 42,
           warningCodes: [],
           errorCode: 'remote-hash-mismatch',
-          message: '服务器端文件校验失败。请检查剩余空间后重试。'
+          message: 'Server file verification failed. Check available space and retry.'
         }
       },
       onInstall: () => undefined
     })
 
-    assert.match(markup, /服务器端文件校验失败/)
-    assert.match(markup, /检查剩余空间后重试/)
+    assert.match(markup, /Server file verification failed/)
+    assert.match(markup, /Check available space and retry/)
   })
 
   it('shows run activation verification failures as unusable', () => {
@@ -151,14 +152,14 @@ describe('remote micromamba settings UI', () => {
           durationMs: 42,
           warningCodes: [],
           errorCode: 'run-verification-failed',
-          message: 'micromamba run 激活验证失败。'
+          message: 'micromamba run activation verification failed.'
         }
       },
       onInstall: () => undefined
     })
 
-    assert.match(markup, /不可运行（2\.9\.0-0）/)
-    assert.match(markup, /micromamba run 激活验证失败/)
+    assert.match(markup, /Unusable \(2\.9\.0-0\)/)
+    assert.match(markup, /micromamba run activation verification failed/)
   })
 
   it('uses the existing warning confirmation wording before retrying writes', () => {
@@ -174,20 +175,20 @@ describe('remote micromamba settings UI', () => {
           platform: 'linux-x64',
           durationMs: 12,
           warningCodes: ['noexec'],
-          message: '该位置不可执行，micromamba 安装后可能无法运行。'
+          message: 'This location is not executable; micromamba may not run after installation.'
         }
       },
       onInstall: (warnings) => {
         calls.push(warnings ?? [])
       }
     }
-    const control = RemoteMicromambaControl(props)
+    const control = captureWrapperUi(() => RemoteMicromambaControl(props))
     const button = (control.props as { children: React.ReactElement[] }).children[2]
     ;(button.props as { onClick: () => void }).onClick()
     const markup = render(props)
 
-    assert.match(markup, /该位置不可执行/)
-    assert.match(markup, />仍然使用</)
+    assert.match(markup, /This location is not executable/)
+    assert.match(markup, />Use anyway</)
     assert.deepEqual(calls, [['noexec']])
   })
 
@@ -243,8 +244,8 @@ describe('remote micromamba settings UI', () => {
       )
     )
 
-    assert.match(markup, /micromamba 路径/)
-    assert.match(markup, /由 Phi 安装在运行时目录/)
-    assert.doesNotMatch(markup, /安装\/更新 micromamba|高级下载设置/)
+    assert.match(markup, /micromamba path/)
+    assert.match(markup, /Installed by Phi in the runtime directory/)
+    assert.doesNotMatch(markup, /Install \/ update micromamba|Advanced Download Settings/)
   })
 })

@@ -35,7 +35,7 @@ test('borrowed POSIX path checks reject NUL and sibling-prefix escapes', () => {
   assert.deepEqual(validateInputPathMapping(mapping), [])
   assert.match(
     validateInputPathMapping({ localRoot: 'relative', remoteRoot: '/cluster' })[0],
-    /本地映射根/
+    /local mapping root/
   )
 })
 
@@ -54,12 +54,12 @@ test('SSH project resolves relative, absolute and glob inputs only inside its se
   assert.deepEqual(absolute.resolution?.remotePaths, ['/data/project/ref.fa'])
   assert.match(
     resolveRemoteInputPath('escape', '../outside.fa', { projectLocation: ssh }).errors[0],
-    /超出远程项目目录/
+    /outside the remote project directory/
   )
   assert.match(
     resolveRemoteInputPath('sibling', '/data/project-other/a.fq', { projectLocation: ssh })
       .errors[0],
-    /超出远程项目目录/
+    /outside the remote project directory/
   )
   assert.match(
     resolveRemoteInputPath(
@@ -67,7 +67,7 @@ test('SSH project resolves relative, absolute and glob inputs only inside its se
       { source: 'local', path: '/Users/me/file' },
       { projectLocation: ssh }
     ).errors[0],
-    /不能引用本机/
+    /cannot reference local/
   )
 })
 
@@ -76,7 +76,7 @@ test('SSH upload provenance waits for a user-selected local path without changin
   assert.equal(pending.resolution?.source, 'upload')
   assert.deepEqual(pending.resolution?.localPaths, [])
   assert.deepEqual(pending.resolution?.remotePaths, [])
-  assert.match(pending.errors[0], /选择.*上传/)
+  assert.match(pending.errors[0], /select local files for upload/)
 
   const mapped = resolveRemoteInputPath(
     'reads',
@@ -100,7 +100,7 @@ test('local project maps only explicit local references and leaves remote string
   assert.match(
     resolveRemoteInputPath('escape', { source: 'local', path: 'data/../other/a.fq' }, context)
       .errors[0],
-    /超出本机映射根/
+    /outside the local mapping root/
   )
   assert.match(
     resolveRemoteInputPath(
@@ -108,7 +108,7 @@ test('local project maps only explicit local references and leaves remote string
       { source: 'local', path: '/Users/me/project/data-other/a.fq' },
       context
     ).errors[0],
-    /超出本机映射根/
+    /outside the local mapping root/
   )
   assert.deepEqual(
     resolveRemoteInputPath('remote', '/cluster/project/data/reads/a.fq', context).resolution
@@ -125,11 +125,11 @@ test('local project maps only explicit local references and leaves remote string
       { source: 'local', path: '/Users/me/file' },
       { projectLocation: local }
     ).errors[0],
-    /没有配置/
+    /without a local-to-server path mapping/
   )
   assert.match(
     resolveRemoteInputPath('unmapped-relative', 'reads/a.fq', { projectLocation: local }).errors[0],
-    /服务器绝对路径/
+    /absolute server path/
   )
 })
 
@@ -156,7 +156,7 @@ test('remote URLs stay remote and unsupported schemes or malformed refs fail cle
   assert.match(
     resolveRemoteInputPath('ssh-url', 'ssh://other-host/etc/hosts', { projectLocation: ssh })
       .errors[0],
-    /URL 类型暂不支持/
+    /URL type.*not supported/
   )
   assert.match(
     resolveRemoteInputPath(
@@ -164,7 +164,7 @@ test('remote URLs stay remote and unsupported schemes or malformed refs fail cle
       { source: 'local', path: '/a', host: 'other' },
       { projectLocation: local, mapping }
     ).errors[0],
-    /必须是路径/
+    /must be a path/
   )
 })
 

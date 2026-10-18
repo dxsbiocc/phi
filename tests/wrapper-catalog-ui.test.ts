@@ -138,9 +138,9 @@ test('wrapper categories count distinct packages and are selected before the vis
   const groups = wrapperCatalogGroups(choices)
 
   assert.deepEqual(groups, [
-    { id: 'all', label: '全部 Wrapper', count: 81 },
-    { id: 'category:工作流', label: '工作流', count: 1 },
-    { id: 'category:模块', label: '模块', count: 80 }
+    { id: 'all', label: 'All Wrappers', count: 81 },
+    { id: 'category:工作流', label: 'Workflows', count: 1 },
+    { id: 'category:模块', label: 'Modules', count: 80 }
   ])
   assert.equal(
     getCatalogPage(choices, 0, CATALOG_DEFAULT_PAGE_SIZE).rows.some(
@@ -157,6 +157,12 @@ test('wrapper categories count distinct packages and are selected before the vis
     ['z-rnaseq']
   )
   assert.equal(filterWrapperCatalogChoices(choices, 'RNA', 'category:模块').length, 0)
+  assert.deepEqual(
+    filterWrapperCatalogChoices(choices, 'Workflows', 'category:工作流').map((choice) => choice.id),
+    ['z-rnaseq']
+  )
+  assert.equal(filterWrapperCatalogChoices(choices, 'Modules', 'category:模块').length, 80)
+  assert.equal(filterWrapperCatalogChoices(choices, '模块', 'category:模块').length, 80)
   assert.equal(filterWrapperCatalogChoices(choices, '', 'category:missing').length, 0)
 })
 

@@ -37,7 +37,10 @@ export function resolveRemoteConnectionConfig(
   agentDir = getPhiAgentDir()
 ): RemoteConnectionConfig {
   const profile = getRemoteHostProfile(connection.hostProfileId, agentDir)
-  if (!profile) throw new Error(`连接 "${connection.label}" 的 SSH 服务器档案不可用，请重新配置`)
+  if (!profile)
+    throw new Error(
+      `The SSH server profile for connection "${connection.label}" is unavailable. Configure it again`
+    )
   return remoteConnectionConfigForProfile(profile)
 }
 
@@ -86,23 +89,36 @@ export function resolveProjectRemoteTarget(
   agentDir = getPhiAgentDir()
 ): ResolvedRemoteTarget | { reason: string } {
   if (!project) {
-    return { reason: '找不到这次运行所属的项目，无法确定要连接的远程主机。' }
+    return {
+      reason:
+        'The project for this run could not be found, so the remote host cannot be determined.'
+    }
   }
   if (project.location.kind === 'ssh') {
     const hostProfile = getRemoteHostProfile(project.location.hostProfileId, agentDir)
     if (!hostProfile) {
-      return { reason: '远程项目绑定的 SSH 服务器档案不可用，请先恢复服务器配置。' }
+      return {
+        reason:
+          'The SSH server profile bound to this remote project is unavailable. Restore its configuration first.'
+      }
     }
     const wanted = connectionId ?? project.defaultRemoteConnectionId
     const configured = project.remoteConnections?.find((candidate) => candidate.id === wanted)
     if (wanted && wanted !== project.location.hostProfileId && !configured) {
-      return { reason: `远程项目的运行配置 ${wanted} 不存在，请重新选择。` }
+      return {
+        reason: `Execution configuration ${wanted} for this remote project does not exist. Select it again.`
+      }
     }
     if (configured && configured.hostProfileId !== project.location.hostProfileId) {
-      return { reason: '远程项目的 Wrapper 运行配置指向另一台服务器，请改用本项目绑定的服务器。' }
+      return {
+        reason:
+          'The Wrapper execution configuration points to another server. Use the server bound to this project.'
+      }
     }
     if (configured && !configured.hpc) {
-      return { reason: `连接 "${configured.label}" 尚未设置 Wrapper 运行方式。` }
+      return {
+        reason: `Connection "${configured.label}" has no Wrapper execution mode configured.`
+      }
     }
     return {
       target: {
@@ -122,20 +138,20 @@ export function resolveProjectRemoteTarget(
   }
   if (!project.remoteWorkspaceRoot) {
     return {
-      reason: `项目 "${project.name}" 还没有设置服务器工作目录。请在该项目的 Wrapper 页面选择“设置远程计算”。`
+      reason: `Project "${project.name}" has no server working directory. Select "Configure remote execution" on its Wrapper page.`
     }
   }
   const wanted = connectionId ?? project.defaultRemoteConnectionId
   const connection = project.remoteConnections?.find((candidate) => candidate.id === wanted)
   if (!connection) {
     return {
-      reason: `项目 "${project.name}" 没有可用的远程计算目标${wanted ? `（找不到 ${wanted}）` : ''}。请在该项目的 Wrapper 页面选择“设置远程计算”。`
+      reason: `Project "${project.name}" has no available remote execution target${wanted ? ` (${wanted} not found)` : ''}. Select "Configure remote execution" on its Wrapper page.`
     }
   }
   if (!connection.hpc) {
     // Without this, Nextflow would run every step on the login node itself: never the intent.
     return {
-      reason: `计算目标 "${connection.label}" 还没有设置运行方式。请在该项目的 Wrapper 页面选择“设置远程计算”。`
+      reason: `Execution target "${connection.label}" has no execution mode configured. Select "Configure remote execution" on this project's Wrapper page.`
     }
   }
   try {

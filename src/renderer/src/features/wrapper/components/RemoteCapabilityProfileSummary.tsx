@@ -1,3 +1,5 @@
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Chip, Stack, Typography } from '@mui/material'
 import { GoCpu } from 'react-icons/go'
 
@@ -7,15 +9,16 @@ import type {
 } from '../../../../../shared/remoteDoctorTypes'
 import type { RemoteRuntimeRootCapabilityProfile } from '../../../../../shared/remoteRuntimeRootTypes'
 
-const TOOL_LABELS = [
-  ['git', 'Git'],
-  ['nextflow', 'Nextflow'],
-  ['java', 'Java'],
-  ['conda', 'Conda'],
-  ['sbatch', 'Slurm'],
-  ['containerRuntime', '容器运行时'],
-  ['module', 'Module']
-] as const
+const toolLabels = () =>
+  [
+    ['git', 'Git'],
+    ['nextflow', 'Nextflow'],
+    ['java', 'Java'],
+    ['conda', 'Conda'],
+    ['sbatch', 'Slurm'],
+    ['containerRuntime', remoteSetupCopy.containerRuntime],
+    ['module', 'Module']
+  ] as const
 
 const PREREQUISITE_LABELS = [
   ['perl', 'Perl'],
@@ -24,31 +27,79 @@ const PREREQUISITE_LABELS = [
   ['sha256sum', 'sha256sum']
 ] as const
 
-const RUNTIME_SOURCE_LABELS = { project: '项目', host: '主机', default: '默认' } as const
+const RUNTIME_SOURCE_LABELS = {
+  get project() {
+    return remoteSetupCopy.project
+  },
+  get host() {
+    return remoteSetupCopy.host
+  },
+  get default() {
+    return remoteSetupCopy.default
+  }
+} as const
 const RUNTIME_CHECK_LABELS = {
-  pathResolution: '路径',
-  creation: '创建',
-  ownership: '所有者',
-  permissions: '权限',
-  filesystem: '文件系统',
-  space: '空间',
-  executable: '执行',
-  sharedFilesystem: '共享盘'
+  get pathResolution() {
+    return remoteSetupCopy.path
+  },
+  get creation() {
+    return remoteSetupCopy.creation
+  },
+  get ownership() {
+    return remoteSetupCopy.ownership
+  },
+  get permissions() {
+    return remoteSetupCopy.permissions
+  },
+  get filesystem() {
+    return remoteSetupCopy.filesystem
+  },
+  get space() {
+    return remoteSetupCopy.space
+  },
+  get executable() {
+    return remoteSetupCopy.execution
+  },
+  get sharedFilesystem() {
+    return remoteSetupCopy.sharedStorage
+  }
 } as const
 const RUNTIME_STATE_LABELS = {
-  ok: '正常',
-  warning: '提醒',
-  error: '错误',
-  unknown: '未知'
+  get ok() {
+    return remoteSetupCopy.ok
+  },
+  get warning() {
+    return remoteSetupCopy.warning
+  },
+  get error() {
+    return remoteSetupCopy.error
+  },
+  get unknown() {
+    return remoteSetupCopy.unknown
+  }
 } as const
 const RUNTIME_WARNING_LABELS = {
-  'not-owned': '不归当前用户所有',
-  'group-or-other-writable': '组或其他用户可写',
-  symlink: '路径含符号链接',
-  'low-space': '剩余空间偏少',
-  'high-disk-use': '磁盘使用率较高',
-  noexec: '不可执行',
-  'shared-filesystem-info': '共享文件系统'
+  get 'not-owned'() {
+    return remoteSetupCopy.notOwned
+  },
+  get 'group-or-other-writable'() {
+    return remoteSetupCopy.groupWritable
+  },
+  get symlink() {
+    return remoteSetupCopy.containsSymlink
+  },
+  get 'low-space'() {
+    return remoteSetupCopy.lowSpace
+  },
+  get 'high-disk-use'() {
+    return remoteSetupCopy.highDiskUse
+  },
+  get noexec() {
+    return remoteSetupCopy.notExecutable
+  },
+  get 'shared-filesystem-info'() {
+    return remoteSetupCopy.sharedFilesystem
+  }
 } as const
 
 function platformLabel(profile: RemoteHostCapabilityProfile): string {
@@ -70,8 +121,9 @@ function availableTool(label: string, capability: RemoteHostCapability): string 
 
 function unavailableTool(label: string, capability: RemoteHostCapability): string | null {
   if (capability.state === 'available') return null
-  const fallback = capability.state === 'degraded' ? '受限' : '不可用'
-  return `${label}：${capability.reason ?? fallback}`
+  const fallback =
+    capability.state === 'degraded' ? remoteSetupCopy.limited : remoteSetupCopy.unavailable
+  return `${label}: ${capability.reason ?? fallback}`
 }
 
 function probeWarning(capability: RemoteHostCapability | undefined): string | null {
@@ -80,13 +132,13 @@ function probeWarning(capability: RemoteHostCapability | undefined): string | nu
     capability.state === 'degraded' &&
     /tim(?:e|ed)?\s*out|timeout|超时/i.test(capability.reason ?? '')
   ) {
-    return '探测：部分检测超时'
+    return remoteSetupCopy.probeTimedOut
   }
-  return unavailableTool('探测', capability)
+  return unavailableTool(remoteSetupCopy.probe, capability)
 }
 
 function formatSpace(availableSpaceKiB: number | null): string {
-  if (availableSpaceKiB === null) return '未知'
+  if (availableSpaceKiB === null) return remoteSetupCopy.unknown
   const gibibytes = availableSpaceKiB / 1024 / 1024
   return `${Number.isInteger(gibibytes) ? gibibytes : gibibytes.toFixed(1)} GiB`
 }
@@ -102,21 +154,28 @@ function environmentSummary(profile: RemoteHostCapabilityProfile): {
     : []
   const storageWarnings = profile.storage
     ? [
-        unavailableTool('家目录写入', profile.storage.homeWritable),
-        unavailableTool('执行落点', profile.storage.homeExecutable),
+        unavailableTool(remoteSetupCopy.homeWritable, profile.storage.homeWritable),
+        unavailableTool(remoteSetupCopy.executionDirectory, profile.storage.homeExecutable),
         unavailableTool(
-          '可用空间',
+          remoteSetupCopy.availableSpace,
           profile.storage.availableSpace ??
             (profile.storage.availableSpaceKiB === null
-              ? { state: 'unavailable', reason: '无法确定可用空间' }
+              ? {
+                  state: 'unavailable',
+                  get reason() {
+                    return remoteSetupCopy.unknownAvailableSpace
+                  }
+                }
               : { state: 'available' })
         ),
-        unavailableTool('共享文件系统', profile.storage.sharedFileSystem)
+        unavailableTool(remoteSetupCopy.sharedFilesystem, profile.storage.sharedFileSystem)
       ].filter((warning): warning is string => Boolean(warning))
     : []
   const probeStatus = probeWarning(profile.probe)
   return {
-    detail: profile.storage ? `可用空间：${formatSpace(profile.storage.availableSpaceKiB)}` : null,
+    detail: profile.storage
+      ? remoteSetupCopy.availableSpaceValue(formatSpace(profile.storage.availableSpaceKiB))
+      : null,
     warnings: [...(probeStatus ? [probeStatus] : []), ...prerequisiteWarnings, ...storageWarnings]
   }
 }
@@ -125,7 +184,7 @@ function toolSummaries(profile: RemoteHostCapabilityProfile): {
   available: string[]
   unavailable: string[]
 } {
-  return TOOL_LABELS.reduce<{ available: string[]; unavailable: string[] }>(
+  return toolLabels().reduce<{ available: string[]; unavailable: string[] }>(
     (summary, [key, label]) => {
       const capability = profile.toolchain[key]
       const available = availableTool(label, capability)
@@ -147,23 +206,28 @@ function helperSummary(profile: RemoteHostCapabilityProfile): string | null {
   const compatibilityReason =
     compatibility && compatibility.state !== 'available'
       ? (compatibility.reason ??
-        (compatibility.state === 'degraded' ? 'helper 受限' : 'helper 不可用'))
+        (compatibility.state === 'degraded'
+          ? remoteSetupCopy.helperLimited
+          : remoteSetupCopy.helperUnavailable))
       : null
   if (unavailable.length === 0 && !compatibilityReason) return null
   const reasons = [
     ...new Set(
-      [compatibilityReason, ...unavailable.map((capability) => capability.reason)].filter(Boolean)
+      [compatibilityReason, ...unavailable.map((capability) => capability.reason)].filter(
+        (reason): reason is string => Boolean(reason)
+      )
     )
   ]
-  return `辅助能力：${reasons.join('；') || '部分不可用'}`
+  return remoteSetupCopy.auxiliaryCapabilities(reasons)
 }
 
 function runtimeRootStatus(profile: RemoteRuntimeRootCapabilityProfile): string {
-  if (profile.status === 'timed-out') return '检测超时'
-  if (profile.status === 'failed' || profile.status === 'incomplete') return '未完成'
-  if (profile.hasHardError) return '有硬性错误'
-  if (profile.warningCodes.length > 0) return '有提醒'
-  return '已检查'
+  if (profile.status === 'timed-out') return remoteSetupCopy.checkTimedOut
+  if (profile.status === 'failed' || profile.status === 'incomplete')
+    return remoteSetupCopy.incomplete
+  if (profile.hasHardError) return remoteSetupCopy.hasHardErrors
+  if (profile.warningCodes.length > 0) return remoteSetupCopy.hasWarnings
+  return remoteSetupCopy.checked
 }
 
 function RuntimeRootSummary({
@@ -171,27 +235,30 @@ function RuntimeRootSummary({
 }: {
   profile?: RemoteRuntimeRootCapabilityProfile
 }): React.JSX.Element {
+  useUiLanguage()
   if (!profile) {
-    return <Typography variant="caption">运行时根目录：未检查</Typography>
+    return <Typography variant="caption">{remoteSetupCopy.runtimeRootUnchecked}</Typography>
   }
   const checks = Object.entries(profile.checks)
     .map(
       ([key, state]) =>
         `${RUNTIME_CHECK_LABELS[key as keyof typeof RUNTIME_CHECK_LABELS]} ${RUNTIME_STATE_LABELS[state]}`
     )
-    .join('、')
+    .join(', ')
   return (
     <Stack spacing={0.25}>
       <Typography variant="caption">
-        运行时根目录：来自{RUNTIME_SOURCE_LABELS[profile.source]} · {runtimeRootStatus(profile)}
+        {remoteSetupCopy.runtimeRootSource}
+        {RUNTIME_SOURCE_LABELS[profile.source]} · {runtimeRootStatus(profile)}
       </Typography>
       <Typography variant="caption" color="text.secondary">
-        检查：{checks}
+        {remoteSetupCopy.checksPrefix}
+        {checks}
       </Typography>
       {profile.warningCodes.length > 0 && (
         <Typography variant="caption" color="warning.main">
-          告警：
-          {profile.warningCodes.map((code) => RUNTIME_WARNING_LABELS[code]).join('、')}
+          {remoteSetupCopy.warningsPrefix}
+          {profile.warningCodes.map((code) => RUNTIME_WARNING_LABELS[code]).join(', ')}
         </Typography>
       )}
     </Stack>
@@ -203,6 +270,7 @@ export function RemoteCapabilityProfileSummary({
 }: {
   profile: RemoteHostCapabilityProfile
 }): React.JSX.Element {
+  useUiLanguage()
   const tools = toolSummaries(profile)
   const helper = helperSummary(profile)
   const environment = environmentSummary(profile)
@@ -211,15 +279,16 @@ export function RemoteCapabilityProfileSummary({
     <Stack spacing={0.75}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <GoCpu size={17} aria-hidden="true" />
-        <Typography variant="subtitle2">服务器能力档案</Typography>
+        <Typography variant="subtitle2">{remoteSetupCopy.capabilityProfile}</Typography>
         <Chip size="small" variant="outlined" label={platformLabel(profile)} />
       </Stack>
       <Typography variant="caption" color="text.secondary">
-        可用工具：{tools.available.join('、') || '未发现'}
+        {remoteSetupCopy.availableToolsPrefix}
+        {tools.available.join(', ') || remoteSetupCopy.noneFound}
       </Typography>
       {tools.unavailable.length > 0 && (
         <Typography variant="caption" color="warning.main">
-          {tools.unavailable.join('；')}
+          {tools.unavailable.join('; ')}
         </Typography>
       )}
       {environment.detail && (
@@ -229,7 +298,8 @@ export function RemoteCapabilityProfileSummary({
       )}
       {environment.warnings.length > 0 && (
         <Typography variant="caption" color="warning.main">
-          环境限制：{environment.warnings.join('；')}
+          {remoteSetupCopy.environmentLimitationsPrefix}
+          {environment.warnings.join('; ')}
         </Typography>
       )}
       <RuntimeRootSummary profile={profile.runtimeRoot} />
@@ -239,8 +309,10 @@ export function RemoteCapabilityProfileSummary({
         </Typography>
       )}
       <Typography variant="caption" color="text.secondary">
-        档案更新：
-        {Number.isNaN(probedAt.getTime()) ? profile.probedAt : probedAt.toLocaleString()}
+        {remoteSetupCopy.profileUpdatedPrefix}
+        {Number.isNaN(probedAt.getTime())
+          ? profile.probedAt
+          : probedAt.toLocaleString(getUiLocale())}
       </Typography>
     </Stack>
   )

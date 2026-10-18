@@ -18,7 +18,7 @@ export type ConnectorSetupReporter = (
 
 export class ConnectorSetupBusyError extends Error {
   constructor(readonly id: string) {
-    super(`连接器 ${id} 的设置正在进行中，请稍候再试`)
+    super(`Connector ${id} setup is in progress. Try again later.`)
     this.name = 'ConnectorSetupBusyError'
   }
 }

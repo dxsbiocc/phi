@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Collapse, IconButton, Typography } from '@mui/material'
 import { memo, useEffect, useState, type ReactNode } from 'react'
 import AgentExecutionCard from '../AgentExecutionCard'
@@ -95,6 +97,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   completedAtMs,
   durationMs
 }: ChatProcessingGroupProps): ReactNode {
+  useUiLanguage()
   const [expanded, setExpanded] = useState(false)
   // Adjusting state while rendering (not in an effect) opens the fold in the same pass that
   // receives the request, so the card is mounted by the time the list goes looking for it.
@@ -146,7 +149,9 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
           }
         }}
         aria-expanded={expanded}
-        aria-label={expanded ? '折叠处理过程' : '展开处理过程'}
+        aria-label={
+          expanded ? chatCopy.collapseProcessingDetails : chatCopy.expandProcessingDetails
+        }
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -292,8 +297,8 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
           <Box sx={{ display: 'flex', justifyContent: 'flex-start', pb: 0.5 }}>
             <IconButton
               size="small"
-              aria-label="折叠处理过程"
-              title="折叠处理过程"
+              aria-label={chatCopy.collapseProcessingDetails}
+              title={chatCopy.collapseProcessingDetails}
               onClick={toggle}
               sx={{
                 width: 28,

@@ -1,8 +1,15 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorJobCopy } from '../lib/connectorJobCopy'
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack } from '@mui/material'
 import { useEffect, useState } from 'react'
 
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
-import { connectorJobDuration, connectorJobStatusLabel } from '../lib/backgroundJobs'
+import {
+  connectorJobDuration,
+  connectorJobStatusLabel,
+  isCancelledConnectorJob
+} from '../lib/backgroundJobs'
 import {
   buildConnectorJobDetailText,
   connectorJobStartedAtLabel,
@@ -43,21 +50,31 @@ export function ConnectorJobDetailBody({
   | 'onCopySetupCommand'
   | 'onOpenSetupTerminal'
 >): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack spacing={1.5} sx={{ pt: 0.5 }}>
-      <DetailField label="连接器名称" value={setup.title ?? setup.id} />
-      <DetailField label="状态" value={connectorJobStatusLabel(setup)} />
-      <DetailField label="命令" value={setup.summary ?? setup.id} mono />
+      <DetailField label={connectorJobCopy.connectorName} value={setup.title ?? setup.id} />
+      <DetailField label={resourceUi.status} value={connectorJobStatusLabel(setup)} />
+      <DetailField label={connectorJobCopy.command} value={setup.summary ?? setup.id} mono />
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-        <DetailField label="开始时间" value={connectorJobStartedAtLabel(setup)} />
-        <DetailField label="耗时" value={connectorJobDuration(setup, nowMs)} />
+        <DetailField label={connectorJobCopy.startedAt} value={connectorJobStartedAtLabel(setup)} />
+        <DetailField label={connectorJobCopy.duration} value={connectorJobDuration(setup, nowMs)} />
       </Stack>
-      <DetailField label="错误" value={setup.error ?? '没有错误'} mono />
-      <DetailField label="进程输出" value={setup.detail ?? '没有进程输出'} mono scroll />
+      <DetailField
+        label={connectorJobCopy.error}
+        value={setup.error ?? connectorJobCopy.noError}
+        mono
+      />
+      <DetailField
+        label={connectorJobCopy.processOutput}
+        value={setup.detail ?? connectorJobCopy.noOutput}
+        mono
+        scroll
+      />
       {setup.phase === 'ready' ? (
-        <DetailField label="工具列表" value={connectorJobToolsLabel(setup)} />
+        <DetailField label={connectorJobCopy.toolList} value={connectorJobToolsLabel(setup)} />
       ) : null}
-      {setup.phase === 'failed' && setup.error !== '已取消' ? (
+      {setup.phase === 'failed' && !isCancelledConnectorJob(setup) ? (
         <ConnectorJobSetupGuide
           setup={setup}
           retrying={retrying}
@@ -83,9 +100,10 @@ export function ConnectorJobDetailContent({
   onCopySetupCommand = () => undefined,
   onOpenSetupTerminal = () => undefined
 }: DetailContentProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <>
-      <DialogTitle>连接器详情</DialogTitle>
+      <DialogTitle>{connectorJobCopy.title}</DialogTitle>
       <DialogContent>
         <ConnectorJobDetailBody
           setup={setup}
@@ -98,14 +116,16 @@ export function ConnectorJobDetailContent({
         />
       </DialogContent>
       <DialogActions>
-        <Button onClick={onCopy}>{copied ? '已复制' : '复制详情'}</Button>
+        <Button onClick={onCopy}>
+          {copied ? connectorJobCopy.copied : connectorJobCopy.copyDetails}
+        </Button>
         {setup.phase === 'failed' ? (
           <Button disabled={retrying} onClick={onRetry}>
-            重试
+            {resourceUi.retry}
           </Button>
         ) : null}
         <Button variant="contained" onClick={onClose}>
-          关闭
+          {resourceUi.close}
         </Button>
       </DialogActions>
     </>
@@ -131,6 +151,7 @@ export function ConnectorJobDetailDialog({
   onOpenSetupAgent?: (prompt: string) => void
   onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [liveNowMs, setLiveNowMs] = useState(() => nowMs ?? Date.now())
   const [copied, setCopied] = useState(false)
   const displayNowMs = nowMs ?? liveNowMs

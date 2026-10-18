@@ -325,7 +325,7 @@ test('explains a timed-out runtime-root check as a slow server retry', async () 
 
     assert.equal(result.status, 'failed')
     assert.equal(result.errorCode, 'runtime-root-check-failed')
-    assert.match(result.message, /服务器响应慢.*稍后重试/u)
+    assert.match(result.message, /server is responding slowly.*Retry later/u)
     assert.equal(session.commands.length, 0)
   } finally {
     await session.close()
@@ -375,8 +375,8 @@ test('requires confirmation before noexec writes and explains the execution cons
 
     assert.equal(result.status, 'needs-confirmation')
     assert.deepEqual(result.warningCodes, ['noexec'])
-    assert.match(result.message, /micromamba 将无法运行/)
-    assert.match(result.message, /建议更换可执行位置/)
+    assert.match(result.message, /micromamba cannot run/)
+    assert.match(result.message, /Choose a location that allows execution/)
     assert.equal(session.commands.length, 0)
     assert.equal(session.uploads.length, 0)
     await assert.rejects(access(root))

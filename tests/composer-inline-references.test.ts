@@ -109,8 +109,8 @@ test('inline chips reuse artwork and expose independent detail and removal actio
     createElement(ComposerReferenceChip, { reference, onRemove: () => undefined })
   )
   assert.match(markup, /data-phi-resource-icon-key="agent-icon"/)
-  assert.match(markup, /aria-label="查看智能体 Reviewer"/)
-  assert.match(markup, /aria-label="移除智能体引用 Reviewer"/)
+  assert.match(markup, /aria-label="View Agent Reviewer"/)
+  assert.match(markup, /aria-label="Remove Agent reference Reviewer"/)
   assert.doesNotMatch(markup, /composer-reference-chips/)
 })
 
@@ -133,7 +133,7 @@ test('Notebook chips show names without the @ prefix and use distinct artwork fo
     assert.match(markup, />context<\/span>/)
     assert.doesNotMatch(markup, />@context<\/span>/)
     assert.match(markup, /title="@context"/)
-    assert.match(markup, /aria-label="移除.+引用 context"/)
+    assert.match(markup, /aria-label="Remove .+ reference context"/)
     const svg = /<svg[^>]*>([\s\S]*?)<\/svg>/u.exec(markup)
     assert.ok(svg, `${kind} needs an icon`)
     return svg[1]

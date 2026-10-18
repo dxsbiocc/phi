@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import { jobStatus } from '../src/renderer/src/features/jobs/lib/backgroundJobLabels'
 import type { McpConnectorSetupProgress } from '../src/shared/mcpConnectorCatalog'
 import {
   connectorJobDetail,
   connectorJobStatusLabel,
+  isCancelledConnectorJob,
   selectBackgroundJobs
 } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
 
@@ -58,24 +60,39 @@ test('connector jobs join the unified active and recent trays', () => {
 test('connector job labels show elapsed time, tools, failures, and cancellation', () => {
   assert.equal(
     connectorJobDetail(setup(), Date.parse('2026-10-11T08:01:05.000Z')),
-    '正在启动并验证 · 已用时 01:05'
+    'Starting and verifying · 01:05 elapsed'
   )
   assert.equal(
     connectorJobDetail(setup({ phase: 'ready', toolNames: ['one', 'two'] }), 0),
-    '已完成 · 2 个工具'
+    'Completed · 2 tools'
   )
   assert.equal(
     connectorJobDetail(setup({ phase: 'failed', error: 'fixture failed' }), 0),
-    '失败 · fixture failed'
+    'Failed · fixture failed'
   )
-  assert.equal(connectorJobDetail(setup({ phase: 'failed', error: '已取消' }), 0), '已取消')
+  for (const error of ['已取消', 'Cancelled']) {
+    const cancelled = setup({ phase: 'failed', error })
+    assert.equal(isCancelledConnectorJob(cancelled), true)
+    assert.equal(connectorJobDetail(cancelled, 0), 'Cancelled')
+    assert.equal(connectorJobStatusLabel(cancelled), 'Cancelled')
+    assert.deepEqual(
+      jobStatus({
+        kind: 'connector',
+        key: 'connector:mail',
+        active: false,
+        timestamp: cancelled.updatedAt,
+        setup: cancelled
+      }),
+      { label: 'Cancelled', tone: 'neutral' }
+    )
+  }
   const needsSetup = setup({
     phase: 'failed',
     failureKind: 'needs-setup',
     failureReason: 'Configuration file not found'
   })
-  assert.equal(connectorJobDetail(needsSetup, 0), '需要先配置 · Configuration file not found')
-  assert.equal(connectorJobStatusLabel(needsSetup), '需要先配置')
+  assert.equal(connectorJobDetail(needsSetup, 0), 'Setup required · Configuration file not found')
+  assert.equal(connectorJobStatusLabel(needsSetup), 'Setup required')
 })
 
 test('background jobs panel wires connector polling, events, cancel, retry, and display copy', () => {
@@ -87,9 +104,9 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(data, /onMcpConnectorSetupChanged/)
   assert.match(panel, /cancelLocalConnectorAdd/)
   assert.match(panel, /retryLocalConnectorAdd/)
-  assert.match(labels, /取消添加/)
-  assert.match(labels, /连接器/)
-  assert.match(row, /重试/)
+  assert.match(labels, /connectorJobCopy\.cancelAdd/)
+  assert.match(labels, /resourceUi\.connector/)
+  assert.match(row, /jobsCopy.retry/)
   // Connector details open inside the panel instead of a modal dialog.
   assert.match(panel, /BackgroundJobDetail/)
   assert.doesNotMatch(panel, /ConnectorJobDetailDialog/)
@@ -100,7 +117,7 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(row, /tabIndex=\{0\}/)
   assert.match(row, /event\.key === 'Enter' \|\| event\.key === ' '/)
   assert.match(row, /event\.currentTarget !== event\.target/)
-  assert.match(row, /aria-label=\{`查看 \$\{title\} 详情`\}/)
+  assert.match(row, /aria-label=\{jobsCopy.viewDetailsForValue\(title\)\}/)
   assert.match(row, /event\.stopPropagation\(\)/)
   assert.match(row, /overflowWrap: 'anywhere'/)
   assert.match(row, /WebkitLineClamp: 2/)

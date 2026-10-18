@@ -1,3 +1,4 @@
+import { componentTree } from './helpers/renderComponentTree'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -46,10 +47,10 @@ test('local connector confirmation shows exact launch details without environmen
     )
   )
 
-  assert.match(markup, /确认添加本地连接器/)
+  assert.match(markup, /Confirm local Connector/)
   assert.match(markup, /aria-labelledby="mcp-local-connect-confirm-title"/)
   assert.match(markup, /aria-describedby="mcp-local-connect-confirm-description"/)
-  assert.match(markup, /运行位置/)
+  assert.match(markup, /Runtime/)
   assert.match(markup, /Python 1/)
   assert.match(markup, /argv\[0\] = &quot;uvx&quot;/)
   assert.match(markup, /argv\[2\] = &quot;value with spaces&quot;/)
@@ -57,25 +58,27 @@ test('local connector confirmation shows exact launch details without environmen
   assert.match(markup, /FEATURE_FLAG/)
   assert.doesNotMatch(markup, /secret-info|secret-enabled/)
   assert.match(markup, /\/tmp\/literature/)
-  assert.match(markup, /确认后将在后台启动并验证，界面不会被锁住；进度见后台任务。/)
-  assert.match(markup, /首次运行需要下载依赖，可能需要几分钟。/)
+  assert.match(markup, /After confirmation, startup and verification run in the background./)
+  assert.match(markup, /The first run downloads dependencies and may take a few minutes./)
 })
 
 test('local connector confirmation exposes cancel and one-shot confirm actions', () => {
   let cancels = 0
   let confirms = 0
-  const tree = McpLocalConnectConfirmDialog({
-    open: true,
-    submitting: false,
-    request: hostRequest,
-    runtimes: [],
-    onCancel: () => {
-      cancels += 1
-    },
-    onConfirm: () => {
-      confirms += 1
-    }
-  })
+  const tree = componentTree(() =>
+    McpLocalConnectConfirmDialog({
+      open: true,
+      submitting: false,
+      request: hostRequest,
+      runtimes: [],
+      onCancel: () => {
+        cancels += 1
+      },
+      onConfirm: () => {
+        confirms += 1
+      }
+    })
+  )
   const buttons = descendants(tree).filter((element) => element.type === Button)
   assert.equal(buttons.length, 2)
 
@@ -102,7 +105,7 @@ test('local connector confirmation disables both actions while submitting', () =
       })
     )
   )
-  assert.match(markup, /正在提交…/)
+  assert.match(markup, /Submitting…/)
   assert.equal((markup.match(/disabled=""/g) ?? []).length, 2)
 })
 
@@ -124,7 +127,10 @@ test('local connector confirmation repeats the host and Bun safety warnings', ()
       )
     )
 
-  assert.match(renderRequest(hostRequest), /将直接在本机运行，不使用 Phi 隔离环境/)
+  assert.match(
+    renderRequest(hostRequest),
+    /Runs directly on this device without a Phi isolated environment/
+  )
   assert.match(
     renderRequest({
       ...hostRequest,
@@ -132,6 +138,6 @@ test('local connector confirmation repeats the host and Bun safety warnings', ()
       command: 'x',
       args: ['--bun', 'fixture@1.0.0']
     }),
-    /由 Phi 内置 Bun 以 Node 兼容模式运行；个别依赖可能不兼容。.*版本不锁定。/s
+    /Runs with Phi&#x27;s bundled Bun in Node compatibility mode; some dependencies may be incompatible\..*without locking versions\./s
   )
 })

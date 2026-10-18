@@ -46,7 +46,7 @@ describe('remote runtime root settings UI', () => {
   it('keeps the effective source visible without presenting an unchecked root as passing', () => {
     const markup = render(
       createElement(RemoteRuntimeRootControl, {
-        label: '项目覆盖',
+        label: 'Project override',
         value: '',
         effective: { source: 'default', configured: '~/.phi/runtime' },
         doctorState: { phase: 'idle' },
@@ -57,17 +57,17 @@ describe('remote runtime root settings UI', () => {
       })
     )
 
-    assert.match(markup, /项目覆盖/)
-    assert.match(markup, /当前生效：~\/.phi\/runtime，来自 默认/)
-    assert.match(markup, /未检测/)
-    assert.doesNotMatch(markup, /检测通过/)
+    assert.match(markup, /Project override/)
+    assert.match(markup, /Effective value: ~\/.phi\/runtime, from Default/)
+    assert.match(markup, /Not checked/)
+    assert.doesNotMatch(markup, /Check passed/)
   })
 
   it('shows each checked property and explains soft-warning consequences', () => {
     const targetKey = 'project-root:/data/lab/runtime'
     const markup = render(
       createElement(RemoteRuntimeRootControl, {
-        label: '项目覆盖',
+        label: 'Project override',
         value: '/data/lab/runtime',
         effective: { source: 'project', configured: '/data/lab/runtime' },
         doctorState: runtimeDoctorState(
@@ -88,13 +88,13 @@ describe('remote runtime root settings UI', () => {
             warnings: [
               {
                 code: 'noexec',
-                message: '该位置不能直接执行程序。',
-                consequence: '环境中的可执行文件可能无法启动。'
+                message: 'Programs cannot be executed directly at this location.',
+                consequence: 'Executables in the environment may fail to start.'
               },
               {
                 code: 'shared-filesystem-info',
-                message: '检测到共享文件系统。',
-                consequence: '计算节点可见性尚未验证。'
+                message: 'Shared filesystem detected.',
+                consequence: 'Visibility from compute nodes has not been verified.'
               }
             ]
           })
@@ -108,18 +108,18 @@ describe('remote runtime root settings UI', () => {
     )
 
     for (const text of [
-      '路径解析',
+      'Resolved path',
       '/data/lab/runtime',
-      '尚未创建，可在 /data/lab 下创建',
-      '不归当前用户所有',
-      '组或其他用户可写',
-      '文件系统：nfs4',
-      '剩余空间：17 GiB',
-      '不可执行',
-      '共享盘；计算节点可见性未知',
-      '该位置不能直接执行程序。',
-      '环境中的可执行文件可能无法启动。',
-      '仍然使用'
+      'Not created yet; can be created under /data/lab',
+      'Not owned by the current user',
+      'Writable by the group or other users',
+      'Filesystem: nfs4',
+      'Remaining space: 17 GiB',
+      'Not executable',
+      'Shared storage; compute node visibility is unknown',
+      'Programs cannot be executed directly at this location.',
+      'Executables in the environment may fail to start.',
+      'Use anyway'
     ]) {
       assert.match(markup, new RegExp(text))
     }
@@ -129,7 +129,7 @@ describe('remote runtime root settings UI', () => {
     const targetKey = 'unknown-root'
     const markup = render(
       createElement(RemoteRuntimeRootControl, {
-        label: '项目覆盖',
+        label: 'Project override',
         value: '/data/runtime',
         effective: { source: 'project', configured: '/data/runtime' },
         doctorState: runtimeDoctorState(
@@ -149,21 +149,24 @@ describe('remote runtime root settings UI', () => {
     )
 
     for (const text of [
-      '所有者：未知',
-      '组或其他用户写权限：未知',
-      '符号链接：未知',
-      '可执行：未知'
+      'Owner: unknown',
+      'Group or other user write access: unknown',
+      'Symbolic links: unknown',
+      'Execution: unknown'
     ]) {
       assert.match(markup, new RegExp(text))
     }
-    assert.doesNotMatch(markup, /归当前用户所有|组或其他用户不可写|不可执行/)
+    assert.doesNotMatch(
+      markup,
+      /Owned by the current user|Not writable by the group or other users|Not executable/
+    )
   })
 
   it('labels a runtime-root timeout as timeout rather than unavailable', () => {
     const targetKey = 'timed-out-root'
     const markup = render(
       createElement(RemoteRuntimeRootControl, {
-        label: '项目覆盖',
+        label: 'Project override',
         value: '',
         effective: { source: 'default', configured: '~/.phi/runtime' },
         doctorState: runtimeDoctorState(targetKey, runtimeCheck({ status: 'timed-out' })),
@@ -173,15 +176,15 @@ describe('remote runtime root settings UI', () => {
         onCheck: () => undefined
       })
     )
-    assert.match(markup, /检测超时/)
-    assert.doesNotMatch(markup, /不可用/)
+    assert.match(markup, /Check timed out/)
+    assert.doesNotMatch(markup, /Unavailable/)
   })
 
   it('shows an explicit redacted runtime-root status in capability summaries', () => {
     const unchecked = render(
       createElement(RemoteCapabilityProfileSummary, { profile: CAPABILITY_PROFILE })
     )
-    assert.match(unchecked, /运行时根目录：未检查/)
+    assert.match(unchecked, /Runtime root: not checked/)
 
     const checked = render(
       createElement(RemoteCapabilityProfileSummary, {
@@ -207,8 +210,8 @@ describe('remote runtime root settings UI', () => {
         }
       })
     )
-    assert.match(checked, /运行时根目录：来自主机 · 有提醒/)
-    assert.match(checked, /告警：不可执行/)
+    assert.match(checked, /Runtime root source: Host · Has warnings/)
+    assert.match(checked, /Warnings: Not executable/)
     assert.doesNotMatch(checked, /\/data\/|researcher|gpu\.example/)
   })
 
@@ -221,8 +224,8 @@ describe('remote runtime root settings UI', () => {
       })
     )
 
-    assert.match(markup, /运行时根目录检测/)
-    assert.match(markup, /路径解析：\/data\/runtime/)
+    assert.match(markup, /Runtime Root Check/)
+    assert.match(markup, /Resolved path: \/data\/runtime/)
   })
 
   it('shows a compact environment editor with the saved host override', () => {
@@ -259,12 +262,12 @@ describe('remote runtime root settings UI', () => {
       })
     )
 
-    assert.match(markup, /默认运行环境/)
+    assert.match(markup, /Default runtime environment/)
     assert.match(markup, /placeholder="~\/.phi\/runtime"/)
-    assert.match(markup, />保存环境配置</)
-    assert.match(markup, />恢复 Phi 默认值</)
-    assert.doesNotMatch(markup, />清除</)
-    assert.doesNotMatch(markup, />检测</)
+    assert.match(markup, />Save environment settings</)
+    assert.match(markup, />Restore Phi defaults</)
+    assert.doesNotMatch(markup, />Clear</)
+    assert.doesNotMatch(markup, />Check</)
     assert.match(markup, /value="\/data\/researcher\/phi-runtime"/)
     assert.equal((markup.match(/data-shrink="true"/g) ?? []).length, 5)
   })
@@ -307,9 +310,9 @@ describe('remote runtime root settings UI', () => {
     const markup = render(
       createElement(WrapperExecutionTargetDialog, { model, actions: DIALOG_ACTIONS })
     )
-    assert.match(markup, /项目覆盖/)
+    assert.match(markup, /Project override/)
     assert.match(markup, /value="\/project\/runtime"/)
-    assert.match(markup, /当前生效：\/project\/runtime，来自 项目/)
+    assert.match(markup, /Effective value: \/project\/runtime, from Project/)
   })
 
   it('requires an explicit candidate-bound confirmation before saving a warned project root', () => {
@@ -337,8 +340,8 @@ describe('remote runtime root settings UI', () => {
           warnings: [
             {
               code: 'not-owned',
-              message: '不归当前用户所有。',
-              consequence: '管理员变更权限后可能不可用。'
+              message: 'Not owned by the current user.',
+              consequence: 'May become unavailable if the administrator changes permissions.'
             }
           ]
         })
@@ -346,7 +349,7 @@ describe('remote runtime root settings UI', () => {
     }
     const derived = deriveControllerState(project, warned)
 
-    assert.match(controllerSaveError(warned, derived) ?? '', /仍然使用/)
+    assert.match(controllerSaveError(warned, derived) ?? '', /Use anyway/)
     assert.equal(
       controllerSaveError(
         { ...warned, runtimeRootConfirmedKey: runtimeRootCandidateKey(warned) },
@@ -377,7 +380,9 @@ describe('remote runtime root settings UI', () => {
       environmentState: runtimeDoctorState(
         key,
         runtimeCheck({
-          hardErrors: [{ code: 'ancestor-not-writable', message: '祖先目录不可写。' }]
+          hardErrors: [
+            { code: 'ancestor-not-writable', message: 'Ancestor directory is not writable.' }
+          ]
         }),
         false
       )
@@ -387,12 +392,12 @@ describe('remote runtime root settings UI', () => {
     const markup = render(
       createElement(WrapperExecutionTargetDialog, { model, actions: DIALOG_ACTIONS })
     )
-    const saveButton = markup.match(/<button[^>]*>保存运行方式<\/button>/)?.[0]
+    const saveButton = markup.match(/<button[^>]*>Save execution mode<\/button>/)?.[0]
     assert.ok(saveButton)
     assert.match(saveButton, /disabled/)
-    const checkButton = markup.match(/<button[^>]*>检测<\/button>/)?.[0]
+    const checkButton = markup.match(/<button[^>]*>Check<\/button>/)?.[0]
     assert.ok(checkButton)
     assert.doesNotMatch(checkButton, /disabled/)
-    assert.match(markup, /祖先目录不可写/)
+    assert.match(markup, /Ancestor directory is not writable/)
   })
 })

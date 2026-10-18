@@ -40,19 +40,22 @@ test('local connector draft produces the validated IPC request without shell par
 })
 
 test('local connector draft mirrors command, runtime, argv, and environment validation', () => {
-  assert.throws(() => buildLocalConnectorRequest(draft({ name: 'x' })), /连接器名称需为 2–64 位/)
+  assert.throws(
+    () => buildLocalConnectorRequest(draft({ name: 'x' })),
+    /Connector names must contain 2–64/
+  )
   assert.throws(
     () => buildLocalConnectorRequest(draft({ runtime: { kind: 'environment', ref: 'python@1' } })),
-    /请选择已就绪的 Phi 运行环境/
+    /Choose a ready Phi runtime/
   )
   assert.throws(
     () => buildLocalConnectorRequest(draft({ command: './server' })),
-    /环境中的命令需为不含路径的命令名/
+    /Environment commands must be command names without a path/
   )
   assert.throws(
     () =>
       buildLocalConnectorRequest(draft({ runtime: { kind: 'host' }, command: 'relative/server' })),
-    /本机命令需使用绝对路径/
+    /Host commands must use an absolute path/
   )
   for (const command of ['install', 'add', 'create', 'upgrade', 'pm', 'repl', 'exec']) {
     assert.throws(
@@ -69,13 +72,13 @@ test('local connector draft mirrors command, runtime, argv, and environment vali
       buildLocalConnectorRequest(
         draft({ envRows: [{ id: 'row-1', name: 'PATH', value: '/unsafe' }] })
       ),
-    /不能设置保留变量 PATH/
+    /Cannot set reserved variable PATH/
   )
   for (const name of ['LANG', 'TMPDIR']) {
     assert.throws(
       () =>
         buildLocalConnectorRequest(draft({ envRows: [{ id: 'row-1', name, value: 'override' }] })),
-      new RegExp(`不能设置保留变量 ${name}`)
+      new RegExp(`Cannot set reserved variable ${name}`)
     )
   }
   assert.throws(
@@ -88,15 +91,15 @@ test('local connector draft mirrors command, runtime, argv, and environment vali
           ]
         })
       ),
-    /环境变量 MODE 重复/
+    /Duplicate environment variable MODE/
   )
   assert.throws(
     () => buildLocalConnectorRequest(draft({ cwd: 'relative/path' })),
-    /工作目录需使用绝对路径/
+    /Working directory must use an absolute path/
   )
   assert.throws(
     () => buildLocalConnectorRequest(draft({ argsText: Array(65).fill('arg').join('\n') })),
-    /参数最多可填写 64 项/
+    /Use at most 64 arguments/
   )
 })
 
@@ -143,7 +146,7 @@ test('GitHub local draft prefills exact argv and selects Phi built-in Bun when a
       },
       [
         { ref: 'phi:r@1', label: 'R' },
-        { ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }
+        { ref: 'bun', label: 'Phi bundled Bun', kind: 'bun' }
       ]
     ),
     {
@@ -171,7 +174,7 @@ test('GitHub setup hints survive draft conversion and request building unchanged
       args: ['--bun', 'qq-email-mcp@0.1.1'],
       setup
     },
-    [{ ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }]
+    [{ ref: 'bun', label: 'Phi bundled Bun', kind: 'bun' }]
   )
   assert.deepEqual(state.hint, {
     readmeUrl: setup.readmeUrl,

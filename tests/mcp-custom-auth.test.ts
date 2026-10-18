@@ -174,10 +174,10 @@ test('saved client fields reach the installed SDK authorization and token exchan
       { clientId: 'configured-client', clientSecret: 'configured-secret' },
       endpoints,
       () => {
-        throw new Error('连接器配置已变化，请重新授权')
+        throw new Error('Connector configuration changed. Authorize again.')
       }
     ),
-    /配置已变化/
+    /configuration changed/
   )
   assert.equal(stored.length, 2)
   const secret = 'private"secret+&/'
@@ -201,7 +201,10 @@ test('saved client fields reach the installed SDK authorization and token exchan
         endpoints
       ),
       (error: Error) => {
-        assert.equal(error.message, '连接器授权失败，请检查客户端信息并重试')
+        assert.equal(
+          error.message,
+          'Connector authorization failed. Check the client details and try again.'
+        )
         assert.equal(error.message.includes(echo), false)
         assert.equal(error.stack?.includes(echo), false)
         assert.equal(error.cause, undefined)
@@ -301,8 +304,11 @@ test('custom OAuth discovery permits only secure endpoints and does not echo pro
   result = { authorizationUrl: 'https://auth.test/authorize', tokenUrl: 'https://auth.test/token' }
   assert.deepEqual(await discover('https://server.test/mcp'), result)
   const cancel = new AbortController()
-  cancel.abort('授权已取消')
-  await assert.rejects(discover('https://server.test/mcp', cancel.signal), /授权已取消/)
+  cancel.abort('Authorization cancelled')
+  await assert.rejects(
+    discover('https://server.test/mcp', cancel.signal),
+    /Authorization cancelled/
+  )
 })
 
 function customWorkerRpc(
@@ -395,7 +401,7 @@ test('worker custom OAuth RPC reaches the helper with exact saved credentials an
       }
     ])
     assert.equal(JSON.stringify(hostRequests).includes('private-secret'), false)
-    await assert.rejects(rpc('mcp.authorizeRemote', { ...request, serverUrl: url }), /已失效/)
+    await assert.rejects(rpc('mcp.authorizeRemote', { ...request, serverUrl: url }), /expired/)
   } finally {
     rmSync(agentDir, { recursive: true, force: true })
   }
@@ -416,7 +422,9 @@ test('worker custom OAuth cancellation aborts discovery and expires the attempt'
     discoverCustomMcpOAuthEndpoints: async (_url: string, signal: AbortSignal) => {
       started()
       return new Promise((_resolve, reject) =>
-        signal.addEventListener('abort', () => reject(new Error('授权已取消')), { once: true })
+        signal.addEventListener('abort', () => reject(new Error('Authorization cancelled')), {
+          once: true
+        })
       )
     },
     authorizeFeaturedMcp: async () => {
@@ -427,10 +435,10 @@ test('worker custom OAuth cancellation aborts discovery and expires the attempt'
   const preparing = rpc('mcp.prepareRemoteAuth', request)
   await discoveryStarted
   await rpc('mcp.cancelRemoteAuth', request)
-  await assert.rejects(preparing, /授权已取消/)
+  await assert.rejects(preparing, /Authorization cancelled/)
   await assert.rejects(
     rpc('mcp.authorizeRemote', { ...request, serverUrl: 'https://example.test/mcp' }),
-    /已失效/
+    /expired/
   )
   assert.equal(authorized, false)
 })

@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdown/markdownUiCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Button, Divider, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import {
@@ -152,6 +154,7 @@ function HighlightedCodeContent({
   codeText: string
   language: SyntaxLanguage
 }): React.JSX.Element {
+  useUiLanguage()
   const lines = useMemo(
     () => codeText.split('\n').map((line) => highlightLine(line, language)),
     [codeText, language]
@@ -184,9 +187,10 @@ function HighlightedCodeContent({
 }
 
 function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
+  useUiLanguage()
   const [copied, setCopied] = useState(false)
   const language = languageFromCodeChild(children)
-  const languageLabel = language ?? '代码'
+  const languageLabel = language ?? markdownCopy.code
   const syntaxLanguage = syntaxLanguageForMarkdownCode(language)
   const codeText = textFromNode(children).replace(/\n$/, '')
 
@@ -254,7 +258,7 @@ function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
           }}
           sx={{ minHeight: 28, textTransform: 'none', color: 'text.secondary' }}
         >
-          {copied ? '已复制' : '复制'}
+          {copied ? markdownCopy.copied : markdownCopy.copy}
         </Button>
       </Box>
       <Box
@@ -293,6 +297,7 @@ function MarkdownImage({
   localPathKinds: ReadonlyMap<string, LocalPathKind>
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const remoteProject = useRemoteProjectFileContext()
   const explicitRemotePath =
     remoteProject && src
@@ -397,7 +402,7 @@ function MarkdownImage({
         <Box
           component="button"
           type="button"
-          aria-label={`打开文件 ${localPath}`}
+          aria-label={markdownCopy.openFileAt(localPath)}
           onClick={() => {
             if (onOpenLocalPath) {
               onOpenLocalPath(localPath, 'file')
@@ -577,6 +582,7 @@ function InlineCode({
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
   remoteProject?: RemoteProjectFileContextValue | null
 }): React.JSX.Element {
+  useUiLanguage()
   const codeText = textFromNode(children)
   const color = normalizeHexColor(codeText)
   if (color) return <ColorCode color={color} />
@@ -650,6 +656,7 @@ function MarkdownContentImpl({
   enableMath = false,
   showColorPalettes = false
 }: MarkdownContentProps): React.JSX.Element {
+  useUiLanguage()
   const remoteProject = useRemoteProjectFileContext()
   const pathReferencePaths = useMemo(
     () =>

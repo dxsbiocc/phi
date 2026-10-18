@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, ButtonBase, Typography } from '@mui/material'
 import { GoChevronRight } from 'react-icons/go'
 
@@ -7,12 +9,24 @@ import { formatBytes } from '../../../lib/toolOutputPresentation'
 import { usePresentedFileOpen } from '../hooks/usePresentedFileOpen'
 
 const ARTIFACT_KIND_LABELS: Record<string, string> = {
-  figure: '图',
-  table: '表',
-  structure: '结构',
-  molecule: '分子',
-  network: '网络',
-  report: '报告'
+  get figure() {
+    return chatCopy.figure
+  },
+  get table() {
+    return chatCopy.table
+  },
+  get structure() {
+    return chatCopy.structure
+  },
+  get molecule() {
+    return chatCopy.molecule
+  },
+  get network() {
+    return chatCopy.network
+  },
+  get report() {
+    return chatCopy.report
+  }
 }
 
 function artifactKindLabel(kind: string): string {
@@ -26,11 +40,12 @@ export function PresentedFilesCard({
   item: PresentedFilesItem
   onOpenFile?: (path: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const { openFile, errorFor } = usePresentedFileOpen(onOpenFile)
   return (
     <Box
       role="region"
-      aria-label="交付文件"
+      aria-label={chatCopy.deliveredFiles}
       sx={{
         mx: 1,
         my: 1,
@@ -57,10 +72,10 @@ export function PresentedFilesCard({
             '@container phi-chat (max-width: 560px)': { fontSize: '0.78rem' }
           }}
         >
-          交付文件
+          {chatCopy.deliveredFiles}
         </Typography>
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {item.files.length} 个
+          {chatCopy.deliveredFileCount(item.files.length)}
         </Typography>
       </Box>
       <Box
@@ -80,7 +95,7 @@ export function PresentedFilesCard({
               key={file.path}
               type="button"
               data-phi-presented-file-row="true"
-              aria-label={`预览交付文件 ${file.displayPath}`}
+              aria-label={chatCopy.previewDeliveredFileValue(file.displayPath)}
               title={file.description ? `${file.path}\n${file.description}` : file.path}
               disabled={!onOpenFile}
               onClick={onOpenFile ? () => void openFile(file) : undefined}
@@ -210,7 +225,8 @@ export function PresentedFilesCard({
                 </Box>
                 {openError ? (
                   <Typography variant="caption" sx={{ display: 'block', color: 'error.main' }}>
-                    交付文件已失效：{openError}
+                    {chatCopy.deliveredFileUnavailable}
+                    {openError}
                   </Typography>
                 ) : null}
               </Box>
@@ -234,7 +250,7 @@ export function PresentedFilesCard({
       <Typography
         variant="caption"
         noWrap
-        title="打开的是工作区中的当前文件，内容可能已更改。"
+        title={chatCopy.thisOpensTheCurrentWorkspaceFileItsContentsMayHave}
         sx={{
           display: 'block',
           mt: 1,
@@ -243,7 +259,7 @@ export function PresentedFilesCard({
           '@container phi-chat (max-width: 560px)': { mt: 0.5, px: 0.25, fontSize: '0.67rem' }
         }}
       >
-        打开的是工作区中的当前文件，内容可能已更改。
+        {chatCopy.thisOpensTheCurrentWorkspaceFileItsContentsMayHave}
       </Typography>
     </Box>
   )

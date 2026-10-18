@@ -1,3 +1,10 @@
+import { beforeEach, afterEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+// Keep these legacy behavioral assertions explicit about their presentation language.
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
+
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -86,7 +93,7 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   const markup = renderRuntimeSidebar()
 
   const serverIndex = markup.indexOf('Jupyter Server')
-  const kernelsIndex = markup.indexOf('Notebook Kernels')
+  const kernelsIndex = markup.indexOf('Notebook 内核')
   assert.ok(serverIndex >= 0)
   assert.ok(kernelsIndex > serverIndex)
   assert.match(markup, /data-phi-runtime-sidebar-server="true"/)
@@ -103,7 +110,7 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="r"/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="python"/)
   assert.match(markup, /PID 2026/)
-  assert.match(markup, /Port 31888/)
+  assert.match(markup, /端口 31888/)
   assert.match(markup, /r_analysis\.ipynb/)
   assert.match(markup, />R</)
   assert.match(markup, /eda\.ipynb/)
@@ -226,7 +233,7 @@ test('runtime sidebar renders the empty notebook kernel state inline', () => {
   })
 
   assert.match(markup, /Jupyter Server/)
-  assert.match(markup, /Notebook Kernels/)
+  assert.match(markup, /Notebook 内核/)
   assert.match(markup, /data-phi-runtime-sidebar-empty-kernels="true"/)
   assert.match(markup, /当前项目还没有运行中的 notebook kernel/)
   assert.doesNotMatch(markup, /Nextflow/)

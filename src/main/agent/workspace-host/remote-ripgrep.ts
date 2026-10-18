@@ -70,7 +70,11 @@ function emit(options: EnsureRemoteRipgrepOptions, progress: RemoteRipgrepProgre
   options.onProgress?.({ ...progress, requestId: options.requestId })
 }
 function assertNotAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw new InstallFailure('aborted', '操作已取消，未继续安装 ripgrep。')
+  if (signal?.aborted)
+    throw new InstallFailure(
+      'aborted',
+      'Operation cancelled. No further ripgrep installation steps were performed.'
+    )
 }
 function statusResult(
   candidate: Candidate | undefined,
@@ -82,7 +86,7 @@ function statusResult(
     return {
       status: 'not-installed',
       durationMs: duration(now, startedAt),
-      message: '远端尚未安装可用的 ripgrep。'
+      message: 'No usable ripgrep is installed on the server.'
     }
   }
   return {
@@ -90,7 +94,9 @@ function statusResult(
     executablePath: candidate.executablePath,
     version: candidate.version,
     durationMs: duration(now, startedAt),
-    message: managed ? '远端受管 ripgrep 已安装且可运行。' : '远端已有系统 ripgrep。'
+    message: managed
+      ? 'Managed remote ripgrep is installed and runnable.'
+      : 'System ripgrep is already available on the server.'
   }
 }
 export async function getRemoteRipgrepStatus(
@@ -103,7 +109,7 @@ export async function getRemoteRipgrepStatus(
       status: 'failed',
       durationMs: duration(undefined, startedAt),
       errorCode: 'status-check-failed',
-      message: '运行时根目录写法无效，无法检查 ripgrep 状态。'
+      message: 'Invalid runtime root path. Unable to check ripgrep status.'
     }
   }
   try {
@@ -115,7 +121,7 @@ export async function getRemoteRipgrepStatus(
       status: 'failed',
       durationMs: duration(undefined, startedAt),
       errorCode: 'status-check-failed',
-      message: '无法读取远端 ripgrep 状态，请检查连接后重试。'
+      message: 'Unable to read remote ripgrep status. Check the connection and retry.'
     }
   }
 }
@@ -131,7 +137,8 @@ function stoppedByRootCheck(
       ...common,
       status: 'failed',
       errorCode: 'runtime-root-hard-error',
-      message: '远端运行时根目录不满足安装要求，请修改位置后重试。'
+      message:
+        'The remote runtime root does not meet installation requirements. Change the location and retry.'
     }
   }
   if (check.status !== 'checked' || !check.expandedPath) {
@@ -141,8 +148,8 @@ function stoppedByRootCheck(
       errorCode: 'runtime-root-check-failed',
       message:
         check.status === 'timed-out'
-          ? '服务器响应慢，运行时根目录检查超时，请稍后重试。'
-          : '无法确认远端运行时根目录，请重新检查连接与目录权限。'
+          ? 'The server is responding slowly and the runtime root check timed out. Retry later.'
+          : 'Unable to verify the remote runtime root. Check the connection and directory permissions.'
     }
   }
   const confirmed = new Set(options.confirmedWarnings)
@@ -150,7 +157,8 @@ function stoppedByRootCheck(
     return {
       ...common,
       status: 'needs-confirmation',
-      message: '运行时根目录存在需要确认的风险，确认“仍然使用”后才能安装 ripgrep。'
+      message:
+        'The runtime root has risks requiring confirmation. Select “Use anyway” to install ripgrep.'
     }
   }
   return undefined
@@ -170,7 +178,10 @@ async function prepareTemporaryPrefix(
     signal
   )
   if (result.code !== 0) {
-    throw new InstallFailure('installation-failed', '无法安全创建 ripgrep 安装目录，请检查权限。')
+    throw new InstallFailure(
+      'installation-failed',
+      'Unable to safely create the ripgrep installation directory. Check permissions.'
+    )
   }
 }
 async function createPrefix(
@@ -190,11 +201,14 @@ async function createPrefix(
     await throwDiagnosedInstallFailure(session, root, offline, signal)
     throw new InstallFailure(
       'source-unreachable',
-      '无法访问 conda 软件源，且本地缓存不足；请配置可用镜像，或在可联网机器预构建后再使用。'
+      'The conda source is unreachable and the local cache is insufficient. Configure an available mirror, or prebuild on a machine with network access.'
     )
   }
   await throwDiagnosedInstallFailure(session, root, result, signal)
-  throw new InstallFailure('installation-failed', 'micromamba 未能完成 ripgrep 安装。')
+  throw new InstallFailure(
+    'installation-failed',
+    'micromamba did not complete the ripgrep installation.'
+  )
 }
 async function runCreatePrefix(
   session: RemoteSshSession,
@@ -253,7 +267,10 @@ async function writeMarker(
     signal
   )
   if (result.code !== 0) {
-    throw new InstallFailure('activation-failed', '无法写入 ripgrep 安装完成标记。')
+    throw new InstallFailure(
+      'activation-failed',
+      'Unable to write the ripgrep installation completion marker.'
+    )
   }
 }
 async function activatePrefix(
@@ -273,7 +290,10 @@ async function activatePrefix(
   )
   if (result.code === 0) return 'activated'
   if (result.code === 17) return 'existing'
-  throw new InstallFailure('activation-failed', '无法原子激活 ripgrep 安装目录。')
+  throw new InstallFailure(
+    'activation-failed',
+    'Unable to activate the ripgrep installation directory atomically.'
+  )
 }
 async function cleanupPrefix(session: RemoteSshSession, temporaryPrefix: string): Promise<void> {
   await runBoundedRemoteCommand(
@@ -299,9 +319,9 @@ function successfulResult(
     warningCodes: warnings,
     message: installed
       ? usedOfflineCache
-        ? '远端受管 ripgrep 已使用本地缓存安装并验证成功。'
-        : '远端受管 ripgrep 安装并验证成功。'
-      : '远端受管 ripgrep 已安装且可运行。'
+        ? 'Managed remote ripgrep installed and verified successfully using the local cache.'
+        : 'Managed remote ripgrep installed and verified successfully.'
+      : 'Managed remote ripgrep is installed and runnable.'
   }
 }
 async function installManaged(
@@ -316,14 +336,17 @@ async function installManaged(
   if (!mamba) {
     throw new InstallFailure(
       'micromamba-not-installed',
-      '未检测到可用的 micromamba；请先在设置 → 远程主机点击“安装 micromamba”。'
+      'No usable micromamba was detected. Select “Install micromamba” in Settings → Remote Hosts first.'
     )
   }
   const randomId = (options.randomId ?? (() => randomBytes(8).toString('hex')))()
   if (!/^[A-Za-z0-9_-]+$/.test(randomId))
-    throw new InstallFailure('installation-failed', '安装标识无效。')
+    throw new InstallFailure('installation-failed', 'Invalid installation identifier.')
   const temporaryPrefix = posix.join(root, 'tools', `.ripgrep-install-${randomId}`)
-  emit(options, { stage: 'preparing-directory', message: '正在准备 ripgrep 安装目录…' })
+  emit(options, {
+    stage: 'preparing-directory',
+    message: 'Preparing the ripgrep installation directory…'
+  })
   await prepareTemporaryPrefix(session, root, temporaryPrefix, options.signal)
   try {
     return await populateAndActivatePrefix(
@@ -348,10 +371,10 @@ async function populateAndActivatePrefix(
   warnings: readonly RemoteRuntimeRootWarningCode[],
   startedAt: number
 ): Promise<RemoteRipgrepResult> {
-  emit(options, { stage: 'remote-downloading', message: '正在通过 micromamba 安装 ripgrep…' })
+  emit(options, { stage: 'remote-downloading', message: 'Installing ripgrep through micromamba…' })
   const usedOfflineCache = await createPrefix(session, root, mamba, temporaryPrefix, options.signal)
   assertNotAborted(options.signal)
-  emit(options, { stage: 'verifying-installation', message: '正在验证 ripgrep…' })
+  emit(options, { stage: 'verifying-installation', message: 'Verifying ripgrep…' })
   const executablePath = posix.join(temporaryPrefix, 'bin', 'rg')
   const verify = await runBoundedRemoteCommand(
     session,
@@ -361,10 +384,14 @@ async function populateAndActivatePrefix(
     options.signal
   )
   const version = verify.code === 0 ? parseRipgrepVersion(verify.stdout) : undefined
-  if (!version) throw new InstallFailure('verification-failed', 'ripgrep 已安装但版本验证失败。')
+  if (!version)
+    throw new InstallFailure(
+      'verification-failed',
+      'ripgrep was installed but version verification failed.'
+    )
   await writeMarker(session, temporaryPrefix, version, options.signal)
   const finalPrefix = posix.join(root, 'tools', `ripgrep-${version}`)
-  emit(options, { stage: 'activating', message: '正在激活受管 ripgrep…' })
+  emit(options, { stage: 'activating', message: 'Activating managed ripgrep…' })
   const activation = await activatePrefix(
     session,
     temporaryPrefix,
@@ -374,9 +401,12 @@ async function populateAndActivatePrefix(
   )
   const candidate = { version, executablePath: posix.join(finalPrefix, 'bin', 'rg') }
   if (!(await verifyRemoteRipgrepCandidate(session, candidate, options.signal))) {
-    throw new InstallFailure('verification-failed', '受管 ripgrep 激活后验证失败。')
+    throw new InstallFailure(
+      'verification-failed',
+      'Managed ripgrep verification failed after activation.'
+    )
   }
-  emit(options, { stage: 'complete', message: '远端 ripgrep 安装完成。' })
+  emit(options, { stage: 'complete', message: 'Remote ripgrep installation complete.' })
   return successfulResult(
     options,
     startedAt,
@@ -398,7 +428,7 @@ async function existingRipgrepResult(
       return {
         ...successfulResult(options, startedAt, [], system, false),
         status: 'system',
-        message: '远端已有系统 ripgrep，无需重复安装。'
+        message: 'System ripgrep is already available on the server. No installation is needed.'
       }
     }
   }
@@ -414,8 +444,11 @@ function failedInstallResult(
     error instanceof InstallFailure
       ? error
       : options.signal?.aborted
-        ? new InstallFailure('aborted', '操作已取消，未继续安装 ripgrep。')
-        : new InstallFailure('installation-failed', '远端 ripgrep 安装失败。')
+        ? new InstallFailure(
+            'aborted',
+            'Operation cancelled. No further ripgrep installation steps were performed.'
+          )
+        : new InstallFailure('installation-failed', 'Remote ripgrep installation failed.')
   return {
     status: 'failed',
     durationMs: duration(options.now, startedAt),
@@ -435,15 +468,15 @@ export async function ensureRemoteRipgrep(
       durationMs: duration(options.now, startedAt),
       warningCodes: [],
       errorCode: 'runtime-root-check-failed',
-      message: '运行时根目录写法无效，无法安装 ripgrep。'
+      message: 'Invalid runtime root path. Unable to install ripgrep.'
     }
   }
   try {
     assertNotAborted(options.signal)
-    emit(options, { stage: 'checking-existing', message: '正在检查远端 ripgrep…' })
+    emit(options, { stage: 'checking-existing', message: 'Checking remote ripgrep…' })
     const existing = await existingRipgrepResult(session, options, startedAt)
     if (existing) return existing
-    emit(options, { stage: 'checking-runtime-root', message: '正在检查远端运行时根目录…' })
+    emit(options, { stage: 'checking-runtime-root', message: 'Checking the remote runtime root…' })
     const check = await (options.checkRuntimeRoot ?? checkRemoteRuntimeRoot)(
       session,
       options.runtimeRoot

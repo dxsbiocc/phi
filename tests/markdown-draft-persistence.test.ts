@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -122,3 +124,5 @@ test('text drafts recover existing Markdown storage without resurrecting cleared
   saveTextFileDrafts(state, {})
   assert.deepEqual(loadTextFileDrafts(state), {})
 })
+
+beforeEach(() => setUiLanguage('zh-CN'))

@@ -1,3 +1,4 @@
+import { terminalUi } from '../lib/terminalUi'
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 
 import type {
@@ -140,7 +141,9 @@ function requestId(): string {
   return globalThis.crypto.randomUUID()
 }
 
-function failedResult(message = 'Terminal Agent 暂时不可用'): TerminalResult<never> {
+function failedResult(
+  message = terminalUi.terminalAgentIsTemporarilyUnavailable
+): TerminalResult<never> {
   return { ok: false, code: 'unavailable', message }
 }
 
@@ -223,7 +226,7 @@ export function useTerminalDraft(
         kind: input.kind,
         open: true,
         phase: 'editing',
-        request: input.kind === 'explain' ? '解释这段终端内容' : '',
+        request: input.kind === 'explain' ? terminalUi.explainThisTerminalContent : '',
         ...(input.selection === undefined ? {} : { selection: input.selection }),
         command: '',
         inputValues: {},

@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import {
   Box,
   Button,
@@ -31,6 +33,7 @@ export function AutoCompactionSettingsSection({
   compactDisabled?: boolean
   onCompact?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [settingsState, setSettingsState] = useState<{
     key: string
     value: CurrentAutoCompactionSettings
@@ -125,17 +128,19 @@ export function AutoCompactionSettingsSection({
   return (
     <Box>
       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-        上下文压缩
+        {chatCopy.contextCompaction}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        自动压缩设置仅作用于当前会话。
+        {chatCopy.autoCompactionSettingsApplyToThisConversationOnly}
       </Typography>
       {!sessionPath && (
         <Typography variant="body2" color="text.secondary">
-          打开会话后可调整压缩设置。
+          {chatCopy.openAConversationToAdjustCompactionSettings}
         </Typography>
       )}
-      {loading && <CircularProgress size={18} aria-label="正在读取自动压缩设置" />}
+      {loading && (
+        <CircularProgress size={18} aria-label={chatCopy.loadingAutoCompactionSettings} />
+      )}
       {settings && (
         <Box sx={{ maxWidth: 360 }}>
           <FormControlLabel
@@ -144,17 +149,17 @@ export function AutoCompactionSettingsSection({
                 checked={settings.enabled}
                 disabled={controlsDisabled}
                 onChange={(_, checked) => void save({ enabled: checked })}
-                slotProps={{ input: { 'aria-label': '当前会话自动压缩' } }}
+                slotProps={{ input: { 'aria-label': chatCopy.autoCompactionForThisConversation } }}
               />
             }
-            label="启用自动压缩"
+            label={chatCopy.enableAutoCompaction}
             sx={{ ml: 0, mb: 1 }}
           />
           <FormControl fullWidth size="small" disabled={controlsDisabled || !settings.enabled}>
-            <InputLabel id={thresholdLabelId}>触发阈值</InputLabel>
+            <InputLabel id={thresholdLabelId}>{chatCopy.triggerThreshold}</InputLabel>
             <Select
               labelId={thresholdLabelId}
-              label="触发阈值"
+              label={chatCopy.triggerThreshold}
               value={settings.overrides.thresholdPercent ?? 'default'}
               onChange={(event) => {
                 if (event.target.value === 'default') return void save({ thresholdPercent: null })
@@ -164,16 +169,16 @@ export function AutoCompactionSettingsSection({
               }}
             >
               <MenuItem value="default">
-                SDK 默认
+                {chatCopy.sDKDefault}
                 {defaultTokenThreshold && defaultTokenThreshold > 0
-                  ? `（${defaultTokenThreshold.toLocaleString('zh-CN')} tokens）`
+                  ? `(${defaultTokenThreshold.toLocaleString(getUiLocale())} tokens)`
                   : defaultThreshold && defaultThreshold > 0
-                    ? `（${defaultThreshold}%）`
+                    ? `(${defaultThreshold}%)`
                     : ''}
               </MenuItem>
-              <MenuItem value={70}>70% · 提前</MenuItem>
-              <MenuItem value={80}>80% · 适中</MenuItem>
-              <MenuItem value={90}>90% · 较晚</MenuItem>
+              <MenuItem value={70}>{chatCopy.label70Early}</MenuItem>
+              <MenuItem value={80}>{chatCopy.label80Moderate}</MenuItem>
+              <MenuItem value={90}>{chatCopy.label90Late}</MenuItem>
             </Select>
           </FormControl>
           {hasOverrides && (
@@ -183,7 +188,7 @@ export function AutoCompactionSettingsSection({
               onClick={() => void save({ enabled: null, thresholdPercent: null })}
               sx={{ mt: 1, px: 0 }}
             >
-              恢复 SDK 默认
+              {chatCopy.restoreSDKDefault}
             </Button>
           )}
         </Box>
@@ -201,7 +206,7 @@ export function AutoCompactionSettingsSection({
                 setRetryKey((value) => value + 1)
               }}
             >
-              重试
+              {chatCopy.retry}
             </Button>
           )}
         </Box>
@@ -211,12 +216,12 @@ export function AutoCompactionSettingsSection({
           type="button"
           size="small"
           variant="outlined"
-          aria-label="压缩当前会话上下文"
+          aria-label={chatCopy.compactTheCurrentConversationContext}
           disabled={!sessionPath || compactDisabled || compacting}
           onClick={onCompact}
           sx={{ mt: 1.5 }}
         >
-          {compacting ? '正在压缩…' : '立即压缩当前会话'}
+          {compacting ? chatCopy.compacting : chatCopy.compactThisConversationNow}
         </Button>
       )}
     </Box>

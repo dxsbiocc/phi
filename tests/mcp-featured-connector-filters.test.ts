@@ -63,3 +63,27 @@ test('a search still looks across categories and honors the API key filter', () 
     ['firecrawl', 'serpapi']
   )
 })
+
+test('English display categories are searchable while original category and sign-in values stay intact', () => {
+  for (const query of ['Productivity', '生产力']) {
+    const results = filterFeaturedConnectors(connectors, {
+      category: '设计创作',
+      query,
+      signIn: '需要登录',
+      install: 'all',
+      sort: 'default',
+      isInstalled: (entry) => installed.has(entry.id)
+    })
+    assert.deepEqual(
+      results.map((entry) => entry.id),
+      ['composio', 'google-drive', 'linear', 'notion']
+    )
+    assert.equal(
+      results[0],
+      connectors[0],
+      'filtering preserves author metadata and raw protocol values'
+    )
+    assert.equal(results[0].category, '生产力')
+    assert.equal(results[0].signIn, '需要登录')
+  }
+})

@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
@@ -23,6 +25,7 @@ export default function NotebookOutputHeader({
   onToggleWrap: () => void
   onClearOutputs?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [copied, setCopied] = useState(false)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const completedAtLabel = formatNotebookExecutionCompletedAt(executionCompletedAt)
@@ -57,7 +60,7 @@ export default function NotebookOutputHeader({
         <Typography
           component="time"
           dateTime={executionCompletedAt}
-          title="运行结束时间"
+          title={analysisCopy.executionEndTime}
           data-phi-notebook-cell-execution-completed-at={executionCompletedAt}
           sx={{
             color: 'text.secondary',
@@ -83,11 +86,11 @@ export default function NotebookOutputHeader({
           transition: 'opacity 140ms ease'
         }}
       >
-        <Tooltip title={copied ? '已复制' : '复制输出'}>
+        <Tooltip title={copied ? analysisCopy.copied : analysisCopy.copyOutput}>
           <span>
             <IconButton
               size="small"
-              aria-label={copied ? '已复制输出' : '复制输出'}
+              aria-label={copied ? analysisCopy.outputCopied : analysisCopy.copyOutput}
               disabled={!copyText}
               onClick={() =>
                 void copyOutput().catch((error) =>
@@ -101,10 +104,10 @@ export default function NotebookOutputHeader({
             </IconButton>
           </span>
         </Tooltip>
-        <Tooltip title={wrapText ? '关闭输出换行' : '开启输出换行'}>
+        <Tooltip title={wrapText ? analysisCopy.disableOutputWrap : analysisCopy.enableOutputWrap}>
           <IconButton
             size="small"
-            aria-label={wrapText ? '关闭输出换行' : '开启输出换行'}
+            aria-label={wrapText ? analysisCopy.disableOutputWrap : analysisCopy.enableOutputWrap}
             aria-pressed={wrapText}
             onClick={onToggleWrap}
             data-phi-notebook-output-wrap-toggle="true"
@@ -113,11 +116,11 @@ export default function NotebookOutputHeader({
             <Box component={TbTextWrap} sx={{ fontSize: 16 }} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="清空输出">
+        <Tooltip title={analysisCopy.clearOutput}>
           <span>
             <IconButton
               size="small"
-              aria-label="清空输出"
+              aria-label={analysisCopy.clearOutput}
               disabled={!hasOutputs || !onClearOutputs}
               onClick={onClearOutputs}
               data-phi-notebook-output-clear="true"

@@ -1,10 +1,16 @@
+import { connectorCopy } from './connectorCopy'
 export function isFeaturedAuthTimeout(message: string): boolean {
-  return message.includes('授权已超时') || message.includes('aborted due to timeout')
+  return (
+    message.includes('Authorization timed out') ||
+    message.includes('授权已超时') ||
+    message.includes('aborted due to timeout')
+  )
 }
 
 export function isFeaturedAuthCancellation(message: string): boolean {
   return (
     isFeaturedAuthTimeout(message) ||
+    message.includes('Authorization cancelled') ||
     message.includes('授权已取消') ||
     message.includes('OAuth callback cancelled') ||
     message.includes('LoginCancelled')
@@ -14,11 +20,11 @@ export function isFeaturedAuthCancellation(message: string): boolean {
 /** Null means the attempt ended without an error to show. */
 export function featuredAuthFailureNotice(message: string): string | null {
   if (isFeaturedAuthTimeout(message)) {
-    return '两分钟内没有完成登录，授权已自动取消。可以重新授权。'
+    return connectorCopy.authTimeout
   }
   if (isFeaturedAuthCancellation(message)) return null
   if (/No handler registered for ['"]mcp:authorizeFeatured['"]/.test(message)) {
-    return '主进程尚未加载授权接口，请重启 Phi 后重试'
+    return connectorCopy.authBackendMissing
   }
   return message
 }
@@ -30,6 +36,9 @@ export function featuredOAuthStatusFromError(
 ): 'unauthenticated' | 'unavailable' {
   if (
     isFeaturedAuthCancellation(message) ||
+    message.includes(`Sign in to ${connectorName} first`) ||
+    message.includes('does not support sign-in status checks') ||
+    message.includes('does not support OAuth authorization') ||
     message.includes(`请先授权登录 ${connectorName}`) ||
     message.includes('尚不支持登录状态查询') ||
     message.includes('尚不支持 OAuth')
