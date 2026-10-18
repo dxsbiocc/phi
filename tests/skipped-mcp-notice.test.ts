@@ -60,6 +60,26 @@ test('the stored notice is bounded', () => {
   assert.equal(event.skippedMcpOmitted, 10)
 })
 
+test('a changed omitted count is announced and survives restart', () => {
+  const servers = Array.from({ length: MAX_SKIPPED_MCP_NOTICE_SERVERS + 2 }, (_, i) => ({
+    name: `connector-${i}`,
+    reason: 'connect_failed' as const
+  }))
+  for (const restart of [false, true]) {
+    const f = harness()
+    f.notifier.notify('s1', servers.slice(0, MAX_SKIPPED_MCP_NOTICE_SERVERS))
+    const notifier = restart ? f.restart() : f.notifier
+    notifier.notify('s1', servers.slice(0, -1))
+    assert.equal(f.appended.length, 2)
+    assert.equal(f.appended.at(-1)?.event.skippedMcpOmitted, 1)
+    f.restart().notify('s1', servers.slice(0, -1))
+    assert.equal(f.appended.length, 2, 'restart retains the announced omitted count')
+    f.restart().notify('s1', servers)
+    assert.equal(f.appended.length, 3)
+    assert.equal(f.appended.at(-1)?.event.skippedMcpOmitted, 2)
+  }
+})
+
 test('wire validation rejects unknown reasons, extra fields and duplicates', () => {
   assert.deepEqual(skippedMcpServersValue([{ name: 'a', reason: 'not_connected' }]), [
     { name: 'a', reason: 'not_connected' }

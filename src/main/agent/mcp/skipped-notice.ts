@@ -17,9 +17,11 @@ function lastAnnouncedSignature(events: readonly SessionEventInput[]): string | 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'mcp_servers_skipped') continue
-    return skippedMcpSignature(
-      skippedMcpNoticeFromEvent(event as { skippedMcpServers?: unknown }).servers
-    )
+    const { servers, omitted } = skippedMcpNoticeFromEvent({
+      skippedMcpServers: event.skippedMcpServers,
+      skippedMcpOmitted: event.skippedMcpOmitted
+    })
+    return skippedMcpSignature(servers, omitted)
   }
   return null
 }
@@ -27,8 +29,8 @@ function lastAnnouncedSignature(events: readonly SessionEventInput[]): string | 
 /**
  * Appends one timeline warning when a conversation's MCP catalog skips servers. The baseline is the
  * last `mcp_servers_skipped` event in the session's own timeline, so it survives restarts. Only a
- * change in (server, user-facing reason category) is announced; an empty set stays quiet and does
- * not reset the baseline.
+ * change in the visible servers, reason categories or omitted count is announced; an empty set
+ * stays quiet and does not reset the baseline.
  */
 export function createSkippedMcpNotifier(sink: SkippedMcpNoticeSink): {
   notify(sessionId: string, skipped: readonly SkippedMcpServerNotice[]): void
@@ -38,7 +40,7 @@ export function createSkippedMcpNotifier(sink: SkippedMcpNoticeSink): {
     notify(sessionId, skipped) {
       if (skipped.length === 0) return
       const { servers, omitted } = boundedSkippedMcpNotice(skipped)
-      const signature = skippedMcpSignature(servers)
+      const signature = skippedMcpSignature(servers, omitted)
       if (!announced.has(sessionId))
         announced.set(sessionId, lastAnnouncedSignature(sink.readEvents(sessionId)))
       if (announced.get(sessionId) === signature) return

@@ -44,11 +44,15 @@ export function mcpSkipReasonCategory(reason: McpSkipReasonCode): McpSkipReasonC
   }
 }
 
-/** Order-independent identity of a skipped set as the user perceives it (name + reason category). */
-export function skippedMcpSignature(skipped: readonly SkippedMcpServerNotice[]): string {
-  return JSON.stringify(
-    skipped.map((server) => [server.name, mcpSkipReasonCategory(server.reason)]).sort()
-  )
+/** Identity of the visible notice: names, reason categories, and the omitted count. */
+export function skippedMcpSignature(
+  skipped: readonly SkippedMcpServerNotice[],
+  omitted: number
+): string {
+  return JSON.stringify({
+    servers: skipped.map((server) => [server.name, mcpSkipReasonCategory(server.reason)]).sort(),
+    omitted
+  })
 }
 
 /** Upper bound on skipped servers accepted across the worker boundary (matches the server-name limit). */
