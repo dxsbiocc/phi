@@ -386,7 +386,8 @@ test('model selection migration becomes a visible timeline item', () => {
     {
       id: 'event-migrated',
       role: 'warning',
-      content: 'kimi-code/kimi-k2.5 当前不可用，已切换到 kimi-code/kimi-for-coding。'
+      content: 'kimi-code/kimi-k2.5 当前不可用，已切换到 kimi-code/kimi-for-coding。',
+      noticeKind: 'model_migrated'
     }
   ])
 })

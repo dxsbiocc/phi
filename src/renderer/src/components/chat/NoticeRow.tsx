@@ -29,6 +29,7 @@ export function NoticeRow({
   title,
   detail,
   children,
+  action,
   onContentResize
 }: {
   level: NoticeLevel
@@ -36,6 +37,8 @@ export function NoticeRow({
   /** Short one-line hint appended to the title while collapsed. */
   detail?: string
   children: ReactNode
+  /** Stays visible while collapsed, so a fix such as opening settings is one click away. */
+  action?: ReactNode
   onContentResize?: ChatContentResizeHandler
 }): ReactNode {
   useUiLanguage()
@@ -110,6 +113,15 @@ export function NoticeRow({
           {title}
           {detail ? `${separator}${detail}` : ''}
         </Typography>
+        {action ? (
+          <Box
+            sx={{ flexShrink: 0, color: 'text.primary' }}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            {action}
+          </Box>
+        ) : null}
       </Box>
       <Collapse
         in={expanded}

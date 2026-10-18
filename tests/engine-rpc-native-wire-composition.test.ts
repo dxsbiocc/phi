@@ -132,7 +132,7 @@ test(
       }
       assert.deepEqual(
         value.context.tools.map((tool) => tool.name).sort(),
-        ['read', 'write', 'edit', 'bash', ...tools.map((tool) => tool.name)].sort()
+        ['read', 'write', 'edit', 'bash', 'glob', 'grep', ...tools.map((tool) => tool.name)].sort()
       )
       for (const actual of value.context.tools) {
         assert.ok(

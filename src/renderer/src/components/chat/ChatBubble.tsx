@@ -124,22 +124,27 @@ export const ChatBubble = memo(function ChatBubble({
         </NoticeRow>
       )
     }
-    const rawLine = display.showRawMessage ? firstLine(display.rawMessage) : ''
+    // Without the raw provider text, the description is the useful hint (e.g. "recharge").
+    const detail = display.showRawMessage
+      ? firstLine(display.rawMessage)
+      : firstLine(display.description)
     return (
       <NoticeRow
         level="error"
         title={display.title}
-        detail={rawLine}
+        detail={detail}
+        action={
+          display.action === 'providerSettings' ? (
+            <Button size="small" onClick={onGoSettings} sx={{ minHeight: 32, py: 0 }}>
+              {display.actionLabel}
+            </Button>
+          ) : undefined
+        }
         onContentResize={onContentResize}
       >
         <NoticeBody text={display.description} />
         {display.showRawMessage ? (
           <NoticeBody text={`${chatCopy.originalError}${display.rawMessage}`} />
-        ) : null}
-        {display.action === 'providerSettings' ? (
-          <Button size="small" onClick={onGoSettings} sx={{ minHeight: 44, mt: 0.5 }}>
-            {display.actionLabel}
-          </Button>
         ) : null}
       </NoticeRow>
     )
