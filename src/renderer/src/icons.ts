@@ -97,6 +97,8 @@ import materialYamlSvg from '../../../node_modules/material-icon-theme/icons/yam
 import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.svg?raw'
 import {
   FiAlertCircle,
+  FiAlertTriangle,
+  FiInfo,
   FiCheck,
   FiCheckCircle,
   FiCheckSquare,
@@ -847,8 +849,10 @@ export const PhiIcons = {
     full: createPhiIcon('FullAccess', FiUnlock),
     inProgress: createPhiIcon('InProgress', FiLoader),
     pending: createPhiIcon('Pending', FiCircle),
+    info: createPhiIcon('Info', FiInfo),
     thinking: createPhiIcon('Thinking', TbBrain),
-    verified: createPhiIcon('Verified', GoVerified)
+    verified: createPhiIcon('Verified', GoVerified),
+    warning: createPhiIcon('Warning', FiAlertTriangle)
   },
   tool: {
     command: createPhiIcon('ToolCommand', FiTerminal),

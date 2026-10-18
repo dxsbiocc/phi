@@ -1,6 +1,7 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { chatEventCopy } from '../../features/chat/lib/chatEventCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { Alert, AlertTitle, Box, Button, Typography } from '@mui/material'
+import { Box, Button, Typography } from '@mui/material'
 import { memo, type ReactNode } from 'react'
 import MarkdownContent, { type LocalPathKind } from '../MarkdownContent'
 import { getProviderErrorDisplay } from '../../lib/providerErrors'
@@ -11,9 +12,25 @@ import {
   type UserMessageRetryTarget,
   type UserMessageState
 } from './ChatUserMessage'
+import { NoticeRow, type NoticeLevel } from './NoticeRow'
 import { ThinkingBlock } from './ThinkingBlock'
 import type { ChatContentResizeHandler } from './useCollapseResizeNotifier'
 import { ApprovalTimelineCard } from '../../features/chat/components/ApprovalTimelineCard'
+
+function firstLine(text: string): string {
+  return text.trim().split('\n', 1)[0] ?? ''
+}
+
+function NoticeBody({ text }: { text: string }): ReactNode {
+  return (
+    <Typography
+      variant="body2"
+      sx={{ color: 'text.secondary', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+    >
+      {text}
+    </Typography>
+  )
+}
 
 export type ChatBubbleProps = {
   message: ChatMessage
@@ -96,29 +113,35 @@ export const ChatBubble = memo(function ChatBubble({
 
   if (message.role === 'error') {
     const display = getProviderErrorDisplay(message.content)
+    if (message.noticeKind) {
+      return (
+        <NoticeRow
+          level="error"
+          title={chatEventCopy.noticeTitle[message.noticeKind] ?? chatEventCopy.noticeTitle.error}
+          onContentResize={onContentResize}
+        >
+          <NoticeBody text={message.content} />
+        </NoticeRow>
+      )
+    }
+    const rawLine = display.showRawMessage ? firstLine(display.rawMessage) : ''
     return (
-      <Alert
-        severity="error"
-        variant="outlined"
-        action={
-          display.action === 'providerSettings' ? (
-            <Button size="small" color="inherit" onClick={onGoSettings} sx={{ minHeight: 44 }}>
-              {display.actionLabel}
-            </Button>
-          ) : undefined
-        }
+      <NoticeRow
+        level="error"
+        title={display.title}
+        detail={rawLine}
+        onContentResize={onContentResize}
       >
-        <AlertTitle>{display.title}</AlertTitle>
-        <Typography variant="body2" sx={{ color: 'inherit', mb: 0.75 }}>
-          {display.description}
-        </Typography>
+        <NoticeBody text={display.description} />
         {display.showRawMessage ? (
-          <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-            {chatCopy.originalError}
-            {display.rawMessage}
-          </Typography>
+          <NoticeBody text={`${chatCopy.originalError}${display.rawMessage}`} />
         ) : null}
-      </Alert>
+        {display.action === 'providerSettings' ? (
+          <Button size="small" onClick={onGoSettings} sx={{ minHeight: 44, mt: 0.5 }}>
+            {display.actionLabel}
+          </Button>
+        ) : null}
+      </NoticeRow>
     )
   }
 
@@ -135,12 +158,17 @@ export const ChatBubble = memo(function ChatBubble({
         </Button>
       )
     }
+    const kind = message.noticeKind
+    const level: NoticeLevel =
+      kind === 'model_migrated' || kind === 'remote_run_stopped' ? 'info' : 'warning'
     return (
-      <Alert severity="info" variant="outlined">
-        <Typography variant="body2" sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}>
-          {message.content}
-        </Typography>
-      </Alert>
+      <NoticeRow
+        level={level}
+        title={(kind && chatEventCopy.noticeTitle[kind]) || chatEventCopy.noticeTitle.warning}
+        onContentResize={onContentResize}
+      >
+        <NoticeBody text={message.content} />
+      </NoticeRow>
     )
   }
 

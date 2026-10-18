@@ -6,6 +6,18 @@ export const chatEventCopy = defineCopy(
     interruptedByRestart: 'The previous run was interrupted when the app restarted.',
     interrupted: 'The run was interrupted.',
     runFailed: 'The run failed.',
+    noticeTitle: {
+      run_interrupted: 'Run interrupted',
+      remote_run_stopped: 'Previous remote run stopped',
+      mcp_servers_skipped: 'Some connectors are unavailable',
+      context_maintenance: 'Context maintenance notice',
+      model_fallback: 'Switching to a fallback model',
+      model_migrated: 'Model switched',
+      warning: 'Notice',
+      error: 'Error'
+    } as Record<string, string>,
+    titleDetailSeparator: ': ',
+    noticeLevel: { info: 'Info', warning: 'Warning', error: 'Error' },
     remoteRunStopped: 'Stopped the unfinished previous remote run.',
     mcpLocalSkipped: (names: string) =>
       `Local connectors ${names} are unavailable in remote projects (they can only run on this Mac).`,
@@ -47,6 +59,18 @@ export const chatEventCopy = defineCopy(
     interruptedByRestart: '上次运行因应用重启而中断。',
     interrupted: '运行已中断。',
     runFailed: '运行失败。',
+    noticeTitle: {
+      run_interrupted: '运行已中断',
+      remote_run_stopped: '已停止上一次远端运行',
+      mcp_servers_skipped: '部分连接器未启用',
+      context_maintenance: '上下文整理提示',
+      model_fallback: '正在切换备用模型',
+      model_migrated: '模型已切换',
+      warning: '提示',
+      error: '错误'
+    } as Record<string, string>,
+    titleDetailSeparator: '：',
+    noticeLevel: { info: '信息', warning: '警告', error: '错误' },
     remoteRunStopped: '已停止上一次未结束的远端运行。',
     mcpLocalSkipped: (names: string) =>
       `本机连接器 ${names} 在远程项目中不可用（它们只能在本机运行）。`,

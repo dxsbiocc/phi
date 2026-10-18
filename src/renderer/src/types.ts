@@ -163,6 +163,14 @@ export type {
   AgentExecutionStep,
   AgentExecutionSteer
 } from './lib/agentExecutionTypes'
+export type ChatNoticeKind =
+  | 'run_interrupted'
+  | 'remote_run_stopped'
+  | 'mcp_servers_skipped'
+  | 'context_maintenance'
+  | 'model_fallback'
+  | 'model_migrated'
+
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
 
 export type Role = MessageRole
@@ -172,6 +180,8 @@ export interface ChatMessage {
   role: Role
   content: string
   backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
+  /** Stable identifier of an app-generated notice; the title is localized from it at render time. */
+  noticeKind?: ChatNoticeKind
   contextCompaction?: ContextCompactionDetails
   approval?: import('./features/chat/lib/approvalTimeline').ApprovalDetails
   images?: Array<PromptImageInput | StoredPromptImage>

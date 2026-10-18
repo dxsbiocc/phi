@@ -51,6 +51,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
+      noticeKind: 'run_interrupted',
       get content() {
         return event.reason === 'app_restarted'
           ? chatEventCopy.interruptedByRestart
@@ -114,6 +115,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
+      noticeKind: 'remote_run_stopped',
       get content() {
         return chatEventCopy.remoteRunStopped
       },
@@ -126,6 +128,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
+      noticeKind: 'mcp_servers_skipped',
       get content() {
         const sep = chatEventCopy.listSeparator
         const local = servers.filter((server) => server.reason === 'stdio_not_allowed')
@@ -164,6 +167,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: event.noticeLevel === 'error' ? 'error' : 'warning',
+      noticeKind: 'context_maintenance',
       get content() {
         return images
           ? chatEventCopy.imagesRemoved(images[1])
@@ -203,6 +207,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
+      noticeKind: event.type === 'model_fallback' ? 'model_fallback' : 'model_migrated',
       get content() {
         const previous = from ?? chatEventCopy.previousModel
         const available = to ?? chatEventCopy.availableModel

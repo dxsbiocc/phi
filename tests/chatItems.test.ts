@@ -1396,6 +1396,7 @@ test('chatItemsFromSessionMessages restores model selection migration notices', 
   assert.deepEqual(items, [
     {
       id: 'event-model-migrated',
+      noticeKind: 'model_migrated',
       role: 'warning',
       content: 'kimi-code/kimi-k2.5 当前不可用，已切换到 kimi-code/kimi-for-coding。'
     }
