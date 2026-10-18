@@ -9,6 +9,11 @@ import type {
 import type { PhiToolContent } from '../types'
 import type { RpcFrame } from './types'
 import { projectRpcMaintenanceEvent } from './facade-maintenance-projection'
+import {
+  EXTENSION_MESSAGE_ROLES,
+  projectExtensionMessage
+} from './facade-extension-message-projection'
+import { writeAppLog } from '../../app-logger'
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
@@ -30,6 +35,14 @@ const privateTypes = new Set([
   'prompt_result',
   'ready',
   'rpc_chunk'
+])
+const KNOWN_ROLES: ReadonlySet<string> = new Set([
+  ...EXTENSION_MESSAGE_ROLES,
+  'user',
+  'developer',
+  'assistant',
+  'toolResult',
+  'compactionSummary'
 ])
 const stopReasons = new Set(['stop', 'length', 'toolUse', 'error', 'aborted'])
 
@@ -160,6 +173,8 @@ export class RpcFacadeEventProjector {
           ...(images ? { images } : {})
         }
       }
+      if (text(raw.role) && EXTENSION_MESSAGE_ROLES.has(raw.role))
+        return projectExtensionMessage(raw)
       if (
         (raw.role === 'user' || raw.role === 'developer') &&
         (text(raw.content) || Array.isArray(raw.content))
@@ -262,7 +277,25 @@ export class RpcFacadeEventProjector {
             value.content.some(
               (part) => record(part) && part.type === 'toolCall' && privateInput(part.arguments)
             )))
-      if (!reserved) throw new Error('Unsupported remote public history message shape')
+      if (!reserved) {
+        // Well-formed but unknown roles (future OMP/extension messages) are skipped, never fatal.
+        // Known roles that fail validation and non-record values stay integrity failures.
+        if (
+          record(value) &&
+          text(value.role) &&
+          value.role.length > 0 &&
+          value.role.length <= 64 &&
+          !KNOWN_ROLES.has(value.role)
+        ) {
+          writeAppLog({
+            level: 'warn',
+            event: 'rpc_history_unknown_message_skipped',
+            metadata: { role: value.role }
+          })
+          continue
+        }
+        throw new Error('Unsupported remote public history message shape')
+      }
       // turn_end/agent_end carry the final results: the call is finished, release its id.
       if (record(value) && value.role === 'toolResult' && text(value.toolCallId))
         this.privateCalls.delete(value.toolCallId)

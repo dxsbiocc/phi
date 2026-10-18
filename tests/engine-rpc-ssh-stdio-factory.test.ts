@@ -114,6 +114,7 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
     extensions: [],
     skills: [],
     lsp: { enabled: false },
+    bash: { autoBackground: { enabled: false } },
     memory: { enabled: false }
   })
   await assert.rejects(access(join(fixture.runtimeRoot, 'MUST_NOT_EXIST')), { code: 'ENOENT' })
@@ -357,6 +358,7 @@ test('foreground native name preparation is strict and paired, while disabled po
     extensions: [],
     skills: [],
     lsp: { enabled: false },
+    bash: { autoBackground: { enabled: false } },
     memory: { enabled: false },
     edit: { mode: 'replace' },
     dev: { autoqa: false }

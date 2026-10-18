@@ -533,6 +533,10 @@ export async function prepareSshRpcSessionTransport(
               runtimePreparation?.childRuntimeRequired === true
                 ? { backend: 'off' }
                 : { enabled: false },
+            // A backgrounded bash call outlives its run: its output would arrive as an unsolicited
+            // follow-up after the Phi generation ended, and a model-chosen `timeout: 1` becomes a 1 s kill.
+            // Keep every command in the foreground, as the remote bash description promises.
+            bash: { autoBackground: { enabled: false } },
             // Plain old/new string replacement matches Phi's legacy edit tool; the default hashline
             // mode needs anchored [PATH#HASH] input that models do not produce reliably.
             ...(options.prepareRuntime
@@ -543,7 +547,6 @@ export async function prepareSshRpcSessionTransport(
             ...(runtimePreparation?.childRuntimeRequired === true
               ? {
                   edit: { mode: 'replace' },
-                  bash: { autoBackground: { enabled: false } },
                   async: { enabled: runtimePreparation.childBackgroundEnabled === true },
                   task: {
                     maxConcurrency: 4,

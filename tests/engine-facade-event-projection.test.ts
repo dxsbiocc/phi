@@ -58,10 +58,8 @@ test('private controls dispatch first and cannot be reclassified or spread to pu
   assert.equal(JSON.stringify(projected).includes(key), false)
   assert.deepEqual(projector.messages([{ ...assistant(), privateKey: key }]), [assistant()])
   assert.equal(projector.event({ type: 'unknown_future_control', content: key }), undefined)
-  assert.throws(
-    () => projector.messages([{ role: 'unrecognized-extension', capability: key }]),
-    /Unsupported remote public history/
-  )
+  assert.deepEqual(projector.messages([{ role: 'unrecognized-extension', capability: key }]), [])
+  assert.throws(() => projector.messages(['not-a-record']), /Unsupported remote public history/)
   assert.equal(
     projector.event({
       type: 'message_update',
@@ -185,7 +183,7 @@ test('verified compaction history exposes display fields while stripping provide
   )
 })
 
-test('malformed compaction messages and unrelated custom roles still fail public history projection', () => {
+test('malformed known-role messages and non-role values still fail public history projection', () => {
   for (const message of [
     { role: 'compactionSummary', summary: 'Summary', timestamp: 1, tokensBefore: -1 },
     {
@@ -195,7 +193,9 @@ test('malformed compaction messages and unrelated custom roles still fail public
       tokensBefore: 0,
       blocks: [{ type: 'image', url: 'https://external.invalid/image' }]
     },
-    { role: 'unknownCustomRole', summary: 'Summary', timestamp: 1 }
+    { role: 'custom', customType: 'async-result', content: 5, display: true, timestamp: 1 },
+    { role: 'assistant', content: 'not-an-array', timestamp: 1 },
+    { timestamp: 1, noRole: true }
   ])
     assert.throws(
       () => new RpcFacadeEventProjector().messages([message]),
@@ -259,4 +259,91 @@ test('private results inside history replay are recognised and released', () => 
   assert.deepEqual(projector.messages(history), [])
   const reused = { ...privateResult('h1'), content: [{ type: 'text', text: 'public again' }] }
   assert.deepEqual(projector.messages([reused]), [reused])
+})
+
+test('OMP background-job follow-ups and other non-LLM roles are projected without extra fields', () => {
+  const asyncResult = {
+    role: 'custom',
+    customType: 'async-result',
+    content: 'Job bg_2 finished\nok',
+    display: true,
+    details: { jobs: [{ jobId: 'bg_2', status: 'completed' }] },
+    attribution: 'agent',
+    timestamp: 5,
+    providerPayload: 'PRIVATE_SENTINEL'
+  }
+  const bash = {
+    role: 'bashExecution',
+    command: 'ls',
+    output: 'a',
+    exitCode: 0,
+    cancelled: false,
+    truncated: false,
+    timestamp: 6
+  }
+  const projected = new RpcFacadeEventProjector().messages([
+    asyncResult,
+    { ...asyncResult, role: 'hookMessage' },
+    bash,
+    {
+      role: 'pythonExecution',
+      code: '1',
+      output: '1',
+      cancelled: false,
+      truncated: false,
+      timestamp: 7
+    },
+    { role: 'branchSummary', summary: 's', fromId: 'x', timestamp: 8 },
+    { role: 'fileMention', files: [{ path: 'a.txt', content: 'hi', lineCount: 1 }], timestamp: 9 },
+    {
+      role: 'custom',
+      customType: 't',
+      content: [{ type: 'text', text: 'x' }],
+      display: false,
+      timestamp: 10
+    }
+  ])
+  assert.equal(projected.length, 7)
+  assert.equal(JSON.stringify(projected).includes('PRIVATE_SENTINEL'), false)
+  assert.deepEqual(projected[0], {
+    role: 'custom',
+    customType: 'async-result',
+    content: 'Job bg_2 finished\nok',
+    display: true,
+    details: asyncResult.details,
+    attribution: 'agent',
+    timestamp: 5
+  })
+  assert.deepEqual(projected[2], bash)
+})
+
+test('a background-job follow-up in agent_end and snapshots does not fail the run', () => {
+  const projector = new RpcFacadeEventProjector()
+  const followUp = {
+    role: 'custom',
+    customType: 'async-result',
+    content: 'done',
+    display: true,
+    timestamp: 3
+  }
+  const event = projector.event({
+    type: 'agent_end',
+    messages: [assistant(), followUp, { role: 'futureRole', x: 1 }]
+  })
+  assert.ok(event && event.type === 'agent_end')
+  assert.deepEqual(
+    event.messages.map((message) => message.role),
+    ['assistant', 'custom']
+  )
+})
+
+test('unknown roles are skipped while private tool messages stay reserved', () => {
+  const projector = new RpcFacadeEventProjector()
+  assert.equal(projector.message(privateCall('p1')), undefined)
+  const out = projector.messages([
+    privateCall('p1'),
+    { role: 'futureRole', capability: 'SECRET' },
+    assistant()
+  ])
+  assert.deepEqual(out, [assistant()])
 })
