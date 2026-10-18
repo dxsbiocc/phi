@@ -201,12 +201,15 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       const decision = resolveInsideProject(config.projectRoot, requested, 'RPC read')
       if (!decision.ok) return { block: true, reason: decision.error }
       const path = realpathSync(resolve(config.projectRoot, requested))
-      if (
-        unsupportedPath(path) ||
-        !statSync(path).isFile() ||
-        !textExtensions.has(extname(path).toLowerCase())
-      )
-        return deny
+      if (unsupportedPath(path)) return deny
+      if (!statSync(path).isFile())
+        return {
+          block: true,
+          reason:
+            'Phi RPC read supports regular text files only; list directories with glob or bash'
+        }
+      if (!textExtensions.has(extname(path).toLowerCase()))
+        return { block: true, reason: 'Phi RPC read supports text files only' }
       const rawPath = `${path}:raw`
       // The SDK probes fallback spellings as literal names before interpreting
       // :raw. No candidate may substitute for the exact authorized file.

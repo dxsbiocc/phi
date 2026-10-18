@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
+import { toolCallIdentifier } from './rpc-tool-call-id'
 
 export const RPC_APPROVAL_TITLE = 'Phi main tool approval v1'
 export const MAX_RPC_APPROVAL_BYTES = 128 * 1024
@@ -127,7 +128,7 @@ export function createApprovalEnvelope(
 ): RpcApprovalEnvelope {
   if (
     !validApprovalIdentity(identity) ||
-    !approvalIdentifier(toolCallId) ||
+    !toolCallIdentifier(toolCallId) ||
     !approvalIdentifier(toolName) ||
     !input ||
     typeof input !== 'object' ||

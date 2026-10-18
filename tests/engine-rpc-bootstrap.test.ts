@@ -273,7 +273,7 @@ test(
       assert.equal(denied.isError, true, `${label}: ${JSON.stringify(denied)}`)
       assert.match(
         JSON.stringify(denied.result),
-        /denies unbridged|inside the project|未经项目授权/,
+        /denies unbridged|supports (regular )?text files only|inside the project|未经项目授权/,
         `${label}: ${JSON.stringify(denied)}`
       )
       assert.doesNotMatch(JSON.stringify(denied.result), /OUTSIDE_PRIVATE_MARKER/)

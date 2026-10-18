@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { approvalIdentifier, createApprovalEnvelope } from './rpc-approval-protocol'
+import { toolCallIdentifier } from './rpc-tool-call-id'
 import { executionCapability } from './rpc-execution-protocol'
 import { childConfigDigest, type RpcChildRuntimeConfig } from './rpc-child-config'
 import {
@@ -80,7 +81,7 @@ function body(value: unknown): Omit<RpcTaskLaunchReceipt, 'hmac'> {
     !executionCapability(raw.configHash) ||
     !executionCapability(raw.manifestHash) ||
     !approvalIdentifier(raw.parentRunId) ||
-    !approvalIdentifier(raw.toolCallId) ||
+    !toolCallIdentifier(raw.toolCallId) ||
     !executionCapability(raw.inputDigest) ||
     !Number.isSafeInteger(raw.controlSequence) ||
     Number(raw.controlSequence) < 1 ||

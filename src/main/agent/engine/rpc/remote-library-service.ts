@@ -14,7 +14,7 @@ import type {
 } from '../../library/library-types'
 import type { LibraryToolStore, LibraryToolStoreFactory } from '../../library/library-tools'
 import type { PhiHostRequestContext } from '../types'
-import { rpcIdentifier, rpcRecord } from './control-frame'
+import { rpcIdentifier, rpcRecord, rpcToolCallId } from './control-frame'
 import { RemoteLibraryStorage } from './remote-library-storage'
 import {
   REMOTE_LIBRARY_MAX_REQUEST_BYTES,
@@ -42,7 +42,9 @@ function parse(
 ): RemoteLibraryRequest {
   if (
     !rpcRecord(value) ||
-    !identityKeys.every((field) => rpcIdentifier(value[field])) ||
+    !identityKeys.every((field) =>
+      field === 'toolCallId' ? rpcToolCallId(value[field]) : rpcIdentifier(value[field])
+    ) ||
     context.originSessionId !== value.runtimeSessionId ||
     context.toolCallId !== value.toolCallId ||
     Object.keys(value).some(

@@ -26,6 +26,17 @@ import {
   type RpcExecutionRetired
 } from '../lib/rpc-execution-protocol'
 
+/** Content-free diagnostic code; never echoes the error text, which may quote model input. */
+function refusalCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : ''
+  if (message === 'Invalid approval identity') return 'invalid-call-identity'
+  if (message === 'Invalid execution input') return 'invalid-input-schema'
+  if (message.startsWith('Canonical JSON envelope')) return 'input-too-large'
+  if (message.startsWith('Approval ') || message.startsWith('Invalid approval'))
+    return 'invalid-input-shape'
+  return 'internal'
+}
+
 export function createRpcExecutionAuthorityExtension(options: {
   identity: RpcExecutionLaunchIdentity
   capability: string
@@ -211,8 +222,11 @@ export function createRpcExecutionAuthorityExtension(options: {
         )
         // Host execution must receive exactly the schema projection authenticated above.
         return tool.site === 'host' ? { input: JSON.parse(JSON.stringify(input)) } : undefined
-      } catch {
-        return { block: true, reason: 'Phi main execution authority refused input' }
+      } catch (error) {
+        return {
+          block: true,
+          reason: `Phi main execution authority refused input (${refusalCode(error)})`
+        }
       }
     })
     pi.on('agent_end', (event, ctx) => {

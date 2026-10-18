@@ -551,7 +551,7 @@ export class RemoteSessionRuntime {
     })
     const registered = registeredHostTools(options.tools)
     const nativeTools = Object.freeze([
-      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash'] as const)),
+      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const)),
       ...(options.foregroundChildren ? (['task'] as const) : [])
     ])
     const tools = Object.freeze([...registered.values()].map(({ tool }) => tool))

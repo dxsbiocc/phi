@@ -5,6 +5,7 @@ import {
   validApprovalIdentity,
   type RpcApprovalIdentity
 } from './rpc-approval-protocol'
+import { toolCallIdentifier } from './rpc-tool-call-id'
 
 export const RPC_EXECUTION_COMMAND = 'phi-rpc-execution-authority'
 export const RPC_EXECUTION_DESCRIPTION = 'Phi main execution authority v1'
@@ -252,7 +253,7 @@ export function parseExecutionMessage(
       fields = ['action', 'requestId']
     } else if (m.type === 'phi_rpc_execution_origin') {
       if (
-        !approvalIdentifier(m.toolCallId) ||
+        !toolCallIdentifier(m.toolCallId) ||
         !approvalIdentifier(m.toolName) ||
         typeof m.inputDigest !== 'string' ||
         !digestPattern.test(m.inputDigest) ||

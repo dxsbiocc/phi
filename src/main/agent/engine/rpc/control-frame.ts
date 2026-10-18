@@ -6,6 +6,8 @@ export function rpcRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+export { toolCallIdentifier as rpcToolCallId } from '../phi-extension/lib/rpc-tool-call-id'
+
 export function rpcIdentifier(value: unknown): value is string {
   return (
     typeof value === 'string' &&

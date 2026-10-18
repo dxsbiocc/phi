@@ -7,7 +7,7 @@ import {
   encodeHostResult,
   validHostResultPayload
 } from '../phi-extension/lib/rpc-host-result-protocol'
-import { rpcIdentifier } from './control-frame'
+import { rpcIdentifier, rpcToolCallId } from './control-frame'
 import { DesktopWebSearchProcess } from './desktop-websearch-process'
 import {
   webSearchMetadata,
@@ -116,7 +116,7 @@ export async function createDesktopWebSearchAdapter(
       strict: true,
       loadMode: 'discoverable',
       async execute(toolCallId, params, _update, context, signal) {
-        if (!rpcIdentifier(toolCallId) || context.cwd !== identity.cwd || !webSearchParams(params))
+        if (!rpcToolCallId(toolCallId) || context.cwd !== identity.cwd || !webSearchParams(params))
           throw new Error('Invalid desktop web search invocation')
         // Serialize before reading live desktop configuration; aborting queued work has zero SDK effects.
         lifetime.throwIfAborted()

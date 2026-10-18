@@ -1,7 +1,7 @@
 import { pickDeclaredToolInput } from '../../remote-workspace-tool-input'
 import type { PhiTool, PhiToolContext, PhiToolImage, PhiToolResult } from '../types'
 import { RpcConnection } from './connection'
-import { rpcIdentifier, rpcRecord, validToolResult } from './control-frame'
+import { rpcIdentifier, rpcRecord, rpcToolCallId, validToolResult } from './control-frame'
 import { encodeRpcCommand, MAX_RPC_FRAME_BYTES } from './frame-codec'
 import { encodeHostResult } from '../phi-extension/lib/rpc-host-result-protocol'
 import type { RpcHostResultDelivery } from './host-result-delivery'
@@ -236,7 +236,7 @@ export class RpcHostToolBridge {
     if (
       !this.registered ||
       !tool ||
-      !rpcIdentifier(frame.toolCallId) ||
+      !rpcToolCallId(frame.toolCallId) ||
       !rpcRecord(frame.arguments) ||
       !run ||
       !rpcIdentifier(run.id) ||

@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { approvalIdentifier, createApprovalEnvelope } from './rpc-approval-protocol'
+import { toolCallIdentifier } from './rpc-tool-call-id'
 import { childConfigDigest, type RpcChildRuntimeConfig } from './rpc-child-config'
 import {
   sameRpcChildRoot,
@@ -70,7 +71,7 @@ function body(value: unknown): SettlementBody {
     !executionCapability(item.configHash) ||
     !executionCapability(item.manifestHash) ||
     !approvalIdentifier(item.parentRunId) ||
-    !approvalIdentifier(item.toolCallId) ||
+    !toolCallIdentifier(item.toolCallId) ||
     !executionCapability(item.inputDigest) ||
     !Number.isSafeInteger(item.controlSequence) ||
     Number(item.controlSequence) < 1 ||

@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { posix } from 'node:path'
+import { toolCallIdentifier } from './rpc-tool-call-id'
 
 // Leave ample room below the 64 MiB server->desktop logical event ceiling.
 export const MAX_HOST_RESULT_BYTES = 32 * 1024 * 1024
@@ -51,9 +52,9 @@ export function validHostResultIdentity(value: HostResultIdentity): boolean {
       value.projectId,
       value.runId,
       value.invocationId,
-      value.toolCallId,
       value.toolName
     ].every(identifier) &&
+    toolCallIdentifier(value.toolCallId) &&
     (value.progressSequence === undefined ||
       (Number.isSafeInteger(value.progressSequence) && value.progressSequence > 0)) &&
     Number.isSafeInteger(value.generation) &&

@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from 'node:fs'
 import { Settings } from '@oh-my-pi/pi-coding-agent'
 import type { PhiToolResult } from '../types'
 import type { DesktopMcpToolMetadata } from '../rpc/desktop-mcp-types'
-import { rpcIdentifier } from '../rpc/control-frame'
+import { rpcIdentifier, rpcToolCallId } from '../rpc/control-frame'
 import { webSearchPath } from '../rpc/desktop-websearch-protocol'
 import { remoteMcpInputUsesLocalProject } from '../phi-extension/lib/remote-mcp'
 import { isMcpConnectorUserDisabled } from '../../mcp-connectors'
@@ -429,7 +429,7 @@ async function call(scope: Scope, params: Record<string, unknown>): Promise<PhiT
   assertCurrent(scope)
   if (
     !rpcIdentifier(params.requestId) ||
-    !rpcIdentifier(params.toolCallId) ||
+    !rpcToolCallId(params.toolCallId) ||
     typeof params.name !== 'string' ||
     typeof params.signature !== 'string' ||
     !isRecord(params.input) ||

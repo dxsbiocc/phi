@@ -28,7 +28,7 @@ import { WRAPPER_JOB_HOST_METHODS } from '../../wrappers/composition/job-types'
 import { buildWrapperCompositionTools } from '../../wrappers/composition/tools'
 import { HostServiceRegistry } from '../host-service-registry'
 import type { PhiHostRequestContext, PhiTool, PhiToolImage, PhiToolApproval } from '../types'
-import { rpcIdentifier } from './control-frame'
+import { rpcIdentifier, rpcToolCallId } from './control-frame'
 import { remoteLibraryToolStore } from './remote-library-service'
 import { isDesktopWebSearchAdapter } from './desktop-websearch-adapter'
 import type { DesktopWebSearchAdapter } from './desktop-websearch-types'
@@ -382,7 +382,7 @@ export function createRpcDesktopToolScope(
           if (
             !run ||
             !rpcIdentifier(run.id) ||
-            !rpcIdentifier(toolCallId) ||
+            !rpcToolCallId(toolCallId) ||
             context.cwd !== identity.cwd
           ) {
             throw new Error('Desktop tool call has no trusted active remote run')
