@@ -20,7 +20,7 @@ import {
 export const RPC_RUNTIME_FILE = 'runtime.json'
 export const RPC_RUNTIME_COMMAND = 'phi-rpc-runtime-attest'
 export const RPC_RUNTIME_DESCRIPTION = 'Phi composed RPC runtime v1'
-export const RPC_RUNTIME_MAX_BYTES = 256 * 1024
+export const RPC_RUNTIME_MAX_BYTES = 2 * 1024 * 1024
 export function rpcRuntimeConfigDigest(config: RpcRuntimeConfig): string {
   return createHash('sha256').update(JSON.stringify(config)).digest('hex')
 }

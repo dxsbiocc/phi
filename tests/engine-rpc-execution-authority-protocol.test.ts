@@ -13,6 +13,7 @@ import {
   executionInput,
   executionLaunchIdentity,
   executionRoster,
+  type RpcExecutionTool,
   parseExecutionMessage,
   RPC_EXECUTION_COMMAND,
   RPC_EXECUTION_DESCRIPTION,
@@ -21,6 +22,7 @@ import {
   type RpcExecutionLaunchIdentity,
   type RpcExecutionOrigin
 } from '../src/main/agent/engine/phi-extension/lib/rpc-execution-protocol'
+import { RPC_RUNTIME_MAX_BYTES } from '../src/main/agent/engine/phi-extension/lib/rpc-runtime-config'
 import { createInitializationWire } from './helpers/rpc-initialization-wire'
 import {
   executionUntil,
@@ -484,24 +486,54 @@ test('actual browser and repository MCP schemas fit the explicit roster budget; 
     }),
     { action: 'scroll', tabId: 'tab', deltaX: 0, deltaY: 100 }
   )
-  const large = {
-    name: 'mcp__large_schema',
+  const hostTool = (name: string, size: number): RpcExecutionTool => ({
+    name,
     site: 'host' as const,
     parameters: {
       type: 'object',
-      properties: { data: { type: 'string', description: 'x'.repeat(140 * 1024) } }
+      properties: { data: { type: 'string', description: 'x'.repeat(size) } }
     }
-  }
+  })
+  // A realistic MCP catalog: ~300 KiB of schemas is accepted and hashes deterministically.
+  const catalog = Array.from({ length: 30 }, (_, index) => hostTool(`mcp__cat_${index}`, 10 * 1024))
+  const roster = executionRoster([...tools, ...catalog])
+  assert.equal(roster.tools.length, tools.length + catalog.length)
   assert.doesNotThrow(() =>
     encodeRpcCommand({
       type: 'set_host_tools',
       id: 'preflight',
-      tools: [
-        { name: large.name, description: 'Large schema fixture', parameters: large.parameters }
-      ]
+      tools: catalog.map(({ name, parameters }) => ({
+        name,
+        description: 'Catalog fixture',
+        parameters
+      }))
     })
   )
-  assert.throws(() => executionRoster([...tools, large]), /supported 128 KiB/u)
+  assert.equal(executionRoster([...catalog.slice().reverse(), ...tools]).hash, roster.hash)
+  // Approvals keep the 128 KiB cap.
+  assert.throws(
+    () =>
+      createApprovalEnvelope(
+        {
+          nonce: '0123456789abcdef',
+          phiSessionId: 's',
+          ompSessionId: 'o',
+          projectId: 'p',
+          cwd: '/',
+          generation: 1,
+          runId: 'r'
+        },
+        'call',
+        'tool',
+        { data: 'x'.repeat(140 * 1024) }
+      ),
+    /exceeds 128 KiB/u
+  )
+  // Past the wire budget the error names the budget and the size.
+  assert.throws(
+    () => executionRoster([...tools, hostTool('mcp__huge', MAX_EXECUTION_ROSTER_ENVELOPE_BYTES)]),
+    /1048576-byte.*is \d+ bytes, over its 1048576-byte budget/u
+  )
 })
 
 test('cancelled in-flight begin closes the generation and a late valid ACK cannot revive readiness', async (t) => {
@@ -560,4 +592,8 @@ test('disconnect and reentrant disposal observe failed owned cleanup without unh
   await executionUntil(() => run.signal.aborted)
   await assert.rejects(f.authority.dispose(), /synthetic cleanup failure/u)
   assert.equal(f.wire.closeCalls(), 1)
+})
+
+test('private runtime config file budget fits a roster at the wire budget plus its other fields', () => {
+  assert.ok(RPC_RUNTIME_MAX_BYTES >= MAX_EXECUTION_ROSTER_ENVELOPE_BYTES + 256 * 1024)
 })

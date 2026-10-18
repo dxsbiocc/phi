@@ -2,7 +2,6 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import {
   approvalIdentifier,
   createApprovalEnvelope,
-  MAX_RPC_APPROVAL_BYTES,
   validApprovalIdentity,
   type RpcApprovalIdentity
 } from './rpc-approval-protocol'
@@ -10,8 +9,11 @@ import {
 export const RPC_EXECUTION_COMMAND = 'phi-rpc-execution-authority'
 export const RPC_EXECUTION_DESCRIPTION = 'Phi main execution authority v1'
 export const MAX_EXECUTION_CALLS = 4096
-/** Foundation budget, smaller than the independent 1 MiB set_host_tools wire budget. */
-export const MAX_EXECUTION_ROSTER_ENVELOPE_BYTES = MAX_RPC_APPROVAL_BYTES
+/**
+ * The roster is derived from the set_host_tools payload, so it shares that 1 MiB wire budget
+ * (MAX_RPC_FRAME_BYTES); approvals keep their own smaller 128 KiB cap.
+ */
+export const MAX_EXECUTION_ROSTER_ENVELOPE_BYTES = 1024 * 1024
 export type RpcExecutionIdentity = Omit<RpcApprovalIdentity, 'runId'>
 export type RpcExecutionLaunchIdentity = Omit<RpcExecutionIdentity, 'ompSessionId'>
 export interface RpcExecutionTool {
@@ -142,10 +144,16 @@ export function executionRoster(
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   let envelope: ReturnType<typeof createApprovalEnvelope>
   try {
-    envelope = createApprovalEnvelope(canonicalIdentity, 'roster', 'roster', { tools: copy })
-  } catch {
+    envelope = createApprovalEnvelope(
+      canonicalIdentity,
+      'roster',
+      'roster',
+      { tools: copy },
+      MAX_EXECUTION_ROSTER_ENVELOPE_BYTES
+    )
+  } catch (error) {
     throw new Error(
-      'Execution roster exceeds its supported 128 KiB canonical JSON envelope or is not valid JSON'
+      `Execution roster exceeds its supported ${MAX_EXECUTION_ROSTER_ENVELOPE_BYTES}-byte canonical JSON envelope or is not valid JSON (${error instanceof Error ? error.message : 'unknown'})`
     )
   }
   return { tools: envelope.input.tools as readonly RpcExecutionTool[], hash: envelope.inputDigest }
