@@ -33,7 +33,8 @@ export const chatEventCopy = defineCopy(
       connect_failed: 'not connected',
       startup_failed: 'not connected',
       startup_pending: 'not connected',
-      not_connected: 'not connected'
+      not_connected: 'not connected',
+      backoff: 'not connected'
     } as Record<string, string>,
     mcpOther: (name: string, reason: string) => `${name} (${reason})`,
     mcpMore: (count: number) => `${count} more connectors are not listed.`,
@@ -86,7 +87,8 @@ export const chatEventCopy = defineCopy(
       connect_failed: '未连接',
       startup_failed: '未连接',
       startup_pending: '未连接',
-      not_connected: '未连接'
+      not_connected: '未连接',
+      backoff: '未连接'
     } as Record<string, string>,
     mcpOther: (name: string, reason: string) => `${name}（${reason}）`,
     mcpMore: (count: number) => `另有 ${count} 个连接器未列出。`,

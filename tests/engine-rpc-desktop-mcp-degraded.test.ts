@@ -84,3 +84,26 @@ test(
     assert.deepEqual(failed?.metadata, { stage: 'profile' })
   }
 )
+
+test(
+  'a dead MCP server is skipped with reason backoff on the next run, and retried after its config changes',
+  { timeout: 90000 },
+  async (t) => {
+    const f = await desktopMcpFixture()
+    t.after(() => f.close())
+    const dead = (url: string): Record<string, unknown> => ({
+      type: 'http',
+      url,
+      headers: { Authorization: MCP_FIXTURE_SECRET }
+    })
+    await f.profile({ mcpServers: { dead: dead('https://127.0.0.1:9/mcp') } })
+    const first = await f.adapter({ serverNames: ['dead'] })
+    assert.ok(first.skipped.some((s) => s.name === 'dead' && s.reason !== 'backoff'))
+    const second = await f.adapter({ serverNames: ['dead'] })
+    assert.deepEqual(second.skipped, [{ name: 'dead', reason: 'backoff' }])
+    await f.profile({ mcpServers: { dead: dead('https://127.0.0.1:9/changed') } })
+    const third = await f.adapter({ serverNames: ['dead'] })
+    assert.ok(third.skipped.some((s) => s.name === 'dead' && s.reason !== 'backoff'))
+    assert.doesNotMatch(JSON.stringify(await logEvents(f.agentDir)), new RegExp(MCP_FIXTURE_SECRET))
+  }
+)

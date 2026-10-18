@@ -16,6 +16,12 @@ import { readMcpConfig } from '../../mcp/package-config'
 import { remoteProjectMcpRuntimeServersValue } from '../../mcp/remote-project-mcp-runtime'
 import { leasedProfileMcpManager, disconnectLeasedMcpManager } from './mcp-profile'
 import { getContext } from './runtime-context'
+import {
+  isMcpServerBackedOff,
+  mcpConfigFingerprint,
+  recordMcpServerFailure,
+  recordMcpServerSuccess
+} from './mcp-failure-backoff'
 import { isRecord } from './common'
 import { requestHost, sendEvent } from './ipc'
 import { writeAppLog } from '../../app-logger'
@@ -245,6 +251,12 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpCreate
     scope.settings.stopWatching()
     credentialSecrets(scope, ctx)
     const overrides: OwnedManager['snapshot']['configs'] = {}
+    const backoffFingerprint = (name: string): string =>
+      mcpConfigFingerprint([
+        scope.entries.get(name),
+        projectServers.find((server) => server.name === name),
+        overrides[name]
+      ])
     for (const name of names) {
       if (!API_KEY_CONNECTOR_IDS.includes(name as (typeof API_KEY_CONNECTOR_IDS)[number])) continue
       if (!isFeaturedMcpApiKeyInstalled(name, scope.agentDir)) {
@@ -266,6 +278,12 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpCreate
       }
       remember(scope, key)
       overrides[name] = featuredApiKeyMcpConfig(name, key)
+    }
+    // A server that just failed to start with this same config is not retried every run;
+    // that retry costs the whole connect timeout before the model can start.
+    for (const name of [...names]) {
+      if (!isMcpServerBackedOff(scope.agentDir, name, backoffFingerprint(name))) continue
+      skip(name, 'backoff')
     }
     stage = 'manager'
     scope.owned = await leasedProfileMcpManager(
@@ -312,7 +330,12 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpCreate
       else if (status.failed.some((failed) => failed.name === name)) skip(name, 'startup_failed')
       else if (status.pending.includes(name)) skip(name, 'startup_pending')
       else if (!manager.getConnection(name)) skip(name, 'not_connected')
-      else continue
+      else {
+        recordMcpServerSuccess(scope.agentDir, name)
+        continue
+      }
+      if (scope.skipped.get(name) !== 'startup_pending')
+        recordMcpServerFailure(scope.agentDir, name, backoffFingerprint(name))
       await manager.disconnectServer(name).catch(() => {})
     }
     stage = 'catalog'

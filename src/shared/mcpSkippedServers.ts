@@ -10,7 +10,8 @@ export const MCP_SKIP_REASONS = [
   'connect_failed',
   'startup_failed',
   'startup_pending',
-  'not_connected'
+  'not_connected',
+  'backoff'
 ] as const
 export type McpSkipReasonCode = (typeof MCP_SKIP_REASONS)[number]
 

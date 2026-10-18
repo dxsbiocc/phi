@@ -38,6 +38,13 @@ import { requestHost } from './ipc'
 import { getContext } from './runtime-context'
 import { handleDesktopMcpRequest } from './desktop-mcp-runtime'
 import {
+  clearMcpServerBackoff,
+  isMcpServerBackedOff,
+  mcpConfigFingerprint,
+  recordMcpServerFailure,
+  recordMcpServerSuccess
+} from './mcp-failure-backoff'
+import {
   RemoteMcpAccess,
   SessionEntry,
   featuredAuthAbort,
@@ -64,10 +71,16 @@ export async function syncFeaturedApiKeysForSession(
     if (isMcpConnectorUserDisabled(connectorId, agentDir)) continue
     const key = await requestHost('mcp.featuredApiKey', { id: connectorId })
     if (typeof key !== 'string' || !key) continue
+    const config = featuredApiKeyMcpConfig(connectorId, key)
+    const fingerprint = mcpConfigFingerprint(config)
+    // An explicit sync for one connector (key saved, enabled) is a user action: always try it.
+    if (!id && isMcpServerBackedOff(agentDir, connectorId, fingerprint)) continue
     try {
-      await manager.connectServers({ [connectorId]: featuredApiKeyMcpConfig(connectorId, key) }, {})
+      await manager.connectServers({ [connectorId]: config }, {})
+      recordMcpServerSuccess(agentDir, connectorId)
     } catch {
       // A failed connector must not prevent the ordinary chat session from starting.
+      recordMcpServerFailure(agentDir, connectorId, fingerprint)
     }
   }
   if (remoteMcpAccess) refreshRemoteMcpAccess(remoteMcpAccess, agentDir, manager.getTools())
@@ -268,7 +281,22 @@ export async function syncFeaturedApiKeys(id?: string): Promise<void> {
   )
 }
 
+/** User-initiated connector actions retry a server at once instead of waiting out its back-off. */
+function clearBackoffForRequest(method: string, params: unknown): void {
+  if (!isRecord(params)) return
+  if (
+    ['mcp.syncFeaturedApiKeys', 'mcp.applyConnectorEnabled', 'mcp.featuredTools'].includes(
+      method
+    ) ||
+    ['mcp.authorizeFeatured', 'mcp.authorizeRemote'].includes(method)
+  ) {
+    const name = stringValue(params.name) || stringValue(params.id)
+    if (name) clearMcpServerBackoff(name)
+  }
+}
+
 export async function handleMcpRequest(method: string, params: unknown): Promise<unknown> {
+  clearBackoffForRequest(method, params)
   switch (method) {
     case 'mcp.desktopCreate':
     case 'mcp.desktopCall':
