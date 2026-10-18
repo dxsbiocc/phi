@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { Children, type ReactElement } from 'react'
+import { Children, createElement, type ReactElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 import { WrapperRunResultActions } from '../src/renderer/src/features/wrapper/components/WrapperRunResultActions'
 import {
@@ -91,13 +92,19 @@ test('result buttons send the saved remote paths and never invoke local open', (
       }
     ]
   }
-  const actions = WrapperRunResultActions({
-    run: withReport,
-    onOpenLocalPath: () => {
-      throw new Error('remote result was sent to a local file action')
-    },
-    onOpenRemoteResult: (_run, path, kind) => calls.push({ path, kind })
-  }) as ReactElement<{ children: unknown }>
+  let actions = null as unknown as ReactElement<{ children: unknown }>
+  // The component subscribes to the UI language, so it is called inside a render.
+  function Probe(): null {
+    actions = WrapperRunResultActions({
+      run: withReport,
+      onOpenLocalPath: () => {
+        throw new Error('remote result was sent to a local file action')
+      },
+      onOpenRemoteResult: (_run, path, kind) => calls.push({ path, kind })
+    }) as ReactElement<{ children: unknown }>
+    return null
+  }
+  renderToStaticMarkup(createElement(Probe))
   const items = Children.toArray(actions.props.children) as ReactElement[]
   const outputButton = (items[0].props as { children: ReactElement }).children.props
     .children as ReactElement<{ onClick: () => void }>
