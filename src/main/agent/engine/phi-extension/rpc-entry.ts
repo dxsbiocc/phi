@@ -53,6 +53,7 @@ import {
 } from './lib/rpc-runtime-config'
 import { loadRpcModelMetadata } from './lib/rpc-model-metadata'
 import { resolveInsideProject } from './lib/project-path'
+import { classifyXdevCall } from './lib/rpc-xdev'
 import {
   loadRpcBootstrapConfig,
   RPC_BOOTSTRAP_COMMAND,
@@ -210,6 +211,12 @@ const rpcExtension: ExtensionFactory = async (pi) => {
           reason: 'Phi child execution is unavailable'
         }
       )
+    // xd:// device discovery is read-only documentation, not a file read. Dispatch (write) is
+    // judged by the execution authority; every other spelling of the scheme is refused here.
+    const xdev = classifyXdevCall(event.toolName, event.input)
+    if (xdev?.kind === 'refused')
+      return { block: true as const, reason: 'Phi RPC refuses this xd:// device path' }
+    if (runtime && xdev?.kind === 'discovery') return undefined
     if (runtime && event.toolName !== 'read') return undefined
     const deny = {
       block: true as const,
@@ -458,6 +465,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     await execution.extension(pi)
     await createRpcToolApprovalExtension({
       readiness: execution.readiness,
+      xdevDispatching: execution.xdevDispatching,
       admitTask: taskAdmission?.preflight,
       childPreflight,
       mainNegativeApproval: taskAdmission

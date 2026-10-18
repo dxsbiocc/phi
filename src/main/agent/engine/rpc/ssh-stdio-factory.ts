@@ -536,7 +536,9 @@ export async function prepareSshRpcSessionTransport(
             // Plain old/new string replacement matches Phi's legacy edit tool; the default hashline
             // mode needs anchored [PATH#HASH] input that models do not produce reliably.
             ...(options.prepareRuntime
-              ? { tools: { xdev: false }, edit: { mode: 'replace' } }
+              ? // Discoverable host tools mount under xd:// (OMP default). Automated QA would advertise
+                // `write xd://report_issue`, a device the Phi authority refuses on the remote host.
+                { edit: { mode: 'replace' }, dev: { autoqa: false } }
               : {}),
             ...(runtimePreparation?.childRuntimeRequired === true
               ? {

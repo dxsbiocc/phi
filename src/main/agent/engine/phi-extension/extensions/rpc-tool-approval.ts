@@ -10,6 +10,7 @@ import {
 } from '../lib/rpc-approval-protocol'
 import { projectToolBoundaryDecision } from '../lib/project-boundary'
 import { remoteUrlGuardDecision } from '../lib/remote-url'
+import { classifyXdevCall } from '../lib/rpc-xdev'
 
 export interface RpcApprovalReadiness extends RpcApprovalIdentity {
   readonly signal: AbortSignal
@@ -24,6 +25,11 @@ export interface RpcToolApprovalOptions {
     input: Readonly<Record<string, unknown>>
   ): 'read' | 'write' | 'exec' | 'host' | 'delegate' | undefined
   admitTask?: (event: RpcTaskCall, ctx: ExtensionContext) => void
+  /**
+   * True while the authority holds an admitted `write xd://<name>` transport call. The transport
+   * is not itself approved: its nested call of the host tool carries that tool's own approval.
+   */
+  xdevDispatching?(toolCallId: string, name: string): boolean
   childPreflight?: RpcVerifiedChildDispatch
   /** R6 opt-in: a negative MAIN decision ends only its still-current turn. */
   mainNegativeApproval?: {
@@ -57,6 +63,10 @@ export function createRpcToolApprovalExtension(options: RpcToolApprovalOptions):
         )
           return blocked
         const identity = Object.freeze({ ...ready })
+        const xdev = classifyXdevCall(event.toolName, event.input)
+        if (xdev?.kind === 'refused') return blocked
+        if (xdev?.kind === 'dispatch')
+          return options.xdevDispatching?.(event.toolCallId, xdev.name) ? undefined : blocked
         const envelope = createApprovalEnvelope(
           identity,
           event.toolCallId,

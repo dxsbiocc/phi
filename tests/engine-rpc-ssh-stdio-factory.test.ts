@@ -358,8 +358,8 @@ test('foreground native name preparation is strict and paired, while disabled po
     skills: [],
     lsp: { enabled: false },
     memory: { enabled: false },
-    tools: { xdev: false },
-    edit: { mode: 'replace' }
+    edit: { mode: 'replace' },
+    dev: { autoqa: false }
   })
 })
 

@@ -30,6 +30,9 @@ function hostRoster(calls: unknown[]): PhiTool[] {
     description: `Curated synthetic desktop tool ${toolIndex}`,
     site: 'host' as const,
     strict: true,
+    // This test inspects the full host schemas on the wire; discoverable tools are mounted under
+    // xd:// instead (see engine-rpc-xdev-host-tools.test.ts).
+    loadMode: 'essential' as const,
     approval: toolIndex === 0 ? ('write' as const) : ('read' as const),
     parameters: {
       type: 'object',

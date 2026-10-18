@@ -1,5 +1,6 @@
 import { isRecord } from './common'
 import { resolveInsideProject } from './project-path'
+import { isXdevDevicePath } from './rpc-xdev'
 
 const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep', 'ast_edit', 'ast_grep'])
 const SHELL_TOOLS = new Set(['bash', 'powershell'])
@@ -31,7 +32,11 @@ function toolPaths(toolName: string, input: unknown): string[] {
   const paths: string[] = []
   if (FILE_TOOLS.has(toolName)) {
     for (const key of ['path', 'file_path']) {
-      if (typeof input[key] === 'string') paths.push(input[key])
+      const value = input[key]
+      // A canonical xd:// device URL addresses an OMP tool device, not a filesystem location.
+      // Whether such a call is admitted is decided by the RPC xdev guards, not by this check.
+      if (typeof value === 'string' && !(key === 'path' && isXdevDevicePath(value)))
+        paths.push(value)
     }
     if (Array.isArray(input.paths)) {
       paths.push(...input.paths.filter((item): item is string => typeof item === 'string'))

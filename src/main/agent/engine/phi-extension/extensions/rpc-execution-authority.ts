@@ -8,6 +8,7 @@ import {
 } from '../lib/rpc-approval-protocol'
 import { projectToolBoundaryDecision } from '../lib/project-boundary'
 import { remoteUrlGuardDecision } from '../lib/remote-url'
+import { classifyXdevCall } from '../lib/rpc-xdev'
 import type { RpcApprovalReadiness } from './rpc-tool-approval'
 import {
   executionBinding,
@@ -48,6 +49,8 @@ export function createRpcExecutionAuthorityExtension(options: {
   extension: ExtensionFactory
   readiness(): Readonly<RpcApprovalReadiness> | undefined
   taskParent(): Readonly<RpcTaskParentRun> | undefined
+  /** True while the current run's `write xd://<name>` transport call awaits its nested host call. */
+  xdevDispatching(toolCallId: string, name: string): boolean
   revokeTaskParent(run: Readonly<RpcTaskParentRun>): void
 } {
   if (
@@ -72,6 +75,8 @@ export function createRpcExecutionAuthorityExtension(options: {
         signal: AbortController
         originSequence: number
         seen: Set<string>
+        /** toolCallId -> host tool named by an admitted `write xd://<name>` transport call. */
+        xdev: Map<string, string>
       }
     | undefined
   let ompSessionId: string | undefined
@@ -114,7 +119,8 @@ export function createRpcExecutionAuthorityExtension(options: {
             control: request,
             signal: new AbortController(),
             originSequence: 0,
-            seen: new Set()
+            seen: new Set(),
+            xdev: new Map()
           }
         } else {
           if (!activated || (current && current.control.runId !== request.runId))
@@ -174,6 +180,10 @@ export function createRpcExecutionAuthorityExtension(options: {
       const run = current
       try {
         const tool = tools.get(event.toolName)
+        // OMP re-dispatches `write xd://<host tool>` as a nested call of that tool with the same
+        // toolCallId. The transport call signs nothing: the nested call is authorised exactly like a
+        // direct host call (its own schema projection, origin and approval), once per transport call.
+        const nested = tool?.site === 'host' && run?.xdev.get(event.toolCallId) === event.toolName
         if (
           !activated ||
           !run ||
@@ -182,10 +192,22 @@ export function createRpcExecutionAuthorityExtension(options: {
           ctx.agent.kind !== 'main' ||
           ctx.sessionManager.getSessionId() !== ompSessionId ||
           realpathSync(ctx.cwd) !== identity.cwd ||
-          run.seen.has(event.toolCallId) ||
-          run.seen.size >= MAX_EXECUTION_CALLS
+          (!nested && (run.seen.has(event.toolCallId) || run.seen.size >= MAX_EXECUTION_CALLS))
         )
           return { block: true, reason: 'Phi main execution authority unavailable' }
+        if (nested) run.xdev.delete(event.toolCallId)
+        const xdev = classifyXdevCall(event.toolName, event.input)
+        if (xdev?.kind === 'refused')
+          return { block: true, reason: 'Phi refuses this xd:// device call' }
+        if (xdev?.kind === 'dispatch') {
+          // Only a roster host tool may be driven through the transport; native tools, OMP's own
+          // devices and unknown names stay refused. No origin is signed for the transport itself.
+          if (tools.get(xdev.name)?.site !== 'host')
+            return { block: true, reason: 'Phi refuses this xd:// device call' }
+          run.seen.add(event.toolCallId)
+          run.xdev.set(event.toolCallId, xdev.name)
+          return undefined
+        }
         if (event.toolName === 'task') {
           if (!options.admitTask) return { block: true, reason: 'Phi native task is unavailable' }
           options.admitTask(event, ctx)
@@ -264,6 +286,8 @@ export function createRpcExecutionAuthorityExtension(options: {
             signal: current.signal.signal
           })
         : undefined,
+    xdevDispatching: (toolCallId, name) =>
+      current !== undefined && activated && current.xdev.get(toolCallId) === name,
     revokeTaskParent: (run) => {
       if (
         current?.control.runId === run.runId &&
