@@ -91,7 +91,7 @@ Goal: make local project boundaries explicit without polluting repositories.
 - Keep relocation optional for P1 if time allows; otherwise show unavailable and allow removal.
 - Do not create project `.phi/` directories on add.
 - Prefer `.phi` resources while retaining `.pi` and `.omp` compatibility.
-- Keep skill and MCP *content* read-only in the app (no in-app editing). Enabling, disabling, and installing units from catalogs is allowed under P1: Content Distribution.
+- Keep skill and MCP _content_ read-only in the app (no in-app editing). Enabling, disabling, and installing units from catalogs is allowed under P1: Content Distribution.
 - Display skill source, scope, disabled state, file path, and diagnostics.
 - Display MCP configured status, config source, command, args, env keys, and diagnostics.
 - Do not actively read or inject project `.env`.
@@ -203,6 +203,7 @@ decision records remain as rationale, not as current product behavior.
 - System notifications.
 - Dedicated OMX team/swarm dashboard.
 - Remembered approval allowlists or path/command rules.
+- Agent-driven capability expansion (additional sources, project capability creation via `capability_create`) and its safety controls: see [capability-autonomy-safety.md](../design/capability-autonomy-safety.md) (中文设计稿).
 - Project-level provider credential isolation.
 - Phi-specific model registry editor.
 - Automatic sync or import/export beyond backup-friendly local files.
