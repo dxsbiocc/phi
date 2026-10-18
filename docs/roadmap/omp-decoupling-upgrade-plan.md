@@ -632,13 +632,24 @@ T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）
 
 ## 6.5 远程默认切换到 RPC 的门槛（2026-10-17 用户确认）
 
-以下四项全部满足后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；状态见 [验收记录](../runtime/omp-remote-acceptance.md) 顶部表格。
+以下各项全部满足后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；状态见 [验收记录](../runtime/omp-remote-acceptance.md) 顶部表格。2026-10-18 用户确认把设计缺陷审计里的远程项一并列为门槛（编号见 [design-defects-audit.md §0.1](../architecture/design-defects-audit.md)）。
+
+实机验收：
 
 - [x] GPU：`scripts/remote-r8.ts` 三个场景通过（`a7d0008c`）
 - [ ] node3：同一脚本三个场景通过
 - [ ] 一次真实模型账号的远程对话（不是合成模型）
 - [ ] 当前代码在实机上跑通一个 Notebook 或 Wrapper
 - [ ] 一轮人工界面检查（远程项目新建、对话、审批、断线恢复）
+
+设计缺陷（需先定错误码分类与 SSH 连接复用设计）：
+
+- [ ] SSH-05 / X-02：连接状态由结构化错误码驱动，去掉中文文案正则；域错误不再拆连接
+- [ ] SSH-02：单个 RPC 请求超时只让该请求失败，不拆整条 generation
+- [ ] OMP-13：私有工具调用预算按在途数计数，溢出只拒绝该次调用
+- [ ] OMP-10：停止会话时同时停止后台子代理
+- [ ] SSH-01（剩余）：会话内前台命令复用连接，不再每 25ms 轮询并新建连接
+- [ ] SSH-04（剩余）：登记远端运行，断线后经新连接补偿 abort 并确认退出
 
 约束审计与取舍见 [remote-constraint-audit-2026-10-17.md](remote-constraint-audit-2026-10-17.md)。
 
