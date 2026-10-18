@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
@@ -9,6 +11,15 @@ test(
   'resource worker holds are generation-bound and release cannot retire another owner',
   { timeout: 15000 },
   async (t) => {
+    // The simulated crash is logged by the bridge; keep it out of the real ~/.phi/logs.
+    const agentDir = mkdtempSync(join(tmpdir(), 'phi-lease-'))
+    const previous = process.env.PI_CODING_AGENT_DIR
+    process.env.PI_CODING_AGENT_DIR = agentDir
+    t.after(() => {
+      if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR
+      else process.env.PI_CODING_AGENT_DIR = previous
+      rmSync(agentDir, { recursive: true, force: true })
+    })
     const bridge = new OmpBridge(() =>
       spawn(process.execPath, [join(process.cwd(), 'tests/helpers/fakeOmpWorker.mjs')], {
         stdio: ['pipe', 'pipe', 'pipe']

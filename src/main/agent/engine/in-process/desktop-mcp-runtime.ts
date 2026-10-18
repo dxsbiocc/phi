@@ -18,6 +18,12 @@ import { leasedProfileMcpManager, disconnectLeasedMcpManager } from './mcp-profi
 import { getContext } from './runtime-context'
 import { isRecord } from './common'
 import { requestHost, sendEvent } from './ipc'
+import { writeAppLog } from '../../app-logger'
+import {
+  DesktopMcpStageError,
+  type DesktopMcpSkipReason,
+  type DesktopMcpStage
+} from '../rpc/desktop-mcp-stages'
 
 type OwnedManager = Awaited<ReturnType<typeof leasedProfileMcpManager>>
 interface Call {
@@ -43,6 +49,15 @@ interface Scope {
 }
 const scopes = new Map<string, Scope>()
 const failure = (): Error => new Error('Desktop MCP resource unavailable')
+/** Records why one server was left out. Only a fixed reason code and the server name are logged. */
+function logSkipped(sessionId: string, name: string, reason: DesktopMcpSkipReason): void {
+  writeAppLog({
+    level: 'warn',
+    event: 'desktop_mcp_server_skipped',
+    sessionId,
+    metadata: { server: name, reason }
+  })
+}
 function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
@@ -165,6 +180,12 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
   )
     throw failure()
   const names = new Set(params.serverNames as string[])
+  const sessionId = params.identity.sessionId as string
+  let stage: DesktopMcpStage = 'profile'
+  const skip = (name: string, reason: DesktopMcpSkipReason): void => {
+    names.delete(name)
+    logSkipped(sessionId, name, reason)
+  }
   const scope: Scope = {
     id: params.scopeId,
     controller: new AbortController(),
@@ -191,11 +212,13 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
     )
       throw failure()
     const projectServers = trustedProjectServers.filter((server) => names.has(server.name))
+    stage = 'credentials'
     for (const [name, value] of Object.entries(process.env))
       if (/KEY|TOKEN|PASSWORD|SECRET|AUTHORIZATION/i.test(name)) remember(scope, value)
-    for (const name of names) {
-      if (!projectServers.some((server) => server.name === name))
-        scope.entries.set(name, fingerprint(profile.mcpServers?.[name]))
+    for (const name of [...names]) {
+      if (projectServers.some((server) => server.name === name)) continue
+      if (profile.mcpServers?.[name] === undefined) skip(name, 'unavailable')
+      else scope.entries.set(name, fingerprint(profile.mcpServers[name]))
     }
     assertCurrent(scope)
     scope.watcher = watch(scope.agentDir, { persistent: false }, () => {
@@ -217,13 +240,27 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
     const overrides: OwnedManager['snapshot']['configs'] = {}
     for (const name of names) {
       if (!API_KEY_CONNECTOR_IDS.includes(name as (typeof API_KEY_CONNECTOR_IDS)[number])) continue
-      if (!isFeaturedMcpApiKeyInstalled(name, scope.agentDir)) throw failure()
-      const key = await requestHost('mcp.featuredApiKey', { id: name })
+      if (!isFeaturedMcpApiKeyInstalled(name, scope.agentDir)) {
+        skip(name, 'api_key_missing')
+        continue
+      }
+      let key: unknown
+      try {
+        key = await requestHost('mcp.featuredApiKey', { id: name })
+      } catch {
+        assertCurrent(scope)
+        skip(name, 'api_key_unavailable')
+        continue
+      }
       assertCurrent(scope)
-      if (typeof key !== 'string' || !key) throw failure()
+      if (typeof key !== 'string' || !key) {
+        skip(name, 'api_key_missing')
+        continue
+      }
       remember(scope, key)
       overrides[name] = featuredApiKeyMcpConfig(name, key)
     }
+    stage = 'manager'
     scope.owned = await leasedProfileMcpManager(
       scope.agentDir,
       scope.resourceCwd,
@@ -231,13 +268,22 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
       ctx.authStorage,
       scope.resourceCwd,
       projectServers,
-      { serverNames: names, allowStdio: params.allowStdio === true, overrides }
+      { serverNames: new Set(names), allowStdio: params.allowStdio === true, overrides }
     )
     assertCurrent(scope)
     const { manager, snapshot } = scope.owned
+    for (const { name, reason } of scope.owned.skipped) skip(name, reason)
+    stage = 'connect'
     const configs: typeof snapshot.configs = {}
     for (const [name, original] of Object.entries(snapshot.configs)) {
-      const config = await manager.prepareConfig(original)
+      let config: Awaited<ReturnType<typeof manager.prepareConfig>>
+      try {
+        config = await manager.prepareConfig(original)
+      } catch {
+        assertCurrent(scope)
+        skip(name, 'prepare_failed')
+        continue
+      }
       assertCurrent(scope)
       if (config.type === 'http' || config.type === 'sse') {
         for (const value of Object.values(config.headers ?? {})) remember(scope, value)
@@ -252,13 +298,17 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
     const connected = await manager.connectServers(configs, snapshot.sources, undefined, 15000)
     const status = await manager.waitForStartup(15000)
     assertCurrent(scope)
-    if (
-      connected.errors.size ||
-      status.failed.length ||
-      status.pending.length ||
-      [...names].some((name) => !manager.getConnection(name))
-    )
-      throw failure()
+    // A server that failed to connect, is still starting, or needs a login that has
+    // lapsed only costs the conversation that server's tools.
+    for (const name of [...names]) {
+      if (connected.errors.has(name)) skip(name, 'connect_failed')
+      else if (status.failed.some((failed) => failed.name === name)) skip(name, 'startup_failed')
+      else if (status.pending.includes(name)) skip(name, 'startup_pending')
+      else if (!manager.getConnection(name)) skip(name, 'not_connected')
+      else continue
+      await manager.disconnectServer(name).catch(() => {})
+    }
+    stage = 'catalog'
     manager.addNotificationListener((serverName, method, raw) => {
       if (
         method !== 'notifications/progress' ||
@@ -309,8 +359,16 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
     assertCurrent(scope)
     return [...scope.catalog.values()].map((tool) => redact(scope, tool) as DesktopMcpToolMetadata)
   } catch {
+    const cancelled = scope.controller.signal.aborted
     await close(scope)
-    throw failure()
+    if (cancelled) throw failure()
+    writeAppLog({
+      level: 'error',
+      event: 'desktop_mcp_discovery_failed',
+      sessionId,
+      metadata: { stage }
+    })
+    throw new DesktopMcpStageError(stage)
   }
 }
 function resultFor(scope: Scope, raw: unknown): PhiToolResult {
@@ -445,8 +503,8 @@ export async function handleDesktopMcpRequest(method: string, value: unknown): P
     }
     if (method === 'mcp.desktopCall') return await call(scope, value)
     throw failure()
-  } catch {
-    throw failure()
+  } catch (error) {
+    throw error instanceof DesktopMcpStageError ? error : failure()
   }
 }
 export async function closeAllDesktopMcpScopes(): Promise<void> {

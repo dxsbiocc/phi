@@ -21,6 +21,13 @@ import {
 } from '../../mcp/remote-project-mcp-runtime'
 import { isRecord } from './common'
 
+export type McpSkipReason =
+  'unavailable' | 'stdio_not_allowed' | 'env_not_ready' | 'profile_changed'
+export interface SkippedMcpServer {
+  name: string
+  reason: McpSkipReason
+}
+
 export async function leasedProfileMcpManager(
   agentDir: string,
   projectCwd: string,
@@ -41,6 +48,8 @@ export async function leasedProfileMcpManager(
   remotePolicy?: RemoteMcpProfilePolicy
   projectPolicy?: RemoteMcpProfilePolicy
   snapshot: Awaited<ReturnType<typeof loadAllMCPConfigs>>
+  /** Selected servers left out of the snapshot because they cannot be used in this session. */
+  skipped: SkippedMcpServer[]
 }> {
   const profile = readMcpConfig(agentDir)
   const phiSettings = createPhiSettings(settings)
@@ -107,14 +116,21 @@ export async function leasedProfileMcpManager(
     })
   }
   const leases = new Map<string, EnvironmentLease>()
+  const skipped: SkippedMcpServer[] = []
   if (selected) {
     const configs: typeof snapshot.configs = {}
     const sources: typeof snapshot.sources = {}
     for (const name of selected.serverNames) {
       const config = selected.overrides?.[name] ?? snapshot.configs[name]
-      if (!config || config.enabled === false) throw new Error('Selected MCP resource unavailable')
-      if (config.type === 'stdio' && !selected.allowStdio)
-        throw new Error('Selected MCP stdio resource is not enabled for this session')
+      // One unusable server must not fail the others (same as the in-process path).
+      if (!config || config.enabled === false) {
+        skipped.push({ name, reason: 'unavailable' })
+        continue
+      }
+      if (config.type === 'stdio' && !selected.allowStdio) {
+        skipped.push({ name, reason: 'stdio_not_allowed' })
+        continue
+      }
       configs[name] = config
       if (snapshot.sources[name]) sources[name] = snapshot.sources[name]
     }
@@ -128,15 +144,28 @@ export async function leasedProfileMcpManager(
       )
         continue
       const entry = profile.mcpServers?.[name]
-      if (!isRecord(entry))
-        throw new Error(`MCP profile changed while preparing ${name}; retry session creation`)
+      const reject = (reason: McpSkipReason, message: string): void => {
+        if (!selected) throw new Error(message)
+        skipped.push({ name, reason })
+        delete snapshot.configs[name]
+      }
+      if (!isRecord(entry)) {
+        reject(
+          'profile_changed',
+          `MCP profile changed while preparing ${name}; retry session creation`
+        )
+        continue
+      }
       const marker = readManagedMarker(entry)
       if (!marker) {
         if (entry.phiManaged !== undefined)
-          throw new Error(`MCP managed environment metadata for ${name} is invalid`)
+          reject('profile_changed', `MCP managed environment metadata for ${name} is invalid`)
         continue
       }
-      if (marker.pending) throw new Error(`MCP environment for ${name} is not ready`)
+      if (marker.pending) {
+        reject('env_not_ready', `MCP environment for ${name} is not ready`)
+        continue
+      }
       if (
         config.type !== 'stdio' ||
         config.command !== entry.command ||
@@ -144,7 +173,11 @@ export async function leasedProfileMcpManager(
         JSON.stringify(config.env ?? {}) !== JSON.stringify(entry.env ?? {}) ||
         config.cwd !== entry.cwd
       ) {
-        throw new Error(`MCP profile changed while preparing ${name}; retry session creation`)
+        reject(
+          'profile_changed',
+          `MCP profile changed while preparing ${name}; retry session creation`
+        )
+        continue
       }
       leases.set(
         name,
@@ -161,6 +194,7 @@ export async function leasedProfileMcpManager(
       leases,
       transports,
       snapshot,
+      skipped,
       ...(remotePolicy ? { remotePolicy } : {}),
       ...(projectPolicy ? { projectPolicy } : {})
     }

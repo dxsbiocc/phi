@@ -4,6 +4,7 @@ import type { PhiTool, PhiToolResult } from '../types'
 import { validHostResultPayload } from '../phi-extension/lib/rpc-host-result-protocol'
 import { rpcIdentifier } from './control-frame'
 import { webSearchPath, webSearchRecord } from './desktop-websearch-protocol'
+import { DESKTOP_MCP_STAGES, desktopMcpStageOf } from './desktop-mcp-stages'
 import type {
   DesktopMcpAdapter,
   DesktopMcpOptions,
@@ -211,9 +212,13 @@ export async function createDesktopMcpAdapter(
     }
     adapters.add(adapter)
     return Object.freeze(adapter)
-  } catch {
+  } catch (error) {
     const cancelled = lifetime.aborted
+    const stage = desktopMcpStageOf(error)
     await close().catch(() => {})
-    throw new Error(cancelled ? 'MCP discovery cancelled' : 'MCP discovery failed')
+    if (cancelled) throw new Error('MCP discovery cancelled')
+    throw new Error(
+      stage ? `MCP discovery failed while ${DESKTOP_MCP_STAGES[stage]}` : 'MCP discovery failed'
+    )
   }
 }

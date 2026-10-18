@@ -149,17 +149,17 @@ test(
 )
 
 test(
-  'MCP catalog rejects unknown/project-dependent/stdio configurations before launching or invoking',
+  'MCP catalog leaves out unknown/project-dependent/stdio configurations before launching or invoking',
   { timeout: 45000 },
   async (t) => {
     const f = await desktopMcpFixture()
     t.after(() => f.close())
-    await assert.rejects(f.adapter({ serverNames: ['missing'] }), /discovery failed/)
+    assert.deepEqual((await f.adapter({ serverNames: ['missing'] })).tools, [])
     const sentinel = join(f.root, 'stdio-executed')
     await f.profile({
       mcpServers: { stdio: { type: 'stdio', command: '/usr/bin/touch', args: [sentinel] } }
     })
-    await assert.rejects(f.adapter({ serverNames: ['stdio'] }), /discovery failed/)
+    assert.deepEqual((await f.adapter({ serverNames: ['stdio'] })).tools, [])
     await assert.rejects(access(sentinel), { code: 'ENOENT' })
     await f.profile({ mcpServers: { fixture: { type: 'http', url: f.url } } })
     const a = await f.adapter()
