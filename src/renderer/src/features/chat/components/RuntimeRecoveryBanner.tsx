@@ -1,4 +1,5 @@
 import { chatCopy } from '../lib/chatCopy'
+import { chatLayoutVariables } from '../lib/chatLayout'
 import { useUiLanguage } from '../../../lib/i18n'
 import {
   Alert,
@@ -24,10 +25,13 @@ import type {
 import { useRuntimeRecovery } from '../hooks/useRuntimeRecovery'
 import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRecoveryState'
 
-// Same column as the conversation and composer, keeping a 16px gutter on narrow windows.
+// The banner sits above ChatView, so it sets the chat layout variables itself and uses the
+// composer's column: the same gutter on both sides and the same max width.
 const bannerWidthSx = {
+  ...chatLayoutVariables('tab'),
   mx: 'auto',
-  width: 'min(var(--phi-chat-content-max-width), calc(100% - 32px))',
+  width: 'calc(100% - 2 * var(--phi-chat-gutter))',
+  maxWidth: 'var(--phi-chat-content-max-width)',
   boxSizing: 'border-box'
 } as const
 
