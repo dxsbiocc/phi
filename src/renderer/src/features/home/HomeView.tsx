@@ -1,3 +1,5 @@
+import { homeCopy } from './lib/homeCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useState } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -48,6 +50,7 @@ export function HomeView({
   onShowProjects,
   onOpenSession
 }: HomeViewProps): React.JSX.Element {
+  useUiLanguage()
   const projectScopeKey = `${projectSessionRefreshKey}|${projects.map((project) => project.id).join('|')}`
   const [projectResult, setProjectResult] = useState<{
     key: string
@@ -147,7 +150,7 @@ export function HomeView({
         >
           <Box sx={{ minWidth: 0 }}>
             <Typography id="home-heading" variant="h4" sx={{ letterSpacing: '-0.025em' }}>
-              继续你的工作
+              {homeCopy.continueYourWork}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -158,7 +161,7 @@ export function HomeView({
               startIcon={<PhiIcons.nav.projects sx={{ fontSize: 18 }} />}
               sx={{ minHeight: 44 }}
             >
-              选择项目
+              {homeCopy.chooseProject}
             </Button>
             <Button
               variant="contained"
@@ -167,7 +170,7 @@ export function HomeView({
               startIcon={<PhiIcons.action.addSession sx={{ fontSize: 18 }} />}
               sx={{ minHeight: 44 }}
             >
-              新建对话
+              {homeCopy.newConversation}
             </Button>
           </Box>
         </Box>
@@ -184,7 +187,10 @@ export function HomeView({
               color: 'warning.dark'
             }}
           >
-            <Typography variant="body2">活动数据暂时不可用：{activity.error}</Typography>
+            <Typography variant="body2">
+              {homeCopy.activityDataUnavailable}
+              {activity.error}
+            </Typography>
           </Box>
         ) : null}
 

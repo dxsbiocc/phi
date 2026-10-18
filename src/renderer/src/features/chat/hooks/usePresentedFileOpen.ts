@@ -1,3 +1,4 @@
+import { chatCopy } from '../lib/chatCopy'
 import { useCallback, useState } from 'react'
 
 import type { PresentedFile } from '../../../../../shared/presentedFileTypes'
@@ -14,7 +15,10 @@ export function usePresentedFileOpen(onOpenFile?: (path: string) => void): {
         setErrors((current) => withoutKey(current, file.path))
         onOpenFile(file.path)
       } catch (error) {
-        const message = error instanceof Error ? error.message : '交付文件入口已失效'
+        const message =
+          error instanceof Error
+            ? error.message
+            : chatCopy.deliveredFileReferenceIsNoLongerAvailable
         setErrors((current) => ({ ...current, [file.path]: message }))
       }
     },

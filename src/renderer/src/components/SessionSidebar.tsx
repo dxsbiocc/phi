@@ -1,3 +1,5 @@
+import { navigationCopy } from '../lib/navigationCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { Box, Button, List, Stack } from '@mui/material'
 import { PhiIcons } from '../icons'
@@ -82,6 +84,7 @@ function SessionSidebar({
   onFetchProjectSessions,
   getSessionRuntimeState
 }: SessionSidebarProps): React.JSX.Element {
+  useUiLanguage()
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null)
   const trustedDialogs = useMemo(
@@ -199,7 +202,7 @@ function SessionSidebar({
               WebkitAppRegion: 'no-drag'
             }}
           >
-            新建项目
+            {navigationCopy.newProject}
           </Button>
         ) : (
           <Button
@@ -214,7 +217,7 @@ function SessionSidebar({
               WebkitAppRegion: 'no-drag'
             }}
           >
-            新对话
+            {navigationCopy.newConversation}
           </Button>
         )}
       </Stack>

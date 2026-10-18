@@ -38,7 +38,7 @@ test('remote runtime routing rejects malformed identity instead of falling back 
   assert.equal(runtime.owns({ runtimeSessionId: 'local-runtime' }), false)
   assert.throws(
     () => runtime.owns({ runtimeSessionId: 'remote-runtime', remoteSessionId: 'session-1' }),
-    /没有回退到本机/u
+    /No local execution fallback was used/u
   )
   assert.throws(
     () =>
@@ -47,7 +47,7 @@ test('remote runtime routing rejects malformed identity instead of falling back 
         remoteSessionId: 42,
         projectId: null
       }),
-    /没有回退到本机/u
+    /No local execution fallback was used/u
   )
 })
 
@@ -68,6 +68,6 @@ test('remote runtime identity is immutable for one runtime session', () => {
         remoteSessionId: 'session-2',
         projectId: 'project-2'
       }),
-    /身份发生变化/u
+    /session identity changed/u
   )
 })

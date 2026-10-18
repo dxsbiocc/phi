@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Tooltip } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { TbSparkles } from 'react-icons/tb'
@@ -19,13 +21,14 @@ export default function NotebookInsertDock({
   onGenerateCode?: () => void
   onInsert: (cellType: Extract<NotebookCellType, 'code' | 'markdown'>) => void | Promise<void>
 }): React.JSX.Element {
+  useUiLanguage()
   const codeAction = notebookInsertCodeAction(codeLanguage)
   const actions = [
     {
       action: 'code' as const,
       label: codeAction.label,
-      ariaLabel: `添加 ${codeAction.label} cell`,
-      tooltip: `添加 ${codeAction.label} cell`,
+      ariaLabel: analysisCopy.addCodeCell(codeAction.label),
+      tooltip: analysisCopy.addCodeCell(codeAction.label),
       minWidth: codeAction.label === 'R' ? 88 : 136,
       renderIcon: codeAction.renderIcon,
       onClick: () => onInsert('code')
@@ -33,8 +36,8 @@ export default function NotebookInsertDock({
     {
       action: 'markdown' as const,
       label: 'Markdown',
-      ariaLabel: '添加 Markdown cell',
-      tooltip: '添加 Markdown cell',
+      ariaLabel: analysisCopy.addMarkdownCell,
+      tooltip: analysisCopy.addMarkdownCell,
       minWidth: 136,
       renderIcon: (disabled: boolean) => (
         <MarkdownIcon
@@ -52,9 +55,9 @@ export default function NotebookInsertDock({
     },
     {
       action: 'ai' as const,
-      label: 'AI 生成',
-      ariaLabel: 'AI 生成代码',
-      tooltip: 'AI 生成代码',
+      label: analysisCopy.aiGenerate,
+      ariaLabel: analysisCopy.aiGenerateCode,
+      tooltip: analysisCopy.aiGenerateCode,
       minWidth: 128,
       renderIcon: (disabled: boolean) => (
         <Box
@@ -110,7 +113,7 @@ export default function NotebookInsertDock({
       >
         {actions.map(
           ({ action, label, ariaLabel, tooltip, minWidth, renderIcon, onClick }, actionIndex) => (
-            <Tooltip key={action} title={disabled ? '打开 notebook 后添加 cell' : tooltip}>
+            <Tooltip key={action} title={disabled ? analysisCopy.openNotebookToAdd : tooltip}>
               <span>
                 <Button
                   size="small"

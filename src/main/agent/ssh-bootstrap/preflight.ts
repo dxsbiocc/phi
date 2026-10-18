@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import type {
   SshBootstrapAgentState,
   SshBootstrapPublicErrorCode,
@@ -78,11 +79,11 @@ export function validateSshBootstrapTarget(target: SshBootstrapTarget): SshBoots
   const alias = validateHostAlias(target.alias.trim())
   const hostname = target.hostname.trim()
   if (!hostname || hostname.length > 255 || /[\s#\0]/.test(hostname) || hostname.startsWith('-')) {
-    throw new Error('服务器地址必须是单个主机名或 IP 地址')
+    throw new Error(sshBootstrapCopy.hostnameInvalid)
   }
   const overrides = validateRemoteConnectionOverrides({ user: target.user, port: target.port })
   if (!overrides.user || overrides.port === undefined) {
-    throw new Error('SSH 用户名和端口不能为空')
+    throw new Error(sshBootstrapCopy.userAndPortRequired)
   }
   return { alias, hostname, user: overrides.user, port: overrides.port }
 }

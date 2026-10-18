@@ -6,6 +6,8 @@ import type {
 } from '../../../../../shared/wrapperTypes'
 import type { Project } from '../../../lib/projectTypes'
 import { declaredExternalOutputRoot } from '../../../../../shared/wrapperResultTypes'
+import { resourceCategoryLabel, resourceUi } from '../../../lib/resourceUi'
+import { wrapperCopy } from './wrapperCopy'
 
 export function wrapperPlanSubmitConfirmation(plan: WrapperRunPlan): WrapperSubmitConfirmation {
   const target = plan.targetSelection
@@ -41,38 +43,46 @@ export function wrapperPlanTargetLines(plan: WrapperRunPlan, run?: WrapperRun): 
   const selected = plan.targetSelection
   const remote = selected?.target === 'remote' || (!selected && plan.executor !== 'local')
   const lines = [
-    `执行位置：${remote ? `远程服务器 ${selected?.hostAlias ?? '未绑定'}` : '本机'}`,
-    `执行模式：${plan.executor === 'slurm-controller' ? 'Slurm 控制作业' : plan.executor === 'slurm' ? '登录节点控制进程 · Slurm 计算任务' : plan.executor === 'remote-background' ? 'SSH 后台进程' : '本机进程'}`,
-    `Profile：${plan.profile}${plan.nextflowProfile && plan.nextflowProfile !== plan.profile ? ` · Nextflow ${plan.nextflowProfile}` : ''}`
+    wrapperCopy.targetLocation(
+      remote
+        ? wrapperCopy.remoteServer(selected?.hostAlias ?? wrapperCopy.unbound)
+        : wrapperCopy.localDevice
+    ),
+    wrapperCopy.executionMode(wrapperCopy.executionModes[plan.executor]),
+    wrapperCopy.profile(
+      `${plan.profile}${plan.nextflowProfile && plan.nextflowProfile !== plan.profile ? ` · Nextflow ${plan.nextflowProfile}` : ''}`
+    )
   ]
   if (remote) {
-    lines.push(`服务器目录：${selected?.remoteRoot ?? '未绑定'}`)
-    lines.push(`任务调度：${selected?.scheduler === 'slurm' ? 'Slurm' : '直接在服务器运行'}`)
+    lines.push(wrapperCopy.serverDirectory(selected?.remoteRoot ?? wrapperCopy.unbound))
     lines.push(
-      `Nextflow 控制进程：${selected?.controller === 'sbatch' ? 'sbatch 作业' : '登录节点'}`
+      wrapperCopy.scheduler(selected?.scheduler === 'slurm' ? 'Slurm' : wrapperCopy.directServer)
     )
-    lines.push(`容器/环境：${selected?.runtime ?? '未指定'}`)
+    lines.push(
+      wrapperCopy.nextflowController(
+        selected?.controller === 'sbatch' ? wrapperCopy.sbatchJob : wrapperCopy.loginNode
+      )
+    )
+    lines.push(wrapperCopy.containerEnvironment(selected?.runtime ?? wrapperCopy.unspecified))
   }
-  if (selected?.reason) lines.push(`目标理由：${selected.reason}`)
+  if (selected?.reason) lines.push(wrapperCopy.targetReason(selected.reason))
   for (const input of plan.inputs) {
     const paths = remote ? input.remotePaths : input.localPaths
-    lines.push(`输入 ${input.id}：${paths?.join('，') || input.userValue}`)
+    lines.push(wrapperCopy.inputPaths(input.id, paths?.join(', ') || input.userValue))
   }
   const declaredOutDir = typeof plan.params?.outdir === 'string' ? plan.params.outdir : ''
   const outputLocation = remote
     ? (run?.outDir ??
       (declaredOutDir.startsWith('/')
         ? declaredOutDir
-        : `${selected?.remoteRoot ?? '服务器项目目录'}/wrappers/runs/<运行 ID>/${declaredOutDir || 'output'}`))
+        : `${selected?.remoteRoot ?? wrapperCopy.serverProjectDirectory}/wrappers/runs/<run ID>/${declaredOutDir || 'output'}`))
     : plan.outputDir
-  lines.push(`输出位置：${outputLocation}`)
+  lines.push(wrapperCopy.outputLocation(outputLocation))
   const externalOutput = remote
     ? declaredExternalOutputRoot(selected?.remoteRoot, declaredOutDir)
     : undefined
-  if (externalOutput) lines.push(`外部输出授权范围：${externalOutput}（仅本次运行）`)
-  lines.push(
-    `资源：${plan.resources.cpus ?? '-'} CPU · ${plan.resources.memory ?? '-'} · ${plan.resources.time ?? '-'}`
-  )
+  if (externalOutput) lines.push(wrapperCopy.externalOutput(externalOutput))
+  lines.push(wrapperCopy.resources(plan.resources.cpus, plan.resources.memory, plan.resources.time))
   return lines
 }
 
@@ -83,12 +93,12 @@ export function wrapperPlanSubmitBlockReason(
 ): string | undefined {
   const selected = plan.targetSelection
   if (!selected) {
-    return plan.executor === 'local' ? undefined : '旧远程计划缺少目标快照，请重新创建计划。'
+    return plan.executor === 'local' ? undefined : wrapperCopy.legacyRemotePlan
   }
-  if (!projectLoaded) return '正在确认项目与服务器状态。'
-  if (!project || project.id !== selected.projectId) return '计划所属项目不可用，请重新创建计划。'
+  if (!projectLoaded) return wrapperCopy.checkingProject
+  if (!project || project.id !== selected.projectId) return wrapperCopy.projectUnavailable
   if (project.location.kind !== selected.projectLocation.kind) {
-    return '项目位置已变化，请重新创建计划。'
+    return wrapperCopy.projectLocationChanged
   }
   if (
     project.location.kind === 'local' &&
@@ -96,7 +106,7 @@ export function wrapperPlanSubmitBlockReason(
     (project.location.path !== selected.projectLocation.path ||
       project.location.realPath !== selected.projectLocation.realPath)
   ) {
-    return '项目目录已变化，请重新创建计划。'
+    return wrapperCopy.projectDirectoryChanged
   }
   if (project.location.kind === 'ssh' && selected.projectLocation.kind === 'ssh') {
     if (
@@ -104,11 +114,11 @@ export function wrapperPlanSubmitBlockReason(
       project.location.canonicalRoot !== selected.projectLocation.canonicalRoot ||
       project.remoteHostAlias !== selected.hostAlias
     ) {
-      return '项目服务器或目录已变化，请重新创建计划。'
+      return wrapperCopy.projectServerChanged
     }
     const phase = project.remoteConnection?.phase ?? project.remoteReachability ?? 'unchecked'
     if (phase !== 'reachable') {
-      return project.remoteConnection?.message ?? '服务器连接尚未就绪，请重连后再提交。'
+      return project.remoteConnection?.message ?? wrapperCopy.serverNotReady
     }
   }
   if (selected.target === 'remote' && project.location.kind === 'local') {
@@ -118,15 +128,15 @@ export function wrapperPlanSubmitBlockReason(
       connection.hostProfileId !== selected.hostProfileId ||
       project.remoteWorkspaceRoot !== selected.remoteRoot
     ) {
-      return '远程连接或工作目录已变化，请重新创建计划。'
+      return wrapperCopy.remoteTargetChanged
     }
   }
   return undefined
 }
 
 export function trustTierLabel(tier: string): string {
-  if (tier === 'bundled') return '内置'
-  if (tier === 'custom') return '自定义'
+  if (tier === 'bundled') return resourceUi.builtIn
+  if (tier === 'custom') return wrapperCopy.custom
   return tier
 }
 
@@ -150,11 +160,16 @@ export function parseWrapperCompositionId(id: string): {
   return { provider, tier, name: rest.join('/') }
 }
 
-export function wrapperTierLabel(tier: string): string {
+/** Preserve established category/filter keys; translate only their displayed labels. */
+export function wrapperTierCategory(tier: string): string {
   if (tier === 'modules') return '模块'
   if (tier === 'subworkflows') return '子流程'
   if (tier === 'workflows') return '工作流'
   return tier
+}
+
+export function wrapperTierLabel(tier: string): string {
+  return resourceCategoryLabel(wrapperTierCategory(tier))
 }
 
 /**
@@ -171,19 +186,7 @@ export function wrapperProviderColor(provider: string): 'primary' | 'secondary' 
 }
 
 export function runStateLabel(state: WrapperRun['state']): string {
-  const labels: Record<WrapperRun['state'], string> = {
-    created: '已创建',
-    validating: '校验中',
-    provisioning: '准备中',
-    queued: '排队中',
-    running: '运行中',
-    collecting: '收集结果中',
-    completed: '已完成',
-    failed: '失败',
-    cancelling: '取消中',
-    cancelled: '已取消',
-    lost: '状态未知'
-  }
+  const labels: Record<WrapperRun['state'], string> = wrapperCopy.runStates
   return labels[state] ?? state
 }
 
@@ -197,16 +200,14 @@ export function runStateColor(
 }
 
 /**
- * "2/6 步 · HISAT2_ALIGN": how far a run has got. The count is processes that have
+ * "2/6 steps · HISAT2_ALIGN": how far a run has got. The count is processes that have
  * *started* (Nextflow does not report completion), so it is only shown while
  * the outcome is still open or after an unfinished end — a completed run needs no count.
  */
 export function runProgressLabel(run: Pick<WrapperRun, 'state' | 'progress'>): string | undefined {
   const progress = run.progress
   if (!progress || progress.started <= 0 || run.state === 'completed') return undefined
-  const count = progress.total
-    ? `${progress.started}/${progress.total} 步`
-    : `已开始 ${progress.started} 步`
+  const count = wrapperCopy.progress(progress.started, progress.total)
   return progress.current ? `${count} · ${progress.current}` : count
 }
 

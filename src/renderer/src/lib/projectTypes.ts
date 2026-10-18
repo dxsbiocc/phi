@@ -1,3 +1,4 @@
+import { windowUiCopy } from './windowUiCopy'
 import type {
   ProjectLocation,
   RemoteProjectConnectionState,
@@ -29,18 +30,9 @@ export interface Project {
 
 export function projectLocationSummary(project: Project): string | null {
   if (project.location?.kind !== 'ssh') return null
-  const host = project.remoteHostAlias ?? '服务器档案不可用'
+  const host = project.remoteHostAlias ?? windowUiCopy.unavailableServer
   const phase = project.remoteConnection?.phase ?? project.remoteReachability
-  const labels: Record<RemoteProjectReachability, string> = {
-    unchecked: '连接待检查',
-    connecting: '连接中',
-    reachable: '已连接',
-    offline: '服务器离线',
-    authentication_failed: '认证失败',
-    identity_failed: '主机身份校验失败',
-    permission_failed: '目录权限不足',
-    configuration_failed: '服务器配置不可用'
-  }
+  const labels = windowUiCopy.connection
   const status = phase ? labels[phase] : labels.unchecked
   return `${host} · ${project.location.remoteRoot} · ${status}`
 }

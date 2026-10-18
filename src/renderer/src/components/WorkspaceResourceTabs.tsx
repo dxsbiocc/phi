@@ -1,8 +1,11 @@
+import { navigationCopy } from '../lib/navigationCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { VscLayoutSidebarLeftDock } from 'react-icons/vsc'
 import { PhiIcons } from '../icons'
 import { ResourceIcon, type ResourceIconProps } from './ResourceIcon'
+import { resourceCatalogCopy, resourceUi } from '../lib/resourceUi'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import type {
   WorkspaceFileWorkspaceTab,
@@ -49,10 +52,11 @@ export function WorkspaceResourceTabs({
   connectorIcon?: (icon?: ResourceIconRef) => React.ReactNode
   fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       role="tablist"
-      aria-label="Open resources"
+      aria-label={navigationCopy.openResources}
       data-phi-workspace-resource-tabs="true"
       sx={{
         flex: 1,
@@ -72,6 +76,8 @@ export function WorkspaceResourceTabs({
         const selected = tab.key === activeKey
         const Icon = resourceIcons[tab.kind]
         const contentKind = contentIconKinds[tab.kind]
+        const title =
+          tab.kind === 'plugins' && tab.itemId === 'installed' ? resourceUi.plugins : tab.title
         return (
           <Box
             key={tab.key}
@@ -80,7 +86,7 @@ export function WorkspaceResourceTabs({
             aria-selected={selected}
             data-phi-workspace-resource-tab={selected ? 'active' : 'inactive'}
             data-phi-workspace-resource-kind={tab.kind}
-            title={tab.subtitle ?? tab.title}
+            title={tab.subtitle ?? title}
             onClick={() => {
               if (!selected) onSelect(tab)
             }}
@@ -150,12 +156,16 @@ export function WorkspaceResourceTabs({
                     transition: 'opacity 120ms ease'
                   }}
                 />
-                <Tooltip title="移到左侧边栏" enterDelay={400} disableFocusListener>
+                <Tooltip
+                  title={navigationCopy.moveToLeftSidebar}
+                  enterDelay={400}
+                  disableFocusListener
+                >
                   <Box
                     component="span"
                     role="button"
                     tabIndex={0}
-                    aria-label="移到左侧边栏"
+                    aria-label={navigationCopy.moveToLeftSidebar}
                     data-phi-session-tab-dock-action="true"
                     className="workspace-session-tab-dock-action"
                     onClick={(event) => {
@@ -214,13 +224,13 @@ export function WorkspaceResourceTabs({
                 lineHeight: '18px'
               }}
             >
-              {tab.title}
+              {title}
             </Typography>
             {(tab.kind === 'file' || tab.kind === 'notebook') && tab.dirty && (
               <Box
                 component="span"
                 role="img"
-                aria-label="未保存的修改"
+                aria-label={navigationCopy.unsavedChanges}
                 data-phi-tab-unsaved="true"
                 sx={{
                   width: 7,
@@ -235,7 +245,11 @@ export function WorkspaceResourceTabs({
               className="workspace-resource-tab-close"
               component="span"
               role="button"
-              aria-label={`关闭 ${tab.title}`}
+              aria-label={
+                contentIconKinds[tab.kind]
+                  ? resourceCatalogCopy.closeTab(title)
+                  : navigationCopy.closeValue(title)
+              }
               tabIndex={0}
               onClick={(event) => {
                 event.stopPropagation()

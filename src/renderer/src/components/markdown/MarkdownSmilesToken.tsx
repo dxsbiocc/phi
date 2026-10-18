@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdownUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Tooltip } from '@mui/material'
 import { useEffect, useState } from 'react'
 import { HOVER_PREVIEW_OPEN_DELAY_MS } from '../../lib/markdownLocalPathPreview'
@@ -47,6 +49,7 @@ function MoleculePreviewImage({
   height: number
   shouldLoad: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const [renderState, setRenderState] = useState<MoleculeRenderState | null>(null)
   const activeRenderState = renderState?.value === smiles ? renderState : null
   const svg = activeRenderState?.svg
@@ -97,10 +100,10 @@ function MoleculePreviewImage({
   }
 
   const statusText = error
-    ? '结构预览加载失败'
+    ? markdownCopy.structureFailed
     : shouldLoad
-      ? '正在加载 RDKit.js 结构预览...'
-      : '悬停加载结构预览'
+      ? markdownCopy.loadingRdkit
+      : markdownCopy.hoverStructure
 
   return (
     <Box
@@ -142,6 +145,7 @@ function MoleculePreviewImage({
 }
 
 export function MarkdownSmilesTokenView({ smiles }: { smiles: string }): React.JSX.Element {
+  useUiLanguage()
   const [previewActive, setPreviewActive] = useState(false)
 
   return (
@@ -177,7 +181,7 @@ export function MarkdownSmilesTokenView({ smiles }: { smiles: string }): React.J
         <Box
           component="code"
           data-phi-molecule-expression="true"
-          title="悬停预览 SMILES 分子结构"
+          title={markdownCopy.hoverSmiles}
           sx={{
             display: 'inline-block',
             minWidth: 0,
@@ -213,7 +217,7 @@ export function MarkdownSmilesTokenView({ smiles }: { smiles: string }): React.J
             border: 0
           }}
         >
-          悬停显示 SMILES 分子结构预览
+          {markdownCopy.hoverSmilesHint}
         </Box>
       </Box>
     </Tooltip>

@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -143,6 +144,9 @@ function renderChat(
     )
   )
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('chat history receives the workspace resource catalog for user and assistant messages', () => {
   const resources: ChatResourceMention[] = [
@@ -366,7 +370,7 @@ test('chat view formats add-menu references for prompt input', () => {
       ]
     ),
     {
-      references: [{ kind: 'agent', name: 'Visualization', text: '调用智能体：Visualization' }],
+      references: [{ kind: 'agent', name: 'Visualization', text: '/agent:Visualization' }],
       body: '正文'
     }
   )
@@ -1753,7 +1757,7 @@ test('tool group keeps the aggregate row neutral when one child failed', () => {
 test('chat view shows current permission mode in the composer', () => {
   const markup = renderChat([], { permissionMode: 'ask' })
 
-  assert.match(markup, /权限 Ask/)
+  assert.match(markup, /权限 询问/)
   assert.match(markup, /aria-label="选择权限模式"/)
 })
 
@@ -1873,7 +1877,7 @@ test('chat view does not reuse the previous user action when the assistant only 
 test('chat view shows full access permission mode in the composer', () => {
   const markup = renderChat([], { permissionMode: 'full' })
 
-  assert.match(markup, /权限 Full/)
+  assert.match(markup, /权限 完全/)
   assert.match(markup, /aria-label="选择权限模式"/)
 })
 
@@ -1881,14 +1885,14 @@ test('chat view uses icon-only composer controls when file preview is open', () 
   const markup = renderChat([], { compactComposerControls: true })
 
   assert.match(markup, /data-phi-placeholder-kind="default"/)
-  assert.match(markup, /aria-label="选择权限模式：权限 Auto"/)
-  assert.match(markup, /aria-label="选择思考等级：High"/)
+  assert.match(markup, /aria-label="选择权限模式：权限 自动"/)
+  assert.match(markup, /aria-label="选择思考等级：高"/)
   assert.match(markup, /aria-label="选择模型：Kimi Coding"/)
   assert.match(markup, /data-phi-provider-icon="moonshot"/)
   assert.match(markup, /data-phi-provider-icon="moonshot"[\s\S]*<svg/)
   assert.match(markup, /data-phi-composer-action="send" data-phi-composer-size="32"/)
-  assert.doesNotMatch(markup, />权限 Auto</)
-  assert.doesNotMatch(markup, />High</)
+  assert.doesNotMatch(markup, />权限 自动</)
+  assert.doesNotMatch(markup, />高</)
   assert.doesNotMatch(markup, />Kimi Coding</)
   assert.doesNotMatch(markup, /输入消息，Enter 发送/)
 })
@@ -1972,7 +1976,7 @@ test('agent execution details scroll instead of flattening every child step into
   assert.match(source, /data-phi-agent-execution-scroll="true"/)
   assert.match(source, /maxHeight: AGENT_EXECUTION_DETAIL_MAX_HEIGHT/)
   assert.match(source, /overflowY: 'auto'/)
-  assert.match(source, /aria-label="折叠 Agent 执行"[\s\S]*<ExpandLessIcon/)
+  assert.match(source, /aria-label=\{chatCopy.collapseAgentExecution\}[\s\S]*<ExpandLessIcon/)
 })
 
 test('chat view keeps next-run controls enabled and shows stop while the current session is busy', () => {
@@ -2140,7 +2144,7 @@ test('chat view shows a preparing placeholder for a wrapper plan tool call with 
     { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'running' }
   ])
 
-  assert.match(markup, /正在准备 wrapper 计划/)
+  assert.match(markup, /正在准备 Wrapper 计划/)
 })
 
 test('chat view shows an error state for a failed wrapper plan tool call, with no plan metadata leaked', () => {
@@ -2148,7 +2152,7 @@ test('chat view shows an error state for a failed wrapper plan tool call, with n
     { id: 'call-1', role: 'wrapper_plan', toolName: 'wrapper.phi_ngs_fastq_qc', status: 'error' }
   ])
 
-  assert.match(markup, /wrapper 计划创建失败/)
+  assert.match(markup, /无法创建 Wrapper 计划/)
   // The chat item itself never carries plan detail — only an id once resolved.
   assert.doesNotMatch(markup, /fastq-qc|multiqc|nextflow/i)
 })

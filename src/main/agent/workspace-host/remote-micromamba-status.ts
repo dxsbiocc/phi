@@ -71,7 +71,7 @@ function notInstalledStatus(
     status: 'not-installed',
     versionMatches: hasExpectedVersion ? false : null,
     runnable: false,
-    message: '远端尚未安装 micromamba。'
+    message: 'micromamba is not installed on the server.'
   }
 }
 
@@ -86,7 +86,8 @@ function legacyLayoutStatus(
     versionMatches: expectedVersion ? legacyVersions.includes(expectedVersion) : null,
     runnable: false,
     errorCode: 'legacy-layout',
-    message: '检测到 R2.2 旧安装布局，不能用于 micromamba run；请重新安装以完成迁移。'
+    message:
+      'A legacy R2.2 installation layout was detected and cannot support micromamba run. Reinstall to migrate.'
   }
 }
 
@@ -140,7 +141,7 @@ async function statusFromScan(
       status: 'outdated',
       versionMatches: false,
       runnable: null,
-      message: '远端 micromamba 版本已过期，需要更新。'
+      message: 'Remote micromamba is outdated and needs an update.'
     }
   }
   const selected = options.expectedVersion ?? scan.versions.at(-1) ?? ''
@@ -152,7 +153,7 @@ async function statusFromScan(
       versionMatches: options.expectedVersion ? verification.versionMatches : null,
       runnable: false,
       errorCode: verification.errorCode,
-      message: '远端 micromamba 已安装但无法通过运行验证。'
+      message: 'Remote micromamba is installed but failed runtime verification.'
     }
   }
   return {
@@ -160,7 +161,7 @@ async function statusFromScan(
     status: 'installed',
     versionMatches: options.expectedVersion ? true : null,
     runnable: true,
-    message: '远端 micromamba 已安装且可运行。'
+    message: 'Remote micromamba is installed and runnable.'
   }
 }
 
@@ -172,11 +173,14 @@ export async function getRemoteMicromambaStatus(
   const startedAt = (options.now ?? Date.now)()
   const empty = statusBase(options, startedAt, [])
   if (!validConfiguredRoot(runtimeRoot)) {
-    return failedStatus(empty, '运行时根目录写法无效，无法检查 micromamba 状态。')
+    return failedStatus(empty, 'Invalid runtime root path. Unable to check micromamba status.')
   }
   try {
     return await statusFromScan(session, runtimeRoot, options, startedAt)
   } catch {
-    return failedStatus(empty, '无法读取远端 micromamba 状态，请检查连接后重试。')
+    return failedStatus(
+      empty,
+      'Unable to read remote micromamba status. Check the connection and retry.'
+    )
   }
 }

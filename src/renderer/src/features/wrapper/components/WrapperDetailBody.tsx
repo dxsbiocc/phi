@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { useMemo } from 'react'
 import { Box, Chip, Divider, Link, Stack, Typography } from '@mui/material'
 import { type Theme } from '@mui/material/styles'
@@ -18,6 +20,7 @@ import { WrapperFlowDiagram } from './WrapperFlowDiagram'
  * `channels`/`dependencies` shape this component happened to expect.
  */
 function WrapperYamlBlock({ yaml }: { yaml: string }): React.JSX.Element {
+  useUiLanguage()
   const lines = useMemo(() => yaml.replace(/\n$/, '').split('\n'), [yaml])
   return (
     <Box
@@ -77,6 +80,7 @@ export function WrapperDetailBody({
   /** Content after the metadata, e.g. run history. */
   children?: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <>
       <WrapperIdentity manifest={manifest} icon={icon} extraChips={extraChips}>
@@ -87,7 +91,7 @@ export function WrapperDetailBody({
       <Divider sx={{ my: 4 }} />
 
       <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-        结构
+        {wrapperCopy.structure}
       </Typography>
       {graph && (
         // Keyed by wrapper id so switching wrappers remounts the whole
@@ -112,7 +116,7 @@ export function WrapperDetailBody({
         <>
           <Divider sx={{ my: 4 }} />
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            关于
+            {wrapperCopy.about}
           </Typography>
           {moduleDetails.meta.description && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -151,7 +155,7 @@ export function WrapperDetailBody({
                     rel="noopener noreferrer"
                     variant="body2"
                   >
-                    主页
+                    {wrapperCopy.homepage}
                   </Link>
                 )}
                 {tool.documentation && (
@@ -161,7 +165,7 @@ export function WrapperDetailBody({
                     rel="noopener noreferrer"
                     variant="body2"
                   >
-                    文档
+                    {wrapperCopy.documentation}
                   </Link>
                 )}
                 {tool.doi && (
@@ -179,7 +183,7 @@ export function WrapperDetailBody({
           ))}
           {moduleDetails.meta.authors && moduleDetails.meta.authors.length > 0 && (
             <Typography variant="caption" color="text.secondary">
-              作者：{moduleDetails.meta.authors.join('、')}
+              {wrapperCopy.authors(moduleDetails.meta.authors)}
             </Typography>
           )}
         </>
@@ -189,7 +193,7 @@ export function WrapperDetailBody({
         <>
           <Divider sx={{ my: 4 }} />
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            环境
+            {wrapperCopy.environment}
           </Typography>
           <WrapperYamlBlock yaml={moduleDetails.environment} />
         </>

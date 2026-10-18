@@ -36,9 +36,9 @@ export function readMcpConfig(agentDir = getPhiAgentDir()): McpConfig {
   const path = mcpConfigPath(agentDir)
   if (!existsSync(path)) return { mcpServers: {} }
   const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  if (!isRecord(parsed)) throw new Error('MCP 配置文件格式无效')
+  if (!isRecord(parsed)) throw new Error('Invalid MCP configuration file format')
   if (parsed.mcpServers !== undefined && !isRecord(parsed.mcpServers)) {
-    throw new Error('MCP 配置中的 mcpServers 必须是对象')
+    throw new Error('mcpServers must be an object in the MCP configuration')
   }
   return parsed
 }
@@ -67,7 +67,9 @@ export function installMcpPackageConfig(
   const servers = config.mcpServers ?? {}
   const existing = servers[manifest.id]
   if (existing !== undefined && packageIdFromMcpEntry(existing) !== manifest.id) {
-    throw new Error(`已有名为 ${manifest.id} 的用户 MCP 配置；不会覆盖`)
+    throw new Error(
+      `User MCP configuration ${manifest.id} already exists and will not be overwritten`
+    )
   }
   const existingMarker = readManagedMarker(existing)
   const desiredEnabled = existingMarker?.pending

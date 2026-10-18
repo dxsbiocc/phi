@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useState } from 'react'
 import {
   Alert,
@@ -47,10 +50,12 @@ export function McpGithubImportActions({
   onImport: () => void
   onUseLocalDraft: (draft: GithubLocalConnectorDraft) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <DialogActions>
       <Button disabled={busy !== null} onClick={onClose}>
-        取消
+        {resourceUi.cancel}
       </Button>
       {!preview ? (
         <Button
@@ -58,11 +63,11 @@ export function McpGithubImportActions({
           disabled={busy !== null || Boolean(githubImportUrlError(url))}
           onClick={onPreview}
         >
-          {busy === 'preview' ? '正在预览…' : '预览'}
+          {busy === 'preview' ? connectorCopy.previewing : connectorCopy.preview}
         </Button>
       ) : preview.packages.length > 0 ? (
         <Button variant="contained" disabled={busy !== null} onClick={onImport}>
-          {busy === 'import' ? '正在导入…' : '导入'}
+          {busy === 'import' ? connectorCopy.importing : connectorCopy.import}
         </Button>
       ) : preview.localDraft ? (
         <Button
@@ -70,7 +75,7 @@ export function McpGithubImportActions({
           disabled={busy !== null}
           onClick={() => onUseLocalDraft(preview.localDraft!)}
         >
-          按本地 stdio 添加…
+          {connectorCopy.addLocalStdio}
         </Button>
       ) : null}
     </DialogActions>
@@ -88,6 +93,8 @@ export function McpGithubImportDialog({
   onImported: (source: GithubSourceSummary) => Promise<void> | void
   onUseLocalDraft: (draft: GithubLocalConnectorDraft) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const [url, setUrl] = useState('')
   const [preview, setPreview] = useState<GithubSourcePreview | null>(null)
   const [busy, setBusy] = useState<'preview' | 'import' | null>(null)
@@ -128,10 +135,10 @@ export function McpGithubImportDialog({
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle>
-        导入软件源
+        {connectorCopy.importSource}
         {preview && preview.packages.length > 0 ? (
           <Typography component="div" variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            导入后，仓库里的连接器会出现在目录中，安装时仍需确认。
+            {connectorCopy.importSourceHint}
           </Typography>
         ) : null}
       </DialogTitle>
@@ -139,7 +146,7 @@ export function McpGithubImportDialog({
         <Stack spacing={2} sx={{ pt: 1 }}>
           <TextField
             autoFocus
-            label="仓库地址"
+            label={connectorCopy.repositoryUrl}
             placeholder="https://github.com/owner/repo"
             value={url}
             disabled={busy !== null}
@@ -155,7 +162,8 @@ export function McpGithubImportDialog({
               <Box>
                 <Typography sx={{ fontWeight: 700 }}>{preview.repo}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {preview.ref ? `引用 ${preview.ref} · ` : ''}提交 {preview.sha.slice(0, 7)}
+                  {preview.ref ? connectorCopy.gitRef(preview.ref) : ''}
+                  {connectorCopy.commit} {preview.sha.slice(0, 7)}
                 </Typography>
               </Box>
               {preview.packages.length === 0 && preview.projectHint ? (
@@ -168,7 +176,7 @@ export function McpGithubImportDialog({
                       <ListItem key={`${pkg.id}@${pkg.version}`} disableGutters>
                         <ListItemText
                           primary={`${pkg.title} · ${pkg.version}`}
-                          secondary={`${pkg.publisher} · ${pkg.transport === 'stdio' ? '本地' : '远程'}`}
+                          secondary={connectorCopy.packageTransport(pkg.publisher, pkg.transport)}
                         />
                       </ListItem>
                     ))}
@@ -183,9 +191,7 @@ export function McpGithubImportDialog({
                       {warning}
                     </Alert>
                   ))}
-                  <Alert severity="warning">
-                    未签名·用户导入。安装连接器时才会运行其中的命令。
-                  </Alert>
+                  <Alert severity="warning">{connectorCopy.unsignedImportHint}</Alert>
                 </>
               )}
             </Stack>

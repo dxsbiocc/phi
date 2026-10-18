@@ -1,12 +1,28 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Button, Paper, Stack, Typography } from '@mui/material'
 import type { ToolApprovalRequest } from '../types'
+import { resourceCatalogCopy } from '../lib/resourceUi'
 
 const TOOL_LABELS: Record<string, string> = {
-  bash: '执行终端命令',
-  powershell: '执行 PowerShell 命令',
-  write: '写入文件',
-  edit: '修改文件',
-  browser: '浏览器操作'
+  get bash() {
+    return chatCopy.executeTerminalCommand
+  },
+  get powershell() {
+    return chatCopy.executePowerShellCommand
+  },
+  get write() {
+    return chatCopy.writeFile
+  },
+  get edit() {
+    return chatCopy.editFile
+  },
+  get browser() {
+    return chatCopy.browserAction
+  },
+  get capability_install() {
+    return resourceCatalogCopy.capabilityInstall
+  }
 }
 
 type ToolApprovalDialogProps = {
@@ -20,15 +36,19 @@ function ToolApprovalDialog({
   onRespond,
   onOpenSession
 }: ToolApprovalDialogProps): React.JSX.Element {
+  useUiLanguage()
   if (!request) {
     return <></>
   }
+  const resourceApproval = request.toolName === 'capability_install'
 
   return (
     <Paper
       variant="outlined"
       role="alert"
-      aria-label="权限审批"
+      aria-label={
+        resourceApproval ? resourceCatalogCopy.permissionApproval : chatCopy.permissionApproval
+      }
       sx={{
         width: '100%',
         mb: 1,
@@ -97,15 +117,19 @@ function ToolApprovalDialog({
                 onClick={() => onOpenSession(request.sessionPath as string)}
                 sx={{ minHeight: 36 }}
               >
-                打开会话
+                {resourceApproval ? resourceCatalogCopy.openSession : chatCopy.openConversation}
               </Button>
             )}
           </Box>
           <Button color="error" onClick={() => onRespond(request.requestId, false)}>
-            拒绝
+            {resourceApproval ? resourceCatalogCopy.reject : chatCopy.reject}
           </Button>
           <Button variant="contained" onClick={() => onRespond(request.requestId, true)}>
-            {request.toolName === 'browser' ? '仅允许这一次' : '批准'}
+            {resourceApproval
+              ? resourceCatalogCopy.approve
+              : request.toolName === 'browser'
+                ? chatCopy.allowOnce
+                : chatCopy.approve}
           </Button>
         </Box>
       </Stack>

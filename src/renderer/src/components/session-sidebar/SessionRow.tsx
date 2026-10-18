@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { getUiLocale, useUiLanguage } from '../../lib/i18n'
 import { memo, useEffect, useState } from 'react'
 import {
   Box,
@@ -56,8 +58,8 @@ const sessionMenuItemSx = {
 } as const
 function formatDateTime(value: string | number): string {
   const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return '未知'
-  return date.toLocaleString('zh-CN', {
+  if (!Number.isFinite(date.getTime())) return navigationCopy.unknown
+  return date.toLocaleString(getUiLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -70,20 +72,23 @@ function formatDateTime(value: string | number): string {
 
 function formatElapsedTime(iso: string, nowMs = Date.now()): string {
   const elapsedSeconds = Math.max(0, Math.floor((nowMs - new Date(iso).getTime()) / 1000))
-  if (elapsedSeconds < 60) return `${elapsedSeconds} 秒`
+  if (elapsedSeconds < 60) return navigationCopy.valueS(elapsedSeconds)
   const minutes = Math.floor(elapsedSeconds / 60)
-  if (minutes < 60) return `${minutes} 分钟`
+  if (minutes < 60) return navigationCopy.valueMin(minutes)
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分钟` : `${hours} 小时`
+  return remainingMinutes > 0
+    ? navigationCopy.valueHValueMin(hours, remainingMinutes)
+    : navigationCopy.valueH(hours)
 }
 
 function sessionStatusLabel(session: SessionSummary): string | null {
-  if (session.status === 'needs_approval') return '请求权限'
-  if (session.status === 'needs_input') return '等待输入'
-  if (session.status === 'running') return '运行中'
-  if (session.status === 'failed' || session.unreadKind === 'failed') return '失败'
-  if (session.status === 'completed_unread' || session.unreadKind === 'completed') return '已完成'
+  if (session.status === 'needs_approval') return navigationCopy.permissionRequested
+  if (session.status === 'needs_input') return navigationCopy.awaitingInput
+  if (session.status === 'running') return navigationCopy.running
+  if (session.status === 'failed' || session.unreadKind === 'failed') return navigationCopy.failed
+  if (session.status === 'completed_unread' || session.unreadKind === 'completed')
+    return navigationCopy.completed
   return null
 }
 
@@ -105,15 +110,16 @@ function SessionAttentionBeacon({
   session: SessionSummary
   indent?: boolean
 }): React.JSX.Element | null {
+  useUiLanguage()
   const kind = sessionBeaconKind(session)
   if (!kind) return null
   const isRunning = kind === 'running'
   const labelByKind = {
-    running: '会话运行中',
-    approval: '会话请求权限',
-    input: '会话等待输入',
-    failed: '会话失败未读',
-    completed: '会话已完成未读'
+    running: navigationCopy.conversationRunning,
+    approval: navigationCopy.conversationRequestingPermission,
+    input: navigationCopy.conversationAwaitingInput,
+    failed: navigationCopy.unreadConversationFailure,
+    completed: navigationCopy.unreadCompletedConversation
   } satisfies Record<NonNullable<ReturnType<typeof sessionBeaconKind>>, string>
 
   return (
@@ -169,7 +175,7 @@ function sessionStatusText(session: SessionSummary, nowMs: number): string | nul
       session.status === 'needs_input') &&
     session.currentRunStartedAt
   ) {
-    return `${status ?? '运行中'} · ${formatElapsedTime(session.currentRunStartedAt, nowMs)}`
+    return `${status ?? navigationCopy.running} · ${formatElapsedTime(session.currentRunStartedAt, nowMs)}`
   }
   return status
 }
@@ -268,6 +274,7 @@ export const SessionRow = memo(function SessionRow({
   compactHoverPreview = false,
   onPreviewInteractionChange
 }: SessionRowProps): React.JSX.Element {
+  useUiLanguage()
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -347,8 +354,14 @@ export const SessionRow = memo(function SessionRow({
                   {sessionTitle(displaySession)}
                 </Typography>
                 <Box sx={{ mt: 1, fontSize: ROW_META_FONT_SIZE, color: 'text.secondary' }}>
-                  <Box>最近活动：{formatDateTime(sessionActivityTime(displaySession) || NaN)}</Box>
-                  <Box>创建时间：{formatDateTime(displaySession.created)}</Box>
+                  <Box>
+                    {navigationCopy.lastActivity}
+                    {formatDateTime(sessionActivityTime(displaySession) || NaN)}
+                  </Box>
+                  <Box>
+                    {navigationCopy.created}
+                    {formatDateTime(displaySession.created)}
+                  </Box>
                   {statusText && (
                     <Box sx={{ mt: 0.5, color: sessionStatusColor(displaySession) }}>
                       {statusText}
@@ -475,10 +488,10 @@ export const SessionRow = memo(function SessionRow({
             WebkitAppRegion: 'no-drag'
           }}
         >
-          <Tooltip title="更多操作" disableFocusListener>
+          <Tooltip title={navigationCopy.moreActions} disableFocusListener>
             <IconButton
               size="small"
-              aria-label="更多会话操作"
+              aria-label={navigationCopy.moreConversationActions}
               aria-haspopup="menu"
               aria-expanded={menuAnchor !== null}
               sx={{
@@ -521,12 +534,12 @@ export const SessionRow = memo(function SessionRow({
       >
         <MenuItem sx={sessionMenuItemSx} onClick={openRename}>
           <GoPencil aria-hidden size={18} />
-          重命名
+          {navigationCopy.rename}
         </MenuItem>
         {session.phiSessionId && onExport && (
           <MenuItem
             disabled={exportDisabled}
-            title={exportDisabled ? '运行结束后可导出' : undefined}
+            title={exportDisabled ? navigationCopy.availableToExportAfterTheRunFinishes : undefined}
             sx={sessionMenuItemSx}
             onClick={() => {
               closeMenu()
@@ -534,7 +547,7 @@ export const SessionRow = memo(function SessionRow({
             }}
           >
             <GoDownload aria-hidden size={18} />
-            导出会话
+            {navigationCopy.exportConversation}
           </MenuItem>
         )}
         <Divider sx={{ mx: 1, my: 0.75 }} />
@@ -551,7 +564,7 @@ export const SessionRow = memo(function SessionRow({
           }}
         >
           <GoTrash aria-hidden size={18} />
-          删除
+          {navigationCopy.delete}
         </MenuItem>
       </Menu>
       <SessionRenamePanel
@@ -563,7 +576,11 @@ export const SessionRow = memo(function SessionRow({
         onClose={() => setRenameOpen(false)}
         onSave={commitRename}
         onGenerateTitle={() => window.api.generateSessionTitle(session.path)}
-        generateTitleDisabledReason={exportDisabled ? '对话运行结束后可生成标题' : undefined}
+        generateTitleDisabledReason={
+          exportDisabled
+            ? navigationCopy.generateATitleAfterTheConversationFinishesRunning
+            : undefined
+        }
       />
     </>
   )

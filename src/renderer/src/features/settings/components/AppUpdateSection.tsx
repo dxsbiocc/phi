@@ -1,3 +1,5 @@
+import { settingsUi } from '../lib/settingsUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
@@ -5,10 +7,13 @@ import type { AppUpdateCheck } from '../../../../../shared/appUpdateTypes'
 
 function resultText(result: AppUpdateCheck): string {
   if (result.status === 'available') {
-    return `有新版本 ${result.latestVersion}，当前 ${result.currentVersion}。请下载新版本安装包替换当前应用，数据会保留。`
+    return settingsUi.versionValueIsAvailableYouAreUsingValue(
+      result.latestVersion,
+      result.currentVersion
+    )
   }
-  if (result.status === 'up-to-date') return `已是最新版本（${result.currentVersion}）。`
-  return `检查更新失败：${result.error ?? '未知错误'}`
+  if (result.status === 'up-to-date') return settingsUi.youAreUpToDateValue(result.currentVersion)
+  return settingsUi.unableToCheckForUpdatesValue(result.error ?? settingsUi.unknownError)
 }
 
 /** Version and manual update check; installing stays manual until the app is signed. */
@@ -17,6 +22,7 @@ export function AppUpdateSection({
 }: {
   initialResult?: AppUpdateCheck | null
 }): React.JSX.Element {
+  useUiLanguage()
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<AppUpdateCheck | null>(initialResult)
 
@@ -40,11 +46,11 @@ export function AppUpdateSection({
   return (
     <Box data-phi-app-update-section>
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        版本与更新
+        {settingsUi.versionAndUpdates}
       </Typography>
       <Stack direction="row" spacing={1} sx={{ mt: 0.75, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button size="small" variant="outlined" disabled={checking} onClick={() => void check()}>
-          {checking ? '正在检查…' : '检查更新'}
+          {checking ? settingsUi.checking2 : settingsUi.checkForUpdates}
         </Button>
         {result?.status === 'available' && (
           <Button
@@ -52,7 +58,7 @@ export function AppUpdateSection({
             variant="contained"
             onClick={() => void window.api.openAppReleasesPage(result.releasesUrl)}
           >
-            前往下载
+            {settingsUi.download}
           </Button>
         )}
       </Stack>
@@ -62,9 +68,7 @@ export function AppUpdateSection({
         color={result?.status === 'error' ? 'error.main' : 'text.secondary'}
         sx={{ mt: 0.75 }}
       >
-        {result
-          ? resultText(result)
-          : '从 GitHub Releases 检查新版本。当前版本需要手动下载安装包更新。'}
+        {result ? resultText(result) : settingsUi.checkGitHubReleasesForNewVersionsDownloadAnd}
       </Typography>
     </Box>
   )

@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement, isValidElement, type ReactNode } from 'react'
@@ -42,6 +43,20 @@ function findProps(
     pending.push(props.children as ReactNode)
   }
   throw new Error('Expected control was not rendered')
+}
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
+
+function inspectTree<T>(build: () => T): T {
+  let result!: T
+  renderToStaticMarkup(
+    createElement(function InspectTree() {
+      result = build()
+      return null
+    })
+  )
+  return result
 }
 
 test('local creation still uses the chosen local folder and permission mode', async () => {
@@ -122,7 +137,7 @@ test('project location fields keep the local picker separate from remote paths',
   assert.match(local, /远程服务器/)
   assert.match(local, /选择文件夹/)
   assert.doesNotMatch(local, /服务器上的项目目录/)
-  const localFields = ProjectLocationFields({ ...props, mode: 'local' })
+  const localFields = inspectTree(() => ProjectLocationFields({ ...props, mode: 'local' }))
   const localPicker = findProps(localFields, (item) => item.children === '选择文件夹')
   ;(localPicker.onClick as () => void)()
   const modeGroup = findProps(
@@ -138,18 +153,20 @@ test('project location fields keep the local picker separate from remote paths',
 
 test('remote fields select a discovered OpenSSH host directly and accept a server path', () => {
   const actions: string[] = []
-  const fields = RemoteProjectFields({
-    hosts: [
-      { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
-    ],
-    hostsLoading: false,
-    hostsError: null,
-    hostProfileId: 'ssh-config:lab-hpc',
-    remoteRoot: '/cluster/lab',
-    onHostChange: (id) => actions.push(`host:${id}`),
-    onRemoteRootChange: (path) => actions.push(`path:${path}`),
-    onOpenRemoteSettings: () => actions.push('settings')
-  })
+  const fields = inspectTree(() =>
+    RemoteProjectFields({
+      hosts: [
+        { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
+      ],
+      hostsLoading: false,
+      hostsError: null,
+      hostProfileId: 'ssh-config:lab-hpc',
+      remoteRoot: '/cluster/lab',
+      onHostChange: (id) => actions.push(`host:${id}`),
+      onRemoteRootChange: (path) => actions.push(`path:${path}`),
+      onOpenRemoteSettings: () => actions.push('settings')
+    })
+  )
   const hostField = findProps(fields, (props) => props.label === 'SSH 服务器')
   const directoryTree = findProps(
     fields,

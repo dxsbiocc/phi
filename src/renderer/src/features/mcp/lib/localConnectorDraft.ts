@@ -1,3 +1,4 @@
+import { connectorCopy } from './connectorCopy'
 import type {
   LocalMcpConnectorRequest,
   LocalMcpRuntime,
@@ -106,15 +107,15 @@ function reservedEnvironmentName(name: string): boolean {
 
 function localConnectorEnvironment(rows: readonly LocalConnectorEnvRow[]): Record<string, string> {
   const populated = rows.filter((row) => row.name.trim() || row.value)
-  if (populated.length > 32) throw new Error('环境变量最多可填写 32 项')
+  if (populated.length > 32) throw new Error(connectorCopy.envLimit)
 
   return populated.reduce<Record<string, string>>((result, row) => {
     const name = row.name.trim()
-    if (!envNamePattern.test(name)) throw new Error(`环境变量名称无效：${name || '空名称'}`)
-    if (reservedEnvironmentName(name)) throw new Error(`不能设置保留变量 ${name}`)
-    if (name in result) throw new Error(`环境变量 ${name} 重复`)
-    if (row.value.length > 4096) throw new Error(`环境变量 ${name} 的值不能超过 4096 个字符`)
-    if (/[\0\r\n]/.test(row.value)) throw new Error(`环境变量 ${name} 的值不能包含换行或 NUL`)
+    if (!envNamePattern.test(name)) throw new Error(connectorCopy.invalidVariableName(name))
+    if (reservedEnvironmentName(name)) throw new Error(connectorCopy.reservedVariable(name))
+    if (name in result) throw new Error(connectorCopy.duplicateVariable(name))
+    if (row.value.length > 4096) throw new Error(connectorCopy.variableLengthLimit(name))
+    if (/[\0\r\n]/.test(row.value)) throw new Error(connectorCopy.variableControlInvalid(name))
     return { ...result, [name]: row.value }
   }, {})
 }
@@ -122,33 +123,34 @@ function localConnectorEnvironment(rows: readonly LocalConnectorEnvRow[]): Recor
 export function buildLocalConnectorRequest(draft: LocalConnectorDraft): LocalMcpConnectorRequest {
   const name = draft.name.trim()
   if (!namePattern.test(name)) {
-    throw new Error('连接器名称需为 2–64 位字母、数字、下划线或连字符，并以字母开头')
+    throw new Error(connectorCopy.localNameInvalid)
   }
 
   const command = draft.command.trim()
-  if (!command || /[\0\r\n]/.test(command)) throw new Error('请输入有效命令')
+  if (!command || /[\0\r\n]/.test(command)) throw new Error(connectorCopy.validCommandRequired)
   if (draft.runtime.kind === 'environment') {
-    if (!runtimeRefPattern.test(draft.runtime.ref)) throw new Error('请选择已就绪的 Phi 运行环境')
+    if (!runtimeRefPattern.test(draft.runtime.ref))
+      throw new Error(connectorCopy.chooseReadyRuntime)
     if (!environmentCommandPattern.test(command)) {
-      throw new Error('环境中的命令需为不含路径的命令名')
+      throw new Error(connectorCopy.environmentCommandInvalid)
     }
   } else if (draft.runtime.kind === 'bun') {
     if (command !== 'x' && command !== 'run') {
-      throw new Error('Phi 内置 Bun 命令只能是 x 或 run')
+      throw new Error(connectorCopy.bunCommandInvalid)
     }
   } else if (!command.startsWith('/')) {
-    throw new Error('本机命令需使用绝对路径')
+    throw new Error(connectorCopy.hostCommandInvalid)
   }
 
   const args = parseLocalConnectorArgs(draft.argsText)
-  if (args.length > 64) throw new Error('参数最多可填写 64 项')
+  if (args.length > 64) throw new Error(connectorCopy.argsLimit)
   for (const arg of args) {
-    if (arg.length > 4096) throw new Error('每个参数不能超过 4096 个字符')
-    if (arg.includes('\0')) throw new Error('参数不能包含 NUL')
+    if (arg.length > 4096) throw new Error(connectorCopy.argLengthLimit)
+    if (arg.includes('\0')) throw new Error(connectorCopy.argNullInvalid)
   }
 
   const cwd = draft.cwd.trim()
-  if (cwd && !cwd.startsWith('/')) throw new Error('工作目录需使用绝对路径')
+  if (cwd && !cwd.startsWith('/')) throw new Error(connectorCopy.workingDirectoryInvalid)
 
   return {
     name,

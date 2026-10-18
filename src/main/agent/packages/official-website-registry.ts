@@ -147,7 +147,7 @@ async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<Loc
       expectedSkillCount: catalog.skillCount
     })
     const notice = built.notices.length
-      ? `官网目录有 ${built.notices.length} 项资源暂不可用：${built.notices.join('；')}`.slice(
+      ? `${built.notices.length} resources in the Phi Website catalog are unavailable: ${built.notices.join('; ')}`.slice(
           0,
           1900
         )
@@ -165,13 +165,13 @@ async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<Loc
       return {
         ...cached,
         status: 'cached',
-        notice: `官网更新暂不可用，正在使用已校验的官网内容缓存（${reason}）。${cached.notice ?? ''}`
+        notice: `The Phi Website update is unavailable. Using the verified website cache (${reason}). ${cached.notice ?? ''}`
       }
     } catch {
       const fallback = await syncOfficialRegistry(options)
       return {
         ...fallback,
-        notice: `官网内容暂不可用，已回退到签名发布目录（${reason}）。${fallback.notice ?? ''}`
+        notice: `The Phi Website content is unavailable. Using the signed release catalog (${reason}). ${fallback.notice ?? ''}`
       }
     }
   } finally {
@@ -190,7 +190,7 @@ function ready(registry: LocalRegistry, options: OfficialRegistryOptions): Local
 async function fetchWebsiteCatalog(options: OfficialRegistryOptions): Promise<WebsiteCatalog> {
   const timeoutMs = options.timeoutMs ?? 30_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000) {
-    throw new Error('官网目录请求超时配置无效')
+    throw new Error('Invalid Phi Website catalog request timeout')
   }
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -206,16 +206,17 @@ async function fetchWebsiteCatalog(options: OfficialRegistryOptions): Promise<We
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
           controller.abort()
-          reject(new Error('官网目录请求超时'))
+          reject(new Error('Phi Website catalog request timed out'))
         }, timeoutMs)
       })
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
   }
-  if (!response.ok) throw new Error(`官网目录请求失败（HTTP ${response.status}）`)
-  if (response.url && response.url !== WEBSITE_CATALOG_URL) throw new Error('官网目录响应来源无效')
-  const bytes = await readBoundedResponse(response, 256 * 1024, '官网目录', timeoutMs)
+  if (!response.ok) throw new Error(`Phi Website catalog request failed (HTTP ${response.status})`)
+  if (response.url && response.url !== WEBSITE_CATALOG_URL)
+    throw new Error('Invalid Phi Website catalog response origin')
+  const bytes = await readBoundedResponse(response, 256 * 1024, 'Phi Website catalog', timeoutMs)
   const value: unknown = JSON.parse(bytes.toString('utf8'))
   if (
     !isRecord(value) ||
@@ -228,7 +229,7 @@ async function fetchWebsiteCatalog(options: OfficialRegistryOptions): Promise<We
     (value.counts.skills as number) < 1 ||
     (value.counts.skills as number) > 500
   ) {
-    throw new Error('官网目录提交或技能数量无效')
+    throw new Error('Invalid Phi Website catalog commit or Skill count')
   }
   return {
     commit: value.commit.toLowerCase(),

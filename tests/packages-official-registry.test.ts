@@ -298,7 +298,7 @@ test('offline catalog reads share a failed refresh window without marking cache 
   for (const cached of [offline, second]) {
     assert.equal(cached.dir, first.dir)
     assert.equal(cached.status, 'cached')
-    assert.match(cached.notice ?? '', /离线/)
+    assert.match(cached.notice ?? '', /Offline/)
   }
   await syncOfficialRegistry({ ...options, forceRefresh: true })
   assert.equal(requests, 4, 'explicit refresh bypasses the failed-attempt window')

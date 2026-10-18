@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { pluginCopy } from '../lib/pluginCopy'
 import { useMemo, useState } from 'react'
 import { Box, CircularProgress, IconButton, List, Stack, Typography } from '@mui/material'
 
@@ -36,6 +39,8 @@ export function PhiPluginSidebar({
   onOpenCatalog,
   catalogOpen = false
 }: PhiPluginSidebarProps): React.JSX.Element {
+  useUiLanguage()
+
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filteredPlugins = useMemo(() => filterPhiPlugins(plugins, query), [plugins, query])
@@ -58,12 +63,12 @@ export function PhiPluginSidebar({
 
   return (
     <CatalogSidebar
-      title="插件"
+      title={resourceUi.plugins}
       resource="plugins"
       query={query}
       onQueryChange={setQuery}
-      searchPlaceholder="搜索插件"
-      summary={`${plugins.length} 个已安装`}
+      searchPlaceholder={pluginCopy.searchPlugins}
+      summary={pluginCopy.installedCount(plugins.length)}
       action={<DiscoverButton expanded={catalogOpen} onClick={onOpenCatalog} />}
     >
       <List disablePadding sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 1 }}>
@@ -71,7 +76,7 @@ export function PhiPluginSidebar({
           <Stack spacing={1.25} sx={{ alignItems: 'center', py: 5 }}>
             <CircularProgress size={22} />
             <Typography variant="body2" color="text.secondary">
-              正在读取插件
+              {pluginCopy.readingPlugins}
             </Typography>
           </Stack>
         ) : groups.length > 0 ? (
@@ -148,10 +153,10 @@ export function PhiPluginSidebar({
           <Stack spacing={1.25} sx={{ alignItems: 'center', textAlign: 'center', px: 2, py: 5 }}>
             <PhiIcons.entity.plugin color="disabled" />
             <Typography variant="body2" color="text.secondary">
-              {normalizedQuery ? '没有匹配的插件' : '尚未安装插件'}
+              {normalizedQuery ? pluginCopy.noMatches : pluginCopy.noneInstalled}
             </Typography>
             {!normalizedQuery ? (
-              <IconButton aria-label="添加插件" color="primary" onClick={onOpenCatalog}>
+              <IconButton aria-label={pluginCopy.addPlugin} color="primary" onClick={onOpenCatalog}>
                 <PhiIcons.action.add size={20} />
               </IconButton>
             ) : null}

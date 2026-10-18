@@ -1,3 +1,6 @@
+import { getUiLocale } from '../../../lib/i18n'
+import { resourceCategorySearchTerms } from '../../../lib/resourceUi'
+import { connectorSignInSearchTerms } from './connectorCopy'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 
 export type ConnectorSignInFilter = 'all' | '无需登录' | '需要登录' | '需要 API key'
@@ -27,13 +30,14 @@ export function filterFeaturedConnectors(
       connector.name,
       connector.description,
       connector.overview,
-      connector.category,
+      ...resourceCategorySearchTerms(connector.category),
+      ...connectorSignInSearchTerms(connector.signIn),
       connector.publisher
     ].some((value) => (value ?? '').toLowerCase().includes(query))
   })
 
   if (options.sort === 'name') {
-    return [...matched].sort((left, right) => left.name.localeCompare(right.name, 'zh'))
+    return [...matched].sort((left, right) => left.name.localeCompare(right.name, getUiLocale()))
   }
   if (options.sort === 'added') {
     return [...matched].sort(

@@ -1,3 +1,4 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import type { WorkspaceFileOperationTarget } from '../../../../../shared/workspaceFileOperations'
 import {
@@ -67,13 +68,13 @@ export function useWorkspaceFileActions({
         path === rootPath ||
         !fileTreePathInSubtree(path, rootPath)
       ) {
-        throw new Error('文件不属于当前工作空间，或工作空间已切换。')
+        throw new Error(filePreviewCopy.workspaceChanged)
       }
       if (path.startsWith('ssh://')) {
         return { kind: 'remote', ...remoteFileRequestForUri(path, getActiveRemoteProject()) }
       }
       if (getActiveRemoteProject() || getActiveCwd() !== rootPath) {
-        throw new Error('本地文件不属于当前工作空间。')
+        throw new Error(filePreviewCopy.localFileOutsideWorkspace)
       }
       return { kind: 'local', rootPath, path }
     },
@@ -106,7 +107,7 @@ export function useWorkspaceFileActions({
       if (
         state.workspaceFileTabs.some((tab) => tab.dirty && fileTreePathInSubtree(tab.path, path))
       ) {
-        onNotice?.('文件操作已完成；操作期间产生的未保存修改仍保留在标签页中，请另存以保留修改。')
+        onNotice?.(filePreviewCopy.mutationDraftPreserved)
       }
       // Successful mutations invalidate parents' listings as well as descendant previews.
       for (const cachedPath of Object.keys(state.filePreviewCache)) {

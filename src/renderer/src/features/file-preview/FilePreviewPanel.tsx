@@ -1,3 +1,5 @@
+import { filePreviewCopy } from './lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import type { FileTreeActions } from './lib/fileTreeActions'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -73,9 +75,11 @@ type FilePreviewPanelProps = {
 }
 
 function fileManagerLabel(): string {
-  if (typeof window !== 'undefined' && window.platform === 'darwin') return 'Finder 中显示'
-  if (typeof window !== 'undefined' && window.platform === 'win32') return '资源管理器中显示'
-  return '文件管理器中显示'
+  if (typeof window !== 'undefined' && window.platform === 'darwin')
+    return filePreviewCopy.showFinder
+  if (typeof window !== 'undefined' && window.platform === 'win32')
+    return filePreviewCopy.showExplorer
+  return filePreviewCopy.showFileManager
 }
 
 export function FilePreviewTitleTab({
@@ -89,11 +93,13 @@ export function FilePreviewTitleTab({
   titlebarInsetStart?: number | string
   titlebarInsetEnd?: number | string
 }): React.JSX.Element {
+  useUiLanguage()
   const title = previewTitle(state)
   const path = previewFullPath(state)
   const previewIcon = previewIconForState(state)
   const PreviewFileIcon = previewIcon.Icon
-  const ariaLabel = previewIcon.kind === 'directory' ? '当前目录' : '当前文件'
+  const ariaLabel =
+    previewIcon.kind === 'directory' ? filePreviewCopy.currentFolder : filePreviewCopy.currentFile
 
   return (
     <Box
@@ -112,7 +118,7 @@ export function FilePreviewTitleTab({
       <Box
         role="tab"
         aria-selected="true"
-        aria-label={`${ariaLabel}：${title}`}
+        aria-label={`${ariaLabel}: ${title}`}
         data-phi-file-kind={previewIcon.kind}
         sx={{
           height: 32,
@@ -147,7 +153,7 @@ export function FilePreviewTitleTab({
         </Tooltip>
         <IconButton
           size="small"
-          aria-label="关闭文件预览"
+          aria-label={filePreviewCopy.closeFilePreview}
           onClick={onClose}
           sx={{ ml: 0.25, p: 0.35, flexShrink: 0 }}
         >
@@ -167,6 +173,7 @@ function FilePathBreadcrumb({
   displayPath: string
   fullPath: string
 }): React.JSX.Element {
+  useUiLanguage()
   const rawSegments = displayPath.split('/').filter(Boolean)
   const segments = rawSegments[0] === rootLabel ? rawSegments.slice(1) : rawSegments
   const items = [rootLabel, ...segments]
@@ -174,7 +181,7 @@ function FilePathBreadcrumb({
 
   return (
     <Box
-      aria-label={`文件路径：${items.join(' / ')}`}
+      aria-label={filePreviewCopy.filePath(items.join(' / '))}
       sx={{
         flex: 1,
         minWidth: 0,
@@ -238,6 +245,7 @@ function FilePreviewActions({
   onDownloadFile?: (path: string) => void
   showDownloadAction?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const isRemote = path.startsWith('ssh://')
   const revealLabel = fileManagerLabel()
   const [defaultAppIcon, setDefaultAppIcon] = useState<{ path: string; src: string | null } | null>(
@@ -275,10 +283,10 @@ function FilePreviewActions({
   if (isRemote) {
     return (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}>
-        <Tooltip title="复制远程路径" enterDelay={400}>
+        <Tooltip title={filePreviewCopy.copyRemotePath} enterDelay={400}>
           <IconButton
             size="small"
-            aria-label="复制远程路径"
+            aria-label={filePreviewCopy.copyRemotePath}
             onClick={() => {
               void navigator.clipboard.writeText(path).catch((error) => {
                 console.error('Failed to copy remote path:', error)
@@ -288,27 +296,31 @@ function FilePreviewActions({
             <PhiIcons.action.copy sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="在文件面板打开" enterDelay={400}>
+        <Tooltip title={filePreviewCopy.openFilePanel} enterDelay={400}>
           <IconButton
             size="small"
-            aria-label="在文件面板打开"
+            aria-label={filePreviewCopy.openFilePanel}
             onClick={() => onOpenDefaultPath(path, pathKind)}
           >
             <DefaultOpenIcon sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
-        <Tooltip title="在项目文件中定位" enterDelay={400}>
+        <Tooltip title={filePreviewCopy.locateProjectFile} enterDelay={400}>
           <IconButton
             size="small"
-            aria-label="在项目文件中定位"
+            aria-label={filePreviewCopy.locateProjectFile}
             onClick={() => onRevealPath(path, pathKind)}
           >
             <FolderIcon sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
         {showDownloadAction && onDownloadFile ? (
-          <Tooltip title="下载到本机" enterDelay={400}>
-            <IconButton size="small" aria-label="下载远程文件" onClick={() => onDownloadFile(path)}>
+          <Tooltip title={filePreviewCopy.downloadToComputer} enterDelay={400}>
+            <IconButton
+              size="small"
+              aria-label={filePreviewCopy.downloadRemoteFile}
+              onClick={() => onDownloadFile(path)}
+            >
               <PhiIcons.action.download sx={{ fontSize: 17 }} />
             </IconButton>
           </Tooltip>
@@ -319,10 +331,10 @@ function FilePreviewActions({
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35, flexShrink: 0 }}>
-      <Tooltip title="默认应用打开" enterDelay={400}>
+      <Tooltip title={filePreviewCopy.openDefaultApp} enterDelay={400}>
         <IconButton
           size="small"
-          aria-label="默认应用打开"
+          aria-label={filePreviewCopy.openDefaultApp}
           data-phi-file-open-default-button="true"
           onClick={() => onOpenDefaultPath(path, pathKind)}
           sx={{
@@ -392,6 +404,7 @@ export default function FilePreviewPanel({
   downloadState,
   onCancelDownload
 }: FilePreviewPanelProps): React.JSX.Element {
+  useUiLanguage()
   const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null)
   const path = previewFullPath(state)
   const displayPath = previewDisplayPath(state)
@@ -404,7 +417,7 @@ export default function FilePreviewPanel({
     <FilePreviewActionsContext.Provider value={{ target: actionHost, inHeader: true }}>
       <Box
         component="aside"
-        aria-label="文件预览"
+        aria-label={filePreviewCopy.filePreview}
         data-phi-file-kind={previewIcon.kind}
         data-phi-file-preview-layout={layout}
         sx={{

@@ -1,3 +1,4 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
 import type { NotebookCellJumpTarget, NotebookToolSummary, ToolCallItem } from '../../types'
 
 export function notebookTargetLabel(notebook: NotebookToolSummary): string {
@@ -15,21 +16,21 @@ export function notebookVerb(kind: string, status: ToolCallItem['status']): stri
   const done = status !== 'running'
   switch (kind) {
     case 'notebook_list':
-      return done ? '已列出 Notebook' : '列出 Notebook'
+      return done ? chatCopy.notebooksListed : chatCopy.listNotebooks
     case 'notebook_document':
-      return done ? '已读取 Notebook' : '读取 Notebook'
+      return done ? chatCopy.notebookRead : chatCopy.readNotebook
     case 'notebook_cell_inserted':
-      return done ? '已插入 Cell' : '插入 Cell'
+      return done ? chatCopy.cellInserted : chatCopy.insertCell
     case 'notebook_cell_updated':
-      return done ? '已更新 Cell' : '更新 Cell'
+      return done ? chatCopy.cellUpdated : chatCopy.updateCell
     case 'notebook_cell_deleted':
-      return done ? '已删除 Cell' : '删除 Cell'
+      return done ? chatCopy.cellDeleted : chatCopy.deleteCell
     case 'notebook_cell_executed':
-      return done ? '已运行 Cell' : '运行 Cell'
+      return done ? chatCopy.cellExecuted : chatCopy.runCell
     case 'notebook_saved':
-      return done ? '已保存 Notebook' : '保存 Notebook'
+      return done ? chatCopy.notebookSaved : chatCopy.saveNotebook
     default:
-      return done ? '已操作 Notebook' : '操作 Notebook'
+      return done ? chatCopy.notebookOperationCompleted : chatCopy.notebookOperation
   }
 }
 

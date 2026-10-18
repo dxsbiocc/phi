@@ -22,12 +22,18 @@ const view = readFileSync('src/renderer/src/features/mcp/McpView.tsx', 'utf8')
 const sidebar = readFileSync('src/renderer/src/AppWorkspaceSidebar.tsx', 'utf8')
 const app = readFileSync('src/renderer/src/App.tsx', 'utf8')
 
+const groupNavigation = readFileSync(
+  'src/renderer/src/features/mcp/components/McpConnectorGroupNavigation.tsx',
+  'utf8'
+)
+
 test('catalog dialog appends a counted 自建 group with custom-only search and detail rendering', () => {
   assert.match(dialog, /type CatalogGroup = [^\n]*\| typeof CUSTOM_CONNECTOR_GROUP/)
   assert.match(customHook, /customConnectorEntries\(servers, jobs\)/)
-  assert.match(dialog, /CUSTOM_CONNECTOR_GROUP[\s\S]*?customEntries\.length/)
+  assert.match(dialog, /McpConnectorGroupNavigation[\s\S]*?customCount=\{customEntries\.length\}/)
   assert.ok(
-    dialog.indexOf('{mcpConnectorCategories') < dialog.indexOf('key={CUSTOM_CONNECTOR_GROUP}'),
+    groupNavigation.indexOf('{mcpConnectorCategories') <
+      groupNavigation.indexOf('key={CUSTOM_CONNECTOR_GROUP}'),
     'the custom group should render after catalog categories'
   )
   assert.match(dialog, /group === CUSTOM_CONNECTOR_GROUP \? \([\s\S]*?McpCustomConnectorGroup/)

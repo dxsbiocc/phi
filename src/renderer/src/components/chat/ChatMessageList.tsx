@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, IconButton } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
 import {
@@ -176,6 +178,7 @@ function ChatVirtualRowShell({
   onMeasure: (groupKey: string, element: HTMLDivElement | null) => void
   children: ReactNode
 }): ReactNode {
+  useUiLanguage()
   const onRowRef = useCallback(
     (element: HTMLDivElement | null) => onMeasure(groupKey, element),
     [groupKey, onMeasure]
@@ -231,6 +234,7 @@ const ChatMessageList = memo(function ChatMessageList({
   onJumpToNotebookCell,
   cwd = ''
 }: ChatMessageListProps): React.JSX.Element {
+  useUiLanguage()
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
   const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   // Mirrors stickToBottomRef for the one place (the virtualCells memo below)
@@ -812,7 +816,7 @@ const ChatMessageList = memo(function ChatMessageList({
       <TodoStepPanel snapshot={todoSnapshot} />
       {showJumpToLatest ? (
         <IconButton
-          aria-label="回到最新消息"
+          aria-label={chatCopy.goToLatestMessage}
           onClick={handleJumpToLatest}
           sx={{
             position: 'absolute',

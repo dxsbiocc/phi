@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -143,3 +145,6 @@ test('download buttons appear on remote files without adding actions to folders 
   assert.equal((markup.match(/aria-label="下载 counts.tsv"/g) ?? []).length, 1)
   assert.doesNotMatch(markup, /aria-label="下载 folder"/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

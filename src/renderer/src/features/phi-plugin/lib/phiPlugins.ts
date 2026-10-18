@@ -1,7 +1,8 @@
+import { resourceUi } from '../../../lib/resourceUi'
+import { pluginCopy } from './pluginCopy'
 import semver from 'semver'
 
 import type { ManagedEnvironmentState } from '../../../../../shared/environmentTypes'
-import { localizePhiPluginProblemMessage } from '../../../../../shared/phiPluginProblems'
 import type { PhiPluginProblemView } from '../../../../../shared/phiPluginTypes'
 
 type PluginComponentCollection = {
@@ -10,6 +11,13 @@ type PluginComponentCollection = {
   scriptTools?: readonly string[]
   environments?: readonly unknown[]
   usedEnvironments?: readonly unknown[]
+}
+
+/** Keep the official plugin's English name when older packages carry its legacy title. */
+export function phiPluginDisplayTitle(plugin: { id: string; title: string }): string {
+  return plugin.id === 'visualization' && plugin.title.trim() === '科研绘图'
+    ? 'Visualization'
+    : plugin.title
 }
 
 export type PhiPluginSourceCategory = 'bundled' | 'registry' | 'local'
@@ -21,21 +29,22 @@ export const phiPluginSourceCategoryOrder: readonly PhiPluginSourceCategory[] = 
 ]
 
 export const phiPluginSourceCategoryLabels: Record<PhiPluginSourceCategory, string> = {
-  bundled: '内置',
-  registry: '软件源',
-  local: '本地目录'
+  get bundled() {
+    return resourceUi.builtIn
+  },
+  get registry() {
+    return pluginCopy.registrySource
+  },
+  get local() {
+    return resourceUi.localDirectory
+  }
 }
 
-const ENVIRONMENT_STATE_LABELS: Record<ManagedEnvironmentState, string> = {
-  absent: '未构建',
-  building: '构建中',
-  ready: '已构建',
-  failed: '构建失败',
-  drifted: '需要修复'
-}
+const ENVIRONMENT_STATE_LABELS: Record<ManagedEnvironmentState, string> =
+  pluginCopy.environmentStates
 
 export function phiPluginSourceLabel(source: 'bundled' | 'local'): string {
-  return source === 'bundled' ? '内置' : '本地'
+  return source === 'bundled' ? resourceUi.builtIn : pluginCopy.localSource
 }
 
 export function phiPluginDistributionLabel(distribution: PhiPluginSourceCategory): string {
@@ -43,7 +52,7 @@ export function phiPluginDistributionLabel(distribution: PhiPluginSourceCategory
 }
 
 export function phiPluginEnabledLabel(enabled: boolean): string {
-  return enabled ? '已启用' : '已停用'
+  return enabled ? resourceUi.enabled : resourceUi.disabled
 }
 
 export function phiPluginEnvironmentStateLabel(state: ManagedEnvironmentState): string {
@@ -52,13 +61,18 @@ export function phiPluginEnvironmentStateLabel(state: ManagedEnvironmentState): 
 
 export function phiPluginComponentSummary(plugin: PluginComponentCollection): string {
   const parts = [
-    [plugin.agents?.length ?? 0, '个智能体'],
-    [plugin.skills?.length ?? 0, '个技能'],
-    [plugin.scriptTools?.length ?? 0, '个脚本工具'],
-    [plugin.usedEnvironments?.length ?? plugin.environments?.length ?? 0, '个环境']
+    [plugin.agents?.length ?? 0, pluginCopy.summaryComponents.agent],
+    [plugin.skills?.length ?? 0, pluginCopy.summaryComponents.skill],
+    [plugin.scriptTools?.length ?? 0, pluginCopy.summaryComponents.script],
+    [
+      plugin.usedEnvironments?.length ?? plugin.environments?.length ?? 0,
+      pluginCopy.summaryComponents.environment
+    ]
   ] as const
-  const visible = parts.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`)
-  return visible.length > 0 ? visible.join(' · ') : '未声明可显示的组件'
+  const visible = parts
+    .filter(([count]) => count > 0)
+    .map(([count, label]) => pluginCopy.componentCount(count, label))
+  return visible.length > 0 ? visible.join(' · ') : pluginCopy.noComponents
 }
 
 export function phiPluginComponentName(path: string): string {
@@ -77,16 +91,14 @@ export function isSemanticUpgrade(
 
 export function formatPhiPluginProblems(
   problems: readonly PhiPluginProblemView[],
-  fallback = '操作失败，请重试。'
+  fallback: string = pluginCopy.operationFailed
 ): string {
   if (problems.length === 0) return fallback
   return problems
     .map((problem) => {
-      const provided = problem.displayMessage?.trim()
-      if (provided) return provided
-      const label = problem.level === 'error' ? '错误' : '警告'
-      const location = problem.path.trim() ? `（${problem.path}）` : ''
-      return `${label}${location}：${localizePhiPluginProblemMessage(problem.message)}`
+      const label = pluginCopy.problemLabels[problem.level]
+      const location = problem.path.trim() ? ` (${problem.path})` : ''
+      return `${label}${location}: ${problem.message.trim() || pluginCopy.operationFailed}`
     })
     .join('\n')
 }

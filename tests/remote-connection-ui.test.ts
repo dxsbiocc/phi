@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -35,6 +36,8 @@ function markup(
     )
   )
 }
+
+setUiLanguage('zh-CN')
 
 test('remote connection notice gives recovery guidance without hiding saved work', () => {
   assert.match(markup('offline'), /cluster · 连接状态消息/)

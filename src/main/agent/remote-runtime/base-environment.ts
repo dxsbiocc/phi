@@ -9,12 +9,12 @@ export async function resolveRemoteBaseEnvironment(
   const parsed = parseEnvironmentRef(ref)
   if (parsed.kind === 'project') {
     throw new Error(
-      '远程 env_request 无法安全读取本机项目级环境声明；请改用 phi: 基础环境，或先在可联网机器构建并迁移。没有回退到本机项目目录。'
+      'Remote env_request cannot safely read local project environment declarations. Use a phi: base environment, or build on a machine with network access and transfer it. No fallback to the local project directory was used.'
     )
   }
   if (parsed.kind === 'plugin' && !pluginId) {
     throw new Error(
-      '远程主会话不能推断 plugin: 环境的所属插件；请在对应插件专家会话中调用 env_request，或改用 phi: 基础环境。没有回退到本机。'
+      'The remote main session cannot determine which plugin owns a plugin: environment. Call env_request in the corresponding plugin specialist session, or use a phi: base environment. No local fallback was used.'
     )
   }
   const descriptor = describeEnvironment(ref, {
@@ -22,11 +22,13 @@ export async function resolveRemoteBaseEnvironment(
     ...(pluginId ? { pluginId } : {})
   })
   if (descriptor.spec.dependencies.some((dependency) => typeof dependency !== 'string')) {
-    throw new Error('远程 env_request 暂不支持含 pip 依赖的基础环境；请先在可联网机器构建后迁移。')
+    throw new Error(
+      'Remote env_request does not yet support base environments with pip dependencies. Build on a machine with network access and transfer the environment.'
+    )
   }
   if (descriptor.spec.sourcePackages?.length) {
     throw new Error(
-      '远程 env_request 暂不支持需要额外源码包的基础环境；请先在可联网机器构建后迁移，且没有回退到本机。'
+      'Remote env_request does not yet support base environments requiring additional source packages. Build on a machine with network access and transfer the environment. No local fallback was used.'
     )
   }
   return {

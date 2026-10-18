@@ -90,7 +90,7 @@ function unsupportedResult(
   error: unknown,
   startedAt: number
 ): RemoteMicromambaResult {
-  const detail = error instanceof Error ? error.message : '不支持该远程平台'
+  const detail = error instanceof Error ? error.message : 'This remote platform is unsupported'
   return {
     status: 'unsupported',
     version: CURRENT_MICROMAMBA_VERSION,
@@ -98,7 +98,9 @@ function unsupportedResult(
     durationMs: Date.now() - startedAt,
     warningCodes: [],
     errorCode: 'unsupported-platform',
-    message: detail.startsWith('不支持') ? detail : '不支持该远程平台。'
+    message: /^(?:Unsupported|不支持)/u.test(detail)
+      ? detail
+      : 'This remote platform is unsupported.'
   }
 }
 
@@ -115,8 +117,8 @@ function failedResult(
     warningCodes: [],
     errorCode: aborted ? 'aborted' : 'invalid-artifact',
     message: aborted
-      ? 'micromamba 安装已取消。'
-      : 'micromamba 准备失败，请检查桌面网络、代理和缓存空间后重试。'
+      ? 'micromamba installation cancelled.'
+      : 'Unable to prepare micromamba. Check the desktop network, proxy, and cache space, then retry.'
   }
 }
 
@@ -145,13 +147,13 @@ async function obtainArtifact(
   getArtifact: NonNullable<RemoteMicromambaSettingsDependencies['getArtifact']>,
   stage: 'download' | 'desktop-relay' = 'download'
 ): Promise<RemoteMicromambaArtifact> {
-  request.onProgress?.({ stage, message: '正在准备本机中转的 micromamba 文件…' })
+  request.onProgress?.({ stage, message: 'Preparing the micromamba file for desktop relay…' })
   return getArtifact(platform, {
     signal: request.signal,
     onProgress: ({ downloadedBytes, totalBytes }) =>
       request.onProgress?.({
         stage,
-        message: '正在通过桌面端下载 micromamba 以进行本机中转…',
+        message: 'Downloading micromamba on the desktop for relay…',
         transferredBytes: downloadedBytes,
         totalBytes
       })
@@ -214,7 +216,7 @@ async function legacyInstallation(
   transfer: Readonly<{ hostKey: string; helperVersion?: string; agentDir: string }>
 ): Promise<RemoteMicromambaResult> {
   const artifact = await obtainArtifact(platform, request, dependencies.getArtifact!)
-  request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
+  request.onProgress?.({ stage: 'install', message: 'Checking and installing remote micromamba…' })
   return (dependencies.ensure ?? ensureRemoteMicromamba)(
     session,
     installationInput(request, artifact, undefined, checkRuntimeRoot, transfer)
@@ -243,7 +245,10 @@ async function runInstallation(
     }
     const artifact = describedArtifact(platform, request, dependencies)
     const getArtifact = dependencies.getArtifact ?? getRemoteMicromambaArtifact
-    request.onProgress?.({ stage: 'install', message: '正在检查并安装远程 micromamba…' })
+    request.onProgress?.({
+      stage: 'install',
+      message: 'Checking and installing remote micromamba…'
+    })
     return await (dependencies.ensure ?? ensureRemoteMicromamba)(
       session,
       installationInput(
@@ -255,7 +260,7 @@ async function runInstallation(
       )
     )
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('不支持')) {
+    if (error instanceof Error && /^(?:Unsupported|不支持)/u.test(error.message)) {
       return unsupportedResult(platform, error, startedAt)
     }
     return failedResult(platform, startedAt, request.signal?.aborted === true)
@@ -292,7 +297,7 @@ export async function installRemoteMicromambaForHost(
   const startedAt = Date.now()
   const agentDir = dependencies.agentDir ?? getPhiAgentDir()
   const profile = (dependencies.getHostProfile ?? getRemoteHostProfile)(hostProfileId, agentDir)
-  if (!profile) throw new Error('SSH 服务器档案不存在，请重新选择服务器')
+  if (!profile) throw new Error('SSH server profile not found. Select the server again.')
   const session = await (dependencies.connect ?? connectRemoteSshSession)({
     ...remoteConnectionConfigForProfile(profile),
     readyTimeoutMs: 15_000,
@@ -300,7 +305,7 @@ export async function installRemoteMicromambaForHost(
     userInitiated: true
   })
   try {
-    request.onProgress?.({ stage: 'probe', message: '正在检测服务器平台…' })
+    request.onProgress?.({ stage: 'probe', message: 'Detecting the server platform…' })
     const platform = await (dependencies.probePlatform ?? defaultProbePlatform)(session)
     const checkRuntimeRoot: CheckRemoteRuntimeRoot = (candidateSession, configuredRoot) =>
       cachedRemoteRuntimeRootCheck(

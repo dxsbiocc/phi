@@ -274,7 +274,7 @@ test('reports a settings action when micromamba is missing', async () => {
 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'micromamba-not-installed')
-  assert.match(result.message, /设置 → 远程主机.*安装 micromamba/u)
+  assert.match(result.message, /Install micromamba.*Settings → Remote Hosts/u)
 })
 
 test('reports an unreachable conda source when the local package cache is insufficient', async () => {
@@ -287,7 +287,10 @@ test('reports an unreachable conda source when the local package cache is insuff
 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'source-unreachable')
-  assert.match(result.message, /本地缓存不足.*配置可用镜像.*可联网机器预构建/u)
+  assert.match(
+    result.message,
+    /local cache is insufficient.*Configure an available mirror.*prebuild on a machine with network access/u
+  )
   const creates = readFakeMicromambaInvocations(remote).filter(({ argv }) => argv[0] === 'create')
   assert.equal(creates.length, 2)
   assert.equal(creates[0].argv.includes('--offline'), false)
@@ -303,7 +306,7 @@ test('retries with the isolated local package cache after a source failure', asy
   const result = await installManaged(remote, session)
 
   assert.equal(result.status, 'installed')
-  assert.match(result.message, /使用本地缓存/u)
+  assert.match(result.message, /using the local cache/u)
   const creates = readFakeMicromambaInvocations(remote).filter(({ argv }) => argv[0] === 'create')
   assert.equal(creates.length, 2)
   assert.equal(creates[0].argv.includes('--offline'), false)
@@ -329,8 +332,8 @@ test('diagnoses a silent micromamba failure as exhausted server quota', async ()
 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'installation-failed')
-  assert.match(result.message, /写入空间或文件数配额已用尽/u)
-  assert.match(result.message, /设置 → 远程主机/u)
+  assert.match(result.message, /Disk space or the file count quota is exhausted/u)
+  assert.match(result.message, /Settings → Remote Hosts/u)
 })
 
 test('selects the newest valid managed marker and ignores incomplete prefixes', async () => {
@@ -401,7 +404,7 @@ test('explains a timed-out runtime-root check as a slow server retry', async () 
 
   assert.equal(result.status, 'failed')
   assert.equal(result.errorCode, 'runtime-root-check-failed')
-  assert.match(result.message, /服务器响应慢.*稍后重试/u)
+  assert.match(result.message, /server is responding slowly.*Retry later/u)
 })
 
 test('reuses the completed root check when warning confirmation retries installation', async () => {

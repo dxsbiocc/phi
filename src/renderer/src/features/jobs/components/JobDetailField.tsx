@@ -1,7 +1,7 @@
 import { Box, Typography } from '@mui/material'
 import { workspacePanelText } from '../../../layout'
 
-const pathFieldLabels = new Set(['Notebook', '项目', '输出目录'])
+const pathFieldLabels = new Set(['Notebook', '项目', '输出目录', 'Project', 'Output directory'])
 
 export function JobDetailField({
   label,

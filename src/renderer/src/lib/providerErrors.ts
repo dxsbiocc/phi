@@ -1,3 +1,5 @@
+import { providerErrorCopy } from './providerErrorCopy'
+
 export type ProviderErrorAction = 'providerSettings' | null
 
 export interface ProviderErrorDisplay {
@@ -81,12 +83,12 @@ export function isProviderBillingError(message: string): boolean {
 }
 
 export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
-  const rawMessage = redactProviderErrorMessage(message.trim() || '请求失败')
+  const rawMessage = redactProviderErrorMessage(message.trim() || providerErrorCopy.requestFailed)
 
   if (rawMessage.startsWith('AI 没有生成可插入内容')) {
     return {
-      title: '没有可插入的 notebook cell',
-      description: '模型返回内容未能转换成 notebook cell。请查看原始返回片段后重试。',
+      title: providerErrorCopy.notebookEmptyTitle,
+      description: providerErrorCopy.notebookEmptyBody,
       rawMessage,
       showRawMessage: true,
       action: null
@@ -98,9 +100,8 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
     /["']?isRetryable["']?\s*[:=]\s*false/i.test(rawMessage)
   ) {
     return {
-      title: 'Cursor 用量上限已用尽',
-      description:
-        'Cursor 已达到当前账户的模型用量上限，并标记此次请求不可重试。请切换模型，或在 Cursor 账户中调整 Spend Limit。',
+      title: providerErrorCopy.cursorLimitTitle,
+      description: providerErrorCopy.cursorLimitBody,
       rawMessage,
       showRawMessage: false,
       action: null
@@ -109,8 +110,8 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
 
   if (isProviderBillingError(rawMessage)) {
     return {
-      title: '账户余额不足',
-      description: '检测到 API 账户余额不足或欠费。请到对应 Provider 控制台充值或检查账单后重试。',
+      title: providerErrorCopy.billingTitle,
+      description: providerErrorCopy.billingBody,
       rawMessage,
       showRawMessage: false,
       action: null
@@ -119,9 +120,8 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
 
   if (matchesAnyPattern(rawMessage, RATE_LIMIT_PATTERNS)) {
     return {
-      title: '请求太频繁',
-      description:
-        'Provider 当前触发了速率限制。请稍等片刻后重试，或切换到限额更高的模型/API 账户。',
+      title: providerErrorCopy.rateLimitTitle,
+      description: providerErrorCopy.rateLimitBody,
       rawMessage,
       showRawMessage: true,
       action: null
@@ -130,21 +130,19 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
 
   if (matchesAnyPattern(rawMessage, AUTHENTICATION_PATTERNS)) {
     return {
-      title: 'API Key 无效或认证失败',
-      description:
-        'Provider 返回认证失败。请重新配置对应 Provider 的 API Key，并确认使用的是该 Provider 的模型调用凭据。',
+      title: providerErrorCopy.authenticationTitle,
+      description: providerErrorCopy.authenticationBody,
       rawMessage,
       showRawMessage: true,
       action: 'providerSettings',
-      actionLabel: '去配置 Provider'
+      actionLabel: providerErrorCopy.configureProvider
     }
   }
 
   if (/Cursor run transport could not negotiate HTTP\/2|h2 is not supported/i.test(rawMessage)) {
     return {
-      title: 'Cursor HTTP/2 连接失败',
-      description:
-        'Cursor 登录状态可能正常，但模型运行通道未能建立 HTTP/2 连接。Phi 会使用本机桥接；若仍失败，请检查网络代理后重试。',
+      title: providerErrorCopy.cursorTransportTitle,
+      description: providerErrorCopy.cursorTransportBody,
       rawMessage,
       showRawMessage: false,
       action: null
@@ -153,18 +151,18 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
 
   if (matchesAnyPattern(rawMessage, CONFIGURATION_PATTERNS)) {
     return {
-      title: 'Provider 需要处理',
-      description: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 后重试。',
+      title: providerErrorCopy.configurationTitle,
+      description: providerErrorCopy.configurationBody,
       rawMessage,
       showRawMessage: true,
       action: 'providerSettings',
-      actionLabel: '去配置 Provider'
+      actionLabel: providerErrorCopy.configureProvider
     }
   }
 
   return {
-    title: '请求失败',
-    description: '模型请求没有完成，请根据原始错误信息处理后重试。',
+    title: providerErrorCopy.requestFailed,
+    description: providerErrorCopy.requestFailedBody,
     rawMessage,
     showRawMessage: true,
     action: null

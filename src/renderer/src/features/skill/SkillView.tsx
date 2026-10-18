@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../lib/i18n'
+import { skillCopy } from './lib/skillCopy'
+import { resourceUi } from '../../lib/resourceUi'
 import { Fragment, useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Typography } from '@mui/material'
 import type {
@@ -44,11 +47,13 @@ function ResizeSeparator({
 }: {
   onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整侧边栏宽度"
+      aria-label={skillCopy.resizeSidebar}
       onMouseDown={onMouseDown}
       sx={{
         width: '1px',
@@ -131,6 +136,8 @@ export default function SkillView({
   onInstallPackage,
   onRefresh
 }: SkillViewProps): React.JSX.Element {
+  useUiLanguage()
+
   const [catalogOpen, setCatalogOpen] = useState(false)
   const selectedSkill = skills.find((skill) => skill.id === activeSkillId) ?? null
 
@@ -156,7 +163,7 @@ export default function SkillView({
         onOpenCatalog={() => setCatalogOpen(true)}
       />
       <ResizeSeparator onMouseDown={onStartSidebarResize} />
-      <DetailPage title={selectedSkill?.name ?? '技能'}>
+      <DetailPage title={selectedSkill?.name ?? resourceUi.skill}>
         <SkillDetail
           selectedSkill={selectedSkill}
           busySkillId={busySkillId}

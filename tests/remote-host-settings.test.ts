@@ -12,12 +12,12 @@ test('remote settings manages SSH servers without showing local project bindings
     createElement(ThemeProvider, { theme: createTheme() }, createElement(RemoteHostSettingsSection))
   )
 
-  assert.match(markup, /SSH 服务器/)
-  assert.match(markup, /选择服务器后管理运行环境/)
-  assert.match(markup, /添加服务器/)
-  assert.doesNotMatch(markup, /为本地项目配置远程 Wrapper/)
-  assert.doesNotMatch(markup, /添加连接/)
-  assert.doesNotMatch(markup, /默认连接/)
+  assert.match(markup, /SSH server/)
+  assert.match(markup, /Select a server to manage its runtime environment/)
+  assert.match(markup, /Add server/)
+  assert.doesNotMatch(markup, /Configure remote Wrappers for local projects/)
+  assert.doesNotMatch(markup, /Add connection/)
+  assert.doesNotMatch(markup, /Default connection/)
 })
 
 test('a new OpenSSH host defaults to passwordless authentication', () => {
@@ -51,13 +51,13 @@ test('a new OpenSSH host defaults to passwordless authentication', () => {
     )
   )
 
-  assert.match(markup, /认证方式/)
-  assert.match(markup, /免密登录（推荐）/)
-  assert.match(markup, /使用现有 SSH 配置/)
+  assert.match(markup, /Authentication/)
+  assert.match(markup, /Key-based login \(recommended\)/)
+  assert.match(markup, /Use existing SSH configuration/)
   assert.match(markup, /checked=""[^>]*value="passwordless"|value="passwordless"[^>]*checked=""/)
-  assert.match(markup, /继续设置免密登录/)
-  assert.doesNotMatch(markup, /私钥路径/)
-  assert.doesNotMatch(markup, /用密码设置免密登录/)
+  assert.match(markup, /Continue key-based login setup/)
+  assert.doesNotMatch(markup, /Private key path/)
+  assert.doesNotMatch(markup, /Set up key-based login with a password/)
 })
 
 test('existing SSH authentication reveals the optional identity file', () => {
@@ -92,7 +92,7 @@ test('existing SSH authentication reveals the optional identity file', () => {
     )
   )
 
-  assert.match(markup, /私钥路径（可选）/)
-  assert.match(markup, />添加服务器</)
-  assert.doesNotMatch(markup, /继续设置免密登录/)
+  assert.match(markup, /Private key path \(optional\)/)
+  assert.match(markup, />Add server</)
+  assert.doesNotMatch(markup, /Continue key-based login setup/)
 })

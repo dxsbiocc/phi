@@ -112,7 +112,7 @@ export async function listLocalMcpRuntimes(
   try {
     const bun = resolvedBunExecutable(options)
     if (isAbsolute(bun)) {
-      runtimes.push({ ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' })
+      runtimes.push({ ref: 'bun', label: 'Phi bundled Bun', kind: 'bun' })
     }
   } catch {
     // A missing bundled runtime hides only the Bun option; managed environments remain usable.
@@ -131,7 +131,7 @@ export function removeLocalMcpConnector(
   const servers = config.mcpServers ?? {}
   const existing = servers[validatedName]
   if (!isRecord(existing) || existing.phiOrigin !== 'user-stdio') {
-    throw new Error('只能移除通过本地 stdio 添加的连接器')
+    throw new Error('Only Connectors added as local stdio can be removed')
   }
   const remaining = Object.fromEntries(
     Object.entries(servers).filter(([entryName]) => entryName !== validatedName)
@@ -187,7 +187,7 @@ async function addLocalMcpConnectorUnlocked(
     })
   } catch (error) {
     if (error instanceof EnvironmentNotReadyError) {
-      throw new Error('运行环境尚未就绪，请先在环境页构建')
+      throw new Error('The runtime is not ready. Build it in Environments first.')
     }
     throw error
   }
@@ -202,7 +202,7 @@ async function addLocalMcpConnectorUnlocked(
   const config = fileSystem.readConfig(agentDir)
   const servers = config.mcpServers ?? {}
   if (servers[request.name] !== undefined) {
-    throw new Error(`已有名为 ${request.name} 的 MCP 配置`)
+    throw new Error(`MCP configuration ${request.name} already exists`)
   }
   fileSystem.writeConfig(
     {
@@ -266,7 +266,8 @@ export function buildLocalStdioEntry(
   const phiUser = { runtime: { ...request.runtime }, env: { ...request.env } }
   if (request.runtime.kind === 'host' || request.runtime.kind === 'bun') {
     const overridden = Object.keys(request.env).find((name) => HOST_CONTRACT_NAMES.has(name))
-    if (overridden) throw new Error(`本地 stdio 环境变量不能覆盖 ${overridden}`)
+    if (overridden)
+      throw new Error(`Local stdio environment variables cannot override ${overridden}`)
     const baseEnv = lookup.baseEnv ?? process.env
     let command = request.command
     let path = validHostValue(baseEnv.PATH) ? baseEnv.PATH : SYSTEM_PATH
@@ -323,7 +324,7 @@ function resolvedBunExecutable(
     if (!isAbsolute(bun)) throw new Error('Bun path must be absolute')
     return bun
   } catch {
-    throw new Error('找不到内置 Bun')
+    throw new Error('Bundled Bun was not found')
   }
 }
 
@@ -366,7 +367,7 @@ export function validateLocalConnectorRequest(
   raw: unknown,
   options: LocalConnectorValidationOptions = {}
 ): LocalMcpConnectorRequest {
-  if (!isRecord(raw)) throw new Error('本地连接器设置无效')
+  if (!isRecord(raw)) throw new Error('Invalid local Connector settings')
   rejectUnknownKeys(raw, new Set(['name', 'runtime', 'command', 'args', 'env', 'cwd', 'hint']))
   const name = validateName(raw.name as string)
   const agentDir = options.agentDir ?? getPhiAgentDir()
@@ -375,11 +376,11 @@ export function validateLocalConnectorRequest(
     [...API_KEY_CONNECTOR_IDS, ...catalogIds].map((id) => id.toLocaleLowerCase())
   )
   if (reservedIds.has(name.toLocaleLowerCase())) {
-    throw new Error(`连接器名称 ${name} 与连接器目录冲突`)
+    throw new Error(`Connector name ${name} conflicts with the Connector catalog`)
   }
   const fileSystem = options.fileSystem ?? localConnectorFileSystem
   const servers = fileSystem.readConfig(agentDir).mcpServers ?? {}
-  if (servers[name] !== undefined) throw new Error(`已有名为 ${name} 的 MCP 配置`)
+  if (servers[name] !== undefined) throw new Error(`MCP configuration ${name} already exists`)
   const runtime = validateRuntime(raw.runtime)
   const command = validateCommand(raw.command, runtime, fileSystem)
   const args = validateArgs(raw.args)
@@ -391,13 +392,13 @@ export function validateLocalConnectorRequest(
 
 function validateHint(value: unknown): LocalMcpConnectorRequest['hint'] | undefined {
   if (value === undefined) return undefined
-  if (!isRecord(value)) throw new Error('设置提示必须是对象')
+  if (!isRecord(value)) throw new Error('Setup hints must be an object')
   rejectUnknownKeys(value, new Set(['readmeUrl', 'setupCommands']))
 
   let readmeUrl: string | undefined
   if (value.readmeUrl !== undefined) {
     if (typeof value.readmeUrl !== 'string' || value.readmeUrl.length > 500) {
-      throw new Error('README 提示链接无效')
+      throw new Error('Invalid README hint URL')
     }
     try {
       const url = new URL(value.readmeUrl)
@@ -412,7 +413,7 @@ function validateHint(value: unknown): LocalMcpConnectorRequest['hint'] | undefi
         throw new Error('invalid URL')
       }
     } catch {
-      throw new Error('README 提示链接必须是无凭据的 GitHub HTTPS 链接')
+      throw new Error('README hint URLs must use GitHub HTTPS without credentials')
     }
     readmeUrl = value.readmeUrl
   }
@@ -420,7 +421,7 @@ function validateHint(value: unknown): LocalMcpConnectorRequest['hint'] | undefi
   let setupCommands: string[] | undefined
   if (value.setupCommands !== undefined) {
     if (!Array.isArray(value.setupCommands) || value.setupCommands.length > 3) {
-      throw new Error('设置提示命令不能超过 3 条')
+      throw new Error('Use at most 3 setup hint commands')
     }
     if (
       !value.setupCommands.every(
@@ -431,7 +432,7 @@ function validateHint(value: unknown): LocalMcpConnectorRequest['hint'] | undefi
           !/[\0\r\n]/u.test(command)
       )
     ) {
-      throw new Error('设置提示命令必须是长度不超过 200 的单行字符串')
+      throw new Error('Setup hint commands must be single-line strings of at most 200 characters')
     }
     setupCommands = [...value.setupCommands]
   }
@@ -447,7 +448,7 @@ function validateRuntime(value: unknown): LocalMcpRuntime {
     !isRecord(value) ||
     (value.kind !== 'environment' && value.kind !== 'host' && value.kind !== 'bun')
   ) {
-    throw new Error('运行位置无效')
+    throw new Error('Invalid runtime location')
   }
   if (value.kind === 'host' || value.kind === 'bun') {
     rejectUnknownKeys(value, new Set(['kind']))
@@ -455,7 +456,7 @@ function validateRuntime(value: unknown): LocalMcpRuntime {
   }
   rejectUnknownKeys(value, new Set(['kind', 'ref']))
   if (typeof value.ref !== 'string' || !ENVIRONMENT_REF.test(value.ref)) {
-    throw new Error('Phi 运行环境引用无效')
+    throw new Error('Invalid Phi runtime reference')
   }
   return { kind: 'environment', ref: value.ref }
 }
@@ -466,20 +467,21 @@ function validateCommand(
   fileSystem: LocalConnectorFileSystem
 ): string {
   if (typeof value !== 'string' || !value.trim() || /[\0\r\n]/u.test(value)) {
-    throw new Error('命令不能为空，且不能包含换行或空字符')
+    throw new Error('Commands must not be empty or contain newlines or NUL')
   }
   const command = value.trim()
   if (runtime.kind === 'bun') {
     if (command !== 'x' && command !== 'run') {
-      throw new Error('Phi 内置 Bun 命令只能是 x 或 run')
+      throw new Error('Phi bundled Bun commands must be x or run')
     }
     return command
   }
   if (runtime.kind === 'environment') {
-    if (!ENVIRONMENT_COMMAND.test(command)) throw new Error('环境命令必须是不含路径的命令名')
+    if (!ENVIRONMENT_COMMAND.test(command))
+      throw new Error('Environment commands must be command names without a path')
     return command
   }
-  if (!isAbsolute(command)) throw new Error('本机命令必须使用绝对路径')
+  if (!isAbsolute(command)) throw new Error('Host commands must use an absolute path')
   try {
     // Validate the target, but launch the path the user gave: venv interpreters and similar
     // symlinks locate their environment from argv[0], so resolving them would break the server.
@@ -487,14 +489,16 @@ function validateCommand(
     if (!fileSystem.stat(resolved).isFile()) throw new Error('not a file')
     fileSystem.access(resolved, constants.X_OK)
   } catch {
-    throw new Error('本机命令不存在、不是可执行文件或符号链接无效')
+    throw new Error(
+      'The host command does not exist, is not executable, or has an invalid symbolic link'
+    )
   }
   return command
 }
 
 function validateArgs(value: unknown): string[] {
   if (!Array.isArray(value) || value.length > MAX_ARGUMENTS) {
-    throw new Error(`参数必须是字符串数组，且不能超过 ${MAX_ARGUMENTS} 个`)
+    throw new Error(`Arguments must be a string array with at most ${MAX_ARGUMENTS} items`)
   }
   if (
     !value.every(
@@ -504,21 +508,24 @@ function validateArgs(value: unknown): string[] {
         !argument.includes('\0')
     )
   ) {
-    throw new Error(`每个参数必须是不超过 ${MAX_VALUE_LENGTH} 个字符且不含空字符的字符串`)
+    throw new Error(
+      `Each argument must be a string of at most ${MAX_VALUE_LENGTH} characters without NUL`
+    )
   }
   return [...value]
 }
 
 function validateEnv(value: unknown): Record<string, string> {
-  if (!isRecord(value)) throw new Error('环境变量必须是对象')
+  if (!isRecord(value)) throw new Error('Environment variables must be an object')
   const entries = Object.entries(value)
-  if (entries.length > 32) throw new Error('环境变量不能超过 32 个')
+  if (entries.length > 32) throw new Error('Use at most 32 environment variables')
   const env: Record<string, string> = {}
   for (const [name, entry] of entries) {
-    if (!ENVIRONMENT_NAME.test(name)) throw new Error(`环境变量名称无效: ${name}`)
-    if (reservedEnvironmentName(name)) throw new Error(`不能设置保留的环境变量: ${name}`)
+    if (!ENVIRONMENT_NAME.test(name)) throw new Error(`Invalid environment variable name: ${name}`)
+    if (reservedEnvironmentName(name))
+      throw new Error(`Cannot set reserved environment variable: ${name}`)
     if (typeof entry !== 'string' || entry.length > MAX_VALUE_LENGTH || /[\0\r\n]/u.test(entry)) {
-      throw new Error(`环境变量 ${name} 的值无效`)
+      throw new Error(`Invalid value for environment variable ${name}`)
     }
     env[name] = entry
   }
@@ -527,11 +534,12 @@ function validateEnv(value: unknown): Record<string, string> {
 
 function validateCwd(value: unknown, fileSystem: LocalConnectorFileSystem): string | undefined {
   if (value === undefined || value === '') return undefined
-  if (typeof value !== 'string' || !isAbsolute(value)) throw new Error('工作目录必须是绝对路径')
+  if (typeof value !== 'string' || !isAbsolute(value))
+    throw new Error('Working directory must use an absolute path')
   try {
     if (!fileSystem.stat(value).isDirectory()) throw new Error('not a directory')
   } catch {
-    throw new Error('工作目录不存在或不是目录')
+    throw new Error('Working directory does not exist or is not a directory')
   }
   return value
 }
@@ -560,7 +568,8 @@ function reservedEnvironmentName(name: string): boolean {
 }
 
 function rejectUnknownKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): void {
-  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error('本地连接器包含未知字段')
+  if (Object.keys(value).some((key) => !allowed.has(key)))
+    throw new Error('Local Connector settings contain unknown fields')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

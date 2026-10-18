@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdownUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useState, type ReactNode } from 'react'
 import { ListItemIcon, ListItemText, Menu, MenuItem, Portal, Snackbar } from '@mui/material'
 
@@ -22,11 +24,12 @@ export function InlineLinkMenu({
   actions: InlineLinkMenuAction[]
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [error, setError] = useState<string | null>(null)
   const run = (action: InlineLinkMenuAction): void => {
     if (position === null) return
     onClose()
-    const report = (): void => setError(`${action.label}失败，请重试。`)
+    const report = (): void => setError(markdownCopy.actionFailed(action.label))
     try {
       void Promise.resolve(action.onSelect()).catch(report)
     } catch {
@@ -47,7 +50,11 @@ export function InlineLinkMenu({
           list: {
             dense: true,
             'aria-label':
-              kind === 'file' ? '文件链接操作' : kind === 'web' ? '网页链接操作' : '资源操作'
+              kind === 'file'
+                ? markdownCopy.fileLinkActions
+                : kind === 'web'
+                  ? markdownCopy.webLinkActions
+                  : markdownCopy.resourceActions
           },
           paper: {
             elevation: 0,

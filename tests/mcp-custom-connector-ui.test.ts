@@ -1,3 +1,4 @@
+import { componentTree } from './helpers/renderComponentTree'
 import assert from 'node:assert/strict'
 import { Children, createElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -58,8 +59,8 @@ function serverEntry(
     kind: 'server',
     name: value.name,
     subtitle: 'uvx literature-mcp',
-    origin: '自建·本地',
-    status: '已启用',
+    origin: 'Custom · Local',
+    status: 'Enabled',
     enabled: true,
     server: value,
     ...overrides
@@ -81,8 +82,8 @@ function jobEntry(): CustomConnectorJobEntry {
     kind: 'job',
     name: 'Mail MCP',
     subtitle: 'bun run mail.ts',
-    origin: '自建·本地',
-    status: '需要先配置',
+    origin: 'Custom · Local',
+    status: 'Setup required',
     job: setup
   }
 }
@@ -99,9 +100,9 @@ test('custom connector cards show ownership, live status, and the added affordan
 
   assert.match(markup, /Literature MCP/)
   assert.match(markup, /uvx literature-mcp/)
-  assert.match(markup, /自建·本地/)
-  assert.match(markup, /已启用/)
-  assert.match(markup, /aria-label="已添加 Literature MCP"/)
+  assert.match(markup, /Custom · Local/)
+  assert.match(markup, /Enabled/)
+  assert.match(markup, /aria-label="Added Literature MCP"/)
   assert.match(markup, /data-phi-connector-state="added"/)
 })
 
@@ -120,19 +121,19 @@ test('custom connector detail exposes safe configuration, controls, and removal 
     onCancelRemove: noop,
     onConfirmRemove: noop
   }
-  const detail = McpCustomConnectorDetail(props)
+  const detail = componentTree(() => McpCustomConnectorDetail(props))
   const markup = render(detail)
 
   assert.match(markup, /Literature MCP/)
-  assert.match(markup, /自建·本地/)
+  assert.match(markup, /Custom · Local/)
   assert.match(markup, /uvx literature-mcp/)
   assert.match(markup, /NCBI_API_KEY/)
-  assert.match(markup, /已启用/)
+  assert.match(markup, /Enabled/)
   assert.doesNotMatch(markup, /secret-value/i)
 
   const disable = findElement(
     detail,
-    (element) => (element.props as { children?: ReactNode }).children === '停用'
+    (element) => (element.props as { children?: ReactNode }).children === 'Disable'
   )
   assert.ok(disable)
   ;(disable.props as { onClick: () => void }).onClick()
@@ -140,29 +141,31 @@ test('custom connector detail exposes safe configuration, controls, and removal 
 
   const remove = findElement(
     detail,
-    (element) => (element.props as { children?: ReactNode }).children === '移除'
+    (element) => (element.props as { children?: ReactNode }).children === 'Remove'
   )
   assert.ok(remove)
   ;(remove.props as { onClick: () => void }).onClick()
   assert.equal(removeRequested, 1)
 
   assert.match(
-    render(McpCustomConnectorDetail({ ...props, confirmingRemove: true })),
-    /确认移除这个本地 stdio 连接器？[\s\S]*取消[\s\S]*确认移除/
+    render(componentTree(() => McpCustomConnectorDetail({ ...props, confirmingRemove: true }))),
+    /Remove this local stdio Connector?[\s\S]*Cancel[\s\S]*Confirm removal/
   )
 })
 
-test('job cards wire 查看进度 to the matching setup job', () => {
+test('job cards wire View progress to the matching setup job', () => {
   const requested: string[] = []
-  const card = McpCustomConnectorCard({
-    entry: jobEntry(),
-    busy: false,
-    onOpen: noop,
-    onViewJob: (jobId) => requested.push(jobId)
-  })
+  const card = componentTree(() =>
+    McpCustomConnectorCard({
+      entry: jobEntry(),
+      busy: false,
+      onOpen: noop,
+      onViewJob: (jobId) => requested.push(jobId)
+    })
+  )
   const action = findElement(
     card,
-    (element) => (element.props as { children?: ReactNode }).children === '查看进度'
+    (element) => (element.props as { children?: ReactNode }).children === 'View progress'
   )
 
   assert.ok(action)
@@ -174,14 +177,14 @@ test('job cards wire 查看进度 to the matching setup job', () => {
   })
   assert.equal(propagationStopped, true)
   assert.deepEqual(requested, ['mail'])
-  assert.match(render(card), /需要先配置/)
+  assert.match(render(card), /Setup required/)
   assert.doesNotMatch(render(card), /data-phi-connector-state="added"/)
 })
 
 test('the custom group empty state explains how to add a connector', () => {
   assert.match(
     render(createElement(McpCustomConnectorEmptyState)),
-    /还没有自建连接器。点击右上角的＋添加本地或远程连接器。/
+    /No custom Connectors yet. Use \+ in the upper right to add a local or remote Connector./
   )
 })
 
@@ -209,16 +212,16 @@ test('custom group search filters by subtitle without applying catalog filters',
       onViewJob: noop
     })
   )
-  assert.match(noMatch, /没有符合条件的连接器/)
-  assert.doesNotMatch(noMatch, /还没有自建连接器/)
+  assert.match(noMatch, /No matching Connectors/)
+  assert.doesNotMatch(noMatch, /No custom Connectors/)
 })
 
 test('remote custom detail shows its URL, disabled state, and remote removal confirmation', () => {
   const remote = serverEntry({
     name: 'Remote MCP',
     subtitle: 'https://custom.example/mcp',
-    origin: '自建·远程',
-    status: '已停用',
+    origin: 'Custom · Remote',
+    status: 'Disabled',
     enabled: false,
     server: localServer({
       id: 'remote',
@@ -244,22 +247,24 @@ test('remote custom detail shows its URL, disabled state, and remote removal con
     })
   )
 
-  assert.match(markup, /自建·远程/)
+  assert.match(markup, /Custom · Remote/)
   assert.match(markup, /https:\/\/custom\.example\/mcp/)
-  assert.match(markup, />启用</)
-  assert.match(markup, /确认移除这个远程 HTTPS 连接器？/)
+  assert.match(markup, />Enable</)
+  assert.match(markup, /Remove this remote HTTPS Connector?/)
 })
 
 test('server cards are keyboard accessible and disabled servers do not show the added check', () => {
   let opened = 0
-  const card = McpCustomConnectorCard({
-    entry: serverEntry({ status: '已停用', enabled: false }),
-    busy: false,
-    onOpen: () => {
-      opened += 1
-    },
-    onViewJob: noop
-  })
+  const card = componentTree(() =>
+    McpCustomConnectorCard({
+      entry: serverEntry({ status: 'Disabled', enabled: false }),
+      busy: false,
+      onOpen: () => {
+        opened += 1
+      },
+      onViewJob: noop
+    })
+  )
   const target = {}
   let prevented = false
   const onKeyDown = (
@@ -285,24 +290,26 @@ test('server cards are keyboard accessible and disabled servers do not show the 
   assert.equal(opened, 1)
   assert.equal(prevented, true)
   const markup = render(card)
-  assert.match(markup, /已停用/)
+  assert.match(markup, /Disabled/)
   assert.doesNotMatch(markup, /data-phi-connector-state="added"/)
 })
 
 test('custom group forwards search changes and server-card opens, and renders its own empty state', () => {
   const queries: string[] = []
   const opened: string[] = []
-  const group = McpCustomConnectorGroup({
-    entries: [serverEntry()],
-    query: '',
-    busy: false,
-    onQueryChange: (value) => queries.push(value),
-    onOpen: (entry) => opened.push(entry.server.id),
-    onViewJob: noop
-  })
+  const group = componentTree(() =>
+    McpCustomConnectorGroup({
+      entries: [serverEntry()],
+      query: '',
+      busy: false,
+      onQueryChange: (value) => queries.push(value),
+      onOpen: (entry) => opened.push(entry.server.id),
+      onViewJob: noop
+    })
+  )
   const search = findElement(
     group,
-    (element) => (element.props as { placeholder?: string }).placeholder === '搜索连接器'
+    (element) => (element.props as { placeholder?: string }).placeholder === 'Search Connectors'
   )
   const card = findElement(group, (element) => element.type === McpCustomConnectorCard)
   assert.ok(search)
@@ -325,7 +332,7 @@ test('custom group forwards search changes and server-card opens, and renders it
         onViewJob: noop
       })
     ),
-    /还没有自建连接器/
+    /No custom Connectors/
   )
 })
 
@@ -346,7 +353,7 @@ test('custom detail renders fallback command and inline errors without environme
       onConfirmRemove: noop
     })
   )
-  assert.match(markup, /未配置命令/)
+  assert.match(markup, /No command configured/)
   assert.match(markup, /保存失败/)
-  assert.doesNotMatch(markup, /环境变量名称/)
+  assert.doesNotMatch(markup, /Environment variable names/)
 })

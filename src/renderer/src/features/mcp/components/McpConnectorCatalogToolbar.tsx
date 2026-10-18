@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useState } from 'react'
 import {
   Box,
@@ -22,9 +25,15 @@ import type {
 } from '../lib/featuredConnectorFilters'
 
 const SORT_LABEL: Record<ConnectorSort, string> = {
-  default: '默认',
-  name: '名称',
-  added: '已配置优先'
+  get default() {
+    return connectorCopy.defaultSort
+  },
+  get name() {
+    return resourceUi.name
+  },
+  get added() {
+    return connectorCopy.configuredFirst
+  }
 }
 
 export function McpConnectorCatalogToolbar({
@@ -46,6 +55,8 @@ export function McpConnectorCatalogToolbar({
   onInstallChange: (value: ConnectorInstallFilter) => void
   onSortChange: (value: ConnectorSort) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null)
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null)
   const filterActive = signIn !== 'all' || install !== 'all'
@@ -54,7 +65,7 @@ export function McpConnectorCatalogToolbar({
     <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 2 }}>
       <TextField
         size="small"
-        placeholder="搜索连接器"
+        placeholder={connectorCopy.searchConnectors}
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         slotProps={{
@@ -75,7 +86,7 @@ export function McpConnectorCatalogToolbar({
         onClick={(event) => setFilterAnchor(event.currentTarget)}
         sx={{ color: filterActive ? 'primary.main' : 'text.primary' }}
       >
-        筛选
+        {connectorCopy.filter}
       </Button>
       <Button
         color="inherit"
@@ -83,7 +94,7 @@ export function McpConnectorCatalogToolbar({
         onClick={(event) => setSortAnchor(event.currentTarget)}
         sx={{ color: 'text.primary' }}
       >
-        排序：{SORT_LABEL[sort]}
+        {connectorCopy.sortBy(SORT_LABEL[sort])}
       </Button>
       <Popover
         open={Boolean(filterAnchor)}
@@ -94,7 +105,7 @@ export function McpConnectorCatalogToolbar({
       >
         <Stack spacing={1.5} sx={{ p: 2, width: 280 }}>
           <Typography variant="caption" color="text.secondary">
-            登录方式
+            {connectorCopy.signInMethod}
           </Typography>
           <ToggleButtonGroup
             exclusive
@@ -105,14 +116,14 @@ export function McpConnectorCatalogToolbar({
             }}
             sx={{ flexWrap: 'wrap' }}
           >
-            <ToggleButton value="all">全部</ToggleButton>
-            <ToggleButton value="无需登录">无需登录</ToggleButton>
-            <ToggleButton value="需要登录">需要登录</ToggleButton>
-            <ToggleButton value="需要 API key">API key</ToggleButton>
+            <ToggleButton value="all">{resourceUi.all}</ToggleButton>
+            <ToggleButton value="无需登录">{connectorCopy.noSignIn}</ToggleButton>
+            <ToggleButton value="需要登录">{connectorCopy.signInRequired}</ToggleButton>
+            <ToggleButton value="需要 API key">{connectorCopy.apiKeyLabel}</ToggleButton>
           </ToggleButtonGroup>
           <Divider />
           <Typography variant="caption" color="text.secondary">
-            配置状态
+            {connectorCopy.configuredState}
           </Typography>
           <ToggleButtonGroup
             exclusive
@@ -122,9 +133,9 @@ export function McpConnectorCatalogToolbar({
               if (value) onInstallChange(value)
             }}
           >
-            <ToggleButton value="all">全部</ToggleButton>
-            <ToggleButton value="added">已配置</ToggleButton>
-            <ToggleButton value="not-added">未配置</ToggleButton>
+            <ToggleButton value="all">{resourceUi.all}</ToggleButton>
+            <ToggleButton value="added">{connectorCopy.configured}</ToggleButton>
+            <ToggleButton value="not-added">{connectorCopy.notConfigured}</ToggleButton>
           </ToggleButtonGroup>
         </Stack>
       </Popover>

@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import {
   Box,
   Button,
@@ -25,19 +28,19 @@ export function WrapperInstallConfirmDialog({
   onConfirm: () => void
   onCancel: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const count = summary?.dependencies.length ?? 0
   return (
     <ConfirmationDialog open={summary !== null} onClose={onCancel}>
-      <DialogTitle>安装 {title}</DialogTitle>
+      <DialogTitle>{wrapperCopy.installTitle(title)}</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" sx={{ mb: 1.5 }}>
-          它依赖另外 {count} 个 wrapper 软件包，会一起安装，共{' '}
-          {formatPackageSize(summary?.totalSize ?? 0)}。
+          {wrapperCopy.installDependencies(count, formatPackageSize(summary?.totalSize ?? 0))}
         </Typography>
         <List
           dense
           disablePadding
-          aria-label="将一起安装的软件包"
+          aria-label={wrapperCopy.packagesToInstall}
           sx={{ maxHeight: 280, overflow: 'auto' }}
         >
           {summary?.dependencies.map((entry) => (
@@ -58,9 +61,9 @@ export function WrapperInstallConfirmDialog({
         </List>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onCancel}>取消</Button>
+        <Button onClick={onCancel}>{resourceUi.cancel}</Button>
         <Button variant="contained" onClick={onConfirm}>
-          安装全部
+          {wrapperCopy.installAll}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

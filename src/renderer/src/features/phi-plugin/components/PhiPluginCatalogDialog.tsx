@@ -1,3 +1,7 @@
+import { getUiLocale } from '../../../lib/i18n'
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi, resourceCategoryLabel, resourceSourceLabel } from '../../../lib/resourceUi'
+import { pluginCopy } from '../lib/pluginCopy'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import {
@@ -43,6 +47,7 @@ import {
 import {
   formatPhiPluginProblems,
   isSemanticUpgrade,
+  phiPluginDisplayTitle,
   phiPluginDistributionLabel
 } from '../lib/phiPlugins'
 
@@ -57,7 +62,10 @@ function installIsUpgrade(preview: PhiPluginInstallPreview): boolean {
 }
 
 function pluginDisplayName(preview: PhiPluginInstallPreview): string {
-  return preview.title?.trim() || preview.id?.trim() || '这个插件'
+  const title = preview.title?.trim()
+  return title
+    ? phiPluginDisplayTitle({ id: preview.id ?? '', title })
+    : preview.id?.trim() || pluginCopy.fallbackPlugin
 }
 
 function CatalogCard({
@@ -83,6 +91,8 @@ function CatalogCard({
   disabled: boolean
   onAction?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Paper variant="outlined" sx={{ p: 1.75, borderRadius: 2 }}>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
@@ -107,8 +117,10 @@ function CatalogCard({
           </Typography>
           <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
             <Chip size="small" label={`v${version}`} />
-            {source ? <Chip size="small" variant="outlined" label={source} /> : null}
-            {source !== PACKAGE_TRUST_LABELS[trust] ? (
+            {source ? (
+              <Chip size="small" variant="outlined" label={resourceSourceLabel(source)} />
+            ) : null}
+            {resourceSourceLabel(source ?? '') !== PACKAGE_TRUST_LABELS[trust] ? (
               <Chip
                 size="small"
                 variant="outlined"
@@ -124,12 +136,12 @@ function CatalogCard({
           onClick={onAction}
         >
           {busy
-            ? '处理中…'
+            ? pluginCopy.processing
             : action === 'update'
-              ? '更新'
+              ? resourceUi.update
               : action === 'installed'
-                ? '已安装'
-                : '安装'}
+                ? resourceUi.installed
+                : resourceUi.install}
         </Button>
       </Stack>
     </Paper>
@@ -163,17 +175,26 @@ export function PhiPluginCatalogContent({
   onChooseDirectory,
   onInstall
 }: PhiPluginCatalogContentProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
+
   const [category, setCategory] = useState(initialCategory)
   const [query, setQuery] = useState('')
   const installedIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins])
-  const catalog = useMemo(() => buildPhiPluginCatalog(plugins, entries), [plugins, entries])
+  const catalog = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return buildPhiPluginCatalog(plugins, entries)
+  }, [plugins, entries, uiLanguage])
   const groups = useMemo(() => {
+    void uiLanguage // Invalidate labels and localized search without changing selection.
+
     const counts = new Map<string, number>()
     for (const item of catalog) {
       counts.set(item.category, (counts.get(item.category) ?? 0) + 1)
     }
-    return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-  }, [catalog])
+    return [...counts.entries()].sort(([left], [right]) =>
+      resourceCategoryLabel(left).localeCompare(resourceCategoryLabel(right), getUiLocale())
+    )
+  }, [catalog, uiLanguage])
   const normalizedQuery = query.trim().toLowerCase()
   const visiblePlugins = plugins.filter((plugin) =>
     [plugin.title, plugin.id, plugin.version, plugin.summary].some((value) =>
@@ -195,7 +216,7 @@ export function PhiPluginCatalogContent({
     >
       <Box
         component="nav"
-        aria-label="插件目录分组"
+        aria-label={pluginCopy.catalogGroups}
         sx={{
           minHeight: 0,
           overflowY: 'auto',
@@ -211,14 +232,18 @@ export function PhiPluginCatalogContent({
             onClick={() => setCategory('all')}
             sx={{ borderRadius: 1.5, mb: 0.5 }}
           >
-            <Typography variant="body2">全部插件 · {catalog.length}</Typography>
+            <Typography variant="body2">
+              {pluginCopy.allPlugins} · {catalog.length}
+            </Typography>
           </ListItemButton>
           <ListItemButton
             selected={installedSelected}
             onClick={() => setCategory('installed')}
             sx={{ borderRadius: 1.5, mb: 0.5 }}
           >
-            <Typography variant="body2">已安装 · {plugins.length}</Typography>
+            <Typography variant="body2">
+              {resourceUi.installed} · {plugins.length}
+            </Typography>
           </ListItemButton>
           {groups.map(([label, count]) => (
             <ListItemButton
@@ -228,7 +253,7 @@ export function PhiPluginCatalogContent({
               sx={{ borderRadius: 1.5, mb: 0.5 }}
             >
               <Typography variant="body2">
-                {label} · {count}
+                {resourceCategoryLabel(label)} · {count}
               </Typography>
             </ListItemButton>
           ))}
@@ -241,18 +266,22 @@ export function PhiPluginCatalogContent({
           onClick={onChooseDirectory}
           sx={{ mt: 2 }}
         >
-          从本地目录安装
+          {pluginCopy.installDirectory}
         </Button>
       </Box>
 
       <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
           <Typography variant="h5" sx={{ flex: 1, fontWeight: 700 }}>
-            {installedSelected ? '已安装' : category === 'all' ? '全部插件' : category}
+            {installedSelected
+              ? resourceUi.installed
+              : category === 'all'
+                ? pluginCopy.allPlugins
+                : resourceCategoryLabel(category)}
           </Typography>
           <TextField
             size="small"
-            placeholder="搜索插件目录"
+            placeholder={pluginCopy.searchCatalog}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             slotProps={{
@@ -286,7 +315,7 @@ export function PhiPluginCatalogContent({
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
               <CircularProgress size={20} />
               <Typography variant="body2" color="text.secondary">
-                正在加载插件目录…
+                {pluginCopy.loadingCatalog}
               </Typography>
             </Stack>
           ) : (
@@ -340,10 +369,10 @@ export function PhiPluginCatalogContent({
             (!installedSelected && visibleItems.length === 0)) ? (
             <Typography variant="body2" color="text.secondary">
               {normalizedQuery
-                ? '没有符合搜索条件的插件'
+                ? pluginCopy.noCatalogMatches
                 : installedSelected
-                  ? '尚未安装插件'
-                  : '这个分组目前没有插件'}
+                  ? pluginCopy.noneInstalled
+                  : pluginCopy.noCategoryPlugins}
             </Typography>
           ) : null}
         </Box>
@@ -377,6 +406,8 @@ export function PhiPluginCatalogDialog({
   onShowError,
   onInstallFromDirectory
 }: PhiPluginCatalogDialogProps): React.JSX.Element {
+  useUiLanguage()
+
   const [entries, setEntries] = useState<PhiPluginCatalogEntry[]>([])
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [loading, setLoading] = useState(true)
@@ -464,18 +495,16 @@ export function PhiPluginCatalogDialog({
       if (!path) return
       const preview = await window.api.previewPhiPluginDirectory(path)
       if (!preview.ok) {
-        onShowError(`插件目录验证失败：${formatPhiPluginProblems(preview.problems)}`)
+        onShowError(pluginCopy.invalidDirectory(formatPhiPluginProblems(preview.problems)))
         return
       }
       if (preview.action === 'same-or-older') {
-        onShowError(
-          `${preview.installedVersion ? `已安装版本为 ${preview.installedVersion}，` : ''}请选择版本更高的插件目录进行升级。`
-        )
+        onShowError(pluginCopy.newerDirectoryRequired(preview.installedVersion))
         return
       }
       setPendingInstall(preview)
     } catch (cause) {
-      onShowError(`无法读取插件目录：${errorMessage(cause)}`)
+      onShowError(pluginCopy.readDirectoryFailed(errorMessage(cause)))
     } finally {
       setPickingDirectory(false)
     }
@@ -486,7 +515,7 @@ export function PhiPluginCatalogDialog({
     const upgrade = installIsUpgrade(pendingInstall)
     const succeeded = await onInstallFromDirectory(
       pendingInstall.path,
-      upgrade ? '插件升级' : '插件安装'
+      upgrade ? pluginCopy.upgradeAction : pluginCopy.installAction
     )
     if (succeeded) setPendingInstall(null)
   }
@@ -521,9 +550,9 @@ export function PhiPluginCatalogDialog({
         sx={{ alignItems: 'center', px: 3, py: 2, borderBottom: 1, borderColor: 'divider' }}
       >
         <Typography variant="h6" sx={{ flex: 1, fontWeight: 700 }}>
-          插件目录
+          {pluginCopy.catalog}
         </Typography>
-        <IconButton aria-label="关闭插件目录" onClick={close}>
+        <IconButton aria-label={pluginCopy.closeCatalog} onClick={close}>
           <PhiIcons.action.close size={18} />
         </IconButton>
       </Stack>
@@ -547,15 +576,24 @@ export function PhiPluginCatalogDialog({
         onClose={installWorking ? undefined : () => setPendingInstall(null)}
       >
         <DialogTitle>
-          {pendingInstall && installIsUpgrade(pendingInstall) ? '升级插件？' : '安装插件？'}
+          {pendingInstall && installIsUpgrade(pendingInstall)
+            ? pluginCopy.upgradeTitle
+            : pluginCopy.installTitle}
         </DialogTitle>
         <DialogContent>
           {pendingInstall ? (
             <Stack spacing={1.5}>
               <DialogContentText>
                 {installIsUpgrade(pendingInstall)
-                  ? `将 ${pluginDisplayName(pendingInstall)} 从 ${pendingInstall.installedVersion ?? '当前版本'} 升级到 ${pendingInstall.version ?? '新版本'}。升级前请确认插件目录可信。`
-                  : `将从这个本地目录安装 ${pluginDisplayName(pendingInstall)} ${pendingInstall.version ?? ''}。安装后插件默认可用。`}
+                  ? pluginCopy.upgradeDescription(
+                      pluginDisplayName(pendingInstall),
+                      pendingInstall.installedVersion,
+                      pendingInstall.version
+                    )
+                  : pluginCopy.installDescription(
+                      pluginDisplayName(pendingInstall),
+                      pendingInstall.version
+                    )}
               </DialogContentText>
               {pendingInstall.summary ? (
                 <Typography variant="body2" color="text.secondary">
@@ -585,7 +623,7 @@ export function PhiPluginCatalogDialog({
         </DialogContent>
         <DialogActions>
           <Button disabled={installWorking} onClick={() => setPendingInstall(null)}>
-            取消
+            {resourceUi.cancel}
           </Button>
           <Button
             variant="contained"
@@ -593,10 +631,10 @@ export function PhiPluginCatalogDialog({
             onClick={() => void confirmInstall()}
           >
             {installWorking
-              ? '处理中…'
+              ? pluginCopy.processing
               : pendingInstall && installIsUpgrade(pendingInstall)
-                ? '确认升级'
-                : '确认安装'}
+                ? pluginCopy.confirmUpgrade
+                : pluginCopy.confirmInstall}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

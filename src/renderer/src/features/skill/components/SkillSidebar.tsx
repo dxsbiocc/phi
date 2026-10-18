@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { skillCopy } from '../lib/skillCopy'
+import { resourceUi, resourceSourceSearchTerms } from '../../../lib/resourceUi'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Box, CircularProgress, List, Stack, Typography } from '@mui/material'
 import { PhiIcons } from '../../../icons'
@@ -98,17 +101,31 @@ export function SkillSidebar({
   onOpenCatalog,
   notice
 }: SkillSidebarProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
+
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filteredSkills = useMemo(() => {
+    void uiLanguage // Invalidate labels and localized search without changing selection.
+
     if (!normalizedQuery) return skills
     return skills.filter((skill) =>
-      [skill.name, skill.description, skill.source, skill.filePath, skillSourceLabel(skill)]
+      [
+        skill.name,
+        skill.description,
+        skill.source,
+        skill.filePath,
+        ...resourceSourceSearchTerms(skill.sourceCategoryLabel),
+        ...resourceSourceSearchTerms(skillSourceLabel(skill))
+      ]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(normalizedQuery))
     )
-  }, [normalizedQuery, skills])
-  const sections = useMemo(() => groupedSkills(filteredSkills), [filteredSkills])
+  }, [normalizedQuery, skills, uiLanguage])
+  const sections = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return groupedSkills(filteredSkills)
+  }, [filteredSkills, uiLanguage])
   const selectedSkill = filteredSkills.find((skill) => skill.id === activeSkillId) ?? null
   const enabledCount = skills.filter(skillIsEnabled).length
   const listRef = useRef<HTMLUListElement | null>(null)
@@ -135,16 +152,18 @@ export function SkillSidebar({
 
   return (
     <CatalogSidebar
-      title="技能"
+      title={resourceUi.skills}
       resource="skills"
       width={sidebarWidth}
       query={query}
       onQueryChange={setQuery}
-      searchPlaceholder="搜索技能"
-      summary={`${skills.length} 个技能 · ${enabledCount} 已启用`}
+      searchPlaceholder={skillCopy.searchSkills}
+      summary={skillCopy.summary(skills.length, enabledCount)}
       notice={notice}
       action={
-        onOpenCatalog ? <DiscoverButton expanded={false} onClick={onOpenCatalog} /> : undefined
+        onOpenCatalog ? (
+          <DiscoverButton expanded={false} onClick={onOpenCatalog} label={resourceUi.discover} />
+        ) : undefined
       }
     >
       <List ref={listRef} disablePadding sx={{ overflow: 'hidden', minHeight: 0, flex: 1, py: 1 }}>
@@ -152,7 +171,7 @@ export function SkillSidebar({
           <Stack spacing={1.5} sx={{ py: 4, alignItems: 'center' }}>
             <CircularProgress size={22} />
             <Typography variant="body2" color="text.secondary">
-              正在读取技能
+              {skillCopy.loadingSkills}
             </Typography>
           </Stack>
         ) : sections.length > 0 ? (
@@ -179,7 +198,11 @@ export function SkillSidebar({
               }
               titleExtras={
                 section.category === 'bundled' ? (
-                  <BuiltInIcon title="内置" size={14} sx={{ ml: 0.75, color: 'info.main' }} />
+                  <BuiltInIcon
+                    title={resourceUi.builtIn}
+                    size={14}
+                    sx={{ ml: 0.75, color: 'info.main' }}
+                  />
                 ) : null
               }
             >
@@ -196,11 +219,11 @@ export function SkillSidebar({
                     busy={busySkillId === skill.id}
                     disabledReason={
                       skill.trustState
-                        ? '服务器项目 Skill 通过详情页的信任按钮管理'
+                        ? skillCopy.remoteTrustManaged
                         : skill.core
-                          ? '核心技能由 Phi 依赖，不可关闭'
+                          ? skillCopy.coreRequired
                           : skill.sourceCategory === 'plugin'
-                            ? '由所属插件管理，请在插件中切换'
+                            ? skillCopy.pluginManaged
                             : undefined
                     }
                     onSelect={() => onSelectSkill(skill)}
@@ -240,7 +263,7 @@ export function SkillSidebar({
                       color="text.secondary"
                       sx={{ mt: 0.25, fontSize: '0.75rem', lineHeight: 1.25 }}
                     >
-                      {skill.description || '这个技能没有提供说明。'}
+                      {skill.description || skillCopy.noDescription}
                     </Typography>
                   </CatalogResourceRow>
                 )
@@ -251,7 +274,7 @@ export function SkillSidebar({
           <Stack spacing={1} sx={{ py: 4, alignItems: 'center' }}>
             <SkillIcon color="disabled" />
             <Typography variant="body2" color="text.secondary">
-              没有找到技能
+              {skillCopy.noSkills}
             </Typography>
           </Stack>
         )}

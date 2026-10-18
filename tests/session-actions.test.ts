@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -19,6 +20,9 @@ const session: SessionSummary = {
   status: 'idle',
   unreadKind: null
 }
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('conversation actions have a separate menu trigger beside the row', () => {
   const markup = renderToStaticMarkup(
@@ -65,5 +69,5 @@ test('rename dialog edits the full title while the sidebar stays concise', () =>
   assert.equal(editableSessionTitle(namedSession), longName)
   assert.notEqual(sessionTitle(namedSession), longName)
   assert.match(dialogSource, /data-phi-session-rename-dialog="true"/)
-  assert.match(dialogSource, /aria-label="新的对话标题"/)
+  assert.match(dialogSource, /aria-label=\{navigationCopy.newConversationTitle\}/)
 })

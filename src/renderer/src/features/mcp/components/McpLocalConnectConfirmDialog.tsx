@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import {
   Alert,
   Button,
@@ -28,8 +31,8 @@ function runtimeLabel(
   request: LocalMcpConnectorRequest,
   runtimes: readonly LocalMcpRuntimeOption[]
 ): string {
-  if (request.runtime.kind === 'bun') return 'Phi 内置 Bun'
-  if (request.runtime.kind === 'host') return '本机命令（不隔离）'
+  if (request.runtime.kind === 'bun') return connectorCopy.bundledBun
+  if (request.runtime.kind === 'host') return connectorCopy.hostRuntime
   const runtimeRef = request.runtime.ref
   return runtimes.find((runtime) => runtime.ref === runtimeRef)?.label ?? runtimeRef
 }
@@ -49,6 +52,8 @@ export function McpLocalConnectConfirmDialog({
   onCancel,
   onConfirm
 }: McpLocalConnectConfirmDialogProps): React.JSX.Element {
+  useUiLanguage()
+
   const argv = connectorArgv(request)
   const environmentNames = Object.keys(request.env)
 
@@ -60,15 +65,17 @@ export function McpLocalConnectConfirmDialog({
       aria-labelledby="mcp-local-connect-confirm-title"
       aria-describedby="mcp-local-connect-confirm-description"
     >
-      <DialogTitle id="mcp-local-connect-confirm-title">确认添加本地连接器</DialogTitle>
+      <DialogTitle id="mcp-local-connect-confirm-title">
+        {connectorCopy.confirmLocalAdd}
+      </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Stack spacing={0.5}>
-            <Typography variant="subtitle2">运行位置</Typography>
+            <Typography variant="subtitle2">{connectorCopy.runtimeLocation}</Typography>
             <Typography>{runtimeLabel(request, runtimes)}</Typography>
           </Stack>
           <Stack spacing={0.5}>
-            <Typography variant="subtitle2">启动参数</Typography>
+            <Typography variant="subtitle2">{connectorCopy.launchArguments}</Typography>
             {argv.map((arg, index) => (
               <Typography
                 key={`${index}:${arg}`}
@@ -80,40 +87,36 @@ export function McpLocalConnectConfirmDialog({
             ))}
           </Stack>
           <Stack spacing={0.5}>
-            <Typography variant="subtitle2">环境变量</Typography>
+            <Typography variant="subtitle2">{connectorCopy.environmentVariables}</Typography>
             <Typography sx={{ overflowWrap: 'anywhere' }}>
-              {environmentNames.length > 0 ? environmentNames.join('、') : '无'}
+              {environmentNames.length > 0 ? environmentNames.join(', ') : connectorCopy.none}
             </Typography>
           </Stack>
           {request.cwd ? (
             <Stack spacing={0.5}>
-              <Typography variant="subtitle2">工作目录</Typography>
+              <Typography variant="subtitle2">{connectorCopy.workingDirectory}</Typography>
               <Typography component="code" sx={{ overflowWrap: 'anywhere' }}>
                 {request.cwd}
               </Typography>
             </Stack>
           ) : null}
           {request.runtime.kind === 'host' ? (
-            <Alert severity="warning">将直接在本机运行，不使用 Phi 隔离环境</Alert>
+            <Alert severity="warning">{connectorCopy.hostWarning}</Alert>
           ) : null}
           {request.runtime.kind === 'bun' ? (
-            <Alert severity="warning">
-              由 Phi 内置 Bun 以 Node 兼容模式运行；个别依赖可能不兼容。x
-              方式每次启动会联网解析依赖，版本不锁定。
-            </Alert>
+            <Alert severity="warning">{connectorCopy.bunWarning}</Alert>
           ) : null}
           <Typography id="mcp-local-connect-confirm-description" color="text.secondary">
-            确认后将在后台启动并验证，界面不会被锁住；进度见后台任务。
-            首次运行需要下载依赖，可能需要几分钟。
+            {connectorCopy.backgroundStartHint}
           </Typography>
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button disabled={submitting} onClick={onCancel}>
-          取消
+          {resourceUi.cancel}
         </Button>
         <Button variant="contained" disabled={submitting} onClick={onConfirm}>
-          {submitting ? '正在提交…' : '确认并在后台添加'}
+          {submitting ? connectorCopy.submitting : connectorCopy.confirmBackgroundAdd}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

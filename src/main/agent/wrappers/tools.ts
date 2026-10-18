@@ -164,7 +164,11 @@ export function wrapperPlanNeedsUploadSelection(plan: WrapperRunPlan): boolean {
   return (
     plan.inputs.some((input) => input.source === 'upload' && input.remotePaths?.length === 0) &&
     plan.validation.errors.length > 0 &&
-    plan.validation.errors.every((error) => error.includes('等待用户选择本机文件上传'))
+    plan.validation.errors.every(
+      (error) =>
+        error.includes('is waiting for the user to select local files for upload') ||
+        error.includes('等待用户选择本机文件上传')
+    )
   )
 }
 

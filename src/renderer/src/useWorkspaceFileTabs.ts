@@ -3,6 +3,7 @@ import type { LocalPathKind } from './components/MarkdownContent'
 import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import type { FilePreviewPanelState } from './features/file-preview/FilePreviewPanel'
 import type { FileDownloadState } from './features/file-preview/lib/filePreviewState'
+import { filePreviewCopy } from './features/file-preview/lib/filePreviewUiCopy'
 import { absoluteWorkspacePath, fileNameFromPath, filePreviewStatePath } from './lib/workspacePaths'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import type { AppView } from './App'
@@ -30,7 +31,7 @@ export function remoteFileRequestForUri(
   scope: RemoteWorkspaceFileScope | null
 ): RemoteWorkspaceFileRequest {
   const path = scope ? remotePathWithinProjectUri(uri, scope.hostAlias, scope.canonicalRoot) : null
-  if (!scope || !path) throw new Error('远程文件不属于当前项目或服务器档案不可用')
+  if (!scope || !path) throw new Error(filePreviewCopy.remoteFileOutsideProject)
   return { sessionId: scope.sessionId, projectId: scope.projectId, path }
 }
 
@@ -73,6 +74,16 @@ export function upsertReusableWorkspaceFileTab(
 }
 export type WorkspaceFilePreviewCache = Record<string, FilePreviewPanelState>
 const MAX_FILE_PREVIEW_CACHE_ENTRIES = 16
+
+/** Raw service cancellation diagnostics must stay independent of interface language. */
+export function isWorkspaceFileDownloadCancellation(error: unknown): boolean {
+  return (
+    (error instanceof Error && error.name === 'AbortError') ||
+    /下载已取消|\b(?:cancelled|canceled|aborted|AbortError)\b/iu.test(
+      readableErrorMessage(error, '')
+    )
+  )
+}
 
 export function cacheWorkspaceFilePreviewState(
   cache: WorkspaceFilePreviewCache,
@@ -248,7 +259,7 @@ export function useWorkspaceFileTabs({
           status: 'error',
           path,
           pathKind,
-          message: readableErrorMessage(error, '无法访问远程文件')
+          message: readableErrorMessage(error, filePreviewCopy.accessRemoteFileFailed)
         })
         return
       }
@@ -284,7 +295,7 @@ export function useWorkspaceFileTabs({
               status: 'error',
               path,
               pathKind: 'directory',
-              message: readableErrorMessage(error, '无法读取目录')
+              message: readableErrorMessage(error, filePreviewCopy.readDirectoryFailed)
             })
           })
         return
@@ -320,7 +331,7 @@ export function useWorkspaceFileTabs({
           setFilePreview({
             status: 'error',
             path,
-            message: readableErrorMessage(error, '无法预览文件')
+            message: readableErrorMessage(error, filePreviewCopy.previewFileFailed)
           })
         })
         .finally(() => {
@@ -385,7 +396,10 @@ export function useWorkspaceFileTabs({
     async (uri: string): Promise<void> => {
       const scope = wrapperResultScopeRef.current
       if (activeDownloadIdRef.current) {
-        showSnackbarError(new Error('已有文件正在下载'), '无法开始新下载')
+        showSnackbarError(
+          new Error(filePreviewCopy.downloadInProgress),
+          filePreviewCopy.startDownloadFailed
+        )
         return
       }
       let route: ReturnType<typeof workspaceFileRoute>
@@ -395,9 +409,9 @@ export function useWorkspaceFileTabs({
           scope?.projectId === getActiveProjectId() ? scope : null,
           getActiveRemoteProject()
         )
-        if (route.kind === 'local') throw new Error('请选择远程文件进行下载')
+        if (route.kind === 'local') throw new Error(filePreviewCopy.chooseRemoteDownload)
       } catch (error) {
-        showSnackbarError(error, '无法下载结果')
+        showSnackbarError(error, filePreviewCopy.downloadResultFailed)
         return
       }
       const requestId = `download_${Date.now()}_${++downloadSequenceRef.current}`
@@ -429,11 +443,11 @@ export function useWorkspaceFileTabs({
         )
       } catch (error) {
         if (activeDownloadIdRef.current !== requestId) return
-        const message = readableErrorMessage(error, '远程文件下载失败')
-        if (/下载已取消|aborted/i.test(message)) setFileDownload(null)
+        const message = readableErrorMessage(error, filePreviewCopy.remoteDownloadFailed)
+        if (isWorkspaceFileDownloadCancellation(error)) setFileDownload(null)
         else {
           setFileDownload({ status: 'error', sourcePath: uri, message })
-          showSnackbarError(error, '远程文件下载失败')
+          showSnackbarError(error, filePreviewCopy.remoteDownloadFailed)
         }
       } finally {
         if (activeDownloadIdRef.current === requestId) activeDownloadIdRef.current = null
@@ -493,7 +507,7 @@ export function useWorkspaceFileTabs({
         return
       }
       void rendererApi.openPath(path).catch((error) => {
-        showSnackbarError(error, '无法打开文件')
+        showSnackbarError(error, filePreviewCopy.openFileFailed)
       })
     },
     [previewFilePath, rendererApi, showSnackbarError]
@@ -507,7 +521,7 @@ export function useWorkspaceFileTabs({
         return
       }
       void rendererApi.revealPath(path).catch((error) => {
-        showSnackbarError(error, '无法在文件管理器中显示')
+        showSnackbarError(error, filePreviewCopy.revealFileFailed)
       })
     },
     [previewDirectoryPath, previewFilePath, rendererApi, showSnackbarError]

@@ -1,5 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- React error boundaries still require a class component. */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { appCopy } from '../lib/appCopy'
+import { useUiLanguage } from '../lib/i18n'
 
 type AppErrorBoundaryProps = {
   children: ReactNode
@@ -26,6 +28,7 @@ function AppErrorFallback({
   onRetry: () => void
   onReload: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const details = [componentStack, error.stack || error.message].filter(Boolean).join('\n\n')
 
   return (
@@ -53,12 +56,11 @@ function AppErrorFallback({
           boxShadow: '0 18px 48px rgba(0, 0, 0, 0.28)'
         }}
       >
-        <p style={{ margin: 0, fontSize: 14, color: '#9FB8BC' }}>Renderer crashed</p>
-        <h1 style={{ margin: '8px 0 12px', fontSize: 22, fontWeight: 700 }}>界面渲染遇到错误</h1>
-        <p style={{ margin: '0 0 18px', color: '#C9D8DA', lineHeight: 1.6 }}>
-          Phi 没有退出，但当前窗口的 React
-          界面被运行时异常中断了。可以先重试渲染，若仍失败请重新载入窗口。
-        </p>
+        <p style={{ margin: 0, fontSize: 14, color: '#9FB8BC' }}>{appCopy.crashLabel}</p>
+        <h1 style={{ margin: '8px 0 12px', fontSize: 22, fontWeight: 700 }}>
+          {appCopy.crashTitle}
+        </h1>
+        <p style={{ margin: '0 0 18px', color: '#C9D8DA', lineHeight: 1.6 }}>{appCopy.crashBody}</p>
         <pre
           style={{
             maxHeight: 240,
@@ -91,7 +93,7 @@ function AppErrorFallback({
               cursor: 'pointer'
             }}
           >
-            重试渲染
+            {appCopy.retryRender}
           </button>
           <button
             type="button"
@@ -106,7 +108,7 @@ function AppErrorFallback({
               cursor: 'pointer'
             }}
           >
-            重新载入窗口
+            {appCopy.reloadWindow}
           </button>
         </div>
       </section>

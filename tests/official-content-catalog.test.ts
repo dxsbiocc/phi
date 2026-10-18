@@ -121,8 +121,11 @@ test('website API failure retries the original official source and reports the f
   })
   assert.deepEqual(paths, ['phi-packages'])
   assert.equal(result.registries[0].dir, '/original-verified-generation')
-  assert.match(result.errors.join('\n'), /官网目录更新失败.*Website temporarily unavailable/)
-  assert.match(result.notices.join('\n'), /回退.*Phi Packages/)
+  assert.match(
+    result.errors.join('\n'),
+    /Could not refresh the Phi Website catalog.*Website temporarily unavailable/
+  )
+  assert.match(result.notices.join('\n'), /Falling back.*Phi Packages/)
 })
 
 test('both official source failures remain visible while a user directory is still usable', async () => {
@@ -187,7 +190,7 @@ test('an old backend returning only a bundled source reports restart instead of 
     }
   })
   assert.deepEqual(result.registries, [])
-  assert.match(result.errors.join('\n'), /后台.*旧版本.*重新启动 Phi/)
+  assert.match(result.errors.join('\n'), /older backend.*restart Phi/)
 })
 
 test('old backend feedback does not hide a usable user-imported source', async () => {
@@ -199,7 +202,7 @@ test('old backend feedback does not hide a usable user-imported source', async (
     readPackageRegistry: async (path) => registry(path, 'directory')
   })
   assert.equal(result.registries[0].dir, '/local')
-  assert.match(result.errors.join('\n'), /后台.*旧版本/)
+  assert.match(result.errors.join('\n'), /older backend/)
 })
 
 test('catalog loads official first, excludes bundled sources, and keeps the actual generation path', async () => {
@@ -243,7 +246,7 @@ test('cached official content preserves offline feedback instead of falling back
     readPackageRegistry: async () => registry('/verified-cache', 'official')
   })
   assert.equal(result.registries[0].status, 'cached')
-  assert.deepEqual(result.notices, ['Phi Packages：正在使用离线缓存。'])
+  assert.deepEqual(result.notices, ['Phi Packages: using the offline cache.'])
 })
 
 test('read failures include source identity and do not silently discard the official error', async () => {
@@ -254,7 +257,7 @@ test('read failures include source identity and do not silently discard the offi
     }
   })
   assert.deepEqual(result.registries, [])
-  assert.deepEqual(result.errors, ['Phi Packages：Invalid registry signature'])
+  assert.deepEqual(result.errors, ['Phi Packages: Invalid registry signature'])
 })
 
 test('official source wins duplicate names while newest versions still win within one source class', () => {

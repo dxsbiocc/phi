@@ -1,3 +1,6 @@
+import { formatPromptAgentReference } from '../../../lib/inputReferences'
+import { agentCopy } from '../lib/agentCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Button,
   Dialog,
@@ -13,13 +16,22 @@ import type { PromptAgentSummary } from '../../../types'
 import { PromptAgentStatus } from '../AgentTrustPanel'
 
 const SOURCE_LABELS: Record<string, string> = {
-  'phi-agent': 'Phi 智能体',
-  'codex-prompt': 'Codex 提示词',
-  'codex-agent': 'Codex 智能体',
-  'server-project-agent': '服务器项目'
+  get 'phi-agent'() {
+    return agentCopy.phiAgent
+  },
+  get 'codex-prompt'() {
+    return agentCopy.codexPrompt
+  },
+  get 'codex-agent'() {
+    return agentCopy.codexAgent
+  },
+  get 'server-project-agent'() {
+    return agentCopy.serverProject
+  }
 }
 
 export function AgentReferenceDetails({ agent }: { agent: PromptAgentSummary }): React.JSX.Element {
+  useUiLanguage()
   const location =
     agent.relativePath ?? (/^(?:\/|[a-z]:[\\/])/iu.test(agent.id) ? agent.id : undefined)
   return (
@@ -31,23 +43,23 @@ export function AgentReferenceDetails({ agent }: { agent: PromptAgentSummary }):
         </Typography>
       </Stack>
       <Typography sx={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-        {agent.description || '这个智能体没有提供说明。'}
+        {agent.description || agentCopy.thisAgentHasNoDescription}
       </Typography>
       <Stack spacing={0.5}>
-        <Typography variant="subtitle2">引用方式</Typography>
+        <Typography variant="subtitle2">{agentCopy.referenceSyntax}</Typography>
         <Typography component="code" variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-          {agent.trigger || `/agent:${agent.name}`}
+          {formatPromptAgentReference(agent)}
         </Typography>
       </Stack>
       <Stack spacing={0.5}>
-        <Typography variant="subtitle2">来源</Typography>
+        <Typography variant="subtitle2">{agentCopy.source}</Typography>
         <Typography variant="body2" color="text.secondary">
           {SOURCE_LABELS[agent.source] ?? agent.source}
         </Typography>
       </Stack>
       {location ? (
         <Stack spacing={0.5}>
-          <Typography variant="subtitle2">文件</Typography>
+          <Typography variant="subtitle2">{agentCopy.file}</Typography>
           <Typography
             component="code"
             variant="body2"
@@ -70,14 +82,15 @@ export function AgentReferenceDialog({
   agent: PromptAgentSummary
   onClose: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>智能体详情</DialogTitle>
+      <DialogTitle>{agentCopy.agentDetails}</DialogTitle>
       <DialogContent>
         <AgentReferenceDetails agent={agent} />
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>关闭</Button>
+        <Button onClick={onClose}>{agentCopy.close}</Button>
       </DialogActions>
     </Dialog>
   )

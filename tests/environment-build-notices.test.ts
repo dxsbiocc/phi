@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -17,6 +18,8 @@ function build(overrides: Partial<EnvironmentBuild> = {}): EnvironmentBuild {
     ...overrides
   }
 }
+
+setUiLanguage('zh-CN')
 
 test('environment build notices fire once for each state transition', () => {
   const building = build()

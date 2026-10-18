@@ -171,7 +171,7 @@ test('reports an R2.2 legacy file layout as needing migration without executing 
     assert.equal(result.versionMatches, true)
     assert.equal(result.errorCode, 'legacy-layout')
     assert.deepEqual(result.installedVersions, ['2.9.0-0'])
-    assert.match(result.message, /旧安装布局.*重新安装/u)
+    assert.match(result.message, /legacy R2.2 installation layout.*Reinstall/u)
     await assert.rejects(access(sentinel))
   } finally {
     await session.close()

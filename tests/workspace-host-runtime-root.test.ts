@@ -291,7 +291,7 @@ describe('remote runtime root check', () => {
         )
         assert.match(
           result.hardErrors[0]?.message ?? '',
-          /服务器上该位置的写入空间或文件数配额已用尽；请在 设置 → 远程主机 把运行时目录改到有空间的位置（例如工作区所在文件系统），或清理旧环境/
+          /Disk space or the file count quota is exhausted.*Settings → Remote Hosts.*location with space.*remove old environments/
         )
         assert.deepEqual(await readdir(parent), [])
       } finally {

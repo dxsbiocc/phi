@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -151,16 +152,16 @@ function catalogEntry(id: string, title: string): PhiPluginCatalogEntry {
   }
 }
 
-test('Phi plugin labels use concise Chinese product language', () => {
-  assert.equal(phiPluginSourceLabel('bundled'), '内置')
-  assert.equal(phiPluginSourceLabel('local'), '本地')
-  assert.equal(phiPluginDistributionLabel('registry'), '软件源')
-  assert.equal(phiPluginDistributionLabel('local'), '本地目录')
-  assert.equal(phiPluginEnabledLabel(true), '已启用')
-  assert.equal(phiPluginEnabledLabel(false), '已停用')
-  assert.equal(phiPluginEnvironmentStateLabel('absent'), '未构建')
-  assert.equal(phiPluginEnvironmentStateLabel('ready'), '已构建')
-  assert.equal(phiPluginEnvironmentStateLabel('drifted'), '需要修复')
+test('Phi plugin labels use concise English product language', () => {
+  assert.equal(phiPluginSourceLabel('bundled'), 'Built-in')
+  assert.equal(phiPluginSourceLabel('local'), 'Local')
+  assert.equal(phiPluginDistributionLabel('registry'), 'Registry')
+  assert.equal(phiPluginDistributionLabel('local'), 'Local directory')
+  assert.equal(phiPluginEnabledLabel(true), 'Enabled')
+  assert.equal(phiPluginEnabledLabel(false), 'Disabled')
+  assert.equal(phiPluginEnvironmentStateLabel('absent'), 'Not built')
+  assert.equal(phiPluginEnvironmentStateLabel('ready'), 'Ready')
+  assert.equal(phiPluginEnvironmentStateLabel('drifted'), 'Needs repair')
 })
 
 test('plugins display their own icons in sidebar, detail and installed or registry catalogs', async () => {
@@ -216,9 +217,9 @@ test('Phi plugin component summaries omit empty categories and preserve final to
       scriptTools: ['viz_render', 'viz_prepare'],
       environments: [{ name: 'demo', ref: 'plugin:demo' }]
     }),
-    '2 个智能体 · 1 个技能 · 2 个脚本工具 · 1 个环境'
+    '2 agents · 1 skill · 2 script tools · 1 environment'
   )
-  assert.equal(phiPluginComponentSummary({}), '未声明可显示的组件')
+  assert.equal(phiPluginComponentSummary({}), 'No components declared')
   assert.equal(
     phiPluginComponentSummary({
       environments: [],
@@ -232,7 +233,7 @@ test('Phi plugin component summaries omit empty categories and preserve final to
         }
       ]
     }),
-    '1 个环境'
+    '1 environment'
   )
   assert.equal(phiPluginComponentName('agents/Visualization.md'), 'Visualization')
   assert.equal(phiPluginComponentName('skills\\omics-visualization'), 'omics-visualization')
@@ -248,7 +249,7 @@ test('semantic upgrade detection accepts only strictly newer valid versions', ()
   assert.equal(isSemanticUpgrade(undefined, '2.0.0'), false)
 })
 
-test('validation problems prefer localized display messages and format a readable fallback', () => {
+test('validation problems preserve validator diagnostics with English labels and a readable fallback', () => {
   const problems: PhiPluginProblemView[] = [
     {
       level: 'error',
@@ -266,7 +267,7 @@ test('validation problems prefer localized display messages and format a readabl
 
   assert.equal(
     formatPhiPluginProblems(problems),
-    '错误（phi-package.yaml）：缺少 schemaVersion\n警告（README.md）：缺少插件合同要求的必填内容。技术详情：README is missing'
+    'Error (phi-package.yaml): schemaVersion is required\nWarning (README.md): README is missing'
   )
   assert.equal(formatPhiPluginProblems([], '没有可用详情'), '没有可用详情')
 })
@@ -282,10 +283,10 @@ test('plugin sidebar groups installed plugins by source and exposes search/filte
     })
   )
 
-  assert.match(markup, /3 个已安装/)
-  assert.match(markup, /内置/)
-  assert.match(markup, /软件源/)
-  assert.match(markup, /本地目录/)
+  assert.match(markup, /3 installed/)
+  assert.match(markup, /Built-in/)
+  assert.match(markup, /Registry/)
+  assert.match(markup, /Local directory/)
   assert.match(markup, /registry-reviewer · v1\.0\.0/)
   assert.match(markup, /data-phi-catalog-status="enabled"/)
   assert.equal(
@@ -348,8 +349,8 @@ test('plugin sidebar renders the requested empty state with an add action', () =
     })
   )
 
-  assert.match(markup, /尚未安装插件/)
-  assert.match(markup, /aria-label="添加插件"/)
+  assert.match(markup, /No plugins installed/)
+  assert.match(markup, /aria-label="Add plugin"/)
 })
 
 test('plugin detail contains management, components, environment state and source metadata', () => {
@@ -375,16 +376,16 @@ test('plugin detail contains management, components, environment state and sourc
 
   assert.match(markup, /科研绘图/)
   assert.match(markup, /visualization · v1\.2\.0/)
-  assert.match(markup, /智能体/)
-  assert.match(markup, /技能/)
-  assert.match(markup, /脚本工具（最终名称）/)
+  assert.match(markup, /Agents/)
+  assert.match(markup, /Skills/)
+  assert.match(markup, /Script Tools \(Final Names\)/)
   assert.match(markup, /viz_prepare/)
-  assert.match(markup, /审批：只读/)
-  assert.match(markup, /审批：写入/)
-  assert.match(markup, /需要修复/)
-  assert.match(markup, /未构建/)
+  assert.match(markup, /Approval: Read-only/)
+  assert.match(markup, /Approval: Write/)
+  assert.match(markup, /Needs repair/)
+  assert.match(markup, /Not built/)
   assert.match(markup, /\/plugins\/visualization\/1\.2\.0/)
-  assert.match(markup, /卸载/)
+  assert.match(markup, /Uninstall/)
 })
 
 test('plugin detail renders descriptions, plugin status, approvals and legacy fallbacks', () => {
@@ -422,15 +423,15 @@ test('plugin detail renders descriptions, plugin status, approvals and legacy fa
     })
   )
 
-  assert.match(markup, /无专属智能体（由主智能体按技能调用）/)
-  assert.equal(markup.match(/已启用/g)?.length, 1)
-  assert.doesNotMatch(markup, /已停用|状态未知/)
-  assert.match(markup, /审批：执行/)
-  assert.match(markup, /所属技能：omics-visualization/)
+  assert.match(markup, /No dedicated agents \(the main agent uses the plugin skills\)/)
+  assert.equal(markup.match(/Enabled/g)?.length, 1)
+  assert.doesNotMatch(markup, /Disabled|Unknown status/)
+  assert.match(markup, /Approval: Execute/)
+  assert.match(markup, /Skill: omics-visualization/)
   assert.match(markup, /data-phi-description-truncated="true"/)
   assert.ok(!markup.includes(`aria-label="${longDescription}"`))
   assert.ok(!markup.includes(`title="${longDescription}"`))
-  assert.match(markup, /aria-label="查看技能 omics-visualization"/)
+  assert.match(markup, /aria-label="View Skill omics-visualization"/)
   assert.match(markup, /text-overflow:ellipsis/)
 
   const legacyMarkup = themed(
@@ -456,7 +457,7 @@ test('plugin detail renders descriptions, plugin status, approvals and legacy fa
   assert.match(legacyMarkup, /LegacyAgent/)
   assert.match(legacyMarkup, /legacy-skill/)
   assert.match(legacyMarkup, /legacy_tool/)
-  assert.doesNotMatch(legacyMarkup, /状态未知/)
+  assert.doesNotMatch(legacyMarkup, /Unknown status/)
 })
 
 test('plugin environment aggregation matches used refs and preserves private declarations', () => {
@@ -660,18 +661,18 @@ test('plugin detail shows builtin and private environments in ready, absent and 
     })
   )
 
-  assert.match(markup, /内置 Python 环境 · phi-python/)
-  assert.match(markup, /内置 R 环境 · phi-r/)
-  assert.match(markup, /与其他内置技能共享/)
-  assert.match(markup, /插件私有/)
-  assert.match(markup, /使用技能：xlsx、docx/)
-  assert.match(markup, /使用智能体：Visualization/)
+  assert.match(markup, /Built-in Python Environment · phi-python/)
+  assert.match(markup, /Built-in R Environment · phi-r/)
+  assert.match(markup, /Shared with other built-in skills/)
+  assert.match(markup, /Private to plugin/)
+  assert.match(markup, /Used by skills: xlsx, docx/)
+  assert.match(markup, /Used by agents: Visualization/)
   assert.match(markup, /skill docx declares no environment/)
   assert.match(markup, /运行办公文档脚本/)
-  assert.match(markup, /已构建/)
-  assert.match(markup, /未构建/)
-  assert.match(markup, /构建中/)
-  assert.match(markup, /查看估算并构建/)
+  assert.match(markup, /Ready/)
+  assert.match(markup, /Not built/)
+  assert.match(markup, /Building/)
+  assert.match(markup, /Review estimate and build/)
 })
 
 test('plugin detail describes a plugin with no environment references truthfully', () => {
@@ -700,9 +701,9 @@ test('plugin detail describes a plugin with no environment references truthfully
     })
   )
 
-  assert.match(markup, /此插件不需要托管环境/)
+  assert.match(markup, /This plugin does not require a managed environment/)
   assert.doesNotMatch(markup, /此插件未声明托管环境/)
-  assert.doesNotMatch(markup, />未构建</)
+  assert.doesNotMatch(markup, />Not built</)
 })
 
 test('plugin detail builds an absent private environment through the shared confirmation flow', async () => {
@@ -735,7 +736,7 @@ test('plugin detail builds an absent private environment through the shared conf
       onUninstall: async () => true
     })
   )
-  assert.match(markup, /查看估算并构建/)
+  assert.match(markup, /Review estimate and build/)
 
   const dialogSource = readFileSync(
     'src/renderer/src/components/EnvironmentBuildConfirmDialog.tsx',
@@ -749,11 +750,12 @@ test('plugin detail builds an absent private environment through the shared conf
     'src/renderer/src/features/environment/components/EnvironmentSettingsPanel.tsx',
     'utf8'
   )
-  assert.match(dialogSource, /构建 .*？/)
-  assert.match(dialogSource, /确认后会在后台构建，进度可在后台任务面板查看/)
-  assert.match(dialogSource, /开始构建/)
+  assert.match(dialogSource, /resourceEnvironmentCopy.confirmTitle/)
+  assert.match(dialogSource, /resourceEnvironmentCopy.confirmDescription/)
+  assert.match(dialogSource, /resourceEnvironmentCopy.startBuild/)
   assert.match(detailSource, /setPendingBuild\(\{ pluginId: plugin\.id, environment \}\)/)
   assert.match(detailSource, /<EnvironmentBuildConfirmDialog/)
+  assert.doesNotMatch(detailSource, /<EnvironmentBuildConfirmDialog\s+language="en"/)
   assert.match(settingsSource, /<EnvironmentBuildConfirmDialog/)
   assert.match(
     settingsSource,
@@ -763,7 +765,7 @@ test('plugin detail builds an absent private environment through the shared conf
   const calls: unknown[][] = []
   const result = await requestPhiPluginEnvironmentBuild(
     {
-      buildManagedEnvironment: async (...args: unknown[]) => {
+      buildManagedEnvironment: async (...args: [string, string?, string?]) => {
         calls.push(args)
         return { envId: 'plugin-visualization-demo-0123456789ab' }
       }
@@ -777,7 +779,7 @@ test('plugin detail builds an absent private environment through the shared conf
   calls.length = 0
   await requestPhiPluginEnvironmentBuild(
     {
-      buildManagedEnvironment: async (...args: unknown[]) => {
+      buildManagedEnvironment: async (...args: [string, string?, string?]) => {
         calls.push(args)
         return { envId: 'phi-python-0123456789ab' }
       }
@@ -795,9 +797,25 @@ test('plugin detail builds an absent private environment through the shared conf
       onConfirm: () => undefined
     })
   )
-  assert.match(dialogMarkup, /构建 demo？/)
-  assert.match(dialogMarkup, /预计下载 4\.0 MB · 12 个包（5 个已缓存）/)
-  assert.match(dialogMarkup, /开始构建/)
+  assert.match(dialogMarkup, /Build demo\?/)
+  assert.match(dialogMarkup, /Estimated download:? 4\.0 MB · 12 packages \(5 cached\)/)
+  assert.match(dialogMarkup, /Start build/)
+  try {
+    setUiLanguage('zh-CN')
+    const chinese = themed(
+      createElement(EnvironmentBuildConfirmDialog, {
+        environment: { ref: 'plugin:demo', label: 'demo', estimate },
+        working: false,
+        onClose: () => undefined,
+        onConfirm: () => undefined
+      })
+    )
+    assert.match(chinese, /构建 demo？/)
+    assert.match(chinese, /开始构建/)
+    assert.match(chinese, /plugin:demo/)
+  } finally {
+    setUiLanguage('en')
+  }
 })
 
 test('plugin environment build events drive building progress and ready state', () => {
@@ -840,7 +858,7 @@ test('plugin environment build events drive building progress and ready state', 
     })
   )
   assert.match(activeMarkup, /正在下载软件包/)
-  assert.match(activeMarkup, /8 \/ 12 个包/)
+  assert.match(activeMarkup, /8 \/ 12 packages/)
   assert.match(activeMarkup, /disabled=""/)
 
   const ready = applyEnvironmentBuildToPlugins([active], {
@@ -870,8 +888,8 @@ test('legacy plugin resource tabs render a safe empty-selection detail', () => {
     })
   )
 
-  assert.match(markup, /从左侧选择插件查看详情/)
-  assert.match(markup, /旧版插件标签页会保留/)
+  assert.match(markup, /Select a plugin from the sidebar to view details/)
+  assert.match(markup, /Legacy plugin tabs are retained/)
 })
 
 test('catalog shows installed, update and install states plus local-directory action', () => {
@@ -905,14 +923,14 @@ test('catalog shows installed, update and install states plus local-directory ac
     })
   )
 
-  assert.match(markup, /已安装 · 3/)
-  assert.match(markup, /科研 · 3/)
-  assert.match(markup, /从本地目录安装/)
-  assert.match(markup, /搜索插件目录/)
-  assert.match(markup, />已安装</)
-  assert.match(markup, />更新</)
-  assert.match(markup, />安装</)
-  assert.match(markup, /官方/)
+  assert.match(markup, /Installed · 3/)
+  assert.match(markup, /Research · 3/)
+  assert.match(markup, /Install from local directory/)
+  assert.match(markup, /Search plugin catalog/)
+  assert.match(markup, />Installed</)
+  assert.match(markup, />Update</)
+  assert.match(markup, />Install</)
+  assert.match(markup, /Official/)
   const installedIds = new Set(installedPlugins.map((item) => item.id))
   assert.equal(phiPluginCatalogAction(entries[0], installedIds, updates), 'installed')
   assert.equal(phiPluginCatalogAction(entries[1], installedIds, updates), 'update')
@@ -960,5 +978,5 @@ test('plugin selection uses resource tabs, preserves sidebar visibility, and uni
   assert.match(sidebarHostSource, /mode === 'plugins'[\s\S]{0,180}<PhiPluginSidebar/)
   assert.match(detailSource, /onClick=\{\(\) => setPendingUninstall\(plugin\)\}/)
   assert.match(detailSource, /open=\{pendingUninstall !== null\}/)
-  assert.match(detailSource, /确认卸载/)
+  assert.match(detailSource, /pluginCopy.confirmUninstall/)
 })

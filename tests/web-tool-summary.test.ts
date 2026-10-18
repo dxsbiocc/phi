@@ -1,6 +1,10 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { webToolSummary } from '../src/renderer/src/features/chat/lib/webToolSummary'
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('PubMed web fetch exposes the decoded search terms', () => {
   assert.deepEqual(

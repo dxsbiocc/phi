@@ -2,6 +2,7 @@ import type { Edge, Node } from '@xyflow/react'
 
 import type { WrapperManifestStep } from '../../../../../shared/wrapperManifestTypes'
 import type { WrapperStepState } from '../../../../../shared/wrapperTypes'
+import { wrapperCopy } from './wrapperCopy'
 
 /**
  * Turns a manifest (or a plan's manifest snapshot — see `WrapperRunPlan.steps`)
@@ -98,7 +99,7 @@ function buildFallbackGraph(source: WrapperFlowSource): WrapperFlowGraph {
     {
       id: 'inputs',
       position: { x: 0, y: 0 },
-      data: { label: 'Inputs', kind: 'io' },
+      data: { label: wrapperCopy.inputs, kind: 'io' },
       type: 'input'
     },
     {
@@ -110,7 +111,7 @@ function buildFallbackGraph(source: WrapperFlowSource): WrapperFlowGraph {
     {
       id: 'outputs',
       position: { x: COLUMN_WIDTH * 2, y: 0 },
-      data: { label: 'Outputs', kind: 'io' },
+      data: { label: wrapperCopy.outputs, kind: 'io' },
       type: 'output'
     }
   ]
@@ -149,8 +150,8 @@ export interface WrapperParamsFlowSource {
  * someone what THIS WRAPPER actually takes.
  */
 export function buildWrapperParamsFlowGraph(source: WrapperParamsFlowSource): WrapperFlowGraph {
-  const inputs = source.inputLabels.length > 0 ? source.inputLabels : ['Inputs']
-  const outputs = source.outputLabels.length > 0 ? source.outputLabels : ['Outputs']
+  const inputs = source.inputLabels.length > 0 ? source.inputLabels : [wrapperCopy.inputs]
+  const outputs = source.outputLabels.length > 0 ? source.outputLabels : [wrapperCopy.outputs]
 
   const nodes: WrapperFlowNode[] = []
   const edges: Edge[] = []

@@ -1,3 +1,4 @@
+import { pluginCopy } from '../lib/pluginCopy'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type {
@@ -14,7 +15,7 @@ import type {
   PhiPluginMutationResult,
   PhiPluginUsedEnvironment
 } from '../../../../../shared/phiPluginTypes'
-import { formatPhiPluginProblems } from '../lib/phiPlugins'
+import { formatPhiPluginProblems, phiPluginDisplayTitle } from '../lib/phiPlugins'
 
 type PhiPluginWithComponents = PhiPluginListItem
 
@@ -164,6 +165,7 @@ function withEnvironmentStatuses(
     const installedPackage = registryPlugins.get(plugin.id)
     return {
       ...enriched,
+      title: phiPluginDisplayTitle(plugin),
       distribution:
         plugin.source === 'bundled' ? 'bundled' : installedPackage ? 'registry' : 'local',
       trust: plugin.source === 'bundled' ? 'builtin' : (installedPackage?.trust ?? 'imported'),
@@ -215,19 +217,34 @@ export function usePhiPlugins(): PhiPluginsState {
     const request = ++requestRef.current
     const promise = Promise.resolve().then(async () => {
       try {
-        const [installed, environments, packages, builds] = await Promise.all([
+        const installedMetadata = Promise.all([
           window.api.listPhiPlugins(),
+          window.api.listInstalledPackages().catch((): InstalledPackageView[] => [])
+        ])
+        const environmentMetadata = Promise.all([
           window.api.listManagedEnvironments().catch((): ManagedEnvironmentEntry[] => []),
-          window.api.listInstalledPackages().catch((): InstalledPackageView[] => []),
           typeof window.api.listEnvironmentBuilds === 'function'
             ? window.api.listEnvironmentBuilds().catch((): EnvironmentBuild[] => [])
             : Promise.resolve([] as EnvironmentBuild[])
         ])
+        const [installed, packages] = await installedMetadata
         if (request !== requestRef.current) return
-        setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
+        // Installed names and trust do not depend on the agent runtime's environment scan.
+        // Until it returns, environment state stays unknown and build actions remain hidden.
+        setPlugins(withEnvironmentStatuses(installed, [], packages, []))
+        setLoading(false)
+        void environmentMetadata
+          .then(([environments, builds]) => {
+            if (request !== requestRef.current) return
+            setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
+          })
+          .catch((cause) => {
+            if (request === requestRef.current)
+              setError(pluginCopy.loadFailed(readableError(cause)))
+          })
       } catch (cause) {
         if (request !== requestRef.current) return
-        setError(`无法读取插件：${readableError(cause)}`)
+        setError(pluginCopy.loadFailed(readableError(cause)))
       } finally {
         if (readRef.current?.request === request) readRef.current = null
         if (request === requestRef.current) setLoading(false)
@@ -275,7 +292,7 @@ export function usePhiPlugins(): PhiPluginsState {
       try {
         const result = await action()
         if (!result.ok) {
-          setError(`${failurePrefix}：${formatPhiPluginProblems(result.problems)}`)
+          setError(`${failurePrefix}: ${formatPhiPluginProblems(result.problems)}`)
         } else {
           succeeded = true
           const warning = result.problems.length
@@ -284,7 +301,7 @@ export function usePhiPlugins(): PhiPluginsState {
           setNotice(`${successMessage}${warning}`)
         }
       } catch (cause) {
-        setError(`${failurePrefix}：${readableError(cause)}`)
+        setError(`${failurePrefix}: ${readableError(cause)}`)
       } finally {
         await load(false, true)
         setBusyPluginId(null)
@@ -299,8 +316,8 @@ export function usePhiPlugins(): PhiPluginsState {
       runMutation({
         busyId: '__install__',
         action: () => window.api.installPhiPluginFromDirectory(path),
-        failurePrefix: '插件安装失败',
-        successMessage: `${description}完成。`
+        failurePrefix: pluginCopy.installFailed,
+        successMessage: pluginCopy.actionCompleted(description)
       }),
     [runMutation]
   )
@@ -310,8 +327,8 @@ export function usePhiPlugins(): PhiPluginsState {
       runMutation({
         busyId: plugin.id,
         action: () => window.api.setPhiPluginEnabled(plugin.id, enabled),
-        failurePrefix: enabled ? '插件启用失败' : '插件停用失败',
-        successMessage: `已${enabled ? '启用' : '停用'} ${plugin.title}。`
+        failurePrefix: enabled ? pluginCopy.enableFailed : pluginCopy.disableFailed,
+        successMessage: pluginCopy.enableCompleted(plugin.title, enabled)
       }),
     [runMutation]
   )
@@ -321,8 +338,8 @@ export function usePhiPlugins(): PhiPluginsState {
       runMutation({
         busyId: plugin.id,
         action: () => window.api.uninstallPhiPlugin(plugin.id),
-        failurePrefix: '插件卸载失败',
-        successMessage: `已卸载 ${plugin.title}。`
+        failurePrefix: pluginCopy.uninstallFailed,
+        successMessage: pluginCopy.uninstallCompleted(plugin.title)
       }),
     [runMutation]
   )

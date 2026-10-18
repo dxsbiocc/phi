@@ -1,3 +1,5 @@
+import { settingsUi } from '../lib/settingsUi'
+import { isUiLanguage, useUiLanguage, type UiLanguage } from '../../../lib/i18n'
 import { useId } from 'react'
 import {
   alpha,
@@ -25,36 +27,85 @@ interface AppearanceSettingsSectionProps {
   onSelectMode: (mode: ThemeMode) => void
   palette: ThemePaletteId
   onSelectPalette: (palette: ThemePaletteId) => void
+  onSelectLanguage?: (language: UiLanguage) => void
+  savingLanguage?: boolean
 }
 
 const MODE_OPTIONS: readonly { value: ThemeMode; label: string; description: string }[] = [
-  { value: 'light', label: '浅色', description: '始终使用浅色界面' },
-  { value: 'dark', label: '深色', description: '始终使用深色界面' },
-  { value: 'system', label: '跟随系统', description: '自动匹配系统外观' }
+  {
+    value: 'light',
+    get label() {
+      return settingsUi.light
+    },
+    get description() {
+      return settingsUi.alwaysUseALightInterface
+    }
+  },
+  {
+    value: 'dark',
+    get label() {
+      return settingsUi.dark
+    },
+    get description() {
+      return settingsUi.alwaysUseADarkInterface
+    }
+  },
+  {
+    value: 'system',
+    get label() {
+      return settingsUi.system
+    },
+    get description() {
+      return settingsUi.matchYourSystemAppearance
+    }
+  }
 ]
 
 export function AppearanceSettingsSection({
   mode,
   onSelectMode,
   palette,
-  onSelectPalette
+  onSelectPalette,
+  onSelectLanguage,
+  savingLanguage = false
 }: AppearanceSettingsSectionProps): React.JSX.Element {
+  const language = useUiLanguage()
   const theme = useTheme()
   const paletteLabelId = useId()
   const modeLabelId = useId()
+  const languageLabelId = useId()
 
   return (
     <Stack spacing={3} sx={{ width: '100%', maxWidth: 760 }}>
       <Box>
-        <Typography variant="h5">外观</Typography>
+        <Typography variant="h5">{settingsUi.appearance}</Typography>
         <Typography variant="body2" color="text.secondary">
-          选择 Minimal 界面配色与明暗模式。
+          {settingsUi.chooseYourInterfaceColorsAndAppearance}
         </Typography>
       </Box>
 
+      <FormControl disabled={savingLanguage}>
+        <FormLabel id={languageLabelId}>{settingsUi.interfaceLanguage}</FormLabel>
+        <RadioGroup
+          row
+          aria-labelledby={languageLabelId}
+          name="interface-language"
+          value={language}
+          onChange={(_, next) => {
+            if (isUiLanguage(next)) onSelectLanguage?.(next)
+          }}
+        >
+          <FormControlLabel value="en" control={<Radio />} label="English" />
+          <FormControlLabel value="zh-CN" control={<Radio />} label="简体中文" />
+        </RadioGroup>
+        <Typography variant="caption" color="text.secondary">
+          {settingsUi.languageAppliesImmediately}
+        </Typography>
+      </FormControl>
+
       <FormControl sx={{ width: '100%' }}>
         <FormLabel id={paletteLabelId} sx={{ mb: 1.25, typography: 'body2' }}>
-          配色
+          {settingsUi.colorPalette}
         </FormLabel>
         <RadioGroup
           aria-labelledby={paletteLabelId}
@@ -125,7 +176,7 @@ export function AppearanceSettingsSection({
 
       <FormControl sx={{ width: '100%' }}>
         <FormLabel id={modeLabelId} sx={{ mb: 1.25, typography: 'body2' }}>
-          明暗
+          {settingsUi.appearanceMode}
         </FormLabel>
         <RadioGroup
           row

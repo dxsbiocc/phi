@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useCallback, useEffect, useState } from 'react'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import {
@@ -28,10 +31,12 @@ function errorMessage(cause: unknown): string {
 
 function diffText(update: Extract<GithubSourceUpdateCheck, { changed: true }>): string[] {
   return [
-    ...update.diff.added.map((entry) => `新增 ${entry.id}@${entry.version}`),
-    ...update.diff.removed.map((entry) => `移除 ${entry.id}@${entry.version}`),
-    ...update.diff.changed.map(
-      (entry) => `更新 ${entry.id}: ${entry.fromVersion} → ${entry.toVersion}`
+    ...update.diff.added.map((entry) => connectorCopy.sourceAddedPackage(entry.id, entry.version)),
+    ...update.diff.removed.map((entry) =>
+      connectorCopy.sourceRemovedPackage(entry.id, entry.version)
+    ),
+    ...update.diff.changed.map((entry) =>
+      connectorCopy.sourceUpdatedPackage(entry.id, entry.fromVersion, entry.toVersion)
     )
   ]
 }
@@ -45,6 +50,8 @@ export function McpSourcesPanel({
   onClose: () => void
   onChanged: () => Promise<void> | void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const [sources, setSources] = useState<GithubSourceSummary[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -81,7 +88,7 @@ export function McpSourcesPanel({
     try {
       const update = await window.api.checkGithubSourceUpdate(source.id)
       if (update.changed) setPendingUpdate(update)
-      else setNotice(`${source.repo} 已是最新版本`)
+      else setNotice(connectorCopy.sourceCurrent(source.repo))
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -100,7 +107,7 @@ export function McpSourcesPanel({
       setPendingUpdate(null)
       await load()
       await onChanged()
-      setNotice('软件源已更新')
+      setNotice(connectorCopy.sourceUpdated)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -116,7 +123,7 @@ export function McpSourcesPanel({
       setPendingRemove(null)
       await load()
       await onChanged()
-      setNotice('软件源已移除；已安装的连接器会保留')
+      setNotice(connectorCopy.sourceRemoved)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -127,13 +134,13 @@ export function McpSourcesPanel({
   return (
     <>
       <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-        <DialogTitle>管理软件源</DialogTitle>
+        <DialogTitle>{connectorCopy.manageSources}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             {error && <Alert severity="error">{error}</Alert>}
             {notice && <Alert severity="info">{notice}</Alert>}
             {sources.length === 0 ? (
-              <Typography color="text.secondary">尚未添加 GitHub 软件源</Typography>
+              <Typography color="text.secondary">{connectorCopy.noGithubSources}</Typography>
             ) : (
               <List disablePadding>
                 {sources.map((source, index) => (
@@ -144,14 +151,14 @@ export function McpSourcesPanel({
                     secondaryAction={
                       <Stack direction="row" spacing={1}>
                         <Button disabled={busy !== null} onClick={() => void check(source)}>
-                          更新
+                          {resourceUi.update}
                         </Button>
                         <Button
                           color="error"
                           disabled={busy !== null}
                           onClick={() => setPendingRemove(source)}
                         >
-                          移除
+                          {resourceUi.remove}
                         </Button>
                       </Stack>
                     }
@@ -168,12 +175,12 @@ export function McpSourcesPanel({
         </DialogContent>
         <DialogActions>
           <Button disabled={busy !== null} onClick={onClose}>
-            完成
+            {connectorCopy.done}
           </Button>
         </DialogActions>
       </Dialog>
       <ConfirmationDialog open={Boolean(pendingUpdate)} onClose={() => setPendingUpdate(null)}>
-        <DialogTitle>确认更新软件源</DialogTitle>
+        <DialogTitle>{connectorCopy.confirmSourceUpdate}</DialogTitle>
         <DialogContent>
           <Stack spacing={1.5} sx={{ pt: 1 }}>
             <Typography>
@@ -187,21 +194,21 @@ export function McpSourcesPanel({
         </DialogContent>
         <DialogActions>
           <Button disabled={busy !== null} onClick={() => setPendingUpdate(null)}>
-            取消
+            {resourceUi.cancel}
           </Button>
           <Button variant="contained" disabled={busy !== null} onClick={() => void apply()}>
-            确认更新
+            {connectorCopy.confirmUpdate}
           </Button>
         </DialogActions>
       </ConfirmationDialog>
       <ConfirmationDialog open={Boolean(pendingRemove)} onClose={() => setPendingRemove(null)}>
-        <DialogTitle>移除软件源？</DialogTitle>
+        <DialogTitle>{connectorCopy.removeSource}</DialogTitle>
         <DialogContent>
-          <Alert severity="warning">软件源会从目录中移除，但已安装的连接器会保留。</Alert>
+          <Alert severity="warning">{connectorCopy.removeSourceHint}</Alert>
         </DialogContent>
         <DialogActions>
           <Button disabled={busy !== null} onClick={() => setPendingRemove(null)}>
-            取消
+            {resourceUi.cancel}
           </Button>
           <Button
             color="error"
@@ -209,7 +216,7 @@ export function McpSourcesPanel({
             disabled={busy !== null}
             onClick={() => void remove()}
           >
-            移除
+            {resourceUi.remove}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

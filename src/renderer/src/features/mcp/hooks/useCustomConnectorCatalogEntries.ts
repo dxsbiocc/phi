@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../../lib/i18n'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { McpServerSummary } from '../../../types'
@@ -24,6 +25,7 @@ export function useCustomConnectorCatalogEntries({
   entries: CustomConnectorEntry[]
   setupById: Record<string, McpConnectorSetupProgress>
 } {
+  const uiLanguage = useUiLanguage()
   const readySwitchKeysRef = useRef(new Set<string>())
   useEffect(() => {
     if (!open) readySwitchKeysRef.current.clear()
@@ -41,6 +43,9 @@ export function useCustomConnectorCatalogEntries({
   )
   const setupById = useConnectorSetupProgress(open, handleSetupChange)
   const jobs = useMemo(() => Object.values(setupById), [setupById])
-  const entries = useMemo(() => customConnectorEntries(servers, jobs), [jobs, servers])
+  const entries = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return customConnectorEntries(servers, jobs)
+  }, [jobs, servers, uiLanguage])
   return { entries, setupById }
 }

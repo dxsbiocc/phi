@@ -44,13 +44,13 @@ async function nextflowCheck(
   const input = {
     id: 'nextflow',
     command: availableCommand([command]),
-    success: '找到 Nextflow 命令',
-    missing: '未找到 Nextflow',
+    success: 'Nextflow command found',
+    missing: 'Nextflow not found',
     missingStatus: status(options.controller === 'sbatch' || deferTools),
     suggestion:
       options.controller === 'sbatch'
-        ? '控制进程由 sbatch 在计算节点启动；请确认计算节点上的启动命令能提供 Nextflow。'
-        : '运行 module load nextflow，或使用管理员提供的 phi-base 环境。'
+        ? 'The controller starts through sbatch on a compute node. Ensure the compute node startup commands provide Nextflow.'
+        : 'Run module load nextflow, or use the phi-base environment provided by the administrator.'
   }
   const standardCommand = !options.nextflowBin || options.nextflowBin === 'nextflow'
   return profile && standardCommand
@@ -63,13 +63,13 @@ async function javaCheck(context: ToolchainCheckContext): Promise<RemoteDoctorCh
   const input = {
     id: 'java',
     command: availableCommand(['java']),
-    success: '找到 Java 命令',
-    missing: '未找到 Java',
+    success: 'Java command found',
+    missing: 'Java not found',
     missingStatus: status(options.controller === 'sbatch' || deferTools),
     suggestion:
       options.controller === 'sbatch'
-        ? '请确认计算节点上的启动命令能提供 Java。'
-        : '运行 module load java，或使用管理员提供的 phi-base 环境。'
+        ? 'Ensure the compute node startup commands provide Java.'
+        : 'Run module load java, or use the phi-base environment provided by the administrator.'
   }
   return profile ? doctorCheckFromCapability(profile.toolchain.java, input) : run(input)
 }
@@ -79,22 +79,22 @@ async function slurmChecks(
   required: boolean
 ): Promise<RemoteDoctorCheck[]> {
   const definitions = [
-    ['slurm_submit', 'sbatch', 'Slurm 提交命令'],
-    ['slurm_status', 'squeue', 'Slurm 状态命令'],
-    ['slurm_detail', 'scontrol', 'Slurm 详情命令'],
-    ['slurm_cancel', 'scancel', 'Slurm 取消命令']
+    ['slurm_submit', 'sbatch', 'Slurm submission command'],
+    ['slurm_status', 'squeue', 'Slurm status command'],
+    ['slurm_detail', 'scontrol', 'Slurm detail command'],
+    ['slurm_cancel', 'scancel', 'Slurm cancellation command']
   ] as const
   return Promise.all(
     definitions.map(([id, binary, label]) => {
       const input = {
         id,
         command: availableCommand([binary]),
-        success: `找到${label}`,
-        missing: `未找到${label}`,
+        success: `${label} found`,
+        missing: `${label} not found`,
         missingStatus: status(!required || context.deferTools),
         suggestion: required
-          ? '运行 module load slurm；若站点未提供模块，请联系集群管理员。'
-          : '仅在选择 Slurm 运行方式时需要此命令。'
+          ? 'Run module load slurm. If the site has no module, contact the cluster administrator.'
+          : 'This command is only required when using Slurm.'
       }
       return context.profile && id === 'slurm_submit'
         ? doctorCheckFromCapability(context.profile.toolchain.sbatch, input)
@@ -111,13 +111,13 @@ async function runtimeCheck(
   const input = {
     id: 'runtime',
     command: availableCommand(candidates),
-    success: `登录节点可找到 ${runtime} 运行时`,
-    missing: `${runtime} 运行时在登录节点未找到`,
+    success: `${runtime} runtime found on the login node`,
+    missing: `${runtime} runtime not found on the login node`,
     missingStatus: status(context.options.scheduler === 'slurm' || context.deferTools),
     suggestion:
       context.options.scheduler === 'slurm'
-        ? '部分集群只在计算节点提供容器运行时；请核对作业节点环境和运行配置。'
-        : `运行 module load ${runtime}，或使用管理员提供的 phi-base 环境。`
+        ? 'Some clusters provide container runtimes only on compute nodes. Check the job node environment and runtime configuration.'
+        : `Run module load ${runtime}, or use the phi-base environment provided by the administrator.`
   }
   const capability = context.profile
     ? selectedRuntimeCapability(context.profile, runtime)
@@ -147,8 +147,9 @@ export async function capabilityToolchainChecks(
     checks.push({
       id: 'login_controller',
       status: 'warning',
-      message: 'Nextflow 控制进程将在登录节点持续运行',
-      suggestion: '若集群禁止登录节点长进程，请将控制方式改为 sbatch。'
+      message: 'The Nextflow controller will keep running on the login node',
+      suggestion:
+        'If the cluster prohibits long-running processes on login nodes, change the controller mode to sbatch.'
     })
   }
   return checks

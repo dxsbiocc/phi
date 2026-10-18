@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { Box, Chip, Stack, Typography } from '@mui/material'
 
 import type {
@@ -27,6 +29,7 @@ export function WrapperIdentity({
   /** Extra controls shown under the chips. */
   children?: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   const { provider, tier } = parseWrapperCompositionId(manifest.id)
   return (
     <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
@@ -79,12 +82,14 @@ function ParamLine({
   name: string
   param: WrapperCompositionParam
 }): React.JSX.Element {
+  useUiLanguage()
   const constraint = wrapperParamConstraint(param)
   return (
     <Typography variant="body2" color="text.secondary">
       {name} ({param.type}
-      {param.required ? '，必填' : ''}){param.description ? ` — ${param.description}` : ''}
-      {constraint ? `（${constraint}）` : ''}
+      {param.required ? wrapperCopy.requiredSuffix : ''})
+      {param.description ? ` — ${param.description}` : ''}
+      {constraint ? wrapperCopy.constraint(constraint) : ''}
     </Typography>
   )
 }
@@ -95,6 +100,7 @@ export function WrapperContractSections({
 }: {
   manifest: WrapperCompositionManifest
 }): React.JSX.Element {
+  useUiLanguage()
   const params = Object.entries(manifest.params)
   const inputs = params.filter(([, param]) => param.kind === 'input')
   const options = params.filter(([, param]) => param.kind === 'option')
@@ -102,11 +108,11 @@ export function WrapperContractSections({
   return (
     <>
       <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-        输入
+        {wrapperCopy.inputs}
       </Typography>
       {inputs.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          无
+          {wrapperCopy.none}
         </Typography>
       ) : (
         inputs.map(([key, param]) => <ParamLine key={key} name={key} param={param} />)
@@ -115,7 +121,7 @@ export function WrapperContractSections({
       {options.length > 0 && (
         <>
           <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-            选项
+            {wrapperCopy.options}
           </Typography>
           {options.map(([key, param]) => (
             <ParamLine key={key} name={key} param={param} />
@@ -124,17 +130,17 @@ export function WrapperContractSections({
       )}
 
       <Typography variant="h6" sx={{ fontWeight: 700, mt: 3, mb: 1 }}>
-        输出
+        {wrapperCopy.outputs}
       </Typography>
       {outputs.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          无
+          {wrapperCopy.none}
         </Typography>
       ) : (
         outputs.map(([key, output]) => (
           <Typography key={key} variant="body2" color="text.secondary">
             {key} — {output.path}
-            {output.primary ? '（主要）' : ''}
+            {output.primary ? wrapperCopy.primarySuffix : ''}
           </Typography>
         ))
       )}

@@ -80,24 +80,24 @@ function render(
 
 test('Notion shows login state independently of whether it was added', () => {
   const connected = render('notion', true, true)
-  assert.match(connected, /已登录/)
-  assert.match(connected, /aria-label="已添加 Notion"/)
+  assert.match(connected, /Signed in/)
+  assert.match(connected, /aria-label="Added Notion"/)
   assert.match(connected, /data-phi-connector-state="added"/)
-  assert.doesNotMatch(connected, /aria-label="添加 Notion"/)
+  assert.doesNotMatch(connected, /aria-label="Add Notion"/)
 
   const notAdded = render('notion', false, true)
-  assert.match(notAdded, /已登录/)
-  assert.match(notAdded, /aria-label="添加 Notion"/)
+  assert.match(notAdded, /Signed in/)
+  assert.match(notAdded, /aria-label="Add Notion"/)
 })
 
 test('a connector awaiting OAuth offers authorization instead of a config-only add', () => {
   const notion = render('notion', false, false)
-  assert.match(notion, /aria-label="授权登录 Notion"/)
-  assert.doesNotMatch(notion, /aria-label="添加 Notion"/)
+  assert.match(notion, /aria-label="Sign in to Notion"/)
+  assert.doesNotMatch(notion, /aria-label="Add Notion"/)
 
   const google = render('google-drive', false, false)
-  assert.match(google, /授权暂不可用/)
-  assert.doesNotMatch(google, /aria-label="添加 Google Drive"/)
+  assert.match(google, /Authorization unavailable/)
+  assert.doesNotMatch(google, /aria-label="Add Google Drive"/)
 
   for (const [id, name] of [
     ['linear', 'Linear'],
@@ -107,58 +107,58 @@ test('a connector awaiting OAuth offers authorization instead of a config-only a
     ['cbioportal', 'cBioPortal']
   ] as const) {
     const markup = render(id, false, false)
-    assert.match(markup, new RegExp(`aria-label="授权登录 ${name}"`))
-    assert.doesNotMatch(markup, /授权暂不可用/)
+    assert.match(markup, new RegExp(`aria-label="Sign in to ${name}"`))
+    assert.doesNotMatch(markup, /Authorization unavailable/)
   }
 })
 
 test('Composio uses the same independent login and install states', () => {
   const connected = render('composio', true, true)
-  assert.match(connected, /已登录/)
-  assert.match(connected, /aria-label="已添加 Composio Connect"/)
+  assert.match(connected, /Signed in/)
+  assert.match(connected, /aria-label="Added Composio Connect"/)
   const notAdded = render('composio', false, false)
-  assert.match(notAdded, /需登录/)
-  assert.match(notAdded, /aria-label="授权登录 Composio Connect"/)
-  assert.doesNotMatch(notAdded, /aria-label="添加 Composio Connect"/)
+  assert.match(notAdded, /Sign-in required/)
+  assert.match(notAdded, /aria-label="Sign in to Composio Connect"/)
+  assert.doesNotMatch(notAdded, /aria-label="Add Composio Connect"/)
 })
 
 test('a saved OAuth connector without authorization is not marked complete', () => {
   const gmail = render('gmail', true, false)
-  assert.match(gmail, /已配置但未验证授权 Gmail/)
-  assert.doesNotMatch(gmail, /aria-label="已添加 Gmail"/)
+  assert.match(gmail, /Configured, authorization unverified for Gmail/)
+  assert.doesNotMatch(gmail, /aria-label="Added Gmail"/)
 })
 
 test('API key connectors offer setup before a key is saved and show completion afterward', () => {
   const missingKey = render('tavily', false, false)
-  assert.match(missingKey, /需填写 API key/)
-  assert.match(missingKey, /aria-label="配置 Tavily"/)
-  assert.doesNotMatch(missingKey, /aria-label="已添加 Tavily"/)
+  assert.match(missingKey, /API key required/)
+  assert.match(missingKey, /aria-label="Configure Tavily"/)
+  assert.doesNotMatch(missingKey, /aria-label="Added Tavily"/)
 
   const connected = render('tavily', true, true)
-  assert.match(connected, /已验证/)
-  assert.match(connected, /aria-label="已添加 Tavily"/)
+  assert.match(connected, /Verified/)
+  assert.match(connected, /aria-label="Added Tavily"/)
 })
 
 test('a configured API key connector remains visibly configured while awaiting verification', () => {
   const configured = render('tavily', true, false)
-  assert.match(configured, /已配置/)
-  assert.match(configured, /API key 未验证/)
-  assert.match(configured, /aria-label="验证 API key Tavily"/)
-  assert.doesNotMatch(configured, /aria-label="已添加 Tavily"/)
+  assert.match(configured, /Configured/)
+  assert.match(configured, /API key unverified/)
+  assert.match(configured, /aria-label="Verify API key for Tavily"/)
+  assert.doesNotMatch(configured, /aria-label="Added Tavily"/)
 })
 
 test('a configured disabled OAuth connector does not look enabled after login', () => {
   const disabled = render('notion', true, true, {}, false)
-  assert.match(disabled, /已登录/)
-  assert.match(disabled, /已停用/)
-  assert.doesNotMatch(disabled, /aria-label="已添加 Notion"/)
+  assert.match(disabled, /Signed in/)
+  assert.match(disabled, /Disabled/)
+  assert.doesNotMatch(disabled, /aria-label="Added Notion"/)
 })
 
 test('catalog cards expose unavailable and not-built environment states', () => {
   const unavailable = render('notion', false, false, {
     unavailableReason: 'requires app 9.0.0'
   })
-  assert.match(unavailable, /需要新版 Phi/)
+  assert.match(unavailable, /Newer Phi required/)
   assert.match(unavailable, /Mui-disabled/)
 
   const pending = render('local-stdio', false, false, {
@@ -171,18 +171,18 @@ test('catalog cards expose unavailable and not-built environment states', () => 
     signIn: '无需登录',
     environmentState: 'not-built'
   })
-  assert.match(pending, /环境未构建/)
-  assert.match(pending, /aria-label="构建 Local stdio 环境"/)
+  assert.match(pending, /Environment not built/)
+  assert.match(pending, /aria-label="Build Local stdio environment"/)
 })
 
 test('an authorization restriction is not presented as an app version requirement', () => {
   const markup = render('google-drive', false, false, {
-    unavailableReason: '此连接器的目录授权暂不可用',
+    unavailableReason: '此连接器的目录Authorization unavailable',
     unavailableKind: 'authorization'
   })
-  assert.match(markup, /授权暂不可用/)
-  assert.doesNotMatch(markup, /需要新版 Phi/)
-  assert.match(markup, /暂不能授权 Google Drive/)
+  assert.match(markup, /Authorization unavailable/)
+  assert.doesNotMatch(markup, /Newer Phi required/)
+  assert.match(markup, /Authorization unavailable for Google Drive/)
 })
 
 test('authorization in progress shows a waiting indicator instead of an add or completion icon', () => {
@@ -192,10 +192,10 @@ test('authorization in progress shows a waiting indicator instead of an add or c
     [true, true, true]
   ] as const) {
     const markup = render('cbioportal', installed, authenticated, {}, true, true, updateAvailable)
-    assert.match(markup, /aria-label="取消授权 cBioPortal"/)
+    assert.match(markup, /aria-label="Cancel authorization for cBioPortal"/)
     assert.match(markup, /role="progressbar"/)
-    assert.match(markup, /aria-label="等待授权"/)
-    assert.doesNotMatch(markup, /aria-label="已添加 cBioPortal"/)
+    assert.match(markup, /aria-label="Waiting for authorization"/)
+    assert.doesNotMatch(markup, /aria-label="Added cBioPortal"/)
   }
 })
 
@@ -217,15 +217,15 @@ test('connector cards render resource-owned metadata icons independently of thei
 
 test('a connector that needs a newer Phi shows that note only while it is not added or has an update pending', () => {
   const needsNewer = { unavailableReason: '需要 Phi 1.0.1 或更高版本' }
-  assert.match(render('notion', false, false, needsNewer), /需要新版 Phi/)
+  assert.match(render('notion', false, false, needsNewer), /Newer Phi required/)
   assert.doesNotMatch(
     render('notion', true, true, needsNewer),
-    /需要新版 Phi/,
+    /Newer Phi required/,
     'an added, working connector is not "unavailable"'
   )
   assert.match(
     render('notion', true, true, needsNewer, true, false, true),
-    /需要新版 Phi/,
+    /Newer Phi required/,
     'an update it cannot take yet is still flagged'
   )
 })

@@ -22,7 +22,7 @@ const server = {
   status: 'configured',
   trustState: 'pending',
   available: false,
-  diagnostics: ['来自服务器项目，未信任'],
+  diagnostics: ['来自Server project，未Trust'],
   relativePath: '.phi/mcp.json',
   contentHash: 'a'.repeat(64),
   remoteProjectCwd: '/local/anchor',
@@ -66,13 +66,13 @@ test('remote MCP trust dialog discloses every command field and requires every c
       onTrusted: async () => undefined
     })
   )
-  assert.match(markup, /任意命令/)
+  assert.match(markup, /arbitrary commands/)
   assert.match(markup, /\/opt\/mcp server/)
   assert.match(markup, /--root/)
   assert.match(markup, /data set/)
   assert.match(markup, /API_MODE/)
   assert.equal((markup.match(/type="checkbox"/g) ?? []).length, 4)
-  assert.match(markup, /<button[^>]*disabled=""[^>]*>确认并信任<\/button>/)
+  assert.match(markup, /<button[^>]*disabled=""[^>]*>Confirm and trust<\/button>/)
 })
 
 test('remote MCP trust request is bound to cwd, path, hash and exact confirmation ids', () => {
@@ -135,7 +135,7 @@ test('catalog-matched HTTPS entries still render the server-project trust gate',
       ]
     })
   )
-  assert.match(markup, /服务器项目 MCP/)
-  assert.match(markup, />信任</)
+  assert.match(markup, /Server project MCP/)
+  assert.match(markup, />Trust</)
   assert.match(markup, /disabled/)
 })

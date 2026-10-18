@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import type { ReactNode } from 'react'
 import {
   Box,
@@ -33,6 +35,7 @@ function AnalysisChatPanel({
 }: {
   activeNotebookPath: string
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box sx={{ display: 'flex', minHeight: 0, flex: 1, flexDirection: 'column' }}>
       <Box sx={{ px: 1, pb: 0.75, pt: 1 }}>
@@ -48,7 +51,7 @@ function AnalysisChatPanel({
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', p: 1.5 }}>
         <Typography variant="body2" color="text.secondary">
-          当前容器未传入真实聊天面板。
+          {analysisCopy.noChatPanel}
         </Typography>
       </Box>
     </Box>
@@ -76,6 +79,7 @@ function NotebookList({
   onInitializeProjectAnalysis?: (cwd: string) => void
   onCreateNotebook?: (cwd: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const projectCwd = registry?.projectCwd ?? null
 
   return (
@@ -85,14 +89,14 @@ function NotebookList({
           {registry?.projectName ?? 'Notebook registry'}
         </Typography>
         {onRefreshNotebooks ? (
-          <Tooltip title="刷新 notebooks">
+          <Tooltip title={analysisCopy.refreshNotebooks}>
             <IconButton size="small" onClick={onRefreshNotebooks}>
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         ) : null}
         {projectCwd && onCreateNotebook ? (
-          <Tooltip title="新建 notebook">
+          <Tooltip title={analysisCopy.newNotebook}>
             <IconButton size="small" onClick={() => onCreateNotebook(projectCwd)}>
               <AddIcon fontSize="small" />
             </IconButton>
@@ -101,7 +105,7 @@ function NotebookList({
       </Box>
       {isLoading ? (
         <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1.5 }}>
-          正在扫描 notebooks...
+          {analysisCopy.scanningNotebooks}
         </Typography>
       ) : null}
       {error ? (
@@ -117,7 +121,7 @@ function NotebookList({
       {!isLoading && !error && projectCwd && notebooks.length === 0 ? (
         <Box sx={{ px: 1, py: 1.5 }}>
           <Typography variant="body2" color="text.secondary">
-            当前项目还没有 notebook。
+            {analysisCopy.noProjectNotebook}
           </Typography>
           {!registry?.initialized && onInitializeProjectAnalysis ? (
             <Button
@@ -127,14 +131,14 @@ function NotebookList({
               sx={{ mt: 1 }}
               onClick={() => onInitializeProjectAnalysis(projectCwd)}
             >
-              初始化分析目录
+              {analysisCopy.initializeAnalysis}
             </Button>
           ) : null}
         </Box>
       ) : null}
       {registry?.truncated ? (
         <Typography variant="caption" color="warning.main" sx={{ display: 'block', px: 1, pb: 1 }}>
-          扫描结果已截断，请缩小项目目录或移动 notebook 到 notebooks/。
+          {analysisCopy.notebookScanTruncated}
         </Typography>
       ) : null}
       {notebooks.map((notebook) => {
@@ -205,9 +209,10 @@ export function LeftRail({
   chatPanel?: ReactNode
   onToggleCollapsed: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const tabs = [
-    { value: 'chat' as const, label: 'Chat', Icon: ChatIcon },
-    { value: 'notebooks' as const, label: 'Notebooks', Icon: NotebookIcon }
+    { value: 'chat' as const, label: analysisCopy.chat, Icon: ChatIcon },
+    { value: 'notebooks' as const, label: analysisCopy.notebooks, Icon: NotebookIcon }
   ]
 
   if (collapsed) {
@@ -314,7 +319,9 @@ export function LeftRail({
         chatPanel ? (
           <Box sx={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>{chatPanel}</Box>
         ) : (
-          <AnalysisChatPanel activeNotebookPath={activeNotebookPath ?? 'No notebook selected'} />
+          <AnalysisChatPanel
+            activeNotebookPath={activeNotebookPath ?? analysisCopy.noNotebookSelected}
+          />
         )
       ) : (
         <NotebookList

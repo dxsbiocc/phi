@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Collapse, Typography } from '@mui/material'
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../icons'
@@ -26,7 +28,7 @@ function basename(path: string): string {
 function joinFiles(files: string[]): string {
   if (files.length <= MAX_FILES_SHOWN) return files.join(', ')
   const shown = files.slice(0, MAX_FILES_SHOWN).join(', ')
-  return `${shown}, and ${files.length - MAX_FILES_SHOWN} more`
+  return chatCopy.moreFiles(shown, files.length - MAX_FILES_SHOWN)
 }
 
 function uniqueInOrder(values: string[]): string[] {
@@ -46,18 +48,23 @@ function capitalize(text: string): string {
 type AggregateToolStatus = 'running' | 'done'
 
 function commandPhrase(count: number, status: AggregateToolStatus): string {
-  if (status === 'running') return count === 1 ? '执行命令' : `执行 ${count} 条命令`
-  return count === 1 ? '已执行命令' : `已执行 ${count} 条命令`
+  if (status === 'running')
+    return count === 1 ? chatCopy.executeCommand : chatCopy.executeValueCommands(count)
+  return count === 1 ? chatCopy.commandExecuted : chatCopy.valueCommandsExecuted(count)
 }
 
 function pythonPhrase(count: number, status: AggregateToolStatus): string {
-  if (status === 'running') return count === 1 ? '执行 Python 代码' : `执行 ${count} 段 Python 代码`
-  return count === 1 ? '已执行 Python 代码' : `已执行 ${count} 段 Python 代码`
+  if (status === 'running')
+    return count === 1 ? chatCopy.executePythonCode : chatCopy.executeValuePythonSnippets(count)
+  return count === 1 ? chatCopy.pythonCodeExecuted : chatCopy.valuePythonSnippetsExecuted(count)
 }
 
 function notebookPhrase(count: number, status: AggregateToolStatus): string {
-  if (status === 'running') return count === 1 ? '操作 Notebook' : `操作 ${count} 次 Notebook`
-  return count === 1 ? '已操作 Notebook' : `已操作 ${count} 次 Notebook`
+  if (status === 'running')
+    return count === 1 ? chatCopy.notebookOperation : chatCopy.performValueNotebookOperations(count)
+  return count === 1
+    ? chatCopy.notebookOperationCompleted
+    : chatCopy.valueNotebookOperationsCompleted(count)
 }
 
 function fileToolPhrase(
@@ -67,16 +74,16 @@ function fileToolPhrase(
 ): string {
   const phrases = {
     read: {
-      running: `读取 ${files}`,
-      done: `已读取 ${files}`
+      running: chatCopy.readValue(files),
+      done: chatCopy.readValue2(files)
     },
     edit: {
-      running: `编辑 ${files}`,
-      done: `已编辑 ${files}`
+      running: chatCopy.editValue(files),
+      done: chatCopy.editedValue(files)
     },
     'read-edit': {
-      running: `读取和编辑 ${files}`,
-      done: `已读取和编辑 ${files}`
+      running: chatCopy.readAndEditValue(files),
+      done: chatCopy.readAndEditedValue(files)
     }
   } satisfies Record<typeof action, Record<AggregateToolStatus, string>>
 
@@ -94,10 +101,7 @@ function aggregateStat(items: ToolCallItem[]): { added: number; removed: number 
   }, null)
 }
 
-function summarize(items: ToolCallItem[]): {
-  headline: string
-  stat: { added: number; removed: number } | null
-} {
+function summarize(items: ToolCallItem[]): string {
   const status = summarizeStatus(items)
   const nonFileReadItems = items.filter(
     (item) => !FILE_TOOLS.has(item.toolName) && item.toolName !== 'read'
@@ -146,10 +150,10 @@ function summarize(items: ToolCallItem[]): {
     clauses.length > 0
       ? capitalize(clauses.join(', '))
       : status === 'running'
-        ? `${items.length} 个工具调用`
-        : `已运行 ${items.length} 个工具调用`
+        ? chatCopy.valueToolCalls(items.length)
+        : chatCopy.valueToolCallsCompleted(items.length)
 
-  return { headline, stat: aggregateStat(items) }
+  return headline
 }
 
 function summarizeStatus(items: ToolCallItem[]): AggregateToolStatus {
@@ -176,13 +180,15 @@ function ToolGroupCard({
   onJumpToNotebookCell,
   onContentResize
 }: ToolGroupCardProps): ReactNode {
+  useUiLanguage()
   const [expanded, setExpanded] = useState(false)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
     setExpanded((value) => !value)
     notifyContentResize()
   }
-  const { headline, stat } = useMemo(() => summarize(items), [items])
+  const headline = summarize(items)
+  const stat = useMemo(() => aggregateStat(items), [items])
   const indicatorStatus = useMemo(() => groupIndicatorStatus(items), [items])
   const actions = useMemo(() => uniqueActions(items), [items])
 

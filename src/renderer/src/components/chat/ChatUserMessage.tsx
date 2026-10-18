@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, IconButton, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { PhiIcons } from '../../icons'
@@ -33,6 +35,7 @@ export function ChatUserMessage({
   onRetry?: (message: UserMessageRetryTarget) => void
   onFork?: (messageId: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const parsedMessage = parseInputFileReferences(message.content)
   const failed = state === 'failed'
   const actionButtonSx = {
@@ -122,8 +125,8 @@ export function ChatUserMessage({
                 <IconButton
                   type="button"
                   size="small"
-                  aria-label="重试消息"
-                  title="重试消息"
+                  aria-label={chatCopy.retryMessage}
+                  title={chatCopy.retryMessage}
                   onClick={() =>
                     onRetry?.({ id: message.id, content: message.content, images: message.images })
                   }
@@ -137,8 +140,8 @@ export function ChatUserMessage({
                     <IconButton
                       type="button"
                       size="small"
-                      aria-label="复制消息"
-                      title="复制消息"
+                      aria-label={chatCopy.copyMessage}
+                      title={chatCopy.copyMessage}
                       onClick={() => copyMessageContent(message.content)}
                       sx={actionButtonSx}
                     >
@@ -149,8 +152,8 @@ export function ChatUserMessage({
                     <IconButton
                       type="button"
                       size="small"
-                      aria-label="编辑消息"
-                      title="编辑消息"
+                      aria-label={chatCopy.editMessage}
+                      title={chatCopy.editMessage}
                       onClick={() => onEdit?.(message.content)}
                       sx={actionButtonSx}
                     >
@@ -161,8 +164,8 @@ export function ChatUserMessage({
                     <IconButton
                       type="button"
                       size="small"
-                      aria-label="从此消息分叉会话"
-                      title="从此消息分叉会话"
+                      aria-label={chatCopy.forkConversationFromThisMessage}
+                      title={chatCopy.forkConversationFromThisMessage}
                       onClick={() => onFork(message.id)}
                       sx={actionButtonSx}
                     >

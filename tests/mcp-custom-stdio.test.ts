@@ -122,7 +122,7 @@ test('validates only Bun x and run subcommands with the existing argument and en
     assert.throws(
       () =>
         validateLocalConnectorRequest({ ...valid, env: { BUN_INSTALL: '/tmp/bun' } }, { agentDir }),
-      /保留/
+      /reserved/
     )
   } finally {
     rmSync(dirname(agentDir), { recursive: true, force: true })
@@ -157,12 +157,12 @@ test('validates bounded non-secret setup hints without adding them to the launch
     ]) {
       assert.throws(
         () => validateLocalConnectorRequest({ ...valid, hint }, { agentDir }),
-        /提示|README|命令|未知/
+        /hint|README|command|unknown/
       )
     }
     assert.throws(
       () => validateLocalConnectorRequest({ ...valid, unexpected: true }, { agentDir }),
-      /未知字段/
+      /unknown fields/
     )
   } finally {
     rmSync(dirname(agentDir), { recursive: true, force: true })
@@ -232,16 +232,16 @@ test('rejects unsafe local stdio input and reserved or existing names', () => {
       )
     }
 
-    rejects({ name: 'existing' }, /已有|冲突/)
-    rejects({ name: 'catalog-server' }, /目录冲突/)
-    rejects({ name: 'Catalog-Server' }, /目录冲突/)
-    rejects({ name: 'tavily' }, /目录冲突/)
-    rejects({ command: '../mcp-server' }, /命令名/)
-    rejects({ command: 'bad\ncommand' }, /换行/)
-    rejects({ runtime: { kind: 'environment', ref: 'phi:Python@1' } }, /环境引用/)
+    rejects({ name: 'existing' }, /already exists|conflicts/)
+    rejects({ name: 'catalog-server' }, /conflicts with the Connector catalog/)
+    rejects({ name: 'Catalog-Server' }, /conflicts with the Connector catalog/)
+    rejects({ name: 'tavily' }, /conflicts with the Connector catalog/)
+    rejects({ command: '../mcp-server' }, /command names/)
+    rejects({ command: 'bad\ncommand' }, /newlines/)
+    rejects({ runtime: { kind: 'environment', ref: 'phi:Python@1' } }, /runtime reference/)
     rejects({ args: Array.from({ length: 65 }, () => 'x') }, /64/)
     rejects({ args: ['x'.repeat(4097)] }, /4096/)
-    rejects({ env: { path: 'x' } }, /名称无效/)
+    rejects({ env: { path: 'x' } }, /Invalid.*name/)
     for (const name of [
       'PATH',
       'HOME',
@@ -262,13 +262,16 @@ test('rejects unsafe local stdio input and reserved or existing names', () => {
       'ENV',
       'IFS'
     ]) {
-      rejects({ env: { [name]: 'unsafe' } }, /保留/)
+      rejects({ env: { [name]: 'unsafe' } }, /reserved/)
     }
-    rejects({ cwd: 'relative' }, /绝对路径/)
-    rejects({ cwd: join(root, 'missing') }, /不存在/)
-    rejects({ runtime: { kind: 'host' }, command: 'server' }, /绝对路径/)
-    rejects({ runtime: { kind: 'host' }, command: join(root, 'missing') }, /不存在|可执行/)
-    rejects({ runtime: { kind: 'host' }, command }, /可执行/)
+    rejects({ cwd: 'relative' }, /absolute path/)
+    rejects({ cwd: join(root, 'missing') }, /does not exist/)
+    rejects({ runtime: { kind: 'host' }, command: 'server' }, /absolute path/)
+    rejects(
+      { runtime: { kind: 'host' }, command: join(root, 'missing') },
+      /does not exist|executable/
+    )
+    rejects({ runtime: { kind: 'host' }, command }, /executable/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -511,7 +514,7 @@ test('an unresolved or non-absolute Bun fails before probing, writing config, or
             return []
           }
         }),
-        /找不到内置 Bun/
+        /Bundled Bun was not found/
       )
     }
     assert.equal(probed, false)
@@ -636,7 +639,7 @@ test('a missing managed environment fails clearly without probing or host fallba
           }
         }
       ),
-      /运行环境尚未就绪，请先在环境页构建/
+      /runtime is not ready/
     )
     assert.equal(probed, false)
     assert.equal(readFileSync(path, 'utf8'), initial)
@@ -684,7 +687,10 @@ test('concurrent adds for the same name serialize so only one can win', async ()
     assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
     const rejected = results.find((result) => result.status === 'rejected')
     assert.equal(rejected?.status, 'rejected')
-    assert.match(String(rejected && rejected.status === 'rejected' ? rejected.reason : ''), /已有/)
+    assert.match(
+      String(rejected && rejected.status === 'rejected' ? rejected.reason : ''),
+      /already exists/
+    )
     assert.equal(probes, 1)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -723,12 +729,12 @@ test('removal requires exact user-stdio ownership and never removes other entrie
 
     assert.throws(
       () => removeLocalMcpConnector('handwritten', { agentDir }),
-      /只能移除通过本地 stdio 添加的连接器/
+      /Only Connectors added as local stdio/
     )
     assert.equal(readFileSync(path, 'utf8'), before)
     assert.throws(
       () => removeLocalMcpConnector('packaged', { agentDir }),
-      /只能移除通过本地 stdio 添加的连接器/
+      /Only Connectors added as local stdio/
     )
     assert.equal(readFileSync(path, 'utf8'), before)
 
@@ -769,7 +775,7 @@ test('local runtime choices include ready base Phi environments and resolvable B
     })
     assert.deepEqual(runtimes, [
       { ref: 'phi:python@1', label: runtimes[0]?.label },
-      { ref: 'bun', label: 'Phi 内置 Bun', kind: 'bun' }
+      { ref: 'bun', label: 'Phi bundled Bun', kind: 'bun' }
     ])
     assert.ok(runtimes[0]?.label)
     assert.deepEqual(
@@ -823,7 +829,7 @@ test('host command keeps the path the user gave so venv-style symlinks still res
           },
           { agentDir: join(root, 'agent') }
         ),
-      /不存在/
+      /does not exist/
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

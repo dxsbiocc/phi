@@ -49,7 +49,9 @@ export async function openRemoteRuntimeWorkspace(
     profile.platform.os === 'unknown' ||
     profile.platform.arch === 'unknown'
   ) {
-    throw new Error('无法安全探测服务器系统与架构；请检查 SSH 连接后重试。')
+    throw new Error(
+      'Unable to safely detect the server OS and architecture. Check the SSH connection and retry.'
+    )
   }
   // Only platform identity is needed here; fast detection grants no additional host capabilities.
   const platform = profile.platform
@@ -110,11 +112,13 @@ export async function resolveRemoteRuntimeRoot(
   })
   const root = result.stdout.trim()
   if (result.terminationReason === 'timeout') {
-    throw new Error('服务器响应慢，运行时根目录检查超时，请稍后重试。')
+    throw new Error(
+      'The server is responding slowly and the runtime root check timed out. Retry later.'
+    )
   }
   if (result.code !== 0 || !validRemoteAbsolutePath(root)) {
     throw new Error(
-      '服务器运行时根目录不存在或无法安全解析；请在远程主机设置中检查该目录与 micromamba 安装。'
+      'The server runtime root is missing or cannot be resolved safely. Check the directory and micromamba installation in Remote Hosts settings.'
     )
   }
   return root

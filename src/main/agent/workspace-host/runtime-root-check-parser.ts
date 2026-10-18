@@ -93,11 +93,13 @@ function numberValue(value: string | undefined): number | null {
 function hardErrors(rows: ParsedRows): readonly RemoteRuntimeRootHardError[] {
   const code = rows.get('hard.error') as RemoteRuntimeRootHardErrorCode | undefined
   const messages: Readonly<Record<RemoteRuntimeRootHardErrorCode, string>> = {
-    'invalid-configured-root': '运行时根目录写法无效，请使用绝对路径或以 ~/ 开头的路径。',
-    'unable-to-expand': '无法在远端展开并规范化运行时根目录。',
-    'ancestor-not-writable': '最近的已存在祖先目录不可写，无法在此创建运行时目录。',
+    'invalid-configured-root':
+      'Invalid runtime root path. Use an absolute path or one starting with ~/.',
+    'unable-to-expand': 'Unable to expand and normalize the runtime root on the server.',
+    'ancestor-not-writable':
+      'The nearest existing ancestor directory is not writable. The runtime directory cannot be created here.',
     'write-capacity-exhausted':
-      '服务器上该位置的写入空间或文件数配额已用尽；请在 设置 → 远程主机 把运行时目录改到有空间的位置（例如工作区所在文件系统），或清理旧环境'
+      'Disk space or the file count quota is exhausted at this server location. In Settings → Remote Hosts, move the runtime directory to a location with space, such as the workspace filesystem, or remove old environments.'
   }
   return code && messages[code] ? [{ code, message: messages[code] }] : []
 }
@@ -121,40 +123,60 @@ function collectWarnings(
   const warnings: RemoteRuntimeRootWarning[] = []
   if (result.ownedByCurrentUser === false)
     warnings.push(
-      warning('not-owned', '该位置不归当前登录用户所有。', '权限可能被所有者更改，导致环境失效。')
+      warning(
+        'not-owned',
+        'This location is not owned by the current user.',
+        'The owner could change permissions and make the environment unusable.'
+      )
     )
   if (result.groupOrOtherWritable)
     warnings.push(
       warning(
         'group-or-other-writable',
-        '该位置允许组内或其他用户写入。',
-        '其他用户可能修改受管环境内容。'
+        'This location is writable by the group or other users.',
+        'Other users could modify the managed environment.'
       )
     )
   if (result.hasSymlink)
     warnings.push(
-      warning('symlink', '路径中包含符号链接。', '链接目标变化后，运行时可能指向不同位置。')
+      warning(
+        'symlink',
+        'The path contains a symlink.',
+        'A changed symlink target could redirect the runtime to another location.'
+      )
     )
   const lowSpace = options.lowSpaceKiB ?? DEFAULT_REMOTE_RUNTIME_ROOT_LOW_SPACE_KIB
   if (result.availableKiB !== null && result.availableKiB < lowSpace)
     warnings.push(
-      warning('low-space', '该文件系统剩余空间偏少。', '环境下载或构建可能因空间耗尽而失败。')
+      warning(
+        'low-space',
+        'This filesystem has little free space.',
+        'Environment downloads or builds could fail if space runs out.'
+      )
     )
   const highUse = options.highDiskUsePercent ?? DEFAULT_REMOTE_RUNTIME_ROOT_HIGH_DISK_USE_PERCENT
   if (result.diskUsePercent !== null && result.diskUsePercent >= highUse)
     warnings.push(
-      warning('high-disk-use', '该文件系统磁盘使用率较高。', '后续环境更新可能更容易遇到空间不足。')
+      warning(
+        'high-disk-use',
+        'Disk usage is high on this filesystem.',
+        'Future environment updates may run out of space.'
+      )
     )
   if (result.executable === false)
     warnings.push(
-      warning('noexec', '该位置无法执行临时探针脚本。', '受管环境中的可执行文件将无法直接运行。')
+      warning(
+        'noexec',
+        'A temporary probe script cannot execute at this location.',
+        'Executables in managed environments cannot run directly.'
+      )
     )
   if (result.sharedFilesystem)
     warnings.push(
       warning(
         'shared-filesystem-info',
-        '该位置位于共享文件系统。',
-        '计算节点可见性仍需后续探针作业确认。'
+        'This location is on a shared filesystem.',
+        'A later probe job must confirm visibility from compute nodes.'
       )
     )
   return warnings

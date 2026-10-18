@@ -31,10 +31,10 @@ test('local connector notices map start, ready, cancellation, and failure feedba
   const starting = localConnectorNotice(progress(), new Set(), openJobs)
   assert.equal(
     starting?.message,
-    '已开始添加 Literature：正在后台启动并验证（首次运行可能需要几分钟）。'
+    'Adding Literature: starting and verifying in the background. The first run may take a few minutes.'
   )
   assert.equal(starting?.severity, 'info')
-  assert.equal(starting?.action?.label, '查看后台任务')
+  assert.equal(starting?.action?.label, 'View Background tasks')
   starting?.action?.onClick()
   assert.equal(opened, 1)
 
@@ -45,7 +45,7 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       openJobs
     ),
     {
-      message: '连接器 Literature 已添加，发现 2 个工具',
+      message: 'Connector Literature added, 2 tools found',
       severity: 'success'
     }
   )
@@ -55,7 +55,7 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       new Set(),
       openJobs
     ),
-    { message: '连接器 Literature 已添加', severity: 'success' }
+    { message: 'Connector Literature added', severity: 'success' }
   )
   assert.deepEqual(
     localConnectorNotice(
@@ -63,7 +63,7 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       new Set(),
       openJobs
     ),
-    { message: '连接器 Literature 已添加，发现 0 个工具', severity: 'success' }
+    { message: 'Connector Literature added, 0 tools found', severity: 'success' }
   )
   assert.deepEqual(
     localConnectorNotice(
@@ -71,7 +71,7 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       new Set(),
       openJobs
     ),
-    { message: '已取消添加 Literature', severity: 'info' }
+    { message: 'Cancelled adding Literature', severity: 'info' }
   )
 
   const failed = localConnectorNotice(
@@ -79,9 +79,9 @@ test('local connector notices map start, ready, cancellation, and failure feedba
     new Set(),
     openJobs
   )
-  assert.equal(failed?.message, '添加 Literature 失败：spawn ENOENT')
+  assert.equal(failed?.message, 'Could not add Literature: spawn ENOENT')
   assert.equal(failed?.severity, 'error')
-  assert.equal(failed?.action?.label, '查看后台任务')
+  assert.equal(failed?.action?.label, 'View Background tasks')
   failed?.action?.onClick()
   assert.equal(opened, 2)
 
@@ -97,9 +97,9 @@ test('local connector notices map start, ready, cancellation, and failure feedba
   )
   assert.equal(
     failedWithDetail?.message,
-    '添加 Literature 失败：MCP subprocess closed stdout before responding（详情见后台任务）'
+    'Could not add Literature: MCP subprocess closed stdout before responding (see Background tasks for details)'
   )
-  assert.equal(failedWithDetail?.action?.label, '查看后台任务')
+  assert.equal(failedWithDetail?.action?.label, 'View Background tasks')
 
   const openedIds: string[] = []
   const needsSetup = localConnectorNotice(
@@ -119,9 +119,9 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       label: needsSetup?.action?.label
     },
     {
-      message: 'Literature 需要先完成配置，点击查看怎么做',
+      message: 'Literature needs configuration. View the setup instructions.',
       severity: 'info',
-      label: '去处理'
+      label: 'Resolve setup'
     }
   )
   needsSetup?.action?.onClick()

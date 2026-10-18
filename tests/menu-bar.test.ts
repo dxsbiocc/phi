@@ -67,17 +67,46 @@ test('macOS menu bar provides focused app actions without hijacking primary clic
   )
   assert.deepEqual(
     clickable.map((item) => item.label),
-    ['打开 Phi', '新建对话', '设置…', '隐藏窗口', '退出 Phi']
+    ['Open Phi', 'New chat', 'Settings…', 'Hide window', 'Quit Phi']
   )
-  clickable.find((item) => item.label === '新建对话')?.click()
-  clickable.find((item) => item.label === '设置…')?.click()
-  clickable.find((item) => item.label === '隐藏窗口')?.click()
-  clickable.find((item) => item.label === '退出 Phi')?.click()
+  clickable.find((item) => item.label === 'New chat')?.click()
+  clickable.find((item) => item.label === 'Settings…')?.click()
+  clickable.find((item) => item.label === 'Hide window')?.click()
+  clickable.find((item) => item.label === 'Quit Phi')?.click()
   assert.deepEqual(actions, ['new-chat', 'open-settings'])
   assert.deepEqual(events, ['open', 'hide', 'quit'])
 
   controller.destroy()
   assert.equal(tray.destroyed, true)
+})
+
+test('the existing tray reads the selected language whenever its menu opens', () => {
+  const tray = new FakeTray()
+  let language: 'en' | 'zh-CN' = 'en'
+  let items: readonly MenuBarMenuItem[] = []
+  const actions: MenuBarAction[] = []
+  createMenuBarController({
+    platform: 'darwin',
+    createTray: () => tray,
+    buildMenu: (next) => {
+      items = next
+      return next
+    },
+    openWindow: () => undefined,
+    queueAction: (action) => actions.push(action),
+    hideWindow: () => undefined,
+    canHideWindow: () => true,
+    quit: () => undefined,
+    getUiLanguage: () => language
+  })
+  tray.listeners.get('right-click')?.()
+  assert.equal('label' in items[1] ? items[1].label : '', 'New chat')
+  language = 'zh-CN'
+  tray.listeners.get('right-click')?.()
+  assert.equal('label' in items[1] ? items[1].label : '', '新建对话')
+  if ('click' in items[1]) items[1].click()
+  assert.deepEqual(actions, ['new-chat'])
+  assert.equal(tray.destroyed, false)
 })
 
 test('menu bar is macOS-only and uses template image plus an explicit renderer command bridge', () => {

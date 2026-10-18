@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { Button, Tooltip } from '@mui/material'
 
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
@@ -14,6 +16,7 @@ export function WrapperRunResultActions({
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenRemoteResult?: (run: WrapperRun, path: string, kind: LocalPathKind) => void
 }): React.JSX.Element {
+  useUiLanguage()
   if (!run.remote) {
     return (
       <Button
@@ -26,7 +29,7 @@ export function WrapperRunResultActions({
           if (path) onOpenLocalPath?.(path, 'directory')
         }}
       >
-        打开输出目录
+        {wrapperCopy.openOutputDirectory}
       </Button>
     )
   }
@@ -38,7 +41,7 @@ export function WrapperRunResultActions({
   )
   return (
     <>
-      <Tooltip title={outputScope ? '' : '这条旧运行记录缺少远端结果授权信息'}>
+      <Tooltip title={outputScope ? '' : wrapperCopy.missingResultAuthorization}>
         <span>
           <Button
             size="small"
@@ -47,7 +50,7 @@ export function WrapperRunResultActions({
               if (outputScope) onOpenRemoteResult?.(run, outputScope.root, 'directory')
             }}
           >
-            打开输出目录
+            {wrapperCopy.openOutputDirectory}
           </Button>
         </span>
       </Tooltip>
@@ -57,7 +60,7 @@ export function WrapperRunResultActions({
           disabled={!onOpenRemoteResult}
           onClick={() => onOpenRemoteResult?.(run, runScope.root, 'directory')}
         >
-          查看运行文件
+          {wrapperCopy.viewRunFiles}
         </Button>
       ) : null}
       {primaryReports.map((output) => (
@@ -67,7 +70,7 @@ export function WrapperRunResultActions({
           disabled={!onOpenRemoteResult}
           onClick={() => onOpenRemoteResult?.(run, output.path, 'file')}
         >
-          查看{output.id === 'report' ? '报告' : output.id}
+          {wrapperCopy.viewOutput(output.id)}
         </Button>
       ))}
     </>

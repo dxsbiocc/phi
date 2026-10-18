@@ -269,8 +269,8 @@ test('remote env_request reports a missing micromamba without installing or fall
     const result = await service.request(request())
 
     assert.ok('error' in result)
-    assert.match(result.error, /设置.+安装 micromamba/u)
-    assert.match(result.error, /没有.+本机/u)
+    assert.match(result.error, /Settings.+Install micromamba/u)
+    assert.match(result.error, /did not fall back.+locally/u)
     assert.equal(readFileSync(join(fixture.localAnchor, 'sentinel.txt'), 'utf8'), 'untouched')
     assert.equal(
       existsSync(join(fixture.runtimeRoot, 'bin', 'micromamba-test', 'micromamba')),
@@ -353,7 +353,7 @@ test('remote env_request enforces its server timeout', async () => {
     const result = await service.request(request())
 
     assert.ok('error' in result)
-    assert.match(result.error, /超时/u)
+    assert.match(result.error, /timed out/u)
   } finally {
     fixture.cleanup()
   }
@@ -374,7 +374,7 @@ test('remote env_request preserves the slow-server runtime-root retry guidance',
   assert.match(result.error, /服务器响应慢.*稍后重试/u)
 })
 
-test('remote env_request turns conda connectivity failures into an actionable Chinese error', async () => {
+test('remote env_request turns conda connectivity failures into an actionable English error', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
     installFakeMicromamba(fixture, 'test', 'offline')
@@ -387,10 +387,10 @@ test('remote env_request turns conda connectivity failures into an actionable Ch
     const result = await service.request(request())
 
     assert.ok('error' in result)
-    assert.match(result.error, /无法访问 conda/u)
-    assert.match(result.error, /本地缓存不足/u)
-    assert.match(result.error, /镜像/u)
-    assert.match(result.error, /可联网机器/u)
+    assert.match(result.error, /cannot reach the conda/u)
+    assert.match(result.error, /local cache cannot satisfy/u)
+    assert.match(result.error, /mirror/u)
+    assert.match(result.error, /machine with network access/u)
     const calls = readFakeMicromambaInvocations(fixture)
     assert.equal(calls.length, 2)
     assert.equal(calls[0]?.argv.includes('--offline'), false)
@@ -414,7 +414,7 @@ test('remote env_request retries once offline and reports a sufficient Phi cache
     const result = await service.request(request({ requestId: 'cached-offline' }))
 
     assert.ok('envId' in result)
-    assert.equal(result.notice, '使用了本地缓存')
+    assert.equal(result.notice, 'Used the local cache')
     const calls = readFakeMicromambaInvocations(fixture)
     assert.equal(calls.length, 2)
     assert.equal(calls[0]?.argv.includes('--offline'), false)
@@ -452,8 +452,8 @@ exit 7
     const result = await service.request(request({ requestId: 'offline-silent-quota' }))
 
     assert.ok('error' in result)
-    assert.match(result.error, /写入空间或文件数配额已用尽/u)
-    assert.doesNotMatch(result.error, /本地缓存不足/u)
+    assert.match(result.error, /Disk space or the file count quota is exhausted/u)
+    assert.doesNotMatch(result.error, /local cache cannot satisfy/u)
     const calls = readFileSync(join(fixture.runtimeRoot, 'offline-retry-calls.log'), 'utf8')
       .trim()
       .split('\n')
@@ -489,8 +489,8 @@ test('remote env_request diagnoses a silent quota failure and cleans its write p
     const result = await service.request(request({ requestId: 'silent-quota' }))
 
     assert.ok('error' in result)
-    assert.match(result.error, /写入空间或文件数配额已用尽/u)
-    assert.match(result.error, /设置 → 远程主机/u)
+    assert.match(result.error, /Disk space or the file count quota is exhausted/u)
+    assert.match(result.error, /Settings → Remote Hosts/u)
     assert.deepEqual(probeLimits, [{ timeoutMs: 10_000, maxOutputBytes: 32 * 1024 }])
     assert.equal(
       readdirSync(fixture.runtimeRoot).some((name) => name.startsWith('.phi-write-probe-')),
@@ -518,7 +518,7 @@ test('remote env_request cancellation terminates the server command', async () =
     const result = await pending
 
     assert.ok('error' in result)
-    assert.match(result.error, /取消/u)
+    assert.match(result.error, /cancelled/u)
   } finally {
     fixture.cleanup()
   }

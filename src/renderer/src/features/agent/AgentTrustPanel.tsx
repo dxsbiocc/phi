@@ -1,34 +1,56 @@
+import { agentCopy } from './lib/agentCopy'
+import { getUiLanguage, useUiLanguage } from '../../lib/i18n'
 import { Button, Chip, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
 import type { PromptAgentSummary } from '../../types'
 import { mutateRemoteAgentTrust } from './lib/remoteAgentTrust'
+import { resourceTrustCopy } from '../../lib/resourceUi'
 
 export type RemoteTrustResource = Pick<
   PromptAgentSummary,
   'trustState' | 'available' | 'diagnostics' | 'relativePath' | 'contentHash'
 >
 
-function statusLabel(resource: RemoteTrustResource): string | undefined {
-  if (resource.trustState === 'pending') return '未信任'
-  if (resource.trustState === 'changed') return '内容已变化'
-  if (resource.trustState === 'trusted') return resource.available === false ? '不可用' : '已信任'
-  if (resource.trustState === 'invalid') return '无效'
-  if (resource.available === false) return '不可用'
-  if (resource.diagnostics?.length) return '降级'
+function statusLabel(
+  resource: RemoteTrustResource,
+  language: 'en' | 'zh-CN' = getUiLanguage()
+): string | undefined {
+  if (language === 'en') {
+    if (resource.trustState === 'pending') return resourceTrustCopy.pending
+    if (resource.trustState === 'changed') return resourceTrustCopy.changed
+    if (resource.trustState === 'trusted')
+      return resource.available === false
+        ? resourceTrustCopy.unavailable
+        : resourceTrustCopy.trusted
+    if (resource.trustState === 'invalid') return resourceTrustCopy.invalid
+    if (resource.available === false) return resourceTrustCopy.unavailable
+    if (resource.diagnostics?.length) return resourceTrustCopy.degraded
+    return undefined
+  }
+  if (resource.trustState === 'pending') return agentCopy.untrusted
+  if (resource.trustState === 'changed') return agentCopy.contentChanged
+  if (resource.trustState === 'trusted')
+    return resource.available === false ? agentCopy.unavailable : agentCopy.trusted
+  if (resource.trustState === 'invalid') return agentCopy.invalid
+  if (resource.available === false) return agentCopy.unavailable
+  if (resource.diagnostics?.length) return agentCopy.degraded
   return undefined
 }
 
 export function RemoteProjectTrustStatus({
   resource,
-  sourceLabel = '服务器项目',
+  language = getUiLanguage(),
+  sourceLabel = language === 'en' ? resourceTrustCopy.remoteProject : agentCopy.serverProject,
   compact = false
 }: {
   resource: RemoteTrustResource
+  language?: 'en' | 'zh-CN'
   sourceLabel?: string
   compact?: boolean
 }): React.JSX.Element | null {
-  const label = statusLabel(resource)
+  useUiLanguage()
+  const label = statusLabel(resource, language)
   if (!label && !resource.diagnostics?.length) return null
   return (
     <Stack spacing={0.25} sx={{ minWidth: 0, mt: compact ? 0.25 : 0.5 }}>
@@ -39,7 +61,15 @@ export function RemoteProjectTrustStatus({
           </Typography>
         ) : null}
         {label && (
-          <Chip size="small" label={label} color={label === '已信任' ? 'success' : 'default'} />
+          <Chip
+            size="small"
+            label={label}
+            color={
+              resource.trustState === 'trusted' && resource.available !== false
+                ? 'success'
+                : 'default'
+            }
+          />
         )}
       </Stack>
       {resource.diagnostics?.map((message) => (
@@ -64,29 +94,38 @@ export function PromptAgentStatus({
   agent: RemoteTrustResource & Pick<PromptAgentSummary, 'scope'>
   compact?: boolean
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (agent.scope !== 'remote-project' && !statusLabel(agent) && !agent.diagnostics?.length)
     return null
   return (
     <RemoteProjectTrustStatus
       resource={agent}
-      sourceLabel={agent.scope === 'remote-project' ? '服务器项目' : ''}
+      sourceLabel={agent.scope === 'remote-project' ? agentCopy.serverProject : ''}
       compact={compact}
     />
   )
 }
 
-function actionLabel(resource: RemoteTrustResource): string {
-  if (resource.trustState === 'trusted') return '撤销信任'
-  return resource.trustState === 'changed' ? '重新信任' : '信任'
+function actionLabel(resource: RemoteTrustResource, language: 'en' | 'zh-CN'): string {
+  if (language === 'en') {
+    if (resource.trustState === 'trusted') return resourceTrustCopy.revoke
+    return resource.trustState === 'changed'
+      ? resourceTrustCopy.trustAgain
+      : resourceTrustCopy.trust
+  }
+  if (resource.trustState === 'trusted') return agentCopy.revokeTrust
+  return resource.trustState === 'changed' ? agentCopy.trustAgain : agentCopy.trust
 }
 
 export function RemoteProjectTrustControl({
   resource,
+  language = getUiLanguage(),
   cwd,
   onMutate,
   onChanged
 }: {
   resource: RemoteTrustResource
+  language?: 'en' | 'zh-CN'
   cwd: string
   onMutate: (
     resource: RemoteTrustResource,
@@ -95,6 +134,7 @@ export function RemoteProjectTrustControl({
   ) => Promise<unknown>
   onChanged: () => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   if (
@@ -118,7 +158,7 @@ export function RemoteProjectTrustControl({
   return (
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', px: 1, pb: 0.75 }}>
       <Button size="small" disabled={busy} onClick={() => void changeTrust()}>
-        {actionLabel(resource)}
+        {actionLabel(resource, language)}
       </Button>
       {error && (
         <Typography variant="caption" color="error">
@@ -138,6 +178,7 @@ export function RemoteAgentTrustControl({
   cwd: string
   onChanged: () => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (agent.scope !== 'remote-project' || agent.trustState === 'invalid') return null
   return (
     <RemoteProjectTrustControl

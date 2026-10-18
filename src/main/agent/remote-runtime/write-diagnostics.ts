@@ -17,9 +17,9 @@ export type RemoteWriteProbeExecutor = (script: string) => Promise<{
 
 const PROBE_MARKER = '__PHI_WRITE_PROBE__='
 const CAPACITY_GUIDANCE =
-  '服务器上该位置的写入空间或文件数配额已用尽；请在 设置 → 远程主机 把运行时目录改到有空间的位置（例如工作区所在文件系统），或清理旧环境'
+  'Disk space or the file count quota is exhausted at this server location. In Settings → Remote Hosts, move the runtime directory to a location with space, such as the workspace filesystem, or remove old environments.'
 const READ_ONLY_GUIDANCE =
-  '服务器上该位置是只读文件系统；请在 设置 → 远程主机 把运行时目录改到可写的位置（例如工作区所在文件系统），或请管理员调整挂载设置'
+  'This server location is on a read-only filesystem. In Settings → Remote Hosts, move the runtime directory to a writable location, such as the workspace filesystem, or ask the administrator to adjust the mount settings.'
 
 export function classifyRemoteWriteFailure(output: string): RemoteWriteFailureKind {
   if (/disk quota exceeded|\bedquot\b|quota exceeded/iu.test(output)) return 'quota-exceeded'
@@ -33,7 +33,11 @@ export function remoteWriteDiagnosis(kind: RemoteWriteFailureKind): RemoteWriteD
     return { kind, message: CAPACITY_GUIDANCE }
   }
   if (kind === 'read-only') return { kind, message: READ_ONLY_GUIDANCE }
-  return { kind, message: '服务器运行时目录写入探测失败；请检查目录权限与文件系统状态。' }
+  return {
+    kind,
+    message:
+      'The server runtime directory write probe failed. Check directory permissions and filesystem status.'
+  }
 }
 
 function simulatedFailure(failure: RemoteWriteProbeFailure | undefined): string[] {

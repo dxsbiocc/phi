@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Box, Button, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
@@ -39,6 +41,7 @@ export function RemoteProjectConnectionRow({
   onDelete: () => void
   onOpenRemoteSettings?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const target = host
     ? remoteConnectionDoctorTarget(projectId, connection, host.hostAlias, remotePath)
     : null
@@ -58,17 +61,19 @@ export function RemoteProjectConnectionRow({
             color="text.secondary"
             sx={{ fontFamily: 'var(--font-mono)' }}
           >
-            {host?.hostAlias ?? '需重新配置 SSH 服务器'}
+            {host?.hostAlias ?? remoteSetupCopy.sshReconfigurationRequired}
           </Typography>
         </Box>
-        {isDefault && <Chip size="small" label="默认" color="primary" variant="outlined" />}
+        {isDefault && (
+          <Chip size="small" label={remoteSetupCopy.default} color="primary" variant="outlined" />
+        )}
         <Tooltip
           title={
             !host
-              ? '先重新配置 SSH 服务器'
+              ? remoteSetupCopy.reconfigureSshFirst
               : !remotePath.trim()
-                ? '先填写远程工作目录'
-                : '检查目录和运行环境'
+                ? remoteSetupCopy.remoteDirectoryRequired
+                : remoteSetupCopy.checkDirectoryAndEnvironment
           }
         >
           <span>
@@ -81,23 +86,23 @@ export function RemoteProjectConnectionRow({
               }}
             >
               {showing && doctorState.phase === 'running'
-                ? '测试中…'
+                ? remoteSetupCopy.testing
                 : showing
-                  ? '重新测试'
-                  : '测试连接'}
+                  ? remoteSetupCopy.retest
+                  : remoteSetupCopy.testConnection}
             </Button>
           </span>
         </Tooltip>
         {!host && onOpenRemoteSettings ? (
           <Button size="small" onClick={onOpenRemoteSettings}>
-            设置 → 远程
+            {remoteSetupCopy.remoteSettings}
           </Button>
         ) : null}
-        <Tooltip title="编辑">
+        <Tooltip title={remoteSetupCopy.edit}>
           <span>
             <IconButton
               size="small"
-              aria-label={`编辑 ${connection.label}`}
+              aria-label={remoteSetupCopy.editItem(connection.label)}
               disabled={busy || doctorState.phase === 'running'}
               onClick={onEdit}
             >
@@ -105,11 +110,11 @@ export function RemoteProjectConnectionRow({
             </IconButton>
           </span>
         </Tooltip>
-        <Tooltip title="删除">
+        <Tooltip title={remoteSetupCopy.delete}>
           <span>
             <IconButton
               size="small"
-              aria-label={`删除 ${connection.label}`}
+              aria-label={remoteSetupCopy.deleteItem(connection.label)}
               disabled={busy || doctorState.phase === 'running'}
               onClick={onDelete}
             >
@@ -124,8 +129,8 @@ export function RemoteProjectConnectionRow({
           color="text.secondary"
           sx={{ display: 'block', ml: 4, overflowWrap: 'anywhere' }}
         >
-          输入映射：{connection.inputPathMapping.localRoot} →{' '}
-          {connection.inputPathMapping.remoteRoot}
+          {remoteSetupCopy.inputMappingPrefix}
+          {connection.inputPathMapping.localRoot} → {connection.inputPathMapping.remoteRoot}
         </Typography>
       )}
       {target && (

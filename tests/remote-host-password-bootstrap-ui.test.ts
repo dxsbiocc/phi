@@ -55,11 +55,14 @@ test('successful password verification offers only recommended key setup or no s
     })
   )
 
-  assert.match(markup, /密码连接成功/)
-  assert.match(markup, /配置免密登录（默认、推荐）/)
-  assert.match(markup, /暂不配置/)
-  assert.match(markup, /之后需要密码时请重新添加，或改用免密登录/)
-  assert.doesNotMatch(markup, /服务器密码|私钥口令|保存密码|记住密码|钥匙串密码/)
+  assert.match(markup, /Password connection succeeded/)
+  assert.match(markup, /Configure key-based login \(recommended\)/)
+  assert.match(markup, /Skip setup for now/)
+  assert.match(markup, /[Aa]dd the password again when needed.{0,10}or use key-based login/)
+  assert.doesNotMatch(
+    markup,
+    /Server password|Private key passphrase|store the password|Remember password|Keychain password/
+  )
 })
 
 test('declining key setup confirms that the one-use password was discarded', () => {
@@ -71,11 +74,11 @@ test('declining key setup confirms that the one-use password was discarded', () 
     })
   )
 
-  assert.match(markup, /已丢弃密码/)
-  assert.match(markup, /未保存任何凭据/)
-  assert.match(markup, /未生成或写入 SSH 配置/)
-  assert.match(markup, /之后需要密码时请重新添加，或改用免密登录/)
-  assert.doesNotMatch(markup, /保存密码|记住密码|钥匙串密码/)
+  assert.match(markup, /The password was discarded/)
+  assert.match(markup, /No credentials were saved/)
+  assert.match(markup, /no SSH configuration was generated or written/)
+  assert.match(markup, /[Aa]dd the password again when needed.{0,10}or use key-based login/)
+  assert.doesNotMatch(markup, /store the password|Remember password|Keychain password/)
 })
 
 function render(element: React.ReactElement): string {
@@ -93,7 +96,7 @@ function render(element: React.ReactElement): string {
 test('password bootstrap requires a password and a matching non-empty key passphrase by default', () => {
   assert.equal(
     credentialValidationMessage({ password: '', passphrase: '', passphraseConfirmation: '' }),
-    '请输入服务器密码'
+    'Enter the server password'
   )
   assert.equal(
     credentialValidationMessage({
@@ -101,7 +104,7 @@ test('password bootstrap requires a password and a matching non-empty key passph
       passphrase: '',
       passphraseConfirmation: ''
     }),
-    '请输入私钥口令'
+    'Enter the private key passphrase'
   )
   assert.equal(
     credentialValidationMessage({
@@ -109,7 +112,7 @@ test('password bootstrap requires a password and a matching non-empty key passph
       passphrase: 'key-passphrase',
       passphraseConfirmation: 'different'
     }),
-    '两次输入的私钥口令不一致'
+    'The private key passphrases do not match'
   )
   assert.equal(
     credentialValidationMessage({
@@ -192,11 +195,11 @@ test('password bootstrap starts with public target information and an explicit u
     })
   )
 
-  assert.match(markup, /设置免密登录/)
+  assert.match(markup, /Set up key-based login/)
   assert.match(markup, /gpu-lab/)
   assert.match(markup, /researcher@gpu\.example\.org:2222/)
-  assert.match(markup, /开始安全检查/)
-  assert.doesNotMatch(markup, /服务器密码/)
+  assert.match(markup, /Start safety check/)
+  assert.doesNotMatch(markup, /Server password/)
 })
 
 test('opening the password bootstrap dialog never starts credential work without a user action', () => {
@@ -237,7 +240,7 @@ test('opening the password bootstrap dialog never starts credential work without
     })
   )
 
-  assert.match(markup, /开始安全检查/)
+  assert.match(markup, /Start safety check/)
   assert.equal(inspectCalls, 0)
 })
 
@@ -249,15 +252,15 @@ test('unsupported targets stop on a public preflight explanation without reveali
         phase: 'target',
         target: TARGET,
         busy: false,
-        error: '此服务器通过 ProxyJump 连接，当前版本不支持引导。'
+        error: 'This server connects through ProxyJump, which this setup flow does not support yet.'
       },
       actions: NOOP_ACTIONS
     })
   )
 
   assert.match(markup, /ProxyJump/)
-  assert.match(markup, /当前版本不支持引导/)
-  assert.doesNotMatch(markup, /服务器密码|私钥口令/)
+  assert.match(markup, /this setup flow does not support yet/)
+  assert.doesNotMatch(markup, /Server password|Private key passphrase/)
 })
 
 test('host fingerprints require explicit confirmation before credentials are shown', () => {
@@ -278,13 +281,13 @@ test('host fingerprints require explicit confirmation before credentials are sho
     })
   )
 
-  assert.match(markup, /确认服务器主机密钥/)
+  assert.match(markup, /Confirm server host key/)
   assert.match(markup, /ED25519/)
   assert.match(markup, /SHA256:ed25519-example/)
   assert.match(markup, /ECDSA/)
-  assert.match(markup, /仅在与管理员提供的指纹一致时确认/)
-  assert.match(markup, /指纹一致，继续/)
-  assert.doesNotMatch(markup, /服务器密码/)
+  assert.match(markup, /Confirm only if it matches the fingerprint they provide/)
+  assert.match(markup, /Fingerprint matches, continue/)
+  assert.doesNotMatch(markup, /Server password/)
 })
 
 test('password test step contains only the one-use server password', () => {
@@ -298,17 +301,20 @@ test('password test step contains only the one-use server password', () => {
         error: null,
         agentState: 'ready',
         password: '',
-        validationMessage: '请输入服务器密码'
+        validationMessage: 'Enter the server password'
       },
       actions: NOOP_ACTIONS
     })
   )
 
-  assert.match(markup, /用密码测试连接/)
-  assert.match(markup, /服务器密码/)
-  assert.match(markup, /密码只用于本次试连/)
-  assert.match(markup, /测试连接/)
-  assert.doesNotMatch(markup, /私钥口令|记住密码|钥匙串密码|保存到钥匙串/)
+  assert.match(markup, /Test password connection/)
+  assert.match(markup, /Server password/)
+  assert.match(markup, /The password is used only for this connection test/)
+  assert.match(markup, /Test connection/)
+  assert.doesNotMatch(
+    markup,
+    /Private key passphrase|Remember password|Keychain password|Save to Keychain/
+  )
 })
 
 test('key setup step defaults to a protected key without retaining the server password', () => {
@@ -321,7 +327,7 @@ test('key setup step defaults to a protected key without retaining the server pa
         busy: false,
         error: null,
         credentials: { password: '', passphrase: '', passphraseConfirmation: '' },
-        validationMessage: '请输入服务器密码',
+        validationMessage: 'Enter the server password',
         passwordlessAcknowledged: false,
         passwordlessAvailable: false
       },
@@ -329,13 +335,16 @@ test('key setup step defaults to a protected key without retaining the server pa
     })
   )
 
-  assert.match(markup, /配置免密登录/)
-  assert.match(markup, /私钥口令/)
-  assert.match(markup, /确认私钥口令/)
-  assert.match(markup, /不会保存私钥口令/)
-  assert.match(markup, /开始引导/)
+  assert.match(markup, /Configure key-based login/)
+  assert.match(markup, /Private key passphrase/)
+  assert.match(markup, /Confirm private key passphrase/)
+  assert.match(markup, /The private key passphrase is not saved/)
+  assert.match(markup, /Start setup/)
   assert.match(markup, /disabled=""/)
-  assert.doesNotMatch(markup, /服务器密码|保存密码|记住密码|钥匙串密码/)
+  assert.doesNotMatch(
+    markup,
+    /Server password|store the password|Remember password|Keychain password/
+  )
 })
 
 test('Linux without an agent offers an explicit risky choice instead of silently dropping the passphrase', () => {
@@ -348,7 +357,8 @@ test('Linux without an agent offers an explicit risky choice instead of silently
         busy: false,
         error: null,
         credentials: { password: '', passphrase: '', passphraseConfirmation: '' },
-        validationMessage: '请先启动 ssh-agent 后重新检查，或明确选择无口令密钥',
+        validationMessage:
+          'Start ssh-agent and recheck, or explicitly choose a key without a passphrase',
         passwordlessAcknowledged: false,
         passwordlessAvailable: true
       },
@@ -356,10 +366,10 @@ test('Linux without an agent offers an explicit risky choice instead of silently
     })
   )
 
-  assert.match(markup, /未检测到正在运行的 ssh-agent/)
-  assert.match(markup, /启动 agent 后重新检查/)
-  assert.match(markup, /明确改用无口令密钥（有风险）/)
-  assert.match(markup, /私钥口令/)
+  assert.match(markup, /No running ssh-agent was found/)
+  assert.match(markup, /Recheck after starting ssh-agent/)
+  assert.match(markup, /Use a key without a passphrase \(risk\)/)
+  assert.match(markup, /Private key passphrase/)
 })
 
 test('progress step presents only public operation status after credentials are submitted', () => {
@@ -371,18 +381,18 @@ test('progress step presents only public operation status after credentials are 
         target: TARGET,
         busy: true,
         error: null,
-        completedSteps: ['已验证密码登录', '已生成专用密钥'],
-        currentStep: '正在安装公钥并验证密钥登录…'
+        completedSteps: ['Password login verified', 'Dedicated key generated'],
+        currentStep: 'Installing the public key and verifying key-based login…'
       },
       actions: NOOP_ACTIONS
     })
   )
 
-  assert.match(markup, /正在设置免密登录/)
-  assert.match(markup, /已验证密码登录/)
-  assert.match(markup, /已生成专用密钥/)
-  assert.match(markup, /正在安装公钥并验证密钥登录…/)
-  assert.doesNotMatch(markup, /服务器密码|私钥口令/)
+  assert.match(markup, /Setting up key-based login/)
+  assert.match(markup, /Password login verified/)
+  assert.match(markup, /Dedicated key generated/)
+  assert.match(markup, /Installing the public key and verifying key-based login…/)
+  assert.doesNotMatch(markup, /Server password|Private key passphrase/)
 })
 
 test('verified key login still requires explicit consent before writing SSH config', () => {
@@ -410,13 +420,13 @@ test('verified key login still requires explicit consent before writing SSH conf
     })
   )
 
-  assert.match(markup, /密钥登录已验证/)
-  assert.match(markup, /确认写入 SSH 配置/)
+  assert.match(markup, /Key-based login verified/)
+  assert.match(markup, /Confirm SSH configuration update/)
   assert.match(markup, /Host gpu-lab/)
   assert.match(markup, /IdentityFile ~\/.ssh\/phi_gpu-lab_ed25519/)
-  assert.match(markup, /暂不写入/)
-  assert.match(markup, /同意写入 SSH 配置/)
-  assert.doesNotMatch(markup, /服务器密码|私钥口令/)
+  assert.match(markup, /Skip update for now/)
+  assert.match(markup, /Approve SSH configuration update/)
+  assert.doesNotMatch(markup, /Server password|Private key passphrase/)
 })
 
 test('declining config writes reports completion and keeps a manual public snippet', () => {
@@ -437,10 +447,10 @@ test('declining config writes reports completion and keeps a manual public snipp
     })
   )
 
-  assert.match(markup, /免密登录已就绪/)
-  assert.match(markup, /未修改 ~\/.ssh\/config/)
+  assert.match(markup, /Key-based login is ready/)
+  assert.match(markup, /~\/.ssh\/config was not modified/)
   assert.match(markup, /SHA256:new-key/)
-  assert.match(markup, /手动配置片段/)
-  assert.match(markup, /完成/)
-  assert.doesNotMatch(markup, /服务器密码|私钥口令/)
+  assert.match(markup, /Manual configuration snippet/)
+  assert.match(markup, /Done/)
+  assert.doesNotMatch(markup, /Server password|Private key passphrase/)
 })

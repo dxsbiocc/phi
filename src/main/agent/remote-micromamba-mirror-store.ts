@@ -43,7 +43,7 @@ function validHostProfileId(value: string): boolean {
 }
 
 function checkedHostProfileId(value: string): string {
-  if (!validHostProfileId(value)) throw new Error('远程主机档案 ID 无效')
+  if (!validHostProfileId(value)) throw new Error('Invalid remote host profile ID')
   return value
 }
 

@@ -1,3 +1,4 @@
+import { markdownCopy } from '../components/markdown/markdownUiCopy'
 function moleculeRendererApi(): {
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
 } | null {
@@ -21,6 +22,6 @@ export async function renderMoleculeSvg(
   height: number
 ): Promise<string> {
   const api = moleculeRendererApi()
-  if (!api) throw new Error('分子结构预览服务不可用')
+  if (!api) throw new Error(markdownCopy.structureServiceUnavailable)
   return api.renderMoleculeSvg(value, width, height)
 }

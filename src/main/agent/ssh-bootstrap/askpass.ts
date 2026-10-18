@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { chmod, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
@@ -68,11 +69,11 @@ export async function withSshAskpass<T>(
   options: { promptCount?: number } = {}
 ): Promise<T> {
   if (/\0|\r|\n/.test(secret) || Buffer.byteLength(secret) > 4_096) {
-    throw new Error('SSH 凭据格式无效')
+    throw new Error(sshBootstrapCopy.credentialsInvalid)
   }
   const promptCount = options.promptCount ?? 1
   if (!Number.isInteger(promptCount) || promptCount < 1 || promptCount > 3) {
-    throw new Error('SSH askpass 次数无效')
+    throw new Error(sshBootstrapCopy.askpassAttemptsInvalid)
   }
   const directory = await files.createDirectory('phi-ssh-askpass-')
   const helperPath = join(directory, 'askpass.sh')

@@ -1,10 +1,11 @@
+import { pluginCopy } from './pluginCopy'
 import type { PhiPluginScriptToolDetail } from '../../../../../shared/phiPluginTypes'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import { phiPluginComponentName } from './phiPlugins'
 
 export type PhiPluginComponentKind = 'agent' | 'skill' | 'script'
-export const PHI_PLUGIN_COMPONENT_LABELS = { agent: '智能体', skill: '技能', script: '脚本工具' }
-export const PHI_PLUGIN_APPROVAL_LABELS = { read: '只读', write: '写入', execute: '执行' }
+export const PHI_PLUGIN_COMPONENT_LABELS = pluginCopy.componentLabels
+export const PHI_PLUGIN_APPROVAL_LABELS = pluginCopy.approvalLabels
 
 export interface PhiPluginInspectableComponent {
   key: string

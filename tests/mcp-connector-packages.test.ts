@@ -312,7 +312,7 @@ test('HTTP package install refuses to overwrite a same-name user server', async 
   )
   await assert.rejects(
     installCatalogConnector(fixture.connectorsDir, 'collision', '1.0.0', installOptions(fixture)),
-    /不会覆盖/
+    /will not be overwritten/
   )
   assert.deepEqual(listInstalledPackages({ agentDir: fixture.agentDir }), [])
 })

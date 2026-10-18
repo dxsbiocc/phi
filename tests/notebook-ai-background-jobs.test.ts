@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -54,6 +55,8 @@ function select(jobs: NotebookAiGenerationJob[]): ReturnType<typeof selectBackgr
 function render(element: React.ReactElement): string {
   return renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
 }
+
+setUiLanguage('zh-CN')
 
 test('Notebook generation attempts join active and completed tasks independently from their draft', () => {
   const jobs = select([

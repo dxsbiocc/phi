@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useRef, useState } from 'react'
 import {
   Box,
@@ -29,6 +31,7 @@ type SessionRenamePanelProps = {
 }
 
 export function SessionRenamePanel(props: SessionRenamePanelProps): React.JSX.Element {
+  useUiLanguage()
   return <SessionRenameDialog key={props.open ? 'open' : 'closed'} {...props} />
 }
 
@@ -42,6 +45,7 @@ function SessionRenameDialog({
   onGenerateTitle,
   generateTitleDisabledReason
 }: SessionRenamePanelProps): React.JSX.Element {
+  useUiLanguage()
   const [generating, setGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
   const generationRequestRef = useRef(0)
@@ -70,11 +74,13 @@ function SessionRenameDialog({
     try {
       const suggestion = (await onGenerateTitle()).trim()
       if (request !== generationRequestRef.current) return
-      if (!suggestion) throw new Error('未生成有效标题，请重试')
+      if (!suggestion) throw new Error(navigationCopy.noValidTitleWasGeneratedTryAgain)
       onTitleChange(suggestion)
     } catch (error) {
       if (request !== generationRequestRef.current) return
-      setGenerationError(error instanceof Error ? error.message : '标题生成失败，请重试')
+      setGenerationError(
+        error instanceof Error ? error.message : navigationCopy.titleGenerationFailedTryAgain
+      )
     } finally {
       if (request === generationRequestRef.current) {
         generationPendingRef.current = false
@@ -117,10 +123,10 @@ function SessionRenameDialog({
           fontWeight: 700
         }}
       >
-        <Box component="span">重命名聊天</Box>
+        <Box component="span">{navigationCopy.renameConversation}</Box>
         <IconButton
           size="small"
-          aria-label="关闭重命名窗口"
+          aria-label={navigationCopy.closeRenameDialog}
           onClick={close}
           sx={{ color: 'text.secondary' }}
         >
@@ -129,13 +135,13 @@ function SessionRenameDialog({
       </DialogTitle>
       <DialogContent sx={{ px: 3, pb: 1 }}>
         <DialogContentText id="session-rename-description" sx={{ fontSize: '0.875rem', mb: 2 }}>
-          保持简短且易于识别
+          {navigationCopy.keepItShortAndRecognizable}
         </DialogContentText>
         <TextField
           autoFocus
           fullWidth
-          label="对话标题"
-          aria-label="新的对话标题"
+          label={navigationCopy.conversationTitle}
+          aria-label={navigationCopy.newConversationTitle}
           value={title}
           disabled={generating}
           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
@@ -163,14 +169,18 @@ function SessionRenameDialog({
                   onClick={() => void generateTitle()}
                   startIcon={
                     generating ? (
-                      <CircularProgress size={15} color="inherit" aria-label="正在生成标题" />
+                      <CircularProgress
+                        size={15}
+                        color="inherit"
+                        aria-label={navigationCopy.generatingTitle}
+                      />
                     ) : (
                       <TbSparkles size={17} aria-hidden />
                     )
                   }
                   sx={{ textTransform: 'none' }}
                 >
-                  AI 生成标题
+                  {navigationCopy.generateTitleWithAI}
                 </Button>
               </span>
             </Tooltip>
@@ -184,7 +194,7 @@ function SessionRenameDialog({
       </DialogContent>
       <DialogActions sx={{ px: 3, pt: 1, pb: 2.5, gap: 1 }}>
         <Button variant="outlined" onClick={close} sx={{ minWidth: 76 }}>
-          取消
+          {navigationCopy.cancel}
         </Button>
         <Button
           variant="contained"
@@ -192,7 +202,7 @@ function SessionRenameDialog({
           onClick={onSave}
           sx={{ minWidth: 76 }}
         >
-          保存
+          {navigationCopy.save}
         </Button>
       </DialogActions>
     </Dialog>

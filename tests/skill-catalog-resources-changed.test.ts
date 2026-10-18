@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SkillCatalogState } from '../src/renderer/src/features/skill/hooks/useSkillCatalog'
@@ -5,6 +6,8 @@ import type { SkillCatalogDialogProps } from '../src/renderer/src/features/skill
 import type { PromptAgentSummary, SkillSummary } from '../src/renderer/src/types'
 import type { PackageRegistryView } from '../src/shared/packageManagerTypes'
 import { loadContentCatalog } from '../src/renderer/src/lib/contentCatalog'
+import * as resourceUi from '../src/renderer/src/lib/resourceUi'
+import { skillCopy } from '../src/renderer/src/features/skill/lib/skillCopy'
 import * as skillCatalogBrowser from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
 import { getCatalogPage } from '../src/renderer/src/components/catalog/catalogPaging'
 import { deferred, flush, hookHarness, type Deferred } from './helpers/resourceCatalogHarness'
@@ -231,7 +234,9 @@ function dialogImports(): Record<string, unknown> {
     '../../../components/catalog/CatalogResultsTable': { CatalogResultsTable: 'Results' },
     '../../../components/catalog/packageSize': { formatPackageSize: () => '64 B' },
     './SkillPackageDetailPage': { SkillPackageDetailPage: 'Detail' },
-    '../lib/skillCatalogBrowser': skillCatalogBrowser
+    '../lib/skillCatalogBrowser': skillCatalogBrowser,
+    '../../../lib/resourceUi': resourceUi,
+    '../lib/skillCopy': { skillCopy }
   }
 }
 
@@ -290,7 +295,7 @@ test('the open skill catalog forces website refresh and updates installation sta
   const rows = view(tree, 'Results').props.rows as Array<{ id: string; action: View }>
   assert.equal(
     rows.find((row) => row.id === 'science-11')?.action.props['aria-label'],
-    '更新 Science 11'
+    'Update Science 11'
   )
   harness.unmount()
   assert.equal(events.listeners.size, 0)
@@ -336,4 +341,61 @@ test('closing or replacing a catalog request rejects stale website snapshots and
   reads[2].resolve(registry(99))
   await flush()
   assert.equal(harness.writes(), writes)
+})
+
+test('language switching retains the open skill catalog query, group, page and loaded snapshot', async () => {
+  const events = resourceEvents()
+  let reads = 0
+  const snapshot = registry(25)
+  for (const entry of snapshot.packages) entry.category = '科学分析'
+  const harness = hookHarness<View>(
+    dialogPath,
+    'SkillCatalogDialog',
+    {
+      ...events,
+      readOfficialContentCatalog: async () => {
+        reads += 1
+        return snapshot
+      },
+      listPackageRegistries: async () => [],
+      listPackageUpdates: async () => [],
+      listInstalledPackages: async () => []
+    },
+    [{ open: true, skills: [], onClose: () => undefined } satisfies SkillCatalogDialogProps],
+    dialogImports()
+  )
+  try {
+    harness.read()
+    await flush()
+    let tree = harness.read()
+    ;(view(tree, 'Browse').props.onQueryChange as (query: string) => void)('Scientific Analysis')
+    ;(view(tree, 'Browse').props.onGroupChange as (group: string) => void)('category:科学分析')
+    tree = harness.read()
+    ;(view(tree, 'Pagination').props.onPageChange as (page: number) => void)(1)
+    tree = harness.read()
+    const groups = view(tree, 'Browse').props.groups as Array<{ id: string; label: string }>
+    assert.equal(
+      groups.find((group) => group.id === 'category:科学分析')?.label,
+      'Scientific Analysis'
+    )
+    for (const [language, label] of [
+      ['zh-CN', '科学分析'],
+      ['en', 'Scientific Analysis']
+    ] as const) {
+      setUiLanguage(language)
+      tree = harness.read()
+      assert.equal(view(tree, 'Browse').props.query, 'Scientific Analysis')
+      assert.equal(view(tree, 'Browse').props.selectedGroupId, 'category:科学分析')
+      assert.equal(view(tree, 'Browse').props.page, 1)
+      const translated = view(tree, 'Browse').props.groups as Array<{ id: string; label: string }>
+      assert.equal(translated.find((group) => group.id === 'category:科学分析')?.label, label)
+      const rows = view(tree, 'Results').props.rows as Array<{ id: string }>
+      assert.equal(rows[0].id, 'science-11')
+      assert.equal(reads, 1, 'a language change must not refetch or reset the loaded catalog')
+      assert.equal(events.listeners.size, 1)
+    }
+  } finally {
+    harness.unmount()
+    setUiLanguage('en')
+  }
 })

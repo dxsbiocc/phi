@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Collapse, IconButton, Tooltip, Typography } from '@mui/material'
 import { memo, useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
@@ -23,8 +25,8 @@ const ChevronRightIcon = PhiIcons.action.back
 function foldedToolHeadline(item: ToolCallItem, action: ReturnType<typeof toolActionKind>): string {
   const notebook = notebookHeadline(item)
   if (notebook) return notebook
-  if (action === 'python') return '执行 Python 代码'
-  if (action === 'command') return '执行命令'
+  if (action === 'python') return chatCopy.executePythonCode
+  if (action === 'command') return chatCopy.executeCommand
   return item.argsPreview || item.toolName
 }
 
@@ -55,6 +57,7 @@ function ToolCallCard({
   onJumpToNotebookCell,
   onContentResize
 }: ToolCallCardProps): React.JSX.Element {
+  useUiLanguage()
   const [ownExpanded, setOwnExpanded] = useState(false)
   const expanded = controlledExpanded ?? ownExpanded
   const stat = useMemo(() => (item.output ? diffStat(item.output) : null), [item.output])
@@ -148,10 +151,10 @@ function ToolCallCard({
           </Typography>
         ) : null}
         {jumpTarget && onJumpToNotebookCell ? (
-          <Tooltip title="跳转到 cell" enterDelay={400}>
+          <Tooltip title={chatCopy.goToCell} enterDelay={400}>
             <IconButton
               size="small"
-              aria-label="跳转到 cell"
+              aria-label={chatCopy.goToCell}
               onClick={(event) => {
                 event.stopPropagation()
                 onJumpToNotebookCell(jumpTarget)

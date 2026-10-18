@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Box, InputAdornment, TextField, Typography } from '@mui/material'
 import { PhiIcons } from '../../../icons'
 import type { CustomConnectorEntry, CustomConnectorServerEntry } from '../lib/customConnectorGroup'
@@ -18,6 +20,8 @@ export function McpCustomConnectorGroup({
   onOpen: (entry: CustomConnectorServerEntry) => void
   onViewJob: (jobId: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const normalizedQuery = query.trim().toLowerCase()
   const filtered = normalizedQuery
     ? entries.filter((entry) =>
@@ -30,7 +34,7 @@ export function McpCustomConnectorGroup({
     <>
       <TextField
         size="small"
-        placeholder="搜索连接器"
+        placeholder={connectorCopy.searchConnectors}
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         slotProps={{
@@ -66,7 +70,7 @@ export function McpCustomConnectorGroup({
       {filtered.length === 0 ? (
         normalizedQuery ? (
           <Typography color="text.secondary" sx={{ mt: 2 }}>
-            没有符合条件的连接器
+            {connectorCopy.noMatches}
           </Typography>
         ) : (
           <McpCustomConnectorEmptyState />

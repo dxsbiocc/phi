@@ -1,3 +1,4 @@
+import { chatEventCopy } from '../features/chat/lib/chatEventCopy'
 import { absoluteWorkspacePath } from './workspacePaths'
 import type { FileTreeEntry, PromptAgentSummary, SkillSummary } from '../types'
 import type { ChatResourceMention } from './chatResourceMentions'
@@ -52,7 +53,10 @@ type DroppedInputFile = File & {
 
 const INPUT_FILE_REFERENCE_LIMIT = 8
 const INPUT_FILE_REFERENCE_STOP_CHARS = /[\s`]/
-const INPUT_FILE_REFERENCE_LABEL = '引用文件：'
+const INPUT_FILE_REFERENCE_LABELS = ['引用文件：', 'Referenced files:'] as const
+function inputFileReferenceLabel(line: string): string | undefined {
+  return INPUT_FILE_REFERENCE_LABELS.find((label) => line.startsWith(label))
+}
 const INPUT_FILE_REFERENCE_BULLET_PATTERN = /^\s*-\s*`([^`]+)`\s*$/
 const INPUT_FILE_REFERENCE_INLINE_PATTERN = /`([^`]+)`/g
 const PROMPT_AGENT_REFERENCE_PATTERN = /^\/prompts:([A-Za-z0-9._-]+)$/
@@ -205,7 +209,7 @@ export function replaceInputReferenceRange(
 
   const before = input.slice(0, range.start)
   const after = input.slice(range.end)
-  if (trimmedReference.startsWith(INPUT_FILE_REFERENCE_LABEL)) {
+  if (inputFileReferenceLabel(trimmedReference)) {
     const body = removeInputReferenceQuery(input, range)
     return {
       value: body ? `${trimmedReference}\n${body}` : trimmedReference,
@@ -247,10 +251,12 @@ export function formatInputFileReferences(paths: string[], cwd = ''): string {
     paths.filter((path) => isVisibleInputFileReferencePath(path, cwd))
   )
   if (references.length === 0) return ''
-  if (references.length === 1) return `${INPUT_FILE_REFERENCE_LABEL}${quotedPath(references[0])}`
-  return [INPUT_FILE_REFERENCE_LABEL, ...references.map((path) => `- ${quotedPath(path)}`)].join(
-    '\n'
-  )
+  if (references.length === 1)
+    return `${chatEventCopy.referencedFilesPrefix}${quotedPath(references[0])}`
+  return [
+    chatEventCopy.referencedFilesPrefix,
+    ...references.map((path) => `- ${quotedPath(path)}`)
+  ].join('\n')
 }
 
 export function parseInputFileReferences(input: string): ParsedInputFileReferences {
@@ -261,7 +267,8 @@ export function parseInputFileReferences(input: string): ParsedInputFileReferenc
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
     const trimmedLine = line.trim()
-    if (!trimmedLine.startsWith(INPUT_FILE_REFERENCE_LABEL)) {
+    const matchedLabel = inputFileReferenceLabel(trimmedLine)
+    if (!matchedLabel) {
       bodyLines.push(line)
       continue
     }
@@ -283,7 +290,7 @@ export function parseInputFileReferences(input: string): ParsedInputFileReferenc
       consumedBullet = true
     }
 
-    if (!consumedBullet && trimmedLine !== INPUT_FILE_REFERENCE_LABEL) {
+    if (!consumedBullet && trimmedLine !== matchedLabel) {
       bodyLines.push(line)
     }
   }
@@ -343,7 +350,7 @@ function inputInvocationReferenceFromLine(
       (candidate) => candidate.name === name && candidate.available !== false
     )
     if (agent) {
-      return { kind: 'agent', name, text: agent.trigger || `/prompts:${name}` }
+      return { kind: 'agent', name, text: trimmed }
     }
   }
 
@@ -357,10 +364,7 @@ function inputInvocationReferenceFromLine(
       return {
         kind: 'agent',
         name,
-        text:
-          agent.source === 'phi-agent' || agent.source === 'server-project-agent'
-            ? `调用智能体：${name}`
-            : agent.trigger || `/prompts:${name}`
+        text: trimmed
       }
     }
   }
@@ -376,7 +380,7 @@ function inputInvocationReferenceFromLine(
           (candidate.source === 'phi-agent' || candidate.source === 'server-project-agent')
       )
     ) {
-      return { kind: 'agent', name, text: `调用智能体：${name}` }
+      return { kind: 'agent', name, text: trimmed }
     }
   }
 
@@ -446,7 +450,7 @@ export function formatInputFileReferenceTarget(entry: FileTreeEntry): string {
       ? rawPath
       : `./${rawPath}`
   const directoryPath = entry.kind === 'directory' && !path.endsWith('/') ? `${path}/` : path
-  return `引用文件：${quotedPath(directoryPath)}`
+  return `${chatEventCopy.referencedFilesPrefix}${quotedPath(directoryPath)}`
 }
 
 export function filterInputFileReferenceCandidates(
@@ -541,6 +545,7 @@ export function uniqueEnabledInputSkills(skills: readonly SkillSummary[]): Skill
 export function formatPromptAgentReference(
   agent: Pick<PromptAgentSummary, 'name' | 'trigger'> & Partial<Pick<PromptAgentSummary, 'source'>>
 ): string {
-  if (agent.source === 'phi-agent') return `调用智能体：${agent.name}`
+  if (agent.source === 'phi-agent' || agent.source === 'server-project-agent')
+    return chatEventCopy.agentReference(agent.name)
   return agent.trigger || `/prompts:${agent.name}`
 }

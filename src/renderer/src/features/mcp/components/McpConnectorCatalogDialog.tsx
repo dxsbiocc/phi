@@ -1,15 +1,9 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { resourceCategoryLabel } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Alert,
-  Box,
-  Button,
-  Dialog,
-  IconButton,
-  List,
-  ListItemButton,
-  Stack,
-  Typography
-} from '@mui/material'
+import { Alert, Box, Button, Dialog, IconButton, Stack, Typography } from '@mui/material'
 import {
   mcpConnectorCategories,
   type McpConnectorSetupProgress,
@@ -34,6 +28,7 @@ import {
   clearFeaturedToolNames
 } from '../lib/featuredToolCache'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
+import { McpConnectorGroupNavigation } from './McpConnectorGroupNavigation'
 import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
 import { McpCatalogAddMenu } from './McpCatalogAddMenu'
 import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
@@ -101,6 +96,8 @@ export function McpConnectorCatalogDialog({
   onClose,
   onRefresh
 }: McpConnectorCatalogDialogProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
+
   const [page, setPage] = useState<CatalogPage>('list')
   const [catalogConnectors, setConnectors] = useState<FeaturedMcpConnector[]>([])
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
@@ -149,7 +146,7 @@ export function McpConnectorCatalogDialog({
         setToolsLoading(false)
       } else if (progress.phase === 'failed') {
         setToolNames(null)
-        setToolsError(progress.error ?? '本地服务启动失败')
+        setToolsError(progress.error ?? connectorCopy.localStartFailed)
         setToolsLoading(false)
       } else if (progress.phase === 'removed') {
         setToolNames(null)
@@ -205,7 +202,7 @@ export function McpConnectorCatalogDialog({
           const status = connector.apiKey
             ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
               ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
-              : Promise.reject(new Error('本地密钥接口尚未加载'))
+              : Promise.reject(new Error(connectorCopy.keyApiMissing))
             : typeof window.api.getFeaturedMcpAuthStatus === 'function'
               ? window.api.getFeaturedMcpAuthStatus(connector.id)
               : cachedTools !== null
@@ -254,21 +251,19 @@ export function McpConnectorCatalogDialog({
     connectors.find((connector) => connector.id === apiKeyDialogId && connector.apiKey) ?? null
   const selectedAuthStatus = authStatusById[selectedId] ?? 'checking'
   const normalizedQuery = query.trim().toLowerCase()
-  const filteredFeatured = useMemo(
-    () =>
-      group === CUSTOM_CONNECTOR_GROUP
-        ? []
-        : filterFeaturedConnectors(connectors, {
-            category: group,
-            query,
-            signIn: signInFilter,
-            install: installFilter,
-            sort,
-            isInstalled: (connector) =>
-              connector.added || Boolean(matchingServer(connector, servers))
-          }),
-    [connectors, group, installFilter, query, servers, signInFilter, sort]
-  )
+  const filteredFeatured = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return group === CUSTOM_CONNECTOR_GROUP
+      ? []
+      : filterFeaturedConnectors(connectors, {
+          category: group,
+          query,
+          signIn: signInFilter,
+          install: installFilter,
+          sort,
+          isInstalled: (connector) => connector.added || Boolean(matchingServer(connector, servers))
+        })
+  }, [connectors, group, installFilter, query, servers, signInFilter, sort, uiLanguage])
 
   async function refreshCatalog(): Promise<void> {
     const [nextConnectors, nextUpdates] = await Promise.all([
@@ -377,7 +372,7 @@ export function McpConnectorCatalogDialog({
     try {
       if (server.userStdio) await window.api.removeLocalMcpConnector(server.name)
       else if (server.url) await window.api.removeRemoteMcpConnector(server.name, server.url)
-      else throw new Error('此连接器不能从 Phi 中移除')
+      else throw new Error(connectorCopy.cannotRemove)
       await onRefresh()
       setRemoveConfirmationServerId(null)
       setPage('list')
@@ -406,7 +401,7 @@ export function McpConnectorCatalogDialog({
   async function connectOAuth(connector: FeaturedMcpConnector): Promise<void> {
     if (!connector.oauthAuthorizationOrigin || authorizingId) return
     if (typeof window.api.authorizeFeaturedMcp !== 'function') {
-      setError('授权接口尚未加载，请重启 Phi 后重试')
+      setError(connectorCopy.authApiMissing)
       return
     }
     toolRequestRef.current += 1
@@ -528,7 +523,7 @@ export function McpConnectorCatalogDialog({
     }
     if (typeof window.api.listFeaturedMcpTools !== 'function') {
       setToolsLoading(false)
-      setToolsError('连接器接口尚未加载，请重新载入 Phi 窗口后重试')
+      setToolsError(connectorCopy.connectorApiMissing)
       return
     }
     setToolsLoading(true)
@@ -545,12 +540,15 @@ export function McpConnectorCatalogDialog({
           const message = ipcErrorMessage(cause)
           const staleCatalog =
             connector.signIn === '无需登录' &&
-            message.includes('该连接器需要授权，暂无法读取实际工具列表')
+            (message.includes(
+              'This Connector requires authorization before its tools can be read'
+            ) ||
+              message.includes('该连接器需要授权，暂无法读取实际工具列表'))
           setToolsError(
             staleCatalog
-              ? '运行时尚未加载新连接器，请重启 Phi 后重试'
+              ? connectorCopy.runtimeRefreshNeeded
               : /No handler registered for ['"]mcp:featuredTools['"]/.test(message)
-                ? '主进程尚未加载工具查询接口，请重新启动 Phi 后重试'
+                ? connectorCopy.toolsApiMissing
                 : message
           )
         }
@@ -723,17 +721,19 @@ export function McpConnectorCatalogDialog({
           }}
         >
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            连接器
+            {resourceUi.connectors}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 2 }}>
           {page === 'list' ? (
             <Typography variant="h5" sx={{ fontWeight: 700, flex: 1 }}>
-              {normalizedQuery ? '搜索结果' : group}
+              {normalizedQuery ? connectorCopy.searchResults : resourceCategoryLabel(group)}
             </Typography>
           ) : (
             <>
-              <Button onClick={() => openGroup(group)}>← 返回{group}</Button>
+              <Button onClick={() => openGroup(group)}>
+                {connectorCopy.backToGroup(resourceCategoryLabel(group))}
+              </Button>
               <Box sx={{ flex: 1 }} />
             </>
           )}
@@ -750,7 +750,7 @@ export function McpConnectorCatalogDialog({
             />
           )}
           <IconButton
-            aria-label="关闭连接器目录"
+            aria-label={connectorCopy.closeCatalog}
             onClick={close}
             sx={{
               width: 32,
@@ -764,49 +764,13 @@ export function McpConnectorCatalogDialog({
             <PhiIcons.action.close size={20} />
           </IconButton>
         </Stack>
-        <Box
-          component="nav"
-          aria-label="连接器分组"
-          sx={{
-            minHeight: 0,
-            overflowY: 'auto',
-            px: 1.5,
-            borderRight: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.default'
-          }}
-        >
-          <List disablePadding>
-            {mcpConnectorCategories
-              .map((category) => ({
-                category,
-                count: connectors.filter((entry) => entry.category === category).length
-              }))
-              .filter(({ count }) => count > 0)
-              .map(({ category, count }) => (
-                <ListItemButton
-                  key={category}
-                  selected={group === category && page === 'list'}
-                  onClick={() => openGroup(category)}
-                  sx={{ borderRadius: 1.5, mb: 0.5 }}
-                >
-                  <Typography variant="body2">
-                    {category} · {count}
-                  </Typography>
-                </ListItemButton>
-              ))}
-            <ListItemButton
-              key={CUSTOM_CONNECTOR_GROUP}
-              selected={group === CUSTOM_CONNECTOR_GROUP && page === 'list'}
-              onClick={() => openGroup(CUSTOM_CONNECTOR_GROUP)}
-              sx={{ borderRadius: 1.5, mb: 0.5 }}
-            >
-              <Typography variant="body2">
-                {CUSTOM_CONNECTOR_GROUP} · {customEntries.length}
-              </Typography>
-            </ListItemButton>
-          </List>
-        </Box>
+        <McpConnectorGroupNavigation
+          connectors={connectors}
+          customCount={customEntries.length}
+          group={group}
+          page={page}
+          onSelect={openGroup}
+        />
         <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <Box sx={{ flex: 1, overflowY: 'auto', px: 3, py: 3 }}>
             {sourceError ? (
@@ -871,7 +835,9 @@ export function McpConnectorCatalogDialog({
               />
             ) : (
               <>
-                {catalogLoading && <Typography color="text.secondary">正在加载连接器…</Typography>}
+                {catalogLoading && (
+                  <Typography color="text.secondary">{connectorCopy.loadingConnectors}</Typography>
+                )}
                 <McpConnectorCatalogToolbar
                   query={query}
                   signIn={signInFilter}
@@ -894,8 +860,8 @@ export function McpConnectorCatalogDialog({
                 {!catalogLoading && filteredFeatured.length === 0 && (
                   <Typography color="text.secondary" sx={{ mt: 2 }}>
                     {normalizedQuery || signInFilter !== 'all' || installFilter !== 'all'
-                      ? '没有符合条件的连接器'
-                      : '这个分组目前没有连接器'}
+                      ? connectorCopy.noMatches
+                      : connectorCopy.emptyGroup}
                   </Typography>
                 )}
               </>
@@ -939,7 +905,7 @@ export function McpConnectorCatalogDialog({
           onClose={() => setGithubImportOpen(false)}
           onImported={async (source) => {
             await refreshCatalog()
-            setSourceNotice(`已导入 GitHub 软件源 ${source.repo}@${source.sha.slice(0, 7)}`)
+            setSourceNotice(connectorCopy.sourceImported(source.repo, source.sha))
           }}
           onUseLocalDraft={(draft) => {
             setGithubImportOpen(false)

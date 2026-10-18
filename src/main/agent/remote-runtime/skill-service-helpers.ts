@@ -103,7 +103,9 @@ export function checkedRawArgs(
       !inside(workspace.projectRoot, arg) &&
       !inside(bundle.absoluteDir, arg)
     ) {
-      throw new Error(`无法把本机路径输入安全路由到远程项目：${arg}。${REMOTE_PATH_GUIDANCE}`)
+      throw new Error(
+        `Unable to safely route the local input path to the remote project: ${arg}. ${REMOTE_PATH_GUIDANCE}`
+      )
     }
     return arg
   })
@@ -115,12 +117,14 @@ export async function projectCwd(
 ): Promise<string> {
   const value = requested || '.'
   if (posix.isAbsolute(value) || value.includes('\\') || value.split('/').includes('..')) {
-    throw new Error(`cwd 必须使用远程项目相对路径：'${value}'。${REMOTE_PATH_GUIDANCE}`)
+    throw new Error(
+      `cwd must be relative to the remote project: '${value}'. ${REMOTE_PATH_GUIDANCE}`
+    )
   }
   const relativePath = posix.normalize(value)
   const stat = await workspace.projectHost.fs.stat(relativePath).catch(() => undefined)
   if (!stat || stat.kind !== 'directory') {
-    throw new Error(`远程项目 cwd 不存在：'${value}'。${REMOTE_PATH_GUIDANCE}`)
+    throw new Error(`Remote project cwd does not exist: '${value}'. ${REMOTE_PATH_GUIDANCE}`)
   }
   return posix.join(workspace.projectRoot, relativePath)
 }
@@ -219,12 +223,20 @@ export function missingToolEnvironment(
   sessionEnvironment?: string
 ): ScriptToolResult {
   const ref = resolveSkillEnvironment(skill, sessionEnvironment).ref
-  return { ok: false, error: `远程环境 ${ref} 尚未创建；请先调用 env_request。`, warnings: [] }
+  return {
+    ok: false,
+    error: `Remote environment ${ref} has not been created. Call env_request first.`,
+    warnings: []
+  }
 }
 
 export function notReady(ref: string): SkillNotReady {
   return {
-    notReady: { ref, envId: '', message: `远程环境 ${ref} 尚未创建；请先调用 env_request。` }
+    notReady: {
+      ref,
+      envId: '',
+      message: `Remote environment ${ref} has not been created. Call env_request first.`
+    }
   }
 }
 

@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -75,7 +77,7 @@ function renderWorkspaceSidePanel(
 test('analysis view renders the first-phase notebook shell', () => {
   const markup = renderAnalysisView()
 
-  assert.match(markup, /No notebook selected/)
+  assert.match(markup, /尚未选择 notebook/)
   assert.match(markup, /当前容器未传入真实聊天面板/)
   assert.match(markup, /调整分析侧栏宽度/)
   assert.match(markup, /添加 Code cell/)
@@ -187,7 +189,7 @@ test('notebook AI prompt @ mentions filter and replace context options', () => {
 test('analysis view can embed into the main workspace without its own chat/notebook rail', () => {
   const markup = renderAnalysisView({ hideLeftRail: true })
 
-  assert.match(markup, /No notebook selected/)
+  assert.match(markup, /尚未选择 notebook/)
   assert.match(markup, /添加 Code cell/)
   assert.doesNotMatch(markup, /当前容器未传入真实聊天面板/)
   assert.doesNotMatch(markup, /调整分析侧栏宽度/)
@@ -393,7 +395,7 @@ test('analysis view lets the left sidebar occupy the analysis window', () => {
     initialLeftSidebarFullscreen: true
   })
 
-  assert.match(markup, /Chat/)
+  assert.match(markup, /聊天/)
   assert.match(markup, /Notebooks/)
   assert.doesNotMatch(markup, /data-phi-top-right-controls/)
   assert.doesNotMatch(markup, /调整分析侧栏宽度/)
@@ -515,7 +517,7 @@ test('analysis notebook runtime lets the active workspace open notebooks', () =>
   assert.match(runtimeSource, /const getActiveAnalysisCwd = useCallback/)
   assert.match(
     runtimeSource,
-    /onOpenAnalysisNotebook[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*showSnackbar\('请先选择一个 workspace 后再打开 notebook', 'warning'\)[\s\S]*return null/
+    /onOpenAnalysisNotebook[\s\S]*const cwd = getActiveAnalysisCwd\(\)[\s\S]*if \(!cwd\)[\s\S]*showSnackbar\(analysisCopy\.chooseWorkspace, 'warning'\)[\s\S]*return null/
   )
   assert.match(
     runtimeSource,
@@ -803,7 +805,7 @@ test('analysis notebook markdown selection and run affordances use the correct l
   assert.match(source, /opacity: menuAnchor \? 1 : 0/)
   assert.doesNotMatch(source, /isRenderedMarkdown \|\| menuAnchor \? 1 : 0/)
   assert.match(source, /&:focus-within/)
-  assert.match(source, /编辑 Markdown/)
+  assert.match(source, /analysisCopy\.editMarkdown/)
   assert.match(canvasSource, /isNotebookSessionRunnable\(notebookSessionStatus\)/)
   assert.doesNotMatch(source, /连接 kernel 后运行/)
   assert.doesNotMatch(source, /cell 停止待接入 kernel interrupt/)
@@ -1115,7 +1117,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     floatingActionsSource,
     /<MenuItem[\s\S]{0,80}data-phi-notebook-floating-action="disconnect-kernel"/
   )
-  assert.match(floatingActionsSource, /断开 kernel/)
+  assert.match(floatingActionsSource, /analysisCopy\.disconnectKernel/)
   assert.doesNotMatch(
     floatingActionsSource,
     /<Fab[\s\S]{0,160}data-phi-notebook-floating-action="disconnect-kernel"/
@@ -1185,7 +1187,7 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     /insertGeneratedNotebookCells\(draftDocument, draft\.afterCellId/
   )
   assert.doesNotMatch(analysisSource, /replaceNotebookCellWithGeneratedCells/)
-  assert.match(analysisSource, /Return replacement notebook cell\(s\) for the selected cell only/)
+  assert.match(analysisSource, /analysisCopy\.refactorRequest/)
   const submitAiPromptStart = analysisSource.indexOf('const submitAiPrompt = async')
   const acceptAiPromptStart = analysisSource.indexOf('const acceptAiPreviewCell = useCallback(')
   assert.ok(submitAiPromptStart >= 0)
@@ -1325,7 +1327,7 @@ test('analysis view exposes detected kernels in the notebook header', () => {
   assert.match(markup, /data-phi-notebook-kernel-select="true"/)
   assert.match(markup, /data-phi-notebook-kernel-status-dot="primary"/)
   assert.match(markup, /Python 3 \(python3\)/)
-  assert.match(markup, /aria-label="Python 3 · not started"/)
+  assert.match(markup, /aria-label="Python 3 · 未启动"/)
 
   const kernelControlSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookKernelControl.tsx'),
@@ -1470,7 +1472,7 @@ test('analysis view keeps kernel selection available while a notebook kernel is 
 
   assert.match(markup, /data-phi-notebook-kernel-select="true"/)
   assert.doesNotMatch(markup, /data-phi-notebook-kernel-select="true"[^>]*disabled/)
-  assert.match(markup, /aria-label="Kernel busy"/)
+  assert.match(markup, /aria-label="Kernel 忙碌"/)
 })
 
 test('analysis view uses an in-app dialog before switching kernels', () => {
@@ -1488,11 +1490,8 @@ test('analysis view uses an in-app dialog before switching kernels', () => {
   assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-dialog="true"/)
   assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-summary="true"/)
   assert.match(kernelSwitchDialogSource, /data-phi-notebook-kernel-switch-warning="true"/)
-  assert.match(kernelSwitchDialogSource, /当前连接的 kernel 会被终止，正在运行的 cell 会停止。/)
-  assert.match(
-    kernelSwitchDialogSource,
-    /Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。/
-  )
+  assert.match(kernelSwitchDialogSource, /analysisCopy\.kernelStopWarning/)
+  assert.match(kernelSwitchDialogSource, /analysisCopy\.kernelMetadataSession/)
   assert.match(
     analysisSource,
     /const saved = await autosave\.saveNow\(pending\.file, nextDocument\)/
@@ -1810,7 +1809,7 @@ test('analysis view folds long text notebook outputs by default', () => {
   })
 
   assert.match(markup, /data-phi-notebook-output-folded="true"/)
-  assert.match(markup, /Output folded: 90 lines/)
+  assert.match(markup, /输出已折叠：90 行/)
   assert.match(markup, /展开完整输出/)
   assert.match(markup, /line 1/)
   assert.doesNotMatch(markup, /line 90/)
@@ -1870,12 +1869,12 @@ test('analysis view renders html dataframe outputs as a table surface', () => {
   })
 
   assert.match(markup, /data-phi-notebook-output-table="true"/)
-  assert.match(markup, /Search\.\.\./)
-  assert.match(markup, /Columns/)
-  assert.match(markup, /Export/)
+  assert.match(markup, /搜索…/)
+  assert.match(markup, /列/)
+  assert.match(markup, /导出/)
   assert.match(markup, /symbol/)
   assert.match(markup, /float64/)
-  assert.match(markup, /2 rows, 3 columns/)
+  assert.match(markup, /2 行，3 列/)
   assert.doesNotMatch(markup, /text\/plain/)
 })
 
@@ -1940,7 +1939,7 @@ test('analysis view renders pandas crosstab index and column names correctly', (
   assert.match(markup, />Down</)
   assert.match(markup, />Up</)
   assert.match(markup, />total</)
-  assert.match(markup, /6 rows, 4 columns/)
+  assert.match(markup, /6 行，4 列/)
   assert.doesNotMatch(markup, />sign</)
 })
 
@@ -2105,9 +2104,9 @@ test('analysis view renders notebook kernel session controls and status', () => 
     onStopNotebookSession: () => undefined
   })
 
-  assert.match(disconnected, /Kernel disconnected/)
+  assert.match(disconnected, /Kernel 已断开/)
   assert.doesNotMatch(disconnected, /aria-label="连接 kernel"/)
-  assert.match(connected, /Kernel idle/)
+  assert.match(connected, /Kernel 空闲/)
   assert.match(connected, /data-phi-notebook-floating-actions="true"/)
   assert.doesNotMatch(connected, /data-phi-notebook-floating-action="disconnect-kernel"/)
   assert.doesNotMatch(connected, /aria-label="断开 kernel"/)
@@ -2308,3 +2307,6 @@ test('analysis view hides placeholder notebook and variables when project kernel
   assert.doesNotMatch(markup, /变量检查/)
   assert.doesNotMatch(markup, /请重启 Phi/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -54,6 +56,7 @@ export function ManagedEnvironmentDetail({
   onRemove,
   onSaveHostPath
 }: ManagedEnvironmentDetailProps): React.JSX.Element {
+  useUiLanguage()
   const canBuild = environment.source !== 'orphaned' && environment.state === 'absent'
   const canRebuild =
     environment.source !== 'orphaned' &&
@@ -93,7 +96,7 @@ export function ManagedEnvironmentDetail({
     <Stack spacing={2.5} data-phi-managed-environment-detail={environment.ref}>
       <Box>
         <Button autoFocus startIcon={<GoArrowLeft />} onClick={onBack} sx={{ minHeight: 44 }}>
-          返回环境列表
+          {environmentUi.backToEnvironments}
         </Button>
       </Box>
 
@@ -126,7 +129,7 @@ export function ManagedEnvironmentDetail({
             {managedEnvironmentSourceLabel(environment.source)}
             {environment.sizeBytes === undefined
               ? ''
-              : ` · 占用 ${formatEnvironmentSize(environment.sizeBytes)}`}
+              : environmentUi.diskUsageValue(formatEnvironmentSize(environment.sizeBytes))}
           </Typography>
         </Box>
       </Stack>
@@ -142,10 +145,10 @@ export function ManagedEnvironmentDetail({
           <Divider />
           <Box component="section" aria-labelledby="managed-environment-host-title">
             <Typography id="managed-environment-host-title" variant="h6" sx={{ fontWeight: 700 }}>
-              本机环境
+              {environmentUi.localEnvironment}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
-              Phi 会自动检测本机已有的工具与容器运行时；只有明确启用的非托管工具才会替代托管版本。
+              {environmentUi.phiAutomaticallyDetectsLocalToolsAndContainerRuntimes}
             </Typography>
             <Stack spacing={1}>
               {hostResources.tools.length ? (
@@ -181,24 +184,24 @@ export function ManagedEnvironmentDetail({
               sx={{ alignItems: 'center', flexWrap: 'wrap' }}
             >
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                Phi 托管环境
+                {environmentUi.phiManagedEnvironment}
               </Typography>
               <Chip
                 size="small"
                 color={managedSelected ? 'success' : 'default'}
                 variant="outlined"
-                label={managedSelected ? '已启用' : '未启用'}
+                label={managedSelected ? environmentUi.enabled : environmentUi.disabled}
               />
             </Stack>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Phi 按锁文件构建和维护此环境。
+              {environmentUi.phiBuildsAndMaintainsThisEnvironmentFromA}
             </Typography>
           </Box>
           <Switch
             checked={managedSelected}
             disabled={hostBusy || switchingMode || !hostTool || (managedSelected && !localPath)}
             onChange={(_, checked) => void selectManaged(checked)}
-            slotProps={{ input: { 'aria-label': '启用 Phi 托管环境' } }}
+            slotProps={{ input: { 'aria-label': environmentUi.enablePhiManagedEnvironment } }}
           />
         </Stack>
 
@@ -211,12 +214,12 @@ export function ManagedEnvironmentDetail({
         <Stack direction="row" spacing={1} useFlexGap sx={{ mt: 1.5, flexWrap: 'wrap' }}>
           {canBuild ? (
             <Button variant="contained" disabled={busy || !managedSelected} onClick={onBuild}>
-              查看估算并构建
+              {environmentUi.reviewEstimateAndBuild}
             </Button>
           ) : null}
           {canRebuild ? (
             <Button variant="outlined" disabled={busy || !managedSelected} onClick={onRebuild}>
-              重新构建
+              {environmentUi.rebuild}
             </Button>
           ) : null}
           {removable ? (
@@ -226,7 +229,7 @@ export function ManagedEnvironmentDetail({
               disabled={busy || !managedSelected}
               onClick={onRemove}
             >
-              移除托管环境
+              {environmentUi.removeManagedEnvironment}
             </Button>
           ) : null}
         </Stack>

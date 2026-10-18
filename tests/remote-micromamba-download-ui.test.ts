@@ -29,7 +29,7 @@ it('shows the probed capability and selected transfer method', () => {
         platform: 'linux-x64',
         durationMs: 20,
         warningCodes: [],
-        message: '远端 micromamba 安装并验证成功。',
+        message: 'Remote micromamba installed and verified.',
         transferMethod: 'remote-direct'
       }
     },
@@ -39,6 +39,6 @@ it('shows the probed capability and selected transfer method', () => {
     createElement(ThemeProvider, { theme: createTheme() }, control)
   )
 
-  assert.match(markup, /上次测速可用源：gh-proxy.com（curl）/)
-  assert.match(markup, /安装方式：服务器直连下载/)
+  assert.match(markup, /Last reachable source: gh-proxy.com \(curl\)/)
+  assert.match(markup, /Installation method: Direct server download/)
 })

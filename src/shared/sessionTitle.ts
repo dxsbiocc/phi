@@ -1,4 +1,4 @@
-const INPUT_FILE_REFERENCE_LABEL = '引用文件：'
+const INPUT_FILE_REFERENCE_LABELS = ['引用文件：', 'Referenced files:'] as const
 const INPUT_FILE_REFERENCE_BULLET_PATTERN = /^\s*-\s*`[^`]+`\s*$/
 
 export function messageContentTitleText(content: string | null | undefined): string {
@@ -11,7 +11,7 @@ export function messageContentTitleText(content: string | null | undefined): str
   const lines = visibleContent.split(/\r?\n/)
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
-    if (line.trim().startsWith(INPUT_FILE_REFERENCE_LABEL)) {
+    if (INPUT_FILE_REFERENCE_LABELS.some((label) => line.trim().startsWith(label))) {
       while (
         index + 1 < lines.length &&
         INPUT_FILE_REFERENCE_BULLET_PATTERN.test(lines[index + 1])

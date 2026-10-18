@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Alert,
   Button,
@@ -19,15 +21,6 @@ import { PhiIcons } from '../../../icons'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { FileTreeActionDialog, FileTreeMenuTarget } from '../hooks/useFileTreeActions'
 import { fileTreeDisplayPath, type FileTreeAction } from '../lib/fileTreeActions'
-
-const actionDetails = {
-  open: { label: '打开', Icon: PhiIcons.action.openDefault },
-  download: { label: '下载', Icon: PhiIcons.action.download },
-  reveal: { label: '在文件管理器中显示', Icon: PhiIcons.entity.folder },
-  copy: { label: '复制路径', Icon: PhiIcons.action.copy },
-  rename: { label: '重命名', Icon: PhiIcons.action.edit },
-  delete: { label: '删除', Icon: PhiIcons.action.delete }
-}
 
 export type FileTreeActionMenuProps = {
   menu: FileTreeMenuTarget | null
@@ -60,6 +53,15 @@ export function FileTreeActionMenu({
   notice,
   onCloseNotice
 }: FileTreeActionMenuProps): React.JSX.Element {
+  useUiLanguage()
+  const actionDetails = {
+    open: { label: filePreviewCopy.open, Icon: PhiIcons.action.openDefault },
+    download: { label: filePreviewCopy.download, Icon: PhiIcons.action.download },
+    reveal: { label: filePreviewCopy.reveal, Icon: PhiIcons.entity.folder },
+    copy: { label: filePreviewCopy.copyPath, Icon: PhiIcons.action.copy },
+    rename: { label: filePreviewCopy.rename, Icon: PhiIcons.action.edit },
+    delete: { label: filePreviewCopy.delete, Icon: PhiIcons.action.delete }
+  }
   const rename = dialog?.mode === 'rename'
   const remote = dialog?.entry.path.startsWith('ssh://')
   return (
@@ -71,7 +73,7 @@ export function FileTreeActionMenu({
         anchorPosition={menu?.position}
         slotProps={{
           paper: { sx: { width: 240, maxWidth: 'calc(100vw - 32px)' } },
-          list: { 'aria-label': '文件操作' }
+          list: { 'aria-label': filePreviewCopy.fileActions }
         }}
       >
         {actions.map((action) => {
@@ -94,13 +96,13 @@ export function FileTreeActionMenu({
         })}
       </Menu>
       <ConfirmationDialog open={Boolean(dialog)} onClose={onCloseDialog}>
-        <DialogTitle>{rename ? '重命名' : '删除确认'}</DialogTitle>
+        <DialogTitle>{rename ? filePreviewCopy.rename : filePreviewCopy.confirmDelete}</DialogTitle>
         <DialogContent>
           {rename ? (
             <TextField
               autoFocus
               fullWidth
-              label="名称"
+              label={filePreviewCopy.name}
               value={newName}
               disabled={busy}
               onChange={(event) => onNameChange(event.target.value)}
@@ -111,15 +113,16 @@ export function FileTreeActionMenu({
                 }
               }}
               error={Boolean(error)}
-              helperText={error || '同名文件不会被覆盖'}
+              helperText={error || filePreviewCopy.noOverwrite}
               sx={{ mt: 1 }}
             />
           ) : (
             <>
               <DialogContentText>
-                {remote ? '将永久删除此项' : '将此项移到废纸篓'}
-                {dialog?.entry.kind === 'directory' ? '及其全部内容' : ''}。
-                {remote ? '此操作无法撤销。' : ''}
+                {remote ? filePreviewCopy.permanentDelete : filePreviewCopy.moveToTrash}
+                {dialog?.entry.kind === 'directory' ? filePreviewCopy.andContents : ''}
+                {'. '}
+                {remote ? filePreviewCopy.irreversible : ''}
               </DialogContentText>
               <Typography variant="body2" sx={{ mt: 1.5, overflowWrap: 'anywhere' }}>
                 {dialog && fileTreeDisplayPath(dialog.entry)}
@@ -134,7 +137,7 @@ export function FileTreeActionMenu({
         </DialogContent>
         <DialogActions>
           <Button disabled={busy} onClick={onCloseDialog}>
-            取消
+            {filePreviewCopy.cancel}
           </Button>
           <Button
             disabled={busy}
@@ -142,7 +145,7 @@ export function FileTreeActionMenu({
             color={rename ? 'primary' : 'error'}
             startIcon={busy ? <CircularProgress size={14} color="inherit" /> : undefined}
           >
-            {rename ? '保存' : '删除'}
+            {rename ? filePreviewCopy.save : filePreviewCopy.delete}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -34,7 +36,7 @@ test('many real lines still fold behind a "展开完整输出" toggle', () => {
   const text = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n')
   const markup = renderPreOutput('text/plain', text)
 
-  assert.match(markup, /Output folded: 200 lines/)
+  assert.match(markup, /输出已折叠：200 行/)
   assert.match(markup, /展开完整输出/)
   assert.match(markup, /max-height:420px/)
 })
@@ -42,7 +44,7 @@ test('many real lines still fold behind a "展开完整输出" toggle', () => {
 test('short output renders without visible truncation UI', () => {
   const markup = renderPreOutput('text/plain', 'hello world')
 
-  assert.doesNotMatch(markup, /Output folded/)
+  assert.doesNotMatch(markup, /输出已折叠/)
   assert.match(markup, /hello world/)
 })
 
@@ -114,3 +116,6 @@ test('the cell wrap preference reaches every text block and nested rich fallback
   assert.match(markup, /overflow-wrap:anywhere/)
   assert.doesNotMatch(markup, /data-phi-notebook-output-toolbar/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

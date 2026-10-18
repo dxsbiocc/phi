@@ -30,7 +30,7 @@ test('remote skills reject package-local environments with an actionable alterna
 
     const listed = await service.scriptTools()
     assert.deepEqual(listed.tools, [])
-    assert.match(listed.problems.join('\n'), /phi:.*预构建.*没有回退/u)
+    assert.match(listed.problems.join('\n'), /phi:.*prebuild.*No local fallback/u)
     await assert.rejects(
       service.run({
         requestId: 'local-environment-skill',
@@ -39,7 +39,7 @@ test('remote skills reject package-local environments with an actionable alterna
         script: 'run.sh',
         args: []
       }),
-      /phi:.*预构建.*没有回退/u
+      /phi:.*prebuild.*No local fallback/u
     )
   } finally {
     fixture.cleanup()

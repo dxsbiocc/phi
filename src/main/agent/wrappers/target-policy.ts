@@ -123,7 +123,10 @@ function requiredDoctorChecks(hpc: RemoteHpcSettings, deferTools = false): strin
 /** Pure policy. Callers provide saved host data and a full doctor snapshot; this function never opens SSH. */
 export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTargetDecision {
   if (input.projectLocation.kind === 'ssh' && input.explicitTarget === 'local') {
-    return blocked('remote_project_local_target', '远程项目的 Wrapper 不能在本机执行。')
+    return blocked(
+      'remote_project_local_target',
+      'Wrappers in remote projects cannot run on this device.'
+    )
   }
 
   const wantsRemote =
@@ -138,7 +141,10 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
           (candidate) => candidate.id === 'local' && candidate.executor === 'local'
         ) ?? input.profiles.find((candidate) => candidate.executor === 'local'))
     if (!profile || profile.executor !== 'local') {
-      return blocked('local_profile_unavailable', '该 Wrapper 没有可用的本地执行 Profile。')
+      return blocked(
+        'local_profile_unavailable',
+        'This Wrapper has no available local execution profile.'
+      )
     }
     if (
       requiresHeavyWorkloadAcknowledgement(input.resourceClass) &&
@@ -146,7 +152,7 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
     ) {
       return blocked(
         'heavy_local_confirmation_required',
-        '重负载 Wrapper 不会自动落到本机；确认本地资源和风险后才能明确选择本机。'
+        'Heavy Wrappers will not fall back to local execution automatically. Confirm local resources and risks before selecting this device.'
       )
     }
     return {
@@ -156,20 +162,26 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
       profileId: profile.id,
       reason:
         input.explicitTarget === 'local'
-          ? '已明确选择本机执行。'
-          : '本地项目使用可用的本地 Profile。'
+          ? 'Local execution was explicitly selected.'
+          : 'The local project uses an available local profile.'
     }
   }
 
   const remote = input.remote
   if (!remote || !remote.hostProfileId || !remote.hostAlias) {
-    return blocked('remote_connection_unavailable', '没有可用的 SSH 服务器连接，无法选择远程执行。')
+    return blocked(
+      'remote_connection_unavailable',
+      'No SSH server connection is available for remote execution.'
+    )
   }
   if (
     input.projectLocation.kind === 'ssh' &&
     remote.hostProfileId !== input.projectLocation.hostProfileId
   ) {
-    return blocked('remote_configuration_invalid', '远程连接与项目绑定的服务器不一致。')
+    return blocked(
+      'remote_configuration_invalid',
+      'The remote connection does not match the server bound to this project.'
+    )
   }
   const remoteRoot =
     input.projectLocation.kind === 'ssh'
@@ -186,7 +198,10 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
     !hpc ||
     (hpc.controller === 'sbatch' && hpc.scheduler !== 'slurm')
   ) {
-    return blocked('remote_configuration_invalid', '远程目录或调度方式尚未正确配置。')
+    return blocked(
+      'remote_configuration_invalid',
+      'The remote directory or scheduler is not configured correctly.'
+    )
   }
 
   const runtime = hpc.runtime ?? DEFAULT_REMOTE_RUNTIME
@@ -196,13 +211,13 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
   if (!profile || !remoteProfileMatches(profile, hpc, runtime)) {
     return blocked(
       'remote_profile_unavailable',
-      '该 Wrapper 没有适用于所选服务器调度方式和运行时的远程 Profile。'
+      'This Wrapper has no remote profile for the selected server scheduler and runtime.'
     )
   }
 
   const doctor = input.doctor
   if (!doctor && !input.deferDoctorToExecution) {
-    return blocked('doctor_unavailable', '请先检查远程运行环境。')
+    return blocked('doctor_unavailable', 'Check the remote runtime environment first.')
   }
   if (
     doctor &&
@@ -212,7 +227,10 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
       doctor.controller !== (hpc.controller ?? 'login') ||
       doctor.runtime !== runtime)
   ) {
-    return blocked('doctor_mismatch', '环境检查对应的服务器、目录或运行方式已变化，请重新检查。')
+    return blocked(
+      'doctor_mismatch',
+      'The server, directory or execution mode has changed since the environment check. Check again.'
+    )
   }
   const failedCheck =
     doctor &&
@@ -226,8 +244,8 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
     return blocked(
       'doctor_not_ready',
       check
-        ? `${check.message}${check.suggestion ? `；${check.suggestion}` : ''}`
-        : '远程运行环境尚未通过完整检查。'
+        ? `${check.message}${check.suggestion ? `; ${check.suggestion}` : ''}`
+        : 'The remote runtime environment has not passed all checks.'
     )
   }
 
@@ -243,9 +261,9 @@ export function chooseWrapperTarget(input: WrapperTargetPolicyInput): WrapperTar
     ...(!doctor ? { environmentCheckPending: true as const } : {}),
     reason:
       input.projectLocation.kind === 'ssh'
-        ? '远程项目固定使用自身服务器和项目目录。'
+        ? 'The remote project uses its bound server and project directory.'
         : input.explicitTarget === 'remote'
-          ? '已明确选择项目配置的远程服务器。'
-          : '本地项目使用已配置并通过检查的远程服务器。'
+          ? 'The configured remote server was explicitly selected.'
+          : 'The local project uses the configured and verified remote server.'
   }
 }

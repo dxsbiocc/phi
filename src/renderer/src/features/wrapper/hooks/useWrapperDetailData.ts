@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../../lib/i18n'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { WrapperCompositionManifest } from '../../../../../shared/wrapperCompositionManifestTypes'
@@ -26,6 +27,7 @@ export function useWrapperDetailData(
   manifest: WrapperCompositionManifest | undefined,
   prefetched?: PrefetchedWrapperFiles
 ): WrapperDetailData {
+  const language = useUiLanguage()
   const manifestId = manifest?.id
   const hasFiles = prefetched !== undefined
   const tier = manifest ? parseWrapperCompositionId(manifest.id).tier : ''
@@ -46,7 +48,8 @@ export function useWrapperDetailData(
             outputLabels: outputs.map(([key]) => key)
           })
         : undefined,
-    [manifest, inputParams, outputs]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Fallback input/output labels follow the UI language.
+    [manifest, inputParams, outputs, language]
   )
   // Only "workflows" (a complete multi-process pipeline) benefits from the
   // real Nextflow DAG: it has no small enumerable params that represent its

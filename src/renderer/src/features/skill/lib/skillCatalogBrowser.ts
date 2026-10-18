@@ -1,3 +1,10 @@
+import { getUiLocale } from '../../../lib/i18n'
+import {
+  resourceCategoryLabel,
+  resourceCategorySearchTerms,
+  resourceSourceSearchTerms
+} from '../../../lib/resourceUi'
+import { skillCopy } from './skillCopy'
 import type {
   CatalogSkillGroup,
   PackageRegistryEntryView,
@@ -31,6 +38,7 @@ export function knownSkillCatalogPackages(
 }
 
 function packageCategory(entry: SkillCatalogPackage): string {
+  // Keep the legacy fallback selection ID; translate only its displayed label.
   return entry.groupLabel?.trim() || entry.category?.trim() || '软件包'
 }
 
@@ -55,7 +63,7 @@ export function skillCatalogGroups(
     else
       categories.set(item.groupId, {
         id: item.groupId,
-        label: packageCategory(item.entry),
+        label: resourceCategoryLabel(packageCategory(item.entry)),
         count: 1
       })
   }
@@ -65,12 +73,14 @@ export function skillCatalogGroups(
       const id = `group:${group.id}`
       const count = categories.get(id)?.count ?? 0
       categories.delete(id)
-      return { id, label: group.label, count }
+      return { id, label: resourceCategoryLabel(group.label), count }
     })
   return [
     {
       id: 'all',
-      label: definitions.find((group) => group.id === 'all')?.label ?? '全部技能',
+      label: resourceCategoryLabel(
+        definitions.find((group) => group.id === 'all')?.label ?? skillCopy.allSkills
+      ),
       count: items.length
     },
     ...declared,
@@ -78,7 +88,7 @@ export function skillCatalogGroups(
       (left, right) =>
         (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
           (order.get(right.id) ?? Number.MAX_SAFE_INTEGER) ||
-        left.label.localeCompare(right.label, 'zh-CN')
+        left.label.localeCompare(right.label, getUiLocale())
     )
   ]
 }
@@ -97,8 +107,8 @@ export function filterSkillCatalogItems(
       item.entry.title,
       item.entry.summary,
       item.entry.group,
-      packageCategory(item.entry),
-      item.entry.registryLabel
+      ...resourceCategorySearchTerms(packageCategory(item.entry)),
+      ...resourceSourceSearchTerms(item.entry.registryLabel ?? skillCopy.packagesGroup)
     ]
     return fields.some((field) => field?.toLocaleLowerCase().includes(needle))
   })

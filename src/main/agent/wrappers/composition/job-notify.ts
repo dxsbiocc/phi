@@ -5,6 +5,7 @@ import {
   type WrapperRunFinishedEvent
 } from '../../../../shared/wrapperRunNotice'
 import type { WrapperRun } from '../types'
+import type { UiLanguage } from '../../../../shared/uiLanguage'
 
 /**
  * Tells the user a background wrapper run has ended: a notice in the
@@ -23,6 +24,7 @@ export interface WrapperRunNotifyDeps {
   sendToWindow: (payload: Record<string, unknown>) => void
   isAppFocused: () => boolean
   showOsNotification: (notification: { title: string; body: string }) => void
+  getUiLanguage?: () => UiLanguage
   /**
    * Called when the conversation that started the run is known, so it can decide to
    * wake the agent (see `job-continue.ts`). Optional; a throw here is contained.
@@ -65,7 +67,7 @@ export function deliverWrapperRunFinished(
   // A user who just cancelled a run knows it ended; only unexpected endings pop up.
   if (event.state === 'cancelled' || deps.isAppFocused()) return
   try {
-    deps.showOsNotification(wrapperRunNotice(event))
+    deps.showOsNotification(wrapperRunNotice(event, deps.getUiLanguage?.()))
   } catch {
     // Notifications are best-effort (unsupported platform, permission denied).
   }

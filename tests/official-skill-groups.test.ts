@@ -130,7 +130,7 @@ test('classification overrides source categories without modifying package ident
         { ...registry, packages: [{ ...registry.packages[0], id: 'different-skill' }] },
         groups
       ),
-    /固定提交/
+    /pinned commit/
   )
 })
 
@@ -158,7 +158,7 @@ test('invalid counts, duplicate groups, and oversized declarations fail before f
       loadOfficialSkillGroups(f.catalog, {
         fetch: async () => assert.fail('invalid catalog should not fetch')
       }),
-      /分组/
+      /Skill group/
     )
   }
 })
@@ -198,7 +198,7 @@ test('incomplete, duplicate, mismatched, or temporally inconsistent API pages ca
     mutate(value)
     await assert.rejects(
       loadOfficialSkillGroups(f.catalog, { fetch: async () => Response.json(value) }),
-      /分组/
+      /Skill group/
     )
   }
   const f = fixture(101)
@@ -212,7 +212,7 @@ test('incomplete, duplicate, mismatched, or temporally inconsistent API pages ca
         return Response.json(value)
       }
     }),
-    /重复技能/
+    /duplicate Skill/
   )
 })
 
@@ -230,6 +230,6 @@ test('classification API failures, oversized responses, and ignored cancellation
       timeoutMs: 5,
       fetch: async () => new Promise<Response>(() => {})
     }),
-    /超时/
+    /timed out/
   )
 })

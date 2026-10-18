@@ -1,3 +1,5 @@
+import { navigationCopy } from './lib/navigationCopy'
+import { useUiLanguage } from './lib/i18n'
 import {
   memo,
   useCallback,
@@ -24,6 +26,7 @@ import {
 import AppWorkspaceSidebar, { type WorkspaceSidebarDataProps } from './AppWorkspaceSidebar'
 import { PhiIcons } from './icons'
 import type { WorkspaceSidebarMode } from './lib/workspaceSidebar'
+import { resourceUi } from './lib/resourceUi'
 import {
   hasVisibleWorkspaceSidebarDialog,
   isPointerWithinWorkspaceSidebarPreview,
@@ -59,6 +62,7 @@ function activityBarIconSize(
 }
 
 function ActivityBarIconBox({ children }: { children: React.ReactNode }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       component="span"
@@ -79,6 +83,7 @@ function ActivityBarIconBox({ children }: { children: React.ReactNode }): React.
 
 function createActivityBarPhiIcon(Icon: PhiIconComponent): ActivityBarIconComponent {
   return function ActivityBarPhiIcon({ fontSize, size }: ActivityBarIconProps): React.JSX.Element {
+    useUiLanguage()
     return (
       <ActivityBarIconBox>
         <Icon size={activityBarIconSize(fontSize, size, activityBarPhiIconGlyphSize)} />
@@ -92,6 +97,7 @@ function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
     fontSize,
     size
   }: ActivityBarIconProps): React.JSX.Element {
+    useUiLanguage()
     return (
       <ActivityBarIconBox>
         <Icon
@@ -154,6 +160,7 @@ function WorkspaceSidebarNavButton({
   previewOpen: boolean
   onFocusPreview: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const button = (
     <IconButton
       size="small"
@@ -250,6 +257,7 @@ function AppActivityBarImpl({
   sidebarProps,
   onPreviewNavigate
 }: AppActivityBarProps): React.JSX.Element {
+  useUiLanguage()
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const [retainedPreview, setRetainedPreview] = useState(visibleWorkspaceSidebarPreview)
   if (
@@ -414,14 +422,14 @@ function AppActivityBarImpl({
     })
   }
   const navigationItems = [
-    { mode: 'conversations', label: '对话', icon: NavChatIcon },
-    { mode: 'projects', label: '项目', icon: NavProjectsIcon },
-    { mode: 'files', label: '文件', icon: NavFilesIcon },
-    { mode: 'runtime', label: '运行时', icon: NavRuntimeIcon },
-    { mode: 'plugins', label: '插件', icon: NavPluginsIcon },
-    { mode: 'skills', label: '技能', icon: NavSkillsIcon },
-    { mode: 'mcp', label: '连接器', icon: NavMcpIcon },
-    { mode: 'wrappers', label: 'Wrappers', icon: NavWrappersIcon }
+    { mode: 'conversations', label: navigationCopy.conversation2, icon: NavChatIcon },
+    { mode: 'projects', label: navigationCopy.project, icon: NavProjectsIcon },
+    { mode: 'files', label: navigationCopy.file, icon: NavFilesIcon },
+    { mode: 'runtime', label: navigationCopy.runtime, icon: NavRuntimeIcon },
+    { mode: 'plugins', label: resourceUi.plugins, icon: NavPluginsIcon },
+    { mode: 'skills', label: resourceUi.skills, icon: NavSkillsIcon },
+    { mode: 'mcp', label: resourceUi.connectors, icon: NavMcpIcon },
+    { mode: 'wrappers', label: resourceUi.wrappers, icon: NavWrappersIcon }
   ] as const
 
   return (
@@ -477,7 +485,7 @@ function AppActivityBarImpl({
         <Box sx={{ flex: 1 }} />
         <IconButton
           size="small"
-          aria-label="设置"
+          aria-label={navigationCopy.settings}
           sx={{ ...activityBarButtonSx(false), mb: 1 }}
           onClick={() => {
             closeWorkspaceSidebarPreview()
@@ -545,7 +553,7 @@ function AppActivityBarImpl({
               <Paper
                 id="workspace-sidebar-preview"
                 role="region"
-                aria-label="导航内容预览"
+                aria-label={navigationCopy.navigationPreview}
                 tabIndex={-1}
                 onKeyDown={(event) => {
                   if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node))

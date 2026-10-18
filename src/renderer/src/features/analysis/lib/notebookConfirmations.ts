@@ -1,3 +1,4 @@
+import { analysisCopy } from './analysisUiCopy'
 export function notebookKernelSwitchConfirmationMessage({
   currentKernelLabel,
   nextKernelLabel,
@@ -8,17 +9,15 @@ export function notebookKernelSwitchConfirmationMessage({
   hasCurrentLiveSession: boolean
 }): string {
   const lines = [
-    '确认切换 notebook kernel？',
+    analysisCopy.confirmSwitchKernel,
     '',
-    `当前：${currentKernelLabel}`,
-    `切换到：${nextKernelLabel}`,
+    analysisCopy.currentKernel(currentKernelLabel),
+    analysisCopy.nextKernel(nextKernelLabel),
     ''
   ]
 
   lines.push(
-    hasCurrentLiveSession
-      ? '当前连接的 kernel 会被终止，正在运行的 cell 会停止。'
-      : 'Notebook 的 kernel metadata 会更新，并尝试连接新 kernel。'
+    hasCurrentLiveSession ? analysisCopy.kernelStopWarning : analysisCopy.kernelMetadataReconnect
   )
   return lines.join('\n')
 }
@@ -29,9 +28,9 @@ export function notebookAiInsertionConfirmationMessage({
   cellCount: number
 }): string {
   return [
-    '确认将 AI 生成内容插入 notebook？',
+    analysisCopy.confirmInsertAi,
     '',
-    `将插入 ${cellCount} 个 cell，并立即保存到当前 .ipynb 文件。`,
-    '请确认当前 notebook 内容可以被修改。'
+    analysisCopy.insertCellConfirmation(cellCount),
+    analysisCopy.confirmNotebookEditable
   ].join('\n')
 }

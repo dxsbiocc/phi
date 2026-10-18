@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi, resourceCategoryLabel, resourceSourceLabel } from '../../../lib/resourceUi'
+import { localizeWrapperMessage, wrapperCopy } from '../lib/wrapperCopy'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Box, Button, CircularProgress, Dialog, Typography } from '@mui/material'
 import type {
@@ -47,6 +50,7 @@ export function WrapperCatalogDialog({
   onRefresh,
   onSetPackageEnabled
 }: WrapperCatalogDialogProps): React.JSX.Element {
+  const language = useUiLanguage()
   const [query, setQuery] = useState('')
   const [groupId, setGroupId] = useState('all')
   const [page, setPage] = useState(0)
@@ -119,7 +123,11 @@ export function WrapperCatalogDialog({
     () => wrapperCatalogChoices(catalog, registries, installedPackages),
     [catalog, registries, installedPackages]
   )
-  const groups = useMemo(() => wrapperCatalogGroups(choices), [choices])
+  const groups = useMemo(
+    () => wrapperCatalogGroups(choices),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Copy proxy reads depend on the UI language.
+    [choices, language]
+  )
   const selectedGroupId = groups.some((group) => group.id === groupId) ? groupId : 'all'
   if (groupId !== selectedGroupId) {
     setGroupId(selectedGroupId)
@@ -141,7 +149,7 @@ export function WrapperCatalogDialog({
     try {
       if (wrapperChoiceNeedsRegistryInstall(choice)) {
         if (!choice.registryPath || !choice.registryEntry)
-          throw new Error('这个 wrapper 没有可用的安装来源。')
+          throw new Error(wrapperCopy.noInstallSource)
         const plan = await window.api.planPackageInstall(
           choice.registryPath,
           'wrapper',
@@ -162,7 +170,7 @@ export function WrapperCatalogDialog({
       }
       if (onSetPackageEnabled) {
         if ((await onSetPackageEnabled(choice.id, true)) === false)
-          throw new Error('未能启用 wrapper，请重试。')
+          throw new Error(wrapperCopy.enableFailed)
       } else {
         await window.api.setEnablement(`wrapper:${choice.id}`, true, { type: 'global' })
         await onRefresh()
@@ -231,7 +239,7 @@ export function WrapperCatalogDialog({
       open={open}
       onClose={close}
       maxWidth={false}
-      aria-label="Wrapper 目录"
+      aria-label={wrapperCopy.catalog}
       slotProps={{
         paper: {
           sx: {
@@ -252,8 +260,8 @@ export function WrapperCatalogDialog({
         />
       ) : (
         <CatalogBrowseLayout
-          title="Wrapper"
-          closeLabel="关闭 wrapper 目录"
+          title={resourceUi.wrappers}
+          closeLabel={wrapperCopy.closeCatalog}
           groups={groups}
           selectedGroupId={selectedGroupId}
           onGroupChange={(id) => {
@@ -265,14 +273,14 @@ export function WrapperCatalogDialog({
             setQuery(value)
             setPage(0)
           }}
-          searchLabel="搜索 wrapper 目录"
+          searchLabel={wrapperCopy.searchCatalog}
           onClose={close}
           busy={busy.any}
           page={result.page}
           rowsPerPage={rowsPerPage}
           actions={
             <CatalogAddButton
-              label="添加 wrapper 目录"
+              label={wrapperCopy.addDirectory}
               disabled={busy.has(DIRECTORY_KEY)}
               onClick={() => void chooseDirectory()}
             />
@@ -294,7 +302,7 @@ export function WrapperCatalogDialog({
         >
           {(error ?? removal.error) ? (
             <Alert severity="error" sx={{ mb: 2 }} onClose={error ? undefined : removal.clearError}>
-              {error ?? removal.error}
+              {localizeWrapperMessage(error ?? removal.error ?? '')}
             </Alert>
           ) : null}
           {sourceNotice ? (
@@ -308,13 +316,13 @@ export function WrapperCatalogDialog({
             </Box>
           ) : filtered.length === 0 ? (
             <Typography color="text.secondary" sx={{ py: 4 }}>
-              {query.trim() ? '没有匹配的 wrapper' : '这个分组暂无 wrapper，可添加本地目录。'}
+              {query.trim() ? wrapperCopy.noMatches : wrapperCopy.emptyGroup}
             </Typography>
           ) : (
             <CatalogResultsTable
-              label="Wrapper 目录列表"
-              nameLabel="工具"
-              detailsLabel="分类 / 版本"
+              label={wrapperCopy.catalogList}
+              nameLabel={resourceUi.tools}
+              detailsLabel={wrapperCopy.categoryVersion}
               rowAttribute="data-phi-wrapper-catalog-choice"
               onOpen={setDetailId}
               rows={visibleChoices.map((choice) => {
@@ -330,8 +338,8 @@ export function WrapperCatalogDialog({
                   ),
                   title: choice.title,
                   summary: '',
-                  metadata: choice.metadata,
-                  details: `${choice.category}${choice.version ? ` · v${choice.version}` : ''}`,
+                  metadata: resourceSourceLabel(choice.metadata),
+                  details: `${resourceCategoryLabel(choice.category)}${choice.version ? ` · v${choice.version}` : ''}`,
                   action: renderAction(choice)
                 }
               })}

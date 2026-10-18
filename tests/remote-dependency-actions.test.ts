@@ -12,10 +12,10 @@ const report: RemoteDoctorReport = {
   checkedAt: '2026-09-28T00:00:00.000Z',
   ok: false,
   checks: [
-    { id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' },
-    { id: 'java', status: 'ok', message: '找到 Java' },
-    { id: 'nextflow', status: 'error', message: '未找到 Nextflow' },
-    { id: 'slurm_submit', status: 'error', message: '未找到 Slurm 提交命令' }
+    { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' },
+    { id: 'java', status: 'ok', message: 'Java found' },
+    { id: 'nextflow', status: 'error', message: 'Nextflow not found' },
+    { id: 'slurm_submit', status: 'error', message: 'Slurm submission command not found' }
   ]
 }
 
@@ -35,20 +35,20 @@ function render(override: RemoteDoctorReport = report): string {
 
 test('missing Nextflow offers an explicit personal install or official manual instructions', () => {
   const markup = render()
-  assert.match(markup, /自动安装 Nextflow/)
-  assert.match(markup, /手动安装说明/)
-  assert.match(markup, /Slurm.*不会安装调度系统/)
-  assert.doesNotMatch(markup, /连接失败/)
+  assert.match(markup, /Install Nextflow automatically/)
+  assert.match(markup, /Manual installation instructions/)
+  assert.match(markup, /Slurm.*does not install the scheduler/)
+  assert.doesNotMatch(markup, /Connection failed/)
 })
 
 test('automatic Nextflow install stays unavailable until Java is ready', () => {
   const markup = render({
     ...report,
     checks: report.checks.map((check) =>
-      check.id === 'java' ? { ...check, status: 'error', message: '未找到 Java' } : check
+      check.id === 'java' ? { ...check, status: 'error', message: 'Java not found' } : check
     )
   })
-  const button = markup.match(/<button[^>]*>自动安装 Nextflow<\/button>/)?.[0]
+  const button = markup.match(/<button[^>]*>Install Nextflow automatically<\/button>/)?.[0]
   assert.ok(button)
   assert.match(button, /disabled/)
   assert.match(markup, /Java 17\+/)
@@ -59,13 +59,13 @@ test('capability-backed missing Nextflow keeps install beside module and phi-bas
     ...report,
     checks: report.checks.map((check) =>
       check.id === 'nextflow'
-        ? { ...check, suggestion: 'module load nextflow，或使用 phi-base 环境。' }
+        ? { ...check, suggestion: 'module load nextflow, or use the phi-base environment.' }
         : check
     )
   })
 
-  assert.match(markup, /自动安装 Nextflow/)
-  assert.match(markup, /module load nextflow，或使用 phi-base 环境/)
-  assert.match(markup, /复制建议/)
-  assert.match(markup, /手动安装说明/)
+  assert.match(markup, /Install Nextflow automatically/)
+  assert.match(markup, /module load nextflow, or use the phi-base environment/)
+  assert.match(markup, /Copy suggestion/)
+  assert.match(markup, /Manual installation instructions/)
 })

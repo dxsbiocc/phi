@@ -1,24 +1,49 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Badge, Chip, IconButton } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { TbCode, TbFile, TbPackage, TbTable, TbVariable } from 'react-icons/tb'
 import { PhiIcons } from '../../icons'
 import { ResourceIcon } from '../ResourceIcon'
 import type { InlineComposerReference } from '../../lib/composerReferences'
+import { resourceCatalogCopy, resourceUi } from '../../lib/resourceUi'
 
 const WebIcon = PhiIcons.tool.web
 const RemoveIcon = PhiIcons.action.close
 const LABELS = {
-  skill: 'Skill',
-  agent: '智能体',
-  wrapper: 'Wrapper',
-  mcp: 'Connector',
-  plugin: '插件',
-  web: '网页链接',
-  module: 'Module',
-  variable: 'Variable',
-  dataframe: 'DataFrame',
-  data_source: 'Data Source',
-  cell_output: 'Cell Output'
+  get skill() {
+    return resourceUi.skill
+  },
+  get agent() {
+    return chatCopy.agent
+  },
+  get wrapper() {
+    return resourceUi.wrapper
+  },
+  get mcp() {
+    return resourceUi.connector
+  },
+  get plugin() {
+    return resourceUi.plugin
+  },
+  get web() {
+    return chatCopy.webLink
+  },
+  get module() {
+    return chatCopy.module
+  },
+  get variable() {
+    return chatCopy.variable
+  },
+  get dataframe() {
+    return chatCopy.dataframe
+  },
+  get data_source() {
+    return chatCopy.dataSource
+  },
+  get cell_output() {
+    return chatCopy.cellOutput
+  }
 }
 const TONES = {
   skill: 'primary',
@@ -72,7 +97,12 @@ export function ComposerReferenceChip({
   onRemove: () => void
   disabled?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const label = LABELS[reference.kind]
+  const resourceReference = ['skill', 'wrapper', 'mcp', 'plugin'].includes(reference.kind)
+  const removeLabel = resourceReference
+    ? resourceCatalogCopy.removeReference(label, reference.name)
+    : chatCopy.removeValueReferenceValue(label, reference.name)
   return (
     <Badge
       data-phi-reference-badge={reference.kind}
@@ -84,8 +114,8 @@ export function ComposerReferenceChip({
             type="button"
             size="small"
             data-phi-reference-remove={reference.kind}
-            aria-label={`移除${label}引用 ${reference.name}`}
-            title={`移除${label}引用 ${reference.name}`}
+            aria-label={removeLabel}
+            title={removeLabel}
             onMouseDown={(event) => event.preventDefault()}
             onClick={(event) => {
               event.stopPropagation()
@@ -139,7 +169,11 @@ export function ComposerReferenceChip({
         title={reference.text}
         onDelete={disabled ? undefined : onRemove}
         deleteIcon={<span />}
-        aria-label={`${reference.onOpen ? '查看' : ''}${label} ${reference.name}`}
+        aria-label={
+          resourceReference && reference.onOpen
+            ? resourceCatalogCopy.viewReference(label, reference.name)
+            : chatCopy.viewReference(label, reference.name, Boolean(reference.onOpen))
+        }
         sx={(theme) => {
           const tone = TONES[reference.kind]
           const palette = tone === 'neutral' ? null : theme.palette[tone]

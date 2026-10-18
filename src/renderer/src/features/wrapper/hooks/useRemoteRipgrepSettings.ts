@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type { RemoteRuntimeRootWarningCode } from '../../../../../shared/remoteRuntimeRootTypes'
@@ -15,7 +16,7 @@ function failedState(): RemoteRipgrepUiState {
       status: 'failed',
       durationMs: 0,
       errorCode: 'status-check-failed',
-      message: 'ripgrep 操作未完成，请检查 SSH 连接后重试。'
+      message: remoteSetupCopy.ripgrepOperationIncomplete
     }
   }
 }

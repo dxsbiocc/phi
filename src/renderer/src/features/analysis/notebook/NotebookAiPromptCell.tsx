@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   useCallback,
   useEffect,
@@ -115,6 +117,7 @@ function NotebookContextPreviewField({
   pre?: boolean
   dataAttribute?: string
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (!value) return null
 
   return (
@@ -153,6 +156,7 @@ function NotebookContextPreview({
 }: {
   reference: AnalysisNotebookContextReference
 }): React.JSX.Element {
+  useUiLanguage()
   const preview = reference.preview
   const kindLabel = notebookContextKindLabel(reference.kind, reference.detail)
 
@@ -189,13 +193,13 @@ function NotebookContextPreview({
       {reference.kind === 'cell_output' ? (
         <>
           <NotebookContextPreviewField
-            label="Code:"
+            label={analysisCopy.codeLabel}
             value={preview?.code}
             pre
             dataAttribute="code"
           />
           <NotebookContextPreviewField
-            label="Output Preview:"
+            label={analysisCopy.outputPreviewLabel}
             value={preview?.output}
             pre
             dataAttribute="output"
@@ -206,16 +210,20 @@ function NotebookContextPreview({
       {reference.kind === 'dataframe' ? (
         <>
           <NotebookContextPreviewField
-            label="Source:"
+            label={analysisCopy.sourceLabel}
             value={preview?.source ?? reference.detail}
             pre
           />
-          <NotebookContextPreviewField label="Shape:" value={preview?.shape} />
+          <NotebookContextPreviewField label={analysisCopy.shapeLabel} value={preview?.shape} />
           {preview?.columns?.length ? (
             <Box sx={{ mt: 1, overflow: 'hidden', border: 1, borderColor: 'divider' }}>
               <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
-                <Typography sx={{ px: 0.8, py: 0.55, fontWeight: 800 }}>Column</Typography>
-                <Typography sx={{ px: 0.8, py: 0.55, fontWeight: 800 }}>Type</Typography>
+                <Typography sx={{ px: 0.8, py: 0.55, fontWeight: 800 }}>
+                  {analysisCopy.column}
+                </Typography>
+                <Typography sx={{ px: 0.8, py: 0.55, fontWeight: 800 }}>
+                  {analysisCopy.type}
+                </Typography>
               </Box>
               {preview.columns.map((column) => (
                 <Box
@@ -249,13 +257,17 @@ function NotebookContextPreview({
 
       {reference.kind === 'variable' ? (
         <>
-          <NotebookContextPreviewField label="Type:" value={reference.detail} />
-          <NotebookContextPreviewField label="Value:" value={preview?.value} pre />
+          <NotebookContextPreviewField label={analysisCopy.typeLabel} value={reference.detail} />
+          <NotebookContextPreviewField label={analysisCopy.valueLabel} value={preview?.value} pre />
         </>
       ) : null}
 
       {reference.kind === 'data_source' ? (
-        <NotebookContextPreviewField label="Path:" value={preview?.source ?? reference.name} pre />
+        <NotebookContextPreviewField
+          label={analysisCopy.pathLabel}
+          value={preview?.source ?? reference.name}
+          pre
+        />
       ) : null}
     </>
   )
@@ -287,6 +299,7 @@ export default function NotebookAiPromptCell({
   onCancel,
   onDragStart
 }: NotebookAiPromptCellProps): React.JSX.Element {
+  useUiLanguage()
   const isMarkdownTarget = language === 'markdown'
   const codeAction = notebookInsertCodeAction(codeLanguage)
   const targetAction = isMarkdownTarget
@@ -302,12 +315,12 @@ export default function NotebookAiPromptCell({
   const errorDisplay = errorOutputText ? getProviderErrorDisplay(errorOutputText) : null
   const canSubmit = prompt.trim().length > 0 && !isGenerating
   const submitTooltip = isGenerating
-    ? '正在生成代码'
+    ? analysisCopy.generatingCode
     : hasStagedCells
-      ? '重新生成预览'
+      ? analysisCopy.regeneratePreview
       : canSubmit
-        ? '生成预览'
-        : '输入需求后生成'
+        ? analysisCopy.generatePreview
+        : analysisCopy.enterPromptToGenerate
   const promptCellRef = useRef<HTMLDivElement | null>(null)
   const promptShellRef = useRef<HTMLDivElement | null>(null)
   const promptInputRef = useRef<ComposerTextEditorHandle | null>(null)
@@ -529,11 +542,11 @@ export default function NotebookAiPromptCell({
               disabled={isGenerating}
               inputRef={promptInputRef}
               focusKey="notebook-ai-input"
-              ariaLabel="Notebook AI 输入框"
+              ariaLabel={analysisCopy.notebookAiInput}
               placeholder={
                 mode === 'refactor'
-                  ? 'Refactor selected cell with AI, @ to include context'
-                  : 'Generate with AI, @ to include context'
+                  ? analysisCopy.refactorPlaceholder
+                  : analysisCopy.generatePlaceholder
               }
               onCursorChange={setPromptCursorPosition}
               onChange={(nextPrompt, nextCursor) => {
@@ -600,14 +613,14 @@ export default function NotebookAiPromptCell({
             >
               {contextOptions.length === 0 ? (
                 <Typography sx={{ px: 1.2, py: 1, color: 'text.secondary', fontSize: '0.82rem' }}>
-                  暂无可引用上下文
+                  {analysisCopy.noContext}
                 </Typography>
               ) : filteredContextOptions.length === 0 ? (
                 <Typography
                   data-phi-notebook-ai-context-empty-match="true"
                   sx={{ px: 1.2, py: 1, color: 'text.secondary', fontSize: '0.82rem' }}
                 >
-                  没有匹配的上下文
+                  {analysisCopy.noMatchingContext}
                 </Typography>
               ) : (
                 <Box
@@ -723,10 +736,10 @@ export default function NotebookAiPromptCell({
               )}
             </Box>
           ) : null}
-          <Tooltip title="关闭">
+          <Tooltip title={analysisCopy.close}>
             <IconButton
               size="small"
-              aria-label="关闭 AI 生成"
+              aria-label={analysisCopy.closeAi}
               onClick={onCancel}
               sx={{ width: 28, height: 28, color: 'text.secondary' }}
             >
@@ -745,13 +758,13 @@ export default function NotebookAiPromptCell({
             pt: 0.4
           }}
         >
-          <Tooltip title={`生成语言：${targetAction.label}`}>
+          <Tooltip title={analysisCopy.generationLanguage(targetAction.label)}>
             <span>
               {compactControls ? (
                 <IconButton
                   size="small"
                   disabled={isGenerating}
-                  aria-label={`选择生成语言：${targetAction.label}`}
+                  aria-label={analysisCopy.chooseGenerationLanguage(targetAction.label)}
                   data-phi-notebook-ai-target-language={
                     isMarkdownTarget ? 'markdown' : codeAction.language
                   }
@@ -766,7 +779,7 @@ export default function NotebookAiPromptCell({
                   size="small"
                   variant="outlined"
                   disabled={isGenerating}
-                  aria-label={`选择生成语言：${targetAction.label}`}
+                  aria-label={analysisCopy.chooseGenerationLanguage(targetAction.label)}
                   data-phi-notebook-ai-target-language={
                     isMarkdownTarget ? 'markdown' : codeAction.language
                   }
@@ -806,7 +819,7 @@ export default function NotebookAiPromptCell({
               }}
             >
               <ListItemIcon>{codeAction.renderIcon(false)}</ListItemIcon>
-              <ListItemText primary={codeAction.label} secondary="按 notebook kernel 生成代码" />
+              <ListItemText primary={codeAction.label} secondary={analysisCopy.kernelCodeHint} />
             </MenuItem>
             <MenuItem
               selected={isMarkdownTarget}
@@ -818,7 +831,7 @@ export default function NotebookAiPromptCell({
               <ListItemIcon>
                 <MarkdownIcon sx={{ fontSize: 18 }} />
               </ListItemIcon>
-              <ListItemText primary="Markdown" secondary="生成说明文字，不生成代码" />
+              <ListItemText primary="Markdown" secondary={analysisCopy.markdownGenerationHint} />
             </MenuItem>
           </Menu>
           <Box
@@ -836,10 +849,10 @@ export default function NotebookAiPromptCell({
             />
           </Box>
           <Box sx={{ flex: 1 }} />
-          <Tooltip title="@ 引用上下文">
+          <Tooltip title={analysisCopy.mentionContext}>
             <IconButton
               size="small"
-              aria-label="@ 引用上下文"
+              aria-label={analysisCopy.mentionContext}
               disabled={isGenerating}
               onClick={() => {
                 setDismissedContextMentionKey(null)
@@ -850,11 +863,11 @@ export default function NotebookAiPromptCell({
               <Typography sx={{ fontWeight: 900, lineHeight: 1 }}>@</Typography>
             </IconButton>
           </Tooltip>
-          <Tooltip title="附加文件">
+          <Tooltip title={analysisCopy.attachFiles}>
             <span>
               <IconButton
                 size="small"
-                aria-label="附加文件"
+                aria-label={analysisCopy.attachFiles}
                 disabled={isGenerating || !canPickContextFiles}
                 onClick={onPickContextFiles}
                 sx={{ width: 30, height: 30 }}
@@ -867,7 +880,7 @@ export default function NotebookAiPromptCell({
             <span>
               <IconButton
                 size="small"
-                aria-label={isGenerating ? '正在生成代码' : '提交 AI 生成'}
+                aria-label={isGenerating ? analysisCopy.generatingCode : analysisCopy.submitAi}
                 disabled={!canSubmit}
                 onClick={onSubmit}
                 sx={{
@@ -883,7 +896,7 @@ export default function NotebookAiPromptCell({
                     thickness={4}
                     color="inherit"
                     data-phi-notebook-ai-generation-spinner="true"
-                    aria-label="正在生成代码"
+                    aria-label={analysisCopy.generatingCode}
                   />
                 ) : (
                   <SendIcon sx={{ fontSize: 18 }} />
@@ -921,7 +934,7 @@ export default function NotebookAiPromptCell({
                   data-phi-notebook-ai-error-raw="true"
                   sx={{ color: 'inherit', whiteSpace: 'pre-wrap' }}
                 >
-                  原始错误：{errorDisplay.rawMessage}
+                  {analysisCopy.originalError} {errorDisplay.rawMessage}
                 </Typography>
               ) : null}
               {showErrorSummary ? (
@@ -947,11 +960,11 @@ export default function NotebookAiPromptCell({
           py: 0.25
         }}
       >
-        <Tooltip title="拖动 AI cell">
+        <Tooltip title={analysisCopy.dragAiCell}>
           <IconButton
             className="ai-prompt-drag-handle"
             size="small"
-            aria-label="拖动 AI cell"
+            aria-label={analysisCopy.dragAiCell}
             draggable
             data-phi-notebook-ai-drag-handle="true"
             onDragStart={onDragStart}

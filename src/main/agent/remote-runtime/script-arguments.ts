@@ -12,7 +12,7 @@ const ajv = configured(new Ajv(OPTIONS))
 const ajv2020 = configured(new Ajv2020(OPTIONS))
 const validators = new WeakMap<object, ValidateFunction>()
 export const REMOTE_PATH_GUIDANCE =
-  '请先将输入上传或复制到远程项目，并传项目相对路径；没有回退到本机。'
+  'Upload or copy inputs to the remote project first, then provide project-relative paths. No local fallback was used.'
 
 export async function remoteScriptArguments(
   workspace: RemoteRuntimeWorkspace,
@@ -90,13 +90,17 @@ async function resolveRemotePath(
   if (format === 'input-path') {
     const stat = await workspace.projectHost.fs.stat(relative).catch(() => undefined)
     if (!stat || stat.kind === 'symlink') {
-      throw new Error(`input-path '${value}' 不存在或无法安全解析。${REMOTE_PATH_GUIDANCE}`)
+      throw new Error(
+        `input-path '${value}' does not exist or cannot be resolved safely. ${REMOTE_PATH_GUIDANCE}`
+      )
     }
   } else {
     const parent = posix.dirname(relative)
     const stat = await workspace.projectHost.fs.stat(parent).catch(() => undefined)
     if (!stat || stat.kind !== 'directory') {
-      throw new Error(`project-path '${value}' 的远程父目录不存在。${REMOTE_PATH_GUIDANCE}`)
+      throw new Error(
+        `The remote parent directory for project-path '${value}' does not exist. ${REMOTE_PATH_GUIDANCE}`
+      )
     }
     await rejectUnsafeExistingTarget(workspace, relative, value)
   }
@@ -117,7 +121,7 @@ async function rejectUnsafeExistingTarget(
     const name = posix.basename(relative)
     if (await directoryContains(workspace, parent, name)) {
       throw new Error(
-        `project-path '${original}' 是不安全的符号链接或越界。${REMOTE_PATH_GUIDANCE}`
+        `project-path '${original}' is an unsafe symlink or is outside the project. ${REMOTE_PATH_GUIDANCE}`
       )
     }
   }
@@ -142,11 +146,11 @@ async function directoryContains(
 
 function projectRelative(root: string, value: string): string {
   if (!value || value.includes('\0') || value.startsWith('~/')) {
-    throw new Error(`path '${value}' 不属于远程项目。${REMOTE_PATH_GUIDANCE}`)
+    throw new Error(`path '${value}' is outside the remote project. ${REMOTE_PATH_GUIDANCE}`)
   }
   const relative = posix.isAbsolute(value) ? posix.relative(root, posix.normalize(value)) : value
   if (posix.isAbsolute(relative) || relative.split('/').includes('..')) {
-    throw new Error(`path '${value}' 不属于远程项目。${REMOTE_PATH_GUIDANCE}`)
+    throw new Error(`path '${value}' is outside the remote project. ${REMOTE_PATH_GUIDANCE}`)
   }
   return posix.normalize(relative)
 }

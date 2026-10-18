@@ -1,3 +1,10 @@
+import { defineCopy } from './lib/i18n'
+
+const paletteCopy = defineCopy(
+  { minimal: 'Minimal (default)', watercolor: 'Chinese Watercolor', yourName: 'Your Name' },
+  { minimal: 'Minimal（默认）', watercolor: '中国水墨画', yourName: '你的名字' }
+)
+
 export const THEME_PALETTE_IDS = [
   'minimal',
   'plotdb',
@@ -31,7 +38,9 @@ export interface ThemePaletteDefinition {
 export const THEME_PALETTES: readonly ThemePaletteDefinition[] = [
   {
     id: 'minimal',
-    label: 'Minimal（默认）',
+    get label() {
+      return paletteCopy.minimal
+    },
     colors: ['#00A76F', '#FFFFFF', '#00B8D9', '#FFAB00', '#FF5630'],
     primary: '#00A76F',
     secondary: '#8E33FF',
@@ -147,7 +156,9 @@ export const THEME_PALETTES: readonly ThemePaletteDefinition[] = [
   },
   {
     id: 'chinese-watercolor',
-    label: '中國水墨畫',
+    get label() {
+      return paletteCopy.watercolor
+    },
     colors: ['#832F0E', '#0C0A08', '#594A40', '#8E7967', '#E3C2A0', '#DEAA6E', '#81947A'],
     primary: '#832F0E',
     secondary: '#81947A',
@@ -176,7 +187,9 @@ export const THEME_PALETTES: readonly ThemePaletteDefinition[] = [
   },
   {
     id: 'your-name',
-    label: '君の名は',
+    get label() {
+      return paletteCopy.yourName
+    },
     colors: ['#8CD0E5', '#376888', '#826B88', '#DE786A', '#F8B976', '#FCDDC9'],
     primary: '#376888',
     secondary: '#826B88',

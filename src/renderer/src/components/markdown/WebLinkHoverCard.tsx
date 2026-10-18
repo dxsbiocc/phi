@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdownUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useState } from 'react'
 import { Box, IconButton, Skeleton, Typography } from '@mui/material'
 import { FaGithub } from 'react-icons/fa'
@@ -22,6 +24,7 @@ export function WebLinkPreviewCard({
   loading,
   onOpen
 }: CardProps): React.JSX.Element {
+  useUiLanguage()
   const [failedIcon, setFailedIcon] = useState<string | null>(null)
   const candidateIcon = preview?.iconDataUrl
   const icon =
@@ -46,7 +49,7 @@ export function WebLinkPreviewCard({
     <Box
       data-phi-web-link-preview={loading ? 'loading' : available ? 'ready' : 'unavailable'}
       role="group"
-      aria-label="网页预览"
+      aria-label={markdownCopy.webPreview}
       aria-busy={loading}
       sx={{
         width: 320,
@@ -106,7 +109,7 @@ export function WebLinkPreviewCard({
               overflowWrap: 'anywhere'
             }}
           >
-            {preview?.description || '暂无网页摘要'}
+            {preview?.description || markdownCopy.noWebSummary}
           </Typography>
         )}
       </Box>
@@ -135,7 +138,7 @@ export function WebLinkPreviewCard({
           {address}
         </Typography>
         <IconButton
-          aria-label="打开网页"
+          aria-label={markdownCopy.openWebPage}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
@@ -158,6 +161,7 @@ export function WebLinkHoverCard({
   active,
   onOpen
 }: Omit<CardProps, 'preview' | 'loading'> & { active: boolean }): React.JSX.Element {
+  useUiLanguage()
   const state = useWebLinkPreview(url, active)
   return <WebLinkPreviewCard url={url} label={label} site={site} onOpen={onOpen} {...state} />
 }

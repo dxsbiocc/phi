@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import {
   Accordion,
   AccordionDetails,
@@ -74,17 +76,18 @@ export interface WrapperExecutionTargetDialogActions {
 }
 
 function SavedConnectionField({ model, actions }: DialogPartProps): React.JSX.Element | null {
+  useUiLanguage()
   if (model.isRemoteProject || model.connections.length === 0) return null
   return (
     <TextField
       select
       size="small"
       fullWidth
-      label="已保存的计算目标"
+      label={remoteSetupCopy.savedExecutionTargets}
       value={model.connectionId}
       onChange={(event) => actions.chooseConnection(event.target.value)}
     >
-      <MenuItem value="">新建计算目标</MenuItem>
+      <MenuItem value="">{remoteSetupCopy.newExecutionTarget}</MenuItem>
       {model.connections.map((connection) => (
         <MenuItem key={connection.id} value={connection.id}>
           {connection.label}
@@ -100,19 +103,18 @@ interface DialogPartProps {
 }
 
 function RemoteHostField({ model, actions }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   if (model.isRemoteProject) {
     return (
       <TextField
         size="small"
         fullWidth
-        label="SSH 服务器"
+        label={remoteSetupCopy.sshServer}
         value={model.remoteHostLabel}
         slotProps={{ input: { readOnly: true } }}
         error={!model.loading && !model.boundHostAvailable}
         helperText={
-          !model.loading && !model.boundHostAvailable
-            ? '绑定的服务器已不可用，请在远程设置中恢复'
-            : ''
+          !model.loading && !model.boundHostAvailable ? remoteSetupCopy.boundServerUnavailable : ''
         }
       />
     )
@@ -123,17 +125,17 @@ function RemoteHostField({ model, actions }: DialogPartProps): React.JSX.Element
       required
       size="small"
       fullWidth
-      label="SSH 服务器"
+      label={remoteSetupCopy.sshServer}
       value={model.hostProfileId}
       disabled={model.loading}
       onChange={(event) => actions.setHostProfileId(event.target.value)}
       helperText={
         model.hosts.length === 0 && !model.loading
-          ? '先在“设置 → 远程”添加服务器'
-          : '使用系统 OpenSSH 配置中的主机和认证方式'
+          ? remoteSetupCopy.addServerInSettings
+          : remoteSetupCopy.openSshConfigurationHelp
       }
     >
-      <MenuItem value="">选择服务器</MenuItem>
+      <MenuItem value="">{remoteSetupCopy.selectServer}</MenuItem>
       {model.hosts.map((host) => (
         <MenuItem key={host.id} value={host.id}>
           {host.label} · {host.hostAlias}
@@ -144,12 +146,13 @@ function RemoteHostField({ model, actions }: DialogPartProps): React.JSX.Element
 }
 
 function RemoteRootField({ model, actions }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <TextField
       required
       size="small"
       fullWidth
-      label="服务器工作目录"
+      label={remoteSetupCopy.serverWorkingDirectory}
       value={model.remoteRoot}
       onChange={
         model.isRemoteProject ? undefined : (event) => actions.setRemoteRoot(event.target.value)
@@ -157,8 +160,8 @@ function RemoteRootField({ model, actions }: DialogPartProps): React.JSX.Element
       placeholder="/data/lab/project"
       helperText={
         model.isRemoteProject
-          ? '与远程项目绑定的目录一致'
-          : 'Wrapper 的任务记录和输出保存在该目录下'
+          ? remoteSetupCopy.boundDirectoryHelp
+          : remoteSetupCopy.wrapperOutputDirectoryHelp
       }
       slotProps={model.isRemoteProject ? { input: { readOnly: true } } : undefined}
       sx={{ '& input': { fontFamily: 'var(--font-mono)' } }}
@@ -167,9 +170,10 @@ function RemoteRootField({ model, actions }: DialogPartProps): React.JSX.Element
 }
 
 function RuntimeRootField({ model, actions }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <RemoteRuntimeRootControl
-      label="项目覆盖"
+      label={remoteSetupCopy.projectOverride}
       value={model.runtimeRootOverride}
       effective={model.runtimeRootEffective}
       doctorState={model.environmentState}
@@ -184,6 +188,7 @@ function RuntimeRootField({ model, actions }: DialogPartProps): React.JSX.Elemen
 }
 
 function RuntimeFields({ model, actions }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
@@ -191,7 +196,7 @@ function RuntimeFields({ model, actions }: DialogPartProps): React.JSX.Element {
           select
           size="small"
           fullWidth
-          label="任务调度"
+          label={remoteSetupCopy.scheduler}
           value={model.hpc.scheduler}
           onChange={(event) =>
             actions.setHpc({
@@ -201,14 +206,14 @@ function RuntimeFields({ model, actions }: DialogPartProps): React.JSX.Element {
             })
           }
         >
-          <MenuItem value="slurm">Slurm 集群</MenuItem>
-          <MenuItem value="local">直接在服务器运行</MenuItem>
+          <MenuItem value="slurm">{remoteSetupCopy.slurmCluster}</MenuItem>
+          <MenuItem value="local">{remoteSetupCopy.runDirectlyOnServer}</MenuItem>
         </TextField>
         <TextField
           select
           size="small"
           fullWidth
-          label="软件环境"
+          label={remoteSetupCopy.softwareEnvironment}
           value={model.hpc.runtime}
           onChange={(event) =>
             actions.setHpc({ ...model.hpc, runtime: event.target.value as HpcDraft['runtime'] })
@@ -221,7 +226,7 @@ function RuntimeFields({ model, actions }: DialogPartProps): React.JSX.Element {
       </Stack>
       <Accordion variant="outlined" disableGutters>
         <AccordionSummary expandIcon={<ExpandIcon fontSize="small" />}>
-          <Typography variant="body2">更多运行参数</Typography>
+          <Typography variant="body2">{remoteSetupCopy.moreRunSettings}</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <WrapperHpcSettingsFields value={model.hpc} onChange={actions.setHpc} advancedOnly />
@@ -232,29 +237,30 @@ function RuntimeFields({ model, actions }: DialogPartProps): React.JSX.Element {
 }
 
 function InputPathMapping({ model, actions }: DialogPartProps): React.JSX.Element | null {
+  useUiLanguage()
   if (model.isRemoteProject) return null
   return (
     <Accordion variant="outlined" disableGutters>
       <AccordionSummary expandIcon={<ExpandIcon fontSize="small" />}>
-        <Typography variant="body2">已有数据的路径映射（可选）</Typography>
+        <Typography variant="body2">{remoteSetupCopy.dataPathMapping}</Typography>
       </AccordionSummary>
       <AccordionDetails>
         <Stack spacing={1.5}>
           <Typography variant="caption" color="text.secondary">
-            仅当同一份数据已在服务器上时填写。Phi 不会上传本地文件。
+            {remoteSetupCopy.pathMappingHelp}
           </Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
             <TextField
               size="small"
               fullWidth
-              label="本机输入根目录"
+              label={remoteSetupCopy.localInputRoot}
               value={model.localInputRoot}
               onChange={(event) => actions.setLocalInputRoot(event.target.value)}
             />
             <TextField
               size="small"
               fullWidth
-              label="服务器对应根目录"
+              label={remoteSetupCopy.serverInputRoot}
               value={model.remoteInputRoot}
               onChange={(event) => actions.setRemoteInputRoot(event.target.value)}
             />
@@ -266,6 +272,7 @@ function InputPathMapping({ model, actions }: DialogPartProps): React.JSX.Elemen
 }
 
 function EnvironmentSection({ model, actions }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
@@ -275,10 +282,12 @@ function EnvironmentSection({ model, actions }: DialogPartProps): React.JSX.Elem
           disabled={model.loading || model.saving || model.checkingEnvironment}
           onClick={actions.checkEnvironment}
         >
-          {model.checkingEnvironment ? '检查中…' : '检查运行环境'}
+          {model.checkingEnvironment
+            ? remoteSetupCopy.checking
+            : remoteSetupCopy.checkRuntimeEnvironment}
         </Button>
         <Typography variant="caption" color="text.secondary">
-          只检查目录和命令；不会安装或修改服务器。
+          {remoteSetupCopy.checkOnlyHelp}
         </Typography>
       </Stack>
       <RemoteDoctorPanel
@@ -296,26 +305,27 @@ function EnvironmentSection({ model, actions }: DialogPartProps): React.JSX.Elem
       {model.installStatus && (
         <Alert severity={model.installStatus.severity}>{model.installStatus.message}</Alert>
       )}
-      {model.error && <Alert severity="error">{model.error}</Alert>}
+      {model.error && <Alert severity="error">{localizeRemoteSetupMessage(model.error)}</Alert>}
     </>
   )
 }
 
 function DialogBody(props: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   const { model, actions } = props
   const missingHost = model.isRemoteProject ? !model.boundHostAvailable : model.hosts.length === 0
   return (
     <Stack spacing={2} sx={{ pt: 0.5 }}>
       <Typography variant="body2" color="text.secondary">
         {model.isRemoteProject
-          ? '该项目的 Wrapper 固定在绑定的服务器和项目目录运行。'
-          : '服务器执行只影响明确指定为远程的 Wrapper。项目文件仍在本机，Phi 不会自动上传数据。'}
+          ? remoteSetupCopy.remoteWrapperBindingHelp
+          : remoteSetupCopy.localRemoteWrapperHelp}
       </Typography>
       <SavedConnectionField {...props} />
       <RemoteHostField {...props} />
       {!model.loading && missingHost && actions.openRemoteSettings && (
         <Button size="small" onClick={actions.openRemoteSettings} sx={{ alignSelf: 'flex-start' }}>
-          添加 SSH 服务器
+          {remoteSetupCopy.addSshServer}
         </Button>
       )}
       <RemoteRootField {...props} />
@@ -331,10 +341,13 @@ export function WrapperExecutionTargetDialog({
   model,
   actions
 }: DialogPartProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Dialog open={model.open} onClose={actions.close} maxWidth="sm" fullWidth>
       <DialogTitle>
-        {model.isRemoteProject ? '远程项目的 Wrapper 运行方式' : '本地项目的远程计算目标'}
+        {model.isRemoteProject
+          ? remoteSetupCopy.remoteWrapperExecutionTitle
+          : remoteSetupCopy.localRemoteTargetTitle}
       </DialogTitle>
       <DialogContent dividers>
         <Box
@@ -347,7 +360,7 @@ export function WrapperExecutionTargetDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={actions.close} disabled={model.saving || model.installing}>
-          取消
+          {remoteSetupCopy.cancel}
         </Button>
         <Button
           variant="contained"
@@ -356,7 +369,11 @@ export function WrapperExecutionTargetDialog({
             model.saving || model.loading || model.installing || model.runtimeRootHardBlocked
           }
         >
-          {model.saving ? '保存中…' : model.isRemoteProject ? '保存运行方式' : '保存计算目标'}
+          {model.saving
+            ? remoteSetupCopy.saving
+            : model.isRemoteProject
+              ? remoteSetupCopy.saveExecutionMode
+              : remoteSetupCopy.saveExecutionTarget}
         </Button>
       </DialogActions>
     </Dialog>

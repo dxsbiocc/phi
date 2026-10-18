@@ -1,3 +1,5 @@
+import { browserUi } from './lib/browserUi'
+import { useUiLanguage } from '../../lib/i18n'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Box, Button, Typography } from '@mui/material'
 import type { BrowserRendererBridge, BrowserTabSnapshot } from '../../../../shared/browserTypes'
@@ -33,40 +35,41 @@ export interface BrowserStatusPaneProps {
 }
 
 export function BrowserStatusPane(props: BrowserStatusPaneProps): React.JSX.Element | null {
+  useUiLanguage()
   let role: 'status' | 'alert' = 'status'
   let title: string
   let detail: string | null = null
   let action: { label: string; run: () => void } | null = null
 
   if (!props.activePhiSessionId) {
-    title = '选择一个会话后即可浏览网页'
-    detail = '浏览器会跟随当前会话独立保存页面。'
+    title = browserUi.selectASessionToBrowseTheWeb
+    detail = browserUi.browserPagesAreSavedSeparatelyForEachSession
   } else if (props.loading) {
-    title = '正在准备浏览器…'
+    title = browserUi.preparingBrowser
   } else if (props.error) {
     role = 'alert'
     title = props.error
-    detail = '你可以稍后重试。'
+    detail = browserUi.youCanTryAgainLater
   } else if (!props.activeTab) {
-    title = '输入网址开始浏览'
-    detail = '支持 HTTPS 或 localhost 地址。'
+    title = browserUi.enterAnAddressToStartBrowsing
+    detail = browserUi.hTTPSAndLocalhostAddressesAreSupported
   } else if (props.activeTab.restorable) {
-    title = '这个页面可以恢复'
+    title = browserUi.thisPageCanBeRestored
     detail = props.activeTab.title || props.activeTab.url
-    action = { label: '恢复页面', run: props.onRestore }
+    action = { label: browserUi.restorePage, run: props.onRestore }
   } else if (props.activeTab.phase === 'failed' || props.activeTab.phase === 'crashed') {
     role = 'alert'
     title =
       props.activeTab.phase === 'crashed'
-        ? '页面停止响应'
+        ? browserUi.pageStoppedResponding
         : props.activeTab.error
           ? browserErrorMessage(props.activeTab.error)
-          : '页面加载失败，请重试。'
-    detail = '检查网址或网络连接后重试。'
-    action = { label: '重试', run: props.onRetry }
+          : browserUi.pageFailedToLoadPleaseTryAgain
+    detail = browserUi.checkTheAddressOrNetworkConnectionAndTry
+    action = { label: browserUi.retry, run: props.onRetry }
   } else if (!props.nativeEnabled) {
-    title = '浏览器内容已暂时隐藏'
-    detail = '返回浏览器面板后会继续显示。'
+    title = browserUi.browserContentIsTemporarilyHidden
+    detail = browserUi.itWillReappearWhenYouReturnToThe
   } else {
     return null
   }
@@ -126,6 +129,7 @@ export interface BrowserPanelProps {
 }
 
 export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Element {
+  useUiLanguage()
   const workspace = useBrowserWorkspace(props.bridge, props.activePhiSessionId)
   const currentSnapshot =
     workspace.snapshot?.sessionId === props.activePhiSessionId ? workspace.snapshot : null
@@ -218,7 +222,11 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
       <Box
         id="phi-browser-viewport"
         role="tabpanel"
-        aria-label={activeTab ? `网页内容：${activeTab.title || activeTab.url}` : '浏览器内容'}
+        aria-label={
+          activeTab
+            ? browserUi.webPageValue(activeTab.title || activeTab.url)
+            : browserUi.browserContent
+        }
         ref={viewportRef}
         data-phi-browser-native-viewport={nativeEnabled ? 'true' : 'false'}
         sx={{

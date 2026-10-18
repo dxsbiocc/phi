@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -7,6 +8,9 @@ import {
   type ProcessingItem
 } from '../src/renderer/src/lib/chatRenderGroups'
 import type { ChatItem } from '../src/renderer/src/types'
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('an error card does not make a still running turn look completed', () => {
   const groups = groupMessages(

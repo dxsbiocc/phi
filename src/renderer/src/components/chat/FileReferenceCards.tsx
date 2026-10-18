@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, IconButton, Typography } from '@mui/material'
 import { PhiIcons, directoryIconForPath, fileIconForPath } from '../../icons'
 
@@ -20,6 +22,7 @@ export function FileReferenceCards({
   variant: 'composer' | 'message'
   onRemove?: (index: number) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (paths.length === 0) return null
 
   if (variant === 'message') {
@@ -112,7 +115,7 @@ export function FileReferenceCards({
             {onRemove ? (
               <IconButton
                 type="button"
-                aria-label={`移除引用文件 ${fileNameFromPath(path)}`}
+                aria-label={chatCopy.removeReferencedFileValue(fileNameFromPath(path))}
                 onClick={() => onRemove(index)}
                 sx={{
                   position: 'absolute',

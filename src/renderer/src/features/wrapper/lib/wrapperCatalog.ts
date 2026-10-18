@@ -8,7 +8,14 @@ import type {
 } from '../../../../../shared/packageManagerTypes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { isManagedWrapper, wrapperFamilyName, wrapperPackageKey } from './wrapperFamily'
-import { parseWrapperCompositionId, wrapperTierLabel } from './wrapperView'
+import { parseWrapperCompositionId, wrapperTierCategory } from './wrapperView'
+import {
+  resourceCategoryLabel,
+  resourceCategorySearchTerms,
+  resourceSourceSearchTerms,
+  resourceUi
+} from '../../../lib/resourceUi'
+import { wrapperCopy } from './wrapperCopy'
 import type { CatalogBrowseGroup } from '../../../components/catalog/CatalogBrowseLayout'
 import { catalogPackages } from '../../../lib/contentCatalog'
 
@@ -48,7 +55,7 @@ export function wrapperCatalogChoices(
       title: isManagedWrapper(entry) ? wrapperFamilyName(id) : name || entry.name,
       summary: entry.summary,
       metadata: provider,
-      category: provider === 'custom' ? '自定义' : wrapperTierLabel(tier) || '其他',
+      category: provider === 'custom' ? '自定义' : wrapperTierCategory(tier) || '其他',
       version: installed.get(id)?.version,
       bundledVersion: bundledVersionOf(installed.get(id)),
       cached: entry,
@@ -61,7 +68,7 @@ export function wrapperCatalogChoices(
     const category = entry.category?.trim()
     const cached = choices.get(entry.id)
     if (cached) {
-      if (category) cached.category = wrapperTierLabel(category)
+      if (category) cached.category = wrapperTierCategory(category)
       cached.registryEntry = entry
       cached.registryPath = registry.dir
       if (!cached.installed) {
@@ -81,8 +88,8 @@ export function wrapperCatalogChoices(
       metadata: registry.label ?? registry.id,
       version: selected ? existing?.version : entry.version,
       category: category
-        ? wrapperTierLabel(category)
-        : wrapperTierLabel(parseWrapperCompositionId(entry.id).tier) || '其他',
+        ? wrapperTierCategory(category)
+        : wrapperTierCategory(parseWrapperCompositionId(entry.id).tier) || '其他',
       registryEntry: entry,
       registryPath: registry.dir,
       bundledVersion: bundledVersionOf(existing),
@@ -119,15 +126,15 @@ export function wrapperChoiceIcon(choice: WrapperCatalogChoice): ResourceIconRef
 }
 
 export interface WrapperChoiceAction {
-  label: '安装' | '添加' | '卸载'
+  label: typeof resourceUi.install | typeof wrapperCopy.add | typeof resourceUi.uninstall
   /** `add` brings the package into use, `remove` takes a chosen package out again. */
   kind: 'add' | 'remove'
 }
 
 /** One action per choice: a chosen package offers removal, anything else offers adding. */
 export function wrapperChoiceAction(choice: WrapperCatalogChoice): WrapperChoiceAction {
-  if (choice.selected) return { label: '卸载', kind: 'remove' }
-  return { label: choice.installed ? '添加' : '安装', kind: 'add' }
+  if (choice.selected) return { label: resourceUi.uninstall, kind: 'remove' }
+  return { label: choice.installed ? wrapperCopy.add : resourceUi.install, kind: 'add' }
 }
 
 export function filterWrapperCatalogChoices(
@@ -145,7 +152,9 @@ export function filterWrapperCatalogChoices(
           entry.title,
           entry.summary,
           entry.metadata,
+          ...resourceSourceSearchTerms(entry.metadata),
           entry.category,
+          ...resourceCategorySearchTerms(entry.category),
           entry.version ?? ''
         ].some((value) => value.toLowerCase().includes(normalized)))
   )
@@ -162,9 +171,13 @@ export function wrapperCatalogGroups(
     return index < 0 ? order.length : index
   }
   return [
-    { id: 'all', label: '全部 Wrapper', count: choices.length },
+    { id: 'all', label: wrapperCopy.allWrappers, count: choices.length },
     ...[...counts]
       .sort(([left], [right]) => rank(left) - rank(right) || left.localeCompare(right))
-      .map(([label, count]) => ({ id: `category:${label}`, label, count }))
+      .map(([label, count]) => ({
+        id: `category:${label}`,
+        label: resourceCategoryLabel(label),
+        count
+      }))
   ]
 }

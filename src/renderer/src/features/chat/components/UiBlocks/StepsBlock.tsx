@@ -1,3 +1,5 @@
+import { chatCopy } from '../../lib/chatCopy'
+import { useUiLanguage } from '../../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { GoCheckCircle, GoCircle, GoSync, GoXCircle } from 'react-icons/go'
 
@@ -5,10 +7,18 @@ import type { StepsUiBlock } from '../../../../../../shared/uiBlockTypes'
 import { UiBlockContainer } from './UiBlockContainer'
 
 const STATUS_LABELS = {
-  done: '已完成',
-  running: '进行中',
-  pending: '待处理',
-  failed: '失败'
+  get done() {
+    return chatCopy.completed
+  },
+  get running() {
+    return chatCopy.inProgress
+  },
+  get pending() {
+    return chatCopy.pending
+  },
+  get failed() {
+    return chatCopy.failed
+  }
 } as const
 
 const STATUS_COLORS = {
@@ -23,6 +33,7 @@ function StatusIcon({
 }: {
   status: StepsUiBlock['items'][number]['status']
 }): React.JSX.Element {
+  useUiLanguage()
   const props = { size: 17, 'aria-hidden': true } as const
   if (status === 'done') return <GoCheckCircle {...props} />
   if (status === 'running') return <GoSync {...props} />
@@ -31,6 +42,7 @@ function StatusIcon({
 }
 
 export function StepsBlock({ block }: { block: StepsUiBlock }): React.JSX.Element {
+  useUiLanguage()
   return (
     <UiBlockContainer title={block.title}>
       <Box sx={{ px: 1.25, py: 0.5, '@container phi-chat (max-width: 560px)': { px: 0.75 } }}>

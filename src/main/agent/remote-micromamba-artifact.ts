@@ -88,12 +88,16 @@ async function fetchWithTimeout(
   const controller = new AbortController()
   const abort = (): void => controller.abort(signal.reason)
   signal.addEventListener('abort', abort, { once: true })
-  const timer = setTimeout(() => controller.abort(new Error('micromamba 下载请求超时')), timeoutMs)
+  const timer = setTimeout(
+    () => controller.abort(new Error('micromamba download request timed out')),
+    timeoutMs
+  )
   timer.unref?.()
   try {
     return await fetcher(url, { headers, redirect: 'follow', signal: controller.signal })
   } catch (error) {
-    if (controller.signal.aborted && !signal.aborted) throw new Error('micromamba 下载请求超时')
+    if (controller.signal.aborted && !signal.aborted)
+      throw new Error('micromamba download request timed out')
     throw error
   } finally {
     clearTimeout(timer)
@@ -123,14 +127,15 @@ async function defaultDownload(
 }
 
 function targetForPlatform(platform: HostCapabilityProfile['platform']): RemoteMicromambaTarget {
-  if (platform.os !== 'linux') throw new Error('不支持：远程 micromamba 目前仅支持 Linux')
+  if (platform.os !== 'linux')
+    throw new Error('Unsupported: remote micromamba currently supports Linux only')
   if (platform.libc?.name !== 'glibc') {
-    const reason = platform.libc?.name === 'musl' ? 'musl' : '未知 libc'
-    throw new Error(`不支持：远程 micromamba 需要 glibc，当前为 ${reason}`)
+    const reason = platform.libc?.name === 'musl' ? 'musl' : 'unknown libc'
+    throw new Error(`Unsupported: remote micromamba requires glibc; detected ${reason}`)
   }
   if (['x86_64', 'amd64'].includes(platform.arch)) return 'linux-x64'
   if (['aarch64', 'arm64'].includes(platform.arch)) return 'linux-arm64'
-  throw new Error(`不支持：远程 micromamba 不支持架构 ${platform.arch}`)
+  throw new Error(`Unsupported: remote micromamba does not support architecture ${platform.arch}`)
 }
 
 function readManifest(path: string): RemoteMicromambaManifest {
@@ -138,9 +143,10 @@ function readManifest(path: string): RemoteMicromambaManifest {
   try {
     value = JSON.parse(readFileSync(path, 'utf8')) as RemoteMicromambaManifest
   } catch {
-    throw new Error('无法读取 micromamba 资源清单')
+    throw new Error('Unable to read the micromamba artifact manifest')
   }
-  if (typeof value.micromamba?.version !== 'string') throw new Error('micromamba 清单版本无效')
+  if (typeof value.micromamba?.version !== 'string')
+    throw new Error('Invalid micromamba manifest version')
   return value
 }
 
@@ -193,7 +199,7 @@ export function describeRemoteMicromambaArtifact(
     release.size < 1 ||
     (release.mirrorPrefixes !== undefined && !validMirrorPrefixes(release.mirrorPrefixes))
   ) {
-    throw new Error(`micromamba 清单缺少有效的 ${target} 条目`)
+    throw new Error(`The micromamba manifest has no valid ${target} entry`)
   }
   const version = manifest.micromamba.version
   return {
@@ -257,7 +263,7 @@ async function downloadAndPublish(
     )
     options.signal?.throwIfAborted()
     if (!(await cachedArtifact({ ...plan, localPath: temporary }))) {
-      throw new Error(`micromamba ${plan.platform} 下载文件的大小或 sha256 不匹配`)
+      throw new Error(`micromamba ${plan.platform} download size or sha256 does not match`)
     }
     await rename(temporary, plan.localPath)
   } finally {
@@ -278,11 +284,11 @@ async function ensureArtifact(
   } catch (error) {
     const message = sanitizedFailureMessage(error, plan, options)
     if (error instanceof Error && error.name === 'AbortError') {
-      const aborted = new Error(`micromamba ${plan.platform} 下载已取消`)
+      const aborted = new Error(`micromamba ${plan.platform} download cancelled`)
       aborted.name = 'AbortError'
       throw aborted
     }
-    throw new Error(`micromamba ${plan.platform} 下载失败：${message}`)
+    throw new Error(`micromamba ${plan.platform} download failed: ${message}`)
   }
 }
 
@@ -298,9 +304,9 @@ function sanitizedFailureMessage(
     options.manifestPath
   ]
   for (const path of paths) {
-    if (path) message = message.replaceAll(path, '[Phi 本地缓存]')
+    if (path) message = message.replaceAll(path, '[Phi local cache]')
   }
-  return message || '未知错误'
+  return message || 'Unknown error'
 }
 
 function waitForDownload(
@@ -310,7 +316,7 @@ function waitForDownload(
   if (!signal) return pending
   signal.throwIfAborted()
   return new Promise((resolve, reject) => {
-    const abort = (): void => reject(signal.reason ?? new Error('micromamba 下载已取消'))
+    const abort = (): void => reject(signal.reason ?? new Error('micromamba download cancelled'))
     signal.addEventListener('abort', abort, { once: true })
     pending
       .then(resolve, reject)

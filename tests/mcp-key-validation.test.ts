@@ -48,6 +48,7 @@ test('invalid keys are distinct from temporary verification failures and never e
     (error: unknown) =>
       error instanceof McpApiKeyValidationError &&
       error.kind === 'invalid' &&
+      error.message === 'The API key is invalid or lacks access permission' &&
       !error.message.includes(secret)
   )
   await assert.rejects(
@@ -57,6 +58,8 @@ test('invalid keys are distinct from temporary verification failures and never e
     (error: unknown) =>
       error instanceof McpApiKeyValidationError &&
       error.kind === 'unavailable' &&
+      error.message ===
+        'Could not connect to the provider to verify the API key. Try again later.' &&
       !error.message.includes(secret)
   )
   await assert.rejects(

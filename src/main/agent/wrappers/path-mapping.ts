@@ -37,10 +37,10 @@ function isWithinLocalRoot(root: string, target: string): boolean {
 export function validateInputPathMapping(mapping: WrapperInputPathMapping): string[] {
   const errors: string[] = []
   if (!isAbsolute(mapping.localRoot) || mapping.localRoot.includes('\0')) {
-    errors.push('本地映射根必须是无 NUL 的绝对路径')
+    errors.push('The local mapping root must be an absolute path without NUL')
   }
   if (!isRemoteAbsolutePath(mapping.remoteRoot)) {
-    errors.push('服务器映射根必须是无 NUL 的 POSIX 绝对路径')
+    errors.push('The server mapping root must be an absolute POSIX path without NUL')
   }
   return errors
 }
@@ -66,9 +66,10 @@ export function parseWrapperInputReference(
       reference = { source: record.source, path: record.path }
     }
   }
-  if (!reference) return { errors: [`输入 "${inputId}" 必须是路径或 {source, path} 引用`] }
+  if (!reference)
+    return { errors: [`Input "${inputId}" must be a path or a {source, path} reference`] }
   if (reference.source !== 'upload' && (!reference.path.trim() || reference.path.includes('\0'))) {
-    return { errors: [`输入 "${inputId}" 不能为空或包含 NUL`] }
+    return { errors: [`Input "${inputId}" cannot be empty or contain NUL`] }
   }
   return { reference, errors: [] }
 }
@@ -82,7 +83,7 @@ export function resolveRemoteInputPath(
   if (!parsed.reference) return { errors: parsed.errors }
   if (parsed.reference.source === 'upload') {
     if (context.projectLocation?.kind !== 'ssh') {
-      return { errors: [`输入 "${inputId}" 仅能在 SSH 项目中选择本机文件上传`] }
+      return { errors: [`Input "${inputId}" can upload local files only in SSH projects`] }
     }
     return {
       resolution: {
@@ -94,7 +95,7 @@ export function resolveRemoteInputPath(
         remotePaths: [],
         allowedRemoteRoot: context.projectLocation.canonicalRoot
       },
-      errors: [`输入 "${inputId}" 等待用户选择本机文件上传`]
+      errors: [`Input "${inputId}" is waiting for the user to select local files for upload`]
     }
   }
   const { source, path } = parsed.reference
@@ -111,20 +112,21 @@ export function resolveRemoteInputPath(
           },
           errors: []
         }
-      : { errors: [`输入 "${inputId}" 的本机来源不能是远程 URL`] }
+      : { errors: [`Local input "${inputId}" cannot be a remote URL`] }
   }
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) {
-    return { errors: [`输入 "${inputId}" 的 URL 类型暂不支持`] }
+    return { errors: [`The URL type for input "${inputId}" is not supported`] }
   }
 
   if (context.projectLocation?.kind === 'ssh') {
-    if (source === 'local') return { errors: [`远程项目的输入 "${inputId}" 不能引用本机文件`] }
+    if (source === 'local')
+      return { errors: [`Input "${inputId}" in a remote project cannot reference local files`] }
     const root = context.projectLocation.canonicalRoot
     const remotePath = isRemoteAbsolutePath(path)
       ? posix.normalize(path)
       : posix.resolve(root, path)
     if (!isWithinRemoteRoot(root, remotePath)) {
-      return { errors: [`输入 "${inputId}" 超出远程项目目录: ${path}`] }
+      return { errors: [`Input "${inputId}" is outside the remote project directory: ${path}`] }
     }
     return {
       resolution: {
@@ -142,19 +144,23 @@ export function resolveRemoteInputPath(
 
   if (source === 'local') {
     if (context.projectLocation?.kind !== 'local' || !context.mapping) {
-      return { errors: [`输入 "${inputId}" 引用本机路径，但没有配置本机→服务器路径映射`] }
+      return {
+        errors: [
+          `Input "${inputId}" references a local path without a local-to-server path mapping`
+        ]
+      }
     }
     const mappingErrors = validateInputPathMapping(context.mapping)
     if (mappingErrors.length > 0) return { errors: mappingErrors }
     const localPath = isAbsolute(path) ? resolve(path) : resolve(context.projectLocation.path, path)
     const localRoot = resolve(context.mapping.localRoot)
     if (!isWithinLocalRoot(localRoot, localPath)) {
-      return { errors: [`输入 "${inputId}" 超出本机映射根: ${path}`] }
+      return { errors: [`Input "${inputId}" is outside the local mapping root: ${path}`] }
     }
     const suffix = relative(localRoot, localPath).split(sep).join('/')
     const remotePath = posix.resolve(context.mapping.remoteRoot, suffix)
     if (!isWithinRemoteRoot(context.mapping.remoteRoot, remotePath)) {
-      return { errors: [`输入 "${inputId}" 超出服务器映射根: ${path}`] }
+      return { errors: [`Input "${inputId}" is outside the server mapping root: ${path}`] }
     }
     return {
       resolution: {
@@ -172,7 +178,9 @@ export function resolveRemoteInputPath(
 
   const remoteRoot = context.mapping?.remoteRoot
   if (context.projectLocation?.kind === 'local' && !isRemoteAbsolutePath(path) && !remoteRoot) {
-    return { errors: [`输入 "${inputId}" 需填写服务器绝对路径，或配置服务器映射根`] }
+    return {
+      errors: [`Input "${inputId}" requires an absolute server path or a server mapping root`]
+    }
   }
   const remotePath = isRemoteAbsolutePath(path)
     ? posix.normalize(path)
@@ -180,7 +188,7 @@ export function resolveRemoteInputPath(
       ? posix.resolve(remoteRoot, path)
       : path
   if (remoteRoot && !isRemoteAbsolutePath(path) && !isWithinRemoteRoot(remoteRoot, remotePath)) {
-    return { errors: [`输入 "${inputId}" 超出服务器映射根: ${path}`] }
+    return { errors: [`Input "${inputId}" is outside the server mapping root: ${path}`] }
   }
   return {
     resolution: {
@@ -223,7 +231,7 @@ export function resolveCompositionInputParams(
     errors.push(...parsed.errors)
     if (!parsed.reference) continue
     if (parsed.reference.source !== 'local') {
-      errors.push(`本机运行的输入 "${id}" 不能引用服务器文件`)
+      errors.push(`Local input "${id}" cannot reference server files`)
       continue
     }
     const path = parsed.reference.path
@@ -262,13 +270,13 @@ export function resolveLocalInputPath(
   cwd: string
 ): PathResolutionResult {
   if (!userValue || userValue.trim().length === 0) {
-    return { errors: [`输入 "${inputId}" 不能为空`] }
+    return { errors: [`Input "${inputId}" cannot be empty`] }
   }
 
   if (isGlobPattern(userValue)) {
     const localPaths = globSync(userValue, { cwd, absolute: true }).sort()
     if (localPaths.length === 0) {
-      return { errors: [`输入 "${inputId}" 的通配符 "${userValue}" 没有匹配到任何文件`] }
+      return { errors: [`The glob "${userValue}" for input "${inputId}" did not match any files`] }
     }
     return {
       resolution: { id: inputId, kind: 'glob', source: 'local', userValue, localPaths },
@@ -278,7 +286,7 @@ export function resolveLocalInputPath(
 
   const resolvedPath = isAbsolute(userValue) ? userValue : join(cwd, userValue)
   if (!existsSync(resolvedPath)) {
-    return { errors: [`输入 "${inputId}" 指向的路径不存在: ${resolvedPath}`] }
+    return { errors: [`The path for input "${inputId}" does not exist: ${resolvedPath}`] }
   }
 
   return {

@@ -22,11 +22,12 @@ export function remoteMicromambaMirrorPrefixError(value: string): string | null 
   try {
     url = new URL(prefix)
   } catch {
-    return '下载镜像前缀必须是有效的 HTTPS 地址'
+    return 'Download mirror prefix must be a valid HTTPS URL'
   }
-  if (url.protocol !== 'https:') return '下载镜像前缀必须使用 https://'
-  if (url.username || url.password) return '下载镜像前缀不能包含用户名或密码'
-  if (!prefix.endsWith('/')) return '下载镜像前缀必须以 / 结尾'
+  if (url.protocol !== 'https:') return 'Download mirror prefix must use https://'
+  if (url.username || url.password)
+    return 'Download mirror prefix must not contain a username or password'
+  if (!prefix.endsWith('/')) return 'Download mirror prefix must end with /'
   return null
 }
 

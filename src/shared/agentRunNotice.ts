@@ -1,3 +1,4 @@
+import type { UiLanguage } from './uiLanguage'
 import { formatWrapperRunDuration } from './wrapperRunNotice'
 
 /**
@@ -41,7 +42,24 @@ function preview(value: string, limit: number): string {
   return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat
 }
 
-export function agentRunNotice(event: AgentRunFinishedEvent): { title: string; body: string } {
+export function agentRunNotice(
+  event: AgentRunFinishedEvent,
+  language: UiLanguage = 'zh-CN'
+): { title: string; body: string } {
+  if (language === 'en') {
+    const suffixes = {
+      done: 'background task completed',
+      error: 'background task failed',
+      cancelled: 'background task cancelled'
+    }
+    const lines = [
+      `Task: ${preview(event.task, TASK_PREVIEW)}`,
+      `Elapsed ${formatWrapperRunDuration(event.elapsedSeconds, language)}`
+    ]
+    if (event.state === 'error' && event.error) lines.push(preview(event.error, ERROR_PREVIEW))
+    lines.push(`Run ID: ${event.agentRunId}`)
+    return { title: `${event.agent} ${suffixes[event.state]}`, body: lines.join('\n') }
+  }
   const lines = [
     `任务：${preview(event.task, TASK_PREVIEW)}`,
     `用时 ${formatWrapperRunDuration(event.elapsedSeconds)}`

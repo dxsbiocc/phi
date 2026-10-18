@@ -1,3 +1,5 @@
+import { jobsCopy } from './jobsCopy'
+import { connectorJobCopy } from './connectorJobCopy'
 import type {
   BackgroundAgentJob,
   BackgroundShellJob
@@ -73,23 +75,49 @@ const ACTIVE_WRAPPER_STATES = new Set<WrapperRun['state']>([
 ])
 
 const ENVIRONMENT_BUILD_STATE_LABELS: Record<EnvironmentBuildState, string> = {
-  building: '构建中',
-  ready: '已就绪',
-  failed: '失败',
-  cancelled: '已取消'
+  get building() {
+    return jobsCopy.building
+  },
+  get ready() {
+    return jobsCopy.ready
+  },
+  get failed() {
+    return jobsCopy.failed
+  },
+  get cancelled() {
+    return jobsCopy.cancelled
+  }
 }
 
 /** Labels for `EnsureProgressPhase`, plus `cancelled` which the build record sets on abort. */
 const ENVIRONMENT_BUILD_PHASE_LABELS: Record<string, string> = {
-  check: '检查',
-  wait: '等待包缓存',
-  create: '下载安装包',
-  'source-packages': '安装源码包',
-  activation: '激活',
-  finalize: '收尾',
-  done: '完成',
-  failed: '失败',
-  cancelled: '已取消'
+  get check() {
+    return jobsCopy.check
+  },
+  get wait() {
+    return jobsCopy.waitingForPackageCache
+  },
+  get create() {
+    return jobsCopy.downloadingPackages
+  },
+  get 'source-packages'() {
+    return jobsCopy.installingSourcePackages
+  },
+  get activation() {
+    return jobsCopy.activating
+  },
+  get finalize() {
+    return jobsCopy.finishing
+  },
+  get done() {
+    return jobsCopy.done
+  },
+  get failed() {
+    return jobsCopy.failed
+  },
+  get cancelled() {
+    return jobsCopy.cancelled
+  }
 }
 
 const MB = 1024 ** 2
@@ -101,7 +129,7 @@ export function canStopUnifiedWrapperRun(run: WrapperRun): boolean {
 }
 
 export function environmentBuildTitle(build: EnvironmentBuild): string {
-  return `构建环境 ${build.ref}`
+  return jobsCopy.buildEnvironmentValue(build.ref)
 }
 
 export function environmentBuildDetail(build: EnvironmentBuild): string {
@@ -109,7 +137,7 @@ export function environmentBuildDetail(build: EnvironmentBuild): string {
   return [
     ENVIRONMENT_BUILD_STATE_LABELS[build.state],
     ENVIRONMENT_BUILD_PHASE_LABELS[build.phase] ?? build.phase,
-    `${build.progress.packagesDone}/${build.progress.packages} 个包`,
+    jobsCopy.valueValuePackages(build.progress.packagesDone, build.progress.packages),
     bytes ? formatByteProgress(bytes.done, bytes.total) : undefined,
     build.state === 'failed' && build.error ? build.error : undefined
   ]
@@ -123,22 +151,30 @@ export function environmentBuildPercent(build: EnvironmentBuild): number | undef
   return ratioPercent(build.progress.packagesDone, build.progress.packages)
 }
 
+/** Persisted jobs may contain the cancellation marker used before English resource UI. */
+export function isCancelledConnectorJob(setup: McpConnectorSetupProgress): boolean {
+  return setup.phase === 'failed' && (setup.error === 'Cancelled' || setup.error === '已取消')
+}
+
 export function connectorJobDetail(setup: McpConnectorSetupProgress, nowMs: number): string {
-  if (setup.phase === 'ready') return `已完成 · ${setup.toolNames?.length ?? 0} 个工具`
+  if (setup.phase === 'ready') return connectorJobCopy.completedTools(setup.toolNames?.length ?? 0)
+  if (isCancelledConnectorJob(setup)) return connectorJobCopy.cancelled
   if (setup.phase === 'failed') {
     if (setup.failureKind === 'needs-setup') {
-      return `需要先配置${setup.failureReason ? ` · ${setup.failureReason}` : ''}`
+      return `${connectorJobCopy.needsSetup}${setup.failureReason ? ` · ${setup.failureReason}` : ''}`
     }
-    return setup.error === '已取消' ? '已取消' : `失败${setup.error ? ` · ${setup.error}` : ''}`
+    return `${connectorJobCopy.failed}${setup.error ? ` · ${setup.error}` : ''}`
   }
-  return `正在启动并验证 · 已用时 ${connectorJobDuration(setup, nowMs)}`
+  return connectorJobCopy.starting(connectorJobDuration(setup, nowMs))
 }
 
 export function connectorJobStatusLabel(setup: McpConnectorSetupProgress): string {
-  if (setup.phase === 'ready') return '已完成'
-  if (setup.phase === 'failed' && setup.failureKind === 'needs-setup') return '需要先配置'
-  if (setup.phase === 'failed') return setup.error === '已取消' ? '已取消' : '失败'
-  return '进行中'
+  if (setup.phase === 'ready') return connectorJobCopy.completed
+  if (isCancelledConnectorJob(setup)) return connectorJobCopy.cancelled
+  if (setup.phase === 'failed' && setup.failureKind === 'needs-setup')
+    return connectorJobCopy.needsSetup
+  if (setup.phase === 'failed') return connectorJobCopy.failed
+  return connectorJobCopy.inProgress
 }
 
 export function connectorJobDuration(setup: McpConnectorSetupProgress, nowMs: number): string {

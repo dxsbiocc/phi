@@ -26,7 +26,7 @@ function getSafeStorage(): SafeStorageLike {
     electronModule = undefined
   }
   if (!electronModule?.safeStorage) {
-    throw new Error('safeStorage 不可用：当前不在 Electron 主进程环境中运行')
+    throw new Error('safeStorage is unavailable outside the Electron main process')
   }
   return electronModule.safeStorage
 }
@@ -90,15 +90,17 @@ export function storeCredentialSecret(
   agentDir = getPhiAgentDir(),
   safeStorageImpl?: SafeStorageLike
 ): void {
-  if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) throw new Error('无效的凭据名称')
+  if (!/^[A-Z_][A-Z0-9_]*$/i.test(name)) throw new Error('Invalid credential name')
   const trimmed = secret.trim()
-  if (!trimmed) throw new Error('凭据不能为空')
+  if (!trimmed) throw new Error('Credentials must not be empty')
   const safeStorage = safeStorageImpl ?? getSafeStorage()
   if (
     !safeStorage.isEncryptionAvailable() ||
     (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
   ) {
-    throw new Error('当前系统不支持加密存储（safeStorage 不可用），无法保存凭据')
+    throw new Error(
+      'Credentials cannot be saved because encrypted storage is unavailable on this system (safeStorage unavailable)'
+    )
   }
   const store = readStore(agentDir)
   store[name] = safeStorage.encryptString(trimmed).toString('base64')

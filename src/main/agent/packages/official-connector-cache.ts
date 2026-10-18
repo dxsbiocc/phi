@@ -43,7 +43,7 @@ export function readOfficialConnectorRegistry(
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const root = officialConnectorRegistryDirectory(agentDir)
   if (!isOfficialConnectorRegistryDirectory(directory, agentDir))
-    throw new Error('连接器 API 目录不属于受管缓存')
+    throw new Error('The Connector API directory is outside the managed cache')
   safeRegistryDirectory(agentDir, root)
   let target = resolve(directory)
   if (target === root) {
@@ -54,7 +54,7 @@ export function readOfficialConnectorRegistry(
       typeof pointer.generation !== 'string' ||
       !/^[a-f0-9]{64}$/.test(pointer.generation)
     )
-      throw new Error('连接器 API 缓存指针无效')
+      throw new Error('Invalid Connector API cache pointer')
     target = join(root, 'generations', pointer.generation)
   }
   safeRegistryDirectory(root, target)
@@ -64,35 +64,36 @@ export function readOfficialConnectorRegistry(
     metadata.version !== CACHE_REVISION ||
     metadata.origin !== OFFICIAL_CONNECTOR_ORIGIN
   )
-    throw new Error('连接器 API 缓存来源无效')
+    throw new Error('Invalid Connector API cache origin')
   const index = parseRegistryAsset(metadata.index, MAX_INDEX_BYTES)
   const generation = relative(join(root, 'generations'), target)
   if (index.path !== 'index.json' || index.sha256 !== generation)
-    throw new Error('连接器 API 缓存索引身份无效')
+    throw new Error('Invalid Connector API cache index identity')
   const indexBytes = readRegistryAsset(target, index)
   const value: unknown = JSON.parse(indexBytes.toString('utf8'))
   if (!isRecord(value) || value.connectorApiRevision !== CACHE_REVISION)
-    throw new Error('连接器 API 缓存版本无效')
+    throw new Error('Invalid Connector API cache revision')
   const registry = readRegistry(target)
   if (
     registry.packages.length < 1 ||
     registry.packages.length > 500 ||
     registry.packages.some((entry) => entry.type !== 'mcp')
   )
-    throw new Error('连接器 API 缓存不含完整 MCP 目录')
+    throw new Error('The Connector API cache does not contain the complete MCP catalog')
   for (const entry of registry.packages) {
     if (
       entry.size > 512 * 1024 ||
       !entry.manifestAsset ||
       typeof entry.directoryAuthBlocked !== 'boolean'
     )
-      throw new Error('连接器 API 软件包大小或清单无效')
+      throw new Error('Invalid Connector API package size or manifest')
     readRegistryAsset(target, { path: entry.archive, size: entry.size, sha256: entry.sha256 })
     if (entry.iconAsset) readRegistryAsset(target, entry.iconAsset)
     const manifest = readRegistryManifestAsset(target, entry)
-    if (!manifest || manifest.type !== 'mcp') throw new Error('连接器 API 软件包缺少可安装清单')
+    if (!manifest || manifest.type !== 'mcp')
+      throw new Error('The Connector API package is missing an installable manifest')
     if (manifest.connector.category !== entry.category || entry.dependsOn.length)
-      throw new Error('连接器 API 目录元数据与清单不一致')
+      throw new Error('Connector API catalog metadata does not match the manifest')
     const bytes = readRegistryAsset(target, entry.manifestAsset)
     parseCompleteOfficialConnectorManifest(bytes.toString('utf8'))
   }
@@ -117,7 +118,8 @@ export function publishOfficialConnectorRegistry(
   const indexBytes = Buffer.from(
     `${JSON.stringify({ connectorApiRevision: CACHE_REVISION, schemaVersion: 1, generatedAt: registry.generatedAt, packages: registry.packages }, null, 2)}\n`
   )
-  if (indexBytes.length > MAX_INDEX_BYTES) throw new Error('连接器 API 索引超过大小限制')
+  if (indexBytes.length > MAX_INDEX_BYTES)
+    throw new Error('The Connector API index exceeds the size limit')
   writeFileSync(registryAssetPath(registry.dir, 'index.json'), indexBytes)
   const generation = sha256(indexBytes)
   writeFileSync(
@@ -154,6 +156,7 @@ export function publishOfficialConnectorRegistry(
 
 function readSmallJson(root: string, path: string, maxBytes: number): unknown {
   const file = registryAssetPath(root, path)
-  if (lstatSync(file).size > maxBytes) throw new Error('连接器 API 缓存元数据超过大小限制')
+  if (lstatSync(file).size > maxBytes)
+    throw new Error('Connector API cache metadata exceeds the size limit')
   return JSON.parse(readFileSync(file, 'utf8')) as unknown
 }

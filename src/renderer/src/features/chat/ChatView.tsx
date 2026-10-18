@@ -1,3 +1,5 @@
+import { chatCopy } from './lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Button, IconButton, Paper, Stack, Typography } from '@mui/material'
 import {
   useEffect,
@@ -227,6 +229,7 @@ function ChatView({
   onJumpToNotebookCell,
   cwd = ''
 }: ViewProps): React.JSX.Element {
+  useUiLanguage()
   const { resources: messageResources, details: agentDetails } = useChatResourceCatalog({
     resources: resourceMentions,
     skills,
@@ -256,10 +259,10 @@ function ChatView({
     [isGenerating, messages]
   )
   const defaultInputPlaceholder = compactComposerControls
-    ? '输入消息'
+    ? chatCopy.message
     : isGenerating && canQueue
-      ? '输入消息，Enter 加入队列，Shift+Enter 换行'
-      : '输入消息，Enter 发送，Shift+Enter 换行'
+      ? chatCopy.messageEnterToQueueShiftEnterForANewLine
+      : chatCopy.messageEnterToSendShiftEnterForANewLine
   const inputPlaceholder = suggestedNextAction ?? defaultInputPlaceholder
   const parsedComposerInput = useMemo(() => parseInputFileReferences(input), [input])
   const composerFileReferences = parsedComposerInput.references
@@ -547,14 +550,14 @@ function ChatView({
           {queuedPrompts.length > 0 && (
             <Paper
               variant="outlined"
-              aria-label="消息队列"
+              aria-label={chatCopy.messageQueue}
               sx={{ width: '100%', mb: 1, borderRadius: 2, p: 1.25 }}
             >
               <Stack spacing={0.75}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
                   {queuedPromptsPaused
-                    ? `已暂停 ${queuedPrompts.length} 条 · 发送新消息成功后继续`
-                    : `排队中 ${queuedPrompts.length} 条`}
+                    ? chatCopy.valuePausedResumesAfterANewMessageIsSent(queuedPrompts.length)
+                    : chatCopy.valueQueued(queuedPrompts.length)}
                 </Typography>
                 {queuedPrompts.map((item) => (
                   <Box
@@ -586,7 +589,7 @@ function ChatView({
                     {onRemoveQueuedPrompt && (
                       <IconButton
                         size="small"
-                        aria-label="移除排队消息"
+                        aria-label={chatCopy.removeQueuedMessage}
                         onClick={() => onRemoveQueuedPrompt(item.id)}
                       >
                         <CloseIcon fontSize="small" />
@@ -636,7 +639,7 @@ function ChatView({
             onDragLeave={composerDragHandlers.onDragLeave}
             onDrop={composerDragHandlers.onDrop}
             onPaste={onPaste}
-            aria-label="消息输入框"
+            aria-label={chatCopy.messageInput}
             data-phi-file-drop-target="chat-composer"
             sx={composerSurfaceSx({
               compact: compactComposerControls,
@@ -766,14 +769,14 @@ function ChatView({
                     type="button"
                     size="small"
                     variant={planReviewEnabled ? 'contained' : 'text'}
-                    aria-label="先计划并等待评审"
+                    aria-label={chatCopy.planFirstAndWaitForReview}
                     aria-pressed={planReviewEnabled}
-                    title="先探索并提交计划，等你确认后再执行"
+                    title={chatCopy.exploreAndSubmitAPlanThenWaitForYourApproval}
                     disabled={disablePlanReview}
                     onClick={onTogglePlanReview}
                     sx={{ minWidth: 0, px: 1, flexShrink: 0, whiteSpace: 'nowrap' }}
                   >
-                    先计划
+                    {chatCopy.planFirst}
                   </Button>
                 )}
               </Box>
@@ -811,7 +814,7 @@ function ChatView({
                     disabled={
                       !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
                     }
-                    aria-label="发送消息"
+                    aria-label={chatCopy.sendMessage}
                     data-phi-composer-action="send"
                     data-phi-composer-size={actionControlSize}
                     sx={{
@@ -840,8 +843,8 @@ function ChatView({
                     onClick={() => {
                       void onStopGeneration()
                     }}
-                    aria-label="停止生成"
-                    title="运行中，点击停止生成"
+                    aria-label={chatCopy.stopGenerating}
+                    title={chatCopy.runningClickToStopGenerating}
                     data-phi-composer-action="stop"
                     data-phi-composer-size={actionControlSize}
                     sx={{

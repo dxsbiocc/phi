@@ -56,7 +56,7 @@ test('remote skill bundle rejects traversal in a discovered server file snapshot
         ],
         fixture.workspace
       ),
-      /路径/u
+      /path/u
     )
     assert.equal(readFileSync(sentinel, 'utf8'), 'keep')
   } finally {
@@ -77,7 +77,7 @@ test('remote skill bundle rejects a symlink destination without deleting its tar
     rmSync(destination, { recursive: true, force: true })
     symlinkSync(envs, destination, 'dir')
 
-    await assert.rejects(prepareRemoteSkillBundle(skill.dir, fixture.workspace), /符号链接/u)
+    await assert.rejects(prepareRemoteSkillBundle(skill.dir, fixture.workspace), /symlink/u)
     assert.equal(existsSync(sentinel), true)
   } finally {
     fixture.cleanup()

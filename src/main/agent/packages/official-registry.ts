@@ -90,7 +90,7 @@ export function getCachedOfficialRegistry(
       options.trustedKeys ?? TRUSTED_REGISTRY_KEYS,
       current.generation
     )
-    return { ...registry, status: 'cached', notice: '当前离线，正在使用已验证的软件源缓存。' }
+    return { ...registry, status: 'cached', notice: 'Offline. Using the verified source cache.' }
   } catch {
     return undefined
   }
@@ -216,7 +216,7 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
       refreshedAt: (options.now?.() ?? new Date()).toISOString()
     }
   } catch (error) {
-    const failure = new Error(`无法获取 Phi Packages 软件源: ${errorMessage(error)}`)
+    const failure = new Error(`Could not fetch the Phi Packages source: ${errorMessage(error)}`)
     refreshed.delete(root)
     failedRefreshes.set(root, {
       attemptedAt: (options.now?.() ?? new Date()).getTime(),

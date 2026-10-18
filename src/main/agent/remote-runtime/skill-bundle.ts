@@ -45,7 +45,7 @@ export async function prepareRemoteSkillBundleFiles(
   return withBundleLock(`${workspace.runtimeRoot}\0${hash}`, signal, async () => {
     const validation = await validateRemoteSkillBundle(workspace, bundle, checkedFiles, signal)
     if (validation.status === 'unsafe') {
-      throw new Error('远程 Skill bundle 目标包含不安全的符号链接')
+      throw new Error('Remote Skill bundle destination contains an unsafe symlink')
     }
     if (validation.status === 'reusable') return bundle
     await publishRemoteSkillBundle(workspace, bundle, checkedFiles, signal)
@@ -67,20 +67,21 @@ export function validateRemoteSkillBundleFiles(
       file.relativePath.includes('\\') ||
       parts.some((part) => !part || part === '.' || part === '..' || part.includes('\0'))
     ) {
-      throw new Error(`Skill 资源路径无效：${file.relativePath}`)
+      throw new Error(`Invalid Skill resource path: ${file.relativePath}`)
     }
     if (paths.has(file.relativePath)) {
-      throw new Error(`Skill 资源路径重复：${file.relativePath}`)
+      throw new Error(`Duplicate Skill resource path: ${file.relativePath}`)
     }
-    if (!Buffer.isBuffer(file.content)) throw new Error(`Skill 资源内容无效：${file.relativePath}`)
+    if (!Buffer.isBuffer(file.content))
+      throw new Error(`Invalid Skill resource content: ${file.relativePath}`)
     const content = Buffer.from(file.content)
     const contentHash = createHash('sha256').update(content).digest('hex')
     if (contentHash !== file.contentHash) {
-      throw new Error(`Skill 资源内容哈希不匹配：${file.relativePath}`)
+      throw new Error(`Skill resource content hash mismatch: ${file.relativePath}`)
     }
     bytes += content.length
     if (checked.length >= MAX_FILES || bytes > MAX_BYTES) {
-      throw new Error('Skill 资源超过远程上传上限（2000 个文件或 64 MiB）')
+      throw new Error('Skill resources exceed the remote upload limit (2000 files or 64 MiB)')
     }
     paths.add(file.relativePath)
     checked.push({
@@ -100,17 +101,19 @@ export function collectRemoteSkillBundleFiles(root: string): RemoteSkillBundleFi
   const walk = (directory: string): void => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name)
-      if (entry.isSymbolicLink()) throw new Error(`Skill 资源包含不安全的符号链接：${entry.name}`)
+      if (entry.isSymbolicLink())
+        throw new Error(`Skill resource contains an unsafe symlink: ${entry.name}`)
       if (entry.isDirectory()) {
         walk(path)
         continue
       }
-      if (!entry.isFile()) throw new Error(`Skill 资源包含不支持的文件类型：${entry.name}`)
+      if (!entry.isFile())
+        throw new Error(`Skill resource contains an unsupported file type: ${entry.name}`)
       const relativePath = remoteRelative(root, path)
       const content = readFileSync(path)
       bytes += content.length
       if (files.length >= MAX_FILES || bytes > MAX_BYTES) {
-        throw new Error('Skill 资源超过远程上传上限（2000 个文件或 64 MiB）')
+        throw new Error('Skill resources exceed the remote upload limit (2000 files or 64 MiB)')
       }
       files.push({
         relativePath,
@@ -133,7 +136,7 @@ function remoteRelative(root: string, path: string): string {
     parts.includes('..') ||
     parts.some((part) => !part || part.includes('\0') || part.includes('\\'))
   ) {
-    throw new Error('Skill 资源路径无效')
+    throw new Error('Invalid Skill resource path')
   }
   return parts.join('/')
 }

@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   ButtonBase,
@@ -45,6 +47,7 @@ type AgentRunRowProps = {
 }
 
 function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): ReactNode {
+  useUiLanguage()
   const markLost = useLostAgentRunsStore((state) => state.markLost)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
@@ -65,13 +68,13 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
 
   const detail = [
     formatAgentDuration(elapsedMs(run.startedAt, nowMs)),
-    `步骤 ${run.stepCount}`,
-    ...(run.currentStep ? [`当前：${run.currentStep}`] : [])
+    chatCopy.stepValue(run.stepCount),
+    ...(run.currentStep ? [chatCopy.currentValue(run.currentStep)] : [])
   ].join(' · ')
   const wrapperDetail = run.wrapperRunId
     ? [
         `Nextflow：${run.wrapperRunId}`,
-        ...(wrapperRun ? [runStateLabel(wrapperRun.state)] : ['查询中']),
+        ...(wrapperRun ? [runStateLabel(wrapperRun.state)] : [chatCopy.checking]),
         ...(wrapperRun ? [runProgressLabel(wrapperRun)].filter(Boolean) : [])
       ].join(' · ')
     : ''
@@ -81,7 +84,7 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
         <ButtonBase
           onClick={() => onLocate(run.id)}
-          aria-label={`在对话中查看 ${run.agentName}`}
+          aria-label={chatCopy.viewValueInConversation(run.agentName)}
           sx={{
             flex: 1,
             minWidth: 0,
@@ -104,7 +107,7 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
               </Typography>
               {run.background ? (
                 <Chip
-                  label="后台"
+                  label={chatCopy.background}
                   size="small"
                   variant="outlined"
                   sx={{ height: 18, fontSize: 11 }}
@@ -118,7 +121,7 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
               sx={{ color: 'text.secondary' }}
               title={run.task}
             >
-              {run.task || '（没有任务描述）'}
+              {run.task || chatCopy.noTaskDescription}
             </Typography>
             <Typography
               variant="caption"
@@ -142,11 +145,11 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
           </Box>
         </ButtonBase>
         {run.control ? (
-          <Tooltip title="停止这个 Agent" enterDelay={400}>
+          <Tooltip title={chatCopy.stopThisAgent} enterDelay={400}>
             <span>
               <IconButton
                 size="small"
-                aria-label={`停止 ${run.agentName}`}
+                aria-label={chatCopy.stopValue(run.agentName)}
                 disabled={stopping}
                 onClick={stop}
                 sx={{ width: 28, height: 28, color: 'error.main' }}
@@ -185,6 +188,7 @@ const WRAPPER_RUN_POLL_INTERVAL_MS = 2000
  * while no agent is running.
  */
 function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNode {
+  useUiLanguage()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [pinned, setPinned] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -281,7 +285,7 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
           }}
           aria-haspopup="true"
           aria-expanded={open}
-          aria-label={`${agentRunOverviewLabel(runs.length)}，查看详情`}
+          aria-label={chatCopy.valueViewDetails(agentRunOverviewLabel(runs.length))}
           sx={{
             position: 'absolute',
             top: 12,
@@ -343,7 +347,7 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
               component="div"
               sx={{ px: 1, pt: 0.5, pb: 0.5, color: 'text.secondary', fontWeight: 600 }}
             >
-              运行中的 Agent
+              {chatCopy.runningAgents}
             </Typography>
             <Box
               component="ul"

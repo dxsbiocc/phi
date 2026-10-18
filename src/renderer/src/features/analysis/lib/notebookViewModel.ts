@@ -1,3 +1,5 @@
+import { analysisCopy } from './analysisUiCopy'
+import { getUiLocale } from '../../../lib/i18n'
 import { parseHtmlTable } from './notebookHtmlTable'
 import { notebookExecutionCompletedAt } from './notebookExecutionTime'
 import { type SyntaxLanguage } from '../../../lib/syntaxHighlight'
@@ -62,11 +64,11 @@ export function notebookContextKindLabel(
   kind: AnalysisNotebookContextReference['kind'],
   detail?: string
 ): string {
-  if (kind === 'dataframe') return 'DataFrame'
-  if (kind === 'data_source') return 'Data Source'
-  if (kind === 'cell_output') return 'Cell Output'
-  if (kind === 'variable' && detail === 'module') return 'Module'
-  return 'Variable'
+  if (kind === 'dataframe') return analysisCopy.dataframe
+  if (kind === 'data_source') return analysisCopy.dataSource
+  if (kind === 'cell_output') return analysisCopy.cellOutput
+  if (kind === 'variable' && detail === 'module') return analysisCopy.module
+  return analysisCopy.variable
 }
 
 export function contextReferenceForFilePath(path: string): AnalysisNotebookContextReference {
@@ -158,10 +160,10 @@ export function notebookOutputTextChunks(outputs: NotebookOutput[]): string[] {
 export function dataframeShapeFromOutputs(outputs: NotebookOutput[]): string | undefined {
   for (const text of notebookOutputTextChunks(outputs)) {
     const explicitShape = text.match(/shape:\s*\((\d+)\s*,\s*(\d+)\)/i)
-    if (explicitShape) return `${explicitShape[1]} rows, ${explicitShape[2]} columns`
+    if (explicitShape) return analysisCopy.tableShape(explicitShape[1], explicitShape[2])
 
     const pandasSummary = text.match(/\[(\d+)\s+rows?\s+x\s+(\d+)\s+columns?\]/i)
-    if (pandasSummary) return `${pandasSummary[1]} rows, ${pandasSummary[2]} columns`
+    if (pandasSummary) return analysisCopy.tableShape(pandasSummary[1], pandasSummary[2])
   }
   return undefined
 }
@@ -503,40 +505,52 @@ export function kernelAvailabilityLabel(
   isLoading: boolean,
   error: string | null | undefined
 ): string {
-  if (isLoading) return 'Checking kernels'
-  if (error) return 'Kernel check failed'
-  if (!diagnostics) return document ? 'Kernel unchecked' : 'Kernel preview'
-  if (!diagnostics.jupyterServer.available) return 'Jupyter missing'
-  if (!document) return 'Jupyter ready'
+  if (isLoading) return analysisCopy.checkingKernels
+  if (error) return analysisCopy.kernelCheckFailed
+  if (!diagnostics) return document ? analysisCopy.kernelUnchecked : analysisCopy.kernelPreview
+  if (!diagnostics.jupyterServer.available) return analysisCopy.jupyterMissing
+  if (!document) return analysisCopy.jupyterReady
 
   const language = notebookKernelLanguage(document)
-  if (language === 'python' && !diagnostics.hasPythonKernel) return 'Python kernel missing'
-  if (language === 'r' && !diagnostics.hasRKernel) return 'R kernel missing'
+  if (language === 'python' && !diagnostics.hasPythonKernel) return analysisCopy.pythonKernelMissing
+  if (language === 'r' && !diagnostics.hasRKernel) return analysisCopy.rKernelMissing
 
   const matchingKernel =
     diagnostics.kernels.find((kernel) => kernel.name === notebookKernelName(document)) ??
     diagnostics.kernels.find((kernel) => kernel.language === language) ??
     diagnostics.kernels.find((kernel) => kernel.name === diagnostics.preferredKernelName)
-  return matchingKernel ? `${matchingKernel.displayName} · not started` : 'Kernel missing'
+  return matchingKernel
+    ? `${matchingKernel.displayName} · ${analysisCopy.notStarted}`
+    : analysisCopy.kernelMissing
 }
 
 export function kernelAvailabilityColor(
   label: string
 ): 'default' | 'primary' | 'success' | 'warning' | 'error' {
-  if (label.includes('failed')) return 'error'
-  if (label.includes('missing')) return 'warning'
-  if (label.includes('not started')) return 'primary'
-  if (label.includes('ready')) return 'success'
+  if (label === analysisCopy.kernelCheckFailed || label.includes('failed')) return 'error'
+  if (
+    [
+      analysisCopy.jupyterMissing,
+      analysisCopy.pythonKernelMissing,
+      analysisCopy.rKernelMissing,
+      analysisCopy.kernelMissing
+    ].includes(label) ||
+    label.includes('missing')
+  )
+    return 'warning'
+  if (label.endsWith(` · ${analysisCopy.notStarted}`) || label.includes('not started'))
+    return 'primary'
+  if (label === analysisCopy.jupyterReady || label.includes('ready')) return 'success'
   return 'default'
 }
 
 export function jupyterServerStateLabel(status: JupyterServerStatus | null | undefined): string {
-  if (!status) return 'Jupyter server unchecked'
-  if (status.state === 'starting') return 'Jupyter server starting'
-  if (status.state === 'ready') return 'Jupyter server ready'
-  if (status.state === 'error') return 'Jupyter server error'
-  if (status.state === 'exited') return 'Jupyter server exited'
-  return 'Jupyter server stopped'
+  if (!status) return analysisCopy.jupyterUnchecked
+  if (status.state === 'starting') return analysisCopy.jupyterStarting
+  if (status.state === 'ready') return analysisCopy.jupyterServerReady
+  if (status.state === 'error') return analysisCopy.jupyterError
+  if (status.state === 'exited') return analysisCopy.jupyterExited
+  return analysisCopy.jupyterStopped
 }
 
 export function jupyterServerStateColor(
@@ -553,14 +567,14 @@ export function jupyterServerStateColor(
 export function notebookSessionStateLabel(
   status: AnalysisNotebookSessionStatus | null | undefined
 ): string {
-  if (!status) return 'Kernel disconnected'
-  if (status.state === 'missing') return 'Kernel missing'
-  if (status.state === 'idle') return 'Kernel idle'
-  if (status.state === 'busy') return 'Kernel busy'
-  if (status.state === 'restarting') return 'Kernel restarting'
-  if (status.state === 'disconnected') return 'Kernel disconnected'
-  if (status.state === 'error') return 'Kernel error'
-  return 'Kernel unknown'
+  if (!status) return analysisCopy.kernelDisconnected
+  if (status.state === 'missing') return analysisCopy.kernelMissing
+  if (status.state === 'idle') return analysisCopy.kernelIdle
+  if (status.state === 'busy') return analysisCopy.kernelBusy
+  if (status.state === 'restarting') return analysisCopy.kernelRestarting
+  if (status.state === 'disconnected') return analysisCopy.kernelDisconnected
+  if (status.state === 'error') return analysisCopy.kernelError
+  return analysisCopy.kernelUnknown
 }
 
 export function notebookSessionStateColor(
@@ -707,12 +721,16 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function notebookStatus(notebook: AnalysisNotebookSummary): string {
-  return `${formatBytes(notebook.bytes)} · ${new Date(notebook.modifiedAt).toLocaleDateString()}`
+export function notebookStatus(
+  notebook: AnalysisNotebookSummary,
+  locale: string = getUiLocale()
+): string {
+  return `${formatBytes(notebook.bytes)} · ${new Date(notebook.modifiedAt).toLocaleDateString(locale)}`
 }
 
 export function registryNotebooks(
-  registry: AnalysisNotebookRegistry | null | undefined
+  registry: AnalysisNotebookRegistry | null | undefined,
+  locale: string = getUiLocale()
 ): NotebookListEntry[] {
   if (!registry) return []
   return registry.notebooks.map((notebook) => ({
@@ -720,12 +738,13 @@ export function registryNotebooks(
     path: notebook.relativePath,
     name: notebook.name,
     absolutePath: notebook.path,
-    status: notebookStatus(notebook)
+    status: notebookStatus(notebook, locale)
   }))
 }
 
 export function notebookFileEntry(
-  file: AnalysisNotebookFile | null | undefined
+  file: AnalysisNotebookFile | null | undefined,
+  locale: string = getUiLocale()
 ): NotebookListEntry | null {
   if (!file) return null
   return {
@@ -733,7 +752,7 @@ export function notebookFileEntry(
     path: file.relativePath,
     name: file.name,
     absolutePath: file.path,
-    status: `${formatBytes(file.bytes)} · ${new Date(file.modifiedAt).toLocaleDateString()}`
+    status: `${formatBytes(file.bytes)} · ${new Date(file.modifiedAt).toLocaleDateString(locale)}`
   }
 }
 

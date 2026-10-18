@@ -88,7 +88,10 @@ export async function searchOfficialCatalog(
       ...(!available
         ? { notice: unavailableNotice(timedOut) }
         : truncated
-          ? { notice: '官网目录搜索结果已截断，请使用更具体的关键词继续查找。' }
+          ? {
+              notice:
+                'The Phi Website catalog search results were truncated. Use more specific keywords to continue.'
+            }
           : {})
     }
   } catch {
@@ -102,8 +105,8 @@ export async function searchOfficialCatalog(
 
 function unavailableNotice(timedOut: boolean): string {
   return timedOut
-    ? '官网目录请求超时，正在使用应用已验证的软件目录。'
-    : '官网目录暂不可用，正在使用应用已验证的软件目录。'
+    ? 'The Phi Website catalog request timed out. Using the app’s verified catalog.'
+    : 'The Phi Website catalog is unavailable. Using the app’s verified catalog.'
 }
 
 function catalogOrigin(baseUrl: string): string {

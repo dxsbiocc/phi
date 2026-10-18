@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Box } from '@mui/material'
 import {
@@ -35,7 +37,7 @@ export default function NotebookHtmlFrameOutput({
   mime = 'text/html',
   frameKind = 'html',
   notebookPath,
-  title = 'Notebook HTML output'
+  title = analysisCopy.htmlOutput
 }: {
   html: string
   mime?: string
@@ -43,6 +45,7 @@ export default function NotebookHtmlFrameOutput({
   notebookPath?: string | null
   title?: string
 }): React.JSX.Element {
+  useUiLanguage()
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const frameId = useId()
   const [height, setHeight] = useState(220)

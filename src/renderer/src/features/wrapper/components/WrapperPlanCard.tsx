@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { localizeWrapperMessage, wrapperCopy } from '../lib/wrapperCopy'
 import { Box, Button, CircularProgress, Collapse, Paper, Stack, Typography } from '@mui/material'
 import { memo, useEffect, useState } from 'react'
 import type { WrapperPlanItem } from '../../../types'
@@ -30,13 +33,7 @@ const TERMINAL_RUN_STATES: WrapperRun['state'][] = ['completed', 'failed', 'canc
 
 function planStateLabel(state: WrapperRunPlan['state']): string {
   const labels: Record<WrapperRunPlan['state'], string> = {
-    draft: '草稿',
-    validating: '校验中',
-    valid: '可提交',
-    invalid: '有问题',
-    expired: '已过期',
-    submitted: '已提交',
-    cancelled: '已取消'
+    ...wrapperCopy.planStates
   }
   return labels[state] ?? state
 }
@@ -47,6 +44,7 @@ function StatusMark({
 }: {
   tone: 'pending' | 'active' | 'positive' | 'negative'
 }): React.JSX.Element {
+  useUiLanguage()
   if (tone === 'active') {
     return <CircularProgress size={13} thickness={5} sx={{ color: 'text.secondary' }} aria-hidden />
   }
@@ -67,12 +65,13 @@ const SAMPLESHEET_PREVIEW_ROWS = 5
 
 /** Compact preview table for a generated samplesheet artifact — plain borders, no MUI Table. */
 function SamplesheetPreview({ inputId, csv }: { inputId: string; csv: string }): React.JSX.Element {
+  useUiLanguage()
   const { header, rows } = parseSamplesheetCsv(csv)
   const visibleRows = rows.slice(0, SAMPLESHEET_PREVIEW_ROWS)
   return (
     <Box>
       <Typography variant="caption" color="text.secondary">
-        {inputId} 生成的 samplesheet（{rows.length} 行）
+        {wrapperCopy.samplesheetPreview(inputId, rows.length)}
       </Typography>
       <Box
         component="table"
@@ -129,7 +128,7 @@ function SamplesheetPreview({ inputId, csv }: { inputId: string; csv: string }):
       </Box>
       {rows.length > visibleRows.length && (
         <Typography variant="caption" color="text.secondary">
-          还有 {rows.length - visibleRows.length} 行未显示
+          {wrapperCopy.remainingRows(rows.length - visibleRows.length)}
         </Typography>
       )}
     </Box>
@@ -148,6 +147,7 @@ function SamplesheetPreview({ inputId, csv }: { inputId: string; csv: string }):
  * whether the agent session that created this plan is still running.
  */
 function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Element {
+  useUiLanguage()
   const [loadState, setLoadState] = useState<{ plan?: WrapperRunPlan; error?: string }>({})
   const [expanded, setExpanded] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -161,7 +161,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
     window.api
       .getWrapperPlan(item.planId)
       .then((result) => {
-        if (!cancelled) setLoadState(result ? { plan: result } : { error: '计划不存在或已删除' })
+        if (!cancelled) setLoadState(result ? { plan: result } : { error: wrapperCopy.planMissing })
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoadState({ error: errorMessage(error) })
@@ -247,7 +247,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
         sx={{ alignItems: 'center', color: 'text.secondary', py: 0.5 }}
       >
         <StatusMark tone="active" />
-        <Typography variant="body2">正在准备 wrapper 计划…</Typography>
+        <Typography variant="body2">{wrapperCopy.preparingPlan}</Typography>
       </Stack>
     )
   }
@@ -260,7 +260,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
         sx={{ alignItems: 'center', color: 'error.main', py: 0.5 }}
       >
         <StatusMark tone="negative" />
-        <Typography variant="body2">wrapper 计划创建失败</Typography>
+        <Typography variant="body2">{wrapperCopy.planFailed}</Typography>
       </Stack>
     )
   }
@@ -273,7 +273,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
         sx={{ alignItems: 'center', color: 'error.main', py: 0.5 }}
       >
         <StatusMark tone="negative" />
-        <Typography variant="body2">{loadState.error}</Typography>
+        <Typography variant="body2">{localizeWrapperMessage(loadState.error)}</Typography>
       </Stack>
     )
   }
@@ -286,7 +286,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
         sx={{ alignItems: 'center', color: 'text.secondary', py: 0.5 }}
       >
         <StatusMark tone="active" />
-        <Typography variant="body2">正在加载计划…</Typography>
+        <Typography variant="body2">{wrapperCopy.loadingPlan}</Typography>
       </Stack>
     )
   }
@@ -407,7 +407,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
           plan.inputDeclarations.length > 0 && (
             <Stack spacing={0.75} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1 }}>
               <Typography variant="caption" sx={{ fontWeight: 700 }}>
-                本机输入上传
+                {wrapperCopy.localInputUpload}
               </Typography>
               {plan.inputDeclarations.map((declaration) => {
                 const input = plan.inputs.find((candidate) => candidate.id === declaration.id)
@@ -428,7 +428,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
                       disabled={busy}
                       onClick={() => setUploadInputId(declaration.id)}
                     >
-                      {uploaded ? '重新选择' : '选择本机输入'}
+                      {uploaded ? wrapperCopy.chooseAgain : wrapperCopy.selectLocalInput}
                     </Button>
                   </Stack>
                 )
@@ -443,10 +443,10 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
             sx={{ alignItems: 'center', color: 'warning.main', flexWrap: 'wrap', rowGap: 0.5 }}
           >
             <Typography variant="caption" sx={{ color: 'inherit' }}>
-              重量级任务将在本机运行，请确认本机资源与输入数据
+              {wrapperCopy.heavyLocalRun}
             </Typography>
             <Button size="small" onClick={() => setHeavyWorkloadAcknowledged((prev) => !prev)}>
-              {heavyWorkloadAcknowledged ? '已确认' : '确认在本地运行'}
+              {heavyWorkloadAcknowledged ? wrapperCopy.acknowledged : wrapperCopy.confirmLocalRun}
             </Button>
           </Stack>
         )}
@@ -541,13 +541,13 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
 
         {actionError && (
           <Typography variant="caption" sx={{ color: 'error.main' }}>
-            {actionError}
+            {localizeWrapperMessage(actionError)}
           </Typography>
         )}
 
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <Button size="small" onClick={() => setExpanded((prev) => !prev)}>
-            {expanded ? '收起详情' : '展开详情'}
+            {expanded ? wrapperCopy.collapseDetails : wrapperCopy.expandDetails}
           </Button>
           <Box sx={{ flex: 1 }} />
           <Button
@@ -563,7 +563,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
               void runAction(() => window.api.cancelWrapperRunPlan(cancelTarget.planId))
             }}
           >
-            取消
+            {resourceUi.cancel}
           </Button>
           <Button
             size="small"
@@ -579,7 +579,7 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
               })
             }
           >
-            提交运行
+            {wrapperCopy.submitRun}
           </Button>
         </Stack>
         {uploadInputId && (

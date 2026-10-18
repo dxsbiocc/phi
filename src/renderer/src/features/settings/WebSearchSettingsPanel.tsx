@@ -1,3 +1,5 @@
+import { settingsUi } from './lib/settingsUi'
+import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useState } from 'react'
 import {
   Alert,
@@ -43,6 +45,7 @@ export function WebSearchSettingsEditor({
   onClearApiKey?: (id: string) => Promise<WebSearchKeyStatus>
   onOpenProviderSettings?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [enabledIds, setEnabledIds] = useState(settings.orderedEnabledIds)
   const [engines, setEngines] = useState(settings.searxngEngines)
   const [instanceReachable, setInstanceReachable] = useState<boolean | null>(() =>
@@ -116,10 +119,14 @@ export function WebSearchSettingsEditor({
   return (
     <Stack spacing={4}>
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-        <Typography variant="h6">网页搜索</Typography>
+        <Typography variant="h6">{settingsUi.webSearch}</Typography>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           {onRefresh && (
-            <IconButton aria-label="刷新网页搜索设置" size="small" onClick={onRefresh}>
+            <IconButton
+              aria-label={settingsUi.refreshWebSearchSettings}
+              size="small"
+              onClick={onRefresh}
+            >
               <GoSync size={17} />
             </IconButton>
           )}
@@ -131,7 +138,7 @@ export function WebSearchSettingsEditor({
               setEnabledIds(defaultIds)
             }}
           >
-            重置服务
+            {settingsUi.resetProviders}
           </Button>
           <Button
             variant="contained"
@@ -139,7 +146,7 @@ export function WebSearchSettingsEditor({
             disabled={saving || !hasChanges}
             onClick={() => void save()}
           >
-            {saving ? '保存中' : '保存'}
+            {saving ? settingsUi.saving : settingsUi.save}
           </Button>
         </Stack>
       </Stack>
@@ -157,12 +164,12 @@ export function WebSearchSettingsEditor({
               size="small"
               label={
                 !settings.searxngEndpoint
-                  ? '未配置'
+                  ? settingsUi.notConfigured
                   : instanceReachable === null
-                    ? '检查中'
+                    ? settingsUi.checking
                     : instanceReachable
-                      ? '已连接'
-                      : '连接失败'
+                      ? settingsUi.connected
+                      : settingsUi.connectionFailed
               }
               color={
                 settings.searxngEndpoint && instanceReachable
@@ -174,7 +181,7 @@ export function WebSearchSettingsEditor({
             />
             {!enabledIds.includes('searxng') && (
               <Button size="small" onClick={() => toggleProvider('searxng')}>
-                启用来源
+                {settingsUi.enableSource}
               </Button>
             )}
           </Stack>
@@ -188,7 +195,7 @@ export function WebSearchSettingsEditor({
                   setEngines('')
                 }}
               >
-                使用默认
+                {settingsUi.useDefault}
               </Button>
             )}
             <Button
@@ -198,7 +205,7 @@ export function WebSearchSettingsEditor({
               disabled={saving}
               onClick={() => setInstanceDialogOpen(true)}
             >
-              {settings.searxngEndpoint ? '修改实例' : '添加实例'}
+              {settings.searxngEndpoint ? settingsUi.editInstance : settingsUi.addInstance}
             </Button>
           </Stack>
         </Stack>
@@ -218,9 +225,12 @@ export function WebSearchSettingsEditor({
       <Box>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 2.5 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-            搜索服务
+            {settingsUi.searchProviders}
           </Typography>
-          <Chip size="small" label={`${enabledIds.length}/${settings.providers.length} 已启用`} />
+          <Chip
+            size="small"
+            label={settingsUi.valueValueEnabled(enabledIds.length, settings.providers.length)}
+          />
         </Stack>
         <SearchProviderList
           providers={settings.providers}
@@ -253,6 +263,7 @@ export function WebSearchSettingsPanel({
 }: {
   onOpenProviderSettings?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [settings, setSettings] = useState<WebSearchSettings | null>(null)
   const [revision, setRevision] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -301,11 +312,11 @@ export function WebSearchSettingsPanel({
   if (loading) {
     return (
       <Stack spacing={1} sx={{ py: 2 }}>
-        <Typography variant="h6">网页搜索</Typography>
+        <Typography variant="h6">{settingsUi.webSearch}</Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <CircularProgress size={18} />
           <Typography variant="body2" color="text.secondary">
-            读取设置…
+            {settingsUi.loadingSettings}
           </Typography>
         </Box>
       </Stack>
@@ -314,16 +325,26 @@ export function WebSearchSettingsPanel({
 
   if (!settings) {
     return (
-      <Alert severity="error" action={<Button onClick={() => void load()}>重试</Button>}>
-        {error ?? '无法读取网页搜索设置'}
+      <Alert
+        severity="error"
+        action={<Button onClick={() => void load()}>{settingsUi.retry}</Button>}
+      >
+        {error ?? settingsUi.unableToLoadWebSearchSettings}
       </Alert>
     )
   }
 
   return (
     <Stack spacing={1.5}>
-      {saved && <Alert severity="success">搜索设置已保存，将用于后续搜索。</Alert>}
-      {error && <Alert severity="error">刷新失败：{error}</Alert>}
+      {saved && (
+        <Alert severity="success">{settingsUi.searchSettingsSavedTheyWillApplyToFuture}</Alert>
+      )}
+      {error && (
+        <Alert severity="error">
+          {settingsUi.refreshFailed}
+          {error}
+        </Alert>
+      )}
       <WebSearchSettingsEditor
         key={revision}
         settings={settings}

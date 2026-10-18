@@ -1,3 +1,4 @@
+import { chatCopy } from './chatCopy'
 import type { ChatItem, ChatMessage } from '../../../types'
 
 export type ApprovalDetails = {
@@ -23,10 +24,18 @@ type ApprovalEvent = {
 }
 
 export const APPROVAL_STATUS_LABELS: Record<ApprovalDetails['status'], string> = {
-  pending: '等待批准',
-  approved: '已批准',
-  denied: '已拒绝',
-  cancelled: '已取消'
+  get pending() {
+    return chatCopy.awaitingApproval
+  },
+  get approved() {
+    return chatCopy.approved
+  },
+  get denied() {
+    return chatCopy.denied
+  },
+  get cancelled() {
+    return chatCopy.cancelled
+  }
 }
 
 const STATUSES: Record<string, ApprovalDetails['status']> = {
@@ -60,7 +69,7 @@ export function approvalItemFromEvent(event: ApprovalEvent): ChatMessage | null 
     return {
       id,
       role: status === 'denied' ? 'error' : 'warning',
-      content: `权限请求${APPROVAL_STATUS_LABELS[status]}。`,
+      content: chatCopy.permissionRequestValue(APPROVAL_STATUS_LABELS[status]),
       ...(event.runId ? { runId: event.runId } : {}),
       ...(event.createdAt ? { createdAt: event.createdAt } : {})
     }
@@ -71,7 +80,8 @@ export function approvalItemFromEvent(event: ApprovalEvent): ChatMessage | null 
     ...(event.approvalId ? { approvalId: event.approvalId } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
-    toolName: typeof event.toolName === 'string' && event.toolName ? event.toolName : '工具调用',
+    toolName:
+      typeof event.toolName === 'string' && event.toolName ? event.toolName : chatCopy.toolCall,
     summary: typeof event.summary === 'string' ? event.summary : ''
   }
   return {
@@ -136,7 +146,9 @@ export function applyApprovalTimelineEvent(items: ChatItem[], event: ApprovalEve
     status,
     sessionId: previous.sessionId ?? next.sessionId,
     toolCallId: previous.toolCallId ?? next.toolCallId,
-    toolName: previous.toolName === '工具调用' ? next.toolName : previous.toolName,
+    toolName: ['工具调用', 'Tool call'].includes(previous.toolName)
+      ? next.toolName
+      : previous.toolName,
     summary: previous.summary || next.summary
   }
   items[index] = {

@@ -1,3 +1,4 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
 import type { AgentExecutionItem } from './agentExecutionTypes'
 
 /**
@@ -36,9 +37,9 @@ export function agentRunStatusText(
   options: { lost?: boolean } = {}
 ): string {
   if (item.status === 'running') {
-    if (options.lost) return '已中断'
-    return item.background ? '后台运行中' : '运行中'
+    if (options.lost) return chatCopy.interrupted
+    return item.background ? chatCopy.runningInBackground : chatCopy.running
   }
-  if (item.cancelled) return '已取消'
-  return item.status === 'error' ? '失败' : '完成'
+  if (item.cancelled) return chatCopy.cancelled
+  return item.status === 'error' ? chatCopy.failed : chatCopy.done
 }

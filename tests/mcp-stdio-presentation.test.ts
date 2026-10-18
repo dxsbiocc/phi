@@ -75,15 +75,21 @@ function renderDetails(value: FeaturedMcpConnector): string {
 
 test('local details describe installation prerequisites without a remote-connector warning', () => {
   const markup = renderDetails(connector())
-  assert.match(markup, /添加连接器并准备本地服务后，可读取服务端工具/)
-  assert.match(markup, /首次启动可能需要下载/)
-  assert.match(markup, /启动命令/)
-  assert.doesNotMatch(markup, /MCP 地址|找不到远程连接器|无法读取当前工具列表/)
+  assert.match(markup, /Add the Connector and prepare its local service to read server tools/)
+  assert.match(markup, /The first start may download/)
+  assert.match(markup, /Launch command/)
+  assert.doesNotMatch(
+    markup,
+    /MCP URL|Remote Connector not found|Could not read the current tool list/
+  )
 })
 
 test('a configured local connector waits for environment readiness without claiming validation', () => {
   const value = connector({ added: true, environmentState: 'not-built' })
-  assert.match(renderDetails(value), /准备运行环境后，可启动本地服务并读取工具/)
+  assert.match(
+    renderDetails(value),
+    /Prepare the runtime to start the local service and read tools/
+  )
   assert.doesNotMatch(renderCard(value), /data-phi-connector-state="added"/)
 })
 
@@ -119,8 +125,8 @@ test('failed local setup keeps failure feedback and a retry action', () => {
       updatedAt: '2026-10-08T00:00:00Z'
     }
   })
-  assert.match(renderDetails(value), /重试连接|Network unavailable/)
-  assert.match(renderCard(value), /aria-label="重试连接 BioMCP"/)
+  assert.match(renderDetails(value), /Retry connection|Network unavailable/)
+  assert.match(renderCard(value), /aria-label="Retry connection to BioMCP"/)
   assert.doesNotMatch(renderCard(value), /data-phi-connector-state="added"/)
 })
 
@@ -137,8 +143,8 @@ test('only a successful local probe presents validation and real tool names', ()
     }
   })
   assert.match(renderCard(value), /data-phi-connector-state="added"/)
-  assert.match(renderDetails(value), /连接已验证/)
-  assert.match(renderDetails(value), /search_article|服务端工具 · 2/)
+  assert.match(renderDetails(value), /Connection verified/)
+  assert.match(renderDetails(value), /search_article|Server tools · 2/)
 })
 
 test('every setup phase has presentation copy', () => {
@@ -164,7 +170,7 @@ test('removed local connectors do not retain successful validation feedback', ()
       updatedAt: '2026-10-08T00:00:00Z'
     }
   })
-  assert.doesNotMatch(renderDetails(value), /连接已验证|设置失败/)
+  assert.doesNotMatch(renderDetails(value), /Connection verified|Setup failed/)
   assert.doesNotMatch(renderCard(value), /data-phi-connector-state="added"/)
 })
 

@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeWrapperMessage, wrapperCopy } from '../lib/wrapperCopy'
 import { useState } from 'react'
 import { Alert, Box, Chip, CircularProgress, Typography } from '@mui/material'
 
@@ -27,6 +29,7 @@ export function WrapperPackageDetailPage({
   action,
   onBack
 }: WrapperPackageDetailPageProps): React.JSX.Element {
+  useUiLanguage()
   const members = useWrapperPackageMembers(catalog, choice)
   const [pickedId, setPickedId] = useState<string | null>(null)
   const selected = members.wrappers.find((entry) => entry.id === pickedId) ?? members.wrappers[0]
@@ -38,7 +41,7 @@ export function WrapperPackageDetailPage({
   return (
     <CatalogDetailFrame
       entryId={choice.id}
-      backLabel="返回 wrapper 目录"
+      backLabel={wrapperCopy.backToCatalog}
       action={action}
       onBack={onBack}
     >
@@ -56,12 +59,12 @@ export function WrapperPackageDetailPage({
             <CircularProgress size={22} />
           </Box>
         ) : members.status === 'error' ? (
-          <Alert severity="error">{members.error}</Alert>
+          <Alert severity="error">{localizeWrapperMessage(members.error ?? '')}</Alert>
         ) : selected ? (
           <Box sx={{ maxWidth: 860, mx: 'auto' }}>
             {members.skipped > 0 ? (
               <Alert severity="warning" sx={{ mb: 2 }}>
-                有 {members.skipped} 个 wrapper 的清单无法解析，已跳过。
+                {wrapperCopy.skippedManifests(members.skipped)}
               </Alert>
             ) : null}
             <WrapperDetailBody
@@ -77,7 +80,7 @@ export function WrapperPackageDetailPage({
             />
           </Box>
         ) : (
-          <Typography color="text.secondary">这个软件包里没有可显示的 wrapper。</Typography>
+          <Typography color="text.secondary">{wrapperCopy.emptyPackage}</Typography>
         )}
       </Box>
     </CatalogDetailFrame>

@@ -255,7 +255,7 @@ test('offline API requests retain only fully verified imported connector cache c
   assert.equal(cached.dir, first.dir)
   assert.equal(cached.status, 'cached')
   assert.equal(cached.trust, 'imported')
-  assert.match(cached.notice ?? '', /API 内容缓存/)
+  assert.match(cached.notice ?? '', /verified API cache/)
   assert.equal(
     f.requests.some((url) => url.includes('github.com')),
     false
@@ -358,7 +358,7 @@ test('invalid API list identity, pagination, categories, and external icon sourc
   ])
     await assert.rejects(
       fetchOfficialConnectorPackages({ fetch: async () => Response.json(value) }),
-      /分页/
+      /pagination/
     )
 })
 
@@ -369,7 +369,7 @@ test('detail identity mismatches and incomplete dependency payloads never replac
   const cached = await syncOfficialConnectorRegistry(f.options)
   assert.equal(cached.dir, first.dir)
   assert.equal(cached.status, 'cached')
-  assert.match(cached.notice ?? '', /不一致/)
+  assert.match(cached.notice ?? '', /does not match/)
 })
 
 test('unsupported stdio or dependency-bearing payloads explicitly fall back to the verified signed source', async () => {
@@ -401,8 +401,8 @@ test('unsupported stdio or dependency-bearing payloads explicitly fall back to t
       }
     })
     assert.equal(result.trust, 'official')
-    assert.match(result.notice ?? '', /签名发布目录/)
-    assert.match(result.notice ?? '', mode === 'stdio' ? /stdio/ : /依赖/)
+    assert.match(result.notice ?? '', /signed release catalog/)
+    assert.match(result.notice ?? '', mode === 'stdio' ? /stdio/ : /dependencies/)
   }
 })
 
@@ -412,11 +412,11 @@ test('unresponsive transports and oversized JSON or icon downloads stay bounded'
       timeoutMs: 5,
       fetch: async () => new Promise<Response>(() => {})
     }),
-    /超时/
+    /timed out/
   )
   await assert.rejects(
     fetchOfficialConnectorPackages({ fetch: async () => new Response(' '.repeat(512 * 1024 + 1)) }),
-    /大小限制/
+    /size limit/
   )
   const f = fixture()
   const transport = f.options!.fetch!
@@ -427,6 +427,6 @@ test('unresponsive transports and oversized JSON or icon downloads stay bounded'
           ? new Response(new Uint8Array(256 * 1024 + 1))
           : transport(input, init)
     }),
-    /大小限制/
+    /size limit/
   )
 })

@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type ReactNode } from 'react'
 import { Box, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
@@ -79,6 +81,7 @@ function ChartModeButton({
   onClick: MouseEventHandler<HTMLButtonElement>
   children: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Tooltip title={label} enterDelay={300}>
       <span>
@@ -119,6 +122,7 @@ export function NotebookVegaOutput({
   metadata?: NotebookMimeMetadata
   spec: JsonObject
 }): React.JSX.Element {
+  useUiLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<View | null>(null)
   const initialStateRef = useRef<ReturnType<View['getState']> | null>(null)
@@ -202,7 +206,7 @@ export function NotebookVegaOutput({
       .catch((cause: unknown) => {
         if (cancelled) return
         setIsRendering(false)
-        setError(cause instanceof Error ? cause.message : 'Unable to render Vega output')
+        setError(cause instanceof Error ? cause.message : analysisCopy.renderVegaFailed)
       })
 
     return () => {
@@ -295,7 +299,7 @@ export function NotebookVegaOutput({
         }}
       >
         <ChartModeButton
-          label="下载图片"
+          label={analysisCopy.downloadImage}
           disabled={!viewReady}
           menu
           onClick={(event) => setDownloadAnchorEl(event.currentTarget)}
@@ -312,21 +316,29 @@ export function NotebookVegaOutput({
           <MenuItem onClick={() => exportChart('png')}>PNG</MenuItem>
           <MenuItem onClick={() => exportChart('svg')}>SVG</MenuItem>
         </Menu>
-        <ChartModeButton label="放大" disabled={!viewReady} onClick={() => zoomChart(zoomInFactor)}>
+        <ChartModeButton
+          label={analysisCopy.zoomIn}
+          disabled={!viewReady}
+          onClick={() => zoomChart(zoomInFactor)}
+        >
           <GoZoomIn size={20} />
         </ChartModeButton>
         <ChartModeButton
-          label="缩小"
+          label={analysisCopy.zoomOut}
           disabled={!viewReady}
           onClick={() => zoomChart(zoomOutFactor)}
         >
           <GoZoomOut size={20} />
         </ChartModeButton>
-        <ChartModeButton label="重置坐标" disabled={!viewReady} onClick={resetChartZoom}>
+        <ChartModeButton
+          label={analysisCopy.resetAxes}
+          disabled={!viewReady}
+          onClick={resetChartZoom}
+        >
           <GoSync size={20} />
         </ChartModeButton>
         <ChartModeButton
-          label={tooltipEnabled ? '关闭悬停提示' : '显示悬停提示'}
+          label={tooltipEnabled ? analysisCopy.disableHover : analysisCopy.enableHover}
           disabled={!viewReady}
           onClick={toggleChartTooltip}
         >
@@ -364,7 +376,7 @@ export function NotebookVegaOutput({
             }}
           >
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              Rendering Vega-Lite output...
+              {analysisCopy.renderingVega}
             </Typography>
           </Box>
         ) : null}
@@ -379,7 +391,7 @@ export function NotebookVegaOutput({
           }}
         >
           <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
-            Vega render failed
+            {analysisCopy.vegaFailed}
           </Typography>
           <NotebookPreOutput kind={`${mime}:fallback`} text={specText} tone="error" />
         </Box>
@@ -395,6 +407,7 @@ export function NotebookPlotlyOutput({
   metadata?: NotebookMimeMetadata
   spec: JsonObject
 }): React.JSX.Element {
+  useUiLanguage()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [error, setError] = useState<string | null>(null)
   const specText = useMemo(() => prettyJson(spec), [spec])
@@ -437,7 +450,7 @@ export function NotebookPlotlyOutput({
       })
       .catch((cause: unknown) => {
         if (cancelled) return
-        setError(cause instanceof Error ? cause.message : 'Unable to render Plotly output')
+        setError(cause instanceof Error ? cause.message : analysisCopy.renderPlotlyFailed)
       })
 
     return () => {
@@ -481,7 +494,7 @@ export function NotebookPlotlyOutput({
           }}
         >
           <Typography variant="caption" sx={{ color: 'error.main', fontWeight: 700 }}>
-            Plotly render failed
+            {analysisCopy.plotlyFailed}
           </Typography>
           <NotebookPreOutput
             kind="application/vnd.plotly.v1+json:fallback"

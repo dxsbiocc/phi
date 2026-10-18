@@ -24,15 +24,17 @@ test('a fresh connection doctor reports the runtime root as unchecked instead of
             hostProfileId: 'host-1',
             checkedAt: '2026-10-09T00:00:00.000Z',
             ok: true,
-            checks: [{ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' }]
+            checks: [
+              { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' }
+            ]
           }
         }
       })
     )
   )
 
-  assert.match(markup, /运行时根目录：未检查/)
-  assert.doesNotMatch(markup, />检查通过</)
+  assert.match(markup, /Runtime root: not checked/)
+  assert.doesNotMatch(markup, />Check passed</)
 })
 
 test('a runtime-root check marks its host row busy even though it uses a candidate-specific key', () => {
@@ -75,8 +77,8 @@ test('a runtime-root check marks its host row busy even though it uses a candida
     )
   )
 
-  assert.match(markup, /正在测试 GPU/)
-  assert.match(markup, /<button[^>]*disabled[^>]*>保存中…<\/button>/)
+  assert.match(markup, /Testing GPU/)
+  assert.match(markup, /<button[^>]*disabled[^>]*>Saving…<\/button>/)
 })
 
 test('a cached runtime-root timeout prevents an overall passing doctor summary', () => {
@@ -94,7 +96,9 @@ test('a cached runtime-root timeout prevents an overall passing doctor summary',
             hostProfileId: 'host-1',
             checkedAt: '2026-10-09T00:00:00.000Z',
             ok: true,
-            checks: [{ id: 'ssh', status: 'ok', message: 'SSH 非交互连接成功' }],
+            checks: [
+              { id: 'ssh', status: 'ok', message: 'Non-interactive SSH connection succeeded' }
+            ],
             capabilityProfile: {
               ...CAPABILITY_PROFILE,
               runtimeRoot: {
@@ -121,7 +125,7 @@ test('a cached runtime-root timeout prevents an overall passing doctor summary',
     )
   )
 
-  assert.match(markup, /检查完成，存在提醒/)
-  assert.match(markup, /运行时根目录：来自主机 · 检测超时/)
-  assert.doesNotMatch(markup, />检查通过</)
+  assert.match(markup, /Check completed with warnings/)
+  assert.match(markup, /Runtime root source: Host · Check timed out/)
+  assert.doesNotMatch(markup, />Check passed</)
 })

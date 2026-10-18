@@ -1,4 +1,5 @@
 import type { MenuBarAction } from '../shared/menuBarTypes'
+import { normalizeUiLanguage, type UiLanguage } from '../shared/uiLanguage'
 
 export type MenuBarMenuItem =
   | { label: string; enabled?: boolean; click: () => void }
@@ -23,6 +24,7 @@ interface CreateMenuBarControllerOptions {
   hideWindow: () => void
   canHideWindow: () => boolean
   quit: () => void
+  getUiLanguage?: () => UiLanguage
 }
 
 export interface MenuBarController {
@@ -38,19 +40,35 @@ export function createMenuBarController(
   tray.setToolTip('Phi')
   tray.onClick(options.openWindow)
   tray.onRightClick(() => {
+    const copy =
+      normalizeUiLanguage(options.getUiLanguage?.()) === 'zh-CN'
+        ? {
+            open: '打开 Phi',
+            chat: '新建对话',
+            settings: '设置…',
+            hide: '隐藏窗口',
+            quit: '退出 Phi'
+          }
+        : {
+            open: 'Open Phi',
+            chat: 'New chat',
+            settings: 'Settings…',
+            hide: 'Hide window',
+            quit: 'Quit Phi'
+          }
     tray.popUpContextMenu(
       options.buildMenu([
-        { label: '打开 Phi', click: options.openWindow },
-        { label: '新建对话', click: () => options.queueAction('new-chat') },
-        { label: '设置…', click: () => options.queueAction('open-settings') },
+        { label: copy.open, click: options.openWindow },
+        { label: copy.chat, click: () => options.queueAction('new-chat') },
+        { label: copy.settings, click: () => options.queueAction('open-settings') },
         { type: 'separator' },
         {
-          label: '隐藏窗口',
+          label: copy.hide,
           enabled: options.canHideWindow(),
           click: options.hideWindow
         },
         { type: 'separator' },
-        { label: '退出 Phi', click: options.quit }
+        { label: copy.quit, click: options.quit }
       ])
     )
   })

@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,6 +20,9 @@ import {
 import { deleteRemoteHostProfile, saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import { projectLocationSummary } from '../src/renderer/src/lib/projectTypes'
+
+test.beforeEach(() => setUiLanguage('zh-CN'))
+test.afterEach(() => setUiLanguage('en'))
 
 async function withPhiDir<T>(run: (root: string, agentDir: string) => Promise<T>): Promise<T> {
   const previous = process.env.PI_CODING_AGENT_DIR

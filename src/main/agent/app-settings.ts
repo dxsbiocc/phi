@@ -3,6 +3,12 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
 import {
+  DEFAULT_UI_LANGUAGE,
+  isUiLanguage,
+  normalizeUiLanguage,
+  systemUiLanguage
+} from '../../shared/uiLanguage'
+import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
@@ -12,6 +18,13 @@ import { getPhiAgentDir } from './runtime-paths'
 import type { ModelSelection } from './session/session-store'
 
 const SETTINGS_FILE = 'settings.json'
+let defaultUiLanguage = DEFAULT_UI_LANGUAGE
+
+/** Called once after Electron is ready, before the splash or settings are read. */
+export function configureSystemUiLanguage(preferredLanguages: readonly string[]): void {
+  defaultUiLanguage = systemUiLanguage(preferredLanguages)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -63,6 +76,7 @@ function readRawSettings(agentDir: string, options: { strict: boolean }): Record
 
 function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): PhiAppSettings {
   return {
+    uiLanguage: normalizeUiLanguage(raw.uiLanguage, defaultUiLanguage),
     noProjectTaskFolder: normalizeNoProjectTaskFolder(raw.noProjectTaskFolder, agentDir),
     allowExternalFileRead: booleanSetting(
       raw.allowExternalFileRead,
@@ -122,6 +136,11 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
 
   const raw = readRawSettings(agentDir, { strict: true })
   const nextRaw = { ...raw }
+
+  if (hasOwnSetting(patch, 'uiLanguage')) {
+    if (!isUiLanguage(patch.uiLanguage)) throw new Error('Unsupported interface language')
+    nextRaw.uiLanguage = patch.uiLanguage
+  }
 
   if (hasOwnSetting(patch, 'noProjectTaskFolder')) {
     if (typeof patch.noProjectTaskFolder !== 'string') {

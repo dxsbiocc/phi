@@ -51,7 +51,7 @@ test('package members are the cached wrappers of that package, sorted by id', ()
 test('parameter constraints describe enums and numeric ranges', () => {
   assert.equal(
     wrapperParamConstraint({ kind: 'option', type: 'string', required: true, enum: ['a', 'b'] }),
-    '可选值：a、b'
+    'Allowed values: a, b'
   )
   assert.equal(
     wrapperParamConstraint({
@@ -61,11 +61,11 @@ test('parameter constraints describe enums and numeric ranges', () => {
       minimum: 1,
       maximum: 64
     }),
-    '范围：1 – 64'
+    'Range: 1 – 64'
   )
   assert.equal(
     wrapperParamConstraint({ kind: 'option', type: 'integer', required: false, minimum: 1 }),
-    '范围：1 – ∞'
+    'Range: 1 – ∞'
   )
   assert.equal(wrapperParamConstraint({ kind: 'input', type: 'file', required: true }), '')
 })
@@ -92,16 +92,16 @@ test('one action per choice: install or add when absent, uninstall once chosen',
     enabled: false,
     ...state
   })
-  assert.deepEqual(wrapperChoiceAction(choice({})), { label: '安装', kind: 'add' })
-  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), { label: '添加', kind: 'add' })
+  assert.deepEqual(wrapperChoiceAction(choice({})), { label: 'Install', kind: 'add' })
+  assert.deepEqual(wrapperChoiceAction(choice({ installed: true })), { label: 'Add', kind: 'add' })
   // A chosen package is removed whether or not it is currently switched on.
   assert.deepEqual(wrapperChoiceAction(choice({ installed: true, selected: true })), {
-    label: '卸载',
+    label: 'Uninstall',
     kind: 'remove'
   })
   assert.deepEqual(
     wrapperChoiceAction(choice({ installed: true, selected: true, enabled: true })),
-    { label: '卸载', kind: 'remove' }
+    { label: 'Uninstall', kind: 'remove' }
   )
 })
 

@@ -75,7 +75,7 @@ export function publishOfficialWebsiteRegistry(
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const root = officialWebsiteRegistryDirectory(agentDir)
   safeRegistryDirectory(agentDir, registry.dir)
-  if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('官网目录缓存提交无效')
+  if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('Invalid Phi Website catalog cache commit')
   const index = {
     materializerRevision: OFFICIAL_WEBSITE_MATERIALIZER_REVISION,
     schemaVersion: registry.schemaVersion,
@@ -84,7 +84,8 @@ export function publishOfficialWebsiteRegistry(
     ...(registry.skillGroups ? { skillGroups: registry.skillGroups } : {})
   }
   const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`)
-  if (indexBytes.length > MAX_INDEX_BYTES) throw new Error('官网目录缓存索引超过大小限制')
+  if (indexBytes.length > MAX_INDEX_BYTES)
+    throw new Error('The Phi Website catalog cache index exceeds the size limit')
   writeFileSync(registryAssetPath(registry.dir, 'index.json'), indexBytes)
   const indexHash = sha256(indexBytes)
   const metadata: WebsiteCacheMetadata = {
@@ -145,22 +146,23 @@ export function readOfficialWebsiteRegistry(
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const root = officialWebsiteRegistryDirectory(agentDir)
   if (!isOfficialWebsiteRegistryDirectory(directory, agentDir)) {
-    throw new Error('官网目录路径不属于应用受管缓存')
+    throw new Error('The Phi Website catalog path is outside the app-managed cache')
   }
   safeRegistryDirectory(agentDir, root)
   let generationDirectory = resolve(directory)
   if (generationDirectory === root) {
     const current = readSmallJson(root, 'current.json', 1024)
     if (!isRecord(current) || current.version !== 1 || typeof current.generation !== 'string') {
-      throw new Error('官网目录缓存指针无效')
+      throw new Error('Invalid Phi Website catalog cache pointer')
     }
-    if (!GENERATION.test(current.generation)) throw new Error('官网目录缓存代次无效')
+    if (!GENERATION.test(current.generation))
+      throw new Error('Invalid Phi Website catalog cache generation')
     generationDirectory = join(root, 'generations', current.generation)
   }
   safeRegistryDirectory(root, generationDirectory)
   const generation = relative(join(root, 'generations'), generationDirectory)
   const identity = GENERATION.exec(generation)
-  if (!identity) throw new Error('官网目录缓存代次无效')
+  if (!identity) throw new Error('Invalid Phi Website catalog cache generation')
   const metadata = readSmallJson(generationDirectory, 'website-source.json', 16 * 1024)
   if (
     !isRecord(metadata) ||
@@ -169,11 +171,11 @@ export function readOfficialWebsiteRegistry(
     (metadata.notice !== undefined &&
       (typeof metadata.notice !== 'string' || metadata.notice.length > 2000))
   ) {
-    throw new Error('官网目录缓存来源无效')
+    throw new Error('Invalid Phi Website catalog cache origin')
   }
   const index = parseRegistryAsset(metadata.index, MAX_INDEX_BYTES)
   if (index.path !== 'index.json' || index.sha256 !== identity[2]) {
-    throw new Error('官网目录缓存索引身份无效')
+    throw new Error('Invalid Phi Website catalog cache index identity')
   }
   const indexBytes = readRegistryAsset(generationDirectory, index)
   const indexValue: unknown = JSON.parse(indexBytes.toString('utf8'))
@@ -185,11 +187,11 @@ export function readOfficialWebsiteRegistry(
         (indexRevision as number) < 1 ||
         (indexRevision as number) > 10_000))
   ) {
-    throw new Error('官网目录缓存 materializer revision 版本不一致或无效')
+    throw new Error('Invalid or inconsistent Phi Website catalog cache materializer revision')
   }
   const registry = readRegistry(generationDirectory)
   for (const entry of registry.packages) {
-    if (entry.size > 64 * 1024 * 1024) throw new Error('官网软件包缓存大小无效')
+    if (entry.size > 64 * 1024 * 1024) throw new Error('Invalid Phi Website package cache size')
     readRegistryAsset(generationDirectory, {
       path: entry.archive,
       sha256: entry.sha256,
@@ -217,6 +219,7 @@ export function readOfficialWebsiteRegistry(
 
 function readSmallJson(root: string, path: string, maxBytes: number): unknown {
   const file = registryAssetPath(root, path)
-  if (lstatSync(file).size > maxBytes) throw new Error('官网目录缓存元数据超过大小限制')
+  if (lstatSync(file).size > maxBytes)
+    throw new Error('Phi Website catalog cache metadata exceeds the size limit')
   return JSON.parse(readFileSync(file, 'utf8')) as unknown
 }

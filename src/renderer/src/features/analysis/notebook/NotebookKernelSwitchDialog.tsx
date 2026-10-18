@@ -1,3 +1,5 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Box,
   Button,
@@ -24,6 +26,7 @@ export default function NotebookKernelSwitchDialog({
   onCancel: () => void
   onConfirm: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <ConfirmationDialog
       open={Boolean(pending)}
@@ -38,7 +41,7 @@ export default function NotebookKernelSwitchDialog({
         }}
       >
         <NotebookIcon sx={{ fontSize: 21, color: 'warning.main' }} />
-        切换 notebook kernel
+        {analysisCopy.switchNotebookKernel}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={1.25}>
@@ -54,13 +57,13 @@ export default function NotebookKernelSwitchDialog({
             }}
           >
             <Typography variant="caption" color="text.secondary">
-              当前
+              {analysisCopy.current}
             </Typography>
             <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
               {pending?.currentKernelLabel}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              切换到
+              {analysisCopy.switchTo}
             </Typography>
             <Typography variant="body2" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
               {pending?.nextKernelLabel}
@@ -73,15 +76,15 @@ export default function NotebookKernelSwitchDialog({
             sx={{ lineHeight: 1.65 }}
           >
             {pending?.hasCurrentLiveSession
-              ? '当前连接的 kernel 会被终止，正在运行的 cell 会停止。'
-              : 'Notebook 的 kernel metadata 会更新，并使用新的 kernel 启动会话。'}
+              ? analysisCopy.kernelStopWarning
+              : analysisCopy.kernelMetadataSession}
           </Typography>
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onCancel}>取消</Button>
+        <Button onClick={onCancel}>{analysisCopy.cancel}</Button>
         <Button variant="contained" color="warning" onClick={onConfirm}>
-          切换 kernel
+          {analysisCopy.switchKernel}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

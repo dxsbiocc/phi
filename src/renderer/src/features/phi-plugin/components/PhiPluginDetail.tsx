@@ -1,3 +1,6 @@
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { pluginCopy } from '../lib/pluginCopy'
 import { useState } from 'react'
 import {
   Alert,
@@ -51,6 +54,8 @@ export function PhiPluginDetail({
   onSetEnabled,
   onUninstall
 }: PhiPluginDetailProps): React.JSX.Element {
+  useUiLanguage()
+
   const [pendingUninstall, setPendingUninstall] = useState<PhiPluginDisplayItem | null>(null)
   const [pendingBuildState, setPendingBuild] = useState<{
     pluginId: string
@@ -100,7 +105,7 @@ export function PhiPluginDetail({
     } catch (cause) {
       setEnvironmentActionError({
         pluginId: plugin.id,
-        message: `无法构建环境：${cause instanceof Error ? cause.message : String(cause)}`
+        message: pluginCopy.buildFailed(cause instanceof Error ? cause.message : String(cause))
       })
       setBusyEnvironment(null)
       setPendingBuild(null)
@@ -122,7 +127,7 @@ export function PhiPluginDetail({
     } catch (cause) {
       setEnvironmentActionError({
         pluginId: plugin.id,
-        message: `无法重新构建环境：${cause instanceof Error ? cause.message : String(cause)}`
+        message: pluginCopy.rebuildFailed(cause instanceof Error ? cause.message : String(cause))
       })
     } finally {
       setBusyEnvironment(null)
@@ -194,7 +199,7 @@ export function PhiPluginDetail({
                       variant="outlined"
                       label={phiPluginDistributionLabel(plugin.distribution)}
                     />
-                    {/* A bundled plugin's trust tier is also 内置; show the tier only when it adds information. */}
+                    {/* A bundled plugin's trust tier is also Built-in; show the tier only when it adds information. */}
                     {PACKAGE_TRUST_LABELS[plugin.trust] !==
                     phiPluginDistributionLabel(plugin.distribution) ? (
                       <Chip
@@ -217,16 +222,18 @@ export function PhiPluginDetail({
                   sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
                 >
                   <Typography variant="body2" color="text.secondary">
-                    启用
+                    {resourceUi.enable}
                   </Typography>
-                  <Tooltip title={plugin.enabled ? '停用插件' : '启用插件'}>
+                  <Tooltip
+                    title={plugin.enabled ? pluginCopy.disablePlugin : pluginCopy.enablePlugin}
+                  >
                     <span>
                       <Switch
                         checked={plugin.enabled}
                         disabled={busyPluginId !== null}
                         slotProps={{
                           input: {
-                            'aria-label': `${plugin.enabled ? '停用' : '启用'} ${plugin.title}`
+                            'aria-label': `${plugin.enabled ? resourceUi.disable : resourceUi.enable} ${plugin.title}`
                           }
                         }}
                         onChange={(_event, checked) => void onSetEnabled(plugin, checked)}
@@ -246,7 +253,7 @@ export function PhiPluginDetail({
                     }
                     onClick={() => setPendingUninstall(plugin)}
                   >
-                    卸载
+                    {resourceUi.uninstall}
                   </Button>
                 </Stack>
               </Stack>
@@ -268,7 +275,9 @@ export function PhiPluginDetail({
               <Divider />
               <Stack spacing={0.75}>
                 <Typography variant="body2" color="text.secondary">
-                  安装于 {new Date(plugin.installedAt).toLocaleString('zh-CN')}
+                  {pluginCopy.installedAt(
+                    new Date(plugin.installedAt).toLocaleString(getUiLocale())
+                  )}
                 </Typography>
                 <Typography
                   component="code"
@@ -283,9 +292,9 @@ export function PhiPluginDetail({
           ) : (
             <Stack spacing={1} sx={{ alignItems: 'center', textAlign: 'center', py: 12 }}>
               <PhiIcons.entity.plugin color="disabled" sx={{ fontSize: 42 }} />
-              <Typography variant="h6">从左侧选择插件查看详情</Typography>
+              <Typography variant="h6">{pluginCopy.selectPlugin}</Typography>
               <Typography variant="body2" color="text.secondary">
-                旧版插件标签页会保留，但需要重新选择一个已安装插件。
+                {pluginCopy.legacyTab}
               </Typography>
             </Stack>
           )}
@@ -296,15 +305,15 @@ export function PhiPluginDetail({
         open={pendingUninstall !== null}
         onClose={busyPluginId ? undefined : () => setPendingUninstall(null)}
       >
-        <DialogTitle>卸载 {pendingUninstall?.title ?? '插件'}？</DialogTitle>
+        <DialogTitle>
+          {pluginCopy.uninstallTitle(pendingUninstall?.title ?? resourceUi.plugin)}
+        </DialogTitle>
         <DialogContent>
           <Stack spacing={1.25}>
-            <DialogContentText>
-              将移除此插件的智能体、技能、脚本工具和环境引用。仅由它使用且不再被引用的环境可以被清理。
-            </DialogContentText>
+            <DialogContentText>{pluginCopy.uninstallDescription}</DialogContentText>
             {pendingUninstall?.source === 'bundled' ? (
               <Alert severity="warning" variant="outlined">
-                这是内置插件。卸载决定会被保留，Phi 下次启动时不会自动恢复它。
+                {pluginCopy.bundledUninstallNotice}
               </Alert>
             ) : null}
             <Typography component="code" variant="caption" sx={{ fontFamily: 'var(--font-mono)' }}>
@@ -314,7 +323,7 @@ export function PhiPluginDetail({
         </DialogContent>
         <DialogActions>
           <Button disabled={Boolean(busyPluginId)} onClick={() => setPendingUninstall(null)}>
-            取消
+            {resourceUi.cancel}
           </Button>
           <Button
             color="error"
@@ -322,7 +331,7 @@ export function PhiPluginDetail({
             disabled={Boolean(busyPluginId)}
             onClick={() => void confirmUninstall()}
           >
-            {busyPluginId ? '卸载中…' : '确认卸载'}
+            {busyPluginId ? pluginCopy.uninstalling : pluginCopy.confirmUninstall}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

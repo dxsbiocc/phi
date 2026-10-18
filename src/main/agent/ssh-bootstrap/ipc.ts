@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import type { SshBootstrapTarget } from '../../../shared/sshBootstrapTypes'
 import type { SshBootstrapCoordinator } from './coordinator'
 import { validateSshBootstrapTarget } from './preflight'
@@ -164,7 +165,7 @@ export function registerSshBootstrapIpc(
       if (!validId(args[0])) throw new Error('invalid')
       return await coordinator.saveConfig(args[0])
     } catch {
-      throw new Error('SSH 引导配置写入失败')
+      throw new Error(sshBootstrapCopy.configWriteFailed)
     }
   })
   ipcMain.handle('sshBootstrap:declineConfig', async (event, ...args) => {
@@ -173,7 +174,7 @@ export function registerSshBootstrapIpc(
       if (!validId(args[0])) throw new Error('invalid')
       return await coordinator.declineConfig(args[0])
     } catch {
-      throw new Error('SSH 引导操作失败')
+      throw new Error(sshBootstrapCopy.operationFailed)
     }
   })
   ipcMain.handle('sshBootstrap:cancel', async (event, ...args) => {

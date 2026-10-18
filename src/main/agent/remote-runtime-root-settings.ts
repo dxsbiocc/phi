@@ -63,7 +63,7 @@ export function saveRemoteRuntimeRootSetting(
   sshConfigPath?: string
 ): RemoteHostProfileWithRuntimeRoot {
   const profile = getRemoteHostProfile(hostProfileId, agentDir, sshConfigPath)
-  if (!profile) throw new Error('SSH 服务器档案不存在')
+  if (!profile) throw new Error('SSH server profile not found')
   const previous = readHostRuntimeRoot(hostProfileId, agentDir)
   saveHostRuntimeRoot(hostProfileId, runtimeRoot, agentDir)
   const current = readHostRuntimeRoot(hostProfileId, agentDir)
@@ -78,7 +78,7 @@ export function saveRemoteEnvironmentSetting(
   sshConfigPath?: string
 ): RemoteHostProfileWithRuntimeRoot {
   const profile = getRemoteHostProfile(hostProfileId, agentDir, sshConfigPath)
-  if (!profile) throw new Error('SSH 服务器档案不存在')
+  if (!profile) throw new Error('SSH server profile not found')
   const previousRoot = readHostRuntimeRoot(hostProfileId, agentDir)
   const previousPaths = readHostRemoteEnvironmentPaths(hostProfileId, agentDir)
   const runtimeRoot = input.runtimeRoot?.trim()
@@ -104,7 +104,7 @@ export function saveRemoteMicromambaMirrorSetting(
   sshConfigPath?: string
 ): RemoteHostProfileWithRuntimeRoot {
   const profile = getRemoteHostProfile(hostProfileId, agentDir, sshConfigPath)
-  if (!profile) throw new Error('SSH 服务器档案不存在')
+  if (!profile) throw new Error('SSH server profile not found')
   const previous = readHostRemoteMicromambaMirrorPrefix(hostProfileId, agentDir)
   saveHostRemoteMicromambaMirrorPrefix(hostProfileId, downloadMirrorPrefix, agentDir)
   const current = readHostRemoteMicromambaMirrorPrefix(hostProfileId, agentDir)

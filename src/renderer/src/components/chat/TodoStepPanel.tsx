@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   ButtonBase,
@@ -38,11 +40,12 @@ const STATUS_COLOR: Record<TodoTaskSnapshot['status'], string> = {
 
 function todoTaskTooltip(task: TodoTaskSnapshot): string {
   return task.status === 'blocked' && task.blocker
-    ? `阻塞：${task.blocker}`
+    ? chatCopy.blockedValue(task.blocker)
     : todoStatusLabel(task.status)
 }
 
 function TodoTaskRow({ task }: { task: TodoTaskSnapshot }): ReactNode {
+  useUiLanguage()
   const StatusIcon = STATUS_ICON[task.status]
   const closed = isClosedTodoTask(task)
 
@@ -94,6 +97,7 @@ function TodoPhaseSection({
   phase: TodoPhaseSnapshot
   showHeader: boolean
 }): ReactNode {
+  useUiLanguage()
   if (phase.tasks.length === 0) return null
   return (
     <Box component="li" sx={{ listStyle: 'none' }}>
@@ -134,6 +138,7 @@ type TodoStepPanelProps = {
  * the full checklist grouped by phase. Renders nothing while there is no todo list yet.
  */
 function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
+  useUiLanguage()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [pinned, setPinned] = useState(false)
   const hover = useHoverIntent({ openDelayMs: 120, closeDelayMs: 220 })
@@ -178,7 +183,7 @@ function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
           }}
           aria-haspopup="true"
           aria-expanded={open}
-          aria-label={`任务清单，已完成 ${pillLabel(progress)}，查看详情`}
+          aria-label={chatCopy.taskListValueCompletedViewDetails(pillLabel(progress))}
           sx={{
             position: 'absolute',
             top: 52,
@@ -236,7 +241,7 @@ function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
               component="div"
               sx={{ px: 1.75, pb: 0.5, color: 'text.secondary', fontWeight: 600 }}
             >
-              任务清单 · {progress.completed}/{progress.total}
+              {chatCopy.taskList} {progress.completed}/{progress.total}
             </Typography>
             <Box component="ul" sx={{ m: 0, p: 0, display: 'flex', flexDirection: 'column' }}>
               {snapshot.phases.map((phase) => (

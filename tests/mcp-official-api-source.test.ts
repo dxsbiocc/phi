@@ -112,7 +112,7 @@ test('API entries with restricted authorization remain visible with their restri
     registries: [api]
   })
   assert.equal(entries.length, 1)
-  assert.match(entries[0].unavailableReason ?? '', /授权/)
+  assert.match(entries[0].unavailableReason ?? '', /Authorization/)
   assert.equal(entries[0].unavailableKind, 'authorization')
   assert.equal(entries[0].source?.kind, 'official')
 })

@@ -88,14 +88,14 @@ function resolvePlanTarget(
           candidate.location.kind === 'ssh' &&
           input.cwd === remoteProjectAnchorPath(candidate.id, agentDir)
       ))
-  const errors = input.projectId && !project ? ['计划所属项目不存在'] : []
+  const errors = input.projectId && !project ? ['The project for this plan does not exist'] : []
   if (
     input.projectId &&
     project?.location.kind === 'local' &&
     input.cwd !== project.location.path &&
     input.cwd !== project.location.realPath
   ) {
-    errors.push('计划工作目录与所属本地项目不一致')
+    errors.push('The plan working directory does not match its local project')
   }
   const location = project?.location ?? {
     kind: 'local' as const,
@@ -201,7 +201,7 @@ function resolveManifestInputs(
   for (const declaration of manifest.inputs) {
     const rawValue = params[declaration.id]
     if (rawValue === undefined) {
-      if (declaration.required) errors.push(`缺少必填输入: ${declaration.id}`)
+      if (declaration.required) errors.push(`Missing required input: ${declaration.id}`)
       continue
     }
     if (!isLocalExecution) {
@@ -224,7 +224,7 @@ function resolveManifestInputs(
     errors.push(...parsed.errors)
     if (!parsed.reference) continue
     if (parsed.reference.source !== 'local') {
-      errors.push(`本机运行的输入 "${declaration.id}" 不能引用服务器文件`)
+      errors.push(`Local input "${declaration.id}" cannot reference server files`)
       continue
     }
     const localValue = parsed.reference.path
@@ -260,7 +260,7 @@ function buildPlan(
 
   if (!isEngineExecutable(manifest)) {
     errors.push(
-      `wrapper ${manifest.id} 使用的 engine.type "${manifest.engine.type}" 暂不支持执行，目前仅支持 nextflow`
+      `Wrapper ${manifest.id} uses unsupported engine.type "${manifest.engine.type}"; only nextflow execution is currently supported`
     )
   }
 
@@ -426,7 +426,7 @@ export function reviseWrapperRunPlan(
   const agentDir = input.agentDir ?? getPhiAgentDir()
   const existing = readWrapperPlan(planId, agentDir)
   if (!existing) {
-    throw new Error(`计划不存在: ${planId}`)
+    throw new Error(`Plan not found: ${planId}`)
   }
   const saved = existing.targetSelection
   if (
@@ -436,7 +436,7 @@ export function reviseWrapperRunPlan(
       (input.selectedProfileId && input.selectedProfileId !== existing.profile) ||
       (input.connectionId && input.connectionId !== saved.connectionId))
   ) {
-    throw new Error('修改执行项目、主机或 Profile 需要创建新计划。')
+    throw new Error('Create a new plan to change the execution project, host or profile.')
   }
   let plan = buildPlan(
     planId,
@@ -467,7 +467,7 @@ export function reviseWrapperRunPlan(
       next.connectionId !== saved.connectionId ||
       next.remoteRoot !== saved.remoteRoot
     ) {
-      throw new Error('项目或服务器配置已变化，请重新创建 Wrapper 计划。')
+      throw new Error('The project or server configuration has changed. Create a new Wrapper plan.')
     }
     if (existing.targetChangeConfirmation) {
       plan = { ...plan, targetChangeConfirmation: existing.targetChangeConfirmation }
@@ -484,12 +484,14 @@ export function recordWrapperUploadedInput(
   agentDir = getPhiAgentDir()
 ): WrapperRunPlan {
   const existing = readWrapperPlan(request.planId, agentDir)
-  if (!existing) throw new Error(`计划不存在: ${request.planId}`)
+  if (!existing) throw new Error(`Plan not found: ${request.planId}`)
   if (!['draft', 'valid', 'invalid'].includes(existing.state) || isWrapperPlanExpired(existing)) {
-    throw new Error('计划已提交、取消或过期，不能再绑定上传输入。')
+    throw new Error(
+      'This plan was submitted, cancelled or expired and cannot accept uploaded inputs.'
+    )
   }
   if (existing.revision !== request.expectedRevision) {
-    throw new Error('计划已更新，请重新选择本机输入。')
+    throw new Error('The plan has changed. Select the local input again.')
   }
   const target = existing.targetSelection
   const projectLocation = target?.projectLocation
@@ -499,10 +501,10 @@ export function recordWrapperUploadedInput(
     projectLocation?.kind !== 'ssh' ||
     !target.remoteRoot
   ) {
-    throw new Error('只有 SSH 项目的远程 Wrapper 计划可以绑定上传输入。')
+    throw new Error('Only remote Wrapper plans in SSH projects can accept uploaded inputs.')
   }
   if (!isAbsolute(request.localPath) || /[\0\r\n]/.test(request.localPath)) {
-    throw new Error('本机上传路径无效。')
+    throw new Error('The local upload path is invalid.')
   }
   if (
     !request.remotePath.startsWith('/') ||
@@ -510,16 +512,17 @@ export function recordWrapperUploadedInput(
     /[\0\r\n]/.test(request.remotePath) ||
     !isWithinRemoteRoot(projectLocation.canonicalRoot, request.remotePath)
   ) {
-    throw new Error('上传落点必须位于远程项目目录内。')
+    throw new Error('The upload destination must be inside the remote project directory.')
   }
   const wrapper = findWrapperCatalogEntry(
     existing.wrapper.canonicalId,
     existing.wrapper.version,
     agentDir
   )
-  if (!wrapper) throw new Error('计划对应的 Wrapper 已不可用，请重新创建计划。')
+  if (!wrapper)
+    throw new Error('The Wrapper for this plan is no longer available. Create a new plan.')
   if (!wrapper.manifest.inputs.some((input) => input.id === request.inputId)) {
-    throw new Error(`Wrapper 未声明输入: ${request.inputId}`)
+    throw new Error(`Wrapper input is not declared: ${request.inputId}`)
   }
   const revised = reviseWrapperRunPlan(
     existing.planId,
@@ -573,16 +576,16 @@ export function retargetWrapperRunPlan(
   agentDir = getPhiAgentDir()
 ): WrapperRunPlan {
   const existing = readWrapperPlan(request.planId, agentDir)
-  if (!existing) throw new Error(`计划不存在: ${request.planId}`)
+  if (!existing) throw new Error(`Plan not found: ${request.planId}`)
   if (!['draft', 'valid', 'invalid'].includes(existing.state) || isWrapperPlanExpired(existing)) {
-    throw new Error('计划已提交、取消或过期，请创建新计划。')
+    throw new Error('This plan was submitted, cancelled or expired. Create a new plan.')
   }
   if (existing.revision !== request.expectedRevision) {
-    throw new Error('计划已更新，请重新查看后再选择执行目标。')
+    throw new Error('The plan has changed. Review it again before selecting an execution target.')
   }
   const saved = existing.targetSelection
   if (!saved || saved.projectLocation.kind !== 'local') {
-    throw new Error('只有本地项目的计划可以调整执行目标。')
+    throw new Error('Only plans in local projects can change execution targets.')
   }
   const project = getProject(saved.projectId)
   if (
@@ -590,21 +593,26 @@ export function retargetWrapperRunPlan(
     project.location.path !== saved.projectLocation.path ||
     project.location.realPath !== saved.projectLocation.realPath
   ) {
-    throw new Error('项目目录已变化，请重新创建计划。')
+    throw new Error('The project directory has changed. Create a new plan.')
   }
   if (saved.target === request.target) return existing
   if (saved.target === 'remote' && !request.confirmedLocalFallback) {
-    throw new Error('改为本机运行需要明确确认本机资源与输入数据。')
+    throw new Error(
+      'Switching to local execution requires explicit confirmation of local resources and input data.'
+    )
   }
   if (saved.target === 'local' && existing.inputs.some((input) => input.localPaths.length > 0)) {
-    throw new Error('改为远程运行需重新创建计划并填写服务器上的输入路径。')
+    throw new Error(
+      'Create a new plan with input paths on the server to switch to remote execution.'
+    )
   }
   const wrapper = findWrapperCatalogEntry(
     existing.wrapper.canonicalId,
     existing.wrapper.version,
     agentDir
   )
-  if (!wrapper) throw new Error('计划对应的 Wrapper 已不可用，请重新创建计划。')
+  if (!wrapper)
+    throw new Error('The Wrapper for this plan is no longer available. Create a new plan.')
   const retargetParams: Record<string, unknown> = { ...existing.params }
   if (request.target === 'local') {
     for (const input of existing.inputs) {
@@ -627,7 +635,7 @@ export function retargetWrapperRunPlan(
     agentDir
   )
   if (!candidate.validation.valid || candidate.targetSelection?.target !== request.target) {
-    throw new Error(`目标变更未通过校验：${candidate.validation.errors.join('；')}`)
+    throw new Error(`Target change validation failed: ${candidate.validation.errors.join('; ')}`)
   }
   const confirmedAt = new Date().toISOString()
   const revised: WrapperRunPlan =
@@ -636,7 +644,7 @@ export function retargetWrapperRunPlan(
           ...candidate,
           targetSelection: {
             ...candidate.targetSelection,
-            reason: `用户确认改在本机运行；${candidate.targetSelection.reason}`
+            reason: `The user confirmed switching to local execution; ${candidate.targetSelection.reason}`
           },
           targetChangeConfirmation: {
             from: 'remote',

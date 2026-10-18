@@ -1,4 +1,5 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
+import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguage } from '../shared/uiLanguage'
 
 const FADE_OPACITIES = [0.32, 0] as const
 const FADE_STEP_MS = 22
@@ -36,10 +37,26 @@ function safeIconDataUrl(value: string): string {
   return /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(value) ? value : ''
 }
 
-export function startupSplashHtml(iconDataUrl: string): string {
+export function startupSplashHtml(
+  iconDataUrl: string,
+  language: UiLanguage = DEFAULT_UI_LANGUAGE
+): string {
   const icon = safeIconDataUrl(iconDataUrl)
+  const selectedLanguage = normalizeUiLanguage(language)
+  const copy =
+    selectedLanguage === 'zh-CN'
+      ? {
+          status: 'Phi 正在启动，正在准备本地工作台',
+          title: '正在启动 Phi',
+          detail: '正在准备本地工作台…'
+        }
+      : {
+          status: 'Phi is starting and preparing the local workspace',
+          title: 'Starting Phi',
+          detail: 'Preparing the local workspace…'
+        }
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${selectedLanguage}">
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'" />
@@ -211,7 +228,7 @@ export function startupSplashHtml(iconDataUrl: string): string {
     </style>
   </head>
   <body>
-    <main role="status" aria-live="polite" aria-label="Phi 正在启动，正在准备本地工作台">
+    <main role="status" aria-live="polite" aria-label="${copy.status}">
       <div class="icon${icon ? ' has-fallback' : ''}" aria-hidden="true">
         <svg class="water-icon" viewBox="0 0 512 512" focusable="false">
           <defs>
@@ -274,8 +291,8 @@ export function startupSplashHtml(iconDataUrl: string): string {
         </svg>
         ${icon ? `<img class="icon-fallback" src="${icon}" alt="" />` : ''}
       </div>
-      <h1>正在启动 Phi</h1>
-      <p>正在准备本地工作台…</p>
+      <h1>${copy.title}</h1>
+      <p>${copy.detail}</p>
       <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
     </main>
   </body>
@@ -285,7 +302,8 @@ export function startupSplashHtml(iconDataUrl: string): string {
 export async function createStartupSplashWindow(
   createWindow: StartupSplashFactory,
   iconDataUrl: string,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  language: UiLanguage = DEFAULT_UI_LANGUAGE
 ): Promise<StartupSplashWindow | null> {
   const window = createWindow({
     width: 360,
@@ -319,7 +337,7 @@ export async function createStartupSplashWindow(
   window.once('ready-to-show', show)
 
   try {
-    const html = startupSplashHtml(iconDataUrl)
+    const html = startupSplashHtml(iconDataUrl, language)
     await window.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(html)}`)
     show()
     return window

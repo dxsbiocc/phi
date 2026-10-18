@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Alert, Box, Chip, Stack, Typography } from '@mui/material'
 import { useMemo } from 'react'
 import {
@@ -14,6 +16,7 @@ export function MolecularStructureFilePreview({
   file: Extract<FilePreview, { kind: 'text' }>
   format: MolecularStructureFileFormat
 }): React.JSX.Element {
+  useUiLanguage()
   const source = useMemo<MolstarStructureSource>(
     () => ({
       kind: 'data',
@@ -40,7 +43,7 @@ export function MolecularStructureFilePreview({
       <Stack spacing={1}>
         <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-            结构预览
+            {filePreviewCopy.structurePreview}
           </Typography>
           <Chip size="small" label="Mol*" />
           <Chip size="small" variant="outlined" label={formatLabel} />
@@ -49,7 +52,7 @@ export function MolecularStructureFilePreview({
 
         {file.truncated ? (
           <Alert severity="warning" variant="outlined">
-            文件内容已截断，Mol* 可能无法解析完整结构；下方仍保留文本预览。
+            {filePreviewCopy.structureTruncated}
           </Alert>
         ) : null}
 

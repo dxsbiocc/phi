@@ -38,11 +38,11 @@ export async function discoverCustomMcpOAuthEndpoints(
         throw new Error('OAuth endpoint is not secure')
       }
     }
-    if (signal?.aborted) throw new Error('授权已取消')
+    if (signal?.aborted) throw new Error('Authorization cancelled')
     return endpoints
   } catch {
-    if (signal?.aborted) throw new Error('授权已取消')
-    throw new Error('此连接器未提供可用的 HTTPS OAuth 授权信息')
+    if (signal?.aborted) throw new Error('Authorization cancelled')
+    throw new Error('This Connector does not provide usable HTTPS OAuth authorization details')
   }
 }
 
@@ -57,7 +57,10 @@ export async function authorizeFeaturedMcp(
 ): Promise<void> {
   const openFailure = new AbortController()
   const timeout = new AbortController()
-  const timer = setTimeout(() => timeout.abort('授权已超时'), FEATURED_MCP_AUTH_TIMEOUT_MS)
+  const timer = setTimeout(
+    () => timeout.abort('Authorization timed out'),
+    FEATURED_MCP_AUTH_TIMEOUT_MS
+  )
   const flowSignal = AbortSignal.any([
     timeout.signal,
     openFailure.signal,
@@ -67,7 +70,8 @@ export async function authorizeFeaturedMcp(
     const endpoints =
       preparedEndpoints ??
       (await discoverOAuthEndpoints(url, undefined, undefined, { signal: flowSignal }))
-    if (!endpoints) throw new Error('此 MCP 服务未提供可用的 OAuth 授权信息')
+    if (!endpoints)
+      throw new Error('This MCP service does not provide usable OAuth authorization details')
     const flow = new MCPOAuthFlow(
       {
         ...endpoints,
@@ -96,22 +100,27 @@ export async function authorizeFeaturedMcp(
     }
     await auth.setMcpOAuth(url, stored)
   } catch (error) {
-    if (timeout.signal.aborted) throw new Error('授权已超时')
-    if (signal?.aborted) throw new Error('授权已取消')
+    if (timeout.signal.aborted) throw new Error('Authorization timed out')
+    if (signal?.aborted) throw new Error('Authorization cancelled')
     const message = error instanceof Error ? error.message : ''
     const openReason = openFailure.signal.reason
     if (
       message === '连接器配置已变化，请重新授权' ||
-      (openReason instanceof Error && openReason.message === '连接器配置已变化，请重新授权')
+      message === 'Connector configuration changed. Authorize again.' ||
+      (openReason instanceof Error &&
+        [
+          '连接器配置已变化，请重新授权',
+          'Connector configuration changed. Authorize again.'
+        ].includes(openReason.message))
     ) {
-      throw new Error('连接器配置已变化，请重新授权')
+      throw new Error('Connector configuration changed. Authorize again.')
     }
-    if (message === '此 MCP 服务未提供可用的 OAuth 授权信息') {
-      throw new Error('此 MCP 服务未提供可用的 OAuth 授权信息')
+    if (message === 'This MCP service does not provide usable OAuth authorization details') {
+      throw new Error('This MCP service does not provide usable OAuth authorization details')
     }
     // OAuth providers can echo submitted secrets in response bodies, including encoded forms.
     // Construct a fresh safe error so the original message, stack, and cause never cross IPC.
-    throw new Error('连接器授权失败，请检查客户端信息并重试')
+    throw new Error('Connector authorization failed. Check the client details and try again.')
   } finally {
     clearTimeout(timer)
   }
@@ -125,7 +134,7 @@ export async function listFeaturedMcpTools(
 ): Promise<string[]> {
   if (API_KEY_CONNECTOR_IDS.some((id) => id === name)) {
     if (!apiKey || apiKeyConnector(name).url !== url) {
-      throw new Error('该连接器需要已保存的 API key 和官方地址')
+      throw new Error('This Connector requires a saved API key and the official URL')
     }
   }
   const manager = new MCPManager(process.cwd())

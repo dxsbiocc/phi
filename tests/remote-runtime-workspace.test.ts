@@ -137,7 +137,7 @@ test('remote runtime root resolution identifies a slow server timeout', async ()
       { canonicalRoot: '/project' } as never,
       '/runtime'
     ),
-    /服务器响应慢.*稍后重试/u
+    /server is responding slowly.*Retry later/u
   )
 })
 
@@ -151,7 +151,10 @@ test('unknown, unsuccessful, incomplete or oversized fast probes fail closed and
     [completeProbe + 'x'.repeat(64 * 1024), 0]
   ] as const) {
     const session = probeSession(stdout, code)
-    await assert.rejects(openWithSession(session), /无法安全探测服务器系统与架构/u)
+    await assert.rejects(
+      openWithSession(session),
+      /Unable to safely detect the server OS and architecture/u
+    )
     assert.equal(session.closed, true)
   }
 })
@@ -216,7 +219,10 @@ test('fast probe keeps its ten-second deadline and closes a timed-out connection
     finish()
   }
   const pending = openWithSession(session)
-  const rejected = assert.rejects(pending, /无法安全探测服务器系统与架构/u)
+  const rejected = assert.rejects(
+    pending,
+    /Unable to safely detect the server OS and architecture/u
+  )
   await entered
   t.mock.timers.tick(9999)
   assert.equal(session.closed, false)

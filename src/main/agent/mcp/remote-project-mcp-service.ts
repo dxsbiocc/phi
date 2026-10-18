@@ -125,21 +125,22 @@ function checkedServer(name: string, value: unknown): ParsedServer {
     /[\0\r\n]/u.test(name) ||
     !isRecord(value)
   ) {
-    throw new Error(`MCP 服务器名称无效：${name || '(empty)'}`)
+    throw new Error(`Invalid MCP server name: ${name || '(empty)'}`)
   }
   const enabled = value.enabled
   if (enabled !== undefined && typeof enabled !== 'boolean') {
-    throw new Error(`${name}：enabled 必须是布尔值`)
+    throw new Error(`${name}: enabled must be a boolean`)
   }
   if (typeof value.command === 'string') {
-    if (!value.command || value.command.includes('\0')) throw new Error(`${name}：stdio 命令无效`)
+    if (!value.command || value.command.includes('\0'))
+      throw new Error(`${name}: invalid stdio command`)
     if (
       value.args !== undefined &&
       (!Array.isArray(value.args) ||
         value.args.length > 256 ||
         !value.args.every((argument) => typeof argument === 'string' && !argument.includes('\0')))
     ) {
-      throw new Error(`${name}：stdio 参数必须是字符串数组`)
+      throw new Error(`${name}: stdio arguments must be a string array`)
     }
     if (
       value.env !== undefined &&
@@ -152,7 +153,7 @@ function checkedServer(name: string, value: unknown): ParsedServer {
             !entry.includes('\0')
         ))
     ) {
-      throw new Error(`${name}：stdio 环境变量无效`)
+      throw new Error(`${name}: invalid stdio environment variables`)
     }
     const args = Array.isArray(value.args) ? (value.args as string[]) : undefined
     const envKeys = isRecord(value.env) ? Object.keys(value.env).sort() : undefined
@@ -170,11 +171,12 @@ function checkedServer(name: string, value: unknown): ParsedServer {
     try {
       url = new URL(value.url)
     } catch {
-      throw new Error(`${name}：MCP URL 无效`)
+      throw new Error(`${name}: invalid MCP URL`)
     }
-    if (url.protocol !== 'https:') throw new Error(`${name}：远程项目 MCP URL 必须使用 HTTPS`)
+    if (url.protocol !== 'https:')
+      throw new Error(`${name}: remote project MCP URLs must use HTTPS`)
     if (value.type !== undefined && value.type !== 'http' && value.type !== 'sse') {
-      throw new Error(`${name}：MCP transport 无效`)
+      throw new Error(`${name}: invalid MCP transport`)
     }
     return {
       name,
@@ -183,7 +185,7 @@ function checkedServer(name: string, value: unknown): ParsedServer {
       transport: value.type === 'sse' ? 'sse' : 'http'
     }
   }
-  throw new Error(`${name}：MCP 配置必须提供 HTTPS URL 或 stdio command`)
+  throw new Error(`${name}: MCP configuration must provide an HTTPS URL or stdio command`)
 }
 
 function confirmationId(...parts: Array<string | number>): string {
@@ -240,7 +242,7 @@ async function readConfig(
     if (missing(error)) return undefined
     throw error
   }
-  if (stat.kind !== 'file') throw new Error(`${relativePath} 不是普通文件`)
+  if (stat.kind !== 'file') throw new Error(`${relativePath} is not a regular file`)
   const directory = posix.dirname(relativePath)
   const basename = posix.basename(relativePath)
   let cursor: string | undefined
@@ -256,29 +258,31 @@ async function readConfig(
     if (declaredKind) break
     cursor = page.nextCursor
     if (cursor && visited >= MAX_CONFIG_DIRECTORY_ENTRIES) {
-      throw new Error(`${relativePath} 所在目录超过安全扫描上限`)
+      throw new Error(`The directory containing ${relativePath} exceeds the safe scan limit`)
     }
   } while (cursor)
   if (declaredKind !== 'file') {
-    throw new Error(`${relativePath} 必须是项目内普通文件，不能是符号链接`)
+    throw new Error(
+      `${relativePath} must be a regular file inside the project, not a symbolic link`
+    )
   }
-  if (stat.size > MAX_CONFIG_BYTES) throw new Error(`${relativePath} 超过 256 KiB 上限`)
+  if (stat.size > MAX_CONFIG_BYTES) throw new Error(`${relativePath} exceeds the 256 KiB limit`)
   const read = await host.fs.readRange(relativePath, { offset: 0, length: MAX_CONFIG_BYTES + 1 })
   if (!read.eof || read.bytesRead > MAX_CONFIG_BYTES) {
-    throw new Error(`${relativePath} 超过 256 KiB 上限`)
+    throw new Error(`${relativePath} exceeds the 256 KiB limit`)
   }
   const content = Buffer.from(read.content)
-  if (content.includes(0)) throw new Error(`${relativePath} 不是文本文件`)
+  if (content.includes(0)) throw new Error(`${relativePath} is not a text file`)
   let text: string
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(content)
   } catch {
-    throw new Error(`${relativePath} 不是有效 UTF-8 文本`)
+    throw new Error(`${relativePath} is not valid UTF-8 text`)
   }
   try {
     const parsed: unknown = JSON.parse(text)
     const map = serverMap(parsed)
-    if (!map) throw new Error(`${relativePath} 不包含 MCP 服务器配置`)
+    if (!map) throw new Error(`${relativePath} contains no MCP server configuration`)
     const servers = Object.entries(map)
       .map(([name, entry]) => checkedServer(name, entry))
       .sort((left, right) => left.name.localeCompare(right.name))
@@ -289,7 +293,7 @@ async function readConfig(
       servers: [],
       error:
         error instanceof SyntaxError
-          ? `${relativePath} 不是有效 JSON`
+          ? `${relativePath} is not valid JSON`
           : error instanceof Error
             ? error.message
             : String(error)
@@ -395,7 +399,7 @@ async function scan(
     binding.projectId !== connection.projectId ||
     binding.hostAlias !== connection.hostAlias
   ) {
-    throw new Error('远程项目 MCP 的工作区与 SSH 连接不匹配')
+    throw new Error('The remote project MCP workspace does not match the SSH connection')
   }
   const host = dependencies.createHost?.(binding) ?? new SshHost(binding.config)
   try {
@@ -476,12 +480,16 @@ export async function loadRemoteProjectMcpCatalog(
         available,
         diagnostics:
           trustState === 'pending'
-            ? ['来自服务器项目，未信任；信任前不会启动或注入 MCP']
+            ? [
+                'Server project configuration is untrusted. MCP will not start or be exposed until trusted.'
+              ]
             : trustState === 'changed'
-              ? ['来自服务器项目，内容已变化；重新信任前不会启动或注入 MCP']
+              ? [
+                  'Server project configuration changed. MCP will not start or be exposed until trusted again.'
+                ]
               : configuredEnabled
                 ? []
-                : ['服务器项目配置已停用'],
+                : ['Server project configuration is disabled'],
         relativePath: config.relativePath,
         contentHash: config.contentHash,
         remoteProjectCwd: context.cwd,
@@ -515,7 +523,9 @@ export async function trustRemoteProjectMcp(
   const { binding, configs } = await scan(context, dependencies)
   const config = configs.find((entry) => entry.relativePath === mutation.relativePath)
   if (!config || config.error || config.contentHash !== mutation.contentHash) {
-    throw new Error('服务器项目 MCP 配置已变化或不可用，请刷新后重试')
+    throw new Error(
+      'Server project MCP configuration changed or is unavailable. Refresh and try again.'
+    )
   }
   if (
     !sameItems(
@@ -523,7 +533,9 @@ export async function trustRemoteProjectMcp(
       config.items.map((item) => item.id)
     )
   ) {
-    throw new Error('请逐项确认完整命令、参数、环境变量名或 HTTPS 地址')
+    throw new Error(
+      'Confirm every complete command, argument, environment variable name or HTTPS URL'
+    )
   }
   trustRemoteProjectMcpIdentity(trustIdentity(binding, config), context.agentDir)
 }
@@ -536,7 +548,9 @@ export async function revokeRemoteProjectMcpTrust(
   const { binding, configs } = await scan(context, dependencies)
   const config = configs.find((entry) => entry.relativePath === mutation.relativePath)
   if (!config || config.error || config.contentHash !== mutation.contentHash) {
-    throw new Error('服务器项目 MCP 配置已变化或不可用，请刷新后重试')
+    throw new Error(
+      'Server project MCP configuration changed or is unavailable. Refresh and try again.'
+    )
   }
   revokeRemoteProjectMcpIdentity(trustIdentity(binding, config), context.agentDir)
 }

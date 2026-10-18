@@ -28,7 +28,7 @@ test('parseWrapperManifest rejects a step depending on an undeclared step id', (
   const raw = readFixture().replace('dependsOn: [fastqc]', 'dependsOn: [does-not-exist]')
   const result = parseWrapperManifest(raw)
   assert.equal(result.valid, false)
-  assert.ok(result.errors.some((error) => error.includes('未声明的 step')))
+  assert.ok(result.errors.some((error) => error.includes('undeclared step')))
 })
 
 test('parseWrapperManifest accepts a manifest with no steps declared at all', () => {
@@ -67,7 +67,7 @@ test('parseWrapperManifest rejects a non-SemVer version', () => {
   const raw = readFixture().replace('version: 1.0.0', 'version: not-a-version')
   const result = parseWrapperManifest(raw)
   assert.equal(result.valid, false)
-  assert.ok(result.errors.some((error) => error.includes('version 必须是合法的 SemVer')))
+  assert.ok(result.errors.some((error) => error.includes('version must be valid SemVer')))
 })
 
 test('parseWrapperManifest rejects an unsupported phiWrapperVersion', () => {
@@ -90,14 +90,16 @@ test('parseWrapperManifest accepts a non-nextflow engine type but marks it non-e
   assert.equal(result.valid, true)
   assert.ok(result.manifest)
   assert.equal(isEngineExecutable(result.manifest!), false)
-  assert.throws(() => assertEngineExecutable(result.manifest!), /暂不支持执行/)
+  assert.throws(() => assertEngineExecutable(result.manifest!), /unsupported engine.type/)
 })
 
 test('parseWrapperManifest requires at least one declared output', () => {
   const raw = readFixture().replace(/outputs:\n(?:.|\n)*?\nsummaries:/, 'outputs: []\nsummaries:')
   const result = parseWrapperManifest(raw)
   assert.equal(result.valid, false)
-  assert.ok(result.errors.some((error) => error.includes('outputs 必须至少声明一个输出')))
+  assert.ok(
+    result.errors.some((error) => error.includes('outputs must declare at least one output'))
+  )
 })
 
 test('a manifest self-declaring verification.status: official_verified is parsed but not treated as trusted by anything here', () => {

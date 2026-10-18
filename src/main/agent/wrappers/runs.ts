@@ -60,16 +60,19 @@ function validatedPlanRemote(
   const saved = plan.targetSelection
   if (!saved) {
     if (plan.executor !== 'local') {
-      throw new Error('旧远程计划缺少项目和服务器快照，请重新创建计划。')
+      throw new Error(
+        'This older remote plan has no project and server snapshot. Create a new plan.'
+      )
     }
     return explicit
   }
   const project = getProject(saved.projectId)
   if (!project || !sameProjectLocation(saved.projectLocation, project.location)) {
-    throw new Error('计划所属项目的位置或主机已变化，请重新创建计划。')
+    throw new Error('The project location or host for this plan has changed. Create a new plan.')
   }
   const entry = findWrapperCatalogEntry(plan.wrapper.canonicalId, plan.wrapper.version, agentDir)
-  if (!entry) throw new Error('计划对应的 Wrapper 已不可用，请重新创建计划。')
+  if (!entry)
+    throw new Error('The Wrapper for this plan is no longer available. Create a new plan.')
   const policyBase = {
     projectLocation: project.location,
     explicitTarget: saved.target,
@@ -81,16 +84,21 @@ function validatedPlanRemote(
   } as const
   if (saved.target === 'local') {
     if (project.location.kind === 'ssh' || plan.executor !== 'local') {
-      throw new Error('远程项目不能将 Wrapper 计划提交到本机。')
+      throw new Error('Remote projects cannot submit Wrapper plans to this device.')
     }
-    if (explicit) throw new Error('本地计划不能在提交时改为远程目标，请重新创建计划。')
+    if (explicit)
+      throw new Error(
+        'A local plan cannot switch to a remote target at submission. Create a new plan.'
+      )
     const decision = chooseWrapperTarget(policyBase)
     if (
       decision.kind !== 'selected' ||
       decision.target !== 'local' ||
       decision.profileId !== plan.profile
     ) {
-      throw new Error('本地执行 Profile 与计划快照不一致，请重新创建计划。')
+      throw new Error(
+        'The local execution profile does not match the plan snapshot. Create a new plan.'
+      )
     }
     return undefined
   }
@@ -101,7 +109,7 @@ function validatedPlanRemote(
     !saved.remoteRoot ||
     !saved.connectionId
   ) {
-    throw new Error('远程计划缺少固定目标，请重新创建计划。')
+    throw new Error('The remote plan has no bound target. Create a new plan.')
   }
   const resolved = resolveProjectRemoteTarget(project, saved.connectionId, agentDir)
   if ('reason' in resolved) throw new Error(resolved.reason)
@@ -118,7 +126,9 @@ function validatedPlanRemote(
     (hpc.controller ?? 'login') !== saved.controller ||
     (hpc.runtime ?? 'singularity') !== saved.runtime
   ) {
-    throw new Error('服务器、远程目录或运行方式与计划快照不一致，请重新创建计划。')
+    throw new Error(
+      'The server, remote directory or execution mode does not match the plan snapshot. Create a new plan.'
+    )
   }
   const decision = chooseWrapperTarget({
     ...policyBase,
@@ -138,14 +148,16 @@ function validatedPlanRemote(
     decision.hostProfileId !== saved.hostProfileId ||
     decision.remoteRoot !== saved.remoteRoot
   ) {
-    throw new Error('远程执行 Profile 与计划快照不一致，请重新创建计划。')
+    throw new Error(
+      'The remote execution profile does not match the plan snapshot. Create a new plan.'
+    )
   }
   if (
     explicit &&
     (explicit.connection.host !== saved.hostAlias ||
       explicit.remoteWorkspaceRoot !== saved.remoteRoot)
   ) {
-    throw new Error('提交目标与计划快照不一致，请重新创建计划。')
+    throw new Error('The submission target does not match the plan snapshot. Create a new plan.')
   }
   return {
     ...(explicit ?? {
@@ -174,14 +186,17 @@ export function resolveRemoteSubmitOptions(
       resolved.target.connection.host !== run.remote.host ||
       expectedRunDir !== run.remote.runDir
     ) {
-      return { reason: '运行记录绑定的服务器或目录已变化，拒绝改投其他目标。' }
+      return {
+        reason:
+          'The server or directory bound to this run has changed. Submission to another target is refused.'
+      }
     }
     if (
       explicit &&
       (explicit.connection.host !== run.remote.host ||
         explicit.remoteWorkspaceRoot !== resolved.target.workspaceRoot)
     ) {
-      return { reason: '显式远程连接与运行记录的目标不一致。' }
+      return { reason: "The explicit remote connection does not match this run's target." }
     }
     return (
       explicit ?? {
@@ -196,7 +211,8 @@ export function resolveRemoteSubmitOptions(
     const resolved = project ? resolveProjectRemoteSubmitOptions(project, agentDir) : undefined
     if (!resolved) {
       return {
-        reason: '缺少远程计算目标：请先在该项目的 Wrapper 页面设置服务器和工作目录'
+        reason:
+          "Remote execution target missing: configure the server and working directory on this project's Wrapper page first"
       }
     }
     return resolved
@@ -267,19 +283,21 @@ export function submitWrapperRunPlan(
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const plan = readWrapperPlan(planId, agentDir)
   if (!plan) {
-    throw new Error(`计划不存在: ${planId}`)
+    throw new Error(`Plan not found: ${planId}`)
   }
   if (isWrapperPlanExpired(plan)) {
-    throw new Error(`计划已过期: ${planId}`)
+    throw new Error(`Plan expired: ${planId}`)
   }
   if (plan.state !== 'valid') {
-    throw new Error(`计划当前状态为 "${plan.state}"，无法提交`)
+    throw new Error(`A plan in state "${plan.state}" cannot be submitted`)
   }
 
   const heavyWorkloadAcknowledged =
     options.heavyWorkloadAcknowledged ?? plan.heavyWorkloadAcknowledged
   if (plan.requiresHeavyWorkloadAcknowledgement && !heavyWorkloadAcknowledged) {
-    throw new Error('该 wrapper 是重量级任务，需要先确认本地资源后才能在本机运行')
+    throw new Error(
+      'This Wrapper is a heavy workload. Confirm local resources before running it on this device'
+    )
   }
 
   const selectedRemote = validatedPlanRemote(plan, options.remote, agentDir)
@@ -308,7 +326,9 @@ export function submitWrapperRunPlan(
         true
       ).path !== remoteOutput.path)
   ) {
-    throw new Error('外部输出目录需要在计划卡明确显示并按该路径确认后才能提交')
+    throw new Error(
+      'The external output directory must be shown on the plan card and explicitly confirmed before submission'
+    )
   }
   const run: WrapperRun = {
     runId,
@@ -427,10 +447,10 @@ export function submitWrapperRunPlan(
 export function cancelWrapperRunPlan(planId: string, agentDir = getPhiAgentDir()): WrapperRunPlan {
   const plan = readWrapperPlan(planId, agentDir)
   if (!plan) {
-    throw new Error(`计划不存在: ${planId}`)
+    throw new Error(`Plan not found: ${planId}`)
   }
   if (plan.state === 'submitted') {
-    throw new Error('计划已提交为运行，请取消对应的 run，而不是这个计划')
+    throw new Error('This plan has already been submitted. Cancel its run instead of the plan')
   }
 
   const now = new Date().toISOString()
@@ -500,7 +520,7 @@ async function dispatchRemoteCancel(
     await new Promise((resolve) => setTimeout(resolve, 100))
     snapshot = readRemoteRunSnapshot(run.runId, agentDir)
   }
-  if (!snapshot) throw new Error('远程运行尚无可核对的启动快照')
+  if (!snapshot) throw new Error('The remote run has no launch snapshot available for verification')
 
   const remote = resolveRemoteSubmitOptions(run, explicitRemote, agentDir)
   if ('reason' in remote) throw new Error(remote.reason)
@@ -509,7 +529,9 @@ async function dispatchRemoteCancel(
     snapshot.remoteRunDir !== expectedDir ||
     (run.remote && run.remote.host !== remote.connection.host)
   ) {
-    throw new Error('远程取消目标与运行记录绑定的主机或目录不一致')
+    throw new Error(
+      'The remote cancellation target does not match the host or directory bound to this run'
+    )
   }
   const connect = remote.connectImpl ?? connectRemoteSshSession
   const session = await connect(remote.connection)
@@ -522,10 +544,10 @@ async function dispatchRemoteCancel(
       slurmHead ? 'sbatch' : 'detached'
     )
     if (observed.kind !== 'started') {
-      throw new Error('远程启动结果尚不明确，取消信号未发送')
+      throw new Error('The remote launch outcome is unknown. No cancellation signal was sent')
     }
     if (slurmHead ? !observed.jobId : observed.pid === undefined) {
-      throw new Error('远程回执没有可核对的作业号或进程号')
+      throw new Error('The remote receipt has no verifiable job ID or process ID')
     }
     const handle: RemoteJobHandle = {
       runId: run.runId,
@@ -535,14 +557,18 @@ async function dispatchRemoteCancel(
     const cleanupSlurmJobs = run.executor === 'slurm-controller' || run.executor === 'slurm'
     const result = await cancelRemoteController(session, handle, undefined, { cleanupSlurmJobs })
     if (result.kind === 'unknown') {
-      throw new Error(result.message ?? '取消后远端状态仍未知，保留运行记录等待对账')
+      throw new Error(
+        result.message ??
+          'The remote state is still unknown after cancellation. The run record is retained for reconciliation'
+      )
     }
     if (result.kind === 'already-ended') {
       const current = readWrapperRun(run.runId, agentDir)
       if (current?.state === 'cancelling') {
         transition(current, agentDir, 'lost', {
           completedAt: new Date().toISOString(),
-          launchDiagnostic: '取消前远端任务已结束；等待输出和最终状态对账'
+          launchDiagnostic:
+            'The remote task ended before cancellation; waiting to reconcile outputs and final state'
         })
       }
       return
@@ -583,7 +609,7 @@ function requestRemoteCancel(
     if (current?.state !== 'cancelling') return
     transition(current, agentDir, 'lost', {
       completedAt: new Date().toISOString(),
-      launchDiagnostic: `取消结果未知：${error instanceof Error ? error.message : String(error)}`
+      launchDiagnostic: `Cancellation outcome unknown: ${error instanceof Error ? error.message : String(error)}`
     })
   })
 
@@ -606,7 +632,7 @@ export function cancelWrapperRun(
 ): WrapperRun {
   const run = readWrapperRun(runId, agentDir)
   if (!run) {
-    throw new Error(`run 不存在: ${runId}`)
+    throw new Error(`Run not found: ${runId}`)
   }
 
   if (PRE_DISPATCH_CANCELLABLE_STATES.includes(run.state)) {
@@ -631,5 +657,7 @@ export function cancelWrapperRun(
     return requestRemoteCancel(run, agentDir, remote)
   }
 
-  throw new Error(`run 当前状态为 "${run.state}"，取消正在执行的进程需要对应执行器支持`)
+  throw new Error(
+    `Run state is "${run.state}". Cancelling an executing process requires support from its executor`
+  )
 }

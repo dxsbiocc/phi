@@ -1,6 +1,8 @@
 export type FileOpenConversationLayout = 'sidebar' | 'tab'
+import type { UiLanguage } from './uiLanguage'
 
 export interface PhiAppSettings {
+  uiLanguage: UiLanguage
   noProjectTaskFolder: string
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
@@ -9,6 +11,7 @@ export interface PhiAppSettings {
 }
 
 export type PhiAppSettingsPatch = {
+  uiLanguage?: UiLanguage
   noProjectTaskFolder?: string
   allowExternalFileRead?: boolean
   preventSleepDuringRuns?: boolean

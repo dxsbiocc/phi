@@ -1,3 +1,4 @@
+import { chatCopy } from '../lib/chatCopy'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   RuntimeRecoveryApi,
@@ -74,7 +75,7 @@ export function useRuntimeRecovery(
         setState(null)
         setError({
           key: runtimeRecoveryViewKey(original),
-          message: '无法读取此会话的恢复状态，请重试。'
+          message: chatCopy.unableToReadRecoveryStatusForThisConversationTryAgain
         })
       }
     }
@@ -142,7 +143,7 @@ export function useRuntimeRecovery(
             if (current(ticket, original)) {
               const failure = {
                 key: runtimeRecoveryViewKey(original),
-                message: '原会话已恢复，但界面刷新未完成。'
+                message: chatCopy.theOriginalConversationWasRecoveredButTheInterfaceCouldNot
               }
               uiRefreshError.current = failure
               setError(failure)
@@ -160,7 +161,7 @@ export function useRuntimeRecovery(
             )
               setError({
                 key: runtimeRecoveryViewKey(targetRef.current),
-                message: '摘要新会话已建立，请从会话列表打开。'
+                message: chatCopy.aConversationWasCreatedFromTheSummaryOpenItFrom
               })
           }
         }
@@ -168,7 +169,7 @@ export function useRuntimeRecovery(
         if (current(ticket, original)) {
           setError({
             key: runtimeRecoveryViewKey(original),
-            message: '操作未完成，请查看更新后的恢复状态。'
+            message: chatCopy.theActionDidNotCompleteCheckTheUpdatedRecoveryStatus
           })
           try {
             const latest = await api.getRuntimeRecoveryState(targetRef.current ?? original)

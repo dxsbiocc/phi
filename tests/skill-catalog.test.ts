@@ -48,17 +48,17 @@ function registryEntry(
   }
 }
 
-test('skill source labels match the Skills page Chinese copy', () => {
-  assert.equal(skillSourceLabel(skill()), '内置')
-  assert.equal(skillSourceLabel(skill({ core: true })), '内置·核心')
-  assert.equal(skillSourceLabel(skill({ sourceCategory: 'installed-package' })), '已安装')
-  assert.equal(skillSourceLabel(skill({ sourceCategory: 'user' })), '我的')
-  assert.equal(skillSourceLabel(skill({ sourceCategory: 'project' })), '项目')
+test('skill source labels match the Skills page English copy', () => {
+  assert.equal(skillSourceLabel(skill()), 'Built-in')
+  assert.equal(skillSourceLabel(skill({ core: true })), 'Built-in · Core')
+  assert.equal(skillSourceLabel(skill({ sourceCategory: 'installed-package' })), 'Installed')
+  assert.equal(skillSourceLabel(skill({ sourceCategory: 'user' })), 'My Skills')
+  assert.equal(skillSourceLabel(skill({ sourceCategory: 'project' })), 'Project')
   assert.equal(
     skillSourceLabel(
       skill({ sourceCategory: 'plugin', source: 'fallback', sourceId: 'visualization' })
     ),
-    '插件: visualization'
+    'Plugin: visualization'
   )
 })
 

@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -169,7 +170,7 @@ export function useRemoteHostPasswordBootstrap({
             ...current,
             error: null,
             password,
-            validationMessage: password ? null : '请输入服务器密码'
+            validationMessage: password ? null : remoteSetupCopy.serverPasswordRequired
           }
         : current
     )
@@ -185,8 +186,8 @@ export function useRemoteHostPasswordBootstrap({
       target: stableTarget,
       busy: true,
       error: null,
-      completedSteps: ['已确认服务器主机密钥'],
-      currentStep: '正在用密码测试连接…'
+      completedSteps: [remoteSetupCopy.hostKeyConfirmed],
+      currentStep: remoteSetupCopy.testingPasswordStep
     })
     try {
       const result = await withEphemeralSshBootstrapPassword(model.password, (input) =>
@@ -259,8 +260,8 @@ export function useRemoteHostPasswordBootstrap({
       target: stableTarget,
       busy: true,
       error: null,
-      completedSteps: ['已确认服务器主机密钥', '已验证密码登录'],
-      currentStep: '正在生成并安装专用密钥…'
+      completedSteps: [remoteSetupCopy.hostKeyConfirmed, remoteSetupCopy.passwordLoginVerified],
+      currentStep: remoteSetupCopy.installingDedicatedKey
     })
     try {
       const result = await withEphemeralSshBootstrapKeyProtection(

@@ -1,6 +1,8 @@
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Button, Stack } from '@mui/material'
 
 import { PhiIcons } from '../../icons'
+import { resourceCatalogCopy } from '../../lib/resourceUi'
 
 /**
  * The shared shell of a catalog entry's detail page. The top bar only carries navigation and the
@@ -20,6 +22,8 @@ export function CatalogDetailFrame({
   onBack: () => void
   children: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Box
       data-phi-catalog-detail={entryId}
@@ -36,7 +40,7 @@ export function CatalogDetailFrame({
           onClick={onBack}
           startIcon={<PhiIcons.action.back size={16} sx={{ transform: 'rotate(180deg)' }} />}
         >
-          返回
+          {resourceCatalogCopy.back}
         </Button>
         {action}
       </Stack>

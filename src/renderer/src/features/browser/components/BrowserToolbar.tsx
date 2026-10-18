@@ -1,3 +1,5 @@
+import { browserUi } from '../lib/browserUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { Box, IconButton, LinearProgress, TextField, Tooltip } from '@mui/material'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
@@ -22,6 +24,7 @@ function ToolbarButton({
   onClick: () => void
   children: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Tooltip title={label} arrow>
       <span style={{ display: 'inline-flex', flexShrink: 0 }}>
@@ -69,6 +72,7 @@ export interface BrowserToolbarProps {
 }
 
 export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
+  useUiLanguage()
   const loading = props.activeTab?.phase === 'loading'
   const controlsDisabled = props.disabled || props.busy
   const submit = (event: FormEvent): void => {
@@ -105,21 +109,21 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
         }}
       >
         <ToolbarButton
-          label="后退"
+          label={browserUi.back}
           disabled={controlsDisabled || !props.activeTab?.canGoBack}
           onClick={props.onBack}
         >
           <BackIcon sx={{ fontSize: 16, transform: 'rotate(180deg)' }} />
         </ToolbarButton>
         <ToolbarButton
-          label="前进"
+          label={browserUi.forward}
           disabled={controlsDisabled || !props.activeTab?.canGoForward}
           onClick={props.onForward}
         >
           <BackIcon sx={{ fontSize: 16 }} />
         </ToolbarButton>
         <ToolbarButton
-          label={loading ? '停止加载' : '重新加载'}
+          label={loading ? browserUi.stopLoading : browserUi.reload}
           disabled={props.disabled || !props.activeTab || (props.busy && !loading)}
           pressed={loading}
           onClick={props.onReloadOrStop}
@@ -133,13 +137,13 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           onBlur={props.onAddressBlur}
           onKeyDown={handleAddressKeyDown}
           disabled={props.disabled}
-          placeholder="输入网址"
+          placeholder={browserUi.enterAURL}
           autoComplete="url"
           size="small"
           fullWidth
           slotProps={{
             htmlInput: {
-              'aria-label': '网址',
+              'aria-label': browserUi.uRL,
               spellCheck: false,
               inputMode: 'url',
               autoCapitalize: 'none'
@@ -157,7 +161,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
           }}
         />
         <ToolbarButton
-          label="在默认浏览器中打开"
+          label={browserUi.openInDefaultBrowser}
           disabled={
             controlsDisabled ||
             !props.activeTab ||
@@ -174,7 +178,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
       </Box>
       <Box data-phi-browser-progress-slot="true" sx={{ height: 2, overflow: 'hidden' }}>
         <LinearProgress
-          aria-label="页面加载进度"
+          aria-label={browserUi.pageLoadingProgress}
           aria-hidden={!loading}
           sx={{ height: 2, visibility: loading ? 'visible' : 'hidden' }}
         />

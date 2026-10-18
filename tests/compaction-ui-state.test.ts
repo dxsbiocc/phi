@@ -1,3 +1,6 @@
+import { chatCopy } from '../src/renderer/src/features/chat/lib/chatCopy'
+import { appCopy } from '../src/renderer/src/lib/appCopy'
+import { getUiLanguage, getUiLocale, setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -117,6 +120,8 @@ function rendererHarness<State>(
     module,
     exports: module.exports,
     require(specifier: string): unknown {
+      if (specifier.endsWith('/chatCopy')) return { chatCopy }
+      if (specifier.endsWith('/i18n')) return { useUiLanguage: getUiLanguage, getUiLocale }
       if (specifier === 'react') return react
       if (specifier === 'react/jsx-runtime') return jsxRuntime
       if (specifier === '@mui/material') return new Proxy({}, { get: (_, key) => key })
@@ -203,6 +208,8 @@ async function settingsHarness(overrides: Partial<AutoCompactionApi> = {}): Prom
 const alert = (tree: Element): unknown =>
   elements(tree, 'Typography').find((node) => node.props.role === 'alert')?.props.children
 const threshold = (tree: Element): unknown => elements(tree, 'Select')[0]?.props.value
+
+setUiLanguage('zh-CN')
 
 test('an old save failure does not erase the newly active session load error', async () => {
   const pending = deferred<CurrentAutoCompactionSettings>()
@@ -415,6 +422,7 @@ function appCallback<T>(name: string, context: Record<string, unknown>): T {
     useCallback: (callback: unknown) => callback,
     Set,
     JSON,
+    appCopy,
     ...context
   }) as T
 }

@@ -6,6 +6,8 @@ import { createWrapperJobHostScope } from '../src/main/agent/wrappers/compositio
 import { createWebLinkPreviewService } from '../src/main/web-link-preview'
 import * as permissionModeControl from '../src/main/agent/session/permission-mode-control'
 import * as workspaceFileIpc from '../src/main/workspace-file-ipc'
+import * as nativeUiCopy from '../src/main/native-ui-copy'
+import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
@@ -411,6 +413,8 @@ type HostContext = {
 }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
+  systemLanguages?: string[]
+  uiLanguage?: 'en' | 'zh-CN'
   capabilityServiceCreate?: typeof capabilityService.createCapabilityService
   officialPackageEntries?: RegistryPackageEntry[]
   customPackageRegistries?: LocalRegistry[]
@@ -824,6 +828,8 @@ async function harness(
     | undefined
   const appNoProjectTaskFolder = '/workspace'
   let allowExternalFileRead = false
+  let appUiLanguage = options.uiLanguage
+  let systemLanguage: 'en' | 'zh-CN' = 'en'
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
     filePaths: []
@@ -1465,6 +1471,7 @@ async function harness(
   }
   const app = Object.assign(new EventEmitter(), {
     setName: noop,
+    getPreferredSystemLanguages: (): string[] => options.systemLanguages ?? ['en-US'],
     getVersion: (): string => '9.8.7',
     whenReady: (): Promise<void> => Promise.resolve(),
     getFileIcon: async (
@@ -1522,6 +1529,7 @@ async function harness(
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   const modules: Record<string, unknown> = {
     './window-startup': windowStartup,
+    './native-ui-copy': nativeUiCopy,
     './startup-splash': {
       createStartupSplashWindow: async () => {
         operationLog.push({ type: 'splash.create' })
@@ -4101,11 +4109,15 @@ async function harness(
       }
     },
     './agent/app-settings': {
+      configureSystemUiLanguage: (languages: readonly string[]): void => {
+        systemLanguage = systemUiLanguage(languages)
+      },
       readLastSelectedModel: () => options.lastSelectedModel,
       writeLastSelectedModel: (model: HarnessOptions['lastSelectedModel']) => {
         options.lastSelectedModel = model
       },
       readAppSettings: (): Record<string, unknown> => ({
+        uiLanguage: appUiLanguage ?? systemLanguage,
         noProjectTaskFolder: appNoProjectTaskFolder,
         allowExternalFileRead,
         preventSleepDuringRuns: false,
@@ -4113,10 +4125,13 @@ async function harness(
         fileOpenConversationLayout: 'sidebar'
       }),
       updateAppSettings: (patch: Record<string, unknown>): Record<string, unknown> => {
+        if (patch.uiLanguage === 'en' || patch.uiLanguage === 'zh-CN')
+          appUiLanguage = patch.uiLanguage
         if (typeof patch.allowExternalFileRead === 'boolean') {
           allowExternalFileRead = patch.allowExternalFileRead
         }
         return {
+          uiLanguage: appUiLanguage ?? systemLanguage,
           noProjectTaskFolder: appNoProjectTaskFolder,
           allowExternalFileRead,
           preventSleepDuringRuns: false,
@@ -5264,12 +5279,47 @@ test('main IPC: app settings exposes general preferences', async () => {
   const app = await harness()
 
   assert.deepEqual(await app.invoke('settings:get'), {
+    uiLanguage: 'en',
     noProjectTaskFolder: '/workspace',
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
     fileOpenConversationLayout: 'sidebar'
   })
+  const requests = app.bridgeRequests.length
+  const updated = (await app.invoke('settings:update', { uiLanguage: 'zh-CN' })) as {
+    uiLanguage: string
+  }
+  assert.equal(updated.uiLanguage, 'zh-CN')
+  assert.equal(((await app.invoke('settings:get')) as { uiLanguage: string }).uiLanguage, 'zh-CN')
+  assert.equal(
+    app.bridgeRequests.length,
+    requests,
+    'changing display language does not restart or call the agent runtime'
+  )
+})
+
+test('main IPC: initial language follows the system while saved choices take priority', async () => {
+  const chinese = await harness(undefined, { systemLanguages: ['zh-Hans-CN', 'en-US'] })
+  assert.equal(
+    ((await chinese.invoke('settings:get')) as { uiLanguage: string }).uiLanguage,
+    'zh-CN'
+  )
+  await chinese.invoke('projects:pickDirectory')
+  assert.equal(chinese.openDialogOptions.at(-1)?.title, '选择项目文件夹')
+  const updated = await chinese.invoke('settings:update', { allowExternalFileRead: true })
+  assert.equal((updated as { uiLanguage: string }).uiLanguage, 'zh-CN')
+
+  const savedEnglish = await harness(undefined, { systemLanguages: ['zh-CN'], uiLanguage: 'en' })
+  assert.equal(
+    ((await savedEnglish.invoke('settings:get')) as { uiLanguage: string }).uiLanguage,
+    'en'
+  )
+  await savedEnglish.invoke('projects:pickDirectory')
+  assert.equal(savedEnglish.openDialogOptions.at(-1)?.title, 'Select a project folder')
+
+  const other = await harness(undefined, { systemLanguages: ['fr-FR', 'zh-CN'] })
+  assert.equal(((await other.invoke('settings:get')) as { uiLanguage: string }).uiLanguage, 'en')
 })
 
 test('main IPC: web search settings are routed to the OMP worker', async () => {
@@ -5456,6 +5506,81 @@ test('main IPC: input file picker returns selected paths without reading files',
     'multiSelections'
   ])
   assert.equal(app.previewReadRequests.length, 0)
+})
+
+test('main IPC: native dialog copy follows saved language without changing selection semantics', async () => {
+  const app = await harness()
+  for (const [
+    language,
+    select,
+    input,
+    plugin,
+    skill,
+    project,
+    executable,
+    importTitle,
+    importAction,
+    filter
+  ] of [
+    [
+      'en',
+      'Select',
+      'Select input files or folders',
+      'Select a Phi Plugin directory',
+      'Select a local Skill directory',
+      'Select a project folder',
+      'Select a tool executable',
+      'Import package',
+      'Import',
+      'Phi package'
+    ],
+    [
+      'zh-CN',
+      '选择',
+      '选择输入文件或文件夹',
+      '选择 Phi 插件目录',
+      '选择本地技能目录',
+      '选择项目文件夹',
+      '选择工具可执行文件',
+      '导入软件包',
+      '导入',
+      'Phi 软件包'
+    ],
+    [
+      'en',
+      'Select',
+      'Select input files or folders',
+      'Select a Phi Plugin directory',
+      'Select a local Skill directory',
+      'Select a project folder',
+      'Select a tool executable',
+      'Import package',
+      'Import',
+      'Phi package'
+    ]
+  ] as const) {
+    await app.invoke('settings:update', { uiLanguage: language })
+    app.setOpenDialogResult({ canceled: false, filePaths: ['/作者目录/原始文件名.tar.gz'] })
+    assert.deepEqual(await app.invoke('files:pickInput'), ['/作者目录/原始文件名.tar.gz'])
+    assert.equal(app.openDialogOptions.at(-1)?.title, input)
+    assert.equal(app.openDialogOptions.at(-1)?.buttonLabel, select)
+    for (const [channel, title] of [
+      ['phiPlugins:pickDirectory', plugin],
+      ['packages:pickRegistryDirectory', skill],
+      ['projects:pickDirectory', project],
+      ['environment:pickBinary', executable]
+    ]) {
+      assert.equal(await app.invoke(channel), '/作者目录/原始文件名.tar.gz')
+      assert.equal(app.openDialogOptions.at(-1)?.title, title)
+      assert.equal(app.openDialogOptions.at(-1)?.buttonLabel, select)
+    }
+    assert.equal(await app.invoke('packages:pickArchive'), '/作者目录/原始文件名.tar.gz')
+    assert.equal(app.openDialogOptions.at(-1)?.title, importTitle)
+    assert.equal(app.openDialogOptions.at(-1)?.buttonLabel, importAction)
+    assert.deepEqual(app.openDialogOptions.at(-1)?.filters, [
+      { name: filter, extensions: ['tar.gz'] }
+    ])
+  }
 })
 
 test('main IPC: input file picker returns an empty list when cancelled', async () => {
@@ -6395,7 +6520,7 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
     app.invoke('skills:read', '/projects/current/.phi/skills/local/SKILL.md', '/projects/current'),
     /暂不可用/
   )
-  await assert.rejects(app.invoke('wrappers:submitPlan', 'plan-1'), /不会在本机执行/)
+  await assert.rejects(app.invoke('wrappers:submitPlan', 'plan-1'), /will not run locally/)
   await app.invoke('sessions:create')
   const restored = (await app.invoke('sessions:switch', current.path)) as {
     projectId: string
@@ -6452,7 +6577,10 @@ test('main IPC: custom OAuth locks browser opening to the prepared endpoint and 
     if (method === 'mcp.authorizeRemote') {
       actualAttempt = request.attemptId
       assert.equal(request.serverUrl, connector.url)
-      await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /正在授权/)
+      await assert.rejects(
+        app.invoke('mcp:authorizeRemoteConnector', 'custom'),
+        /Authorization is already in progress/
+      )
       for (const url of [
         'http://auth.example.test/oauth/authorize',
         'https://user:password@auth.example.test/oauth/authorize',
@@ -6461,7 +6589,7 @@ test('main IPC: custom OAuth locks browser opening to the prepared endpoint and 
       ]) {
         await assert.rejects(
           open({ name: 'custom', attemptId: request.attemptId, url }),
-          /无效|不匹配/
+          /Invalid|does not match/
         )
       }
       await assert.rejects(
@@ -6470,7 +6598,7 @@ test('main IPC: custom OAuth locks browser opening to the prepared endpoint and 
           attemptId: 'stale-attempt',
           url: 'https://auth.example.test/oauth/authorize'
         }),
-        /失效/
+        /expired/
       )
       await open({
         name: 'custom',
@@ -6491,7 +6619,7 @@ test('main IPC: custom OAuth locks browser opening to the prepared endpoint and 
       attemptId: actualAttempt,
       url: 'https://auth.example.test/oauth/authorize'
     }),
-    /失效/
+    /expired/
   )
   assert.equal(JSON.stringify(app.bridgeRequests).includes('private-secret'), false)
   assert.equal(JSON.stringify(app.events).includes('private-secret'), false)
@@ -6517,7 +6645,7 @@ test('main IPC: custom OAuth rejects invalid preflight and changed saved configu
     app.setCustomMcpBridgeRequest(async (method) =>
       method === 'mcp.prepareRemoteAuth' ? prepared : undefined
     )
-    await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /无效|已变化/)
+    await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /Invalid|changed/)
   }
   app.setCustomMcpBridgeRequest(async (method) => {
     if (method === 'mcp.prepareRemoteAuth') {
@@ -6529,7 +6657,7 @@ test('main IPC: custom OAuth rejects invalid preflight and changed saved configu
     }
     return undefined
   })
-  await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /已变化/)
+  await assert.rejects(app.invoke('mcp:authorizeRemoteConnector', 'custom'), /changed/)
   assert.equal(
     app.bridgeRequests.some((request) => request.method === 'mcp.authorizeRemote'),
     false
@@ -6560,7 +6688,7 @@ test('main IPC: cancellation during custom OAuth discovery prevents the later br
     serverUrl: connector.url,
     authorizationUrl: 'https://auth.example.test/authorize'
   })
-  await assert.rejects(authorize, /授权已取消/)
+  await assert.rejects(authorize, /Authorization cancelled/)
   assert.equal(
     app.bridgeRequests.some((request) => request.method === 'mcp.authorizeRemote'),
     false
@@ -6596,10 +6724,10 @@ test('main IPC: custom OAuth cancellation and config changes invalidate browser 
   const authorize = app.invoke('mcp:authorizeRemoteConnector', 'custom')
   const request = await started.promise
   app.setCustomRemoteConnector('custom', { ...connector, oauth: { clientId: 'changed' } })
-  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /已变化/)
+  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /changed/)
   app.setCustomRemoteConnector('custom', connector)
   await app.invoke('mcp:cancelRemoteAuth', 'custom')
-  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /失效/)
+  await assert.rejects(open({ ...request, url: 'https://auth.example.test/authorize' }), /expired/)
   completed.resolve()
   await assert.rejects(authorize, /授权已取消/)
   const cancelled = app.bridgeRequests.find((entry) => entry.method === 'mcp.cancelRemoteAuth')
@@ -6617,7 +6745,7 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
       auth: 'none'
     }
   })
-  await assert.rejects(app.invoke('mcp:featuredTools', null), /连接器标识无效/)
+  await assert.rejects(app.invoke('mcp:featuredTools', null), /Invalid Connector ID/)
   assert.equal(await app.invoke('mcp:featuredAuthStatus', 'notion'), true)
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.featuredAuthStatus',
@@ -6633,7 +6761,10 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     method: 'mcp.featuredAuthStatus',
     params: { id: 'cbioportal', url: 'https://mcp.cbioportal.org/db/mcp' }
   })
-  await assert.rejects(app.invoke('mcp:featuredAuthStatus', 'gmail'), /不支持登录状态查询/)
+  await assert.rejects(
+    app.invoke('mcp:featuredAuthStatus', 'gmail'),
+    /does not support sign-in status checks/
+  )
   await app.invoke('mcp:authorizeFeatured', 'notion')
   assert.deepEqual(app.bridgeRequests.at(-1), {
     method: 'mcp.authorizeFeatured',
@@ -6649,22 +6780,25 @@ test('main IPC: featured MCP tools are read through the Bun worker', async () =>
     method: 'mcp.authorizeFeatured',
     params: { id: 'cbioportal', url: 'https://mcp.cbioportal.org/db/mcp' }
   })
-  await assert.rejects(app.invoke('mcp:authorizeFeatured', 'gmail'), /不支持 OAuth 授权/)
+  await assert.rejects(
+    app.invoke('mcp:authorizeFeatured', 'gmail'),
+    /does not support OAuth authorization/
+  )
   const openAuthUrl = app.hostHandlers.get('mcp.openAuthUrl')
   assert.ok(openAuthUrl)
-  await assert.rejects(openAuthUrl({ id: 'notion', url: 'http://example.com/' }), /不匹配/)
-  await assert.rejects(openAuthUrl({ id: 'notion', url: 'https://example.com/' }), /不匹配/)
+  await assert.rejects(openAuthUrl({ id: 'notion', url: 'http://example.com/' }), /does not match/)
+  await assert.rejects(openAuthUrl({ id: 'notion', url: 'https://example.com/' }), /does not match/)
   await assert.rejects(
     openAuthUrl({ id: 'notion', url: 'https://user:pass@mcp.notion.com/' }),
-    /不匹配/
+    /does not match/
   )
   await assert.rejects(
     openAuthUrl({ id: 'composio', url: 'https://mcp.notion.com/authorize' }),
-    /不匹配/
+    /does not match/
   )
   await assert.rejects(
     openAuthUrl({ id: 'cbioportal', url: 'https://accounts.google.com/authorize' }),
-    /不匹配/
+    /does not match/
   )
   await openAuthUrl({ id: 'notion', url: 'https://mcp.notion.com/authorize' })
   await openAuthUrl({ id: 'composio', url: 'https://connect.composio.dev/oauth/authorize' })
@@ -6709,7 +6843,7 @@ test('main IPC: a saved API key remains saved if live worker refresh fails', asy
   app.failBridgeRequests(new Error('worker unavailable'))
   await assert.rejects(
     app.invoke('mcp:setFeaturedApiKey', 'tavily', 'private-test-key'),
-    /本地修改已保存.*会话同步失败/
+    /Local changes were saved.*could not be synchronized/
   )
   assert.equal(await app.invoke('mcp:featuredApiKeyStatus', 'tavily'), true)
   assert.equal(app.bridgeStopCount(), 1)
@@ -6808,7 +6942,7 @@ test('main IPC allows only a plan snapshotted for the active SSH project to reac
       target: 'remote',
       projectId: 'another-project'
     }),
-    /只能提交绑定本项目服务器/
+    /only submit Wrapper plans bound to their server/
   )
   app.setWrapperPlan({
     revision: 1,
@@ -6824,7 +6958,7 @@ test('main IPC allows only a plan snapshotted for the active SSH project to reac
       target: 'local',
       projectId: 'remote-project-1'
     }),
-    /不会在本机执行/
+    /will not run locally/
   )
   app.setWrapperPlan({
     revision: 2,
@@ -6845,7 +6979,7 @@ test('main IPC allows only a plan snapshotted for the active SSH project to reac
   }
   await assert.rejects(
     app.invoke('wrappers:submitPlan', 'plan-1', undefined, { ...confirmed, expectedRevision: 1 }),
-    /执行目标已变化/
+    /execution target has changed/
   )
   app.setRemoteProjectPhase('offline')
   await assert.rejects(
@@ -6871,14 +7005,14 @@ test('main IPC allows only a plan snapshotted for the active SSH project to reac
   const externalConfirmation = { ...confirmed, expectedRevision: 3 }
   await assert.rejects(
     app.invoke('wrappers:submitPlan', 'plan-1', undefined, externalConfirmation),
-    /执行目标已变化/
+    /execution target has changed/
   )
   await assert.rejects(
     app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
       ...externalConfirmation,
       externalOutputRoot: '/scratch/other'
     }),
-    /执行目标已变化/
+    /execution target has changed/
   )
   await assert.rejects(
     app.invoke('wrappers:submitPlan', 'plan-1', undefined, {
@@ -6902,7 +7036,7 @@ test('main IPC forwards an explicit local fallback request only with revision an
       expectedRevision: 1,
       host: 'other'
     }),
-    /目标变更请求无效/
+    /Invalid Wrapper target change request/
   )
   const request = {
     planId: 'plan-1',
@@ -7463,8 +7597,14 @@ test('main IPC exposes local package registry planning and lifecycle channels', 
   assert.equal(preview.plan.root.id, 'offline-skill')
   assert.deepEqual(await app.invoke('packages:import', '/tmp/offline-skill.tar.gz'), [])
   assert.deepEqual(await app.invoke('packages:listUpdates'), [])
-  await assert.rejects(app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'), /没有可用更新/)
-  await assert.rejects(app.invoke('packages:plan', '', 'wrapper', '', undefined), /参数无效/)
+  await assert.rejects(
+    app.invoke('packages:applyUpdate', 'skill', 'alpha-skill'),
+    /No update available/
+  )
+  await assert.rejects(
+    app.invoke('packages:plan', '', 'wrapper', '', undefined),
+    /Invalid package installation plan request/
+  )
 })
 
 test('main IPC plans official metadata before fetching and routes all four install types through preparation', async () => {
@@ -7773,11 +7913,11 @@ test('main IPC validates and stores global and project enablement', async () => 
   )
   await assert.rejects(
     app.invoke('enablement:set', 'wrapper:FastQC', true, { type: 'global' }),
-    /标识无效/
+    /Invalid enablement item ID/
   )
   await assert.rejects(
     app.invoke('enablement:set', 'skill:scanpy', 'yes', { type: 'global' }),
-    /启用值无效/
+    /Invalid enablement value/
   )
   await assert.rejects(
     app.invoke('enablement:set', 'skill:scanpy', true, { type: 'project' }),

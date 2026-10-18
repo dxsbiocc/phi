@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from './remoteSetupCopy'
 import type { RemoteDoctorReport } from '../../../../../shared/remoteDoctorTypes'
 import type { RemoteRuntimeRootCheckResult } from '../../../../../shared/remoteRuntimeRootTypes'
 import type { RemoteDoctorUiState } from './remoteDoctorUi'
@@ -28,14 +29,16 @@ export function remoteRuntimeRootUiStatus(
   if (state.phase === 'idle' || state.key !== targetKey) return { phase: 'idle' }
   if (state.phase === 'running') return { phase: 'running' }
   if (state.phase === 'failed') {
-    return /超时/.test(state.message) ? { phase: 'timed-out' } : { phase: 'failed' }
+    return /tim(?:e|ed)?\s*out|timeout|超时/i.test(state.message)
+      ? { phase: 'timed-out' }
+      : { phase: 'failed' }
   }
   const result = (state.report as ReportWithRuntimeRoot).runtimeRootCheck
   return result ? remoteRuntimeRootResultStatus(result) : { phase: 'idle' }
 }
 
 export function formatRemoteRuntimeRootSpace(availableKiB: number | null): string {
-  if (availableKiB === null) return '未知'
+  if (availableKiB === null) return remoteSetupCopy.unknown
   const gibibytes = availableKiB / 1024 / 1024
   return `${Number.isInteger(gibibytes) ? gibibytes : gibibytes.toFixed(1)} GiB`
 }
@@ -59,11 +62,11 @@ export function runtimeRootNeedsWarningConfirmation(
 
 export function remoteRuntimeRootValueError(value: string): string | null {
   if (!value) return null
-  if (/\0|\r|\n/.test(value)) return '运行时根目录不能包含 NUL 或换行符'
+  if (/\0|\r|\n/.test(value)) return remoteSetupCopy.runtimeRootControlCharacterError
   if (!value.startsWith('/') && !value.startsWith('~/')) {
-    return '运行时根目录必须是绝对路径或以 ~/ 开头'
+    return remoteSetupCopy.runtimeRootAbsolutePathError
   }
-  if (value.split('/').includes('..')) return '运行时根目录不能包含 .. 路径段'
+  if (value.split('/').includes('..')) return remoteSetupCopy.runtimeRootParentSegmentError
   return null
 }
 

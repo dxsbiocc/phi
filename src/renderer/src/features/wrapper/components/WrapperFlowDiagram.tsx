@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import {
   Handle,
   MarkerType,
@@ -29,6 +31,7 @@ const WrapperFlowStepNode = memo(function WrapperFlowStepNode({
   data,
   type
 }: NodeProps<WrapperFlowNode>): React.JSX.Element {
+  useUiLanguage()
   const theme = useTheme()
   const color = stateColor(theme, data)
   const isIo = data.kind === 'io'
@@ -82,13 +85,13 @@ const WrapperFlowStepNode = memo(function WrapperFlowStepNode({
 function runStepStateLabel(state: WrapperFlowNodeData['state']): string {
   switch (state) {
     case 'running':
-      return '运行中'
+      return wrapperCopy.stepStates.running
     case 'completed':
-      return '已完成'
+      return wrapperCopy.stepStates.completed
     case 'failed':
-      return '失败'
+      return wrapperCopy.stepStates.failed
     default:
-      return '待运行'
+      return wrapperCopy.stepStates.pending
   }
 }
 
@@ -114,6 +117,7 @@ export function WrapperFlowDiagram({
   graph,
   height = 160
 }: WrapperFlowDiagramProps): React.JSX.Element {
+  useUiLanguage()
   const theme = useTheme()
   // A handful of nodes reads fine as a static "fit to box" thumbnail (the
   // original design intent — see this component's own doc comment). A real

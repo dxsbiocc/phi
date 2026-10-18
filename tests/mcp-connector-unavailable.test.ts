@@ -65,8 +65,8 @@ function render(options: {
 
 test('a connector that is not added yet and needs a newer Phi cannot be added', () => {
   const markup = render({ configured: false, unavailableReason: UNAVAILABLE })
-  assert.match(markup, /需要新版 Phi/)
-  assert.doesNotMatch(markup, />移除</)
+  assert.match(markup, /Newer Phi required/)
+  assert.doesNotMatch(markup, />Remove</)
 })
 
 test('authorization restrictions explain why adding or updating is unavailable', () => {
@@ -74,19 +74,19 @@ test('authorization restrictions explain why adding or updating is unavailable',
     const markup = render({
       configured,
       updateAvailable: configured,
-      unavailableReason: '此连接器的目录授权暂不可用',
+      unavailableReason: '此连接器的目录Authorization unavailable',
       unavailableKind: 'authorization'
     })
-    assert.match(markup, /授权暂不可用/)
-    assert.doesNotMatch(markup, /需要新版 Phi/)
-    if (configured) assert.match(markup, />移除</)
+    assert.match(markup, /Authorization unavailable/)
+    assert.doesNotMatch(markup, /Newer Phi required/)
+    if (configured) assert.match(markup, />Remove</)
   }
 })
 
 test('an added connector can always be removed, even when the catalog version needs a newer Phi', () => {
   const markup = render({ configured: true, unavailableReason: UNAVAILABLE })
-  assert.match(markup, />移除</)
-  assert.doesNotMatch(markup, /需要新版 Phi/, 'it already works, so it is not "unavailable"')
+  assert.match(markup, />Remove</)
+  assert.doesNotMatch(markup, /Newer Phi required/, 'it already works, so it is not "unavailable"')
 })
 
 test('a pending update that needs a newer Phi is stated as such next to the remove button', () => {
@@ -95,20 +95,20 @@ test('a pending update that needs a newer Phi is stated as such next to the remo
     updateAvailable: true,
     unavailableReason: UNAVAILABLE
   })
-  assert.match(markup, />移除</)
-  assert.match(markup, /更新需要新版 Phi/)
-  assert.doesNotMatch(markup, />更新</)
+  assert.match(markup, />Remove</)
+  assert.match(markup, /Update requires a newer Phi/)
+  assert.doesNotMatch(markup, />Update</)
 })
 
 test('an added connector with an update it can take still offers update and remove', () => {
   const markup = render({ configured: true, updateAvailable: true })
-  assert.match(markup, />更新</)
-  assert.match(markup, />移除</)
+  assert.match(markup, />Update</)
+  assert.match(markup, />Remove</)
 })
 
 test('a switched-off connector that is already added can be switched back on despite the version note', () => {
   const markup = render({ configured: true, enabled: false, unavailableReason: UNAVAILABLE })
-  const button = /<button[^>]*>启用<\/button>/.exec(markup)?.[0]
+  const button = /<button[^>]*>Enable<\/button>/.exec(markup)?.[0]
   assert.ok(button, 'the enable button is shown')
   assert.doesNotMatch(button, /disabled/)
 })

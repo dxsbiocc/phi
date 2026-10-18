@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import {
   Accordion,
   AccordionDetails,
@@ -60,7 +62,9 @@ export interface RemoteMicromambaControlProps {
 }
 
 function formatBytes(bytes: number | undefined): string {
-  return bytes === undefined ? '服务器架构检测后确定' : `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+  return bytes === undefined
+    ? remoteSetupCopy.architecturePending
+    : `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
 function micromambaStatus(
@@ -84,13 +88,13 @@ function micromambaStatus(
 }
 
 function statusLabel(status: RemoteMicromambaCapabilityProfile): string {
-  const version = 'version' in status ? `（${status.version}）` : ''
+  const version = 'version' in status ? ` (${status.version})` : ''
   const labels = {
-    unchecked: '未检查',
-    'not-installed': '未安装',
-    installed: `已安装${version}`,
-    outdated: `版本过期${version}`,
-    unusable: `不可运行${version}`
+    unchecked: remoteSetupCopy.notChecked,
+    'not-installed': remoteSetupCopy.notInstalled,
+    installed: remoteSetupCopy.installedVersion(version),
+    outdated: remoteSetupCopy.outdatedVersion(version),
+    unusable: remoteSetupCopy.unusableVersion(version)
   }
   return labels[status.status]
 }
@@ -110,10 +114,13 @@ function progressPercent(progress: RemoteMicromambaProgressView | undefined): nu
 }
 
 function Progress({ progress }: { progress?: RemoteMicromambaProgressView }): React.JSX.Element {
+  useUiLanguage()
   const percent = progressPercent(progress)
   return (
     <Stack spacing={0.5}>
-      <Typography variant="caption">{progress?.message ?? '正在准备 micromamba…'}</Typography>
+      <Typography variant="caption">
+        {progress?.message ?? remoteSetupCopy.preparingMicromamba}
+      </Typography>
       <LinearProgress
         variant={percent === undefined ? 'indeterminate' : 'determinate'}
         value={percent}
@@ -124,13 +131,14 @@ function Progress({ progress }: { progress?: RemoteMicromambaProgressView }): Re
 }
 
 function transferLabel(result: RemoteMicromambaResult): string | undefined {
-  if (result.transferMethod === 'remote-direct') return '服务器直连下载'
-  if (result.transferMethod === 'desktop-relay') return '本机中转'
-  if (result.transferMethod === 'existing') return '复用已安装版本'
+  if (result.transferMethod === 'remote-direct') return remoteSetupCopy.serverDirectDownload
+  if (result.transferMethod === 'desktop-relay') return remoteSetupCopy.desktopRelay
+  if (result.transferMethod === 'existing') return remoteSetupCopy.reuseInstalledVersion
   return undefined
 }
 
 function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Element {
+  useUiLanguage()
   const severity =
     result.status === 'failed' || result.status === 'unsupported'
       ? 'error'
@@ -141,7 +149,7 @@ function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Eleme
   return (
     <Alert severity={severity}>
       {result.message}
-      {method ? ` 安装方式：${method}。` : ''}
+      {method ? remoteSetupCopy.installationMethod(method) : ''}
     </Alert>
   )
 }
@@ -149,19 +157,22 @@ function Result({ result }: { result: RemoteMicromambaResult }): React.JSX.Eleme
 function downloadCapability(profile: RemoteHostCapabilityProfile | undefined): string {
   const capability = profile?.runtimeRoot?.micromamba?.download
   if (capability?.status === 'reachable') {
-    return `上次测速可用源：${sanitizedSourceHost(capability.host)}（${capability.tool}）`
+    return remoteSetupCopy.lastReachableSource(
+      sanitizedSourceHost(capability.host),
+      capability.tool
+    )
   }
-  if (capability?.status === 'unreachable') return '上次探测不可达，将使用本机中转'
-  if (capability?.status === 'no-tool') return '服务器无 curl/wget，将使用本机中转'
-  return '安装时自动测速直连来源'
+  if (capability?.status === 'unreachable') return remoteSetupCopy.downloadUnreachable
+  if (capability?.status === 'no-tool') return remoteSetupCopy.noDownloadTool
+  return remoteSetupCopy.probeDownloadOnInstall
 }
 
 function sanitizedSourceHost(value: string): string {
   try {
     const host = new URL(value.includes('://') ? value : `https://${value}`).hostname
-    return host || '未知来源'
+    return host || remoteSetupCopy.unknownSource
   } catch {
-    return '未知来源'
+    return remoteSetupCopy.unknownSource
   }
 }
 
@@ -172,16 +183,17 @@ function MirrorPrefixEditor(props: {
   onChange: (value: string) => void
   onSave?: (value?: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: 'flex-start' }}>
       <TextField
         size="small"
         fullWidth
-        label="下载镜像前缀（可选）"
+        label={remoteSetupCopy.downloadMirrorPrefix}
         placeholder="https://mirror.example/"
         value={props.value}
         error={Boolean(props.error)}
-        helperText={props.error ?? '必须使用 HTTPS，不含用户名或密码，并以 / 结尾'}
+        helperText={props.error ?? remoteSetupCopy.downloadMirrorHelp}
         disabled={props.disabled}
         onChange={(event) => props.onChange(event.target.value)}
       />
@@ -193,7 +205,7 @@ function MirrorPrefixEditor(props: {
           onClick={() => props.onSave?.(normalizeRemoteMicromambaMirrorPrefix(props.value))}
           sx={{ flexShrink: 0, mt: { sm: 0.5 } }}
         >
-          保存镜像
+          {remoteSetupCopy.saveMirror}
         </Button>
       )}
     </Stack>
@@ -210,8 +222,12 @@ export function RemoteMicromambaControl({
   onDownloadMirrorPrefixSave,
   onInstall
 }: RemoteMicromambaControlProps): React.JSX.Element {
+  useUiLanguage()
   const mirrorValue = downloadMirrorPrefix ?? ''
-  const mirrorError = remoteMicromambaMirrorPrefixError(mirrorValue)
+  const mirrorValidationError = remoteMicromambaMirrorPrefixError(mirrorValue)
+  const mirrorError = mirrorValidationError
+    ? localizeRemoteSetupMessage(mirrorValidationError)
+    : null
   const size = REMOTE_ARTIFACT_SIZES[capabilityProfile?.platform.arch ?? '']
   const status = micromambaStatus(capabilityProfile, state)
   const needsConfirmation =
@@ -226,7 +242,7 @@ export function RemoteMicromambaControl({
             micromamba
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            为远程环境提供隔离的包管理能力。
+            {remoteSetupCopy.micromambaHelp}
           </Typography>
         </Stack>
         <Chip
@@ -237,9 +253,11 @@ export function RemoteMicromambaControl({
         />
       </Stack>
       <Typography variant="caption" color="text.secondary">
-        可联网时由服务器直连下载 {formatBytes(size)}，否则经本机中转至{' '}
-        {remoteMicromambaPath(runtimeRoot, MICROMAMBA_VERSION)}；
-        {downloadCapability(capabilityProfile)}。
+        {remoteSetupCopy.micromambaTransferHelp(
+          formatBytes(size),
+          remoteMicromambaPath(runtimeRoot, MICROMAMBA_VERSION),
+          downloadCapability(capabilityProfile)
+        )}
       </Typography>
       <Button
         size="small"
@@ -250,7 +268,7 @@ export function RemoteMicromambaControl({
         }
         sx={{ alignSelf: 'flex-start', minHeight: 44 }}
       >
-        {needsConfirmation ? '仍然使用' : '安装/更新 micromamba'}
+        {needsConfirmation ? remoteSetupCopy.useAnyway : remoteSetupCopy.installOrUpdateMicromamba}
       </Button>
       <Accordion
         disableGutters
@@ -275,7 +293,7 @@ export function RemoteMicromambaControl({
           }}
         >
           <Typography variant="body2" sx={{ fontWeight: 650 }}>
-            高级下载设置
+            {remoteSetupCopy.advancedDownloadSettings}
           </Typography>
         </AccordionSummary>
         <AccordionDetails sx={{ px: 0, pt: 0.5 }}>

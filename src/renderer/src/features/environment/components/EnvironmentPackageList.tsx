@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import Box from '@mui/material/Box'
 import Divider from '@mui/material/Divider'
 import Stack from '@mui/material/Stack'
@@ -17,6 +19,7 @@ export function EnvironmentPackageList({
 }: {
   packages: readonly ManagedEnvironmentPackage[]
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (packages.length === 0) return null
   return (
     <Box component="section" aria-labelledby="managed-environment-packages-title" sx={{ mt: 1.5 }}>
@@ -27,10 +30,10 @@ export function EnvironmentPackageList({
           variant="subtitle2"
           sx={{ fontWeight: 700 }}
         >
-          依赖包 · {packages.length}
+          {environmentUi.dependencies} {packages.length}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          版本来自当前平台锁文件
+          {environmentUi.versionsFromTheLockfileForThisPlatform}
         </Typography>
       </Stack>
       <Box
@@ -71,7 +74,7 @@ export function EnvironmentPackageList({
                 noWrap
                 sx={{ fontFamily: 'var(--font-mono)' }}
               >
-                {dependency.version ?? '锁定'}
+                {dependency.version ?? environmentUi.locked}
               </Typography>
             </Stack>
             <Typography variant="caption" color="text.secondary">

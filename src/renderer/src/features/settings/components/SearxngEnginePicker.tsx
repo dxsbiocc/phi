@@ -1,3 +1,5 @@
+import { settingsUi } from '../lib/settingsUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useEffect, useState } from 'react'
 import {
   Alert,
@@ -61,6 +63,7 @@ export function SearxngEnginePicker({
   catalog?: SearxngEngineOption[]
   onConnectionChange?: (reachable: boolean) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [loaded, setLoaded] = useState<SearxngDisplayEngine[]>(
     catalog ? mergeSearxngEngines(catalog) : SEARXNG_DEFAULT_ENGINES
   )
@@ -146,7 +149,12 @@ export function SearxngEnginePicker({
 
   return (
     <Stack spacing={2}>
-      {error && <Alert severity="warning">读取实例引擎失败：{error}</Alert>}
+      {error && (
+        <Alert severity="warning">
+          {settingsUi.unableToLoadInstanceEngines}
+          {error}
+        </Alert>
+      )}
       <Card>
         <Tabs
           value={selectionFilter}
@@ -156,19 +164,19 @@ export function SearxngEnginePicker({
           }}
           variant="scrollable"
           scrollButtons="auto"
-          aria-label="按选择状态筛选搜索引擎"
+          aria-label={settingsUi.filterSearchEnginesBySelection}
           sx={{ px: 3, borderBottom: 1, borderColor: 'divider' }}
         >
-          <Tab value="all" label={<TabLabel text="全部" count={loaded.length} />} />
+          <Tab value="all" label={<TabLabel text={settingsUi.all} count={loaded.length} />} />
           <Tab
             value="selected"
-            label={<TabLabel text="已选" count={selectedCount} tone="success" />}
+            label={<TabLabel text={settingsUi.selected} count={selectedCount} tone="success" />}
           />
           <Tab
             value="unselected"
             label={
               <TabLabel
-                text="未选"
+                text={settingsUi.notSelected}
                 count={availableEngines.length - selectedCount}
                 tone="warning"
               />
@@ -176,7 +184,7 @@ export function SearxngEnginePicker({
           />
           <Tab
             value="unavailable"
-            label={<TabLabel text="不可用" count={unavailableCount} tone="error" />}
+            label={<TabLabel text={settingsUi.unavailable} count={unavailableCount} tone="error" />}
           />
         </Tabs>
         <Stack
@@ -185,29 +193,29 @@ export function SearxngEnginePicker({
           sx={{ px: 3, py: 2.5, borderBottom: 1, borderColor: 'divider', alignItems: 'center' }}
         >
           <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel id="searxng-status-filter-label">默认状态</InputLabel>
+            <InputLabel id="searxng-status-filter-label">{settingsUi.defaultStatus}</InputLabel>
             <Select
               labelId="searxng-status-filter-label"
-              label="默认状态"
+              label={settingsUi.defaultStatus}
               value={statusFilter}
               onChange={(event) => {
                 setStatusFilter(event.target.value as SearxngStatusFilter)
                 setPage(0)
               }}
             >
-              <MenuItem value="all">全部状态</MenuItem>
-              <MenuItem value="default-on">默认开启</MenuItem>
-              <MenuItem value="default-off">默认关闭</MenuItem>
-              <MenuItem value="admin-required">需实例配置</MenuItem>
+              <MenuItem value="all">{settingsUi.allStatuses}</MenuItem>
+              <MenuItem value="default-on">{settingsUi.enabledByDefault}</MenuItem>
+              <MenuItem value="default-off">{settingsUi.disabledByDefault}</MenuItem>
+              <MenuItem value="admin-required">{settingsUi.instanceSetupRequired}</MenuItem>
               <MenuItem value="instance-missing" disabled={!fromInstance}>
-                实例未提供
+                {settingsUi.notProvidedByInstance}
               </MenuItem>
             </Select>
           </FormControl>
           <TextField
             fullWidth
             size="small"
-            placeholder="搜索名称或快捷词"
+            placeholder={settingsUi.searchNameOrShortcut}
             value={filter}
             onChange={(event) => {
               setFilter(event.target.value)
@@ -224,11 +232,11 @@ export function SearxngEnginePicker({
             }}
           />
           {Boolean(endpoint) && (
-            <Tooltip title="刷新实例引擎">
+            <Tooltip title={settingsUi.refreshInstanceEngines}>
               <span>
                 <IconButton
                   size="small"
-                  aria-label="刷新实例引擎"
+                  aria-label={settingsUi.refreshInstanceEngines}
                   disabled={disabled || loading || Boolean(catalog)}
                   onClick={() => void refresh()}
                 >
@@ -246,11 +254,11 @@ export function SearxngEnginePicker({
               '& th:first-of-type, & td:first-of-type': { pl: 3 },
               '& th:last-of-type, & td:last-of-type': { pr: 3 }
             }}
-            aria-label="SearXNG 搜索引擎列表"
+            aria-label={settingsUi.searXNGSearchEngines}
           >
             <TableHead>
               <TableRow sx={{ bgcolor: 'action.hover' }}>
-                <TableCell sx={{ width: 76 }}>使用</TableCell>
+                <TableCell sx={{ width: 76 }}>{settingsUi.use}</TableCell>
                 <TableCell>
                   <TableSortLabel
                     active={nameOrder !== 'original'}
@@ -260,11 +268,11 @@ export function SearxngEnginePicker({
                       setPage(0)
                     }}
                   >
-                    搜索引擎
+                    {settingsUi.searchEngine}
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ width: 100 }}>快捷词</TableCell>
-                <TableCell sx={{ width: 122 }}>状态</TableCell>
+                <TableCell sx={{ width: 100 }}>{settingsUi.shortcut}</TableCell>
+                <TableCell sx={{ width: 122 }}>{settingsUi.status}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -273,12 +281,12 @@ export function SearxngEnginePicker({
                 const unavailable = isSearxngEngineUnavailable(engine)
                 const status =
                   engine.available === false
-                    ? '实例未提供'
+                    ? settingsUi.notProvidedByInstance
                     : engine.inactive
-                      ? '需实例配置'
+                      ? settingsUi.instanceSetupRequired
                       : engine.enabled
-                        ? '默认开启'
-                        : '默认关闭'
+                        ? settingsUi.enabledByDefault
+                        : settingsUi.disabledByDefault
                 return (
                   <TableRow key={engine.name} hover>
                     <TableCell padding="checkbox">
@@ -289,7 +297,9 @@ export function SearxngEnginePicker({
                           disabled || unavailable || (checked && effectiveSelected.length === 1)
                         }
                         onChange={() => toggle(engine.name)}
-                        slotProps={{ input: { 'aria-label': `启用 ${engine.name} 引擎` } }}
+                        slotProps={{
+                          input: { 'aria-label': settingsUi.enableValueEngine(engine.name) }
+                        }}
                       />
                     </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>{engine.name}</TableCell>
@@ -311,7 +321,7 @@ export function SearxngEnginePicker({
               {result.rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
-                    没有符合条件的搜索引擎
+                    {settingsUi.noMatchingSearchEngines}
                   </TableCell>
                 </TableRow>
               )}
@@ -329,14 +339,17 @@ export function SearxngEnginePicker({
             setPage(0)
           }}
           rowsPerPageOptions={[10, 20, 50]}
-          labelRowsPerPage="每页"
+          labelRowsPerPage={settingsUi.perPage}
           labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
           sx={{ '& .MuiTablePagination-toolbar': { pl: 3 } }}
         />
       </Card>
 
       {unknownNames.length > 0 && (
-        <Alert severity="warning">实例未列出已填写的引擎：{unknownNames.join('、')}</Alert>
+        <Alert severity="warning">
+          {settingsUi.enginesNotListedByTheInstance}
+          {unknownNames.join('、')}
+        </Alert>
       )}
     </Stack>
   )

@@ -1,3 +1,4 @@
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AnalysisJupyterRuntimeStatus,
@@ -148,7 +149,7 @@ export function useAnalysisNotebookRuntime({
       setAnalysisNotebookRegistry(registry)
     } catch (error) {
       if (request !== analysisNotebooksRequestRef.current) return
-      setAnalysisNotebookError(readableErrorMessage(error, '无法读取项目 notebooks'))
+      setAnalysisNotebookError(readableErrorMessage(error, analysisCopy.readNotebooksFailed))
     } finally {
       if (request === analysisNotebooksRequestRef.current) {
         setIsLoadingAnalysisNotebooks(false)
@@ -162,7 +163,7 @@ export function useAnalysisNotebookRuntime({
         await rendererApi.initializeProjectAnalysis(cwd)
         await refreshAnalysisNotebooks()
       } catch (error) {
-        setAnalysisNotebookError(readableErrorMessage(error, '无法初始化分析目录'))
+        setAnalysisNotebookError(readableErrorMessage(error, analysisCopy.initializeAnalysisFailed))
       }
     },
     [refreshAnalysisNotebooks, rendererApi]
@@ -209,9 +210,7 @@ export function useAnalysisNotebookRuntime({
           return
         }
         setAnalysisNotebookSessionStatus(null)
-        setAnalysisNotebookSessionError(
-          readableErrorMessage(error, '无法读取 notebook kernel 状态')
-        )
+        setAnalysisNotebookSessionError(readableErrorMessage(error, analysisCopy.readKernelFailed))
       }
     },
     [getActiveAnalysisCwd, rendererApi]
@@ -226,7 +225,7 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookContentError(null)
         setAnalysisNotebookSessionError(null)
         setAnalysisNotebookSessionStatus(null)
-        showSnackbar('请先选择一个 workspace 后再打开 notebook', 'warning')
+        showSnackbar(analysisCopy.chooseWorkspace, 'warning')
         return null
       }
       setIsOpeningAnalysisNotebook(true)
@@ -243,7 +242,9 @@ export function useAnalysisNotebookRuntime({
         return file
       } catch (error) {
         if (request !== analysisNotebookOpenRequestRef.current) return null
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法打开 notebook'))
+        setAnalysisNotebookContentError(
+          readableErrorMessage(error, analysisCopy.openNotebookFailed)
+        )
         return null
       } finally {
         if (request === analysisNotebookOpenRequestRef.current) {
@@ -288,7 +289,7 @@ export function useAnalysisNotebookRuntime({
     (file: AnalysisNotebookFile, target: NotebookCellJumpTarget): boolean => {
       if (!analysisNotebookMatchesTarget(file, target)) return false
       if (!file.document.cells.some((cell) => cell.id === target.cellId)) {
-        showSnackbar('这个 cell 已不在当前 notebook 中', 'warning')
+        showSnackbar(analysisCopy.cellMissing, 'warning')
         return false
       }
 
@@ -361,7 +362,9 @@ export function useAnalysisNotebookRuntime({
           epoch === notebookScopeEpochRef.current &&
           activeAnalysisNotebookRef.current?.path === file.path
         ) {
-          setAnalysisNotebookContentError(readableErrorMessage(error, '无法保存 notebook'))
+          setAnalysisNotebookContentError(
+            readableErrorMessage(error, analysisCopy.saveNotebookFailed)
+          )
         }
         return false
       } finally {
@@ -415,7 +418,9 @@ export function useAnalysisNotebookRuntime({
             .syncAnalysisNotebookDraft(cwd, latest.path, latest.document, latest.savedRevision)
             .catch((error) => {
               if (cwd !== getActiveCwd() || epoch !== notebookScopeEpochRef.current) return
-              setAnalysisNotebookContentError(readableErrorMessage(error, '无法同步 notebook 草稿'))
+              setAnalysisNotebookContentError(
+                readableErrorMessage(error, analysisCopy.syncNotebookDraftFailed)
+              )
             })
         }, 300)
       )
@@ -435,7 +440,9 @@ export function useAnalysisNotebookRuntime({
         void refreshAnalysisNotebookSessionStatus(file)
         await refreshAnalysisNotebooks()
       } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法新建 notebook'))
+        setAnalysisNotebookContentError(
+          readableErrorMessage(error, analysisCopy.createNotebookFailed)
+        )
       } finally {
         setIsOpeningAnalysisNotebook(false)
       }
@@ -466,9 +473,11 @@ export function useAnalysisNotebookRuntime({
           setAnalysisCellExecutionError(null)
         }
         await refreshAnalysisNotebooks()
-        showSnackbar(`已删除 ${file.relativePath}`, 'success')
+        showSnackbar(analysisCopy.deletedNamed(file.relativePath), 'success')
       } catch (error) {
-        setAnalysisNotebookContentError(readableErrorMessage(error, '无法删除 notebook'))
+        setAnalysisNotebookContentError(
+          readableErrorMessage(error, analysisCopy.deleteNotebookFailed)
+        )
       }
     },
     [
@@ -490,14 +499,14 @@ export function useAnalysisNotebookRuntime({
       const listAnalysisKernels = requireRendererApiMethod(
         rendererApi,
         'listAnalysisKernels',
-        'Notebook kernel API 尚未加载，请重启 Phi 后再试'
+        analysisCopy.kernelApiUnavailable
       )
       const diagnostics = await listAnalysisKernels(cwd)
       if (request !== analysisKernelsRequestRef.current || cwd !== getActiveCwd()) return
       setAnalysisKernelDiagnostics(diagnostics)
     } catch (error) {
       if (request !== analysisKernelsRequestRef.current) return
-      setAnalysisKernelError(readableErrorMessage(error, '无法检测 Jupyter kernels'))
+      setAnalysisKernelError(readableErrorMessage(error, analysisCopy.checkKernelsFailed))
     } finally {
       if (request === analysisKernelsRequestRef.current) {
         setIsLoadingAnalysisKernels(false)
@@ -519,14 +528,14 @@ export function useAnalysisNotebookRuntime({
       const getAnalysisJupyterStatus = requireRendererApiMethod(
         rendererApi,
         'getAnalysisJupyterStatus',
-        'Jupyter Server API 尚未加载，请重启 Phi 后再试'
+        analysisCopy.jupyterApiUnavailable
       )
       const status = await getAnalysisJupyterStatus(cwd)
       if (request !== analysisJupyterRequestRef.current || cwd !== getActiveCwd()) return
       setAnalysisJupyterStatus(status)
     } catch (error) {
       if (request !== analysisJupyterRequestRef.current) return
-      setAnalysisJupyterError(readableErrorMessage(error, '无法读取 Jupyter Server 状态'))
+      setAnalysisJupyterError(readableErrorMessage(error, analysisCopy.jupyterStatusFailed))
       setAnalysisJupyterStatus(null)
     }
   }, [getActiveCwd, rendererApi])
@@ -535,7 +544,7 @@ export function useAnalysisNotebookRuntime({
     (target: NotebookCellJumpTarget): void => {
       const notebookPath = target.path ?? target.relativePath
       if (!notebookPath) {
-        showSnackbar('这个工具调用没有记录 notebook 路径', 'warning')
+        showSnackbar(analysisCopy.missingNotebookPath, 'warning')
         return
       }
 
@@ -616,14 +625,14 @@ export function useAnalysisNotebookRuntime({
         } catch (fallbackError) {
           if (request !== analysisJupyterRuntimeRequestRef.current) return
           setAnalysisJupyterRuntimeError(
-            notebookEnvironmentErrorMessage(fallbackError, '无法读取 Jupyter Server 状态')
+            notebookEnvironmentErrorMessage(fallbackError, analysisCopy.jupyterStatusFailed)
           )
           setAnalysisJupyterRuntimeStatus(null)
           return
         }
       }
       setAnalysisJupyterRuntimeError(
-        notebookEnvironmentErrorMessage(error, '无法读取 Jupyter runtime 状态')
+        notebookEnvironmentErrorMessage(error, analysisCopy.jupyterRuntimeFailed)
       )
       setAnalysisJupyterRuntimeStatus(null)
     } finally {
@@ -667,7 +676,9 @@ export function useAnalysisNotebookRuntime({
         if (status.state === 'ready' && status.hasEndpoint) await refreshAnalysisKernels()
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(notebookEnvironmentErrorMessage(error, '无法启动 Jupyter Server'))
+        setAnalysisJupyterError(
+          notebookEnvironmentErrorMessage(error, analysisCopy.startJupyterFailed)
+        )
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
@@ -698,7 +709,7 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookSessionStatus(null)
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(readableErrorMessage(error, '无法停止 Jupyter Server'))
+        setAnalysisJupyterError(readableErrorMessage(error, analysisCopy.stopJupyterFailed))
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
@@ -737,7 +748,7 @@ export function useAnalysisNotebookRuntime({
         let jupyterStatus = analysisJupyterStatus
         if (!jupyterServerIsReady(jupyterStatus)) {
           if (remoteJupyterRequiresExplicitStart(jupyterStatus)) {
-            throw new Error('请先在 Runtime 面板显式启动远程 Jupyter，再连接 notebook kernel。')
+            throw new Error(analysisCopy.remoteJupyterFirst)
           }
           setIsStartingAnalysisJupyter(true)
           setAnalysisJupyterError(null)
@@ -777,7 +788,7 @@ export function useAnalysisNotebookRuntime({
           dropUnconfirmedNotebookKernelSession(current, file.path)
         )
         setAnalysisNotebookSessionError(
-          notebookEnvironmentErrorMessage(error, '无法连接 notebook kernel')
+          notebookEnvironmentErrorMessage(error, analysisCopy.connectKernelFailed)
         )
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
@@ -813,7 +824,9 @@ export function useAnalysisNotebookRuntime({
         void refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (request !== analysisNotebookSessionRequestRef.current) return
-        setAnalysisNotebookSessionError(readableErrorMessage(error, '无法断开 notebook kernel'))
+        setAnalysisNotebookSessionError(
+          readableErrorMessage(error, analysisCopy.disconnectKernelFailed)
+        )
       } finally {
         if (request === analysisNotebookSessionRequestRef.current) {
           isStartingNotebookSessionRef.current = false
@@ -841,7 +854,7 @@ export function useAnalysisNotebookRuntime({
         await refreshAnalysisJupyterRuntimeStatus()
       } catch (error) {
         if (cwd !== getActiveCwd()) return
-        setAnalysisJupyterRuntimeError(readableErrorMessage(error, '无法停止 notebook kernel'))
+        setAnalysisJupyterRuntimeError(readableErrorMessage(error, analysisCopy.stopKernelFailed))
       } finally {
         if (cwd === getActiveCwd()) {
           setClosingRuntimeNotebookPath((current) => (current === notebookPath ? null : current))
@@ -869,7 +882,7 @@ export function useAnalysisNotebookRuntime({
         const executeAnalysisNotebookCell = requireRendererApiMethod(
           rendererApi,
           'executeAnalysisNotebookCell',
-          'Notebook cell 执行 API 尚未加载，请重启 Phi 后再试'
+          analysisCopy.executeApiUnavailable
         )
         const result = await executeAnalysisNotebookCell(cwd, file.path, executionDocument, cellId)
         if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) {
@@ -882,7 +895,7 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookSessionStatus(result.sessionStatus)
       } catch (error) {
         if (request !== analysisCellExecutionRequestRef.current) return
-        const message = notebookEnvironmentErrorMessage(error, '无法执行 notebook cell')
+        const message = notebookEnvironmentErrorMessage(error, analysisCopy.executeCellFailed)
         setAnalysisCellExecutionError(message)
         // Without this, a failed run (timeout, lost kernel connection, stale
         // session, ...) leaves the cell showing nothing at all once the
@@ -931,17 +944,17 @@ export function useAnalysisNotebookRuntime({
         const interruptAnalysisNotebookExecution = requireRendererApiMethod(
           rendererApi,
           'interruptAnalysisNotebookExecution',
-          'Notebook cell 停止 API 尚未加载，请重启 Phi 后再试'
+          analysisCopy.stopApiUnavailable
         )
         const status = await interruptAnalysisNotebookExecution(cwd, file.path)
         if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) {
           return
         }
         setAnalysisNotebookSessionStatus(status)
-        showSnackbar('已请求停止 notebook cell', 'info')
+        showSnackbar(analysisCopy.stopCellRequested, 'info')
       } catch (error) {
         if (request !== analysisCellExecutionRequestRef.current) return
-        setAnalysisCellExecutionError(readableErrorMessage(error, '无法停止 notebook cell'))
+        setAnalysisCellExecutionError(readableErrorMessage(error, analysisCopy.stopCellFailed))
       }
     },
     [getActiveCwd, rendererApi, showSnackbar]
@@ -956,7 +969,7 @@ export function useAnalysisNotebookRuntime({
       const generateAnalysisNotebookCode = requireRendererApiMethod(
         rendererApi,
         'generateAnalysisNotebookCode',
-        'Notebook AI 生成 API 尚未加载，请重启 Phi 后再试'
+        analysisCopy.aiApiUnavailable
       )
       return generateAnalysisNotebookCode(getActiveCwd(), file.path, document, input)
     },
@@ -974,7 +987,7 @@ export function useAnalysisNotebookRuntime({
       const completeAnalysisNotebookCell = requireRendererApiMethod(
         rendererApi,
         'completeAnalysisNotebookCell',
-        'Notebook code completion API 尚未加载，请重启 Phi 后再试'
+        analysisCopy.completionApiUnavailable
       )
       return completeAnalysisNotebookCell(getActiveCwd(), {
         path: file.path,
@@ -998,7 +1011,7 @@ export function useAnalysisNotebookRuntime({
       const formatAnalysisNotebookCell = requireRendererApiMethod(
         rendererApi,
         'formatAnalysisNotebookCell',
-        'Notebook code formatting API 尚未加载，请重启 Phi 后再试'
+        analysisCopy.formatApiUnavailable
       )
       return formatAnalysisNotebookCell(getActiveCwd(), {
         path: file.path,
@@ -1059,9 +1072,7 @@ export function useAnalysisNotebookRuntime({
       ) {
         if (activeAnalysisNotebookRef.current?.path === current.path) {
           setActiveAnalysisNotebook(current)
-          setAnalysisNotebookContentError(
-            'Notebook 的 AI 修改与尚未同步的本地编辑冲突；已保留本地内容。'
-          )
+          setAnalysisNotebookContentError(analysisCopy.aiLocalConflict)
         }
         return
       }
@@ -1130,11 +1141,7 @@ export function useAnalysisNotebookRuntime({
         )
         if (isActive) {
           setActiveAnalysisNotebook(file)
-          setAnalysisNotebookContentError(
-            conflict
-              ? 'Notebook 已在磁盘上修改，与未保存的本地内容冲突；已保留本地内容，请另存或处理冲突后再保存。'
-              : null
-          )
+          setAnalysisNotebookContentError(conflict ? analysisCopy.diskLocalConflict : null)
           if (!conflict) void refreshAnalysisNotebookSessionStatus(file)
         }
         return
@@ -1143,7 +1150,7 @@ export function useAnalysisNotebookRuntime({
         if (current && current.document.revision !== current.savedRevision) {
           if (isActive) {
             setActiveAnalysisNotebook(current)
-            setAnalysisNotebookContentError('Notebook 已在磁盘上删除；未保存的本地内容仍已保留。')
+            setAnalysisNotebookContentError(analysisCopy.notebookDeletedPreserved)
           }
           return
         }
@@ -1160,11 +1167,11 @@ export function useAnalysisNotebookRuntime({
         setAnalysisNotebookSessionStatus(null)
         setExecutingAnalysisCellId(null)
         setAnalysisCellExecutionError(null)
-        setAnalysisNotebookContentError(`Notebook 已在磁盘上删除: ${change.relativePath}`)
+        setAnalysisNotebookContentError(analysisCopy.notebookDeleted(change.relativePath))
         return
       }
 
-      setAnalysisNotebookContentError(`Notebook 已变化，但无法重新读取: ${change.message}`)
+      setAnalysisNotebookContentError(analysisCopy.notebookChangedReadFailed(change.message))
     },
     [
       analysisNotebookRegistry?.projectCwd,
@@ -1217,7 +1224,7 @@ export function useAnalysisNotebookRuntime({
         activeAnalysisNotebookRef.current?.path === current.path
       ) {
         setAnalysisNotebookContentError(
-          readableErrorMessage(error, '无法自动刷新 notebook；当前内容已保留。')
+          readableErrorMessage(error, analysisCopy.notebookRefreshFailed)
         )
       }
     }

@@ -79,7 +79,7 @@ describe('remote micromamba IPC', () => {
         hostProfileId: 'host-1',
         runtimeRoot: '/data/runtime'
       }),
-      /请求无效/
+      /Invalid micromamba installation request/
     )
     await assert.rejects(
       handler(event as never, {
@@ -88,7 +88,7 @@ describe('remote micromamba IPC', () => {
         runtimeRoot: '/data/runtime',
         confirmedWarnings: ['invented-warning']
       }),
-      /确认值无效/
+      /Invalid micromamba warning confirmation/
     )
     await assert.rejects(
       handler(event as never, {
@@ -97,7 +97,7 @@ describe('remote micromamba IPC', () => {
         runtimeRoot: '/data/runtime',
         downloadMirrorPrefix: 'https://user@example.com/'
       }),
-      /不能包含用户名或密码/
+      /must not contain a username or password/
     )
     assert.equal(calls, 0)
   })

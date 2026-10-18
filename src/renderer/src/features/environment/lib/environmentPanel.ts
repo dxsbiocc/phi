@@ -1,3 +1,5 @@
+import { environmentUi } from './environmentUi'
+import { getUiLocale } from '../../../lib/i18n'
 import type {
   EnvironmentHostDependency,
   EnvironmentHostTool,
@@ -12,7 +14,7 @@ export { formatBuildEstimate, formatEnvironmentSize } from '../../../lib/environ
 
 export type EnvironmentPanelSection = {
   id: 'managed'
-  title: '环境'
+  title: string
   items: ManagedEnvironmentEntry[]
 }
 
@@ -31,25 +33,51 @@ const SOURCE_ORDER: Record<ManagedEnvironmentSource, number> = {
 }
 
 const STATE_LABELS: Record<ManagedEnvironmentState, string> = {
-  absent: '未构建',
-  building: '构建中',
-  ready: '已就绪',
-  failed: '构建失败',
-  drifted: '需要修复'
+  get absent() {
+    return environmentUi.notBuilt
+  },
+  get building() {
+    return environmentUi.building2
+  },
+  get ready() {
+    return environmentUi.ready
+  },
+  get failed() {
+    return environmentUi.buildFailed
+  },
+  get drifted() {
+    return environmentUi.repairNeeded
+  }
 }
 
 const SOURCE_LABELS: Record<ManagedEnvironmentSource, string> = {
-  official: 'Phi 官方',
-  plugin: '插件',
-  project: '当前项目',
-  orphaned: '孤立环境'
+  get official() {
+    return environmentUi.phiOfficial
+  },
+  get plugin() {
+    return environmentUi.plugin
+  },
+  get project() {
+    return environmentUi.currentProject
+  },
+  get orphaned() {
+    return environmentUi.orphanedEnvironment
+  }
 }
 
 const CONSUMER_KIND_LABELS: Record<ManagedEnvironmentConsumerKind, string> = {
-  skill: '技能',
-  agent: '智能体',
-  plugin: '插件',
-  wrapper: '工作流',
+  get skill() {
+    return environmentUi.skill
+  },
+  get agent() {
+    return environmentUi.agent
+  },
+  get plugin() {
+    return environmentUi.plugin
+  },
+  get wrapper() {
+    return environmentUi.workflow
+  },
   notebook: 'Notebook',
   kernel: 'Kernel'
 }
@@ -130,7 +158,7 @@ function sortedManaged(items: readonly ManagedEnvironmentEntry[]): ManagedEnviro
   return [...items].sort((left, right) => {
     const sourceDifference = SOURCE_ORDER[left.source] - SOURCE_ORDER[right.source]
     if (sourceDifference !== 0) return sourceDifference
-    return (left.label ?? left.ref).localeCompare(right.label ?? right.ref, 'zh-CN')
+    return (left.label ?? left.ref).localeCompare(right.label ?? right.ref, getUiLocale())
   })
 }
 
@@ -138,7 +166,7 @@ function sortedManaged(items: readonly ManagedEnvironmentEntry[]): ManagedEnviro
 export function buildEnvironmentSections(
   managed: readonly ManagedEnvironmentEntry[]
 ): EnvironmentPanelSections {
-  return [{ id: 'managed', title: '环境', items: sortedManaged(managed) }]
+  return [{ id: 'managed', title: environmentUi.environments, items: sortedManaged(managed) }]
 }
 
 export function managedEnvironmentStateLabel(state: ManagedEnvironmentState): string {

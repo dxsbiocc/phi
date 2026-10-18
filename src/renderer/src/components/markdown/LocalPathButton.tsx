@@ -1,3 +1,5 @@
+import { markdownCopy } from './markdownUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Tooltip } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { directoryIconForPath, fileIconForPath, PhiIcons } from '../../icons'
@@ -22,6 +24,7 @@ export function LocalPathButton({
   pathKind?: LocalPathKind
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const remoteProject = useRemoteProjectFileContext()
   const remoteUri =
     remoteProject?.hostAlias && remotePathInsideRoot(absolutePath, remoteProject.canonicalRoot)
@@ -51,9 +54,9 @@ export function LocalPathButton({
       label:
         remoteProject || onOpenLocalPath
           ? pathKind === 'directory'
-            ? '打开目录'
-            : '打开文件'
-          : '在文件管理器中显示',
+            ? markdownCopy.openDirectory
+            : markdownCopy.openFile
+          : markdownCopy.reveal,
       icon: <LocalFileIcon sx={{ fontSize: 16 }} />,
       disabled: Boolean(remoteProject && !remoteUri),
       onSelect: openPath
@@ -62,7 +65,7 @@ export function LocalPathButton({
       ? [
           {
             id: 'reveal',
-            label: '在文件管理器中显示',
+            label: markdownCopy.reveal,
             icon: <PhiIcons.entity.folder sx={{ fontSize: 16 }} />,
             onSelect: reveal
           }
@@ -70,13 +73,13 @@ export function LocalPathButton({
       : []),
     {
       id: 'copy-path',
-      label: '复制路径',
+      label: markdownCopy.copyPath,
       icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
       onSelect: () => navigator.clipboard.writeText(target)
     },
     {
       id: 'copy-name',
-      label: pathKind === 'directory' ? '复制目录名' : '复制文件名',
+      label: pathKind === 'directory' ? markdownCopy.copyDirectoryName : markdownCopy.copyFileName,
       icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
       onSelect: () => navigator.clipboard.writeText(localPathLabel('', absolutePath))
     }
@@ -105,7 +108,7 @@ export function LocalPathButton({
           aria-expanded={interactions.position !== null}
           onContextMenu={interactions.onContextMenu}
           onKeyDown={interactions.onKeyDown}
-          aria-label={`${pathKind === 'directory' ? '打开目录' : '打开文件'} ${absolutePath}`}
+          aria-label={`${pathKind === 'directory' ? markdownCopy.openDirectory : markdownCopy.openFile} ${absolutePath}`}
           onClick={() => {
             void Promise.resolve(openPath()).catch((error) => {
               console.error('Failed to open local path:', error)

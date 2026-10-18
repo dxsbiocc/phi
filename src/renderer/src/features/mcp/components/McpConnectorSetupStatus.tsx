@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Alert, CircularProgress, Stack, Typography } from '@mui/material'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import { connectorSetupActive, connectorSetupLabel } from '../lib/connectorSetupPresentation'
@@ -7,6 +9,8 @@ export function McpConnectorSetupStatus({
 }: {
   setup?: McpConnectorSetupProgress
 }): React.JSX.Element | null {
+  useUiLanguage()
+
   if (!setup || setup.phase === 'installed' || setup.phase === 'removed') return null
   const working = connectorSetupActive(setup)
   return (
@@ -20,7 +24,7 @@ export function McpConnectorSetupStatus({
         <Typography variant="body2">{connectorSetupLabel(setup.phase)}</Typography>
         {setup.error && <Typography variant="body2">{setup.error}</Typography>}
         {setup.phase === 'starting' && (
-          <Typography variant="body2">首次启动可能需要下载所需文件，请保持网络连接。</Typography>
+          <Typography variant="body2">{connectorCopy.firstStartDownload}</Typography>
         )}
       </Stack>
     </Alert>

@@ -2,7 +2,8 @@ import type {
   WrapperCompositionCatalogItem,
   WrapperCompositionManifest
 } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { parseWrapperCompositionId, wrapperTierLabel } from './wrapperView'
+import { resourceCategorySearchTerms } from '../../../lib/resourceUi'
+import { parseWrapperCompositionId, wrapperTierCategory } from './wrapperView'
 
 /** Cached bundled packages stay discoverable without crowding the user's chosen resources. */
 export function selectedWrappers(
@@ -19,9 +20,16 @@ export function filterWrappers<T extends WrapperCompositionManifest>(
   if (!normalizedQuery) return [...catalog]
   return catalog.filter((entry) => {
     const { provider, tier, name } = parseWrapperCompositionId(entry.id)
-    return [entry.id, entry.name, entry.summary, provider, tier, name, wrapperTierLabel(tier)].some(
-      (value) => value.toLowerCase().includes(normalizedQuery)
-    )
+    return [
+      entry.id,
+      entry.name,
+      entry.summary,
+      provider,
+      tier,
+      name,
+      wrapperTierCategory(tier),
+      ...resourceCategorySearchTerms(wrapperTierCategory(tier))
+    ].some((value) => value.toLowerCase().includes(normalizedQuery))
   })
 }
 

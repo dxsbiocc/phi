@@ -1,3 +1,4 @@
+import { filePreviewCopy } from './filePreviewUiCopy'
 import { create, type StoreApi, type UseBoundStore } from 'zustand'
 import { textContentsEqual } from './textFiles'
 import { loadTextFileDrafts, saveTextFileDrafts } from './textFileDraftPersistence'
@@ -57,7 +58,7 @@ export function createTextFileDraftStore(
               ...state.drafts,
               [path]: {
                 ...existing,
-                error: '内容超过文本编辑大小上限（320 KB），请缩短后再编辑。'
+                error: filePreviewCopy.textLimit
               }
             }
           }
@@ -117,7 +118,7 @@ export function createTextFileDraftStore(
       store.setState({ drafts: loadTextFileDrafts(storage) })
     } catch (error) {
       store.setState({
-        persistenceError: error instanceof Error ? error.message : '无法读取本地草稿'
+        persistenceError: error instanceof Error ? error.message : filePreviewCopy.readDraftFailed
       })
     }
     store.subscribe((state, previous) => {
@@ -127,8 +128,7 @@ export function createTextFileDraftStore(
         if (state.persistenceError) store.setState({ persistenceError: null })
       } catch (error) {
         store.setState({
-          persistenceError:
-            error instanceof Error ? error.message : '无法保存本地草稿，请手动保存文件'
+          persistenceError: error instanceof Error ? error.message : filePreviewCopy.saveDraftFailed
         })
       }
     })

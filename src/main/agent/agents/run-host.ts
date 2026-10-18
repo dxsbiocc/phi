@@ -1,4 +1,5 @@
 import type { PersistedToolOutput } from '../session/session-store'
+import type { UiLanguage } from '../../../shared/uiLanguage'
 import {
   agentRunNotice,
   isAgentRunEndState,
@@ -35,6 +36,7 @@ export interface AgentRunHostDeps {
   sendToWindow: (payload: Record<string, unknown>) => void
   isAppFocused: () => boolean
   showOsNotification: (notification: { title: string; body: string }) => void
+  getUiLanguage?: () => UiLanguage
   /** Decides whether to wake the main agent (see `run-continue.ts`); a throw here is contained. */
   continueConversation?: (phiSessionId: string, event: AgentRunFinishedEvent) => void
   /** Strips secrets from text that came out of an agent session. */
@@ -223,7 +225,7 @@ export function agentRunHostHandlers(
       // Someone who just stopped a run knows it ended; only unexpected endings pop up.
       if (event.state !== 'cancelled' && !deps.isAppFocused()) {
         try {
-          deps.showOsNotification(agentRunNotice(event))
+          deps.showOsNotification(agentRunNotice(event, deps.getUiLanguage?.()))
         } catch {
           // Notifications are best-effort (unsupported platform, permission denied).
         }

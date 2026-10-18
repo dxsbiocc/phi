@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Alert, Button, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material'
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
@@ -14,27 +16,29 @@ export function SessionExportDialog({
   onClose: () => void
   onExport: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <ConfirmationDialog open={session !== null} onClose={busy ? undefined : onClose}>
-      <DialogTitle>导出完整会话</DialogTitle>
+      <DialogTitle>{chatCopy.exportFullConversation}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1.5 }}>
-          将「{session?.name || session?.firstMessage || '未命名会话'}」导出到您选择的文件夹。 Phi
-          会在其中创建独立的会话备份目录。
+          {chatCopy.exportConversationDescription(
+            session?.name || session?.firstMessage || chatCopy.untitledConversation
+          )}
         </Typography>
         <Alert severity="warning">
-          此备份包含完整对话、思考内容、工具输出、图片及运行时历史，可能含有密钥或其他敏感信息。请妥善保存。
+          {chatCopy.thisBackupIncludesTheFullConversationThinkingToolOutputImages}
         </Alert>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-          项目工作目录中的文件不会被复制。导出结果用于查看和备份，目前不能直接导入 Phi。
+          {chatCopy.filesInTheProjectWorkingDirectoryAreExcludedTheExport}
         </Typography>
       </DialogContent>
       <DialogActions>
         <Button disabled={busy} onClick={onClose}>
-          取消
+          {chatCopy.cancel}
         </Button>
         <Button disabled={busy} variant="contained" onClick={onExport}>
-          {busy ? '正在导出…' : '选择位置并导出'}
+          {busy ? chatCopy.exporting : chatCopy.chooseLocationAndExport}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

@@ -38,10 +38,13 @@ export async function assertSafeBundleDestination(
     ],
     { cwd: '.', signal, timeoutMs: 10_000, maxOutputBytes: 16 * 1024 }
   )
-  if (result.code === 42) throw new Error('远程 Skill bundle 目标包含不安全的符号链接')
+  if (result.code === 42)
+    throw new Error('Remote Skill bundle destination contains an unsafe symlink')
   if (result.code !== 0) {
     const detail = `${result.stderr}\n${result.stdout}`.trim()
-    throw new Error(`远程 Skill bundle 目录无法安全准备：${detail || `exit code ${result.code}`}`)
+    throw new Error(
+      `Unable to prepare the remote Skill bundle directory safely: ${detail || `exit code ${result.code}`}`
+    )
   }
 }
 
@@ -56,5 +59,6 @@ export async function removeRemoteSkillBundle(
     timeoutMs: 30_000,
     maxOutputBytes: 16 * 1024
   })
-  if (result.code !== 0) throw new Error(`无法清理远程 Skill bundle：${result.stderr.trim()}`)
+  if (result.code !== 0)
+    throw new Error(`Unable to clean up the remote Skill bundle: ${result.stderr.trim()}`)
 }

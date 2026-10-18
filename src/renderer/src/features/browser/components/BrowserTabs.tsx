@@ -1,3 +1,5 @@
+import { browserUi } from '../lib/browserUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import type { ReactNode } from 'react'
 import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -25,6 +27,7 @@ export interface BrowserTabsProps {
 }
 
 export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       data-phi-browser-tabs="true"
@@ -42,7 +45,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
     >
       <Box
         role="tablist"
-        aria-label="浏览器标签页"
+        aria-label={browserUi.browserTabs}
         sx={{
           flex: '1 1 auto',
           minWidth: 0,
@@ -62,7 +65,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
             data-phi-browser-empty-tab-title="true"
             sx={{ ...workspacePanelText.itemTitle, px: 1, color: 'text.secondary' }}
           >
-            新标签页
+            {browserUi.newTab}
           </Typography>
         ) : null}
         {props.tabs.map((tab, index) => {
@@ -171,7 +174,7 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                     <CircularProgress
                       size={13}
                       thickness={5}
-                      aria-label={`正在加载 ${label}`}
+                      aria-label={browserUi.loadingValue(label)}
                       sx={{ color: 'primary.main' }}
                     />
                   ) : (
@@ -192,11 +195,11 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
                   {label}
                 </Typography>
               </Box>
-              <Tooltip title={`关闭 ${label}`} arrow>
+              <Tooltip title={browserUi.closeValue(label)} arrow>
                 <span style={{ display: 'inline-flex', flexShrink: 0 }}>
                   <IconButton
                     type="button"
-                    aria-label={`关闭 ${label}`}
+                    aria-label={browserUi.closeValue(label)}
                     disabled={props.disabled}
                     size="small"
                     onClick={(event) => {
@@ -233,11 +236,11 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
           )
         })}
       </Box>
-      <Tooltip title="新建标签页" arrow>
+      <Tooltip title={browserUi.newTab2} arrow>
         <span style={{ display: 'inline-flex', flexShrink: 0 }}>
           <IconButton
             type="button"
-            aria-label="新建标签页"
+            aria-label={browserUi.newTab2}
             disabled={props.disabled}
             size="small"
             onClick={props.onNewTab}

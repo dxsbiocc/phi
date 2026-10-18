@@ -285,18 +285,18 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const url = stringValue(record.url)
       const auth = stringValue(record.auth)
       if (!id || !url.startsWith('https://') || !['none', 'oauth', 'header'].includes(auth)) {
-        throw new Error('该连接器需要授权，暂无法读取实际工具列表')
+        throw new Error('This Connector requires authorization before its tools can be read')
       }
       if (auth === 'oauth' && !mcpOAuthAuthorizationOrigin(id, url)) {
-        throw new Error('该连接器尚不支持登录状态查询')
+        throw new Error('This Connector does not support sign-in status checks')
       }
       const context = auth === 'oauth' ? await getContext() : undefined
       if (context && !context.auth.hasMcpOAuth(url)) {
-        throw new Error(`请先授权登录 ${id}`)
+        throw new Error(`Sign in to ${id} first`)
       }
       const apiKey = auth === 'header' ? await requestHost('mcp.featuredApiKey', { id }) : undefined
       if (auth === 'header' && (typeof apiKey !== 'string' || !apiKey)) {
-        throw new Error(`请先保存 ${id} API key 并添加连接器`)
+        throw new Error(`Save the ${id} API key and add the Connector first`)
       }
       return listFeaturedMcpTools(
         id,
@@ -320,8 +320,10 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const record = isRecord(params) ? params : {}
       const connector = readCustomRemoteMcpConnector(stringValue(record.name))
       const attemptId = stringValue(record.attemptId)
-      if (!attemptId || attemptId.length > 100) throw new Error('连接器授权请求无效')
-      if (pendingCustomMcpAuth.has(connector.name)) throw new Error('该连接器正在授权')
+      if (!attemptId || attemptId.length > 100)
+        throw new Error('Invalid Connector authorization request')
+      if (pendingCustomMcpAuth.has(connector.name))
+        throw new Error('Authorization for this Connector is already in progress')
       const pending = {
         attemptId,
         connector,
@@ -347,7 +349,7 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const name = stringValue(record.name)
       const pending = pendingCustomMcpAuth.get(name)
       if (pending?.attemptId === stringValue(record.attemptId)) {
-        pending.cancel.abort('授权已取消')
+        pending.cancel.abort('Authorization cancelled')
         pendingCustomMcpAuth.delete(name)
       }
       return undefined
@@ -357,7 +359,7 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const name = stringValue(record.name)
       const pending = pendingCustomMcpAuth.get(name)
       if (!pending?.endpoints || pending.attemptId !== stringValue(record.attemptId)) {
-        throw new Error('连接器授权准备已失效，请重试')
+        throw new Error('Connector authorization preparation expired. Try again.')
       }
       try {
         const connector = readCustomRemoteMcpConnector(name)
@@ -365,9 +367,9 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
           JSON.stringify(connector) !== JSON.stringify(pending.connector) ||
           connector.url !== record.serverUrl
         ) {
-          throw new Error('连接器配置已变化，请重新授权')
+          throw new Error('Connector configuration changed. Authorize again.')
         }
-        if (pending.cancel.signal.aborted) throw new Error('授权已取消')
+        if (pending.cancel.signal.aborted) throw new Error('Authorization cancelled')
         const ctx = await getContext()
         await authorizeFeaturedMcp(
           connector.url,
@@ -386,19 +388,28 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
               JSON.stringify(readCustomRemoteMcpConnector(name)) !==
               JSON.stringify(pending.connector)
             ) {
-              throw new Error('连接器配置已变化，请重新授权')
+              throw new Error('Connector configuration changed. Authorize again.')
             }
           }
         )
       } catch (error) {
         const message =
           error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-        if (pending.cancel.signal.aborted || message.includes('授权已取消'))
-          throw new Error('授权已取消')
-        if (message.includes('授权已超时')) throw new Error('授权已超时')
-        if (message === '连接器配置已变化，请重新授权') throw new Error(message)
+        if (
+          pending.cancel.signal.aborted ||
+          message.includes('Authorization cancelled') ||
+          message.includes('授权已取消')
+        )
+          throw new Error('Authorization cancelled')
+        if (message.includes('Authorization timed out') || message.includes('授权已超时'))
+          throw new Error('Authorization timed out')
+        if (
+          message === 'Connector configuration changed. Authorize again.' ||
+          message === '连接器配置已变化，请重新授权'
+        )
+          throw new Error('Connector configuration changed. Authorize again.')
         // Provider errors can echo submitted client credentials. Keep those in neither IPC nor logs.
-        throw new Error('连接器授权失败，请检查客户端信息并重试')
+        throw new Error('Connector authorization failed. Check the client details and try again.')
       } finally {
         if (pendingCustomMcpAuth.get(name) === pending) pendingCustomMcpAuth.delete(name)
       }
@@ -409,14 +420,14 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const id = stringValue(record.id)
       const url = stringValue(record.url)
       if (!mcpOAuthAuthorizationOrigin(id, url)) {
-        throw new Error('该连接器尚不支持登录状态查询')
+        throw new Error('This Connector does not support sign-in status checks')
       }
       const { auth } = await getContext()
       return auth.hasMcpOAuthToken(url)
     }
     case 'mcp.cancelFeaturedAuth': {
       const id = isRecord(params) ? stringValue(params.id) : ''
-      featuredAuthAbort.get(id)?.abort('授权已取消')
+      featuredAuthAbort.get(id)?.abort('Authorization cancelled')
       return undefined
     }
     case 'mcp.authorizeFeatured': {
@@ -424,7 +435,7 @@ export async function handleMcpRequest(method: string, params: unknown): Promise
       const id = stringValue(record.id)
       const url = stringValue(record.url)
       if (!mcpOAuthAuthorizationOrigin(id, url)) {
-        throw new Error('该连接器尚不支持 OAuth 授权')
+        throw new Error('This Connector does not support OAuth authorization')
       }
       const ctx = await getContext()
       const cancel = new AbortController()

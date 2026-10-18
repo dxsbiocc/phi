@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Button, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material'
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
@@ -13,21 +15,21 @@ export function RemoteNextflowInstallDialog({
   onClose: () => void
   onConfirm: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <ConfirmationDialog open={open} onClose={() => !installing && onClose()}>
-      <DialogTitle>自动安装 Nextflow</DialogTitle>
+      <DialogTitle>{remoteSetupCopy.installNextflow}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mt: 1 }}>
-          Phi 将从 Nextflow 官方安装地址获取安装脚本，在所选服务器的当前账号下执行，并把程序放入
-          ~/.local/bin。不会使用 sudo，也不会安装 Java、Slurm 或容器运行时。
+          {remoteSetupCopy.nextflowInstallConsent}
         </Typography>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={installing}>
-          取消
+          {remoteSetupCopy.cancel}
         </Button>
         <Button variant="contained" onClick={onConfirm} disabled={installing}>
-          确认安装
+          {remoteSetupCopy.confirmInstall}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

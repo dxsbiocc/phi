@@ -1,3 +1,5 @@
+import { navigationCopy } from '../../lib/navigationCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { memo, useCallback, useEffect, useState } from 'react'
 import {
   Box,
@@ -83,6 +85,7 @@ function ProjectRowImpl({
   compactHoverPreview = false,
   onPreviewInteractionChange
 }: ProjectRowProps): React.JSX.Element {
+  useUiLanguage()
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
@@ -309,10 +312,10 @@ function ProjectRowImpl({
                 transition: 'opacity 0.15s ease'
               }}
             >
-              <Tooltip title="更多" disableFocusListener>
+              <Tooltip title={navigationCopy.more} disableFocusListener>
                 <IconButton
                   size="small"
-                  aria-label="更多项目操作"
+                  aria-label={navigationCopy.moreProjectActions}
                   sx={{ width: 32, height: 32, p: 0.5 }}
                   onClick={(event) => {
                     event.stopPropagation()
@@ -323,11 +326,11 @@ function ProjectRowImpl({
                   <MoreHorizIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="新对话" disableFocusListener>
+              <Tooltip title={navigationCopy.newConversation} disableFocusListener>
                 <span>
                   <IconButton
                     size="small"
-                    aria-label="新建项目对话"
+                    aria-label={navigationCopy.newProjectConversation}
                     sx={{ width: 32, height: 32, p: 0.5 }}
                     onClick={(event) => {
                       event.stopPropagation()
@@ -383,7 +386,7 @@ function ProjectRowImpl({
           }}
         >
           <DeleteIcon aria-hidden fontSize="small" />
-          删除项目
+          {navigationCopy.deleteProject}
         </MenuItem>
       </Menu>
 
@@ -394,7 +397,7 @@ function ProjectRowImpl({
             color="text.secondary"
             sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
           >
-            正在读取对话…
+            {navigationCopy.loadingConversations}
           </Typography>
         )}
         {sessionsReady && orderedSessions.length > 0 && (
@@ -422,7 +425,7 @@ function ProjectRowImpl({
             color="text.secondary"
             sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
           >
-            暂无对话
+            {navigationCopy.noConversationsYet}
           </Typography>
         )}
       </Collapse>

@@ -1,3 +1,4 @@
+import { filePreviewCopy } from './filePreviewUiCopy'
 import type { FileTreeEntry } from '../../../types'
 import type { WorkspaceTextSaveResult } from '../../../../../shared/workspaceFileOperations'
 import type { RemoteProjectFileContextValue } from '../../../lib/remoteProjectFileContext'
@@ -53,16 +54,16 @@ export function fileTreeEntryActions(
 }
 
 export function fileTreeRenameError(name: string): string {
-  if (!name.trim()) return '请输入名称'
-  if (/\uFFFD|[\uD800-\uDFFF]/u.test(name)) return '名称包含无效字符'
-  if (new TextEncoder().encode(name).length > 255) return '名称过长，请缩短到 255 字节以内'
+  if (!name.trim()) return filePreviewCopy.nameRequired
+  if (/\uFFFD|[\uD800-\uDFFF]/u.test(name)) return filePreviewCopy.nameInvalid
+  if (new TextEncoder().encode(name).length > 255) return filePreviewCopy.nameTooLong
   if (
     name === '.' ||
     name === '..' ||
     /[/\\]/.test(name) ||
     [...name].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
   ) {
-    return '名称不能包含路径分隔符、控制字符或使用 . 和 ..'
+    return filePreviewCopy.nameDisallowed
   }
   return ''
 }

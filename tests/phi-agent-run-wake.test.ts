@@ -457,3 +457,28 @@ test('a run without a card is still announced, just not completed', async () => 
     true
   )
 })
+
+test('native agent notifications follow live language without changing event IDs or task content', async () => {
+  let language: 'en' | 'zh-CN' = 'en'
+  const { calls, handlers } = harness({ isAppFocused: () => false, getUiLanguage: () => language })
+  for (const next of ['en', 'zh-CN', 'en'] as const) {
+    language = next
+    await handlers[AGENT_RUN_HOST_METHODS.finished](finishedParams())
+  }
+  assert.deepEqual(
+    calls.notifications.map((item) => item.title),
+    [
+      'Wrapper background task completed',
+      'Wrapper 后台任务已完成',
+      'Wrapper background task completed'
+    ]
+  )
+  const events = calls.appended
+    .filter((item) => item.event.type === 'agent_run_finished')
+    .map((item) => item.event)
+  assert.equal(events.length, 3)
+  assert.deepEqual(events[0], events[1])
+  assert.deepEqual(events[1], events[2])
+  assert.ok(calls.sent.every((item) => item.eventId === 'e1'))
+  assert.ok(calls.notifications.every((item) => item.body.includes('align reads')))
+})

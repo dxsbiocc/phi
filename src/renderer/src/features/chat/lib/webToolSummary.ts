@@ -1,3 +1,4 @@
+import { chatCopy } from './chatCopy'
 export type WebToolSummary = { headline: string; query?: string }
 
 export function webToolSummary(toolName: string, argsJson: string): WebToolSummary | null {
@@ -14,7 +15,7 @@ export function webToolSummary(toolName: string, argsJson: string): WebToolSumma
   if (toolName === 'web_search') {
     const query = typeof args.query === 'string' ? args.query : args.q
     return typeof query === 'string' && query.trim()
-      ? { headline: `网页搜索：${query.trim()}`, query: query.trim() }
+      ? { headline: chatCopy.webSearchValue(query.trim()), query: query.trim() }
       : null
   }
 
@@ -32,11 +33,11 @@ export function webToolSummary(toolName: string, argsJson: string): WebToolSumma
     .find((value): value is string => Boolean(value))
   if (query) {
     return {
-      headline: `${isPubMed ? 'PubMed' : url.hostname} 检索：${query}`,
+      headline: chatCopy.valueSearchValue(isPubMed ? 'PubMed' : url.hostname, query),
       query
     }
   }
   const pmid = isPubMed ? /^\/(\d+)\/?$/.exec(url.pathname)?.[1] : undefined
-  if (pmid) return { headline: `PubMed 文献：PMID ${pmid}` }
-  return { headline: `读取网页：${url.hostname}${url.pathname}` }
+  if (pmid) return { headline: chatCopy.pubMedArticlePMIDValue(pmid) }
+  return { headline: chatCopy.readWebpageValueValue(url.hostname, url.pathname) }
 }

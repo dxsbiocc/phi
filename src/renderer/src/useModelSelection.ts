@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModelOption, ProviderAuthStatus, ThinkingLevel } from './types'
+import { appCopy } from './lib/appCopy'
 
 const defaultSessionKey = (): string => ''
 
@@ -33,7 +34,9 @@ export function modelOptionFromSelection(
       (item) => item.providerId === selection.providerId && item.modelId === selection.modelId
     ) ?? {
       ...selection,
-      name: `${selection.providerId}/${selection.modelId}（不可用）`,
+      get name() {
+        return appCopy.unavailableModel(`${selection.providerId}/${selection.modelId}`)
+      },
       thinkingLevels: []
     }
   )
@@ -183,7 +186,7 @@ export function useModelSelection(
       } catch (error) {
         if (!isCurrent()) return
         setSelectedModel(pending.confirmedModel)
-        showSnackbarError(error, '切换模型失败')
+        showSnackbarError(error, appCopy.switchModelFailed)
       } finally {
         // A refresh failure does not turn an accepted switch into a failure.
         await finishSelection(pending)
@@ -209,7 +212,7 @@ export function useModelSelection(
       } catch (error) {
         if (!isCurrent()) return
         setThinkingLevel(pending.confirmedThinking)
-        showSnackbarError(error, '切换思考等级失败')
+        showSnackbarError(error, appCopy.switchThinkingFailed)
       } finally {
         await finishSelection(pending)
       }

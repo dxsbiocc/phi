@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement, createRef } from 'react'
@@ -31,6 +32,8 @@ function remoteAgent(
     contentHash: 'a'.repeat(64)
   }
 }
+
+setUiLanguage('zh-CN')
 
 test('agent menus show server trust badges, diagnostics and disable untrusted selection', () => {
   const pending = remoteAgent('pending')
@@ -163,6 +166,6 @@ test('manual agent references ignore pending entries and use an available same-n
   assert.deepEqual(parseInputInvocationReferences('/agent:Reviewer', [], [pending]).references, [])
   assert.deepEqual(
     parseInputInvocationReferences('/agent:Reviewer', [], [pending, global]).references,
-    [{ kind: 'agent', name: 'Reviewer', text: '调用智能体：Reviewer' }]
+    [{ kind: 'agent', name: 'Reviewer', text: '/agent:Reviewer' }]
   )
 })

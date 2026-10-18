@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { connectorJobCopy } from '../lib/connectorJobCopy'
 import { Box, Button, Link, Paper, Stack, Typography } from '@mui/material'
 
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
@@ -18,13 +20,17 @@ export function ConnectorJobSetupGuide({
   onOpenTerminal: (command: string) => void
   onRetry: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const commands = setup.setupHint?.commands ?? []
-  const agentLabel = setup.failureKind === 'needs-setup' ? '交给 Agent 处理' : '交给 Agent 排查'
+  const agentLabel =
+    setup.failureKind === 'needs-setup'
+      ? connectorJobCopy.askAgentSetup
+      : connectorJobCopy.askAgentInvestigate
 
   return (
-    <Stack spacing={1.25} aria-label="连接器处理指南">
+    <Stack spacing={1.25} aria-label={connectorJobCopy.guide}>
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        怎么处理
+        {connectorJobCopy.nextSteps}
       </Typography>
       <Paper variant="outlined" sx={{ p: 1.5 }}>
         <Stack spacing={0.75} sx={{ alignItems: 'flex-start' }}>
@@ -32,26 +38,28 @@ export function ConnectorJobSetupGuide({
             {agentLabel}
           </Button>
           <Typography variant="body2" color="text.secondary">
-            新建对话并把排查信息放进输入框。内容不会自动发送，你可以先检查再发送。
+            {connectorJobCopy.agentDraft}
           </Typography>
         </Stack>
       </Paper>
       <Paper variant="outlined" sx={{ p: 1.5 }}>
         <Typography variant="subtitle2" sx={{ mb: 0.75, fontWeight: 700 }}>
-          自己手动处理
+          {connectorJobCopy.manualSetup}
         </Typography>
         <Box component="ol" sx={{ pl: 2.5, my: 0 }}>
           <Typography component="li" variant="body2" sx={{ mb: 1 }}>
-            看上面的“进程输出”，确认服务自己的说明。
+            {connectorJobCopy.checkOutput}
           </Typography>
           <Box component="li" sx={{ mb: 1 }}>
             <Typography variant="body2" sx={{ mb: commands.length ? 0.75 : 0 }}>
-              {commands.length ? '在终端里完成它要求的初始化：' : '运行服务文档里的初始化命令。'}
+              {commands.length
+                ? connectorJobCopy.initializeCommands
+                : connectorJobCopy.initializeDocs}
               {setup.setupHint?.readmeUrl ? (
                 <>
                   {' '}
                   <Link href={setup.setupHint.readmeUrl} target="_blank" rel="noreferrer">
-                    查看 README
+                    {connectorJobCopy.viewReadme}
                   </Link>
                 </>
               ) : null}
@@ -66,21 +74,21 @@ export function ConnectorJobSetupGuide({
                 </Box>
                 <Stack direction="row" spacing={0.75} sx={{ mt: 0.5 }}>
                   <Button size="small" onClick={() => onCopyCommand(command)}>
-                    复制命令
+                    {connectorJobCopy.copyCommand}
                   </Button>
                   <Button size="small" onClick={() => onOpenTerminal(command)}>
-                    在终端打开
+                    {connectorJobCopy.openTerminal}
                   </Button>
                 </Stack>
               </Box>
             ))}
           </Box>
           <Typography component="li" variant="body2">
-            完成后回到这里重试。
+            {connectorJobCopy.retryAfterSetup}
           </Typography>
         </Box>
         <Button sx={{ mt: 1 }} disabled={retrying} onClick={onRetry}>
-          我已完成，重试
+          {connectorJobCopy.setupDoneRetry}
         </Button>
       </Paper>
     </Stack>

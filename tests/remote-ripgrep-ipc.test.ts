@@ -71,7 +71,7 @@ describe('remote ripgrep IPC', () => {
         hostProfileId: 'host-1',
         runtimeRoot: '/data/runtime'
       }),
-      /请求无效/
+      /Invalid ripgrep request/
     )
     await assert.rejects(
       handler(event as never, {
@@ -81,7 +81,7 @@ describe('remote ripgrep IPC', () => {
         runtimeRoot: '/data/runtime',
         confirmedWarnings: ['invented-warning']
       }),
-      /请求无效/
+      /Invalid ripgrep request/
     )
     assert.equal(calls, 0)
   })

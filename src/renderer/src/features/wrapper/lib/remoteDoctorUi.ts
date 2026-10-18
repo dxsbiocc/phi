@@ -1,3 +1,4 @@
+import { remoteSetupCopy } from './remoteSetupCopy'
 import type {
   RemoteDoctorOptions,
   RemoteDoctorReport
@@ -106,13 +107,14 @@ export function remoteHostCheckPresentation(
   targetKey: string
 ): { tone: RemoteHostCheckTone; message: string } {
   if (!state || state.phase === 'idle' || state.key !== targetKey) {
-    return { tone: 'idle', message: '测试连接' }
+    return { tone: 'idle', message: remoteSetupCopy.testConnection }
   }
-  if (state.phase === 'running') return { tone: 'running', message: '正在测试连接…' }
+  if (state.phase === 'running')
+    return { tone: 'running', message: remoteSetupCopy.testingConnection }
   if (state.phase === 'failed') return { tone: 'error', message: state.message }
   const ssh = state.report.checks.find((check) => check.id === 'ssh')
   if (ssh?.status === 'ok') {
-    return { tone: 'success', message: 'SSH 连接成功。点击可重新测试。' }
+    return { tone: 'success', message: remoteSetupCopy.sshConnectedRetest }
   }
   const issues = state.report.checks.filter((check) => check.id === 'ssh' && check.status !== 'ok')
   const errors = issues.filter((check) => check.status === 'error')
@@ -122,7 +124,7 @@ export function remoteHostCheckPresentation(
     .join('\n')
     .slice(0, 600)
   if (!ssh || errors.length > 0) {
-    return { tone: 'error', message: details || '连接检查未通过；请检查服务器设置。' }
+    return { tone: 'error', message: details || remoteSetupCopy.connectionCheckFailed }
   }
   return { tone: 'warning', message: details || ssh.message }
 }
@@ -184,8 +186,8 @@ export function createRemoteDoctorUiController(
               key,
               message:
                 error instanceof UiTimeoutError
-                  ? '测试超时，请检查网络和服务器状态后重试。'
-                  : '测试未完成，请检查连接后重试。'
+                  ? remoteSetupCopy.connectionTestTimedOut
+                  : remoteSetupCopy.connectionTestIncomplete
             })
           }
         } finally {
@@ -236,7 +238,7 @@ export function createRemoteHostDoctorUiController(
     check(target) {
       const key = remoteDoctorTargetKey(target)
       const hostId = remoteHostIdFromDoctorKey(key)
-      if (!hostId) throw new Error('服务器连接测试需要 SSH 主机目标')
+      if (!hostId) throw new Error(remoteSetupCopy.sshTargetRequired)
       const current = controllers.get(hostId)
       if (current?.key === key) return current.controller.check(target)
       if (current) invalidateHost(hostId)

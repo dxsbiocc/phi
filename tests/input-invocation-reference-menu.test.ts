@@ -1,3 +1,5 @@
+import { getUiLanguage } from '../src/renderer/src/lib/i18n'
+import { chatCopy } from '../src/renderer/src/features/chat/lib/chatCopy'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -27,6 +29,8 @@ function loadModule(path: string, imports: Record<string, unknown>): Record<stri
     module,
     exports: module.exports,
     require(specifier: string): unknown {
+      if (specifier.endsWith('/chatCopy')) return { chatCopy }
+      if (specifier.endsWith('/i18n')) return { useUiLanguage: getUiLanguage }
       assert.ok(Object.hasOwn(imports, specifier), `Unexpected import: ${specifier}`)
       return imports[specifier]
     }

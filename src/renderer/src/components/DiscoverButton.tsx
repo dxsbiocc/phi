@@ -1,18 +1,22 @@
+import { useUiLanguage } from '../lib/i18n'
 import { Box, Button } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import type { SystemStyleObject } from '@mui/system'
 import { GoPlus } from 'react-icons/go'
+import { resourceUi } from '../lib/resourceUi'
 
-/** The sidebar's "add from catalog" action: a plus that widens into “发现” on hover or while open. */
+/** The sidebar's catalog action: a plus that widens into its label on hover or while open. */
 export function DiscoverButton({
   expanded,
   onClick,
-  label = '发现'
+  label = resourceUi.discover
 }: {
   expanded: boolean
   onClick: () => void
   label?: string
 }): React.JSX.Element {
+  useUiLanguage()
+
   return (
     <Button
       size="small"

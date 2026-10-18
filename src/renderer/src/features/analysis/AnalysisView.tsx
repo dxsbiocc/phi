@@ -1,3 +1,5 @@
+import { analysisCopy } from './lib/analysisUiCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import { useCallback, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { Box } from '@mui/material'
 import { type Theme } from '@mui/material/styles'
@@ -109,6 +111,9 @@ export type AnalysisViewProps = {
   chatPanel?: ReactNode
 }
 
+const uiLocaleForLanguage = (language: string): 'en-US' | 'zh-CN' =>
+  language === 'zh-CN' ? 'zh-CN' : 'en-US'
+
 const leftRailWidth = 300
 const minLeftRailWidth = 220
 const maxLeftRailWidth = 460
@@ -120,6 +125,7 @@ function ResizeSeparator({
   label: string
   onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       role="separator"
@@ -194,6 +200,7 @@ export default function AnalysisView({
   onCreateNotebook,
   chatPanel
 }: AnalysisViewProps = {}): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
   const [leftPanel, setLeftPanel] = useState<LeftPanel>(initialLeftPanel)
   const [leftCollapsed, setLeftCollapsed] = useState(false)
   const [leftSidebarFullscreen, setLeftSidebarFullscreen] = useState(initialLeftSidebarFullscreen)
@@ -207,8 +214,14 @@ export default function AnalysisView({
       return nextValue
     })
   }, [])
-  const notebooks = useMemo(() => registryNotebooks(notebookRegistry), [notebookRegistry])
-  const activeNotebookEntry = useMemo(() => notebookFileEntry(notebookFile), [notebookFile])
+  const notebooks = useMemo(
+    () => registryNotebooks(notebookRegistry, uiLocaleForLanguage(uiLanguage)),
+    [notebookRegistry, uiLanguage]
+  )
+  const activeNotebookEntry = useMemo(
+    () => notebookFileEntry(notebookFile, uiLocaleForLanguage(uiLanguage)),
+    [notebookFile, uiLanguage]
+  )
   const [openNotebookPaths, setOpenNotebookPaths] = useState<string[]>([])
   const [selectedNotebookPath, setSelectedNotebookPath] = useState<string | null>(
     notebooks[0]?.path ?? null
@@ -337,11 +350,11 @@ export default function AnalysisView({
         />
       ) : null}
       {showLeftRail && !leftCollapsed && !effectiveLeftSidebarFullscreen ? (
-        <ResizeSeparator label="调整分析侧栏宽度" onMouseDown={onStartLeftResize} />
+        <ResizeSeparator label={analysisCopy.resizeAnalysisRail} onMouseDown={onStartLeftResize} />
       ) : null}
       {!effectiveLeftSidebarFullscreen ? (
         <NotebookCanvas
-          activeNotebookPath={headerActivePath ?? 'No notebook selected'}
+          activeNotebookPath={headerActivePath ?? analysisCopy.noNotebookSelected}
           notebooks={headerTabs}
           hideNotebookTabs={Boolean(workspaceFileTabs)}
           availableNotebooks={notebooks}

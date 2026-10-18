@@ -38,7 +38,7 @@ export async function validateFeaturedMcpApiKey(
 ): Promise<void> {
   apiKeyConnector(id)
   if (typeof key !== 'string' || !key.trim() || /[\r\n\0]/.test(key)) {
-    throw new McpApiKeyValidationError('invalid', 'API key 格式无效')
+    throw new McpApiKeyValidationError('invalid', 'Invalid API key format')
   }
 
   const headers: Record<string, string> = { Accept: 'application/json' }
@@ -63,7 +63,7 @@ export async function validateFeaturedMcpApiKey(
       headers['X-Browser-Use-API-Key'] = key.trim()
       break
     default:
-      throw new McpApiKeyValidationError('invalid', '不支持此连接器')
+      throw new McpApiKeyValidationError('invalid', 'Unsupported Connector')
   }
 
   let response: Response
@@ -77,22 +77,37 @@ export async function validateFeaturedMcpApiKey(
     })
   } catch {
     // Fetch errors can contain the full URL, including SerpApi's query-string key.
-    throw new McpApiKeyValidationError('unavailable', '暂时无法连接服务商验证 API key，请稍后重试')
+    throw new McpApiKeyValidationError(
+      'unavailable',
+      'Could not connect to the provider to verify the API key. Try again later.'
+    )
   }
 
   if (response.status === 401 || response.status === 403) {
-    throw new McpApiKeyValidationError('invalid', 'API key 无效或没有访问权限')
+    throw new McpApiKeyValidationError(
+      'invalid',
+      'The API key is invalid or lacks access permission'
+    )
   }
   if (!response.ok) {
-    throw new McpApiKeyValidationError('unavailable', '服务商暂时无法验证 API key，请稍后重试')
+    throw new McpApiKeyValidationError(
+      'unavailable',
+      'The provider cannot verify the API key right now. Try again later.'
+    )
   }
   let body: unknown
   try {
     body = await response.json()
   } catch {
-    throw new McpApiKeyValidationError('unavailable', '服务商返回了无法识别的验证结果')
+    throw new McpApiKeyValidationError(
+      'unavailable',
+      'The provider returned an unrecognized verification result'
+    )
   }
   if (!validAccountResponse(id, body)) {
-    throw new McpApiKeyValidationError('unavailable', '服务商返回了无法识别的验证结果')
+    throw new McpApiKeyValidationError(
+      'unavailable',
+      'The provider returned an unrecognized verification result'
+    )
   }
 }

@@ -1,3 +1,4 @@
+import { navigationCopy } from './navigationCopy'
 import type { ChatItem, ChatMessage, SessionSummary } from '../types'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
 
@@ -13,7 +14,7 @@ export function sessionDisplayTitle(session: SessionSummary): string {
   const title =
     messageContentTitleText(session.name) ||
     messageContentTitleText(session.firstMessage) ||
-    '新对话'
+    navigationCopy.newConversation
   return truncateSessionTitle(title)
 }
 

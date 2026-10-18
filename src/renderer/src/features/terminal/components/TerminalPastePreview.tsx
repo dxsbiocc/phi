@@ -1,3 +1,5 @@
+import { terminalUi } from '../lib/terminalUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Typography } from '@mui/material'
 
 function pasteLines(text: string): string[] {
@@ -14,6 +16,7 @@ export interface TerminalPastePreviewProps {
 }
 
 export function TerminalPastePreview(props: TerminalPastePreviewProps): React.JSX.Element {
+  useUiLanguage()
   const lines = pasteLines(props.text)
   const preview = lines
     .slice(0, 2)
@@ -27,7 +30,7 @@ export function TerminalPastePreview(props: TerminalPastePreviewProps): React.JS
     <Box
       data-phi-terminal-paste-preview="true"
       role="dialog"
-      aria-label="多行粘贴预览"
+      aria-label={terminalUi.multilinePastePreview}
       sx={{
         flexShrink: 0,
         mx: 1.5,
@@ -45,10 +48,10 @@ export function TerminalPastePreview(props: TerminalPastePreviewProps): React.JS
         sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1 }}
       >
         <Typography variant="caption" sx={{ fontWeight: 800 }}>
-          多行粘贴
+          {terminalUi.multilinePaste}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          {lines.length} 行
+          {lines.length} {terminalUi.lines}
         </Typography>
       </Box>
       <Typography
@@ -70,10 +73,10 @@ export function TerminalPastePreview(props: TerminalPastePreviewProps): React.JS
       </Typography>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.75, mt: 1 }}>
         <Button size="small" color="inherit" disabled={props.busy} onClick={props.onCancel}>
-          取消
+          {terminalUi.cancel}
         </Button>
         <Button size="small" variant="contained" disabled={props.busy} onClick={props.onSend}>
-          发送到终端
+          {terminalUi.sendToTerminal}
         </Button>
       </Box>
     </Box>

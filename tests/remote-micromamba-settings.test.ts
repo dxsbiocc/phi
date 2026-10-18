@@ -120,7 +120,7 @@ describe('remote micromamba settings operation', () => {
           }
         }
       ),
-      /SSH 服务器档案不存在/
+      /SSH server profile not found/
     )
   })
 
@@ -237,31 +237,36 @@ describe('remote micromamba settings operation', () => {
     ])
   })
 
-  it('returns an unsupported result without attempting upload', async () => {
-    let ensured = false
-    const result = await installRemoteMicromambaForHost(
-      'host-1',
-      { runtimeRoot: '~/.phi/runtime' },
-      {
-        getHostProfile: () => ({ id: 'host-1', label: 'Cluster', hostAlias: 'cluster' }),
-        connect: async () => ({ close: async () => undefined }) as never,
-        probePlatform: async () => ({
-          os: 'linux',
-          arch: 'x86_64',
-          libc: { name: 'musl' as const }
-        }),
-        getArtifact: async () => {
-          throw new Error('不支持 musl 远程主机；micromamba 需要 glibc。')
-        },
-        ensure: async () => {
-          ensured = true
-          return installedResult()
+  for (const detail of [
+    'Unsupported: remote micromamba requires glibc; detected musl',
+    '不支持 musl 远程主机；micromamba 需要 glibc。'
+  ]) {
+    it(`returns an unsupported result without attempting upload: ${detail}`, async () => {
+      let ensured = false
+      const result = await installRemoteMicromambaForHost(
+        'host-1',
+        { runtimeRoot: '~/.phi/runtime' },
+        {
+          getHostProfile: () => ({ id: 'host-1', label: 'Cluster', hostAlias: 'cluster' }),
+          connect: async () => ({ close: async () => undefined }) as never,
+          probePlatform: async () => ({
+            os: 'linux',
+            arch: 'x86_64',
+            libc: { name: 'musl' as const }
+          }),
+          getArtifact: async () => {
+            throw new Error(detail)
+          },
+          ensure: async () => {
+            ensured = true
+            return installedResult()
+          }
         }
-      }
-    )
+      )
 
-    assert.equal(result.status, 'unsupported')
-    assert.match(result.message, /不支持 musl/)
-    assert.equal(ensured, false)
-  })
+      assert.equal(result.status, 'unsupported')
+      assert.equal(result.message, detail)
+      assert.equal(ensured, false)
+    })
+  }
 })

@@ -1,3 +1,4 @@
+import { skillCopy } from './skillCopy'
 import type { SkillSummary } from '../../../types'
 import type { RemoteTrustResource } from '../../agent/AgentTrustPanel'
 
@@ -6,7 +7,7 @@ function trustRequest(
   cwd: string
 ): { cwd: string; relativePath: string; contentHash: string } {
   if (!resource.relativePath || !resource.contentHash || resource.trustState === 'invalid') {
-    throw new Error('该 Skill 不能更改信任状态')
+    throw new Error(skillCopy.cannotChangeTrust)
   }
   return {
     cwd,

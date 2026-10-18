@@ -21,13 +21,13 @@ export function checkLocalResourceRequestSanity(
   const errors: string[] = []
 
   if (resources.cpus !== undefined && (resources.cpus < 1 || resources.cpus > MAX_SANE_CPUS)) {
-    errors.push(`cpus 请求值不合理: ${resources.cpus}`)
+    errors.push(`Invalid CPU request: ${resources.cpus}`)
   }
   if (resources.memory !== undefined && !MEMORY_PATTERN.test(resources.memory)) {
-    errors.push(`memory 格式不正确，应为如 "8 GB" 的形式: ${resources.memory}`)
+    errors.push(`Invalid memory format; expected a value such as "8 GB": ${resources.memory}`)
   }
   if (resources.time !== undefined && !TIME_PATTERN.test(resources.time)) {
-    errors.push(`time 格式不正确，应为如 "2h" 的形式: ${resources.time}`)
+    errors.push(`Invalid time format; expected a value such as "2h": ${resources.time}`)
   }
 
   return { ok: errors.length === 0, errors }

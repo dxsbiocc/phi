@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -67,6 +68,9 @@ function renderHomeView(): string {
   )
 }
 
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
+
 test('home dashboard prioritizes resumable work and groups resource-owned icons', () => {
   const markup = renderHomeView()
 
@@ -93,7 +97,7 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
   )
   assert.match(markup, /data-phi-home-wrapper-ranking="true"/)
   assert.ok(markup.indexOf('过去一年的活跃度') < markup.indexOf('data-phi-home-primary-card'))
-  assert.match(markup, /暂无运行记录/)
+  assert.match(markup, /开始一次 Wrapper 任务后会显示排行/)
   assert.doesNotMatch(markup, /工作总览|每个方格代表一天，深色表示更多运行次数与任务历时/)
 
   const source = readFileSync(
@@ -101,8 +105,8 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
     'utf8'
   )
   assert.doesNotMatch(source, /PhiIcons\.nav\.(skills|wrappers|mcp|plugins)/)
-  assert.match(source, /gridTemplateColumns: 'minmax\(0, 1fr\) 3em'/)
-  assert.match(source, /gridTemplateColumns: 'minmax\(0, 1fr\) 3em',[\s\S]*?alignItems: 'center'/)
+  assert.match(source, /gridTemplateColumns: 'minmax\(0, 1fr\) 5em'/)
+  assert.match(source, /gridTemplateColumns: 'minmax\(0, 1fr\) 5em',[\s\S]*?alignItems: 'center'/)
   assert.match(source, /textAlign: 'right'/)
   assert.match(source, /width: 88/)
   assert.match(source, /alignSelf: 'center'/)

@@ -10,6 +10,8 @@ import Typography from '@mui/material/Typography'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import type { EnvironmentBuildEstimate } from '../../../shared/environmentBuildTypes'
 import { formatBuildEstimate } from '../lib/environmentFormatting'
+import { useUiLanguage } from '../lib/i18n'
+import { resourceEnvironmentCopy, resourceUi } from '../lib/resourceUi'
 
 export type EnvironmentBuildConfirmTarget = {
   ref: string
@@ -28,6 +30,7 @@ export function EnvironmentBuildConfirmDialog({
   onClose: () => void
   onConfirm: () => void
 }): React.JSX.Element {
+  const language = useUiLanguage()
   return (
     <ConfirmationDialog
       open={environment !== null}
@@ -35,13 +38,16 @@ export function EnvironmentBuildConfirmDialog({
       disablePortal
     >
       <DialogTitle>
-        {environment ? `构建 ${environment.label ?? environment.ref}？` : ''}
+        {environment
+          ? resourceEnvironmentCopy.confirmTitle(environment.label ?? environment.ref)
+          : ''}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={1}>
           <DialogContentText>
-            {formatBuildEstimate(environment?.estimate)}
-            。确认后会在后台构建，进度可在后台任务面板查看。
+            {formatBuildEstimate(environment?.estimate, language)}
+            {language === 'en' ? '. ' : '。'}
+            {resourceEnvironmentCopy.confirmDescription}
           </DialogContentText>
           <Typography
             variant="caption"
@@ -54,7 +60,7 @@ export function EnvironmentBuildConfirmDialog({
       </DialogContent>
       <DialogActions>
         <Button disabled={working} onClick={onClose}>
-          取消
+          {resourceUi.cancel}
         </Button>
         <Button
           color="primary"
@@ -63,7 +69,7 @@ export function EnvironmentBuildConfirmDialog({
           onClick={onConfirm}
           startIcon={working ? <CircularProgress size={14} color="inherit" /> : undefined}
         >
-          {working ? '处理中…' : '开始构建'}
+          {working ? resourceEnvironmentCopy.working : resourceEnvironmentCopy.startBuild}
         </Button>
       </DialogActions>
     </ConfirmationDialog>

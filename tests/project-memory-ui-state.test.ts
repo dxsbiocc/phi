@@ -1,3 +1,10 @@
+import { beforeEach, afterEach } from 'node:test'
+import { getUiLanguage, getUiLocale, setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+// Keep these legacy behavioral assertions explicit about their presentation language.
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
+
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -6,6 +13,7 @@ import * as jsxRuntime from 'react/jsx-runtime'
 import ts from 'typescript'
 import type { ProjectMemorySnapshot } from '../src/shared/projectMemoryTypes'
 import type { Project } from '../src/renderer/src/lib/projectTypes'
+import { memoryUi } from '../src/renderer/src/features/memory/lib/memoryUi'
 import { nextProjectMemorySettings } from '../src/renderer/src/features/memory/lib/projectMemorySettings'
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -134,6 +142,8 @@ function harness(overrides: Partial<Api> = {}): {
     module,
     exports: module.exports,
     require(specifier: string): unknown {
+      if (specifier.endsWith('/memoryUi')) return { memoryUi }
+      if (specifier.endsWith('/lib/i18n')) return { useUiLanguage: getUiLanguage, getUiLocale }
       if (specifier === 'react') return react
       if (specifier === 'react/jsx-runtime') return jsxRuntime
       if (specifier === '@mui/material') return new Proxy({}, { get: (_, key) => key })
@@ -276,4 +286,21 @@ test('a current failure preserves the snapshot and allows the next real operatio
   await flush()
   assert.equal(f.calls.clears.length, 2)
   assert.equal(nodes(f.read(), 'Alert').length, 0)
+})
+
+test('switching language retains the expanded memory snapshot and pending confirmation', async () => {
+  const f = harness()
+  f.click('查看记忆')
+  await flush()
+  f.click('清空记忆')
+  assert.ok(f.button('确认清空'))
+  setUiLanguage('en')
+  assert.ok(f.button('Confirm clear'))
+  assert.ok(f.button('Collapse'))
+  assert.equal(f.calls.reads, 1)
+  assert.equal(f.calls.clears.length, 0)
+  assert.ok(nodes(f.read(), 'Typography').some((node) => node.props.children === snapshot.summary))
+  setUiLanguage('zh-CN')
+  assert.ok(f.button('确认清空'))
+  assert.equal(f.calls.reads, 1)
 })

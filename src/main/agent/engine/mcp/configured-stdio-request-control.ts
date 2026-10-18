@@ -27,9 +27,9 @@ export function resolveConfiguredStdioTimeoutMs(
 export function configuredStdioTimeoutMessage(timeoutMs: number): string {
   const waited =
     timeoutMs < 60_000
-      ? `${Math.max(1, Math.round(timeoutMs / 1000))} 秒`
-      : `${Number((timeoutMs / 60_000).toFixed(2))} 分钟`
-  return `启动验证超时（已等待 ${waited}）。首次运行通常需要下载依赖；已下载的部分会保留，可以重试。`
+      ? `${Math.max(1, Math.round(timeoutMs / 1000))} seconds`
+      : `${Number((timeoutMs / 60_000).toFixed(2))} minutes`
+  return `Startup verification timed out after ${waited}. The first run usually downloads dependencies. Downloaded files are kept; you can retry.`
 }
 
 export function configuredStdioRequestKey(value: unknown): string | undefined {
@@ -57,7 +57,7 @@ export class ConfiguredStdioRequestRegistry {
   cancel(requestKey: string): boolean {
     const controller = this.controllers.get(requestKey)
     if (!controller) return false
-    controller.abort(new Error('已取消'))
+    controller.abort(new Error('Cancelled'))
     return true
   }
 

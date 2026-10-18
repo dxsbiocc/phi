@@ -8,6 +8,7 @@ import {
   type MenuBarMenuItem
 } from './menu-bar-controller'
 import type { MenuBarAction } from '../shared/menuBarTypes'
+import type { UiLanguage } from '../shared/uiLanguage'
 
 interface CreateMacMenuBarOptions {
   openWindow: () => void
@@ -15,6 +16,7 @@ interface CreateMacMenuBarOptions {
   hideWindow: () => void
   canHideWindow: () => boolean
   quit: () => void
+  getUiLanguage?: () => UiLanguage
 }
 
 export function createMacMenuBar(options: CreateMacMenuBarOptions): MenuBarController | null {

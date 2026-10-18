@@ -1,3 +1,4 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
 import {
   useLayoutEffect,
   useMemo,
@@ -84,7 +85,7 @@ export function useFileTreeActions({
       if (action === 'copy') await navigator.clipboard.writeText(fileTreeDisplayPath(entry))
     } catch (cause) {
       if (currentScope.current === actionScope) {
-        setNotice(cause instanceof Error ? cause.message : '操作失败，请重试')
+        setNotice(cause instanceof Error ? cause.message : filePreviewCopy.actionFailed)
       }
     }
   }
@@ -112,7 +113,7 @@ export function useFileTreeActions({
       onMutation(target.entry)
     } catch (cause) {
       if (currentScope.current === actionScope) {
-        setError(cause instanceof Error ? cause.message : '操作失败，请重试')
+        setError(cause instanceof Error ? cause.message : filePreviewCopy.actionFailed)
       }
     } finally {
       if (currentScope.current === actionScope) setBusy(false)

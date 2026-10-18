@@ -64,8 +64,11 @@ class FakeSplashWindow implements StartupSplashWindow {
 test('startup splash markup embeds only a validated icon and accessible progress copy', () => {
   const markup = startupSplashHtml(ICON_DATA_URL)
 
-  assert.match(markup, /正在启动 Phi/)
-  assert.match(markup, /正在准备本地工作台…/)
+  assert.match(markup, /Starting Phi/)
+  assert.match(markup, /Preparing the local workspace…/)
+  assert.match(startupSplashHtml(ICON_DATA_URL, 'zh-CN'), /正在启动 Phi/)
+  assert.match(startupSplashHtml(ICON_DATA_URL, 'zh-CN'), /lang="zh-CN"/)
+  assert.match(markup, /lang="en"/)
   assert.match(markup, /role="status"/)
   assert.match(markup, /tracePhi 1\.9s cubic-bezier\([^;]+forwards/)
   assert.match(markup, /watercolorBloom 1\.9s cubic-bezier\([^;]+forwards/)
@@ -103,7 +106,7 @@ test('startup splash paints before startup work continues', async () => {
 
   assert.equal(result, splash)
   assert.equal(splash.shown, 1)
-  assert.match(decodeURIComponent(splash.loadedUrl), /正在启动 Phi/)
+  assert.match(decodeURIComponent(splash.loadedUrl), /Starting Phi/)
   assert.equal(options?.show, false)
   assert.equal(options?.alwaysOnTop, true)
   assert.equal(options?.frame, false)

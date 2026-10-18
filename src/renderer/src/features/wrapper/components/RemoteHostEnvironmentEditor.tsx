@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useUiLanguage } from '../../../lib/i18n'
+import { remoteSetupCopy } from '../lib/remoteSetupCopy'
+import { useState } from 'react'
 import { Box, Button, Stack, TextField, Typography } from '@mui/material'
 
 import type { RemoteHostProfile } from '../../../types'
@@ -19,14 +21,34 @@ const TOOL_FIELDS: ReadonlyArray<{
   label: string
   managed: string
 }> = [
-  { id: 'nextflow', label: 'Nextflow', managed: '由 Phi 托管' },
+  {
+    id: 'nextflow',
+    label: 'Nextflow',
+    get managed() {
+      return remoteSetupCopy.managedByPhi
+    }
+  },
   {
     id: 'jupyter',
     label: 'Jupyter',
-    managed: '先检测服务器已有的 Jupyter（PATH、conda），没有再由 Phi 托管'
+    get managed() {
+      return remoteSetupCopy.jupyterDetection
+    }
   },
-  { id: 'micromamba', label: 'micromamba', managed: '由 Phi 安装在运行时目录' },
-  { id: 'docker', label: 'Docker', managed: '从服务器 PATH 自动检测' }
+  {
+    id: 'micromamba',
+    label: 'micromamba',
+    get managed() {
+      return remoteSetupCopy.installedInRuntimeRoot
+    }
+  },
+  {
+    id: 'docker',
+    label: 'Docker',
+    get managed() {
+      return remoteSetupCopy.detectFromServerPath
+    }
+  }
 ]
 
 const PATH_INPUT_SLOT_PROPS = {
@@ -41,6 +63,19 @@ const PATH_INPUT_SLOT_PROPS = {
     }
   }
 } as const
+
+function toolPathError(value: string, label: string): string | null {
+  const error = remoteEnvironmentPathError(value, label)
+  if (!error) return null
+  if (error === `${label} must not contain NUL or newline characters`) {
+    return remoteSetupCopy.pathControlCharacterError(label)
+  }
+  if (error === `${label} must be an absolute path`) return remoteSetupCopy.pathAbsoluteError(label)
+  if (error === `${label} must not contain .. path segments`) {
+    return remoteSetupCopy.pathParentSegmentError(label)
+  }
+  return error
+}
 
 function trimmedToolPaths(paths: RemoteEnvironmentToolPaths): RemoteEnvironmentToolPaths {
   return Object.fromEntries(
@@ -62,20 +97,21 @@ export function RemoteHostEnvironmentEditor({
   busy,
   onSave
 }: RemoteHostEnvironmentEditorProps): React.JSX.Element {
+  useUiLanguage()
   const [runtimeRoot, setRuntimeRoot] = useState(host.runtimeRoot ?? '')
   const [toolPaths, setToolPaths] = useState<RemoteEnvironmentToolPaths>(host.toolPaths ?? {})
-  const pathErrors = useMemo(() => {
+  const pathErrors = (() => {
     const entries = TOOL_FIELDS.flatMap(({ id, label }) => {
       const value = toolPaths[id] ?? ''
       const error =
-        remoteEnvironmentPathError(value, `${label} 路径`) ??
+        toolPathError(value, remoteSetupCopy.toolPath(label)) ??
         (id === 'docker' && value.trim() && !value.trim().endsWith('/docker')
-          ? 'Docker 路径必须指向名为 docker 的可执行文件'
+          ? remoteSetupCopy.dockerPathError
           : null)
       return error ? [[id, error] as const] : []
     })
     return Object.fromEntries(entries) as Partial<Record<RemoteEnvironmentToolId, string>>
-  }, [toolPaths])
+  })()
   const normalizedRuntimeRoot = normalizeRemoteRuntimeRootValue(runtimeRoot.trim())
   const runtimeError = remoteRuntimeRootValueError(runtimeRoot.trim())
   const normalizedPaths = trimmedToolPaths(toolPaths)
@@ -101,22 +137,22 @@ export function RemoteHostEnvironmentEditor({
     <Stack spacing={2.25}>
       <Box>
         <Typography variant="h6" sx={{ fontWeight: 750 }}>
-          环境配置
+          {remoteSetupCopy.environmentSettings}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          留空时由 Phi 管理；只有明确填写的路径会覆盖默认值。
+          {remoteSetupCopy.environmentOverrideHelp}
         </Typography>
       </Box>
 
       <TextField
         fullWidth
         size="small"
-        label="默认运行环境"
+        label={remoteSetupCopy.defaultRuntimeEnvironment}
         value={runtimeRoot}
         error={Boolean(runtimeError)}
         disabled={busy}
         placeholder="~/.phi/runtime"
-        helperText={runtimeError ?? '默认：~/.phi/runtime'}
+        helperText={runtimeError ?? remoteSetupCopy.defaultRuntimeRoot}
         onChange={(event) => setRuntimeRoot(event.target.value)}
         slotProps={PATH_INPUT_SLOT_PROPS}
       />
@@ -133,12 +169,12 @@ export function RemoteHostEnvironmentEditor({
             key={id}
             fullWidth
             size="small"
-            label={`${label} 路径`}
+            label={remoteSetupCopy.toolPath(label)}
             value={toolPaths[id] ?? ''}
             error={Boolean(pathErrors[id])}
             disabled={busy}
-            placeholder={id === 'jupyter' ? '自动检测' : '由 Phi 管理'}
-            helperText={pathErrors[id] ?? `默认：${managed}`}
+            placeholder={id === 'jupyter' ? remoteSetupCopy.autoDetect : remoteSetupCopy.phiManaged}
+            helperText={pathErrors[id] ?? remoteSetupCopy.defaultValue(managed)}
             onChange={(event) =>
               setToolPaths((current) => ({ ...current, [id]: event.target.value }))
             }
@@ -149,11 +185,11 @@ export function RemoteHostEnvironmentEditor({
 
       <Stack direction="row" spacing={1}>
         <Button variant="contained" disabled={busy || invalid || !dirty} onClick={() => save()}>
-          {busy ? '保存中…' : '保存环境配置'}
+          {busy ? remoteSetupCopy.saving : remoteSetupCopy.saveEnvironmentSettings}
         </Button>
         {(hasOverrides || dirty) && (
           <Button disabled={busy} onClick={() => save(true)}>
-            恢复 Phi 默认值
+            {remoteSetupCopy.restoreDefaults}
           </Button>
         )}
       </Stack>

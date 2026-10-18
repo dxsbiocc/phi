@@ -1,3 +1,5 @@
+import { chatCopy } from '../../lib/chatCopy'
+import { useUiLanguage } from '../../../../lib/i18n'
 import { useMemo, useState } from 'react'
 import {
   Box,
@@ -19,6 +21,7 @@ import { UiBlockContainer } from './UiBlockContainer'
 type CopyState = 'idle' | 'copied' | 'failed'
 
 export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Element {
+  useUiLanguage()
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [direction, setDirection] = useState<TableSortDirection>('asc')
   const [copyState, setCopyState] = useState<CopyState>('idle')
@@ -46,7 +49,11 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
   }
 
   const copyLabel =
-    copyState === 'copied' ? '已复制 TSV' : copyState === 'failed' ? '复制失败' : '复制 TSV'
+    copyState === 'copied'
+      ? chatCopy.tSVCopied
+      : copyState === 'failed'
+        ? chatCopy.copyFailed
+        : chatCopy.copyTSV
 
   return (
     <UiBlockContainer title={block.title}>
@@ -67,7 +74,7 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
         <Table
           stickyHeader
           size="small"
-          aria-label={block.title ?? '结构化数据表'}
+          aria-label={block.title ?? chatCopy.structuredDataTable}
           sx={{ minWidth: block.columns.length * 120 }}
         >
           <TableHead>

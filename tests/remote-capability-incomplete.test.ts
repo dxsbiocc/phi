@@ -14,9 +14,9 @@ const partialProfile: RemoteHostCapabilityProfile = {
   fs: { state: 'available' },
   exec: { state: 'available' },
   background: { state: 'available' },
-  pty: { state: 'unavailable', reason: 'helper 未安装' },
-  watch: { state: 'unavailable', reason: 'helper 未安装' },
-  forwardPort: { state: 'unavailable', reason: 'helper 未安装' },
+  pty: { state: 'unavailable', reason: 'Helper not installed' },
+  watch: { state: 'unavailable', reason: 'Helper not installed' },
+  forwardPort: { state: 'unavailable', reason: 'Helper not installed' },
   probe: { state: 'degraded', reason: 'slow capability detection timed out' },
   toolchain: {
     git: { state: 'available', version: '2.43.0' },
@@ -32,15 +32,15 @@ const partialProfile: RemoteHostCapabilityProfile = {
 test('doctor reports an incomplete capability as a warning instead of installed or missing', () => {
   const check = doctorCheckFromCapability(partialProfile.toolchain.nextflow, {
     id: 'nextflow',
-    success: '找到 Nextflow 命令',
-    missing: '未找到 Nextflow',
+    success: 'Nextflow command found',
+    missing: 'Nextflow not found',
     missingStatus: 'error',
-    suggestion: '安装 Nextflow。'
+    suggestion: 'Install Nextflow.'
   })
 
   assert.equal(check.status, 'warning')
   assert.equal(check.message, 'Nextflow detection timed out')
-  assert.doesNotMatch(`${check.message} ${check.suggestion ?? ''}`, /未找到|安装 Nextflow/)
+  assert.doesNotMatch(`${check.message} ${check.suggestion ?? ''}`, /Not found|Install Nextflow/)
 })
 
 test('settings summary labels partial timeouts without calling unknown tools missing', () => {
@@ -52,7 +52,7 @@ test('settings summary labels partial timeouts without calling unknown tools mis
     )
   )
 
-  assert.match(markup, /部分检测超时/)
+  assert.match(markup, /some checks timed out/)
   assert.match(markup, /Nextflow detection timed out/)
-  assert.doesNotMatch(markup, /Nextflow：未发现|Nextflow is not installed/)
+  assert.doesNotMatch(markup, /Nextflow: None found|Nextflow is not installed/)
 })

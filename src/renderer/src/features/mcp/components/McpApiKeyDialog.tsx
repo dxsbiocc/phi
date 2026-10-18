@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import {
   Alert,
   Button,
@@ -32,6 +35,8 @@ export function McpApiKeyDialog({
   onClose: () => void
   onSubmit: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const name = connector?.name ?? ''
   const canUseSavedKey = verified && !installed
   const canSubmit = Boolean(value.trim()) || canUseSavedKey
@@ -39,12 +44,16 @@ export function McpApiKeyDialog({
   return (
     <Dialog open={Boolean(connector)} onClose={busy ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>
-        {installed ? (verified ? `更新 ${name} API key` : `验证 ${name} API key`) : `添加 ${name}`}
+        {installed
+          ? verified
+            ? connectorCopy.updateNamedKey(name)
+            : connectorCopy.verifyNamedKey(name)
+          : connectorCopy.addNamed(name)}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            输入你的 API key。Phi 会先向 {name} 验证，再将密钥加密保存在本机。
+            {connectorCopy.apiKeyIntro(name)}
           </Typography>
           {connector?.apiKey && (
             <Button
@@ -55,20 +64,17 @@ export function McpApiKeyDialog({
               size="small"
               sx={{ alignSelf: 'flex-start', pl: 0 }}
             >
-              前往 {name} 获取 API key ↗
+              {connectorCopy.obtainKey(name)}
             </Button>
           )}
           {connector?.id === 'serpapi' && (
-            <Alert severity="info">
-              SerpApi 的账户验证接口要求通过 HTTPS 查询参数发送一次密钥。Phi
-              不会保存验证地址；服务商或网络代理可能记录请求地址。
-            </Alert>
+            <Alert severity="info">{connectorCopy.serpApiDisclosure}</Alert>
           )}
           <TextField
             autoFocus
             fullWidth
             type="password"
-            label="API key"
+            label={connectorCopy.apiKeyLabel}
             value={value}
             onChange={(event) => onChange(event.target.value)}
             autoComplete="off"
@@ -78,7 +84,7 @@ export function McpApiKeyDialog({
           />
           {canUseSavedKey && !value && (
             <Typography variant="body2" color="text.secondary">
-              已有验证过的密钥，可直接添加；输入新密钥则会替换它。
+              {connectorCopy.existingKeyHint}
             </Typography>
           )}
           {error && <Alert severity="error">{error}</Alert>}
@@ -86,18 +92,18 @@ export function McpApiKeyDialog({
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2.5 }}>
         <Button disabled={busy} onClick={onClose}>
-          取消
+          {resourceUi.cancel}
         </Button>
         <Button variant="contained" disabled={busy || !canSubmit} onClick={onSubmit}>
           {busy
-            ? '正在验证…'
+            ? connectorCopy.verifying
             : value.trim()
               ? installed
                 ? verified
-                  ? '验证并更新'
-                  : '验证并保存'
-                : '验证并添加'
-              : '添加连接器'}
+                  ? connectorCopy.verifyUpdate
+                  : connectorCopy.verifySave
+                : connectorCopy.verifyAdd
+              : connectorCopy.addConnector}
         </Button>
       </DialogActions>
     </Dialog>

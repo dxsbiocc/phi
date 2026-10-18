@@ -33,7 +33,7 @@ function nonEmptySafeString(value: unknown, maxLength: number): value is string 
 
 function parseRequest(value: unknown): RemoteMicromambaIpcRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('micromamba 安装请求无效')
+    throw new Error('Invalid micromamba installation request')
   }
   const input = value as Record<string, unknown>
   if (
@@ -41,17 +41,17 @@ function parseRequest(value: unknown): RemoteMicromambaIpcRequest {
     !nonEmptySafeString(input.hostProfileId, 512) ||
     !nonEmptySafeString(input.runtimeRoot, 4096)
   ) {
-    throw new Error('micromamba 安装请求无效')
+    throw new Error('Invalid micromamba installation request')
   }
   const warnings = input.confirmedWarnings
   if (
     warnings !== undefined &&
     (!Array.isArray(warnings) || !warnings.every((code) => WARNING_CODES.has(code)))
   ) {
-    throw new Error('micromamba 警告确认值无效')
+    throw new Error('Invalid micromamba warning confirmation')
   }
   if (input.downloadMirrorPrefix !== undefined && typeof input.downloadMirrorPrefix !== 'string') {
-    throw new Error('下载镜像前缀无效')
+    throw new Error('Invalid download mirror prefix')
   }
   const downloadMirrorPrefix = normalizeRemoteMicromambaMirrorPrefix(
     (input.downloadMirrorPrefix as string | undefined) ?? ''

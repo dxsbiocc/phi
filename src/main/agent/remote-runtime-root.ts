@@ -24,13 +24,13 @@ function trimTrailingSlashes(value: string): string {
 
 export function normalizeRemoteRuntimeRoot(value: string): string {
   if (!value || /[\0\r\n]/.test(value)) {
-    throw new Error('远程运行时根目录不能为空，也不能包含 NUL 或换行符')
+    throw new Error('Remote runtime root must not be empty or contain NUL or newline characters')
   }
   if (!value.startsWith('/') && !value.startsWith('~/')) {
-    throw new Error('远程运行时根目录必须是绝对路径或以 ~/ 开头')
+    throw new Error('Remote runtime root must be an absolute path or start with ~/')
   }
   if (hasParentSegment(value)) {
-    throw new Error('远程运行时根目录不能包含 .. 路径段')
+    throw new Error('Remote runtime root must not contain .. path segments')
   }
   return trimTrailingSlashes(value)
 }

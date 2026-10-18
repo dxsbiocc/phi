@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Alert, Box, Button } from '@mui/material'
 import { useMemo, useState } from 'react'
 
@@ -12,6 +14,7 @@ export function HtmlReportPreview({
 }: {
   file: Extract<FilePreview, { kind: 'html' }>
 }): React.JSX.Element {
+  useUiLanguage()
   const [mode, setMode] = useState<'rendered' | 'source'>('rendered')
   const srcDoc = useMemo(() => htmlReportSrcDoc(file.content), [file.content])
   const sourceFile = useMemo<Extract<FilePreview, { kind: 'text' }>>(
@@ -37,7 +40,7 @@ export function HtmlReportPreview({
           aria-pressed={mode === 'rendered'}
           onClick={() => setMode('rendered')}
         >
-          报告预览
+          {filePreviewCopy.reportPreview}
         </Button>
         <Button
           size="small"
@@ -45,18 +48,18 @@ export function HtmlReportPreview({
           aria-pressed={mode === 'source'}
           onClick={() => setMode('source')}
         >
-          查看源码
+          {filePreviewCopy.viewSource}
         </Button>
       </Box>
       {mode === 'rendered' ? (
         <>
           <Alert severity="info" sx={{ mx: 1.5, my: 1 }}>
-            此处只显示报告的静态内容。交互图表请用默认应用打开。
+            {filePreviewCopy.staticReportHint}
           </Alert>
           <Box
             component="iframe"
             name={HTML_REPORT_FRAME_NAME}
-            title={`HTML 报告预览：${file.name}`}
+            title={filePreviewCopy.htmlReportPreview(file.name)}
             data-phi-html-report-preview="true"
             sandbox=""
             referrerPolicy="no-referrer"

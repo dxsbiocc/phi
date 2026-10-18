@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import { chmod, lstat, mkdir, open, readFile } from 'node:fs/promises'
 
 import type { SshHostKeyFileSystem } from './host-key'
@@ -20,7 +21,7 @@ export function createNodeSshHostKeyFileSystem(): SshHostKeyFileSystem {
     async appendText(path, content, mode) {
       try {
         const info = await lstat(path)
-        if (!info.isFile()) throw new Error('known_hosts 不是普通文件')
+        if (!info.isFile()) throw new Error(sshBootstrapCopy.knownHostsNotFile)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       }

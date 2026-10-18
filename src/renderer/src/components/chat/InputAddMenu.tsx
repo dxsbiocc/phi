@@ -1,3 +1,5 @@
+import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
   IconButton,
@@ -11,6 +13,7 @@ import {
 import { useCallback, useMemo, type ReactNode, type Ref } from 'react'
 import { ResourceIcon } from '../ResourceIcon'
 import { PhiIcons } from '../../icons'
+import { resourceCatalogCopy, resourceUi } from '../../lib/resourceUi'
 import {
   formatInputFileReferences,
   formatPromptAgentReference,
@@ -33,6 +36,7 @@ function InputAddGroup({
   title: string
   children: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Box
       sx={{
@@ -61,6 +65,7 @@ function InputAddGroup({
 }
 
 function InputAddEmptyState({ children }: { children: ReactNode }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Typography
       variant="body2"
@@ -88,6 +93,7 @@ function InputAddMenuRow({
   selected?: boolean
   onClick: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <ListItemButton
       dense
@@ -141,6 +147,7 @@ export function InputAddPanel({
   onTrustChanged?: () => Promise<void>
   onClose: () => void
 }): ReactNode {
+  useUiLanguage()
   const enabledSkills = useMemo(() => uniqueEnabledInputSkills(skills), [skills])
   const insertReference = useCallback(
     (reference: string): void => {
@@ -164,7 +171,7 @@ export function InputAddPanel({
       id={panelId}
       variant="outlined"
       role="menu"
-      aria-label="添加上下文"
+      aria-label={chatCopy.addContext}
       sx={{
         width: '100%',
         mb: 1,
@@ -175,17 +182,17 @@ export function InputAddPanel({
         p: 1
       }}
     >
-      <InputAddGroup title="添加">
+      <InputAddGroup title={chatCopy.add}>
         <InputAddMenuRow
           icon={<InputFileIcon fontSize="small" />}
-          primary="文件和文件夹"
+          primary={chatCopy.filesAndFolders}
           selected
           disabled={!onPickFiles}
           onClick={() => void pickFiles()}
         />
       </InputAddGroup>
 
-      <InputAddGroup title="智能体">
+      <InputAddGroup title={chatCopy.agent}>
         {promptAgents.length > 0 ? (
           promptAgents.map((agent) => (
             <Box key={agent.id}>
@@ -209,11 +216,11 @@ export function InputAddPanel({
             </Box>
           ))
         ) : (
-          <InputAddEmptyState>暂无可指定智能体</InputAddEmptyState>
+          <InputAddEmptyState>{chatCopy.noAgentsAvailableToSelect}</InputAddEmptyState>
         )}
       </InputAddGroup>
 
-      <InputAddGroup title="Skill">
+      <InputAddGroup title={resourceUi.skills}>
         {enabledSkills.length > 0 ? (
           enabledSkills.map((skill) => (
             <InputAddMenuRow
@@ -224,7 +231,7 @@ export function InputAddPanel({
             />
           ))
         ) : (
-          <InputAddEmptyState>暂无可引用 Skill</InputAddEmptyState>
+          <InputAddEmptyState>{resourceCatalogCopy.noSkillReferences}</InputAddEmptyState>
         )}
       </InputAddGroup>
       {(['wrapper', 'mcp', 'plugin'] as const).map((kind) => {
@@ -233,7 +240,13 @@ export function InputAddPanel({
         return (
           <InputAddGroup
             key={kind}
-            title={{ wrapper: 'Wrapper', mcp: 'Connector', plugin: '插件' }[kind]}
+            title={
+              {
+                wrapper: resourceUi.wrappers,
+                mcp: resourceUi.connectors,
+                plugin: resourceUi.plugins
+              }[kind]
+            }
           >
             {candidates.map((resource) => (
               <InputAddMenuRow
@@ -268,13 +281,14 @@ export function InputAddControl({
   buttonRef: Ref<HTMLButtonElement>
   onToggle: () => void
 }): ReactNode {
+  useUiLanguage()
   return (
-    <Tooltip title="添加文件和资源引用" enterDelay={400}>
+    <Tooltip title={chatCopy.addFilesAndResourceReferences} enterDelay={400}>
       <IconButton
         ref={buttonRef}
         size="small"
         type="button"
-        aria-label="添加文件和资源引用"
+        aria-label={chatCopy.addFilesAndResourceReferences}
         aria-controls={open ? controls : undefined}
         aria-expanded={open}
         aria-haspopup="menu"

@@ -305,7 +305,7 @@ test('hash mismatches and download failures remove every temporary file', async 
         manifestPath,
         download: async ({ destination }) => writeFileSync(destination, Buffer.alloc(bytes.length))
       }),
-      /大小或 sha256 不匹配/
+      /size or sha256 does not match/
     )
     assert.deepEqual(readdirSync(dirname(localPath)), [])
 
@@ -320,7 +320,10 @@ test('hash mismatches and download failures remove every temporary file', async 
       }),
       (error: unknown) => {
         assert.ok(error instanceof Error)
-        assert.match(error.message, /micromamba linux-x64 下载失败：simulated transport failure/)
+        assert.match(
+          error.message,
+          /micromamba linux-x64 download failed: simulated transport failure/
+        )
         assert.doesNotMatch(error.message, new RegExp(agentDir))
         return true
       }
@@ -346,22 +349,22 @@ test('unsupported operating systems, architectures, and libc variants fail befor
         { os: 'darwin', arch: 'arm64', libc: { name: 'unknown' } },
         options
       ),
-      /不支持.*仅支持 Linux/
+      /Unsupported.*supports Linux only/
     )
     await assert.rejects(
       getRemoteMicromambaArtifact(
         { os: 'linux', arch: 'ppc64le', libc: { name: 'glibc' } },
         options
       ),
-      /不支持.*架构 ppc64le/
+      /Unsupported.*architecture ppc64le/
     )
     await assert.rejects(
       getRemoteMicromambaArtifact({ os: 'linux', arch: 'x86_64', libc: { name: 'musl' } }, options),
-      /不支持.*需要 glibc.*musl/
+      /Unsupported.*requires glibc.*musl/
     )
     await assert.rejects(
       getRemoteMicromambaArtifact({ os: 'linux', arch: 'x86_64' }, options),
-      /不支持.*未知 libc/
+      /Unsupported.*unknown libc/
     )
     assert.equal(downloads, 0)
     assert.equal(existsSync(agentDir), false)
@@ -385,7 +388,7 @@ test('the default downloader times out and cleans staging files', async () => {
         { os: 'linux', arch: 'x86_64', libc: { name: 'glibc' } },
         { agentDir, manifestPath, fetch, timeoutMs: 20 }
       ),
-      /下载请求超时/
+      /download request timed out/
     )
     assert.deepEqual(readdirSync(dirname(localPath)), [])
   })

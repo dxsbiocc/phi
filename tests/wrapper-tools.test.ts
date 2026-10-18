@@ -232,7 +232,18 @@ test('an explicit upload source keeps the plan card available for user file sele
       errors: ['输入 "reads" 等待用户选择本机文件上传']
     }
   } as unknown as WrapperRunPlan
+  // Existing persisted plans retain the earlier message; new plans use English.
   assert.equal(wrapperPlanNeedsUploadSelection(pending), true)
+  assert.equal(
+    wrapperPlanNeedsUploadSelection({
+      ...pending,
+      validation: {
+        valid: false,
+        errors: ['Input "reads" is waiting for the user to select local files for upload']
+      }
+    }),
+    true
+  )
   assert.equal(
     wrapperPlanNeedsUploadSelection({
       ...pending,

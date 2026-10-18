@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { wrapperCopy } from '../lib/wrapperCopy'
 import { Button, Stack, Typography } from '@mui/material'
 
 import type {
@@ -8,8 +10,9 @@ import type {
 import { wrapperPlanRetargetRequest, wrapperPlanTargetLines } from '../lib/wrapperView'
 
 export function WrapperPlanTargetSummary({ plan }: { plan: WrapperRunPlan }): React.JSX.Element {
+  useUiLanguage()
   const lines = wrapperPlanTargetLines(plan)
-  const externalOutput = lines.find((line) => line.startsWith('外部输出授权范围：'))
+  const externalOutput = lines.find((line) => line.startsWith(wrapperCopy.externalOutputPrefix))
   return (
     <Stack spacing={0.25} sx={{ borderLeft: 2, borderColor: 'primary.main', pl: 1.25 }}>
       {lines.slice(0, 3).map((line) => (
@@ -38,6 +41,7 @@ export function WrapperPlanTargetDetails({
   plan: WrapperRunPlan
   run?: WrapperRun
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <>
       {wrapperPlanTargetLines(plan, run)
@@ -71,6 +75,7 @@ export function WrapperPlanTargetActions({
   remoteConfigured?: boolean
   onRetarget: (request: WrapperRetargetRequest) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const localProject = plan.targetSelection?.projectLocation.kind === 'local'
   const hasLocalInputs = plan.inputs.some((input) => input.localPaths.length > 0)
   return (
@@ -78,21 +83,23 @@ export function WrapperPlanTargetActions({
       {localProject && plan.targetSelection?.target === 'remote' && isUnsubmitted && (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
           <Typography variant="caption" color="text.secondary">
-            改在本机运行会重新检查本机输入，并保存目标变更确认。
+            {wrapperCopy.localRetargetHelp}
           </Typography>
           <Button
             size="small"
             disabled={busy}
             onClick={() => onRetarget(wrapperPlanRetargetRequest(plan, 'local'))}
           >
-            确认改在本机运行
+            {wrapperCopy.confirmLocalRetarget}
           </Button>
         </Stack>
       )}
       {plan.targetChangeConfirmation && (
         <Typography variant="caption" color="text.secondary">
-          已确认从远程改为本机 · 计划修订 {plan.targetChangeConfirmation.fromRevision} →{' '}
-          {plan.revision}
+          {wrapperCopy.localRetargetConfirmed(
+            plan.targetChangeConfirmation.fromRevision,
+            plan.revision
+          )}
         </Typography>
       )}
       {localProject &&
@@ -100,11 +107,11 @@ export function WrapperPlanTargetActions({
         isUnsubmitted &&
         (hasLocalInputs ? (
           <Typography variant="caption" color="text.secondary">
-            改用远程服务器需重新创建计划，并填写服务器上的输入路径。
+            {wrapperCopy.remoteRetargetInputs}
           </Typography>
         ) : !remoteConfigured ? (
           <Typography variant="caption" color="text.secondary">
-            先选择服务器和工作目录，再改用远程运行。
+            {wrapperCopy.remoteRetargetSetup}
           </Typography>
         ) : (
           <Button
@@ -112,7 +119,7 @@ export function WrapperPlanTargetActions({
             disabled={busy}
             onClick={() => onRetarget(wrapperPlanRetargetRequest(plan, 'remote'))}
           >
-            改用远程服务器并重新校验计划
+            {wrapperCopy.remoteRetarget}
           </Button>
         ))}
       {submitBlockReason && isUnsubmitted && (
@@ -124,7 +131,7 @@ export function WrapperPlanTargetActions({
         plan.targetSelection.environmentCheckPending &&
         isUnsubmitted && (
           <Typography variant="caption" color="text.secondary">
-            运行环境将在远端启动时检查；连接失败不会转到本机。
+            {wrapperCopy.remoteEnvironmentCheck}
           </Typography>
         )}
     </>

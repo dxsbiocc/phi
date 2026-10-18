@@ -1,3 +1,4 @@
+import { sshBootstrapCopy } from './copy'
 import type { OpenSshHostInput } from '../../../shared/remoteHostProfile'
 import type {
   SshBootstrapCredentialRequest,
@@ -382,7 +383,7 @@ export function createSshBootstrapCoordinator(
 
     async saveConfig(operationId): Promise<SshBootstrapFinalResult> {
       const operation = operations.get(operationId)
-      if (!operation) throw new Error('SSH 引导操作不存在或已结束')
+      if (!operation) throw new Error(sshBootstrapCopy.operationExpired)
       await dependencies.saveHost(operation.input)
       operations.delete(operationId)
       return {
@@ -394,7 +395,7 @@ export function createSshBootstrapCoordinator(
 
     async declineConfig(operationId): Promise<SshBootstrapFinalResult> {
       const operation = operations.get(operationId)
-      if (!operation) throw new Error('SSH 引导操作不存在或已结束')
+      if (!operation) throw new Error(sshBootstrapCopy.operationExpired)
       operations.delete(operationId)
       return {
         configured: false,

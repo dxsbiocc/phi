@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -101,13 +103,14 @@ function searchHighlights(query: string, caseSensitive: boolean): Extension {
 }
 
 export function SourceTextEditor(props: SourceTextEditorProps): React.JSX.Element {
+  useUiLanguage()
   const {
     onChange,
     readOnly = false,
     path,
     query = '',
     caseSensitive = false,
-    ariaLabel = '文本内容',
+    ariaLabel = filePreviewCopy.textContent,
     inlineMarkdown = false,
     renderMarkdown
   } = props
@@ -234,7 +237,7 @@ export function SourceTextEditor(props: SourceTextEditorProps): React.JSX.Elemen
             EditorState.readOnly.of(!editable),
             EditorView.editable.of(editable),
             EditorView.contentAttributes.of({
-              'aria-label': initial.ariaLabel ?? '文本内容',
+              'aria-label': initial.ariaLabel ?? filePreviewCopy.textContent,
               tabindex: '0'
             })
           ]),

@@ -1,3 +1,4 @@
+import { browserUi } from '../lib/browserUi'
 import { useEffect } from 'react'
 import type {
   BrowserRendererBridge,
@@ -19,7 +20,7 @@ export function browserAppShellFailureMessage(
   envelope: BrowserRendererEventEnvelope
 ): string | null {
   return envelope.sessionId === null && envelope.event.type === 'appShellOpenFailed'
-    ? '无法打开链接，请先选择一个会话或稍后重试。'
+    ? browserUi.unableToOpenTheLinkSelectASession
     : null
 }
 

@@ -1,3 +1,5 @@
+import { projectCopy } from '../lib/projectCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Alert, Button, MenuItem, Stack, TextField } from '@mui/material'
 
 import type { RemoteHostProfile } from '../../../types'
@@ -28,17 +30,20 @@ export function RemoteProjectFields({
   onRemoteRootChange: (path: string) => void
   onOpenRemoteSettings: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Stack spacing={1.5}>
       <TextField
         select
         fullWidth
-        label="SSH 服务器"
+        label={projectCopy.sSHServer}
         value={hostProfileId}
         onChange={(event) => onHostChange(event.target.value)}
-        helperText={hostsLoading ? '正在读取服务器…' : '可直接选择 ~/.ssh/config 中的主机'}
+        helperText={
+          hostsLoading ? projectCopy.loadingServers : projectCopy.chooseAHostFromSshConfig
+        }
       >
-        <MenuItem value="">请选择服务器</MenuItem>
+        <MenuItem value="">{projectCopy.chooseAServer}</MenuItem>
         {hosts.map((host) => (
           <MenuItem key={host.id} value={host.id}>
             {remoteHostLabel(host)}
@@ -51,11 +56,11 @@ export function RemoteProjectFields({
         onClick={onOpenRemoteSettings}
         sx={{ alignSelf: 'flex-start' }}
       >
-        管理服务器
+        {projectCopy.manageServers}
       </Button>
       {hostsError && <Alert severity="error">{hostsError}</Alert>}
       {!hostsLoading && !hostsError && hosts.length === 0 && (
-        <Alert severity="info">未识别到 SSH 主机；可在远程设置中手动添加。</Alert>
+        <Alert severity="info">{projectCopy.noSSHHostsFoundAddOneManuallyInRemoteSettings}</Alert>
       )}
       {hostProfileId ? (
         <RemoteDirectoryTree

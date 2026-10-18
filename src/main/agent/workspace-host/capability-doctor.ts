@@ -29,8 +29,9 @@ export function doctorCheckFromCapability(
     return {
       id: input.id,
       status: 'warning',
-      message: capability.reason ?? '能力检测未完成',
-      suggestion: '重新检测服务器能力后，再判断工具是否已安装。'
+      message: capability.reason ?? 'Capability detection did not complete',
+      suggestion:
+        'Detect server capabilities again before checking whether the tools are installed.'
     }
   }
   return { id: input.id, status: 'ok', message: input.success }

@@ -1,3 +1,4 @@
+import { filePreviewCopy } from './filePreviewUiCopy'
 import { directoryIconForPath, fileIconForPath, type FileIconMeta } from '../../../icons'
 import type { DirectoryListing, FilePreview } from '../../../types'
 
@@ -67,7 +68,7 @@ export function previewRootLabel(state: FilePreviewPanelState): string {
   if (state.status === 'ready') return state.file.rootLabel
   if (state.status === 'directory') return state.directory.rootLabel
   if (state.path.startsWith('ssh://')) {
-    return /^ssh:\/\/([^/]+)/.exec(state.path)?.[1] ?? '远程文件'
+    return /^ssh:\/\/([^/]+)/.exec(state.path)?.[1] ?? filePreviewCopy.remoteFiles
   }
   return fileNameFromPath(previewRootPath(state))
 }

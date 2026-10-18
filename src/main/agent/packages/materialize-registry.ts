@@ -23,7 +23,7 @@ export function materializeRegistry(
 ): LocalRegistry {
   const generatedAt = options.generatedAt ?? new Date().toISOString()
   if (!Number.isFinite(Date.parse(generatedAt))) {
-    throw new Error(`软件源生成时间无效: ${generatedAt}`)
+    throw new Error(`Invalid source generation time: ${generatedAt}`)
   }
   mkdirSync(outDir, { recursive: true })
 
@@ -32,17 +32,19 @@ export function materializeRegistry(
     const validation = validatePackage(packageDir)
     if (!validation.ok || !validation.package) {
       throw new Error(
-        `MCP 软件包无效: ${packageDir}（${validation.errors
+        `Invalid MCP package: ${packageDir} (${validation.errors
           .map((problem) => `${problem.path}: ${problem.message}`)
-          .join('；')}）`
+          .join('; ')})`
       )
     }
     const manifest = validation.package.manifest
     if (!(options.allowedTypes ?? ['mcp']).includes(manifest.type)) {
-      throw new Error(`连接器源不是 MCP 软件包或不属于允许类型: ${packageDir}`)
+      throw new Error(
+        `Connector source is not an MCP package or an allowed package type: ${packageDir}`
+      )
     }
     const identity = `${manifest.type}:${manifest.id}`
-    if (ids.has(identity)) throw new Error(`软件源包含重复软件包: ${manifest.id}`)
+    if (ids.has(identity)) throw new Error(`Source contains a duplicate package: ${manifest.id}`)
     ids.add(identity)
 
     const files = regularPackageFiles(packageDir)
@@ -118,12 +120,13 @@ export function regularPackageFiles(root: string): ArchiveFile[] {
       const path = join(dir, entry.name)
       const stat = lstatSync(path)
       const relativePath = relative(root, path).split('\\').join('/')
-      if (stat.isSymbolicLink()) throw new Error(`连接器软件包不允许符号链接: ${relativePath}`)
+      if (stat.isSymbolicLink())
+        throw new Error(`Connector packages cannot contain symlinks: ${relativePath}`)
       if (stat.isDirectory()) walk(path)
       else if (stat.isFile() && relativePath !== 'files.json') {
         files.push({ path: relativePath, data: readFileSync(path), mode: stat.mode & 0o777 })
       } else if (!stat.isFile()) {
-        throw new Error(`连接器软件包包含非普通文件: ${relativePath}`)
+        throw new Error(`Connector package contains a non-regular file: ${relativePath}`)
       }
     }
   }

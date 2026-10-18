@@ -1,3 +1,4 @@
+import { navigationCopy } from './navigationCopy'
 // Non-component helpers shared by SessionSidebar, ProjectRow, and SessionRow.
 import type { SessionSummary } from '../types'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
@@ -20,7 +21,7 @@ export function editableSessionTitle(session: SessionSummary): string {
   return (
     messageContentTitleText(session.name) ||
     messageContentTitleText(session.firstMessage) ||
-    '新对话'
+    navigationCopy.newConversation
   )
 }
 

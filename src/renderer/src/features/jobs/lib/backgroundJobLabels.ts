@@ -1,3 +1,7 @@
+import { getUiLocale } from '../../../lib/i18n'
+import { jobsCopy } from './jobsCopy'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorJobCopy } from './connectorJobCopy'
 import type {
   BackgroundAgentJob,
   BackgroundShellJob
@@ -10,6 +14,7 @@ import { runProgressLabel, runStateLabel } from '../../wrapper/lib/wrapperView'
 import {
   canStopUnifiedWrapperRun,
   connectorJobDetail,
+  isCancelledConnectorJob,
   environmentBuildDetail,
   environmentBuildPercent,
   environmentBuildTitle,
@@ -28,50 +33,106 @@ export const JOB_TONE_COLOR: Record<JobTone, string> = {
 export type JobDetailField = { label: string; value: string; mono?: boolean; scroll?: boolean }
 
 const AGENT_STATE_LABELS = {
-  queued: '排队中',
-  running: '运行中',
-  done: '已完成',
-  error: '失败',
-  cancelled: '已停止',
-  interrupted: '已中断'
+  get queued() {
+    return jobsCopy.queued
+  },
+  get running() {
+    return jobsCopy.running
+  },
+  get done() {
+    return jobsCopy.completed
+  },
+  get error() {
+    return jobsCopy.failed
+  },
+  get cancelled() {
+    return jobsCopy.stopped
+  },
+  get interrupted() {
+    return jobsCopy.interrupted
+  }
 } satisfies Record<BackgroundAgentJob['state'], string>
 
 const SHELL_STATE_LABELS = {
-  queued: '排队中',
-  running: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已停止'
+  get queued() {
+    return jobsCopy.queued
+  },
+  get running() {
+    return jobsCopy.running
+  },
+  get completed() {
+    return jobsCopy.completed
+  },
+  get failed() {
+    return jobsCopy.failed
+  },
+  get cancelled() {
+    return jobsCopy.stopped
+  }
 } satisfies Record<BackgroundShellJob['state'], string>
 
 const UPLOAD_STATE_LABELS: Record<RemoteProjectUploadJob['status'], string> = {
-  queued: '排队',
-  uploading: '上传中',
-  verifying: '校验',
-  completed: '完成',
-  failed: '失败',
-  cancelled: '已取消'
+  get queued() {
+    return jobsCopy.queue
+  },
+  get uploading() {
+    return jobsCopy.uploading
+  },
+  get verifying() {
+    return jobsCopy.verifying
+  },
+  get completed() {
+    return jobsCopy.done
+  },
+  get failed() {
+    return jobsCopy.failed
+  },
+  get cancelled() {
+    return jobsCopy.cancelled
+  }
 }
 
 const JUPYTER_STATE_LABELS: Record<RemoteJupyterStartJob['state'], string> = {
-  running: '启动中',
-  ready: '已就绪',
-  failed: '启动失败',
-  cancelled: '已停止'
+  get running() {
+    return jobsCopy.starting
+  },
+  get ready() {
+    return jobsCopy.ready
+  },
+  get failed() {
+    return jobsCopy.startupFailed
+  },
+  get cancelled() {
+    return jobsCopy.stopped
+  }
 }
 
 const NOTEBOOK_AI_PHASE_LABELS: Record<NotebookAiGenerationJob['phase'], string> = {
-  preparing: '准备上下文',
-  waiting: '等待模型响应',
-  generating: '正在生成代码',
-  repairing: '修正生成结果',
-  completed: '已完成',
-  failed: '生成失败'
+  get preparing() {
+    return jobsCopy.preparingContext
+  },
+  get waiting() {
+    return jobsCopy.awaitingModelResponse
+  },
+  get generating() {
+    return jobsCopy.generatingCode
+  },
+  get repairing() {
+    return jobsCopy.repairingGeneratedOutput
+  },
+  get completed() {
+    return jobsCopy.completed
+  },
+  get failed() {
+    return jobsCopy.generationFailed
+  }
 }
 
 function uploadTitle(upload: RemoteProjectUploadJob): string {
-  const first = upload.files[0]?.name ?? '本机文件'
-  return upload.totalFiles > 1 ? `${first} 等 ${upload.totalFiles} 个文件` : first
+  const first = upload.files[0]?.name ?? jobsCopy.localFile
+  return upload.totalFiles > 1
+    ? jobsCopy.valueAndValueFilesInTotal(first, upload.totalFiles)
+    : first
 }
 
 function uploadDetail(upload: RemoteProjectUploadJob): string {
@@ -85,7 +146,9 @@ function uploadDetail(upload: RemoteProjectUploadJob): string {
       ? `${(upload.bytesPerSecond / 1024 ** 2).toFixed(1)} MiB/s`
       : undefined,
     renamed?.destinationPath
-      ? `同名文件已改为 ${renamed.destinationPath.split('/').pop()}`
+      ? jobsCopy.duplicateFilenameRenamedToValue(
+          renamed.destinationPath.split('/').pop() ?? renamed.destinationPath
+        )
       : undefined,
     upload.error
   ]
@@ -109,8 +172,8 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
   if (item.kind === 'upload') return uploadTitle(item.upload)
-  if (item.kind === 'jupyter') return `启动 Jupyter Server · ${item.job.projectName}`
-  if (item.kind === 'notebook-ai') return `AI 生成 · ${item.job.notebookName}`
+  if (item.kind === 'jupyter') return jobsCopy.startJupyterServerValue(item.job.projectName)
+  if (item.kind === 'notebook-ai') return jobsCopy.aIGenerationValue(item.job.notebookName)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
@@ -118,24 +181,24 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
 
 export function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'history') return item.snapshot.source
-  if (item.kind === 'connector') return '连接器'
-  if (item.kind === 'environment') return '环境'
-  if (item.kind === 'upload') return '上传'
+  if (item.kind === 'connector') return resourceUi.connector
+  if (item.kind === 'environment') return jobsCopy.environment
+  if (item.kind === 'upload') return jobsCopy.upload
   if (item.kind === 'wrapper') return 'Wrapper'
-  if (item.kind === 'jupyter') return '远程 Jupyter'
+  if (item.kind === 'jupyter') return jobsCopy.remoteJupyter
   if (item.kind === 'notebook-ai') return 'Notebook AI'
   return item.run.sessionTitle
 }
 
 export function jobSubtitle(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'history') return '历史记录'
+  if (item.kind === 'history') return jobsCopy.history
   if (item.kind === 'connector') return item.setup.summary ?? item.setup.id
   if (item.kind === 'environment') return item.build.envId
-  if (item.kind === 'upload') return item.upload.destinationDirectory || '项目根目录'
+  if (item.kind === 'upload') return item.upload.destinationDirectory || jobsCopy.projectRoot
   if (item.kind === 'jupyter') return item.job.serverLabel
   if (item.kind === 'notebook-ai') return item.job.projectCwd
   if (item.kind === 'agent') return item.run.task
-  if (item.kind === 'shell') return '后台命令'
+  if (item.kind === 'shell') return jobsCopy.backgroundCommand
   return item.run.runId
 }
 
@@ -160,7 +223,7 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
     return [
       NOTEBOOK_AI_PHASE_LABELS[item.job.phase],
       elapsed(item.job.startedAt, item.job.completedAt, nowMs),
-      item.job.cellCount === undefined ? undefined : `${item.job.cellCount} 个单元`,
+      item.job.cellCount === undefined ? undefined : jobsCopy.valueCells(item.job.cellCount),
       item.job.state === 'failed' ? item.job.error : undefined
     ]
       .filter(Boolean)
@@ -185,10 +248,12 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   }
   return [
     AGENT_STATE_LABELS[item.run.state],
-    item.run.historyAvailable === false ? '旧连接的记录，未自动重启' : undefined,
+    item.run.historyAvailable === false
+      ? jobsCopy.recordFromAnOldConnectionNotRestartedAutomatically
+      : undefined,
     duration,
     item.run.lastStep,
-    item.run.toolCalls ? `${item.run.toolCalls} 步` : undefined
+    item.run.toolCalls ? jobsCopy.valueSteps(item.run.toolCalls) : undefined
   ]
     .filter(Boolean)
     .join(' · ')
@@ -198,14 +263,17 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
   if (item.kind === 'history') return item.snapshot.status
   if (item.active) {
     if (item.kind === 'jupyter') return { label: JUPYTER_STATE_LABELS.running, tone: 'running' }
-    return { label: '进行中', tone: 'running' }
+    if (item.kind === 'connector') return { label: connectorJobCopy.inProgress, tone: 'running' }
+    return { label: jobsCopy.inProgress, tone: 'running' }
   }
   const failed = (label: string): { label: string; tone: JobTone } => ({ label, tone: 'error' })
   const done = (label: string): { label: string; tone: JobTone } => ({ label, tone: 'success' })
   const stopped = (label: string): { label: string; tone: JobTone } => ({ label, tone: 'neutral' })
   switch (item.kind) {
     case 'notebook-ai':
-      return item.job.state === 'completed' ? done('已完成') : failed('生成失败')
+      return item.job.state === 'completed'
+        ? done(jobsCopy.completed)
+        : failed(jobsCopy.generationFailed)
     case 'jupyter':
       if (item.job.state === 'ready') return done(JUPYTER_STATE_LABELS.ready)
       if (item.job.state === 'failed') return failed(JUPYTER_STATE_LABELS.failed)
@@ -225,17 +293,21 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
       }
       return stopped(runStateLabel(item.run.state))
     case 'environment':
-      if (item.build.state === 'ready') return done('已就绪')
-      if (item.build.state === 'failed') return failed('失败')
-      return stopped('已取消')
+      if (item.build.state === 'ready') return done(jobsCopy.ready)
+      if (item.build.state === 'failed') return failed(jobsCopy.failed)
+      return stopped(jobsCopy.cancelled)
     case 'upload':
       if (item.upload.status === 'completed') return done(UPLOAD_STATE_LABELS.completed)
       if (item.upload.status === 'failed') return failed(UPLOAD_STATE_LABELS.failed)
       return stopped(UPLOAD_STATE_LABELS[item.upload.status])
     case 'connector':
-      if (item.setup.phase === 'ready') return done('已完成')
-      if (item.setup.error === '已取消') return stopped('已取消')
-      return failed(item.setup.failureKind === 'needs-setup' ? '需要先配置' : '失败')
+      if (item.setup.phase === 'ready') return done(connectorJobCopy.completed)
+      if (isCancelledConnectorJob(item.setup)) return stopped(connectorJobCopy.cancelled)
+      return failed(
+        item.setup.failureKind === 'needs-setup'
+          ? connectorJobCopy.needsSetup
+          : connectorJobCopy.failed
+      )
   }
 }
 
@@ -250,26 +322,26 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
 }
 
 export function stopTooltip(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'connector') return '取消添加'
-  if (item.kind === 'environment') return '取消构建'
-  if (item.kind === 'upload') return '取消上传'
-  if (item.kind === 'agent') return '停止这个 Agent'
-  if (item.kind === 'shell') return '停止这个后台命令'
-  return '取消这个 Wrapper 运行'
+  if (item.kind === 'connector') return connectorJobCopy.cancelAdd
+  if (item.kind === 'environment') return jobsCopy.cancelBuild
+  if (item.kind === 'upload') return jobsCopy.cancelUpload
+  if (item.kind === 'agent') return jobsCopy.stopThisAgent
+  if (item.kind === 'shell') return jobsCopy.stopThisBackgroundCommand
+  return jobsCopy.cancelThisWrapperRun
 }
 
 export function stopAriaLabel(item: UnifiedBackgroundJob): string {
   const title = jobTitle(item)
-  if (item.kind === 'environment') return '取消构建'
-  if (item.kind === 'upload') return `取消上传 ${title}`
-  if (item.kind === 'connector') return `取消添加 ${title}`
-  return `停止 ${title}`
+  if (item.kind === 'environment') return jobsCopy.cancelBuild
+  if (item.kind === 'upload') return jobsCopy.cancelUploadValue(title)
+  if (item.kind === 'connector') return connectorJobCopy.cancelNamed(title)
+  return jobsCopy.stopValue(title)
 }
 
 function timeLabel(value: string | number | undefined): string {
   if (value === undefined) return ''
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(getUiLocale())
 }
 
 /** Fields of the in-panel detail view. Connector and Jupyter jobs add their own sections. */
@@ -281,111 +353,138 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
       case 'notebook-ai':
         return [
           { label: 'Notebook', value: item.job.notebookPath || item.job.notebookName },
-          { label: '项目', value: item.job.projectCwd },
-          { label: '模型', value: item.job.model },
-          { label: '状态', value: status },
+          { label: jobsCopy.project, value: item.job.projectCwd },
+          { label: jobsCopy.model, value: item.job.model },
+          { label: jobsCopy.status, value: status },
           item.job.cellCount === undefined
             ? undefined
-            : { label: '生成单元', value: `${item.job.cellCount} 个单元` },
-          { label: '开始时间', value: timeLabel(item.job.startedAt) },
-          { label: '耗时', value: elapsed(item.job.startedAt, item.job.completedAt, nowMs) },
+            : { label: jobsCopy.generatedCells, value: jobsCopy.valueCells(item.job.cellCount) },
+          { label: jobsCopy.started, value: timeLabel(item.job.startedAt) },
+          {
+            label: jobsCopy.duration,
+            value: elapsed(item.job.startedAt, item.job.completedAt, nowMs)
+          },
           item.job.completedAt
-            ? { label: '结束时间', value: timeLabel(item.job.completedAt) }
+            ? { label: jobsCopy.finished, value: timeLabel(item.job.completedAt) }
             : undefined,
-          { label: '当前步骤', value: NOTEBOOK_AI_PHASE_LABELS[item.job.phase] },
-          { label: '请求', value: item.job.prompt },
+          { label: jobsCopy.currentStep, value: NOTEBOOK_AI_PHASE_LABELS[item.job.phase] },
+          { label: jobsCopy.request, value: item.job.prompt },
           item.job.sourcePreview
-            ? { label: '生成内容预览', value: item.job.sourcePreview, mono: true, scroll: true }
+            ? {
+                label: jobsCopy.generatedContentPreview,
+                value: item.job.sourcePreview,
+                mono: true,
+                scroll: true
+              }
             : undefined,
-          item.job.error ? { label: '错误', value: item.job.error, mono: true } : undefined
+          item.job.error ? { label: jobsCopy.error, value: item.job.error, mono: true } : undefined
         ]
       case 'agent':
         return [
-          { label: '对话', value: item.run.sessionTitle },
-          { label: '任务', value: item.run.task },
-          { label: '状态', value: status },
+          { label: jobsCopy.conversation, value: item.run.sessionTitle },
+          { label: jobsCopy.task, value: item.run.task },
+          { label: jobsCopy.status, value: status },
           item.run.historyAvailable === false
-            ? { label: '说明', value: '旧连接的任务记录；执行历史不可用，未自动重启。' }
+            ? {
+                label: jobsCopy.description,
+                value: jobsCopy.taskRecordFromAnOldConnectionExecutionHistoryIsUnavailable
+              }
             : undefined,
-          { label: '开始时间', value: timeLabel(item.run.startedAt) },
+          { label: jobsCopy.started, value: timeLabel(item.run.startedAt) },
           {
-            label: '耗时',
+            label: jobsCopy.duration,
             value: elapsed(item.run.startedAt, item.run.completedAt, nowMs)
           },
-          item.run.lastStep ? { label: '最近一步', value: item.run.lastStep } : undefined,
-          item.run.toolCalls ? { label: '工具调用', value: `${item.run.toolCalls} 步` } : undefined
+          item.run.lastStep ? { label: jobsCopy.lastStep, value: item.run.lastStep } : undefined,
+          item.run.toolCalls
+            ? { label: jobsCopy.toolCall, value: jobsCopy.valueSteps(item.run.toolCalls) }
+            : undefined
         ]
       case 'shell':
         return [
-          { label: '对话', value: item.run.sessionTitle },
-          { label: '命令', value: item.run.command, mono: true },
-          { label: '状态', value: status },
-          { label: '开始时间', value: timeLabel(item.run.startedAt) },
+          { label: jobsCopy.conversation, value: item.run.sessionTitle },
+          { label: jobsCopy.command, value: item.run.command, mono: true },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.started, value: timeLabel(item.run.startedAt) },
           {
-            label: '耗时',
+            label: jobsCopy.duration,
             value: elapsed(item.run.startedAt, item.run.completedAt, nowMs)
           },
-          { label: '输出', value: item.run.output || '没有输出', mono: true, scroll: true }
+          {
+            label: jobsCopy.output,
+            value: item.run.output || jobsCopy.noOutput,
+            mono: true,
+            scroll: true
+          }
         ]
       case 'wrapper':
         return [
           { label: 'Wrapper', value: item.run.wrapper.canonicalId },
-          { label: '运行 ID', value: item.run.runId, mono: true },
-          { label: '状态', value: status },
+          { label: jobsCopy.runID, value: item.run.runId, mono: true },
+          { label: jobsCopy.status, value: status },
           runProgressLabel(item.run)
-            ? { label: '进度', value: runProgressLabel(item.run) ?? '' }
+            ? { label: jobsCopy.progress, value: runProgressLabel(item.run) ?? '' }
             : undefined,
-          { label: '开始时间', value: timeLabel(item.run.startedAt ?? item.run.createdAt) },
+          { label: jobsCopy.started, value: timeLabel(item.run.startedAt ?? item.run.createdAt) },
           {
-            label: '耗时',
+            label: jobsCopy.duration,
             value: elapsed(item.run.startedAt ?? item.run.createdAt, item.run.completedAt, nowMs)
           },
-          { label: '输出目录', value: item.run.outDir },
+          { label: jobsCopy.outputDirectory, value: item.run.outDir },
           item.run.environmentError
-            ? { label: '环境错误', value: item.run.environmentError, mono: true }
+            ? { label: jobsCopy.environmentError, value: item.run.environmentError, mono: true }
             : undefined,
           item.run.inputErrors?.length
-            ? { label: '输入错误', value: item.run.inputErrors.join('\n'), mono: true }
+            ? { label: jobsCopy.inputError, value: item.run.inputErrors.join('\n'), mono: true }
             : undefined,
           item.run.launchDiagnostic
-            ? { label: '启动诊断', value: item.run.launchDiagnostic, mono: true }
+            ? { label: jobsCopy.startupDiagnostics, value: item.run.launchDiagnostic, mono: true }
             : undefined
         ]
       case 'environment':
         return [
-          { label: '环境', value: item.build.ref },
-          { label: '环境 ID', value: item.build.envId, mono: true },
-          { label: '状态', value: status },
-          { label: '进度', value: environmentBuildDetail(item.build) },
-          { label: '开始时间', value: timeLabel(item.build.startedAt) },
+          { label: jobsCopy.environment, value: item.build.ref },
+          { label: jobsCopy.environmentID, value: item.build.envId, mono: true },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.progress, value: environmentBuildDetail(item.build) },
+          { label: jobsCopy.started, value: timeLabel(item.build.startedAt) },
           {
-            label: '耗时',
+            label: jobsCopy.duration,
             value: elapsed(item.build.startedAt, item.build.finishedAt, nowMs)
           },
-          item.build.message ? { label: '说明', value: item.build.message } : undefined,
-          item.build.error ? { label: '错误', value: item.build.error, mono: true } : undefined
+          item.build.message
+            ? { label: jobsCopy.description, value: item.build.message }
+            : undefined,
+          item.build.error
+            ? { label: jobsCopy.error, value: item.build.error, mono: true }
+            : undefined
         ]
       case 'upload':
         return [
-          { label: '文件', value: item.upload.files.map((file) => file.name).join('\n') },
-          { label: '目标目录', value: item.upload.destinationDirectory || '项目根目录' },
-          { label: '状态', value: status },
-          { label: '进度', value: uploadDetail(item.upload) },
-          { label: '开始时间', value: timeLabel(item.upload.createdAt) },
-          item.upload.error ? { label: '错误', value: item.upload.error, mono: true } : undefined
+          { label: jobsCopy.file, value: item.upload.files.map((file) => file.name).join('\n') },
+          {
+            label: jobsCopy.destinationDirectory,
+            value: item.upload.destinationDirectory || jobsCopy.projectRoot
+          },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.progress, value: uploadDetail(item.upload) },
+          { label: jobsCopy.started, value: timeLabel(item.upload.createdAt) },
+          item.upload.error
+            ? { label: jobsCopy.error, value: item.upload.error, mono: true }
+            : undefined
         ]
       case 'jupyter':
         return [
-          { label: '项目', value: item.job.projectName },
-          { label: '服务器', value: item.job.serverLabel },
-          { label: '状态', value: status },
-          { label: '当前步骤', value: item.job.phase },
-          { label: '开始时间', value: timeLabel(item.job.startedAt) },
+          { label: jobsCopy.project, value: item.job.projectName },
+          { label: jobsCopy.server, value: item.job.serverLabel },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.currentStep, value: item.job.phase },
+          { label: jobsCopy.started, value: timeLabel(item.job.startedAt) },
           {
-            label: '耗时',
+            label: jobsCopy.duration,
             value: elapsed(item.job.startedAt, item.job.finishedAt, nowMs)
           },
-          item.job.error ? { label: '错误', value: item.job.error, mono: true } : undefined
+          item.job.error ? { label: jobsCopy.error, value: item.job.error, mono: true } : undefined
         ]
       case 'connector':
         return []

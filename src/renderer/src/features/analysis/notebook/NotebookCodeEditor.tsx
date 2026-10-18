@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   autocompletion,
@@ -114,6 +116,13 @@ function completionShouldActivate(
   return source.slice(Math.max(0, context.pos - 1), context.pos) === '.'
 }
 
+function notebookEditorPhrases(): Record<string, string> {
+  return {
+    Completions: analysisCopy.completions,
+    'Control character': analysisCopy.controlCharacter
+  }
+}
+
 function codeMirrorCompletion(option: NotebookEditorCompletionOption): Completion {
   return {
     label: option.label,
@@ -132,9 +141,12 @@ export default function NotebookCodeEditor({
   onFormat,
   initialSelection
 }: NotebookCodeEditorProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const languageCompartmentRef = useRef(new Compartment())
+  const localeCompartmentRef = useRef(new Compartment())
+  const appearanceCompartmentRef = useRef(new Compartment())
   const initialValueRef = useRef(value)
   const initialLanguageRef = useRef(language)
   const initialSelectionRef = useRef(initialSelection)
@@ -265,6 +277,10 @@ export default function NotebookCodeEditor({
     [caretColor, theme]
   )
   const highlightStyle = useMemo<HighlightStyle>(() => codeMirrorHighlightStyle(theme), [theme])
+  const initialAppearanceRef = useRef([
+    editorTheme,
+    syntaxHighlighting(highlightStyle, { fallback: true })
+  ])
   const completionSource = useMemo(
     () =>
       async (context: CompletionContext): Promise<CompletionResult | null> => {
@@ -322,7 +338,7 @@ export default function NotebookCodeEditor({
       indentOnInput(),
       bracketMatching(),
       highlightActiveLine(),
-      syntaxHighlighting(highlightStyle, { fallback: true }),
+      appearanceCompartmentRef.current.of(initialAppearanceRef.current),
       autocompletion({
         activateOnTyping: true,
         defaultKeymap: true,
@@ -375,11 +391,11 @@ export default function NotebookCodeEditor({
         ...defaultKeymap,
         ...historyKeymap
       ]),
-      editorTheme,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) onChangeRef.current(update.state.doc.toString())
       }),
-      languageCompartmentRef.current.of(languageExtension(initialLanguageRef.current))
+      languageCompartmentRef.current.of(languageExtension(initialLanguageRef.current)),
+      localeCompartmentRef.current.of(EditorState.phrases.of(notebookEditorPhrases()))
     ]
     const view = new EditorView({
       parent: hostRef.current,
@@ -396,7 +412,18 @@ export default function NotebookCodeEditor({
       view.destroy()
       viewRef.current = null
     }
-  }, [completionSource, editorTheme, highlightStyle])
+  }, [completionSource])
+
+  useEffect(() => {
+    // Locale changes also replace the MUI theme. Reconfigure visual extensions in
+    // place so the editor keeps its document, cursor, focus and undo history.
+    viewRef.current?.dispatch({
+      effects: appearanceCompartmentRef.current.reconfigure([
+        editorTheme,
+        syntaxHighlighting(highlightStyle, { fallback: true })
+      ])
+    })
+  }, [editorTheme, highlightStyle])
 
   useEffect(() => {
     const view = viewRef.current
@@ -416,6 +443,14 @@ export default function NotebookCodeEditor({
       effects: languageCompartmentRef.current.reconfigure(languageExtension(language))
     })
   }, [language])
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: localeCompartmentRef.current.reconfigure(
+        EditorState.phrases.of(notebookEditorPhrases())
+      )
+    })
+  }, [uiLanguage])
 
   return (
     <Box

@@ -1,3 +1,5 @@
+import { settingsUi } from '../features/settings/lib/settingsUi'
+import { useUiLanguage } from '../lib/i18n'
 import {
   Alert,
   Box,
@@ -46,19 +48,19 @@ type AddProviderDialogProps = {
 
 function promptInputLabel(prompt: ActiveAuthPrompt['prompt']): string {
   if (prompt.type === 'manual_code') {
-    return '请输入授权码'
+    return settingsUi.enterAuthorizationCode
   }
   if (prompt.type === 'secret') {
-    return '请输入密钥'
+    return settingsUi.enterKey2
   }
-  return prompt.placeholder || '请输入'
+  return prompt.placeholder || settingsUi.enterAValue
 }
 
 function formatPromptHint(eventType: ActiveAuthPrompt['prompt']['type']): string {
   if (eventType === 'select') {
-    return '请选择后提交'
+    return settingsUi.selectAnOptionAndSubmit
   }
-  return '请填写并提交'
+  return settingsUi.completeTheFieldAndSubmit
 }
 
 function AddProviderDialogContent({
@@ -76,6 +78,7 @@ function AddProviderDialogContent({
   onSubmitPrompt,
   onUpdatePromptValue
 }: AddProviderDialogProps): React.JSX.Element {
+  useUiLanguage()
   const [step, setStep] = useState<'select' | 'configure'>(
     initialProviderId ? 'configure' : 'select'
   )
@@ -112,7 +115,7 @@ function AddProviderDialogContent({
     return (
       <Box sx={{ mt: 2 }}>
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
-          授权交互输入
+          {settingsUi.authorizationInput}
         </Typography>
         <Stack spacing={1.5}>
           {activePrompts.map((item) => (
@@ -178,7 +181,7 @@ function AddProviderDialogContent({
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <CheckCircleIcon />
-        添加 Provider
+        {settingsUi.addProvider}
       </DialogTitle>
 
       <DialogContent sx={{ pt: 1.5, pb: 1.5 }}>
@@ -191,7 +194,7 @@ function AddProviderDialogContent({
                 variant="body2"
                 sx={{ fontWeight: 600 }}
               >
-                搜索 Provider
+                {settingsUi.searchProviders2}
               </Typography>
               <TextField
                 id="add-provider-search"
@@ -205,7 +208,7 @@ function AddProviderDialogContent({
                     focusProviderOption(0)
                   }
                 }}
-                placeholder="输入名称或 ID"
+                placeholder={settingsUi.enterANameOrID}
                 sx={{ mt: 0.75 }}
               />
             </Box>
@@ -219,7 +222,7 @@ function AddProviderDialogContent({
             >
               <List
                 ref={providerListRef}
-                aria-label="Provider 列表"
+                aria-label={settingsUi.providerList}
                 sx={{ py: 0.5, maxHeight: 'min(42vh, 360px)', overflowY: 'auto' }}
               >
                 {visibleProviders.map((provider, index) => (
@@ -255,7 +258,7 @@ function AddProviderDialogContent({
                         }}
                       />
                       {provider.configured ? (
-                        <Chip label="已配置" size="small" variant="outlined" />
+                        <Chip label={settingsUi.configured} size="small" variant="outlined" />
                       ) : null}
                     </ListItemButton>
                   </ListItem>
@@ -263,7 +266,7 @@ function AddProviderDialogContent({
                 {visibleProviders.length === 0 ? (
                   <ListItem sx={{ py: 3, justifyContent: 'center' }}>
                     <Typography variant="body2" color="text.secondary">
-                      没有匹配的 Provider
+                      {settingsUi.noMatchingProviders}
                     </Typography>
                   </ListItem>
                 ) : null}
@@ -288,7 +291,7 @@ function AddProviderDialogContent({
               </Alert>
             ) : null}
 
-            <Typography variant="subtitle2">OAuth 登录</Typography>
+            <Typography variant="subtitle2">{settingsUi.oAuthLogin}</Typography>
             {selectedProvider.hasOAuth ? (
               <Button
                 fullWidth
@@ -301,11 +304,11 @@ function AddProviderDialogContent({
                 sx={{ mt: 1, minHeight: 44 }}
                 disabled={isProcessing}
               >
-                OAuth 登录
+                {settingsUi.oAuthLogin}
               </Button>
             ) : (
               <Alert severity="warning" sx={{ mt: 1 }}>
-                当前 Provider 未启用 OAuth
+                {settingsUi.oAuthIsNotEnabledForThisProvider}
               </Alert>
             )}
 
@@ -329,7 +332,7 @@ function AddProviderDialogContent({
                   onChange={(event) => {
                     setApiKey(event.target.value)
                   }}
-                  placeholder="输入 API Key"
+                  placeholder={settingsUi.enterAPIKey2}
                   sx={{ mt: 1 }}
                   slotProps={{
                     input: {
@@ -345,12 +348,12 @@ function AddProviderDialogContent({
                   sx={{ mt: 1.5, minHeight: 44 }}
                   disabled={isProcessing || !apiKey.trim()}
                 >
-                  保存 API Key
+                  {settingsUi.saveAPIKey}
                 </Button>
               </form>
             ) : (
               <Alert severity="warning" sx={{ mt: 1 }}>
-                当前 Provider 未启用 API Key
+                {settingsUi.aPIKeysAreNotEnabledForThisProvider}
               </Alert>
             )}
 
@@ -369,11 +372,11 @@ function AddProviderDialogContent({
             }}
             sx={{ minHeight: 44 }}
           >
-            返回
+            {settingsUi.back}
           </Button>
         ) : null}
         <Button onClick={onClose} sx={{ minHeight: 44 }}>
-          关闭
+          {settingsUi.close}
         </Button>
         {isProcessing ? <CircularProgress size={20} sx={{ mr: 2 }} /> : null}
       </DialogActions>
@@ -382,6 +385,7 @@ function AddProviderDialogContent({
 }
 
 function AddProviderDialog(props: AddProviderDialogProps): React.JSX.Element {
+  useUiLanguage()
   const dialogSessionKey = props.open ? (props.initialProviderId ?? 'select') : 'closed'
   return <AddProviderDialogContent key={dialogSessionKey} {...props} />
 }

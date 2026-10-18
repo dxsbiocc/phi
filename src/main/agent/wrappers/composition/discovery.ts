@@ -190,20 +190,20 @@ function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
   const reasonCache = new Map<string, string | undefined>()
   const unavailableReason = (id: string, visiting = new Set<string>()): string | undefined => {
     if (reasonCache.has(id)) return reasonCache.get(id)
-    if (visiting.has(id)) return `依赖出现循环：${id}`
+    if (visiting.has(id)) return `Dependency cycle: ${id}`
     if (packageEnabled.get(id) === false) {
-      const reason = `软件包 ${id} 已停用`
+      const reason = `Package ${id} is disabled`
       reasonCache.set(id, reason)
       return reason
     }
     const state = registry.packages[id]
-    if (!state) return `依赖的软件包 ${id} 未安装`
+    if (!state) return `Required package ${id} is not installed`
     const nextVisiting = new Set(visiting).add(id)
     for (const dependency of state.manifest.dependsOn ?? []) {
       if (dependency.type !== 'wrapper') continue
       const dependencyReason = unavailableReason(dependency.id, nextVisiting)
       if (!dependencyReason) continue
-      const reason = `依赖 ${dependency.id} 不可用（${dependencyReason}）`
+      const reason = `Dependency ${dependency.id} is unavailable (${dependencyReason})`
       reasonCache.set(id, reason)
       return reason
     }
@@ -233,7 +233,7 @@ function loadCatalog(agentDir: string, projectDir?: string): CachedCatalog {
       return {
         ...entry,
         enablementId,
-        ...(!enabled ? { hiddenReason: `自定义 wrapper ${entry.manifest.name} 已停用` } : {})
+        ...(!enabled ? { hiddenReason: `Custom Wrapper ${entry.manifest.name} is disabled` } : {})
       }
     })
   const entries = [...packaged, ...custom].sort((left, right) =>

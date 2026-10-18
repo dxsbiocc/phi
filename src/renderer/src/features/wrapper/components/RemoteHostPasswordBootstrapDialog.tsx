@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { localizeRemoteSetupMessage, remoteSetupCopy } from '../lib/remoteSetupCopy'
 import {
   Alert,
   Box,
@@ -36,6 +38,7 @@ export function RemoteHostPasswordBootstrapDialog({
   onClose: () => void
   onCompleted?: (result: SshBootstrapFinalResult) => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (!open) return null
   const targetKey = `${target.alias}\0${target.hostname}\0${target.user}\0${target.port}`
   return (
@@ -60,6 +63,7 @@ function RemoteHostPasswordBootstrapSession({
   onClose: () => void
   onCompleted?: (result: SshBootstrapFinalResult) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const controller = useRemoteHostPasswordBootstrap({ target, client, onClose, onCompleted })
   return (
     <RemoteHostPasswordBootstrapDialogView
@@ -79,41 +83,47 @@ export function RemoteHostPasswordBootstrapDialogView({
   model: SshBootstrapUiModel
   actions: SshBootstrapUiActions
 }): React.JSX.Element {
+  useUiLanguage()
   const confirmingHostKey = model.phase === 'host-key-confirmation'
   const enteringPassword = model.phase === 'password'
   const choosingPasswordless = model.phase === 'password-choice'
   const skippedPasswordless = model.phase === 'skipped'
   const enteringCredentials = model.phase === 'credentials'
   const progressing = model.phase === 'progress'
-  const testingPassword = progressing && model.currentStep === '正在用密码测试连接…'
+  const testingPassword =
+    progressing &&
+    localizeRemoteSetupMessage(model.currentStep) === remoteSetupCopy.testingPasswordStep
   const previewingConfig = model.phase === 'config-preview'
   const showingResult = model.phase === 'result'
   return (
     <Dialog open={open} onClose={model.busy ? undefined : actions.close} maxWidth="sm" fullWidth>
       <DialogTitle>
         {confirmingHostKey
-          ? '确认服务器主机密钥'
+          ? remoteSetupCopy.confirmHostKey
           : choosingPasswordless
-            ? '密码连接成功'
+            ? remoteSetupCopy.passwordConnectionSucceeded
             : skippedPasswordless
-              ? '本次连接已结束'
+              ? remoteSetupCopy.connectionEnded
               : enteringPassword
-                ? '用密码测试连接'
+                ? remoteSetupCopy.testPasswordConnection
                 : enteringCredentials
-                  ? '配置免密登录'
+                  ? remoteSetupCopy.configurePasswordless
                   : testingPassword
-                    ? '正在测试密码连接'
+                    ? remoteSetupCopy.testingPasswordConnection
                     : progressing
-                      ? '正在设置免密登录'
+                      ? remoteSetupCopy.settingUpPasswordless
                       : previewingConfig
-                        ? '确认写入 SSH 配置'
+                        ? remoteSetupCopy.confirmSshConfiguration
                         : showingResult
-                          ? '免密登录已就绪'
-                          : '设置免密登录'}
+                          ? remoteSetupCopy.passwordlessReady
+                          : remoteSetupCopy.setUpPasswordless}
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 0.75 }}>
-          <Typography variant="body2">目标别名：{model.target.alias}</Typography>
+          <Typography variant="body2">
+            {remoteSetupCopy.targetAliasPrefix}
+            {model.target.alias}
+          </Typography>
           <Typography variant="body2" color="text.secondary">
             {model.target.user}@{model.target.hostname}:{model.target.port}
           </Typography>
@@ -132,26 +142,22 @@ export function RemoteHostPasswordBootstrapDialogView({
                   </Typography>
                 </Stack>
               ))}
-              <Typography variant="body2">
-                请通过可信渠道向服务器管理员核对。仅在与管理员提供的指纹一致时确认。
-              </Typography>
+              <Typography variant="body2">{remoteSetupCopy.verifyFingerprint}</Typography>
             </>
           ) : choosingPasswordless ? (
             <>
-              <Alert severity="success">密码试连成功，密码已从本次请求中丢弃。</Alert>
-              <Typography variant="body2">
-                推荐现在配置免密登录。若暂不配置，之后需要密码时请重新添加，或改用免密登录。
-              </Typography>
+              <Alert severity="success">{remoteSetupCopy.passwordTestSucceeded}</Alert>
+              <Typography variant="body2">{remoteSetupCopy.recommendPasswordless}</Typography>
             </>
           ) : skippedPasswordless ? (
             <>
-              <Alert severity="info">已丢弃密码，未保存任何凭据，也未生成或写入 SSH 配置。</Alert>
-              <Typography variant="body2">之后需要密码时请重新添加，或改用免密登录。</Typography>
+              <Alert severity="info">{remoteSetupCopy.passwordDiscarded}</Alert>
+              <Typography variant="body2">{remoteSetupCopy.futurePasswordHelp}</Typography>
             </>
           ) : enteringPassword ? (
             <>
               <TextField
-                label="服务器密码"
+                label={remoteSetupCopy.serverPassword}
                 type="password"
                 value={model.password}
                 onChange={(event) => actions.setPassword(event.target.value)}
@@ -159,23 +165,23 @@ export function RemoteHostPasswordBootstrapDialogView({
                 autoFocus
                 fullWidth
               />
-              <Alert severity="info">密码只用于本次试连，Phi 不会保存密码。</Alert>
+              <Alert severity="info">{remoteSetupCopy.passwordUseHelp}</Alert>
             </>
           ) : enteringCredentials ? (
             <>
               {!model.passwordlessAcknowledged && (
                 <>
                   <TextField
-                    label="私钥口令"
+                    label={remoteSetupCopy.keyPassphrase}
                     type="password"
                     value={model.credentials.passphrase}
                     onChange={(event) => actions.setPassphrase(event.target.value)}
                     autoComplete="new-password"
-                    helperText="默认生成带口令的专用 ed25519 私钥"
+                    helperText={remoteSetupCopy.keyPassphraseHelp}
                     fullWidth
                   />
                   <TextField
-                    label="确认私钥口令"
+                    label={remoteSetupCopy.confirmKeyPassphrase}
                     type="password"
                     value={model.credentials.passphraseConfirmation}
                     onChange={(event) => actions.setPassphraseConfirmation(event.target.value)}
@@ -190,16 +196,13 @@ export function RemoteHostPasswordBootstrapDialogView({
               {model.passwordlessAvailable && (
                 <Alert severity="warning">
                   <Stack spacing={1}>
-                    <Typography variant="body2">
-                      Linux 上未检测到正在运行的 ssh-agent。带口令密钥必须先加载到 agent，Phi
-                      才能安全验证连接。
-                    </Typography>
+                    <Typography variant="body2">{remoteSetupCopy.linuxAgentRequired}</Typography>
                     <Button
                       size="small"
                       onClick={actions.startInspection}
                       sx={{ alignSelf: 'start' }}
                     >
-                      启动 agent 后重新检查
+                      {remoteSetupCopy.recheckAgent}
                     </Button>
                     <FormControlLabel
                       control={
@@ -210,29 +213,38 @@ export function RemoteHostPasswordBootstrapDialogView({
                           }
                         />
                       }
-                      label="明确改用无口令密钥（有风险）"
+                      label={remoteSetupCopy.unprotectedKeyOption}
                     />
                   </Stack>
                 </Alert>
               )}
-              <Alert severity="info">不会保存私钥口令，提交后会立即从界面状态清除。</Alert>
+              <Alert severity="info">{remoteSetupCopy.passphraseDiscarded}</Alert>
             </>
           ) : progressing ? (
             <>
               {model.completedSteps.map((step) => (
-                <Typography key={step} variant="body2" color="success.main">
-                  ✓ {step}
+                <Typography
+                  key={localizeRemoteSetupMessage(step)}
+                  variant="body2"
+                  color="success.main"
+                >
+                  ✓ {localizeRemoteSetupMessage(step)}
                 </Typography>
               ))}
               <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
                 <CircularProgress size={18} />
-                <Typography variant="body2">{model.currentStep}</Typography>
+                <Typography variant="body2">
+                  {localizeRemoteSetupMessage(model.currentStep)}
+                </Typography>
               </Stack>
             </>
           ) : previewingConfig ? (
             <>
-              <Alert severity="success">密钥登录已验证。写入配置前请检查以下内容。</Alert>
-              <Typography variant="body2">新密钥：{model.keyFingerprint}</Typography>
+              <Alert severity="success">{remoteSetupCopy.keyVerifiedReview}</Alert>
+              <Typography variant="body2">
+                {remoteSetupCopy.newKeyPrefix}
+                {model.keyFingerprint}
+              </Typography>
               <Typography variant="body2" color="text.secondary">
                 {model.keyDisplayPath}
               </Typography>
@@ -252,24 +264,27 @@ export function RemoteHostPasswordBootstrapDialogView({
                 {model.preview}
               </Box>
               <Typography variant="caption" color="text.secondary">
-                只有点击“同意写入 SSH 配置”后才会修改 ~/.ssh/config。
+                {remoteSetupCopy.sshConfigurationConsent}
               </Typography>
             </>
           ) : showingResult ? (
             <>
-              <Alert severity="success">专用密钥已安装并通过密钥登录验证。</Alert>
-              <Typography variant="body2">新密钥：{model.keyFingerprint}</Typography>
+              <Alert severity="success">{remoteSetupCopy.keyInstalledVerified}</Alert>
+              <Typography variant="body2">
+                {remoteSetupCopy.newKeyPrefix}
+                {model.keyFingerprint}
+              </Typography>
               <Typography variant="body2" color="text.secondary">
                 {model.keyDisplayPath}
               </Typography>
               <Typography variant="body2">
                 {model.configured
-                  ? '已按确认的预览更新 ~/.ssh/config。'
-                  : '未修改 ~/.ssh/config；你可以稍后手动添加下面的配置。'}
+                  ? remoteSetupCopy.sshConfigurationUpdated
+                  : remoteSetupCopy.sshConfigurationUnchanged}
               </Typography>
               {model.manualConfig && (
                 <>
-                  <Typography variant="subtitle2">手动配置片段</Typography>
+                  <Typography variant="subtitle2">{remoteSetupCopy.manualConfiguration}</Typography>
                   <Box
                     component="pre"
                     sx={{
@@ -289,44 +304,42 @@ export function RemoteHostPasswordBootstrapDialogView({
               )}
             </>
           ) : (
-            <Typography variant="body2">
-              Phi 会先检查服务器能力和主机密钥；在你确认指纹前不会登录，也不会写入 known_hosts。
-            </Typography>
+            <Typography variant="body2">{remoteSetupCopy.bootstrapSafetyHelp}</Typography>
           )}
-          {model.error && <Alert severity="error">{model.error}</Alert>}
+          {model.error && <Alert severity="error">{localizeRemoteSetupMessage(model.error)}</Alert>}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         {showingResult || skippedPasswordless ? (
           <Button variant="contained" onClick={actions.close}>
-            完成
+            {remoteSetupCopy.done}
           </Button>
         ) : choosingPasswordless ? (
           <>
             <Button onClick={actions.skipPasswordless} disabled={model.busy}>
-              暂不配置
+              {remoteSetupCopy.skipSetup}
             </Button>
             <Button
               variant="contained"
               onClick={actions.configurePasswordless}
               disabled={model.busy}
             >
-              配置免密登录（默认、推荐）
+              {remoteSetupCopy.configurePasswordlessRecommended}
             </Button>
           </>
         ) : previewingConfig ? (
           <>
             <Button onClick={actions.declineConfig} disabled={model.busy}>
-              暂不写入
+              {remoteSetupCopy.skipWrite}
             </Button>
             <Button variant="contained" onClick={actions.saveConfig} disabled={model.busy}>
-              {model.busy ? '写入中…' : '同意写入 SSH 配置'}
+              {model.busy ? remoteSetupCopy.writing : remoteSetupCopy.approveSshConfiguration}
             </Button>
           </>
         ) : !progressing ? (
           <>
             <Button onClick={actions.close} disabled={model.busy}>
-              取消
+              {remoteSetupCopy.cancel}
             </Button>
             <Button
               variant="contained"
@@ -346,19 +359,19 @@ export function RemoteHostPasswordBootstrapDialogView({
             >
               {model.busy
                 ? confirmingHostKey
-                  ? '写入中…'
+                  ? remoteSetupCopy.writing
                   : enteringPassword
-                    ? '测试中…'
+                    ? remoteSetupCopy.testing
                     : enteringCredentials
-                      ? '引导中…'
-                      : '检查中…'
+                      ? remoteSetupCopy.bootstrapping
+                      : remoteSetupCopy.checking
                 : confirmingHostKey
-                  ? '指纹一致，继续'
+                  ? remoteSetupCopy.fingerprintMatches
                   : enteringPassword
-                    ? '测试连接'
+                    ? remoteSetupCopy.testConnection
                     : enteringCredentials
-                      ? '开始引导'
-                      : '开始安全检查'}
+                      ? remoteSetupCopy.startBootstrap
+                      : remoteSetupCopy.startSafetyCheck}
             </Button>
           </>
         ) : null}

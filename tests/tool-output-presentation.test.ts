@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -15,6 +16,9 @@ import {
   stripSavedOutputMarker
 } from '../src/renderer/src/lib/toolOutputPresentation'
 import type { ToolCallItem } from '../src/renderer/src/types'
+
+// Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
+setUiLanguage('zh-CN')
 
 test('tool output presentation strips persisted-output storage marker', () => {
   const output =

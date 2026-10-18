@@ -1,3 +1,5 @@
+import { filePreviewCopy } from '../lib/filePreviewUiCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import type { KeyboardEvent, MouseEvent } from 'react'
 import { alpha } from '@mui/material/styles'
@@ -39,6 +41,7 @@ export function FileTreeRow({
   onKeyDown?: (event: KeyboardEvent<HTMLElement>) => void
   onDownload?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const isDirectory = entry.kind === 'directory'
   const entryIcon = isDirectory
     ? genericDirectoryIcons
@@ -54,8 +57,12 @@ export function FileTreeRow({
         {entry.name}
       </Typography>
       <Typography variant="caption" component="div" sx={{ opacity: 0.8, mt: 0.25 }}>
-        {isDirectory ? '文件夹' : extension ? `${extension.toUpperCase()} 文件` : '文件'}
-        {entry.path.startsWith('ssh://') ? ' · 远程' : ''}
+        {isDirectory
+          ? filePreviewCopy.folder
+          : extension
+            ? filePreviewCopy.fileType(extension.toUpperCase())
+            : filePreviewCopy.file}
+        {entry.path.startsWith('ssh://') ? filePreviewCopy.remoteSuffix : ''}
       </Typography>
       <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
         {fileTreeDisplayPath(entry)}
@@ -155,7 +162,7 @@ export function FileTreeRow({
       </Tooltip>
       {onDownload && (
         <Tooltip
-          title="下载远程文件"
+          title={filePreviewCopy.downloadRemoteFile}
           disableFocusListener
           enterDelay={FILE_TREE_TOOLTIP_DELAY_MS}
           enterNextDelay={FILE_TREE_TOOLTIP_DELAY_MS}
@@ -163,7 +170,7 @@ export function FileTreeRow({
           <IconButton
             size="small"
             className="phi-file-download"
-            aria-label={`下载 ${entry.name}`}
+            aria-label={filePreviewCopy.downloadNamed(entry.name)}
             onClick={onDownload}
             sx={{
               opacity: 0,

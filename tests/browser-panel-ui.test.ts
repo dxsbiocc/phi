@@ -1,3 +1,10 @@
+import { beforeEach, afterEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+// Keep these legacy behavioral assertions explicit about their presentation language.
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
+
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -151,11 +158,11 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(tabsSource, /onKeyDown=\{\(event\) => \{[\s\S]{0,180}isBrowserTabActivationKey/)
   assert.match(
     tabsSource,
-    /aria-label=\{`关闭[\s\S]{0,400}onClick=\{\(event\) => \{[\s\S]{0,120}event\.stopPropagation\(\)/
+    /aria-label=\{browserUi\.closeValue\(label\)[\s\S]{0,400}onClick=\{\(event\) => \{[\s\S]{0,120}event\.stopPropagation\(\)/
   )
   assert.match(
     tabsSource,
-    /aria-label=\{`关闭[\s\S]{0,600}onKeyDown=\{\(event\) => \{[\s\S]{0,160}event\.stopPropagation\(\)/
+    /aria-label=\{browserUi\.closeValue\(label\)[\s\S]{0,600}onKeyDown=\{\(event\) => \{[\s\S]{0,160}event\.stopPropagation\(\)/
   )
   assert.match(tabsSource, /WebkitAppRegion: 'drag'/)
   assert.match(tabsSource, /WebkitAppRegion: 'no-drag'/)
@@ -396,8 +403,8 @@ test('browser approvals are scoped and presented as one-action decisions in both
   )
   assert.match(appSource, /cancelBrowserTrustedOverlay\('approval', requestId\)/)
   for (const source of [dialogSource, permissionSource]) {
-    assert.match(source, /browser: '浏览器操作'/)
-    assert.match(source, /仅允许这一次/)
+    assert.match(source, /get browser\(\) \{[\s\S]{0,100}(?:chatCopy|settingsUi)\.browserAction/)
+    assert.match(source, /(?:chatCopy|settingsUi)\.allowOnce/)
   }
 })
 

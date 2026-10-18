@@ -1,3 +1,6 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { resourceUi } from '../../../lib/resourceUi'
+import { connectorCopy } from '../lib/connectorCopy'
 import { Box, Chip, CircularProgress, IconButton, Stack, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { GoCheck, GoKey, GoLock, GoPlay, GoPlus, GoSync } from 'react-icons/go'
@@ -39,6 +42,8 @@ export function McpFeaturedConnectorCard({
   onEnable?: () => void
   onBuildEnvironment?: () => void
 }): React.JSX.Element {
+  useUiLanguage()
+
   const requiresSignIn = connector.signIn !== '无需登录' && connector.signIn !== '本地服务'
   const supportsAuthorization = Boolean(connector.oauthAuthorizationOrigin || connector.apiKey)
   const authorized = !requiresSignIn || (supportsAuthorization && authStatus === 'authenticated')
@@ -50,45 +55,45 @@ export function McpFeaturedConnectorCard({
     ? null
     : !supportsAuthorization
       ? installed
-        ? '已配置 · 授权未验证'
-        : '授权暂不可用'
+        ? connectorCopy.configuredAuthUnverified
+        : connectorCopy.authorizationUnavailable
       : authorizing
-        ? '等待授权'
+        ? connectorCopy.waitingAuthorization
         : authStatus === 'authenticated'
           ? connector.apiKey
-            ? '已验证'
-            : '已登录'
+            ? connectorCopy.verified
+            : connectorCopy.signedIn
           : authStatus === 'checking'
-            ? '检查中'
+            ? connectorCopy.checking
             : authStatus === 'unavailable'
               ? installed
-                ? '已配置 · 状态不可用'
-                : '状态不可用'
+                ? connectorCopy.configuredStatusUnavailable
+                : connectorCopy.statusUnavailable
               : connector.apiKey
                 ? installed
-                  ? '已配置 · API key 未验证'
-                  : '需填写 API key'
+                  ? connectorCopy.configuredKeyUnverified
+                  : connectorCopy.apiKeyRequired
                 : installed
-                  ? '已配置 · 需登录'
-                  : '需登录'
+                  ? connectorCopy.configuredSignInRequired
+                  : connectorCopy.signInRequired
   const actionLabel =
     localUnchecked && !needsEnvironment
-      ? `${connector.setup?.phase === 'failed' ? '重试连接' : '检查连接'} ${connector.name}`
+      ? connectorCopy.checkNamedConnection(connector.name, connector.setup?.phase === 'failed')
       : authorizing
-        ? `取消授权 ${connector.name}`
+        ? connectorCopy.cancelAuthorizationNamed(connector.name)
         : updateAvailable
-          ? `更新 ${connector.name}`
+          ? connectorCopy.updateNamed(connector.name)
           : needsEnvironment
-            ? `构建 ${connector.name} 环境`
+            ? connectorCopy.buildNamedEnvironment(connector.name)
             : installed && authorized && !enabled
-              ? `启用 ${connector.name}`
+              ? connectorCopy.enableNamed(connector.name)
               : authorized
-                ? `添加 ${connector.name}`
+                ? connectorCopy.addNamed(connector.name)
                 : connector.apiKey
                   ? installed
-                    ? `验证 API key ${connector.name}`
-                    : `配置 ${connector.name}`
-                  : `授权登录 ${connector.name}`
+                    ? connectorCopy.verifyNamedKey(connector.name)
+                    : connectorCopy.configureNamed(connector.name)
+                  : connectorCopy.signInNamed(connector.name)
 
   return (
     <Box
@@ -159,16 +164,19 @@ export function McpFeaturedConnectorCard({
             />
           )}
           {installed && authorized && !enabled && (
-            <Chip size="small" variant="outlined" label="已停用" />
+            <Chip size="small" variant="outlined" label={resourceUi.disabled} />
           )}
           {connector.unavailableReason &&
             (!installed || updateAvailable) &&
-            (connector.unavailableKind !== 'authorization' || loginLabel !== '授权暂不可用') && (
+            (connector.unavailableKind !== 'authorization' ||
+              loginLabel !== connectorCopy.authorizationUnavailable) && (
               <Chip
                 size="small"
                 variant="outlined"
                 label={
-                  connector.unavailableKind === 'authorization' ? '授权暂不可用' : '需要新版 Phi'
+                  connector.unavailableKind === 'authorization'
+                    ? connectorCopy.authorizationUnavailable
+                    : connectorCopy.newerPhiRequired
                 }
               />
             )}
@@ -183,7 +191,7 @@ export function McpFeaturedConnectorCard({
               />
             )}
           {needsEnvironment && !settingUp && (
-            <Chip size="small" variant="outlined" label="环境未构建" />
+            <Chip size="small" variant="outlined" label={connectorCopy.environmentNotBuilt} />
           )}
         </Stack>
         {connector.source && (
@@ -209,7 +217,7 @@ export function McpFeaturedConnectorCard({
         !needsEnvironment ? (
         <Box
           role="img"
-          aria-label={`已添加 ${connector.name}`}
+          aria-label={connectorCopy.addedNamed(connector.name)}
           data-phi-connector-state="added"
           sx={{
             width: 34,
@@ -229,7 +237,9 @@ export function McpFeaturedConnectorCard({
         <Box
           role="img"
           aria-label={
-            installed ? `已配置但未验证授权 ${connector.name}` : `暂不能授权 ${connector.name}`
+            installed
+              ? connectorCopy.unverifiedNamedAuthorization(connector.name)
+              : connectorCopy.unavailableNamedAuthorization(connector.name)
           }
           sx={{
             width: 34,
@@ -280,7 +290,11 @@ export function McpFeaturedConnectorCard({
           }}
         >
           {authorizing ? (
-            <CircularProgress size={18} color="inherit" aria-label="等待授权" />
+            <CircularProgress
+              size={18}
+              color="inherit"
+              aria-label={connectorCopy.waitingAuthorization}
+            />
           ) : updateAvailable || localUnchecked ? (
             <GoSync size={18} aria-hidden="true" />
           ) : installed && authorized && !enabled ? (

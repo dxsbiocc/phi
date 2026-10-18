@@ -1,3 +1,5 @@
+import { skillCopy } from './skillCopy'
+import { resourceUi } from '../../../lib/resourceUi'
 import type {
   PackageRegistryEntryView,
   PackageRegistryView
@@ -13,11 +15,21 @@ export const skillSourceCategoryOrder: SkillSourceCategory[] = [
 ]
 
 export const skillSourceCategoryLabels: Record<SkillSourceCategory, string> = {
-  bundled: '内置',
-  'installed-package': '已安装',
-  user: '我的',
-  project: '项目',
-  plugin: '插件'
+  get bundled() {
+    return resourceUi.builtIn
+  },
+  get 'installed-package'() {
+    return skillCopy.installedSource
+  },
+  get user() {
+    return skillCopy.personalSource
+  },
+  get project() {
+    return skillCopy.projectSource
+  },
+  get plugin() {
+    return resourceUi.plugin
+  }
 }
 
 export function skillIsEnabled(skill: SkillSummary): boolean {
@@ -30,15 +42,13 @@ export function skillIsGloballyEnabled(skill: SkillSummary): boolean {
 
 export function skillSourceLabel(skill: SkillSummary): string {
   if (skill.sourceCategory === 'bundled') {
-    return skill.core ? '内置·核心' : '内置'
+    return skill.core ? skillCopy.builtInCore : resourceUi.builtIn
   }
   if (skill.sourceCategory === 'plugin') {
-    return `插件: ${skill.sourceId ?? skill.source}`
+    return skillCopy.pluginSource(skill.sourceId ?? skill.source)
   }
   return skillSourceCategoryLabels[skill.sourceCategory]
 }
-
-export const DEPRECATED_SKILL_LABEL = '即将替代'
 
 export function registrySkillPackages(
   registry: Pick<PackageRegistryView, 'packages'> | null | undefined

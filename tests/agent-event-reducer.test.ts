@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -6,6 +7,9 @@ import {
 } from '../src/renderer/src/lib/agentEventReducer'
 import { INLINE_OUTPUT_PREVIEW_CHARS } from '../src/renderer/src/lib/toolOutputPresentation'
 import type { AgentEventSummary } from '../src/renderer/src/types'
+
+// Existing Chinese timeline assertions select their locale explicitly.
+setUiLanguage('zh-CN')
 
 test('provider-managed tool result appears as a completed tool card', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {

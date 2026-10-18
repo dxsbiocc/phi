@@ -37,7 +37,12 @@ export function classifyRemoteProjectConnectionError(
     return connectionState(phase, diagnosis.message, diagnosis.suggestion)
   }
   const message = error instanceof Error ? error.message : ''
-  if (/SSH.*(?:连接已关闭|命令超时|超时)/i.test(message) && !/调用已取消/.test(message)) {
+  if (
+    /SSH.*(?:connection closed|command timed out|timed out|连接已关闭|命令超时|超时)/i.test(
+      message
+    ) &&
+    !/调用已取消/.test(message)
+  ) {
     return connectionState(
       'offline',
       'SSH 连接中断或超时',

@@ -1,12 +1,13 @@
+import { connectorCopy } from './connectorCopy'
 export function githubImportUrlError(input: string): string | null {
   const raw = input.trim()
-  if (!raw) return '请输入 GitHub 仓库地址'
-  if (/%[0-9a-f]{2}/i.test(raw)) return 'GitHub 仓库地址不能包含编码路径'
+  if (!raw) return connectorCopy.enterGithubUrl
+  if (/%[0-9a-f]{2}/i.test(raw)) return connectorCopy.githubEncodedPath
   let url: URL
   try {
     url = new URL(raw)
   } catch {
-    return 'GitHub 仓库地址无效'
+    return connectorCopy.githubInvalidUrl
   }
   const authority = /^https:\/\/([^/]+)(?:\/|$)/i.exec(raw)?.[1]
   if (
@@ -19,12 +20,12 @@ export function githubImportUrlError(input: string): string | null {
     url.search ||
     url.hash
   ) {
-    return '仅支持不含凭据、端口、查询参数的 https://github.com 仓库地址'
+    return connectorCopy.githubUrlConstraints
   }
   const parts = url.pathname.split('/').slice(1)
   const trailingSlash = parts.at(-1) === ''
   if (trailingSlash) parts.pop()
-  if (parts.length < 2 || parts.some((part) => !part)) return 'GitHub 仓库地址无效'
+  if (parts.length < 2 || parts.some((part) => !part)) return connectorCopy.githubInvalidUrl
   const owner = parts[0]!
   const rawName = parts[1]!
   const name = rawName.endsWith('.git') ? rawName.slice(0, -4) : rawName
@@ -34,11 +35,11 @@ export function githubImportUrlError(input: string): string | null {
     name === '.' ||
     name === '..'
   ) {
-    return 'GitHub 仓库名称无效'
+    return connectorCopy.githubInvalidRepo
   }
   if (parts.length > 2) {
     if (trailingSlash || parts[2] !== 'tree' || parts.length < 4) {
-      return 'GitHub 仓库地址路径无效'
+      return connectorCopy.githubInvalidPath
     }
     const ref = parts.slice(3).join('/')
     if (
@@ -48,7 +49,7 @@ export function githubImportUrlError(input: string): string | null {
       ref.startsWith('/') ||
       ref.endsWith('/')
     ) {
-      return 'GitHub 分支或提交引用无效'
+      return connectorCopy.githubInvalidRef
     }
   }
   return null

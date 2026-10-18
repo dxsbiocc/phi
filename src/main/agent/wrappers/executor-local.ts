@@ -142,7 +142,7 @@ export async function runLocalWrapperExecution(
     return failRun(
       run,
       agentDir,
-      `找不到已安装的 wrapper: ${run.wrapper.canonicalId}@${run.wrapper.version}`
+      `Installed Wrapper not found: ${run.wrapper.canonicalId}@${run.wrapper.version}`
     )
   }
   const manifest = entry.manifest
@@ -165,7 +165,7 @@ export async function runLocalWrapperExecution(
       .filter((check) => !check.ok)
       .map((check) => check.label)
       .join(', ')
-    return failRun(run, agentDir, `本地环境检查未通过: ${missing}`)
+    return failRun(run, agentDir, `Local environment check failed: ${missing}`)
   }
 
   const runDir = join(getWrapperRunsDir(agentDir), run.runId)

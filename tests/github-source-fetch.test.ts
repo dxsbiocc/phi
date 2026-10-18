@@ -231,7 +231,7 @@ test('times out a response body that stops making progress', async () => {
       timeoutMs: 10,
       fetch: async () => new Response(new ReadableStream<Uint8Array>())
     }),
-    /读取超时/
+    /read timed out/
   )
   assert.deepEqual(existsSync(fixture.stagingRoot) ? readdirSync(fixture.stagingRoot) : [], [])
 })

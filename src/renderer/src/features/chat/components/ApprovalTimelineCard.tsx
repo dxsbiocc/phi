@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box } from '@mui/material'
 
 import type { ChatMessage } from '../../../types'
@@ -12,6 +13,7 @@ export function ApprovalTimelineCard({
   message: ChatMessage & { approval: NonNullable<ChatMessage['approval']> }
   onContentResize?: ChatContentResizeHandler
 }): React.JSX.Element {
+  useUiLanguage()
   const approval = message.approval
   return (
     <Box

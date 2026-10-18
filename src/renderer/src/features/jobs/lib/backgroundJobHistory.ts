@@ -1,3 +1,5 @@
+import { getUiLocale } from '../../../lib/i18n'
+import { jobsCopy } from './jobsCopy'
 import type { LiveBackgroundJob, UnifiedBackgroundJob } from './backgroundJobs'
 import {
   jobDetailFields,
@@ -38,7 +40,22 @@ const DETAIL_LABELS = new Set([
   '服务器',
   'Notebook',
   '模型',
-  '生成单元'
+  '生成单元',
+  'Conversation',
+  'Status',
+  'Started',
+  'Finished',
+  'Duration',
+  'Run ID',
+  'Output directory',
+  'Environment',
+  'Environment ID',
+  'File',
+  'Destination directory',
+  'Project',
+  'Server',
+  'Model',
+  'Generated cells'
 ])
 
 export interface JobHistorySnapshot {
@@ -79,16 +96,17 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function text(value: unknown, limit: number): string {
   if (typeof value !== 'string') return ''
+  const redacted = jobsCopy.redacted
   return value
     .slice(0, limit)
     .replaceAll('\0', '')
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [已隐藏]')
+    .replace(/\bBearer\s+[^\s"']+/gi, `Bearer ${redacted}`)
     .replace(
       /((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|--token)\s*[:=]?\s+|(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|--token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
-      '$1[已隐藏]'
+      `$1${redacted}`
     )
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1[已隐藏]@')
-    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏]')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, `$1${redacted}@`)
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, redacted)
     .slice(0, limit)
 }
 
@@ -169,20 +187,23 @@ function snapshotOf(item: LiveBackgroundJob): JobHistorySnapshot | undefined {
   const fields = jobDetailFields(item, Date.parse(item.timestamp)).filter((field) =>
     DETAIL_LABELS.has(field.label)
   )
-  if (!fields.some((field) => field.label === '状态'))
-    fields.push({ label: '状态', value: status.label })
-  fields.push({ label: '结束时间', value: new Date(item.timestamp).toLocaleString() })
+  if (!fields.some((field) => field.label === jobsCopy.status))
+    fields.push({ label: jobsCopy.status, value: status.label })
+  fields.push({
+    label: jobsCopy.finished,
+    value: new Date(item.timestamp).toLocaleString(getUiLocale())
+  })
   return checkedSnapshot({
     key: item.key,
     sourceKind: item.kind,
     timestamp: item.timestamp,
     title:
       item.kind === 'shell'
-        ? '后台命令'
+        ? jobsCopy.backgroundCommand
         : item.kind === 'wrapper'
           ? item.run.wrapper.shortId || item.run.wrapper.canonicalId
           : jobTitle(item),
-    source: jobSource(item) || (item.kind === 'agent' ? 'Agent' : '后台命令'),
+    source: jobSource(item) || (item.kind === 'agent' ? 'Agent' : jobsCopy.backgroundCommand),
     status,
     fields,
     ...(item.kind === 'agent' || item.kind === 'shell'

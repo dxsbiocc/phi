@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import {
   Alert,
   Box,
@@ -35,6 +37,7 @@ export function RuntimeRecoveryBanner({
   onRecovered?: (state: RuntimeRecoveryState) => void | Promise<void>
   onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>
 }): React.JSX.Element | null {
+  useUiLanguage()
   const recovery = useRuntimeRecovery(api, target, onRecovered, onSummaryCreated)
   const viewKey = runtimeRecoveryViewKey(target)
   const [selection, setSelection] = useState({ viewKey: '', summaryOpen: false, replacement: '' })
@@ -47,7 +50,7 @@ export function RuntimeRecoveryBanner({
     return recovery.error ? (
       <Alert
         severity="warning"
-        action={<Button onClick={() => void recovery.refresh()}>刷新状态</Button>}
+        action={<Button onClick={() => void recovery.refresh()}>{chatCopy.refreshStatus}</Button>}
         sx={{ mx: 2, my: 1 }}
       >
         {recovery.error}
@@ -57,7 +60,9 @@ export function RuntimeRecoveryBanner({
   if (state.phase === 'connected')
     return recovery.error ? (
       <Alert severity="warning" sx={{ mx: 2, my: 1 }}>
-        <Typography variant="body2">会话已连接，请重新打开此会话刷新内容。</Typography>
+        <Typography variant="body2">
+          {chatCopy.conversationConnectedReopenItToRefreshItsContents}
+        </Typography>
         <Typography variant="caption">{recovery.error}</Typography>
       </Alert>
     ) : null
@@ -88,11 +93,11 @@ export function RuntimeRecoveryBanner({
               value={replacement}
               displayEmpty
               disabled={busy}
-              inputProps={{ 'aria-label': '选择替代模型' }}
+              inputProps={{ 'aria-label': chatCopy.chooseAReplacementModel }}
               onChange={(event) => updateSelection({ replacement: event.target.value })}
             >
               <MenuItem value="" disabled>
-                选择可用的替代模型
+                {chatCopy.chooseAnAvailableReplacementModel}
               </MenuItem>
               {models.map((model) => (
                 <MenuItem
@@ -111,7 +116,7 @@ export function RuntimeRecoveryBanner({
               disabled={busy || !state.canResume || (needsModel && !chosen)}
               onClick={() => void recovery.resume(chosen)}
             >
-              恢复原会话
+              {chatCopy.recoverOriginalConversation}
             </Button>
             {state.summary ? (
               <Button
@@ -119,11 +124,11 @@ export function RuntimeRecoveryBanner({
                 disabled={busy}
                 onClick={() => updateSelection({ summaryOpen: true })}
               >
-                查看摘要并新建
+                {chatCopy.reviewSummaryAndCreateNew}
               </Button>
             ) : null}
             <Button size="small" disabled={busy} onClick={() => void recovery.refresh()}>
-              刷新状态
+              {chatCopy.refreshStatus}
             </Button>
           </Stack>
         </Stack>
@@ -134,10 +139,10 @@ export function RuntimeRecoveryBanner({
           if (!busy) updateSelection({ summaryOpen: false })
         }}
       >
-        <DialogTitle>用本地摘要另建会话</DialogTitle>
+        <DialogTitle>{chatCopy.createAConversationFromALocalSummary}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            旧会话会保留。新会话不会自动发送消息或重新启动任务；服务器离线时仍未连接。
+            {chatCopy.theOldConversationIsPreservedTheNewConversationWillNot}
           </Typography>
           <Box
             component="pre"
@@ -157,13 +162,13 @@ export function RuntimeRecoveryBanner({
         </DialogContent>
         <DialogActions>
           <Button disabled={busy} onClick={() => updateSelection({ summaryOpen: false })}>
-            取消
+            {chatCopy.cancel}
           </Button>
           <Button
             disabled={busy || state.canContinueFromSummary === false}
             onClick={() => void recovery.continueFromSummary()}
           >
-            用此摘要新建会话
+            {chatCopy.createConversationFromThisSummary}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

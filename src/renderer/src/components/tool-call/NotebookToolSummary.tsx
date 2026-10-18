@@ -1,3 +1,4 @@
+import { useUiLanguage } from '../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import type { ReactNode } from 'react'
 import { PhiIcons } from '../../icons'
@@ -9,6 +10,7 @@ export function NotebookToolSummaryBlock({
 }: {
   notebook: NotebookToolSummary
 }): ReactNode {
+  useUiLanguage()
   const target = notebookTargetLabel(notebook)
   const cellLabel = notebookCellLabel(notebook)
   const details = [

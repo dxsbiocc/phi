@@ -1,3 +1,5 @@
+import { projectCopy } from '../lib/projectCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Stack, TextField } from '@mui/material'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -37,6 +39,7 @@ export function RemoteDirectoryTree({
   selectedPath: string
   onSelectPath: (path: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [locatedPath, setLocatedPath] = useState(
     () => normalizeAbsoluteTreePath(selectedPath) ?? ''
   )
@@ -95,15 +98,15 @@ export function RemoteDirectoryTree({
     <Stack spacing={1}>
       <TextField
         fullWidth
-        label="服务器上的项目目录"
+        label={projectCopy.projectDirectoryOnServer}
         value={selectedPath}
         onChange={(event) => onSelectPath(event.target.value)}
         placeholder="/cluster/lab/project"
         error={inputPathIsInvalid}
         helperText={
           inputPathIsInvalid
-            ? '请输入以 / 开头的服务器绝对路径。'
-            : '可直接输入绝对路径，或在下方目录树中选择。'
+            ? projectCopy.enterAnAbsoluteServerPathStartingWith
+            : projectCopy.enterAnAbsolutePathOrChooseOneInTheDirectory
         }
       />
       <Box
@@ -129,7 +132,7 @@ export function RemoteDirectoryTree({
           }}
           onListDirectory={listDirectory}
           revealPath={locatedPath}
-          searchPlaceholder="筛选文件夹..."
+          searchPlaceholder={projectCopy.filterFolders}
           stateKey={`remote-project:${hostProfileId}`}
           variant="standalone"
         />

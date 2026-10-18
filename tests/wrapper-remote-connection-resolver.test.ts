@@ -163,7 +163,7 @@ test('SSH project always resolves its bound host and canonical directory', () =>
       agentDir
     )
     assert.ok('reason' in refused)
-    assert.match(refused.reason, /另一台服务器/)
+    assert.match(refused.reason, /another server/)
   })
 })
 
@@ -175,10 +175,10 @@ test('removed or old-format host bindings fail with a reconfiguration reason', (
       hostProfileId: 'missing',
       hpc: { scheduler: 'slurm' }
     }
-    assert.throws(() => resolveRemoteConnectionConfig(connection, agentDir), /重新配置/)
+    assert.throws(() => resolveRemoteConnectionConfig(connection, agentDir), /Configure it again/)
     const result = resolveProjectRemoteTarget(project(connection), undefined, agentDir)
     assert.ok('reason' in result)
-    assert.match(result.reason, /重新配置/)
+    assert.match(result.reason, /Configure it again/)
   })
 })
 
@@ -192,7 +192,7 @@ test('remote target requires project, workspace, connection and HPC settings', (
     }
     assert.match(
       (resolveProjectRemoteTarget(undefined, undefined, agentDir) as { reason: string }).reason,
-      /项目/
+      /project/
     )
     assert.match(
       (
@@ -202,17 +202,17 @@ test('remote target requires project, workspace, connection and HPC settings', (
           agentDir
         ) as { reason: string }
       ).reason,
-      /服务器工作目录/
+      /server working directory/
     )
     assert.match(
       (resolveProjectRemoteTarget(project(connection), 'other', agentDir) as { reason: string })
         .reason,
-      /找不到/
+      /not found/
     )
     assert.match(
       (resolveProjectRemoteTarget(project(connection), undefined, agentDir) as { reason: string })
         .reason,
-      /运行方式/
+      /execution mode/
     )
   })
 })

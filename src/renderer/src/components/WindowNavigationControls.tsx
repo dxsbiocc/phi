@@ -1,4 +1,6 @@
 import { Box, IconButton, Tooltip } from '@mui/material'
+import { useUiLanguage } from '../lib/i18n'
+import { windowUiCopy } from '../lib/windowUiCopy'
 import { GoSearch, GoSidebarCollapse, GoSidebarExpand } from 'react-icons/go'
 
 /**
@@ -19,6 +21,7 @@ export default function WindowNavigationControls({
   onToggleSidebar: () => void
   onOpenSessionSearch: () => void
 }): React.JSX.Element {
+  useUiLanguage()
   const iconButtonSx = {
     width: 28,
     height: 28,
@@ -39,10 +42,13 @@ export default function WindowNavigationControls({
         WebkitAppRegion: 'no-drag'
       }}
     >
-      <Tooltip title={isSidebarOpen ? '收起侧边栏' : '展开侧边栏'} placement="bottom">
+      <Tooltip
+        title={isSidebarOpen ? windowUiCopy.collapseSidebar : windowUiCopy.expandSidebar}
+        placement="bottom"
+      >
         <IconButton
           size="small"
-          aria-label={isSidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+          aria-label={isSidebarOpen ? windowUiCopy.collapseSidebar : windowUiCopy.expandSidebar}
           data-phi-window-sidebar-toggle-icon={isSidebarOpen ? 'collapse' : 'expand'}
           onClick={onToggleSidebar}
           sx={{ ...iconButtonSx, color: isSidebarOpen ? 'text.primary' : 'text.secondary' }}
@@ -50,10 +56,10 @@ export default function WindowNavigationControls({
           <SidebarToggleIcon size={19} />
         </IconButton>
       </Tooltip>
-      <Tooltip title="查找会话">
+      <Tooltip title={windowUiCopy.searchChats}>
         <IconButton
           size="small"
-          aria-label="查找会话"
+          aria-label={windowUiCopy.searchChats}
           onClick={onOpenSessionSearch}
           sx={iconButtonSx}
         >

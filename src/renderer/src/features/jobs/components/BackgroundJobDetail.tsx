@@ -1,3 +1,5 @@
+import { jobsCopy } from '../lib/jobsCopy'
+import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, Stack, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
@@ -20,10 +22,11 @@ import { NotebookJobActivity } from './NotebookJobActivity'
 
 function entryTime(at: string): string {
   const date = new Date(at)
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString()
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString(getUiLocale())
 }
 
 function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Element {
+  useUiLanguage()
   const endRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: 'nearest' })
@@ -35,7 +38,7 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
         color="text.secondary"
         sx={{ ...workspacePanelText.label, display: 'block', mb: 0.35 }}
       >
-        启动日志
+        {jobsCopy.startupLog}
       </Typography>
       <Box
         data-phi-jupyter-start-log
@@ -53,7 +56,7 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
       >
         {job.entries.length === 0 ? (
           <Typography variant="caption" color="text.secondary" sx={workspacePanelText.body}>
-            还没有日志
+            {jobsCopy.noLogsYet}
           </Typography>
         ) : (
           job.entries.map((entry, index) => (
@@ -94,14 +97,14 @@ function detailText(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'jupyter') {
     lines.push(
       '',
-      '启动日志：',
+      jobsCopy.startupLog2,
       ...item.job.entries.map((entry) => `${entry.at} [${entry.kind}] ${entry.text}`)
     )
   }
   if (item.kind === 'notebook-ai' && item.job.entries?.length) {
     lines.push(
       '',
-      '运行过程：',
+      jobsCopy.runActivity,
       ...item.job.entries.map(
         (entry) =>
           `${entry.at} [${entry.kind}${entry.label ? `:${entry.label}` : ''}] ${entry.text}`
@@ -135,6 +138,7 @@ export function BackgroundJobDetail({
   onOpenSetupAgent?: (prompt: string) => void
   onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
+  useUiLanguage()
   const [copied, setCopied] = useState(false)
   const status = jobStatus(item)
   const title = jobTitle(item)
@@ -163,8 +167,13 @@ export function BackgroundJobDetail({
       sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, flex: 1, p: 1.5 }}
     >
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 1, minWidth: 0 }}>
-        <Button size="small" onClick={onBack} aria-label="返回任务列表" sx={{ flexShrink: 0 }}>
-          ← 返回
+        <Button
+          size="small"
+          onClick={onBack}
+          aria-label={jobsCopy.backToJobList}
+          sx={{ flexShrink: 0 }}
+        >
+          {jobsCopy.back}
         </Button>
         <Typography
           variant="caption"
@@ -203,7 +212,7 @@ export function BackgroundJobDetail({
               <NotebookJobActivity key={item.job.id} job={item.job} />
             )}
             {jobDetailFields(item, nowMs).map((field) =>
-              item.kind === 'notebook-ai' && field.label === '生成内容预览' ? (
+              item.kind === 'notebook-ai' && field.label === jobsCopy.generatedContentPreview ? (
                 <NotebookJobPreview key={field.label} job={item.job} />
               ) : (
                 <JobDetailField key={field.label} {...field} />
@@ -220,21 +229,21 @@ export function BackgroundJobDetail({
         sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider', flexWrap: 'wrap' }}
       >
         <Button size="small" onClick={() => void copy().catch(() => undefined)}>
-          {copied ? '已复制' : '复制详情'}
+          {copied ? jobsCopy.copied : jobsCopy.copyDetails}
         </Button>
         {sessionPath && (
           <Button size="small" onClick={() => onOpenSession(sessionPath)}>
-            打开对话
+            {jobsCopy.openConversation}
           </Button>
         )}
         {wrapperId && onOpenWrapper && (
           <Button size="small" onClick={() => onOpenWrapper(wrapperId)}>
-            打开 Wrapper
+            {jobsCopy.openWrapper}
           </Button>
         )}
         {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
           <Button size="small" disabled={busy} onClick={() => onRetry(item)}>
-            重试
+            {jobsCopy.retry}
           </Button>
         )}
         {canStopJob(item) && (

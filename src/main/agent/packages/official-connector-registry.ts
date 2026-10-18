@@ -104,13 +104,13 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
       return {
         ...cached,
         status: 'cached',
-        notice: `Phi 官网连接器 API 暂不可用，正在使用已校验的 API 内容缓存（${reason}）。`
+        notice: `The Phi Website Connector API is unavailable. Using the verified API cache (${reason}).`
       }
     } catch {
       const fallback = await syncOfficialRegistry(options)
       return {
         ...fallback,
-        notice: `Phi 官网连接器 API 暂不可用，已回退到签名发布目录（${reason}）。${fallback.notice ?? ''}`
+        notice: `The Phi Website Connector API is unavailable. Using the signed release catalog (${reason}). ${fallback.notice ?? ''}`
       }
     }
   } finally {

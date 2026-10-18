@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -12,6 +13,8 @@ function render(item: UiBlocksItem): string {
     createElement(ThemeProvider, { theme: createTheme() }, createElement(UiBlocksCard, { item }))
   )
 }
+
+setUiLanguage('zh-CN')
 
 test('ui blocks render HTML-like agent strings as inert text', () => {
   const markup = render({

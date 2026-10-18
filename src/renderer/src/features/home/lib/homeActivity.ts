@@ -1,3 +1,5 @@
+import { getUiLocale } from '../../../lib/i18n'
+import { homeCopy } from './homeCopy'
 import type {
   HomeActivityDay,
   HomeActivityPeriodSummary,
@@ -82,12 +84,12 @@ export function buildHomeActivityCalendar(
   const thresholds = activityThresholds(
     buckets.filter((bucket) => bucket.date >= startKey && bucket.date <= currentDayKey)
   )
-  const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
+  const dateFormatter = new Intl.DateTimeFormat(getUiLocale(), {
     year: 'numeric',
     month: 'long',
     day: 'numeric'
   })
-  const monthFormatter = new Intl.DateTimeFormat('zh-CN', { month: 'short' })
+  const monthFormatter = new Intl.DateTimeFormat(getUiLocale(), { month: 'short' })
 
   return Array.from({ length: CALENDAR_WEEK_COUNT }, (_, weekIndex) => {
     const weekStart = addDays(start, weekIndex * 7)
@@ -123,12 +125,12 @@ export function buildHomeActivityCalendar(
 }
 
 export function formatActivityDuration(durationMs: number): string {
-  if (!Number.isFinite(durationMs) || durationMs <= 0) return '0 分钟'
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return homeCopy.label0Min
   const totalMinutes = Math.max(1, Math.round(durationMs / 60_000))
-  if (totalMinutes < 60) return `${totalMinutes} 分钟`
+  if (totalMinutes < 60) return homeCopy.valueMin(totalMinutes)
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
-  return minutes === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes} 分`
+  return minutes === 0 ? homeCopy.valueH(hours) : homeCopy.valueHValueMin(hours, minutes)
 }
 
 export function completionRate(period: HomeActivityPeriodSummary): number {
@@ -142,17 +144,17 @@ export function totalActiveDays(summary: HomeActivitySummary): number {
 
 export function formatSessionActivity(session: SessionSummary, now = new Date()): string {
   const timestamp = Date.parse(session.lastActivityAt ?? session.modified)
-  if (!Number.isFinite(timestamp)) return '最近使用'
+  if (!Number.isFinite(timestamp)) return homeCopy.recentlyUsed
   const elapsedDays = Math.max(
     0,
     Math.floor(
       (startOfLocalDay(now).getTime() - startOfLocalDay(new Date(timestamp)).getTime()) / DAY_MS
     )
   )
-  if (elapsedDays === 0) return '今天'
-  if (elapsedDays === 1) return '昨天'
-  if (elapsedDays < 7) return `${elapsedDays} 天前`
-  return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(
+  if (elapsedDays === 0) return homeCopy.today
+  if (elapsedDays === 1) return homeCopy.yesterday
+  if (elapsedDays < 7) return homeCopy.valueDaysAgo(elapsedDays)
+  return new Intl.DateTimeFormat(getUiLocale(), { month: 'short', day: 'numeric' }).format(
     new Date(timestamp)
   )
 }

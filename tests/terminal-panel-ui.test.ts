@@ -1,3 +1,10 @@
+import { beforeEach, afterEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+
+// Keep these legacy behavioral assertions explicit about their presentation language.
+beforeEach(() => setUiLanguage('zh-CN'))
+afterEach(() => setUiLanguage('en'))
+
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

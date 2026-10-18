@@ -161,7 +161,7 @@ test('createWrapperRunPlan fails validation when the input glob matches nothing'
 
     assert.equal(plan.state, 'invalid')
     assert.equal(plan.validation.valid, false)
-    assert.ok(plan.validation.errors.some((error) => error.includes('没有匹配到任何文件')))
+    assert.ok(plan.validation.errors.some((error) => error.includes('did not match any files')))
   })
 })
 
@@ -424,7 +424,7 @@ test('createWrapperRunPlan rejects a configured remote target without a compatib
     })
 
     assert.equal(plan.state, 'invalid')
-    assert.match(plan.validation.errors.join('; '), /远程 Profile/)
+    assert.match(plan.validation.errors.join('; '), /remote profile/)
   })
 })
 
@@ -459,7 +459,7 @@ test('createWrapperRunPlan rejects partial remote settings instead of silently r
     })
 
     assert.equal(plan.state, 'invalid')
-    assert.match(plan.validation.errors.join('; '), /服务器工作目录/)
+    assert.match(plan.validation.errors.join('; '), /server working directory/)
   })
 })
 
@@ -538,7 +538,7 @@ test('SSH project plans use their bound host and canonical path for ordinary SSH
             },
             agentDir
           ),
-        /只有本地项目/
+        /Only plans in local projects/
       )
     })
   }
@@ -561,7 +561,7 @@ test('an SSH plan records only a completed explicit upload and becomes submit-re
     assert.equal(plan.state, 'invalid')
     assert.equal(plan.inputs[0]?.source, 'upload')
     assert.equal(plan.inputDeclarations?.[0]?.id, 'reads')
-    assert.match(plan.validation.errors.join('; '), /等待用户选择/)
+    assert.match(plan.validation.errors.join('; '), /waiting for the user to select/)
 
     const revised = recordWrapperUploadedInput(
       {
@@ -650,7 +650,7 @@ test('a Wrapper tool running from a private SSH anchor resolves the registered p
     assert.equal(plan.targetSelection?.target, 'remote')
     assert.equal(plan.executor, 'slurm-controller')
     assert.equal(plan.inputs[0]?.source, 'upload')
-    assert.match(plan.validation.errors.join('; '), /等待用户选择/)
+    assert.match(plan.validation.errors.join('; '), /waiting for the user to select/)
   })
 })
 
@@ -666,7 +666,7 @@ test('SSH project without a compatible remote profile is invalid and cannot fall
       agentDir
     })
     assert.equal(plan.state, 'invalid')
-    assert.match(plan.validation.errors.join('; '), /远程 Profile/)
+    assert.match(plan.validation.errors.join('; '), /remote profile/)
     assert.equal(plan.targetSelection, undefined)
   })
 })
@@ -689,7 +689,7 @@ test('SSH project rejects an explicit local target while a local project may cho
       agentDir
     })
     assert.equal(refused.state, 'invalid')
-    assert.match(refused.validation.errors.join('; '), /不能在本机执行/)
+    assert.match(refused.validation.errors.join('; '), /cannot run on this device/)
   })
   withProjectHarness(({ agentDir, projectDir }) => {
     configureProjectRemote(agentDir, projectDir)
@@ -770,7 +770,7 @@ test('revising an SSH plan preserves its saved host, profile and project identit
           agentDir,
           explicitTarget: 'local'
         }),
-      /需要创建新计划/
+      /Create a new plan/
     )
     const changed = {
       ...project,
@@ -779,7 +779,7 @@ test('revising an SSH plan preserves its saved host, profile and project identit
     writeFileSync(join(agentDir, 'projects.json'), JSON.stringify([changed]))
     assert.throws(
       () => reviseWrapperRunPlan(first.planId, params, { actor: 'agent', wrapper, cwd, agentDir }),
-      /项目或服务器配置已变化/
+      /project or server configuration has changed/
     )
     assert.equal(readWrapperPlan(first.planId, agentDir)?.revision, 2)
   })
@@ -805,7 +805,7 @@ test('local fallback creates a validated revision with an explicit durable confi
           { planId: remote.planId, target: 'local', expectedRevision: 1 },
           agentDir
         ),
-      /需要明确确认/
+      /requires explicit confirmation/
     )
     const local = retargetWrapperRunPlan(
       {
@@ -820,7 +820,10 @@ test('local fallback creates a validated revision with an explicit durable confi
     assert.equal(local.revision, 2)
     assert.equal(local.executor, 'local')
     assert.equal(local.targetSelection?.target, 'local')
-    assert.match(local.targetSelection?.reason ?? '', /用户确认改在本机运行/)
+    assert.match(
+      local.targetSelection?.reason ?? '',
+      /The user confirmed switching to local execution/
+    )
     assert.equal(local.targetChangeConfirmation?.fromRevision, 1)
     assert.ok(local.targetChangeConfirmation?.confirmedAt)
     assert.deepEqual(
@@ -838,7 +841,7 @@ test('local fallback creates a validated revision with an explicit durable confi
           { planId: remote.planId, target: 'remote', expectedRevision: 1 },
           agentDir
         ),
-      /计划已更新/
+      /plan has changed/
     )
     assert.throws(
       () =>
@@ -846,7 +849,7 @@ test('local fallback creates a validated revision with an explicit durable confi
           { planId: remote.planId, target: 'remote', expectedRevision: 2 },
           agentDir
         ),
-      /重新创建计划并填写服务器上的输入路径/
+      /Create a new plan with input paths on the server/
     )
   })
 })

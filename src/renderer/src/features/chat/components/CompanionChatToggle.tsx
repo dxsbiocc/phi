@@ -1,3 +1,5 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { IconButton, Tooltip } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { VscLayoutPanelDock, VscLayoutSidebarLeftDock } from 'react-icons/vsc'
@@ -9,7 +11,8 @@ export function CompanionChatToggle({
   destination: 'sidebar' | 'tab'
   onToggle: () => void
 }): React.JSX.Element {
-  const label = destination === 'sidebar' ? '移到左侧边栏' : '放回标签区'
+  useUiLanguage()
+  const label = destination === 'sidebar' ? chatCopy.moveToLeftSidebar : chatCopy.returnToTabs
   const LayoutIcon = destination === 'sidebar' ? VscLayoutSidebarLeftDock : VscLayoutPanelDock
 
   return (

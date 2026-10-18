@@ -1,3 +1,4 @@
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -201,6 +202,7 @@ test('analysis notebook cache resolves absolute and relative tab paths', () => {
 })
 
 test('notebook environment errors point to the managed environment settings section', () => {
+  setUiLanguage('zh-CN')
   assert.equal(
     notebookEnvironmentErrorMessage(new Error('环境 phi:python@1 尚未构建。'), '运行失败'),
     '环境 phi:python@1 尚未构建。 请前往“设置 → 环境”的“托管环境”构建后重试。'
@@ -246,3 +248,5 @@ test('remote notebook kernels require an explicit runtime start', () => {
     false
   )
 })
+
+test.afterEach(() => setUiLanguage('en'))

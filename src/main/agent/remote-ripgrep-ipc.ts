@@ -34,7 +34,7 @@ function safeString(value: unknown, maxLength: number): value is string {
 
 function parseRequest(value: unknown): RemoteRipgrepIpcRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('ripgrep 请求无效')
+    throw new Error('Invalid ripgrep request')
   }
   const input = value as Record<string, unknown>
   const warnings = input.confirmedWarnings
@@ -47,7 +47,7 @@ function parseRequest(value: unknown): RemoteRipgrepIpcRequest {
     (warnings !== undefined &&
       (!Array.isArray(warnings) || !warnings.every((code) => WARNING_CODES.has(code))))
   ) {
-    throw new Error('ripgrep 请求无效')
+    throw new Error('Invalid ripgrep request')
   }
   return {
     action: input.action,

@@ -620,7 +620,7 @@ test('the production runner bounds output, times out, and never returns its chil
     timeoutMs: 10
   })
   assert.equal(timedOut.exitCode === 0, false)
-  assert.equal(timedOut.stderr, '命令执行超时')
+  assert.equal(timedOut.stderr, 'Command timed out')
   assert.equal(JSON.stringify(timedOut).includes(secret), false)
 
   const missing = await runSshBootstrapCommand({
@@ -628,7 +628,7 @@ test('the production runner bounds output, times out, and never returns its chil
     args: [],
     env: { PHI_SSH_ASKPASS_SECRET: secret }
   })
-  assert.deepEqual(missing, { exitCode: null, stdout: '', stderr: '无法启动命令' })
+  assert.deepEqual(missing, { exitCode: null, stdout: '', stderr: 'Could not start the command' })
 })
 test('password authentication accepts a safe IPv6 hostname as one argv element', async () => {
   const requests: SshBootstrapSecretCommandRequest[] = []

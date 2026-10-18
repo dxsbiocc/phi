@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import { useMemo, useState } from 'react'
 import { Box, Button } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -33,7 +35,7 @@ function mimeLabel(mime: string): string {
   if (isPlotlyMime(mime)) return 'Plotly'
   if (isVegaMime(mime)) return mime.includes('lite') ? 'Vega-Lite' : 'Vega'
   if (mime === 'text/html') return 'HTML'
-  if (mime === 'text/plain') return 'Plain text'
+  if (mime === 'text/plain') return analysisCopy.plainText
   if (mime === 'text/markdown') return 'Markdown'
   if (mime === 'application/json') return 'JSON'
   if (mime === 'application/pdf') return 'PDF'
@@ -75,6 +77,7 @@ function NotebookMimeOutput({
   value: JsonObject[string]
   notebookPath?: string | null
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (isVegaMime(mime)) {
     return isJsonObject(value) ? (
       <NotebookVegaOutput metadata={metadata} mime={mime} spec={value} />
@@ -113,7 +116,7 @@ function NotebookMimeOutput({
         mime={mime}
         frameKind="javascript"
         notebookPath={notebookPath}
-        title="Notebook JavaScript output"
+        title={analysisCopy.javascriptOutput}
       />
     )
   }
@@ -182,7 +185,7 @@ function NotebookMimeOutput({
         data-phi-notebook-output-pdf="true"
         data-phi-notebook-output-width={metadata?.width}
         data-phi-notebook-output-height={metadata?.height}
-        title="Notebook PDF output"
+        title={analysisCopy.pdfOutput}
         src={`data:application/pdf;base64,${pdf}`}
         sx={{
           display: 'block',
@@ -242,6 +245,7 @@ function NotebookDisplayData({
   metadata: JsonObject
   notebookPath?: string | null
 }): React.JSX.Element | null {
+  useUiLanguage()
   const mimes = displayMimes(data)
   const [requestedMime, setRequestedMime] = useState<string | null>(null)
   const activeMime =
@@ -270,7 +274,7 @@ function NotebookDisplayData({
     >
       <Box
         role="tablist"
-        aria-label="Notebook output MIME choices"
+        aria-label={analysisCopy.outputFormats}
         sx={{
           display: 'flex',
           flexWrap: 'wrap',
@@ -323,6 +327,7 @@ function NotebookDisplayData({
 }
 
 function NotebookStderrOutput({ text }: { text: string }): React.JSX.Element {
+  useUiLanguage()
   const [isExpanded, setIsExpanded] = useState(false)
 
   if (isLikelyErrorStderr(text)) {
@@ -378,6 +383,7 @@ function NotebookOutputItem({
   output: NotebookOutput
   notebookPath?: string | null
 }): React.JSX.Element | null {
+  useUiLanguage()
   if (output.outputType === 'stream') {
     if (!output.text) return null
     return output.name === 'stderr' ? (
@@ -416,6 +422,7 @@ export default function NotebookOutputArea({
   isRunning?: boolean
   onClearOutputs?: () => void
 }): React.JSX.Element | null {
+  useUiLanguage()
   const [wrapText, setWrapText] = useState(false)
   const copyText = useMemo(() => notebookOutputText(outputs), [outputs])
   const completedAtLabel = formatNotebookExecutionCompletedAt(executionCompletedAt)

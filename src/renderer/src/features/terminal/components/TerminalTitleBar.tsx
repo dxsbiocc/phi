@@ -1,3 +1,5 @@
+import { terminalUi } from '../lib/terminalUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import { useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 
@@ -24,6 +26,7 @@ function TitleButton(props: {
   onClick(event: MouseEvent<HTMLButtonElement>): void
   children: React.ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Tooltip title={props.label} arrow describeChild>
       <span style={{ display: 'inline-flex', flexShrink: 0 }}>
@@ -72,12 +75,13 @@ export interface TerminalTitleBarProps {
 }
 
 export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Element {
+  useUiLanguage()
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const activeTerminal =
     props.terminals.find((terminal) => terminal.terminalId === props.activeTerminalId) ?? null
   const initialDirectory = activeTerminal?.initialCwd || props.initialDirectory
   const titleTooltip = initialDirectory
-    ? `${props.projectName}\n初始目录：${initialDirectory}`
+    ? terminalUi.valueInitialDirectoryValue(props.projectName, initialDirectory)
     : props.projectName
 
   const openMenu = (event: MouseEvent<HTMLElement>): void => {
@@ -87,7 +91,10 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
   const closeMenu = (): void => setMenuAnchor(null)
   const endActive = (): void => {
     closeMenu()
-    if (activeTerminal && window.confirm('结束后该终端中正在运行的程序会被终止。')) {
+    if (
+      activeTerminal &&
+      window.confirm(terminalUi.closingThisTerminalWillTerminateItsRunningPrograms)
+    ) {
       props.onEnd(activeTerminal.terminalId)
     }
   }
@@ -104,7 +111,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
     const count = props.terminals.length
     if (
       count > 0 &&
-      window.confirm(`确定结束当前工作区的全部 ${count} 个终端吗？正在运行的程序会被终止。`)
+      window.confirm(terminalUi.closeAllValueTerminalsInThisWorkspaceRunning(count))
     ) {
       props.onEndAll()
     }
@@ -137,7 +144,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         {props.terminals.length > 1 ? (
           <Box
             component="select"
-            aria-label="选择终端"
+            aria-label={terminalUi.selectTerminal}
             value={props.activeTerminalId ?? ''}
             disabled={props.busy}
             onChange={(event) => props.onSelect(event.currentTarget.value)}
@@ -179,7 +186,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       </Box>
 
       <TitleButton
-        label="新建终端"
+        label={terminalUi.newTerminal}
         disabled={!props.canCreate || props.busy}
         onClick={props.onCreate}
       >
@@ -189,7 +196,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       <Box sx={{ flex: 1, minWidth: 8 }} />
 
       <TitleButton
-        label="更多终端操作"
+        label={terminalUi.moreTerminalActions}
         disabled={props.terminals.length === 0}
         onClick={(event) => setMenuAnchor(event.currentTarget)}
       >
@@ -205,24 +212,24 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         anchorEl={menuAnchor}
         open={Boolean(menuAnchor)}
         onClose={closeMenu}
-        slotProps={{ list: { 'aria-label': '终端操作' } }}
+        slotProps={{ list: { 'aria-label': terminalUi.terminalActions } }}
       >
         <MenuItem disabled={!activeTerminal || props.busy} onClick={openAssist}>
-          帮我写命令
+          {terminalUi.helpWriteACommand}
         </MenuItem>
         <MenuItem
           disabled={!activeTerminal || !props.canExplainSelection || props.busy}
           onClick={explainSelection}
         >
-          让 Agent 解释
+          {terminalUi.askAgentToExplain}
         </MenuItem>
         <Divider />
         <MenuItem disabled={!activeTerminal || props.busy} onClick={endActive}>
-          结束终端
+          {terminalUi.closeTerminal}
         </MenuItem>
         <Divider />
         <MenuItem disabled={props.terminals.length === 0 || props.busy} onClick={endAll}>
-          结束全部终端
+          {terminalUi.closeAllTerminals}
         </MenuItem>
       </Menu>
     </Box>

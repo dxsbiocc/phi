@@ -1,4 +1,5 @@
 import semver from 'semver'
+import { resourceCatalogCopy, resourceSourceLabel } from './resourceUi'
 import type {
   InstalledPackageView,
   KnownPackageRegistryView,
@@ -35,15 +36,15 @@ export async function loadContentCatalog(
     try {
       officialRegistry = await api.readOfficialContentCatalog(options.forceRefresh)
     } catch (cause) {
-      errors.push(`Phi 官网目录更新失败：${message(cause)}`)
-      notices.push('正在回退到原 Phi Packages 软件源目录。')
+      errors.push(resourceCatalogCopy.officialRefreshFailed(message(cause)))
+      notices.push(resourceCatalogCopy.fallbackSource)
     }
   }
   let knownSources: KnownPackageRegistryView[] = []
   try {
     knownSources = await api.listPackageRegistries()
   } catch (cause) {
-    errors.push(`读取本地软件源列表失败：${message(cause)}`)
+    errors.push(resourceCatalogCopy.sourceListFailed(message(cause)))
   }
   const backendNeedsRestart =
     !api.readOfficialContentCatalog &&
@@ -68,10 +69,12 @@ export async function loadContentCatalog(
   }
   const results = await Promise.all(
     sources.map(async (source) => {
-      const label = source.label ?? (source.kind === 'official' ? 'Phi Packages' : source.id)
+      const label = resourceSourceLabel(
+        source.label ?? (source.kind === 'official' ? 'Phi Packages' : source.id)
+      )
       try {
         if (source.status === 'unavailable' || source.error) {
-          throw new Error(source.error ?? source.notice ?? '软件源暂时不可用')
+          throw new Error(source.error ?? source.notice ?? resourceCatalogCopy.sourceUnavailable)
         }
         const registry = await api.readPackageRegistry(source.path)
         const status = registry.status ?? (source.status === 'cached' ? 'cached' : 'ready')
@@ -85,10 +88,10 @@ export async function loadContentCatalog(
           notice:
             registry.notice ??
             source.notice ??
-            (status === 'cached' ? `${label}：正在使用离线缓存。` : undefined)
+            (status === 'cached' ? resourceCatalogCopy.cachedSource(label) : undefined)
         }
       } catch (cause) {
-        return { error: `${label}：${message(cause)}` }
+        return { error: `${label}: ${message(cause)}` }
       }
     })
   )
@@ -107,16 +110,18 @@ export async function loadContentCatalog(
     ],
     errors: [
       ...errors,
-      ...(backendNeedsRestart
-        ? ['Phi 后台仍在运行旧版本，请完整退出并重新启动 Phi 后加载官方内容源。']
-        : []),
+      ...(backendNeedsRestart ? [resourceCatalogCopy.restartBackend] : []),
       ...results.flatMap((result) => (result.error ? [result.error] : []))
     ],
     notices: [
       ...notices,
       ...(officialRegistry?.notice ? [officialRegistry.notice] : []),
       ...(officialRegistry?.status === 'cached' && !officialRegistry.notice
-        ? [`${officialRegistry.label ?? 'Phi Packages'}：正在使用离线缓存。`]
+        ? [
+            resourceCatalogCopy.cachedSource(
+              resourceSourceLabel(officialRegistry.label ?? 'Phi Packages')
+            )
+          ]
         : []),
       ...results.flatMap((result) => (result.notice ? [result.notice] : []))
     ]

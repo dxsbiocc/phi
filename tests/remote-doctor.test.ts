@@ -551,7 +551,7 @@ test('each remote check has a deadline and the connection closes after a stalled
       }
     )
     assert.equal(status(report, 'java'), 'error')
-    assert.match(report.checks.find((check) => check.id === 'java')?.message ?? '', /超时/)
+    assert.match(report.checks.find((check) => check.id === 'java')?.message ?? '', /timed out/)
     assert.equal(fake.closed(), true)
   })
 })
@@ -569,7 +569,7 @@ test('SSH connection setup itself has a deadline', async () => {
       }
     )
     assert.equal(status(report, 'ssh'), 'error')
-    assert.match(report.checks[0].message, /超时/)
+    assert.match(report.checks[0].message, /timed out/)
   })
 })
 

@@ -1,3 +1,5 @@
+import { beforeEach } from 'node:test'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createElement } from 'react'
@@ -266,3 +268,6 @@ test('the prompt cell maps provider billing errors to the chat-style alert title
   assert.match(markup, /账户余额不足/)
   assert.doesNotMatch(markup, /data-phi-notebook-output-kind="error"/)
 })
+
+// Legacy assertions exercise the Chinese interface explicitly.
+beforeEach(() => setUiLanguage('zh-CN'))

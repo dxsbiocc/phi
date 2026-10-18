@@ -1,3 +1,5 @@
+import { chatCopy } from '../features/chat/lib/chatCopy'
+import { useUiLanguage } from '../lib/i18n'
 import { Fragment, useMemo, type ReactNode } from 'react'
 import { Box } from '@mui/material'
 import { PhiIcons } from '../icons'
@@ -17,6 +19,7 @@ export function ResourceMentionsProvider({
   resources: readonly ChatResourceMention[]
   children?: ReactNode
 }): React.JSX.Element {
+  useUiLanguage()
   const matcher = useMemo(() => createChatResourceMatcher(resources), [resources])
   return (
     <ChatResourceMentionsContext.Provider value={matcher}>
@@ -32,17 +35,18 @@ export function ResourceMention({
   resource: ChatResourceMention
   inheritColor?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const interactions = useInlineLinkMenu(`${resource.kind}:${resource.id}`)
   const actions: InlineLinkMenuAction[] = [
     {
       id: 'copy',
-      label: '复制',
+      label: chatCopy.copy,
       icon: <PhiIcons.action.copy sx={{ fontSize: 16 }} />,
       onSelect: () => navigator.clipboard.writeText(resource.name)
     },
     {
       id: 'details',
-      label: '查看详情',
+      label: chatCopy.viewDetails,
       icon: <PhiIcons.action.openDefault sx={{ fontSize: 16 }} />,
       disabled: !resource.onOpen,
       onSelect: () => resource.onOpen?.()
@@ -115,6 +119,7 @@ export function ResourceMentionText({
   inheritColor?: boolean
   protectCode?: boolean
 }): React.JSX.Element {
+  useUiLanguage()
   const matcher = useChatResourceMatcher()
   const render = (value: string, prefix: number): ReactNode =>
     matcher

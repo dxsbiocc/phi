@@ -76,6 +76,7 @@ import {
   validateSessionPermissionModeUpdate
 } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
+import { nativeUiCopy } from './native-ui-copy'
 import {
   createStartupSplashWindow,
   dismissStartupSplashWindow,
@@ -492,6 +493,7 @@ import {
 } from './agent/wrappers/store'
 import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import {
+  configureSystemUiLanguage,
   readAppSettings,
   readLastSelectedModel,
   updateAppSettings,
@@ -2619,7 +2621,7 @@ getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   if (!authorizationOrigin) throw new Error('授权地址无效')
   const url = new URL(request.url)
   if (url.origin !== authorizationOrigin || url.username || url.password) {
-    throw new Error('授权地址与连接器不匹配')
+    throw new Error('The authorization URL does not match this Connector')
   }
   await shell.openExternal(url.toString())
 })
@@ -2641,7 +2643,7 @@ function customMcpAuthUrl(value: unknown): URL {
       throw new Error('Invalid URL')
     return url
   } catch {
-    throw new Error('连接器授权地址无效')
+    throw new Error('Invalid Connector authorization URL')
   }
 }
 
@@ -2652,7 +2654,7 @@ function customMcpConfigDigest(connector: ReturnType<typeof readCustomRemoteMcpC
 getPhiEngine().host.register('mcp.openCustomAuthUrl', async (params) => {
   const request = params as { name?: unknown; attemptId?: unknown; url?: unknown } | null
   if (typeof request?.name !== 'string' || typeof request.attemptId !== 'string') {
-    throw new Error('连接器授权请求无效')
+    throw new Error('Invalid Connector authorization request')
   }
   const pending = pendingCustomMcpAuthorizations.get(request.name)
   if (
@@ -2661,24 +2663,24 @@ getPhiEngine().host.register('mcp.openCustomAuthUrl', async (params) => {
     pending.attemptId !== request.attemptId ||
     !pending.authorizationOrigin
   ) {
-    throw new Error('连接器授权请求已失效')
+    throw new Error('The Connector authorization request has expired')
   }
   const connector = readCustomRemoteMcpConnector(request.name, AGENT_DIR)
   if (
     connector.url !== pending.serverUrl ||
     customMcpConfigDigest(connector) !== pending.configDigest
   ) {
-    throw new Error('连接器配置已变化，请重新授权')
+    throw new Error('Connector configuration changed. Authorize again.')
   }
   const url = customMcpAuthUrl(request.url)
   if (url.origin !== pending.authorizationOrigin || url.pathname !== pending.authorizationPath) {
-    throw new Error('授权地址与连接器不匹配')
+    throw new Error('The authorization URL does not match this Connector')
   }
   await shell.openExternal(url.toString())
 })
 getPhiEngine().host.register('mcp.featuredApiKey', (params) => {
   const id = (params as { id?: unknown } | null)?.id
-  if (typeof id !== 'string') throw new Error('连接器标识无效')
+  if (typeof id !== 'string') throw new Error('Invalid Connector ID')
   apiKeyConnector(id)
   if (!isFeaturedMcpApiKeyInstalled(id)) return undefined
   return readFeaturedMcpApiKey(id)
@@ -2721,7 +2723,9 @@ async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
     // leave a revoked or rotated credential usable in an existing session.
     writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: id } })
     await getPhiEngine().stop()
-    throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
+    throw new Error(
+      'Local changes were saved, but the running chat could not be synchronized and was stopped. Reopen the chat and try again.'
+    )
   }
 }
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
@@ -3392,7 +3396,8 @@ wrapperJobs.onFinish((run, status) => {
     sendToWindow: sendRunEventToWindow,
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
     continueConversation: liveOrigin ? continueConversationAfterWrapperRun : async () => undefined,
-    showOsNotification: showRunNotification
+    showOsNotification: showRunNotification,
+    getUiLanguage: () => readAppSettings().uiLanguage
   })
 })
 
@@ -3406,6 +3411,7 @@ for (const [method, handler] of Object.entries(
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
     continueConversation: continueConversationAfterAgentRun,
     showOsNotification: showRunNotification,
+    getUiLanguage: () => readAppSettings().uiLanguage,
     redact: redactSensitiveText,
     persistStepOutput: (phiSessionId, toolCallId, stepId, output) =>
       persistToolOutput(phiSessionId, {
@@ -9628,13 +9634,14 @@ function createWindow(): void {
     (reason) => {
       finishStartupSplash(window)
       writeAppLog({ level: 'error', event: 'window_startup_failed', metadata: { reason } })
+      const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
       void dialog
         .showMessageBox({
           type: 'error',
           title: APP_NAME,
-          message: 'Phi 界面未能完成加载',
-          detail: '可以重新加载窗口，或关闭后再次启动。',
-          buttons: ['重新加载', '关闭'],
+          message: dialogCopy.startupFailed,
+          detail: dialogCopy.startupRecovery,
+          buttons: [dialogCopy.reload, dialogCopy.close],
           defaultId: 0,
           cancelId: 1,
           noLink: true
@@ -9731,9 +9738,15 @@ registerNotebookOutputScheme()
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+  try {
+    configureSystemUiLanguage(app.getPreferredSystemLanguages())
+  } catch {
+    configureSystemUiLanguage([])
+  }
   installNotebookOutputProtocol()
   applyDockIcon()
   menuBarController = createMacMenuBar({
+    getUiLanguage: () => readAppSettings().uiLanguage,
     openWindow: showMainWindowFromMenuBar,
     queueAction: queueMenuBarAction,
     hideWindow: hideMainWindowFromMenuBar,
@@ -9742,7 +9755,9 @@ app.whenReady().then(async () => {
   })
   startupSplashWindow = await createStartupSplashWindow(
     (options) => new BrowserWindow(options),
-    appIcon.isEmpty() ? '' : appIcon.toDataURL()
+    appIcon.isEmpty() ? '' : appIcon.toDataURL(),
+    Date.now,
+    readAppSettings().uiLanguage
   )
 
   const removedLogs = cleanupOldLogs()
@@ -9938,7 +9953,10 @@ app.whenReady().then(async () => {
       throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')
     }
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
+      title: dialogCopy.selectInput,
+      buttonLabel: dialogCopy.select,
       defaultPath: currentCwd || undefined,
       properties: ['openFile', 'openDirectory', 'multiSelections']
     }
@@ -9949,7 +9967,10 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('files:pickLocalUpload', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
+      title: dialogCopy.selectUpload,
+      buttonLabel: dialogCopy.select,
       properties: ['openFile', 'openDirectory', 'multiSelections']
     }
     const result = window
@@ -10045,6 +10066,7 @@ app.whenReady().then(async () => {
     ipcMain,
     dialog,
     shell,
+    getUiLanguage: () => readAppSettings().uiLanguage,
     requireRenderer: requireMainWindowRenderer,
     requireLocalWorkspaceRoot: (rootPath) => {
       if (
@@ -10102,7 +10124,10 @@ app.whenReady().then(async () => {
     if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
     const name = basename(checked.path!)
     const window = BrowserWindow.fromWebContents?.(event.sender) ?? getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.SaveDialogOptions = {
+      title: dialogCopy.saveResult,
+      buttonLabel: dialogCopy.save,
       defaultPath: name && name !== '.' && name !== '..' ? name : 'remote-result'
     }
     const chosen = window
@@ -10293,8 +10318,10 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('environment:pickBinary', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
-      title: '选择工具可执行文件',
+      title: dialogCopy.selectExecutable,
+      buttonLabel: dialogCopy.select,
       properties: ['openFile']
     }
     const result = window
@@ -10775,8 +10802,10 @@ app.whenReady().then(async () => {
     if (!manifest) throw new Error('会话不存在')
     if (runnerRegistry.getActiveRun(sessionId)) throw new Error('请等待会话运行结束后再导出')
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
-      title: '选择会话导出的目标文件夹',
+      title: dialogCopy.exportChat,
+      buttonLabel: dialogCopy.select,
       properties: ['openDirectory', 'createDirectory']
     }
     const choice = window
@@ -10795,7 +10824,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('projects:list', async () => listProjects())
   ipcMain.handle('projects:pickDirectory', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
+      title: dialogCopy.selectProject,
+      buttonLabel: dialogCopy.select,
       properties: ['openDirectory', 'createDirectory']
     }
     const result = window
@@ -11579,8 +11611,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
   ipcMain.handle('phiPlugins:pickDirectory', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
-      title: '选择 Phi 插件目录',
+      title: dialogCopy.selectPlugin,
+      buttonLabel: dialogCopy.select,
       properties: ['openDirectory']
     }
     const result = window
@@ -11594,7 +11628,11 @@ app.whenReady().then(async () => {
         ok: false,
         path: '',
         problems: [
-          phiPluginProblemView({ level: 'error', path: 'path', message: '请选择有效的插件目录' })
+          phiPluginProblemView({
+            level: 'error',
+            path: 'path',
+            message: 'Select a valid Plugin directory'
+          })
         ]
       } satisfies PhiPluginInstallPreview
     }
@@ -11609,7 +11647,7 @@ app.whenReady().then(async () => {
           phiPluginProblemView({
             level: 'error',
             path: 'preview',
-            message: `插件检查失败：${error instanceof Error ? error.message : String(error)}`
+            message: `Plugin validation failed: ${error instanceof Error ? error.message : String(error)}`
           })
         ]
       } satisfies PhiPluginInstallPreview
@@ -11617,7 +11655,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('phiPlugins:installFromDirectory', async (_, path: unknown) => {
     if (typeof path !== 'string' || path.trim().length === 0) {
-      return failedPhiPluginMutation('path', '请选择有效的插件目录')
+      return failedPhiPluginMutation('path', 'Select a valid Plugin directory')
     }
     try {
       const validation = validatePlugin(path)
@@ -11651,7 +11689,7 @@ app.whenReady().then(async () => {
       } else {
         return failedPhiPluginMutation(
           'version',
-          `已安装 ${existing.id} ${existing.version}；请选择更高版本进行升级`
+          `${existing.id} ${existing.version} is already installed. Select a newer version to upgrade.`
         )
       }
       if (result.ok) await invalidateAgentSession()
@@ -11660,13 +11698,13 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'install',
-        `插件安装失败：${error instanceof Error ? error.message : String(error)}`
+        `Plugin installation failed: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle('phiPlugins:setEnabled', async (_, id: unknown, enabled: unknown) => {
     if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
-      return failedPhiPluginMutation('request', '插件标识或启用状态无效')
+      return failedPhiPluginMutation('request', 'Invalid Plugin ID or enabled state')
     }
     try {
       const result = setPluginEnabled(id, enabled, {
@@ -11678,13 +11716,13 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'enabled',
-        `插件状态更新失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not update Plugin state: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle('phiPlugins:uninstall', async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) {
-      return failedPhiPluginMutation('id', '插件标识无效')
+      return failedPhiPluginMutation('id', 'Invalid Plugin ID')
     }
     try {
       const result = uninstallPhiPlugin(id, {
@@ -11697,14 +11735,16 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'uninstall',
-        `插件卸载失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not uninstall Plugin: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle('packages:pickRegistryDirectory', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
-      title: '选择本地技能目录',
+      title: dialogCopy.selectSkill,
+      buttonLabel: dialogCopy.select,
       properties: ['openDirectory']
     }
     const result = window
@@ -11714,10 +11754,12 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('packages:pickArchive', async () => {
     const window = getActiveWindow()
+    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
-      title: '导入软件包',
+      title: dialogCopy.importPackage,
+      buttonLabel: dialogCopy.import,
       properties: ['openFile'],
-      filters: [{ name: 'Phi 软件包', extensions: ['tar.gz'] }]
+      filters: [{ name: dialogCopy.packageFilter, extensions: ['tar.gz'] }]
     }
     const result = window
       ? await dialog.showOpenDialog(window, options)
@@ -11737,7 +11779,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('packages:contentCatalog', async (_, forceRefresh?: unknown) => {
     if (forceRefresh !== undefined && typeof forceRefresh !== 'boolean')
-      throw new Error('目录刷新参数无效')
+      throw new Error('Invalid catalog refresh request')
     const registry = await syncPreferredOfficialRegistry({
       ...officialContentSourceOptions(),
       forceRefresh: forceRefresh === true
@@ -11745,13 +11787,13 @@ app.whenReady().then(async () => {
     return packageRegistryIconView(registry)
   })
   ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
-    if (typeof id !== 'string') throw new Error('软件源标识无效')
+    if (typeof id !== 'string') throw new Error('Invalid source ID')
     removeKnownRegistry(id, { agentDir: AGENT_DIR })
     return (await listKnownRegistries(knownContentSourceOptions())).registries
   })
   ipcMain.handle('sources:previewGithub', async (_, url: unknown) => {
     if (typeof url !== 'string' || url.length < 1 || url.length > 2048) {
-      throw new Error('GitHub 仓库地址无效')
+      throw new Error('Invalid GitHub repository URL')
     }
     return previewGithubSource(url, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
   })
@@ -11765,7 +11807,7 @@ app.whenReady().then(async () => {
       typeof input.sha !== 'string' ||
       !/^[a-f0-9]{40}$/i.test(input.sha)
     ) {
-      throw new Error('GitHub 软件源添加参数无效')
+      throw new Error('Invalid GitHub source import request')
     }
     const source = await addGithubSource(
       { url: input.url, sha: input.sha },
@@ -11777,7 +11819,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('sources:checkGithubUpdate', async (_, id: unknown) => {
     if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
-      throw new Error('GitHub 软件源标识无效')
+      throw new Error('Invalid GitHub source ID')
     }
     return checkGithubSourceUpdate(id, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
   })
@@ -11790,7 +11832,7 @@ app.whenReady().then(async () => {
       typeof input.sha !== 'string' ||
       !/^[a-f0-9]{40}$/i.test(input.sha)
     ) {
-      throw new Error('GitHub 软件源更新参数无效')
+      throw new Error('Invalid GitHub source refresh request')
     }
     const source = await applyGithubSourceUpdate(input.id, input.sha, {
       agentDir: AGENT_DIR,
@@ -11805,7 +11847,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('sources:removeGithub', async (_, id: unknown) => {
     if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
-      throw new Error('GitHub 软件源标识无效')
+      throw new Error('Invalid GitHub source ID')
     }
     const source = listGithubSources({ agentDir: AGENT_DIR }).sources.find(
       (entry) => entry.id === id
@@ -11831,14 +11873,14 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('packages:registry', async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {
-      throw new Error('注册表目录无效')
+      throw new Error('Invalid registry directory')
     }
     try {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return packageRegistryIconView(registry)
     } catch (error) {
       throw new Error(
-        `读取软件包注册表失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not read package registry: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
@@ -11852,7 +11894,7 @@ app.whenReady().then(async () => {
         id.length === 0 ||
         (version !== undefined && typeof version !== 'string')
       ) {
-        throw new Error('软件包安装计划参数无效')
+        throw new Error('Invalid package installation plan request')
       }
       try {
         const registry = await readContentRegistry(dir, officialContentSourceOptions())
@@ -11863,34 +11905,34 @@ app.whenReady().then(async () => {
         )
       } catch (error) {
         throw new Error(
-          `生成软件包安装计划失败：${error instanceof Error ? error.message : String(error)}`
+          `Could not create package installation plan: ${error instanceof Error ? error.message : String(error)}`
         )
       }
     }
   )
   ipcMain.handle('packages:skillDetail', async (_, dir: unknown, id: unknown) => {
     if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
-      throw new Error('技能软件包详情参数无效')
+      throw new Error('Invalid Skill package detail request')
     }
     try {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return await readSkillPackageDetail(registry, id, officialContentSourceOptions())
     } catch (error) {
       throw new Error(
-        `读取技能软件包详情失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not read Skill package details: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle('packages:wrapperDetail', async (_, dir: unknown, id: unknown) => {
     if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
-      throw new Error('wrapper 软件包详情参数无效')
+      throw new Error('Invalid Wrapper package detail request')
     }
     try {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return await readWrapperPackageDetail(registry, id, officialContentSourceOptions())
     } catch (error) {
       throw new Error(
-        `读取 wrapper 软件包详情失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not read Wrapper package details: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
@@ -11905,7 +11947,7 @@ app.whenReady().then(async () => {
           id.length === 0 ||
           (version !== undefined && typeof version !== 'string')
         ) {
-          throw new Error('软件包安装参数无效')
+          throw new Error('Invalid package installation request')
         }
         try {
           const registry = await readContentRegistry(dir, officialContentSourceOptions())
@@ -11950,7 +11992,7 @@ app.whenReady().then(async () => {
           return result
         } catch (error) {
           throw new Error(
-            `安装软件包失败：${error instanceof Error ? error.message : String(error)}`
+            `Package installation failed: ${error instanceof Error ? error.message : String(error)}`
           )
         }
       }
@@ -11959,7 +12001,8 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'packages:removeWrapper',
     serializedPackageMutation(async (_, id: unknown) => {
-      if (typeof id !== 'string' || id.length === 0) throw new Error('wrapper 软件包参数无效')
+      if (typeof id !== 'string' || id.length === 0)
+        throw new Error('Invalid Wrapper package request')
       try {
         const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
         resetWrapperCompositionCatalogCache()
@@ -11978,7 +12021,7 @@ app.whenReady().then(async () => {
         typeof id !== 'string' ||
         id.length === 0
       ) {
-        throw new Error('软件包卸载参数无效')
+        throw new Error('Invalid package uninstall request')
       }
       try {
         const result = uninstallRegistryPackage(type, id, {
@@ -11990,7 +12033,9 @@ app.whenReady().then(async () => {
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(`卸载软件包失败：${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(
+          `Could not uninstall package: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     })
   )
@@ -11999,12 +12044,13 @@ app.whenReady().then(async () => {
       return listRegistryPackages({ agentDir: AGENT_DIR })
     } catch (error) {
       throw new Error(
-        `读取已安装软件包失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not read installed packages: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle('packages:previewImport', async (_, path: unknown) => {
-    if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+    if (typeof path !== 'string' || path.length === 0)
+      throw new Error('Invalid offline package path')
     try {
       return previewOfflinePackageImport(path, {
         agentDir: AGENT_DIR,
@@ -12013,14 +12059,15 @@ app.whenReady().then(async () => {
       })
     } catch (error) {
       throw new Error(
-        `读取离线软件包失败：${error instanceof Error ? error.message : String(error)}`
+        `Could not read offline package: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   })
   ipcMain.handle(
     'packages:import',
     serializedPackageMutation(async (_, path: unknown) => {
-      if (typeof path !== 'string' || path.length === 0) throw new Error('离线软件包路径无效')
+      if (typeof path !== 'string' || path.length === 0)
+        throw new Error('Invalid offline package path')
       const installedBefore = new Set(
         listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
       )
@@ -12061,7 +12108,9 @@ app.whenReady().then(async () => {
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(`导入软件包失败：${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(
+          `Could not import package: ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     })
   )
@@ -12076,7 +12125,7 @@ app.whenReady().then(async () => {
         typeof id !== 'string' ||
         id.length === 0
       ) {
-        throw new Error('软件包更新参数无效')
+        throw new Error('Invalid package update request')
       }
       const loaded = await loadPackageRegistries()
       const updates = listPackageUpdates(loaded.registries, {
@@ -12084,7 +12133,7 @@ app.whenReady().then(async () => {
         appVersion: app.getVersion()
       })
       const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
-      if (!update) throw new Error(`没有可用更新：${type}:${id}`)
+      if (!update) throw new Error(`No update available: ${type}:${id}`)
       const result = await applyPackageUpdate(update, loaded.registries, {
         preparePackage: async (registry, request) => {
           await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
@@ -12138,7 +12187,7 @@ app.whenReady().then(async () => {
       throw new Error('项目目录无效')
     }
     if (typeof projectCwd === 'string' && isRemoteResourceScope(projectCwd)) {
-      throw new Error('远程项目 Skills 暂不可用')
+      throw new Error('Skills are not available for this remote project')
     }
     return getEnablementSnapshot({
       agentDir: AGENT_DIR,
@@ -12146,8 +12195,8 @@ app.whenReady().then(async () => {
     })
   })
   ipcMain.handle('enablement:set', async (_, item: unknown, value: unknown, scope: unknown) => {
-    if (!isEnablementItemKey(item)) throw new Error('启用项目标识无效')
-    if (typeof value !== 'boolean' && value !== null) throw new Error('启用值无效')
+    if (!isEnablementItemKey(item)) throw new Error('Invalid enablement item ID')
+    if (typeof value !== 'boolean' && value !== null) throw new Error('Invalid enablement value')
     const options = enablementScopeOptions(scope as EnablementScope)
     if (item.startsWith('plugin:')) {
       const pluginId = item.slice('plugin:'.length)
@@ -12162,7 +12211,8 @@ app.whenReady().then(async () => {
       })
       if (!result.ok) {
         throw new Error(
-          result.errors.map((problem) => problem.message).join('; ') || '插件启用状态无效'
+          result.errors.map((problem) => problem.message).join('; ') ||
+            'Invalid Plugin enabled state'
         )
       }
       if (value === null) setEnabled(item, null, { agentDir: AGENT_DIR, ...options })
@@ -12198,14 +12248,14 @@ app.whenReady().then(async () => {
     'skills:setDisabled',
     async (_, filePath: string, disabled: boolean, cwd?: string) => {
       if (isRemoteResourceScope(cwd)) {
-        throw new Error('远程项目 Skills 暂不可用')
+        throw new Error('Skills are not available for this remote project')
       }
       return setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
     }
   )
   ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
-      throw new Error('远程项目 Skills 暂不可用')
+      throw new Error('Skills are not available for this remote project')
     }
     return deleteSkill(filePath, cwd ?? currentCwd)
   })
@@ -12295,7 +12345,7 @@ app.whenReady().then(async () => {
 
   async function probeStdioTools(id: string, report: ConnectorSetupReporter): Promise<string[]> {
     const entry = readMcpServerEntry(id, AGENT_DIR)
-    if (!entry || entry.phiPackage !== id) throw new Error('请先安装这个本地连接器')
+    if (!entry || entry.phiPackage !== id) throw new Error('Install this local Connector first')
     report('starting')
     const toolNames = await getPhiEngine().mcp.configuredStdioTools({
       name: id,
@@ -12347,7 +12397,7 @@ app.whenReady().then(async () => {
         (version !== undefined && typeof version !== 'string') ||
         (registryDir !== undefined && typeof registryDir !== 'string')
       ) {
-        throw new Error('连接器安装参数无效')
+        throw new Error('Invalid Connector installation request')
       }
       const connector = (await connectorCatalog()).find(
         (entry) =>
@@ -12355,7 +12405,7 @@ app.whenReady().then(async () => {
           (version === undefined || entry.version === version) &&
           (registryDir === undefined || entry.registryDir === registryDir)
       )
-      if (!connector?.registryDir) throw new Error(`连接器目录中找不到 ${id}`)
+      if (!connector?.registryDir) throw new Error(`Connector ${id} was not found in the catalog`)
       if (connector.unavailableReason) throw new Error(connector.unavailableReason)
       const sourceRegistryDir = connector.registryDir
       return connectorSetups.run(
@@ -12403,7 +12453,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle('mcp:uninstallConnector', async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
     return connectorSetups.run(
       id,
       async () => {
@@ -12419,7 +12469,7 @@ app.whenReady().then(async () => {
     )
   })
   ipcMain.handle('mcp:buildConnectorEnvironment', async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) throw new Error('连接器标识无效')
+    if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
     return connectorSetups.run(id, async (report) => {
       let environment: { envId: string }
       let toolNames: string[]
@@ -12459,18 +12509,18 @@ app.whenReady().then(async () => {
     return localConnectorJobs.startLocalConnectorAdd(request)
   })
   ipcMain.handle('mcp:cancelLocalConnectorAdd', async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    if (typeof name !== 'string') throw new Error('Invalid Connector name')
     await localConnectorJobs.cancelLocalConnectorAdd(validateName(name))
   })
   ipcMain.handle('mcp:retryLocalConnectorAdd', async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    if (typeof name !== 'string') throw new Error('Invalid Connector name')
     return localConnectorJobs.retryLocalConnectorAdd(validateName(name))
   })
   ipcMain.handle('mcp:listLocalConnectorJobs', async () =>
     localConnectorJobs.listLocalConnectorJobs()
   )
   ipcMain.handle('mcp:removeLocalConnector', async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    if (typeof name !== 'string') throw new Error('Invalid Connector name')
     const validatedName = validateName(name)
     await removeLocalMcpConnector(validatedName)
     await getPhiEngine().mcp.applyConnectorEnabled({ name: validatedName })
@@ -12488,7 +12538,7 @@ app.whenReady().then(async () => {
     'mcp:setConnectorEnabled',
     async (_, name: string, enabled: boolean, sourcePath?: string) => {
       if (typeof sourcePath === 'string' && sourcePath.startsWith('ssh://')) {
-        throw new Error('服务器项目 MCP 的启用状态由服务器配置文件管理')
+        throw new Error('Server project MCP enablement is managed by the server configuration file')
       }
       setMcpConnectorEnabled(
         name,
@@ -12501,7 +12551,9 @@ app.whenReady().then(async () => {
         if (!API_KEY_CONNECTOR_IDS.some((id) => id === name)) throw error
         writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: name } })
         await getPhiEngine().stop()
-        throw new Error('本地修改已保存，但运行中的会话同步失败并已停止；请重新打开对话后重试')
+        throw new Error(
+          'Local changes were saved, but the running chat could not be synchronized and was stopped. Reopen the chat and try again.'
+        )
       }
     }
   )
@@ -12525,9 +12577,9 @@ app.whenReady().then(async () => {
     await syncFeaturedMcpApiKeySessions(id)
   })
   ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
-    if (typeof id !== 'string') throw new Error('连接器标识无效')
+    if (typeof id !== 'string') throw new Error('Invalid Connector ID')
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
-    if (!connector) throw new Error('连接器目录中找不到这个连接器')
+    if (!connector) throw new Error('This Connector was not found in the catalog')
     if (connector.transport === 'stdio') {
       return connectorSetups.run(id, async (report) => {
         const toolNames = await probeStdioTools(id, report)
@@ -12535,7 +12587,7 @@ app.whenReady().then(async () => {
         return toolNames
       })
     }
-    if (!connector.url) throw new Error('连接器的服务地址无效')
+    if (!connector.url) throw new Error('Invalid Connector service URL')
     return getPhiEngine().mcp.featuredTools({
       id,
       url: connector.url,
@@ -12545,14 +12597,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
-      throw new Error('该连接器尚不支持登录状态查询')
+      throw new Error('This Connector does not support sign-in status checks')
     }
     return getPhiEngine().mcp.featuredAuthStatus({ id, url: connector.url })
   })
   ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
-      throw new Error('该连接器尚不支持 OAuth 授权')
+      throw new Error('This Connector does not support OAuth authorization')
     }
     await getPhiEngine().mcp.authorizeFeatured({ id, url: connector.url })
   })
@@ -12563,7 +12615,8 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('mcp:authorizeRemoteConnector', async (_, name: string) => {
     const connector = readCustomRemoteMcpConnector(name, AGENT_DIR)
-    if (pendingCustomMcpAuthorizations.has(connector.name)) throw new Error('该连接器正在授权')
+    if (pendingCustomMcpAuthorizations.has(connector.name))
+      throw new Error('Authorization is already in progress for this Connector')
     const pending: PendingCustomMcpAuthorization = {
       attemptId: randomUUID(),
       serverUrl: connector.url,
@@ -12578,14 +12631,14 @@ app.whenReady().then(async () => {
         name: connector.name,
         attemptId: pending.attemptId
       })
-      if (pending.cancelled) throw new Error('授权已取消')
+      if (pending.cancelled) throw new Error('Authorization cancelled')
       const current = readCustomRemoteMcpConnector(connector.name, AGENT_DIR)
       if (
         !prepared ||
         prepared.serverUrl !== pending.serverUrl ||
         customMcpConfigDigest(current) !== pending.configDigest
       ) {
-        throw new Error('连接器配置已变化，请重新授权')
+        throw new Error('Connector configuration changed. Authorize again.')
       }
       const authorizationUrl = customMcpAuthUrl(prepared.authorizationUrl)
       pending.authorizationOrigin = authorizationUrl.origin
@@ -12607,7 +12660,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle('mcp:cancelRemoteAuth', async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('连接器名称无效')
+    if (typeof name !== 'string') throw new Error('Invalid Connector name')
     const key = name.trim()
     const pending = pendingCustomMcpAuthorizations.get(key)
     if (!pending) return
@@ -12634,7 +12687,7 @@ app.whenReady().then(async () => {
       (request.confirmedLocalFallback !== undefined &&
         typeof request.confirmedLocalFallback !== 'boolean')
     ) {
-      throw new Error('Wrapper 目标变更请求无效')
+      throw new Error('Invalid Wrapper target change request')
     }
     return retargetWrapperRunPlan(request)
   })
@@ -12653,7 +12706,7 @@ app.whenReady().then(async () => {
           !selected.projectLocation ||
           !['local', 'ssh'].includes(selected.projectLocation.kind)
         ) {
-          throw new Error('计划目标快照无效，请重新创建计划。')
+          throw new Error('The plan target snapshot is invalid. Create a new plan.')
         }
         if (
           !confirmation ||
@@ -12679,7 +12732,9 @@ app.whenReady().then(async () => {
               ? declaredExternalOutputRoot(selected.remoteRoot, plan.params?.outdir)
               : undefined)
         ) {
-          throw new Error('计划执行目标已变化，请刷新计划卡后重新确认。')
+          throw new Error(
+            'The plan execution target has changed. Refresh the plan card and confirm again.'
+          )
         }
       }
       if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
@@ -12693,14 +12748,17 @@ app.whenReady().then(async () => {
           plan?.targetSelection?.projectId !== manifest.projectId ||
           plan.targetSelection.target !== 'remote'
         ) {
-          throw new Error('远程项目只能提交绑定本项目服务器的 Wrapper 计划；不会在本机执行')
+          throw new Error(
+            'Remote projects can only submit Wrapper plans bound to their server; they will not run locally'
+          )
         }
       }
       if (selected?.target === 'remote' && selected.projectLocation.kind === 'ssh') {
         const current = listProjects().find((project) => project.id === selected.projectId)
         if (current?.remoteConnection?.phase !== 'reachable') {
           throw new Error(
-            current?.remoteConnection?.message ?? '服务器连接尚未就绪，请重连后再提交。'
+            current?.remoteConnection?.message ??
+              'The server connection is not ready. Reconnect before submitting.'
           )
         }
       }
@@ -12782,7 +12840,10 @@ app.whenReady().then(async () => {
     try {
       const bundle = buildWrapperReproducibilityBundle(runId)
       const window = getActiveWindow()
+      const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
       const options: Electron.SaveDialogOptions = {
+        title: dialogCopy.exportReproducibility,
+        buttonLabel: dialogCopy.save,
         defaultPath: `phi-wrapper-${runId}-reproducibility.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }]
       }

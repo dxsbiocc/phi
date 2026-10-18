@@ -138,11 +138,13 @@ function copyWrapperSourceTree(sourceDir: string, installedPath: string): void {
 function loadManifestFromDir(dir: string): WrapperManifest {
   const manifestPath = join(dir, MANIFEST_FILE)
   if (!existsSync(manifestPath)) {
-    throw new Error(`未找到 wrapper.yaml: ${manifestPath}`)
+    throw new Error(`wrapper.yaml not found: ${manifestPath}`)
   }
   const result = parseWrapperManifest(readFileSync(manifestPath, 'utf-8'))
   if (!result.valid || !result.manifest) {
-    throw new Error(`wrapper.yaml 校验失败 (${manifestPath}):\n${result.errors.join('\n')}`)
+    throw new Error(
+      `wrapper.yaml validation failed (${manifestPath}):\n${result.errors.join('\n')}`
+    )
   }
   return result.manifest
 }

@@ -1,3 +1,5 @@
+import { environmentUi } from '../lib/environmentUi'
+import { useUiLanguage } from '../../../lib/i18n'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -25,14 +27,15 @@ export function EnvironmentSummaryDialog({
   onClose,
   onOpenSettings
 }: EnvironmentSummaryDialogProps): React.JSX.Element {
+  useUiLanguage()
   const { dependencies, tools } = environmentHostResources(snapshot)
   const capabilityGroups = [
     {
-      title: 'Jupyter 环境',
+      title: environmentUi.jupyterEnvironment,
       items: tools.filter((tool) => tool.id === 'jupyter')
     },
     {
-      title: 'Nextflow 环境',
+      title: environmentUi.nextflowEnvironment,
       items: [
         ...tools.filter((tool) => tool.id === 'nextflow'),
         ...dependencies.filter(
@@ -46,22 +49,21 @@ export function EnvironmentSummaryDialog({
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>工作台环境检测</DialogTitle>
+      <DialogTitle>{environmentUi.workbenchEnvironmentDetection}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Phi 会自动检测本机已有的 Jupyter、Nextflow 与容器运行时，并把结果合并到对应环境中。
+          {environmentUi.phiAutomaticallyDetectsLocalJupyterNextflowAndContainer}
         </Typography>
 
         <Alert
           severity={readyCapabilities.length === capabilities.length ? 'success' : 'warning'}
           sx={{ mb: 1.5 }}
         >
-          宿主能力：{readyCapabilities.length} 项可用，
-          {capabilities.length - readyCapabilities.length} 项未就绪
+          {environmentUi.capabilitySummary(readyCapabilities.length, capabilities.length)}
         </Alert>
         {capabilities.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            尚无检测结果。
+            {environmentUi.noDetectionResultsYet}
           </Typography>
         ) : (
           <Stack spacing={1.5}>
@@ -82,7 +84,7 @@ export function EnvironmentSummaryDialog({
                       size="small"
                       color={item.status === 'ready' ? 'success' : 'default'}
                       variant="outlined"
-                      label={`${item.label} · ${item.status === 'ready' ? '可用' : '未就绪'}`}
+                      label={`${item.label} · ${item.status === 'ready' ? environmentUi.available : environmentUi.notReady2}`}
                     />
                   ))}
                 </Stack>
@@ -92,9 +94,9 @@ export function EnvironmentSummaryDialog({
         )}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onOpenSettings}>打开环境设置</Button>
+        <Button onClick={onOpenSettings}>{environmentUi.openEnvironmentSettings}</Button>
         <Button variant="contained" onClick={onClose}>
-          知道了
+          {environmentUi.gotIt}
         </Button>
       </DialogActions>
     </Dialog>

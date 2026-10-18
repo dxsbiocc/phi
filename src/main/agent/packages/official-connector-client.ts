@@ -41,11 +41,14 @@ export async function fetchOfficialConnectorPackages(
 ): Promise<OfficialConnectorPayload[]> {
   const timeoutMs = options.timeoutMs ?? 60_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000)
-    throw new Error('官网连接器请求超时配置无效')
+    throw new Error('Invalid Phi Website Connector request timeout')
   const controller = new AbortController()
   const deadline = Date.now() + timeoutMs
   let totalBytes = 0
-  const timer = setTimeout(() => controller.abort(new Error('官网连接器请求超时')), timeoutMs)
+  const timer = setTimeout(
+    () => controller.abort(new Error('Phi Website Connector request timed out')),
+    timeoutMs
+  )
   const fetcher = options.fetch ?? fetch
   const read = async (path: string, maxBytes: number): Promise<Buffer> => {
     controller.signal.throwIfAborted()
@@ -60,15 +63,18 @@ export async function fetchOfficialConnectorPackages(
       controller.signal
     )
     if (!response.ok || (response.url && response.url !== url))
-      throw new Error(`官网连接器请求失败或来源无效（HTTP ${response.status}）`)
+      throw new Error(
+        `Phi Website Connector request failed or returned an invalid origin (HTTP ${response.status})`
+      )
     const remaining = deadline - Date.now()
-    if (remaining <= 0) throw new Error('官网连接器请求超时')
+    if (remaining <= 0) throw new Error('Phi Website Connector request timed out')
     const bytes = await abortable(
-      readBoundedResponse(response, maxBytes, '官网连接器响应', remaining),
+      readBoundedResponse(response, maxBytes, 'Phi Website Connector response', remaining),
       controller.signal
     )
     totalBytes += bytes.length
-    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('官网连接器下载总大小超过限制')
+    if (totalBytes > MAX_TOTAL_BYTES)
+      throw new Error('Phi Website Connector download total exceeds the size limit')
     return bytes
   }
   const json = async (path: string): Promise<unknown> =>
@@ -92,20 +98,22 @@ export async function fetchOfficialConnectorPackages(
         value.items.length !== Math.min(100, (value.total as number) - (page - 1) * 100) ||
         (expectedTotal !== undefined && value.total !== expectedTotal)
       )
-        throw new Error('官网连接器分页目录无效或更新时序不一致')
+        throw new Error(
+          'Invalid Phi Website Connector catalog pagination or inconsistent update timing'
+        )
       expectedTotal = value.total as number
       const categories = parseCategories(value.categories, expectedTotal)
       if (expectedCategories !== undefined && expectedCategories !== JSON.stringify(categories))
-        throw new Error('官网连接器分类在分页期间发生变化')
+        throw new Error('Phi Website Connector categories changed during pagination')
       expectedCategories = JSON.stringify(categories)
       if (
         value.meta !== undefined &&
         (!isRecord(value.meta) || value.meta.connectors !== expectedTotal)
       )
-        throw new Error('官网连接器目录计数不一致')
+        throw new Error('Phi Website Connector catalog count mismatch')
       for (const raw of value.items) {
         const item = parseItem(raw)
-        if (ids.has(item.id)) throw new Error(`官网连接器包含重复 ID：${item.id}`)
+        if (ids.has(item.id)) throw new Error(`Duplicate Phi Website Connector ID: ${item.id}`)
         ids.add(item.id)
         items.push(item)
       }
@@ -118,11 +126,16 @@ export async function fetchOfficialConnectorPackages(
           items.filter((item) => item.category === category.name).length !== category.count
       )
     )
-      throw new Error('官网连接器分类未完整覆盖目录')
+      throw new Error('Phi Website Connector categories do not cover the complete catalog')
     const installable = items.filter((item) => item.catalogInstallable)
-    if (!installable.length) throw new Error('官网连接器目录没有可完整安装的模块')
+    if (!installable.length)
+      throw new Error(
+        'The Phi Website Connector catalog contains no completely installable packages'
+      )
     if (installable.some((item) => item.transport !== 'http'))
-      throw new Error('官网连接器 API 暂不能完整交付 stdio 内容，需使用签名发布目录')
+      throw new Error(
+        'The Phi Website Connector API cannot deliver complete stdio contents. Use the signed release catalog'
+      )
     const result: OfficialConnectorPayload[] = new Array(installable.length)
     let cursor = 0
     const tasks = Array.from({ length: Math.min(4, installable.length) }, async () => {
@@ -143,7 +156,7 @@ export async function fetchOfficialConnectorPackages(
             detail.catalogInstallable !== true ||
             detail.directoryAuthBlocked !== item.directoryAuthBlocked
           )
-            throw new Error(`官网连接器详情与目录不一致：${item.id}`)
+            throw new Error(`Phi Website Connector details do not match the catalog: ${item.id}`)
           const yaml = stringifyYaml(detail.package, { sortMapEntries: true })
           const manifest = parseCompleteOfficialConnectorManifest(yaml)
           if (
@@ -152,12 +165,12 @@ export async function fetchOfficialConnectorPackages(
             manifest.connector.category !== item.category ||
             manifest.connector.auth !== item.auth
           )
-            throw new Error(`官网连接器软件包与目录不一致：${item.id}`)
+            throw new Error(`Phi Website Connector package does not match the catalog: ${item.id}`)
           const declaredIcon =
             detail.iconUrl === undefined ? undefined : iconPath(detail.iconUrl, item.id)
           const listIcon = item.iconUrl === undefined ? undefined : iconPath(item.iconUrl, item.id)
           if (declaredIcon && listIcon && declaredIcon !== listIcon)
-            throw new Error(`官网连接器图标与目录不一致：${item.id}`)
+            throw new Error(`Phi Website Connector icon does not match the catalog: ${item.id}`)
           const icon = declaredIcon ?? listIcon
           result[index] = {
             manifest,
@@ -167,7 +180,8 @@ export async function fetchOfficialConnectorPackages(
               ? { icon: { name: icon.split('/').at(-1)!, bytes: await read(icon, MAX_ICON_BYTES) } }
               : {})
           }
-          if (result[index].icon?.bytes.length === 0) throw new Error('官网连接器图标为空')
+          if (result[index].icon?.bytes.length === 0)
+            throw new Error('The Phi Website Connector icon is empty')
         } catch (error) {
           controller.abort(error)
           throw error
@@ -188,12 +202,14 @@ export function parseCompleteOfficialConnectorManifest(
 ): McpPackageManifest & { connector: HttpConnectorManifest } {
   const manifest = parsePackageManifestText(yaml)
   if (manifest.type !== 'mcp' || manifest.connector.transport !== 'http')
-    throw new Error('官网连接器 API 无法完整交付非 HTTP 软件包')
+    throw new Error('The Phi Website Connector API cannot deliver complete non-HTTP packages')
   if (manifest.dependsOn?.length)
-    throw new Error('官网连接器 API 无法完整交付软件包依赖，需使用签名发布目录')
+    throw new Error(
+      'The Phi Website Connector API cannot deliver complete package dependencies. Use the signed release catalog'
+    )
   const url = new URL(manifest.connector.url)
   if (url.protocol !== 'https:' || url.username || url.password || url.hash)
-    throw new Error('官网连接器服务 URL 无效')
+    throw new Error('Invalid Phi Website Connector service URL')
   return { ...manifest, connector: manifest.connector }
 }
 
@@ -212,7 +228,7 @@ function parseItem(value: unknown): ConnectorItem {
     typeof value.directoryAuthBlocked !== 'boolean' ||
     (value.iconUrl !== undefined && typeof value.iconUrl !== 'string')
   )
-    throw new Error('官网连接器目录条目无效')
+    throw new Error('Invalid Phi Website Connector catalog entry')
   if (value.iconUrl !== undefined) iconPath(value.iconUrl, value.id)
   return {
     id: value.id,
@@ -228,7 +244,7 @@ function parseItem(value: unknown): ConnectorItem {
 
 function parseCategories(value: unknown, total: number): Array<{ name: string; count: number }> {
   if (!Array.isArray(value) || value.length < 1 || value.length > CONNECTOR_CATEGORIES.length)
-    throw new Error('官网连接器分类无效')
+    throw new Error('Invalid Phi Website Connector categories')
   const seen = new Set<string>()
   const categories = value.map((item) => {
     if (
@@ -240,22 +256,24 @@ function parseCategories(value: unknown, total: number): Array<{ name: string; c
       (item.count as number) < 0 ||
       (item.count as number) > MAX_ITEMS
     )
-      throw new Error('官网连接器分类条目无效')
+      throw new Error('Invalid Phi Website Connector category entry')
     seen.add(item.name)
     return { name: item.name, count: item.count as number }
   })
   if (categories.reduce((sum, item) => sum + item.count, 0) !== total)
-    throw new Error('官网连接器分类计数不一致')
+    throw new Error('Phi Website Connector category count mismatch')
   return categories
 }
 
 function iconPath(value: unknown, id: string): string {
-  if (typeof value !== 'string') throw new Error('官网连接器图标 URL 无效')
+  if (typeof value !== 'string') throw new Error('Invalid Phi Website Connector icon URL')
   for (const filename of PACKAGE_ICON_FILENAMES) {
     const path = `/packages/resources/connectors/${id}/${filename}`
     if (value === path || value === `${OFFICIAL_CONNECTOR_ORIGIN}${path}`) return path
   }
-  throw new Error('官网连接器图标必须来自同官网的当前软件包目录')
+  throw new Error(
+    'Phi Website Connector icons must come from the same website and package directory'
+  )
 }
 
 async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {

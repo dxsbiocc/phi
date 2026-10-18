@@ -1,13 +1,23 @@
+import { chatCopy } from '../lib/chatCopy'
+import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Paper, Typography } from '@mui/material'
 
 import type { PlanReviewItem } from '../../../types'
 import MarkdownContent from '../../../components/MarkdownContent'
 
 const STATUS_LABEL: Record<PlanReviewItem['status'], string> = {
-  pending: '等待评审',
-  approved: '已批准执行',
-  revise: '需要修改',
-  cancelled: '已取消'
+  get pending() {
+    return chatCopy.awaitingReview
+  },
+  get approved() {
+    return chatCopy.approvedToExecute
+  },
+  get revise() {
+    return chatCopy.changesRequested
+  },
+  get cancelled() {
+    return chatCopy.cancelled
+  }
 }
 
 export function PlanReviewCard({
@@ -17,14 +27,15 @@ export function PlanReviewCard({
   item: PlanReviewItem
   cwd: string
 }): React.JSX.Element {
+  useUiLanguage()
   return (
     <Paper
       variant="outlined"
-      aria-label="计划评审记录"
+      aria-label={chatCopy.planReviewHistory}
       sx={{ mx: 1, my: 0.75, p: 1.5, borderRadius: 2, minWidth: 0 }}
     >
       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        计划 · {item.title}
+        {chatCopy.plan} {item.title}
       </Typography>
       <Typography variant="caption" color="text.secondary">
         {STATUS_LABEL[item.status]}
@@ -34,7 +45,8 @@ export function PlanReviewCard({
       </Box>
       {item.note && (
         <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
-          修改意见：{item.note}
+          {chatCopy.revisionNotes}
+          {item.note}
         </Typography>
       )}
     </Paper>

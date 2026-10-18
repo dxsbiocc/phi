@@ -164,7 +164,7 @@ test('local connector validation and runtime errors throw synchronously before a
           runtime: { kind: 'bun' },
           command: 'x'
         }),
-      /找不到内置 Bun/
+      /Bundled Bun was not found/
     )
     assert.deepEqual(jobs.listLocalConnectorJobs(), [])
   } finally {
@@ -203,7 +203,7 @@ test('probe failure and cancellation end failed without writing configuration', 
       const failed = await waitForTerminal(tracker, 'mail')
       assert.equal(failed.phase, 'failed')
       assert.equal(failed.failedPhase, 'starting')
-      assert.equal(failed.error, mode === 'failure' ? 'fixture probe failed' : '已取消')
+      assert.equal(failed.error, mode === 'failure' ? 'fixture probe failed' : 'Cancelled')
       assert.equal(failed.detail, undefined)
       assert.equal(failed.failureKind, mode === 'failure' ? 'generic' : undefined)
       assert.equal(failed.failureReason, undefined)
@@ -245,7 +245,7 @@ test('pre-handshake probe failure stores stderr detail and adds the initializati
     assert.equal(failed.detail, 'Config not found, run init first')
     assert.equal(
       failed.error,
-      'MCP subprocess closed stdout before responding\n服务在响应前就退出了，进程输出见详情。若它需要先初始化（例如运行 init），请先在终端完成。'
+      'MCP subprocess closed stdout before responding\nThe service exited before responding. See details for process output. If initialization is required (such as running init), complete it in the terminal first.'
     )
     assert.equal(failed.failureKind, 'needs-setup')
     assert.equal(failed.failureReason, 'Config not found, run init first')
@@ -308,7 +308,7 @@ test('active names are reserved and a failed in-memory request can be retried', 
       applyEnabled: () => undefined
     })
     jobs.startLocalConnectorAdd(f.request)
-    assert.throws(() => jobs.startLocalConnectorAdd(f.request), /进行中/)
+    assert.throws(() => jobs.startLocalConnectorAdd(f.request), /in progress/)
     first.reject(new Error('first failure'))
     await waitForTerminal(tracker, 'mail')
     assert.deepEqual(jobs.retryLocalConnectorAdd('mail'), { started: true, name: 'mail' })
@@ -322,7 +322,7 @@ test('active names are reserved and a failed in-memory request can be retried', 
       cancelProbe: () => undefined,
       applyEnabled: () => undefined
     })
-    assert.throws(() => afterRestart.retryLocalConnectorAdd('missing'), /无法重试，请重新添加/)
+    assert.throws(() => afterRestart.retryLocalConnectorAdd('missing'), /Cannot retry/)
   } finally {
     f.cleanup()
   }
@@ -349,7 +349,7 @@ test('collision is checked again immediately before the successful write', async
     pending.resolve(['tool'])
     const failed = await waitForTerminal(tracker, 'mail')
     assert.equal(failed.phase, 'failed')
-    assert.match(failed.error ?? '', /已有名为 mail/)
+    assert.match(failed.error ?? '', /MCP configuration mail already exists/)
     assert.match(readFileSync(join(f.agentDir, 'mcp.json'), 'utf8'), /external\.example/)
   } finally {
     f.cleanup()

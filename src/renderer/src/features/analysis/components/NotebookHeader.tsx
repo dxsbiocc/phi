@@ -1,3 +1,5 @@
+import { useUiLanguage } from '../../../lib/i18n'
+import { analysisCopy } from '../lib/analysisUiCopy'
 import type { MouseEvent } from 'react'
 import { Box, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
@@ -21,6 +23,7 @@ export function NotebookHeader({
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
 }): React.JSX.Element {
+  useUiLanguage()
   if (hideNotebookTabs) {
     return <Box data-phi-notebook-file-tabs-hidden="true" sx={{ display: 'none' }} />
   }
@@ -60,7 +63,8 @@ function NotebookFileTabs({
   onSelectNotebook?: (notebook: NotebookListEntry) => void
   onCloseNotebook?: (notebook: NotebookListEntry) => void
 }): React.JSX.Element {
-  const hasActiveNotebook = activeNotebookPath !== 'No notebook selected'
+  useUiLanguage()
+  const hasActiveNotebook = activeNotebookPath !== analysisCopy.noNotebookSelected
   const tabs =
     notebooks.length > 0
       ? notebooks
@@ -80,7 +84,7 @@ function NotebookFileTabs({
       <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 0.75 }}>
         <NotebookIcon fontSize="small" sx={{ color: 'primary.main' }} />
         <Typography variant="subtitle2" noWrap sx={{ fontWeight: 700 }}>
-          No notebook selected
+          {analysisCopy.noNotebookSelected}
         </Typography>
       </Box>
     )
@@ -89,7 +93,7 @@ function NotebookFileTabs({
   return (
     <Box
       role="tablist"
-      aria-label="Open notebooks"
+      aria-label={analysisCopy.openNotebooks}
       data-phi-notebook-file-tabs="true"
       sx={{
         flex: 1,
@@ -192,7 +196,9 @@ function NotebookFileTabs({
                 className="notebook-tab-close"
                 component="span"
                 role="button"
-                aria-label={`关闭 ${notebook.name || notebookTabLabel(notebook.path)}`}
+                aria-label={analysisCopy.closeNamed(
+                  notebook.name || notebookTabLabel(notebook.path)
+                )}
                 data-phi-notebook-file-tab-close="true"
                 tabIndex={0}
                 onClick={(event: MouseEvent<HTMLElement>) => {

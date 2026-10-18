@@ -1,9 +1,10 @@
+import { navigationCopy } from '../../lib/navigationCopy'
 import type { Project } from '../../types'
 
 function permissionLabel(project: Project): string {
-  if (project.permissionMode === 'full') return '完全访问'
-  if (project.permissionMode === 'auto') return '帮我批准'
-  return '重要操作前询问'
+  if (project.permissionMode === 'full') return navigationCopy.fullAccess
+  if (project.permissionMode === 'auto') return navigationCopy.approveForMe
+  return navigationCopy.askBeforeImportantActions
 }
 
 function projectLocation(project: Project): string {
@@ -11,9 +12,12 @@ function projectLocation(project: Project): string {
 }
 
 export function projectRowMetaLabel(project: Project): string | null {
-  if (project.location.kind === 'ssh') return project.remoteHostAlias ?? '服务器不可用'
+  if (project.location.kind === 'ssh')
+    return project.remoteHostAlias ?? navigationCopy.serverUnavailable
   if (!project.gitStatus) return null
-  return project.gitStatus.dirty ? `${project.gitStatus.branch} · 有改动` : project.gitStatus.branch
+  return project.gitStatus.dirty
+    ? navigationCopy.valueChanged(project.gitStatus.branch)
+    : project.gitStatus.branch
 }
 
 export function projectHoverDetailRows(
@@ -23,21 +27,29 @@ export function projectHoverDetailRows(
 ): Array<{ label: string; value: string }> {
   return [
     {
-      label: project.location.kind === 'ssh' ? '服务器' : '类型',
-      value: project.location.kind === 'ssh' ? (project.remoteHostAlias ?? '不可用') : '本地项目'
+      label: project.location.kind === 'ssh' ? navigationCopy.server : navigationCopy.type,
+      value:
+        project.location.kind === 'ssh'
+          ? (project.remoteHostAlias ?? navigationCopy.unavailable)
+          : navigationCopy.localProject
     },
-    { label: '位置', value: projectLocation(project) },
-    { label: '权限', value: permissionLabel(project) },
+    { label: navigationCopy.location, value: projectLocation(project) },
+    { label: navigationCopy.permissions, value: permissionLabel(project) },
     ...(project.gitStatus
       ? [
           {
             label: 'Git',
             value: project.gitStatus.dirty
-              ? `${project.gitStatus.branch} · 有改动`
+              ? navigationCopy.valueChanged(project.gitStatus.branch)
               : project.gitStatus.branch
           }
         ]
       : []),
-    { label: '对话', value: sessionsReady ? `${sessionCount} 个` : '正在读取' }
+    {
+      label: navigationCopy.conversation2,
+      value: sessionsReady
+        ? navigationCopy.valueConversations(sessionCount)
+        : navigationCopy.loading
+    }
   ]
 }

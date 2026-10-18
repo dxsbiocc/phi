@@ -25,13 +25,13 @@ test('buildPairedEndFastqSamplesheet pairs R1/R2 files by sample and sorts rows'
 test('buildPairedEndFastqSamplesheet reports an unrecognized file name instead of dropping it silently', () => {
   const result = buildPairedEndFastqSamplesheet(['/data/notes.txt'])
   assert.equal(result.rows.length, 0)
-  assert.match(result.errors[0], /无法从文件名识别样本\/mate 信息/)
+  assert.match(result.errors[0], /Cannot identify sample\/mate information from filename/)
 })
 
 test('buildPairedEndFastqSamplesheet reports a sample missing its R1 mate', () => {
   const result = buildPairedEndFastqSamplesheet(['/data/S1_R2.fastq.gz'])
   assert.equal(result.rows.length, 0)
-  assert.match(result.errors[0], /缺少 R1 文件/)
+  assert.match(result.errors[0], /has no R1 file/)
 })
 
 test('buildPairedEndFastqSamplesheet quotes a path containing a comma instead of corrupting the row', () => {

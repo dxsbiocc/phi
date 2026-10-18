@@ -1,3 +1,4 @@
+import * as i18n from '../../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -129,6 +130,8 @@ export function hookHarness<State>(
     exports: module.exports,
     require(specifier: string): unknown {
       if (specifier === 'react') return react
+      // The harness schedules renders explicitly; read the actual locale snapshot each time.
+      if (specifier.endsWith('/i18n')) return { ...i18n, useUiLanguage: i18n.getUiLanguage }
       if (Object.hasOwn(imports, specifier)) return imports[specifier]
       if (specifier.endsWith('/catalogSelection')) return { retainSelectedCatalogId }
       if (specifier === '../lib/phiPlugins') return { formatPhiPluginProblems }

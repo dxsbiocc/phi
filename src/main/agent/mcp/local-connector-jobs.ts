@@ -90,7 +90,7 @@ export class LocalConnectorJobs {
           startedAt,
           summary: localConnectorSummary(request)
         })
-        if (job.cancelled) throw new Error('已取消')
+        if (job.cancelled) throw new Error('Cancelled')
         const result = await addLocalMcpConnector(request, {
           agentDir: this.deps.agentDir,
           runtimeRoot: this.deps.runtimeRoot,
@@ -102,7 +102,7 @@ export class LocalConnectorJobs {
           fileSystem: this.deps.fileSystem,
           clock: this.deps.clock,
           probe: async (probeRequest) => {
-            if (job.cancelled) throw new Error('已取消')
+            if (job.cancelled) throw new Error('Cancelled')
             job.probeStarted = true
             try {
               const tools = await this.deps.probe({
@@ -111,10 +111,10 @@ export class LocalConnectorJobs {
                 timeoutMs: this.deps.timeoutMs ?? LOCAL_CONNECTOR_TIMEOUT_MS,
                 captureStderr: true
               })
-              if (job.cancelled) throw new Error('已取消')
+              if (job.cancelled) throw new Error('Cancelled')
               return tools
             } catch (error) {
-              if (job.cancelled) throw new Error('已取消')
+              if (job.cancelled) throw new Error('Cancelled')
               throw localProbeFailure(error, request.hint)
             } finally {
               job.probeStarted = false
@@ -123,14 +123,14 @@ export class LocalConnectorJobs {
         })
         try {
           await this.deps.applyEnabled(request.name)
-          if (job.cancelled) throw new Error('已取消')
+          if (job.cancelled) throw new Error('Cancelled')
         } catch (error) {
           removeLocalMcpConnector(request.name, {
             agentDir: this.deps.agentDir,
             fileSystem: this.deps.fileSystem
           })
           await Promise.resolve(this.deps.applyEnabled(request.name)).catch(() => undefined)
-          if (job.cancelled) throw new Error('已取消')
+          if (job.cancelled) throw new Error('Cancelled')
           throw error
         }
         report('ready', { toolNames: result.tools })
@@ -159,7 +159,7 @@ export class LocalConnectorJobs {
   retryLocalConnectorAdd(rawName: unknown): { started: true; name: string } {
     const name = validateName(rawName as string)
     const request = this.retryRequests.get(name)
-    if (!request) throw new Error('无法重试，请重新添加')
+    if (!request) throw new Error('Cannot retry. Add the Connector again.')
     return this.startLocalConnectorAdd(copyRequest(request))
   }
 
@@ -184,7 +184,7 @@ export class LocalConnectorJobs {
       })
     } catch (error) {
       if (error instanceof EnvironmentNotReadyError) {
-        throw new Error('运行环境尚未就绪，请先在环境页构建')
+        throw new Error('The runtime is not ready. Build it in Environments first.')
       }
       throw error
     }
@@ -193,7 +193,7 @@ export class LocalConnectorJobs {
 }
 
 const EARLY_EXIT_HINT =
-  '服务在响应前就退出了，进程输出见详情。若它需要先初始化（例如运行 init），请先在终端完成。'
+  'The service exited before responding. See details for process output. If initialization is required (such as running init), complete it in the terminal first.'
 
 class LocalConnectorProbeFailure extends ConfiguredStdioProbeError {
   readonly failureKind: LocalConnectorFailureClassification['kind']
