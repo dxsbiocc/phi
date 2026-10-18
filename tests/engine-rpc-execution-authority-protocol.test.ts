@@ -597,3 +597,20 @@ test('disconnect and reentrant disposal observe failed owned cleanup without unh
 test('private runtime config file budget fits a roster at the wire budget plus its other fields', () => {
   assert.ok(RPC_RUNTIME_MAX_BYTES >= MAX_EXECUTION_ROSTER_ENVELOPE_BYTES + 256 * 1024)
 })
+
+test('roster accepts deeply nested MCP schemas while approvals keep their nesting cap', () => {
+  let schema: Record<string, unknown> = { type: 'string' }
+  for (let level = 0; level < 30; level++) schema = { type: 'object', properties: { next: schema } }
+  const deep = { name: 'mcp__deep_tool', site: 'host' as const, parameters: schema }
+  assert.match(executionRoster([deep]).hash, /^[a-f0-9]{64}$/)
+  const identity = {
+    nonce: '0123456789abcdef',
+    phiSessionId: 'phi-1',
+    ompSessionId: 'omp-1',
+    projectId: 'project-1',
+    cwd: '/',
+    generation: 1,
+    runId: 'run-1'
+  }
+  assert.throws(() => createApprovalEnvelope(identity, 'call-1', 'tool', { schema }), /too deeply/)
+})

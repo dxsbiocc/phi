@@ -3,6 +3,7 @@ import { posix } from 'node:path'
 
 export const RPC_APPROVAL_TITLE = 'Phi main tool approval v1'
 export const MAX_RPC_APPROVAL_BYTES = 128 * 1024
+export const MAX_RPC_APPROVAL_DEPTH = 32
 export interface RpcApprovalIdentity {
   nonce: string
   phiSessionId: string
@@ -48,8 +49,13 @@ export function validApprovalIdentity(value: RpcApprovalIdentity): boolean {
   )
 }
 /** JSON-only, bounded and deterministic; rejects getters, unsafe keys and non-finite numbers. */
-function canonical(value: unknown, depth = 0, limit = MAX_RPC_APPROVAL_BYTES): string {
-  if (depth > 32) throw new Error('Approval input is too deeply nested')
+function canonical(
+  value: unknown,
+  depth = 0,
+  limit = MAX_RPC_APPROVAL_BYTES,
+  maxDepth = MAX_RPC_APPROVAL_DEPTH
+): string {
+  if (depth > maxDepth) throw new Error('Approval input is too deeply nested')
   if (value === null || typeof value === 'boolean' || typeof value === 'string')
     return JSON.stringify(value)
   if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value)
@@ -64,7 +70,7 @@ function canonical(value: unknown, depth = 0, limit = MAX_RPC_APPROVAL_BYTES): s
       const descriptor = descriptors[String(index)]
       if (!descriptor || !('value' in descriptor))
         throw new Error('Approval arrays cannot have accessors')
-      items.push(canonical(descriptor.value, depth + 1, limit))
+      items.push(canonical(descriptor.value, depth + 1, limit, maxDepth))
     }
     return `[${items.join(',')}]`
   }
@@ -87,12 +93,12 @@ function canonical(value: unknown, depth = 0, limit = MAX_RPC_APPROVAL_BYTES): s
         !descriptor.enumerable
       )
         throw new Error('Invalid approval input field')
-      return `${JSON.stringify(key)}:${canonical(descriptor.value, depth + 1, limit)}`
+      return `${JSON.stringify(key)}:${canonical(descriptor.value, depth + 1, limit, maxDepth)}`
     })
     .join(',')}}`
 }
-function boundedJson(value: unknown, limit: number): string {
-  const json = canonical(value, 0, limit)
+function boundedJson(value: unknown, limit: number, maxDepth = MAX_RPC_APPROVAL_DEPTH): string {
+  const json = canonical(value, 0, limit, maxDepth)
   const bytes = Buffer.byteLength(json)
   if (bytes > limit)
     throw new Error(
@@ -115,7 +121,9 @@ export function createApprovalEnvelope(
   toolName: string,
   input: unknown,
   /** Canonical JSON byte budget; approvals keep the 128 KiB default. */
-  maxBytes: number = MAX_RPC_APPROVAL_BYTES
+  maxBytes: number = MAX_RPC_APPROVAL_BYTES,
+  /** Nesting budget from the envelope root; approvals keep the default. */
+  maxDepth: number = MAX_RPC_APPROVAL_DEPTH
 ): RpcApprovalEnvelope {
   if (
     !validApprovalIdentity(identity) ||
@@ -140,7 +148,7 @@ export function createApprovalEnvelope(
     toolName,
     input
   }
-  const json = boundedJson(body, maxBytes)
+  const json = boundedJson(body, maxBytes, maxDepth)
   return freeze({
     ...JSON.parse(json),
     inputDigest: createHash('sha256').update(json).digest('hex')

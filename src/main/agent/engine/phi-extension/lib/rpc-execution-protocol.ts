@@ -14,6 +14,8 @@ export const MAX_EXECUTION_CALLS = 4096
  * (MAX_RPC_FRAME_BYTES); approvals keep their own smaller 128 KiB cap.
  */
 export const MAX_EXECUTION_ROSTER_ENVELOPE_BYTES = 1024 * 1024
+/** Real MCP schemas nest deeply ($defs, anyOf, items); the roster wraps them in five levels. */
+export const MAX_EXECUTION_ROSTER_DEPTH = 128
 export type RpcExecutionIdentity = Omit<RpcApprovalIdentity, 'runId'>
 export type RpcExecutionLaunchIdentity = Omit<RpcExecutionIdentity, 'ompSessionId'>
 export interface RpcExecutionTool {
@@ -149,7 +151,8 @@ export function executionRoster(
       'roster',
       'roster',
       { tools: copy },
-      MAX_EXECUTION_ROSTER_ENVELOPE_BYTES
+      MAX_EXECUTION_ROSTER_ENVELOPE_BYTES,
+      MAX_EXECUTION_ROSTER_DEPTH
     )
   } catch (error) {
     throw new Error(
