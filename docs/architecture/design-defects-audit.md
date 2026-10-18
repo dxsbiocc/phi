@@ -40,10 +40,10 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 | OMP-12 | 仍在 | `host-service-registry.ts:8` 键只有方法名;facade 在 `:489,612` 共用同一 registry |
 | OMP-13 | 已修 | `6bee4f41`:预算按在途私有调用计数,结果投影后释放;溢出只拒绝该帧 |
 | OMP-14 | 仍在 | `fetch-bun.mjs:21` 只有两个平台 |
-| SSH-01 | 部分 | 远程**启动**已改为单个启动事务脚本,正常启动 4 条远程命令、约 12s(GPU R8,`a7d0008c`);部署用的 `runtimeHost` 已带 helper(`remote-runtime/workspace.ts:88`,`446cda81`),原文"明确不带 helper"不再成立。**仍在**:会话内前台命令走 `ssh-host-exec.ts:30,155` 的 25ms 轮询,`ssh-host-context.ts:103` `withSession` 每次新建连接 |
+| SSH-01 | 已修(待实机) | 启动 4 条命令(`a7d0008c`);`fd4b67c9`:helper 打开即启动,兜底每 host 一条共享 master、最多 8 个通道、`ssh -O check` 判断断线、空闲 30s 先检查;前台命令单通道流式执行,不再轮询或写 `wrappers/runs` |
 | SSH-02 | 已修 | `3c014834`:单请求超时只让该请求以 `TIMEOUT_UNKNOWN` 失败;abort 与 prompt 受理超时仍显式放弃该代 |
 | SSH-03 | 仍在 | `history-pager.ts:129-130` 64MiB 上限;`HISTORY_LIMIT` 在 UI 侧仍无专门文案 |
-| SSH-04 | 部分 | `1f856efe` 断线后释放会话;已有服务器端 flock 写者租约(`session-storage/writer-lease.ts`,`startup-transaction.ts:447-452`),第二个 writer 在旧锁仍被持有时会被挡住。**仍在**:锁由启动通道持有,SSH 断开后锁随之释放,而远端 OMP 是否退出 Phi 无法确认;没有远端 PID/run 登记与断线后补偿 abort |
+| SSH-04 | 已修(待实机) | `2a397e33`:`run.lock` 由 OMP 进程树持有(经 `/bin/sh` exec 继承);恢复时核对运行记录后 TERM→KILL 旧进程组再接管,核对不过不杀并报 `DOMAIN_CONFLICT`;时间线提示"已停止上一次未结束的远端运行" |
 | SSH-05 | 已修 | `3c014834`:状态机按错误码判断,中文正则已删;只有 `TRANSPORT_LOST` 释放 host |
 | SSH-06 | 已修 | `3c014834`:远程 turn 失败区分 `PROVIDER_ERROR`/`APPROVAL_DENIED`/`ABORTED`/`TRANSPORT_LOST`,脱敏后写入 `run_failed` |
 | SSH-07 | 仍在 | `remote-session-runtime.ts:554` 默认原生工具;`approval-bridge.ts:66` 审批集合;`:133-136` 帧预算耗尽后静默 `cancelled` |

@@ -16,6 +16,14 @@
 | R8 实机验证 | GPU 通过；node3 待测 | GPU 三场景通过（回执 `2026-10-17T15-31-59-020Z-GPU-…`）。node3 当晚登录一次 38 分钟（服务器/VPN 侧），未能运行 |
 | R9 清理旧实现 | 未开始 | 默认切换并稳定一个升级周期后再做 |
 
+node3 R8 时一并实机检查(2026-10-18 新增,对应 SSH-01/SSH-04):
+
+1. 服务器有 `flock`、`ps`、`/proc`;无 pty 时 sshd 让登录 shell 成为进程组长(否则启动报 `PHI_LAUNCH:NOT_GROUP_LEADER`)。
+2. 持久会话启动后 `run.record` 权限 600、pid = pgid、`ps -o pgid,args` 的 argv0 为部署的 OMP;OMP 存活时 `flock -n run.lock` 失败。
+3. 长 bash 运行中只断 SSH:OMP 仍存活;恢复后旧进程组收到 TERM(10s 后 KILL)、新 OMP 启动、时间线出现"已停止上一次未结束的远端运行"、journal 只有一个写者。
+4. 篡改 `run.record` 的 pgid 或让无关进程持锁:不杀进程,报"该会话仍被另一个进程占用"。
+5. 远程项目前台命令、取消与超时在真实 sshd 上行为正确;`ssh -O check` 能识别已断的 master;打开项目到首个命令只建立 1 条 master。
+
 已知问题：本地加载 agent 列表约 2.9 s；OMP 发布包下载不支持断点续传（慢网络中断后需从头下载 276 MB）。OMP 下载已改走系统代理（`desktopFetch`）。
 
 
