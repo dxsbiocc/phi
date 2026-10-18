@@ -40,7 +40,8 @@ interface PersistentLauncherFixture extends Omit<
 }
 
 export async function createPersistentLauncherFixture(
-  realCli = false
+  realCli = false,
+  options: { hostProfileId?: string; projectPrefix?: string } = {}
 ): Promise<PersistentLauncherFixture> {
   const payload = realCli
     ? `exec ${shellQuote(join(process.env.HOME!, '.bun/bin/bun'))} --no-env-file --preload ${shellQuote(join(process.cwd(), 'tests/engine-contract/network-guard.ts'))} ${shellQuote(join(process.cwd(), 'node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js'))} "$@"`
@@ -48,14 +49,16 @@ export async function createPersistentLauncherFixture(
   const base = await createPhiExtensionDeploymentFixture(
     `#!/bin/sh\nif [ "$1" = --version ]; then printf 'omp/18.10.3\\n'; exit 0; fi\n${payload}\n`
   )
-  const projectRoot = await realpath(await mkdtemp(join(tmpdir(), 'phi-launcher-project-')))
+  const projectRoot = await realpath(
+    await mkdtemp(join(tmpdir(), options.projectPrefix ?? 'phi-launcher-project-'))
+  )
   const session = createLocalShellSession(base.runtimeRoot)
   const openStdio = session.openStdio!
   // Model a normal remote account explicitly; preparation-shell umasks do not carry over.
   session.openStdio = (command) =>
     openStdio(command.includes(' env -i PATH=') ? `umask 022\n${command}` : command)
   const scope: RemoteSessionScope = {
-    hostProfileId: 'launcher-fixture-host',
+    hostProfileId: options.hostProfileId ?? 'launcher-fixture-host',
     bindingHash: 'a'.repeat(64),
     projectId: 'launcher-project',
     projectRoot,

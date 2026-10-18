@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { getOmpBridge } from '../omp-bridge'
 import type { PhiTool, PhiToolResult } from '../types'
 import { validHostResultPayload } from '../phi-extension/lib/rpc-host-result-protocol'
-import { rpcIdentifier } from './control-frame'
+import { rpcIdentifier, rpcToolCallId } from './control-frame'
 import { webSearchPath, webSearchRecord } from './desktop-websearch-protocol'
 import { skippedMcpServersValue } from '../../../../shared/mcpSkippedServers'
 import { DESKTOP_MCP_STAGES, desktopMcpStageOf } from './desktop-mcp-stages'
@@ -165,7 +165,7 @@ export async function createDesktopMcpAdapter(
           async execute(toolCallId, params, onUpdate, context, signal) {
             options.beforeDispatch?.()
             if (
-              !rpcIdentifier(toolCallId) ||
+              !rpcToolCallId(toolCallId) ||
               context.cwd !== identity.cwd ||
               !webSearchRecord(params)
             )

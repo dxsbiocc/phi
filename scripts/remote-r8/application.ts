@@ -9,6 +9,7 @@ import type { RemoteStartupDiagnostic } from '../../src/main/agent/engine/rpc/re
 import { loadRemoteAgentCatalog } from '../../src/main/agent/agents/remote-agent-service'
 import { createRemoteProject } from '../../src/main/agent/projects'
 import { saveRemoteHostProfile } from '../../src/main/agent/remote-hosts'
+import { sshConfigHostId } from '../../src/shared/remoteHostProfile'
 import { ensureRemoteProjectAnchor } from '../../src/main/agent/remote-project-anchor'
 import {
   createAppRemoteSessionManager,
@@ -126,12 +127,16 @@ export async function createSshApplication(
   try {
     await writePrivateConfiguration(input, agentDir, provider.url)
     await seedSyntheticAuth(bun, agentDir)
-    const emptyConfig = join(input.localRoot, 'empty-ssh-config')
-    await writeFile(emptyConfig, '', { mode: 0o600, flag: 'wx' })
+    const sshConfig = join(input.localRoot, 'ssh-config')
+    await writeFile(sshConfig, `Host ${input.profile.hostAlias}\n`, { mode: 0o600, flag: 'wx' })
     const profile = saveRemoteHostProfile(
-      { label: `Private R8 ${input.host}`, ...input.profile },
+      {
+        id: sshConfigHostId(input.profile.hostAlias),
+        label: `Private R8 ${input.host}`,
+        ...input.profile
+      },
       agentDir,
-      emptyConfig
+      sshConfig
     )
     const project = await createRemoteProject(
       {

@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
 import { OmpBridge } from '../../src/main/agent/engine/omp-bridge'
 import { createDesktopMcpAdapter } from '../../src/main/agent/engine/rpc/desktop-mcp-adapter'
+import { realisticMcpTools } from './mcpRealisticCatalog'
 import type { DesktopMcpOptions } from '../../src/main/agent/engine/rpc/desktop-mcp-types'
 
 export const MCP_FIXTURE_SCHEMA = {
@@ -20,7 +21,7 @@ export const MCP_FIXTURE_SCHEMA = {
   additionalProperties: false
 }
 export const MCP_FIXTURE_SECRET = 'synthetic-private-mcp-header'
-export async function desktopMcpFixture(): Promise<{
+export async function desktopMcpFixture(options: { realisticCatalog?: boolean } = {}): Promise<{
   root: string
   agentDir: string
   resourceCwd: string
@@ -141,7 +142,8 @@ export async function desktopMcpFixture(): Promise<{
                 ? { ...MCP_FIXTURE_SCHEMA, required: [] }
                 : MCP_FIXTURE_SCHEMA,
               annotations: { readOnlyHint: true }
-            }
+            },
+            ...(options.realisticCatalog ? realisticMcpTools() : [])
           ]
         })
       } else if (method === 'tools/call') {
