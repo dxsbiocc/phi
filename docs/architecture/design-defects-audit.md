@@ -35,7 +35,7 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 | OMP-07 | 已修 | `ab123b20`:stdin 错误与写回调错误都让该代 worker 退役,不再抛出未捕获的 EPIPE |
 | OMP-08 | 仍在 | `omp-bridge.ts:559` 非事件静默丢弃,无握手 |
 | OMP-09 | 已修 | `a82ef561`:桌面端统一用 `engine/omp-version.ts`;`package.json` 与远端扩展的字面量由 `tests/omp-version-pin.test.ts` 校验 |
-| OMP-10 | 仍在 | `remote-session-runtime.ts:1246` 无主 run 时 `stopExecution()` 直接返回,子代理只在 `close()` 里 `stopParent` |
+| OMP-10 | 已修 | `22ca9e2c`:停止会话时同时停止未完成的后台子代理 |
 | OMP-11 | 仍在 | `session-factory.ts:8,54`;`owned-stdio-transports.ts:28-36` |
 | OMP-12 | 仍在 | `host-service-registry.ts:8` 键只有方法名;facade 在 `:489,612` 共用同一 registry |
 | OMP-13 | 已修 | `6bee4f41`:预算按在途私有调用计数,结果投影后释放;溢出只拒绝该帧 |
@@ -82,6 +82,11 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 - 远程项目打开时即启动 helper,不再按需启动;正常情况下所有 fs/exec 走 helper 的常驻连接。
 - helper 不可用时的纯 SSH 兜底:每个 host 一条带引用计数的共享 SSH master(会话池);前台命令在该连接上单通道流式执行,不再"先 detach 再轮询";只有真正的后台任务轮询,间隔放宽并复用同一连接。
 - 改动集中在 `workspace-host/ssh-host-context.ts`、`ssh-host-exec.ts` 与 `ssh-host.ts` 的 helper 启动时机。
+
+**断线处理(SSH-04):锁跟着 OMP 进程走,恢复时自动停旧的。**
+
+- 启动 OMP 时由它自己持有会话存储的写者锁(flock 的文件描述符随 `exec` 继承),并记录 pid、进程组与本代 nonce;锁的生命周期等于 OMP 进程的生命周期,旧 OMP 活着时第二个写者一定进不来。
+- 恢复时锁空闲则直接接管;锁被占则核对 pid 与 nonce 确认是 Phi 自己的进程,依次 TERM 进程组、等待、KILL,确认退出后再接管,并提示"已停止上一次未结束的远端运行"。
 
 ---
 
