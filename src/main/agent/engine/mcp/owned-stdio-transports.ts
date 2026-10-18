@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { VERSION } from '@oh-my-pi/pi-coding-agent'
 import { StdioTransport } from '@oh-my-pi/pi-coding-agent/mcp/transports/stdio'
+import { PINNED_OMP_VERSION } from '../omp-version'
 
 interface OwnedChild {
   pid: number
@@ -11,7 +12,6 @@ interface OwnedChild {
 const owners = new AsyncLocalStorage<OwnedStdioTransportScope>()
 const spawning = new AsyncLocalStorage<{ owner: OwnedStdioTransportScope; active: boolean }>()
 // Revalidated against 18.10.3: connect/close and Bun.spawn ownership are unchanged.
-const SDK_VERSION = '18.10.3'
 const CLEANUP_TIMEOUT_MS = 10_000
 let hooksInstalled = false
 let connectHook: StdioTransport['connect'] | undefined
@@ -32,7 +32,10 @@ function installHooks(): void {
       throw unsupported()
     return
   }
-  if (VERSION !== SDK_VERSION) throw unsupported()
+  if (VERSION !== PINNED_OMP_VERSION)
+    throw new Error(
+      `Unsupported MCP SDK stdio cleanup API: Phi pins OMP ${PINNED_OMP_VERSION} but the loaded SDK is ${String(VERSION)}`
+    )
   const connect = StdioTransport.prototype.connect
   const close = StdioTransport.prototype.close
   const bun: unknown = Reflect.get(globalThis, 'Bun')

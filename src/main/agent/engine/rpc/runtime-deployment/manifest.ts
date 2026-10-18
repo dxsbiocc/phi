@@ -1,3 +1,4 @@
+import { PINNED_OMP_VERSION } from '../../omp-version'
 import {
   RemoteOmpDeploymentError,
   type RemoteOmpAsset,
@@ -8,14 +9,14 @@ import {
 // Official v18.10.3 SHA256SUMS and release asset digests, verified 2026-10-13.
 // Change together with the desktop SDK version; never select a moving "latest" release.
 export const REMOTE_OMP_MANIFEST: RemoteOmpManifest = Object.freeze({
-  version: '18.10.3',
+  version: PINNED_OMP_VERSION,
   assets: Object.freeze({
     'linux-x64': Object.freeze({
-      url: 'https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-linux-x64',
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v${PINNED_OMP_VERSION}/omp-linux-x64`,
       sha256: '366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9'
     }),
     'linux-arm64': Object.freeze({
-      url: 'https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-linux-arm64',
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v${PINNED_OMP_VERSION}/omp-linux-arm64`,
       sha256: '7f580e1fe06ebffe16ae46cc6881051aca4980db7f654702feefed5651555862'
     })
   })

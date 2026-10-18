@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import { PINNED_OMP_VERSION } from '../engine/omp-version'
 
-export const REMOTE_OMP_VERSION = '18.10.3' as const
+export const REMOTE_OMP_VERSION = PINNED_OMP_VERSION
 
 export interface RemoteOmpScope {
   readonly hostProfileId: string
