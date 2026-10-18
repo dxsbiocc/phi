@@ -37,6 +37,26 @@ test('empty trusted skill catalog registers the other real schemas without expos
   assert.equal(roster.get('lib.save')?.validate({}), false)
 })
 
+test('a skill enabled from several sources appears once in the skill_run schema', (t) => {
+  const f = desktopToolsFixture()
+  t.after(() => f.close())
+  const scope = createRpcDesktopToolScope({
+    identity: f.scope.identity,
+    services: f.services,
+    currentRun: () => undefined,
+    recentUserImages: () => [],
+    allowBrowserTypeText: () => false,
+    browserTextVault: f.vault,
+    agentDir: join(f.root, 'agent'),
+    allowedSkills: ['remote-demo', 'grill-me', 'remote-demo', 'grill-me'],
+    scriptTools: []
+  })
+  t.after(() => scope.dispose())
+  const skillRun = scope.tools.find((tool) => tool.name === 'skill_run')
+  const skill = (skillRun?.parameters.properties as Record<string, { enum?: string[] }>).skill
+  assert.deepEqual(skill.enum, ['remote-demo', 'grill-me'])
+})
+
 test('actual existing dotted notebook names register without widening name policy to controls or arbitrary methods', (t) => {
   const f = desktopToolsFixture()
   t.after(() => f.close())

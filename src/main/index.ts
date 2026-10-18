@@ -2189,11 +2189,14 @@ async function loadAppRemoteDesktopTools(
   ])
   assertMemoryBinding()
   const projectNames = new Set(catalog.sources.map((skill) => skill.name))
+  // The same skill name can come from several global sources; tool schemas need unique names.
   const allowedSkills = [
-    ...catalog.sources.map((skill) => skill.name),
-    ...globals
-      .filter((skill) => skill.enabled && !projectNames.has(skill.name))
-      .map((skill) => skill.name)
+    ...new Set([
+      ...catalog.sources.map((skill) => skill.name),
+      ...globals
+        .filter((skill) => skill.enabled && !projectNames.has(skill.name))
+        .map((skill) => skill.name)
+    ])
   ]
   const scripts = await remoteRuntimeController.scriptTools({
     runtimeSessionId: identity.runtimeSessionId,

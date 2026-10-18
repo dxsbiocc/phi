@@ -195,7 +195,7 @@ export function createRpcDesktopToolScope(
     sessionId: identity.sessionId,
     projectId: identity.projectId
   })
-  const skills = Object.freeze([...options.allowedSkills])
+  const skills = Object.freeze([...new Set(options.allowedSkills)])
   const descriptors = structuredClone(options.scriptTools).filter(
     (descriptor) =>
       descriptor.attachTo.includes(options.toolOwner ?? 'main') && skills.includes(descriptor.skill)
