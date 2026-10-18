@@ -8,6 +8,7 @@ import { getUiLanguage } from '../../../lib/i18n'
 import { approvalItemFromEvent } from './approvalTimeline'
 import { chatCopy } from './chatCopy'
 import { chatEventCopy } from './chatEventCopy'
+import { skippedMcpNoticeFromEvent } from '../../../../../shared/mcpSkippedServers'
 
 function createdAtField(createdAt?: string): { createdAt: string } | Record<string, never> {
   return typeof createdAt === 'string' ? { createdAt } : {}
@@ -33,6 +34,8 @@ export function chatItemFromPhiTimelineEvent(event: {
   tokensAfter?: unknown
   noticeText?: unknown
   noticeLevel?: unknown
+  skippedMcpServers?: unknown
+  skippedMcpOmitted?: unknown
   errorMessage?: unknown
   createdAt?: string
   fromProviderId?: unknown
@@ -113,6 +116,41 @@ export function chatItemFromPhiTimelineEvent(event: {
       role: 'warning',
       get content() {
         return chatEventCopy.remoteRunStopped
+      },
+      ...createdAtField(event.createdAt)
+    }
+  }
+  if (event.type === 'mcp_servers_skipped') {
+    const { servers, omitted } = skippedMcpNoticeFromEvent(event)
+    if (servers.length === 0) return null
+    return {
+      id,
+      role: 'warning',
+      get content() {
+        const sep = chatEventCopy.listSeparator
+        const local = servers.filter((server) => server.reason === 'stdio_not_allowed')
+        const others = servers.filter((server) => server.reason !== 'stdio_not_allowed')
+        return [
+          local.length
+            ? chatEventCopy.mcpLocalSkipped(local.map((server) => server.name).join(sep))
+            : '',
+          others.length
+            ? chatEventCopy.mcpOthersSkipped(
+                others
+                  .map((server) =>
+                    chatEventCopy.mcpOther(
+                      server.name,
+                      chatEventCopy.mcpReason[server.reason] ??
+                        chatEventCopy.mcpReason.not_connected
+                    )
+                  )
+                  .join(sep)
+              )
+            : '',
+          omitted > 0 ? chatEventCopy.mcpMore(omitted) : ''
+        ]
+          .filter(Boolean)
+          .join(' ')
       },
       ...createdAtField(event.createdAt)
     }

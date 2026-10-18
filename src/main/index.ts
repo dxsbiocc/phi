@@ -210,6 +210,7 @@ import {
   type RemoteRuntimeDispatchControl
 } from './agent/remote-runtime/controller'
 import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
+import { createSkippedMcpNotifier } from './agent/mcp/skipped-notice'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
 import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
 import { readColdChildRuns } from './agent/session/child-run-recovery'
@@ -1612,6 +1613,10 @@ const runnerRegistry = new SessionRunnerRegistry({
     rpcChildApprovals.afterParentRunSettled(sessionId)
   }
 })
+const skippedMcpNotifier = createSkippedMcpNotifier({
+  append: appendSessionEvent,
+  broadcast: broadcastSessionTimelineEvent
+})
 // Main-only internal migration gate; renderer session input cannot enable this route.
 const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
 installAppRemoteSessionRouting({
@@ -2240,6 +2245,7 @@ async function loadAppRemoteDesktopTools(
         beforeDispatch: assertBinding
       })
     assertMemoryBinding()
+    skippedMcpNotifier.notify(identity.sessionId, mcp?.skipped ?? [])
     return {
       tools: {
         assertBinding,

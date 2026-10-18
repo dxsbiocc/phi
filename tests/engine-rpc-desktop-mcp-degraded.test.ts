@@ -44,6 +44,11 @@ test(
       ['mcp__fixture_inspect']
     )
     await assert.rejects(access(sentinel), { code: 'ENOENT' })
+    const byName = new Map(adapter.skipped.map((server) => [server.name, server.reason]))
+    assert.equal(byName.get('stdio'), 'stdio_not_allowed')
+    assert.equal(byName.get('missing'), 'unavailable')
+    assert.ok(byName.has('dead'))
+    assert.equal(byName.has('fixture'), false)
     const events = await logEvents(f.agentDir)
     const skipped = new Map(
       events

@@ -1,3 +1,5 @@
+import type { McpSkipReasonCode } from '../../../../shared/mcpSkippedServers'
+
 /** Stages of desktop MCP discovery, shared by the worker (which reports) and main (which words it). */
 export const DESKTOP_MCP_STAGES = {
   profile: 'checking the MCP server list',
@@ -9,18 +11,7 @@ export const DESKTOP_MCP_STAGES = {
 export type DesktopMcpStage = keyof typeof DESKTOP_MCP_STAGES
 
 /** Why one server was left out of a session while the others kept working. */
-export type DesktopMcpSkipReason =
-  | 'unavailable'
-  | 'stdio_not_allowed'
-  | 'env_not_ready'
-  | 'profile_changed'
-  | 'api_key_missing'
-  | 'api_key_unavailable'
-  | 'prepare_failed'
-  | 'connect_failed'
-  | 'startup_failed'
-  | 'startup_pending'
-  | 'not_connected'
+export type DesktopMcpSkipReason = McpSkipReasonCode
 
 const PREFIX = 'MCP discovery stage: '
 export class DesktopMcpStageError extends Error {

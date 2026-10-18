@@ -229,15 +229,18 @@ test('catalog disposal and a single child drain preserve the root and peer share
     async request(method: string): Promise<unknown> {
       requests.push(method)
       if (method === 'mcp.desktopCreate')
-        return [
-          {
-            name: 'mcp__fixture',
-            label: 'Fixture',
-            description: 'owned shared adapter',
-            parameters: { type: 'object', properties: {} },
-            signature: 'a'.repeat(64)
-          }
-        ]
+        return {
+          tools: [
+            {
+              name: 'mcp__fixture',
+              label: 'Fixture',
+              description: 'owned shared adapter',
+              parameters: { type: 'object', properties: {} },
+              signature: 'a'.repeat(64)
+            }
+          ],
+          skipped: []
+        }
       return { content: [{ type: 'text', text: 'live MCP result' }] }
     }
   } as unknown as OmpBridge

@@ -4,6 +4,7 @@ import type { PhiTool, PhiToolResult } from '../types'
 import { validHostResultPayload } from '../phi-extension/lib/rpc-host-result-protocol'
 import { rpcIdentifier } from './control-frame'
 import { webSearchPath, webSearchRecord } from './desktop-websearch-protocol'
+import { skippedMcpServersValue } from '../../../../shared/mcpSkippedServers'
 import { DESKTOP_MCP_STAGES, desktopMcpStageOf } from './desktop-mcp-stages'
 import type {
   DesktopMcpAdapter,
@@ -43,6 +44,7 @@ export async function createDesktopMcpAdapter(
     const empty: DesktopMcpAdapter = Object.freeze({
       identity,
       tools: Object.freeze([]),
+      skipped: Object.freeze([]),
       approvalFor: () => undefined,
       retire: () => {},
       close: async () => {}
@@ -118,14 +120,18 @@ export async function createDesktopMcpAdapter(
       remoteProjectMcpServers: options.remoteProjectMcpServers ?? []
     })
     active.add(creating)
-    let discovered: unknown
+    let created: unknown
     try {
-      discovered = await creating
+      created = await creating
     } finally {
       active.delete(creating)
     }
     lifetime.throwIfAborted()
     options.beforeDispatch?.()
+    const skipped = webSearchRecord(created) ? skippedMcpServersValue(created.skipped) : undefined
+    if (!webSearchRecord(created) || !skipped || Object.keys(created).length !== 2)
+      throw new Error('MCP catalog was invalid')
+    const discovered = created.tools
     if (
       !Array.isArray(discovered) ||
       discovered.length > 4096 ||
@@ -201,6 +207,7 @@ export async function createDesktopMcpAdapter(
     const adapter: DesktopMcpAdapter = {
       identity,
       tools,
+      skipped: Object.freeze(skipped.map((server) => Object.freeze(server))),
       approvalFor(name, input) {
         if (lifetime.aborted || !tools.some((tool) => tool.name === name)) return undefined
         return options.approvalFor(name, input) ?? 'write'

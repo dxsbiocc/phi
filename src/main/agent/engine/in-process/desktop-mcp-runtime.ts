@@ -41,6 +41,7 @@ interface Scope {
   secrets: Set<string>
   calls: Map<string, Call>
   seen: Set<string>
+  skipped: Map<string, DesktopMcpSkipReason>
   ready: Promise<void>
   settings?: Settings
   owned?: OwnedManager
@@ -161,7 +162,11 @@ function toolMetadata(
     signature: fingerprint({ ...value, server: tool.mcpServerName, tool: tool.mcpToolName })
   }
 }
-async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMetadata[]> {
+interface DesktopMcpCreated {
+  tools: DesktopMcpToolMetadata[]
+  skipped: Array<{ name: string; reason: DesktopMcpSkipReason }>
+}
+async function create(params: Record<string, unknown>): Promise<DesktopMcpCreated> {
   if (
     !rpcIdentifier(params.scopeId) ||
     !isRecord(params.identity) ||
@@ -184,6 +189,7 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
   let stage: DesktopMcpStage = 'profile'
   const skip = (name: string, reason: DesktopMcpSkipReason): void => {
     names.delete(name)
+    scope.skipped.set(name, reason)
     logSkipped(sessionId, name, reason)
   }
   const scope: Scope = {
@@ -197,6 +203,7 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
     secrets: new Set(),
     calls: new Map(),
     seen: new Set(),
+    skipped: new Map(),
     ready: Promise.resolve()
   }
   scopes.set(scope.id, scope)
@@ -357,7 +364,12 @@ async function create(params: Record<string, unknown>): Promise<DesktopMcpToolMe
   try {
     await scope.ready
     assertCurrent(scope)
-    return [...scope.catalog.values()].map((tool) => redact(scope, tool) as DesktopMcpToolMetadata)
+    return {
+      tools: [...scope.catalog.values()].map(
+        (tool) => redact(scope, tool) as DesktopMcpToolMetadata
+      ),
+      skipped: [...scope.skipped].map(([name, reason]) => ({ name, reason }))
+    }
   } catch {
     const cancelled = scope.controller.signal.aborted
     await close(scope)

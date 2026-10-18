@@ -1689,3 +1689,47 @@ test('a stopped previous remote run is shown as a warning item', () => {
   assert.equal(items[0].role, 'warning')
   assert.equal(items[0].content, '已停止上一次未结束的远端运行。')
 })
+
+test('skipped MCP servers are announced with a localized warning in both languages', () => {
+  const event = {
+    source: 'phi',
+    type: 'mcp_servers_skipped',
+    eventId: 'mcp-skipped-1',
+    skippedMcpServers: [
+      { name: 'biomcp', reason: 'stdio_not_allowed' },
+      { name: 'qq-email-mcp', reason: 'stdio_not_allowed' },
+      { name: 'notion', reason: 'connect_failed' },
+      { name: 'exa', reason: 'api_key_missing' }
+    ],
+    skippedMcpOmitted: 3
+  }
+  try {
+    setUiLanguage('zh-CN')
+    const zh = chatItemsFromSessionMessages([event])
+    assert.equal(zh.length, 1)
+    assert.equal(zh[0].role, 'warning')
+    assert.equal(
+      zh[0].content,
+      '本机连接器 biomcp、qq-email-mcp 在远程项目中不可用（它们只能在本机运行）。 以下连接器本次会话未启用：notion（未连接）、exa（缺少密钥）。 另有 3 个连接器未列出。'
+    )
+    setUiLanguage('en')
+    const en = chatItemsFromSessionMessages([event])
+    assert.match(
+      en[0].content,
+      /^Local connectors biomcp, qq-email-mcp are unavailable in remote projects/
+    )
+    assert.match(en[0].content, /notion \(not connected\), exa \(missing key\)/)
+    assert.match(en[0].content, /3 more connectors are not listed/)
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+})
+
+test('a malformed skipped MCP notice renders nothing', () => {
+  assert.equal(
+    chatItemsFromSessionMessages([
+      { source: 'phi', type: 'mcp_servers_skipped', eventId: 'bad', skippedMcpServers: 'x' }
+    ]).length,
+    0
+  )
+})
