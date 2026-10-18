@@ -1,5 +1,24 @@
 # OMP 远程运行时验收记录
 
+## 当前状态（2026-10-18，分支 `fix/t16-local` @ `81807221`）
+
+每个 R 项一行。下方旧记录原样保留，作为历史证据；以本表为准。实机验收用 `node --import ./scripts/test-loader.mjs scripts/remote-r8.ts --host <别名> --execute`（见 [remote-r8.md](remote-r8.md)），回执在 `.phi-acceptance/receipts/`。
+
+| 项 | 状态 | 证据 / 说明 |
+|---|---|---|
+| R1 分发与部署 | GPU 通过 | 启动事务发现缺失项才安装；安装时完整校验并写就绪标记。GPU 首次修复 21–132 s。node3 新路径待测 |
+| R2 启动与连接 | GPU 通过 | 已安装主机正常启动 4 条远程命令（含 OMP 通道）、约 12 s（`a7d0008c`）；改前 537–615 条 |
+| R3 模型代理与隧道 | GPU 通过（合成模型） | 真实模型账号未测 |
+| R4 宿主工具 | 部分 | Notebook 在旧版本 GPU 上通过（db18）；当前代码未在实机重测 Notebook/Wrapper |
+| R5 主会话审批 | GPU 通过 | R8 场景 ①：编辑、命令各一次批准，持久记录一次 |
+| R6 子智能体 | GPU 通过 | R8 场景 ②：只读子任务完成并验证；派发时核对 OMP 实际解析的定义 |
+| R7 会话存储与恢复 | GPU 通过 | R8 场景 ③：杀 SSH 主连接 → 旧会话失败且不重放 → 显式恢复同一会话记录 |
+| R8 实机验证 | GPU 通过；node3 待测 | GPU 三场景通过（回执 `2026-10-17T15-31-59-020Z-GPU-…`）。node3 当晚登录一次 38 分钟（服务器/VPN 侧），未能运行 |
+| R9 清理旧实现 | 未开始 | 默认切换并稳定一个升级周期后再做 |
+
+已知问题：Phi 下载 OMP 发布包不走用户代理（需代理的网络下极慢）；本地加载 agent 列表约 2.9 s。
+
+
 最新原 T16 限定状态（2026-10-16）：三项已审修复已本地 fast-forward 合入 main `db18ec7c`，保留其他工作、未推送；该固定候选 GPU Notebook 原强场景 3/3 与生产 gates 已绿。原 child-enabled R8、node3 extension、services 环境拒绝结果和标准全量仍有下述缺口。T16 仍 partial，原任务编号与默认开关不变。
 
 上一批原 T16 限定增量（2026-10-16）：真实 App routing/runtime-adapter/SessionRunner → SSH → 官方 OMP 18.10.3 的 GPU 受控闭环 4/4 通过，覆盖读写/Bash、审批拒绝与待批停止、同 journal 新代显式恢复。模型仅为合成 loopback provider，不代表完整 R8 或真实厂商验收。源码 `e62d22cc` 补齐 App 工作区未探测平台而导致资产选择失败的接点；相关 19/19（包含 workspace 6 项）及独立审查通过，固定候选生产类型/构建/lint/asar 均退出 0（70.73 秒），2704 个跟踪文件、HEAD、tree 与共享资源引用前后稳定。

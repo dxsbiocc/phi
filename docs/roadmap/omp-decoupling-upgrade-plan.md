@@ -630,6 +630,18 @@ T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）
 
 ---
 
+## 6.5 远程默认切换到 RPC 的门槛（2026-10-17 用户确认）
+
+以下四项全部满足后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；状态见 [验收记录](../runtime/omp-remote-acceptance.md) 顶部表格。
+
+- [x] GPU：`scripts/remote-r8.ts` 三个场景通过（`a7d0008c`）
+- [ ] node3：同一脚本三个场景通过
+- [ ] 一次真实模型账号的远程对话（不是合成模型）
+- [ ] 当前代码在实机上跑通一个 Notebook 或 Wrapper
+- [ ] 一轮人工界面检查（远程项目新建、对话、审批、断线恢复）
+
+约束审计与取舍见 [remote-constraint-audit-2026-10-17.md](remote-constraint-audit-2026-10-17.md)。
+
 ## 7. 完成定义
 
 - 引擎目录外没有 `@oh-my-pi/*` import（终端例外除外），白名单只包含已说明理由的条目。
