@@ -1615,6 +1615,7 @@ const runnerRegistry = new SessionRunnerRegistry({
 })
 const skippedMcpNotifier = createSkippedMcpNotifier({
   append: appendSessionEvent,
+  readEvents: readSessionEvents,
   broadcast: broadcastSessionTimelineEvent
 })
 // Main-only internal migration gate; renderer session input cannot enable this route.

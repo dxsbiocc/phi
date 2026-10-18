@@ -27,14 +27,8 @@ export const chatEventCopy = defineCopy(
       stdio_not_allowed: 'local only',
       env_not_ready: 'environment not ready',
       profile_changed: 'configuration changed',
-      api_key_missing: 'missing key',
-      api_key_unavailable: 'missing key',
-      prepare_failed: 'not connected',
-      connect_failed: 'not connected',
-      startup_failed: 'not connected',
-      startup_pending: 'not connected',
-      not_connected: 'not connected',
-      backoff: 'not connected'
+      missing_key: 'missing key',
+      not_connected: 'not connected'
     } as Record<string, string>,
     mcpOther: (name: string, reason: string) => `${name} (${reason})`,
     mcpMore: (count: number) => `${count} more connectors are not listed.`,
@@ -81,14 +75,8 @@ export const chatEventCopy = defineCopy(
       stdio_not_allowed: '仅限本机',
       env_not_ready: '环境未就绪',
       profile_changed: '配置已变化',
-      api_key_missing: '缺少密钥',
-      api_key_unavailable: '缺少密钥',
-      prepare_failed: '未连接',
-      connect_failed: '未连接',
-      startup_failed: '未连接',
-      startup_pending: '未连接',
-      not_connected: '未连接',
-      backoff: '未连接'
+      missing_key: '缺少密钥',
+      not_connected: '未连接'
     } as Record<string, string>,
     mcpOther: (name: string, reason: string) => `${name}（${reason}）`,
     mcpMore: (count: number) => `另有 ${count} 个连接器未列出。`,

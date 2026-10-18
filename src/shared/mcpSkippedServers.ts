@@ -20,6 +20,37 @@ export interface SkippedMcpServerNotice {
   readonly reason: McpSkipReasonCode
 }
 
+/** What the user sees: reasons that render identically share one category. */
+export type McpSkipReasonCategory =
+  | 'unavailable'
+  | 'stdio_not_allowed'
+  | 'env_not_ready'
+  | 'profile_changed'
+  | 'missing_key'
+  | 'not_connected'
+
+export function mcpSkipReasonCategory(reason: McpSkipReasonCode): McpSkipReasonCategory {
+  switch (reason) {
+    case 'unavailable':
+    case 'stdio_not_allowed':
+    case 'env_not_ready':
+    case 'profile_changed':
+      return reason
+    case 'api_key_missing':
+    case 'api_key_unavailable':
+      return 'missing_key'
+    default:
+      return 'not_connected'
+  }
+}
+
+/** Order-independent identity of a skipped set as the user perceives it (name + reason category). */
+export function skippedMcpSignature(skipped: readonly SkippedMcpServerNotice[]): string {
+  return JSON.stringify(
+    skipped.map((server) => [server.name, mcpSkipReasonCategory(server.reason)]).sort()
+  )
+}
+
 /** Upper bound on skipped servers accepted across the worker boundary (matches the server-name limit). */
 export const MAX_SKIPPED_MCP_SERVERS_WIRE = 256
 /** Bounds for what is stored in, and shown from, a timeline notice. */

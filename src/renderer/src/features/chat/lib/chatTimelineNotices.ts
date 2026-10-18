@@ -8,7 +8,10 @@ import { getUiLanguage } from '../../../lib/i18n'
 import { approvalItemFromEvent } from './approvalTimeline'
 import { chatCopy } from './chatCopy'
 import { chatEventCopy } from './chatEventCopy'
-import { skippedMcpNoticeFromEvent } from '../../../../../shared/mcpSkippedServers'
+import {
+  mcpSkipReasonCategory,
+  skippedMcpNoticeFromEvent
+} from '../../../../../shared/mcpSkippedServers'
 
 function createdAtField(createdAt?: string): { createdAt: string } | Record<string, never> {
   return typeof createdAt === 'string' ? { createdAt } : {}
@@ -143,7 +146,7 @@ export function chatItemFromPhiTimelineEvent(event: {
                   .map((server) =>
                     chatEventCopy.mcpOther(
                       server.name,
-                      chatEventCopy.mcpReason[server.reason] ??
+                      chatEventCopy.mcpReason[mcpSkipReasonCategory(server.reason)] ??
                         chatEventCopy.mcpReason.not_connected
                     )
                   )
