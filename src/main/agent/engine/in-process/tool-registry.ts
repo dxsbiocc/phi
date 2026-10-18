@@ -19,7 +19,7 @@ import {
 } from '../remote-workspace-custom-tools'
 import { buildLibraryCustomTools } from '../../library/library-tools'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
-import { buildNotebookCustomTools } from '../../notebook/notebook-tools'
+import { buildSessionNotebookTools } from './session-notebook-tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
 import { buildBrowserTool } from '../../browser/browser-tool'
 import { BrowserTextVault } from '../../browser/browser-text-vault'
@@ -272,17 +272,10 @@ export async function createSessionToolRegistry(deps: {
       }).catch(() => undefined)
     }
   })
-  const notebookCustomTools = buildNotebookCustomTools(
-    async (request) => requestHost('notebookTool.execute', request),
+  const notebookCustomTools = buildSessionNotebookTools(
+    requestHost,
+    sessionId,
     remoteProjectIdentity
-      ? {
-          remoteProject: {
-            runtimeSessionId: sessionId,
-            sessionId: remoteProjectIdentity.sessionId,
-            projectId: remoteProjectIdentity.projectId
-          }
-        }
-      : {}
   )
   const libraryCustomTools = buildLibraryCustomTools()
   const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>

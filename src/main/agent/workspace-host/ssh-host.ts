@@ -92,6 +92,14 @@ function profileHelperInstallation(
   }
 }
 
+/** Thrown before any command is dispatched, so the operation certainly did not run. */
+export class SshHostClosedError extends Error {
+  constructor() {
+    super('SSH workspace host is closed')
+    this.name = 'SshHostClosedError'
+  }
+}
+
 export class SshHost implements WorkspaceHost {
   readonly fs: WorkspaceHost['fs']
   readonly exec: WorkspaceHost['exec']
@@ -264,7 +272,7 @@ export class SshHost implements WorkspaceHost {
   }
 
   private async selected(ensureHelper = false): Promise<Pick<WorkspaceHost, 'fs' | 'exec'>> {
-    if (this.disposed) throw new Error('SSH workspace host is closed')
+    if (this.disposed) throw new SshHostClosedError()
     if ((!this.context.helper && !this.context.helperBootstrap) || this.helperDisabled) {
       return { fs: this.pureFs, exec: this.pureExec }
     }
@@ -278,7 +286,7 @@ export class SshHost implements WorkspaceHost {
     }
     this.helperInitialization ??= this.initializeHelper()
     await this.helperInitialization
-    if (this.disposed) throw new Error('SSH workspace host is closed')
+    if (this.disposed) throw new SshHostClosedError()
     return this.helper ?? { fs: this.pureFs, exec: this.pureExec }
   }
 

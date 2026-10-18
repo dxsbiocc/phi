@@ -1,5 +1,6 @@
 import { posix } from 'node:path'
 
+import { CodedError } from '../../../shared/errorCodes'
 import {
   REMOTE_WORKSPACE_PATH_PROBE_LIMIT,
   type RemoteWorkspacePathProbeRequest,
@@ -18,7 +19,7 @@ import { readCapabilityProfile } from './capability-profile-store'
 import { reconcileRemoteHelperProfile } from './helper-installer'
 import { resolveRemoteHelperPreparation } from './helper-development'
 import { createWorkspaceHostRemoteSession } from './remote-session'
-import { SshHost } from './ssh-host'
+import { SshHost, SshHostClosedError } from './ssh-host'
 import type { SshHostConfig } from './ssh-host-context'
 import type { WorkspaceHost } from './types'
 
@@ -176,10 +177,14 @@ export class RemoteWorkspaceHostRegistry {
       projectId: request.projectId
     })
     const entry = this.entry(binding)
-    return createWorkspaceHostRemoteSession(entry.host, entry.canonicalRoot, {
-      onFailure: () => void this.releaseSession(binding.sessionId),
-      defaultTimeoutMs: request.execTimeoutMs
-    })
+    return createWorkspaceHostRemoteSession(
+      this.reacquiring(binding, entry.host),
+      entry.canonicalRoot,
+      {
+        onFailure: () => void this.releaseSession(binding.sessionId),
+        defaultTimeoutMs: request.execTimeoutMs
+      }
+    )
   }
 
   async statPaths(input: unknown): Promise<RemoteWorkspacePathStat[]> {
@@ -228,6 +233,54 @@ export class RemoteWorkspaceHostRegistry {
       }
     }
     return paths.map((path) => result.get(path)!)
+  }
+
+  /**
+   * A host can be released (connection check, transport loss) between being acquired and
+   * dispatching a command. Closed hosts reject before anything is sent, so one transparent
+   * retry on a fresh host is safe; a second failure is reported as a lost connection.
+   */
+  private reacquiring(binding: RemoteWorkspaceHostBinding, first: WorkspaceHost): WorkspaceHost {
+    let current = first
+    const attempt = async <T>(run: (host: WorkspaceHost) => Promise<T>): Promise<T> => {
+      try {
+        return await run(current)
+      } catch (error) {
+        if (!(error instanceof SshHostClosedError)) throw error
+      }
+      if (this.entries.get(binding.sessionId)?.host === current) {
+        this.entries.delete(binding.sessionId)
+      }
+      current = this.entry(binding).host
+      try {
+        return await run(current)
+      } catch (error) {
+        if (!(error instanceof SshHostClosedError)) throw error
+        throw new CodedError('TRANSPORT_LOST', 'SSH 连接中断；请检查网络和服务器后重试')
+      }
+    }
+    const fs = first.fs
+    const transfer = first.transfer
+    return {
+      fs: {
+        glob: (...a) => attempt((h) => h.fs.glob(...a)),
+        list: (...a) => attempt((h) => h.fs.list(...a)),
+        mkdirp: (...a) => attempt((h) => h.fs.mkdirp(...a)),
+        readRange: (...a) => attempt((h) => h.fs.readRange(...a)),
+        remove: (...a) => attempt((h) => h.fs.remove(...a)),
+        stat: (...a) => attempt((h) => h.fs.stat(...a)),
+        ...(fs.statMany ? { statMany: (...a) => attempt((h) => h.fs.statMany!(...a)) } : {}),
+        writeAtomic: (...a) => attempt((h) => h.fs.writeAtomic(...a))
+      },
+      exec: {
+        run: (...a) => attempt((h) => h.exec.run(...a)),
+        spawnBackground: (...a) => attempt((h) => h.exec.spawnBackground(...a))
+      },
+      ...(transfer
+        ? { transfer: { uploadFile: (...a) => attempt((h) => h.transfer!.uploadFile(...a)) } }
+        : {}),
+      capabilities: () => current.capabilities()
+    }
   }
 
   async releaseSession(sessionId: string): Promise<void> {

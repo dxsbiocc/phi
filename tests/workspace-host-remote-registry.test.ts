@@ -8,7 +8,7 @@ import { CodedError } from '../src/shared/errorCodes'
 import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/remote-registry'
-import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
+import { SshHost, SshHostClosedError } from '../src/main/agent/workspace-host/ssh-host'
 import type { SshHostConfig } from '../src/main/agent/workspace-host/ssh-host-context'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
@@ -482,4 +482,90 @@ test('remote workspace host registry starts the helper when the project host ope
     rmSync(agentDir, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+function closableRegistry(hosts: WorkspaceHost[]): {
+  registry: RemoteWorkspaceHostRegistry
+  created: () => number
+} {
+  let created = 0
+  const registry = new RemoteWorkspaceHostRegistry({
+    resolveBinding: (request) => ({
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      hostAlias: 'cluster-a',
+      remoteRoot: '/remote/project',
+      canonicalRoot: '/canonical/project',
+      cacheKey: 'host-a:/canonical/project',
+      config: {
+        remoteRoot: '/remote/project',
+        canonicalRoot: '/canonical/project',
+        connect: async () => {
+          throw new Error('not used')
+        }
+      }
+    }),
+    createHost: () => hosts[Math.min(created++, hosts.length - 1)]!
+  })
+  return { registry, created: () => created }
+}
+
+function fakeHost(run: () => Promise<unknown>): WorkspaceHost {
+  return {
+    fs: {} as WorkspaceHost['fs'],
+    exec: { run, spawnBackground: async () => undefined as never } as WorkspaceHost['exec'],
+    capabilities() {
+      throw new Error('not used')
+    }
+  }
+}
+
+test('remote workspace registry retries once on a fresh host when the host closed before dispatch', async () => {
+  let closedCalls = 0
+  const closed = fakeHost(async () => {
+    closedCalls += 1
+    throw new SshHostClosedError()
+  })
+  const ok = fakeHost(async () => ({ code: 0, signal: null, stdout: 'done', stderr: '' }))
+  const { registry, created } = closableRegistry([closed, ok])
+
+  const session = await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+  const result = await session.exec('echo done')
+
+  assert.equal(result.stdout, 'done')
+  assert.equal(closedCalls, 1)
+  assert.equal(created(), 2)
+})
+
+test('remote workspace registry reports a lost connection when the fresh host is also closed', async () => {
+  let calls = 0
+  const closed = fakeHost(async () => {
+    calls += 1
+    throw new SshHostClosedError()
+  })
+  const { registry } = closableRegistry([closed])
+
+  const session = await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+  await assert.rejects(session.exec('echo done'), (error: unknown) => {
+    assert.ok(error instanceof CodedError)
+    assert.equal(error.code, 'TRANSPORT_LOST')
+    assert.match(error.message, /SSH 连接中断/)
+    assert.doesNotMatch(error.message, /host is closed/)
+    return true
+  })
+  assert.equal(calls, 2)
+})
+
+test('remote workspace registry never retries a failure that is not a pre-dispatch close', async () => {
+  let calls = 0
+  const broken = fakeHost(async () => {
+    calls += 1
+    throw new Error('connection reset')
+  })
+  const { registry, created } = closableRegistry([broken])
+
+  const session = await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+  await assert.rejects(session.exec('echo done'), /connection reset/)
+  assert.equal(calls, 1)
+  assert.equal(created(), 1)
 })
