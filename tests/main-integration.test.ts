@@ -10,6 +10,7 @@ import * as nativeUiCopy from '../src/main/native-ui-copy'
 import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
+import * as skippedMcpNotice from '../src/main/agent/mcp/skipped-notice'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
 import * as remoteLibrary from '../src/main/agent/engine/rpc/remote-library-service'
 import { controlRemoteRuntimeWorkspace } from '../src/main/agent/remote-runtime/controller'
@@ -2581,6 +2582,7 @@ async function harness(
           }
         })
     },
+    './agent/mcp/skipped-notice': skippedMcpNotice,
     './agent/engine/rpc/desktop-websearch-adapter': {
       ...desktopWebSearch,
       createDesktopWebSearchAdapter: options.projectMemoryAdapterCreate

@@ -87,6 +87,18 @@ test('remote locator key matches server derivation and is bound to the stable Ph
   assert.throws(() => parseRuntimeReference(ref, 'other-session'), invalid)
 })
 
+test('remote locator accepts host profiles imported from ~/.ssh/config', () => {
+  const scope = { ...remoteReferenceScope, hostProfileId: 'ssh-config:GPU' }
+  const key = remoteOmpDurableSessionKey(scope, 'phi-1')
+  const ref = { ...remoteReference('phi-1'), ...scope, durableSessionKey: key }
+  assert.equal(parseRuntimeReference(ref, 'phi-1').hostProfileId, 'ssh-config:GPU')
+  for (const bad of ['ssh-config:', 'ssh-config:../x', 'other:GPU', 'ssh-config:a/b'])
+    assert.throws(
+      () => remoteOmpDurableSessionKey({ ...remoteReferenceScope, hostProfileId: bad }, 'phi-1'),
+      invalid
+    )
+})
+
 for (const [name, patch] of Object.entries({
   'wrong kind': { kind: 'local' },
   'wrong version': { version: 2 },

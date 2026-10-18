@@ -54,6 +54,8 @@ export class RuntimeReferenceError extends Error {
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const hash = /^[a-f0-9]{64}$/
+// Host profiles imported from ~/.ssh/config are `ssh-config:<alias>`.
+const hostProfileId = /^(?:ssh-config:)?[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 const scopeKeys = [
   'hostProfileId',
   'bindingHash',
@@ -94,7 +96,7 @@ export function remoteOmpDurableSessionKey(scope: RemoteOmpScope, sessionId: str
     !scope ||
     Object.values(scope).some((value) => typeof value !== 'string') ||
     !identifier.test(sessionId) ||
-    !identifier.test(scope.hostProfileId) ||
+    !hostProfileId.test(scope.hostProfileId) ||
     !hash.test(scope.bindingHash) ||
     !identifier.test(scope.projectId) ||
     !canonicalPath(scope.projectRoot, true) ||
