@@ -47,7 +47,15 @@ function signalStdioProcess(child: ChildProcessWithoutNullStreams, signal: NodeJ
   child.kill(signal)
 }
 
-export function createLocalShellSession(remoteRoot?: string): LocalShellSession {
+/**
+ * `env` models the remote host's environment for every channel kind, as one real ssh connection
+ * would: exec, stdin-fed exec and raw stdio channels all see it instead of this process's.
+ * It is read at spawn time so shims a test installs later (flock, setsid) stay visible.
+ */
+export function createLocalShellSession(
+  remoteRoot?: string,
+  options: { env?: () => NodeJS.ProcessEnv } = {}
+): LocalShellSession {
   const stdioProcesses = new Set<ChildProcessWithoutNullStreams>()
   const session: LocalShellSession = {
     commands: [],
@@ -146,6 +154,7 @@ export function createLocalShellSession(remoteRoot?: string): LocalShellSession 
     async openStdio(command): Promise<RemoteStdioProcess> {
       session.commands.push(command)
       const child = spawn('bash', ['-c', command], {
+        ...(options.env ? { env: options.env() } : {}),
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe']
       })

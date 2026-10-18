@@ -271,11 +271,14 @@ export class RemoteWorkspaceHostRegistry {
 
   private create(binding: RemoteWorkspaceHostBinding): HostEntry {
     const createHost = this.dependencies.createHost ?? ((input) => new SshHost(input))
+    const host = createHost(sshHostConfig(binding, this.dependencies))
+    // Project hosts are long-lived: bring the helper's persistent connection up on open.
+    if (host instanceof SshHost) void host.warmUp()
     return {
       projectId: binding.projectId,
       cacheKey: binding.cacheKey,
       canonicalRoot: binding.canonicalRoot,
-      host: createHost(sshHostConfig(binding, this.dependencies))
+      host
     }
   }
 }

@@ -38,13 +38,20 @@ for (const boundary of ['workspace', 'launch', 'stdin'] as const)
         canonicalRoot: f.projectRoot,
         connect: async () => {
           const session = await f.connect()
-          const write = session.writeTextFile.bind(session)
+          const exec = session.exec.bind(session)
           const open = session.openStdio!.bind(session)
+          let launchPaused = false
           return {
             ...session,
-            writeTextFile: async (path, value) => {
-              await write(path, value)
-              if (boundary === 'launch' && path.endsWith('/launch.sh')) await pause()
+            // Foreground commands resolve their working directory first and are admitted right
+            // after; hold at that first resolution step, before the admission check.
+            exec: async (command) => {
+              const result = await exec(command)
+              if (boundary === 'launch' && hold && !launchPaused) {
+                launchPaused = true
+                await pause()
+              }
+              return result
             },
             openStdio: async (command) => {
               const process = await open(command)

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -11,6 +11,7 @@ import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/re
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { SshHostConfig } from '../src/main/agent/workspace-host/ssh-host-context'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
+import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
 
 test('remote workspace host registry keeps one host per Phi session until release', async () => {
   let hostsCreated = 0
@@ -435,6 +436,50 @@ __PHI_CAPABILITY_PROBE_V1_END__
       'development build failure must permit a later connection to retry'
     )
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('remote workspace host registry starts the helper when the project host opens and falls back when it fails', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-registry-eager-'))
+  let connects = 0
+  const shim = mkdtempSync(join(tmpdir(), 'phi-registry-eager-shim-'))
+  const restoreSetsid = installSetsidShim(shim)
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'phi-registry-eager-root-')))
+  const registry = new RemoteWorkspaceHostRegistry({
+    agentDir,
+    resolveBinding: (request) => ({
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      hostAlias: 'cluster-a',
+      remoteRoot: root,
+      canonicalRoot: root,
+      cacheKey: 'host-a:eager',
+      config: {
+        remoteRoot: root,
+        canonicalRoot: root,
+        connect: async () => {
+          connects += 1
+          if (connects === 1) throw new Error('helper session refused')
+          return createLocalShellSession(root)
+        }
+      }
+    })
+  })
+  try {
+    const session = await registry.connect({ sessionId: 'session-a', projectId: 'project-a' })
+    // The helper attempt starts on open, before any file operation is requested.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    assert.equal(connects, 1)
+    // Its failure leaves a working pure-SSH host that shares one connection afterwards.
+    assert.equal((await session.exec('echo ok')).stdout, 'ok\n')
+    await session.exec('echo again')
+    assert.equal(connects, 2)
+  } finally {
+    await registry.releaseAll()
+    restoreSetsid()
+    rmSync(shim, { recursive: true, force: true })
+    rmSync(agentDir, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
   }
 })

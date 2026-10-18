@@ -99,6 +99,8 @@ export interface RemoteSshSession {
   /** Optional raw stdio channel for a connection-scoped remote helper. */
   openStdio?: (command: string) => Promise<RemoteStdioProcess>
   openReverseTunnel?: (options: ReverseTunnelOptions) => Promise<RemoteReverseTunnel>
+  /** Whether the connection's master process still answers; local to its control socket. */
+  isAlive?: () => Promise<boolean>
   close(): Promise<void>
 }
 
@@ -710,6 +712,17 @@ export async function connectRemoteSshSession(
     authGate.clearSshBlock(hostKey)
     const connectedSession: RemoteSshSession = {
       exec: call,
+      async isAlive() {
+        if (closed || masterClosed) return false
+        const check = await runProcess(
+          spawnImpl,
+          'ssh',
+          buildControlArgs(host, controlPath, 'check', config),
+          2_000,
+          MAX_CONTROL_OUTPUT_BYTES
+        ).catch(() => null)
+        return check?.code === 0
+      },
       async execWithInput(command, input, options) {
         checkOpen()
         const result = await runProcess(

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/remote-registry'
+import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import { createLocalShellSession } from './helpers/localShellSession'
 import { assertBoundaryIdentity } from './helpers/remoteBoundaryIdentity'
@@ -43,6 +44,8 @@ function fixture(options: { now?: () => number; ttlMs?: number } = {}): {
       assertBoundaryIdentity(request)
       return binding(request.sessionId, request.projectId)
     },
+    // These tests count the commands one probe spends, so the helper bootstrap stays out of them.
+    createHost: (config) => new SshHost({ ...config, helperBootstrap: undefined }),
     now: options.now,
     pathStatTtlMs: options.ttlMs
   })

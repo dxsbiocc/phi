@@ -121,8 +121,13 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
     MAMBA_ROOT_PREFIX: join(remoteHome, 'private-mamba'),
     MAMBA_PKGS_DIRS: join(remoteHome, 'private-pkgs')
   }
+  // Raw stdio channels read PATH when they spawn, so shims installed after this fixture still apply.
+  const channelEnv = (): NodeJS.ProcessEnv => ({
+    ...inheritedEnv,
+    PATH: pathWithoutHostJupyter(process.env.PATH)
+  })
   const connect = async (): Promise<LocalShellSession> => {
-    const session = createLocalShellSession(runtimeRoot)
+    const session = createLocalShellSession(runtimeRoot, { env: channelEnv })
     installExecEnvironment(session, inheritedEnv)
     session.execWithInput = (command, input) => execWithInput(session, command, input, inheritedEnv)
     session.execBounded = (command, options) => execBounded(session, command, options, inheritedEnv)
@@ -162,7 +167,7 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
   runtimeHost.managedRemoteHelper = () => helperInstallation
   runtimeHost.ensureManagedRemoteHelper = async () => helperInstallation
   const workspace: RemoteRuntimeWorkspace = {
-    projectHost: sshHost(projectRoot, sessions, inheritedEnv),
+    projectHost: sshHost(projectRoot, sessions, inheritedEnv, channelEnv),
     runtimeHost,
     projectRoot,
     runtimeRoot,
@@ -188,13 +193,14 @@ export function createRemoteRuntimeFixture(): RemoteRuntimeFixture {
 function sshHost(
   root: string,
   sessions: LocalShellSession[],
-  inheritedEnv: NodeJS.ProcessEnv
+  inheritedEnv: NodeJS.ProcessEnv,
+  channelEnv: () => NodeJS.ProcessEnv
 ): SshHost {
   return new SshHost({
     remoteRoot: root,
     canonicalRoot: root,
     connect: async () => {
-      const session = createLocalShellSession(root)
+      const session = createLocalShellSession(root, { env: channelEnv })
       installExecEnvironment(session, inheritedEnv)
       session.execWithInput = (command, input) =>
         execWithInput(session, command, input, inheritedEnv)

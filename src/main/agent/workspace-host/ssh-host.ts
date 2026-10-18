@@ -194,6 +194,15 @@ export class SshHost implements WorkspaceHost {
     return this.helperInstallation ? undefined : this.helperFailure
   }
 
+  /**
+   * Starts the helper now instead of at the first fs/exec call, so a project host that is about
+   * to be used already has its persistent connection. Never throws: a helper that cannot start
+   * leaves the host on the shared pure-SSH fallback exactly as a lazy start would.
+   */
+  async warmUp(): Promise<void> {
+    await this.selected(true).catch(() => undefined)
+  }
+
   async close(): Promise<void> {
     this.disposed = true
     this.preparation.abort()
@@ -201,6 +210,7 @@ export class SshHost implements WorkspaceHost {
     const helper = this.helper
     this.helper = undefined
     await helper?.close()
+    await this.context.dispose()
   }
 
   private pureCapabilities(): HostCapabilityProfile {

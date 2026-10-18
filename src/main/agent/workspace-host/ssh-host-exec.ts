@@ -15,6 +15,7 @@ import { verifyRemoteCancelTarget } from '../wrappers/remote-launch-claim'
 import { MAX_REMOTE_LOG_RAW_BYTES, readRemoteFileChunk } from '../wrappers/remote-ssh-log'
 import { shellQuote, type RemoteSshSession } from '../wrappers/remote-ssh-session'
 import { SshHostContext } from './ssh-host-context'
+import { foregroundScript, runForegroundCommand, workspaceCommand } from './ssh-host-foreground'
 import {
   WorkspaceHostError,
   type BackgroundProcessHandle,
@@ -27,7 +28,6 @@ import {
 
 type ExecutionHost = WorkspaceHost['exec']
 const DEFAULT_TIMEOUT_MS = 30_000
-const POLL_INTERVAL_MS = 25
 const TERMINATE_GRACE_MS = 500
 
 interface RemoteOutput {
@@ -55,22 +55,8 @@ function validate(command: HostCommand, options: RunCommandOptions): number {
   return maxBytes
 }
 
-function invocation(command: HostCommand): string {
-  return `exec ${command.map(shellQuote).join(' ')}`
-}
-
-function workspaceCommand(
-  cwd: string,
-  command: HostCommand,
-  env: Readonly<Record<string, string>> = {}
-): string {
-  const body = [
-    `cd -P -- ${shellQuote(cwd)} || exit 72`,
-    `[ "$PWD" = ${shellQuote(cwd)} ] || exit 72`,
-    ...Object.entries(env).map(([key, value]) => `export ${key}=${shellQuote(value)}`),
-    invocation(command)
-  ].join('\n')
-  return `bash -c ${shellQuote(body)}`
+function signalOption(options: RunCommandOptions): { signal?: AbortSignal } {
+  return options.signal ? { signal: options.signal } : {}
 }
 
 function parsePid(raw: string): number {
@@ -144,16 +130,6 @@ class SshProcess implements BackgroundProcessHandle {
     if (status.outcome === 'running') return { pid: this.pid, running: true }
     const result = await this.settle(status, null)
     return { pid: this.pid, running: false, result: { ...result } }
-  }
-
-  async wait(): Promise<CommandResult> {
-    for (;;) {
-      if (this.result) return { ...this.result }
-      if (this.settling) return { ...(await this.settling) }
-      const state = await this.query()
-      if (!state.running && state.result) return state.result
-      await delay(POLL_INTERVAL_MS)
-    }
   }
 
   async terminate(): Promise<CommandResult> {
@@ -250,10 +226,27 @@ class SshExecution {
   }
 
   private async run(command: HostCommand, options: RunCommandOptions): Promise<CommandResult> {
+    const maxOutputBytes = validate(command, options)
     const submission = { started: false }
     try {
-      const process = await this.spawnBackground(command, options, submission)
-      return await (process as SshProcess).wait()
+      options.signal?.throwIfAborted()
+      return await this.context.withPath(
+        options.cwd,
+        'existing',
+        async (session, cwd) => {
+          options.signal?.throwIfAborted()
+          options.beforeExec?.()
+          options.signal?.throwIfAborted()
+          // Once the channel opens, a lost reply cannot prove that the command never ran.
+          submission.started = true
+          return runForegroundCommand(session, foregroundScript(cwd, command, options.env), {
+            timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            maxOutputBytes,
+            ...(options.signal ? { signal: options.signal } : {})
+          })
+        },
+        signalOption(options)
+      )
     } catch (error) {
       if (!submission.started && options.signal?.aborted && error === options.signal.reason)
         return {
@@ -270,9 +263,9 @@ class SshExecution {
 
   private async spawnBackground(
     command: HostCommand,
-    options: RunCommandOptions,
-    submission = { started: false }
+    options: RunCommandOptions
   ): Promise<BackgroundProcessHandle> {
+    const submission = { started: false }
     const maxBytes = validate(command, options)
     const runId = `workspace-host-${randomUUID()}`
     const runDir = posix.join(this.context.canonicalRoot, 'wrappers', 'runs', runId)
@@ -281,25 +274,30 @@ class SshExecution {
       options.signal?.throwIfAborted()
       await this.context.mkdirp(runDir)
       prepared = true
-      const process = await this.context.withPath(options.cwd, 'existing', async (session, cwd) => {
-        const claimDir = posix.join(runDir, '.phi-launch-claim')
-        await session.mkdirp(claimDir)
-        await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
-        const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
-        await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
-        options.signal?.throwIfAborted()
-        options.beforeExec?.()
-        options.signal?.throwIfAborted()
-        const launch = buildDetachedLaunchCommand(runDir)
-        // Once submitted, a lost reply cannot prove that the command never ran.
-        submission.started = true
-        const launched = await session.exec(launch)
-        if (launched.code !== 0) {
-          throw new Error(launched.stderr || launched.stdout || '启动命令未返回 PID')
-        }
-        const handle = { runId, remoteRunDir: runDir, pid: parsePid(launched.stdout) }
-        return new SshProcess(this.context, handle, maxBytes)
-      })
+      const process = await this.context.withPath(
+        options.cwd,
+        'existing',
+        async (session, cwd) => {
+          const claimDir = posix.join(runDir, '.phi-launch-claim')
+          await session.mkdirp(claimDir)
+          await session.writeTextFile(posix.join(claimDir, 'run-id'), `${runId}\n`)
+          const script = wrapWithExitCodeTrap(workspaceCommand(cwd, command, options.env))
+          await session.writeTextFile(posix.join(runDir, 'launch.sh'), script)
+          options.signal?.throwIfAborted()
+          options.beforeExec?.()
+          options.signal?.throwIfAborted()
+          const launch = buildDetachedLaunchCommand(runDir)
+          // Once submitted, a lost reply cannot prove that the command never ran.
+          submission.started = true
+          const launched = await session.exec(launch)
+          if (launched.code !== 0) {
+            throw new Error(launched.stderr || launched.stdout || '启动命令未返回 PID')
+          }
+          const handle = { runId, remoteRunDir: runDir, pid: parsePid(launched.stdout) }
+          return new SshProcess(this.context, handle, maxBytes)
+        },
+        signalOption(options)
+      )
       process.attach(options)
       return process
     } catch (error) {
