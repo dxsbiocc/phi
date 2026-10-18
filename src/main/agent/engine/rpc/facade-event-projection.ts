@@ -49,18 +49,22 @@ function json(value: unknown): unknown {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
 }
 
+/** Rejects one frame only; the budget counts in-flight calls, so later frames stay projectable. */
+class PrivateBudgetError extends Error {
+  constructor() {
+    super('Private tool carrier budget exceeded')
+  }
+}
+
 /** Public event/message projection. Protocol frames and reserved transport tools never leave this boundary. */
 export class RpcFacadeEventProjector {
+  /** In-flight private tool calls; an id is released once its tool result has been projected. */
   private readonly privateCalls = new Set<string>()
-  private privateOverflow = false
   constructor(private readonly dispatchPrivate?: (frame: Readonly<RpcFrame>) => void) {}
 
   private remember(id: unknown): void {
     if (!text(id)) return
-    if (this.privateCalls.size >= 4096 && !this.privateCalls.has(id)) {
-      this.privateOverflow = true
-      throw new Error('Private tool carrier budget exceeded')
-    }
+    if (this.privateCalls.size >= 4096 && !this.privateCalls.has(id)) throw new PrivateBudgetError()
     this.privateCalls.add(id)
   }
   private content(raw: unknown): PhiMessageContent[] | undefined {
@@ -235,7 +239,7 @@ export class RpcFacadeEventProjector {
         }
       }
     } catch (error) {
-      if (this.privateOverflow) throw error
+      if (error instanceof PrivateBudgetError) throw error
       return undefined
     }
   }
@@ -259,8 +263,10 @@ export class RpcFacadeEventProjector {
               (part) => record(part) && part.type === 'toolCall' && privateInput(part.arguments)
             )))
       if (!reserved) throw new Error('Unsupported remote public history message shape')
+      // turn_end/agent_end carry the final results: the call is finished, release its id.
+      if (record(value) && value.role === 'toolResult' && text(value.toolCallId))
+        this.privateCalls.delete(value.toolCallId)
     }
-    if (this.privateOverflow) throw new Error('Private tool carrier budget exceeded')
     return output
   }
 
@@ -324,7 +330,6 @@ export class RpcFacadeEventProjector {
   }
 
   event(frame: Readonly<RpcFrame>): PhiAgentEvent | undefined {
-    if (this.privateOverflow) throw new Error('Private tool carrier budget exceeded')
     // Private dispatch happens before projection; errors remain visible to the
     // trusted driver, which retires its generation. Never send raw protocol to UI.
     if (privateTypes.has(frame.type)) {
@@ -433,7 +438,7 @@ export class RpcFacadeEventProjector {
           return undefined
       }
     } catch (error) {
-      if (this.privateOverflow) throw error
+      if (error instanceof PrivateBudgetError) throw error
       return undefined
     }
   }

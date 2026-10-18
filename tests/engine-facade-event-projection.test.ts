@@ -202,3 +202,61 @@ test('malformed compaction messages and unrelated custom roles still fail public
       /Unsupported remote public history/
     )
 })
+
+const privateCall = (id: string): PhiAssistantMessage => ({
+  ...assistant(),
+  content: [
+    {
+      type: 'toolCall',
+      id,
+      name: 'write',
+      arguments: { path: 'phi-child://request/x', content: 'synthetic-private-child-key' }
+    }
+  ]
+})
+const privateResult = (id: string): Record<string, unknown> => ({
+  role: 'toolResult',
+  toolCallId: id,
+  toolName: 'write',
+  timestamp: 2,
+  isError: false,
+  content: [{ type: 'text', text: 'synthetic-private-child-key' }]
+})
+
+test('private tool carrier budget counts only in-flight calls, so completed calls never exhaust it', () => {
+  const projector = new RpcFacadeEventProjector()
+  for (let index = 0; index < 4200; index++) {
+    const id = `private-${index}`
+    assert.equal(projector.message(privateCall(id)), undefined)
+    assert.equal(projector.event({ type: 'message_end', message: privateResult(id) }), undefined)
+    assert.deepEqual(
+      projector.event({
+        type: 'turn_end',
+        message: assistant(),
+        toolResults: [privateResult(id)]
+      }),
+      { type: 'turn_end', message: assistant(), toolResults: [] }
+    )
+  }
+  const publicResult = { ...privateResult('public-call'), content: [{ type: 'text', text: 'ok' }] }
+  assert.deepEqual(projector.message(publicResult), publicResult)
+})
+
+test('private tool carrier overflow rejects only the overflowing call and keeps the stream usable', () => {
+  const projector = new RpcFacadeEventProjector()
+  for (let index = 0; index < 4096; index++)
+    assert.equal(projector.message(privateCall(`inflight-${index}`)), undefined)
+  assert.throws(() => projector.message(privateCall('overflow')), /budget exceeded/)
+  const publicEvent = { type: 'agent_start' }
+  assert.deepEqual(projector.event(publicEvent), publicEvent)
+  projector.messages([privateResult('inflight-0')])
+  assert.equal(projector.message(privateCall('after-release')), undefined)
+})
+
+test('private results inside history replay are recognised and released', () => {
+  const projector = new RpcFacadeEventProjector()
+  const history = [privateCall('h1'), privateResult('h1')]
+  assert.deepEqual(projector.messages(history), [])
+  const reused = { ...privateResult('h1'), content: [{ type: 'text', text: 'public again' }] }
+  assert.deepEqual(projector.messages([reused]), [reused])
+})
