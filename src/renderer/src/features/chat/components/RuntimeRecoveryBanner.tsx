@@ -1,5 +1,4 @@
 import { chatCopy } from '../lib/chatCopy'
-import { chatLayoutVariables } from '../lib/chatLayout'
 import { useUiLanguage } from '../../../lib/i18n'
 import {
   Alert,
@@ -25,15 +24,8 @@ import type {
 import { useRuntimeRecovery } from '../hooks/useRuntimeRecovery'
 import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRecoveryState'
 
-// The banner sits above ChatView, so it sets the chat layout variables itself and uses the
-// composer's column: the same gutter on both sides and the same max width.
-const bannerWidthSx = {
-  ...chatLayoutVariables('tab'),
-  mx: 'auto',
-  width: 'calc(100% - 2 * var(--phi-chat-gutter))',
-  maxWidth: 'var(--phi-chat-content-max-width)',
-  boxSizing: 'border-box'
-} as const
+// App places the banner in a floating column matching the composer; it fills that column.
+const bannerWidthSx = { mx: 0, boxShadow: 3, bgcolor: 'background.paper' } as const
 
 export function RuntimeRecoveryBanner({
   api,

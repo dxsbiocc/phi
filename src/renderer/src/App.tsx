@@ -51,6 +51,10 @@ import type {
 } from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
+import {
+  runtimeRecoveryBannerColumnSx,
+  runtimeRecoveryBannerOverlaySx
+} from './features/chat/lib/chatLayout'
 import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -4476,7 +4480,15 @@ function App(): React.JSX.Element {
           : null
       }
     >
-      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative'
+        }}
+      >
         {activeProjectLocation?.kind === 'ssh' ? (
           <RemoteConnectionNotice
             hostAlias={activeProject?.remoteHostAlias}
@@ -4485,13 +4497,18 @@ function App(): React.JSX.Element {
             onOpenRemoteSettings={() => openSettings('remote')}
           />
         ) : null}
-        <RuntimeRecoveryBanner
-          api={rendererApi}
-          target={runtimeRecoveryTarget}
-          models={availableModels}
-          onRecovered={onRuntimeRecovered}
-          onSummaryCreated={onRuntimeSummaryCreated}
-        />
+        {/* Floats over the conversation in the composer's column instead of pushing it down. */}
+        <Box sx={runtimeRecoveryBannerOverlaySx}>
+          <Box sx={runtimeRecoveryBannerColumnSx}>
+            <RuntimeRecoveryBanner
+              api={rendererApi}
+              target={runtimeRecoveryTarget}
+              models={availableModels}
+              onRecovered={onRuntimeRecovered}
+              onSummaryCreated={onRuntimeSummaryCreated}
+            />
+          </Box>
+        </Box>
         <Suspense
           fallback={
             <Box

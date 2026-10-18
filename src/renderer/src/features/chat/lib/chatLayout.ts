@@ -22,3 +22,22 @@ export const chatComposerLayoutSx = {
     pb: 1
   }
 } as const
+
+/** Floating layer above the conversation, so recovery notices do not push messages down. */
+export const runtimeRecoveryBannerOverlaySx = {
+  ...chatLayoutVariables('tab'),
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  zIndex: 2,
+  pointerEvents: 'none'
+} as const
+
+/** Same column as the composer: its gutter on both sides and its max width. */
+export const runtimeRecoveryBannerColumnSx = {
+  mx: 'auto',
+  width: 'calc(100% - 2 * var(--phi-chat-gutter))',
+  maxWidth: 'var(--phi-chat-content-max-width)',
+  pointerEvents: 'auto'
+} as const
