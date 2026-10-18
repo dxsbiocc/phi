@@ -343,9 +343,21 @@ export class SessionRoutingEngine implements PhiEngine {
     }
   }
   readonly history: PhiEngine['history'] = {
+    // A remote conversation in this project must not hide the project's other conversations:
+    // drop only the local journals a remote locator claims, instead of refusing the whole list.
     list: async (params) => {
-      this.historyGuard(undefined, params.cwd)
-      return this.legacy.history.list(params)
+      const remote = listPhiSessions().filter(
+        (manifest) => manifest.runtimeRef || manifest.runtimeRecoveryError
+      )
+      const infos = await this.legacy.history.list(params)
+      return infos.filter(
+        (info) =>
+          !remote.some(
+            (manifest) =>
+              excludesManifestLocalJournalPath(manifest, info.path) ||
+              (manifest.runtimeRecoveryError && manifest.runtimeSessionPath === info.path)
+          )
+      )
     },
     open: async (params) => {
       this.historyGuard(params.path, params.cwd)

@@ -32,6 +32,8 @@ export const navigationCopy = defineCopy(
     deleteProject: 'Delete project',
     loadingConversations: 'Loading conversations…',
     noConversationsYet: 'No conversations yet',
+    conversationsLoadFailed: 'Could not load conversations',
+    retryLoadConversations: 'Retry',
     deleteThisConversation: 'Delete this conversation?',
     willBePermanentlyDeletedAndCannotBeRecovered:
       'will be permanently deleted and cannot be recovered.',
@@ -125,6 +127,8 @@ export const navigationCopy = defineCopy(
     deleteProject: '删除项目',
     loadingConversations: '正在读取对话…',
     noConversationsYet: '暂无对话',
+    conversationsLoadFailed: '对话加载失败',
+    retryLoadConversations: '重试',
     deleteThisConversation: '删除这段对话？',
     willBePermanentlyDeletedAndCannotBeRecovered: '将被永久删除，无法恢复。',
     delete: '删除',

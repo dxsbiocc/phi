@@ -5,6 +5,7 @@ import {
   Box,
   Collapse,
   IconButton,
+  Link,
   ListItemButton,
   Menu,
   MenuItem,
@@ -87,6 +88,9 @@ function ProjectRowImpl({
 }: ProjectRowProps): React.JSX.Element {
   useUiLanguage()
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
+  // A failed read is not an empty project; keep it distinct so it can be retried.
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [retryNonce, setRetryNonce] = useState(0)
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -108,16 +112,28 @@ function ProjectRowImpl({
       onFetchSessions(project.workingDirectory, project.id)
     ).then(
       (nextSessions) => {
-        if (!cancelled) setSessions(orderSessionsForDisplay(nextSessions))
+        if (cancelled) return
+        setLoadFailed(false)
+        setSessions(orderSessionsForDisplay(nextSessions))
       },
       () => {
-        if (!cancelled) setSessions([])
+        if (cancelled) return
+        setLoadFailed(true)
+        setSessions([])
       }
     )
     return () => {
       cancelled = true
     }
-  }, [expanded, onFetchSessions, project.id, project.workingDirectory, refreshKey, searchSessions])
+  }, [
+    expanded,
+    onFetchSessions,
+    project.id,
+    project.workingDirectory,
+    refreshKey,
+    retryNonce,
+    searchSessions
+  ])
 
   // This project's own ticking clock for live elapsed-time display, gated on
   // whether any of ITS sessions are actually active — separate from
@@ -419,15 +435,35 @@ function ProjectRowImpl({
             ))}
           </>
         )}
-        {sessionsReady && orderedSessions.length === 0 && (
+        {sessionsReady && loadFailed && searchSessions === undefined && (
           <Typography
             variant="body2"
-            color="text.secondary"
+            color="error"
             sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
           >
-            {navigationCopy.noConversationsYet}
+            {navigationCopy.conversationsLoadFailed}{' '}
+            <Link
+              component="button"
+              type="button"
+              underline="hover"
+              onClick={() => setRetryNonce((value) => value + 1)}
+              sx={{ fontSize: 'inherit', verticalAlign: 'baseline' }}
+            >
+              {navigationCopy.retryLoadConversations}
+            </Link>
           </Typography>
         )}
+        {sessionsReady &&
+          !(loadFailed && searchSessions === undefined) &&
+          orderedSessions.length === 0 && (
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ pl: 4, pr: 1, py: 0.75, fontSize: ROW_META_FONT_SIZE }}
+            >
+              {navigationCopy.noConversationsYet}
+            </Typography>
+          )}
       </Collapse>
     </Box>
   )
