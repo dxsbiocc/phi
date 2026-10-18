@@ -62,6 +62,7 @@ export function buildEnvRequestTool(
     label: 'Request Environment Packages',
     description: PHI_ENV_REQUEST_DESCRIPTION,
     site: 'host',
+    loadMode: 'essential',
     // The in-chat \u6dfb\u52a0/\u53d6\u6d88 question is the confirmation. `read` keeps this off the exec approval path; omitting approval is treated as exec.
     approval: 'read',
     parameters: {

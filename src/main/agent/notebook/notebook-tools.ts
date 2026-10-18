@@ -80,6 +80,8 @@ function buildNotebookTool(
   return {
     ...definition,
     site: 'host',
+    // Core research tools: keep them in the model's tool list instead of behind xd://.
+    loadMode: 'essential',
     async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext) {
       try {
         const result = await executeHost({

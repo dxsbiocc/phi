@@ -42,6 +42,7 @@ export function buildWrapperCompositionSearchTool(
 ): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[0],
+    loadMode: 'essential',
     label: 'Search Wrappers',
     description:
       'Search available Nextflow module/subworkflow wrappers by keyword. Returns id, name, and summary. Use before wrapper_inspect.',
@@ -91,6 +92,7 @@ export function buildWrapperCompositionInspectTool(
 ): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[1],
+    loadMode: 'essential',
     label: 'Inspect Wrapper',
     description:
       'Get the params/outputs contract and default run parameters for one wrapper by id (from wrapper_search), so you know what to override before calling wrapper_run.',
@@ -149,6 +151,7 @@ function runIdParam(params: unknown): string | undefined {
 export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[2],
+    loadMode: 'essential',
     label: 'Run Wrapper',
     description:
       'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
@@ -242,6 +245,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
 export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[3],
+    loadMode: 'essential',
     label: 'Wrapper Run Status',
     description:
       'Report on a wrapper run started with wrapper_run: its state (running, completed, failed, cancelled, lost), progress, output locations, and the tail of its Nextflow log. Without run_id, lists the most recent runs so you can find one.',
@@ -273,6 +277,7 @@ export function buildWrapperCompositionStatusTool(jobs: WrapperJobClient): PhiTo
 export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[4],
+    loadMode: 'essential',
     label: 'Wait For Wrapper Run',
     description: `Block until a wrapper run ends or up to timeout_seconds (default ${DEFAULT_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}), then report its status. If the run is still going when the time is up you get its current status and can call this again. Use it only when the task needs the run's results before the next step; otherwise start the run and finish.`,
     site: 'host',
@@ -320,6 +325,7 @@ export function buildWrapperCompositionWaitTool(jobs: WrapperJobClient): PhiTool
 export function buildWrapperCompositionCancelTool(jobs: WrapperJobClient): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[5],
+    loadMode: 'essential',
     label: 'Cancel Wrapper Run',
     description:
       'Stop a running wrapper run: Nextflow and everything it spawned are terminated and the run is recorded as cancelled. Only cancel when the user asked for it or the run is clearly wrong.',

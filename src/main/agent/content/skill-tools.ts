@@ -95,6 +95,7 @@ export function buildSkillRunTool(
     label: 'Run Skill Script',
     description: PHI_SKILL_RUN_DESCRIPTION,
     site: 'host',
+    loadMode: 'essential',
     approval: 'exec',
     parameters: SKILL_RUN_PARAMETERS,
     async execute(_toolCallId, params, _onUpdate, ctx, signal) {
