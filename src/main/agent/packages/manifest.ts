@@ -8,6 +8,8 @@ import { parse as parseYaml } from 'yaml'
 import { validateSkill, type ValidatedSkill } from '../content/skill'
 import { validatePlugin, type ValidatedPlugin } from '../plugins/validate'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export const PACKAGE_CONTRACT_VERSION = '1.2.0'
 
 export const CONNECTOR_CATEGORIES = [
@@ -386,10 +388,6 @@ function finish(
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function schemaPath(error: ErrorObject): string {
   const parts = error.instancePath
     .split('/')
@@ -406,8 +404,4 @@ function schemaMessage(error: ErrorObject): string {
     return `unknown field '${String((error.params as Record<string, unknown>).additionalProperty)}'`
   }
   return error.message ?? 'is invalid'
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 
 import type { PhiHostRequestContext, PhiTool, PhiToolResult } from '../engine/types'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export const CAPABILITY_HOST_METHODS = {
   search: 'capabilities.search',
   install: 'capabilities.install',
@@ -130,16 +132,12 @@ export function buildCapabilityTools(
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function isInstalled(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && value.ok === true && value.installed === true
 }
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }
 
 function failure(text: string, details?: unknown): PhiToolResult {

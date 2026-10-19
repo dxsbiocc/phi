@@ -66,10 +66,15 @@ export function isRetryable(error: unknown): boolean {
   return typeof explicit === 'boolean' ? explicit : ERROR_CODES[errorCodeOf(error)].retryable
 }
 
+/** Display-only text for any thrown value. Never branch on this string. */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function toErrorPayload(error: unknown): ErrorPayload {
   return {
     code: errorCodeOf(error),
     retryable: isRetryable(error),
-    message: error instanceof Error ? error.message : String(error)
+    message: errorMessage(error)
   }
 }

@@ -1,5 +1,6 @@
 import type { PackageType } from './manifest'
 
+import { isRecord } from '../../../shared/guards'
 export const OFFICIAL_CATALOG_BASE_URL = 'https://phi.omicsagent.cn'
 const ROUTES: Record<PackageType, string> = {
   skill: '/api/skills',
@@ -306,8 +307,4 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
   } finally {
     if (abort) signal.removeEventListener('abort', abort)
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
 }

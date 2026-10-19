@@ -34,6 +34,7 @@ import {
   type WrapperPackageManifest
 } from './manifest'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const TREE_REGISTRY_VERSION = 1
 const PACKAGE_METADATA = new Set(['files.json', 'phi-package.yaml'])
 
@@ -470,9 +471,7 @@ function validateWrapperIds(tree: string, agentDir: string): void {
       id = parseWrapperCompositionManifest(readFileSync(path, 'utf8')).id
     } catch (error) {
       if (!strict) return
-      throw new Error(
-        `invalid installed wrapper adapter ${path}: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`invalid installed wrapper adapter ${path}: ${errorMessage(error)}`)
     }
     const previous = ids.get(id)
     if (previous) throw new Error(`wrapper id '${id}' is declared by both ${previous} and ${path}`)

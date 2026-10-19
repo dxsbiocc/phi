@@ -34,6 +34,7 @@ import type {
   CapabilityService,
   RememberExternalCapabilitiesParams
 } from './capability-service-types'
+import { errorMessage } from '../../../shared/errorCodes'
 export type {
   CapabilityApprovalPackage,
   CapabilityApprovalRequest,
@@ -124,7 +125,7 @@ export function createCapabilityService(deps: CapabilityServiceDependencies): Ca
         official = await deps.searchOfficial(input.query, input.type, context.signal)
       } catch (error) {
         assertCurrent(context)
-        official.notice = `官网目录暂不可用：${error instanceof Error ? error.message : String(error)}`
+        official.notice = `官网目录暂不可用：${errorMessage(error)}`
       }
     }
     assertCurrent(context)

@@ -1,5 +1,6 @@
 import { gunzipSync, gzipSync } from 'node:zlib'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export interface ArchiveFile {
   path: string
   data: Buffer
@@ -176,10 +177,6 @@ function verifyChecksum(header: Buffer): void {
   copy.fill(0x20, 148, 156)
   const actual = copy.reduce((sum, byte) => sum + byte, 0)
   if (actual !== expected) throw new Error('invalid tar header checksum')
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function compareText(left: string, right: string): number {

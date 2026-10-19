@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, relative, resolve, win32 } from 'node:path'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 import type { LocalRegistry, PackageSourceMetadata, RegistryTrustTier } from './installer-types'
 import type { PackageType } from './manifest'
+
+// Historical import surface for the packages module; the definitions now live in src/shared.
+export { errorMessage, isRecord }
 
 type ReadablePackageSourceMetadata = Omit<PackageSourceMetadata, 'trust'> & {
   trust?: RegistryTrustTier
@@ -88,14 +93,6 @@ export function legacySourceTrust(registry: string): RegistryTrustTier {
   return LEGACY_BUILTIN_REGISTRY_IDS.has(registry) ? 'builtin' : 'imported'
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 export function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined
-}
-
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

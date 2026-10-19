@@ -24,6 +24,8 @@ import type {
   GithubSourceSkippedPackage
 } from '../../../shared/githubSourceTypes'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export interface GithubRepository {
   owner: string
   name: string
@@ -633,14 +635,6 @@ async function readWithDeadline(
   } finally {
     if (timer) clearTimeout(timer)
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export {

@@ -6,6 +6,8 @@ import {
   verify as verifyBytes
 } from 'node:crypto'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export interface RegistrySignature {
   version: 1
   keyId: string
@@ -108,12 +110,4 @@ function decodeCanonicalBase64(value: string): Buffer {
 
 function assertEd25519Key(type: string | undefined): void {
   if (type !== 'ed25519') throw new Error('注册表签名密钥必须是 Ed25519 密钥')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

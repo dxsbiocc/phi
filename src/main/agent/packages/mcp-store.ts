@@ -6,6 +6,7 @@ import semver from 'semver'
 
 import { getPhiAgentDir } from '../runtime-paths'
 
+import { isRecord } from '../../../shared/guards'
 export interface InstalledMcpState {
   version: string
   installedAt: string
@@ -93,10 +94,6 @@ function isMcpPackagesRegistry(value: unknown): value is McpPackagesRegistry {
       typeof entry.installedAt === 'string' &&
       Number.isFinite(Date.parse(entry.installedAt))
   )
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function errorCode(error: unknown): string | undefined {
