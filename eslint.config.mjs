@@ -28,5 +28,18 @@ export default defineConfig(
       ...eslintPluginReactRefresh.configs.vite.rules
     }
   },
+  // Complexity ratchet, part one: the ceiling is reported everywhere so a new
+  // offender is visible, and `--max-warnings` in package.json freezes the count
+  // so adding one fails the build. Clean directories are promoted to errors below.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      complexity: ['warn', 15],
+      'max-depth': ['warn', 3],
+      'max-params': ['warn', 5],
+      'max-lines': ['warn', { max: 600, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['warn', { max: 80, skipBlankLines: true, skipComments: true }]
+    }
+  },
   eslintConfigPrettier
 )
