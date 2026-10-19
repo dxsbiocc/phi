@@ -51,6 +51,7 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 | SSH-09 | 仍在 | `ssh-bootstrap/host-key.ts` 只跳过 `@` 标记;`every` 要求每个旧算法都被重扫到 |
 | SSH-10 | 仍在 | `runtime-deployment/deployment.ts:22` 仅进程内互斥(启动事务的 flock 只覆盖会话存储,不覆盖运行时部署 staging) |
 | SSH-11 | 部分 | 清理已改为先校验归属再 `rm -rf`(`ssh-stdio-factory.ts:391`),但仍走同一条通道、失败被吞(`:392`),没有启动时按年龄清扫 |
+| SSH-12 | 新增 | `run-guard.ts` 发出 `PHI_LAUNCH:*` 标记,但全仓没有解析点;启动被拒时上层只看到 `TRANSPORT_LOST 'RPC output stream ended'`。启动路径硬依赖 `flock` 与可用的 `ps` |
 | X-01 | 仍在 | 未改动 |
 | X-02 | 部分 | `3c014834` 新增 `src/shared/errorCodes.ts`,远程与引擎已迁移;`index.ts` 其余 `throw new Error` 仍为 `UNKNOWN` |
 | X-03 | 仍在 | 未改动 |
@@ -456,6 +457,30 @@ if (this.privateCalls.size >= 4096 && !this.privateCalls.has(id)) {
 **影响**:每次掉线留下一个会话目录 + 一份过期凭据文件;长期使用在共享 runtime root 里积累孤儿,且没有诊断能看出来。
 
 **修复方向**:会话开始时做带年龄阈值的 `rpc-sessions/*` 清扫;清理拆成"本地登记 + 下次连接补偿";`models.yml` 在生成关闭时显式删除。
+
+#### SSH-12 启动拒绝的原因被丢弃,启动路径硬依赖宿主工具 🆕
+
+**证据**
+- `run-guard.ts:45-46` 两处标记:
+  ```sh
+  flock -x -n 8 || { echo PHI_LAUNCH:RUN_LOCK_BUSY >&2; exit 75; }
+  [ "$(ps -o pgid= -p $$ | tr -d "[:space:]")" = "$$" ] || { echo PHI_LAUNCH:NOT_GROUP_LEADER >&2; exit 78; }
+  ```
+- 全仓没有解析点(`grep -rn PHI_LAUNCH src` 只命中这两行输出),即标记只被写、从未被读。
+- 2026-10-19 实测:在缺 `flock` 的 macOS 上执行同一段包装脚本 →
+  ```
+  phi-run: flock: command not found
+  PHI_LAUNCH:RUN_LOCK_BUSY
+  exit 75
+  ```
+  在 `ps` 被禁的环境 → `exit 78`。上层统一表现为 `CodedError: TRANSPORT_LOST 'RPC output stream ended'`。
+- 影响面:18 个真实启动套件因此全红;给 `PATH` 补上 `flock`/`ps` 替身后 116/116 全绿,证明失败与被测逻辑无关。
+
+**影响**
+用户看到"连接中断",真实原因是"启动被拒"。远端若缺 `flock`(精简容器、部分非 Linux 环境)或没有 `ps` 权限,远程会话完全起不来,且现场没有任何可自助诊断的信息。
+
+**修复方向**
+启动包装脚本的 stderr 标记应在启动失败时被解析成带 code 的错误(`DOMAIN_INVALID` 之类 + 可读原因),而不是等 stdout EOF 后统一归为传输丢失;`flock`/`ps` 作为启动前置条件纳入部署检查(R1)并给出可操作提示。
 
 ### 4.4 信任边界:做对的部分与真正的缺口
 

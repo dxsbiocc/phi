@@ -4,13 +4,13 @@
  *
  * `bun run test` runs every top-level suite, including the ones that need host
  * capabilities a restricted runner does not grant. This gate runs the same
- * suites minus the ones listed in test-known-failures.json, and it re-checks
- * environment probes at runtime so a capable host still runs them.
+ * suites minus the entries in test-known-failures.json, and it re-checks the
+ * environment probes on every run so a capable host still executes them.
  *
  * Usage:
- *   node scripts/test-gate.mjs              run the gate
- *   node scripts/test-gate.mjs --list       print the resolved plan
- *   node scripts/test-gate.mjs --only-skipped   run only the skipped suites
+ *   node scripts/test-gate.mjs                 run the gate
+ *   node scripts/test-gate.mjs --list          print the resolved plan
+ *   node scripts/test-gate.mjs --only-skipped  run only the skipped suites
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -26,32 +26,56 @@ const args = process.argv.slice(2)
 const listOnly = args.includes('--list')
 const onlySkipped = args.includes('--only-skipped')
 
-/** Host capabilities a suite may need. Absent means "not granted here". */
-function probePs() {
-  try {
-    execFileSync('/bin/ps', ['-o', 'pid=', '-p', String(process.pid)], {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    return true
-  } catch {
-    return false
+/** Host capabilities a suite may need. A missing key means "not granted here". */
+const PROBES = {
+  /** The launch wrapper proves it is a group leader with `ps -o pgid=`. */
+  ps: () => {
+    try {
+      execFileSync('/bin/ps', ['-o', 'pid=', '-p', String(process.pid)], {
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      return true
+    } catch {
+      return false
+    }
+  },
+  /** The launch wrapper takes the run lock with the flock(1) binary. */
+  flock: () => {
+    try {
+      execFileSync('/bin/sh', ['-c', 'command -v flock'], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
-const probes = { ps: probePs() }
+const probes = Object.fromEntries(Object.entries(PROBES).map(([key, run]) => [key, run()]))
 
 function loadKnownFailures() {
   const parsed = JSON.parse(readFileSync(knownFailuresPath, 'utf8'))
+  const profiles = parsed.profiles ?? {}
   const entries = Array.isArray(parsed.entries) ? parsed.entries : []
   const byFile = new Map()
+
   for (const entry of entries) {
-    if (typeof entry?.file !== 'string' || typeof entry?.kind !== 'string') {
-      throw new Error('Every known-failure entry needs a string "file" and "kind".')
+    if (typeof entry?.file !== 'string') {
+      throw new Error('Every known-failure entry needs a string "file".')
     }
     if (byFile.has(entry.file)) {
       throw new Error(`Duplicate known-failure entry for ${entry.file}`)
     }
-    byFile.set(entry.file, entry)
+    const profile = typeof entry.profile === 'string' ? profiles[entry.profile] : undefined
+    if (entry.profile && !profile) {
+      throw new Error(`${entry.file} names unknown profile "${entry.profile}"`)
+    }
+    const resolved = { ...profile, ...entry }
+    if (typeof resolved.kind !== 'string') {
+      throw new Error(`${entry.file} needs a "kind" or a profile that provides one.`)
+    }
+    const required = resolved.probes ?? resolved.probe
+    resolved.requiredProbes = required === undefined ? [] : [required].flat()
+    byFile.set(entry.file, resolved)
   }
   return byFile
 }
@@ -79,25 +103,31 @@ function resolvePlan(entries) {
       run.push(file)
       continue
     }
-    const missingProbe = entry.kind === 'environment' && entry.probe && !probes[entry.probe]
-    if (missingProbe) {
-      skipped.push({ file, kind: entry.kind, why: `host lacks "${entry.probe}"` })
+
+    if (entry.kind === 'environment') {
+      if (entry.alwaysSkip) {
+        skipped.push({ file, why: 'host capability cannot be probed cheaply (see reason)' })
+        continue
+      }
+      const missing = entry.requiredProbes.filter((probe) => !probes[probe])
+      if (missing.length > 0) {
+        skipped.push({ file, why: `host lacks ${missing.map((probe) => `"${probe}"`).join(', ')}` })
+        continue
+      }
+      // Every probe now passes: the suite must run again instead of staying quarantined.
+      run.push(file)
       continue
     }
-    if (entry.kind === 'fixture') {
-      skipped.push({ file, kind: entry.kind, why: 'known red test' })
-      continue
-    }
-    // An environment entry whose probe now passes: the suite must run again.
-    run.push(file)
+
+    skipped.push({ file, why: `known red test (${entry.kind})` })
   }
 
   for (const [file, entry] of entries) {
     if (typeof entry.reviewBy === 'string' && entry.reviewBy < todayIso()) {
-      stale.push(file)
+      stale.push(`${file} — reviewBy ${entry.reviewBy} has passed`)
     }
-    if (entry.scope === 'main' && !files.includes(file)) {
-      stale.push(`${file} (no longer exists)`)
+    if ((entry.scope ?? 'main') === 'main' && !files.includes(file)) {
+      stale.push(`${file} — file no longer exists`)
     }
   }
 
@@ -106,12 +136,8 @@ function resolvePlan(entries) {
 
 function printPlan(plan) {
   console.log(`Gate plan: ${plan.run.length} suite(s) to run, ${plan.skipped.length} skipped.`)
-  for (const item of plan.skipped) {
-    console.log(`  skip ${item.file} — ${item.why}`)
-  }
-  for (const item of plan.stale) {
-    console.log(`  STALE known-failure entry: ${item}`)
-  }
+  for (const item of plan.skipped) console.log(`  skip ${item.file} — ${item.why}`)
+  for (const item of plan.stale) console.log(`  STALE known-failure entry: ${item}`)
   console.log(`  probes: ${JSON.stringify(probes)}`)
 }
 
@@ -132,9 +158,7 @@ if (selected.length === 0) {
 
 printPlan(plan)
 if (plan.stale.length > 0) {
-  console.error(
-    '\nKnown-failure entries are stale: fix the cause and delete the entry, or update reviewBy.'
-  )
+  console.error('\nKnown-failure entries are stale: fix the cause and delete the entry, or update reviewBy.')
   process.exit(1)
 }
 

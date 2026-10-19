@@ -1,47 +1,230 @@
 {
   "$comment": [
-    "Tests that cannot pass as-is. Every entry must say WHY in 'kind' terms:",
-    "kind=environment  -> the test needs a host capability this runner does not have;",
-    "                      the gate re-checks the probe at runtime and only skips when the",
-    "                      capability is really missing, so a normal dev machine still runs it.",
-    "kind=fixture      -> a real red test kept honest by an owner and a review date.",
-    "Remove an entry as soon as the underlying cause is fixed; the gate fails on stale entries."
+    "Suites that cannot pass without a host capability. 'profiles' holds the shared",
+    "explanation; 'entries' only name files and the profile they belong to.",
+    "kind=environment entries are re-checked on every run: when the probes succeed the",
+    "suite runs again with no edit, so a quarantine cannot hide a working test.",
+    "alwaysSkip marks a capability that cannot be probed cheaply; reviewBy is then the",
+    "only thing forcing a re-check.",
+    "kind=fixture entries are real red tests: they stay skipped until someone fixes the",
+    "cause, and reviewBy makes the entry fail the gate once it is overdue."
   ],
+  "profiles": {
+    "rpc-launch": {
+      "kind": "environment",
+      "probes": [
+        "ps",
+        "flock"
+      ],
+      "owner": "engine / RPC",
+      "reviewBy": "2026-11-18",
+      "reason": "These suites execute the real RPC launch wrapper, which takes the run lock with flock and proves the launch process is its own group leader with 'ps -o pgid='. A host without the flock binary (stock macOS) or without permission to call ps cannot run them. Verified on 2026-10-19: with flock/ps shims on PATH these suites pass, and the only one that still needs a real flock is engine-rpc-run-guard.test.ts, because it tests lock contention and TERM/KILL takeover."
+    },
+    "electron-sandbox": {
+      "kind": "environment",
+      "owner": "renderer / notebook",
+      "reviewBy": "2026-11-18",
+      "alwaysSkip": true,
+      "reason": "The suite boots a real Electron BrowserWindow. Restricted runners reject it with 'sandbox initialization failed: Operation not permitted' before any assertion runs, so the failure says nothing about the editor code."
+    },
+    "real-ssh-server": {
+      "kind": "environment",
+      "owner": "engine / SSH",
+      "reviewBy": "2026-11-18",
+      "alwaysSkip": true,
+      "reason": "The suite connects to a real OpenSSH server to exercise host-key trust. Without a reachable server it fails in under 200ms with RemoteSshConnectionError/network_unreachable, never reaching the assertion under test."
+    },
+    "pty": {
+      "kind": "environment",
+      "owner": "terminal / remote",
+      "reviewBy": "2026-11-18",
+      "alwaysSkip": true,
+      "reason": "The suite allocates a real PTY through the terminal worker. Restricted runners reject it with 'failed to openpty: Operation not permitted' (EPERM) before the ssh argv and resize assertions run."
+    },
+    "concurrency-sensitive": {
+      "kind": "environment",
+      "owner": "wrappers / jobs",
+      "reviewBy": "2026-11-01",
+      "alwaysSkip": true,
+      "reason": "Passes 26/26 when run alone (checked twice on 2026-10-19) but fails inside the full run at --test-concurrency=4 after ~19s, so the suite is not isolated from other suites' load. Re-run it alone before trusting a green gate; the real fix is test isolation, not a skip."
+    }
+  },
   "entries": [
     {
       "file": "tests/t14production-child-controls.test.ts",
-      "scope": "main",
-      "kind": "environment",
-      "probe": "ps",
-      "owner": "engine / RPC",
-      "reviewBy": "2026-11-18",
-      "reason": "The production launcher verifies process-group leadership with /bin/ps. Restricted runners reject it, so the child reports 'phi-run: /bin/ps: Operation not permitted' plus PHI_LAUNCH:NOT_GROUP_LEADER before any assertion runs."
+      "profile": "rpc-launch"
     },
     {
       "file": "tests/engine-facade-checkpoint.test.ts",
-      "scope": "main",
-      "kind": "environment",
-      "probe": "ps",
-      "owner": "engine / RPC",
-      "reviewBy": "2026-11-18",
-      "reason": "Same production launcher dependency on /bin/ps: 'Composition CLI failed: phi-run: /bin/ps: Operation not permitted'."
+      "profile": "rpc-launch"
     },
     {
       "file": "tests/engine-facade-child-composition.test.ts",
-      "scope": "main",
-      "kind": "environment",
-      "probe": "ps",
-      "owner": "engine / RPC",
-      "reviewBy": "2026-11-18",
-      "reason": "Same production launcher dependency on /bin/ps. Also the slowest suite (tens of real child processes), so it belongs to the slow tier even on a capable host."
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-child-resources.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-compaction.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-desktop-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-maintenance-regressions.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-metadata.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-prompt-context.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-routing-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-routing-regressions.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-selected-cleanup.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-facade-selection.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-cursor-child-recovery.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-desktop-mcp-cli.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-desktop-tools-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-desktop-websearch-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-metadata-projection.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-native-wire-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-persistent-launcher.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-real-world-shapes.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-remote-library-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-run-guard.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-effects.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-generation.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-host-fatal.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-host-policy.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-image.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-native.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-security.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition-shake.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-composition.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-runtime-host-policy-terminal.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-t15-recovery-integration.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/engine-rpc-xdev-host-tools.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/remote-r8.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/remote-startup-command-ceiling.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/workspace-host-runtime-root.test.ts",
+      "profile": "rpc-launch"
+    },
+    {
+      "file": "tests/notebook-editor-retention.test.ts",
+      "profile": "electron-sandbox"
+    },
+    {
+      "file": "tests/remote-ssh-real-identity.test.ts",
+      "profile": "real-ssh-server"
     },
     {
       "file": "tests/package-content/connector-catalog.test.ts",
-      "scope": "packages",
       "kind": "fixture",
+      "scope": "packages",
       "owner": "content / connectors",
       "reviewBy": "2026-11-01",
       "reason": "The curated connector directory now lists 13 services while the test still asserts the original 4. This is a real red test, not an environment problem: update the expectation or the fixture."
+    },
+    {
+      "file": "tests/remote-terminal-pty.test.ts",
+      "profile": "pty"
+    },
+    {
+      "file": "tests/wrapper-job-manager-remote.test.ts",
+      "profile": "concurrency-sensitive"
     }
   ]
 }

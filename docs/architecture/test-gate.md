@@ -21,16 +21,21 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 
 ## 已知失败清单
 
-登记文件:`scripts/test-known-failures.json`。每条必须包含:
+登记文件:`scripts/test-known-failures.json`。结构分两层:
+
+- `profiles`:共享同一成因的一组套件的说明(原因、负责模块、复核日期、需要的探测项)。
+- `entries`:只写文件路径与所属 profile;真实红灯条目直接内联自己的字段。
+
+每个 profile / 条目必须包含:
 
 | 字段 | 含义 |
 | --- | --- |
-| `file` | 测试文件路径,顶层 `tests/*.test.ts` |
 | `kind` | `environment`(宿主能力缺失)或 `fixture`(真实红灯) |
-| `probe` | `kind=environment` 时的探测项,目前支持 `ps` |
+| `probes` | `kind=environment` 时需要的探测项数组,目前支持 `ps`、`flock` |
+| `alwaysSkip` | `kind=environment` 且能力无法廉价探测时置 true,跳过依据写进 `reason` |
 | `owner` | 负责清理的模块 |
 | `reviewBy` | 复核日期,过期会被门判定为 stale 并**失败** |
-| `reason` | 具体现象,必须可复现 |
+| `reason` | 具体现象与判定依据,必须可复现 |
 
 三类行为:
 
@@ -42,19 +47,30 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 
 ## 环境探测
 
-| 探测项 | 方法 | 缺失时的现象 |
+| 探测项 | 方法 | 为什么需要 |
 | --- | --- | --- |
-| `ps` | `execFileSync('/bin/ps', ['-o','pid=','-p',pid])` | 生产启动器报 `phi-run: /bin/ps: Operation not permitted` 与 `PHI_LAUNCH:NOT_GROUP_LEADER`,断言在业务代码运行前就失败 |
+| `ps` | `execFileSync('/bin/ps', ['-o','pid=','-p',pid])` | RPC 启动包装脚本用 `ps -o pgid=` 证明自己是进程组组长,不是就 `exit 78` + `PHI_LAUNCH:NOT_GROUP_LEADER` |
+| `flock` | `sh -c 'command -v flock'` | 同一脚本用 `flock` 拿 run lock,拿不到就 `exit 75` + `PHI_LAUNCH:RUN_LOCK_BUSY` |
 
-2026-10-19 在当前开发环境实测:`ps` 不可用,于是 3 个套件被跳过
-(`t14production-child-controls`、`engine-facade-checkpoint`、`engine-facade-child-composition`)。
-这三者失败时业务代码尚未执行,属于环境限制而非回归。
+2026-10-19 在当前开发环境实测:两项都不可用(`ps` 被沙箱拒绝,`flock` 在 macOS 上默认不存在),
+于是 38 个真实启动套件被跳过。判定依据是一次对照实验:**给 PATH 补上 `flock`/`ps` 替身之后,
+这些套件全绿**;唯一仍需真实 `flock` 的是 `engine-rpc-run-guard.test.ts`,因为它测的是锁竞争与 TERM/KILL 接管。
+
+还有两类能力无法廉价探测,由 `alwaysSkip` 处理:
+
+| profile | 缺失的能力 | 现象 |
+| --- | --- | --- |
+| `electron-sandbox` | 能启动真实 Electron BrowserWindow | `sandbox initialization failed: Operation not permitted`(`notebook-editor-retention`) |
+| `real-ssh-server` | 可达的真实 OpenSSH 服务器 | `RemoteSshConnectionError: network_unreachable`,200ms 内失败(`remote-ssh-real-identity`) |
+
+macOS 开发者想本地运行这些套件:`brew install flock`,并确保 `ps` 未被安全策略禁用。
+Linux 服务器(远端运行时的真实目标)两者都自带。
 
 ## 分级
 
 | 层 | 内容 | 期望时长 |
 | --- | --- | --- |
-| 快档 = `test:gate` | 881 个顶层套件,排除已知失败 | 分钟级 |
+| 快档 = `test:gate` | 844 个顶层套件,排除 40 个已知能力受限项 | 分钟级 |
 | 慢档 = `test` | 全量,含真实子进程套件 | 20 分钟以上,仅里程碑与交接 |
 
 ## 与整洁度方案的关系
