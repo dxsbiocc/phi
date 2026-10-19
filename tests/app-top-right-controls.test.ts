@@ -255,8 +255,11 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
   assert.match(appSource, /onTogglePanel=\{onToggleWorkspaceSidePanel\}/)
   assert.match(
-    appSource,
-    /toggleWorkspaceSidePanelModeForLayout\(current, mode, workspaceSidePanelCanSplit\)/
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/lib/app-shell/useWorkspaceSidePanel.ts'),
+      'utf8'
+    ),
+    /toggleWorkspaceSidePanelModeForLayout\(current, mode, canSplit\)/
   )
   assert.doesNotMatch(appSource, /showSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /workspaceSidePanelFullscreen/)
@@ -294,17 +297,22 @@ test('workspace file previews and chats can show the shared right side panel', (
   )
   assert.doesNotMatch(appSource, /activeChatView[\s\S]{0,900}<WorkspaceSidePanel/)
   assert.match(appSource, /label=\{appCopy\.resizeWorkspace\}/)
-  assert.match(
-    appSource,
-    /const \[workspaceSidePanelWidth, setWorkspaceSidePanelWidth\] = useState\(\s*workspaceSidePanelWidthDefault\s*\)/
+  const panelHookSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/lib/app-shell/useWorkspaceSidePanel.ts'),
+    'utf8'
   )
   assert.match(
-    appSource,
-    /workspaceSidePanelEffectiveWidth = workspaceSidePanelWidthForViewport\(\{[\s\S]{0,260}preferredWidth: workspaceSidePanelWidth[\s\S]{0,260}maximum: maxWorkspaceSidePanelWidth/
+    panelHookSource,
+    /const \[width, setWidth\] = useState\(defaultWorkspaceSidePanelWidth\)/
   )
   assert.match(
-    appSource,
-    /const startWidth = workspaceSidePanelWidth[\s\S]{0,300}setWorkspaceSidePanelWidth\(nextWidth\)/
+    panelHookSource,
+    /workspaceSidePanelWidthForViewport\(\{[\s\S]{0,200}preferredWidth: width[\s\S]{0,200}maximum: maxWorkspaceSidePanelWidth/
+  )
+  assert.match(panelHookSource, /beginSidePanelResize\(event, width, setWidth\)/)
+  assert.match(
+    panelHookSource,
+    /Math\.min\(maxWorkspaceSidePanelWidth, Math\.max\(minWorkspaceSidePanelWidth, startWidth - delta\)\)/
   )
   assert.doesNotMatch(appSource, /browserSidePanelWidth/)
   assert.doesNotMatch(
@@ -313,10 +321,10 @@ test('workspace file previews and chats can show the shared right side panel', (
   )
   assert.match(appSource, /maximized=\{workspaceSidePanelState\.maximized\}/)
   assert.match(appSource, /onCloseSlot=\{onCloseWorkspaceSidePanelSlot\}/)
-  assert.match(appSource, /onToggleMaximized=\{onToggleWorkspaceSidePanelMaximized\}/)
+  assert.match(appSource, /onToggleMaximized=\{toggleWorkspaceSidePanelMaximized\}/)
   assert.match(
-    appSource,
-    /workspaceSidePanelCanSplit = appViewportWidth >= 1200 && appViewportSize\.height >= 640/
+    panelHookSource,
+    /canSplit = viewport\.width >= splitViewportWidth && viewport\.height >= splitViewportHeight/
   )
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}treeRevision=/)
   assert.doesNotMatch(appSource, /<WorkspaceSidePanel[\s\S]{0,180}titlebarInsetEnd=/)

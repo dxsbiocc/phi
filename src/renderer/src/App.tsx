@@ -193,15 +193,8 @@ import {
 } from './lib/workspaceResourceTabs'
 import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib/workspaceSidebar'
 import type { ChatResourceMention } from './lib/chatResourceMentions'
-import {
-  closeWorkspaceSidePanelMode,
-  emptyWorkspaceSidePanelState,
-  openWorkspaceSidePanelMode,
-  toggleWorkspaceSidePanelMaximized,
-  toggleWorkspaceSidePanelModeForLayout,
-  workspaceSidePanelWidthForViewport,
-  type WorkspaceSidePanelMode
-} from './lib/workspaceSidePanelMode'
+import type { WorkspaceSidePanelMode } from './lib/workspaceSidePanelMode'
+import { useWorkspaceSidePanel } from './lib/app-shell/useWorkspaceSidePanel'
 import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
@@ -260,9 +253,6 @@ const ChatView = lazy(() => import('./features/chat/ChatView'))
 const AnalysisView = lazy(() => import('./features/analysis/AnalysisView'))
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
-const workspaceSidePanelWidthDefault = 340
-const minWorkspaceSidePanelWidth = 240
-const maxWorkspaceSidePanelWidth = 520
 const titlebarChromeHorizontalInset = '14px'
 
 function App(): React.JSX.Element {
@@ -816,28 +806,30 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
-  const [appViewportSize, setAppViewportSize] = useState(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight
-  }))
-  useEffect(() => {
-    const onResize = (): void =>
-      setAppViewportSize({ width: window.innerWidth, height: window.innerHeight })
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-  const appViewportWidth = appViewportSize.width
-  const workspaceSidePanelCanSplit = appViewportWidth >= 1200 && appViewportSize.height >= 640
-  const [workspaceSidePanelState, setWorkspaceSidePanelState] = useState(
-    emptyWorkspaceSidePanelState
-  )
+  const {
+    slots: workspaceSidePanelSlots,
+    state: workspaceSidePanelState,
+    collapsed: workspaceSidePanelCollapsed,
+    canSplit: workspaceSidePanelCanSplit,
+    overlay: workspaceSidePanelOverlay,
+    activeWidth: activeWorkspaceSidePanelWidth,
+    singleVisibleMode: responsiveSingleVisibleMode,
+    treeRevision: workspaceSidePanelTreeRevision,
+    open: openWorkspaceSidePanel,
+    close: closeWorkspaceSidePanel,
+    toggleForLayout: toggleWorkspaceSidePanelForLayout,
+    toggleMaximized: toggleWorkspaceSidePanelMaximized,
+    refreshTree: refreshWorkspaceSidePanelTree,
+    startResize: onStartWorkspaceSidePanelResize
+  } = useWorkspaceSidePanel({
+    navigationWidth: activityBarWidth + (isSidebarOpen ? sidebarWidth : 0)
+  })
   const [requestedConnectorJobId, setRequestedConnectorJobId] = useState<string | null>(null)
   const [requestedBackgroundJobKey, setRequestedBackgroundJobKey] = useState<string | null>(null)
   const [requestedTerminalInput, setRequestedTerminalInput] = useState<{
     id: string
     text: string
   } | null>(null)
-  const workspaceSidePanelSlots = workspaceSidePanelState.slots
   const browserSlotVisible =
     workspaceSidePanelSlots.includes('browser') &&
     (workspaceSidePanelState.maximized === null ||
@@ -845,9 +837,6 @@ function App(): React.JSX.Element {
     (workspaceSidePanelSlots.length === 1 ||
       workspaceSidePanelCanSplit ||
       workspaceSidePanelState.active === 'browser')
-  const openWorkspaceSidePanel = useCallback((mode: WorkspaceSidePanelMode): void => {
-    setWorkspaceSidePanelState((current) => openWorkspaceSidePanelMode(current, mode))
-  }, [])
   const openBrowserPanelFromRequest = useCallback((): void => {
     openWorkspaceSidePanel('browser')
   }, [openWorkspaceSidePanel])
@@ -903,8 +892,8 @@ function App(): React.JSX.Element {
   }, [activePhiSessionId, activeSessionGeneration, browserLinkOpeningCoordinator])
   const closeBrowserPanelForTrustedOverlay = useCallback((): void => {
     browserLinkOpeningCoordinator.invalidate()
-    setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, 'browser'))
-  }, [browserLinkOpeningCoordinator])
+    closeWorkspaceSidePanel('browser')
+  }, [browserLinkOpeningCoordinator, closeWorkspaceSidePanel])
   const handleBrowserTrustedOverlayFailure = useCallback((): void => {
     showSnackbar(appCopy.dialogOpenFailed)
   }, [showSnackbar])
@@ -976,27 +965,6 @@ function App(): React.JSX.Element {
     },
     [cancelBrowserTrustedOverlay, openLocalTrustedOverlay, setIsSessionSearchOpen]
   )
-  const workspaceSidePanelCollapsed = workspaceSidePanelSlots.length === 0
-  const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
-    workspaceSidePanelWidthDefault
-  )
-  const workspaceSidePanelEffectiveWidth = workspaceSidePanelWidthForViewport({
-    preferredWidth: workspaceSidePanelWidth,
-    viewportWidth: appViewportWidth,
-    navigationWidth: activityBarWidth + (isSidebarOpen ? sidebarWidth : 0),
-    compactMinimum: minWorkspaceSidePanelWidth,
-    maximum: maxWorkspaceSidePanelWidth
-  })
-  const responsiveSingleVisibleMode =
-    !workspaceSidePanelCanSplit && workspaceSidePanelSlots.length > 1
-      ? (workspaceSidePanelState.active ?? workspaceSidePanelSlots.at(-1) ?? null)
-      : null
-  const workspaceSidePanelOverlay =
-    appViewportWidth < 1100 || workspaceSidePanelEffectiveWidth < minWorkspaceSidePanelWidth
-  const activeWorkspaceSidePanelWidth = workspaceSidePanelOverlay
-    ? Math.min(workspaceSidePanelWidth, Math.max(0, appViewportWidth - 16))
-    : workspaceSidePanelEffectiveWidth
-  const [workspaceSidePanelTreeRevision, setWorkspaceSidePanelTreeRevision] = useState(0)
 
   const handleNotebookFileChangedEvent = useCallback(
     (change: AnalysisNotebookFileChange): void => {
@@ -2565,58 +2533,27 @@ function App(): React.JSX.Element {
     activeView === 'chat' || activeView === 'projects' || activeView === 'analysis'
   const isWorkspaceView = isChatWorkspaceView || isResourceWorkspaceView
   const isAnalysisWorkspaceView = activeView === 'analysis'
+  // Toggling a slot also cancels a pending browser link open, so the link does
+  // not steal the panel the user just asked for.
   const onToggleWorkspaceSidePanel = useCallback(
     (mode: WorkspaceSidePanelMode): void => {
       browserLinkOpeningCoordinator.invalidate()
-      setWorkspaceSidePanelState((current) =>
-        toggleWorkspaceSidePanelModeForLayout(current, mode, workspaceSidePanelCanSplit)
-      )
+      toggleWorkspaceSidePanelForLayout(mode)
     },
-    [browserLinkOpeningCoordinator, workspaceSidePanelCanSplit]
+    [browserLinkOpeningCoordinator, toggleWorkspaceSidePanelForLayout]
   )
-  const onCloseWorkspaceSidePanelSlot = useCallback((mode: WorkspaceSidePanelMode): void => {
-    setWorkspaceSidePanelState((current) => closeWorkspaceSidePanelMode(current, mode))
-    window.requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLButtonElement>(`[data-phi-workspace-panel-toggle="${mode}"]`)
-        ?.focus()
-    })
-  }, [])
-  const onToggleWorkspaceSidePanelMaximized = useCallback((mode: WorkspaceSidePanelMode): void => {
-    setWorkspaceSidePanelState((current) => toggleWorkspaceSidePanelMaximized(current, mode))
-  }, [])
-  const onRefreshWorkspaceSidePanel = useCallback((): void => {
-    setWorkspaceSidePanelTreeRevision((value) => value + 1)
-  }, [])
-  const onStartWorkspaceSidePanelResize = useCallback(
-    (event: MouseEvent<HTMLDivElement>): void => {
-      event.preventDefault()
-
-      const startX = event.clientX
-      const startWidth = workspaceSidePanelWidth
-      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
-        const delta = moveEvent.clientX - startX
-        const nextWidth = Math.min(
-          maxWorkspaceSidePanelWidth,
-          Math.max(minWorkspaceSidePanelWidth, startWidth - delta)
-        )
-        setWorkspaceSidePanelWidth(nextWidth)
-      }
-
-      const onMouseUp = (): void => {
-        document.removeEventListener('mousemove', onMouseMove)
-        document.removeEventListener('mouseup', onMouseUp)
-        document.body.style.cursor = ''
-        document.body.style.userSelect = ''
-      }
-
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-      document.addEventListener('mousemove', onMouseMove)
-      document.addEventListener('mouseup', onMouseUp)
+  const onCloseWorkspaceSidePanelSlot = useCallback(
+    (mode: WorkspaceSidePanelMode): void => {
+      closeWorkspaceSidePanel(mode)
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLButtonElement>(`[data-phi-workspace-panel-toggle="${mode}"]`)
+          ?.focus()
+      })
     },
-    [workspaceSidePanelWidth]
+    [closeWorkspaceSidePanel]
   )
+  const onRefreshWorkspaceSidePanel = refreshWorkspaceSidePanelTree
   const activeSession = activeSessionPath
     ? (sessions.find((session) =>
         activePhiSessionId
@@ -2643,7 +2580,7 @@ function App(): React.JSX.Element {
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      setWorkspaceSidePanelTreeRevision((value) => value + 1)
+      refreshWorkspaceSidePanelTree()
       const currentScope = getActiveRemoteProject()
       if (
         filePreview?.status === 'error' &&
@@ -2665,7 +2602,8 @@ function App(): React.JSX.Element {
     activeRemoteConnection?.phase,
     filePreview,
     getActiveRemoteProject,
-    loadFilePreview
+    loadFilePreview,
+    refreshWorkspaceSidePanelTree
   ])
   const activeRemoteFileScope = useMemo(
     () =>
@@ -2759,7 +2697,7 @@ function App(): React.JSX.Element {
     if (typeof rendererApi.onRemoteProjectUploadsChanged !== 'function') return undefined
     return rendererApi.onRemoteProjectUploadsChanged((job) => {
       if (job.status !== 'completed') return
-      setWorkspaceSidePanelTreeRevision((value) => value + 1)
+      refreshWorkspaceSidePanelTree()
       const renamed = job.files.filter((file) => file.resolution === 'renamed')
       if (renamed.length > 0) {
         const names = renamed
@@ -2770,7 +2708,7 @@ function App(): React.JSX.Element {
         showSnackbar(appCopy.uploadRenamed(renamed.length, names), 'info')
       }
     })
-  }, [rendererApi, showSnackbar])
+  }, [refreshWorkspaceSidePanelTree, rendererApi, showSnackbar])
   const remoteFileIdentity =
     activeProjectLocation?.kind === 'ssh'
       ? `${activeProjectId ?? ''}:${activeRemoteFileScope?.hostAlias ?? ''}:${activeProjectLocation.canonicalRoot}`
@@ -4927,7 +4865,7 @@ function App(): React.JSX.Element {
                 singleVisibleMode={responsiveSingleVisibleMode}
                 onCloseSlot={onCloseWorkspaceSidePanelSlot}
                 onRefreshJobs={() => void refreshBackgroundJobs()}
-                onToggleMaximized={onToggleWorkspaceSidePanelMaximized}
+                onToggleMaximized={toggleWorkspaceSidePanelMaximized}
                 renderSlot={(mode, slotContext) => {
                   if (mode === 'jobs') {
                     return (
