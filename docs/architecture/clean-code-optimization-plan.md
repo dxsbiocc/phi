@@ -251,6 +251,11 @@ Clean Code 反对重复,但同样反对为了 DRY 制造错误抽象。只处理
 
 ---
 
+## 4.5 执行状态
+
+App shell 拆分正在进行,进度、剩余切片、踩坑记录与「新会话如何接手」都在
+[app-shell-refactor-handoff.md](app-shell-refactor-handoff.md)。本文档保留原始方案与目标,不随执行滚动更新。
+
 ## 5. 度量看板(前后对照)
 
 | 指标                                  | 现状         | 目标           | 采集方式   |
