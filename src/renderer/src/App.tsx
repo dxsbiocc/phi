@@ -47,15 +47,12 @@ import type {
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import {
-  TopRightControls,
-  titlebarChromeIconButtonSize
-} from './components/app-shell/TopRightControls'
-import {
   WorkspaceFileHeader,
   WorkspaceResourceHeader,
   titlebarTrailingToggleChromeReserve
 } from './components/app-shell/WorkspaceTitlebar'
 import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
+import { AppWindowChrome } from './components/app-shell/AppWindowChrome'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import {
@@ -66,8 +63,6 @@ import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
-import MacWindowControls from './components/MacWindowControls'
-import WindowNavigationControls from './components/WindowNavigationControls'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
 import {
@@ -221,8 +216,6 @@ import type {
   SkillSummary
 } from './types'
 
-const titlebarChromeTopOffset = `${(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize) / 2}px`
-
 function isWorkspaceFileWorkspaceTab(
   tab: WorkspaceTab | null | undefined
 ): tab is WorkspaceFileWorkspaceTab {
@@ -253,7 +246,6 @@ const ChatView = lazy(() => import('./features/chat/ChatView'))
 const AnalysisView = lazy(() => import('./features/analysis/AnalysisView'))
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
-const titlebarChromeHorizontalInset = '14px'
 
 function App(): React.JSX.Element {
   const uiLanguage = useUiLanguage()
@@ -4929,61 +4921,21 @@ function App(): React.JSX.Element {
           </>
         ) : null}
 
-        {/* App chrome renders after view titlebars so Electron drag regions cannot swallow clicks. */}
-        {isMac && (
-          <Box
-            data-phi-window-top-left-chrome="true"
-            sx={{
-              position: 'absolute',
-              top: titlebarChromeTopOffset,
-              left: `${chromeLayout.topLeftChromeInset}px`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: `${chromeLayout.topLeftChromeGap}px`,
-              pointerEvents: 'auto',
-              zIndex: 30,
-              WebkitAppRegion: 'no-drag'
-            }}
-          >
-            {chromeLayout.showMacWindowControls ? (
-              <MacWindowControls
-                onClose={() => void rendererApi.closeWindow()}
-                onMinimize={() => void rendererApi.minimizeWindow()}
-                onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
-              />
-            ) : null}
-            <WindowNavigationControls
-              isSidebarOpen={isSidebarOpen}
-              onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
-              onOpenSessionSearch={() => setSessionSearchOpenWithBrowserGate(true)}
-            />
-          </Box>
-        )}
-        <Box
-          data-phi-workspace-top-right-chrome="true"
-          sx={{
-            position: 'absolute',
-            top: titlebarChromeTopOffset,
-            right:
-              workspaceSidePanelSlots.length === 0
-                ? titlebarChromeHorizontalInset
-                : `calc(${activeWorkspaceSidePanelWidth}px + ${workspaceSidePanelOverlay ? 0 : 1}px + ${titlebarChromeHorizontalInset})`,
-            display: 'flex',
-            alignItems: 'center',
-            pointerEvents: 'auto',
-            zIndex: 30,
-            WebkitAppRegion: 'no-drag'
-          }}
-        >
-          <TopRightControls
-            showSidePanelRefresh={false}
-            sidePanelRefreshDisabled={false}
-            showSidePanelButtons
-            activePanels={workspaceSidePanelSlots}
-            onRefreshSidePanel={onRefreshWorkspaceSidePanel}
-            onTogglePanel={onToggleWorkspaceSidePanel}
-          />
-        </Box>
+        <AppWindowChrome
+          isMac={isMac}
+          chromeLayout={chromeLayout}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen((value) => !value)}
+          onOpenSessionSearch={() => setSessionSearchOpenWithBrowserGate(true)}
+          onCloseWindow={() => void rendererApi.closeWindow()}
+          onMinimizeWindow={() => void rendererApi.minimizeWindow()}
+          onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
+          activePanels={workspaceSidePanelSlots}
+          sidePanelWidth={activeWorkspaceSidePanelWidth}
+          sidePanelOverlay={workspaceSidePanelOverlay}
+          onRefreshSidePanel={onRefreshWorkspaceSidePanel}
+          onTogglePanel={onToggleWorkspaceSidePanel}
+        />
 
         {isSessionSearchOpen && (
           <SessionSearchPanel

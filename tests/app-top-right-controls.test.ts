@@ -197,61 +197,67 @@ test('workspace sessions and resources share the same tab strip', () => {
 
 test('workspace top-right controls are app-level chrome, not notebook-only content', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const chromeSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/AppWindowChrome.tsx'),
+    'utf8'
+  )
+  const controlsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
+    'utf8'
+  )
 
   assert.match(
     appSource,
     /import \{ WINDOW_TITLEBAR_HEIGHT, windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/
   )
-  assert.match(appSource, /const titlebarChromeHorizontalInset = '14px'/)
-  // The size constant moved with the component; App only imports it for the offsets.
-  const controlsSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
-    'utf8'
-  )
-  assert.match(
-    appSource,
-    /import \{[\s\S]{0,80}titlebarChromeIconButtonSize[\s\S]{0,80}\} from '\.\/components\/app-shell\/TopRightControls'/
-  )
+  // The titlebar offsets now live with the chrome that uses them.
+  assert.match(chromeSource, /const titlebarChromeHorizontalInset = '14px'/)
   assert.match(controlsSource, /export const titlebarChromeIconButtonSize = 28/)
   assert.match(
-    appSource,
+    chromeSource,
     /const titlebarChromeTopOffset = `\$\{\(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize\) \/ 2\}px`/
   )
   assert.match(controlsSource, /width: titlebarChromeIconButtonSize/)
   assert.match(controlsSource, /height: titlebarChromeIconButtonSize/)
-  assert.match(appSource, /pointerEvents: 'auto'[\s\S]{0,120}WebkitAppRegion: 'no-drag'/)
-  assert.match(appSource, /data-phi-workspace-top-right-chrome="true"/)
-  const topRightChromeIndex = appSource.indexOf('data-phi-workspace-top-right-chrome="true"')
+  assert.match(chromeSource, /pointerEvents: 'auto'[\s\S]{0,120}WebkitAppRegion: 'no-drag'/)
+  assert.match(chromeSource, /data-phi-workspace-top-right-chrome="true"/)
+
+  // Chrome renders as one block after every draggable workspace layer.
+  const chromeIndex = appSource.indexOf('<AppWindowChrome')
   const workspaceTitlebarIndex = appSource.indexOf(
     "WebkitAppRegion: 'drag'",
     appSource.indexOf('{showWorkspaceTitlebar ? (')
   )
   const workspaceSidePanelIndex = appSource.indexOf('data-phi-workspace-side-panel-shell="true"')
+  assert.ok(chromeIndex >= 0, 'expected App.tsx to render the chrome block')
   assert.ok(
-    topRightChromeIndex > workspaceTitlebarIndex,
+    chromeIndex > workspaceTitlebarIndex,
     'top-right controls must render after workspace drag titlebars so clicks are not swallowed'
   )
   assert.ok(
-    topRightChromeIndex > workspaceSidePanelIndex,
+    chromeIndex > workspaceSidePanelIndex,
     'top-right controls must render after the workspace side panel shell so they stay clickable on top'
   )
   assert.doesNotMatch(appSource, /isChatWorkspaceView \? \([\s\S]{0,400}<TopRightControls/)
+
+  assert.match(chromeSource, /left: `\$\{layout\.topLeftChromeInset\}px`/)
   assert.match(
-    appSource,
-    /left: `\$\{chromeLayout\.topLeftChromeInset\}px`[\s\S]{0,500}<MacWindowControls/
+    chromeSource,
+    /data-phi-window-top-left-chrome="true"[\s\S]{0,900}<MacWindowControls/
   )
-  assert.match(appSource, /position: 'absolute'[\s\S]{0,800}<TopRightControls/)
-  assert.match(appSource, /top: titlebarChromeTopOffset[\s\S]{0,800}<TopRightControls/)
+  assert.match(chromeSource, /position: 'absolute'/)
   assert.match(
-    appSource,
-    /right:\s*workspaceSidePanelSlots\.length === 0[\s\S]{0,160}\? titlebarChromeHorizontalInset[\s\S]{0,220}activeWorkspaceSidePanelWidth/
+    chromeSource,
+    /data-phi-workspace-top-right-chrome="true"[\s\S]{0,700}<TopRightControls/
   )
+  assert.match(chromeSource, /top: titlebarChromeTopOffset/)
   assert.match(
-    appSource,
-    /activeWorkspaceSidePanelWidth[\s\S]{0,120}workspaceSidePanelOverlay \? 0 : 1[\s\S]{0,100}titlebarChromeHorizontalInset/
+    chromeSource,
+    /right: sidePanelOpen[\s\S]{0,180}\? `calc\(\$\{sidePanelWidth\}px[\s\S]{0,120}: titlebarChromeHorizontalInset/
   )
-  assert.match(appSource, /showSidePanelRefresh=\{false\}/)
-  assert.match(appSource, /sidePanelRefreshDisabled=\{false\}/)
+  assert.match(chromeSource, /sidePanelOverlay \? 0 : 1/)
+  assert.match(chromeSource, /showSidePanelRefresh=\{false\}/)
+  assert.match(chromeSource, /sidePanelRefreshDisabled=\{false\}/)
   assert.match(appSource, /onRefreshSidePanel=\{onRefreshWorkspaceSidePanel\}/)
   assert.match(appSource, /onTogglePanel=\{onToggleWorkspaceSidePanel\}/)
   assert.match(
@@ -266,18 +272,12 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.doesNotMatch(appSource, /onToggleWorkspaceSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /FiMaximize2/)
   assert.doesNotMatch(appSource, /FiMinimize2/)
-  assert.match(appSource, /<TopRightControls/)
-  assert.match(
-    readFileSync(
-      resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
-      'utf8'
-    ),
-    /const RefreshIcon = GoSync/
-  )
+  assert.match(chromeSource, /<TopRightControls/)
+  assert.match(controlsSource, /const RefreshIcon = GoSync/)
   assert.doesNotMatch(appSource, /GoSidebarCollapse/)
   assert.doesNotMatch(appSource, /GoSidebarExpand/)
   assert.doesNotMatch(appSource, /TbLayoutSidebarRight/)
-  assert.doesNotMatch(appSource, /<TopRightControls[\s\S]{0,400}onMinimize=/)
+  assert.doesNotMatch(chromeSource, /<TopRightControls[\s\S]{0,400}onMinimize=/)
   assert.doesNotMatch(appSource, /FiMinus/)
   assert.doesNotMatch(appSource, /topRightControls=\{\(chromeState\) =>/)
 })

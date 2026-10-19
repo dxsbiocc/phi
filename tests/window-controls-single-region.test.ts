@@ -24,58 +24,65 @@ test('MacWindowControls and WindowNavigationControls do not declare their own po
   }
 })
 
-test('App.tsx wraps both window-control clusters in exactly one shared no-drag boundary', () => {
-  const appSource = readSource('src/renderer/src/App.tsx')
+test('the window chrome wraps both clusters in exactly one shared no-drag boundary', () => {
+  const chromeSource = readSource('src/renderer/src/components/app-shell/AppWindowChrome.tsx')
 
-  const clusterMatch = appSource.match(
+  const clusterMatch = chromeSource.match(
     /\{isMac && \([\s\S]*?data-phi-window-top-left-chrome="true"[\s\S]*?<MacWindowControls[\s\S]*?<WindowNavigationControls[\s\S]*?\)\}/
   )
   assert.ok(clusterMatch, 'expected the isMac-gated window-controls JSX block')
-  const cluster = clusterMatch![0]
 
-  const noDragCount = (cluster.match(/WebkitAppRegion:\s*'no-drag'/g) ?? []).length
-  assert.equal(noDragCount, 1, 'exactly one no-drag boundary should wrap the whole cluster')
-  assert.match(cluster, /position:\s*'absolute'/)
-  assert.match(cluster, /pointerEvents:\s*'auto'/)
-  assert.match(cluster, /zIndex:\s*30/)
+  // One shared style object is the single no-drag boundary; both clusters spread it.
+  const noDragCount = (chromeSource.match(/WebkitAppRegion:\s*'no-drag'/g) ?? []).length
+  assert.equal(noDragCount, 1, 'exactly one no-drag boundary should exist for both clusters')
+  assert.match(chromeSource, /const chromeClusterSx = \{[\s\S]*?WebkitAppRegion: 'no-drag'/)
+  assert.equal(
+    (chromeSource.match(/\.\.\.chromeClusterSx/g) ?? []).length,
+    2,
+    'both the left and right cluster styles must reuse the shared boundary'
+  )
+  assert.match(chromeSource, /position:\s*'absolute'/)
+  assert.match(chromeSource, /pointerEvents:\s*'auto'/)
+  assert.match(chromeSource, /zIndex:\s*30/)
 })
 
-test('App.tsx renders top-left chrome after draggable workspace layers', () => {
+test('App.tsx renders the window chrome after draggable workspace layers', () => {
   const appSource = readSource('src/renderer/src/App.tsx')
 
-  const topLeftChromeIndex = appSource.indexOf('data-phi-window-top-left-chrome="true"')
+  const chromeIndex = appSource.indexOf('<AppWindowChrome')
   const activityBarIndex = appSource.indexOf('<AppActivityBar')
   const workspaceSidebarIndex = appSource.indexOf('<AppWorkspaceSidebar')
   const workspaceFileHeaderIndex = appSource.indexOf('<WorkspaceFileHeader')
   const workspaceSidePanelIndex = appSource.indexOf('data-phi-workspace-side-panel-shell="true"')
 
-  assert.ok(topLeftChromeIndex >= 0, 'expected a top-left chrome marker')
+  assert.ok(chromeIndex >= 0, 'expected the chrome block to be rendered')
   assert.ok(
-    topLeftChromeIndex > activityBarIndex,
-    'top-left controls must render after the activity bar to preserve hit testing'
+    chromeIndex > activityBarIndex,
+    'the chrome must render after the activity bar to preserve hit testing'
   )
   assert.ok(
-    topLeftChromeIndex > workspaceSidebarIndex,
-    'top-left controls must render after the workspace sidebar to preserve hit testing'
+    chromeIndex > workspaceSidebarIndex,
+    'the chrome must render after the workspace sidebar to preserve hit testing'
   )
   assert.ok(
-    topLeftChromeIndex > workspaceFileHeaderIndex,
-    'top-left controls must render after file headers so file-open drag regions cannot swallow clicks'
+    chromeIndex > workspaceFileHeaderIndex,
+    'the chrome must render after file headers so file-open drag regions cannot swallow clicks'
   )
   assert.ok(
-    topLeftChromeIndex > workspaceSidePanelIndex,
-    'top-left controls must render after the side panel shell so fullscreen panels cannot cover them'
+    chromeIndex > workspaceSidePanelIndex,
+    'the chrome must render after the side panel shell so fullscreen panels cannot cover it'
   )
 })
 
 test('App.tsx removes macOS traffic lights in true fullscreen but keeps navigation controls', () => {
   const appSource = readSource('src/renderer/src/App.tsx')
+  const chromeSource = readSource('src/renderer/src/components/app-shell/AppWindowChrome.tsx')
 
   assert.match(appSource, /const isWindowFullscreen = useWindowFullscreen\(rendererApi, isMac\)/)
   assert.match(appSource, /fullscreen: isWindowFullscreen/)
   assert.match(
-    appSource,
+    chromeSource,
     /chromeLayout\.showMacWindowControls \? \([\s\S]{0,220}<MacWindowControls[\s\S]{0,500}: null\}[\s\S]{0,160}<WindowNavigationControls/
   )
-  assert.match(appSource, /gap: `\$\{chromeLayout\.topLeftChromeGap\}px`/)
+  assert.match(chromeSource, /gap: `\$\{layout\.topLeftChromeGap\}px`/)
 })
