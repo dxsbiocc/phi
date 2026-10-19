@@ -34,28 +34,28 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
 
 ## 2. 当前状态
 
-| 指标 | 值 |
-| --- | --- |
-| `App.tsx` | 4,803 行(`App()` 函数本体约 4,200 行) |
-| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 28 / 15 / 116 / 7 |
-| ESLint `--max-warnings` | 1,470 |
-| 测试门 | ≈7,070 例,0 失败,12 跳过 |
-| 主进程边界基线 | `index.ts` 13,002 行,234 通道,4 个超长文件(本次工作未触碰) |
+| 指标                                                            | 值                                                         |
+| --------------------------------------------------------------- | ---------------------------------------------------------- |
+| `App.tsx`                                                       | 4,803 行(`App()` 函数本体约 4,200 行)                      |
+| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 28 / 15 / 116 / 7                                          |
+| ESLint `--max-warnings`                                         | 1,470                                                      |
+| 测试门                                                          | ≈7,070 例,0 失败,12 跳过                                   |
+| 主进程边界基线                                                  | `index.ts` 13,002 行,234 通道,4 个超长文件(本次工作未触碰) |
 
 ### 已经抽出的模块(全部已合入)
 
-| 模块 | 行数 | 职责 |
-| --- | --- | --- |
-| `components/app-shell/TopRightControls.tsx` | 173 | 标题栏右侧的面板开关 |
-| `components/app-shell/WorkspaceTitlebar.tsx` | 315 | 文件/资源两种标签条 + header |
-| `components/app-shell/AppResizeSeparator.tsx` | 40 | 侧面板拖拽分隔条 |
-| `components/app-shell/AppWindowChrome.tsx` | 128 | 窗口 chrome 两簇(mac 交通灯 + 右侧开关) |
-| `lib/app-shell/useAppDialogs.ts` | 73 | 9 组对话框状态 |
-| `lib/app-shell/useWorkspaceSidebar.ts` | 63 | 7 组导航侧栏状态 |
-| `lib/app-shell/useWorkspaceSidePanel.ts` | 167 | 侧面板:槽位、宽度、停靠/浮层、拖拽改宽 |
-| `features/workspace/WorkspaceView.tsx` | 234 | workspace 主列的布局与内容槽位选择 |
-| `features/workspace/lib/workspaceViewMode.ts` | 28 | 内容槽位优先级(纯函数) |
-| `features/workspace/hooks/useWorkspaceTabNavigation.ts` | 356 | 标签选择/打开/关闭的语义 |
+| 模块                                                    | 行数 | 职责                                    |
+| ------------------------------------------------------- | ---- | --------------------------------------- |
+| `components/app-shell/TopRightControls.tsx`             | 173  | 标题栏右侧的面板开关                    |
+| `components/app-shell/WorkspaceTitlebar.tsx`            | 315  | 文件/资源两种标签条 + header            |
+| `components/app-shell/AppResizeSeparator.tsx`           | 40   | 侧面板拖拽分隔条                        |
+| `components/app-shell/AppWindowChrome.tsx`              | 128  | 窗口 chrome 两簇(mac 交通灯 + 右侧开关) |
+| `lib/app-shell/useAppDialogs.ts`                        | 73   | 9 组对话框状态                          |
+| `lib/app-shell/useWorkspaceSidebar.ts`                  | 63   | 7 组导航侧栏状态                        |
+| `lib/app-shell/useWorkspaceSidePanel.ts`                | 167  | 侧面板:槽位、宽度、停靠/浮层、拖拽改宽  |
+| `features/workspace/WorkspaceView.tsx`                  | 234  | workspace 主列的布局与内容槽位选择      |
+| `features/workspace/lib/workspaceViewMode.ts`           | 28   | 内容槽位优先级(纯函数)                  |
+| `features/workspace/hooks/useWorkspaceTabNavigation.ts` | 356  | 标签选择/打开/关闭的语义                |
 
 对应的测试:`tests/app-workspace-*.test.ts`、`tests/app-window-chrome.test.ts`、
 `tests/workspace-view-mode.test.ts`、`tests/workspace-tab-navigation.test.ts`。
@@ -118,13 +118,13 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
 
 `App.tsx` 现在还剩下五块。顺序按「依赖面从小到大」排列,不是按行数。
 
-| 顺序 | 切片 | 位置 | 估算 | 备注 |
-| --- | --- | --- | --- | --- |
-| 1 | 运行控制:`isBusy`/`isSendingMessage`/`compactingSessions`/`contextUsageRefreshKey` + 停止生成 + 队列 | 新 `features/chat/hooks/` 或 `lib/app-shell/` | ~300 | 依赖面清晰,和已完成的 hook 同构 |
-| 2 | 文件/笔记本打开链 | `features/file-preview/` | ~200 | `useWorkspaceFileActions` 已有基础,注意别和它重叠 |
-| 3 | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput` | `features/jobs/` 或 `lib/app-shell/` | ~120 | 三个同构的小状态对,可以一次做完 |
-| 4 | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39) | `features/chat/hooks/` | ~340 | 先拆函数再做 hook;复杂度是这个文件最高的 |
-| 5 | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试 | 看实际情况 | ~400 | 做完这步 APP 才可能接近 1,200 |
+| 顺序 | 切片                                                                                                 | 位置                                          | 估算 | 备注                                              |
+| ---- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---- | ------------------------------------------------- |
+| 1    | 运行控制:`isBusy`/`isSendingMessage`/`compactingSessions`/`contextUsageRefreshKey` + 停止生成 + 队列 | 新 `features/chat/hooks/` 或 `lib/app-shell/` | ~300 | 依赖面清晰,和已完成的 hook 同构                   |
+| 2    | 文件/笔记本打开链                                                                                    | `features/file-preview/`                      | ~200 | `useWorkspaceFileActions` 已有基础,注意别和它重叠 |
+| 3    | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput`              | `features/jobs/` 或 `lib/app-shell/`          | ~120 | 三个同构的小状态对,可以一次做完                   |
+| 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 先拆函数再做 hook;复杂度是这个文件最高的          |
+| 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 做完这步 APP 才可能接近 1,200                     |
 
 每完成一块,`App.tsx` 会降 100–300 行。**不要指望一次抽走很多**——JSX 只有 534 行,
 其余全是编排逻辑;这是前面几轮反复验证过的测量结论。
@@ -141,14 +141,14 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
 这些在 [clean-code-optimization-plan.md](clean-code-optimization-plan.md) 的 P1/P2 里,
 和 App 拆分**可以并行**,但不要同时开两条大改动的线。
 
-| 任务 | 现状 | 目标 | 入口 |
-| --- | --- | --- | --- |
-| 主进程 `index.ts` IPC 拆分 | 13,002 行、234 个 `ipcMain.handle` | ≤ 800 行,按域拆成注册模块 | 方案文档 step 2–5;先用 `scripts/check-main-boundaries.mjs --update` 冻结当前上限 |
-| 运行时上下文替换模块级 `let` | 24 个 | 主进程可隔离测试 | 方案 step 9 |
-| `tests/main-integration.test.ts` | 单文件数百个 `test()` | 按域拆 6–8 个文件 | 方案 step 10;该文件是 `eslint.config.mjs` 之外的独立风险 |
-| `MarkdownContent.tsx` / `NotebookCanvas.tsx` | 965 / 1,512 行 | 按解析/渲染/交互拆 | 方案 step 11 |
-| 设计线缺陷 | 见审计文档「分支状态」表 | OMP-05 事件 DTO、X-01 会话身份、主进程 IPC 拆分 | `design-defects-audit.md` |
-| 测试门抖动 | 偶发负载敏感失败 | 定位到具体套件 | `test-gate.md`;先找 `rpc-launch`/`pty` 之外的抖动用例 |
+| 任务                                         | 现状                               | 目标                                            | 入口                                                                             |
+| -------------------------------------------- | ---------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------- |
+| 主进程 `index.ts` IPC 拆分                   | 13,002 行、234 个 `ipcMain.handle` | ≤ 800 行,按域拆成注册模块                       | 方案文档 step 2–5;先用 `scripts/check-main-boundaries.mjs --update` 冻结当前上限 |
+| 运行时上下文替换模块级 `let`                 | 24 个                              | 主进程可隔离测试                                | 方案 step 9                                                                      |
+| `tests/main-integration.test.ts`             | 单文件数百个 `test()`              | 按域拆 6–8 个文件                               | 方案 step 10;该文件是 `eslint.config.mjs` 之外的独立风险                         |
+| `MarkdownContent.tsx` / `NotebookCanvas.tsx` | 965 / 1,512 行                     | 按解析/渲染/交互拆                              | 方案 step 11                                                                     |
+| 设计线缺陷                                   | 见审计文档「分支状态」表           | OMP-05 事件 DTO、X-01 会话身份、主进程 IPC 拆分 | `design-defects-audit.md`                                                        |
+| 测试门抖动                                   | 偶发负载敏感失败                   | 定位到具体套件                                  | `test-gate.md`;先找 `rpc-launch`/`pty` 之外的抖动用例                            |
 
 判优先级的原则:先做**能减少后续成本**的(主进程 IPC 拆分、棘轮护栏),
 再做**能减少认知负担**的(App 拆分),最后才是零散清理。
