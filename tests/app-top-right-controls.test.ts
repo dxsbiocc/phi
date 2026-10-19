@@ -5,7 +5,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
-import { TopRightControls } from '../src/renderer/src/App'
+import { TopRightControls } from '../src/renderer/src/components/app-shell/TopRightControls'
 import type { WorkspaceSidePanelMode } from '../src/renderer/src/lib/workspaceSidePanelMode'
 import { workspaceSidebarModeIsExpanded } from '../src/renderer/src/lib/workspaceSidebar'
 import { workspaceScopeLabelForCwd } from '../src/renderer/src/lib/workspaceScope'
@@ -61,14 +61,13 @@ test('workspace top-right controls place jobs, terminal, and browser side by sid
 })
 
 test('right-side buttons use Go icons and the left navigation color treatment', () => {
-  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
-  const controlsSource = appSource.slice(
-    appSource.indexOf('export function TopRightControls'),
-    appSource.indexOf('function WorkspaceFileTabs')
+  const controlsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
+    'utf8'
   )
 
   assert.match(
-    appSource,
+    controlsSource,
     /import \{ GoGlobe, GoStack, GoSync, GoTerminal \} from 'react-icons\/go'/
   )
   assert.match(controlsSource, /<GoStack aria-hidden focusable="false" size=\{20\}/)
@@ -200,13 +199,22 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
     /import \{ WINDOW_TITLEBAR_HEIGHT, windowChromeLayout \} from '\.\/lib\/windowChromeLayout'/
   )
   assert.match(appSource, /const titlebarChromeHorizontalInset = '14px'/)
-  assert.match(appSource, /const titlebarChromeIconButtonSize = 28/)
+  // The size constant moved with the component; App only imports it for the offsets.
+  const controlsSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
+    'utf8'
+  )
+  assert.match(
+    appSource,
+    /import \{[\s\S]{0,80}titlebarChromeIconButtonSize[\s\S]{0,80}\} from '\.\/components\/app-shell\/TopRightControls'/
+  )
+  assert.match(controlsSource, /export const titlebarChromeIconButtonSize = 28/)
   assert.match(
     appSource,
     /const titlebarChromeTopOffset = `\$\{\(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize\) \/ 2\}px`/
   )
-  assert.match(appSource, /width: titlebarChromeIconButtonSize/)
-  assert.match(appSource, /height: titlebarChromeIconButtonSize/)
+  assert.match(controlsSource, /width: titlebarChromeIconButtonSize/)
+  assert.match(controlsSource, /height: titlebarChromeIconButtonSize/)
   assert.match(appSource, /pointerEvents: 'auto'[\s\S]{0,120}WebkitAppRegion: 'no-drag'/)
   assert.match(appSource, /data-phi-workspace-top-right-chrome="true"/)
   const topRightChromeIndex = appSource.indexOf('data-phi-workspace-top-right-chrome="true"')
@@ -251,8 +259,14 @@ test('workspace top-right controls are app-level chrome, not notebook-only conte
   assert.doesNotMatch(appSource, /onToggleWorkspaceSidePanelFullscreen/)
   assert.doesNotMatch(appSource, /FiMaximize2/)
   assert.doesNotMatch(appSource, /FiMinimize2/)
-  assert.match(appSource, /GoSync/)
-  assert.match(appSource, /const RefreshIcon = GoSync/)
+  assert.match(appSource, /<TopRightControls/)
+  assert.match(
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/components/app-shell/TopRightControls.tsx'),
+      'utf8'
+    ),
+    /const RefreshIcon = GoSync/
+  )
   assert.doesNotMatch(appSource, /GoSidebarCollapse/)
   assert.doesNotMatch(appSource, /GoSidebarExpand/)
   assert.doesNotMatch(appSource, /TbLayoutSidebarRight/)
