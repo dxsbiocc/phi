@@ -78,7 +78,14 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
   assert.doesNotMatch(markup, /从上次停下的地方接着做/)
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   assert.match(appSource, /const showHomeWorkspace =/)
-  assert.match(appSource, /\{!showHomeWorkspace \? \(/)
+  assert.match(appSource, /hideTitle=\{showHomeWorkspace\}/)
+  assert.match(
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/features/workspace/WorkspaceView.tsx'),
+      'utf8'
+    ),
+    /\{hideTitle \? null : \(/
+  )
 
   assert.match(markup, /data-phi-home-primary-card="true"/)
   assert.match(markup, /继续最近的工作/)

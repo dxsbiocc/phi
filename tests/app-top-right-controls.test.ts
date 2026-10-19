@@ -122,6 +122,10 @@ test('analysis workspace skips the blank outer titlebar', () => {
     resolve(process.cwd(), 'src/renderer/src/components/app-shell/WorkspaceTitlebar.tsx'),
     'utf8'
   )
+  const viewSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/workspace/WorkspaceView.tsx'),
+    'utf8'
+  )
 
   assert.match(appSource, /const isAnalysisWorkspaceView = activeView === 'analysis'/)
   assert.match(
@@ -129,12 +133,14 @@ test('analysis workspace skips the blank outer titlebar', () => {
     /const showWorkspaceTitlebar =\s*!isAnalysisWorkspaceView && !isResourceWorkspaceView && !showWorkspaceTabs/
   )
   assert.doesNotMatch(appSource, /activeView !== 'analysis' \|\| Boolean\(filePreview\)/)
-  assert.match(appSource, /\{showWorkspaceTitlebar \? \(/)
+  // The titlebar switch now lives with the workspace layout.
+  assert.match(viewSource, /\{showTitlebar \? \(/)
+  assert.match(appSource, /showTitlebar=\{showWorkspaceTitlebar\}/)
   assert.match(titlebarSource, /data-phi-workspace-file-header="true"/)
   assert.match(titlebarSource, /data-phi-workspace-file-tabs="true"/)
   assert.match(titlebarSource, /borderRadius: '999px'/)
   assert.match(appSource, /layout="workspace"/)
-  assert.match(appSource, /workspaceFileTabs=\{workspaceFileTabs\}/)
+  assert.match(appSource, /tabs: workspaceFileTabs,/)
 })
 
 test('workspace sessions and resources share the same tab strip', () => {
@@ -160,9 +166,13 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(tabTypesSource, /export function visibleWorkspaceTabsForState/)
   assert.match(appSource, /workspaceFileTabKey\(tab\.path\)/)
   assert.match(appSource, /isWorkspaceFileWorkspaceTab\(tab\)/)
-  assert.match(appSource, /tabs=\{visibleWorkspaceTabs\}/)
-  assert.match(appSource, /onSelect=\{\(tab\) => \{[\s\S]{0,250}selectWorkspaceTab\(tab\)/)
-  assert.match(appSource, /onClose=\{onCloseWorkspaceTab\}/)
+  assert.match(appSource, /tabs: visibleWorkspaceTabs,/)
+  assert.match(appSource, /onSelect: onSelectWorkspaceTab,/)
+  assert.match(appSource, /onClose: onCloseWorkspaceTab,/)
+  assert.match(
+    appSource,
+    /const onSelectWorkspaceTab = useCallback\([\s\S]{0,200}closeWorkspaceSidebarPreview\(\)[\s\S]{0,80}selectWorkspaceTab\(tab\)/
+  )
   assert.match(
     appSource,
     /activeWorkspaceResourceTab\.kind === 'plugins'[\s\S]{0,500}<PhiPluginsView/
@@ -387,10 +397,7 @@ test('conversation tab and sidebar expose opposite companion layout actions', ()
 
   assert.match(appSource, /const onDockConversationToSidebar = useCallback/)
   assert.match(appSource, /const onRestoreConversationToMain = useCallback/)
-  assert.match(
-    appSource,
-    /onDockSessionTab=\{[\s\S]{0,160}onDockConversationToSidebar[\s\S]{0,80}\}/
-  )
+  assert.match(appSource, /onDockSessionTab:[\s\S]{0,160}onDockConversationToSidebar[\s\S]{0,60}/)
   assert.doesNotMatch(appSource, /<CompanionChatToggle[\s\S]{0,100}destination="sidebar"/)
   assert.match(appSource, /onRestoreConversationToMain: onRestoreConversationToMain/)
   assert.match(sidebarSource, /destination="tab"/)
@@ -486,8 +493,14 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
     titlebarSource,
     /pr: reserveTrailingChromeSpace \? titlebarTrailingToggleChromeReserve : 1\.5/
   )
-  assert.match(appSource, /leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/)
-  assert.match(appSource, /reserveTrailingChromeSpace=\{workspaceSidePanelCollapsed\}/)
+  assert.match(
+    readFileSync(
+      resolve(process.cwd(), 'src/renderer/src/features/workspace/WorkspaceView.tsx'),
+      'utf8'
+    ),
+    /leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/
+  )
+  assert.match(appSource, /sidePanelCollapsed=\{workspaceSidePanelCollapsed\}/)
 })
 
 test('collapsed-sidebar workspace titlebars keep their leading reserve with any workbench layout', () => {
@@ -506,16 +519,21 @@ test('collapsed-sidebar workspace titlebars keep their leading reserve with any 
     appSource,
     /const chromeLayout = windowChromeLayout\(\{\s*isMac,\s*sidebarOpen: isSidebarOpen,\s*fullscreen: isWindowFullscreen\s*\}\)/
   )
+  const viewSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/workspace/WorkspaceView.tsx'),
+    'utf8'
+  )
   assert.match(
-    appSource,
+    viewSource,
     /data-phi-workspace-titlebar="true"[\s\S]{0,180}height: WINDOW_TITLEBAR_HEIGHT/
   )
   assert.match(
-    appSource,
-    /data-phi-workspace-titlebar="true"[\s\S]{0,600}pl: `\$\{chromeLayout\.mainColumnTitlebarInset\}px`/
+    viewSource,
+    /data-phi-workspace-titlebar="true"[\s\S]{0,700}pl: `\$\{chromeLayout\.mainColumnTitlebarInset\}px`/
   )
   assert.equal(
-    (appSource.match(/leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/g) ?? []).length,
+    (viewSource.match(/leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/g) ?? [])
+      .length,
     2,
     'file and resource titlebars must use the same workbench-independent leading inset'
   )

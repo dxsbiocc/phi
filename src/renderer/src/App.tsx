@@ -46,13 +46,11 @@ import type {
 } from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
-import {
-  WorkspaceFileHeader,
-  WorkspaceResourceHeader,
-  titlebarTrailingToggleChromeReserve
-} from './components/app-shell/WorkspaceTitlebar'
+import { titlebarTrailingToggleChromeReserve } from './components/app-shell/WorkspaceTitlebar'
 import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
 import { AppWindowChrome } from './components/app-shell/AppWindowChrome'
+import { WorkspaceView } from './features/workspace/WorkspaceView'
+import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import {
@@ -3215,6 +3213,15 @@ function App(): React.JSX.Element {
     activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
       ? (filePreviewCache[activeWorkspaceFileTab.path] ?? null)
       : null
+  const workspaceViewMode = workspaceViewModeFor({
+    showWorkspaceTabs,
+    isAnalysisWorkspaceView,
+    analysisFilePreviewAvailable: Boolean(
+      activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
+    ),
+    chatSelected: activeView === 'chat',
+    visibleTabCount: visibleWorkspaceTabs.length
+  })
   const activeFilePreviewState =
     activeWrapperResultScope &&
     !wrapperResultBelongsToProject(activeWrapperResultScope, activeProjectId)
@@ -3637,6 +3644,15 @@ function App(): React.JSX.Element {
     [onOpenWrapperTab, wrapperCatalog, setIsSidebarOpen, setWorkspaceSidebarMode]
   )
 
+  // Selecting a tab closes any sidebar hover preview first, so the clicked tab
+  // is not immediately replaced by the preview's companion.
+  const onSelectWorkspaceTab = useCallback(
+    (tab: WorkspaceTab): void => {
+      closeWorkspaceSidebarPreview()
+      selectWorkspaceTab(tab)
+    },
+    [closeWorkspaceSidebarPreview, selectWorkspaceTab]
+  )
   const onCloseWorkspaceTab = useCallback(
     (tab: WorkspaceTab): void => {
       const closingIndex = visibleWorkspaceTabs.findIndex((item) => item.key === tab.key)
@@ -4326,35 +4342,38 @@ function App(): React.JSX.Element {
     </Suspense>
   )
 
-  const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (
-    activeWorkspaceTab.kind === 'notebook' ? (
-      activeAnalysisView
-    ) : activeFilePreviewState ? (
-      <FilePreviewPanel
-        key={
-          activeWrapperResultScope
-            ? `${activeWrapperResultScope.projectId}:${activeWrapperResultScope.runId}:${activeWrapperResultScope.scope}`
-            : 'project-file'
-        }
-        layout="workspace"
-        state={activeFilePreviewState}
-        onOpenFile={onOpenFilePreview}
-        onOpenDefaultPath={onOpenDefaultPreviewPath}
-        onRevealPath={onRevealPreviewPathInWorkspace}
-        onListDirectory={onListPreviewDirectory}
-        fileActions={workspaceFileActions}
-        treeRevision={workspaceSidePanelTreeRevision}
-        onDownloadFile={
-          activeFilePreviewState &&
-          filePreviewStatePath(activeFilePreviewState).startsWith('ssh://')
-            ? downloadWrapperResultFile
-            : undefined
-        }
-        downloadState={fileDownload}
-        onCancelDownload={cancelActiveWrapperResultDownload}
-      />
-    ) : null
+  // One preview element for both workspace layouts: the tab content slot and the
+  // analysis file strip render exactly the same panel.
+  const workspaceFilePreviewContent = activeFilePreviewState ? (
+    <FilePreviewPanel
+      key={
+        activeWrapperResultScope
+          ? `${activeWrapperResultScope.projectId}:${activeWrapperResultScope.runId}:${activeWrapperResultScope.scope}`
+          : 'project-file'
+      }
+      layout="workspace"
+      state={activeFilePreviewState}
+      onOpenFile={onOpenFilePreview}
+      onOpenDefaultPath={onOpenDefaultPreviewPath}
+      onRevealPath={onRevealPreviewPathInWorkspace}
+      onListDirectory={onListPreviewDirectory}
+      fileActions={workspaceFileActions}
+      treeRevision={workspaceSidePanelTreeRevision}
+      onDownloadFile={
+        activeFilePreviewState && filePreviewStatePath(activeFilePreviewState).startsWith('ssh://')
+          ? downloadWrapperResultFile
+          : undefined
+      }
+      downloadState={fileDownload}
+      onCancelDownload={cancelActiveWrapperResultDownload}
+    />
   ) : null
+
+  const activeWorkspaceFileTabContent = isWorkspaceFileWorkspaceTab(activeWorkspaceTab)
+    ? activeWorkspaceTab.kind === 'notebook'
+      ? activeAnalysisView
+      : workspaceFilePreviewContent
+    : null
 
   const standardWorkspaceTabContent =
     activeWorkspaceTab?.kind === 'session'
@@ -4651,179 +4670,46 @@ function App(): React.JSX.Element {
           onInstallFromDirectory={phiPluginsState.installFromDirectory}
         />
 
-        {isWorkspaceView ? (
-          <Box
-            component="main"
-            sx={{
-              flex: 1,
-              minWidth: 0,
-              height: '100vh',
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column'
-            }}
-          >
-            {showWorkspaceTitlebar ? (
-              <Box
-                data-phi-workspace-titlebar="true"
-                sx={{
-                  height: WINDOW_TITLEBAR_HEIGHT,
-                  flexShrink: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  backgroundColor: (muiTheme) =>
-                    muiTheme.palette.mode === 'dark'
-                      ? muiTheme.palette.background.default
-                      : '#FFFFFF',
-                  WebkitAppRegion: 'drag',
-                  zIndex: 7,
-                  pl: `${chromeLayout.mainColumnTitlebarInset}px`
-                }}
-              >
-                <Box
-                  sx={{
-                    flex: filePreview && !showProjectSessionPlaceholder ? '1 1 320px' : 1,
-                    minWidth: 0,
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: '100%',
-                      maxWidth: 860,
-                      mx: 'auto',
-                      px: 3,
-                      minWidth: 0
-                    }}
-                  >
-                    {!showHomeWorkspace ? (
-                      <Typography
-                        variant="subtitle2"
-                        title={activeWorkspaceTitle}
-                        sx={{
-                          maxWidth: { xs: 220, sm: 360, md: 520 },
-                          minWidth: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          fontWeight: 600
-                        }}
-                      >
-                        {activeWorkspaceTitle}
-                      </Typography>
-                    ) : null}
-                  </Box>
-                </Box>
-                {filePreview && !showProjectSessionPlaceholder ? (
-                  <FilePreviewTitleTab
-                    state={filePreview}
-                    titlebarInsetEnd={
-                      workspaceSidePanelCollapsed ? titlebarTrailingToggleChromeReserve : 1.25
-                    }
-                    onClose={onCloseCurrentFilePreview}
-                  />
-                ) : null}
-              </Box>
-            ) : null}
-            <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', overflow: 'hidden' }}>
-              {showWorkspaceTabs ? (
-                <Box
-                  sx={{
-                    flex: 1,
-                    minWidth: 0,
-                    minHeight: 0,
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                >
-                  <WorkspaceResourceHeader
-                    tabs={visibleWorkspaceTabs}
-                    activeKey={effectiveActiveWorkspaceTabKey}
-                    onSelect={(tab) => {
-                      closeWorkspaceSidebarPreview()
-                      selectWorkspaceTab(tab)
-                    }}
-                    onClose={onCloseWorkspaceTab}
-                    onDockSessionTab={
-                      workspaceFileTabs.length > 0 ? onDockConversationToSidebar : undefined
-                    }
-                    leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
-                    reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
-                  />
-                  <Box
-                    sx={{
-                      flex: 1,
-                      minWidth: 0,
-                      minHeight: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    {activeWorkspaceTabContent}
-                  </Box>
-                </Box>
-              ) : isAnalysisWorkspaceView &&
-                activeWorkspaceFileTab &&
-                activeWorkspaceFileTab.kind !== 'notebook' ? (
-                <Box
-                  sx={{
-                    flex: 1,
-                    minWidth: 0,
-                    minHeight: 0,
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                >
-                  <WorkspaceFileHeader
-                    tabs={workspaceFileTabs}
-                    activePath={activeWorkspaceFilePath}
-                    onSelect={onSelectWorkspaceFileTab}
-                    onClose={onCloseWorkspaceFileTab}
-                    leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
-                    reserveTrailingChromeSpace={workspaceSidePanelCollapsed}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
-                    {activeFilePreviewState ? (
-                      <FilePreviewPanel
-                        key={
-                          activeWrapperResultScope
-                            ? `${activeWrapperResultScope.projectId}:${activeWrapperResultScope.runId}:${activeWrapperResultScope.scope}`
-                            : 'project-file'
-                        }
-                        layout="workspace"
-                        state={activeFilePreviewState}
-                        onOpenFile={onOpenFilePreview}
-                        onOpenDefaultPath={onOpenDefaultPreviewPath}
-                        onRevealPath={onRevealPreviewPathInWorkspace}
-                        onListDirectory={onListPreviewDirectory}
-                        fileActions={workspaceFileActions}
-                        treeRevision={workspaceSidePanelTreeRevision}
-                        onDownloadFile={
-                          filePreviewStatePath(activeFilePreviewState).startsWith('ssh://')
-                            ? downloadWrapperResultFile
-                            : undefined
-                        }
-                        downloadState={fileDownload}
-                        onCancelDownload={cancelActiveWrapperResultDownload}
-                      />
-                    ) : null}
-                  </Box>
-                </Box>
-              ) : isAnalysisWorkspaceView ? (
-                activeAnalysisView
-              ) : activeView === 'chat' && visibleWorkspaceTabs.length === 0 ? (
-                emptyWorkspaceContent
-              ) : (
-                chatWorkspaceContent
-              )}
-            </Box>
-          </Box>
-        ) : (
-          <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
-        )}
+        <WorkspaceView
+          active={isWorkspaceView}
+          chromeLayout={chromeLayout}
+          mode={workspaceViewMode}
+          workspaceTitle={activeWorkspaceTitle}
+          showTitlebar={showWorkspaceTitlebar}
+          hideTitle={showHomeWorkspace}
+          sidePanelCollapsed={workspaceSidePanelCollapsed}
+          titlebarTrailing={
+            filePreview && !showProjectSessionPlaceholder ? (
+              <FilePreviewTitleTab
+                state={filePreview}
+                titlebarInsetEnd={
+                  workspaceSidePanelCollapsed ? titlebarTrailingToggleChromeReserve : 1.25
+                }
+                onClose={onCloseCurrentFilePreview}
+              />
+            ) : null
+          }
+          resourceStrip={{
+            tabs: visibleWorkspaceTabs,
+            activeKey: effectiveActiveWorkspaceTabKey,
+            onSelect: onSelectWorkspaceTab,
+            onClose: onCloseWorkspaceTab,
+            onDockSessionTab: workspaceFileTabs.length > 0 ? onDockConversationToSidebar : undefined
+          }}
+          fileStrip={{
+            tabs: workspaceFileTabs,
+            activePath: activeWorkspaceFilePath,
+            onSelect: onSelectWorkspaceFileTab,
+            onClose: onCloseWorkspaceFileTab
+          }}
+          content={{
+            tabs: activeWorkspaceTabContent,
+            filePreview: workspaceFilePreviewContent,
+            analysis: activeAnalysisView,
+            chat: chatWorkspaceContent,
+            empty: emptyWorkspaceContent
+          }}
+        />
 
         {workspaceSidePanelSlots.length > 0 ? (
           <>

@@ -31,29 +31,9 @@ function callback(name: string): string {
   return expression.getText(syntax)
 }
 
+/** The header's onSelect is a named callback so the harness can evaluate it directly. */
 function headerSelect(): string {
-  let expression: ts.Expression | undefined
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isJsxSelfClosingElement(node) &&
-      node.tagName.getText(syntax) === 'WorkspaceResourceHeader'
-    ) {
-      for (const property of node.attributes.properties) {
-        if (
-          ts.isJsxAttribute(property) &&
-          property.name.getText(syntax) === 'onSelect' &&
-          property.initializer &&
-          ts.isJsxExpression(property.initializer)
-        ) {
-          expression = property.initializer.expression
-        }
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(syntax)
-  assert.ok(expression)
-  return expression.getText(syntax)
+  return callback('onSelectWorkspaceTab')
 }
 
 function navigation(open: boolean): {
