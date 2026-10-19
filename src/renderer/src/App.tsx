@@ -51,6 +51,7 @@ import type {
 } from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
+import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import {
   runtimeRecoveryBannerColumnSx,
   runtimeRecoveryBannerOverlaySx
@@ -781,14 +782,35 @@ function App(): React.JSX.Element {
     onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
+  // Dialog ownership lives in its own hook; names and setter signatures are unchanged
+  // so call sites stay as they were while the shell gets smaller.
+  const {
+    isSettingsOpen,
+    setIsSettingsOpen,
+    settingsCategory,
+    setSettingsCategory,
+    isSessionSearchOpen,
+    setIsSessionSearchOpen,
+    isNewProjectDialogOpen,
+    setIsNewProjectDialogOpen,
+    isSkillCatalogOpen,
+    setIsSkillCatalogOpen,
+    isPhiPluginCatalogOpen,
+    setIsPhiPluginCatalogOpen,
+    showOnboarding,
+    setShowOnboarding,
+    showEnvironmentSummary,
+    setShowEnvironmentSummary,
+    exportTarget,
+    setExportTarget,
+    isExportingSession,
+    setIsExportingSession
+  } = useAppDialogs()
   const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [notebookViewStateStore] = useState<NotebookViewStateStore>(() => new Map())
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
   const [contextUsageRefreshKey, setContextUsageRefreshKey] = useState(0)
-  const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false)
-  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
@@ -810,12 +832,8 @@ function App(): React.JSX.Element {
     anchorEl: HTMLElement
   } | null>(null)
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
-  const [isNewProjectDialogOpen, setIsNewProjectDialogOpen] = useState(false)
-  const [isSkillCatalogOpen, setIsSkillCatalogOpen] = useState(false)
-  const [isPhiPluginCatalogOpen, setIsPhiPluginCatalogOpen] = useState(false)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
-  const [showOnboarding, setShowOnboarding] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
   const [noProjectTaskFolder, setNoProjectTaskFolder] = useState('')
   const [allowExternalFileRead, setAllowExternalFileRead] = useState(
@@ -834,14 +852,11 @@ function App(): React.JSX.Element {
   const [isLoadingEnvironment, setIsLoadingEnvironment] = useState(true)
   const [isLoadingHomeSessions, setIsLoadingHomeSessions] = useState(true)
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
-  const [showEnvironmentSummary, setShowEnvironmentSummary] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const appSettingsRevisionRef = useRef(0)
   const [isUpdatingPermissionMode, setIsUpdatingPermissionMode] = useState(false)
   const permissionModeUpdateRef = useRef(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
-  const [exportTarget, setExportTarget] = useState<SessionSummary | null>(null)
-  const [isExportingSession, setIsExportingSession] = useState(false)
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
@@ -999,7 +1014,7 @@ function App(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [rendererApi, showSnackbarError])
+  }, [rendererApi, showSnackbarError, setShowEnvironmentSummary])
 
   const onRedetectEnvironment = useCallback(async (): Promise<void> => {
     setIsRedetectingEnvironment(true)
@@ -1026,7 +1041,7 @@ function App(): React.JSX.Element {
     } catch (error) {
       showSnackbarError(error, appCopy.dismissEnvironmentFailed)
     }
-  }, [rendererApi, showSnackbarError])
+  }, [rendererApi, showSnackbarError, setShowEnvironmentSummary])
 
   const onUpdateAppSettings = useCallback(
     async (patch: PhiAppSettingsPatch): Promise<void> => {
@@ -1385,7 +1400,7 @@ function App(): React.JSX.Element {
       }
       openLocalTrustedOverlay('settings', () => setIsSettingsOpen(true))
     },
-    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay, setIsSettingsOpen]
   )
   const setNewProjectDialogOpenWithBrowserGate = useCallback(
     (open: boolean): void => {
@@ -1396,7 +1411,7 @@ function App(): React.JSX.Element {
       }
       openLocalTrustedOverlay('new-project', () => setIsNewProjectDialogOpen(true))
     },
-    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay, setIsNewProjectDialogOpen]
   )
   const setSessionSearchOpenWithBrowserGate = useCallback(
     (open: boolean): void => {
@@ -1407,7 +1422,7 @@ function App(): React.JSX.Element {
       }
       openLocalTrustedOverlay('session-search', () => setIsSessionSearchOpen(true))
     },
-    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay]
+    [cancelBrowserTrustedOverlay, openLocalTrustedOverlay, setIsSessionSearchOpen]
   )
   const workspaceSidePanelCollapsed = workspaceSidePanelSlots.length === 0
   const [workspaceSidePanelWidth, setWorkspaceSidePanelWidth] = useState(
@@ -1681,7 +1696,7 @@ function App(): React.JSX.Element {
         openLocalTrustedOverlay('session-export', () => setExportTarget(session))
       }
     },
-    [openLocalTrustedOverlay]
+    [openLocalTrustedOverlay, setExportTarget]
   )
 
   const confirmExportSession = async (): Promise<void> => {
@@ -1923,7 +1938,7 @@ function App(): React.JSX.Element {
       }
       setSettingsOpenWithBrowserGate(true)
     },
-    [setSettingsOpenWithBrowserGate]
+    [setSettingsOpenWithBrowserGate, setSettingsCategory]
   )
 
   const onGoProviderSettings = useCallback((): void => {
@@ -1973,7 +1988,9 @@ function App(): React.JSX.Element {
     isProviderDialogOpen,
     isSettingsOpen,
     onNewChat,
-    navigateToView
+    navigateToView,
+    setIsNewProjectDialogOpen,
+    setIsSettingsOpen
   ])
 
   useEffect(() => {
@@ -2223,6 +2240,7 @@ function App(): React.JSX.Element {
     scheduleSessionRefresh,
     setActiveSessionRuntimeState,
     setAgentEventState,
+    setIsSettingsOpen,
     setPendingApproval,
     setPendingUserInteraction,
     setProjectSessionRefreshKey,
@@ -2243,7 +2261,7 @@ function App(): React.JSX.Element {
       setPersonaMarkdownState(markdown)
       setShowOnboarding(!onboarded)
     })()
-  }, [rendererApi])
+  }, [rendererApi, setShowOnboarding])
 
   useEffect(() => {
     void (async () => {
