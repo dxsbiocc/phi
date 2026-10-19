@@ -4,8 +4,32 @@ import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { sidebarStateForFileOpenConversationLayout } from '../src/renderer/src/features/chat/lib/fileOpenConversationLayout'
+import {
+  previewFileInWorkspaceTab,
+  type PathOpenerTargets
+} from '../src/renderer/src/features/file-preview/lib/pathOpeners'
 import { absoluteWorkspacePath, fileNameFromPath } from '../src/renderer/src/lib/workspacePaths'
 import type { WorkspaceSidebarMode } from '../src/renderer/src/lib/workspaceSidebar'
+
+/** Recording surfaces for the path router; each test overrides what it checks. */
+function openerTargets(overrides: Partial<PathOpenerTargets> = {}): PathOpenerTargets {
+  return {
+    applyLayout: () => undefined,
+    getActiveCwd: () => '/project',
+    setActiveTabKey: () => undefined,
+    previewFile: () => undefined,
+    previewDirectory: () => undefined,
+    openSystemDefault: () => undefined,
+    isRemoteProject: () => false,
+    getActiveProjectId: () => null,
+    getRemoteScope: () => null,
+    blockLocalInRemote: () => false,
+    notifyError: () => undefined,
+    openNotebook: () => undefined,
+    wrapper: { scope: null, isActiveUri: () => false, openPath: () => '' },
+    ...overrides
+  }
+}
 
 function callback(path: string, name: string): string {
   const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
@@ -33,8 +57,7 @@ const files = 'src/renderer/src/useWorkspaceFileTabs.ts'
 const callbacks = [
   callback(app, 'applyFileOpenConversationLayout'),
   callback(files, 'openWorkspaceTab'),
-  callback(files, 'previewFilePath'),
-  callback(app, 'previewFilePathInWorkspaceTab')
+  callback(files, 'previewFilePath')
 ].join('\n')
 
 for (const open of [false, true]) {
@@ -49,36 +72,45 @@ for (const open of [false, true]) {
         loaded: ''
       }
       const selectRef = { current: 7 }
-      const invoke = runInNewContext(`${callbacks}\npreviewFilePathInWorkspaceTab`, {
-        fileOpenConversationLayout: 'tab',
-        sidebarStateForFileOpenConversationLayout,
-        projectSidebarSelectionRequestRef: selectRef,
-        setIsSidebarOpen: (next: boolean) => {
-          state.open = next
-        },
-        setWorkspaceSidebarMode: (next: WorkspaceSidebarMode) => {
-          state.mode = next
-        },
-        setActiveView: (next: string) => {
-          state.view = next
-        },
-        setActiveWorkspaceTabKey: (next: string) => {
-          state.activePath = next
-        },
-        workspaceFileTabKey: (path: string) => `file:${path}`,
-        getActiveCwd: () => '/project',
-        absoluteWorkspacePath,
-        fileNameFromPath,
-        activeWorkspaceFilePath: null,
-        filePreview: null,
-        upsertWorkspaceFileTab: (tab: { path: string }) => {
-          state.tab = tab
-        },
-        loadFilePreview: (path: string) => {
-          state.loaded = path
+      const invoke = runInNewContext(
+        `${callbacks}\n({ applyFileOpenConversationLayout, previewFilePath })`,
+        {
+          fileOpenConversationLayout: 'tab',
+          sidebarStateForFileOpenConversationLayout,
+          projectSidebarSelectionRequestRef: selectRef,
+          setIsSidebarOpen: (next: boolean) => {
+            state.open = next
+          },
+          setWorkspaceSidebarMode: (next: WorkspaceSidebarMode) => {
+            state.mode = next
+          },
+          setActiveView: (next: string) => {
+            state.view = next
+          },
+          workspaceFileTabKey: (path: string) => `file:${path}`,
+          getActiveCwd: () => '/project',
+          absoluteWorkspacePath,
+          fileNameFromPath,
+          activeWorkspaceFilePath: null,
+          filePreview: null,
+          upsertWorkspaceFileTab: (tab: { path: string }) => {
+            state.tab = tab
+          },
+          loadFilePreview: (path: string) => {
+            state.loaded = path
+          }
         }
-      }) as (path: string) => void
-      invoke('/project/sample_qc.tsv')
+      ) as { applyFileOpenConversationLayout: () => void; previewFilePath: (path: string) => void }
+      previewFileInWorkspaceTab(
+        openerTargets({
+          applyLayout: invoke.applyFileOpenConversationLayout,
+          setActiveTabKey: (key: string) => {
+            state.activePath = key
+          },
+          previewFile: invoke.previewFilePath
+        }),
+        '/project/sample_qc.tsv'
+      )
       assert.equal(state.open, open)
       assert.equal(state.mode, mode)
       assert.equal(selectRef.current, 7)

@@ -1,5 +1,6 @@
 import { appCopy } from './lib/appCopy'
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
+import { useFilePathOpeners } from './features/file-preview/hooks/useFilePathOpeners'
 import { resourceActionMessages, resourceUi } from './lib/resourceUi'
 import { getUiLanguage, normalizeUiLanguage, setUiLanguage, useUiLanguage } from './lib/i18n'
 import { enUS, zhCN } from '@mui/material/locale'
@@ -35,7 +36,6 @@ import {
   DEFAULT_PREVENT_SLEEP_DURING_RUNS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionCatalogItem } from '../../shared/wrapperCompositionManifestTypes'
-import type { WrapperRun } from '../../shared/wrapperTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
@@ -84,10 +84,7 @@ import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/Ph
 import { usePhiPlugins } from './features/phi-plugin/hooks/usePhiPlugins'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
-import {
-  wrapperResultBelongsToProject,
-  wrapperResultScopeForPath
-} from './features/wrapper/lib/resultFiles'
+import { wrapperResultBelongsToProject } from './features/wrapper/lib/resultFiles'
 import { SkillCatalogDialog, SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
@@ -166,7 +163,6 @@ import {
   isWorkspaceSidebarPreviewDialogActive
 } from './lib/workspaceSidebarPreviewPointer'
 import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
-import { isNotebookFilePath } from './features/analysis/lib/notebookPaths'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
@@ -2173,235 +2169,31 @@ function App(): React.JSX.Element {
     }
   }
 
-  const previewFilePathInWorkspaceTab = useCallback(
-    (path: string): void => {
-      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      applyFileOpenConversationLayout()
-      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
-      previewFilePath(path)
-    },
-    [applyFileOpenConversationLayout, getActiveCwd, previewFilePath]
-  )
-
-  const openRemoteWorkspacePath = useCallback(
-    (path: string, kind: LocalPathKind): void => {
-      const scope = getActiveRemoteProject()
-      if (!scope) {
-        showSnackbarError(new Error(appCopy.remoteSessionUnavailable), appCopy.openRemoteFileFailed)
-        return
-      }
-      const uri = path.startsWith('ssh://')
-        ? path
-        : remotePathInsideRoot(path, scope.canonicalRoot)
-          ? remoteWorkspaceUri(scope.hostAlias, path)
-          : null
-      if (!uri || !remotePathWithinProjectUri(uri, scope.hostAlias, scope.canonicalRoot)) {
-        showSnackbarError(new Error(appCopy.remotePathOutsideProject), appCopy.openRemoteFileFailed)
-        return
-      }
-      applyFileOpenConversationLayout()
-      setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
-      if (kind === 'directory') previewDirectoryPath(uri)
-      else previewFilePath(uri)
-    },
-    [
-      applyFileOpenConversationLayout,
-      getActiveRemoteProject,
-      previewDirectoryPath,
-      previewFilePath,
-      showSnackbarError
-    ]
-  )
-
-  const openRemoteNotebookPath = useCallback(
-    (path: string): boolean => {
-      if (!isNotebookFilePath(path)) return false
-      const scope = getActiveRemoteProject()
-      const serverPath = scope
-        ? path.startsWith('ssh://')
-          ? remotePathWithinProjectUri(path, scope.hostAlias, scope.canonicalRoot)
-          : remotePathInsideRoot(path, scope.canonicalRoot)
-            ? path
-            : null
-        : null
-      if (!serverPath) {
-        showSnackbarError(new Error(appCopy.wrongRemoteNotebook), appCopy.openNotebookFailed)
-        return true
-      }
-      onOpenNotebookWorkspaceFile(serverPath)
-      return true
-    },
-    [getActiveRemoteProject, onOpenNotebookWorkspaceFile, showSnackbarError]
-  )
-
-  const openActiveWrapperResultPath = useCallback(
-    (path: string, kind: LocalPathKind): boolean => {
-      if (
-        !wrapperResultBelongsToProject(
-          activeWrapperResultScope,
-          useSessionStore.getState().activeProjectId
-        ) ||
-        !isActiveWrapperResultUri(path)
-      ) {
-        return false
-      }
-      applyFileOpenConversationLayout()
-      setActiveWorkspaceTabKey(workspaceFileTabKey(path))
-      if (kind === 'directory') previewDirectoryPath(path)
-      else previewFilePath(path)
-      return true
-    },
-    [
-      activeWrapperResultScope,
-      applyFileOpenConversationLayout,
-      isActiveWrapperResultUri,
-      previewDirectoryPath,
-      previewFilePath
-    ]
-  )
-
-  const onOpenWrapperResult = useCallback(
-    (run: WrapperRun, path: string, kind: LocalPathKind): void => {
-      if (
-        !run.remote?.projectId ||
-        run.remote.projectId !== useSessionStore.getState().activeProjectId
-      ) {
-        showSnackbarError(new Error(appCopy.selectRunProject), appCopy.openRemoteResultFailed)
-        return
-      }
-      const scope = wrapperResultScopeForPath(run, path)
-      if (!scope) {
-        showSnackbarError(new Error(appCopy.resultScopeMissing), appCopy.openRemoteResultFailed)
-        return
-      }
-      try {
-        applyFileOpenConversationLayout()
-        const uri = openWrapperResultPath(scope, path, kind)
-        setActiveWorkspaceTabKey(workspaceFileTabKey(uri))
-      } catch (error) {
-        showSnackbarError(error, appCopy.openRemoteResultFailed)
-      }
-    },
-    [applyFileOpenConversationLayout, openWrapperResultPath, showSnackbarError]
-  )
-
-  const previewDirectoryPathInWorkspaceTab = useCallback(
-    (path: string): void => {
-      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      applyFileOpenConversationLayout()
-      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
-      previewDirectoryPath(path)
-    },
-    [applyFileOpenConversationLayout, getActiveCwd, previewDirectoryPath]
-  )
-
-  const onOpenWorkspaceFileFromSidebar = useCallback(
-    (path: string): void => {
-      applyFileOpenConversationLayout()
-      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        if (openRemoteNotebookPath(path)) return
-        openRemoteWorkspacePath(path, 'file')
-        return
-      }
-      if (blockRemoteLocalFileAction()) return
-      const normalizedPath = absoluteWorkspacePath(getActiveCwd(), path)
-      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
-      if (isNotebookFilePath(path)) {
-        onOpenNotebookWorkspaceFile(path)
-        return
-      }
-      previewFilePath(path)
-    },
-    [
-      applyFileOpenConversationLayout,
-      blockRemoteLocalFileAction,
-      getActiveCwd,
-      onOpenNotebookWorkspaceFile,
-      openRemoteNotebookPath,
-      openRemoteWorkspacePath,
-      previewFilePath
-    ]
-  )
-
-  const onOpenFilePreview = useCallback(
-    (path: string): void => {
-      if (openActiveWrapperResultPath(path, 'file')) return
-      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        if (openRemoteNotebookPath(path)) return
-        openRemoteWorkspacePath(path, 'file')
-        return
-      }
-      if (blockRemoteLocalFileAction()) return
-      if (isNotebookFilePath(path)) {
-        onOpenNotebookWorkspaceFile(path)
-        return
-      }
-      previewFilePathInWorkspaceTab(path)
-    },
-    [
-      blockRemoteLocalFileAction,
-      onOpenNotebookWorkspaceFile,
-      openActiveWrapperResultPath,
-      openRemoteNotebookPath,
-      openRemoteWorkspacePath,
-      previewFilePathInWorkspaceTab
-    ]
-  )
-
-  const onOpenLocalPath = useCallback(
-    (path: string, pathKind: LocalPathKind): void => {
-      if (openActiveWrapperResultPath(path, pathKind)) return
-      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        if (pathKind === 'file' && openRemoteNotebookPath(path)) return
-        openRemoteWorkspacePath(path, pathKind)
-        return
-      }
-      if (blockRemoteLocalFileAction()) return
-      if (pathKind === 'directory') {
-        previewDirectoryPathInWorkspaceTab(path)
-        return
-      }
-      if (isNotebookFilePath(path)) {
-        onOpenNotebookWorkspaceFile(path)
-        return
-      }
-      previewFilePathInWorkspaceTab(path)
-    },
-    [
-      blockRemoteLocalFileAction,
-      onOpenNotebookWorkspaceFile,
-      openActiveWrapperResultPath,
-      openRemoteNotebookPath,
-      openRemoteWorkspacePath,
-      previewDirectoryPathInWorkspaceTab,
-      previewFilePathInWorkspaceTab
-    ]
-  )
-
-  const onOpenDefaultPreviewPath = useCallback(
-    (path: string, kind: LocalPathKind = 'file'): void => {
-      if (openActiveWrapperResultPath(path, kind)) return
-      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        if (kind === 'file' && openRemoteNotebookPath(path)) return
-        openRemoteWorkspacePath(path, kind)
-        return
-      }
-      if (blockRemoteLocalFileAction()) return
-      if (isNotebookFilePath(path)) {
-        onOpenNotebookWorkspaceFile(path)
-        return
-      }
-      openPathWithSystemDefault(path)
-    },
-    [
-      blockRemoteLocalFileAction,
-      onOpenNotebookWorkspaceFile,
-      openActiveWrapperResultPath,
-      openPathWithSystemDefault,
-      openRemoteNotebookPath,
-      openRemoteWorkspacePath
-    ]
-  )
+  // Path routing: which surface opens a file, a directory, a notebook, or a
+  // wrapper result. The precedence lives in the hook so the shell only wires it.
+  const {
+    previewDirectoryPathInWorkspaceTab,
+    openRemoteWorkspacePath,
+    onOpenWorkspaceFileFromSidebar,
+    onOpenFilePreview,
+    onOpenLocalPath,
+    onOpenDefaultPreviewPath,
+    onOpenWrapperResult
+  } = useFilePathOpeners({
+    applyFileOpenConversationLayout,
+    getActiveCwd,
+    setActiveWorkspaceTabKey,
+    previewFilePath,
+    previewDirectoryPath,
+    openPathWithSystemDefault,
+    getActiveRemoteProject,
+    blockRemoteLocalFileAction,
+    showSnackbarError,
+    onOpenNotebookWorkspaceFile,
+    activeWrapperResultScope,
+    isActiveWrapperResultUri,
+    openWrapperResultPath
+  })
 
   const onRetryRemoteConnection = useCallback((): void => {
     const state = useSessionStore.getState()

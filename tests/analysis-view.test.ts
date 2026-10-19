@@ -486,6 +486,11 @@ test('analysis notebook selection can open notebooks missing from controlled wor
 
 test('remote notebook routes use server paths instead of the local session anchor', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  // Path routing moved to the file-preview feature; the route lives there now.
+  const openersSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/file-preview/lib/pathOpeners.ts'),
+    'utf8'
+  )
   const runtimeSource = readFileSync(
     resolve(
       process.cwd(),
@@ -494,12 +499,13 @@ test('remote notebook routes use server paths instead of the local session ancho
     'utf8'
   )
 
-  assert.match(appSource, /const openRemoteNotebookPath = useCallback/)
+  assert.doesNotMatch(appSource, /const openRemoteNotebookPath = useCallback/)
+  assert.match(openersSource, /export function openRemoteNotebookPath/)
   assert.match(
-    appSource,
+    openersSource,
     /remotePathWithinProjectUri\(path, scope\.hostAlias, scope\.canonicalRoot\)/
   )
-  assert.match(appSource, /remotePathInsideRoot\(path, scope\.canonicalRoot\)/)
+  assert.match(openersSource, /remotePathInsideRoot\(path, scope\.canonicalRoot\)/)
   assert.doesNotMatch(appSource, /远程项目的 Notebook\/Jupyter 暂不可用/)
   assert.match(runtimeSource, /expectedHash: file\.contentHash/)
   assert.match(runtimeSource, /change\.projectCwd !== getActiveCwd\(\)/)

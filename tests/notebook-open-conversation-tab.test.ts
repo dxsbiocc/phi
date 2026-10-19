@@ -4,6 +4,10 @@ import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
 import { sidebarStateForFileOpenConversationLayout } from '../src/renderer/src/features/chat/lib/fileOpenConversationLayout'
+import {
+  openLocalPath,
+  type PathOpenerTargets
+} from '../src/renderer/src/features/file-preview/lib/pathOpeners'
 import { isNotebookFilePath } from '../src/renderer/src/features/analysis/lib/notebookPaths'
 import { absoluteWorkspacePath, fileNameFromPath } from '../src/renderer/src/lib/workspacePaths'
 import {
@@ -37,10 +41,10 @@ function expression(name: string): string {
 }
 
 const script = ts.transpileModule(
-  `${['applyFileOpenConversationLayout', 'onOpenNotebookWorkspaceFile', 'onOpenLocalPath']
+  `${['applyFileOpenConversationLayout', 'onOpenNotebookWorkspaceFile']
     .map((name) => `const ${name} = ${expression(name)};`)
     .join('\n')}
-  ({ open: onOpenLocalPath, showSession: () => (${expression('shouldShowSessionWorkspaceTab')}) })`,
+  ({ applyFileOpenConversationLayout, onOpenNotebookWorkspaceFile, showSession: () => (${expression('shouldShowSessionWorkspaceTab')}) })`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText
 
@@ -80,7 +84,6 @@ async function openNotebook(options: {
       getState: () => ({ activeCwd: '/project', activeProjectLocation: { kind: 'local' } })
     },
     blockNotebookWorkspaceOpen: () => false,
-    blockRemoteLocalFileAction: () => false,
     openActiveWrapperResultPath: () => false,
     openRemoteNotebookPath: () => false,
     absoluteWorkspacePath,
@@ -112,10 +115,28 @@ async function openNotebook(options: {
     refreshAnalysisJupyterStatus: () => undefined
   }
   const actions = runInNewContext(script, state) as {
-    open: (path: string, kind: 'file') => void
+    applyFileOpenConversationLayout: () => void
+    onOpenNotebookWorkspaceFile: (path: string) => void
     showSession: () => boolean
   }
-  actions.open('notebooks/01_merge_and_qc.ipynb', 'file')
+  const targets: PathOpenerTargets = {
+    applyLayout: actions.applyFileOpenConversationLayout,
+    getActiveCwd: () => '/project',
+    setActiveTabKey: (key: string) => {
+      activeKey = key
+    },
+    previewFile: () => undefined,
+    previewDirectory: () => undefined,
+    openSystemDefault: () => undefined,
+    isRemoteProject: () => false,
+    getActiveProjectId: () => null,
+    getRemoteScope: () => null,
+    blockLocalInRemote: () => false,
+    notifyError: () => undefined,
+    openNotebook: actions.onOpenNotebookWorkspaceFile,
+    wrapper: { scope: null, isActiveUri: () => false, openPath: () => '' }
+  }
+  openLocalPath(targets, 'notebooks/01_merge_and_qc.ipynb', 'file')
   await Promise.resolve()
   const workspaceFiles: WorkspaceFileWorkspaceTab[] = files.map((tab) => ({
     ...tab,

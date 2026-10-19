@@ -428,12 +428,18 @@ test('conversation tab and sidebar expose opposite companion layout actions', ()
 
 test('file opening applies the saved conversation layout preference', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const openersSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/file-preview/lib/pathOpeners.ts'),
+    'utf8'
+  )
 
   assert.match(appSource, /const applyFileOpenConversationLayout = useCallback/)
   assert.match(appSource, /sidebarStateForFileOpenConversationLayout/)
+  // Path routing lives in its own module now; the layout must still be applied first.
+  assert.doesNotMatch(appSource, /const previewFilePathInWorkspaceTab = useCallback/)
   assert.match(
-    appSource,
-    /const previewFilePathInWorkspaceTab = useCallback[\s\S]{0,260}applyFileOpenConversationLayout\(\)/
+    openersSource,
+    /export function previewFileInWorkspaceTab[\s\S]{0,240}targets\.applyLayout\(\)/
   )
   assert.match(
     appSource,
