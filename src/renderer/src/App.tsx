@@ -53,6 +53,7 @@ import { WorkspaceView } from './features/workspace/WorkspaceView'
 import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode'
 import { useWorkspaceTabNavigation } from './features/workspace/hooks/useWorkspaceTabNavigation'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
+import { usePanelRequests } from './lib/app-shell/usePanelRequests'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
@@ -796,12 +797,18 @@ function App(): React.JSX.Element {
   } = useWorkspaceSidePanel({
     navigationWidth: activityBarWidth + (isSidebarOpen ? sidebarWidth : 0)
   })
-  const [requestedConnectorJobId, setRequestedConnectorJobId] = useState<string | null>(null)
-  const [requestedBackgroundJobKey, setRequestedBackgroundJobKey] = useState<string | null>(null)
-  const [requestedTerminalInput, setRequestedTerminalInput] = useState<{
-    id: string
-    text: string
-  } | null>(null)
+  // One-shot requests into the jobs/terminal side panels.
+  const {
+    connectorJobId: requestedConnectorJobId,
+    backgroundJobKey: requestedBackgroundJobKey,
+    terminalInput: requestedTerminalInput,
+    requestConnectorJob,
+    consumeConnectorJob,
+    requestBackgroundJob,
+    consumeBackgroundJob,
+    requestTerminalInput,
+    consumeTerminalInput
+  } = usePanelRequests()
   const browserSlotVisible =
     workspaceSidePanelSlots.includes('browser') &&
     (workspaceSidePanelState.maximized === null ||
@@ -842,17 +849,17 @@ function App(): React.JSX.Element {
   const onOpenLocalConnectorJobs = useCallback(
     (jobId?: string): void => {
       mcpConnectorDialogCloserRef.current?.()
-      setRequestedConnectorJobId(jobId ?? null)
+      requestConnectorJob(jobId)
       onOpenBackgroundJobs()
     },
-    [onOpenBackgroundJobs]
+    [onOpenBackgroundJobs, requestConnectorJob]
   )
   useLocalConnectorNotices(showSnackbar, onOpenLocalConnectorJobs, refreshMcpServers)
   // Remote Jupyter startup is a background job; its steps and errors live in the jobs panel.
   const onOpenJupyterStartLog = useCallback((): void => {
-    setRequestedBackgroundJobKey(LATEST_JUPYTER_JOB_KEY)
+    requestBackgroundJob(LATEST_JUPYTER_JOB_KEY)
     onOpenBackgroundJobs()
-  }, [onOpenBackgroundJobs])
+  }, [onOpenBackgroundJobs, requestBackgroundJob])
   const onOpenWebUrl = useCallback(
     (url: string): void => {
       void browserLinkOpeningCoordinator.open(url)
@@ -1069,10 +1076,10 @@ function App(): React.JSX.Element {
         showSnackbar(appCopy.invalidSetupCommand, 'error')
         return
       }
-      setRequestedTerminalInput({ id: globalThis.crypto.randomUUID(), text: command })
+      requestTerminalInput(command)
       openWorkspaceSidePanel('terminal')
     },
-    [openWorkspaceSidePanel, showSnackbar]
+    [openWorkspaceSidePanel, requestTerminalInput, showSnackbar]
   )
 
   const onSelectSession = useCallback(
@@ -4291,15 +4298,9 @@ function App(): React.JSX.Element {
                         onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
                         onOpenWrapper={onOpenWrapperRunFromJobs}
                         requestedConnectorJobId={requestedConnectorJobId}
-                        onRequestedConnectorJobHandled={(id) =>
-                          setRequestedConnectorJobId((current) => (current === id ? null : current))
-                        }
+                        onRequestedConnectorJobHandled={consumeConnectorJob}
                         requestedJobKey={requestedBackgroundJobKey}
-                        onRequestedJobHandled={(key) =>
-                          setRequestedBackgroundJobKey((current) =>
-                            current === key ? null : current
-                          )
-                        }
+                        onRequestedJobHandled={consumeBackgroundJob}
                         onOpenSetupAgent={onOpenConnectorSetupAgent}
                         onOpenSetupTerminal={onOpenConnectorSetupTerminal}
                       />
@@ -4334,11 +4335,7 @@ function App(): React.JSX.Element {
                       projects={projects}
                       headerActions={slotContext.headerActions}
                       requestedInput={requestedTerminalInput}
-                      onRequestedInputHandled={(id) =>
-                        setRequestedTerminalInput((current) =>
-                          current?.id === id ? null : current
-                        )
-                      }
+                      onRequestedInputHandled={consumeTerminalInput}
                     />
                   )
                 }}

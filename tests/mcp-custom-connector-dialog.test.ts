@@ -63,7 +63,7 @@ test('查看进度 threads the existing dialog-close and requested-job path from
   assert.match(app, /onOpenConnectorJob:\s*onOpenLocalConnectorJobs/)
   assert.match(
     app,
-    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?setRequestedConnectorJobId\(jobId \?\? null\)[\s\S]*?onOpenBackgroundJobs\(\)/
+    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?requestConnectorJob\(jobId\)[\s\S]*?onOpenBackgroundJobs\(\)/
   )
 })
 

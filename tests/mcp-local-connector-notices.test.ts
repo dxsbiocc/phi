@@ -190,7 +190,7 @@ test('the app closes connector dialogs before opening jobs from a notice action'
   assert.match(app, /useLocalConnectorNotices\(showSnackbar, onOpenLocalConnectorJobs/)
   assert.match(
     app,
-    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?setRequestedConnectorJobId[\s\S]*?onOpenBackgroundJobs\(\)/
+    /onOpenLocalConnectorJobs[\s\S]*?mcpConnectorDialogCloserRef\.current\?\.\(\)[\s\S]*?requestConnectorJob\(jobId\)[\s\S]*?onOpenBackgroundJobs\(\)/
   )
   assert.match(app, /requestedConnectorJobId=\{requestedConnectorJobId\}/)
   assert.doesNotMatch(app, /window\.api\.onMcpConnectorSetupChanged/)
