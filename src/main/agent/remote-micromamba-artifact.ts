@@ -10,6 +10,7 @@ import { getBundledResourceDir } from './runtime/runtime-adapter'
 import { getPhiAgentDir } from './runtime-paths'
 import type { HostCapabilityProfile } from './workspace-host/types'
 
+import { errorMessage } from '../../shared/errorCodes'
 export type { RemoteMicromambaArtifact } from '../../shared/remoteMicromambaTypes'
 
 export const REMOTE_MICROMAMBA_TARGETS = ['linux-x64', 'linux-arm64'] as const
@@ -281,7 +282,7 @@ function sanitizedFailureMessage(
   plan: RemoteMicromambaArtifactPlan,
   options: GetRemoteMicromambaOptions
 ): string {
-  let message = error instanceof Error ? error.message : String(error)
+  let message = errorMessage(error)
   const paths = [
     options.agentDir ?? getPhiAgentDir(),
     dirname(plan.localPath),

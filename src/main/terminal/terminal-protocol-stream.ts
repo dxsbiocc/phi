@@ -4,6 +4,8 @@ import {
   parseProtocolLine
 } from './terminal-protocol'
 
+import { errorMessage } from '../../shared/errorCodes'
+
 interface ProtocolRequest {
   id: string
 }
@@ -26,8 +28,8 @@ export function createProtocolRequestStream<Request extends ProtocolRequest>(
     process.stderr.write(`[${options.name}] ${message}\n`)
   }
 
-  const errorMessage = (error: unknown): string => {
-    const message = error instanceof Error ? error.message : String(error)
+  const describeError = (error: unknown): string => {
+    const message = errorMessage(error)
     return (message || options.fallbackErrorMessage).slice(0, 4_096)
   }
 
@@ -51,7 +53,7 @@ export function createProtocolRequestStream<Request extends ProtocolRequest>(
       const result = await handleRequest(request)
       writeFrame({ id: request.id, ok: true, result })
     } catch (error) {
-      writeFrame({ id: request.id, ok: false, error: errorMessage(error) })
+      writeFrame({ id: request.id, ok: false, error: describeError(error) })
     }
   }
 
@@ -92,5 +94,5 @@ export function createProtocolRequestStream<Request extends ProtocolRequest>(
     })
   }
 
-  return { diagnostic, errorMessage, writeFrame, start }
+  return { diagnostic, errorMessage: describeError, writeFrame, start }
 }

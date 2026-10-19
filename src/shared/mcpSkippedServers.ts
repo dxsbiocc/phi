@@ -1,3 +1,4 @@
+import { isRecord } from './guards'
 /** Stable codes for why one MCP server was left out of a conversation. Display text is localized elsewhere. */
 export const MCP_SKIP_REASONS = [
   'unavailable',
@@ -63,10 +64,6 @@ export const MAX_SKIPPED_MCP_NOTICE_NAME = 64
 
 export function isMcpSkipReason(value: unknown): value is McpSkipReasonCode {
   return typeof value === 'string' && (MCP_SKIP_REASONS as readonly string[]).includes(value)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Strict shape check; undefined when anything is off so callers can reject the whole payload. */

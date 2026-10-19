@@ -25,6 +25,7 @@ import {
 import { outputPreviewText } from './toolOutputPresentation'
 import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
 
+import { isRecord } from '../../../shared/guards'
 export interface AgentEventReducerState {
   messages: ChatItem[]
   textBlockIds: Map<number, string>
@@ -148,10 +149,6 @@ function toolOutputMetadataFrom(
     outputTruncated: record.truncated === true ? true : undefined,
     outputArtifact
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isAgentToolName(toolName: unknown): toolName is string {

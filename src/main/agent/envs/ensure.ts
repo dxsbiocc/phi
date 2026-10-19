@@ -53,6 +53,7 @@ import { ensureRuntimeLayout, runMicromamba, writeMambarc, type RuntimeSettings 
 import { envMetadataSchema } from './schemas'
 import { createSourcePackageInstaller } from './source-packages'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validateEnvMetadata = ajv.compile(envMetadataSchema)
 
@@ -120,7 +121,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function shortError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   const line = message.split('\n')[0] ?? message
   return line.length > 300 ? `${line.slice(0, 297)}...` : line
 }

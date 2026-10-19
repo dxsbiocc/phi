@@ -6,6 +6,8 @@ import type {
   AgentUserInteractionResponse
 } from '../../shared/agentInteractionTypes'
 
+import { isRecord } from '../../shared/guards'
+import { errorMessage } from '../../shared/errorCodes'
 const ASK_USER_QUESTION_TOOL_NAME = 'ask_user_question'
 const MAX_QUESTIONS = 4
 const MIN_OPTIONS = 2
@@ -40,10 +42,6 @@ export type UserInteractionToolRequest = {
 export type UserInteractionToolHostExecutor = (
   request: UserInteractionToolRequest
 ) => Promise<unknown>
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function normalizeLineTerminators(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '')
@@ -375,7 +373,7 @@ export function buildAskUserQuestionCustomTools(
           )
           return buildQuestionnaireResponse(result, typed)
         } catch (error) {
-          return buildToolResult(error instanceof Error ? error.message : String(error), {
+          return buildToolResult(errorMessage(error), {
             answers: [],
             cancelled: true,
             error: 'no_custom_ui'

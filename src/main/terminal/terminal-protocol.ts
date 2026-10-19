@@ -7,6 +7,7 @@ import {
   TERMINAL_MIN_ROWS
 } from '../../shared/terminalTypes'
 
+import { isRecord } from '../../shared/guards'
 export const TERMINAL_MAX_FRAME_BYTES = 256 * 1024
 export const TERMINAL_ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/u
 
@@ -101,10 +102,6 @@ export type WorkerMessage = WorkerResponse | WorkerEvent
 
 function invalid(message?: string): never {
   throw new TerminalProtocolError(message)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function record(value: unknown): Record<string, unknown> {

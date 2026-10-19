@@ -17,6 +17,8 @@ import {
 } from '../envs/contract'
 import { pluginManifestSchema, type PhiPluginManifest } from './phi-package'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 const PACKAGE_FILE = 'phi-package.yaml'
 const RESERVED_DIRECTORIES = ['mcp', 'wrappers', 'orchestrator'] as const
 
@@ -409,12 +411,4 @@ function isDirectory(path: string): boolean {
   } catch {
     return false
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

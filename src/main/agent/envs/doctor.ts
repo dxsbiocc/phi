@@ -21,6 +21,7 @@ import { hasLiveEnvironmentLeases } from './leases'
 import { ensureMambarc, ensureRuntimeLayout, runMicromamba } from './runtime'
 import { envMetadataSchema } from './schemas'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validateEnvMetadata = ajv.compile(envMetadataSchema)
 
@@ -151,7 +152,7 @@ function lockPackages(lockText: string): { packages: PackageIdentity[]; problems
       const pkg = parseLockPackage(entry.url)
       packages.push({ name: pkg.name, version: pkg.version, build: pkg.build })
     } catch (error) {
-      problems.push(error instanceof Error ? error.message : String(error))
+      problems.push(errorMessage(error))
     }
   }
   return { packages, problems }

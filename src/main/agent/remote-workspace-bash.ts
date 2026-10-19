@@ -4,6 +4,7 @@ import {
 } from './remote-workspace-boundary'
 import { shellQuote, type RemoteSshSession } from './wrappers/remote-ssh-session'
 
+import { errorMessage } from '../../shared/errorCodes'
 export const REMOTE_BASH_MAX_OUTPUT_BYTES = 256 * 1024
 const DEFAULT_TIMEOUT_SECONDS = 30
 const MAX_TIMEOUT_SECONDS = 120
@@ -222,7 +223,7 @@ export class RemoteWorkspaceBashManager {
             }
           } catch (error) {
             if (entry.cancelled) return unknownResult('cancelled', now() - startedAt)
-            const message = error instanceof Error ? error.message : String(error)
+            const message = errorMessage(error)
             return unknownResult(
               /超时|timed out/i.test(message) ? 'timeout' : 'connection_lost',
               now() - startedAt

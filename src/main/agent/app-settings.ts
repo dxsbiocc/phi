@@ -17,16 +17,14 @@ import {
 import { getPhiAgentDir } from './runtime-paths'
 import type { ModelSelection } from './session/session-store'
 
+import { isRecord } from '../../shared/guards'
+import { errorMessage } from '../../shared/errorCodes'
 const SETTINGS_FILE = 'settings.json'
 let defaultUiLanguage = DEFAULT_UI_LANGUAGE
 
 /** Called once after Electron is ready, before the splash or settings are read. */
 export function configureSystemUiLanguage(preferredLanguages: readonly string[]): void {
   defaultUiLanguage = systemUiLanguage(preferredLanguages)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function getAppSettingsPath(agentDir = getPhiAgentDir()): string {
@@ -64,11 +62,7 @@ function readRawSettings(agentDir: string, options: { strict: boolean }): Record
     return isRecord(parsed) ? parsed : {}
   } catch (error) {
     if (options.strict) {
-      throw new Error(
-        `settings.json 不是合法 JSON，无法保存设置: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
+      throw new Error(`settings.json 不是合法 JSON，无法保存设置: ${errorMessage(error)}`)
     }
     return {}
   }

@@ -17,6 +17,7 @@ import {
   browserToolParameters
 } from './browser-tool-schema'
 
+import { isRecord } from '../../../shared/guards'
 const MAX_ORIGIN_ID_LENGTH = 512
 const SAFE_KEYS = new Set<string>(BROWSER_SAFE_KEYS)
 
@@ -44,10 +45,6 @@ export interface BrowserToolOptions {
     placeholder: string
   ) => { text?: string; denied?: boolean } | undefined
   allowTypeText?: () => boolean
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

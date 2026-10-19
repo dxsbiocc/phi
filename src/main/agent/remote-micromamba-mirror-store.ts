@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { normalizeRemoteMicromambaMirrorPrefix } from '../../shared/remoteMicromambaTypes'
 import { getPhiAgentDir } from './runtime-paths'
 
+import { isRecord } from '../../shared/guards'
 const STORE_FILE = 'remote-micromamba-mirrors.json'
 const STORE_VERSION = 1
 
@@ -23,10 +24,6 @@ interface RemoteMicromambaMirrorStore {
 
 function emptyStore(): RemoteMicromambaMirrorStore {
   return { version: STORE_VERSION, entries: {} }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function normalizedEntry(value: unknown): string | undefined {

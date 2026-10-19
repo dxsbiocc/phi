@@ -13,6 +13,7 @@ import type {
   TerminalDraftSessionFactory
 } from './terminal-command-draft'
 
+import { isRecord } from '../../shared/guards'
 type MaybePromise<T> = T | Promise<T>
 
 export interface TerminalDraftResolvedSession {
@@ -27,10 +28,6 @@ export interface TerminalDraftSessionFactoryBuilderOptions {
   resolveSession: (
     context: TerminalDraftSessionContext
   ) => MaybePromise<TerminalDraftResolvedSession>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function assistantMessages(value: unknown): unknown[] {

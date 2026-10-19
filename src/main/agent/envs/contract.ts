@@ -11,6 +11,7 @@ import type {
 import { type PhiPlatform } from './platform'
 import { environmentSpecSchema } from './schemas'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
 export type { PhiPlatform } from './platform'
 
@@ -130,7 +131,7 @@ export function parseEnvironmentSpec(yamlText: string): EnvironmentSpecParseResu
   try {
     document = parseYaml(yamlText)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { ok: false, errors: [`YAML parse error: ${message}`] }
   }
   if (document === null || typeof document !== 'object' || Array.isArray(document)) {

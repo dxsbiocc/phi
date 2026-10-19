@@ -43,6 +43,7 @@ import {
   type ProjectResourceName
 } from '../runtime-paths'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export const AGENT_RUNTIME_ID = 'omp-sdk'
 export const AGENT_RUNTIME_PACKAGE = '@oh-my-pi/pi-coding-agent'
 const nodeRequire = createRequire(import.meta.url)
@@ -1079,7 +1080,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     } catch (error) {
       result = {
         block: true,
-        reason: error instanceof Error ? error.message : String(error)
+        reason: errorMessage(error)
       }
     }
 

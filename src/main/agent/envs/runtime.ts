@@ -8,6 +8,7 @@ import { stringify } from 'yaml'
 import { getPhiAgentDir } from '../runtime-paths'
 import { getMicromambaPath } from './paths'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const RUNTIME_DIRECTORIES = ['envs', 'pkgs', 'logs', 'state', 'sources'] as const
 
 // Parent variables copied into the micromamba child. LC_* is kept by prefix.
@@ -312,7 +313,7 @@ function spawnMicromamba(
       stdio: ['ignore', 'pipe', 'pipe']
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     throw new Error(`Failed to spawn micromamba at ${executable}: ${message}`)
   }
 }

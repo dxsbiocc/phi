@@ -83,6 +83,7 @@ import {
 import { readManagedMarker } from './mcp/stdio-environment'
 import { validateName } from './mcp/connector-name'
 
+import { isRecord } from '../../shared/guards'
 export { MCP_PACKAGE_MARKER_FIELD, refreshPersistedManagedStdioServers }
 export { validateName } from './mcp/connector-name'
 
@@ -834,10 +835,6 @@ function readAppVersion(): string {
   const value = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }
   if (typeof value.version !== 'string') throw new Error('package.json version is missing')
   return value.version
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function configPath(agentDir: string): string {

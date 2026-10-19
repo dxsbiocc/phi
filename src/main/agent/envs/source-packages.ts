@@ -17,6 +17,7 @@ import { type SourcePackage } from './contract'
 import { type SourcePackageInstaller } from './ensure'
 import { runMicromamba } from './runtime'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const execFileAsync = promisify(execFile)
 
 export interface SourcePackageProgress {
@@ -188,7 +189,7 @@ async function downloadWithCurl(
 }
 
 function isHttpClientError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return /requested URL returned error: 4\d\d/.test(message) || /curl: \(22\)/.test(message)
 }
 
@@ -360,7 +361,7 @@ function firstLine(text: string): string {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

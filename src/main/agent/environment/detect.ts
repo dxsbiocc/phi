@@ -19,6 +19,7 @@ import {
   parseNextflowVersion
 } from '../wrappers/composition/nextflow-version'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /** Label for a tool the user pointed Phi at explicitly; Phi does not manage it (§5.2). */
 export const HOST_UNMANAGED = 'host (unmanaged)'
 
@@ -328,9 +329,7 @@ export function detectHostDependencies(
         status: 'unavailable',
         path: dockerPath,
         version: probeVersion(runner, dockerPath, ['--version']),
-        messages: [
-          `Docker 命令可用，但无法连接 daemon：${error instanceof Error ? error.message : String(error)}`
-        ]
+        messages: [`Docker 命令可用，但无法连接 daemon：${errorMessage(error)}`]
       }
     }
   }
@@ -528,7 +527,7 @@ export function probeCustomToolPath(
       status: 'invalid',
       activePath: absolutePath,
       source: 'custom',
-      messages: [error instanceof Error ? error.message : String(error)]
+      messages: [errorMessage(error)]
     }
   }
 

@@ -625,6 +625,8 @@ import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTyp
 import { createBeforeQuitHandler } from './app-quit'
 import icon from '../../resources/icon.png?asset'
 
+import { isRecord } from '../shared/guards'
+import { errorMessage } from '../shared/errorCodes'
 // Compatibility boundary: Electron derives userData and macOS "Phi Safe Storage" from this name.
 const APP_NAME = 'Phi'
 const APP_QUIT_CLEANUP_TIMEOUT_MS = 2_000
@@ -1084,10 +1086,7 @@ async function loadPackageRegistries(
   } catch (error) {
     return {
       ...loaded,
-      errors: [
-        ...loaded.errors,
-        `Phi 官网其他模块：${error instanceof Error ? error.message : String(error)}`
-      ]
+      errors: [...loaded.errors, `Phi 官网其他模块：${errorMessage(error)}`]
     }
   }
 }
@@ -1123,7 +1122,7 @@ function scheduleStartupPackageUpdateCheck(): void {
       writeAppLog({
         level: 'warn',
         event: 'package_update_check_failed',
-        metadata: { error: error instanceof Error ? error.message : String(error) }
+        metadata: { error: errorMessage(error) }
       })
     }
   })
@@ -3971,11 +3970,6 @@ async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
   }
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  return String(error)
-}
-
 function emptyNotebookCompletionResult(
   cursorPosition: number,
   message?: string
@@ -4206,7 +4200,7 @@ function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEv
 }
 
 function logUnexpectedError(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   writeAppLog({
     level: 'error',
     event: 'error_summary',
@@ -4220,10 +4214,6 @@ function extractAssistantText(message: unknown): string {
   if (record.role !== 'assistant') return ''
 
   return extractMessageText(record.content)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function redactStructuredValue(value: unknown, key = ''): unknown {
@@ -5587,7 +5577,7 @@ function startAutomaticContinuation(
       event: 'wrapper_run_continue_failed',
       metadata: {
         phiSessionId,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage(error)
       }
     })
   })
@@ -5819,7 +5809,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
           event: 'session_loaded_skills_unavailable',
           level: 'warn',
           sessionId: phiSessionId,
-          metadata: { error: error instanceof Error ? error.message : String(error) }
+          metadata: { error: errorMessage(error) }
         })
       }
       loadedSkillNamesBySession.set(phiSessionId, loadedSkills)
@@ -6906,7 +6896,7 @@ function isUsableWindow(window: BrowserWindow | null): window is BrowserWindow {
 }
 
 function isDisposedFrameSendError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return (
     message.includes('Render frame was disposed before WebFrameMain could be accessed') ||
     message.includes('Object has been destroyed')
@@ -6914,7 +6904,7 @@ function isDisposedFrameSendError(error: unknown): boolean {
 }
 
 function isExpectedShutdownCleanupError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return message.includes('OMP worker exited (130)')
 }
 
@@ -8341,14 +8331,14 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
       result = await session.compact(control)
       control.assertCurrent()
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
+      const failureMessage = errorMessage(error)
       try {
         broadcast(
           appendSessionEvent(phiSessionId, {
             type: 'context_compaction_failed',
             action: 'manual',
             reason: 'user',
-            errorMessage: errorMessage.slice(0, 500)
+            errorMessage: failureMessage.slice(0, 500)
           })
         )
       } catch (persistError) {
@@ -9837,7 +9827,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       level: 'error',
       event: 'package_staging_cleanup_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
@@ -9864,7 +9854,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       level: 'warn',
       event: 'mcp_managed_stdio_refresh_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   }
   try {
@@ -9898,7 +9888,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       event: 'enablement_plugin_registry_migration_failed',
       level: 'warn',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   }
   // Domain packages are installed only after a catalog choice. Core runtime assets remain bundled.
@@ -9916,7 +9906,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       level: 'error',
       event: 'wrapper_custom_migration_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   }
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
@@ -9926,7 +9916,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       level: 'error',
       event: 'wrapper_remote_run_reconcile_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   })
   // Agent-started (wrapper_run) local runs cannot outlive the worker that owned
@@ -9940,7 +9930,7 @@ app.whenReady().then(async () => {
     writeAppLog({
       level: 'error',
       event: 'wrapper_composition_run_reconcile_failed',
-      metadata: { error: error instanceof Error ? error.message : String(error) }
+      metadata: { error: errorMessage(error) }
     })
   }
   // Remote runs are the exception: they kept running on the cluster while Phi was closed, so
@@ -9956,7 +9946,7 @@ app.whenReady().then(async () => {
       writeAppLog({
         level: 'error',
         event: 'wrapper_remote_run_adopt_failed',
-        metadata: { error: error instanceof Error ? error.message : String(error) }
+        metadata: { error: errorMessage(error) }
       })
     })
   // Set app user model id for windows
@@ -10405,9 +10395,7 @@ app.whenReady().then(async () => {
       try {
         return await managedEnvironmentActions.list(projectCwd, includeDynamic)
       } catch (error) {
-        throw new Error(
-          `读取托管环境失败：${error instanceof Error ? error.message : String(error)}`
-        )
+        throw new Error(`读取托管环境失败：${errorMessage(error)}`)
       }
     }
   )
@@ -10417,9 +10405,7 @@ app.whenReady().then(async () => {
       try {
         return managedEnvironmentActions.build(ref, projectCwd, pluginId)
       } catch (error) {
-        throw new Error(
-          `启动环境构建失败：${error instanceof Error ? error.message : String(error)}`
-        )
+        throw new Error(`启动环境构建失败：${errorMessage(error)}`)
       }
     }
   )
@@ -10427,21 +10413,21 @@ app.whenReady().then(async () => {
     try {
       await managedEnvironmentActions.rebuild(envId)
     } catch (error) {
-      throw new Error(`重新构建环境失败：${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`重新构建环境失败：${errorMessage(error)}`)
     }
   })
   ipcMain.handle('managedEnvironments:remove', async (_, envId: unknown) => {
     try {
       return await managedEnvironmentActions.remove(envId)
     } catch (error) {
-      throw new Error(`删除环境失败：${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`删除环境失败：${errorMessage(error)}`)
     }
   })
   ipcMain.handle('managedEnvironments:clean', async () => {
     try {
       return await managedEnvironmentActions.clean()
     } catch (error) {
-      throw new Error(`清理环境失败：${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`清理环境失败：${errorMessage(error)}`)
     }
   })
 
@@ -11652,7 +11638,7 @@ app.whenReady().then(async () => {
           workspace.workingDirectory,
           file.path,
           'error',
-          error instanceof Error ? error.message : String(error)
+          errorMessage(error)
         )
         throw error
       }
@@ -11718,7 +11704,7 @@ app.whenReady().then(async () => {
           phiPluginProblemView({
             level: 'error',
             path: 'preview',
-            message: `Plugin validation failed: ${error instanceof Error ? error.message : String(error)}`
+            message: `Plugin validation failed: ${errorMessage(error)}`
           })
         ]
       } satisfies PhiPluginInstallPreview
@@ -11769,7 +11755,7 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'install',
-        `Plugin installation failed: ${error instanceof Error ? error.message : String(error)}`
+        `Plugin installation failed: ${errorMessage(error)}`
       )
     }
   })
@@ -11787,7 +11773,7 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'enabled',
-        `Could not update Plugin state: ${error instanceof Error ? error.message : String(error)}`
+        `Could not update Plugin state: ${errorMessage(error)}`
       )
     }
   })
@@ -11806,7 +11792,7 @@ app.whenReady().then(async () => {
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'uninstall',
-        `Could not uninstall Plugin: ${error instanceof Error ? error.message : String(error)}`
+        `Could not uninstall Plugin: ${errorMessage(error)}`
       )
     }
   })
@@ -11950,9 +11936,7 @@ app.whenReady().then(async () => {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return packageRegistryIconView(registry)
     } catch (error) {
-      throw new Error(
-        `Could not read package registry: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`Could not read package registry: ${errorMessage(error)}`)
     }
   })
   ipcMain.handle(
@@ -11975,9 +11959,7 @@ app.whenReady().then(async () => {
           { agentDir: AGENT_DIR, appVersion: app.getVersion() }
         )
       } catch (error) {
-        throw new Error(
-          `Could not create package installation plan: ${error instanceof Error ? error.message : String(error)}`
-        )
+        throw new Error(`Could not create package installation plan: ${errorMessage(error)}`)
       }
     }
   )
@@ -11989,9 +11971,7 @@ app.whenReady().then(async () => {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return await readSkillPackageDetail(registry, id, officialContentSourceOptions())
     } catch (error) {
-      throw new Error(
-        `Could not read Skill package details: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`Could not read Skill package details: ${errorMessage(error)}`)
     }
   })
   ipcMain.handle('packages:wrapperDetail', async (_, dir: unknown, id: unknown) => {
@@ -12002,9 +11982,7 @@ app.whenReady().then(async () => {
       const registry = await readContentRegistry(dir, officialContentSourceOptions())
       return await readWrapperPackageDetail(registry, id, officialContentSourceOptions())
     } catch (error) {
-      throw new Error(
-        `Could not read Wrapper package details: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`Could not read Wrapper package details: ${errorMessage(error)}`)
     }
   })
   ipcMain.handle(
@@ -12062,9 +12040,7 @@ app.whenReady().then(async () => {
           await invalidateAgentSession()
           return result
         } catch (error) {
-          throw new Error(
-            `Package installation failed: ${error instanceof Error ? error.message : String(error)}`
-          )
+          throw new Error(`Package installation failed: ${errorMessage(error)}`)
         }
       }
     )
@@ -12080,7 +12056,7 @@ app.whenReady().then(async () => {
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(error instanceof Error ? error.message : String(error))
+        throw new Error(errorMessage(error))
       }
     })
   )
@@ -12104,9 +12080,7 @@ app.whenReady().then(async () => {
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(
-          `Could not uninstall package: ${error instanceof Error ? error.message : String(error)}`
-        )
+        throw new Error(`Could not uninstall package: ${errorMessage(error)}`)
       }
     })
   )
@@ -12114,9 +12088,7 @@ app.whenReady().then(async () => {
     try {
       return listRegistryPackages({ agentDir: AGENT_DIR })
     } catch (error) {
-      throw new Error(
-        `Could not read installed packages: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`Could not read installed packages: ${errorMessage(error)}`)
     }
   })
   ipcMain.handle('packages:previewImport', async (_, path: unknown) => {
@@ -12129,9 +12101,7 @@ app.whenReady().then(async () => {
         registries: (await loadPackageRegistries()).registries
       })
     } catch (error) {
-      throw new Error(
-        `Could not read offline package: ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`Could not read offline package: ${errorMessage(error)}`)
     }
   })
   ipcMain.handle(
@@ -12179,9 +12149,7 @@ app.whenReady().then(async () => {
         await invalidateAgentSession()
         return result
       } catch (error) {
-        throw new Error(
-          `Could not import package: ${error instanceof Error ? error.message : String(error)}`
-        )
+        throw new Error(`Could not import package: ${errorMessage(error)}`)
       }
     })
   )
@@ -12873,7 +12841,7 @@ app.whenReady().then(async () => {
       writeAppLog({
         level: 'error',
         event: 'wrapper_custom_add_failed',
-        metadata: { sourceDir, error: error instanceof Error ? error.message : String(error) }
+        metadata: { sourceDir, error: errorMessage(error) }
       })
       throw error
     }
@@ -12930,7 +12898,7 @@ app.whenReady().then(async () => {
       writeAppLog({
         level: 'error',
         event: 'wrapper_reproducibility_export_failed',
-        metadata: { runId, error: error instanceof Error ? error.message : String(error) }
+        metadata: { runId, error: errorMessage(error) }
       })
       throw error
     }

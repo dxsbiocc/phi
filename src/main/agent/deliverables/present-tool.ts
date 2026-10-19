@@ -2,6 +2,7 @@ import type { PhiTool } from '../engine/types'
 
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../../../shared/presentedFileTypes'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type PresentFilesRequest = {
   runtimeSessionId: string
   toolCallId: string
@@ -59,7 +60,7 @@ export function buildPresentFilesTool(
         }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

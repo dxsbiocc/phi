@@ -6,6 +6,7 @@ export { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../engine/phi-extension'
 
 import { suggestedFilename, validateDownloadUrl } from './project-download-tool'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -37,7 +38,7 @@ export function buildRemoteProjectDownloadTool(backend: RemoteDownloadBackend): 
         return { content: [{ type: 'text', text: JSON.stringify(result) }], details: result }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

@@ -6,6 +6,7 @@ import type {
   WebSearchSettingsPatch
 } from '../../shared/webSearchSettingsTypes'
 
+import { isRecord } from '../../shared/guards'
 type ProviderDetail = Pick<
   WebSearchProviderOption,
   'access' | 'auth' | 'apiKeyEnv' | 'apiKeyUrl'
@@ -140,10 +141,6 @@ export const WEB_SEARCH_PROVIDER_DETAILS = {
 
 const PROVIDER_IDS = SEARCH_PROVIDER_CHOICES.map((provider) => provider.value)
 const PROVIDER_ID_SET = new Set<string>(PROVIDER_IDS)
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function knownIds(value: unknown): SearchProviderId[] {
   if (!Array.isArray(value)) return []

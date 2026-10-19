@@ -1,5 +1,6 @@
 import { apiKeyConnector } from './mcp-key-credentials'
 
+import { isRecord } from '../../shared/guards'
 export class McpApiKeyValidationError extends Error {
   constructor(
     readonly kind: 'invalid' | 'unavailable',
@@ -8,10 +9,6 @@ export class McpApiKeyValidationError extends Error {
     super(message)
     this.name = 'McpApiKeyValidationError'
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function validAccountResponse(id: string, body: unknown): boolean {

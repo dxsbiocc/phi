@@ -22,6 +22,8 @@ import {
   type PhiPlatform
 } from './contract'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export interface ProjectOverrides {
   overrides: Record<string, string>
   /** Set when the file is missing or not a valid overrides document. */
@@ -54,14 +56,14 @@ export function readOverrides(projectDir: string): ProjectOverrides {
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') {
       return { overrides: {}, problem: 'environments.json is missing' }
     }
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { overrides: {}, problem: `environments.json is invalid: ${message}` }
   }
   let parsed: unknown
   try {
     parsed = JSON.parse(text) as unknown
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { overrides: {}, problem: `environments.json is invalid: ${message}` }
   }
   const overrides = validOverrides(parsed)
@@ -262,8 +264,4 @@ function isPhiPlatform(value: string): value is PhiPlatform {
 function errorCode(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error) return String(error.code)
   return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

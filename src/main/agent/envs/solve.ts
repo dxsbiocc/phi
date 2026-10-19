@@ -11,6 +11,8 @@ import {
 } from './contract'
 import { ensureMambarc, ensureRuntimeLayout, runMicromamba, type CondaOverrides } from './runtime'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 /**
  * Oldest systems an official lock must support. Virtual-package overrides keep a lock
  * independent of the machine that solved it (a macOS host has no glibc, so a linux-64
@@ -312,7 +314,7 @@ async function solveDryRun(
           return json
         }
       } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error)
+        lastError = errorMessage(error)
       }
     } else {
       lastError = solverFailureText(result)
@@ -389,8 +391,4 @@ function abortError(): Error {
   const error = new Error('aborted')
   error.name = 'AbortError'
   return error
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

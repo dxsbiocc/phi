@@ -6,6 +6,7 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import type { ScriptTool } from '../content/skill'
 import type { RemoteRuntimeWorkspace } from './types'
 
+import { isRecord } from '../../../shared/guards'
 const OPTIONS = { allErrors: true, strict: false } as const
 const DRAFT_2020 = 'https://json-schema.org/draft/2020-12/schema'
 const ajv = configured(new Ajv(OPTIONS))
@@ -188,8 +189,4 @@ function formatErrors(errors: ErrorObject[] | null | undefined): string {
         `${error.instancePath ? `${error.instancePath} ` : ''}${error.message ?? 'is invalid'}`
     )
     .join('; ')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

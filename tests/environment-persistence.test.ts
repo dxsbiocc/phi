@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import * as environmentTypes from '../src/shared/environmentTypes'
+import * as sharedGuards from '../src/shared/guards'
 
 function interruptedStore(filesystem: Partial<typeof fs>): {
   dismissEnvironmentSummary: (agentDir: string) => unknown
@@ -18,6 +19,7 @@ function interruptedStore(filesystem: Partial<typeof fs>): {
     if (name === 'node:path') return { join }
     if (name === 'node:crypto') return { randomUUID: () => 'interrupted-fixture' }
     if (name === '../../../shared/environmentTypes') return environmentTypes
+    if (name === '../../../shared/guards') return sharedGuards
     if (name === '../runtime-paths' || name === './detect') return {}
     throw new Error(`Unexpected dependency: ${name}`)
   }, exports)

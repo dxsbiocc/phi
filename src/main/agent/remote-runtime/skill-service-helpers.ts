@@ -11,6 +11,7 @@ import { parseRemoteScriptOutput, REMOTE_PATH_GUIDANCE } from './script-argument
 import type { RemoteSkillBundle } from './skill-bundle'
 import type { RemoteEnvironmentHandle, RemoteRuntimeWorkspace } from './types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const INTERPRETERS: Readonly<Record<string, string>> = {
   '.py': 'python',
   '.R': 'Rscript',
@@ -258,7 +259,7 @@ export function interpreter(script: string): string {
 }
 
 export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }
 
 function termination(

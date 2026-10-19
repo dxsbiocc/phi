@@ -1,5 +1,6 @@
 import type { TransferDirection, TransferSourceIdentity } from './types'
 
+import { isRecord } from '../../../shared/guards'
 export const TRANSFER_MANIFEST_VERSION = 1 as const
 
 export type TransferManifest = Readonly<{
@@ -15,10 +16,6 @@ export type TransferManifest = Readonly<{
   createdAt: number
   updatedAt: number
 }>
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 export function parseTransferManifest(value: unknown): TransferManifest | null {
   if (!isRecord(value) || value.protocolVersion !== TRANSFER_MANIFEST_VERSION) return null

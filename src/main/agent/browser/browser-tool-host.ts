@@ -7,6 +7,7 @@ import {
   type BrowserOutcome
 } from '../../../shared/browserTypes'
 
+import { isRecord } from '../../../shared/guards'
 const MAX_ORIGIN_ID_BYTES = 512
 const MAX_ID_BYTES = 256
 const MAX_URL_BYTES = 16 * 1024
@@ -39,10 +40,6 @@ type ParsedRequest = {
   requestId: string
   toolCallId: string
   command: Record<string, unknown>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function boundedString(value: unknown, maxBytes: number): string {

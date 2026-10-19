@@ -21,6 +21,7 @@ import {
   type DetectEnvironmentOptions
 } from './detect'
 
+import { isRecord } from '../../../shared/guards'
 const ENVIRONMENT_FILE = 'environment.json'
 const HOST_DEPENDENCY_IDS = new Set(['docker', 'singularity'])
 
@@ -35,10 +36,6 @@ type PersistedEnvironmentFile = {
   tools?: EnvironmentToolState[]
   hostDependencies?: EnvironmentHostDependency[]
   hostTools?: EnvironmentHostTool[]
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function getEnvironmentPath(agentDir = getPhiAgentDir()): string {

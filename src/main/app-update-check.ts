@@ -2,6 +2,7 @@ import { gt, valid } from 'semver'
 
 import type { AppUpdateCheck } from '../shared/appUpdateTypes'
 
+import { errorMessage } from '../shared/errorCodes'
 /** Published (non-draft, non-prerelease) releases of this repository are the update source. */
 export const RELEASES_REPOSITORY = 'dxsbiocc/phi'
 export const RELEASES_PAGE_URL = `https://github.com/${RELEASES_REPOSITORY}/releases/latest`
@@ -63,7 +64,7 @@ export async function checkForAppUpdate(
     return {
       ...base,
       status: 'error',
-      error: aborted ? '检查更新超时' : error instanceof Error ? error.message : String(error)
+      error: aborted ? '检查更新超时' : errorMessage(error)
     }
   } finally {
     clearTimeout(timer)

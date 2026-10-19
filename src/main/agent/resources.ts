@@ -22,6 +22,7 @@ import { listActiveMcpPackages } from './packages/mcp-store'
 import { listInstalledPlugins } from './plugins/loader'
 import { readManagedMarker } from './mcp/stdio-environment'
 
+import { isRecord } from '../../shared/guards'
 const AGENT_DIR = getPhiAgentDir()
 
 export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
@@ -58,10 +59,6 @@ function createResourceLoader(cwd = WORKSPACE_DIR): RuntimeResourceLoader {
     agentDir: AGENT_DIR,
     settingsManager
   })
-}
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function readJsonFile(path: string): unknown {

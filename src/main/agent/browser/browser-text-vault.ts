@@ -7,6 +7,7 @@ import {
   BROWSER_SAFE_MODIFIERS
 } from '../../../shared/browserTypes'
 
+import { isRecord } from '../../../shared/guards'
 const PLACEHOLDER_PREFIX = '__phi_browser_text_v1__:'
 const MAX_URL_BYTES = 16 * 1024
 const INVALID_BROWSER_INPUT = Object.freeze({ action: 'invalid' })
@@ -25,10 +26,6 @@ export interface BrowserTextVaultOptions {
   tokenFactory?: () => string
   /** Child model actors currently have no private typing capability. */
   allowTypeText?: boolean
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function isBrowserTextPlaceholder(value: unknown): value is string {

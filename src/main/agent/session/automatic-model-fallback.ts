@@ -4,6 +4,7 @@ import type {
   RuntimePromptOptions
 } from '../runtime/runtime-adapter'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const CONTINUE_PROMPT =
   '请继续完成用户上一条请求，沿用当前对话和已有工具结果，从中断处继续。不要重复执行已经成功完成的操作。'
 
@@ -13,7 +14,7 @@ function modelKey(model: Pick<RuntimeModel, 'provider' | 'id'>): string {
 
 /** Transport failures may throw instead of emitting an assistant error message. */
 function isModelRequestError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   if (
     /abort|cancel|permission.*(?:tool|command|file)|approval|denied.*(?:tool|command|file)/i.test(
       message

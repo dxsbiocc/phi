@@ -10,6 +10,8 @@ import {
   writeEnablementState
 } from './state'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export const DEFAULT_ENABLEMENT_MIGRATION_LIMITS = {
   maxSessions: 50,
   maxBytes: 5 * 1024 * 1024
@@ -65,10 +67,6 @@ function positiveLimit(value: number | undefined, fallback: number): number {
   if (!Number.isSafeInteger(value) || value < 0)
     throw new Error('Migration limits must be non-negative integers')
   return value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function collectString(value: unknown, used: Set<string>): void {
@@ -163,7 +161,7 @@ function scanHistory(
     } catch (error) {
       logger.warn('Could not scan session history during enablement migration', {
         path: history.path,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage(error)
       })
       continue
     }

@@ -18,6 +18,7 @@ import { isReservedExecutionName } from '../engine/phi-extension'
 import { envMetadataSchema } from './schemas'
 import { ownedRuntimeDirectory } from './ownership'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export const EXECUTION_CONTRACT_VERSION = '1.0.0'
 
 /** `{ envId, prefix, metadata }` as returned by `ensureEnvironment`. */
@@ -264,7 +265,7 @@ function spawnCommand(
       stdio: ['pipe', 'pipe', 'pipe']
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     throw new Error(`failed to spawn ${resolved}: ${message}`)
   }
 
@@ -464,7 +465,7 @@ export function loadEnvironment(root: string, envId: string): EnvHandle {
   try {
     parsed = JSON.parse(text) as unknown
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     throw new Error(`environment ${envId} metadata is invalid JSON: ${message}`)
   }
   if (!validateEnvMetadata(parsed)) {

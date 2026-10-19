@@ -3,6 +3,7 @@ import type { SshBootstrapTarget } from '../../../shared/sshBootstrapTypes'
 import type { SshBootstrapCoordinator } from './coordinator'
 import { validateSshBootstrapTarget } from './preflight'
 
+import { isRecord } from '../../../shared/guards'
 interface RendererLike {
   mainFrame: unknown
   isDestroyed(): boolean
@@ -34,10 +35,6 @@ function assertTrustedRenderer(
   ) {
     throw new Error('Window renderer is not authorized')
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function validId(value: unknown): value is string {

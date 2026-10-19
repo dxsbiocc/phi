@@ -28,6 +28,7 @@ import {
 } from './environment-transport'
 import { diagnoseRemoteCommandFailure, type RemoteWriteProbeFailure } from './write-diagnostics'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const DEFAULT_TIMEOUT_MS = 10 * 60_000
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024
 const WRITE_PROBE_TIMEOUT_MS = 10_000
@@ -571,5 +572,5 @@ function optionalRequestId(params: unknown): string | undefined {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }

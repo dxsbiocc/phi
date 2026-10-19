@@ -16,16 +16,13 @@ import {
 } from '../../shared/remoteEnvironmentTypes'
 import { getPhiAgentDir } from './runtime-paths'
 
+import { isRecord } from '../../shared/guards'
 const STORE_FILE = 'remote-environment-paths.json'
 const STORE_VERSION = 1
 
 interface RemoteEnvironmentStore {
   version: number
   entries: Readonly<Record<string, RemoteEnvironmentToolPaths>>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function validHostProfileId(value: string): boolean {

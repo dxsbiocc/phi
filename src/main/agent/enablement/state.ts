@@ -15,6 +15,8 @@ import type { SkillSourceCategory } from '../../../shared/skillTypes'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export const CORE_SKILL_NAMES = ['create-wrapper'] as const
 
 export type EnablementSource = SkillSourceCategory
@@ -67,10 +69,6 @@ function emptyState(): EnablementState {
   return { version: 1, global: {}, projects: {} }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function isBooleanRecord(value: unknown): value is Record<string, boolean> {
   return isRecord(value) && Object.values(value).every((entry) => typeof entry === 'boolean')
 }
@@ -81,10 +79,6 @@ function isEnablementState(value: unknown): value is EnablementState {
   return Object.entries(value.projects).every(
     ([projectPath, overrides]) => isAbsolute(projectPath) && isBooleanRecord(overrides)
   )
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function loggerFor(options?: EnablementOptions): EnablementLogger {

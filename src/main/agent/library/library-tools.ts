@@ -10,6 +10,8 @@ import {
 } from './library-store'
 import type { LibraryListFilters, SavePaperInput, UpdatePaperInput } from './library-types'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export type LibraryToolAction = 'save' | 'update' | 'remove' | 'list' | 'find' | 'audit'
 export const LIBRARY_TOOL_NAMES = Object.freeze([
   'lib.save',
@@ -40,10 +42,6 @@ export type LibraryToolStoreFactory = (
   context: PhiToolContext,
   signal?: AbortSignal
 ) => LibraryToolStore
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function recordValue(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {}
@@ -171,7 +169,7 @@ function buildLibraryTool(
         )
         return toolResult(result.summary, result.details)
       } catch (error) {
-        return toolResult(error instanceof Error ? error.message : String(error), {}, true)
+        return toolResult(errorMessage(error), {}, true)
       }
     }
   }

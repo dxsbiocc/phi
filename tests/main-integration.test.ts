@@ -48,6 +48,8 @@ import * as sessionTitle from '../src/shared/sessionTitle'
 import * as sessionTitleGeneration from '../src/main/agent/session/session-title-generation'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
+import * as sharedGuards from '../src/shared/guards'
+import * as sharedErrorCodes from '../src/shared/errorCodes'
 import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
 import * as remoteJupyterStartJobs from '../src/main/agent/notebook/remote-jupyter-start-jobs'
 import * as notebookAiGenerationJobs from '../src/main/agent/notebook/notebook-ai-generation-jobs'
@@ -1558,6 +1560,8 @@ async function harness(
     './app-update-check': appUpdateCheck,
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
+    '../shared/guards': sharedGuards,
+    '../shared/errorCodes': sharedErrorCodes,
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
       renderMoleculeSvg: async (): Promise<string> => '<svg xmlns="http://www.w3.org/2000/svg"/>'

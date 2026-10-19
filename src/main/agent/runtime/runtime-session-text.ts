@@ -1,14 +1,10 @@
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
-type UnknownRecord = Record<string, unknown>
+import { isRecord } from '../../../shared/guards'
 
 const DEFAULT_MAX_TEXT_CHARS = 20_000
 const DEFAULT_MAX_MESSAGE_CHARS = 2_000
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()

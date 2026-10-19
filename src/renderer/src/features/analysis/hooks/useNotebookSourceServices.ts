@@ -6,6 +6,7 @@ import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import type { NotebookCanvasProps } from '../lib/notebookCanvasTypes'
 import { notebookSyntaxLanguage } from '../lib/notebookViewModel'
 
+import { errorMessage } from '../../../../../shared/errorCodes'
 type NotebookSourceServicesOptions = {
   notebookFile?: AnalysisNotebookFile | null
   draftDocument: NotebookDocument | null
@@ -25,10 +26,6 @@ export type NotebookSourceServices = {
   ) => Promise<AnalysisNotebookCompletionResult | null>
   onFormatCellSource: (cellId: string, source: string, language?: SyntaxLanguage) => Promise<void>
   onFormatNotebook: () => Promise<void>
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error)
 }
 
 export function useNotebookSourceServices({

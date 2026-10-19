@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { getPhiAgentDir } from './runtime-paths'
 import { normalizeRemoteRuntimeRoot } from './remote-runtime-root'
 
+import { isRecord } from '../../shared/guards'
 const STORE_FILE = 'remote-runtime-roots.json'
 const STORE_VERSION = 1
 
@@ -23,10 +24,6 @@ interface RemoteRuntimeRootStore {
 
 function emptyStore(): RemoteRuntimeRootStore {
   return { version: STORE_VERSION, entries: {} }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function normalizedEntry(value: unknown): string | undefined {

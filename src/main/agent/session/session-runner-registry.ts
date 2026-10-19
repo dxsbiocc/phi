@@ -10,6 +10,7 @@ import { writeAppLog } from '../app-logger'
 import { redactSensitiveText } from '../redaction'
 import { errorCodeOf, isRetryable } from '../../../shared/errorCodes'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export interface SessionRunContext {
   signal: AbortSignal
 }
@@ -51,8 +52,9 @@ export interface SessionRunnerRegistryOptions {
 
 const DEFAULT_MAX_ACTIVE_RUNS = 4
 
-function errorMessage(error: unknown): string {
-  return redactSensitiveText(error instanceof Error ? error.message : String(error))
+/** Shared text plus redaction: these messages reach the persisted timeline. */
+function redactedErrorMessage(error: unknown): string {
+  return redactSensitiveText(errorMessage(error))
 }
 
 /** Additive failure classification for the persisted event; uncoded errors stay as before. */
@@ -194,7 +196,7 @@ export class SessionRunnerRegistry {
             runId: input.runId,
             createdAt: failedAt,
             durationMs: runDurationMs(run, failedAt),
-            errorMessage: errorMessage(recordedFailure)
+            errorMessage: redactedErrorMessage(recordedFailure)
           })
           updateSessionManifest(input.sessionId, {
             status: 'failed',
@@ -208,7 +210,7 @@ export class SessionRunnerRegistry {
             event: 'run_failed',
             sessionId: input.sessionId,
             runId: input.runId,
-            metadata: { error: errorMessage(recordedFailure) }
+            metadata: { error: redactedErrorMessage(recordedFailure) }
           })
           return
         }
@@ -242,7 +244,7 @@ export class SessionRunnerRegistry {
           runId: input.runId,
           createdAt: completedAt,
           durationMs: runDurationMs(run, completedAt),
-          errorMessage: errorMessage(error),
+          errorMessage: redactedErrorMessage(error),
           ...failureCode(error)
         })
         writeAppLog({
@@ -250,7 +252,7 @@ export class SessionRunnerRegistry {
           event: run.outcome === 'stopped' ? 'run_interrupted' : 'run_failed',
           sessionId: input.sessionId,
           runId: input.runId,
-          metadata: run.outcome === 'failed' ? { error: errorMessage(error) } : undefined
+          metadata: run.outcome === 'failed' ? { error: redactedErrorMessage(error) } : undefined
         })
         updateSessionManifest(input.sessionId, {
           status: run.outcome === 'failed' ? 'failed' : 'idle',

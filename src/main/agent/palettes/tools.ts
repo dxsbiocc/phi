@@ -5,6 +5,8 @@ import { parse as parseYaml } from 'yaml'
 
 import { getBundledPalettesDir } from '../runtime/runtime-adapter'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export type PaletteUse = 'categorical' | 'heatmap' | 'diverging' | 'sequential_warm' | 'product'
 
 type Palette = {
@@ -34,10 +36,6 @@ const USE_KINDS: Record<PaletteUse, Palette['kind']> = {
   diverging: 'diverging',
   sequential_warm: 'sequential',
   product: 'categorical'
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function readCatalog(path: string): PaletteCatalog {
@@ -165,7 +163,7 @@ export function buildPaletteRecommendationTool(
         return { content: [{ type: 'text', text: JSON.stringify(details) }], details }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

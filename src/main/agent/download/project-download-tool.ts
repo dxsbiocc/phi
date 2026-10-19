@@ -4,6 +4,7 @@ import { basename } from 'node:path'
 import { resolveInsideProject } from '../engine/phi-extension'
 import { transferFile } from './file-transfer'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 20_000
@@ -210,7 +211,7 @@ export function buildProjectDownloadTool(
         return { content: [{ type: 'text', text: JSON.stringify(result) }], details: result }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

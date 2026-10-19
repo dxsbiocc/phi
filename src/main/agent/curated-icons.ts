@@ -7,6 +7,7 @@ import { RESOURCE_ICON_MAX_BYTES } from '../../shared/resourceIconTypes'
 import { getBundledResourceDir } from './runtime/runtime-adapter'
 import { readResourceIcon, registerResourceIconAsset } from './resource-icons'
 
+import { isRecord } from '../../shared/guards'
 /** Resource kinds that can be given a fallback icon once they are installed. */
 export type CuratedIconKind = 'agent' | 'skill' | 'plugin' | 'wrapper' | 'mcp'
 
@@ -43,10 +44,6 @@ const REQUIRED_KINDS: CuratedIconKind[] = ['agent', 'skill']
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const SHA256 = /^[a-f0-9]{64}$/
 const CATALOG_NAME = 'catalog.json'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function httpsUrl(value: unknown, hostname?: string): value is string {
   if (typeof value !== 'string' || value.length > 2048) return false

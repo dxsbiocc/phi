@@ -21,6 +21,7 @@ import type {
 import type { BrowserPolicyContext } from './browser-policy'
 import type { BrowserToolDispatchControl } from '../agent/browser/browser-tool-host'
 
+import { isRecord } from '../../shared/guards'
 const MAX_ID_BYTES = 256
 const MAX_ORIGIN_ID_BYTES = 512
 const MAX_URL_BYTES = 16 * 1024
@@ -91,10 +92,6 @@ export class BrowserIpcError extends Error {
 
 function invalidRequest(): never {
   throw new BrowserIpcError('Invalid browser request')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
