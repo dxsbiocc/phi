@@ -51,6 +51,7 @@ import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
 import { AppWindowChrome } from './components/app-shell/AppWindowChrome'
 import { WorkspaceView } from './features/workspace/WorkspaceView'
 import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode'
+import { useWorkspaceTabNavigation } from './features/workspace/hooks/useWorkspaceTabNavigation'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import {
@@ -78,7 +79,7 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
-import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
+import { usePhiPlugins } from './features/phi-plugin/hooks/usePhiPlugins'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
 import {
@@ -169,18 +170,14 @@ import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
   isWorkspaceFileTabKind,
   isWorkspaceResourceKind,
-  upsertWorkspaceResourceTab,
   resolveWorkspaceResourceTabIcons,
   workspaceFileTabKey,
   workspaceResourceKindLabel,
-  workspaceResourceKindToSidebarMode,
-  workspaceResourceTabKey,
   activeTabKeyAfterPrompt,
   workspaceSessionTabKey,
   visibleWorkspaceTabsForState,
   type WorkspaceFileWorkspaceTab,
   type WorkspaceResourceKind,
-  type WorkspaceResourceTab,
   type WorkspaceSessionTab,
   type WorkspaceTab
 } from './lib/workspaceResourceTabs'
@@ -3379,106 +3376,38 @@ function App(): React.JSX.Element {
     workspaceFileTabs
   ])
 
-  const upsertWorkspaceTab = useCallback((tab: WorkspaceTab): void => {
-    setWorkspaceTabs((tabs) => upsertWorkspaceResourceTab(tabs, tab))
-  }, [])
-
-  const selectWorkspaceTab = useCallback(
-    (tab: WorkspaceTab): void => {
-      setActiveWorkspaceTabKey(tab.key)
-      if (tab.kind === 'session') {
-        setSessionTabWasOpened(true)
-        setClosedWorkspaceSessionTabKeys((keys) => {
-          if (!keys.has(tab.key)) return keys
-          const nextKeys = new Set(keys)
-          nextKeys.delete(tab.key)
-          return nextKeys
-        })
-        setWorkspaceSidebarMode(tab.sidebarMode)
-        navigateToView('chat')
-        if (tab.sessionPath && tab.sessionPath !== useSessionStore.getState().activeSessionPath) {
-          void onSelectSession(tab.sessionPath)
-        } else {
-          void acknowledgeActiveSession({ force: true })
-        }
-        return
-      }
-
-      if (isWorkspaceFileWorkspaceTab(tab)) {
-        onSelectWorkspaceFileTab(tab)
-        return
-      }
-
-      setWorkspaceSidebarMode(workspaceResourceKindToSidebarMode(tab.kind))
-      if (tab.kind === 'skills') {
-        setActiveSkillId(tab.itemId)
-      } else if (tab.kind === 'mcp') {
-        setActiveMcpServerId(tab.itemId)
-      } else if (tab.kind === 'wrappers') {
-        setSelectedWrapperId(tab.itemId)
-      }
-      navigateToView(tab.kind)
-    },
-    [
-      acknowledgeActiveSession,
-      navigateToView,
-      onSelectSession,
-      onSelectWorkspaceFileTab,
-      setActiveMcpServerId,
-      setActiveSkillId,
-      setSelectedWrapperId,
-      setClosedWorkspaceSessionTabKeys,
-      setSessionTabWasOpened,
-      setWorkspaceSidebarMode
-    ]
-  )
-
-  const openWorkspaceResourceTab = useCallback(
-    (tab: Omit<WorkspaceResourceTab, 'key'>): void => {
-      const nextTab: WorkspaceResourceTab = {
-        ...tab,
-        key: workspaceResourceTabKey(tab.kind)
-      }
-      upsertWorkspaceTab(nextTab)
-      selectWorkspaceTab(nextTab)
-    },
-    [selectWorkspaceTab, upsertWorkspaceTab]
-  )
-
-  const onOpenPhiPlugins = useCallback((): void => {
-    openWorkspaceResourceTab({
-      kind: 'plugins',
-      itemId: 'installed',
-      title: resourceUi.plugins
-    })
-  }, [openWorkspaceResourceTab])
-
-  const onOpenPhiPluginTab = useCallback(
-    (plugin: PhiPluginDisplayItem): void => {
-      openWorkspaceResourceTab({
-        kind: 'plugins',
-        itemId: plugin.id,
-        title: plugin.title,
-        icon: plugin.icon,
-        subtitle: plugin.directory
-      })
-    },
-    [openWorkspaceResourceTab]
-  )
-
-  const onOpenSkillTab = useCallback(
-    (skill: SkillSummary): void => {
-      setActiveSkillId(skill.id)
-      openWorkspaceResourceTab({
-        kind: 'skills',
-        itemId: skill.id,
-        title: skill.name,
-        icon: skill.icon,
-        subtitle: skill.filePath
-      })
-    },
-    [openWorkspaceResourceTab, setActiveSkillId]
-  )
+  const {
+    selectTab: selectWorkspaceTab,
+    selectTabFromChrome: onSelectWorkspaceTab,
+    closeTab: onCloseWorkspaceTab,
+    openResourceTab: openWorkspaceResourceTab,
+    openPluginsTab: onOpenPhiPlugins,
+    openPluginTab: onOpenPhiPluginTab,
+    openSkillTab: onOpenSkillTab
+  } = useWorkspaceTabNavigation({
+    workspaceTabs,
+    setWorkspaceTabs,
+    activeWorkspaceTabKey,
+    setActiveWorkspaceTabKey,
+    visibleWorkspaceTabs,
+    effectiveActiveWorkspaceTabKey,
+    activeSkillId,
+    activeMcpServerId,
+    selectedWrapperId,
+    setWorkspaceSidebarMode,
+    setActiveSkillId,
+    setActiveMcpServerId,
+    setSelectedWrapperId,
+    setSessionTabWasOpened,
+    setClosedWorkspaceSessionTabKeys,
+    navigateToView,
+    onSelectSession,
+    acknowledgeActiveSession,
+    onSelectWorkspaceFileTab,
+    onCloseWorkspaceFileTab,
+    closeWorkspaceSidebarPreview,
+    activeSessionPath: activeSessionPath ?? null
+  })
 
   const onSetSkillDisabled = useCallback(
     async (skill: SkillSummary, disabled: boolean): Promise<void> => {
@@ -3645,74 +3574,6 @@ function App(): React.JSX.Element {
   )
 
   // Selecting a tab closes any sidebar hover preview first, so the clicked tab
-  // is not immediately replaced by the preview's companion.
-  const onSelectWorkspaceTab = useCallback(
-    (tab: WorkspaceTab): void => {
-      closeWorkspaceSidebarPreview()
-      selectWorkspaceTab(tab)
-    },
-    [closeWorkspaceSidebarPreview, selectWorkspaceTab]
-  )
-  const onCloseWorkspaceTab = useCallback(
-    (tab: WorkspaceTab): void => {
-      const closingIndex = visibleWorkspaceTabs.findIndex((item) => item.key === tab.key)
-      if (closingIndex === -1) return
-      const remainingTabs = visibleWorkspaceTabs.filter((item) => item.key !== tab.key)
-      if (tab.kind === 'session') {
-        setSessionTabWasOpened(false)
-        setClosedWorkspaceSessionTabKeys((keys) => {
-          if (keys.has(tab.key)) return keys
-          const nextKeys = new Set(keys)
-          nextKeys.add(tab.key)
-          return nextKeys
-        })
-      } else if (isWorkspaceFileWorkspaceTab(tab)) {
-        onCloseWorkspaceFileTab(tab)
-      } else {
-        setWorkspaceTabs((tabs) => tabs.filter((item) => item.key !== tab.key))
-      }
-
-      // The sidebar's "selected" resource id is independent of which tab is
-      // active — clicking a resource icon in the activity bar switches
-      // `workspaceSidebarMode` without touching `activeWorkspaceTabKey` (see
-      // selectWorkspaceTab), so closing that resource's tab from the *tab
-      // bar* wouldn't otherwise clear its sidebar highlight even when the
-      // tab wasn't the active one. Without this, the sidebar keeps showing
-      // an item selected indefinitely after its last tab closes.
-      if (tab.kind === 'skills' && activeSkillId === tab.itemId) {
-        setActiveSkillId(null)
-      } else if (tab.kind === 'mcp' && activeMcpServerId === tab.itemId) {
-        setActiveMcpServerId(null)
-      } else if (tab.kind === 'wrappers' && selectedWrapperId === tab.itemId) {
-        setSelectedWrapperId(null)
-      }
-
-      if (tab.key !== effectiveActiveWorkspaceTabKey) return
-
-      const nextTab = remainingTabs[Math.min(closingIndex, remainingTabs.length - 1)] ?? null
-      if (nextTab) {
-        selectWorkspaceTab(nextTab)
-        return
-      }
-      setActiveWorkspaceTabKey(null)
-      navigateToView('chat')
-    },
-    [
-      activeMcpServerId,
-      activeSkillId,
-      effectiveActiveWorkspaceTabKey,
-      navigateToView,
-      onCloseWorkspaceFileTab,
-      selectWorkspaceTab,
-      selectedWrapperId,
-      setActiveMcpServerId,
-      setActiveSkillId,
-      setSelectedWrapperId,
-      visibleWorkspaceTabs,
-      setClosedWorkspaceSessionTabKeys,
-      setSessionTabWasOpened
-    ]
-  )
 
   const onRemoveMcpServer = useCallback(
     async (server: McpServerSummary): Promise<void> => {

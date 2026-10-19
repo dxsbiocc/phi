@@ -153,6 +153,13 @@ test('workspace sessions and resources share the same tab strip', () => {
     resolve(process.cwd(), 'src/renderer/src/lib/workspaceResourceTabs.ts'),
     'utf8'
   )
+  const tabNavigationSource = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/workspace/hooks/useWorkspaceTabNavigation.ts'
+    ),
+    'utf8'
+  )
 
   assert.match(appSource, /const \[workspaceTabs, setWorkspaceTabs\] = useState<WorkspaceTab\[\]>/)
   assert.match(appSource, /workspaceSessionTabKey\(activeSessionPath, activeSessionGeneration\)/)
@@ -165,29 +172,44 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /sessionTabWasOpened/)
   assert.match(tabTypesSource, /export function visibleWorkspaceTabsForState/)
   assert.match(appSource, /workspaceFileTabKey\(tab\.path\)/)
-  assert.match(appSource, /isWorkspaceFileWorkspaceTab\(tab\)/)
+  assert.match(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        'src/renderer/src/features/workspace/hooks/useWorkspaceTabNavigation.ts'
+      ),
+      'utf8'
+    ),
+    /isWorkspaceFileWorkspaceTab\(tab\)/
+  )
   assert.match(appSource, /tabs: visibleWorkspaceTabs,/)
   assert.match(appSource, /onSelect: onSelectWorkspaceTab,/)
   assert.match(appSource, /onClose: onCloseWorkspaceTab,/)
   assert.match(
-    appSource,
-    /const onSelectWorkspaceTab = useCallback\([\s\S]{0,200}closeWorkspaceSidebarPreview\(\)[\s\S]{0,80}selectWorkspaceTab\(tab\)/
+    readFileSync(
+      resolve(
+        process.cwd(),
+        'src/renderer/src/features/workspace/hooks/useWorkspaceTabNavigation.ts'
+      ),
+      'utf8'
+    ),
+    /const selectTabFromChrome = useCallback\([\s\S]{0,200}closeWorkspaceSidebarPreview\(\)[\s\S]{0,40}selectTab\(tab\)/
   )
   assert.match(
     appSource,
     /activeWorkspaceResourceTab\.kind === 'plugins'[\s\S]{0,500}<PhiPluginsView/
   )
   assert.match(
-    appSource,
-    /tab\.kind === 'skills' && activeSkillId === tab\.itemId[\s\S]{0,40}setActiveSkillId\(null\)/
+    tabNavigationSource,
+    /tab\.kind === 'skills' && context\.activeSkillId === tab\.itemId[\s\S]{0,40}setActiveSkillId\(null\)/
   )
   assert.match(
-    appSource,
-    /tab\.kind === 'mcp' && activeMcpServerId === tab\.itemId[\s\S]{0,40}setActiveMcpServerId\(null\)/
+    tabNavigationSource,
+    /tab\.kind === 'mcp' && context\.activeMcpServerId === tab\.itemId[\s\S]{0,40}setActiveMcpServerId\(null\)/
   )
   assert.match(
-    appSource,
-    /tab\.kind === 'wrappers' && selectedWrapperId === tab\.itemId[\s\S]{0,40}setSelectedWrapperId\(null\)/
+    tabNavigationSource,
+    /tab\.kind === 'wrappers' && context\.selectedWrapperId === tab\.itemId[\s\S]{0,40}setSelectedWrapperId\(null\)/
   )
   assert.match(appSource, /activeWorkspaceFileTabContent/)
   assert.match(

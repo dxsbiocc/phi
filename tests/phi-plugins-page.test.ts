@@ -959,17 +959,21 @@ test('plugin selection uses resource tabs, preserves sidebar visibility, and uni
   )
   const sidebarHostSource = readFileSync('src/renderer/src/AppWorkspaceSidebar.tsx', 'utf8')
 
-  assert.match(appSource, /const onOpenPhiPluginTab = useCallback/)
-  assert.match(appSource, /kind: 'plugins',[\s\S]{0,80}itemId: plugin\.id/)
-  assert.match(appSource, /const onOpenPhiPlugins = useCallback[\s\S]{0,160}itemId: 'installed'/)
-  assert.match(appSource, /activeResourcePhiPlugin[\s\S]{0,700}<PhiPluginsView/)
-  const selectionStart = appSource.indexOf('  const selectWorkspaceTab = useCallback(')
-  const selectionEnd = appSource.indexOf(
-    '  const openWorkspaceResourceTab = useCallback(',
-    selectionStart
+  const tabNavigationSource = readFileSync(
+    'src/renderer/src/features/workspace/hooks/useWorkspaceTabNavigation.ts',
+    'utf8'
   )
+  assert.match(tabNavigationSource, /const openPluginTab = useCallback/)
+  assert.match(tabNavigationSource, /kind: 'plugins',[\s\S]{0,80}itemId: plugin\.id/)
+  assert.match(
+    tabNavigationSource,
+    /const openPluginsTab = useCallback[\s\S]{0,160}itemId: 'installed'/
+  )
+  assert.match(appSource, /activeResourcePhiPlugin[\s\S]{0,700}<PhiPluginsView/)
+  const selectionStart = tabNavigationSource.indexOf('function applySelectTab(')
+  const selectionEnd = tabNavigationSource.indexOf('type ClosingContext =', selectionStart)
   assert.ok(selectionStart >= 0 && selectionEnd > selectionStart)
-  const tabSelectionSource = appSource.slice(selectionStart, selectionEnd)
+  const tabSelectionSource = tabNavigationSource.slice(selectionStart, selectionEnd)
   assert.match(
     tabSelectionSource,
     /setWorkspaceSidebarMode\(workspaceResourceKindToSidebarMode\(tab\.kind\)\)/
