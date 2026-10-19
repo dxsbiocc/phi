@@ -118,6 +118,10 @@ test('workspace top-right controls stay hidden when not requested', () => {
 
 test('analysis workspace skips the blank outer titlebar', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const titlebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/WorkspaceTitlebar.tsx'),
+    'utf8'
+  )
 
   assert.match(appSource, /const isAnalysisWorkspaceView = activeView === 'analysis'/)
   assert.match(
@@ -126,9 +130,9 @@ test('analysis workspace skips the blank outer titlebar', () => {
   )
   assert.doesNotMatch(appSource, /activeView !== 'analysis' \|\| Boolean\(filePreview\)/)
   assert.match(appSource, /\{showWorkspaceTitlebar \? \(/)
-  assert.match(appSource, /data-phi-workspace-file-header="true"/)
-  assert.match(appSource, /data-phi-workspace-file-tabs="true"/)
-  assert.match(appSource, /borderRadius: '999px'/)
+  assert.match(titlebarSource, /data-phi-workspace-file-header="true"/)
+  assert.match(titlebarSource, /data-phi-workspace-file-tabs="true"/)
+  assert.match(titlebarSource, /borderRadius: '999px'/)
   assert.match(appSource, /layout="workspace"/)
   assert.match(appSource, /workspaceFileTabs=\{workspaceFileTabs\}/)
 })
@@ -447,9 +451,17 @@ test('workspace files are available from the left sidebar activity item', () => 
 
 test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const titlebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/app-shell/WorkspaceTitlebar.tsx'),
+    'utf8'
+  )
 
   assert.match(appSource, /FilePreviewTitleTab,/)
-  assert.match(appSource, /const titlebarTrailingToggleChromeReserve = '120px'/)
+  assert.match(titlebarSource, /export const titlebarTrailingToggleChromeReserve = '120px'/)
+  assert.match(
+    appSource,
+    /import \{[\s\S]{0,120}titlebarTrailingToggleChromeReserve[\s\S]{0,120}\} from '\.\/components\/app-shell\/WorkspaceTitlebar'/
+  )
   assert.match(
     appSource,
     /filePreview && !showProjectSessionPlaceholder \? \([\s\S]{0,220}<FilePreviewTitleTab/
@@ -459,11 +471,11 @@ test('workspace file titlebars reserve trailing app chrome only at the window ed
     /titlebarInsetEnd=\{\s*workspaceSidePanelCollapsed \? titlebarTrailingToggleChromeReserve : 1\.25\s*\}/
   )
   assert.match(appSource, /onClose=\{onCloseCurrentFilePreview\}/)
-  assert.match(appSource, /leadingChromeInset\?: number/)
-  assert.match(appSource, /pl: leadingChromeInset > 0 \? `\$\{leadingChromeInset\}px` : 1\.5/)
-  assert.match(appSource, /reserveTrailingChromeSpace\?: boolean/)
+  assert.match(titlebarSource, /leadingChromeInset\?: number/)
+  assert.match(titlebarSource, /pl: leadingChromeInset > 0 \? `\$\{leadingChromeInset\}px` : 1\.5/)
+  assert.match(titlebarSource, /reserveTrailingChromeSpace\?: boolean/)
   assert.match(
-    appSource,
+    titlebarSource,
     /pr: reserveTrailingChromeSpace \? titlebarTrailingToggleChromeReserve : 1\.5/
   )
   assert.match(appSource, /leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/)

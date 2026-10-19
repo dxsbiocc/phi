@@ -28,7 +28,6 @@ import {
   ThemeProvider,
   Typography
 } from '@mui/material'
-import { alpha } from '@mui/material/styles'
 import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
@@ -51,6 +50,12 @@ import {
   TopRightControls,
   titlebarChromeIconButtonSize
 } from './components/app-shell/TopRightControls'
+import {
+  WorkspaceFileHeader,
+  WorkspaceResourceHeader,
+  titlebarTrailingToggleChromeReserve
+} from './components/app-shell/WorkspaceTitlebar'
+import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import {
@@ -90,8 +95,6 @@ import {
 import { SkillCatalogDialog, SkillDetail } from './features/skill/SkillView'
 import { useSkillCatalog } from './features/skill/hooks/useSkillCatalog'
 import { McpDetail } from './features/mcp/McpView'
-import { ConnectorIcon } from './features/mcp/components/ConnectorIcon'
-import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { useLocalConnectorNotices } from './features/mcp/hooks/useLocalConnectorNotices'
 import { type SettingsCategory } from './components/SettingsDialog'
@@ -106,7 +109,6 @@ import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
-import { WorkspaceResourceTabs } from './components/WorkspaceResourceTabs'
 import { createPaletteTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { syncWindowBackground } from './lib/windowStartup'
@@ -200,7 +202,6 @@ import {
   workspaceSidePanelWidthForViewport,
   type WorkspaceSidePanelMode
 } from './lib/workspaceSidePanelMode'
-import { PhiIcons, fileIconForPath, directoryIconForPath } from './icons'
 import {
   idleSessionRuntimeState,
   reduceSessionRuntimeState,
@@ -228,7 +229,6 @@ import type {
 } from './types'
 
 const titlebarChromeTopOffset = `${(WINDOW_TITLEBAR_HEIGHT - titlebarChromeIconButtonSize) / 2}px`
-const titlebarTrailingToggleChromeReserve = '120px'
 
 function isWorkspaceFileWorkspaceTab(
   tab: WorkspaceTab | null | undefined
@@ -264,294 +264,6 @@ const workspaceSidePanelWidthDefault = 340
 const minWorkspaceSidePanelWidth = 240
 const maxWorkspaceSidePanelWidth = 520
 const titlebarChromeHorizontalInset = '14px'
-
-function WorkspaceFileTabs({
-  tabs,
-  activePath,
-  onSelect,
-  onClose
-}: {
-  tabs: WorkspaceFileTab[]
-  activePath: string | null
-  onSelect: (tab: WorkspaceFileTab) => void
-  onClose: (tab: WorkspaceFileTab) => void
-}): React.JSX.Element {
-  useUiLanguage()
-  return (
-    <Box
-      role="tablist"
-      aria-label={appCopy.openFiles}
-      data-phi-workspace-file-tabs="true"
-      sx={{
-        flex: 1,
-        minWidth: 0,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 0.55,
-        overflowX: 'auto',
-        alignSelf: 'stretch',
-        py: 0.65,
-        WebkitAppRegion: 'drag',
-        scrollbarWidth: 'none',
-        '&::-webkit-scrollbar': { display: 'none' }
-      }}
-    >
-      {tabs.map((tab) => {
-        const selected = tab.path === activePath
-        const fileIcon =
-          tab.kind === 'directory'
-            ? directoryIconForPath(tab.path, selected)
-            : fileIconForPath(tab.path)
-        const FileIcon = fileIcon.Icon
-        return (
-          <Box
-            key={tab.id}
-            role="tab"
-            tabIndex={0}
-            aria-selected={selected}
-            data-phi-workspace-file-tab={selected ? 'active' : 'inactive'}
-            data-phi-workspace-file-kind={tab.kind}
-            title={tab.absolutePath ?? tab.path}
-            onClick={() => {
-              if (!selected) onSelect(tab)
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return
-              event.preventDefault()
-              if (!selected) onSelect(tab)
-            }}
-            sx={{
-              border: 1,
-              borderColor: selected
-                ? (theme) => alpha(theme.palette.primary.main, 0.5)
-                : (theme) => alpha(theme.palette.text.primary, 0.12),
-              borderRadius: '999px',
-              bgcolor: selected
-                ? (theme) =>
-                    alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1)
-                : (theme) => alpha(theme.palette.background.paper, 0.56),
-              color: selected ? 'text.primary' : 'text.secondary',
-              cursor: selected ? 'default' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.4,
-              flex: '0 0 156px',
-              width: 156,
-              minWidth: 118,
-              maxWidth: 156,
-              height: 32,
-              px: 0.6,
-              pl: 1,
-              lineHeight: 1,
-              WebkitAppRegion: 'no-drag',
-              '&:hover': {
-                bgcolor: selected
-                  ? (theme) =>
-                      alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.24 : 0.14)
-                  : (theme) => alpha(theme.palette.action.hover, 0.68),
-                color: 'text.primary'
-              },
-              '&:hover .workspace-file-tab-close, &:focus-within .workspace-file-tab-close': {
-                opacity: 1
-              }
-            }}
-          >
-            <FileIcon sx={{ flexShrink: 0, fontSize: 18, color: fileIcon.color }} />
-            <Typography
-              component="span"
-              noWrap
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.78rem',
-                fontWeight: selected ? 800 : 650,
-                lineHeight: '18px'
-              }}
-            >
-              {tab.name}
-            </Typography>
-            {tab.dirty && (
-              <Box
-                component="span"
-                role="img"
-                aria-label={appCopy.unsaved}
-                sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'warning.main' }}
-              />
-            )}
-            <Box
-              className="workspace-file-tab-close"
-              component="span"
-              role="button"
-              aria-label={appCopy.closeTab(tab.name)}
-              tabIndex={0}
-              onClick={(event: MouseEvent<HTMLElement>) => {
-                event.stopPropagation()
-                onClose(tab)
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                event.stopPropagation()
-                onClose(tab)
-              }}
-              sx={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-                width: 17,
-                height: 17,
-                ml: 'auto',
-                borderRadius: '50%',
-                color: 'text.disabled',
-                opacity: selected ? 0.72 : 0,
-                transition: 'opacity 120ms ease, background-color 120ms ease, color 120ms ease',
-                WebkitAppRegion: 'no-drag',
-                '&:hover': {
-                  bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08),
-                  color: 'text.primary'
-                }
-              }}
-            >
-              <PhiIcons.action.close sx={{ fontSize: 14 }} />
-            </Box>
-          </Box>
-        )
-      })}
-    </Box>
-  )
-}
-
-function WorkspaceFileHeader({
-  tabs,
-  activePath,
-  onSelect,
-  onClose,
-  leadingChromeInset = 0,
-  reserveTrailingChromeSpace = false
-}: {
-  tabs: WorkspaceFileTab[]
-  activePath: string | null
-  onSelect: (tab: WorkspaceFileTab) => void
-  onClose: (tab: WorkspaceFileTab) => void
-  leadingChromeInset?: number
-  reserveTrailingChromeSpace?: boolean
-}): React.JSX.Element {
-  return (
-    <Box
-      data-phi-workspace-file-header="true"
-      sx={{
-        height: WINDOW_TITLEBAR_HEIGHT,
-        flexShrink: 0,
-        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
-        pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        WebkitAppRegion: 'drag'
-      }}
-    >
-      <WorkspaceFileTabs
-        tabs={tabs}
-        activePath={activePath}
-        onSelect={onSelect}
-        onClose={onClose}
-      />
-    </Box>
-  )
-}
-
-function WorkspaceResourceHeader({
-  tabs,
-  activeKey,
-  onSelect,
-  onClose,
-  onDockSessionTab,
-  actions,
-  leadingChromeInset = 0,
-  reserveTrailingChromeSpace = false
-}: {
-  tabs: WorkspaceTab[]
-  activeKey: string | null
-  onSelect: (tab: WorkspaceTab) => void
-  onClose: (tab: WorkspaceTab) => void
-  onDockSessionTab?: (tab: WorkspaceSessionTab) => void
-  actions?: React.ReactNode
-  leadingChromeInset?: number
-  reserveTrailingChromeSpace?: boolean
-}): React.JSX.Element {
-  return (
-    <Box
-      data-phi-workspace-resource-header="true"
-      sx={{
-        height: WINDOW_TITLEBAR_HEIGHT,
-        flexShrink: 0,
-        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
-        pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        WebkitAppRegion: 'drag'
-      }}
-    >
-      <WorkspaceResourceTabs
-        tabs={tabs}
-        activeKey={activeKey}
-        onSelect={onSelect}
-        onClose={onClose}
-        onDockSessionTab={onDockSessionTab}
-        connectorIcon={renderConnectorTabIcon}
-        fileIcon={renderFileWorkspaceTabIcon}
-      />
-      {actions}
-    </Box>
-  )
-}
-
-function renderConnectorTabIcon(icon?: ResourceIconRef): React.JSX.Element {
-  return <ConnectorIcon icon={icon} size={20} />
-}
-
-function renderFileWorkspaceTabIcon(tab: WorkspaceFileWorkspaceTab): React.JSX.Element {
-  const icon =
-    tab.kind === 'directory' ? directoryIconForPath(tab.path, false) : fileIconForPath(tab.path)
-  const Icon = icon.Icon
-  return <Icon sx={{ flexShrink: 0, fontSize: 18, color: icon.color }} />
-}
-
-function AppResizeSeparator({
-  label,
-  onMouseDown
-}: {
-  label: string
-  onMouseDown: (event: MouseEvent<HTMLDivElement>) => void
-}): React.JSX.Element {
-  return (
-    <Box
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={label}
-      onMouseDown={onMouseDown}
-      sx={{
-        width: '1px',
-        flexShrink: 0,
-        position: 'relative',
-        cursor: 'col-resize',
-        zIndex: 5,
-        WebkitAppRegion: 'no-drag',
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          bottom: 0,
-          left: -4,
-          right: -4
-        }
-      }}
-    />
-  )
-}
 
 function App(): React.JSX.Element {
   const uiLanguage = useUiLanguage()

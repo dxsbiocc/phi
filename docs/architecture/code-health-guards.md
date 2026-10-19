@@ -54,10 +54,10 @@ node scripts/check-main-boundaries.mjs --update   # 拆分后把更低的数字�
 存量代码必然大量超标,所以真正的闸门是 `--max-warnings`:
 
 ```json
-"lint": "... eslint --cache . --max-warnings 1472"
+"lint": "... eslint --cache . --max-warnings 1470"
 ```
 
-2026-10-19 冻结在 1,472。**新增任何一条告警都会让 `bun run lint` 失败**;清理存量后把数字调低即可,它只能往下走。
+冻结在 1,470(2026-10-19 从 1,472 下调:App.tsx 的标题栏组件迁出后,标签项拆成独立组件,消掉两条 `max-lines-per-function`)。**新增任何一条告警都会让 `bun run lint` 失败**;清理存量后把数字调低即可,它只能往下走。
 
 试过并对齐过的一条:**不要**按目录把规则设成 `error` —— `src/shared` 里 `notebookCodeGeneration.ts` 有 715 行,直接 error 会让 lint 立刻红;总数预算对"新增"的约束是一样的,而且不需要给每个目录维护例外。
 
