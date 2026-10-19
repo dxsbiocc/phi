@@ -51,7 +51,7 @@ Status: 审计结论(只读分析,未修改任何生产代码);2026-10-18 已与
 | SSH-09 | 仍在 | `ssh-bootstrap/host-key.ts` 只跳过 `@` 标记;`every` 要求每个旧算法都被重扫到 |
 | SSH-10 | 仍在 | `runtime-deployment/deployment.ts:22` 仅进程内互斥(启动事务的 flock 只覆盖会话存储,不覆盖运行时部署 staging) |
 | SSH-11 | 部分 | 清理已改为先校验归属再 `rm -rf`(`ssh-stdio-factory.ts:391`),但仍走同一条通道、失败被吞(`:392`),没有启动时按年龄清扫 |
-| SSH-12 | 新增 | `run-guard.ts` 发出 `PHI_LAUNCH:*` 标记,但全仓没有解析点;启动被拒时上层只看到 `TRANSPORT_LOST 'RPC output stream ended'`。启动路径硬依赖 `flock` 与可用的 `ps` |
+| SSH-12 | 已修 | `7347dcda`:`RpcConnection` 按代收集 stderr 尾部,`describeTransportEnd` 钩子把 `PHI_LAUNCH:*` 映射成 `DOMAIN_CONFLICT`(锁被占)或 `DOMAIN_INVALID`(缺 `flock`/`ps` 工具),并给出可操作文案;无标记时仍是 `TRANSPORT_LOST` |
 | X-01 | 仍在 | 未改动 |
 | X-02 | 部分 | `3c014834` 新增 `src/shared/errorCodes.ts`,远程与引擎已迁移;`index.ts` 其余 `throw new Error` 仍为 `UNKNOWN` |
 | X-03 | 仍在 | 未改动 |
@@ -458,7 +458,7 @@ if (this.privateCalls.size >= 4096 && !this.privateCalls.has(id)) {
 
 **修复方向**:会话开始时做带年龄阈值的 `rpc-sessions/*` 清扫;清理拆成"本地登记 + 下次连接补偿";`models.yml` 在生成关闭时显式删除。
 
-#### SSH-12 启动拒绝的原因被丢弃,启动路径硬依赖宿主工具 🆕
+#### SSH-12 启动拒绝的原因被丢弃,启动路径硬依赖宿主工具 ✅ 已修(`7347dcda`)
 
 **证据**
 - `run-guard.ts:45-46` 两处标记:
@@ -479,8 +479,18 @@ if (this.privateCalls.size >= 4096 && !this.privateCalls.has(id)) {
 **影响**
 用户看到"连接中断",真实原因是"启动被拒"。远端若缺 `flock`(精简容器、部分非 Linux 环境)或没有 `ps` 权限,远程会话完全起不来,且现场没有任何可自助诊断的信息。
 
-**修复方向**
-启动包装脚本的 stderr 标记应在启动失败时被解析成带 code 的错误(`DOMAIN_INVALID` 之类 + 可读原因),而不是等 stdout EOF 后统一归为传输丢失;`flock`/`ps` 作为启动前置条件纳入部署检查(R1)并给出可操作提示。
+**修复方向(已实施)**
+`RpcConnection` 每代保留一段 stderr 尾部,通道结束或进程退出时交给 `describeTransportEnd` 钩子;`remote-session-runtime` 注入 `runGuardRefusalError`,`run-guard.ts` 依据标记与周边 stderr 判定原因。映射:
+
+| 现场 | code | 用户看到 |
+| --- | --- | --- |
+| `RUN_LOCK_BUSY` + `flock: command not found` | `DOMAIN_INVALID` | 服务器缺少 flock,请安装 util-linux |
+| `RUN_LOCK_BUSY` | `DOMAIN_CONFLICT` | 该会话仍被上一次未结束的远端运行占用 |
+| `NOT_GROUP_LEADER` + `ps ... Operation not permitted` | `DOMAIN_INVALID` | 服务器 ps 不可用或受限 |
+| `NOT_GROUP_LEADER` | `DOMAIN_INVALID` | 启动进程不是进程组组长 |
+| 无标记 | `TRANSPORT_LOST` | 保持原样,不猜测原因 |
+
+尚未做:把 `flock`/`ps` 纳入部署检查(R1)的前置探测,目前只在失败时给出提示。
 
 ### 4.4 信任边界:做对的部分与真正的缺口
 
