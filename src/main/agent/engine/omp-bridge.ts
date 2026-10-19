@@ -21,6 +21,7 @@ import {
   type ModelGatewayLease
 } from './model-gateway-types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export interface OwnedModelGatewayLease extends ModelGatewayLease {
   readonly closed: Promise<void>
   close(): Promise<void>
@@ -573,7 +574,7 @@ export class OmpBridge extends EventEmitter {
   async sendAuthPromptError(requestId: string, error: unknown): Promise<void> {
     await this.request('auth.promptResult', {
       requestId,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage(error)
     })
   }
 
@@ -781,7 +782,7 @@ export class OmpBridge extends EventEmitter {
         type: 'hostResponse',
         id: request.id,
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
         stack: error instanceof Error ? error.stack : undefined
       })
     }

@@ -11,6 +11,7 @@ import { formatJobList, formatJobStatus } from './job-format'
 import type { WrapperJobClient } from './job-types'
 import { rankWrapperEntries } from './search'
 
+import { isRecord } from '../../../../shared/guards'
 export const WRAPPER_COMPOSITION_TOOL_NAMES = [
   'wrapper_search',
   'wrapper_inspect',
@@ -32,10 +33,6 @@ export const WRAPPER_COMPOSITION_TOOL_NAMES = [
  * plan-card chat UI from Milestone P1.5 was built for the older package
  * manifest and hasn't been ported to this layout yet.
  */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 export function buildWrapperCompositionSearchTool(
   discovery: WrapperCompositionDiscoveryOptions = {}

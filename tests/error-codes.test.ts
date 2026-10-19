@@ -5,6 +5,7 @@ import {
   CodedError,
   ERROR_CODES,
   errorCodeOf,
+  errorMessage,
   isErrorCode,
   isRetryable,
   toErrorPayload
@@ -54,4 +55,13 @@ test('toErrorPayload serializes code, retryable and message only', () => {
     message: 'plain'
   })
   assert.deepEqual(toErrorPayload('str'), { code: 'UNKNOWN', retryable: false, message: 'str' })
+})
+
+test('errorMessage never renders an empty explanation', () => {
+  assert.equal(errorMessage(new Error('boom')), 'boom')
+  // An Error with no message falls back to its string form instead of ''.
+  assert.equal(errorMessage(new Error('')), 'Error')
+  assert.equal(errorMessage(Object.assign(new Error(''), { name: 'TimeoutError' })), 'TimeoutError')
+  assert.equal(errorMessage('plain string'), 'plain string')
+  assert.equal(errorMessage(undefined), 'undefined')
 })

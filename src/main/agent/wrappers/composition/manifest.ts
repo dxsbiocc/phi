@@ -6,6 +6,7 @@ import type {
   WrapperCompositionParam
 } from '../../../../shared/wrapperCompositionManifestTypes'
 
+import { isRecord } from '../../../../shared/guards'
 /**
  * Parser for the minimal per-wrapper manifest described in
  * resources/skills/create-wrapper/references/guide.md section 3 — NOT the
@@ -20,10 +21,6 @@ export type {
   WrapperCompositionOutput,
   WrapperCompositionParam
 } from '../../../../shared/wrapperCompositionManifestTypes'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 const WRAPPER_ID = /^[a-z][a-z0-9-]*\/(?:modules|subworkflows|workflows)\/[a-z][a-z0-9-]*$/
 const PARAM_NAME = /^[a-z][a-z0-9_]*$/

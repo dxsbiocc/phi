@@ -1,5 +1,6 @@
 import { ModelRegistry } from '@oh-my-pi/pi-coding-agent'
 import { AuthStorage } from '@oh-my-pi/pi-ai'
+import { isRecord } from '../../../../shared/guards'
 import { PhiAuth } from '../types'
 
 export type UnknownRecord = Record<string, unknown>
@@ -61,9 +62,7 @@ export type RuntimeModelSummary = {
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
 }
 
-export function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+export { isRecord }
 
 export function stringValue(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback

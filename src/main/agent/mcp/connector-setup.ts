@@ -5,6 +5,7 @@ import type {
 import { randomUUID } from 'node:crypto'
 import { loadConnectorSetups, saveConnectorSetups } from './connector-setup-store'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type ConnectorSetupReporter = (
   phase: Exclude<McpConnectorSetupPhase, 'failed'>,
   details?: {
@@ -95,7 +96,7 @@ export class ConnectorSetupTracker {
         ...metadata,
         ...(operationId ? { operationId } : {}),
         ...(phase ? { failedPhase: phase } : {}),
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
         ...(detail ? { detail } : {}),
         ...failure
       })

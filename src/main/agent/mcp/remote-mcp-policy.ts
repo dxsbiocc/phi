@@ -4,6 +4,7 @@ import {
   remoteMcpInputUsesLocalProject
 } from '../engine/phi-extension'
 
+import { isRecord } from '../../../shared/guards'
 export {
   REMOTE_MCP_PROJECT_DEPENDENCY_REASON,
   REMOTE_MCP_UNVERIFIED_REASON,
@@ -55,10 +56,6 @@ export type RemoteMcpServerDecision =
   { allowed: true; entry: Record<string, unknown> } | { allowed: false; reason: string }
 
 type McpToolLike = { name?: unknown; mcpServerName?: unknown }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function isInside(root: string, candidate: string): boolean {
   const rel = relative(resolve(root), resolve(candidate))

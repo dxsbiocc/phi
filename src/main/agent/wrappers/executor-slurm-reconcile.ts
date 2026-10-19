@@ -17,6 +17,7 @@ import { resolveRemoteSubmitOptions } from './runs'
 import { appendWrapperAuditEvent, listWrapperRuns } from './store'
 import type { WrapperRun, WrapperRunState } from './types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /**
  * Startup reconciliation for remote controller runs — see the technical
  * design doc's "Monitoring And Recovery": "If the app closes or the network
@@ -270,7 +271,7 @@ export async function reconcileRemoteWrapperRuns(
       try {
         await reconcileOneRun(run, agentDir, connectImpl, pollIntervalMs)
       } catch (error) {
-        markLost(run, agentDir, error instanceof Error ? error.message : String(error))
+        markLost(run, agentDir, errorMessage(error))
       }
     })
   )

@@ -1,6 +1,8 @@
 import type { EnvironmentBuildEstimate } from '../../../shared/environmentBuildTypes'
 import type { ConfirmBuildRequest } from './skill-host'
 
+import { isRecord } from '../../../shared/guards'
+
 /** The in-chat question asked before a missing environment is built. */
 export const BUILD_NOW = '现在构建'
 
@@ -39,8 +41,4 @@ export function confirmedEnvironmentBuild(response: unknown): boolean {
   }
   if (!Array.isArray(response.answers)) return false
   return response.answers.some((answer) => isRecord(answer) && answer.answer === BUILD_NOW)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

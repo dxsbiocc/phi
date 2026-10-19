@@ -9,6 +9,8 @@ import {
   type EnvironmentDescriptor
 } from './environment-refs'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 export interface ConfirmBuildRequest {
   runtimeSessionId: string
   ref: string
@@ -202,7 +204,7 @@ function failureReason(builds: EnvironmentBuilds, envId: string, error: unknown)
   if (entry?.state === 'cancelled' || entry?.state === 'failed') {
     return entry.error ?? (entry.state === 'cancelled' ? 'build cancelled' : 'build failed')
   }
-  return error instanceof Error ? error.message : String(error)
+  return errorMessage(error)
 }
 
 function isAbortError(error: unknown): boolean {

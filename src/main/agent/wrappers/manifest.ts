@@ -7,6 +7,8 @@ import type { ManifestParseResult, WrapperManifest, WrapperManifestRuntime } fro
 import { isPlausibleJsonSchema } from './schema'
 import type { WrapperEngineType, WrapperResourceClass } from './types'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 /** Phi's own wrapper runtime version, checked against a manifest's `runtime.minVersion`/`maxVersion`. */
 export const PHI_WRAPPER_RUNTIME_VERSION = '1.0.0'
 
@@ -15,10 +17,6 @@ const RESOURCE_CLASSES: WrapperResourceClass[] = ['light', 'standard', 'heavy', 
 const ENGINE_TYPES: WrapperEngineType[] = ['nextflow', 'snakemake', 'cwl', 'wdl']
 /** Only this engine can actually be submitted for execution (Phase 1-3). Others parse fine but can't run yet. */
 const EXECUTABLE_ENGINE_TYPES: WrapperEngineType[] = ['nextflow']
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function maxVersionSatisfied(maxVersion: string, current: string): boolean {
   const majorWildcard = /^(\d+)\.x$/.exec(maxVersion)
@@ -196,7 +194,7 @@ export function parseWrapperManifest(rawYamlText: string): ManifestParseResult {
   } catch (error) {
     return {
       valid: false,
-      errors: [`YAML parsing failed: ${error instanceof Error ? error.message : String(error)}`]
+      errors: [`YAML parsing failed: ${errorMessage(error)}`]
     }
   }
 

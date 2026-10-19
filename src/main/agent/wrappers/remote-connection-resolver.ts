@@ -7,6 +7,7 @@ import type { RemoteTarget } from './composition/remote-job'
 import type { ConnectImpl } from './executor-remote'
 import type { RemoteConnectionConfig } from './remote-ssh-session'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /** Everything `runs.ts` needs to dispatch a `slurm-controller` submit — resolved either explicitly by the caller, or (via `resolveProjectRemoteSubmitOptions`) from a project's saved remote config. */
 export interface RemoteSubmitOptions {
   connection: RemoteConnectionConfig
@@ -167,6 +168,6 @@ export function resolveProjectRemoteTarget(
       hostProfileId: connection.hostProfileId
     }
   } catch (error) {
-    return { reason: error instanceof Error ? error.message : String(error) }
+    return { reason: errorMessage(error) }
   }
 }

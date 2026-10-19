@@ -14,6 +14,9 @@ import {
   resolveSkillEnvironment
 } from './environment-refs'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 const DEFAULT_TIMEOUT_SECONDS = 600
 const STDERR_TAIL = 2000
 
@@ -66,7 +69,7 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
   try {
     validate = validatorFor(input.tool.args)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { ok: false, error: `invalid arguments schema: ${message}`, warnings }
   }
   if (!validate(input.args)) {
@@ -80,7 +83,7 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
   try {
     args = resolveArgumentPaths(input.projectDir, input.tool.args, input.args)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { ok: false, error: message, warnings }
   }
 
@@ -109,7 +112,7 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
   try {
     cwd = realpathSync(input.projectDir)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return {
       ok: false,
       error: `project directory does not exist: ${input.projectDir} (${message})`,
@@ -158,7 +161,7 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
     try {
       check = validatorFor(input.tool.outputSchema)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       return {
         ok: false,
         error: `output schema is invalid: ${message}`,
@@ -359,12 +362,4 @@ function pathFormat(schema: unknown): 'input-path' | 'project-path' | undefined 
 function isInside(root: string, target: string): boolean {
   const rel = relative(root, target)
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

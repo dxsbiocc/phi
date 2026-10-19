@@ -13,6 +13,7 @@ import {
   type JupyterRuntimeBackend
 } from './jupyter-runtime-backend'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type { JupyterServerConnection } from './analysis-jupyter-server'
 
 export type AnalysisNotebookKernelState =
@@ -108,11 +109,6 @@ type RawJupyterSession = {
     name?: unknown
     execution_state?: unknown
   }
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  return String(error)
 }
 
 function jsonObject(value: unknown): JsonObject | null {

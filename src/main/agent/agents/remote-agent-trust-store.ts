@@ -12,6 +12,8 @@ import { join, posix } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 
+import { isRecord } from '../../../shared/guards'
+
 const STORE_FILE = 'remote-agent-trust.json'
 const STORE_VERSION = 1
 
@@ -27,10 +29,6 @@ export interface RemoteAgentTrustIdentity {
 interface RemoteAgentTrustStore {
   version: number
   entries: RemoteAgentTrustIdentity[]
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function checkedText(value: string, label: string): string {

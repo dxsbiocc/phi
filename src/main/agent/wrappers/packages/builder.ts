@@ -21,6 +21,7 @@ import {
 } from '../../packages/icon-assets'
 import type { RegistryIconAsset } from '../../../../shared/resourceIconTypes'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 export type WrapperPackageKind = 'module' | 'subworkflow' | 'workflow' | 'support'
 
 export interface WrapperPackageDependency {
@@ -235,9 +236,7 @@ function validateWrapperAdapters(wrappersRoot: string, files: string[]): void {
       }
       ids.set(manifest.id, path)
     } catch (error) {
-      throw new Error(
-        `invalid wrapper adapter '${path}': ${error instanceof Error ? error.message : String(error)}`
-      )
+      throw new Error(`invalid wrapper adapter '${path}': ${errorMessage(error)}`)
     }
   }
 }

@@ -4,6 +4,7 @@ import type { AnalysisNotebookGeneratedCell } from '../../../shared/notebookCode
 import type { PhiAgentEventSummary } from '../engine/event-types'
 import { NotebookAiActivity } from './notebook-ai-activity'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const MAX_FINISHED_JOBS = 50
 const MAX_PROMPT_LENGTH = 4_000
 const MAX_SOURCE_PREVIEW_LENGTH = 20_000
@@ -126,10 +127,7 @@ export class NotebookAiGenerationJobs {
       },
       fail: (error) => {
         if (job.state !== 'running') return
-        job.error = (error instanceof Error ? error.message : String(error)).slice(
-          0,
-          MAX_ERROR_LENGTH
-        )
+        job.error = errorMessage(error).slice(0, MAX_ERROR_LENGTH)
         finish('failed')
       }
     }

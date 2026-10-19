@@ -29,6 +29,7 @@ import { isWrapperPlanExpired } from './plans'
 import { chooseWrapperTarget } from './target-policy'
 import type { WrapperRun, WrapperRunPlan } from './types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type { RemoteSubmitOptions }
 
 function sameProjectLocation(
@@ -217,7 +218,7 @@ export function resolveRemoteSubmitOptions(
     }
     return resolved
   } catch (error) {
-    return { reason: error instanceof Error ? error.message : String(error) }
+    return { reason: errorMessage(error) }
   }
 }
 
@@ -397,7 +398,7 @@ export function submitWrapperRunPlan(
       agentDir,
       ...(options.nextflowLaunch ? { nextflowLaunch: options.nextflowLaunch } : {})
     }).catch((error: unknown) => {
-      markRunFailed(run, agentDir, error instanceof Error ? error.message : String(error))
+      markRunFailed(run, agentDir, errorMessage(error))
     })
   } else if (options.autoExecute !== false && run.executor === 'slurm-controller') {
     // Remote startup errors settle the already-created run; target identity
@@ -414,7 +415,7 @@ export function submitWrapperRunPlan(
         connectImpl: remote.connectImpl,
         pollIntervalMs: remote.pollIntervalMs
       }).catch((error: unknown) => {
-        markRemoteRunLost(run, agentDir, error instanceof Error ? error.message : String(error))
+        markRemoteRunLost(run, agentDir, errorMessage(error))
       })
     }
   } else if (
@@ -435,7 +436,7 @@ export function submitWrapperRunPlan(
         connectImpl: remote.connectImpl,
         pollIntervalMs: remote.pollIntervalMs
       }).catch((error: unknown) => {
-        markRemoteRunLost(run, agentDir, error instanceof Error ? error.message : String(error))
+        markRemoteRunLost(run, agentDir, errorMessage(error))
       })
     }
   }
@@ -609,7 +610,7 @@ function requestRemoteCancel(
     if (current?.state !== 'cancelling') return
     transition(current, agentDir, 'lost', {
       completedAt: new Date().toISOString(),
-      launchDiagnostic: `Cancellation outcome unknown: ${error instanceof Error ? error.message : String(error)}`
+      launchDiagnostic: `Cancellation outcome unknown: ${errorMessage(error)}`
     })
   })
 

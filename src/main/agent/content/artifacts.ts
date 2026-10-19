@@ -9,6 +9,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 
 import Ajv, { type ErrorObject } from 'ajv'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 export const ARTIFACT_CONTRACT_VERSION = '1.0.0'
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024
@@ -164,7 +167,7 @@ export function readArtifact(projectDir: string, requested: string): ReadArtifac
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? error.code : undefined
     if (code === 'ENOENT') return fail('file does not exist')
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return fail(message)
   }
   if (!containsPath(projectReal, artifactReal)) return fail('file is outside the project')
@@ -336,8 +339,4 @@ function formatSchemaErrors(errors: ErrorObject[] | null | undefined): string {
       return error.instancePath ? `${error.instancePath} ${message}` : message
     })
     .join('; ')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

@@ -11,6 +11,7 @@ import { requestHost, sendEvent } from './ipc'
 import { serializeModel } from './runtime-context'
 import { pendingToolApprovals } from './state'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 export function requestToolApproval(
   sessionId: string,
   event: UnknownRecord,
@@ -95,7 +96,7 @@ export async function loadSkillScriptTools(
     }
     return tools
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     process.stderr.write(`Phi skill tools unavailable: ${message}\n`)
     return undefined
   }

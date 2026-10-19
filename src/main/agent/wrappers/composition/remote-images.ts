@@ -22,6 +22,7 @@ import { hashLocalFile } from '../../transfer/ssh-data-plane-local'
 import type { RemoteHelperReadyMarkerIdentity } from '../../remote-helper-marker'
 import { collectIncludedFiles } from './includes'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /**
  * Puts a wrapper's Singularity images into the cluster's cache before a run.
  *
@@ -279,7 +280,7 @@ export async function stageSingularityImages(
       cacheDir,
       remoteTimeoutMs,
       options.signal
-    ).catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+    ).catch((error: unknown) => errorMessage(error))
     options.signal?.throwIfAborted()
     if (serverError === undefined) {
       onOutput?.(`准备镜像 ${label}：已由服务器下载。\n`)
@@ -293,7 +294,7 @@ export async function stageSingularityImages(
       result.staged.push(image.fileName)
     } catch (error) {
       if (options.signal?.aborted) throw error
-      const reason = error instanceof Error ? error.message : String(error)
+      const reason = errorMessage(error)
       onOutput?.(`准备镜像 ${label}：失败（${reason}）。\n`)
       result.failed.push({ fileName: image.fileName, reason })
     }

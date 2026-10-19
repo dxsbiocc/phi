@@ -7,6 +7,8 @@ import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from 
 import type { PhiAgentDiagnostic } from './discovery'
 import { remoteAgentTrustState, type RemoteAgentTrustState } from './remote-agent-trust-store'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 export const MAX_REMOTE_AGENT_FILE_BYTES = 256 * 1024
 export const MAX_REMOTE_AGENT_DIRECTORY_ENTRIES = 256
 
@@ -79,9 +81,7 @@ async function rootEntries(
     return result.entries
   } catch (error) {
     if (!missingPath(error)) {
-      diagnostics.push(
-        diagnostic(directory, error instanceof Error ? error.message : String(error))
-      )
+      diagnostics.push(diagnostic(directory, errorMessage(error)))
     }
     return []
   }
@@ -212,7 +212,7 @@ export async function discoverRemoteProjectAgents(
         entries.push(inspected.entry)
         if (inspected.definition) agents.push(inspected.definition)
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         diagnostics.push(diagnostic(posix.join(options.projectRoot, relativePath), message))
       }
     }

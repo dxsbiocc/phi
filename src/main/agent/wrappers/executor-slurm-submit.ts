@@ -38,6 +38,7 @@ import { readWrapperRun, writeWrapperRun } from './store'
 import { checkRemoteSubmitPreflight, executeRemoteLaunchPreflight } from './remote-submit-preflight'
 import type { WrapperRun, WrapperRunPlan } from './types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /**
  * Drives one `slurm-controller` run end to end via `SbatchRunner` — the
  * remote counterpart to `executor-local.ts`'s `runLocalWrapperExecution`,
@@ -164,7 +165,7 @@ export async function runSlurmWrapperExecution(
       }
     })
   } catch (error) {
-    const reason = `服务器提交前检查失败: ${error instanceof Error ? error.message : String(error)}`
+    const reason = `服务器提交前检查失败: ${errorMessage(error)}`
     return failRun({ ...run, environmentError: reason }, agentDir, reason)
   }
   if (environment.error) {
@@ -178,11 +179,7 @@ export async function runSlurmWrapperExecution(
   try {
     session = await connectImpl(options.connection)
   } catch (error) {
-    return failRun(
-      run,
-      agentDir,
-      `连接远程主机失败: ${error instanceof Error ? error.message : String(error)}`
-    )
+    return failRun(run, agentDir, `连接远程主机失败: ${errorMessage(error)}`)
   }
 
   if (plan.targetSelection?.target === 'remote') {
@@ -211,7 +208,7 @@ export async function runSlurmWrapperExecution(
       }
     } catch (error) {
       await session.close().catch(() => undefined)
-      const reason = `服务器预检失败: ${error instanceof Error ? error.message : String(error)}`
+      const reason = `服务器预检失败: ${errorMessage(error)}`
       return failRun({ ...provisioning, environmentError: reason }, agentDir, reason)
     }
   }
@@ -236,12 +233,10 @@ export async function runSlurmWrapperExecution(
     return failRun(
       {
         ...provisioning,
-        inputErrors: [
-          `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
-        ]
+        inputErrors: [`服务器输入核验失败: ${errorMessage(error)}`]
       },
       agentDir,
-      `服务器输入核验失败: ${error instanceof Error ? error.message : String(error)}`
+      `服务器输入核验失败: ${errorMessage(error)}`
     )
   }
 
@@ -249,11 +244,7 @@ export async function runSlurmWrapperExecution(
     await uploadWrapperBundle(session, entry.installedPath, remoteWrapperDir)
   } catch (error) {
     await session.close()
-    return failRun(
-      provisioning,
-      agentDir,
-      `上传 wrapper 到远程失败: ${error instanceof Error ? error.message : String(error)}`
-    )
+    return failRun(provisioning, agentDir, `上传 wrapper 到远程失败: ${errorMessage(error)}`)
   }
 
   const launch = buildRemoteNextflowLaunch(entry.manifest, plan, remoteWrapperDir, remoteOutDir)
@@ -289,11 +280,7 @@ export async function runSlurmWrapperExecution(
       })
     }
     writeRemoteRunSnapshot(run.runId, agentDir, { remoteRunDir })
-    return failRun(
-      running,
-      agentDir,
-      `远程提交失败: ${error instanceof Error ? error.message : String(error)}`
-    )
+    return failRun(running, agentDir, `远程提交失败: ${errorMessage(error)}`)
   }
 
   // Enough to rebuild a RemoteJobHandle and resume polling after a restart

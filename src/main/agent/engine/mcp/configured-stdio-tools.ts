@@ -31,6 +31,7 @@ import {
   resolveConfiguredStdioTimeoutMs
 } from './configured-stdio-request-control'
 
+import { isRecord } from '../../../../shared/guards'
 export interface ConfiguredStdioMcpToolsRequest {
   name: string
   /** Main-process verified installed/configured entry; never renderer-provided launch fields. */
@@ -418,8 +419,4 @@ function environmentLookup(value: unknown): EnvironmentLookup {
     lookup.platform = platform
   }
   return lookup
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

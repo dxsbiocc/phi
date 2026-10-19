@@ -16,6 +16,7 @@ import {
   type RefreshResult
 } from './stdio-environment'
 
+import { isRecord } from '../../../shared/guards'
 export const MCP_PACKAGE_MARKER_FIELD = 'phiPackage'
 
 export type McpConfig = McpConfigLike
@@ -190,8 +191,4 @@ export function refreshPersistedManagedStdioServers(
   const written = result.refreshed.length > 0
   if (written) writeMcpConfig(result.config, agentDir)
   return { ...result, written }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

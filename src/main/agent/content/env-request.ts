@@ -18,6 +18,9 @@ import {
 import type { EnvironmentBuilds } from './environment-builds'
 import { describeEnvironment } from './environment-refs'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 export const ADD_PACKAGES = '添加'
 
 const MATCH_SPEC = /^[A-Za-z0-9_.-]+(\s*[=<>!~]=?[^\s,;]+(,[<>=!~]=?[^\s,;]+)*)?$/
@@ -278,7 +281,7 @@ function retargetOverrides(
 }
 
 function shortError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   const compact = message.replace(/\s+/g, ' ').trim()
   if (compact.length <= 240) return compact
   return `${compact.slice(0, 239)}…`
@@ -293,8 +296,4 @@ function requireText(record: Record<string, unknown>, key: string): string {
   const value = record[key]
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} is required`)
   return value
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

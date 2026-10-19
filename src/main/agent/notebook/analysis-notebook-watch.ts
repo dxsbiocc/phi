@@ -7,6 +7,7 @@ import type {
   NotebookWorkspaceWatchSubscription
 } from './notebook-workspace'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type AnalysisNotebookFileChange =
   | {
       type: 'changed'
@@ -71,10 +72,6 @@ export interface AnalysisNotebookFileWatcherOptions {
 
 function displayPath(path: string): string {
   return path.split(sep).join('/')
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error)
 }
 
 function isMissingError(error: unknown): boolean {

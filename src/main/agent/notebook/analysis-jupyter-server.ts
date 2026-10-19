@@ -5,6 +5,7 @@ import { request } from 'node:http'
 
 import { resolveManagedJupyterLaunch, type ManagedJupyterOptions } from './managed-jupyter-server'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type JupyterServerState = 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
 
 export interface JupyterServerPublicStatus {
@@ -127,11 +128,6 @@ function defaultProcessFactory(cwd: string, launch: JupyterServerLaunch): Manage
 export function managedLaunchResolver(options: ManagedJupyterOptions = {}): JupyterLaunchResolver {
   return (_projectCwd, launch) =>
     resolveManagedJupyterLaunch({ ...launch, args: jupyterServerArgs(launch) }, options)
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  return String(error)
 }
 
 function resolveProjectCwd(workingDirectory: string): string {

@@ -6,6 +6,8 @@ import {
   type AgentRunFinishedEvent
 } from '../../../shared/agentRunNotice'
 
+import { isRecord } from '../../../shared/guards'
+
 /**
  * The main-process side of a background agent run ending. The runs live in the
  * agent worker (one registry per conversation); when one ends it tells the main
@@ -54,10 +56,6 @@ export interface AgentRunHostDeps {
   markReported: (phiSessionId: string, agentRunId: string) => void
   /** A new run with this id has just ended; any earlier receipt for that id is stale. */
   clearReported: (phiSessionId: string, agentRunId: string) => void
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function requireString(

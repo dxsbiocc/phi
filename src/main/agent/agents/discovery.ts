@@ -7,6 +7,8 @@ import { loadRemoteWrapperAgent } from './remote-wrapper-agent'
 import { loadedPlugins } from '../plugins/loader'
 import { PHI_PROJECT_CONFIG_DIR_NAME } from '../runtime-paths'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 /**
  * Scans for Phi agents. Phi's own directories are authoritative and are read
  * first; foreign layouts are then read for compatibility only, mirroring how
@@ -119,7 +121,7 @@ function scanAgentFile(
     diagnostics.push({
       filePath,
       level: 'error',
-      message: error instanceof Error ? error.message : String(error)
+      message: errorMessage(error)
     })
     return
   }

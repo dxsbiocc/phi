@@ -63,6 +63,7 @@ import {
 } from './run-record'
 import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /**
  * Owns every background wrapper run. It lives in the main process on purpose:
  * a run has to outlive any chat session, and the agent worker is stopped when
@@ -368,7 +369,7 @@ export class WrapperJobManager implements WrapperJobClient {
         } catch (error) {
           return {
             ok: false,
-            error: `远程环境检查失败：${error instanceof Error ? error.message : String(error)}`
+            error: `远程环境检查失败：${errorMessage(error)}`
           }
         }
       }
@@ -481,7 +482,7 @@ export class WrapperJobManager implements WrapperJobClient {
     } catch (error) {
       return {
         ok: false,
-        error: `Could not record the run: ${error instanceof Error ? error.message : String(error)}`
+        error: `Could not record the run: ${errorMessage(error)}`
       }
     }
 
@@ -526,7 +527,7 @@ export class WrapperJobManager implements WrapperJobClient {
             ...(resources ? { resources } : {})
           })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       finishCompositionRun({
         run,
         entry,

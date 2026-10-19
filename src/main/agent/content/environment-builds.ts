@@ -8,6 +8,8 @@ import type {
 } from '../../../shared/environmentBuildTypes'
 import { buildEnvironment, type EnvironmentDescriptor } from './environment-refs'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 const FINISHED_LIMIT = 20
 const SAMPLE_MS = 1000
 
@@ -59,10 +61,6 @@ function sameProgress(left: EnvironmentBuildProgress, right: EnvironmentBuildPro
     left.bytesDone === right.bytesDone &&
     left.bytesTotal === right.bytesTotal
   )
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function createEnvironmentBuilds({

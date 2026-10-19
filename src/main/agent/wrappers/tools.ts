@@ -10,6 +10,8 @@ import {
 import { createWrapperRunPlan } from './plans'
 import type { WrapperRunPlan } from './types'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 /**
  * Builds the LLM-callable `wrapper_*` tools — see docs/design/phi-wrapper-
  * technical-design.md, "Agent Tool Registration" and the Milestone P1.0
@@ -24,10 +26,6 @@ const TOOL_NAME_PREFIX = 'wrapper_'
 /** "phi/ngs/fastq-qc" -> "phi_ngs_fastq_qc" — a safe, unique tool name per canonical id. */
 export function wrapperToolName(canonicalId: string): string {
   return `${TOOL_NAME_PREFIX}${canonicalId.replace(/[/-]/g, '_')}`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 interface WrapperSearchResultItem {
@@ -252,7 +250,7 @@ export function buildWrapperExecuteTool(
         }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

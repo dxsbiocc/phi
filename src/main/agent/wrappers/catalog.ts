@@ -37,6 +37,8 @@ import type { WrapperManifest } from './manifest-types'
 import type { WrapperTrustTier } from './types'
 import type { WrapperCatalogEntry } from '../../../shared/wrapperCatalogTypes'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export type { WrapperCatalogEntry } from '../../../shared/wrapperCatalogTypes'
 
 /**
@@ -409,10 +411,6 @@ export function migrateLegacyCustomWrappers(agentDir: string): string[] {
   return migrated.sort()
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /**
  * Explicit legacy wrapper migration helper. The caller must supply its source
  * tree; current startup and catalog installs use verified package registries.
@@ -500,7 +498,7 @@ export async function ensureBundledWrappersInstalled(
       } catch (error) {
         legacyPackWarnings.push({
           root: legacyPack.root,
-          reason: `conversion failed; used bundled source: ${error instanceof Error ? error.message : String(error)}`
+          reason: `conversion failed; used bundled source: ${errorMessage(error)}`
         })
         built = undefined
         rmSync(registryOutput, { recursive: true, force: true })

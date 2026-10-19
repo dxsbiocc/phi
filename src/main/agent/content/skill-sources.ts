@@ -1,6 +1,8 @@
 import { lstatSync, readdirSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import { isRecord } from '../../../shared/guards'
+
 export interface SkillSource {
   dir: string
   /** Root-relative parent grouping; omitted for an ungrouped skill. */
@@ -89,8 +91,4 @@ export function skillSourceCategory(
     }
   }
   return pathCategory || undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

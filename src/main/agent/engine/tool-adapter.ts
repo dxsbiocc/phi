@@ -3,10 +3,7 @@ import type { CustomTool } from '@oh-my-pi/pi-coding-agent'
 import { pickDeclaredToolInput } from '../remote-workspace-tool-input'
 import type { PhiTool, PhiToolContext, PhiToolImage, PhiToolResult, PhiToolUpdate } from './types'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
+import { isRecord } from '../../../shared/guards'
 export function recentUserImages(context: unknown): PhiToolImage[] {
   if (!isRecord(context) || !isRecord(context.sessionManager)) return []
   const getBranch = context.sessionManager.getBranch

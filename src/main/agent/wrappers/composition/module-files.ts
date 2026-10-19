@@ -6,14 +6,11 @@ import type {
   WrapperModuleTool
 } from '../../../../shared/wrapperModuleDetailsTypes'
 
+import { isRecord } from '../../../../shared/guards'
 /** Reads one file of a wrapper's component by name; `undefined` when it does not exist. */
 export type ReadComponentFile = (name: string) => string | undefined
 
 const DAG_FILE = 'dag.mmd'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined

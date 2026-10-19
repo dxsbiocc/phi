@@ -5,6 +5,9 @@ import { parse as parseYaml } from 'yaml'
 
 import { parseEnvironmentRef } from '../envs/contract'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 /**
  * A Phi agent: a specialist the main agent can delegate to. Defined by a
  * Markdown file (frontmatter + system prompt) that Phi itself scans — see
@@ -131,10 +134,6 @@ export class PhiAgentParseError extends Error {
     super(message)
     this.name = 'PhiAgentParseError'
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function isValidPhiAgentName(name: string): boolean {
@@ -323,7 +322,7 @@ function readEnvironment(value: unknown, collected: Collected): string | undefin
       return undefined
     }
   } catch (error) {
-    fail(collected, 'environment', error instanceof Error ? error.message : String(error))
+    fail(collected, 'environment', errorMessage(error))
     return undefined
   }
   return ref
@@ -524,11 +523,7 @@ export function validateAgentFile(
   try {
     parsed = parseYaml(parts.frontmatter)
   } catch (error) {
-    fail(
-      collected,
-      'frontmatter',
-      `Invalid frontmatter YAML: ${error instanceof Error ? error.message : String(error)}`
-    )
+    fail(collected, 'frontmatter', `Invalid frontmatter YAML: ${errorMessage(error)}`)
     return finish(collected.errors, collected.warnings)
   }
   if (!isRecord(parsed)) {
@@ -550,7 +545,7 @@ export function validateAgent(filePath: string): AgentValidationResult {
   try {
     content = readFileSync(filePath, 'utf8')
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return finish([problem('error', filePath, `cannot read agent file: ${message}`)], [])
   }
   return validateAgentFile(filePath, content, 'phi')

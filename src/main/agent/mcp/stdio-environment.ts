@@ -5,6 +5,7 @@ import type { PhiPlatform } from '../envs/contract'
 import { environmentVariables, resolveCommand, type EnvHandle } from '../envs/execution'
 import { applyOverrides } from '../envs/project-environments'
 
+import { isRecord } from '../../../shared/guards'
 /**
  * MCP stdio servers started inside a managed environment (execution contract,
  * `environmentVariables`). Mechanism only: nothing here reads or writes `mcp.json`.
@@ -523,10 +524,6 @@ function isAbsolutePath(value: unknown): value is string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function asError(error: unknown): Error {

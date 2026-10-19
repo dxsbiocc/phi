@@ -6,6 +6,7 @@ import {
   type WrapperJobControl
 } from './job-types'
 
+import { isRecord } from '../../../../shared/guards'
 export interface WrapperJobHostScope extends WrapperJobControl {
   originSessionId: string
   ownsRun(runId: string): boolean
@@ -50,10 +51,6 @@ export function createWrapperJobHostScope(options: {
  */
 
 const MAX_WAIT_MS = 10 * 60 * 1000
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function requireString(params: unknown, key: string): string {
   const value = isRecord(params) ? params[key] : undefined

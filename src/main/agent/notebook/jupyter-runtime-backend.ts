@@ -18,6 +18,7 @@ import {
 } from './remote-jupyter-server'
 import type { RemoteJupyterResourceStatus } from './remote-jupyter-resource-guard'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export type JupyterRuntimeKind = 'local' | 'ssh'
 export type JupyterRuntimeState =
   JupyterServerPublicStatus['state'] | RemoteJupyterServerStatus['state']
@@ -73,7 +74,7 @@ export function sanitizeJupyterConnectionError(
   error: unknown,
   connection: JupyterServerConnection
 ): string {
-  let message = error instanceof Error ? error.message : String(error)
+  let message = errorMessage(error)
   try {
     const token = jupyterWebSocketToken(connection)
     if (token) message = message.split(token).join('<redacted>')

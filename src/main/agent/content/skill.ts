@@ -12,6 +12,9 @@ import {
 } from '../envs/contract'
 import { phiSkillBlockSchema } from './skill-schema'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validatePhiBlock = ajv.compile(phiSkillBlockSchema)
 
@@ -155,7 +158,7 @@ export function parseSkillFile(skillMdText: string): SkillFileParseResult {
   try {
     document = parseYaml(lines.slice(1, close).join('\n'))
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     return { ok: false, error: `YAML parse error: ${message}` }
   }
   if (!isRecord(document)) {
@@ -216,7 +219,7 @@ export function validateSkill(
   try {
     text = readFileSync(skillMdPath, 'utf8')
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     fail('SKILL.md', `cannot read SKILL.md: ${message}`)
     return finish(errors, warnings)
   }
@@ -305,7 +308,7 @@ export function validateSkill(
       try {
         environment = parseEnvironmentRef(fm.phi.environment)
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = errorMessage(error)
         fail('phi.environment', message)
       }
       if (environment?.kind === 'path' && environment.path !== LOCAL_ENVIRONMENT) {
@@ -385,7 +388,7 @@ function validateLocalEnvironment(
         for (const message of parsed.errors) fail('environment.yml', message)
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       fail('environment.yml', `cannot read environment.yml: ${message}`)
     }
   }
@@ -514,7 +517,7 @@ function validateOutput(
   try {
     parsed = JSON.parse(readFileSync(resolved.absolute, 'utf8'))
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     fail(path, `output is not valid JSON: ${message}`)
     return
   }
@@ -687,10 +690,6 @@ function isFile(path: string): boolean {
   } catch {
     return false
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isStringMap(value: unknown): value is Record<string, string> {

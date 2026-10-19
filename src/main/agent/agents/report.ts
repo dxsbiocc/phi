@@ -1,3 +1,5 @@
+import { isRecord } from '../../../shared/guards'
+
 export type AgentReportStatus = 'completed' | 'partial' | 'not_found' | 'blocked' | 'failed'
 
 export interface AgentReport {
@@ -17,10 +19,6 @@ const STATUSES = new Set<AgentReportStatus>([
   'blocked',
   'failed'
 ])
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []

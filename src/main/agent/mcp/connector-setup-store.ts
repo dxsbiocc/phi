@@ -13,6 +13,7 @@ import {
 import { dirname } from 'node:path'
 import type { McpConnectorSetupProgress } from '../../../shared/mcpConnectorCatalog'
 
+import { isRecord } from '../../../shared/guards'
 const PHASES = new Set([
   'downloading',
   'installing',
@@ -229,8 +230,4 @@ function copySetupHint(value: Record<string, unknown>): McpConnectorSetupProgres
     ...(typeof value.readmeUrl === 'string' ? { readmeUrl: value.readmeUrl } : {}),
     ...(Array.isArray(value.commands) ? { commands: [...(value.commands as string[])] } : {})
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

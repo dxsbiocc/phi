@@ -17,6 +17,8 @@ import {
 } from './runner'
 import { parseAgentReport, type AgentReportStatus } from './report'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 export type AgentRunState = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 
 export interface AgentRunSnapshot {
@@ -371,7 +373,7 @@ export class AgentRunRegistry {
       } else if (error instanceof AgentTimeoutError) {
         this.finish(record, { state: 'error', error: error.message })
       } else {
-        const reason = error instanceof Error ? error.message : String(error)
+        const reason = errorMessage(error)
         this.finish(record, { state: 'error', error: `The ${input.agent} agent failed: ${reason}` })
       }
     }

@@ -10,6 +10,7 @@ import {
 } from '../workspace-host/ssh-port-forward'
 import { remoteJupyterReconcileActivity } from './remote-jupyter-reconcile'
 
+import { errorMessage } from '../../../shared/errorCodes'
 interface MonitoredRemoteJupyterLease {
   closed: Promise<{ code: number | null; signal: string | null }>
   isClosed(): boolean
@@ -321,7 +322,7 @@ function redactTokenFragments(text: string, token: string): string {
 }
 
 export function sanitizedRemoteJupyterError(error: unknown, token?: string): Error {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return new Error(sanitizeRemoteJupyterText(message, token))
 }
 

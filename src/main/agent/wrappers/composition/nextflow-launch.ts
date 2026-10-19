@@ -20,6 +20,7 @@ import {
   readLocalNextflowVersion
 } from './nextflow-version'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /**
  * Which `nextflow` a local wrapper run uses (runtime foundation §5.2, §9 decision 5).
  *
@@ -167,7 +168,7 @@ async function resolveManagedLaunch(
   } catch (error) {
     return {
       ok: false,
-      error: `环境 ${NEXTFLOW_ENVIRONMENT_REF} 不可用：${error instanceof Error ? error.message : String(error)}`
+      error: `环境 ${NEXTFLOW_ENVIRONMENT_REF} 不可用：${errorMessage(error)}`
     }
   }
   const outcome = await ensureEnvironmentReady({

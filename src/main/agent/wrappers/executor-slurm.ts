@@ -26,6 +26,7 @@ import {
 import type { WrapperRun, WrapperRunPlan } from './types'
 import { cancelSlurmControllerJob } from './remote-slurm-controller-cancel'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export { signalSlurmJob } from './remote-slurm-controller-cancel'
 
 /**
@@ -359,11 +360,7 @@ export class SbatchRunner implements RemoteRunner {
       await fresh?.close().catch(() => undefined)
       this.sessionPromise = undefined
       if (rejected) throw new RemoteLaunchRejectedError(rejected)
-      throw new RemoteLaunchUnknownError(
-        run.runId,
-        launch.remoteRunDir,
-        error instanceof Error ? error.message : String(error)
-      )
+      throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, errorMessage(error))
     }
   }
 

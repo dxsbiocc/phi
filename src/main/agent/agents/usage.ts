@@ -1,5 +1,7 @@
 import { redactSensitiveText } from '../redaction'
 
+import { isRecord } from '../../../shared/guards'
+
 /**
  * What one delegated agent run cost, recorded so prompt and tool changes can be judged on
  * numbers. Sizes and names only: the task, argument values and tool output are never stored.
@@ -64,10 +66,6 @@ export interface AgentRunUsageRecord {
 
 const MAX_TOOL_RECORDS = 100
 const MAX_ERROR_HEAD_CHARS = 160
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function count(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0

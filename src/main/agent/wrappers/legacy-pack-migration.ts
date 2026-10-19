@@ -16,6 +16,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 import { assertSafePackagePath, compareText, isRecord } from '../packages/installer-utils'
 
+import { errorMessage } from '../../../shared/errorCodes'
 const PACK_NAME = 'phi-wrappers'
 const PACK_META_FILE = 'pack.json'
 const PACK_INDEX_FILE = 'index.json'
@@ -154,7 +155,7 @@ export function selectLegacyWrapperPack(agentDir: string): LegacyWrapperPackSele
       const index = parseIndex(root)
       return { root, version: index.version, rejected }
     } catch (error) {
-      rejected.push({ root, reason: error instanceof Error ? error.message : String(error) })
+      rejected.push({ root, reason: errorMessage(error) })
     }
   }
   return { rejected }

@@ -23,6 +23,8 @@ import {
   trustRemoteProjectMcpIdentity
 } from './remote-project-mcp-trust-store'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 const CONFIG_PATHS = ['.phi/mcp.json', '.mcp.json', '.omp/mcp.json', '.pi/mcp.json'] as const
 const MAX_CONFIG_BYTES = 256 * 1024
 const MAX_CONFIG_DIRECTORY_ENTRIES = 10_000
@@ -91,10 +93,6 @@ const REMOTE_ENV_NAMES = [
   'SSL_CERT_FILE',
   'REQUESTS_CA_BUNDLE'
 ] as const
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function missing(error: unknown): boolean {
   return (
@@ -414,7 +412,7 @@ async function scan(
           contentHash: createHash('sha256').update(`invalid:${relativePath}`).digest('hex'),
           servers: [],
           items: [],
-          error: error instanceof Error ? error.message : String(error)
+          error: errorMessage(error)
         })
         continue
       }

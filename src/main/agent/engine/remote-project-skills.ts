@@ -1,4 +1,4 @@
-type UnknownRecord = Record<string, unknown>
+import { isRecord } from '../../../shared/guards'
 
 export interface RemoteProjectWorkerSkill {
   name: string
@@ -7,10 +7,6 @@ export interface RemoteProjectWorkerSkill {
   baseDir: string
   source: string
   hide?: boolean
-}
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 export function remoteProjectSkillsValue(value: unknown): RemoteProjectWorkerSkill[] {

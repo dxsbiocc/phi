@@ -52,6 +52,7 @@ import { getPhiAgentDir } from '../../runtime-paths'
 import { remoteTransferHostKey } from '../../transfer'
 import type { RemoteHelperReadyMarkerIdentity } from '../../remote-helper-marker'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /**
  * Runs one composition wrapper on an HPC login host and exposes it as the same
  * `WrapperProcess` the local runner returns, so the job manager treats both alike.
@@ -427,9 +428,7 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
       const cleanupSlurmJobs = target.hpc?.scheduler === 'slurm'
       return await cancelRemoteController(session, handle, graceMs, { cleanupSlurmJobs })
     } catch (error) {
-      options.onOutput?.(
-        `[Phi] 取消信号未能确认送达：${error instanceof Error ? error.message : String(error)}\n`
-      )
+      options.onOutput?.(`[Phi] 取消信号未能确认送达：${errorMessage(error)}\n`)
     }
     return undefined
   }
@@ -480,7 +479,7 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
       }
     } catch (error) {
       failures += 1
-      lastError = error instanceof Error ? error.message : String(error)
+      lastError = errorMessage(error)
       if (failures >= maxFailures) {
         return reported(
           options,
@@ -601,7 +600,7 @@ async function stageImagesForRun(
       )
     }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
+    const reason = errorMessage(error)
     options.onOutput?.(`警告：检查镜像缓存 ${cacheDir} 失败（${reason}），将直接启动运行。\n`)
   }
 }
@@ -670,7 +669,7 @@ async function launch(options: StartRemoteOptions, control: Control): Promise<Wr
     )
   }
   const recover = async (error: unknown): Promise<WrapperRunResult> => {
-    const reason = error instanceof Error ? error.message : String(error)
+    const reason = errorMessage(error)
     try {
       const fresh = await connect(target.connection)
       await session.close().catch(() => undefined)
@@ -808,10 +807,7 @@ export function startRemoteWrapperComposition(options: StartRemoteOptions): Wrap
   const done = launch(options, control).catch((error: unknown) =>
     control.cancelled
       ? failure('', { cancelled: true })
-      : reported(
-          options,
-          `Remote run could not be started: ${error instanceof Error ? error.message : String(error)}`
-        )
+      : reported(options, `Remote run could not be started: ${errorMessage(error)}`)
   )
   return toProcess(control, done)
 }
@@ -873,13 +869,9 @@ export function attachRemoteWrapperComposition(options: AttachRemoteOptions): Wr
       await session.close().catch(() => undefined)
     }
   })().catch((error: unknown) =>
-    reported(
-      options,
-      `Could not reach ${target.connection.host}: ${error instanceof Error ? error.message : String(error)}`,
-      {
-        lost: true
-      }
-    )
+    reported(options, `Could not reach ${target.connection.host}: ${errorMessage(error)}`, {
+      lost: true
+    })
   )
   return toProcess(control, done)
 }

@@ -28,6 +28,8 @@ import {
 } from '../envs/applications'
 import type { ApplicationInstallationProvider } from '../envs/applications/types'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 const LOCAL_ENVIRONMENT = './environment.yml'
 const FALLBACK_ENVIRONMENT = 'phi:python@1'
 
@@ -303,7 +305,7 @@ function readText(file: string, label: string): string {
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') {
       throw new Error(`${label} is missing: ${file}`)
     }
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     throw new Error(`cannot read ${label} ${file}: ${message}`)
   }
 }

@@ -12,6 +12,7 @@ import { listActiveSkillPackages } from '../../packages/store'
 import { loadedPlugins } from '../../plugins/loader'
 import { isRecord } from './common'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /** Keep the array passed by the legacy loader shim to the SDK alive across reloads. */
 export function createLiveSkillSnapshot<T extends { name: string; source?: string }>(
   enabled: (skills: readonly T[]) => readonly T[]
@@ -158,7 +159,7 @@ export async function refreshInstalledCapabilities(
     }
   } catch (error) {
     signal?.throwIfAborted()
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     throw new Error(`模块已安装，但当前任务加载失败：${message}。请重新打开当前会话后继续。`)
   }
 }

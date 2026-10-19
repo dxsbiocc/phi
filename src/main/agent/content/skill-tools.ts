@@ -10,6 +10,9 @@ import type { SkillNotReady } from './skill-host'
 import type { SkillRunResult } from './skill-run'
 import type { ScriptToolDescriptor } from './skill-tool-types'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 export type { ScriptToolDescriptor } from './skill-tool-types'
 
 /** Host call used by the agent worker. `skills.cancel` is sent when the tool call aborts. */
@@ -195,7 +198,7 @@ async function runSkillTool(
       details: result
     }
   } catch (error) {
-    return errorResult(error instanceof Error ? error.message : String(error))
+    return errorResult(errorMessage(error))
   }
 }
 
@@ -248,7 +251,7 @@ async function runScriptToolCall(
     }
     return errorResult('script tool returned an unexpected result')
   } catch (error) {
-    return errorResult(error instanceof Error ? error.message : String(error))
+    return errorResult(errorMessage(error))
   }
 }
 
@@ -390,8 +393,4 @@ function isScriptFailure(value: unknown): value is Extract<ScriptToolResult, { o
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

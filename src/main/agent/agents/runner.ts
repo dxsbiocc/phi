@@ -7,6 +7,8 @@
 import { isPhiEventType } from '../engine/events'
 import type { PhiAgentEvent } from '../engine/types'
 import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
+import { isRecord } from '../../../shared/guards'
+
 /** The Phi session contract used to drive a specialist. */
 export interface AgentSessionLike {
   subscribe(listener: (event: PhiAgentEvent) => void): () => void
@@ -81,10 +83,6 @@ export class AgentTimeoutError extends Error {
 // group), and real pipelines such as nf-core/rnaseq routinely take hours.
 const DEFAULT_TIMEOUT_MS = 3 * 60 * 60 * 1000
 const MAX_PROGRESS_LENGTH = 120
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 /** Concatenates the text parts of an assistant message, ignoring thinking and tool calls. */
 export function extractAssistantText(message: unknown): string {

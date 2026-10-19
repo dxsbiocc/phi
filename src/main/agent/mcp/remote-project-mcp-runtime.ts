@@ -3,10 +3,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
 import type { McpSnapshotLike, RemoteMcpProfilePolicy } from './remote-mcp-policy'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
+import { isRecord } from '../../../shared/guards'
 function validName(value: unknown): value is string {
   return (
     typeof value === 'string' &&

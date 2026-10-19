@@ -1,6 +1,8 @@
 import type { PhiTool, PhiToolContext } from '../engine/types'
 import { NOTEBOOK_TOOL_DESCRIPTIONS } from '../engine/phi-extension'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 export { NOTEBOOK_TOOL_DESCRIPTIONS } from '../engine/phi-extension'
 
 export type NotebookToolAction =
@@ -53,10 +55,6 @@ export type NotebookToolBuildOptions = {
   remoteProject?: NotebookRemoteProjectIdentity
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function recordValue(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {}
 }
@@ -96,7 +94,7 @@ function buildNotebookTool(
         }
       } catch (error) {
         return {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: errorMessage(error) }],
           isError: true
         }
       }

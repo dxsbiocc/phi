@@ -7,6 +7,9 @@ import {
   type AgentWaitResult
 } from './registry'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 /** Public control surface shared by the synchronous local registry and the owned RPC adapter. */
 export interface AgentRunToolRegistry {
   get(id: string): AgentRunSnapshot | undefined | Promise<AgentRunSnapshot | undefined>
@@ -23,10 +26,6 @@ const MAX_REPORT_LENGTH = 20000
 const MAX_TASK_PREVIEW = 100
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: true }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function text(value: string): ToolResult {
   return { content: [{ type: 'text', text: value }] }
@@ -175,7 +174,7 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
           ...(signal ? { signal } : {})
         })
       } catch (error) {
-        return errorResult(error instanceof Error ? error.message : String(error))
+        return errorResult(errorMessage(error))
       }
       if (result.runs.length === 0) return text('There are no unfinished agent runs to wait for.')
 
@@ -211,7 +210,7 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
       try {
         await registry.steer(id, message)
       } catch (error) {
-        return errorResult(error instanceof Error ? error.message : String(error))
+        return errorResult(errorMessage(error))
       }
       return text(`Sent your message to ${id}. It will read it after its current tool call.`)
     }

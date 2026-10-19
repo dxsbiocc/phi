@@ -13,6 +13,7 @@ import { join, posix } from 'node:path'
 import type { RemoteProjectMcpTrustState } from '../../../shared/remoteProjectMcpTypes'
 import { getPhiAgentDir } from '../runtime-paths'
 
+import { isRecord } from '../../../shared/guards'
 const STORE_FILE = 'remote-mcp-trust.json'
 const STORE_VERSION = 1
 const CONFIG_PATHS = new Set(['.phi/mcp.json', '.mcp.json', '.omp/mcp.json', '.pi/mcp.json'])
@@ -27,10 +28,6 @@ export interface RemoteProjectMcpTrustIdentity {
 interface Store {
   version: number
   entries: RemoteProjectMcpTrustIdentity[]
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function checkedText(value: string, label: string): string {

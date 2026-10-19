@@ -35,6 +35,7 @@ import {
   type ManagedStdioEntry
 } from './stdio-environment'
 
+import { isRecord } from '../../../shared/guards'
 const ENVIRONMENT_REF = /^phi:[a-z][a-z0-9-]{0,62}@(0|[1-9][0-9]*)$/
 const ENVIRONMENT_COMMAND = /^[A-Za-z0-9_+.-]+$/
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/
@@ -570,8 +571,4 @@ function reservedEnvironmentName(name: string): boolean {
 function rejectUnknownKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): void {
   if (Object.keys(value).some((key) => !allowed.has(key)))
     throw new Error('Local Connector settings contain unknown fields')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

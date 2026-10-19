@@ -12,6 +12,8 @@ import type { RemoteSkillBundleFile, RemoteSkillSource } from '../remote-runtime
 import type { WorkspaceEntry, WorkspaceHost } from '../workspace-host/types'
 import { validateSkill } from './skill'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 export const MAX_REMOTE_PROJECT_SKILL_DIRECTORY_ENTRIES = 256
 export const MAX_REMOTE_PROJECT_SKILL_FILE_BYTES = 16 * 1024 * 1024
 export const MAX_REMOTE_PROJECT_SKILL_TOTAL_BYTES = 64 * 1024 * 1024
@@ -93,9 +95,7 @@ async function rootEntries(
     return result.entries
   } catch (error) {
     if (!missingPath(error)) {
-      diagnostics.push(
-        diagnostic(directory, error instanceof Error ? error.message : String(error))
-      )
+      diagnostics.push(diagnostic(directory, errorMessage(error)))
     }
     return []
   }
@@ -283,7 +283,7 @@ export async function discoverRemoteProjectSkills(
         try {
           content = textOf(skillFile)
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = errorMessage(error)
           diagnostics.push(diagnostic(posix.join(options.projectRoot, relativePath), message))
           entries.push(
             invalidEntry({
@@ -366,10 +366,7 @@ export async function discoverRemoteProjectSkills(
         }
       } catch (error) {
         diagnostics.push(
-          diagnostic(
-            posix.join(options.projectRoot, relativePath),
-            error instanceof Error ? error.message : String(error)
-          )
+          diagnostic(posix.join(options.projectRoot, relativePath), errorMessage(error))
         )
       }
     }

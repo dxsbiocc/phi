@@ -17,6 +17,7 @@ import {
 } from './remote-launch-claim'
 import { readRemoteLogTail } from './remote-log'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /**
  * Remote execution, per docs/design/phi-wrapper-technical-design.md
  * ("Executor Model" / "Remote Background" / "Slurm"). Two controller
@@ -343,11 +344,7 @@ export class SshExecRunner implements RemoteRunner {
       await fresh?.close().catch(() => undefined)
       this.sessionPromise = undefined
       if (rejected) throw new RemoteLaunchRejectedError(rejected)
-      throw new RemoteLaunchUnknownError(
-        run.runId,
-        launch.remoteRunDir,
-        error instanceof Error ? error.message : String(error)
-      )
+      throw new RemoteLaunchUnknownError(run.runId, launch.remoteRunDir, errorMessage(error))
     }
   }
 

@@ -25,6 +25,8 @@ import {
 } from './index'
 import type { ScriptToolDescriptor } from './skill-tool-types'
 
+import { errorMessage } from '../../../shared/errorCodes'
+
 export type { ConfirmBuildRequest }
 
 export interface SkillNotReady {
@@ -146,7 +148,7 @@ export function createSkillHost({
         expectedName: installedSkillPackageIdForDir(dir, agentDir)
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       throw new Error(`invalid skill '${name}': ${message}`)
     }
     if (!validation.ok || !validation.skill) {
@@ -228,7 +230,7 @@ export function createSkillHost({
             expectedName: installedSkillPackageIdForDir(dir, agentDir)
           })
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
+          const message = errorMessage(error)
           problems.push(`invalid skill '${basename(dir)}': ${message}`)
           continue
         }
@@ -389,7 +391,7 @@ export function createSkillHost({
             })
           } catch (error) {
             // Artifact contract § 3: presentation problems are warnings; the call succeeded.
-            const message = error instanceof Error ? error.message : String(error)
+            const message = errorMessage(error)
             presentWarnings.push(`artifacts were not presented: ${message}`)
           }
         }

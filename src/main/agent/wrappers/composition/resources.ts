@@ -1,5 +1,6 @@
 import type { WrapperRunResources } from '../../../../shared/wrapperTypes'
 
+import { isRecord } from '../../../../shared/guards'
 export type { WrapperRunResources } from '../../../../shared/wrapperTypes'
 
 /**
@@ -21,10 +22,6 @@ const MEMORY_UNITS: Record<string, string> = { k: 'KB', m: 'MB', g: 'GB', t: 'TB
 const DURATION_TOKEN =
   /(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])/gi
 const DURATION_UNITS: Record<string, string> = { d: 'd', h: 'h', m: 'm', s: 's' }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function parseMemory(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined

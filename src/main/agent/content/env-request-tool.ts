@@ -7,6 +7,9 @@ export { PHI_ENV_REQUEST_DESCRIPTION } from '../engine/phi-extension'
 
 import type { SkillHostRequest } from './skill-tools'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
+
 /** Live session binding. `env_request` replaces `ref` and `variables` after a successful rebind. */
 export interface EnvRequestBinding {
   ref: string
@@ -138,7 +141,7 @@ async function runEnvRequest(
       details: result
     }
   } catch (error) {
-    return errorResult(error instanceof Error ? error.message : String(error))
+    return errorResult(errorMessage(error))
   }
 }
 
@@ -256,8 +259,4 @@ function errorResult(text: string, details?: unknown): ToolResult {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

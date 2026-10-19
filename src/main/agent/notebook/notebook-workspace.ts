@@ -18,6 +18,7 @@ import {
 import { watchHostNotebook } from './analysis-notebook-watch'
 import { listNotebooksWithFind } from './notebook-fast-list'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export const MAX_NOTEBOOK_FILE_BYTES = 1024 * 1024
 const [READ_CHUNK_BYTES, DEFAULT_POLL_INTERVAL_MS] = [256 * 1024, 2_000]
 
@@ -52,10 +53,6 @@ export interface NotebookWorkspace {
 }
 
 type WorkspacePath = { relativePath: string; path: string }
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message ? error.message : String(error)
-}
 
 function sha256(content: Uint8Array | string): string {
   return createHash('sha256').update(content).digest('hex')

@@ -66,9 +66,16 @@ export function isRetryable(error: unknown): boolean {
   return typeof explicit === 'boolean' ? explicit : ERROR_CODES[errorCodeOf(error)].retryable
 }
 
-/** Display-only text for any thrown value. Never branch on this string. */
+/**
+ * Display-only text for any thrown value. Never branch on this string.
+ *
+ * An Error without a message falls back to `String(error)` (its name) so a
+ * surface never renders an empty explanation; that is the semantics five local
+ * copies in the notebook module already had before they were consolidated.
+ */
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  if (error instanceof Error && error.message.length > 0) return error.message
+  return String(error)
 }
 
 export function toErrorPayload(error: unknown): ErrorPayload {

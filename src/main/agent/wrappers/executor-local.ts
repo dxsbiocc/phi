@@ -22,6 +22,7 @@ import { startWeblogListener, type WeblogListenerHandle } from './weblog-listene
 import type { WrapperManifest } from './manifest-types'
 import type { WrapperOutputRecord, WrapperRun, WrapperRunPlan, WrapperRunState } from './types'
 
+import { errorMessage } from '../../../shared/errorCodes'
 /** Matches `node:child_process`'s `spawn` — injectable so tests can fake Nextflow without it installed. */
 export type SpawnImpl = typeof spawn
 
@@ -185,7 +186,7 @@ export async function runLocalWrapperExecution(
       options.micromambaPath
     )
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
+    const reason = errorMessage(error)
     return failRun(run, agentDir, reason, { environmentError: reason })
   }
 

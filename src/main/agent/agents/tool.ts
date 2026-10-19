@@ -12,6 +12,8 @@ import {
   type AgentRunToolStep
 } from './runner'
 
+import { isRecord } from '../../../shared/guards'
+
 const MAX_TASK_LENGTH = 20000
 const MAX_FORWARDED_IMAGE_BYTES = 20 * 1024 * 1024
 const IMAGE_MIME: Record<string, string> = {
@@ -28,10 +30,6 @@ export interface AgentToolOptions {
   cwd?: string
   /** Remote projects keep today's delegation tool: no local execution context and no image forwarding. */
   remote?: boolean
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function errorResult(text: string): {

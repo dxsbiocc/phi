@@ -24,6 +24,7 @@ import {
 } from '../content/environment-refs'
 import { environmentVariables, type EnvHandle, type PhiPlatform } from '../envs'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export const HOST_KERNEL_LABEL = 'host (unmanaged)'
 export const NOT_BUILT_KERNEL_LABEL = 'not built'
 export const HOST_KERNEL_PREFIX = 'host-'
@@ -166,7 +167,7 @@ export function managedEnvironmentState(
         }
       }
     }
-    return { notBuilt: { message: error instanceof Error ? error.message : String(error) } }
+    return { notBuilt: { message: errorMessage(error) } }
   }
 }
 

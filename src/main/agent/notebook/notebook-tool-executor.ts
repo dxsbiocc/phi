@@ -18,6 +18,8 @@ import { openProjectNotebook, type AnalysisNotebookFile } from './analysis-noteb
 import { createLocalNotebookWorkspace, type NotebookWorkspace } from './notebook-workspace'
 import type { NotebookToolDispatchControl, NotebookToolRequest } from './notebook-tools'
 
+import { isRecord } from '../../../shared/guards'
+import { errorMessage } from '../../../shared/errorCodes'
 type NotebookWorkspaceRef = {
   workingDirectory: string
   name?: string
@@ -72,10 +74,6 @@ type ConstructorOptions = {
   notebookSessionRegistry: AnalysisNotebookSessionRegistry
   notebookExecutor: AnalysisNotebookExecutor
   onDraftChanged?: (change: NotebookDraftChange) => void
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function stringValue(value: unknown, name: string): string {
@@ -505,7 +503,7 @@ export class AnalysisNotebookToolExecutor {
         project.workingDirectory,
         state.file.path,
         error instanceof JupyterKernelExecutionStoppedError ? 'idle' : 'error',
-        error instanceof Error ? error.message : String(error),
+        errorMessage(error),
         target
       )
       throw error

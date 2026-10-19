@@ -44,6 +44,7 @@ import {
   closeAllModelGatewayLeases
 } from './model-gateway'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
     case 'modelGateway.create':
@@ -200,7 +201,7 @@ input.on('line', (line) => {
       const result = await handleRequest(request.method, request.params)
       send({ id: request.id, ok: true, result })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       const stack = error instanceof Error ? error.stack : undefined
       const detail =
         isRecord(error) && typeof error.detail === 'string'

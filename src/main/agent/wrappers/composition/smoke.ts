@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import type { WrapperCompositionEntry } from './discovery'
 import { validateWrapperParams } from './validate'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 /**
  * Static ("tier 0") smoke checks for a bundled wrapper: everything that can be
  * verified without Nextflow or the network. `scripts/smoke-wrappers.mjs` layers
@@ -178,7 +179,7 @@ export async function probeUrl(url: string, options: ProbeOptions = {}): Promise
       last = await probeOnce(url, fetchImpl, timeoutMs)
       if (last.ok || !isTransientStatus(last.status ?? 0)) return last
     } catch (error) {
-      last = { ok: false, error: error instanceof Error ? error.message : String(error) }
+      last = { ok: false, error: errorMessage(error) }
     }
   }
   return last

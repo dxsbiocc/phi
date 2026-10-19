@@ -1,14 +1,12 @@
 import { isFinalAgentRunState, type AgentRunRegistry } from './registry'
 
+import { isRecord } from '../../../shared/guards'
+
 /**
  * A delegation card in the chat steers or stops the run it shows. The request
  * arrives in the agent worker addressed to one session; this is what that
  * session's run registry does with it. Errors are the messages the card shows.
  */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
 
 function requireString(params: unknown, key: string): string {
   const value = isRecord(params) ? params[key] : undefined

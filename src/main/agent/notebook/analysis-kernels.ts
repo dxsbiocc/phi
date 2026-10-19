@@ -14,6 +14,7 @@ import {
   type ManagedKernelState
 } from './managed-kernels'
 
+import { errorMessage } from '../../../shared/errorCodes'
 export const JUPYTER_ENVIRONMENT_REF = 'phi:jupyter@1'
 export const DEFAULT_KERNEL_NAME = 'phi-python'
 
@@ -74,11 +75,6 @@ function runCommand(command: string, args: string[]): string {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 5_000
   })
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message
-  return String(error)
 }
 
 function parseJsonObject(text: string): Record<string, unknown> {
