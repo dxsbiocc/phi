@@ -54,6 +54,8 @@ import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode
 import { useWorkspaceTabNavigation } from './features/workspace/hooks/useWorkspaceTabNavigation'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
+import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
+import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import {
   runtimeRecoveryBannerColumnSx,
   runtimeRecoveryBannerOverlaySx
@@ -221,21 +223,6 @@ const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 export type AppView =
   'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 
-type QueuedPrompt = {
-  id: string
-  text: string
-  target: PromptTarget
-  sendOptions?: SendPromptOptions
-}
-
-type SendPromptOptions = {
-  appendUserMessage?: boolean
-  retryUserMessageId?: string
-  suppressUserMessageEvent?: boolean
-  images?: PromptImageInput[]
-  planMode?: boolean
-}
-
 const activityBarWidth = 48
 const ChatView = lazy(() => import('./features/chat/ChatView'))
 const AnalysisView = lazy(() => import('./features/analysis/AnalysisView'))
@@ -309,6 +296,11 @@ function App(): React.JSX.Element {
     onRespondAgentUserInteraction
   } = useSessionStore()
   const messages = agentEventState.messages
+  // Stopping a run clears both interaction channels at once; the setters are stable.
+  const clearPendingInteractions = useCallback((): void => {
+    setPendingApproval(null)
+    setPendingUserInteraction(null)
+  }, [setPendingApproval, setPendingUserInteraction])
   // Dialog ownership lives in its own hook; names and setter signatures are unchanged
   // so call sites stay as they were while the shell gets smaller.
   const {
@@ -350,9 +342,6 @@ function App(): React.JSX.Element {
   const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [notebookViewStateStore] = useState<NotebookViewStateStore>(() => new Map())
-  const compactingSessionKeysRef = useRef(new Set<string>())
-  const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
-  const [contextUsageRefreshKey, setContextUsageRefreshKey] = useState(0)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
 
   const navigateToView = useCallback((view: AppView): void => {
@@ -1903,51 +1892,31 @@ function App(): React.JSX.Element {
     },
     [activeDraftKey, setDraftInputs]
   )
-  const [queuedPromptsBySession, setQueuedPromptsBySession] = useState<
-    Record<string, QueuedPrompt[]>
-  >({})
-  const activeQueuedPrompts = useMemo(
-    () => queuedPromptsBySession[activeDraftKey] ?? [],
-    [activeDraftKey, queuedPromptsBySession]
-  )
-  const removeQueuedPrompt = useCallback(
-    (id: string): void => {
-      setQueuedPromptsBySession((prev) => {
-        const current = prev[activeDraftKey] ?? []
-        const next = current.filter((item) => item.id !== id)
-        if (next.length === current.length) return prev
-        const updated = { ...prev }
-        if (next.length > 0) {
-          updated[activeDraftKey] = next
-        } else {
-          delete updated[activeDraftKey]
-        }
-        return updated
-      })
-    },
-    [activeDraftKey]
-  )
-  const queuePromptText = useCallback(
-    (text: string, target: PromptTarget, sendOptions?: SendPromptOptions): void => {
-      setQueuedPromptsBySession((prev) => {
-        const current = prev[activeDraftKey] ?? []
-        return {
-          ...prev,
-          [activeDraftKey]: [
-            ...current,
-            {
-              id: `queued-${Date.now()}-${current.length}`,
-              text,
-              target,
-              sendOptions
-            }
-          ]
-        }
-      })
-      setActiveInput('')
-    },
-    [activeDraftKey, setActiveInput]
-  )
+  // Run control (queue, stop, compaction) has one owner. The shell keeps the wiring:
+  // the send pipeline, readiness inputs, and the effect that drains the queue.
+  const {
+    compactingSessions,
+    isCompactingKey,
+    contextUsageRefreshKey,
+    refreshContextUsage,
+    activeQueuedPrompts,
+    queuePromptText,
+    removeQueuedPrompt,
+    dequeueQueuedPrompt,
+    moveQueuedPromptsToSession,
+    onStopGeneration,
+    onCompactContext
+  } = useChatRunControl({
+    activeDraftKey,
+    rendererApi,
+    sendRequestRef,
+    isSendingRef,
+    setIsSendingMessage,
+    setActiveInput,
+    clearPendingInteractions,
+    showSnackbar,
+    showSnackbarError
+  })
 
   const sendPromptText = useCallback(
     async (
@@ -2037,20 +2006,7 @@ function App(): React.JSX.Element {
               cwd: target.cwd,
               sessionGeneration: result.sessionGeneration
             }
-            setQueuedPromptsBySession((prev) => {
-              const queued = prev[activeDraftKey] ?? []
-              if (queued.length === 0) return prev
-              const updated = { ...prev }
-              delete updated[activeDraftKey]
-              updated[materializedQueueKey] = [
-                ...(updated[materializedQueueKey] ?? []),
-                ...queued.map((item) => ({
-                  ...item,
-                  target: { ...item.target, ...materializedTarget }
-                }))
-              ]
-              return updated
-            })
+            moveQueuedPromptsToSession(materializedQueueKey, materializedTarget)
           }
         }
 
@@ -2114,6 +2070,7 @@ function App(): React.JSX.Element {
       availableModels,
       isModelStateReady,
       models,
+      moveQueuedPromptsToSession,
       openSettings,
       providerStatuses,
       refreshSessions,
@@ -2134,7 +2091,7 @@ function App(): React.JSX.Element {
     event.preventDefault()
     const current = useSessionStore.getState()
     if (
-      compactingSessionKeysRef.current.has(
+      isCompactingKey(
         JSON.stringify([
           current.activePhiSessionId ?? null,
           current.activeSessionPath,
@@ -2167,29 +2124,6 @@ function App(): React.JSX.Element {
     clearInputImages()
     setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
     await sendPromptText(text, target, { images, planMode: planReviewEnabled })
-  }
-
-  const onStopGeneration = async (): Promise<void> => {
-    const stoppedRequest = sendRequestRef.current
-    const stoppedSession = useSessionStore.getState()
-    const stoppedTarget = {
-      phiSessionId: stoppedSession.activePhiSessionId ?? null,
-      sessionPath: stoppedSession.activeSessionPath,
-      sessionGeneration: stoppedSession.activeSessionGeneration
-    }
-    await rendererApi.stopGeneration()
-    const current = useSessionStore.getState()
-    if (
-      stoppedRequest === sendRequestRef.current &&
-      (current.activePhiSessionId ?? null) === stoppedTarget.phiSessionId &&
-      current.activeSessionPath === stoppedTarget.sessionPath &&
-      current.activeSessionGeneration === stoppedTarget.sessionGeneration
-    ) {
-      isSendingRef.current = false
-      setIsSendingMessage(false)
-      setPendingApproval(null)
-      setPendingUserInteraction(null)
-    }
   }
 
   const onSavePersonaMarkdown = async (markdown: string): Promise<void> => {
@@ -2857,43 +2791,6 @@ function App(): React.JSX.Element {
     activeSessionGeneration
   ])
   const currentSessionIsCompacting = compactingSessions.has(activeContextCompactionKey)
-  const onCompactContext = useCallback(
-    async (target: ManualCompactionTarget): Promise<void> => {
-      const isCurrentTarget = (): boolean => {
-        const current = useSessionStore.getState()
-        return (
-          (current.activePhiSessionId ?? null) === target.phiSessionId &&
-          current.activeSessionPath === target.sessionPath &&
-          current.activeSessionGeneration === target.sessionGeneration
-        )
-      }
-      if (!isCurrentTarget()) return
-      const key = JSON.stringify([
-        target.phiSessionId,
-        target.sessionPath,
-        target.sessionGeneration
-      ])
-      if (compactingSessionKeysRef.current.has(key)) return
-      compactingSessionKeysRef.current.add(key)
-      setCompactingSessions((previous) => new Set(previous).add(key))
-      try {
-        await rendererApi.compactCurrentSession(target)
-        if (!isCurrentTarget()) return
-        showSnackbar(appCopy.contextCompacted, 'success')
-        setContextUsageRefreshKey((value) => value + 1)
-      } catch (error) {
-        if (isCurrentTarget()) showSnackbarError(error, appCopy.compactFailed)
-      } finally {
-        compactingSessionKeysRef.current.delete(key)
-        setCompactingSessions((previous) => {
-          const next = new Set(previous)
-          next.delete(key)
-          return next
-        })
-      }
-    },
-    [rendererApi, showSnackbar, showSnackbarError]
-  )
   useEffect(() => {
     currentSessionIsBusyRef.current = currentSessionIsBusy || currentSessionIsCompacting
   }, [currentSessionIsBusy, currentSessionIsCompacting])
@@ -2989,7 +2886,7 @@ function App(): React.JSX.Element {
           onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
         })
         replaceMessages(chatItemsFromSessionMessages(result.messages))
-        setContextUsageRefreshKey((value) => value + 1)
+        refreshContextUsage()
         void refreshCurrentModelControls(request)
         await refreshSessions()
       } finally {
@@ -2998,6 +2895,7 @@ function App(): React.JSX.Element {
     },
     [
       applyCurrentSession,
+      refreshContextUsage,
       refreshCurrentModelControls,
       refreshSessions,
       rendererApi,
@@ -3045,30 +2943,19 @@ function App(): React.JSX.Element {
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      setQueuedPromptsBySession((prev) => {
-        const current = prev[activeDraftKey] ?? []
-        if (current[0]?.id !== nextPrompt.id) return prev
-        const remaining = current.slice(1)
-        const updated = { ...prev }
-        if (remaining.length > 0) {
-          updated[activeDraftKey] = remaining
-        } else {
-          delete updated[activeDraftKey]
-        }
-        return updated
-      })
+      dequeueQueuedPrompt(nextPrompt.id)
       void sendPromptText(nextPrompt.text, nextPrompt.target, nextPrompt.sendOptions)
     })
     return () => {
       cancelled = true
     }
   }, [
-    activeDraftKey,
     activeQueuedPrompts,
     availableModels,
     currentSessionIsBusy,
     queuedPromptsPaused,
     currentSessionIsCompacting,
+    dequeueQueuedPrompt,
     isModelStateReady,
     isBusy,
     isSessionChanging,

@@ -399,10 +399,14 @@ test('context usage ignores a late old-session reply and peer-session events', a
   assert.equal(calls, before + 1)
 })
 
-function appCallback<T>(name: string, context: Record<string, unknown>): T {
+/** Run control moved out of App.tsx; the assertions follow it to its owners. */
+const runControlPath = 'src/renderer/src/features/chat/hooks/useChatRunControl.ts'
+const manualCompactionPath = 'src/renderer/src/features/chat/hooks/useManualCompaction.ts'
+
+function appCallback<T>(path: string, name: string, context: Record<string, unknown>): T {
   const syntax = ts.createSourceFile(
-    'App.tsx',
-    readFileSync('src/renderer/src/App.tsx', 'utf8'),
+    path,
+    readFileSync(path, 'utf8'),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX
@@ -439,6 +443,7 @@ function manualHarness(pending: Promise<unknown>): {
   const notices: unknown[] = []
   const calls: ManualCompactionTarget[] = []
   const compact = appCallback<(target: ManualCompactionTarget) => Promise<void>>(
+    manualCompactionPath,
     'onCompactContext',
     {
       useSessionStore: {
@@ -458,7 +463,7 @@ function manualHarness(pending: Promise<unknown>): {
       setCompactingSessions: () => {},
       showSnackbar: (...values: unknown[]) => notices.push(values),
       showSnackbarError: (...values: unknown[]) => notices.push(values),
-      setContextUsageRefreshKey: () => {
+      refreshContextUsage: () => {
         refreshes += 1
       }
     }
@@ -544,7 +549,7 @@ function stopHarness(pending: Promise<void>): {
   let target = first
   const writes: unknown[] = []
   const isSendingRef = { current: true }
-  const stop = appCallback<() => Promise<void>>('onStopGeneration', {
+  const stop = appCallback<() => Promise<void>>(runControlPath, 'onStopGeneration', {
     rendererApi: { stopGeneration: () => pending },
     sendRequestRef: { current: 3 },
     isSendingRef,
@@ -556,8 +561,7 @@ function stopHarness(pending: Promise<void>): {
       })
     },
     setIsSendingMessage: (value: unknown) => writes.push(value),
-    setPendingApproval: (value: unknown) => writes.push(value),
-    setPendingUserInteraction: (value: unknown) => writes.push(value)
+    clearPendingInteractions: () => writes.push('pending-cleared')
   })
   return {
     stop,
@@ -593,6 +597,6 @@ test('a late stop reply cannot clear a newer generation of the same session', as
 test('stopping the current original session retains the existing local cleanup behavior', async () => {
   const f = stopHarness(Promise.resolve())
   await f.stop()
-  assert.deepEqual(f.writes, [false, null, null])
+  assert.deepEqual(f.writes, [false, 'pending-cleared'])
   assert.equal(f.isSendingRef.current, false)
 })
