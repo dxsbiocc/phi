@@ -66,6 +66,23 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 macOS 开发者想本地运行这些套件:`brew install flock`,并确保 `ps` 未被安全策略禁用。
 Linux 服务器(远端运行时的真实目标)两者都自带。
 
+## 抖动与真失败
+
+系统负载高时,个别用例会失败或超时,而单跑必然通过(实测:`workspace-host-contract.ts` 里的
+"only one concurrent expected-hash write win" 在全量并发下偶发失败,单跑 3/3 通过)。
+
+门在首次运行失败后会自动**串行重试失败的那几个套件**,并区分两种情况:
+
+| 情况 | 门的输出 |
+| --- | --- |
+| 重试通过 | `Retry passed: the failure is load-sensitive, not a regression.` 退出码 0 |
+| 重试仍失败 | `Retry failed too: this is a real failure.` 退出码非 0 |
+
+失败套件的识别覆盖共享测试体:`tests/workspace-host-contract.ts` 这类文件被多个 runner 导入,
+报告里只出现契约文件路径,门会反查引用它的 runner 再重试。用 `--no-retry` 可关闭重试。
+
+重试通过不代表可以无视:它说明该用例对并发敏感,应当修测试隔离,而不是长期依赖重试。
+
 ## 分级
 
 | 层 | 内容 | 期望时长 |

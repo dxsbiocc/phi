@@ -158,23 +158,122 @@ if (selected.length === 0) {
 
 printPlan(plan)
 if (plan.stale.length > 0) {
-  console.error('\nKnown-failure entries are stale: fix the cause and delete the entry, or update reviewBy.')
+  console.error(
+    '\nKnown-failure entries are stale: fix the cause and delete the entry, or update reviewBy.'
+  )
   process.exit(1)
 }
 
 const concurrency = process.env.PHI_TEST_CONCURRENCY ?? '4'
-const child = spawn(
-  process.execPath,
-  [
-    '--import',
-    loaderPath,
-    '--test',
-    `--test-concurrency=${concurrency}`,
-    '--test-timeout=300000',
-    '--test-force-exit',
-    ...selected
-  ],
-  { cwd: repoRoot, stdio: 'inherit' }
-)
+const retry = !args.includes('--no-retry')
+/** Keep the tail only: enough to find failing files, not the whole suite log. */
+const OUTPUT_TAIL_BYTES = 4 * 1024 * 1024
 
-child.once('exit', (code) => process.exit(code ?? 1))
+function runTests(files, testConcurrency) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [
+        '--import',
+        loaderPath,
+        '--test',
+        `--test-concurrency=${testConcurrency}`,
+        '--test-timeout=300000',
+        '--test-force-exit',
+        ...files
+      ],
+      { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    let tail = ''
+    const absorb = (chunk, sink) => {
+      sink.write(chunk)
+      tail = `${tail}${chunk.toString()}`.slice(-OUTPUT_TAIL_BYTES)
+    }
+    child.stdout.on('data', (chunk) => absorb(chunk, process.stdout))
+    child.stderr.on('data', (chunk) => absorb(chunk, process.stderr))
+    child.once('error', () => resolve({ code: 1, tail }))
+    child.once('exit', (code) => resolve({ code: code ?? 1, tail }))
+  })
+}
+
+/**
+ * Some suites are shared bodies under tests/ (for example workspace-host-contract.ts)
+ * that several runners import. A failure is reported against the shared file, so map
+ * it back to the runners that actually need to re-run.
+ */
+function runnerMap(files) {
+  const byHelper = new Map()
+  for (const file of files) {
+    let source = ''
+    try {
+      source = readFileSync(path.join(repoRoot, file), 'utf8')
+    } catch {
+      continue
+    }
+    for (const match of source.matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
+      const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]))
+      // Node reports `tests/x.ts`; relative imports usually omit the extension.
+      // Helpers need not be runners themselves: tests/workspace-host-contract.ts is
+      // imported by several *.test.ts files and failures are reported against it.
+      const candidates = resolved.endsWith('.ts') ? [resolved] : [resolved, `${resolved}.ts`]
+      for (const candidate of candidates) {
+        if (!byHelper.has(candidate)) byHelper.set(candidate, new Set())
+        byHelper.get(candidate).add(file)
+      }
+    }
+  }
+  return byHelper
+}
+
+const runnersByHelper = runnerMap(selected)
+
+/** Files named in the failure section; node prints `test at <file>:<line>`. */
+function failedFiles(output) {
+  const named = new Set()
+  for (const match of output.matchAll(
+    /test at ((?:file:\/\/)?[^\s:(]*tests\/[^\s:()]+\.ts):\d+/g
+  )) {
+    named.add(match[1].replace(/^file:\/\//, '').replace(/^.*?(?=tests\/)/, ''))
+  }
+  for (const match of output.matchAll(
+    /\(((?:file:\/\/)?[^\s:()]*tests\/[^\s:()]+\.ts):\d+:\d+\)/g
+  )) {
+    named.add(match[1].replace(/^file:\/\//, '').replace(/^.*?(?=tests\/)/, ''))
+  }
+  const runners = new Set()
+  for (const file of named) {
+    if (selected.includes(file)) {
+      runners.add(file)
+      continue
+    }
+    for (const runner of runnersByHelper.get(file) ?? []) runners.add(runner)
+  }
+  return [...runners]
+}
+
+const first = await runTests(selected, concurrency)
+if (first.code === 0) process.exit(0)
+
+if (!retry) process.exit(first.code)
+
+const retryFiles = failedFiles(first.tail)
+if (retryFiles.length === 0) {
+  console.error(
+    '\nGate failed and no failing suite could be identified; re-run the selection above by hand.'
+  )
+  process.exit(first.code)
+}
+
+console.log(
+  `\nGate failed in ${retryFiles.length} suite(s); retrying them serially to tell flakes from real failures:` +
+    retryFiles.map((file) => `\n  ${file}`).join('')
+)
+const second = await runTests(retryFiles, '1')
+if (second.code === 0) {
+  console.log(
+    'Retry passed: the failure is load-sensitive, not a regression. Report it, do not ignore it.'
+  )
+  process.exit(0)
+}
+console.error('Retry failed too: this is a real failure.')
+process.exit(second.code)
