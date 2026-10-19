@@ -52,6 +52,7 @@ import type {
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
+import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import {
   runtimeRecoveryBannerColumnSx,
   runtimeRecoveryBannerOverlaySx
@@ -806,32 +807,34 @@ function App(): React.JSX.Element {
     isExportingSession,
     setIsExportingSession
   } = useAppDialogs()
+  const {
+    isSidebarOpen,
+    setIsSidebarOpen,
+    sidebarWidth,
+    setSidebarWidth,
+    workspaceSidebarMode,
+    setWorkspaceSidebarMode,
+    workspaceSidebarPreview,
+    setWorkspaceSidebarPreview,
+    sessionTabWasOpened,
+    setSessionTabWasOpened,
+    closedWorkspaceSessionTabKeys,
+    setClosedWorkspaceSessionTabKeys
+  } = useWorkspaceSidebar()
+  const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [chatScrollPositionStore] = useState(() => new Map<string, number>())
   const [notebookViewStateStore] = useState<NotebookViewStateStore>(() => new Map())
   const compactingSessionKeysRef = useRef(new Set<string>())
   const [compactingSessions, setCompactingSessions] = useState<Set<string>>(() => new Set())
   const [contextUsageRefreshKey, setContextUsageRefreshKey] = useState(0)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-  const [sidebarWidth, setSidebarWidth] = useState(navigationPaneWidth)
   const [activeView, setActiveViewState] = useState<AppView>('chat')
 
   const navigateToView = useCallback((view: AppView): void => {
     setActiveViewState(view)
   }, [])
 
-  const [workspaceSidebarMode, setWorkspaceSidebarMode] =
-    useState<WorkspaceSidebarMode>('conversations')
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>([])
-  const [sessionTabWasOpened, setSessionTabWasOpened] = useState(false)
-  const [closedWorkspaceSessionTabKeys, setClosedWorkspaceSessionTabKeys] = useState<Set<string>>(
-    () => new Set()
-  )
   const [activeWorkspaceTabKey, setActiveWorkspaceTabKey] = useState<string | null>(null)
-  const [workspaceSidebarPreview, setWorkspaceSidebarPreview] = useState<{
-    mode: WorkspaceSidebarMode
-    anchorEl: HTMLElement
-  } | null>(null)
-  const workspaceSidebarPreviewCloseTimer = useRef<number | null>(null)
   const [isBusy, setIsBusy] = useState(false)
   const [isSendingMessage, setIsSendingMessage] = useState(false)
   const [personaMarkdown, setPersonaMarkdownState] = useState<string | null>(null)
@@ -1557,7 +1560,10 @@ function App(): React.JSX.Element {
       resetAnalysisJupyterRuntimeForCwdChange,
       setIsSessionChanging,
       setDraftInputs,
-      startFreshChat
+      startFreshChat,
+      setClosedWorkspaceSessionTabKeys,
+      setSessionTabWasOpened,
+      setWorkspaceSidebarMode
     ]
   )
 
@@ -1650,7 +1656,9 @@ function App(): React.JSX.Element {
       replaceMessages,
       resetAnalysisJupyterRuntimeForCwdChange,
       setAgentEventState,
-      setIsSessionChanging
+      setIsSessionChanging,
+      setClosedWorkspaceSessionTabKeys,
+      setSessionTabWasOpened
     ]
   )
 
@@ -1686,7 +1694,8 @@ function App(): React.JSX.Element {
       refreshCurrentModelControls,
       replaceMessages,
       refreshSessions,
-      setProjectSessionRefreshKey
+      setProjectSessionRefreshKey,
+      setSessionTabWasOpened
     ]
   )
 
@@ -1717,7 +1726,7 @@ function App(): React.JSX.Element {
     projectSidebarSelectionRequestRef.current += 1
     setWorkspaceSidebarMode('conversations')
     setIsSidebarOpen(true)
-  }, [])
+  }, [setIsSidebarOpen, setWorkspaceSidebarMode])
 
   const applyFileOpenConversationLayout = useCallback((): void => {
     const next = sidebarStateForFileOpenConversationLayout(fileOpenConversationLayout)
@@ -1725,7 +1734,7 @@ function App(): React.JSX.Element {
     projectSidebarSelectionRequestRef.current += 1
     setWorkspaceSidebarMode(next.workspaceSidebarMode)
     setIsSidebarOpen(next.isSidebarOpen)
-  }, [fileOpenConversationLayout])
+  }, [fileOpenConversationLayout, setIsSidebarOpen, setWorkspaceSidebarMode])
 
   const onNotebookDirtyChange = useCallback(
     (file: { path: string }, dirty: boolean): void => {
@@ -1882,7 +1891,10 @@ function App(): React.JSX.Element {
       resetAnalysisJupyterRuntimeForCwdChange,
       setIsSessionChanging,
       setProjectSessionRefreshKey,
-      startFreshChat
+      startFreshChat,
+      setClosedWorkspaceSessionTabKeys,
+      setSessionTabWasOpened,
+      setWorkspaceSidebarMode
     ]
   )
 
@@ -2975,7 +2987,7 @@ function App(): React.JSX.Element {
       }
       onRevealPreviewPath(path, kind)
     },
-    [onRevealPreviewPath]
+    [onRevealPreviewPath, setIsSidebarOpen, setWorkspaceSidebarMode]
   )
 
   const onOpenInputAddMenu = useCallback((): void => {
@@ -3689,7 +3701,7 @@ function App(): React.JSX.Element {
         setWorkspaceSidebarPreview(null)
       }, delayMs)
     },
-    [clearWorkspaceSidebarPreviewCloseTimer]
+    [clearWorkspaceSidebarPreviewCloseTimer, setWorkspaceSidebarPreview]
   )
   const openWorkspaceSidebarPreview = useCallback(
     (mode: WorkspaceSidebarMode, anchorEl: HTMLElement): void => {
@@ -3703,7 +3715,8 @@ function App(): React.JSX.Element {
     [
       clearWorkspaceSidebarPreviewCloseTimer,
       closeWorkspaceSidebarPreview,
-      shouldUseWorkspaceSidebarPreview
+      shouldUseWorkspaceSidebarPreview,
+      setWorkspaceSidebarPreview
     ]
   )
   const scheduleWorkspaceSidebarPreviewClose = useCallback((): void => {
@@ -3927,7 +3940,10 @@ function App(): React.JSX.Element {
       onSelectWorkspaceFileTab,
       setActiveMcpServerId,
       setActiveSkillId,
-      setSelectedWrapperId
+      setSelectedWrapperId,
+      setClosedWorkspaceSessionTabKeys,
+      setSessionTabWasOpened,
+      setWorkspaceSidebarMode
     ]
   )
 
@@ -4139,7 +4155,7 @@ function App(): React.JSX.Element {
       setWorkspaceSidebarMode('wrappers')
       setIsSidebarOpen(true)
     },
-    [onOpenWrapperTab, wrapperCatalog]
+    [onOpenWrapperTab, wrapperCatalog, setIsSidebarOpen, setWorkspaceSidebarMode]
   )
 
   const onCloseWorkspaceTab = useCallback(
@@ -4197,7 +4213,9 @@ function App(): React.JSX.Element {
       setActiveMcpServerId,
       setActiveSkillId,
       setSelectedWrapperId,
-      visibleWorkspaceTabs
+      visibleWorkspaceTabs,
+      setClosedWorkspaceSessionTabKeys,
+      setSessionTabWasOpened
     ]
   )
 
@@ -4222,29 +4240,32 @@ function App(): React.JSX.Element {
     [activeWorkspaceResourceTab, onCloseWorkspaceTab, refreshMcpServers, showSnackbar]
   )
 
-  const onStartSidebarResize = useCallback((event: MouseEvent<HTMLDivElement>): void => {
-    event.preventDefault()
+  const onStartSidebarResize = useCallback(
+    (event: MouseEvent<HTMLDivElement>): void => {
+      event.preventDefault()
 
-    const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
-      const nextWidth = Math.min(
-        maxNavigationPaneWidth,
-        Math.max(minNavigationPaneWidth, moveEvent.clientX - activityBarWidth)
-      )
-      setSidebarWidth(nextWidth)
-    }
+      const onMouseMove = (moveEvent: globalThis.MouseEvent): void => {
+        const nextWidth = Math.min(
+          maxNavigationPaneWidth,
+          Math.max(minNavigationPaneWidth, moveEvent.clientX - activityBarWidth)
+        )
+        setSidebarWidth(nextWidth)
+      }
 
-    const onMouseUp = (): void => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
+      const onMouseUp = (): void => {
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
 
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-  }, [])
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    },
+    [setSidebarWidth]
+  )
 
   const onSelectWorkspaceSidebarMode = useCallback(
     (mode: WorkspaceSidebarMode): void => {
@@ -4259,7 +4280,7 @@ function App(): React.JSX.Element {
       }
       setIsSidebarOpen(true)
     },
-    [closeWorkspaceSidebarPreview, workspaceSidebarMode]
+    [closeWorkspaceSidebarPreview, workspaceSidebarMode, setIsSidebarOpen, setWorkspaceSidebarMode]
   )
 
   const onDockConversationToSidebar = useCallback(
@@ -4286,7 +4307,13 @@ function App(): React.JSX.Element {
     selectWorkspaceTab(currentSessionTab)
     setWorkspaceSidebarMode('files')
     setIsSidebarOpen(true)
-  }, [closeWorkspaceSidebarPreview, currentSessionTab, selectWorkspaceTab])
+  }, [
+    closeWorkspaceSidebarPreview,
+    currentSessionTab,
+    selectWorkspaceTab,
+    setIsSidebarOpen,
+    setWorkspaceSidebarMode
+  ])
 
   const onSelectWorkspaceView = useCallback(
     (view: 'chat' | 'projects', anchorEl: HTMLElement): void => {
@@ -4872,7 +4899,9 @@ function App(): React.JSX.Element {
     isSidebarOpen,
     workspaceSidebarMode,
     workspaceSidebarPreviewMode,
-    visibleWorkspaceSidebarPreview
+    visibleWorkspaceSidebarPreview,
+    setIsSidebarOpen,
+    setWorkspaceSidebarMode
   ])
 
   const workspaceSidebarProps = useMemo<WorkspaceSidebarDataProps>(
