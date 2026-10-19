@@ -20,6 +20,7 @@ import type { PhiTool, PhiToolImage, PhiToolApproval, PhiToolResult } from '../t
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
 import { RpcConnection } from './connection'
+import { runGuardRefusalError } from './run-guard'
 import { RpcExecutionAuthority } from './execution-authority'
 import {
   RpcApprovalBridge,
@@ -377,7 +378,12 @@ export class RemoteSessionRuntime {
     })
     this.connection = new RpcConnection(
       (signal, generation) => this.transport.open(this.params, signal, generation),
-      options.connectionOptions
+      {
+        ...options.connectionOptions,
+        // SSH-12: a refused launch explains itself on stderr; keep that cause.
+        describeTransportEnd:
+          options.connectionOptions?.describeTransportEnd ?? runGuardRefusalError
+      }
     )
     this.detach.push(
       this.connection.onDisconnect(({ error, expected }) => {

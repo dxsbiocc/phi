@@ -1,3 +1,4 @@
+import { CodedError, type ErrorCode } from '../../../../shared/errorCodes'
 import { shellQuote as q } from '../../wrappers/remote-ssh-session'
 
 /**
@@ -114,3 +115,56 @@ run_guard() {
 if [ -n "$run_exe" ]; then run_guard; fi`
   .replace('__PHI_RUN_TERM_WAIT__', String(RUN_TERM_WAIT_SECONDS))
   .replace('__PHI_RUN_KILL_WAIT__', String(RUN_KILL_WAIT_SECONDS))
+
+/**
+ * SSH-12: the launcher reports every refusal on stderr as `PHI_LAUNCH:<reason>`
+ * and exits, but nothing used to read it, so a refused launch reached the caller
+ * as a bare "RPC output stream ended". Map the markers to an actionable error.
+ *
+ * The markers name the failed check, not the cause: `RUN_LOCK_BUSY` also happens
+ * when the flock binary itself is missing, so the surrounding stderr decides
+ * between "another run holds it" and "this server cannot take the lock at all".
+ */
+export interface RunGuardRefusal {
+  readonly code: ErrorCode
+  readonly message: string
+}
+
+const MISSING_FLOCK = /flock(?:: |:)(?:command )?not found|flock: No such file or directory/i
+const MISSING_PS = /ps(?:: |:)(?:command )?not found|ps: .*Operation not permitted|ps: not found/i
+
+export function parseRunGuardRefusal(stderr: string): RunGuardRefusal | undefined {
+  if (stderr.includes('PHI_LAUNCH:RUN_LOCK_BUSY')) {
+    return MISSING_FLOCK.test(stderr)
+      ? {
+          code: 'DOMAIN_INVALID',
+          message:
+            '服务器缺少 flock,无法为远端运行建立写者锁。请在服务器安装 util-linux(提供 flock)后重试。'
+        }
+      : {
+          code: 'DOMAIN_CONFLICT',
+          message:
+            '该会话仍被上一次未结束的远端运行占用。请等它结束后重试;Phi 不会终止无法确认归属的进程。'
+        }
+  }
+  if (stderr.includes('PHI_LAUNCH:NOT_GROUP_LEADER')) {
+    return MISSING_PS.test(stderr)
+      ? {
+          code: 'DOMAIN_INVALID',
+          message:
+            '服务器无法确认远端运行的进程组(ps 不可用或受限),Phi 不能安全停止该运行。请检查服务器上的 ps 权限后重试。'
+        }
+      : {
+          code: 'DOMAIN_INVALID',
+          message:
+            '远端启动进程不是进程组组长,Phi 无法安全停止该运行。请检查服务器 sshd 是否以 no-pty exec 启动后重试。'
+        }
+  }
+  return undefined
+}
+
+/** `describeTransportEnd` hook for RpcConnection: undefined keeps the generic transport error. */
+export function runGuardRefusalError(stderrTail: string): Error | undefined {
+  const refusal = parseRunGuardRefusal(stderrTail)
+  return refusal ? new CodedError(refusal.code, refusal.message) : undefined
+}

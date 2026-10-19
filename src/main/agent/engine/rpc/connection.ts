@@ -24,6 +24,8 @@ import type {
 } from './types'
 
 type Timer = ReturnType<typeof setTimeout>
+/** Enough for a launch refusal to name its cause; the tail is capped per generation. */
+const MAX_STDERR_TAIL = 4096
 interface PendingResponse {
   command: string
   resolve(response: RpcResponse): void
@@ -52,6 +54,8 @@ interface Generation {
   writes: Promise<void>
   writing: number
   queuedBytes: number
+  /** Bounded stderr seen on this generation, used to explain a refused launch. */
+  stderrTail: string
   detach?: () => void
   cleanup?: Promise<void>
 }
@@ -106,6 +110,7 @@ export class RpcConnection {
   private readonly requestMs: number
   private readonly promptMs: number
   private readonly closeMs: number
+  private readonly describeEnd: ((stderrTail: string) => Error | undefined) | undefined
   private lastCleanup: Promise<void> = Promise.resolve()
 
   constructor(
@@ -117,6 +122,7 @@ export class RpcConnection {
     this.promptMs = timeout(options.promptTimeoutMs, 0)
     this.closeMs = timeout(options.closeTimeoutMs, 5_000)
     if (!this.closeMs) throw new Error('RPC cleanup timeout must be positive')
+    this.describeEnd = options.describeTransportEnd
   }
 
   get isReady(): boolean {
@@ -161,7 +167,8 @@ export class RpcConnection {
       prompts: new Map(),
       writes: Promise.resolve(),
       writing: 0,
-      queuedBytes: 0
+      queuedBytes: 0,
+      stderrTail: ''
     }
     this.current = state
     // Reap an earlier channel before opening its replacement. A late factory
@@ -312,6 +319,17 @@ export class RpcConnection {
   private attach(state: Generation, process: RpcTransport): void {
     state.process = process
     const failure = (error: Error): void => this.fail(state, transportError(error))
+    // Never let the describer throw inside a stream handler: an exception there
+    // would surface as an uncaughtException instead of a channel failure.
+    const endError = (fallback: string): Error => {
+      let described: Error | undefined
+      try {
+        described = this.describeEnd?.(state.stderrTail)
+      } catch {
+        described = undefined
+      }
+      return described ?? new CodedError('TRANSPORT_LOST', fallback)
+    }
     const eof = (): void => {
       if (!this.active(state)) return
       try {
@@ -320,7 +338,15 @@ export class RpcConnection {
         this.fail(state, asError(error))
         return
       }
-      this.fail(state, new CodedError('TRANSPORT_LOST', 'RPC output stream ended'))
+      if (this.describeEnd && state.stderrTail.length === 0) {
+        // A refused launch writes its marker to stderr immediately before exiting.
+        // Give that write one loop turn so the cause is not lost to pipe ordering.
+        setImmediate(() => {
+          if (this.active(state)) this.fail(state, endError('RPC output stream ended'))
+        })
+        return
+      }
+      this.fail(state, endError('RPC output stream ended'))
     }
     const data = (chunk: unknown): void => {
       if (!this.active(state)) return
@@ -331,13 +357,15 @@ export class RpcConnection {
         this.fail(state, asError(error))
       }
     }
-    const drainStderr = (): void => undefined
+    const collectStderr = (chunk: unknown): void => {
+      state.stderrTail = `${state.stderrTail}${String(chunk)}`.slice(-MAX_STDERR_TAIL)
+    }
     process.stdin.on('error', failure)
     process.stdout.on('error', failure)
     process.stderr.on('error', failure)
     process.stdout.on('end', eof)
     process.stdout.on('close', eof)
-    process.stderr.on('data', drainStderr)
+    process.stderr.on('data', collectStderr)
     state.detach = () => {
       if (!state.writing) process.stdin.removeListener('error', failure)
       process.stdout.removeListener('error', failure)
@@ -345,14 +373,21 @@ export class RpcConnection {
       process.stdout.removeListener('data', data)
       process.stdout.removeListener('end', eof)
       process.stdout.removeListener('close', eof)
-      process.stderr.removeListener('data', drainStderr)
+      process.stderr.removeListener('data', collectStderr)
     }
     void process.closed.then(
-      ({ code, signal }) =>
-        this.fail(
-          state,
-          new CodedError('TRANSPORT_LOST', `RPC process exited (${signal ?? code ?? 'unknown'})`)
-        ),
+      ({ code, signal }) => {
+        const fallback = `RPC process exited (${signal ?? code ?? 'unknown'})`
+        if (!this.describeEnd) {
+          this.fail(state, new CodedError('TRANSPORT_LOST', fallback))
+          return
+        }
+        // The exit can be delivered before the last stderr write is drained.
+        // One loop turn lets a launch refusal reach the describer.
+        setImmediate(() => {
+          if (this.active(state)) this.fail(state, endError(fallback))
+        })
+      },
       (error: unknown) => this.fail(state, transportError(error))
     )
     process.stdout.on('data', data)

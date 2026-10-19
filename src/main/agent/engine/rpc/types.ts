@@ -61,6 +61,12 @@ export interface RpcConnectionOptions {
   /** Default zero: long-running prompts are stopped explicitly, not replayed on timeout. */
   promptTimeoutMs?: number
   closeTimeoutMs?: number
+  /**
+   * Turns the stderr tail observed before the output stream ended into a specific
+   * error. Launch refusals print their reason there, and without this hook the
+   * caller only ever sees a generic transport loss.
+   */
+  describeTransportEnd?: (stderrTail: string) => Error | undefined
 }
 
 export interface RpcDisconnect {
