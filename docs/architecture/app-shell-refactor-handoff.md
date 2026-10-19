@@ -1,7 +1,7 @@
 # App shell 拆分:交接文档
 
 Date: 2026-10-19
-Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
+Status: 进行中(`App.tsx` 5,569 → 4,689,目标 ≤ 1,200;第 5 节第 1 项已完成)
 
 这份文档是给**接手这个任务的新会话**看的。读完它应当能直接开工,不需要回看之前的对话。
 
@@ -36,10 +36,10 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
 
 | 指标                                                            | 值                                                         |
 | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| `App.tsx`                                                       | 4,803 行(`App()` 函数本体约 4,200 行)                      |
-| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 28 / 15 / 116 / 7                                          |
+| `App.tsx`                                                       | 4,689 行(`App()` 函数本体 4,457 行,即 232–4,688)           |
+| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 13 / 15 / 114 / 6                                          |
 | ESLint `--max-warnings`                                         | 1,470                                                      |
-| 测试门                                                          | ≈7,070 例,0 失败,12 跳过                                   |
+| 测试门                                                          | ≈7,079 例,0 失败,12 跳过                                   |
 | 主进程边界基线                                                  | `index.ts` 13,002 行,234 通道,4 个超长文件(本次工作未触碰) |
 
 ### 已经抽出的模块(全部已合入)
@@ -56,9 +56,14 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
 | `features/workspace/WorkspaceView.tsx`                  | 234  | workspace 主列的布局与内容槽位选择      |
 | `features/workspace/lib/workspaceViewMode.ts`           | 28   | 内容槽位优先级(纯函数)                  |
 | `features/workspace/hooks/useWorkspaceTabNavigation.ts` | 356  | 标签选择/打开/关闭的语义                |
+| `features/chat/hooks/useChatRunControl.ts`              | 130  | 运行控制组合入口(停止生成 + 刷新信号)   |
+| `features/chat/hooks/usePromptQueue.ts`                 | 90   | 每个会话的提示词队列状态                |
+| `features/chat/hooks/useManualCompaction.ts`            | 87   | 手动压缩:在途 key、渲染态、派发守卫     |
+| `features/chat/lib/promptQueue.ts`                      | 101  | 队列纯变换(append/drop/shift/retarget)  |
 
 对应的测试:`tests/app-workspace-*.test.ts`、`tests/app-window-chrome.test.ts`、
-`tests/workspace-view-mode.test.ts`、`tests/workspace-tab-navigation.test.ts`。
+`tests/workspace-view-mode.test.ts`、`tests/workspace-tab-navigation.test.ts`、
+`tests/prompt-queue.test.ts`。
 
 ---
 
@@ -111,20 +116,25 @@ Status: 进行中(`App.tsx` 5,569 → 4,803,目标 ≤ 1,200)
    函数进 vm 沙箱跑;拆到 hook 后重写成「渲染 hook → 拿 actions → 调记录型假依赖」,
    断言更强也更稳。
 8. **测试门偶发负载敏感失败**。门内置串行重试;重试转绿视为抖动,但要在提交说明里写出来。
+9. **新 hook 会撞上 `max-lines-per-function: 80`**。一次抽出 ~130 行的 hook 会把告警数顶到
+   1,471,棘轮立刻失败。按职责拆成「队列 / 压缩 / 组合」三个 ≤80 行的小 hook 即可回到 1,470;
+   拆完也让每个 hook 的依赖面更小。别用 `eslint-disable` 消掉它。
+10. **`isBusy` 容易被误当成运行控制**。它只由 `useProviderAuth(setIsBusy, ...)` 写入,是鉴权闸,
+    留在 App 里才对;`isSendingMessage`/`isSendingRef` 才是聊天运行状态。
 
 ---
 
 ## 5. 剩余任务(按建议顺序)
 
-`App.tsx` 现在还剩下五块。顺序按「依赖面从小到大」排列,不是按行数。
+`App.tsx` 现在还剩下四块(第 1 块已合入)。顺序按「依赖面从小到大」排列,不是按行数。
 
-| 顺序 | 切片                                                                                                 | 位置                                          | 估算 | 备注                                              |
-| ---- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---- | ------------------------------------------------- |
-| 1    | 运行控制:`isBusy`/`isSendingMessage`/`compactingSessions`/`contextUsageRefreshKey` + 停止生成 + 队列 | 新 `features/chat/hooks/` 或 `lib/app-shell/` | ~300 | 依赖面清晰,和已完成的 hook 同构                   |
-| 2    | 文件/笔记本打开链                                                                                    | `features/file-preview/`                      | ~200 | `useWorkspaceFileActions` 已有基础,注意别和它重叠 |
-| 3    | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput`              | `features/jobs/` 或 `lib/app-shell/`          | ~120 | 三个同构的小状态对,可以一次做完                   |
-| 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 先拆函数再做 hook;复杂度是这个文件最高的          |
-| 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 做完这步 APP 才可能接近 1,200                     |
+| 顺序 | 切片                                                                                                 | 位置                                          | 估算 | 状态   | 备注                                                    |
+| ---- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---- | ------ | ------------------------------------------------------- |
+| 1    | 运行控制:`isBusy`/`isSendingMessage`/`compactingSessions`/`contextUsageRefreshKey` + 停止生成 + 队列 | 新 `features/chat/hooks/` 或 `lib/app-shell/` | ~300 | 已完成 | 实际只降 113 行:`isBusy` 是鉴权闸、发送 ref 留给第 4 块 |
+| 2    | 文件/笔记本打开链                                                                                    | `features/file-preview/`                      | ~200 | 待做   | `useWorkspaceFileActions` 已有基础,注意别和它重叠       |
+| 3    | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput`              | `features/jobs/` 或 `lib/app-shell/`          | ~120 | 待做   | 三个同构的小状态对,可以一次做完                         |
+| 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 待做   | 先拆函数再做 hook;复杂度是这个文件最高的                |
+| 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 待做   | 做完这步 APP 才可能接近 1,200                           |
 
 每完成一块,`App.tsx` 会降 100–300 行。**不要指望一次抽走很多**——JSX 只有 534 行,
 其余全是编排逻辑;这是前面几轮反复验证过的测量结论。
