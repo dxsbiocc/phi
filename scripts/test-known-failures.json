@@ -1,0 +1,47 @@
+{
+  "$comment": [
+    "Tests that cannot pass as-is. Every entry must say WHY in 'kind' terms:",
+    "kind=environment  -> the test needs a host capability this runner does not have;",
+    "                      the gate re-checks the probe at runtime and only skips when the",
+    "                      capability is really missing, so a normal dev machine still runs it.",
+    "kind=fixture      -> a real red test kept honest by an owner and a review date.",
+    "Remove an entry as soon as the underlying cause is fixed; the gate fails on stale entries."
+  ],
+  "entries": [
+    {
+      "file": "tests/t14production-child-controls.test.ts",
+      "scope": "main",
+      "kind": "environment",
+      "probe": "ps",
+      "owner": "engine / RPC",
+      "reviewBy": "2026-11-18",
+      "reason": "The production launcher verifies process-group leadership with /bin/ps. Restricted runners reject it, so the child reports 'phi-run: /bin/ps: Operation not permitted' plus PHI_LAUNCH:NOT_GROUP_LEADER before any assertion runs."
+    },
+    {
+      "file": "tests/engine-facade-checkpoint.test.ts",
+      "scope": "main",
+      "kind": "environment",
+      "probe": "ps",
+      "owner": "engine / RPC",
+      "reviewBy": "2026-11-18",
+      "reason": "Same production launcher dependency on /bin/ps: 'Composition CLI failed: phi-run: /bin/ps: Operation not permitted'."
+    },
+    {
+      "file": "tests/engine-facade-child-composition.test.ts",
+      "scope": "main",
+      "kind": "environment",
+      "probe": "ps",
+      "owner": "engine / RPC",
+      "reviewBy": "2026-11-18",
+      "reason": "Same production launcher dependency on /bin/ps. Also the slowest suite (tens of real child processes), so it belongs to the slow tier even on a capable host."
+    },
+    {
+      "file": "tests/package-content/connector-catalog.test.ts",
+      "scope": "packages",
+      "kind": "fixture",
+      "owner": "content / connectors",
+      "reviewBy": "2026-11-01",
+      "reason": "The curated connector directory now lists 13 services while the test still asserts the original 4. This is a real red test, not an environment problem: update the expectation or the fixture."
+    }
+  ]
+}
