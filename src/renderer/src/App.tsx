@@ -57,6 +57,8 @@ import { usePanelRequests } from './lib/app-shell/usePanelRequests'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
 import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
+import { usePromptSend } from './features/chat/hooks/usePromptSend'
+import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import {
   runtimeRecoveryBannerColumnSx,
@@ -139,9 +141,7 @@ import {
 } from './lib/remoteUploadDestination'
 import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
-import { messagesForUserRetry } from './lib/chatRetry'
 import { getAppShortcutAction } from './lib/appShortcuts'
-import { getPromptReadiness } from './lib/promptReadiness'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import { orderSessionsForDisplay } from './lib/sessionOrder'
@@ -158,7 +158,6 @@ import {
   resolveWorkspaceResourceTabIcons,
   workspaceFileTabKey,
   workspaceResourceKindLabel,
-  activeTabKeyAfterPrompt,
   workspaceSessionTabKey,
   visibleWorkspaceTabsForState,
   type WorkspaceFileWorkspaceTab,
@@ -1694,174 +1693,35 @@ function App(): React.JSX.Element {
     showSnackbarError
   })
 
-  const sendPromptText = useCallback(
-    async (
-      text: string,
-      target: PromptTarget,
-      options: SendPromptOptions = {}
-    ): Promise<boolean> => {
-      const images = options.images ?? []
-      if ((!text.trim() && images.length === 0) || isSendingRef.current) {
-        return false
-      }
-      if (images.length && selectedModel?.supportsImages === false) {
-        showSnackbarError(new Error(appCopy.imagesUnsupported), appCopy.sendImagesFailed)
-        return false
-      }
-      const readiness = getPromptReadiness({
-        modelStateReady: isModelStateReady,
-        providers: providerStatuses,
-        availableModels
-      })
-      if (!readiness.ready) {
-        if (readiness.reason !== 'providers_loading') {
-          openSettings('providers')
-        }
-        return false
-      }
-
-      isSendingRef.current = true
-      const submitGeneration = target.sessionGeneration
-      const sendRequest = ++sendRequestRef.current
-      let optimisticUserMessageId: string | undefined
-
-      if (options.retryUserMessageId) {
-        updateMessages((prev) => messagesForUserRetry(prev, options.retryUserMessageId as string))
-      } else if (options.appendUserMessage !== false) {
-        optimisticUserMessageId = `user-${Date.now()}`
-        updateMessages((prev) => [
-          ...prev,
-          {
-            id: optimisticUserMessageId as string,
-            role: 'user',
-            content: text,
-            ...(images.length ? { images } : {})
-          }
-        ])
-      }
-      setIsSendingMessage(true)
-
-      try {
-        const result = await rendererApi.sendPrompt(
-          text,
-          options.suppressUserMessageEvent
-            ? {
-                ...target,
-                ...(images.length ? { images } : {}),
-                ...(options.planMode ? { planMode: true } : {}),
-                suppressUserMessageEvent: true,
-                ...(options.retryUserMessageId
-                  ? { retryUserMessageId: options.retryUserMessageId }
-                  : {})
-              }
-            : {
-                ...target,
-                ...(images.length ? { images } : {}),
-                ...(options.planMode ? { planMode: true } : {})
-              }
-        )
-        if (
-          !result ||
-          sendRequest !== sendRequestRef.current ||
-          result.sessionGeneration !== useSessionStore.getState().activeSessionGeneration
-        ) {
-          return true
-        }
-
-        if (result.path) {
-          const materializedQueueKey = sessionDraftKey({
-            phiSessionId: result.phiSessionId ?? null,
-            path: result.path,
-            cwd: target.cwd,
-            sessionGeneration: result.sessionGeneration
-          })
-          if (materializedQueueKey !== activeDraftKey) {
-            const materializedTarget: PromptTarget = {
-              path: result.path,
-              phiSessionId: result.phiSessionId,
-              cwd: target.cwd,
-              sessionGeneration: result.sessionGeneration
-            }
-            moveQueuedPromptsToSession(materializedQueueKey, materializedTarget)
-          }
-        }
-
-        if (result.path && result.path !== activeSessionPath) {
-          // First prompt of a fresh chat: it just became a stable Phi session — pick it up so
-          // the sidebar can highlight it.
-          setActiveSessionPath(result.path)
-        }
-        if (result.path) {
-          const tabKey = workspaceSessionTabKey(result.path, result.sessionGeneration)
-          setClosedWorkspaceSessionTabKeys((keys) => {
-            if (!keys.has(tabKey)) return keys
-            const nextKeys = new Set(keys)
-            nextKeys.delete(tabKey)
-            return nextKeys
-          })
-          setActiveWorkspaceTabKey((currentKey) => activeTabKeyAfterPrompt(currentKey, tabKey))
-        }
-        if (
-          result.phiSessionId &&
-          result.phiSessionId !== useSessionStore.getState().activePhiSessionId
-        ) {
-          setActivePhiSessionId(result.phiSessionId)
-        }
-        void refreshSessions()
-        if (!selectedModel) {
-          const active = await rendererApi.getSelectedModel()
-          if (active) {
-            setSelectedModel((prev) => prev ?? modelOptionFromSelection(active, models) ?? prev)
-          }
-        }
-        return true
-      } catch (error) {
-        if (
-          sendRequest !== sendRequestRef.current ||
-          submitGeneration !== useSessionStore.getState().activeSessionGeneration
-        ) {
-          return true
-        }
-        showSnackbarError(error, appCopy.sendMessageFailed)
-        if (images.length && options.appendUserMessage !== false) {
-          setDraftImagesBySession((prev) =>
-            prev[activeDraftKey]?.length ? prev : { ...prev, [activeDraftKey]: images }
-          )
-          setDraftInputs((prev) => updateSessionDraft(prev, activeDraftKey, text))
-        }
-        return true
-      } finally {
-        if (
-          sendRequest === sendRequestRef.current &&
-          submitGeneration === useSessionStore.getState().activeSessionGeneration
-        ) {
-          isSendingRef.current = false
-          setIsSendingMessage(false)
-        }
-      }
-    },
-    [
-      activeDraftKey,
-      activeSessionPath,
+  const sendPromptText = usePromptSend({
+    rendererApi,
+    readiness: {
+      modelStateReady: isModelStateReady,
+      providers: providerStatuses,
       availableModels,
-      isModelStateReady,
       models,
-      moveQueuedPromptsToSession,
-      openSettings,
-      providerStatuses,
-      refreshSessions,
-      rendererApi,
       selectedModel,
+      openSettings
+    },
+    actions: {
+      updateMessages,
+      setIsSendingMessage,
+      setDraftImagesBySession,
       setDraftInputs,
-      setActivePhiSessionId,
       setActiveSessionPath,
-      setActiveWorkspaceTabKey,
+      setActivePhiSessionId,
       setClosedWorkspaceSessionTabKeys,
+      setActiveWorkspaceTabKey,
       setSelectedModel,
-      showSnackbarError,
-      updateMessages
-    ]
-  )
+      moveQueuedPromptsToSession,
+      refreshSessions,
+      showSnackbarError
+    },
+    activeDraftKey,
+    activeSessionPath,
+    isSendingRef,
+    sendRequestRef
+  })
 
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
@@ -2492,48 +2352,19 @@ function App(): React.JSX.Element {
     },
     [onSelectSession, refreshSessions, showSnackbar]
   )
-  useEffect(() => {
-    if (
-      currentSessionIsBusy ||
-      queuedPromptsPaused ||
-      currentSessionIsCompacting ||
-      isSessionChanging ||
-      isBusy ||
-      isSendingRef.current
-    ) {
-      return
-    }
-    const nextPrompt = activeQueuedPrompts[0]
-    if (!nextPrompt) return
-    const readiness = getPromptReadiness({
-      modelStateReady: isModelStateReady,
-      providers: providerStatuses,
-      availableModels
-    })
-    if (!readiness.ready) return
-
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      dequeueQueuedPrompt(nextPrompt.id)
-      void sendPromptText(nextPrompt.text, nextPrompt.target, nextPrompt.sendOptions)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [
-    activeQueuedPrompts,
-    availableModels,
-    currentSessionIsBusy,
-    queuedPromptsPaused,
-    currentSessionIsCompacting,
-    dequeueQueuedPrompt,
-    isModelStateReady,
-    isBusy,
-    isSessionChanging,
-    providerStatuses,
+  useQueuedPromptDrain({
+    queue: { activeQueuedPrompts, dequeueQueuedPrompt },
+    session: {
+      currentSessionIsBusy,
+      currentSessionIsCompacting,
+      queuedPromptsPaused,
+      isSessionChanging,
+      isBusy
+    },
+    readiness: { modelStateReady: isModelStateReady, providers: providerStatuses, availableModels },
+    isSendingRef,
     sendPromptText
-  ])
+  })
   const activeWorkspaceTitle = useMemo(() => {
     void uiLanguage // Localized fallback titles are read through the shared copy proxy.
     if (showProjectSessionPlaceholder) return appCopy.projectChat
