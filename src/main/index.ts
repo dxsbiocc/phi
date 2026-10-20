@@ -150,7 +150,6 @@ import {
   setCurrentAutoCompactionSettings,
   type SessionCompactionControlOptions
 } from './agent/session/session-compaction-control'
-import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
 import { getAuthManager } from './agent/auth-manager'
 import { getPersonaMarkdown } from './agent/persona-manager'
 import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
@@ -400,6 +399,11 @@ import {
   type SessionSnapshot
 } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
+import {
+  executePromptRun as executePromptRunWithDeps,
+  type PromptRunExecutionDeps,
+  type PromptRunResult
+} from './agent/session/prompt-run-execution'
 import {
   persistSessionEvent as persistSessionEventWithDeps,
   type SessionEventPersistenceDeps
@@ -3888,16 +3892,32 @@ interface SubmitPromptInput {
   planMode?: boolean
 }
 
-/**
- * Runs one prompt in the conversation `sessionKey`. It does not depend on which
- * conversation is on screen, so it also serves prompts for a conversation in the
- * background. The `agent:prompt` handler and automatic continuation both use it.
- */
-async function submitPromptRun(input: SubmitPromptInput): Promise<{
-  path: string | null
-  phiSessionId?: string
-  sessionGeneration: number
-} | null> {
+interface ResolvedPromptRunTarget {
+  input: SubmitPromptInput
+  normalizedText: string
+  promptTarget: PromptTargetInput | null
+  runSessionKey: string
+  runLifecycle: SessionLifecycle<AgentSessionResult>
+  runSessionGeneration: number
+  runSnapshot: SessionSnapshot & { permissionMode: PermissionMode }
+  automaticModelSelection: boolean
+  project: Project | undefined
+}
+
+interface AdmittedPromptRun extends ResolvedPromptRunTarget {
+  phiSessionId: string
+  stableSessionPath: string
+  runId: string
+}
+
+interface PromptRunContext extends AdmittedPromptRun {
+  runGeneration: number
+  storedImages: ReturnType<typeof persistPromptImages>
+  otherActiveProjectRuns: number
+  promptRun: PromptRun
+}
+
+function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarget {
   const normalizedText = input.text
   const promptTarget = input.promptTarget
   const runSessionKey = resolveSessionKeyAlias(input.sessionKey)
@@ -3912,10 +3932,24 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   ) {
     throw new Error('远程项目暂不支持计划评审')
   }
-  const phiSessionId = ensurePhiSessionId(
+  return {
+    input,
+    normalizedText,
+    promptTarget,
     runSessionKey,
+    runLifecycle,
+    runSessionGeneration,
     runSnapshot,
-    normalizedText || (input.images?.length ? '图片' : undefined)
+    automaticModelSelection,
+    project
+  }
+}
+
+function admitPromptRun(target: ResolvedPromptRunTarget): AdmittedPromptRun {
+  const phiSessionId = ensurePhiSessionId(
+    target.runSessionKey,
+    target.runSnapshot,
+    target.normalizedText || (target.input.images?.length ? '图片' : undefined)
   )
   if (runtimeRecoveryOperations.has(phiSessionId))
     throw new Error('会话正在恢复，请等待恢复操作结束')
@@ -3924,24 +3958,30 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
   }
   const stableSessionPath = phiOnlySessionPath(phiSessionId)
   const runId = createRunId()
-  if (hasActivePromptRun(runSessionKey)) {
+  if (hasActivePromptRun(target.runSessionKey)) {
     throw new Error('会话正在运行')
   }
-  const runGeneration = advancePromptGeneration(runSessionKey)
+  return { ...target, phiSessionId, stableSessionPath, runId }
+}
+
+function allocatePromptRun(admission: AdmittedPromptRun): PromptRunContext {
+  const runGeneration = advancePromptGeneration(admission.runSessionKey)
   // A real user message starts the automatic wake-up count over only after preflight succeeds.
-  if (!input.automatic) automaticContinuations.delete(phiSessionId)
-  const storedImages = input.images?.length ? persistPromptImages(phiSessionId, input.images) : []
-  const otherActiveProjectRuns = project
-    ? countOtherActiveProjectRuns(project.id, runSessionKey)
+  if (!admission.input.automatic) automaticContinuations.delete(admission.phiSessionId)
+  const storedImages = admission.input.images?.length
+    ? persistPromptImages(admission.phiSessionId, admission.input.images)
+    : []
+  const otherActiveProjectRuns = admission.project
+    ? countOtherActiveProjectRuns(admission.project.id, admission.runSessionKey)
     : 0
   const promptRun: PromptRun = {
-    sessionKey: runSessionKey,
-    phiSessionId,
-    runId,
-    cwd: runSnapshot.cwd,
-    ...(project ? { projectId: project.id } : {}),
+    sessionKey: admission.runSessionKey,
+    phiSessionId: admission.phiSessionId,
+    runId: admission.runId,
+    cwd: admission.runSnapshot.cwd,
+    ...(admission.project ? { projectId: admission.project.id } : {}),
     generation: runGeneration,
-    sessionGeneration: runSessionGeneration,
+    sessionGeneration: admission.runSessionGeneration,
     cancelled: false,
     thinkingBlocks: new Map(),
     thinkingBlockStartedAtMs: new Map(),
@@ -3951,9 +3991,15 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     browserSdkToolCallIds: new Set(),
     persistedToolCallIds: new Set(),
     pendingProviderToolCalls: new Map(),
-    sessionPath: stableSessionPath
+    sessionPath: admission.stableSessionPath
   }
-  setActivePromptRun(runSessionKey, promptRun)
+  setActivePromptRun(admission.runSessionKey, promptRun)
+  return { ...admission, runGeneration, storedImages, otherActiveProjectRuns, promptRun }
+}
+
+function preparePromptRunForQueue(context: PromptRunContext): void {
+  const { input, phiSessionId, runId, normalizedText, promptTarget, storedImages, promptRun } =
+    context
   try {
     if (input.automatic) {
       // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
@@ -3976,272 +4022,176 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
       })
     }
   } catch (error) {
-    deleteActivePromptRun(runSessionKey, promptRun)
+    deleteActivePromptRun(context.runSessionKey, promptRun)
     throw error
   }
-  if (otherActiveProjectRuns > 0 && !input.automatic) {
+  if (context.otherActiveProjectRuns > 0 && !input.automatic) {
     notifyProjectParallelRun(
-      runSessionGeneration,
-      stableSessionPath,
-      runSnapshot.cwd,
-      otherActiveProjectRuns
+      context.runSessionGeneration,
+      context.stableSessionPath,
+      context.runSnapshot.cwd,
+      context.otherActiveProjectRuns
     )
   }
+}
 
-  // Serialize prompts per session: duplicate/overlapping IPC invokes must
-  // never run session.prompt() concurrently within the same conversation.
-  const run = getPromptQueue(runSessionKey).then(async () => {
-    let promptResult: {
-      path: string | null
-      phiSessionId?: string
-      sessionGeneration: number
-    } | null = null
-    if (
-      promptRun.cancelled ||
-      promptRun.generation !== getPromptGeneration(runSessionKey) ||
-      !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-    ) {
-      return null
+const promptRunExecutionDeps: PromptRunExecutionDeps<PromptRunContext> = {
+  lifecycle: { getPromptGeneration },
+  session: {
+    getAgentSession,
+    applyNextRunConfiguration,
+    abortSession,
+    abortSessionWithoutCancellingApprovals,
+    linkRuntimeSessionPath: (context, session) => {
+      linkPromptRunRuntimeSessionPath(
+        context.runSessionKey,
+        context.runSnapshot.cwd,
+        context.promptRun,
+        session
+      )
+    },
+    recordMaterialization: (context) => {
+      sessionState.recordPromptRunMaterialization(
+        context.runSessionKey,
+        context.stableSessionPath,
+        sameCanonicalSessionKey
+      )
     }
+  },
+  models: { selectableRuntimeModels },
+  timeline: { broadcastSessionTimelineEvent, logUnexpectedError }
+}
 
-    const changeBaseline =
-      project?.location?.kind === 'ssh' ? null : await beginWorkspaceChangeCapture(runSnapshot.cwd)
+function startPromptRegistryRun(
+  context: PromptRunContext,
+  loadedSkills: string[],
+  setPromptResult: (result: PromptRunResult) => void
+): ReturnType<typeof runnerRegistry.startRun> {
+  return runnerRegistry.startRun({
+    sessionId: context.phiSessionId,
+    runId: context.runId,
+    loadedSkills,
+    getRecordedFailure: () => context.promptRun.recordedFailureMessage,
+    execute: ({ signal }) =>
+      executePromptRunWithDeps(context, promptRunExecutionDeps, signal, setPromptResult)
+  })
+}
 
-    let loadedSkills = loadedSkillNamesBySession.get(phiSessionId)
-    if (!loadedSkills) {
-      try {
-        loadedSkills = (
-          isRemoteResourceScope(runSnapshot.cwd)
-            ? await listRemoteProjectSkills(runSnapshot.cwd)
-            : await listSkills(runSnapshot.cwd)
-        )
-          .filter((skill) => skill.enabled)
-          .map((skill) => skill.name)
-          .sort()
-      } catch (error) {
-        loadedSkills = []
-        writeAppLog({
-          event: 'session_loaded_skills_unavailable',
-          level: 'warn',
-          sessionId: phiSessionId,
-          metadata: { error: errorMessage(error) }
-        })
-      }
-      loadedSkillNamesBySession.set(phiSessionId, loadedSkills)
+function persistPromptRunWorkspaceChanges(
+  context: PromptRunContext,
+  changes: Awaited<ReturnType<typeof finishWorkspaceChangeCapture>>
+): void {
+  if (changes && (changes.files.length > 0 || changes.truncated)) {
+    try {
+      const stored = appendSessionEvent(context.phiSessionId, {
+        type: 'workspace_changes',
+        runId: context.runId,
+        ...changes
+      })
+      broadcastSessionTimelineEvent(context.phiSessionId, stored)
+    } catch (error) {
+      logUnexpectedError(error)
     }
+  }
+}
 
-    const registryRun = runnerRegistry.startRun({
-      sessionId: phiSessionId,
-      runId,
-      loadedSkills,
-      getRecordedFailure: () => promptRun.recordedFailureMessage,
-      execute: async ({ signal }) => {
-        if (signal.aborted || promptRun.cancelled) return
+async function runQueuedPrompt(context: PromptRunContext): Promise<PromptRunResult> {
+  let promptResult: PromptRunResult = null
+  if (
+    context.promptRun.cancelled ||
+    context.promptRun.generation !== getPromptGeneration(context.runSessionKey) ||
+    !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
+  ) {
+    return null
+  }
 
-        let session: AgentSessionInstance
-        try {
-          const result = await getAgentSession(runSessionKey, runSnapshot)
-          session = result.session
-        } catch (error) {
-          if (
-            isStaleSessionError(error) ||
-            promptRun.cancelled ||
-            signal.aborted ||
-            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-          ) {
-            return
-          }
-          throw error
-        }
-        promptRun.session = session
-        const automatic =
-          automaticModelSelection && !ownsRemoteRuntimeSession(session.runtimeSessionId)
-        const automaticCandidates = async (): Promise<RuntimeModel[]> => {
-          const [runtime, providers] = await Promise.all([
-            getAuthManager().getRuntime(),
-            getAuthManager().getProviderStatuses()
-          ])
-          const configured = new Set(
-            providers
-              .filter((provider) => provider.configured)
-              .map((provider) => provider.providerId)
-          )
-          return selectableRuntimeModels(runtime).filter(
-            (model) =>
-              configured.has(model.provider) &&
-              (!input.images?.length || model.supportsImages === true)
-          )
-        }
+  const changeBaseline =
+    context.project?.location?.kind === 'ssh'
+      ? null
+      : await beginWorkspaceChangeCapture(context.runSnapshot.cwd)
 
-        await applyNextRunConfiguration(session, runSessionKey, runSnapshot)
-        if (input.planMode) {
-          await getPhiEngine().sessions.enterPlanMode({
-            sessionId: session.runtimeSessionId
-          })
-        }
-        if (automatic && input.images?.length && session.model?.supportsImages !== true) {
-          const compatible = (await automaticCandidates())[0]
-          if (signal.aborted || promptRun.cancelled) return
-          if (compatible) await session.setModel(compatible)
-        }
-        if (input.images?.length && session.model?.supportsImages !== true) {
-          throw new Error('当前模型不支持图片，请切换到支持图片的模型后重试')
-        }
+  let loadedSkills = loadedSkillNamesBySession.get(context.phiSessionId)
+  if (!loadedSkills) {
+    try {
+      loadedSkills = (
+        isRemoteResourceScope(context.runSnapshot.cwd)
+          ? await listRemoteProjectSkills(context.runSnapshot.cwd)
+          : await listSkills(context.runSnapshot.cwd)
+      )
+        .filter((skill) => skill.enabled)
+        .map((skill) => skill.name)
+        .sort()
+    } catch (error) {
+      loadedSkills = []
+      writeAppLog({
+        event: 'session_loaded_skills_unavailable',
+        level: 'warn',
+        sessionId: context.phiSessionId,
+        metadata: { error: errorMessage(error) }
+      })
+    }
+    loadedSkillNamesBySession.set(context.phiSessionId, loadedSkills)
+  }
 
-        if (
-          signal.aborted ||
-          promptRun.cancelled ||
-          promptRun.generation !== getPromptGeneration(runSessionKey) ||
-          !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-        ) {
-          await abortSession(session)
-          return
-        }
-
-        try {
-          await promptWithAutomaticModelFallback({
-            session,
-            text: normalizedText,
-            automatic,
-            isCurrent: () =>
-              !signal.aborted &&
-              !promptRun.cancelled &&
-              promptRun.generation === getPromptGeneration(runSessionKey) &&
-              runLifecycle.isCurrentGeneration(promptRun.sessionGeneration),
-            recordedFailure: () => promptRun.recordedFailureMessage,
-            clearFailure: () => {
-              delete promptRun.recordedFailureMessage
-              delete promptRun.stoppingPermanentProviderError
-            },
-            candidates: automaticCandidates,
-            onSwitch: (from, to, error) => {
-              const stored = appendSessionEvent(phiSessionId, {
-                type: 'model_fallback',
-                runId,
-                fromProviderId: from.provider,
-                fromModelId: from.id,
-                toProviderId: to.provider,
-                toModelId: to.id,
-                toModelName: to.name,
-                errorMessage: redactSensitiveText(error)
-              })
-              broadcastSessionTimelineEvent(phiSessionId, stored)
-            },
-            options: {
-              hostRunId: promptRun.runId,
-              ...(input.images?.length
-                ? {
-                    images: input.images.map((image) => ({
-                      type: 'image' as const,
-                      data: image.data,
-                      mimeType: image.mimeType
-                    }))
-                  }
-                : {}),
-              preflightResult: (success) => {
-                if (
-                  success &&
-                  (signal.aborted ||
-                    promptRun.cancelled ||
-                    promptRun.generation !== getPromptGeneration(runSessionKey) ||
-                    !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration))
-                ) {
-                  void abortSessionWithoutCancellingApprovals(session).catch((error) => {
-                    logUnexpectedError(error)
-                    console.error('Failed to abort stale prompt:', error)
-                  })
-                  throw new StaleSessionError()
-                }
-              }
-            }
-          })
-        } catch (error) {
-          linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
-          if (
-            signal.aborted ||
-            promptRun.cancelled ||
-            promptRun.generation !== getPromptGeneration(runSessionKey) ||
-            !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-          ) {
-            return
-          }
-          throw error
-        }
-        linkPromptRunRuntimeSessionPath(runSessionKey, runSnapshot.cwd, promptRun, session)
-
-        if (
-          signal.aborted ||
-          promptRun.cancelled ||
-          promptRun.generation !== getPromptGeneration(runSessionKey) ||
-          !runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
-        ) {
-          return
-        }
-
-        // A brand-new chat's first prompt is when it actually becomes a file on disk —
-        // hand the stable Phi path back so the renderer can refresh and highlight it.
-        sessionState.recordPromptRunMaterialization(
-          runSessionKey,
-          stableSessionPath,
-          sameCanonicalSessionKey
-        )
-        promptRun.sessionPath = stableSessionPath
-        promptResult = {
-          path: stableSessionPath,
-          phiSessionId,
-          sessionGeneration: promptRun.sessionGeneration
-        }
+  const registryRun = startPromptRegistryRun(context, loadedSkills, (result) => {
+    promptResult = result
+  })
+  syncPreventSleepBlocker()
+  void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
+  try {
+    await registryRun.done
+  } finally {
+    let savedDiffBytes = 0
+    const changes = await finishWorkspaceChangeCapture(changeBaseline, {
+      onTextDiff: async (_name, patch) => {
+        const bytes = Buffer.byteLength(patch, 'utf8')
+        if (savedDiffBytes + bytes > MAX_RUN_DIFF_BYTES) return null
+        const ref = persistWorkspaceDiff(context.phiSessionId, patch)
+        if (ref) savedDiffBytes += ref.bytes
+        return ref
       }
     })
-    syncPreventSleepBlocker()
-    void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
-    try {
-      await registryRun.done
-    } finally {
-      let savedDiffBytes = 0
-      const changes = await finishWorkspaceChangeCapture(changeBaseline, {
-        onTextDiff: async (_name, patch) => {
-          const bytes = Buffer.byteLength(patch, 'utf8')
-          if (savedDiffBytes + bytes > MAX_RUN_DIFF_BYTES) return null
-          const ref = persistWorkspaceDiff(phiSessionId, patch)
-          if (ref) savedDiffBytes += ref.bytes
-          return ref
-        }
-      })
-      if (changes && (changes.files.length > 0 || changes.truncated)) {
-        try {
-          const stored = appendSessionEvent(phiSessionId, {
-            type: 'workspace_changes',
-            runId,
-            ...changes
-          })
-          broadcastSessionTimelineEvent(phiSessionId, stored)
-        } catch (error) {
-          logUnexpectedError(error)
-        }
-      }
-    }
-    return promptRun.cancelled ? null : promptResult
-  })
-  promptRun.done = run
+    persistPromptRunWorkspaceChanges(context, changes)
+  }
+  return context.promptRun.cancelled ? null : promptResult
+}
+
+function trackPromptRunSettlement(context: PromptRunContext, run: Promise<PromptRunResult>): void {
+  context.promptRun.done = run
   setPromptQueue(
-    runSessionKey,
+    context.runSessionKey,
     run.then(
       (result) => {
-        deleteActivePromptRun(runSessionKey, promptRun)
+        deleteActivePromptRun(context.runSessionKey, context.promptRun)
         notifySessionChanged()
-        flushPendingContinuations(phiSessionId, promptRun.cancelled)
-        if (result && !promptRun.cancelled && !promptRun.recordedFailureMessage) {
-          scheduleAutomaticSessionTitle(phiSessionId)
+        flushPendingContinuations(context.phiSessionId, context.promptRun.cancelled)
+        if (result && !context.promptRun.cancelled && !context.promptRun.recordedFailureMessage) {
+          scheduleAutomaticSessionTitle(context.phiSessionId)
         }
       },
       () => {
-        deleteActivePromptRun(runSessionKey, promptRun)
+        deleteActivePromptRun(context.runSessionKey, context.promptRun)
         notifySessionChanged()
-        flushPendingContinuations(phiSessionId, promptRun.cancelled)
+        flushPendingContinuations(context.phiSessionId, context.promptRun.cancelled)
       }
     )
   )
+}
+
+/**
+ * Runs one prompt in the conversation `sessionKey`. It does not depend on which
+ * conversation is on screen, so it also serves prompts for a conversation in the
+ * background. The `agent:prompt` handler and automatic continuation both use it.
+ */
+async function submitPromptRun(input: SubmitPromptInput): Promise<PromptRunResult> {
+  const target = resolvePromptRunTarget(input)
+  const admission = admitPromptRun(target)
+  const context = allocatePromptRun(admission)
+  preparePromptRunForQueue(context)
+  // Serialize prompts per session: duplicate/overlapping IPC invokes must
+  // never run session.prompt() concurrently within the same conversation.
+  const run = getPromptQueue(context.runSessionKey).then(() => runQueuedPrompt(context))
+  trackPromptRunSettlement(context, run)
   return run
 }
 

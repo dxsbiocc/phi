@@ -4432,6 +4432,7 @@ async function harness(
     './agent/session/current-session-reads',
     './agent/session/phi-timeline-messages',
     './agent/session/model-selection-target',
+    './agent/session/prompt-run-execution',
     './agent/session/prompt-target-control',
     './agent/session/runtime-recovery-control',
     './agent/session/session-compaction-control',
@@ -16244,6 +16245,45 @@ test('T15 main recovery: stopping a pending explicit attach cancels its own prep
   await rejected
   assert.equal(app.sessions.length, 0)
   assert.equal(app.appendedSessionEvents.length, 0)
+})
+
+test('T15 main recovery: a pending explicit attach rejects a new prompt before recording it', async () => {
+  let entered = false
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onCreateSession: async (_options, control) => {
+      entered = true
+      assert.ok(control?.signal)
+      await new Promise<void>((_resolve, reject) => {
+        control.signal!.addEventListener('abort', () => reject(control.signal!.reason), {
+          once: true
+        })
+      })
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: savedRemoteReference(current.phiSessionId),
+      model: { providerId: 'openai', modelId: 'gpt-test' }
+    }
+  })
+  const restoring = app.invoke(
+    'sessions:resumeRuntime',
+    runtimeRecoveryTarget(await app.invoke('sessions:current'))
+  )
+  const restoreRejected = assert.rejects(restoring, /取消/)
+  await waitUntil(() => entered)
+
+  await assert.rejects(app.invoke('agent:prompt', 'must wait for recovery'), /会话正在恢复/)
+  assert.equal(app.appendedSessionEvents.length, 0)
+  assert.equal(app.runStartInputs.length, 0)
+
+  await app.invoke('agent:stop')
+  await restoreRejected
 })
 
 test('T14 main controls: a confirmed background expert blocks persona and model policy edits without stopping its parent scope', async () => {
