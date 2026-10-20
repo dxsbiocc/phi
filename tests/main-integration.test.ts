@@ -622,6 +622,12 @@ type HarnessResult = {
   }
   openedExternalUrls: string[]
   approvalResolveCalls: Array<{ requestId: string; approved: boolean; trusted: boolean }>
+  agentInteractionResolutions: Array<{
+    requestId: string
+    response: unknown
+    cancelled: boolean
+    webContentsId: number
+  }>
   beforeQuit: () => number
   appQuitCount: () => number
 }
@@ -641,6 +647,12 @@ async function harness(
     requestId: string
     approved: boolean
     trusted: boolean
+  }> = []
+  const agentInteractionResolutions: Array<{
+    requestId: string
+    response: unknown
+    cancelled: boolean
+    webContentsId: number
   }> = []
   const resolvedApprovalIds = new Set<string>()
   const runnerEvents: Array<Record<string, unknown>> = []
@@ -1149,6 +1161,7 @@ async function harness(
       }
     }
     webContents = {
+      id: 101,
       mainFrame: {},
       send: (channel: string, data: unknown): void => {
         operationLog.push({ type: 'webContents.send', channel, data })
@@ -1520,6 +1533,7 @@ async function harness(
       )
         return customMcpBridgeRequest(method, params)
       if (method === 'agentRuns.list') return bridgeAgentJobs
+      if (method === 'sessions.fork') return { path: 'forked.jsonl' }
       if (method === 'mcp.featuredTools') return ['search_articles']
       if (method === 'mcp.featuredAuthStatus') return true
       return { ok: true }
@@ -2709,7 +2723,14 @@ async function harness(
     './agent/user-interaction': {
       canRequestAgentUserInteraction: (): boolean => true,
       cancelAgentUserInteractions: noop,
-      resolveAgentUserInteraction: noop,
+      resolveAgentUserInteraction: (
+        requestId: string,
+        response: unknown,
+        cancelled: boolean,
+        webContentsId: number
+      ): void => {
+        agentInteractionResolutions.push({ requestId, response, cancelled, webContentsId })
+      },
       waitForAgentUserInteraction: async (
         request: Record<string, unknown>
       ): Promise<Record<string, unknown>> => ({
@@ -4244,6 +4265,22 @@ async function harness(
         createdPhiSessions.push({ sessionId, ...input })
         return { sessionId }
       },
+      forkPhiSession: (
+        sourceId: string,
+        eventId: string,
+        runtimeSessionPath: string
+      ): { sessionId: string } => {
+        const source = createdPhiSessions.find((entry) => entry.sessionId === sourceId)
+        if (!source) throw new Error('来源会话不存在')
+        const sessionId = `phi-${++phiSessionCounter}`
+        createdPhiSessions.push({
+          ...source,
+          sessionId,
+          runtimeSessionPath,
+          forkedFrom: { sessionId: sourceId, eventId }
+        })
+        return { sessionId }
+      },
       createRunId: (): string => `run-${phiSessionCounter + 1}`,
       findPhiSessionByRuntimePath: (runtimeSessionPath: string): { sessionId: string } | null => {
         if (runtimeSessionPath === 'with-phi-events') return { sessionId: 'phi-existing' }
@@ -4487,6 +4524,7 @@ async function harness(
     },
     openedExternalUrls,
     approvalResolveCalls,
+    agentInteractionResolutions,
     beforeQuit: (): number => {
       let prevented = 0
       app.emit('before-quit', {
@@ -5151,6 +5189,48 @@ test('main approval response validates payload, renderer identity, and one-shot 
   ])
 })
 
+test('main agent interaction response requires the trusted renderer and forwards cancellation', async () => {
+  const app = await harness()
+  const response = { answers: [{ questionId: 'scope', answer: 'current project' }] }
+
+  assert.equal(await app.invoke('agent:interaction-response', 'interaction-1', response), undefined)
+  assert.equal(
+    await app.invoke('agent:interaction-response', 'interaction-2', response, true),
+    undefined
+  )
+  assert.deepEqual(app.agentInteractionResolutions, [
+    {
+      requestId: 'interaction-1',
+      response,
+      cancelled: false,
+      webContentsId: 101
+    },
+    {
+      requestId: 'interaction-2',
+      response,
+      cancelled: true,
+      webContentsId: 101
+    }
+  ])
+
+  await assert.rejects(
+    app.invokeFromForeign('agent:interaction-response', 'interaction-3', response),
+    /authorized|renderer|渲染|窗口|可信/i
+  )
+  assert.equal(app.agentInteractionResolutions.length, 2)
+})
+
+test('main prompt and stop preserve their empty and idle return values without creating state', async () => {
+  const app = await harness()
+
+  assert.equal(await app.invoke('agent:prompt', '   '), null)
+  assert.equal(await app.invoke('agent:prompt', null), null)
+  assert.equal(await app.invoke('agent:stop'), undefined)
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.createdPhiSessions.length, 0)
+  assert.equal(app.appendedSessionEvents.length, 0)
+})
+
 test('main browser cleanup restores idle metadata without loading pages after window reopen', async () => {
   const app = await harness()
   const current = (await app.invoke('sessions:create')) as {
@@ -5163,7 +5243,7 @@ test('main browser cleanup restores idle metadata without loading pages after wi
     url: 'https://delete.example'
   })
   const deletedView = app.browserViews[0]
-  await app.invoke('sessions:delete', current.path)
+  assert.equal(await app.invoke('sessions:delete', current.path), undefined)
   assert.equal(deletedView.webContents.closeCalls, 1)
   assert.deepEqual(app.deleted, [current.path])
 
@@ -6484,8 +6564,20 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
     relativePath: '.phi/agents/Reviewer.md',
     contentHash: 'a'.repeat(64)
   }
-  await app.invoke('agents:trustRemoteProject', agentTrustRequest)
-  await app.invoke('agents:revokeRemoteProjectTrust', agentTrustRequest)
+  assert.deepEqual(
+    (
+      (await app.invoke('agents:trustRemoteProject', agentTrustRequest)) as Array<{ name: string }>
+    ).map((agent) => agent.name),
+    ['Wrapper']
+  )
+  assert.deepEqual(
+    (
+      (await app.invoke('agents:revokeRemoteProjectTrust', agentTrustRequest)) as Array<{
+        name: string
+      }>
+    ).map((agent) => agent.name),
+    ['Wrapper']
+  )
   assert.deepEqual(app.remoteAgentMutations, [
     {
       operation: 'trust',
@@ -6502,6 +6594,15 @@ test('main IPC: remote project session is tied to its ID and a private anchor', 
       }
     }
   ])
+  await assert.rejects(
+    app.invoke('agents:trustRemoteProject', { ...agentTrustRequest, contentHash: 'invalid' }),
+    /信任请求无效/
+  )
+  await assert.rejects(
+    app.invoke('agents:revokeRemoteProjectTrust', { ...agentTrustRequest, extra: true }),
+    /信任请求无效/
+  )
+  assert.equal(app.remoteAgentMutations.length, 2)
   const skillTrustRequest = {
     cwd: current.cwd,
     relativePath: '.phi/skills/server-demo/SKILL.md',
@@ -8016,6 +8117,23 @@ test('main IPC refreshes loaded-skill history after runtime invalidation', async
   )
 })
 
+test('main IPC: session list and home activity return their read-only snapshots', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('sessions:list'), [])
+  assert.deepEqual(await app.invoke('sessions:homeActivity'), {
+    generatedAt: '2026-10-09T00:00:00.000Z',
+    dayBuckets: [],
+    periods: {
+      week: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 },
+      month: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 },
+      year: { durationMs: 0, completedRuns: 0, totalRuns: 0, activeDays: 0 }
+    }
+  })
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.createdPhiSessions.length, 0)
+})
+
 test(
   'main IPC: a late background session creation cannot overwrite the selected conversation',
   { timeout: 3000 },
@@ -8098,6 +8216,76 @@ test('main IPC: switching sessions includes stored Phi timeline events', async (
       output: 'restored'
     }
   ])
+})
+
+test('main IPC: forking validates the selected user turn and returns the new Phi session', async () => {
+  const app = await harness()
+  const source = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'branch from this question')
+  const changedBeforeFork = app.events.filter(
+    (event) => event.channel === 'sessions:changed'
+  ).length
+
+  await assert.rejects(app.invoke('sessions:fork', source.phiSessionId, 42), /无效的会话分叉请求/)
+  await assert.rejects(app.invoke('sessions:fork', 'missing', 'event-1'), /来源会话不存在/)
+  await assert.rejects(
+    app.invoke('sessions:fork', source.phiSessionId, 'event-missing'),
+    /分叉消息不存在/
+  )
+
+  const fork = (await app.invoke('sessions:fork', source.phiSessionId, 'event-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  assert.deepEqual(fork, { path: 'phi-session:phi-2', phiSessionId: 'phi-2' })
+  assert.deepEqual(
+    app.bridgeRequests.find((request) => request.method === 'sessions.fork'),
+    {
+      method: 'sessions.fork',
+      params: {
+        path: 'fresh.jsonl',
+        cwd: '/workspace',
+        userMessages: ['branch from this question'],
+        selectedIndex: 0
+      }
+    }
+  )
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.forkedFrom, {
+    sessionId: source.phiSessionId,
+    eventId: 'event-1'
+  })
+  assert.equal(
+    app.events.filter((event) => event.channel === 'sessions:changed').length,
+    changedBeforeFork + 1
+  )
+})
+
+test('main IPC: session handlers preserve current missing-target and invalid-target behavior', async () => {
+  const app = await harness()
+  const current = (await app.invoke('sessions:create')) as { path: string }
+
+  assert.equal(await app.invoke('sessions:switch', 'phi-session:missing'), null)
+  assert.equal(await app.invoke('sessions:acknowledge', 'phi-session:missing'), null)
+  assert.deepEqual(app.acknowledgedSessions.at(-1), {
+    file: 'phi-session:missing',
+    cwd: '/workspace'
+  })
+  assert.equal(await app.invoke('sessions:delete', 'phi-session:missing'), undefined)
+  assert.equal(app.deleted.at(-1), 'phi-session:missing')
+  assert.equal(await app.invoke('sessions:rename', current.path, '   '), undefined)
+  assert.deepEqual(app.renamedSessions, [])
+  await assert.rejects(app.invoke('sessions:export', 42), /会话编号无效/)
+  await assert.rejects(app.invoke('sessions:autoCompactionSettings', null), /会话已切换/)
+
+  await assert.rejects(app.invoke('sessions:runtimeRecovery', null), /恢复目标无效/)
+  await assert.rejects(app.invoke('sessions:resumeRuntime', null), /恢复目标无效/)
+  await assert.rejects(
+    app.invoke('sessions:continueRuntimeSummary', null, 'a'.repeat(64)),
+    /恢复目标无效/
+  )
 })
 
 test(
@@ -8733,7 +8921,7 @@ test('main IPC: acknowledging a session uses that session cwd without sidebar re
   const changedEventsBeforeAcknowledge = app.events.filter(
     (event) => event.channel === 'sessions:changed'
   ).length
-  await app.invoke('sessions:acknowledge', 'A')
+  assert.equal(await app.invoke('sessions:acknowledge', 'A'), null)
   const changedEventsAfterAcknowledge = app.events.filter(
     (event) => event.channel === 'sessions:changed'
   ).length
@@ -12279,6 +12467,27 @@ test('main IPC: model list hides retired Kimi Code K2 entries', async () => {
   )
 })
 
+test('main IPC: model and thinking selectors preserve void returns and malformed-input behavior', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+
+  assert.equal(await app.invoke('models:select', 'openai', 'gpt-test'), undefined)
+  assert.deepEqual(await app.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-test'
+  })
+  await assert.rejects(app.invoke('models:select', null, 'gpt-test'), /模型选择无效/)
+  assert.deepEqual(await app.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-test'
+  })
+
+  assert.equal(await app.invoke('thinking:select', 'medium'), undefined)
+  assert.equal(await app.invoke('thinking:selected'), 'medium')
+  assert.equal(await app.invoke('thinking:select', 'turbo'), undefined)
+  assert.equal(await app.invoke('thinking:selected'), 'turbo')
+})
+
 test('main IPC: saved retired Kimi Code model selection migrates before prompting', async () => {
   const app = await harness()
   await app.invoke('projects:newSession', '/projects/kimi-retired', 'ask')
@@ -13732,8 +13941,11 @@ test('main IPC: a background run’s steps and end reach its card after the turn
 
 test('main IPC: the card’s steer and stop reach the run in the agent worker', async () => {
   const app = await harness()
-  await app.invoke('agent:steerRun', 'runtime-7', 'run_3', '  use the mouse genome  ')
-  await app.invoke('agent:stopRun', 'runtime-7', 'run_3')
+  assert.equal(
+    await app.invoke('agent:steerRun', 'runtime-7', 'run_3', '  use the mouse genome  '),
+    undefined
+  )
+  assert.equal(await app.invoke('agent:stopRun', 'runtime-7', 'run_3'), undefined)
   assert.deepEqual(app.bridgeRequests, [
     {
       method: 'agentRun.steer',
@@ -15203,7 +15415,7 @@ test('AI session titles: manual generation suggests an editable title without sa
     }
   })
   const owner = (await app.invoke('sessions:create')) as { path: string }
-  await app.invoke('sessions:rename', owner.path, '已有的手动标题')
+  assert.equal(await app.invoke('sessions:rename', owner.path, '已有的手动标题'), undefined)
   await app.invoke('agent:prompt', '检查单细胞质控参数\n\n引用文件：\n- `/private/data.h5ad`')
   await tick()
   assert.equal(requests.length, 0, 'manual titles are protected from automatic requests')
