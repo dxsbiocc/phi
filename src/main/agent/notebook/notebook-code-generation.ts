@@ -1,4 +1,5 @@
 import type { NotebookDocument } from '../../../shared/notebookDocument'
+import type { AnalysisNotebookGeneratedCell } from '../../../shared/notebookCodeGeneration'
 import { normalizeNotebookGenerationLanguage as normalizeLanguage } from '../../../shared/notebookCodeGeneration'
 
 export {
@@ -14,12 +15,28 @@ export type { AnalysisNotebookGeneratedCell } from '../../../shared/notebookCode
 export type AnalysisNotebookCodeGenerationInput = {
   prompt: string
   language: string
+  requestId?: string
   model?: {
     providerId: string
     modelId: string
   } | null
   afterCellId?: string | null
   references?: AnalysisNotebookContextReference[]
+}
+
+export type AnalysisNotebookCodeGenerationResult = {
+  source: string
+  language: string
+  cells?: AnalysisNotebookGeneratedCell[]
+}
+
+export type AnalysisNotebookCodeGenerationProgress = {
+  requestId: string
+  path: string
+  relativePath: string
+  source: string
+  language: string
+  cells: AnalysisNotebookGeneratedCell[]
 }
 
 export type AnalysisNotebookContextReference = {

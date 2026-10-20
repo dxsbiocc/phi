@@ -506,13 +506,13 @@ test('an external on-disk AI edit reaches the active document through the real f
 })
 
 test('the read-only refresh IPC registers disk watching without changing the active path or tool draft', async () => {
-  const path = 'src/main/index.ts'
+  const path = 'src/main/ipc/analysis-ipc.ts'
   const syntax = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
   let registration: ts.CallExpression | undefined
   const visit = (node: ts.Node): void => {
     if (
       ts.isCallExpression(node) &&
-      node.expression.getText(syntax) === 'ipcMain.handle' &&
+      node.expression.getText(syntax) === 'options.ipcMain.handle' &&
       node.arguments[0]?.getText(syntax) === 'IPC.analysis.refreshNotebook'
     )
       registration = node
@@ -529,19 +529,25 @@ test('the read-only refresh IPC registers disk watching without changing the act
   const diskReads: unknown[][] = []
   runInNewContext(code, {
     IPC,
-    ipcMain: {
-      handle: (_channel: string, callback: typeof handler) => {
-        handler = callback
+    options: {
+      ipcMain: {
+        handle: (_channel: string, callback: typeof handler) => {
+          handler = callback
+        }
+      },
+      notebooks: {
+        resolveWorkspaceByCwd: (cwd: string) =>
+          cwd === '/project' ? { workingDirectory: cwd } : null,
+        operations: {
+          openFile: async (...args: unknown[]) => {
+            diskReads.push(args)
+            return file
+          },
+          syncDraft: () => assert.fail('read-only refresh must not replace the tool draft')
+        },
+        activePathByProjectCwd: activePaths
       }
-    },
-    resolveAnalysisWorkspaceByCwd: (cwd: string) =>
-      cwd === '/project' ? { workingDirectory: cwd } : null,
-    analysisOpenFile: async (...args: unknown[]) => {
-      diskReads.push(args)
-      return file
-    },
-    activeNotebookPathByProjectCwd: activePaths,
-    syncAnalysisDraft: () => assert.fail('read-only refresh must not replace the tool draft')
+    }
   })
   assert.equal(await handler(null, '/project', file.relativePath), file)
   assert.deepEqual(diskReads[0], [{ workingDirectory: '/project' }, file.relativePath, true])

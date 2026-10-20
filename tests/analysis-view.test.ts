@@ -943,7 +943,14 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   )
   const preloadSource = readFileSync(resolve(process.cwd(), 'src/preload/index.ts'), 'utf8')
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
-  const mainSource = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const analysisIpcSource = readFileSync(
+    resolve(process.cwd(), 'src/main/ipc/analysis-ipc.ts'),
+    'utf8'
+  )
+  const notebookCodeGeneratorSource = readFileSync(
+    resolve(process.cwd(), 'src/main/agent/notebook/analysis-notebook-code-generator.ts'),
+    'utf8'
+  )
   const notebookCodeGenerationSource = readFileSync(
     resolve(process.cwd(), 'src/main/agent/notebook/notebook-code-generation.ts'),
     'utf8'
@@ -1231,15 +1238,15 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(notebookCodeGenerationSource, /NotebookCellsCompletion pattern/)
   assert.match(notebookCodeGenerationSource, /Return exactly one JSON object/)
   assert.match(notebookCodeGenerationSource, /Do not include prose outside JSON/)
-  assert.match(mainSource, /parseGeneratedNotebookCompletionSnapshot/)
-  assert.match(mainSource, /buildNotebookCodeGenerationPrompt/)
+  assert.match(notebookCodeGeneratorSource, /parseGeneratedNotebookCompletionSnapshot/)
+  assert.match(notebookCodeGeneratorSource, /buildNotebookCodeGenerationPrompt/)
   assert.match(
-    mainSource,
-    /const modelSelection = input\.model \?\? workspace\.project\?\.defaultModel \?\? selectedModel/
+    notebookCodeGeneratorSource,
+    /const modelSelection =\s*input\.model \?\? workspace\.project\?\.defaultModel \?\? this\.options\.models\.selected\(\)/
   )
   assert.match(
-    mainSource,
-    /thinkingLevel: workspace\.project\?\.defaultThinkingLevel \?\? selectedThinkingLevel/
+    notebookCodeGeneratorSource,
+    /thinkingLevel:\s*input\.workspace\.project\?\.defaultThinkingLevel \?\? this\.options\.models\.thinkingLevel\(\)/
   )
   assert.match(notebookCodeGenerationSource, /notebookContextReferencePrompt\(input\.references\)/)
   assert.match(analysisSource, /onSelectCell=\{isAiPreviewCell \? undefined : setSelectedCellId\}/)
@@ -1259,10 +1266,13 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
   assert.match(analysisRuntimeSource, /generateAnalysisNotebookCode\(getActiveCwd\(\), file\.path/)
   assert.match(preloadSource, /ipcRenderer\.invoke\(IPC\.analysis\.generateNotebookCode/)
   assert.match(preloadSource, /IPC\.analysis\.notebookCodeGenerationProgress/)
-  assert.match(mainSource, /ipcMain\.handle\(\s*IPC\.analysis\.generateNotebookCode/)
-  assert.match(mainSource, /IPC\.analysis\.notebookCodeGenerationProgress/)
-  assert.match(mainSource, /new NotebookCompletionCollector\(\)/)
-  assert.match(mainSource, /noTools: 'all'/)
+  assert.match(
+    analysisIpcSource,
+    /options\.ipcMain\.handle\(\s*IPC\.analysis\.generateNotebookCode/
+  )
+  assert.match(analysisIpcSource, /IPC\.analysis\.notebookCodeGenerationProgress/)
+  assert.match(notebookCodeGeneratorSource, /new NotebookCompletionCollector\(\)/)
+  assert.match(notebookCodeGeneratorSource, /noTools: 'all'/)
 })
 
 test('analysis notebook AI generation hides Electron IPC wrapper errors from the prompt cell', () => {

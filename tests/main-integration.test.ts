@@ -1549,6 +1549,7 @@ async function harness(
       createMacMenuBar: () => null
     },
     'node:crypto': { createHash, randomUUID },
+    'node:path': path,
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
     './app-quit': { createBeforeQuitHandler },
@@ -4358,29 +4359,71 @@ async function harness(
     './agent/local-file-access': localFileAccess,
     '../../resources/icon.png?asset': { default: '/icon.png' }
   }
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  const compiled = ts
-    .transpileModule(source, {
+  const mainSourceRoot = path.resolve(process.cwd(), 'src/main')
+  const mainEntryPath = path.join(mainSourceRoot, 'index.ts')
+  const sourceModuleCache = new Map<string, Record<string, unknown>>()
+  const explicitlyLoadedSourceModules = new Set([
+    './agent/notebook/analysis-notebook-code-generator',
+    './agent/notebook/analysis-notebook-operations'
+  ])
+  const mockProcess = {
+    platform: process.platform,
+    env: {
+      PI_CODING_AGENT_DIR: '/isolated',
+      ELECTRON_RENDERER_URL: 'https://phi.internal',
+      ...(options.remoteRpc ? { PHI_REMOTE_OMP_RPC: '1' } : {})
+    },
+    versions: { node: '22.0.0', electron: '39.0.0' }
+  }
+  const normalizeModuleKey = (specifier: string, importerPath: string): string => {
+    if (!specifier.startsWith('.')) return specifier
+    const relativePath = path
+      .relative(mainSourceRoot, path.resolve(path.dirname(importerPath), specifier))
+      .split(path.sep)
+      .join('/')
+    return relativePath.startsWith('.') ? relativePath : `./${relativePath}`
+  }
+  const shouldLoadSourceModule = (moduleKey: string): boolean =>
+    moduleKey.startsWith('./ipc/') || explicitlyLoadedSourceModules.has(moduleKey)
+  const sourcePathForModuleKey = (moduleKey: string): string => {
+    const relativePath = moduleKey.startsWith('./') ? moduleKey.slice(2) : moduleKey
+    return path.join(
+      mainSourceRoot,
+      relativePath.endsWith('.ts') ? relativePath : `${relativePath}.ts`
+    )
+  }
+  const load = (specifier: string, importerPath = mainEntryPath): unknown => {
+    const moduleKey = normalizeModuleKey(specifier, importerPath)
+    if (shouldLoadSourceModule(moduleKey)) return loadSourceModule(moduleKey)
+    assert.ok(moduleKey in modules, `Unexpected external dependency: ${moduleKey}`)
+    return modules[moduleKey]
+  }
+  const loadSourceModule = (moduleKey: string): Record<string, unknown> => {
+    const cached = sourceModuleCache.get(moduleKey)
+    if (cached) return cached
+    const modulePath = sourcePathForModuleKey(moduleKey)
+    const source = readFileSync(modulePath, 'utf8')
+    const compiled = ts
+      .transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+      })
+      .outputText.replaceAll('import.meta.dirname', "'/app/main'")
+    const sourceExports: Record<string, unknown> = {}
+    sourceModuleCache.set(moduleKey, sourceExports)
+    new Function('require', 'exports', 'process', compiled)(
+      (specifier: string) => load(specifier, modulePath),
+      sourceExports,
+      mockProcess
+    )
+    return sourceExports
+  }
+  const mainSource = readFileSync(mainEntryPath, 'utf8')
+  const compiledMain = ts
+    .transpileModule(mainSource, {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
     })
     .outputText.replaceAll('import.meta.dirname', "'/app/main'")
-  const load = (specifier: string): unknown => {
-    assert.ok(specifier in modules, `Unexpected external dependency: ${specifier}`)
-    return modules[specifier]
-  }
-  new Function('require', 'exports', 'process', compiled)(
-    load,
-    {},
-    {
-      platform: process.platform,
-      env: {
-        PI_CODING_AGENT_DIR: '/isolated',
-        ELECTRON_RENDERER_URL: 'https://phi.internal',
-        ...(options.remoteRpc ? { PHI_REMOTE_OMP_RPC: '1' } : {})
-      },
-      versions: { node: '22.0.0', electron: '39.0.0' }
-    }
-  )
+  new Function('require', 'exports', 'process', compiledMain)(load, {}, mockProcess)
   await tick()
   return {
     invoke: async (channel, ...args): Promise<unknown> => {

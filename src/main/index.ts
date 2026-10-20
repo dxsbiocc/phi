@@ -77,6 +77,7 @@ import {
   validateSessionPermissionModeUpdate
 } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
+import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { nativeUiCopy } from './native-ui-copy'
 import {
   createStartupSplashWindow,
@@ -135,7 +136,6 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
 import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
-import { NotebookAiGenerationJobs } from './agent/notebook/notebook-ai-generation-jobs'
 import { getAuthManager } from './agent/auth-manager'
 import {
   fallbackMarkdownFromDescription,
@@ -502,58 +502,27 @@ import {
   writeLastSelectedModel
 } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
-import {
-  emptyNotebookRegistry,
-  initializeProjectAnalysis,
-  listProjectNotebooks
-} from './agent/notebook/analysis-notebooks'
-import {
-  closeProjectNotebook,
-  createProjectNotebook,
-  deleteProjectNotebook,
-  openProjectNotebook,
-  saveProjectNotebook,
-  type SaveProjectNotebookInput
-} from './agent/notebook/analysis-notebook-files'
+import { listProjectNotebooks } from './agent/notebook/analysis-notebooks'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
 import {
   createManagedEnvironmentActions,
-  detectConfiguredAnalysisKernels,
   getCustomToolPath,
   listManagedEnvironments
 } from './agent/environment'
 import { createBackgroundEnvironment } from './agent/environment/background'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
-import {
-  AnalysisNotebookExecutor,
-  type JupyterKernelCompletionResult,
-  type NotebookVariableIntrospection
-} from './agent/notebook/analysis-jupyter-execution'
-import {
-  completeNotebookPythonStaticCompletion,
-  mergeNotebookCompletionResults
-} from './agent/notebook/analysis-notebook-completion'
-import { formatNotebookCellSource } from './agent/notebook/analysis-notebook-formatting'
+import { AnalysisNotebookExecutor } from './agent/notebook/analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
-import {
-  buildNotebookCodeGenerationRepairPrompt,
-  buildNotebookCodeGenerationPrompt,
-  generatedNotebookCellsSource,
-  notebookCellPromptContext,
-  notebookGenerationEmptyResultMessage,
-  parseFinalGeneratedNotebookCompletion,
-  parseGeneratedNotebookCompletionSnapshot
-} from './agent/notebook/notebook-code-generation'
-import {
-  NotebookCompletionCollector,
-  type NotebookCompletionSelection
-} from './agent/notebook/notebook-completion'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import {
   createRemoteAnalysisNotebookBackend,
-  remoteNotebookFileChange,
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
+import {
+  AnalysisNotebookOperations,
+  type AnalysisWorkspaceContext
+} from './agent/notebook/analysis-notebook-operations'
+import { AnalysisNotebookCodeGenerator } from './agent/notebook/analysis-notebook-code-generator'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import {
   getPhiEngine,
@@ -615,12 +584,7 @@ import {
   listPhiSessions,
   toolResultDetailsForSession
 } from './agent/session/session-store'
-import {
-  updateNotebookCell,
-  type JsonObject,
-  type NotebookDocument
-} from '../shared/notebookDocument'
-import { notebookCellMetadataWithExecutionDuration } from '../shared/notebookExecutionMetadata'
+import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
 import { createBeforeQuitHandler } from './app-quit'
@@ -1263,55 +1227,6 @@ interface PromptRun {
   done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
 }
 
-type AnalysisNotebookCodeGenerationInput = {
-  prompt: string
-  language: string
-  requestId?: string
-  model?: {
-    providerId: string
-    modelId: string
-  } | null
-  afterCellId?: string | null
-  references?: AnalysisNotebookContextReference[]
-}
-
-type AnalysisNotebookContextReference = {
-  id: string
-  kind: 'dataframe' | 'data_source' | 'variable' | 'cell_output'
-  name: string
-  detail?: string
-  cellId?: string
-  preview?: {
-    source?: string
-    code?: string
-    output?: string
-    value?: string
-    shape?: string
-    columns?: Array<{ name: string; type?: string }>
-  }
-}
-
-type AnalysisNotebookGeneratedCell = {
-  cellType: 'code' | 'markdown'
-  source: string
-  language?: string
-}
-
-type AnalysisNotebookCodeGenerationResult = {
-  source: string
-  language: string
-  cells?: AnalysisNotebookGeneratedCell[]
-}
-
-type AnalysisNotebookCodeGenerationProgress = {
-  requestId: string
-  path: string
-  relativePath: string
-  source: string
-  language: string
-  cells: AnalysisNotebookGeneratedCell[]
-}
-
 const sessionLifecycles = new Map<string, SessionLifecycle<AgentSessionResult>>()
 const sessionAbortControllers = new Map<string, AbortController>()
 const cleanupBarriersByPath = new Map<string, Promise<void>>()
@@ -1319,13 +1234,6 @@ const unknownPathCleanupBarriers = new Set<Promise<void>>()
 
 function getNoProjectTaskFolder(): string {
   return readAppSettings(AGENT_DIR).noProjectTaskFolder
-}
-
-type AnalysisWorkspaceContext = {
-  workingDirectory: string
-  name: string
-  project: Project | null
-  remoteSessionId?: string
 }
 
 function currentRemoteAnalysisProject(
@@ -1767,7 +1675,6 @@ const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
 })
 const notebookExecutor = new AnalysisNotebookExecutor()
-const notebookAiGenerationJobs = new NotebookAiGenerationJobs()
 const activeNotebookPathByProjectCwd = new Map<string, string>()
 const notebookToolExecutor = new AnalysisNotebookToolExecutor({
   resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
@@ -1778,6 +1685,35 @@ const notebookToolExecutor = new AnalysisNotebookToolExecutor({
 })
 const notebookFileWatcher = new AnalysisNotebookFileWatcher({
   onChange: notifyAnalysisNotebookFileChanged
+})
+const analysisNotebookOperations = new AnalysisNotebookOperations({
+  remoteNotebookBackend,
+  notebookSessionRegistry,
+  notebookToolExecutor,
+  notebookFileWatcher,
+  notifyAnalysisNotebookFileChanged
+})
+const analysisNotebookCodeGenerator = new AnalysisNotebookCodeGenerator({
+  agentDir: AGENT_DIR,
+  notebooks: {
+    resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
+    remoteBackendFor: (workspace) => analysisNotebookOperations.remoteBackendFor(workspace),
+    openFile: (workspace, notebookPath, watch) =>
+      analysisNotebookOperations.openFile(workspace, notebookPath, watch),
+    sessions: (workspace) => analysisNotebookOperations.sessions(workspace)
+  },
+  notebookSessionRegistry,
+  notebookExecutor,
+  models: {
+    selected: () => selectedModel,
+    thinkingLevel: () => selectedThinkingLevel,
+    resolve: resolveRuntimeModelSelection,
+    label: modelSelectionLabel
+  },
+  messages: {
+    extractAssistantText,
+    assistantErrorMessageFromEventSummary
+  }
 })
 const remoteNotebookBackends = new Map<string, RemoteAnalysisNotebookBackend>()
 const remoteNotebookSessionIds = new Map<string, string>()
@@ -1945,16 +1881,6 @@ async function resolveRemoteNotebookToolBackend(identity: {
     projectCwd: backend.projectCwd,
     execute: (request, control) => backend.tools.execute(request, control)
   }
-}
-
-function remoteNotebookBackendFor(
-  workspace: AnalysisWorkspaceContext
-): RemoteAnalysisNotebookBackend | null {
-  if (workspace.project?.location?.kind !== 'ssh') return null
-  if (!workspace.remoteSessionId) {
-    throw new Error('远程 Notebook 会话身份缺失；没有回退到本机执行。')
-  }
-  return remoteNotebookBackend(workspace.project, workspace.remoteSessionId)
 }
 
 function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undefined {
@@ -3969,178 +3895,6 @@ async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
   if (status.state !== 'ready' || !status.hasEndpoint) {
     throw new Error(status.message ?? 'Jupyter Server 尚未就绪')
   }
-}
-
-function emptyNotebookCompletionResult(
-  cursorPosition: number,
-  message?: string
-): JupyterKernelCompletionResult {
-  const position = Number.isFinite(cursorPosition) ? Math.max(0, cursorPosition) : 0
-  return {
-    matches: [],
-    cursorStart: position,
-    cursorEnd: position,
-    metadata: {},
-    status: 'error' as const,
-    message
-  }
-}
-
-function stoppedJupyterStatus(
-  projectCwd: string | undefined,
-  message?: string
-): {
-  projectCwd: string
-  state: 'stopped'
-  hasEndpoint: false
-  message?: string
-} {
-  return {
-    projectCwd: projectCwd ?? '',
-    state: 'stopped' as const,
-    hasEndpoint: false,
-    ...(message ? { message } : {})
-  }
-}
-
-function emptyAnalysisRuntimeStatus(
-  projectCwd: string | undefined,
-  message?: string
-): {
-  server: ReturnType<typeof stoppedJupyterStatus>
-  notebooks: {
-    activeSessionCount: number
-    busySessionCount: number
-    sessions: unknown[]
-  }
-} {
-  return {
-    server: stoppedJupyterStatus(projectCwd, message),
-    notebooks: {
-      activeSessionCount: 0,
-      busySessionCount: 0,
-      sessions: []
-    }
-  }
-}
-
-function analysisSessions(workspace: AnalysisWorkspaceContext): AnalysisNotebookSessionRegistry {
-  return remoteNotebookBackendFor(workspace)?.sessions ?? notebookSessionRegistry
-}
-
-function analysisTools(workspace: AnalysisWorkspaceContext): AnalysisNotebookToolExecutor {
-  return remoteNotebookBackendFor(workspace)?.tools ?? notebookToolExecutor
-}
-
-function analysisKernels(
-  workspace: AnalysisWorkspaceContext
-): ReturnType<typeof detectConfiguredAnalysisKernels> {
-  return remoteNotebookBackendFor(workspace)?.kernels() ?? detectConfiguredAnalysisKernels()
-}
-
-async function analysisOpenFile(
-  workspace: AnalysisWorkspaceContext,
-  notebookPath: string,
-  watch = false
-): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['workspace']['open']>>> {
-  const remote = remoteNotebookBackendFor(workspace)
-  if (!remote) {
-    return watch
-      ? notebookFileWatcher.watch(workspace.workingDirectory, notebookPath)
-      : openProjectNotebook(workspace.workingDirectory, notebookPath)
-  }
-  return remote.open(
-    notebookPath,
-    watch
-      ? (event) =>
-          notifyAnalysisNotebookFileChanged(remoteNotebookFileChange(remote.projectCwd, event))
-      : undefined
-  )
-}
-
-function syncAnalysisDraft(
-  workspace: AnalysisWorkspaceContext,
-  file: Awaited<ReturnType<typeof analysisOpenFile>>,
-  document: NotebookDocument = file.document,
-  savedRevision: string = file.savedRevision,
-  refreshFileBasis = false
-): ReturnType<AnalysisNotebookToolExecutor['syncDraft']> {
-  return analysisTools(workspace).syncDraft({
-    cwd: workspace.workingDirectory,
-    path: file.path,
-    file,
-    document,
-    savedRevision,
-    refreshFileBasis,
-    source: 'renderer'
-  })
-}
-
-async function analysisSaveFile(
-  workspace: AnalysisWorkspaceContext,
-  input: SaveProjectNotebookInput
-): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['save']>>> {
-  const remote = remoteNotebookBackendFor(workspace)
-  const file = remote
-    ? await remote.save(input)
-    : saveProjectNotebook(workspace.workingDirectory, input)
-  if (!remote) notebookFileWatcher.noteLocalWrite(workspace.workingDirectory, file)
-  return file
-}
-
-async function analysisCreateFile(
-  workspace: AnalysisWorkspaceContext,
-  relativePath?: string
-): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['workspace']['create']>>> {
-  const remote = remoteNotebookBackendFor(workspace)
-  if (!remote) {
-    const file = createProjectNotebook(workspace.workingDirectory, relativePath)
-    notebookFileWatcher.watchFile(workspace.workingDirectory, file)
-    return file
-  }
-  const created = await remote.workspace.create(relativePath)
-  return remote.open(created.path, (event) =>
-    notifyAnalysisNotebookFileChanged(remoteNotebookFileChange(remote.projectCwd, event))
-  )
-}
-
-async function analysisCloseFile(
-  workspace: AnalysisWorkspaceContext,
-  notebookPath: string
-): Promise<{ path: string }> {
-  const remote = remoteNotebookBackendFor(workspace)
-  if (remote) return remote.close(notebookPath)
-  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-  await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
-  notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
-  return closeProjectNotebook(workspace.workingDirectory, notebookPath)
-}
-
-async function analysisDeleteFile(
-  workspace: AnalysisWorkspaceContext,
-  notebookPath: string
-): Promise<{ path: string; relativePath: string }> {
-  const remote = remoteNotebookBackendFor(workspace)
-  if (remote) return remote.delete(notebookPath)
-  const file = openProjectNotebook(workspace.workingDirectory, notebookPath)
-  await notebookSessionRegistry.closeSession(workspace.workingDirectory, file.path)
-  notebookFileWatcher.unwatchFile(workspace.workingDirectory, file)
-  return deleteProjectNotebook(workspace.workingDirectory, notebookPath)
-}
-
-function notebookDocumentLanguage(document: NotebookDocument): string {
-  const kernelspec = document.metadata.kernelspec
-  if (kernelspec && typeof kernelspec === 'object' && !Array.isArray(kernelspec)) {
-    const spec = kernelspec as JsonObject
-    if (typeof spec.language === 'string') return spec.language
-    if (typeof spec.name === 'string') return spec.name
-    if (typeof spec.display_name === 'string') return spec.display_name
-  }
-  return ''
-}
-
-function isPythonNotebookDocument(document: NotebookDocument): boolean {
-  return notebookDocumentLanguage(document).toLocaleLowerCase().includes('python')
 }
 
 function notebookAgentRuntimePrompt(projectCwd: string): string | null {
@@ -6550,345 +6304,6 @@ async function generatePersonaMarkdown(
     return generated || fallbackMarkdownFromDescription(description)
   } finally {
     await session.dispose()
-  }
-}
-
-const NOTEBOOK_AI_VARIABLE_REFERENCE_PATTERN =
-  /@(?:(?:dataframe|variable):\/\/)?((?:[A-Za-z_]|\.(?!\d))[A-Za-z0-9._]*)/g
-
-function notebookLanguageSupportsKernelIntrospection(language: string): boolean {
-  const value = language.toLocaleLowerCase()
-  return value.startsWith('python') || value === 'r' || value === 'ir' || value === 'rscript'
-}
-
-function notebookAiVariableNamesFromInput(
-  prompt: string,
-  references: AnalysisNotebookContextReference[] | undefined
-): string[] {
-  const names = new Set<string>()
-  for (const reference of references ?? []) {
-    if (reference.kind === 'dataframe' || reference.kind === 'variable') {
-      names.add(reference.name)
-    }
-  }
-  for (const match of prompt.matchAll(NOTEBOOK_AI_VARIABLE_REFERENCE_PATTERN)) {
-    names.add(match[1])
-  }
-  return [...names]
-}
-
-function kernelShapeLabel(shape: string | undefined): string | undefined {
-  if (!shape) return undefined
-  const match = shape.match(/^\s*(\d+)\s*x\s*(\d+)\s*$/)
-  return match ? `${match[1]} rows x ${match[2]} columns` : shape
-}
-
-function mergeKernelIntrospectionReference(
-  references: AnalysisNotebookContextReference[],
-  summary: NotebookVariableIntrospection
-): AnalysisNotebookContextReference[] {
-  if (!summary.exists || !summary.name) return references
-  const index = references.findIndex(
-    (reference) =>
-      reference.name === summary.name &&
-      (reference.kind === 'dataframe' || reference.kind === 'variable')
-  )
-  const existing = index >= 0 ? references[index] : null
-  const kind: AnalysisNotebookContextReference['kind'] =
-    existing?.kind ?? (summary.columns?.length || summary.shape ? 'dataframe' : 'variable')
-  const next: AnalysisNotebookContextReference = {
-    id: existing?.id ?? `${kind}:${summary.name}`,
-    kind,
-    name: summary.name,
-    detail: summary.datatype ?? existing?.detail ?? 'live kernel',
-    cellId: existing?.cellId,
-    preview: {
-      ...existing?.preview,
-      source: existing?.preview?.source ?? 'live kernel',
-      shape: kernelShapeLabel(summary.shape) ?? existing?.preview?.shape,
-      columns: summary.columns ?? existing?.preview?.columns,
-      value: summary.preview ?? existing?.preview?.value
-    }
-  }
-  if (index < 0) return [...references, next]
-  return references.map((reference, currentIndex) => (currentIndex === index ? next : reference))
-}
-
-async function notebookAiReferencesWithKernelIntrospection(input: {
-  projectCwd: string
-  notebookPath: string
-  prompt: string
-  language: string
-  references?: AnalysisNotebookContextReference[]
-  sessions?: AnalysisNotebookSessionRegistry
-}): Promise<AnalysisNotebookContextReference[] | undefined> {
-  const references = [...(input.references ?? [])]
-  if (!notebookLanguageSupportsKernelIntrospection(input.language)) return references
-  const variableNames = notebookAiVariableNamesFromInput(input.prompt, references)
-  if (variableNames.length === 0) return references
-  const target = (input.sessions ?? notebookSessionRegistry).executionTarget(
-    input.projectCwd,
-    input.notebookPath
-  )
-  if (!target) return references
-
-  try {
-    const summaries = await notebookExecutor.introspectVariables({
-      connection: target.connection,
-      sessionId: target.sessionId,
-      kernelId: target.kernelId,
-      variableNames,
-      language: input.language
-    })
-    return summaries.reduce(mergeKernelIntrospectionReference, references)
-  } catch {
-    return references
-  }
-}
-
-async function repairNotebookGenerationCompletion(input: {
-  sessionOptions: NonNullable<Parameters<typeof createAgentSession>[0]>
-  language: string
-  notebookPath: string
-  insertionIndex: number
-  references?: AnalysisNotebookContextReference[]
-  userPrompt: string
-  nearbyContext: string
-  otherCellContext: string
-  invalidOutput: string
-  onEvent?: (summary: PhiAgentEventSummary) => void
-  onProgress?: (completion: NotebookCompletionSelection) => void
-}): Promise<NotebookCompletionSelection | null> {
-  const completion = new NotebookCompletionCollector()
-  let errorMessage = ''
-  const { session } = await createAgentSession(input.sessionOptions, (summary) => {
-    input.onEvent?.(summary)
-    completion.observe(summary)
-    errorMessage = assistantErrorMessageFromEventSummary(summary) ?? errorMessage
-    const snapshot = completion.select(input.language, parseGeneratedNotebookCompletionSnapshot)
-    if (snapshot?.cells.length) input.onProgress?.(snapshot)
-  })
-
-  try {
-    await session.prompt(
-      buildNotebookCodeGenerationRepairPrompt({
-        language: input.language,
-        notebookPath: input.notebookPath,
-        insertionIndex: input.insertionIndex,
-        references: input.references,
-        userPrompt: input.userPrompt,
-        nearbyContext: input.nearbyContext,
-        otherCellContext: input.otherCellContext,
-        invalidOutput: input.invalidOutput
-      }),
-      {
-        expandPromptTemplates: false,
-        synthetic: true,
-        skipCompactionCheck: true
-      }
-    )
-    if (errorMessage) {
-      throw new Error(errorMessage)
-    }
-
-    return completion.select(
-      input.language,
-      parseFinalGeneratedNotebookCompletion,
-      session.messages
-    )
-  } finally {
-    await session.dispose()
-  }
-}
-
-async function generateAnalysisNotebookCode(
-  cwd: string,
-  notebookPath: string,
-  document: NotebookDocument,
-  input: AnalysisNotebookCodeGenerationInput,
-  onProgress?: (progress: AnalysisNotebookCodeGenerationProgress) => void
-): Promise<AnalysisNotebookCodeGenerationResult> {
-  const prompt = input.prompt.trim()
-  if (!prompt) {
-    throw new Error('请输入要生成的代码需求')
-  }
-
-  const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-  if (!workspace) {
-    throw new Error('请选择一个已添加的项目或当前 workspace')
-  }
-  const modelSelection = input.model ?? workspace.project?.defaultModel ?? selectedModel
-  const job = notebookAiGenerationJobs.begin({
-    requestId: input.requestId,
-    projectCwd: workspace.workingDirectory,
-    notebookPath,
-    notebookName: basename(notebookPath),
-    model: modelSelection ? modelSelectionLabel(modelSelection) : '默认模型',
-    prompt
-  })
-  try {
-    const remote = remoteNotebookBackendFor(workspace)
-    const file = await analysisOpenFile(workspace, notebookPath)
-    job.update('preparing', { notebookPath: file.path, notebookName: basename(file.path) })
-    const runtime = await getAuthManager().getRuntime()
-    const resolvedModel = modelSelection
-      ? resolveRuntimeModelSelection(runtime, modelSelection)
-      : null
-    if (modelSelection && !resolvedModel) {
-      throw new Error(`模型不可用: ${modelSelectionLabel(modelSelection)}`)
-    }
-    const { insertionIndex, nearbyContext, otherCellContext } = notebookCellPromptContext(
-      document,
-      input.afterCellId
-    )
-    const language = input.language || 'python'
-    const references = await notebookAiReferencesWithKernelIntrospection({
-      projectCwd: workspace.workingDirectory,
-      notebookPath: file.path,
-      prompt,
-      language,
-      references: input.references,
-      sessions: analysisSessions(workspace)
-    })
-    const sessionCwd = remote ? AGENT_DIR : workspace.workingDirectory
-    const sessionOptions = {
-      modelRuntime: runtime,
-      cwd: sessionCwd,
-      noTools: 'all' as const,
-      thinkingLevel: workspace.project?.defaultThinkingLevel ?? selectedThinkingLevel,
-      sessionManager: createInMemoryRuntimeSessionManager(sessionCwd),
-      ...(resolvedModel ? { model: resolvedModel.model } : {})
-    }
-    const completion = new NotebookCompletionCollector()
-    let eventErrorMessage = ''
-    let lastProgressSource = ''
-    const emitProgress = (): void => {
-      const selectedCompletion = completion.select(
-        language,
-        parseGeneratedNotebookCompletionSnapshot
-      )
-      if (!selectedCompletion || selectedCompletion.cells.length === 0) return
-      const source = generatedNotebookCellsSource(selectedCompletion.cells)
-      if (source === lastProgressSource) return
-      lastProgressSource = source
-      job.update('generating', {
-        sourcePreview: source,
-        previewCells: selectedCompletion.cells,
-        cellCount: selectedCompletion.cells.length
-      })
-      if (!input.requestId || !onProgress) return
-      onProgress({
-        requestId: input.requestId,
-        path: file.path,
-        relativePath: file.relativePath,
-        source,
-        language,
-        cells: selectedCompletion.cells
-      })
-    }
-    const { session } = await createAgentSession(sessionOptions, (summary) => {
-      job.observe(summary)
-      completion.observe(summary)
-      eventErrorMessage = assistantErrorMessageFromEventSummary(summary) ?? eventErrorMessage
-      if (completion.text) job.update('generating')
-      emitProgress()
-    })
-
-    let result: Required<AnalysisNotebookCodeGenerationResult>
-    try {
-      job.update(
-        'waiting',
-        session.model ? { model: `${session.model.provider}/${session.model.id}` } : {}
-      )
-      await session.prompt(
-        buildNotebookCodeGenerationPrompt({
-          language,
-          notebookPath: file.relativePath,
-          insertionIndex,
-          references,
-          userPrompt: prompt,
-          nearbyContext,
-          otherCellContext
-        }),
-        {
-          expandPromptTemplates: false,
-          userInitiated: true,
-          skipCompactionCheck: true
-        }
-      )
-      if (eventErrorMessage) {
-        throw new Error(eventErrorMessage)
-      }
-
-      const lastAssistantMessage = [...session.messages].reverse().find((message) => {
-        const record = message as { role?: string }
-        return record.role === 'assistant'
-      })
-      const selectedCompletion = completion.select(
-        language,
-        parseFinalGeneratedNotebookCompletion,
-        session.messages
-      )
-      let assistantText = selectedCompletion?.text || completion.text
-      assistantText ||= extractAssistantText(lastAssistantMessage).trim()
-      let cells = selectedCompletion?.cells ?? []
-      let completionText = assistantText
-      if (cells.length === 0) {
-        job.update('repairing')
-        const repairedCompletion = await repairNotebookGenerationCompletion({
-          sessionOptions,
-          language,
-          notebookPath: file.relativePath,
-          insertionIndex,
-          references,
-          userPrompt: prompt,
-          nearbyContext,
-          otherCellContext,
-          invalidOutput: assistantText,
-          onEvent: (summary) => job.observe(summary),
-          onProgress: (completion) => {
-            job.update('repairing', {
-              sourcePreview: generatedNotebookCellsSource(completion.cells),
-              previewCells: completion.cells,
-              cellCount: completion.cells.length
-            })
-          }
-        })
-        if (repairedCompletion) {
-          cells = repairedCompletion.cells
-          completionText = repairedCompletion.text
-        }
-      }
-      if (cells.length === 0) {
-        const emptyResultDiagnostic =
-          completionText ||
-          '未收到模型返回文本或 data-notebook-cells-completion 结构化结果。请检查当前模型/供应商配置，或稍后重试。'
-        throw new Error(notebookGenerationEmptyResultMessage(emptyResultDiagnostic))
-      }
-      const source = generatedNotebookCellsSource(cells)
-      if (input.requestId && onProgress && source !== lastProgressSource) {
-        onProgress({
-          requestId: input.requestId,
-          path: file.path,
-          relativePath: file.relativePath,
-          source,
-          language,
-          cells
-        })
-      }
-      result = { source, language, cells }
-    } finally {
-      await session.dispose()
-    }
-    job.complete({
-      sourcePreview: result.source,
-      previewCells: result.cells,
-      cellCount: result.cells.length
-    })
-    return result
-  } catch (error) {
-    job.fail(error)
-    throw error
   }
 }
 
@@ -11235,427 +10650,23 @@ app.whenReady().then(async () => {
       return disposeAndSwitchSession(session.path, workingDirectory, session.permissionMode)
     }
   )
-  ipcMain.handle(IPC.analysis.listNotebooks, async (_, cwd?: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      return emptyNotebookRegistry('选择一个项目或当前 workspace 后显示 notebooks')
-    }
-    const remote = remoteNotebookBackendFor(workspace)
-    const registry = remote
-      ? await remote.workspace.list()
-      : listProjectNotebooks(workspace.workingDirectory)
-    return {
-      projectCwd: workspace.workingDirectory,
-      projectName: workspace.name,
-      ...registry
-    }
+  registerAnalysisIpc({
+    ipcMain,
+    notebooks: {
+      resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
+      operations: analysisNotebookOperations,
+      activePathByProjectCwd: activeNotebookPathByProjectCwd
+    },
+    jupyter: {
+      getCurrentCwd: () => currentCwd,
+      isRemoteAnalysisCwd,
+      serverRegistry: jupyterServerRegistry,
+      executor: notebookExecutor,
+      fileWatcher: notebookFileWatcher,
+      ensureServerReady: ensureJupyterServerReady
+    },
+    generation: analysisNotebookCodeGenerator
   })
-  ipcMain.handle(IPC.analysis.initializeProject, async (_, cwd: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    return (
-      remoteNotebookBackendFor(workspace)?.initializeProject() ??
-      initializeProjectAnalysis(workspace.workingDirectory)
-    )
-  })
-  ipcMain.handle(IPC.analysis.refreshNotebook, async (_, cwd: string, notebookPath: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    // Revalidation reads disk without replacing the tool draft or active path.
-    return analysisOpenFile(workspace, notebookPath, true)
-  })
-  ipcMain.handle(IPC.analysis.openNotebook, async (_, cwd: string, notebookPath: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const file = await analysisOpenFile(workspace, notebookPath, true)
-    activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-    syncAnalysisDraft(workspace, file, file.document, file.savedRevision, true)
-    return file
-  })
-  ipcMain.handle(
-    IPC.analysis.saveNotebook,
-    async (_, cwd: string, input: SaveProjectNotebookInput) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisSaveFile(workspace, input)
-      activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-      syncAnalysisDraft(workspace, file, file.document, file.savedRevision, true)
-      return file
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.syncNotebookDraft,
-    async (
-      _,
-      cwd: string,
-      notebookPath: string,
-      document: NotebookDocument,
-      savedRevision?: string
-    ) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisOpenFile(workspace, notebookPath)
-      activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-      return syncAnalysisDraft(workspace, file, document, savedRevision ?? file.savedRevision)
-    }
-  )
-  ipcMain.handle(IPC.analysis.createNotebook, async (_, cwd: string, relativePath?: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const file = await analysisCreateFile(workspace, relativePath)
-    activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
-    return file
-  })
-  ipcMain.handle(IPC.analysis.closeNotebook, async (_, cwd: string, notebookPath: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const closed = await analysisCloseFile(workspace, notebookPath)
-    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === closed.path) {
-      activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
-    }
-    return closed
-  })
-  ipcMain.handle(IPC.analysis.deleteNotebook, async (_, cwd: string, notebookPath: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const deleted = await analysisDeleteFile(workspace, notebookPath)
-    if (activeNotebookPathByProjectCwd.get(workspace.workingDirectory) === deleted.path) {
-      activeNotebookPathByProjectCwd.delete(workspace.workingDirectory)
-    }
-    return deleted
-  })
-  ipcMain.handle(IPC.analysis.listKernels, async (_, cwd?: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (workspace) return analysisKernels(workspace)
-    const targetCwd = cwd ?? currentCwd
-    if (isRemoteAnalysisCwd(targetCwd)) {
-      throw new Error('远程 Notebook 会话或后端不可用；没有探测或回退到本机 Jupyter kernel。')
-    }
-    return detectConfiguredAnalysisKernels()
-  })
-  ipcMain.handle(IPC.analysis.jupyterStatus, async (_, cwd: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      return stoppedJupyterStatus(cwd, '请选择一个已添加的项目或当前 workspace')
-    }
-    return (
-      remoteNotebookBackendFor(workspace)?.controller.status() ??
-      jupyterServerRegistry.status(workspace.workingDirectory)
-    )
-  })
-  ipcMain.handle(IPC.analysis.jupyterRuntimeStatus, async (_, cwd: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      return emptyAnalysisRuntimeStatus(cwd, '请选择一个已添加的项目或当前 workspace')
-    }
-    const remote = remoteNotebookBackendFor(workspace)
-    const sessions = analysisSessions(workspace)
-    return {
-      server:
-        remote?.controller.status() ?? jupyterServerRegistry.status(workspace.workingDirectory),
-      notebooks: sessions.projectSummary(workspace.workingDirectory)
-    }
-  })
-  ipcMain.handle(IPC.analysis.startJupyter, async (_, cwd: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    return (
-      remoteNotebookBackendFor(workspace)?.controller.start() ??
-      jupyterServerRegistry.start(workspace.workingDirectory)
-    )
-  })
-  ipcMain.handle(
-    IPC.analysis.stopJupyter,
-    async (_, cwd: string, options?: { abandonUnconfirmed?: boolean }) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const remote = remoteNotebookBackendFor(workspace)
-      const sessions = analysisSessions(workspace)
-      await sessions.closeProject(workspace.workingDirectory)
-      if (remote) {
-        const status = await remote.controller.stop({
-          abandonUnconfirmed: options?.abandonUnconfirmed === true
-        })
-        await sessions.closeProject(workspace.workingDirectory)
-        return status
-      }
-      notebookFileWatcher.unwatchProject(workspace.workingDirectory)
-      return jupyterServerRegistry.stop(workspace.workingDirectory)
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.notebookSessionStatus,
-    async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisOpenFile(workspace, notebookPath)
-      return analysisSessions(workspace).status({
-        projectCwd: workspace.workingDirectory,
-        notebookPath: file.path,
-        document,
-        kernels: analysisKernels(workspace)
-      })
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.ensureNotebookSession,
-    async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisOpenFile(workspace, notebookPath)
-      return analysisSessions(workspace).ensureSession({
-        projectCwd: workspace.workingDirectory,
-        notebookPath: file.path,
-        document,
-        kernels: analysisKernels(workspace)
-      })
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.closeNotebookSession,
-    async (_, cwd: string, notebookPath: string) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisOpenFile(workspace, notebookPath)
-      return analysisSessions(workspace).closeSession(workspace.workingDirectory, file.path)
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.interruptNotebookExecution,
-    async (_, cwd: string, notebookPath: string) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const file = await analysisOpenFile(workspace, notebookPath)
-      return analysisSessions(workspace).interruptSession(workspace.workingDirectory, file.path)
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.completeNotebookCell,
-    async (
-      _,
-      cwd: string,
-      input: {
-        path: string
-        document: NotebookDocument
-        cellId: string
-        source: string
-        cursorPosition: number
-      }
-    ) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const remote = remoteNotebookBackendFor(workspace)
-      const file = await analysisOpenFile(workspace, input.path)
-      const cell = input.document.cells.find((item) => item.id === input.cellId)
-      const cursorPosition = Number.isFinite(input.cursorPosition)
-        ? Math.max(0, Math.min(input.cursorPosition, input.source.length))
-        : 0
-      if (!cell || cell.cellType !== 'code') {
-        return emptyNotebookCompletionResult(cursorPosition, 'Notebook cell is not a code cell')
-      }
-
-      const staticCompletion =
-        !remote && isPythonNotebookDocument(input.document)
-          ? completeNotebookPythonStaticCompletion({
-              projectCwd: workspace.workingDirectory,
-              source: input.source,
-              cursorPosition
-            })
-          : null
-      const target = analysisSessions(workspace).executionTarget(
-        workspace.workingDirectory,
-        file.path
-      )
-      if (!target) {
-        return (
-          staticCompletion ??
-          emptyNotebookCompletionResult(cursorPosition, 'Notebook kernel is not connected')
-        )
-      }
-
-      try {
-        const kernelCompletion = await notebookExecutor.completeCode({
-          connection: target.connection,
-          sessionId: target.sessionId,
-          kernelId: target.kernelId,
-          code: input.source,
-          cursorPosition
-        })
-        return mergeNotebookCompletionResults(kernelCompletion, staticCompletion)
-      } catch (error) {
-        return (
-          staticCompletion ?? emptyNotebookCompletionResult(cursorPosition, errorMessage(error))
-        )
-      }
-    }
-  )
-  ipcMain.handle(
-    IPC.analysis.formatNotebookCell,
-    async (
-      _,
-      cwd: string,
-      input: {
-        path: string
-        document: NotebookDocument
-        cellId: string
-        source: string
-        language?: string
-        lineLength?: number
-      }
-    ) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      await analysisOpenFile(workspace, input.path)
-      const cell = input.document.cells.find((item) => item.id === input.cellId)
-      if (!cell || cell.cellType !== 'code') {
-        return {
-          source: input.source,
-          changed: false,
-          formatter: 'none' as const,
-          message: 'Notebook cell is not a code cell'
-        }
-      }
-
-      if (remoteNotebookBackendFor(workspace)) {
-        throw new Error(
-          '远程 Notebook 暂不支持桌面端本机 formatter；请在登录节点环境中格式化。没有回退到本机执行。'
-        )
-      }
-
-      return formatNotebookCellSource({
-        projectCwd: workspace.workingDirectory,
-        source: input.source,
-        language: input.language,
-        lineLength: input.lineLength
-      })
-    }
-  )
-  ipcMain.handle(IPC.analysis.listNotebookAiGenerationJobs, () => notebookAiGenerationJobs.list())
-  ipcMain.handle(
-    IPC.analysis.generateNotebookCode,
-    async (
-      event,
-      cwd: string,
-      notebookPath: string,
-      document: NotebookDocument,
-      input: AnalysisNotebookCodeGenerationInput
-    ) =>
-      generateAnalysisNotebookCode(cwd, notebookPath, document, input, (progress) => {
-        event.sender.send(IPC.analysis.notebookCodeGenerationProgress, progress)
-      })
-  )
-  ipcMain.handle(
-    IPC.analysis.executeNotebookCell,
-    async (_, cwd: string, notebookPath: string, document: NotebookDocument, cellId: string) => {
-      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-      if (!workspace) {
-        throw new Error('请选择一个已添加的项目或当前 workspace')
-      }
-      const remote = remoteNotebookBackendFor(workspace)
-      const file = await analysisOpenFile(workspace, notebookPath)
-      const kernels = analysisKernels(workspace)
-      const sessions = analysisSessions(workspace)
-      let sessionStatus = await sessions.ensureSession({
-        projectCwd: workspace.workingDirectory,
-        notebookPath: file.path,
-        document,
-        kernels
-      })
-      let target = sessions.executionTarget(workspace.workingDirectory, file.path)
-      if (!target) {
-        if (remote) remote.controller.requireReady()
-        else await ensureJupyterServerReady(workspace.workingDirectory)
-        sessionStatus = await sessions.ensureSession({
-          projectCwd: workspace.workingDirectory,
-          notebookPath: file.path,
-          document,
-          kernels
-        })
-        target = sessions.executionTarget(workspace.workingDirectory, file.path)
-      }
-      if (!target) {
-        throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
-      }
-
-      const cell = document.cells.find((item) => item.id === cellId)
-      if (!cell) {
-        throw new Error(`Notebook cell not found: ${cellId}`)
-      }
-
-      sessions.updateSessionState(
-        workspace.workingDirectory,
-        file.path,
-        'busy',
-        'Notebook kernel 正在执行'
-      )
-      try {
-        const execution = await notebookExecutor.executeCell({
-          connection: target.connection,
-          sessionId: target.sessionId,
-          kernelId: target.kernelId,
-          cell
-        })
-        const nextDocument = updateNotebookCell(document, cellId, {
-          executionCount: execution.executionCount,
-          outputs: execution.outputs,
-          metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
-        })
-        syncAnalysisDraft(workspace, file, nextDocument)
-        const nextSessionStatus =
-          sessions.updateSessionState(
-            workspace.workingDirectory,
-            file.path,
-            'idle',
-            execution.state === 'error' ? 'Cell 执行出错，kernel 仍可继续使用' : 'Cell 执行完成'
-          ) ?? sessionStatus
-        return {
-          ...execution,
-          document: nextDocument,
-          sessionStatus: nextSessionStatus
-        }
-      } catch (error) {
-        sessions.updateSessionState(
-          workspace.workingDirectory,
-          file.path,
-          'error',
-          errorMessage(error)
-        )
-        throw error
-      }
-    }
-  )
   ipcMain.handle(
     IPC.tool.approvalResponse,
     async (event, requestId: unknown, approved: unknown) => {
