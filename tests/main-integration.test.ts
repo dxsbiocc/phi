@@ -4406,6 +4406,9 @@ async function harness(
     './ipc/skills-ipc'
   ]
   const explicitlyLoadedSourceModules = new Set([
+    './agent/agents/agent-run-control-request',
+    './agent/agents/remote-agent-request-context',
+    './agent/agents/remote-agent-trust-request',
     './agent/content/remote-skill-trust-request',
     './agent/enablement-request',
     './agent/jobs/background-agent-job-listing',
@@ -4416,6 +4419,14 @@ async function harness(
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations',
     './agent/plugins/phi-plugin-management-view',
+    './agent/runtime/model-thinking-levels',
+    './agent/session/active-prompt-stop',
+    './agent/session/current-session-reads',
+    './agent/session/phi-timeline-messages',
+    './agent/session/model-selection-target',
+    './agent/session/prompt-target-control',
+    './agent/session/runtime-recovery-control',
+    './agent/session/session-compaction-control',
     './agent/wrappers/remote-result-read-control'
   ])
   const mockProcess = {

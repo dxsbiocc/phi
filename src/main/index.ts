@@ -7,43 +7,19 @@ import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { PhiAgentEvent, PhiAgentEventSummary } from './agent/engine/types'
 import type {
   RuntimeRecoveryModelSelection,
-  RuntimeRecoveryState,
-  RuntimeRecoveryTarget,
-  RuntimeRecoveryIssue,
-  RuntimeRecoverySummary
+  RuntimeRecoveryIssue
 } from '../shared/runtimeRecoveryTypes'
-import {
-  createRuntimeRecoveryController,
-  runtimeRecoveryMessage,
-  type RuntimeRecoveryScope
-} from './agent/session/runtime-recovery-ipc'
-import {
-  buildRuntimeRecoverySummary,
-  readRuntimeRecoverySummarySeed
-} from './agent/session/recovery-summary'
-import {
-  RemoteRecoveryError,
-  describeRemoteRecoveryFailure
-} from './agent/engine/rpc/session-recovery'
+import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
+import { RemoteRecoveryError } from './agent/engine/rpc/session-recovery'
 import {
   parseRuntimeReference,
   assertRuntimeReferenceProject,
-  assertRuntimeScope,
-  RuntimeReferenceError
+  assertRuntimeScope
 } from './agent/session/runtime-reference'
 import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
-import type {
-  AutoCompactionOverrides,
-  AutoCompactionSettingsPatch,
-  CurrentAutoCompactionSettings,
-  CurrentContextUsage,
-  ManualCompactionOutcome,
-  ManualCompactionTarget
-} from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
-import type { PromptAgentSummary } from '../shared/promptAgentTypes'
 import {
   hoverMediaPreviewType,
   mediaPreviewType,
@@ -58,7 +34,6 @@ import { isPluginSkillPreviewPath } from './agent/plugins/preview'
 import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
-import { validateSessionPermissionModeUpdate } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
@@ -86,6 +61,17 @@ import {
 import { registerRemoteWorkspaceIpc } from './ipc/remote-workspace-ipc'
 import { registerRemoteIpc } from './ipc/remote-ipc'
 import { registerMemoryIpc } from './ipc/memory-ipc'
+import {
+  registerAgentInteractionIpc,
+  registerAgentPromptIpc,
+  registerAgentRunControlIpc,
+  type AgentIpcOptions
+} from './ipc/agent-ipc'
+import { registerAgentsIpc } from './ipc/agents-ipc'
+import { registerModelsIpc } from './ipc/models-ipc'
+import { registerThinkingIpc } from './ipc/thinking-ipc'
+import { registerToolIpc } from './ipc/tool-ipc'
+import { registerSessionsIpc } from './ipc/sessions-ipc'
 import {
   registerProjectsIpc,
   registerProjectsRemoteHostsIpc,
@@ -147,6 +133,26 @@ import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
+import type { ThinkingLevel } from './agent/runtime/model-thinking-levels'
+import {
+  alignCurrentSessionToPromptTarget,
+  parsePromptTarget,
+  type PromptTargetInput,
+  type PromptTargetControlOptions
+} from './agent/session/prompt-target-control'
+import {
+  getCurrentContextUsage,
+  getCurrentSessionPayloadWithMessages,
+  type CurrentContextUsageOptions,
+  type CurrentSessionPayload,
+  type CurrentSessionPayloadMessagesOptions
+} from './agent/session/current-session-reads'
+import {
+  compactCurrentSession,
+  getCurrentAutoCompactionSettings,
+  setCurrentAutoCompactionSettings,
+  type SessionCompactionControlOptions
+} from './agent/session/session-compaction-control'
 import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
 import { getAuthManager } from './agent/auth-manager'
 import {
@@ -157,16 +163,12 @@ import {
   skipOnboarding
 } from './agent/persona-manager'
 import {
-  acknowledgeSession,
   createSessionManager,
-  deleteSession,
   isPhiOnlySessionPath,
-  listSessions,
   phiOnlySessionPath,
   phiSessionIdFromPath,
   renameSession
 } from './agent/session/sessions'
-import { getHomeActivity } from './agent/session/home-activity'
 import {
   assertProjectPathAvailable,
   getProject,
@@ -302,7 +304,6 @@ import {
   getBundledAgentsDir,
   getCoreAuthoringSkillDir,
   openRuntimeSessionManager,
-  readAutoCompactionDefaults,
   type Skill as RuntimeSkill,
   type ModelRuntime,
   type RuntimeModel,
@@ -337,7 +338,6 @@ import { validateSkill } from './agent/content/skill'
 import {
   listGlobalMcpServers,
   listGlobalSkills,
-  listPromptAgents,
   listSkills,
   readGlobalSkillContent
 } from './agent/resources'
@@ -355,12 +355,7 @@ import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-r
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { createWrapperResultReadControl } from './agent/wrappers/remote-result-read-control'
 import { discoverPhiAgents } from './agent/agents/discovery'
-import {
-  loadRemoteAgentCatalog,
-  revokeRemoteAgent,
-  trustRemoteAgent,
-  type RemoteAgentProjectContext
-} from './agent/agents/remote-agent-service'
+import { loadRemoteAgentCatalog } from './agent/agents/remote-agent-service'
 import { BackgroundAgentApprovalTracker } from './agent/agents/background-approval'
 import { buildAgentLeaderPrompt } from './agent/agents/leader-prompt'
 import {
@@ -381,8 +376,7 @@ import {
   configureSystemUiLanguage,
   readAppSettings,
   readLastSelectedModel,
-  updateAppSettings,
-  writeLastSelectedModel
+  updateAppSettings
 } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import { listProjectNotebooks } from './agent/notebook/analysis-notebooks'
@@ -407,11 +401,7 @@ import {
 } from './agent/notebook/analysis-notebook-operations'
 import { AnalysisNotebookCodeGenerator } from './agent/notebook/analysis-notebook-code-generator'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
-import {
-  getPhiEngine,
-  ownsRemoteRuntimeSession,
-  readRpcCompactionPolicy
-} from './agent/engine/in-process-engine'
+import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
 import {
   installAppRemoteSessionRouting,
   createAppRemoteSessionManager,
@@ -431,23 +421,17 @@ import {
   type SessionSnapshot
 } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
-import { exportPhiSession } from './agent/session/session-export'
 import {
   beginWorkspaceChangeCapture,
   finishWorkspaceChangeCapture
 } from './agent/session/workspace-changes'
 import { persistWorkspaceDiff, readWorkspaceDiff } from './agent/session/workspace-diffs'
 import { SessionTitleGenerator } from './agent/session/session-title-generation'
-import {
-  persistPromptImages,
-  readPromptImage,
-  validatePromptImages
-} from './agent/session/prompt-images'
+import { persistPromptImages } from './agent/session/prompt-images'
 import type { PromptImageInput } from '../shared/promptImageTypes'
 import {
   appendSessionEvent,
   createPhiSession,
-  forkPhiSession,
   createRunId,
   findPhiSessionById,
   findPhiSessionByRuntimePath,
@@ -455,12 +439,9 @@ import {
   readSessionEvents,
   recoverInterruptedPhiSessions,
   updateSessionManifest,
-  type LastRunOutcome,
   type PhiSessionManifest,
   type SessionEventInput,
-  type SessionStatus,
   type StoredSessionEvent,
-  type UnreadKind,
   listPhiSessions,
   toolResultDetailsForSession
 } from './agent/session/session-store'
@@ -959,9 +940,6 @@ function scheduleStartupPackageUpdateCheck(): void {
   })
 }
 
-type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-
-const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
 const FILE_PREVIEW_BYTES_LIMIT = 320000
 const MAX_RUN_DIFF_BYTES = 2 * 1024 * 1024
@@ -978,23 +956,6 @@ const KIMI_CODE_REPLACEMENT_MODEL_IDS = [
   'k3-256k',
   'kimi-for-coding-highspeed'
 ] as const
-
-// Mirrors the runtime model metadata: a level is
-// unsupported if the model's thinkingLevelMap explicitly maps it to null, and
-// 'xhigh'/'max' additionally require an explicit (non-undefined) mapping —
-// most models don't opt into those two tiers at all.
-function getSupportedThinkingLevels(model: {
-  reasoning: boolean
-  thinkingLevelMap?: Partial<Record<string, string | null>>
-}): ThinkingLevel[] {
-  if (!model.reasoning) return []
-  return THINKING_LEVEL_ORDER.filter((level) => {
-    const mapped = model.thinkingLevelMap?.[level]
-    if (mapped === null) return false
-    if (level === 'xhigh' || level === 'max') return mapped !== undefined
-    return true
-  })
-}
 
 function isRetiredKimiCodeModel(providerId: string, modelId: string): boolean {
   return providerId === 'kimi-code' && /^kimi-k2(?:$|[.-])/.test(modelId)
@@ -1042,33 +1003,6 @@ function modelSelectionLabel(selection: ModelSelection): string {
 type AgentSessionResult = Awaited<ReturnType<typeof createAgentSession>>
 type AgentSessionInstance = AgentSessionResult['session']
 type AgentSessionRecord = SessionLifecycleRecord<AgentSessionResult>
-type CurrentSessionPayload = {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  displayCwd: string
-  projectId?: string
-  projectLocation?: ProjectLocation
-  sessionGeneration: number
-  permissionMode: PermissionMode
-  status: SessionStatus
-  unreadKind: UnreadKind | null
-  lastRunOutcome?: LastRunOutcome
-  currentRunId?: string
-  currentRunStartedAt?: string
-  lastActivityAt?: string
-}
-
-type PromptTargetInput = {
-  path: string | null
-  phiSessionId?: string
-  cwd: string
-  sessionGeneration?: number
-  suppressUserMessageEvent?: boolean
-  retryUserMessageId?: string
-  planMode?: boolean
-}
-
 interface PromptRun {
   sessionKey: string
   phiSessionId: string
@@ -1206,7 +1140,6 @@ let currentPermissionMode: PermissionMode = 'auto'
 let selectedModel: ModelSelection | null | undefined = readLastSelectedModel()
 let modelSelectionRequest = 0
 let lastRememberedModelSelectionRequest = 0
-const sessionModelSelectionQueues = new Map<string, Promise<void>>()
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
@@ -2963,72 +2896,6 @@ for (const [method, handler] of Object.entries(
   getPhiEngine().host.register(method, handler)
 }
 
-const MAX_AGENT_STEER_LENGTH = 4000
-
-/**
- * Keeps what the user told a running agent on its card, so it is still there after switching
- * conversations or restarting. Only called once the agent has accepted the message; recording it
- * is an extra that must never turn a delivered message into a failure.
- */
-function recordAgentSteer(
-  agentSessionId: unknown,
-  agentRunId: unknown,
-  toolCallId: unknown,
-  text: string
-): void {
-  if (typeof toolCallId !== 'string' || !toolCallId) return
-  try {
-    const origin = resolveOriginSession(typeof agentSessionId === 'string' ? agentSessionId : '')
-    if (!origin) return
-    const stored = appendSessionEvent(origin.phiSessionId, {
-      type: 'agent_execution_steered',
-      toolCallId,
-      ...(typeof agentRunId === 'string' ? { agentRunId } : {}),
-      text: redactSensitiveText(text)
-    })
-    sendRunEventToWindow({
-      source: 'phi',
-      ...stored,
-      phiSessionId: origin.phiSessionId,
-      cwd: origin.cwd
-    })
-  } catch (error) {
-    logUnexpectedError(error)
-  }
-}
-
-async function requestAgentRunControl(
-  method: 'agentRun.steer' | 'agentRun.stop',
-  agentSessionId: unknown,
-  agentRunId: unknown,
-  message?: string
-): Promise<void> {
-  if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少 Agent 会话')
-  if (typeof agentRunId !== 'string' || !agentRunId) throw new Error('缺少 Agent 运行编号')
-  const origin = resolveRecoverableJobOrigin(agentSessionId)
-  const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
-  if (
-    manifest?.projectLocation?.kind === 'ssh' ||
-    manifest?.runtimeRef ||
-    manifest?.runtimeRecoveryError
-  ) {
-    if (
-      !ownsRemoteRuntimeSession(agentSessionId) ||
-      resolveOriginSession(agentSessionId)?.phiSessionId !== manifest.sessionId ||
-      !getPhiEngine().sessions.has(agentSessionId) ||
-      !currentRuntimeOriginScope(manifest)
-    )
-      throw new Error('远程专家任务当前没有可控制的连接；旧任务不会在本机重新启动。')
-  }
-  const params = {
-    sessionId: agentSessionId,
-    runId: agentRunId,
-    ...(message !== undefined ? { message } : {})
-  }
-  if (method === 'agentRun.steer') await getPhiEngine().agentRuns.steer(params)
-  else await getPhiEngine().agentRuns.stop(params)
-}
-
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   if (typeof value !== 'string') return undefined
@@ -4587,47 +4454,6 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
   })
 }
 
-function readPhiTimelineMessages(
-  runtimeSessionPath: string | null | undefined,
-  cwd: string,
-  phiSessionId?: string
-): unknown[] {
-  const manifestsById = new Map<string, PhiSessionManifest>()
-  if (runtimeSessionPath) {
-    for (const manifest of listPhiSessions()) {
-      if (manifest.cwd === cwd && manifest.runtimeSessionPath === runtimeSessionPath) {
-        manifestsById.set(manifest.sessionId, manifest)
-      }
-    }
-  }
-  if (phiSessionId) {
-    const manifest = listPhiSessions().find((session) => session.sessionId === phiSessionId)
-    if (manifest) {
-      manifestsById.set(manifest.sessionId, manifest)
-    }
-  } else if (runtimeSessionPath && manifestsById.size === 0) {
-    const manifest = findPhiSessionByRuntimePath(runtimeSessionPath, cwd)
-    if (manifest) {
-      manifestsById.set(manifest.sessionId, manifest)
-    }
-  }
-  const manifests = [...manifestsById.values()].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt)
-  )
-  if (manifests.length === 0) return []
-  const events = manifests
-    .flatMap((manifest) => readSessionEvents(manifest.sessionId))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-  const hasPhiText = events.some(
-    (event) => event.type === 'user_message' || event.type === 'assistant_message_finalized'
-  )
-  return events.map((event) => ({
-    ...event,
-    ...(hasPhiText ? { preferPhiTimeline: true } : {}),
-    source: 'phi'
-  }))
-}
-
 function createSessionKey(
   path: string | undefined,
   cwd: string,
@@ -4829,27 +4655,6 @@ function runtimeSessionPathForSnapshot(
 function uiSessionPathForKey(sessionKey: string, fallbackPath: string | undefined): string | null {
   const phiSessionId = getPhiSessionIdForKey(sessionKey)
   return phiSessionId ? phiOnlySessionPath(phiSessionId) : (fallbackPath ?? null)
-}
-
-function parsePromptTarget(input: unknown): PromptTargetInput | null {
-  if (!input || typeof input !== 'object') return null
-  const record = input as Record<string, unknown>
-  const path = record.path === null ? null : typeof record.path === 'string' ? record.path : null
-  const phiSessionId = typeof record.phiSessionId === 'string' ? record.phiSessionId : undefined
-  const cwd = typeof record.cwd === 'string' && record.cwd.trim() ? record.cwd : currentCwd
-  return {
-    path,
-    ...(phiSessionId ? { phiSessionId } : {}),
-    cwd,
-    ...(typeof record.sessionGeneration === 'number'
-      ? { sessionGeneration: record.sessionGeneration }
-      : {}),
-    ...(record.suppressUserMessageEvent === true ? { suppressUserMessageEvent: true } : {}),
-    ...(typeof record.retryUserMessageId === 'string'
-      ? { retryUserMessageId: record.retryUserMessageId }
-      : {}),
-    ...(record.planMode === true ? { planMode: true } : {})
-  }
 }
 
 // Waking a conversation when a background run it started has ended: a wrapper run, or a
@@ -5354,64 +5159,6 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
     )
   )
   return run
-}
-
-async function alignCurrentSessionToPromptTarget(input: unknown): Promise<void> {
-  const target = parsePromptTarget(input)
-  if (!target) return
-
-  if (target.phiSessionId) {
-    const manifest = findPhiSessionById(target.phiSessionId)
-    if (!manifest) throw new Error('会话不存在或已被删除')
-    const stablePath = phiOnlySessionPath(manifest.sessionId)
-    const targetKey = createPhiSessionKey(manifest.sessionId, manifest.cwd)
-    linkPhiManagedSessionKey(targetKey, manifest.cwd, manifest.sessionId)
-    sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
-    const generationMatches =
-      typeof target.sessionGeneration !== 'number' ||
-      target.sessionGeneration === getLifecycleForKey(targetKey).currentGeneration
-    if (currentSessionPath === stablePath && currentCwd === manifest.cwd && generationMatches) {
-      return
-    }
-    await disposeAndSwitchSession(stablePath, manifest.cwd, manifest.permissionMode, {
-      notify: false
-    })
-    return
-  }
-
-  if (target.path === null) {
-    const generationMatches =
-      typeof target.sessionGeneration !== 'number' ||
-      target.sessionGeneration === getCurrentLifecycle().currentGeneration
-    if (currentSessionPath === undefined && currentCwd === target.cwd && generationMatches) return
-    throw new Error('当前会话已切换，请重新发送')
-  }
-
-  const phiOnlySessionId = phiSessionIdFromPath(target.path)
-  if (phiOnlySessionId) {
-    const manifest = findPhiSessionById(phiOnlySessionId)
-    if (!manifest) throw new Error('会话不存在或已被删除')
-    const targetKey = createSessionKey(target.path, manifest.cwd)
-    setPhiSessionIdForKey(targetKey, phiOnlySessionId)
-    sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
-    if (currentSessionPath !== target.path || currentCwd !== manifest.cwd) {
-      await disposeAndSwitchSession(target.path, manifest.cwd, manifest.permissionMode, {
-        notify: false
-      })
-    }
-    return
-  }
-
-  if (currentSessionPath === target.path) {
-    return
-  }
-
-  const cwd = (await openRuntimeSessionManager(target.path)).getCwd()
-  const targetKey = createSessionKey(target.path, cwd)
-  const permissionMode = resolveSessionPermissionMode(targetKey, { path: target.path, cwd })
-  if (currentSessionPath !== target.path || currentCwd !== cwd) {
-    await disposeAndSwitchSession(target.path, cwd, permissionMode, { notify: false })
-  }
 }
 
 function getSessionStatusPayload(
@@ -5966,19 +5713,6 @@ function isRemoteResourceScope(cwd?: string): boolean {
   )
 }
 
-function remoteAgentProjectContext(cwd?: string): RemoteAgentProjectContext {
-  const target = cwd ?? currentCwd
-  const remote = currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(currentCwd)
-  if (!remote) throw new Error('远程项目 agent 请求缺少有效的当前项目会话')
-  return {
-    sessionId: remote.sessionId,
-    projectId: remote.project.id,
-    cwd: target,
-    agentDir: AGENT_DIR,
-    bundledDir: getBundledAgentsDir()
-  }
-}
-
 function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
   const target = cwd ?? currentCwd
   const remote = currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(currentCwd)
@@ -6035,30 +5769,6 @@ function remoteRuntimeSkillDefinitions(catalog: RemoteProjectSkillCatalog): Runt
       }
     ]
   })
-}
-
-function checkedRemoteAgentTrustMutation(value: unknown): {
-  cwd: string
-  relativePath: string
-  contentHash: string
-} {
-  if (!isRecord(value)) throw new Error('远程项目 agent 信任请求无效')
-  if (
-    Object.keys(value).some(
-      (key) => key !== 'cwd' && key !== 'relativePath' && key !== 'contentHash'
-    ) ||
-    typeof value.cwd !== 'string' ||
-    typeof value.relativePath !== 'string' ||
-    typeof value.contentHash !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(value.contentHash)
-  ) {
-    throw new Error('远程项目 agent 信任请求无效')
-  }
-  return value as { cwd: string; relativePath: string; contentHash: string }
-}
-
-async function listRemotePromptAgents(cwd?: string): Promise<PromptAgentSummary[]> {
-  return (await loadRemoteAgentCatalog(remoteAgentProjectContext(cwd))).entries
 }
 
 function isCoreAuthoringSkillResourcePath(target: string): boolean {
@@ -6873,112 +6583,6 @@ async function getCurrentResolvedSession(): Promise<AgentSessionResult | null> {
   }
 }
 
-async function getCurrentResolvedSessionIfReady(): Promise<AgentSessionResult | null> {
-  const lifecycle = getCurrentLifecycle()
-  const record = lifecycle.currentRecord
-  if (!record) return null
-
-  const pending = Symbol('pending')
-  try {
-    const result = await Promise.race([record.promise, Promise.resolve(pending)])
-    if (result === pending) return null
-    return lifecycle.isCurrent(record) ? result : null
-  } catch (error) {
-    if (!isStaleSessionError(error)) {
-      throw error
-    }
-    return null
-  }
-}
-
-async function getCurrentContextUsage(): Promise<CurrentContextUsage> {
-  const current = getCurrentSessionPayload()
-  const identity = {
-    sessionPath: current.path,
-    phiSessionId: current.phiSessionId ?? null,
-    sessionGeneration: current.sessionGeneration
-  }
-  const sessionKey = currentSessionKey
-  const snapshot: SessionSnapshot = {
-    path: currentSessionPath,
-    cwd: currentCwd,
-    permissionMode: currentPermissionMode
-  }
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  if (
-    !runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
-    !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
-  ) {
-    return { ...identity, usage: null }
-  }
-
-  const result =
-    manifest?.projectLocation?.kind === 'ssh'
-      ? await getCurrentResolvedSessionIfReady()
-      : await getAgentSession(sessionKey, snapshot)
-  if (!result) return { ...identity, usage: null }
-  const usage = await result.session.getContextUsage()
-  const latest = getCurrentSessionPayload()
-  if (
-    latest.path !== identity.sessionPath ||
-    (latest.phiSessionId ?? null) !== identity.phiSessionId ||
-    latest.sessionGeneration !== identity.sessionGeneration
-  ) {
-    return { ...identity, usage: null }
-  }
-  return { ...identity, usage }
-}
-
-function currentAutoCompactionManifest(target: unknown): {
-  current: ReturnType<typeof getCurrentSessionPayload>
-  manifest: PhiSessionManifest
-  sessionKey: string
-} {
-  const current = getCurrentSessionPayload()
-  const requested = target as Partial<ManualCompactionTarget> | null
-  if (
-    !requested ||
-    requested.sessionPath !== current.path ||
-    (requested.phiSessionId ?? null) !== (current.phiSessionId ?? null) ||
-    requested.sessionGeneration !== current.sessionGeneration
-  ) {
-    throw new Error('会话已切换，请重新打开自动压缩设置')
-  }
-  const sessionKey = currentSessionKey
-  const manifest = findPhiManifestForSession(sessionKey, current.path ?? undefined, current.cwd)
-  if (!manifest) throw new Error('当前会话尚未建立设置记录')
-  return { current, manifest, sessionKey }
-}
-
-function autoCompactionSettingsPatch(value: unknown): AutoCompactionSettingsPatch {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('自动压缩设置无效')
-  }
-  const patch = value as Record<string, unknown>
-  if (Object.keys(patch).some((key) => key !== 'enabled' && key !== 'thresholdPercent')) {
-    throw new Error('自动压缩设置包含未知字段')
-  }
-  const result: AutoCompactionSettingsPatch = {}
-  if ('enabled' in patch) {
-    if (patch.enabled !== null && typeof patch.enabled !== 'boolean') {
-      throw new Error('自动压缩开关无效')
-    }
-    result.enabled = patch.enabled
-  }
-  if ('thresholdPercent' in patch) {
-    if (
-      patch.thresholdPercent !== null &&
-      patch.thresholdPercent !== 70 &&
-      patch.thresholdPercent !== 80 &&
-      patch.thresholdPercent !== 90
-    ) {
-      throw new Error('自动压缩阈值无效')
-    }
-    result.thresholdPercent = patch.thresholdPercent
-  }
-  return result
-}
-
 // Bind a control before its first await. RPC may advance its own checkpoint/runtime
 // generation; the owner, lifecycle record, journal, project and host stay bound.
 // Manual dispatch releases only the view fence so accepted work survives navigation.
@@ -7088,484 +6692,6 @@ function captureSessionControlTarget(
   }
 }
 
-async function getCurrentAutoCompactionSettings(
-  target: unknown
-): Promise<CurrentAutoCompactionSettings> {
-  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
-  const captured = captureSessionControlTarget(sessionKey, manifest.sessionId, false, false)
-  const ready = await captured.resolved()
-  const receipt =
-    captured.rpc && ready ? await ready.session.getAutoCompactionSettings?.(captured) : undefined
-  captured.assertCurrent()
-  const defaults =
-    receipt?.defaults ??
-    (captured.rpc
-      ? (await readRpcCompactionPolicy(AGENT_DIR, manifest.autoCompaction ?? {})).defaults
-      : await readAutoCompactionDefaults(current.cwd, AGENT_DIR))
-  captured.assertCurrent()
-  const overrides = findPhiSessionById(manifest.sessionId)?.autoCompaction ?? {}
-  return {
-    sessionPath: current.path,
-    phiSessionId: current.phiSessionId ?? null,
-    sessionGeneration: current.sessionGeneration,
-    enabled: receipt?.enabled ?? overrides.enabled ?? defaults.enabled,
-    thresholdPercent:
-      receipt?.thresholdPercent ?? overrides.thresholdPercent ?? defaults.thresholdPercent,
-    defaults,
-    overrides
-  }
-}
-
-async function setCurrentAutoCompactionSettings(
-  target: unknown,
-  value: unknown
-): Promise<CurrentAutoCompactionSettings> {
-  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target)
-  const captured = captureSessionControlTarget(sessionKey, manifest.sessionId)
-  const patch = autoCompactionSettingsPatch(value)
-  const overrides: AutoCompactionOverrides = { ...(manifest.autoCompaction ?? {}) }
-  if (patch.enabled === null) delete overrides.enabled
-  else if (patch.enabled !== undefined) overrides.enabled = patch.enabled
-  if (patch.thresholdPercent === null) delete overrides.thresholdPercent
-  else if (patch.thresholdPercent !== undefined) overrides.thresholdPercent = patch.thresholdPercent
-  const ready = await captured.resolved()
-  // Resolve local/cold settings before any save. A live RPC receipt includes its
-  // installation's baseline, so no new read can turn a committed success into failure.
-  const defaults = captured.rpc
-    ? ready
-      ? undefined
-      : (await readRpcCompactionPolicy(AGENT_DIR, overrides)).defaults
-    : await readAutoCompactionDefaults(current.cwd, AGENT_DIR)
-  captured.assertCurrent()
-  const receipt = ready
-    ? await ready.session.setAutoCompactionSettings(overrides, captured)
-    : undefined
-  captured.assertCurrent()
-  const confirmedDefaults = receipt?.defaults ?? defaults
-  if (!confirmedDefaults) throw new Error('远程自动压缩设置缺少已确认的默认策略')
-  updateSessionManifest(manifest.sessionId, {
-    autoCompaction: Object.keys(overrides).length > 0 ? overrides : undefined
-  })
-  notifySessionChanged()
-  return {
-    sessionPath: current.path,
-    phiSessionId: current.phiSessionId ?? null,
-    sessionGeneration: current.sessionGeneration,
-    enabled: receipt?.enabled ?? overrides.enabled ?? confirmedDefaults.enabled,
-    thresholdPercent:
-      receipt?.thresholdPercent ?? overrides.thresholdPercent ?? confirmedDefaults.thresholdPercent,
-    defaults: confirmedDefaults,
-    overrides
-  }
-}
-
-async function compactCurrentSession(target: unknown): Promise<ManualCompactionOutcome> {
-  const current = getCurrentSessionPayload()
-  const requested = target as Partial<ManualCompactionTarget> | null
-  if (
-    !requested ||
-    requested.sessionPath !== current.path ||
-    (requested.phiSessionId ?? null) !== (current.phiSessionId ?? null) ||
-    requested.sessionGeneration !== current.sessionGeneration
-  ) {
-    throw new Error('会话已切换，请重新打开压缩操作')
-  }
-  const sessionKey = currentSessionKey
-  const snapshot: SessionSnapshot & { permissionMode: PermissionMode } = {
-    path: currentSessionPath,
-    cwd: currentCwd,
-    permissionMode: currentPermissionMode
-  }
-  if (hasActivePromptRun(sessionKey)) throw new Error('请等待当前会话运行结束后再压缩')
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  if (
-    !runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
-    !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
-  ) {
-    throw new Error('当前会话暂无可压缩的历史')
-  }
-
-  const phiSessionId = ensurePhiSessionId(sessionKey, snapshot)
-  if (manualCompactionIds.has(phiSessionId)) throw new Error('上下文压缩正在进行')
-  const captured = captureSessionControlTarget(sessionKey, phiSessionId, true)
-  let finish!: () => void
-  const operation: { session?: AgentSessionInstance; cancelled: boolean; done: Promise<void> } = {
-    cancelled: false,
-    done: new Promise<void>((resolve) => {
-      finish = resolve
-    })
-  }
-  const control = {
-    assertCurrent: (): void => {
-      if (operation.cancelled) throw new Error('上下文压缩已取消')
-      captured.assertCurrent()
-    }
-  }
-  manualCompactionIds.add(phiSessionId)
-  manualCompactionOperations.set(phiSessionId, operation)
-  const sessionPath = phiOnlySessionPath(phiSessionId)
-  const sessionGeneration = getLifecycleForKey(sessionKey).currentGeneration
-  const broadcast = (event: StoredSessionEvent): void => {
-    sendToAllWindows(IPC.agent.event, {
-      source: 'phi',
-      ...event,
-      phiSessionId,
-      sessionPath,
-      sessionGeneration,
-      cwd: snapshot.cwd
-    })
-    notifySessionChanged()
-  }
-
-  try {
-    const resolved = await captured.resolved(snapshot)
-    control.assertCurrent()
-    if (!resolved) throw new Error('当前会话暂无可压缩的历史')
-    const { session } = resolved
-    operation.session = session
-    let result: Awaited<ReturnType<typeof session.compact>>
-    try {
-      captured.acceptManual()
-      result = await session.compact(control)
-      control.assertCurrent()
-    } catch (error) {
-      const failureMessage = errorMessage(error)
-      try {
-        broadcast(
-          appendSessionEvent(phiSessionId, {
-            type: 'context_compaction_failed',
-            action: 'manual',
-            reason: 'user',
-            errorMessage: failureMessage.slice(0, 500)
-          })
-        )
-      } catch (persistError) {
-        logUnexpectedError(persistError)
-      }
-      throw error
-    }
-
-    broadcast(
-      appendSessionEvent(phiSessionId, {
-        type: 'context_compacted',
-        action: 'manual',
-        reason: 'user',
-        summary: result.summary,
-        ...(result.shortSummary ? { shortSummary: result.shortSummary } : {}),
-        tokensBefore: result.tokensBefore,
-        ...(result.tokensAfter === undefined ? {} : { tokensAfter: result.tokensAfter })
-      })
-    )
-    return {
-      sessionPath,
-      phiSessionId,
-      tokensBefore: result.tokensBefore,
-      ...(result.tokensAfter === undefined ? {} : { tokensAfter: result.tokensAfter }),
-      ...(result.shortSummary ? { shortSummary: result.shortSummary } : {})
-    }
-  } finally {
-    manualCompactionOperations.delete(phiSessionId)
-    manualCompactionIds.delete(phiSessionId)
-    finish()
-    flushPendingContinuations(phiSessionId, false)
-  }
-}
-
-interface MainRuntimeRecoveryScope extends RuntimeRecoveryScope {
-  readonly manifest: PhiSessionManifest
-  readonly key: string
-  readonly snapshot: SessionSnapshot & { permissionMode: PermissionMode }
-  attach(replacement?: RuntimeRecoveryModelSelection): Promise<RuntimeRecoveryState>
-}
-
-async function captureRuntimeRecoveryScope(
-  target: RuntimeRecoveryTarget
-): Promise<MainRuntimeRecoveryScope> {
-  const current = getCurrentSessionPayload()
-  if (
-    current.phiSessionId !== target.sessionId ||
-    current.path !== target.sessionPath ||
-    current.projectId !== target.projectId ||
-    current.sessionGeneration !== target.sessionGeneration
-  )
-    throw new StaleSessionError()
-  const manifest = findPhiSessionById(target.sessionId)
-  if (
-    !manifest ||
-    manifest.projectId !== target.projectId ||
-    manifest.projectLocation?.kind !== 'ssh'
-  )
-    throw new Error('恢复目标不是已绑定的远程会话')
-  const key = resolveSessionKeyAlias(currentSessionKey)
-  const snapshot = {
-    path: currentSessionPath,
-    cwd: currentCwd,
-    permissionMode: currentPermissionMode
-  }
-  const lifecycle = getLifecycleForKey(key)
-  let generation = lifecycle.currentGeneration
-  let record = lifecycle.currentRecord
-  let promptGeneration = getPromptGeneration(key)
-  let selected = true
-  const readBinding = (): ReturnType<typeof resolveRemoteWorkspaceHostBinding> | undefined => {
-    try {
-      return resolveRemoteWorkspaceHostBinding({
-        sessionId: target.sessionId,
-        projectId: target.projectId
-      })
-    } catch {
-      return undefined
-    }
-  }
-  const selectedBinding = readBinding()
-  const binding = selectedBinding?.cacheKey
-  const journal = JSON.stringify([
-    manifest.runtimeRef?.ompSessionId,
-    manifest.runtimeRef?.journalBasename
-  ])
-  const currentProject = getProject(target.projectId)
-  const readProject = (): string => {
-    const project = getProject(target.projectId)
-    const profile =
-      project?.location.kind === 'ssh'
-        ? getRemoteHostProfile(project.location.hostProfileId)
-        : undefined
-    return JSON.stringify([
-      project?.location,
-      project?.workingDirectory,
-      profile ? remoteConnectionConfigForProfile(profile) : null,
-      project?.location.kind === 'ssh' ? projectRemoteRuntimeRoot(project).configured : null
-    ])
-  }
-  const projectBinding = readProject()
-  const assertCurrent = (): void => {
-    const latest = findPhiSessionById(target.sessionId)
-    if (
-      (selected &&
-        (!sameCanonicalSessionKey(key, currentSessionKey) || currentCwd !== snapshot.cwd)) ||
-      getLifecycleForKey(key) !== lifecycle ||
-      !lifecycle.isCurrentGeneration(generation) ||
-      lifecycle.currentRecord !== record ||
-      getPromptGeneration(key) !== promptGeneration ||
-      latest?.projectId !== target.projectId ||
-      latest?.cwd !== snapshot.cwd ||
-      JSON.stringify([latest?.runtimeRef?.ompSessionId, latest?.runtimeRef?.journalBasename]) !==
-        journal ||
-      readBinding()?.cacheKey !== binding ||
-      readProject() !== projectBinding
-    )
-      throw new StaleSessionError()
-  }
-  assertCurrent()
-  const pending = Symbol('pending')
-  const resolved = record
-    ? await Promise.race([record.promise, Promise.resolve(pending)]).catch(() => null)
-    : null
-  assertCurrent()
-  const ready = resolved === pending ? null : resolved
-  const busy = (): boolean =>
-    Boolean(
-      hasActivePromptRun(key) ||
-      runnerRegistry.getActiveRun(target.sessionId) ||
-      manualCompactionIds.has(target.sessionId) ||
-      ready?.session.hasActiveAgentRuns?.() ||
-      (record && resolved === pending)
-    )
-  const assertIdle = (): void => {
-    if (busy()) throw new Error('请等待原会话和专家任务结束后再恢复')
-  }
-  let live = false
-  if (ready && ownsRemoteRuntimeSession(ready.session.runtimeSessionId)) {
-    try {
-      live = getPhiEngine().sessions.has(ready.session.runtimeSessionId)
-    } catch {
-      live = false
-    }
-  }
-  let issue: RuntimeRecoveryIssue =
-    runtimeRecoveryFailures.get(target.sessionId) ??
-    (manifest.runtimeRecoveryError
-      ? describeRemoteRecoveryFailure(
-          new RuntimeReferenceError(manifest.runtimeRecoveryError.code, '')
-        ).issue
-      : 'disconnected')
-  let validReference = false
-  if (manifest.runtimeRef) {
-    try {
-      const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
-      if (!selectedBinding || currentProject?.location.kind !== 'ssh')
-        throw new Error('项目或主机身份不匹配')
-      assertRuntimeReferenceProject(manifest, {
-        ...reference,
-        hostProfileId: currentProject.location.hostProfileId,
-        bindingHash: facadeBindingHash(selectedBinding),
-        projectId: currentProject.id,
-        projectRoot: selectedBinding.canonicalRoot
-      })
-      assertRuntimeScope(reference, {
-        ...reference,
-        hostProfileId: currentProject.location.hostProfileId,
-        bindingHash: facadeBindingHash(selectedBinding),
-        projectId: currentProject.id,
-        projectRoot: selectedBinding.canonicalRoot
-      })
-      validReference = true
-    } catch (error) {
-      issue = selectedBinding ? describeRemoteRecoveryFailure(error).issue : 'binding-changed'
-    }
-  }
-  if (!remoteOmpRpcEnabled) issue = 'not-enabled'
-  if (
-    remoteOmpRpcEnabled &&
-    manifest.model &&
-    !busy() &&
-    !runtimeRecoveryOperations.has(target.sessionId)
-  ) {
-    const runtime = await getAuthManager().getRuntime()
-    assertCurrent()
-    const saved = resolveRuntimeModelSelection(runtime, manifest.model)
-    if (!saved || saved.migratedFrom) issue = 'model-unavailable'
-  }
-  const state: RuntimeRecoveryState = {
-    target,
-    phase: live
-      ? 'connected'
-      : busy() || runtimeRecoveryOperations.has(target.sessionId)
-        ? 'busy'
-        : manifest.runtimeRef || manifest.runtimeRecoveryError
-          ? 'recovery-required'
-          : 'not-started',
-    issue,
-    message: runtimeRecoveryMessage(issue),
-    canResume: !live && !busy() && remoteOmpRpcEnabled && validReference,
-    canContinueFromSummary:
-      remoteOmpRpcEnabled &&
-      Boolean(manifest.runtimeRef || manifest.runtimeRecoveryError) &&
-      currentProject?.location.kind === 'ssh',
-    ...(manifest.model ? { savedModel: manifest.model } : {})
-  }
-  const scope: MainRuntimeRecoveryScope = {
-    state,
-    manifest,
-    key,
-    snapshot,
-    assertCurrent,
-    assertIdle,
-    attach: async (replacement) => {
-      assertCurrent()
-      assertIdle()
-      if (state.issue === 'model-unavailable' && !replacement)
-        throw new RemoteRecoveryError('MODEL_UNAVAILABLE', '请先选择可用的替代模型')
-      const controller = new AbortController()
-      let finish!: () => void
-      const done = new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      runtimeRecoveryOperations.set(target.sessionId, { controller, done })
-      try {
-        const previous = lifecycle.advance()
-        generation = lifecycle.currentGeneration
-        record = lifecycle.currentRecord
-        advancePromptGeneration(key)
-        promptGeneration = getPromptGeneration(key)
-        selected = false
-        notifySessionChanged()
-        await cleanupSessionRecord(previous)
-        assertCurrent()
-        controller.signal.throwIfAborted()
-        const creating = getAgentSession(
-          key,
-          snapshot,
-          {
-            signal: controller.signal,
-            assertCurrent: () => {
-              controller.signal.throwIfAborted()
-              assertCurrent()
-            }
-          },
-          { ...(replacement ? { replacementModel: replacement } : {}) }
-        )
-        record = lifecycle.currentRecord
-        const result = await creating
-        assertCurrent()
-        controller.signal.throwIfAborted()
-        if (
-          !ownsRemoteRuntimeSession(result.session.runtimeSessionId) ||
-          !getPhiEngine().sessions.has(result.session.runtimeSessionId)
-        )
-          throw new Error('原远程会话尚未确认连接')
-        const confirmed = findPhiSessionById(target.sessionId)
-        if (confirmed?.model)
-          sessionModelSelections.set(resolveSessionKeyAlias(key), confirmed.model)
-        if (confirmed?.thinkingLevel === undefined)
-          sessionThinkingLevels.delete(resolveSessionKeyAlias(key))
-        else sessionThinkingLevels.set(resolveSessionKeyAlias(key), confirmed.thinkingLevel)
-        runtimeRecoveryFailures.delete(target.sessionId)
-        notifySessionChanged()
-        return {
-          ...state,
-          target: { ...target, sessionGeneration: generation },
-          phase: 'connected',
-          issue: undefined,
-          message: '原会话已恢复，未重发消息或任务。',
-          canResume: false
-        }
-      } catch (error) {
-        runtimeRecoveryFailures.set(target.sessionId, describeRemoteRecoveryFailure(error).issue)
-        notifySessionChanged()
-        throw error
-      } finally {
-        runtimeRecoveryOperations.delete(target.sessionId)
-        finish()
-      }
-    }
-  }
-  return scope
-}
-
-const runtimeRecoveryController = createRuntimeRecoveryController<MainRuntimeRecoveryScope>({
-  capture: captureRuntimeRecoveryScope,
-  resolveModel: async (selection, scope) => {
-    const runtime = await getAuthManager().getRuntime()
-    scope.assertCurrent()
-    const resolved = resolveRuntimeModelSelection(runtime, selection)
-    if (!resolved || resolved.migratedFrom)
-      throw new RemoteRecoveryError('MODEL_UNAVAILABLE', '所选替代模型目前不可用')
-    return resolved.selection
-  },
-  resume: (scope, replacement) => scope.attach(replacement),
-  summarize: (scope) =>
-    buildRuntimeRecoverySummary({
-      sourceSessionId: scope.manifest.sessionId,
-      projectId: scope.manifest.projectId ?? null,
-      events: readSessionEvents(scope.manifest.sessionId)
-    }),
-  continueFromSummary: async (scope, summary: RuntimeRecoverySummary) => {
-    scope.assertCurrent()
-    scope.assertIdle()
-    const created = createRemoteManagedSession(scope.manifest.projectId!)
-    appendSessionEvent(created.sessionId, {
-      type: 'runtime_recovery_summary',
-      content: summary.content,
-      provenance: summary.provenance,
-      contentSha256: createHash('sha256').update(summary.content).digest('hex')
-    })
-    const switched = await disposeAndSwitchSession(
-      created.path,
-      created.cwd,
-      created.permissionMode
-    )
-    return {
-      path: created.path,
-      phiSessionId: created.sessionId,
-      projectId: scope.manifest.projectId!,
-      sessionGeneration: switched.sessionGeneration,
-      sourceSessionId: scope.manifest.sessionId,
-      connected: false
-    }
-  }
-})
-
 function getCurrentSessionPayload(): CurrentSessionPayload {
   currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, {
     path: currentSessionPath,
@@ -7588,35 +6714,6 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
     sessionGeneration: getCurrentLifecycle().currentGeneration,
     permissionMode: currentPermissionMode,
     ...getSessionStatusPayload(currentSessionKey, currentSessionPath, currentCwd)
-  }
-}
-
-async function getCurrentSessionPayloadWithMessages(): Promise<
-  ReturnType<typeof getCurrentSessionPayload> & {
-    messages: unknown[]
-  }
-> {
-  const payload = getCurrentSessionPayload()
-  const phiSessionId = payload.phiSessionId ?? getPhiSessionIdForKey(currentSessionKey)
-  if (!payload.path && !phiSessionId) {
-    return { ...payload, messages: [] }
-  }
-
-  const current = payload.path
-    ? phiSessionId
-      ? await getCurrentResolvedSessionIfReady()
-      : await getCurrentResolvedSession()
-    : null
-  return {
-    ...payload,
-    messages: [
-      ...(current?.session.messages ?? []),
-      ...readPhiTimelineMessages(
-        current?.session.sessionFile ?? payload.path,
-        payload.cwd,
-        phiSessionId
-      )
-    ]
   }
 }
 
@@ -7675,33 +6772,6 @@ async function invalidateAgentSession(): Promise<void> {
   )
   notifySessionChanged()
   void cleanupSessionRecord(previous)
-}
-
-async function stopActivePrompt(): Promise<void> {
-  // Invalidate queued work even before its queue callback sets activePromptRun.
-  advancePromptGeneration(currentSessionKey)
-  const run = getActivePromptRun(currentSessionKey)
-  if (!run) {
-    const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
-    const recovery = phiSessionId ? runtimeRecoveryOperations.get(phiSessionId) : undefined
-    if (recovery) {
-      recovery.controller.abort(new Error('会话恢复已取消'))
-      await recovery.done
-      return
-    }
-    const operation = phiSessionId ? manualCompactionOperations.get(phiSessionId) : undefined
-    if (operation) {
-      operation.cancelled = true
-      try {
-        if (operation.session) await operation.session.abort()
-      } finally {
-        await operation.done
-      }
-    }
-    return
-  }
-
-  await stopPromptRun(currentSessionKey, run, false)
 }
 
 async function stopPromptRun(
@@ -8460,67 +7530,6 @@ async function applyNextRunConfiguration(
   await session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
 }
 
-function captureCurrentSelectionTarget(): {
-  key: string
-  phiSessionId: string | undefined
-  rpc: boolean
-  assertCurrent(): void
-  resolved(): Promise<AgentSessionResult | null>
-} {
-  const key = resolveSessionKeyAlias(currentSessionKey)
-  const cwd = currentCwd
-  const phiSessionId = getPhiSessionIdForKey(key)
-  const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
-  const lifecycle = getCurrentLifecycle()
-  const generation = lifecycle.currentGeneration
-  const record = lifecycle.currentRecord
-  const rpc = Boolean(
-    manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh')
-  )
-  const identity = (value: typeof manifest): string =>
-    JSON.stringify([
-      value?.projectId,
-      value?.cwd,
-      value?.cwdRealPath,
-      value?.projectLocation,
-      value?.runtimeRef?.ompSessionId,
-      value?.runtimeRef?.journalBasename
-    ])
-  const initialIdentity = identity(manifest)
-  const assertCurrent = (): void => {
-    const latest = phiSessionId ? findPhiSessionById(phiSessionId) : null
-    if (
-      !sameCanonicalSessionKey(key, currentSessionKey) ||
-      currentCwd !== cwd ||
-      getPhiSessionIdForKey(currentSessionKey) !== phiSessionId ||
-      getCurrentLifecycle() !== lifecycle ||
-      !lifecycle.isCurrentGeneration(generation) ||
-      lifecycle.currentRecord !== record ||
-      identity(latest) !== initialIdentity
-    )
-      throw new StaleSessionError()
-    if (
-      rpc &&
-      (hasActivePromptRun(key) || (phiSessionId && runnerRegistry.getActiveRun(phiSessionId)))
-    )
-      throw new Error('Remote selection requires an idle Phi session')
-  }
-  assertCurrent()
-  return {
-    key,
-    phiSessionId,
-    rpc,
-    assertCurrent,
-    resolved: async () => {
-      const result = record ? await record.promise : null
-      assertCurrent()
-      if (rpc && result?.session.hasActiveAgentRuns?.())
-        throw new Error('请等待专家任务运行结束后再修改会话')
-      return result
-    }
-  }
-}
-
 function captureCurrentRpcConfigurationTarget(): ReturnType<
   typeof captureSessionControlTarget
 > | null {
@@ -8985,61 +7994,75 @@ app.whenReady().then(async () => {
       return renderMoleculeSvg(value, width, height)
     }
   )
-  ipcMain.handle(IPC.agent.prompt, async (_, text: string, targetInput?: unknown) => {
-    const normalizedText = typeof text === 'string' ? text.trim() : ''
-    const images = validatePromptImages(
-      targetInput && typeof targetInput === 'object'
-        ? (targetInput as Record<string, unknown>).images
-        : undefined
-    )
-    if (!normalizedText && images.length === 0) return null
-    const promptTarget = parsePromptTarget(targetInput)
-    if (targetInput !== undefined) {
-      await alignCurrentSessionToPromptTarget(targetInput)
+  const promptTargetControlOptions: PromptTargetControlOptions = {
+    state: {
+      getCurrentSessionPath: () => currentSessionPath,
+      getCurrentCwd: () => currentCwd,
+      sessionPermissionModes
+    },
+    identity: {
+      createPhiSessionKey,
+      createSessionKey,
+      linkPhiManagedSessionKey,
+      setPhiSessionIdForKey,
+      resolveSessionKeyAlias
+    },
+    lifecycle: {
+      getLifecycleForKey,
+      getCurrentLifecycle,
+      disposeAndSwitchSession,
+      openRuntimeSessionManager,
+      resolveSessionPermissionMode
     }
-
-    return submitPromptRun({
-      sessionKey: resolveSessionKeyAlias(currentSessionKey),
-      snapshot: {
-        path: runtimeSessionPath(currentSessionPath),
-        cwd: currentCwd,
-        permissionMode: currentPermissionMode
+  }
+  const agentIpcOptions: AgentIpcOptions = {
+    ipcMain,
+    state: {
+      getCurrentSessionKey: () => currentSessionKey,
+      getCurrentSessionPath: () => currentSessionPath,
+      getCurrentCwd: () => currentCwd,
+      getCurrentPermissionMode: () => currentPermissionMode,
+      resolveSessionKeyAlias,
+      runtimeSessionPath
+    },
+    prompt: {
+      parseTarget: (input) => parsePromptTarget(input, () => currentCwd),
+      alignCurrentSessionToTarget: (input) =>
+        alignCurrentSessionToPromptTarget(input, promptTargetControlOptions),
+      submit: submitPromptRun
+    },
+    stop: {
+      advancePromptGeneration,
+      getActivePromptRun,
+      getPhiSessionIdForKey,
+      getRuntimeRecoveryOperation: (sessionId) => runtimeRecoveryOperations.get(sessionId),
+      getManualCompactionOperation: (sessionId) => manualCompactionOperations.get(sessionId),
+      stopPromptRun: (sessionKey, run, invalidateGeneration) =>
+        stopPromptRun(sessionKey, run as PromptRun, invalidateGeneration)
+    },
+    agentRuns: {
+      control: {
+        resolveRecoverableJobOrigin,
+        findPhiSessionById,
+        ownsRemoteRuntimeSession,
+        resolveOriginSession,
+        hasEngineSession: (sessionId) => getPhiEngine().sessions.has(sessionId),
+        currentRuntimeOriginScope,
+        steer: (params) => getPhiEngine().agentRuns.steer(params),
+        stop: (params) => getPhiEngine().agentRuns.stop(params)
       },
-      text: normalizedText,
-      images,
-      promptTarget,
-      planMode: promptTarget?.planMode === true
-    })
-  })
-
-  ipcMain.handle(IPC.agent.readPromptImage, async (_, ref: unknown) => readPromptImage(ref))
-  ipcMain.handle(IPC.workspaceChanges.readDiff, async (_, ref: unknown) => readWorkspaceDiff(ref))
-
-  ipcMain.handle(IPC.agent.stop, async () => {
-    await stopActivePrompt()
-  })
-
-  // A delegation card steers or stops the run it shows. The card knows which agent session
-  // owns the run; the worker answers if the run is still there.
-  ipcMain.handle(
-    IPC.agent.steerRun,
-    async (
-      _,
-      agentSessionId: unknown,
-      agentRunId: unknown,
-      message: unknown,
-      toolCallId?: unknown
-    ) => {
-      const text = typeof message === 'string' ? message.trim() : ''
-      if (!text) throw new Error('消息不能为空')
-      if (text.length > MAX_AGENT_STEER_LENGTH) throw new Error('消息过长')
-      await requestAgentRunControl('agentRun.steer', agentSessionId, agentRunId, text)
-      recordAgentSteer(agentSessionId, agentRunId, toolCallId, text)
+      persistence: {
+        resolveOriginSession,
+        appendSessionEvent: (phiSessionId, event) => appendSessionEvent(phiSessionId, event),
+        redactSensitiveText,
+        sendRunEventToWindow,
+        logUnexpectedError
+      }
     }
-  )
-  ipcMain.handle(IPC.agent.stopRun, async (_, agentSessionId: unknown, agentRunId: unknown) => {
-    await requestAgentRunControl('agentRun.stop', agentSessionId, agentRunId)
-  })
+  }
+  registerAgentPromptIpc(agentIpcOptions)
+  ipcMain.handle(IPC.workspaceChanges.readDiff, async (_, ref: unknown) => readWorkspaceDiff(ref))
+  registerAgentRunControlIpc(agentIpcOptions)
 
   ipcMain.handle(IPC.auth.status, async () => getAuthManager().getProviderStatuses())
   ipcMain.handle(IPC.auth.loginApiKey, async (_, providerId: string, key: string) => {
@@ -9166,459 +8189,206 @@ app.whenReady().then(async () => {
       throw new Error(`清理环境失败：${errorMessage(error)}`)
     }
   })
-  ipcMain.handle(IPC.models.list, async () => {
-    const runtime = await getAuthManager().getRuntime()
-    return selectableRuntimeModels(runtime).map((model) => ({
-      providerId: model.provider,
-      modelId: model.id,
-      name: model.name,
-      supportsImages: model.supportsImages ?? false,
-      thinkingLevels: getSupportedThinkingLevels(model)
-    }))
+  const modelSelectionTarget = {
+    getCurrentSessionKey: () => currentSessionKey,
+    getCurrentCwd: () => currentCwd,
+    resolveSessionKeyAlias,
+    getPhiSessionIdForKey,
+    findPhiSessionById,
+    getCurrentLifecycle,
+    sameCanonicalSessionKey,
+    isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
+    hasActivePromptRun,
+    getActiveSessionRun: (sessionId: string) => runnerRegistry.getActiveRun(sessionId)
+  }
+  const modelSessionState = {
+    getCurrentSessionPath: () => currentSessionPath,
+    getCurrentPermissionMode: () => currentPermissionMode,
+    sessionModelSelections,
+    sessionThinkingLevels
+  }
+  const modelSelectionRequests = {
+    nextModelSelectionRequest: () => ++modelSelectionRequest,
+    getLastRememberedModelSelectionRequest: () => lastRememberedModelSelectionRequest,
+    setLastRememberedModelSelectionRequest: (request: number) => {
+      lastRememberedModelSelectionRequest = request
+    },
+    setSelectedModel: (model: ModelSelection | null) => {
+      selectedModel = model
+    }
+  }
+  const modelSelectionOperations = {
+    resolveRuntimeModelSelection,
+    resolveSessionThinkingLevel
+  }
+  registerModelsIpc({
+    ipcMain,
+    selectionTarget: modelSelectionTarget,
+    sessionState: modelSessionState,
+    requests: modelSelectionRequests,
+    models: {
+      ...modelSelectionOperations,
+      selectableRuntimeModels,
+      resolveSessionModelSelection
+    }
   })
-  ipcMain.handle(
-    IPC.models.select,
-    async (_, providerId: string | null, modelId: string | null) => {
-      const target = captureCurrentSelectionTarget()
-      const request = ++modelSelectionRequest
-      const key = target.phiSessionId ?? resolveSessionKeyAlias(target.key)
-      const rememberSelection = (model: ModelSelection | null): void => {
-        if (request < lastRememberedModelSelectionRequest) return
-        writeLastSelectedModel(model)
-        selectedModel = model
-        lastRememberedModelSelectionRequest = request
-      }
-      const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(
-        async () => {
-          target.assertCurrent()
-          if (providerId === null && modelId === null) {
-            if (target.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
-            sessionModelSelections.set(resolveSessionKeyAlias(target.key), null)
-            if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: null })
-            rememberSelection(null)
-            return
-          }
-          if (typeof providerId !== 'string' || typeof modelId !== 'string') {
-            throw new Error('模型选择无效')
-          }
-          const runtime = await getAuthManager().getRuntime()
-          target.assertCurrent()
-          const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
-          if (!resolved || resolved.migratedFrom)
-            throw new Error(`未知模型: ${providerId}/${modelId}`)
-          const model = resolved.model
-          if (target.rpc) {
-            const current = await target.resolved()
-            target.assertCurrent()
-            const snapshot = {
-              path: currentSessionPath,
-              cwd: currentCwd,
-              permissionMode: currentPermissionMode
-            }
-            const preferred = selectionThinking(
-              model,
-              resolveSessionThinkingLevel(target.key, snapshot)
-            ).phi
-            if (current) {
-              if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
-                throw new Error('Remote selection requires an exact live attachment')
-              await current.session.setModel(model, {
-                assertCurrent: target.assertCurrent,
-                preferredThinkingLevel: preferred
-              })
-              target.assertCurrent()
-            } else {
-              if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
-                throw new Error('Remote selection requires an exact live attachment')
-              if (target.phiSessionId)
-                updateSessionManifest(target.phiSessionId, {
-                  model: { providerId, modelId },
-                  thinkingLevel: preferred
-                })
-            }
-            const key = resolveSessionKeyAlias(target.key)
-            sessionModelSelections.set(key, { providerId, modelId })
-            const confirmed = target.phiSessionId
-              ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
-              : preferred
-            if (confirmed === undefined) sessionThinkingLevels.delete(key)
-            else sessionThinkingLevels.set(key, confirmed)
-            rememberSelection({ providerId, modelId })
-            return
-          }
-          const nextModel = { providerId, modelId }
-          if (!hasActivePromptRun(target.key)) {
-            const current = await target.resolved()
-            if (current) await current.session.setModel(model)
-            target.assertCurrent()
-          }
-          sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
-          if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
-          rememberSelection(nextModel)
-        }
-      )
-      const settled = selection.then(
-        () => undefined,
-        () => undefined
-      )
-      sessionModelSelectionQueues.set(key, settled)
-      void settled.then(() => {
-        if (sessionModelSelectionQueues.get(key) === settled)
-          sessionModelSelectionQueues.delete(key)
-      })
-      return selection
-    }
-  )
-  ipcMain.handle(IPC.models.selected, async () => {
-    const snapshot: SessionSnapshot = {
-      path: currentSessionPath,
-      cwd: currentCwd,
-      permissionMode: currentPermissionMode
-    }
-    const resolved = resolveSessionModelSelection(currentSessionKey, snapshot)
-    if (resolved) {
-      const runtime = await getAuthManager().getRuntime()
-      return resolveRuntimeModelSelection(runtime, resolved)?.selection ?? resolved
-    }
-
-    return null
+  registerThinkingIpc({
+    ipcMain,
+    selectionTarget: modelSelectionTarget,
+    sessionState: {
+      ...modelSessionState,
+      getCurrentResolvedSession
+    },
+    models: modelSelectionOperations
   })
 
-  ipcMain.handle(IPC.thinking.select, async (_, level: ThinkingLevel) => {
-    const target = captureCurrentSelectionTarget()
-    if (target.rpc) {
-      const current = await target.resolved()
-      target.assertCurrent()
-      if (current) {
-        if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
-          throw new Error('Remote selection requires an exact live attachment')
-        await current.session.setThinkingLevel(level, target)
-        target.assertCurrent()
-      } else {
-        if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
-          throw new Error('Remote selection requires an exact live attachment')
-        const runtime = await getAuthManager().getRuntime()
-        target.assertCurrent()
-        const manifest = target.phiSessionId ? findPhiSessionById(target.phiSessionId) : null
-        const selected =
-          manifest?.model && resolveRuntimeModelSelection(runtime, manifest.model)?.model
-        if (!selected) throw new Error('Remote thinking selection requires a trusted model')
-        const normalized = selectionThinking(selected, level, true).phi
-        if (target.phiSessionId)
-          updateSessionManifest(target.phiSessionId, { thinkingLevel: normalized })
-      }
-      const key = resolveSessionKeyAlias(target.key)
-      const confirmed = target.phiSessionId
-        ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
-        : level
-      if (confirmed === undefined) sessionThinkingLevels.delete(key)
-      else sessionThinkingLevels.set(key, confirmed)
-      return
+  const currentContextUsageOptions: CurrentContextUsageOptions = {
+    getCurrentPayload: getCurrentSessionPayload,
+    getCurrentSessionKey: () => currentSessionKey,
+    getCurrentSessionPath: () => currentSessionPath,
+    getCurrentCwd: () => currentCwd,
+    getCurrentPermissionMode: () => currentPermissionMode,
+    findPhiManifestForSession,
+    runtimeSessionPathForSnapshot,
+    getCurrentLifecycle,
+    getAgentSession
+  }
+  const currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions = {
+    getCurrentPayload: getCurrentSessionPayload,
+    getCurrentSessionKey: () => currentSessionKey,
+    getPhiSessionIdForKey,
+    getCurrentLifecycle,
+    getCurrentResolvedSession
+  }
+  const sessionCompactionControlOptions: SessionCompactionControlOptions = {
+    workspace: { agentDir: AGENT_DIR },
+    state: {
+      getCurrentPayload: getCurrentSessionPayload,
+      getCurrentSessionKey: () => currentSessionKey,
+      getCurrentSessionPath: () => currentSessionPath,
+      getCurrentCwd: () => currentCwd,
+      getCurrentPermissionMode: () => currentPermissionMode,
+      manualCompactionIds,
+      manualCompactionOperations
+    },
+    sessions: {
+      findPhiManifestForSession,
+      runtimeSessionPathForSnapshot,
+      ensurePhiSessionId,
+      hasActivePromptRun,
+      captureSessionControlTarget,
+      getSessionGeneration: (sessionKey) => getLifecycleForKey(sessionKey).currentGeneration
+    },
+    events: {
+      sendToAllWindows,
+      notifySessionChanged,
+      logUnexpectedError,
+      flushPendingContinuations
     }
-    sessionThinkingLevels.set(resolveSessionKeyAlias(target.key), level)
-    if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { thinkingLevel: level })
-    if (hasActivePromptRun(target.key)) return
-    const current = await target.resolved()
-    if (current) await current.session.setThinkingLevel(level)
+  }
+  registerSessionsIpc({
+    ipcMain,
+    state: {
+      getCurrentSessionKey: () => currentSessionKey,
+      getCurrentSessionPath: () => currentSessionPath,
+      getCurrentCwd: () => currentCwd,
+      getCurrentPermissionMode: () => currentPermissionMode,
+      setCurrentPermissionMode: (permissionMode) => {
+        currentPermissionMode = permissionMode
+      },
+      nextSessionSwitchRequest: () => ++sessionSwitchRequest,
+      getSessionSwitchRequest: () => sessionSwitchRequest,
+      sessionPermissionModes,
+      loadedSkillNamesBySession
+    },
+    reads: {
+      getNoProjectTaskFolder,
+      getCurrentSessionPayload,
+      getCurrentSessionPayloadWithMessages: () =>
+        getCurrentSessionPayloadWithMessages(currentSessionPayloadMessagesOptions),
+      getCurrentContextUsage: () => getCurrentContextUsage(currentContextUsageOptions)
+    },
+    recovery: {
+      state: {
+        getCurrentPayload: getCurrentSessionPayload,
+        getCurrentSessionKey: () => currentSessionKey,
+        getCurrentSessionPath: () => currentSessionPath,
+        getCurrentCwd: () => currentCwd,
+        getCurrentPermissionMode: () => currentPermissionMode,
+        isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
+        runtimeRecoveryOperations,
+        runtimeRecoveryFailures,
+        manualCompactionIds,
+        sessionModelSelections,
+        sessionThinkingLevels
+      },
+      identity: {
+        resolveSessionKeyAlias,
+        sameCanonicalSessionKey,
+        getPromptGeneration,
+        advancePromptGeneration
+      },
+      lifecycle: {
+        getLifecycleForKey,
+        hasActivePromptRun,
+        runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
+        cleanupSessionRecord,
+        getAgentSession
+      },
+      projects: { projectRemoteRuntimeRoot },
+      models: { resolveRuntimeModelSelection },
+      sessions: { createRemoteManagedSession, disposeAndSwitchSession },
+      events: { notifySessionChanged }
+    },
+    compaction: {
+      getSettings: (target) =>
+        getCurrentAutoCompactionSettings(target, sessionCompactionControlOptions),
+      setSettings: (target, patch) =>
+        setCurrentAutoCompactionSettings(target, patch, sessionCompactionControlOptions),
+      compact: (target) => compactCurrentSession(target, sessionCompactionControlOptions)
+    },
+    identity: {
+      createSessionKey,
+      resolveSessionKeyAlias,
+      setPhiSessionIdForKey,
+      getPhiSessionIdForKey,
+      findPhiManifestForSession,
+      runtimeSessionPath
+    },
+    lifecycle: {
+      createPhiManagedSession,
+      disposeAndSwitchSession,
+      openRuntimeSessionManager,
+      resolveSessionPermissionMode,
+      getLifecycleForKey,
+      getAgentSession,
+      waitForSessionCleanup
+    },
+    status: {
+      runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
+      activePromptEntries: () => [...activePromptRuns.entries()],
+      stopPromptRun: (sessionKey, run) => stopPromptRun(sessionKey, run as PromptRun),
+      getSessionStatusPayload,
+      notifySessionChanged
+    },
+    remote: {
+      scheduleRemoteProjectCheck,
+      remoteNotebookSessionIds,
+      disposeRemoteNotebookBackend
+    },
+    browser: {
+      getRegistry: () => browserWorkspaceRegistry
+    },
+    titles: {
+      getGenerator: getSessionTitleGenerator,
+      getGeneratorIfCreated: () => sessionTitleGenerator,
+      context: (path) => sessionTitleContext(path),
+      manualRequests: manualTitleRequests,
+      enqueueWrite: enqueueSessionTitleWrite,
+      renameConversation
+    },
+    windows: { getActiveWindow, requireMainWindowRenderer }
   })
-  ipcMain.handle(IPC.thinking.selected, async () => {
-    const resolved = sessionThinkingLevels.get(resolveSessionKeyAlias(currentSessionKey))
-    if (resolved) return resolved
-
-    const current = await getCurrentResolvedSession()
-    if (current) {
-      const { session } = current
-      return session.thinkingLevel
-    }
-    return resolveSessionThinkingLevel(currentSessionKey, {
-      path: currentSessionPath,
-      cwd: currentCwd,
-      permissionMode: currentPermissionMode
-    })
-  })
-
-  ipcMain.handle(IPC.sessions.list, async () => listSessions(getNoProjectTaskFolder()))
-  ipcMain.handle(IPC.sessions.homeActivity, async () => getHomeActivity())
-  ipcMain.handle(IPC.sessions.current, async () => getCurrentSessionPayloadWithMessages())
-  ipcMain.handle(IPC.sessions.contextUsage, async () => getCurrentContextUsage())
-  ipcMain.handle(IPC.sessions.runtimeRecovery, async (_, target: unknown) =>
-    runtimeRecoveryController.getState(target)
-  )
-  ipcMain.handle(IPC.sessions.resumeRuntime, async (_, target: unknown, replacement?: unknown) =>
-    runtimeRecoveryController.resume(target, replacement)
-  )
-  ipcMain.handle(IPC.sessions.continueRuntimeSummary, async (_, target: unknown, sha256: unknown) =>
-    runtimeRecoveryController.continueFromSummary(target, sha256)
-  )
-  ipcMain.handle(IPC.sessions.autoCompactionSettings, async (_, target: unknown) =>
-    getCurrentAutoCompactionSettings(target)
-  )
-  ipcMain.handle(
-    IPC.sessions.autoCompactionSettingsSet,
-    async (_, target: unknown, patch: unknown) => setCurrentAutoCompactionSettings(target, patch)
-  )
-  ipcMain.handle(IPC.sessions.compact, async (_, target: unknown) => compactCurrentSession(target))
-  ipcMain.handle(
-    IPC.sessions.updatePermissionMode,
-    async (event, value: unknown, target: unknown) => {
-      requireMainWindowRenderer(event)
-      const permissionMode = validateSessionPermissionModeUpdate(
-        value,
-        target,
-        getCurrentSessionPayload()
-      )
-      currentPermissionMode = permissionMode
-      sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-      const phiSessionId =
-        getPhiSessionIdForKey(currentSessionKey) ??
-        (currentSessionPath
-          ? findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)?.sessionId
-          : undefined)
-      if (phiSessionId) {
-        updateSessionManifest(phiSessionId, { permissionMode })
-      }
-      notifySessionChanged()
-      return getCurrentSessionPayload()
-    }
-  )
-  ipcMain.handle(IPC.sessions.create, async () => {
-    const cwd = getNoProjectTaskFolder()
-    const session = createPhiManagedSession(cwd, 'auto')
-    return disposeAndSwitchSession(session.path, cwd, session.permissionMode)
-  })
-  ipcMain.handle(IPC.sessions.fork, async (_, sourceId: unknown, eventId: unknown) => {
-    if (typeof sourceId !== 'string' || typeof eventId !== 'string') {
-      throw new Error('无效的会话分叉请求')
-    }
-    const source = findPhiSessionById(sourceId)
-    if (!source) throw new Error('来源会话不存在')
-    if (
-      source.status === 'running' ||
-      source.status === 'needs_approval' ||
-      source.status === 'needs_input' ||
-      runnerRegistry.getActiveRun(sourceId)
-    ) {
-      throw new Error('请等待来源会话运行结束后再分叉')
-    }
-    if (!source.runtimeSessionPath) throw new Error('来源会话尚无可分叉的历史')
-    const events = readSessionEvents(sourceId)
-    const userMessages = events.filter((event) => event.type === 'user_message')
-    const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
-    if (selectedIndex < 0) throw new Error('分叉消息不存在')
-    const result = await getPhiEngine().history.fork({
-      path: source.runtimeSessionPath,
-      cwd: source.cwd,
-      userMessages: userMessages
-        .slice(0, selectedIndex + 2)
-        .map((event) => (typeof event.content === 'string' ? event.content : '')),
-      selectedIndex
-    })
-    try {
-      const fork = forkPhiSession(sourceId, eventId, result.path)
-      notifySessionChanged()
-      return { path: phiOnlySessionPath(fork.sessionId), phiSessionId: fork.sessionId }
-    } catch (error) {
-      deleteSession(result.path)
-      throw error
-    }
-  })
-  ipcMain.handle(IPC.sessions.switch, async (_, path: string) => {
-    const request = ++sessionSwitchRequest
-    const phiOnlySessionId = phiSessionIdFromPath(path)
-    if (phiOnlySessionId) {
-      const manifest = findPhiSessionById(phiOnlySessionId)
-      if (!manifest) return null
-      const targetKey = createSessionKey(path, manifest.cwd)
-      setPhiSessionIdForKey(targetKey, phiOnlySessionId)
-      sessionPermissionModes.set(resolveSessionKeyAlias(targetKey), manifest.permissionMode)
-      const shouldBecomeCurrent = request === sessionSwitchRequest
-      const target = shouldBecomeCurrent
-        ? await disposeAndSwitchSession(path, manifest.cwd, manifest.permissionMode, {
-            notify: false
-          })
-        : {
-            path,
-            cwd: manifest.cwd,
-            sessionGeneration: getLifecycleForKey(targetKey).currentGeneration,
-            permissionMode: manifest.permissionMode
-          }
-      if (shouldBecomeCurrent) {
-        acknowledgeSession(path, manifest.cwd)
-      }
-      const project = manifest.projectId ? getProject(manifest.projectId) : undefined
-      const projectLocation = manifest.projectLocation ?? project?.location
-      if (shouldBecomeCurrent && projectLocation?.kind === 'ssh' && manifest.projectId) {
-        scheduleRemoteProjectCheck(manifest.sessionId, manifest.projectId)
-      }
-      return {
-        path,
-        phiSessionId: manifest.sessionId,
-        cwd: target.cwd,
-        displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
-        ...(manifest.projectId ? { projectId: manifest.projectId } : {}),
-        ...(projectLocation ? { projectLocation } : {}),
-        sessionGeneration: target.sessionGeneration,
-        permissionMode: manifest.permissionMode,
-        ...getSessionStatusPayload(targetKey, path, target.cwd),
-        messages: readPhiTimelineMessages(null, target.cwd, phiOnlySessionId)
-      }
-    }
-
-    // The session file already knows its own cwd (a project session was created with
-    // that project's folder as cwd) — read it so switching to it also restores the
-    // right permission mode, regardless of which sidebar section it was opened from.
-    const cwd = (await openRuntimeSessionManager(path)).getCwd()
-    const targetKey = createSessionKey(path, cwd)
-    const permissionMode = resolveSessionPermissionMode(targetKey, { path, cwd })
-    const shouldBecomeCurrent = request === sessionSwitchRequest
-    const target = shouldBecomeCurrent
-      ? await disposeAndSwitchSession(path, cwd, permissionMode, { notify: false })
-      : {
-          path,
-          cwd,
-          sessionGeneration: getLifecycleForKey(createSessionKey(path, cwd)).currentGeneration,
-          permissionMode
-        }
-    const targetLifecycle = getLifecycleForKey(targetKey)
-    const targetSnapshot: SessionSnapshot = { path, cwd, permissionMode }
-    let session: AgentSessionInstance
-    try {
-      const result = await getAgentSession(targetKey, targetSnapshot)
-      session = result.session
-    } catch (error) {
-      if (
-        isStaleSessionError(error) ||
-        !targetLifecycle.isCurrentGeneration(target.sessionGeneration)
-      ) {
-        return null
-      }
-      throw error
-    }
-    if (!targetLifecycle.isCurrentGeneration(target.sessionGeneration)) {
-      return null
-    }
-    if (shouldBecomeCurrent && target.path) {
-      acknowledgeSession(target.path, target.cwd)
-    }
-    const sessionPath = session.sessionFile ?? path
-    const phiSessionId = getPhiSessionIdForKey(targetKey)
-    const linkedManifest = phiSessionId
-      ? findPhiSessionById(phiSessionId)
-      : findPhiSessionByRuntimePath(sessionPath, target.cwd)
-    const project = linkedManifest?.projectId ? getProject(linkedManifest.projectId) : undefined
-    const projectLocation = linkedManifest?.projectLocation ?? project?.location
-    return {
-      path: phiSessionId ? phiOnlySessionPath(phiSessionId) : sessionPath,
-      ...(phiSessionId ? { phiSessionId } : {}),
-      cwd: target.cwd,
-      displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
-      ...(linkedManifest?.projectId ? { projectId: linkedManifest.projectId } : {}),
-      ...(projectLocation ? { projectLocation } : {}),
-      sessionGeneration: target.sessionGeneration,
-      permissionMode,
-      ...getSessionStatusPayload(targetKey, sessionPath, target.cwd),
-      messages: [
-        ...session.messages,
-        ...readPhiTimelineMessages(sessionPath, target.cwd, getPhiSessionIdForKey(targetKey))
-      ]
-    }
-  })
-  ipcMain.handle(IPC.sessions.acknowledge, async (_, path: string) => {
-    const phiOnlySessionId = phiSessionIdFromPath(path)
-    const cwd = phiOnlySessionId
-      ? (findPhiSessionById(phiOnlySessionId)?.cwd ?? currentCwd)
-      : (await openRuntimeSessionManager(path)).getCwd()
-    return acknowledgeSession(path, cwd)
-  })
-  ipcMain.handle(IPC.sessions.delete, async (_, path: string) => {
-    sessionTitleGenerator?.cancel(path)
-    const deletionCwd = currentCwd
-    const phiSessionId = phiSessionIdFromPath(path)
-    const manifest = phiSessionId
-      ? findPhiSessionById(phiSessionId)
-      : findPhiSessionByRuntimePath(path, deletionCwd)
-    const activeEntry = [...activePromptRuns.entries()].find(
-      ([, run]) => run.phiSessionId === manifest?.sessionId
-    )
-    if (activeEntry) await stopPromptRun(activeEntry[0], activeEntry[1])
-    if (currentSessionPath === path) {
-      await disposeAndSwitchSession(undefined)
-    }
-    // Let an aborted run finish persisting before unlinking its history; otherwise
-    // the final SDK write can recreate a conversation the user just deleted.
-    await waitForSessionCleanup({
-      path: manifest?.runtimeSessionPath ?? runtimeSessionPath(path),
-      cwd: manifest?.cwd ?? currentCwd,
-      permissionMode: currentPermissionMode
-    })
-    if (manifest?.sessionId && browserWorkspaceRegistry) {
-      try {
-        await browserWorkspaceRegistry.disposeSession(manifest.sessionId)
-      } catch {
-        writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
-      }
-    }
-    if (
-      manifest?.projectId &&
-      remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
-    ) {
-      await disposeRemoteNotebookBackend(manifest.projectId)
-    }
-    // Session-private drafts and their registries are deleted here; Save As copies are project
-    // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
-    deleteSession(path)
-    if (manifest) loadedSkillNamesBySession.delete(manifest.sessionId)
-  })
-  ipcMain.handle(IPC.sessions.generateTitle, async (event, path: unknown) => {
-    requireMainWindowRenderer(event)
-    if (typeof path !== 'string' || !path || path.length > 8192) {
-      throw new Error('对话路径无效')
-    }
-    const context = sessionTitleContext(path)
-    if (runnerRegistry.getActiveRun(context.manifest.sessionId)) {
-      throw new Error('请等待对话运行结束后再生成标题')
-    }
-    const title = await getSessionTitleGenerator().generate({ sessionPath: path, ...context })
-    if (!title) throw new Error('暂时无法生成标题，请稍后重试，并检查当前模型是否可用')
-    return title
-  })
-  ipcMain.handle(IPC.sessions.rename, async (_, path: string, name: string) => {
-    const trimmedName = name.trim()
-    if (!trimmedName) return
-
-    manualTitleRequests.add(path)
-    sessionTitleGenerator?.cancel(path)
-    try {
-      await enqueueSessionTitleWrite(path, () => renameConversation(path, trimmedName, 'user'))
-    } finally {
-      manualTitleRequests.delete(path)
-    }
-  })
-  ipcMain.handle(IPC.sessions.export, async (_, sessionId: unknown) => {
-    if (typeof sessionId !== 'string') throw new Error('会话编号无效')
-    const manifest = findPhiSessionById(sessionId)
-    if (!manifest) throw new Error('会话不存在')
-    if (runnerRegistry.getActiveRun(sessionId)) throw new Error('请等待会话运行结束后再导出')
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.exportChat,
-      buttonLabel: dialogCopy.select,
-      properties: ['openDirectory', 'createDirectory']
-    }
-    const choice = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    if (choice.canceled || !choice.filePaths[0]) return null
-    const result = await exportPhiSession(sessionId, choice.filePaths[0])
-    writeAppLog({
-      event: 'session_exported',
-      sessionId,
-      metadata: { fileCount: result.fileCount, bytes: result.bytes }
-    })
-    return result
-  })
-
   const projectsIpcOptions: ProjectsIpcOptions = {
     ipcMain,
     windows: { getActiveWindow, requireMainWindowRenderer },
@@ -9679,27 +8449,12 @@ app.whenReady().then(async () => {
     },
     generation: analysisNotebookCodeGenerator
   })
-  ipcMain.handle(
-    IPC.tool.approvalResponse,
-    async (event, requestId: unknown, approved: unknown) => {
-      if (
-        typeof requestId !== 'string' ||
-        requestId.length === 0 ||
-        requestId.length > 256 ||
-        typeof approved !== 'boolean'
-      ) {
-        return false
-      }
-      return resolveToolApproval(requestId, approved, event.sender)
-    }
-  )
-  ipcMain.handle(
-    IPC.agent.interactionResponse,
-    async (event, requestId: string, response, cancelled?: boolean) => {
-      const window = requireMainWindowRenderer(event)
-      resolveAgentUserInteraction(requestId, response, cancelled === true, window.webContents.id)
-    }
-  )
+  registerToolIpc({ ipcMain, resolveToolApproval })
+  registerAgentInteractionIpc({
+    ipcMain,
+    requireMainWindowRenderer,
+    resolveAgentUserInteraction
+  })
   registerPhiPluginIpc({
     ipcMain,
     lifecycle: { invalidateAgentSession, logUnexpectedError },
@@ -9755,28 +8510,16 @@ app.whenReady().then(async () => {
     },
     plugins: { installedPluginNamespace }
   })
-  ipcMain.handle(IPC.agents.list, async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listRemotePromptAgents(cwd) : listPromptAgents(cwd ?? currentCwd)
-  )
-  ipcMain.handle(IPC.agents.trustRemoteProject, async (_, input: unknown) => {
-    const request = checkedRemoteAgentTrustMutation(input)
-    const context = remoteAgentProjectContext(request.cwd)
-    await trustRemoteAgent(context, {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash
-    })
-    await invalidateAgentSession()
-    return (await loadRemoteAgentCatalog(context)).entries
-  })
-  ipcMain.handle(IPC.agents.revokeRemoteProjectTrust, async (_, input: unknown) => {
-    const request = checkedRemoteAgentTrustMutation(input)
-    const context = remoteAgentProjectContext(request.cwd)
-    await revokeRemoteAgent(context, {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash
-    })
-    await invalidateAgentSession()
-    return (await loadRemoteAgentCatalog(context)).entries
+  registerAgentsIpc({
+    ipcMain,
+    lifecycle: { invalidateAgentSession },
+    workspace: {
+      agentDir: AGENT_DIR,
+      bundledDir: getBundledAgentsDir(),
+      getCurrentCwd: () => currentCwd,
+      currentRemoteAnalysisProject,
+      isRemoteResourceScope
+    }
   })
   registerMcpIpc({
     ipcMain,
