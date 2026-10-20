@@ -25,12 +25,13 @@ import {
 import { runProgressLabel, runStateLabel } from '../../features/wrapper/lib/wrapperView'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
 import { useHoverIntent } from './useHoverIntent'
+import { errorMessage } from '../../../../shared/errorCodes'
 
 const AgentIcon = PhiIcons.entity.agent
 const StopIcon = PhiIcons.action.stop
 
 function errorText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 

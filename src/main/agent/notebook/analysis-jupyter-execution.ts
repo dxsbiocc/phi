@@ -5,6 +5,7 @@ import type {
   NotebookCell,
   NotebookOutput
 } from '../../../shared/notebookDocument'
+import { errorMessage } from '../../../shared/errorCodes'
 import type { JupyterServerConnection } from './analysis-jupyter-server'
 import { jupyterConnectionIdentity, jupyterWebSocketToken } from './jupyter-runtime-backend'
 
@@ -82,10 +83,7 @@ export class JupyterKernelExecutionUnconfirmedError extends Error {
     readonly released: Promise<void>,
     readonly retire: () => void
   ) {
-    super(
-      `Notebook 停止未确认 kernel 终止: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause }
-    )
+    super(`Notebook 停止未确认 kernel 终止: ${errorMessage(cause)}`, { cause })
     this.name = 'JupyterKernelExecutionUnconfirmedError'
   }
 }

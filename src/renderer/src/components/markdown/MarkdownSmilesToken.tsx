@@ -4,6 +4,7 @@ import { Box, Tooltip } from '@mui/material'
 import { useEffect, useState } from 'react'
 import { HOVER_PREVIEW_OPEN_DELAY_MS } from '../../lib/markdownLocalPathPreview'
 import { renderMoleculeSvg } from '../../lib/rdkitPreview'
+import { errorMessage } from '../../../../shared/errorCodes'
 
 type MoleculeRenderState = {
   value: string
@@ -67,7 +68,7 @@ function MoleculePreviewImage({
         if (cancelled) return
         setRenderState({
           value: smiles,
-          error: loadError instanceof Error ? loadError.message : String(loadError)
+          error: errorMessage(loadError)
         })
       })
 

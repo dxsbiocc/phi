@@ -1,4 +1,5 @@
 import { redactSensitiveText } from '../redaction'
+import { errorMessage } from '../../../shared/errorCodes'
 
 export type TransferErrorCode =
   | 'ABORTED'
@@ -31,7 +32,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
 }
 
 export function safeTransferText(value: unknown, maxBytes = MAX_TRANSFER_ERROR_BYTES): string {
-  const text = value instanceof Error ? value.message : String(value)
+  const text = errorMessage(value)
   const redacted = redactSensitiveText(text)
     .replace(NETWORK_LOCATION, '[redacted-location]')
     .replace(SCP_LOCATION, '[redacted-location]')

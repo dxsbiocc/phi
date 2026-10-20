@@ -11,6 +11,7 @@ import {
   type LocalMcpConnectorRequest,
   type RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { PhiIcons } from '../../../icons'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
@@ -53,12 +54,12 @@ type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number] | typeof CUSTOM_CONNECTOR_GROUP
 type ImportedConnectorAction = 'install' | 'oauth' | 'api-key'
 function ipcErrorMessage(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause)
+  const message = errorMessage(cause)
   return message.replace(/^Error invoking remote method '[^']+': (?:[^:]+: )?/, '')
 }
 
 function apiKeyErrorMessage(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause)
+  const message = errorMessage(cause)
   return message.replace(
     /^Error invoking remote method ['"]mcp:setFeaturedApiKey['"]: (?:McpApiKeyValidationError|Error): /,
     ''
@@ -282,7 +283,7 @@ export function McpConnectorCatalogDialog({
       await onRefresh()
       await refreshCatalog()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
       await Promise.allSettled([onRefresh(), refreshCatalog()])
     } finally {
       setBusy(null)
@@ -317,7 +318,7 @@ export function McpConnectorCatalogDialog({
       await onRefresh()
       await refreshCatalog()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
       await Promise.allSettled([onRefresh(), refreshCatalog()])
     } finally {
       setBusy(null)
@@ -360,7 +361,7 @@ export function McpConnectorCatalogDialog({
       await onRefresh()
       await refreshCatalog()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusy(null)
     }
@@ -390,7 +391,7 @@ export function McpConnectorCatalogDialog({
         [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
       }))
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
+      const message = errorMessage(cause)
       setAuthStatusById((current) => ({
         ...current,
         [connector.id]: featuredOAuthStatusFromError(message, connector.name)
@@ -423,7 +424,7 @@ export function McpConnectorCatalogDialog({
       cacheFeaturedToolNames(connector.id, names)
       setToolNames(names)
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
+      const message = errorMessage(cause)
       await refreshOAuthStatus(connector)
       setError(featuredAuthFailureNotice(message))
     } finally {
@@ -486,7 +487,7 @@ export function McpConnectorCatalogDialog({
           page === 'detail' &&
           selectedId === connector.id
         ) {
-          setToolsError(cause instanceof Error ? cause.message : String(cause))
+          setToolsError(errorMessage(cause))
         }
       }
     } catch (cause) {

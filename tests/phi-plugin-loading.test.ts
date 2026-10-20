@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { errorMessage } from '../src/shared/errorCodes'
 import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
 import type { PhiPluginListItem } from '../src/shared/phiPluginTypes'
 import type { InstalledPackageView } from '../src/shared/packageManagerTypes'
@@ -81,6 +82,7 @@ test('installed plugin names and verified trust appear before a delayed environm
     exports: module.exports,
     require(name: string): unknown {
       if (name === 'react') return react
+      if (name.endsWith('/shared/errorCodes')) return { errorMessage }
       if (name === '../lib/phiPlugins') return pluginHelpers
       if (name === '../lib/pluginCopy') return { pluginCopy }
       throw new Error(`Unexpected module ${name}`)

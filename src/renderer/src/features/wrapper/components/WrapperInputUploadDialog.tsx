@@ -16,14 +16,11 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRunPlan } from '../../../../../shared/wrapperTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import {
   remoteUploadDestinationDirectory,
   selectedRemoteUploadDestination
 } from '../../../lib/remoteUploadDestination'
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 export function WrapperInputUploadDialog({
   plan,

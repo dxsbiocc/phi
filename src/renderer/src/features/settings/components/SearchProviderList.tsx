@@ -36,6 +36,7 @@ import type {
   WebSearchKeyStatus,
   WebSearchProviderOption
 } from '../../../../../shared/webSearchSettingsTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import {
   listSearchProviderPage,
   type SearchProviderCostFilter,
@@ -135,7 +136,7 @@ export function SearchProviderList({
       setKey('')
       setKeyProvider(null)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -149,7 +150,7 @@ export function SearchProviderList({
       const status = await onClearApiKey(provider.id)
       setKeyStatus((current) => ({ ...current, [provider.id]: status }))
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusy(false)
     }

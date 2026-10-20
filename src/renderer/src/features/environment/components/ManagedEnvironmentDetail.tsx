@@ -16,6 +16,7 @@ import type {
   EnvironmentToolId,
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import {
   formatEnvironmentSize,
   type ManagedEnvironmentHostResources,
@@ -86,7 +87,7 @@ export function ManagedEnvironmentDetail({
     try {
       await onSaveHostPath(hostTool.id, nextPath ?? null)
     } catch (cause) {
-      setModeError(cause instanceof Error ? cause.message : String(cause))
+      setModeError(errorMessage(cause))
     } finally {
       setSwitchingMode(false)
     }

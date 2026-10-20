@@ -4,6 +4,7 @@ import type {
   LocalMcpRuntime,
   LocalMcpRuntimeOption
 } from '../../../../../shared/mcpConnectorCatalog'
+import { errorMessage } from '../../../../../shared/errorCodes'
 
 export interface LocalConnectorEnvRow {
   id: string
@@ -187,6 +188,6 @@ export function localConnectorDraftError(draft: LocalConnectorDraft): string | n
     buildLocalConnectorRequest(draft)
     return null
   } catch (cause) {
-    return cause instanceof Error ? cause.message : String(cause)
+    return errorMessage(cause)
   }
 }

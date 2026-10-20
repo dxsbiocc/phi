@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import type { SkillMarkdownState } from '../components/SkillDetailBody'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
+import { errorMessage } from '../../../../../shared/errorCodes'
 
 interface Loaded {
   key: string
@@ -40,7 +41,7 @@ export function useSkillPackageMarkdown(
           setLoaded({
             key,
             content: null,
-            error: cause instanceof Error ? cause.message : String(cause),
+            error: errorMessage(cause),
             missingMarkdown: false
           })
         }

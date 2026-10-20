@@ -15,6 +15,7 @@ import type {
   PhiPluginMutationResult,
   PhiPluginUsedEnvironment
 } from '../../../../../shared/phiPluginTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { formatPhiPluginProblems, phiPluginDisplayTitle } from '../lib/phiPlugins'
 
 type PhiPluginWithComponents = PhiPluginListItem
@@ -54,10 +55,6 @@ export type PhiPluginsState = {
   showError: (message: string) => void
   clearError: () => void
   clearNotice: () => void
-}
-
-function readableError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }
 
 function ownsPluginEnvironment(environment: ManagedEnvironmentEntry, pluginId: string): boolean {
@@ -239,12 +236,11 @@ export function usePhiPlugins(): PhiPluginsState {
             setPlugins(withEnvironmentStatuses(installed, environments, packages, builds))
           })
           .catch((cause) => {
-            if (request === requestRef.current)
-              setError(pluginCopy.loadFailed(readableError(cause)))
+            if (request === requestRef.current) setError(pluginCopy.loadFailed(errorMessage(cause)))
           })
       } catch (cause) {
         if (request !== requestRef.current) return
-        setError(pluginCopy.loadFailed(readableError(cause)))
+        setError(pluginCopy.loadFailed(errorMessage(cause)))
       } finally {
         if (readRef.current?.request === request) readRef.current = null
         if (request === requestRef.current) setLoading(false)
@@ -301,7 +297,7 @@ export function usePhiPlugins(): PhiPluginsState {
           setNotice(`${successMessage}${warning}`)
         }
       } catch (cause) {
-        setError(`${failurePrefix}: ${readableError(cause)}`)
+        setError(`${failurePrefix}: ${errorMessage(cause)}`)
       } finally {
         await load(false, true)
         setBusyPluginId(null)

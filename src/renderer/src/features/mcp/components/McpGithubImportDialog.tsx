@@ -23,14 +23,12 @@ import type {
   GithubSourcePreview,
   GithubSourceSummary
 } from '../../../../../shared/githubSourceTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { githubImportUrlError } from '../lib/githubImportDraft'
 import { McpProjectHintPanel } from './McpProjectHintPanel'
 
 function message(cause: unknown): string {
-  return (cause instanceof Error ? cause.message : String(cause)).replace(
-    /^Error invoking remote method '[^']+': (?:[^:]+: )?/,
-    ''
-  )
+  return errorMessage(cause).replace(/^Error invoking remote method '[^']+': (?:[^:]+: )?/, '')
 }
 
 export function McpGithubImportActions({

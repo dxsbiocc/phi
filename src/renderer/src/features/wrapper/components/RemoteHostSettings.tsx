@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { OpenSshHost, RemoteHostProfile } from '../../../types'
 import type { RemoteEnvironmentSettingInput } from '../../../../../shared/remoteEnvironmentTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type {
   SshBootstrapFinalResult,
   SshBootstrapTarget
@@ -74,7 +75,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
             : discovered.status === 'rejected'
               ? discovered.reason
               : null
-        if (failure) setConfigError(failure instanceof Error ? failure.message : String(failure))
+        if (failure) setConfigError(errorMessage(failure))
       })
       .finally(() => {
         if (!cancelled) setConfigLoading(false)
@@ -100,7 +101,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
           : discovered.status === 'rejected'
             ? discovered.reason
             : null
-      if (failure) setConfigError(failure instanceof Error ? failure.message : String(failure))
+      if (failure) setConfigError(errorMessage(failure))
       if (clearChecks) {
         doctorController.invalidate()
         setHostDoctorStates({})
@@ -142,7 +143,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       setHostDraft(EMPTY_HOST_DRAFT)
       setHostDialogOpen(false)
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : String(error))
+      setHostError(errorMessage(error))
     } finally {
       setHostBusy(false)
     }
@@ -156,7 +157,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       setHosts((previous) => previous.filter((item) => item.id !== id))
       doctorController.invalidate(id)
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : String(error))
+      setHostError(errorMessage(error))
     } finally {
       setHostBusy(false)
     }
@@ -173,7 +174,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       setHosts((previous) => [...previous.filter((item) => item.id !== profile.id), profile])
       doctorController.invalidate(host.id)
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : String(error))
+      setHostError(errorMessage(error))
     } finally {
       setHostBusy(false)
     }
@@ -213,7 +214,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
       setBootstrapTarget({ alias, hostname, user, port })
       setHostDialogOpen(false)
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : String(error))
+      setHostError(errorMessage(error))
     }
   }
 

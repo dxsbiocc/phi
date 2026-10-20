@@ -4,6 +4,7 @@ import { Box, Button, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
 import type { AppUpdateCheck } from '../../../../../shared/appUpdateTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 
 function resultText(result: AppUpdateCheck): string {
   if (result.status === 'available') {
@@ -36,7 +37,7 @@ export function AppUpdateSection({
         currentVersion: result?.currentVersion ?? '',
         releasesUrl: result?.releasesUrl ?? '',
         checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage(error)
       })
     } finally {
       setChecking(false)

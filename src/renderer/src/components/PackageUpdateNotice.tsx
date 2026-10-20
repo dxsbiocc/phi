@@ -3,11 +3,8 @@ import { useUiLanguage } from '../lib/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { Button, Snackbar } from '@mui/material'
 import type { PackageUpdateView } from '../../../shared/packageManagerTypes'
+import { errorMessage } from '../../../shared/errorCodes'
 import { PackageUpdatesDialog } from './PackageUpdatesDialog'
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 export function PackageUpdateNotice(): React.JSX.Element {
   useUiLanguage()
@@ -50,7 +47,7 @@ export function PackageUpdateNotice(): React.JSX.Element {
       await window.api.applyPackageUpdate(update.type, update.id)
       await refresh()
     } catch (cause) {
-      setError(message(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusyKey(null)
     }
@@ -63,7 +60,7 @@ export function PackageUpdateNotice(): React.JSX.Element {
       await window.api.applyAllPackageUpdates()
       await refresh()
     } catch (cause) {
-      setError(message(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusyKey(null)
     }

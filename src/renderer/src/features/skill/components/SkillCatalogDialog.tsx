@@ -7,6 +7,7 @@ import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { SkillSummary } from '../../../types'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
@@ -53,10 +54,6 @@ function withoutId(ids: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(ids)
   next.delete(id)
   return next
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function SkillCatalogDialog({

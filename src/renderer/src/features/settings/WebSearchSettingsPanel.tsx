@@ -18,13 +18,10 @@ import type {
   WebSearchSettings,
   WebSearchSettingsPatch
 } from '../../../../shared/webSearchSettingsTypes'
+import { errorMessage } from '../../../../shared/errorCodes'
 import { SearxngEnginePicker } from './components/SearxngEnginePicker'
 import { SearxngInstanceDialog } from './components/SearxngInstanceDialog'
 import { SearchProviderList } from './components/SearchProviderList'
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 export function WebSearchSettingsEditor({
   settings,

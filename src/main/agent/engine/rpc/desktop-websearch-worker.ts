@@ -21,6 +21,7 @@ import {
   DesktopWebSearchCapabilityError,
   type DesktopWebSearchCapability
 } from './desktop-websearch-capability'
+import { errorMessage } from '../../../../shared/errorCodes'
 
 logger.setTransports({ file: false, console: false })
 delete process.env.PI_REQ_DEBUG
@@ -238,7 +239,7 @@ async function dispatch(frame: Record<string, unknown>): Promise<void> {
       await send({
         type: 'reply',
         id,
-        error: redact(failure instanceof Error ? failure.message : String(failure))
+        error: redact(errorMessage(failure))
       })
     } finally {
       active.delete(id)

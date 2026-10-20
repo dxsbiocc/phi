@@ -29,6 +29,7 @@ import {
 } from '@mui/material'
 import { GoSearch, GoSync } from 'react-icons/go'
 import type { SearxngEngineOption } from '../../../../../shared/webSearchSettingsTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import {
   isSearxngEngineUnavailable,
   listSearxngEnginePage,
@@ -108,7 +109,7 @@ export function SearxngEnginePicker({
       setFromInstance(true)
       onConnectionChange?.(true)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
       setLoaded(SEARXNG_DEFAULT_ENGINES)
       setFromInstance(false)
       onConnectionChange?.(false)
@@ -131,7 +132,7 @@ export function SearxngEnginePicker({
       })
       .catch((cause: unknown) => {
         if (active) {
-          setError(cause instanceof Error ? cause.message : String(cause))
+          setError(errorMessage(cause))
           setLoaded(SEARXNG_DEFAULT_ENGINES)
           setFromInstance(false)
           onConnectionChange?.(false)

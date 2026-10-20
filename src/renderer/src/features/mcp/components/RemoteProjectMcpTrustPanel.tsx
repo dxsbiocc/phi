@@ -20,6 +20,7 @@ import type {
   RemoteProjectMcpConfirmationItem,
   RemoteProjectMcpTrustRequest
 } from '../../../../../shared/remoteProjectMcpTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { RemoteProjectTrustStatus } from '../../agent/AgentTrustPanel'
 import type { McpServerSummary } from '../lib/mcpTypes'
 import {
@@ -76,7 +77,7 @@ export function RemoteProjectMcpTrustDialog({
       await onTrusted(items.map((item) => item.id))
       close()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -180,7 +181,7 @@ export function RemoteProjectMcpTrustPanel({
       else await api.revokeRemoteProjectMcpTrust(request)
       await onChanged?.()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
       throw cause
     } finally {
       setBusy(false)

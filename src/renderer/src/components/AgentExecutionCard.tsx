@@ -30,6 +30,7 @@ import {
   type ChatContentResizeHandler
 } from './chat/useCollapseResizeNotifier'
 import { TimelineRail } from './chat/TimelineRail'
+import { errorMessage } from '../../../shared/errorCodes'
 
 const AgentIcon = PhiIcons.entity.agent
 const ChevronRightIcon = PhiIcons.action.back
@@ -61,7 +62,7 @@ function currentStepIndex(item: AgentExecutionItem): number {
 }
 
 function errorText(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorMessage(error)
   return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 

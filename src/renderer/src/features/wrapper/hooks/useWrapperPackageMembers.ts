@@ -46,6 +46,7 @@ export function useWrapperPackageMembers(
       })
       .catch((cause) => {
         if (active) {
+          // Keep empty messages falsy because `remote.error` selects error versus ready state.
           setRemote({
             key,
             wrappers: [],

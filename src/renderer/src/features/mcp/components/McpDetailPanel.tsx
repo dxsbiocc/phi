@@ -4,6 +4,7 @@ import { connectorCopy } from '../lib/connectorCopy'
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
+import { errorMessage as sharedErrorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
@@ -31,7 +32,7 @@ function commandLine(server: McpServerSummary): string {
 }
 
 function errorMessage(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause)
+  const message = sharedErrorMessage(cause)
   return message.replace(
     /^Error invoking remote method ['"]mcp:setFeaturedApiKey['"]: (?:McpApiKeyValidationError|Error): /,
     ''
@@ -127,7 +128,7 @@ export function McpDetailPanel({
       })
       .catch((cause: unknown) => {
         if (!active) return
-        const message = cause instanceof Error ? cause.message : String(cause)
+        const message = sharedErrorMessage(cause)
         setAuthStatusById((current) => ({
           ...current,
           [connector.id]: connector.oauthAuthorizationOrigin

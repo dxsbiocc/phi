@@ -13,6 +13,7 @@ import Typography from '@mui/material/Typography'
 import { TbRoute } from 'react-icons/tb'
 
 import type { EnvironmentHostTool, EnvironmentToolId } from '../../../../../shared/environmentTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
 import { hostToolDisplayVersion, hostToolPresentation } from '../lib/hostEnvironmentStatus'
 import { HostEnvironmentItem } from './HostEnvironmentItem'
@@ -28,7 +29,7 @@ async function pickEnvironmentBinary(): Promise<string | null> {
 }
 
 function readableToolError(cause: unknown): string {
-  const raw = cause instanceof Error ? cause.message : String(cause)
+  const raw = errorMessage(cause)
   const clean = raw
     .replace(ansiEscape, '')
     .replace(/^Error invoking remote method '[^']+': Error:\s*/u, '')

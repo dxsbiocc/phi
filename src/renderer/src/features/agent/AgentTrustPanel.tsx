@@ -3,6 +3,7 @@ import { getUiLanguage, useUiLanguage } from '../../lib/i18n'
 import { Button, Chip, Stack, Typography } from '@mui/material'
 import { useState } from 'react'
 
+import { errorMessage } from '../../../../shared/errorCodes'
 import type { PromptAgentSummary } from '../../types'
 import { mutateRemoteAgentTrust } from './lib/remoteAgentTrust'
 import { resourceTrustCopy } from '../../lib/resourceUi'
@@ -150,7 +151,7 @@ export function RemoteProjectTrustControl({
     try {
       await onMutate(resource, cwd, onChanged)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      setError(errorMessage(reason))
     } finally {
       setBusy(false)
     }

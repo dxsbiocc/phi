@@ -18,6 +18,7 @@ import {
 
 import { PhiIcons } from '../../../icons'
 import type { Project } from '../../../lib/projectTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type {
   ProjectMemoryLesson,
   ProjectMemorySettings,
@@ -33,10 +34,6 @@ type ProjectMemoryCardProps = {
   project: Project
   settings: ProjectMemorySettings
   onSettingsSaved: (project: Project) => void
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function formatTime(value: string | null): string {

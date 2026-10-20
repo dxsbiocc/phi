@@ -69,6 +69,7 @@ export function AutoCompactionSettingsSection({
         }
       })
       .catch((failure: unknown) => {
+        // Keep empty messages falsy because `loading` is derived from `!error`.
         if (!cancelled && request === requestRef.current)
           setErrorState({
             key: targetKey,
@@ -101,6 +102,7 @@ export function AutoCompactionSettingsSection({
       }
     } catch (failure) {
       if (request === requestRef.current && activeTargetKeyRef.current === targetKey) {
+        // Keep empty messages falsy because `loading` is derived from `!error`.
         setErrorState({
           key: targetKey,
           message: failure instanceof Error ? failure.message : String(failure)

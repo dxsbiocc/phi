@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { retainSelectedCatalogId } from '../../../lib/catalogSelection'
@@ -51,7 +52,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
     try {
       await loadWrappers()
     } catch (err) {
-      setWrapperError(err instanceof Error ? err.message : String(err))
+      setWrapperError(errorMessage(err))
     } finally {
       setIsLoadingWrappers(false)
     }
@@ -69,7 +70,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
     try {
       await window.api.exportWrapperReproducibility(runId)
     } catch (err) {
-      setWrapperError(err instanceof Error ? err.message : String(err))
+      setWrapperError(errorMessage(err))
     }
   }, [])
 
@@ -77,7 +78,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
     try {
       await window.api.cancelWrapperRun(runId)
     } catch (err) {
-      setWrapperError(err instanceof Error ? err.message : String(err))
+      setWrapperError(errorMessage(err))
     }
   }, [])
 
@@ -92,7 +93,7 @@ export function useWrapperCatalog(): WrapperCatalogState {
         await loadWrappers()
         return true
       } catch (err) {
-        setWrapperError(err instanceof Error ? err.message : String(err))
+        setWrapperError(errorMessage(err))
         return false
       } finally {
         mutationRef.current = null

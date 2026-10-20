@@ -19,6 +19,7 @@ import type {
   LocalMcpConnectorRequest,
   RemoteMcpConnectorOptions
 } from '../../../../../shared/mcpConnectorCatalog'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
 import {
   buildLocalConnectorRequest,
@@ -96,7 +97,7 @@ export function McpCustomConnectorDialog({
         })
       })
       .catch((cause: unknown) => {
-        if (active) setLocalError(cause instanceof Error ? cause.message : String(cause))
+        if (active) setLocalError(errorMessage(cause))
       })
       .finally(() => {
         if (active) setRuntimesLoading(false)
@@ -120,7 +121,7 @@ export function McpCustomConnectorDialog({
       const request = buildLocalConnectorRequest(localDraft)
       setLocalConfirmRequest(request)
     } catch (cause) {
-      setLocalError(cause instanceof Error ? cause.message : String(cause))
+      setLocalError(errorMessage(cause))
     }
   }
   async function confirmLocal(): Promise<void> {

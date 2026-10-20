@@ -7,6 +7,7 @@ import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../shared/packageManagerTypes'
+import { errorMessage } from '../../../shared/errorCodes'
 
 type ContentCatalogApi = {
   readOfficialContentCatalog?: (forceRefresh?: boolean) => Promise<PackageRegistryView>
@@ -18,10 +19,6 @@ export interface ContentCatalogResult {
   registries: PackageRegistryView[]
   errors: string[]
   notices: string[]
-}
-
-function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }
 
 /** Load the official source first; a failed source remains visible as feedback. */
@@ -36,7 +33,7 @@ export async function loadContentCatalog(
     try {
       officialRegistry = await api.readOfficialContentCatalog(options.forceRefresh)
     } catch (cause) {
-      errors.push(resourceCatalogCopy.officialRefreshFailed(message(cause)))
+      errors.push(resourceCatalogCopy.officialRefreshFailed(errorMessage(cause)))
       notices.push(resourceCatalogCopy.fallbackSource)
     }
   }
@@ -44,7 +41,7 @@ export async function loadContentCatalog(
   try {
     knownSources = await api.listPackageRegistries()
   } catch (cause) {
-    errors.push(resourceCatalogCopy.sourceListFailed(message(cause)))
+    errors.push(resourceCatalogCopy.sourceListFailed(errorMessage(cause)))
   }
   const backendNeedsRestart =
     !api.readOfficialContentCatalog &&
@@ -91,7 +88,7 @@ export async function loadContentCatalog(
             (status === 'cached' ? resourceCatalogCopy.cachedSource(label) : undefined)
         }
       } catch (cause) {
-        return { error: `${label}: ${message(cause)}` }
+        return { error: `${label}: ${errorMessage(cause)}` }
       }
     })
   )

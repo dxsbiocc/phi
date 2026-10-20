@@ -149,6 +149,7 @@ export function describeRemoteJupyterError(error: unknown): string {
   const parts: string[] = []
   let current: unknown = error
   for (let depth = 0; current !== undefined && current !== null && depth < 5; depth += 1) {
+    // Preserve an empty Error message so the existing unknown-error fallback still applies.
     const message = current instanceof Error ? current.message : String(current)
     if (message && !parts.includes(message)) parts.push(message)
     current = current instanceof Error ? current.cause : undefined

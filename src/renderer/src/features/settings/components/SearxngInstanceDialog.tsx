@@ -11,6 +11,7 @@ import {
   Stack,
   TextField
 } from '@mui/material'
+import { errorMessage } from '../../../../../shared/errorCodes'
 
 export function SearxngInstanceDialog({
   initialEndpoint,
@@ -33,7 +34,7 @@ export function SearxngInstanceDialog({
       await onSave(value)
       onClose()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       setSaving(false)
     }

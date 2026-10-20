@@ -26,6 +26,7 @@ import {
 } from '@mui/material'
 
 import type { PackageTrust, PackageUpdateView } from '../../../../../shared/packageManagerTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { PhiPluginInstallPreview } from '../../../../../shared/phiPluginTypes'
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import { PhiIcons } from '../../../icons'
@@ -50,10 +51,6 @@ import {
   phiPluginDisplayTitle,
   phiPluginDistributionLabel
 } from '../lib/phiPlugins'
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 function installIsUpgrade(preview: PhiPluginInstallPreview): boolean {
   return (

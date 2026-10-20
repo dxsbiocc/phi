@@ -21,9 +21,10 @@ import type {
   GithubSourceSummary,
   GithubSourceUpdateCheck
 } from '../../../../../shared/githubSourceTypes'
+import { errorMessage as sharedErrorMessage } from '../../../../../shared/errorCodes'
 
 function errorMessage(cause: unknown): string {
-  return (cause instanceof Error ? cause.message : String(cause)).replace(
+  return sharedErrorMessage(cause).replace(
     /^Error invoking remote method '[^']+': (?:[^:]+: )?/,
     ''
   )

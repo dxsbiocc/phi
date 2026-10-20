@@ -19,6 +19,7 @@ import {
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { PhiIcons } from '../../../icons'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { SkillSummary } from '../../../types'
 import { RemoteProjectTrustControl, RemoteProjectTrustStatus } from '../../agent/AgentTrustPanel'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
@@ -89,7 +90,7 @@ function useSkillContent(selectedSkill: SkillSummary | null): SkillContentState 
           filePath: selectedFilePath,
           contentHash: selectedContentHash,
           content: null,
-          error: error instanceof Error ? error.message : String(error)
+          error: errorMessage(error)
         })
       })
 

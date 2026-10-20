@@ -2,6 +2,7 @@ import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 import type { Project, ProjectRemoteConnection } from '../../../types'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { RemoteNextflowInstallResult } from '../../../../../shared/remoteDoctorTypes'
 import type {
   WrapperExecutionTargetDialogActions,
@@ -78,7 +79,7 @@ function useRemoteHosts(open: boolean, setState: StateSetter): void {
       .catch((cause: unknown) => {
         if (!cancelled) {
           patchControllerState(setState, {
-            error: cause instanceof Error ? cause.message : String(cause)
+            error: errorMessage(cause)
           })
         }
       })
@@ -254,7 +255,7 @@ function createSaveAction(
       input.onSaved?.()
     } catch (cause) {
       patchControllerState(setState, {
-        error: cause instanceof Error ? cause.message : String(cause)
+        error: errorMessage(cause)
       })
     } finally {
       patchControllerState(setState, { saving: false })

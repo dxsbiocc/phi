@@ -5,6 +5,7 @@ import { Box, Button, CircularProgress, Collapse, Paper, Stack, Typography } fro
 import { memo, useEffect, useState } from 'react'
 import type { WrapperPlanItem } from '../../../types'
 import type { WrapperRun, WrapperRunPlan } from '../../../../../shared/wrapperTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
 import { buildWrapperFlowGraph } from '../lib/wrapperFlow'
 import { parseSamplesheetCsv } from '../lib/wrapperSamplesheet'
@@ -55,10 +56,6 @@ function StatusMark({
     return <DoneIcon sx={{ fontSize: 15, color: 'success.main' }} aria-hidden />
   }
   return <Box sx={{ width: 15 }} aria-hidden />
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 const SAMPLESHEET_PREVIEW_ROWS = 5
@@ -164,7 +161,9 @@ function WrapperPlanCardImpl({ item }: { item: WrapperPlanItem }): React.JSX.Ele
         if (!cancelled) setLoadState(result ? { plan: result } : { error: wrapperCopy.planMissing })
       })
       .catch((error: unknown) => {
-        if (!cancelled) setLoadState({ error: errorMessage(error) })
+        // Keep empty messages falsy because `loadState.error` selects error versus loading state.
+        if (!cancelled)
+          setLoadState({ error: error instanceof Error ? error.message : String(error) })
       })
     return (): void => {
       cancelled = true

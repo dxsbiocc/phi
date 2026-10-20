@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 
 import { useBusyKeys } from './useBusyKeys'
+import { errorMessage } from '../../../../shared/errorCodes'
 
 export interface PackageRemoval {
   /** Whether this package is being removed right now. */
@@ -29,7 +30,7 @@ export function usePackageRemoval(
         await removePackage(id)
         await afterRemove()
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause))
+        setError(errorMessage(cause))
       } finally {
         finish(id)
       }

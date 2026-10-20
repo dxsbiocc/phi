@@ -26,6 +26,7 @@ import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/p
 import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
 import { PhiPluginComponentDetails } from './PhiPluginComponentDetails'
@@ -105,7 +106,7 @@ export function PhiPluginDetail({
     } catch (cause) {
       setEnvironmentActionError({
         pluginId: plugin.id,
-        message: pluginCopy.buildFailed(cause instanceof Error ? cause.message : String(cause))
+        message: pluginCopy.buildFailed(errorMessage(cause))
       })
       setBusyEnvironment(null)
       setPendingBuild(null)
@@ -127,7 +128,7 @@ export function PhiPluginDetail({
     } catch (cause) {
       setEnvironmentActionError({
         pluginId: plugin.id,
-        message: pluginCopy.rebuildFailed(cause instanceof Error ? cause.message : String(cause))
+        message: pluginCopy.rebuildFailed(errorMessage(cause))
       })
     } finally {
       setBusyEnvironment(null)

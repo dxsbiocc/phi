@@ -2,6 +2,7 @@ import { markdownCopy } from './markdown/markdownUiCopy'
 import { useUiLanguage } from '../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
+import { errorMessage } from '../../../shared/errorCodes'
 
 export type MolstarStructureSource =
   | { kind: 'pdb-id'; value: string; label?: string }
@@ -116,7 +117,7 @@ export function MolstarStructureViewer({
       if (cancelled) return
       setLoadState({
         sourceKey: loadKey,
-        status: error instanceof Error ? error.message : String(error)
+        status: errorMessage(error)
       })
     })
 

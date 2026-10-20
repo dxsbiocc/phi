@@ -17,6 +17,7 @@ import type {
   EnvironmentToolId,
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { useSessionStore } from '../../../stores/sessionStore'
@@ -51,10 +52,6 @@ type LoadManagedOptions = {
   blocking?: boolean
   force?: boolean
   includeDynamic?: boolean
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }
 
 function actionDialogTitle(action: DestructiveAction): string {

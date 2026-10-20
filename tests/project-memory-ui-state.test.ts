@@ -11,6 +11,7 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import * as jsxRuntime from 'react/jsx-runtime'
 import ts from 'typescript'
+import { errorMessage } from '../src/shared/errorCodes'
 import type { ProjectMemorySnapshot } from '../src/shared/projectMemoryTypes'
 import type { Project } from '../src/renderer/src/lib/projectTypes'
 import { memoryUi } from '../src/renderer/src/features/memory/lib/memoryUi'
@@ -142,6 +143,7 @@ function harness(overrides: Partial<Api> = {}): {
     module,
     exports: module.exports,
     require(specifier: string): unknown {
+      if (specifier.endsWith('/shared/errorCodes')) return { errorMessage }
       if (specifier.endsWith('/memoryUi')) return { memoryUi }
       if (specifier.endsWith('/lib/i18n')) return { useUiLanguage: getUiLanguage, getUiLocale }
       if (specifier === 'react') return react

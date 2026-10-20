@@ -491,8 +491,7 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
         await session.close().catch(() => undefined)
         session = await connect(target.connection)
       } catch (reconnectError) {
-        lastError =
-          reconnectError instanceof Error ? reconnectError.message : String(reconnectError)
+        lastError = errorMessage(reconnectError)
       }
     }
     await control.pause(pollMs)

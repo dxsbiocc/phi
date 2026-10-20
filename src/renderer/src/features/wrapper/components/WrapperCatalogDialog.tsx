@@ -7,6 +7,7 @@ import type {
   InstalledPackageView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
@@ -109,7 +110,7 @@ export function WrapperCatalogDialog({
         setSourceNotice(data.notice)
       })
       .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : String(cause))
+        if (active) setError(errorMessage(cause))
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -181,7 +182,7 @@ export function WrapperCatalogDialog({
       setError(refreshed.error)
       setSourceNotice(refreshed.notice)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       busy.finish(choice.id)
     }
@@ -215,7 +216,7 @@ export function WrapperCatalogDialog({
       const registry = await window.api.readPackageRegistry(path)
       setRegistries((current) => [...current.filter((entry) => entry.id !== registry.id), registry])
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(errorMessage(cause))
     } finally {
       busy.finish(DIRECTORY_KEY)
     }
