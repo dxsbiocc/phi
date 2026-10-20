@@ -10,12 +10,23 @@ import {
 } from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import { resolveRemoteBaseEnvironment } from '../src/main/agent/remote-runtime/base-environment'
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
+import { warmExecutable } from './helpers/firstExec'
 import {
   createRemoteRuntimeFixture,
   installFakeMicromamba,
   readFakeMicromambaInvocations,
+  WARM_ARG,
   type RemoteRuntimeFixture
 } from './helpers/remoteRuntimeFixture'
+
+/** First line of every fake server command: lets the fixture pay the first-exec scan. */
+const WARM_LINE = `[ "$1" = ${WARM_ARG} ] && exit 0`
+
+function writeFakeServerCommand(path: string, body: string): void {
+  writeFileSync(path, `#!/bin/sh\n${WARM_LINE}\n${body}`)
+  chmodSync(path, 0o755)
+  warmExecutable(path, [WARM_ARG])
+}
 
 function createAdapter(
   fixture: RemoteRuntimeFixture,
@@ -306,8 +317,7 @@ test('an opted-in user prefix is listed only after its ipykernel dependency chec
     const prefix = join(fixture.root, 'server-users', 'private-name', 'research')
     const python = join(prefix, 'bin', 'python')
     mkdirSync(join(prefix, 'bin'), { recursive: true })
-    writeFileSync(python, '#!/bin/sh\n[ "$1" = -c ] && [ "$2" = "import ipykernel" ]\n')
-    chmodSync(python, 0o755)
+    writeFakeServerCommand(python, '[ "$1" = -c ] && [ "$2" = "import ipykernel" ]\n')
     const adapter = createAdapter(fixture, { allowUserPrefixes: true })
 
     const kernel = await adapter.registerUserPrefix({
@@ -333,8 +343,7 @@ test('an opted-in user prefix without ipykernel is not registered or exposed in 
     const prefix = join(fixture.root, 'server-users', 'private-name', 'missing-kernel')
     const python = join(prefix, 'bin', 'python')
     mkdirSync(join(prefix, 'bin'), { recursive: true })
-    writeFileSync(python, '#!/bin/sh\nexit 3\n')
-    chmodSync(python, 0o755)
+    writeFakeServerCommand(python, 'exit 3\n')
     const adapter = createAdapter(fixture, { allowUserPrefixes: true })
 
     await assert.rejects(
@@ -365,16 +374,14 @@ function installFakeServerJupyter(
   mkdirSync(bin, { recursive: true })
   const jupyter = join(bin, 'jupyter')
   const python = join(bin, 'python')
-  writeFileSync(
+  writeFakeServerCommand(
     jupyter,
-    `#!/bin/sh\nif [ "$1 $2" = "server --version" ]; then echo ${options.version ?? '2.14.2'}; exit 0; fi\nexit 1\n`
+    `if [ "$1 $2" = "server --version" ]; then echo ${options.version ?? '2.14.2'}; exit 0; fi\nexit 1\n`
   )
-  writeFileSync(
+  writeFakeServerCommand(
     python,
-    `#!/bin/sh\nif [ "$1 $2" = "-c import ipykernel" ]; then exit ${options.ipykernel === false ? 1 : 0}; fi\nexit 1\n`
+    `if [ "$1 $2" = "-c import ipykernel" ]; then exit ${options.ipykernel === false ? 1 : 0}; fi\nexit 1\n`
   )
-  chmodSync(jupyter, 0o755)
-  chmodSync(python, 0o755)
   return { jupyter, python }
 }
 

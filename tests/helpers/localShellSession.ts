@@ -17,6 +17,7 @@ import type {
   RemoteSshSession,
   RemoteStdioProcess
 } from '../../src/main/agent/wrappers/remote-ssh-session'
+import { warmExecutable } from './firstExec'
 
 /**
  * A `RemoteSshSession` whose "remote host" is this machine: commands run through
@@ -295,6 +296,8 @@ export function installSetsidShim(dir: string): () => void {
     ].join('\n')
   )
   chmodSync(shim, 0o755)
+  // Pay the first-exec scan before product deadlines time a detached launch; no gate here.
+  warmExecutable(shim, ['/usr/bin/true'], { ...process.env, FAKE_SETSID_GATE: '' })
   process.env.PATH = `${dir}:${savedPath ?? ''}`
   return () => {
     process.env.PATH = savedPath

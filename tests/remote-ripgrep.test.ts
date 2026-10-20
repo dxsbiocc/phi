@@ -21,6 +21,7 @@ import {
   readFakeMicromambaInvocations,
   type RemoteRuntimeFixture
 } from './helpers/remoteRuntimeFixture'
+import { warmExecutable } from './helpers/firstExec'
 import type { LocalShellSession } from './helpers/localShellSession'
 
 const fixtures: RemoteRuntimeFixture[] = []
@@ -103,6 +104,8 @@ function writeManagedRipgrep(root: string, version: string): string {
   mkdirSync(join(prefix, 'bin'), { recursive: true })
   writeFileSync(executable, `#!/bin/sh\nprintf 'ripgrep ${version}\\n'\n`)
   chmodSync(executable, 0o755)
+  // The product's 10 s status probe must not absorb this new file's first-exec scan.
+  warmExecutable(executable, ['--version'])
   writeFileSync(join(prefix, REMOTE_RIPGREP_COMPLETE_MARKER), `${version}\n`)
   return executable
 }

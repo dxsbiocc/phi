@@ -32,6 +32,10 @@ import {
   installSetsidShim,
   type LocalShellSession
 } from './localShellSession'
+import { warmExecutable } from './firstExec'
+
+/** Makes a fake command exit at once, so fixtures can pay macOS's first-exec scan up front. */
+export const WARM_ARG = '--phi-warm'
 
 export interface RemoteRuntimeFixture {
   root: string
@@ -340,6 +344,7 @@ ${runSystemRipgrep}
 `
   const source = `#!/bin/sh
 set -eu
+if [ "\${1:-}" = ${WARM_ARG} ]; then exit 0; fi
 ${executableCheck}phi_root=\${MAMBA_ROOT_PREFIX:?}
 phi_calls="$phi_root/micromamba-invocations.log"
 {
@@ -386,6 +391,8 @@ if [ "$command_name" = create ]; then
   cat > "$prefix/bin/rg" <<'PHI_FAKE_RG'
 ${fakeRipgrep}PHI_FAKE_RG
   chmod 755 "$prefix/bin/rg"
+  # Pay the new rg's first-exec scan here, inside the generous create deadline.
+  "$prefix/bin/rg" --version >/dev/null
   exit 0
 fi
 if [ "$command_name" = run ]; then
@@ -397,6 +404,7 @@ exit 9
 `
   writeFileSync(path, source)
   chmodSync(path, 0o755)
+  warmExecutable(path, [WARM_ARG])
   return path
 }
 

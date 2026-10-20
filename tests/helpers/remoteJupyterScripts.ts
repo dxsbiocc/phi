@@ -1,6 +1,12 @@
 import { chmod, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { warmExecutable } from './firstExec'
+
+/** Makes a fake command exit at once, so fixtures can pay macOS's first-exec scan up front. */
+const WARM_ARG = '--phi-warm'
+const WARM_LINE = `[[ "\${1-}" == ${WARM_ARG} ]] && exit 0`
+
 export async function writeRemoteJupyterTestExecutables(
   ssh: string,
   jupyter: string
@@ -10,6 +16,7 @@ export async function writeRemoteJupyterTestExecutables(
     ssh,
     [
       '#!/bin/bash',
+      WARM_LINE,
       'printf "%s\\n" "$@" >> "$PHI_FAKE_JUPYTER_SSH_ARGS"',
       'printf "%s\\n" "---" >> "$PHI_FAKE_JUPYTER_SSH_ARGS"',
       '[[ -z "$PHI_FAKE_JUPYTER_RECONCILE_FAIL" || " $* " == *" -L "* ]] || exit 255',
@@ -22,6 +29,7 @@ export async function writeRemoteJupyterTestExecutables(
     jupyter,
     [
       '#!/bin/bash',
+      WARM_LINE,
       'printf "%s\\n" "$@" >> "$PHI_FAKE_JUPYTER_ARGS"',
       'printf "%s\\n" "---" >> "$PHI_FAKE_JUPYTER_ARGS"',
       'echo "stdout token=$JUPYTER_TOKEN"',
@@ -42,6 +50,7 @@ export async function writeRemoteJupyterTestExecutables(
     ps,
     [
       '#!/bin/bash',
+      WARM_LINE,
       // The cleanup's live-member listing needs the host's real process table.
       'if [[ "$*" == "-A -o pgid= -o stat=" ]]; then',
       '  for real in /bin/ps /usr/bin/ps; do [[ -x "$real" ]] && exec "$real" "$@"; done',
@@ -65,6 +74,9 @@ export async function writeRemoteJupyterTestExecutables(
     ].join('\n')
   )
   await Promise.all([chmod(ssh, 0o755), chmod(jupyter, 0o755), chmod(ps, 0o755)])
+  // Every fixture writes these into a fresh directory; the product's 15 s ssh deadline must not
+  // absorb their first-exec scans.
+  for (const path of [ssh, jupyter, ps]) warmExecutable(path, [WARM_ARG])
 }
 
 export async function installBlockingRemoteJupyterSetsid(root: string): Promise<void> {
@@ -73,6 +85,7 @@ export async function installBlockingRemoteJupyterSetsid(root: string): Promise<
     path,
     [
       '#!/bin/bash',
+      WARM_LINE,
       'echo "$$" > "$PHI_SETSID_PID"',
       'while [[ ! -e "$PHI_SETSID_GATE" ]]; do sleep 0.02; done',
       'exec "$@"',
@@ -80,6 +93,7 @@ export async function installBlockingRemoteJupyterSetsid(root: string): Promise<
     ].join('\n')
   )
   await chmod(path, 0o755)
+  warmExecutable(path, [WARM_ARG])
 }
 
 export async function installRemoteJupyterSetsid(root: string): Promise<void> {
@@ -91,4 +105,5 @@ export async function installRemoteJupyterSetsid(root: string): Promise<void> {
     )
   )
   await chmod(path, 0o755)
+  warmExecutable(path, ['/usr/bin/true'])
 }

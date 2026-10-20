@@ -17,6 +17,7 @@ import {
   installRemoteJupyterSetsid,
   writeRemoteJupyterTestExecutables
 } from './helpers/remoteJupyterScripts'
+import { warmExecutable } from './helpers/firstExec'
 import { pidIsRunning } from './helpers/processLiveness'
 
 const LEASE_ID = '0123456789abcdef0123456789abcdef'
@@ -249,9 +250,11 @@ async function startRecordedProcess(
   const sleeper = join(root, `sleeper-${ignoreTerm ? 'stubborn' : 'normal'}`)
   await writeFile(
     sleeper,
-    `#!/bin/bash\ntrap '${ignoreTerm ? '' : 'exit 0'}' TERM INT\nwhile :; do sleep 0.05; done\n`,
+    `#!/bin/bash\n[[ "\${1-}" == --phi-warm ]] && exit 0\ntrap '${ignoreTerm ? '' : 'exit 0'}' TERM INT\nwhile :; do sleep 0.05; done\n`,
     { mode: 0o755 }
   )
+  // A TERM that lands while the first-exec scan still holds the exec would beat the trap.
+  warmExecutable(sleeper, ['--phi-warm'])
   const child = spawn(join(root, 'setsid'), [sleeper], {
     env: { ...process.env, PHI_JUPYTER_LEASE_ID: identity.leaseId },
     stdio: ['pipe', 'pipe', 'pipe']
@@ -295,7 +298,7 @@ function pidIsAlive(pid: number): boolean {
   return pidIsRunning(pid)
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error('timed out waiting for condition')

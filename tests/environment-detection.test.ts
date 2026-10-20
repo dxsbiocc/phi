@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -20,6 +20,7 @@ import {
   redetectEnvironment,
   setEnvironmentToolPath
 } from '../src/main/agent/environment/store'
+import { warmExecutable } from './helpers/firstExec'
 
 test('detectEnvironmentTools marks tools ready from injected which/runner', () => {
   const tools = detectEnvironmentTools({
@@ -180,6 +181,12 @@ test('custom Nextflow validation can resolve Java from the selected environment 
       "#!/bin/sh\nset -e\nphi-sibling-java\nprintf 'nextflow version 26.04.6 build 1\\n'\n",
       { mode: 0o755 }
     )
+    // Pays both new files' first-exec scans before the product's 8 s version probe, which
+    // also puts the command's own directory first on PATH.
+    warmExecutable(nextflow, ['-version'], {
+      ...process.env,
+      PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`
+    })
 
     const probed = probeCustomToolPath('nextflow', nextflow)
     assert.equal(probed.status, 'ready', probed.messages?.join('\n'))

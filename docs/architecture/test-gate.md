@@ -161,10 +161,35 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
       中止后约 150 毫秒(余量仅 30 毫秒),压力下最长 188 毫秒。改为轮询 `inspect` 直到出现撤销
       (60 秒截止,明确报错),断言不变;每次 `inspect` 都会重置 bridge 的 2 秒空闲停止,不会换 worker。
     - 并发 14 `--no-retry` 全量门连跑 3 次(各约 8 分钟),上述 4 个套件都未再失败。
-    - 同样 3 次门里又出现一批偶发首轮失败(单跑全部通过):`omp-worker-proxy-env`、`environment-background`、
-      `omp-bun-executable` 已在下一条修复;`remote-jupyter-reconciliation`、`remote-kernelspec-adapter`、
-      `remote-workspace-search`(各 3/3)、`wrapper-executor-remote`(`waitUntil` 5 秒)、`remote-ripgrep`(2/3)、
-      `environment-detection`(1/3)待另行处理。
+    - 同样 3 次门里又出现一批偶发首轮失败(单跑全部通过)。`omp-worker-proxy-env`、`environment-background`、
+      `omp-bun-executable` 已在下一条修复;其余 6 个根因都是首次执行扫描,只改测试修复:
+      - `remote-jupyter-reconciliation`(连带同一 helper 的 `remote-jupyter-server`、`jupyter-runtime-backend`、
+        `remote-notebook-tools-e2e`):每个用例在新目录写出 fake `ssh` / `ps` / `jupyter` / `setsid`,
+        产品清理确认给 ssh 固定 15 秒(`execTimeoutMs` 默认值),首次执行扫描把它吃光,报
+        「清理确认连接不可用」(cause 为「连接超时」),supervisor 用例随之报「服务器暂时连不上」。
+        `tests/helpers/remoteJupyterScripts.ts` 给这些假命令加 `--phi-warm` 分支并在写出后预热;
+        用例自己写的 sleeper 也预热(否则 TERM 可能在扫描期间先到、trap 还没装上);测试自己的 `waitFor` 2 → 60 秒。
+      - `remote-kernelspec-adapter`:用例写出的假服务器 `python` / `jupyter` 首次执行落在产品 10 秒的
+        ipykernel 检查和 Jupyter 探测里,报「缺少可用的 ipykernel」或退回受管环境。统一由
+        `writeFakeServerCommand` 写出并预热。
+      - `remote-ripgrep`:`installFakeMicromamba` 写出的假 micromamba、它在 `create` 里写出的假 `rg`、
+        用例写的受管 `rg`,都要在产品 10 秒的状态探测里首次执行。假 micromamba 加 `--phi-warm` 并预热;
+        假 micromamba 在 `create` 里写完 `rg` 立即执行一次(落在 5 分钟安装上限内);用例写的 `rg` 预热。
+        `tests/helpers/localShellSession.ts` 的 `setsid` 垫片同样预热(不带闸门环境变量)。
+      - `remote-workspace-search`:假 ssh 通道是测试自己的 `spawnSync(..., { timeout: 5_000 })`,
+        新写出的受管 `rg` 包装脚本首次执行超过 5 秒被杀,产品于是退回 `find`。包装脚本预热,通道上限改为 60 秒。
+      - `wrapper-executor-remote`:新写出的 `setsid` 垫片加上 1 秒的启动脚本,落在测试自己 `waitUntil`
+        的 5 秒里。垫片预热,`waitUntil` 默认改为 60 秒(超时仍明确报错)。
+      - `environment-detection`「custom Nextflow … Java」:新写出的 `nextflow` 再调用新写出的
+        `phi-sibling-java`,两次扫描串行落在产品 8 秒的版本探测里(`spawnSync … ETIMEDOUT`)。用 `-version` 先预热。
+      - `warmExecutable` 增加可选 `env` 参数,供 setsid 垫片在没有闸门的环境下预热。
+      - 复现:修复前每个套件 8 份并行 + 20 个 `yes` + 12 个写新脚本的进程,6 个套件全部每份必挂;
+        修复后同样压力下全部通过。
+      - 并发 14 `--no-retry` 全量门连跑 3 次(各约 7 分钟),这 6 个套件都未再失败。同 3 次门里另见
+        `engine-rpc-desktop-mcp`「changed real MCP schema」(Missing expected rejection)和
+        `workspace-host-contract`「only one concurrent create-only write」(39 毫秒内失败,不像扫描)各 1 次,待另行处理。
+      - rebase 到含环境/OMP 修复与 IPC-6b 的 main 后,并发 14 `--no-retry` 全量门再连跑 3 次(各约 6.5 分钟),
+        三轮首轮失败均为 0。
     - 仍需产品侧决定(只报告,未改产品):
       - `envs-application-tools`:已按用户决定改产品,见下一条。
       - `remote-runtime-root-doctor` 在更重的压力下(8 份 + 20 个 `yes` + 12 个写新脚本的进程)仍会失败:

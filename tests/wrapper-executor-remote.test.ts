@@ -21,6 +21,7 @@ import type { RemoteFileChunk } from '../src/main/agent/wrappers/remote-ssh-log'
 import { RemoteLaunchUnknownError } from '../src/main/agent/wrappers/remote-launch-claim'
 import { fakeLaunchClaimCommand } from './helpers/fakeLaunchClaims'
 import { fakeRemoteLogChunk } from './helpers/fakeRemoteLogChunk'
+import { warmExecutable } from './helpers/firstExec'
 
 const RUN_DIR = '/home/lab/.phi/wrappers/runs/wrun_test'
 
@@ -333,6 +334,7 @@ async function withDetachedCommandHarness<T>(
     const setsidShim = join(binDir, 'setsid')
     writeFileSync(setsidShim, '#!/bin/sh\nexec "$@"\n')
     chmodSync(setsidShim, 0o755)
+    warmExecutable(setsidShim, ['/usr/bin/true'])
 
     function run(command: string): string {
       return execSync(command, {
@@ -357,7 +359,7 @@ function sleep(ms: number): Promise<void> {
  * have enough overhead of their own to skew short timing windows) until
  * `check()` returns true or `timeoutMs` elapses.
  */
-async function waitUntil(check: () => boolean, timeoutMs = 5000, intervalMs = 50): Promise<void> {
+async function waitUntil(check: () => boolean, timeoutMs = 60_000, intervalMs = 50): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (check()) return

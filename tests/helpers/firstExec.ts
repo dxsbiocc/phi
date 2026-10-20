@@ -12,8 +12,13 @@ const FIRST_EXEC_TIMEOUT_MS = 60_000
  * not absorb that one-off cost, so fixtures pay it here, under a deadline that fails loudly.
  * The arguments must make the executable exit without side effects.
  */
-export function warmExecutable(path: string, args: readonly string[]): void {
+export function warmExecutable(
+  path: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env
+): void {
   execFileSync(path, args, {
+    env,
     stdio: 'ignore',
     timeout: FIRST_EXEC_TIMEOUT_MS,
     killSignal: 'SIGKILL'

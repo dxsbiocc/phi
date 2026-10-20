@@ -26,6 +26,7 @@ import {
 import type { RemoteWorkspaceBoundaryDependencies } from '../src/main/agent/remote-workspace-boundary'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import { REMOTE_RIPGREP_COMPLETE_MARKER } from '../src/shared/remoteRipgrepTypes'
+import { warmExecutable } from './helpers/firstExec'
 
 function fixture(noRg = false): {
   root: string
@@ -77,7 +78,8 @@ function fixture(noRg = false): {
   const run = (command: string): ReturnType<typeof spawnSync> =>
     spawnSync('bash', ['-c', command], {
       encoding: 'utf-8',
-      timeout: 5_000,
+      // The fake ssh channel's own limit; generous so host load cannot kill a command midway.
+      timeout: 60_000,
       maxBuffer: 2 * 1024 * 1024
     })
   const dependencies: RemoteWorkspaceBoundaryDependencies = {
@@ -171,6 +173,8 @@ function installManagedRipgrep(
   writeFileSync(binary, `#!/bin/sh\nexec ${JSON.stringify(systemRg)} "$@"\n`)
   writeFileSync(join(prefix, REMOTE_RIPGREP_COMPLETE_MARKER), `${version}\n`)
   chmodSync(binary, 0o755)
+  // The product's managed-rg probe must not absorb this new wrapper's first-exec scan.
+  warmExecutable(binary, ['--version'])
   return binary
 }
 
