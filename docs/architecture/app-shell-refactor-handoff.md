@@ -1,7 +1,7 @@
 # App shell 拆分:交接文档
 
 Date: 2026-10-19
-Status: 进行中(`App.tsx` 5,569 → 4,478,目标 ≤ 1,200;第 5 节第 1–3 项已完成)
+Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 项已完成)
 
 这份文档是给**接手这个任务的新会话**看的。读完它应当能直接开工,不需要回看之前的对话。
 
@@ -36,10 +36,10 @@ Status: 进行中(`App.tsx` 5,569 → 4,478,目标 ≤ 1,200;第 5 节第 1–3 
 
 | 指标                                                            | 值                                                         |
 | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| `App.tsx`                                                       | 4,478 行(`App()` 函数本体 4,249 行,即 229–4,477)           |
-| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 22 / 15 / 104 / 12                                         |
-| ESLint `--max-warnings`                                         | 1,470                                                      |
-| 测试门                                                          | ≈7,099 例,0 失败,12 跳过                                   |
+| `App.tsx`                                                       | 4,082 行(`App()` 函数本体 3,872 行,即 210–4,081)           |
+| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 22 / 13 / 104 / 12                                         |
+| ESLint `--max-warnings`                                         | 1,467                                                      |
+| 测试门                                                          | ≈7,122 例,0 失败,12 跳过                                   |
 | 主进程边界基线                                                  | `index.ts` 13,002 行,234 通道,4 个超长文件(本次工作未触碰) |
 
 ### 已经抽出的模块(全部已合入)
@@ -64,6 +64,11 @@ Status: 进行中(`App.tsx` 5,569 → 4,478,目标 ≤ 1,200;第 5 节第 1–3 
 | `features/file-preview/hooks/useFilePathOpeners.ts`     | 133  | 把路由绑定到 shell 拥有的各个 surface    |
 | `lib/app-shell/panelRequests.ts`                        | 65   | 侧栏一次性请求的状态与纯变换             |
 | `lib/app-shell/usePanelRequests.ts`                     | 65   | 三个请求的绑定(稳定回调)                 |
+| `features/chat/lib/sessionEventBridge.ts`               | 303  | 主进程会话事件 → store 的路由规则        |
+| `features/chat/hooks/useSessionEventBridge.ts`          | 101  | 九路订阅的绑定与清理                     |
+| `features/chat/lib/promptSend.ts`                       | 263  | 发送管线:守卫、乐观消息、回执、失败恢复  |
+| `features/chat/hooks/usePromptSend.ts`                  | 45   | 稳定身份的发送绑定(latest-ref)           |
+| `features/chat/hooks/useQueuedPromptDrain.ts`           | 97   | 空闲时排空队列的守卫与出队               |
 
 计数口径(别再用 `/useState\(/` 这种正则,会漏掉泛型写法):
 `grep -cE '= (useState|useMemo)[<(]' App.tsx`、`grep -cE '= useCallback\(' App.tsx`、
@@ -71,7 +76,8 @@ Status: 进行中(`App.tsx` 5,569 → 4,478,目标 ≤ 1,200;第 5 节第 1–3 
 
 对应的测试:`tests/app-workspace-*.test.ts`、`tests/app-window-chrome.test.ts`、
 `tests/workspace-view-mode.test.ts`、`tests/workspace-tab-navigation.test.ts`、
-`tests/prompt-queue.test.ts`、`tests/file-path-openers.test.ts`、`tests/panel-requests.test.ts`。
+`tests/prompt-queue.test.ts`、`tests/file-path-openers.test.ts`、`tests/panel-requests.test.ts`、
+`tests/session-event-bridge.test.ts`、`tests/prompt-send.test.ts`。
 
 ---
 
@@ -139,19 +145,26 @@ Status: 进行中(`App.tsx` 5,569 → 4,478,目标 ≤ 1,200;第 5 节第 1–3 
 13. **行数估算会大幅偏离,别按估算决定值不值得做**。第 3 块估算 ~120 行,实际只降 3 行:三个状态对
     本来就短,内联的消费闭包也短。它的价值是「消费当前请求才清除」这条规则有了名字和测试,面板
     拿到的是稳定回调。判断标准是「这块代码是否回答一个可命名的问题」,不是行数。
+14. **发送回调要稳定身份,否则 drain 会取消自己**。`sendPromptText` 每次渲染换身份时,drain effect
+    会重跑并清掉自己排的 microtask,队列永远发不出去。`usePromptSend` 用 latest-ref 固化返回的
+    函数,读取 `latest.current` 里的当次状态;`useSessionEventBridge` 则相反,依赖数组必须逐项列
+    出(它只在依赖变化时重订阅)。
+15. **主机休眠会污染测试门**。本机两次门跑出现 100–980 秒的用例耗时,全部集中在无关的 engine/SDK
+    套件;那是机器睡过去,不是回归。跑门前用 `caffeinate -dimsu` 顶住,并把「重跑转绿」和
+    「宿主休眠」区分开写进提交说明。
 
 ---
 
 ## 5. 剩余任务(按建议顺序)
 
-`App.tsx` 现在还剩下两块(第 1–3 块已合入)。顺序按「依赖面从小到大」排列,不是按行数。
+`App.tsx` 现在只剩最后一块(第 1–4 块已合入)。顺序按「依赖面从小到大」排列,不是按行数。
 
 | 顺序 | 切片                                                                                                 | 位置                                          | 估算 | 状态   | 备注                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---- | ------ | ------------------------------------------------------- |
 | 1    | 运行控制:`isBusy`/`isSendingMessage`/`compactingSessions`/`contextUsageRefreshKey` + 停止生成 + 队列 | 新 `features/chat/hooks/` 或 `lib/app-shell/` | ~300 | 已完成 | 实际只降 113 行:`isBusy` 是鉴权闸、发送 ref 留给第 4 块 |
 | 2    | 文件/笔记本打开链                                                                                    | `features/file-preview/`                      | ~200 | 已完成 | 实际降 208 行;路由做成纯函数 + 显式 targets             |
 | 3    | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput`              | `features/jobs/` 或 `lib/app-shell/`          | ~120 | 已完成 | 只降 3 行;价值是消费规则和稳定回调,不是行数             |
-| 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 待做   | 先拆函数再做 hook;复杂度是这个文件最高的                |
+| 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 已完成 | 两个提交共降 396 行;先拆函数再绑定,订阅/发送各一个 hook |
 | 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 待做   | 做完这步 APP 才可能接近 1,200                           |
 
 每完成一块,`App.tsx` 会降 100–300 行。**不要指望一次抽走很多**——JSX 只有 534 行,
