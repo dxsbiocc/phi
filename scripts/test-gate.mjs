@@ -11,11 +11,15 @@
  *   node scripts/test-gate.mjs                 run the gate
  *   node scripts/test-gate.mjs --list          print the resolved plan
  *   node scripts/test-gate.mjs --only-skipped  run only the skipped suites
+ *   node scripts/test-gate.mjs --changed       run only suites the current change can affect
+ *   node scripts/test-gate.mjs --changed=<ref> same, diffing against <ref> (default: main)
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
+import { availableParallelism } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { changedFiles, selectAffected } from './test-affected.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const testsDir = path.join(repoRoot, 'tests')
@@ -25,6 +29,8 @@ const loaderPath = path.join(repoRoot, 'scripts/test-loader.mjs')
 const args = process.argv.slice(2)
 const listOnly = args.includes('--list')
 const onlySkipped = args.includes('--only-skipped')
+const changedArg = args.find((arg) => arg === '--changed' || arg.startsWith('--changed='))
+const changedBase = changedArg?.includes('=') ? changedArg.slice('--changed='.length) : 'main'
 
 /** Host capabilities a suite may need. A missing key means "not granted here". */
 const PROBES = {
@@ -149,11 +155,29 @@ if (listOnly) {
   process.exit(0)
 }
 
-const selected = onlySkipped ? plan.skipped.map((item) => item.file) : plan.run
+function selectSuites() {
+  const base = onlySkipped ? plan.skipped.map((item) => item.file) : plan.run
+  if (!changedArg) return base
+  const changed = changedFiles(repoRoot, changedBase)
+  const affected = selectAffected(repoRoot, changed, base)
+  if (affected.all) {
+    console.log(
+      `--changed: ${affected.reason} is outside the import graph; running the full selection.`
+    )
+  } else {
+    console.log(
+      `--changed: ${changed.length} changed file(s) against ${changedBase}; ` +
+        `${affected.files.length} of ${base.length} suite(s) affected.`
+    )
+  }
+  return affected.files
+}
+
+const selected = selectSuites()
 
 if (selected.length === 0) {
   console.log('Nothing to run for this selection.')
-  process.exit(1)
+  process.exit(changedArg ? 0 : 1)
 }
 
 printPlan(plan)
@@ -164,7 +188,10 @@ if (plan.stale.length > 0) {
   process.exit(1)
 }
 
-const concurrency = process.env.PHI_TEST_CONCURRENCY ?? '4'
+// Most slow suites wait on fake SSH/Slurm hosts rather than burn CPU, so half the cores is a
+// safe default; the serial retry below still separates load-sensitive flakes from failures.
+const concurrency =
+  process.env.PHI_TEST_CONCURRENCY ?? String(Math.max(4, Math.floor(availableParallelism() / 2)))
 const retry = !args.includes('--no-retry')
 /** Keep the tail only: enough to find failing files, not the whole suite log. */
 const OUTPUT_TAIL_BYTES = 4 * 1024 * 1024

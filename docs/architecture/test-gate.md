@@ -17,6 +17,13 @@ bun run test:known-failures  # 只跑被跳过的套件,用于在正常机器上
 node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、探测结果
 ```
 
+日常改动优先用 `--changed`,只跑受这次改动影响的套件(见下文「按改动选择」):
+
+```sh
+node scripts/test-gate.mjs --changed          # 对比 main + 未提交/未跟踪的改动
+node scripts/test-gate.mjs --changed=<ref>    # 对比任意 ref
+```
+
 `bun run test` 保留原样,作为"全量"入口;beta 交接仍以全量结果为准,但在受限环境下应改用 `test:gate`。
 
 ## 已知失败清单
@@ -28,14 +35,14 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 
 每个 profile / 条目必须包含:
 
-| 字段 | 含义 |
-| --- | --- |
-| `kind` | `environment`(宿主能力缺失)或 `fixture`(真实红灯) |
-| `probes` | `kind=environment` 时需要的探测项数组,目前支持 `ps`、`flock` |
+| 字段         | 含义                                                                 |
+| ------------ | -------------------------------------------------------------------- |
+| `kind`       | `environment`(宿主能力缺失)或 `fixture`(真实红灯)                    |
+| `probes`     | `kind=environment` 时需要的探测项数组,目前支持 `ps`、`flock`         |
 | `alwaysSkip` | `kind=environment` 且能力无法廉价探测时置 true,跳过依据写进 `reason` |
-| `owner` | 负责清理的模块 |
-| `reviewBy` | 复核日期,过期会被门判定为 stale 并**失败** |
-| `reason` | 具体现象与判定依据,必须可复现 |
+| `owner`      | 负责清理的模块                                                       |
+| `reviewBy`   | 复核日期,过期会被门判定为 stale 并**失败**                           |
+| `reason`     | 具体现象与判定依据,必须可复现                                        |
 
 三类行为:
 
@@ -47,10 +54,10 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 
 ## 环境探测
 
-| 探测项 | 方法 | 为什么需要 |
-| --- | --- | --- |
-| `ps` | `execFileSync('/bin/ps', ['-o','pid=','-p',pid])` | RPC 启动包装脚本用 `ps -o pgid=` 证明自己是进程组组长,不是就 `exit 78` + `PHI_LAUNCH:NOT_GROUP_LEADER` |
-| `flock` | `sh -c 'command -v flock'` | 同一脚本用 `flock` 拿 run lock,拿不到就 `exit 75` + `PHI_LAUNCH:RUN_LOCK_BUSY` |
+| 探测项  | 方法                                              | 为什么需要                                                                                             |
+| ------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `ps`    | `execFileSync('/bin/ps', ['-o','pid=','-p',pid])` | RPC 启动包装脚本用 `ps -o pgid=` 证明自己是进程组组长,不是就 `exit 78` + `PHI_LAUNCH:NOT_GROUP_LEADER` |
+| `flock` | `sh -c 'command -v flock'`                        | 同一脚本用 `flock` 拿 run lock,拿不到就 `exit 75` + `PHI_LAUNCH:RUN_LOCK_BUSY`                         |
 
 2026-10-19 在当前开发环境实测:两项都不可用(`ps` 被沙箱拒绝,`flock` 在 macOS 上默认不存在),
 于是 38 个真实启动套件被跳过。判定依据是一次对照实验:**给 PATH 补上 `flock`/`ps` 替身之后,
@@ -58,10 +65,10 @@ node scripts/test-gate.mjs --list   # 只看计划:跑哪些、跳过哪些、�
 
 还有两类能力无法廉价探测,由 `alwaysSkip` 处理:
 
-| profile | 缺失的能力 | 现象 |
-| --- | --- | --- |
-| `electron-sandbox` | 能启动真实 Electron BrowserWindow | `sandbox initialization failed: Operation not permitted`(`notebook-editor-retention`) |
-| `real-ssh-server` | 可达的真实 OpenSSH 服务器 | `RemoteSshConnectionError: network_unreachable`,200ms 内失败(`remote-ssh-real-identity`) |
+| profile            | 缺失的能力                        | 现象                                                                                     |
+| ------------------ | --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `electron-sandbox` | 能启动真实 Electron BrowserWindow | `sandbox initialization failed: Operation not permitted`(`notebook-editor-retention`)    |
+| `real-ssh-server`  | 可达的真实 OpenSSH 服务器         | `RemoteSshConnectionError: network_unreachable`,200ms 内失败(`remote-ssh-real-identity`) |
 
 macOS 开发者想本地运行这些套件:`brew install flock`,并确保 `ps` 未被安全策略禁用。
 Linux 服务器(远端运行时的真实目标)两者都自带。
@@ -73,10 +80,10 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
 
 门在首次运行失败后会自动**串行重试失败的那几个套件**,并区分两种情况:
 
-| 情况 | 门的输出 |
-| --- | --- |
-| 重试通过 | `Retry passed: the failure is load-sensitive, not a regression.` 退出码 0 |
-| 重试仍失败 | `Retry failed too: this is a real failure.` 退出码非 0 |
+| 情况       | 门的输出                                                                  |
+| ---------- | ------------------------------------------------------------------------- |
+| 重试通过   | `Retry passed: the failure is load-sensitive, not a regression.` 退出码 0 |
+| 重试仍失败 | `Retry failed too: this is a real failure.` 退出码非 0                    |
 
 失败套件的识别覆盖共享测试体:`tests/workspace-host-contract.ts` 这类文件被多个 runner 导入,
 报告里只出现契约文件路径,门会反查引用它的 runner 再重试。用 `--no-retry` 可关闭重试。
@@ -85,10 +92,31 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
 
 ## 分级
 
-| 层 | 内容 | 期望时长 |
-| --- | --- | --- |
-| 快档 = `test:gate` | 844 个顶层套件,排除 40 个已知能力受限项 | 分钟级 |
-| 慢档 = `test` | 全量,含真实子进程套件 | 20 分钟以上,仅里程碑与交接 |
+| 层                 | 内容                                    | 期望时长                   |
+| ------------------ | --------------------------------------- | -------------------------- |
+| 快档 = `test:gate` | 844 个顶层套件,排除 40 个已知能力受限项 | 分钟级                     |
+| 慢档 = `test`      | 全量,含真实子进程套件                   | 20 分钟以上,仅里程碑与交接 |
+
+## 按改动选择(`--changed`)
+
+`scripts/test-affected.mjs` 从每个测试文件出发,沿静态 import、动态 import 和带引号的仓内路径
+(读源码文本的测试、按路径拉起的 fixture)求可达文件集合;改动命中集合的套件才会运行。
+
+- 只改 `docs/`、根目录 `*.md` → 不跑任何套件。
+- 改动落在导入图追不到的地方(`package.json`、`bun.lock`、`scripts/`、`resources/`、tsconfig 等)→ 退回完整选择。
+- 结果偏保守:读 `App.tsx` 源码的测试会连带 App 的全部依赖,宁可多跑,不漏跑。
+
+提交前、里程碑和交接仍跑完整的 `test:gate`。
+
+## 耗时与提速(2026-10-20 实测)
+
+- 基线:855 个套件,并发 4,墙钟约 12 分钟(宿主同时有其他任务)。套件内耗时合计约 2,280 秒,
+  58 个 > 10 秒的套件占 80%,主要是假 SSH / Slurm / 远端部署类套件,多数时间在等待而不是算。
+- 每个测试文件是独立进程,原来每个进程都要加载 TypeScript 编译器并重新转译共享模块。
+  `scripts/test-loader.mjs` 现在把转译结果按「源码 + 编译器版本 + 选项」缓存到
+  `node_modules/.cache/phi-test-transpile/`,命中时不加载编译器。200 个小套件:无缓存 27.1 秒 → 命中 9.6 秒。
+- 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
+- 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 
 ## 与整洁度方案的关系
 

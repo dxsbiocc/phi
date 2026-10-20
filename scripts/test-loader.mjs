@@ -1,9 +1,9 @@
-import { registerHooks, syncBuiltinESMExports } from 'node:module'
+import { createHash } from 'node:crypto'
+import { createRequire, registerHooks, syncBuiltinESMExports } from 'node:module'
 import fs, { readFileSync, existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
 
 // --- Test data isolation -------------------------------------------------------------
 // Tests must never write into the developer's real ~/.phi (logs, sessions, caches, MCP
@@ -47,6 +47,54 @@ process.on('exit', (code) => {
   if (code === 0) process.exitCode = 1
 })
 
+// --- Transpile cache -----------------------------------------------------------------
+// Every test file runs in its own process, so without a cache each process loads the
+// TypeScript compiler and re-transpiles the same shared modules. Key the output by source
+// text, compiler version and these options; load the compiler only on a cache miss.
+const TRANSPILE_CACHE_VERSION = '1'
+const require = createRequire(import.meta.url)
+const typescriptVersion = JSON.parse(
+  readFileSync(require.resolve('typescript/package.json'), 'utf8')
+).version
+const transpileCacheDir = resolve(
+  fileURLToPath(new URL('..', import.meta.url)),
+  'node_modules/.cache/phi-test-transpile'
+)
+let typescript
+
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- plain JS loader
+function transpile(filePath) {
+  const source = readFileSync(filePath, 'utf8')
+  const key = createHash('sha1')
+    .update(`${TRANSPILE_CACHE_VERSION}\0${typescriptVersion}\0${filePath}\0${source}`)
+    .digest('hex')
+  const cached = join(transpileCacheDir, `${key}.js`)
+  try {
+    return readFileSync(cached, 'utf8')
+  } catch {
+    // Cache miss: transpile below and store the result.
+  }
+  typescript ??= require('typescript')
+  const { outputText } = typescript.transpileModule(source, {
+    fileName: filePath,
+    compilerOptions: {
+      target: typescript.ScriptTarget.ES2022,
+      module: typescript.ModuleKind.ESNext,
+      jsx: typescript.JsxEmit.ReactJSX
+    }
+  })
+  try {
+    fs.mkdirSync(transpileCacheDir, { recursive: true })
+    // Write then rename so a concurrent reader never sees a half-written file.
+    const temp = `${cached}.${process.pid}.tmp`
+    fs.writeFileSync(temp, outputText)
+    fs.renameSync(temp, cached)
+  } catch (error) {
+    console.error(`[test-loader] transpile cache write failed: ${error.message}`)
+  }
+  return outputText
+}
+
 // Run source-level regression tests without adding a second build toolchain.
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -77,14 +125,6 @@ registerHooks({
       return { format: 'module', source: `export default ${source}`, shortCircuit: true }
     }
     if (!url.startsWith('file:') || !/\.tsx?$/.test(url)) return nextLoad(url, context)
-    const { outputText } = ts.transpileModule(readFileSync(fileURLToPath(url), 'utf8'), {
-      fileName: fileURLToPath(url),
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.ESNext,
-        jsx: ts.JsxEmit.ReactJSX
-      }
-    })
-    return { format: 'module', source: outputText, shortCircuit: true }
+    return { format: 'module', source: transpile(fileURLToPath(url)), shortCircuit: true }
   }
 })
