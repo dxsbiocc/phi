@@ -205,15 +205,16 @@ test('SSH background launch preserves submitted control files when an accepted l
   f.release()
   await assert.rejects(pending, (error) => error === lost)
   assert.equal(f.launches(), 1)
-  for (let attempt = 0; attempt < 200; attempt++) {
-    if (
-      await access(join(f.runDirectory(), 'exit_code')).then(
-        () => true,
-        () => false
-      )
-    )
-      break
-    await delay(10)
+  // The detached launch finishes on its own schedule; a loaded host can take seconds.
+  const deadline = Date.now() + 20_000
+  while (
+    !(await access(join(f.runDirectory(), 'exit_code')).then(
+      () => true,
+      () => false
+    ))
+  ) {
+    if (Date.now() >= deadline) throw new Error('detached launch never wrote exit_code')
+    await delay(20)
   }
   await access(f.marker)
   await access(join(f.runDirectory(), 'launch.sh'))

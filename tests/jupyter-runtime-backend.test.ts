@@ -407,9 +407,11 @@ test('app disposal closes every remote runtime child and tunnel handle', async (
   }
 })
 
+// Every fake-host step is a fresh bash/perl process; on a loaded gate host each one can take
+// seconds, so the budget is generous. It only bounds how long a real failure takes to surface.
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 20_000
+  timeoutMs = 60_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!(await predicate())) {

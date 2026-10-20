@@ -56,12 +56,14 @@ function notebookBody(): string {
   })
 }
 
+// The fake Jupyter starts through several fresh bash/perl processes; a loaded gate host can
+// take seconds, so the budget only bounds how long a real failure takes to surface.
 async function waitForFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (existsSync(path)) return
+  const deadline = Date.now() + 60_000
+  while (!existsSync(path)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`)
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
-  throw new Error(`timed out waiting for ${path}`)
 }
 
 function fakeSessionClient(events: string[]): JupyterSessionClient {

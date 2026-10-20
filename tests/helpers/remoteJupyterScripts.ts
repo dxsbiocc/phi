@@ -47,6 +47,11 @@ export async function writeRemoteJupyterTestExecutables(
       '  for real in /bin/ps /usr/bin/ps; do [[ -x "$real" ]] && exec "$real" "$@"; done',
       '  exit 1',
       'fi',
+      // The launch script's resource monitor samples every 5 s. A sample it cannot read stops
+      // Jupyter, so a slow (loaded) start would lose the server. macOS ps has no nlwp: report 1.
+      'if [[ "$*" == "-eo pgid=,rss=,nlwp=,time=" ]]; then',
+      "  exec /bin/ps -eo pgid=,rss=,time= | awk '{ print $1, $2, 1, $3 }'",
+      'fi',
       'pid="${!#}"',
       'kill -0 "$pid" 2>/dev/null || exit 1',
       'case "$*" in',
