@@ -747,7 +747,7 @@ test('plugin detail builds an absent private environment through the shared conf
     'utf8'
   )
   const settingsSource = readFileSync(
-    'src/renderer/src/features/environment/components/EnvironmentSettingsPanel.tsx',
+    'src/renderer/src/features/environment/EnvironmentSettingsPanel.tsx',
     'utf8'
   )
   assert.match(dialogSource, /resourceEnvironmentCopy.confirmTitle/)

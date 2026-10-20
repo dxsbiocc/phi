@@ -6,9 +6,9 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import {
-  createMarkdownDraftStore,
-  markdownDraftIsDirty
-} from '../src/renderer/src/features/file-preview/lib/markdownDrafts'
+  createTextFileDraftStore,
+  textFileDraftIsDirty
+} from '../src/renderer/src/features/file-preview/lib/textFileDrafts'
 import {
   isMarkdownFilePath,
   markdownContentsEqual,
@@ -67,7 +67,7 @@ test('Markdown path recognition handles uppercase and encoded remote names', () 
 })
 
 test('dirty drafts survive file navigation and external refresh without losing their save baseline', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().sync('a.md', '# Original')
   store.getState().edit('a.md', '# Original', '# My edit')
   store.getState().release('a.md')
@@ -78,7 +78,7 @@ test('dirty drafts survive file navigation and external refresh without losing t
 })
 
 test('failed saves preserve text and permit retry while duplicate saves are rejected', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().edit('a.md', '# Before', '# After')
   assert.ok(store.getState().beginSave('a.md'))
   assert.equal(store.getState().beginSave('a.md'), null)
@@ -89,33 +89,33 @@ test('failed saves preserve text and permit retry while duplicate saves are reje
 })
 
 test('typing during a save keeps new edits dirty and advances the baseline to actually saved content', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().edit('a.md', '# Before', '# Submitted')
   store.getState().beginSave('a.md')
   store.getState().edit('a.md', '# Before', '# Newer edit')
   store.getState().saved('a.md', '# Submitted', '# Submitted')
   assert.equal(store.getState().drafts['a.md'].content, '# Newer edit')
   assert.equal(store.getState().drafts['a.md'].baseContent, '# Submitted')
-  assert.equal(markdownDraftIsDirty(store.getState().drafts['a.md']), true)
+  assert.equal(textFileDraftIsDirty(store.getState().drafts['a.md']), true)
 })
 
 test('saved line endings compare cleanly and clean drafts are released', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().edit('a.md', '# Before\r\n', '# After\n')
   store.getState().beginSave('a.md')
   store.getState().saved('a.md', '# After\n', '# After\r\n')
-  assert.equal(markdownDraftIsDirty(store.getState().drafts['a.md']), false)
+  assert.equal(textFileDraftIsDirty(store.getState().drafts['a.md']), false)
   assert.equal(markdownContentsEqual('# Same\r\n', '# Same\n'), true)
   store.getState().release('a.md')
   assert.equal(store.getState().drafts['a.md'], undefined)
 })
 
 test('discarding modifications restores the latest file content', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().edit('a.md', '# Before', '# Draft')
   store.getState().discard('a.md', '# Latest read')
   assert.equal(store.getState().drafts['a.md'].content, '# Latest read')
-  assert.equal(markdownDraftIsDirty(store.getState().drafts['a.md']), false)
+  assert.equal(textFileDraftIsDirty(store.getState().drafts['a.md']), false)
 })
 
 test('draft storage integration recovers unsaved edits and surfaces quota failures without losing text', () => {
@@ -126,11 +126,11 @@ test('draft storage integration recovers unsaved edits and surfaces quota failur
       stored = value
     }
   }
-  const first = createMarkdownDraftStore(storage)
+  const first = createTextFileDraftStore(storage)
   first.getState().edit('/project/a.md', '# Before', '# Recover me')
-  const restored = createMarkdownDraftStore(storage)
+  const restored = createTextFileDraftStore(storage)
   assert.equal(restored.getState().drafts['/project/a.md'].content, '# Recover me')
-  const full = createMarkdownDraftStore({
+  const full = createTextFileDraftStore({
     getItem: () => null,
     setItem: () => {
       throw new Error('quota')
@@ -142,7 +142,7 @@ test('draft storage integration recovers unsaved edits and surfaces quota failur
 })
 
 test('oversized pasted content does not replace the recoverable draft', () => {
-  const store = createMarkdownDraftStore()
+  const store = createTextFileDraftStore()
   store.getState().edit('/project/a.md', '# Before', '你'.repeat(120_000))
   assert.equal(store.getState().drafts['/project/a.md'].content, '# Before')
   assert.match(store.getState().drafts['/project/a.md'].error ?? '', /大小上限/)

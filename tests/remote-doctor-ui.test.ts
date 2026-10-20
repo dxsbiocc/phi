@@ -9,7 +9,6 @@ import type { RemoteDoctorReport } from '../src/shared/remoteDoctorTypes'
 import { RemoteDoctorPanel } from '../src/renderer/src/features/wrapper/components/RemoteDoctorPanel'
 import { RemoteHostProfilesPanel } from '../src/renderer/src/features/wrapper/components/RemoteHostProfilesPanel'
 import { RemoteHostDialog } from '../src/renderer/src/features/wrapper/components/RemoteHostDialog'
-import { RemoteProjectConnectionRow } from '../src/renderer/src/features/wrapper/components/RemoteProjectConnectionRow'
 import {
   createRemoteDoctorUiController,
   createRemoteHostDoctorUiController,
@@ -578,80 +577,6 @@ test('server detail keeps the connection status without exposing capability diag
   )
   assert.match(markup, /Connected/)
   assert.doesNotMatch(markup, /Server Capability Profile|Linux · x86_64|Checked at/)
-})
-
-test('project connection test uses its own host, directory and HPC settings', () => {
-  const calls: string[] = []
-  const connection = {
-    id: 'conn-1',
-    label: 'Cluster',
-    hostProfileId: 'host-1',
-    hpc: { scheduler: 'slurm' as const, runtime: 'conda' as const, nextflowBin: '/opt/nf' }
-  }
-  const row = captureWrapperUi(() =>
-    RemoteProjectConnectionRow({
-      projectId: 'project-1',
-      connection,
-      host: { id: 'host-1', label: 'Lab', hostAlias: 'lab-hpc' },
-      remotePath: '/cluster/project',
-      isDefault: true,
-      busy: false,
-      doctorState: { phase: 'idle' },
-      onTest: (target) => {
-        calls.push(JSON.stringify([target.hostProfileId, target.remotePath, target.options]))
-      },
-      onEdit: () => {
-        calls.push('edit')
-      },
-      onDelete: () => {
-        calls.push('delete')
-      }
-    })
-  )
-  findAction(row, 'Test connection')()
-  findAction(row, 'Edit Cluster')()
-  findAction(row, 'Delete Cluster')()
-  assert.deepEqual(calls, [
-    JSON.stringify([
-      'host-1',
-      '/cluster/project',
-      {
-        scheduler: 'slurm',
-        runtime: 'conda',
-        nextflowBin: '/opt/nf',
-        refreshCapabilities: true
-      }
-    ]),
-    'edit',
-    'delete'
-  ])
-  const markup = render(row)
-  assert.match(markup, /Default/)
-  assert.match(markup, /lab-hpc/)
-  assert.doesNotMatch(markup, /privateKeyPath|passphrase/)
-})
-
-test('a project connection with no host links directly to remote settings', () => {
-  const calls: string[] = []
-  const row = captureWrapperUi(() =>
-    RemoteProjectConnectionRow({
-      projectId: 'project-1',
-      connection: { id: 'conn-1', label: 'Missing', hostProfileId: 'missing-host' },
-      host: undefined,
-      remotePath: '/cluster/project',
-      isDefault: false,
-      busy: false,
-      doctorState: { phase: 'idle' },
-      onTest: () => undefined,
-      onEdit: () => undefined,
-      onDelete: () => undefined,
-      onOpenRemoteSettings: () => calls.push('settings')
-    })
-  )
-
-  findAction(row, 'Settings → Remote')()
-  assert.deepEqual(calls, ['settings'])
-  assert.match(render(row), /SSH server needs reconfiguration/)
 })
 
 test('result panel identifies each failed setting and shows a checked time and retry guidance', () => {

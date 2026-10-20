@@ -1,5 +1,5 @@
-import { environmentUi } from '../lib/environmentUi'
-import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
+import { environmentUi } from './lib/environmentUi'
+import { getUiLocale, useUiLanguage } from '../../lib/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
@@ -16,22 +16,22 @@ import type {
   EnvironmentSnapshot,
   EnvironmentToolId,
   ManagedEnvironmentEntry
-} from '../../../../../shared/environmentTypes'
-import { errorMessage } from '../../../../../shared/errorCodes'
-import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
-import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
-import { useSessionStore } from '../../../stores/sessionStore'
-import { ManagedEnvironmentsSection } from './ManagedEnvironmentsSection'
-import { ManagedEnvironmentDetail } from './ManagedEnvironmentDetail'
+} from '../../../../shared/environmentTypes'
+import { errorMessage } from '../../../../shared/errorCodes'
+import { EnvironmentBuildConfirmDialog } from '../../components/EnvironmentBuildConfirmDialog'
+import { ConfirmationDialog } from '../../components/ConfirmationDialog'
+import { useSessionStore } from '../../stores/sessionStore'
+import { ManagedEnvironmentsSection } from './components/ManagedEnvironmentsSection'
+import { ManagedEnvironmentDetail } from './components/ManagedEnvironmentDetail'
 import {
   buildEnvironmentSections,
   formatEnvironmentSize,
   managedEnvironmentHostResources
-} from '../lib/environmentPanel'
+} from './lib/environmentPanel'
 import {
   readManagedEnvironmentCache,
   refreshManagedEnvironmentCache
-} from '../lib/managedEnvironmentApi'
+} from './lib/managedEnvironmentApi'
 
 type PendingAction =
   | { kind: 'build'; environment: ManagedEnvironmentEntry }
