@@ -44,15 +44,7 @@ import type {
   ManualCompactionTarget
 } from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
-import type {
-  PhiPluginInstallPreview,
-  PhiPluginListItem,
-  PhiPluginMutationResult,
-  PhiPluginProblemView
-} from '../shared/phiPluginTypes'
-import type { EnablementItemKey, EnablementScope } from '../shared/enablementTypes'
 import type { PromptAgentSummary } from '../shared/promptAgentTypes'
-import { localizePhiPluginProblemMessage } from '../shared/phiPluginProblems'
 import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
   hoverMediaPreviewType,
@@ -78,6 +70,14 @@ import {
 } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
+import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
+import {
+  registerPackageCatalogIpc,
+  registerPackageOperationsIpc,
+  registerResourceCatalogIpc
+} from './ipc/packages-ipc'
+import { registerPhiPluginIpc } from './ipc/phi-plugins-ipc'
+import { registerSkillsIpc } from './ipc/skills-ipc'
 import { registerMcpIpc, type PendingCustomMcpAuthorization } from './ipc/mcp-ipc'
 import { nativeUiCopy } from './native-ui-copy'
 import {
@@ -134,7 +134,6 @@ import { TerminalManager } from './terminal/terminal-manager'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
 import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import semver from 'semver'
 import { createAgentSession } from './agent/session/session-manager'
 import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
 import { getAuthManager } from './agent/auth-manager'
@@ -292,8 +291,6 @@ import {
   loadRemoteProjectSkillCatalog,
   readRemoteProjectSkillContent,
   readRemoteProjectSkillResource,
-  revokeRemoteProjectSkillTrust,
-  trustRemoteProjectSkill,
   type RemoteProjectSkillCatalog,
   type RemoteProjectSkillContext
 } from './agent/content/remote-project-skill-service'
@@ -338,66 +335,25 @@ import {
   type RuntimeModel,
   type RuntimeResourceLoader
 } from './agent/runtime/runtime-adapter'
-import {
-  installPlugin as installPhiPlugin,
-  listInstalledPlugins,
-  loadedPlugins,
-  setPluginEnabled,
-  uninstallPlugin as uninstallPhiPlugin,
-  upgradePlugin,
-  type PluginLifecycleResult,
-  type PluginNamespace
-} from './agent/plugins/loader'
-import { validatePlugin, type PluginProblem } from './agent/plugins/validate'
-import { buildPhiPluginListItem } from './agent/plugins/details'
+import { loadedPlugins, type PluginNamespace } from './agent/plugins/loader'
 import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
+import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
 import {
-  getEnablementSnapshot,
-  isCoreSkill,
-  migrateEnablementFromHistory,
-  setEnabled
-} from './agent/enablement'
-import {
-  applyPackageUpdate,
-  applyPackageUpdates,
   cleanupStalePackageStaging,
-  importOfflinePackage,
-  installPackages as installRegistryPackages,
-  listKnownRegistries,
-  listInstalledPackages as listRegistryPackages,
   listPackageUpdates,
   loadKnownRegistryIndexes,
-  planInstall as planRegistryInstall,
-  previewOfflinePackageImport,
-  removeKnownRegistry,
-  type PackageUpdate,
-  uninstallPackage as uninstallRegistryPackage
+  type PackageUpdate
 } from './agent/packages/installer'
-import { prepareContentPackageInstall, readContentRegistry } from './agent/packages/content-source'
+import { prepareContentPackageInstall } from './agent/packages/content-source'
 import type { InstallerOptions } from './agent/packages/installer-types'
 import type { PackageType } from './agent/packages/manifest'
-import { readSkillPackageDetail } from './agent/packages/skill-detail'
-import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
-import { runPackageMutation } from './agent/packages/mutation-queue'
-import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncPreferredOfficialRegistry } from './agent/packages/official-website-registry'
 import { syncOfficialConnectorRegistry } from './agent/packages/official-connector-registry'
-import { packageRegistryIconView } from './agent/packages/icon-views'
-import {
-  addGithubSource,
-  applyGithubSourceUpdate,
-  checkGithubSourceUpdate,
-  listGithubSources,
-  previewGithubSource,
-  removeGithubSource
-} from './agent/packages/github-source'
-import { readResourceIcon } from './agent/resource-icons'
 import {
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
   readCustomRemoteMcpConnector,
-  refreshPersistedManagedStdioServers,
-  setMcpPackageEnabled
+  refreshPersistedManagedStdioServers
 } from './agent/mcp-connectors'
 import {
   apiKeyConnector,
@@ -406,14 +362,11 @@ import {
 } from './agent/mcp-key-credentials'
 import { validateSkill } from './agent/content/skill'
 import {
-  deleteSkill,
   listGlobalMcpServers,
   listGlobalSkills,
   listPromptAgents,
   listSkills,
-  readSkillContent,
-  readGlobalSkillContent,
-  setSkillDisabled
+  readGlobalSkillContent
 } from './agent/resources'
 import {
   addCustomWrapper,
@@ -958,13 +911,6 @@ const terminalIpcCoordinator = new TerminalIpcCoordinator({
 const officialRegistryFetch: typeof fetch = (input, init) =>
   net.fetch(input instanceof URL ? input.toString() : input, init)
 
-/** Package changes share registries on disk, so they run one after another (see mutation-queue). */
-function serializedPackageMutation<Args extends unknown[], Result>(
-  handler: (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result>
-): (event: IpcMainInvokeEvent, ...args: Args) => Promise<Result> {
-  return (event, ...args) => runPackageMutation(() => handler(event, ...args))
-}
-
 function officialContentSourceOptions(): {
   agentDir: string
   appVersion: string
@@ -1041,13 +987,6 @@ async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
     appVersion: app.getVersion()
   })
   return cachedPackageUpdates
-}
-
-async function refreshGithubSourceDependants(): Promise<void> {
-  cachedPackageUpdates = []
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(IPC.packages.updatesAvailable, [])
-  }
 }
 
 function scheduleStartupPackageUpdateCheck(): void {
@@ -2331,65 +2270,6 @@ getPhiEngine().host.register('library.execute', (params, context) =>
 getPhiEngine().host.register('library.cancel', (params, context) =>
   remoteLibraryService.cancel(params, context)
 )
-
-function phiPluginListItems(): PhiPluginListItem[] {
-  const enablement = getEnablementSnapshot({ agentDir: AGENT_DIR })
-  return listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) =>
-    buildPhiPluginListItem(plugin, {
-      isSkillEnabled: (name) => isCoreSkill(name) || enablement.global[`skill:${name}`] !== false
-    })
-  )
-}
-
-function phiPluginProblemView(problem: PluginProblem): PhiPluginProblemView {
-  const label = problem.level === 'error' ? '错误' : '警告'
-  return {
-    ...problem,
-    displayMessage: `${label}（${problem.path}）：${localizePhiPluginProblemMessage(problem.message)}`
-  }
-}
-
-function phiPluginMutation(result: PluginLifecycleResult): PhiPluginMutationResult {
-  return {
-    ok: result.ok,
-    plugins: phiPluginListItems(),
-    problems: [...result.errors, ...result.warnings].map(phiPluginProblemView)
-  }
-}
-
-function failedPhiPluginMutation(path: string, message: string): PhiPluginMutationResult {
-  return phiPluginMutation({
-    ok: false,
-    errors: [{ level: 'error', path, message }],
-    warnings: []
-  })
-}
-
-function phiPluginInstallPreview(path: string): PhiPluginInstallPreview {
-  const validation = validatePlugin(path)
-  const problems = [...validation.errors, ...validation.warnings].map(phiPluginProblemView)
-  if (!validation.ok || !validation.plugin) return { ok: false, path, problems }
-
-  const { manifest } = validation.plugin
-  const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
-    (plugin) => plugin.id === manifest.id
-  )
-  return {
-    ok: true,
-    path,
-    action: !existing
-      ? 'install'
-      : semver.gt(manifest.version, existing.version)
-        ? 'upgrade'
-        : 'same-or-older',
-    id: manifest.id,
-    version: manifest.version,
-    title: manifest.title,
-    summary: manifest.summary,
-    ...(existing ? { installedVersion: existing.version } : {}),
-    problems
-  }
-}
 
 async function installedPluginNamespace(projectDir?: string): Promise<PluginNamespace> {
   const resourceCwd = projectDir ?? currentCwd
@@ -6407,56 +6287,8 @@ function checkedRemoteAgentTrustMutation(value: unknown): {
   return value as { cwd: string; relativePath: string; contentHash: string }
 }
 
-function checkedRemoteSkillTrustMutation(value: unknown): {
-  cwd: string
-  relativePath: string
-  contentHash: string
-} {
-  if (!isRecord(value)) throw new Error('远程项目 Skill 信任请求无效')
-  if (
-    Object.keys(value).some(
-      (key) => key !== 'cwd' && key !== 'relativePath' && key !== 'contentHash'
-    ) ||
-    typeof value.cwd !== 'string' ||
-    typeof value.relativePath !== 'string' ||
-    !/^\.(?:phi|omp|pi)\/skills\/[a-z0-9][a-z0-9-]{0,63}\/SKILL\.md$/u.test(value.relativePath) ||
-    typeof value.contentHash !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(value.contentHash)
-  ) {
-    throw new Error('远程项目 Skill 信任请求无效')
-  }
-  return value as { cwd: string; relativePath: string; contentHash: string }
-}
-
 async function listRemotePromptAgents(cwd?: string): Promise<PromptAgentSummary[]> {
   return (await loadRemoteAgentCatalog(remoteAgentProjectContext(cwd))).entries
-}
-
-function isEnablementItemKey(value: unknown): value is EnablementItemKey {
-  return (
-    typeof value === 'string' &&
-    (/^skill:[a-z0-9][a-z0-9-]{0,63}$/.test(value) ||
-      /^(?:plugin|wrapper|mcp):[a-z][a-z0-9-]{1,63}$/.test(value))
-  )
-}
-
-function enablementScopeOptions(value: unknown): { projectDir?: string } {
-  if (!isRecord(value) || (value.type !== 'global' && value.type !== 'project')) {
-    throw new Error('启用范围无效')
-  }
-  if (value.type === 'global') {
-    if (Object.keys(value).some((key) => key !== 'type')) throw new Error('全局启用范围无效')
-    return {}
-  }
-  if (
-    Object.keys(value).some((key) => key !== 'type' && key !== 'projectCwd') ||
-    typeof value.projectCwd !== 'string' ||
-    value.projectCwd.trim().length === 0 ||
-    isRemoteResourceScope(value.projectCwd)
-  ) {
-    throw new Error('项目启用范围无效')
-  }
-  return { projectDir: value.projectCwd }
 }
 
 function isCoreAuthoringSkillResourcePath(target: string): boolean {
@@ -9299,7 +9131,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.files.getIcon, async (_, filePath: string) => {
     return getLocalFileIconDataUrl(filePath)
   })
-  ipcMain.handle(IPC.resources.readIcon, (_, key: unknown) => readResourceIcon(key))
+  registerResourceCatalogIpc(ipcMain)
   ipcMain.handle(IPC.webLink.preview, (event, url: unknown) => {
     requireMainWindowRenderer(event)
     return webLinkPreviews.get(url)
@@ -10569,658 +10401,60 @@ app.whenReady().then(async () => {
       resolveAgentUserInteraction(requestId, response, cancelled === true, window.webContents.id)
     }
   )
-  ipcMain.handle(IPC.phiPlugins.list, async () => phiPluginListItems())
-  ipcMain.handle(IPC.phiPlugins.pickDirectory, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectPlugin,
-      buttonLabel: dialogCopy.select,
-      properties: ['openDirectory']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
+  registerPhiPluginIpc({
+    ipcMain,
+    lifecycle: { invalidateAgentSession, logUnexpectedError },
+    workspace: { agentDir: AGENT_DIR },
+    plugins: { installedPluginNamespace, environmentBuilds },
+    windows: { getActiveWindow }
   })
-  ipcMain.handle(IPC.phiPlugins.previewDirectory, async (_, path: unknown) => {
-    if (typeof path !== 'string' || path.trim().length === 0) {
-      return {
-        ok: false,
-        path: '',
-        problems: [
-          phiPluginProblemView({
-            level: 'error',
-            path: 'path',
-            message: 'Select a valid Plugin directory'
-          })
-        ]
-      } satisfies PhiPluginInstallPreview
-    }
-    try {
-      return phiPluginInstallPreview(path)
-    } catch (error) {
-      logUnexpectedError(error)
-      return {
-        ok: false,
-        path,
-        problems: [
-          phiPluginProblemView({
-            level: 'error',
-            path: 'preview',
-            message: `Plugin validation failed: ${errorMessage(error)}`
-          })
-        ]
-      } satisfies PhiPluginInstallPreview
-    }
-  })
-  ipcMain.handle(IPC.phiPlugins.installFromDirectory, async (_, path: unknown) => {
-    if (typeof path !== 'string' || path.trim().length === 0) {
-      return failedPhiPluginMutation('path', 'Select a valid Plugin directory')
-    }
-    try {
-      const validation = validatePlugin(path)
-      if (!validation.ok || !validation.plugin) {
-        return phiPluginMutation({
-          ok: false,
-          errors: validation.errors,
-          warnings: validation.warnings
-        })
+  const packagesIpcOptions = {
+    ipcMain,
+    lifecycle: { getAppVersion: () => app.getVersion(), invalidateAgentSession },
+    workspace: { agentDir: AGENT_DIR },
+    windows: { getActiveWindow },
+    plugins: { installedPluginNamespace, environmentBuilds },
+    packages: {
+      officialContentSourceOptions,
+      knownContentSourceOptions,
+      loadPackageRegistries
+    },
+    updates: {
+      refreshCachedPackageUpdates,
+      packageUpdateViews,
+      replaceCachedPackageUpdates: (updates) => {
+        cachedPackageUpdates = updates
       }
-      const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
-        (plugin) => plugin.id === validation.plugin?.manifest.id
-      )
-      const names = await installedPluginNamespace()
-      let result: PluginLifecycleResult
-      if (!existing) {
-        result = installPhiPlugin(path, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot(),
-          names,
-          source: 'local'
-        })
-      } else if (semver.gt(validation.plugin.manifest.version, existing.version)) {
-        result = await upgradePlugin(path, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot(),
-          names,
-          source: 'local',
-          build: (descriptor, options) => environmentBuilds.start(descriptor, options)
-        })
-      } else {
-        return failedPhiPluginMutation(
-          'version',
-          `${existing.id} ${existing.version} is already installed. Select a newer version to upgrade.`
-        )
+    }
+  }
+  registerPackageCatalogIpc(packagesIpcOptions)
+  registerGithubSourceIpc({
+    ipcMain,
+    workspace: { agentDir: AGENT_DIR },
+    sources: { officialRegistryFetch },
+    updates: {
+      clearCachedPackageUpdates: () => {
+        cachedPackageUpdates = []
+      },
+      sendNoAvailableUpdates: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC.packages.updatesAvailable, [])
+        }
       }
-      if (result.ok) await invalidateAgentSession()
-      return phiPluginMutation(result)
-    } catch (error) {
-      logUnexpectedError(error)
-      return failedPhiPluginMutation(
-        'install',
-        `Plugin installation failed: ${errorMessage(error)}`
-      )
     }
   })
-  ipcMain.handle(IPC.phiPlugins.setEnabled, async (_, id: unknown, enabled: unknown) => {
-    if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
-      return failedPhiPluginMutation('request', 'Invalid Plugin ID or enabled state')
-    }
-    try {
-      const result = setPluginEnabled(id, enabled, {
-        agentDir: AGENT_DIR,
-        names: await installedPluginNamespace()
-      })
-      return phiPluginMutation(result)
-    } catch (error) {
-      logUnexpectedError(error)
-      return failedPhiPluginMutation(
-        'enabled',
-        `Could not update Plugin state: ${errorMessage(error)}`
-      )
-    }
-  })
-  ipcMain.handle(IPC.phiPlugins.uninstall, async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) {
-      return failedPhiPluginMutation('id', 'Invalid Plugin ID')
-    }
-    try {
-      const result = uninstallPhiPlugin(id, {
-        agentDir: AGENT_DIR,
-        runtimeRoot: getRuntimeRoot()
-      })
-      if (result.ok) await invalidateAgentSession()
-      return phiPluginMutation(result)
-    } catch (error) {
-      logUnexpectedError(error)
-      return failedPhiPluginMutation(
-        'uninstall',
-        `Could not uninstall Plugin: ${errorMessage(error)}`
-      )
-    }
-  })
-  ipcMain.handle(IPC.packages.pickRegistryDirectory, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectSkill,
-      buttonLabel: dialogCopy.select,
-      properties: ['openDirectory']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
-  ipcMain.handle(IPC.packages.pickArchive, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.importPackage,
-      buttonLabel: dialogCopy.import,
-      properties: ['openFile'],
-      filters: [{ name: dialogCopy.packageFilter, extensions: ['tar.gz'] }]
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
-  ipcMain.handle(IPC.packages.listRegistries, async () => {
-    const result = await listKnownRegistries(knownContentSourceOptions())
-    if (result.error) {
-      writeAppLog({
-        level: 'warn',
-        event: 'package_registries_invalid',
-        metadata: { error: result.error }
-      })
-    }
-    return result.registries
-  })
-  ipcMain.handle(IPC.packages.contentCatalog, async (_, forceRefresh?: unknown) => {
-    if (forceRefresh !== undefined && typeof forceRefresh !== 'boolean')
-      throw new Error('Invalid catalog refresh request')
-    const registry = await syncPreferredOfficialRegistry({
-      ...officialContentSourceOptions(),
-      forceRefresh: forceRefresh === true
-    })
-    return packageRegistryIconView(registry)
-  })
-  ipcMain.handle(IPC.packages.removeRegistry, async (_, id: unknown) => {
-    if (typeof id !== 'string') throw new Error('Invalid source ID')
-    removeKnownRegistry(id, { agentDir: AGENT_DIR })
-    return (await listKnownRegistries(knownContentSourceOptions())).registries
-  })
-  ipcMain.handle(IPC.sources.previewGithub, async (_, url: unknown) => {
-    if (typeof url !== 'string' || url.length < 1 || url.length > 2048) {
-      throw new Error('Invalid GitHub repository URL')
-    }
-    return previewGithubSource(url, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
-  })
-  ipcMain.handle(IPC.sources.addGithub, async (_, input: unknown) => {
-    if (
-      !isRecord(input) ||
-      Object.keys(input).some((key) => key !== 'url' && key !== 'sha') ||
-      typeof input.url !== 'string' ||
-      input.url.length < 1 ||
-      input.url.length > 2048 ||
-      typeof input.sha !== 'string' ||
-      !/^[a-f0-9]{40}$/i.test(input.sha)
-    ) {
-      throw new Error('Invalid GitHub source import request')
-    }
-    const source = await addGithubSource(
-      { url: input.url, sha: input.sha },
-      { agentDir: AGENT_DIR, fetch: officialRegistryFetch }
-    )
-    await refreshGithubSourceDependants()
-    writeAppLog({ event: 'github_source_added', metadata: { repo: source.repo, sha: source.sha } })
-    return source
-  })
-  ipcMain.handle(IPC.sources.checkGithubUpdate, async (_, id: unknown) => {
-    if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
-      throw new Error('Invalid GitHub source ID')
-    }
-    return checkGithubSourceUpdate(id, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
-  })
-  ipcMain.handle(IPC.sources.applyGithubUpdate, async (_, input: unknown) => {
-    if (
-      !isRecord(input) ||
-      Object.keys(input).some((key) => key !== 'id' && key !== 'sha') ||
-      typeof input.id !== 'string' ||
-      !/^[a-f0-9]{16}$/.test(input.id) ||
-      typeof input.sha !== 'string' ||
-      !/^[a-f0-9]{40}$/i.test(input.sha)
-    ) {
-      throw new Error('Invalid GitHub source refresh request')
-    }
-    const source = await applyGithubSourceUpdate(input.id, input.sha, {
+  registerPackageOperationsIpc(packagesIpcOptions)
+  registerSkillsIpc({
+    ipcMain,
+    lifecycle: { invalidateAgentSession },
+    workspace: {
       agentDir: AGENT_DIR,
-      fetch: officialRegistryFetch
-    })
-    await refreshGithubSourceDependants()
-    writeAppLog({
-      event: 'github_source_updated',
-      metadata: { repo: source.repo, sha: source.sha }
-    })
-    return source
-  })
-  ipcMain.handle(IPC.sources.removeGithub, async (_, id: unknown) => {
-    if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
-      throw new Error('Invalid GitHub source ID')
-    }
-    const source = listGithubSources({ agentDir: AGENT_DIR }).sources.find(
-      (entry) => entry.id === id
-    )
-    const removed = await removeGithubSource(id, { agentDir: AGENT_DIR })
-    if (removed) {
-      await refreshGithubSourceDependants()
-      if (source) {
-        writeAppLog({
-          event: 'github_source_removed',
-          metadata: { repo: source.repo, sha: source.sha }
-        })
-      }
-    }
-    return removed
-  })
-  ipcMain.handle(IPC.sources.listGithub, async () => {
-    const state = listGithubSources({ agentDir: AGENT_DIR })
-    if (state.error) {
-      writeAppLog({ level: 'warn', event: 'github_sources_invalid' })
-    }
-    return state.sources
-  })
-  ipcMain.handle(IPC.packages.registry, async (_, dir: unknown) => {
-    if (typeof dir !== 'string' || dir.trim().length === 0) {
-      throw new Error('Invalid registry directory')
-    }
-    try {
-      const registry = await readContentRegistry(dir, officialContentSourceOptions())
-      return packageRegistryIconView(registry)
-    } catch (error) {
-      throw new Error(`Could not read package registry: ${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(
-    IPC.packages.plan,
-    async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
-      if (
-        typeof dir !== 'string' ||
-        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-        typeof id !== 'string' ||
-        id.length === 0 ||
-        (version !== undefined && typeof version !== 'string')
-      ) {
-        throw new Error('Invalid package installation plan request')
-      }
-      try {
-        const registry = await readContentRegistry(dir, officialContentSourceOptions())
-        return planRegistryInstall(
-          registry,
-          { type, id, ...(version ? { version } : {}) },
-          { agentDir: AGENT_DIR, appVersion: app.getVersion() }
-        )
-      } catch (error) {
-        throw new Error(`Could not create package installation plan: ${errorMessage(error)}`)
-      }
-    }
-  )
-  ipcMain.handle(IPC.packages.skillDetail, async (_, dir: unknown, id: unknown) => {
-    if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
-      throw new Error('Invalid Skill package detail request')
-    }
-    try {
-      const registry = await readContentRegistry(dir, officialContentSourceOptions())
-      return await readSkillPackageDetail(registry, id, officialContentSourceOptions())
-    } catch (error) {
-      throw new Error(`Could not read Skill package details: ${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(IPC.packages.wrapperDetail, async (_, dir: unknown, id: unknown) => {
-    if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
-      throw new Error('Invalid Wrapper package detail request')
-    }
-    try {
-      const registry = await readContentRegistry(dir, officialContentSourceOptions())
-      return await readWrapperPackageDetail(registry, id, officialContentSourceOptions())
-    } catch (error) {
-      throw new Error(`Could not read Wrapper package details: ${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(
-    IPC.packages.install,
-    serializedPackageMutation(
-      async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
-        if (
-          typeof dir !== 'string' ||
-          (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-          typeof id !== 'string' ||
-          id.length === 0 ||
-          (version !== undefined && typeof version !== 'string')
-        ) {
-          throw new Error('Invalid package installation request')
-        }
-        try {
-          const registry = await readContentRegistry(dir, officialContentSourceOptions())
-          const installedBefore = new Set(
-            listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
-          )
-          await prepareContentPackageInstall(
-            registry,
-            { type, id, ...(version ? { version } : {}) },
-            officialContentSourceOptions()
-          )
-          const plan = planRegistryInstall(
-            registry,
-            { type, id, ...(version ? { version } : {}) },
-            { agentDir: AGENT_DIR, appVersion: app.getVersion() }
-          )
-          const result = await installRegistryPackages(plan, {
-            agentDir: AGENT_DIR,
-            runtimeRoot: getRuntimeRoot(),
-            names: await installedPluginNamespace(),
-            build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-          })
-          for (const installed of result) {
-            if (
-              installed.type === 'skill' &&
-              !installedBefore.has(`${installed.type}:${installed.id}`)
-            ) {
-              setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
-            }
-            if (
-              installed.type === 'mcp' &&
-              !installedBefore.has(`${installed.type}:${installed.id}`)
-            ) {
-              setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
-              setMcpPackageEnabled(installed.id, true, AGENT_DIR)
-            }
-          }
-          if (result.some((installed) => installed.type === 'wrapper')) {
-            resetWrapperCompositionCatalogCache()
-          }
-          await invalidateAgentSession()
-          return result
-        } catch (error) {
-          throw new Error(`Package installation failed: ${errorMessage(error)}`)
-        }
-      }
-    )
-  )
-  ipcMain.handle(
-    IPC.packages.removeWrapper,
-    serializedPackageMutation(async (_, id: unknown) => {
-      if (typeof id !== 'string' || id.length === 0)
-        throw new Error('Invalid Wrapper package request')
-      try {
-        const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
-        resetWrapperCompositionCatalogCache()
-        await invalidateAgentSession()
-        return result
-      } catch (error) {
-        throw new Error(errorMessage(error))
-      }
-    })
-  )
-  ipcMain.handle(
-    IPC.packages.uninstall,
-    serializedPackageMutation(async (_, type: unknown, id: unknown) => {
-      if (
-        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-        typeof id !== 'string' ||
-        id.length === 0
-      ) {
-        throw new Error('Invalid package uninstall request')
-      }
-      try {
-        const result = uninstallRegistryPackage(type, id, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot()
-        })
-        if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-        if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
-        await invalidateAgentSession()
-        return result
-      } catch (error) {
-        throw new Error(`Could not uninstall package: ${errorMessage(error)}`)
-      }
-    })
-  )
-  ipcMain.handle(IPC.packages.listInstalled, async () => {
-    try {
-      return listRegistryPackages({ agentDir: AGENT_DIR })
-    } catch (error) {
-      throw new Error(`Could not read installed packages: ${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(IPC.packages.previewImport, async (_, path: unknown) => {
-    if (typeof path !== 'string' || path.length === 0)
-      throw new Error('Invalid offline package path')
-    try {
-      return previewOfflinePackageImport(path, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion(),
-        registries: (await loadPackageRegistries()).registries
-      })
-    } catch (error) {
-      throw new Error(`Could not read offline package: ${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(
-    IPC.packages.import,
-    serializedPackageMutation(async (_, path: unknown) => {
-      if (typeof path !== 'string' || path.length === 0)
-        throw new Error('Invalid offline package path')
-      const installedBefore = new Set(
-        listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
-      )
-      try {
-        const result = await importOfflinePackage(path, {
-          agentDir: AGENT_DIR,
-          appVersion: app.getVersion(),
-          runtimeRoot: getRuntimeRoot(),
-          registries: (await loadPackageRegistries()).registries,
-          preparePackage: async (registry, entry) => {
-            await prepareContentPackageInstall(
-              registry,
-              { type: entry.type, id: entry.id, version: entry.version },
-              officialContentSourceOptions()
-            )
-          },
-          names: await installedPluginNamespace(),
-          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-        })
-        for (const installed of result) {
-          if (
-            !installedBefore.has(`${installed.type}:${installed.id}`) &&
-            installed.type === 'skill'
-          ) {
-            setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
-          }
-          if (
-            !installedBefore.has(`${installed.type}:${installed.id}`) &&
-            installed.type === 'mcp'
-          ) {
-            setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
-            setMcpPackageEnabled(installed.id, true, AGENT_DIR)
-          }
-        }
-        if (result.some((installed) => installed.type === 'wrapper')) {
-          resetWrapperCompositionCatalogCache()
-        }
-        await invalidateAgentSession()
-        return result
-      } catch (error) {
-        throw new Error(`Could not import package: ${errorMessage(error)}`)
-      }
-    })
-  )
-  ipcMain.handle(IPC.packages.listUpdates, async () =>
-    packageUpdateViews(await refreshCachedPackageUpdates())
-  )
-  ipcMain.handle(
-    IPC.packages.applyUpdate,
-    serializedPackageMutation(async (_, type: unknown, id: unknown) => {
-      if (
-        (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
-        typeof id !== 'string' ||
-        id.length === 0
-      ) {
-        throw new Error('Invalid package update request')
-      }
-      const loaded = await loadPackageRegistries()
-      const updates = listPackageUpdates(loaded.registries, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion()
-      })
-      const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
-      if (!update) throw new Error(`No update available: ${type}:${id}`)
-      const result = await applyPackageUpdate(update, loaded.registries, {
-        preparePackage: async (registry, request) => {
-          await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
-        },
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion(),
-        runtimeRoot: getRuntimeRoot(),
-        names: await installedPluginNamespace(),
-        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-      })
-      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-      cachedPackageUpdates = listPackageUpdates(loaded.registries, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion()
-      })
-      await invalidateAgentSession()
-      return result
-    })
-  )
-  ipcMain.handle(
-    IPC.packages.applyAllUpdates,
-    serializedPackageMutation(async () => {
-      const loaded = await loadPackageRegistries()
-      const updates = listPackageUpdates(loaded.registries, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion()
-      })
-      const result = await applyPackageUpdates(updates, loaded.registries, {
-        preparePackage: async (registry, request) => {
-          await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
-        },
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion(),
-        runtimeRoot: getRuntimeRoot(),
-        names: await installedPluginNamespace(),
-        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-      })
-      if (updates.some((update) => update.type === 'wrapper')) {
-        resetWrapperCompositionCatalogCache()
-      }
-      cachedPackageUpdates = listPackageUpdates(loaded.registries, {
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion()
-      })
-      await invalidateAgentSession()
-      return result
-    })
-  )
-  ipcMain.handle(IPC.enablement.get, async (_, projectCwd?: unknown) => {
-    if (projectCwd !== undefined && typeof projectCwd !== 'string') {
-      throw new Error('项目目录无效')
-    }
-    if (typeof projectCwd === 'string' && isRemoteResourceScope(projectCwd)) {
-      throw new Error('Skills are not available for this remote project')
-    }
-    return getEnablementSnapshot({
-      agentDir: AGENT_DIR,
-      ...(typeof projectCwd === 'string' && projectCwd.length > 0 ? { projectDir: projectCwd } : {})
-    })
-  })
-  ipcMain.handle(IPC.enablement.set, async (_, item: unknown, value: unknown, scope: unknown) => {
-    if (!isEnablementItemKey(item)) throw new Error('Invalid enablement item ID')
-    if (typeof value !== 'boolean' && value !== null) throw new Error('Invalid enablement value')
-    const options = enablementScopeOptions(scope as EnablementScope)
-    if (item.startsWith('plugin:')) {
-      const pluginId = item.slice('plugin:'.length)
-      const inherited = options.projectDir
-        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
-        : undefined
-      const desired = value ?? inherited ?? true
-      const result = setPluginEnabled(pluginId, desired, {
-        agentDir: AGENT_DIR,
-        ...options,
-        names: await installedPluginNamespace(options.projectDir)
-      })
-      if (!result.ok) {
-        throw new Error(
-          result.errors.map((problem) => problem.message).join('; ') ||
-            'Invalid Plugin enabled state'
-        )
-      }
-      if (value === null) setEnabled(item, null, { agentDir: AGENT_DIR, ...options })
-    } else if (item.startsWith('mcp:')) {
-      const packageId = item.slice('mcp:'.length)
-      const inherited = options.projectDir
-        ? getEnablementSnapshot({ agentDir: AGENT_DIR, ...options }).global[item]
-        : undefined
-      const desired = value ?? inherited ?? true
-      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
-      setMcpPackageEnabled(packageId, desired, AGENT_DIR)
-    } else {
-      setEnabled(item, value, { agentDir: AGENT_DIR, ...options })
-    }
-    if (item.startsWith('wrapper:')) resetWrapperCompositionCatalogCache()
-    return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
-  })
-  ipcMain.handle(IPC.skills.list, async (_, cwd?: string) =>
-    isRemoteResourceScope(cwd) ? listRemoteProjectSkills(cwd) : listSkills(cwd ?? currentCwd)
-  )
-  ipcMain.handle(IPC.skills.read, async (_, filePath: string, cwd?: string) => {
-    if (isRemoteResourceScope(cwd)) {
-      const context = remoteSkillProjectContext(cwd)
-      const catalog = await loadRemoteProjectSkillCatalog(context)
-      if (catalog.summaries.some((skill) => skill.filePath === filePath)) {
-        return readRemoteProjectSkillContent(context, filePath)
-      }
-      return readGlobalSkillContent(filePath)
-    }
-    return readSkillContent(filePath, cwd ?? currentCwd)
-  })
-  ipcMain.handle(
-    IPC.skills.setDisabled,
-    async (_, filePath: string, disabled: boolean, cwd?: string) => {
-      if (isRemoteResourceScope(cwd)) {
-        throw new Error('Skills are not available for this remote project')
-      }
-      return setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
-    }
-  )
-  ipcMain.handle(IPC.skills.delete, async (_, filePath: string, cwd?: string) => {
-    if (isRemoteResourceScope(cwd)) {
-      throw new Error('Skills are not available for this remote project')
-    }
-    return deleteSkill(filePath, cwd ?? currentCwd)
-  })
-  ipcMain.handle(IPC.skills.trustRemoteProject, async (_, input: unknown) => {
-    const request = checkedRemoteSkillTrustMutation(input)
-    const context = remoteSkillProjectContext(request.cwd)
-    await trustRemoteProjectSkill(context, {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash
-    })
-    await invalidateAgentSession()
-    return listRemoteProjectSkills(request.cwd)
-  })
-  ipcMain.handle(IPC.skills.revokeRemoteProjectTrust, async (_, input: unknown) => {
-    const request = checkedRemoteSkillTrustMutation(input)
-    const context = remoteSkillProjectContext(request.cwd)
-    await revokeRemoteProjectSkillTrust(context, {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash
-    })
-    await invalidateAgentSession()
-    return listRemoteProjectSkills(request.cwd)
+      getCurrentCwd: () => currentCwd,
+      isRemoteResourceScope,
+      remoteSkillProjectContext,
+      listRemoteProjectSkills
+    },
+    plugins: { installedPluginNamespace }
   })
   ipcMain.handle(IPC.agents.list, async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listRemotePromptAgents(cwd) : listPromptAgents(cwd ?? currentCwd)

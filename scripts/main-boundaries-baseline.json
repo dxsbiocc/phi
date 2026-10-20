@@ -7,8 +7,8 @@
   "frozenAt": "2026-10-20",
   "index": {
     "path": "src/main/index.ts",
-    "lines": 11561,
-    "ipcHandles": 185,
+    "lines": 10795,
+    "ipcHandles": 146,
     "note": "Target is the app lifecycle and assembly only; IPC registration moves to src/main/ipc/. Raised once from 13002 to 13014 on 2026-10-20: replacing channel literals with longer IPC constants made prettier wrap 12 more lines; no handler was added."
   },
   "oversized": {
@@ -17,7 +17,7 @@
       "src/main/agent/engine/rpc/facade-session-driver.ts": 1358,
       "src/main/agent/engine/rpc/remote-session-runtime.ts": 1376,
       "src/main/agent/runtime/runtime-adapter.ts": 1255,
-      "src/main/index.ts": 11561
+      "src/main/index.ts": 10795
     }
   }
 }

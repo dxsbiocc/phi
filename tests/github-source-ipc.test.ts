@@ -14,10 +14,10 @@ const CHANNEL_REFERENCES = new Map(
 
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
-function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, IpcHandler> {
+function extractedGithubSourceIpc(dependencies: Record<string, unknown>): Map<string, IpcHandler> {
   const source = ts.createSourceFile(
-    'main.ts',
-    readFileSync(resolve('src/main/index.ts'), 'utf8'),
+    'github-sources-ipc.ts',
+    readFileSync(resolve('src/main/ipc/github-sources-ipc.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )
@@ -41,6 +41,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   visit(source)
   assert.deepEqual([...registrations.keys()].sort(), CHANNELS.toSorted())
   const program = `const { IPC, previewGithubSource, addGithubSource, checkGithubSourceUpdate, applyGithubSourceUpdate, removeGithubSource, listGithubSources, refreshGithubSourceDependants, writeAppLog, officialRegistryFetch, isRecord, AGENT_DIR } = dependencies;
+  const refreshGithubSourceDependantsForContext = refreshGithubSourceDependants;
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
   ${CHANNELS.map((channel) => registrations.get(channel)!.getText(source)).join('\n')}
@@ -62,7 +63,7 @@ test('GitHub source IPC validates every input, refreshes mutations, and logs onl
     updatedAt: '2026-10-11T00:00:00.000Z'
   }
   const calls: Array<{ operation: string; value?: unknown }> = []
-  const callbacks = extractedMainIpc({
+  const callbacks = extractedGithubSourceIpc({
     AGENT_DIR: '/verified/agent',
     officialRegistryFetch: async () => new Response(),
     isRecord: (value: unknown) =>

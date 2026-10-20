@@ -4362,11 +4362,20 @@ async function harness(
   const mainSourceRoot = path.resolve(process.cwd(), 'src/main')
   const mainEntryPath = path.join(mainSourceRoot, 'index.ts')
   const sourceModuleCache = new Map<string, Record<string, unknown>>()
+  const contentIpcSourceModules = [
+    './ipc/github-sources-ipc',
+    './ipc/packages-ipc',
+    './ipc/phi-plugins-ipc',
+    './ipc/skills-ipc'
+  ]
   const explicitlyLoadedSourceModules = new Set([
+    './agent/content/remote-skill-trust-request',
+    './agent/enablement-request',
     './agent/mcp/featured-api-key-verification',
     './agent/mcp/remote-mcp-trust-request',
     './agent/notebook/analysis-notebook-code-generator',
-    './agent/notebook/analysis-notebook-operations'
+    './agent/notebook/analysis-notebook-operations',
+    './agent/plugins/phi-plugin-management-view'
   ])
   const mockProcess = {
     platform: process.platform,
@@ -4426,6 +4435,9 @@ async function harness(
     })
     .outputText.replaceAll('import.meta.dirname', "'/app/main'")
   new Function('require', 'exports', 'process', compiledMain)(load, {}, mockProcess)
+  for (const moduleKey of contentIpcSourceModules) {
+    assert.ok(sourceModuleCache.has(moduleKey), `Main did not load ${moduleKey}`)
+  }
   await tick()
   return {
     invoke: async (channel, ...args): Promise<unknown> => {
