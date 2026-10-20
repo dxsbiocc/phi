@@ -11,6 +11,7 @@ import {
   resolveBunExecutable,
   workerPathWithBun
 } from '../src/main/agent/engine/bun-executable'
+import { warmExecutable } from './helpers/firstExec'
 
 // Finder/Dock launches inherit launchd's PATH, which never contains bun.
 const FINDER_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
@@ -255,6 +256,8 @@ test(
         '#!/bin/sh\necho "welcome banner"\nPATH=/from/login/shell exec /bin/sh "$@"\n'
       )
       chmodSync(shell, 0o755)
+      // Pay the first-exec scan of the new shell outside the product's 5 s login-shell deadline.
+      warmExecutable(shell, ['-c', ':'])
       // /etc/profile (path_helper on macOS) may prepend system dirs; the banner must not leak in.
       const pathValue = readLoginShellPath({ SHELL: shell, PATH: FINDER_PATH }) ?? ''
       assert.ok(pathValue.split(delimiter).includes('/from/login/shell'), pathValue)

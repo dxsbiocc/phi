@@ -161,15 +161,12 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
       中止后约 150 毫秒(余量仅 30 毫秒),压力下最长 188 毫秒。改为轮询 `inspect` 直到出现撤销
       (60 秒截止,明确报错),断言不变;每次 `inspect` 都会重置 bridge 的 2 秒空闲停止,不会换 worker。
     - 并发 14 `--no-retry` 全量门连跑 3 次(各约 8 分钟),上述 4 个套件都未再失败。
-    - 同样 3 次门里又出现一批偶发首轮失败(单跑全部通过),待另行处理:`omp-worker-proxy-env`、
-      `remote-jupyter-reconciliation`、`remote-kernelspec-adapter`、`remote-workspace-search`(各 3/3)、
-      `wrapper-executor-remote`(`waitUntil` 5 秒)、`remote-ripgrep`、`environment-background`(各 2/3)、
-      `environment-detection`、`omp-bun-executable`(各 1/3)。
+    - 同样 3 次门里又出现一批偶发首轮失败(单跑全部通过):`omp-worker-proxy-env`、`environment-background`、
+      `omp-bun-executable` 已在下一条修复;`remote-jupyter-reconciliation`、`remote-kernelspec-adapter`、
+      `remote-workspace-search`(各 3/3)、`wrapper-executor-remote`(`waitUntil` 5 秒)、`remote-ripgrep`(2/3)、
+      `environment-detection`(1/3)待另行处理。
     - 仍需产品侧决定(只报告,未改产品):
-      - `envs-application-tools`:产品写出 `.bun.<uuid>.partial`(或 `.node.*`)后立即给 `--version` 固定
-        5 秒(`src/main/agent/envs/applications/tools.ts`),新文件名由产品生成,测试无法预热也无法注入上限。
-        上述 3 次门里每次都有 5–7 例因此失败。
-        真实用户的 Mac 首次执行新下载的 bun 同样要扫描,负载高时可能超过 5 秒。
+      - `envs-application-tools`:已按用户决定改产品,见下一条。
       - `remote-runtime-root-doctor` 在更重的压力下(8 份 + 20 个 `yes` + 12 个写新脚本的进程)仍会失败:
         快速能力探测(`HOST_CAPABILITY_FAST_PROBE_SCRIPT`)在 `$HOME` 下写出并执行新脚本,上限固定为
         `min(timeoutMs, 10 秒)`,`remoteDoctor` 没有暴露 `fastTimeoutMs`。同样压力下单独计时这段脚本:
@@ -177,6 +174,18 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
         需要产品决定是否给 doctor 暴露快速探测上限,或换掉「执行新文件」这种探测方式。
       - 另外,这个 doctor 套件的「默认运行根」用例实际探测本机真实的 `~/.phi/runtime`,快速探测也会在
         真实 `$HOME` 下建临时目录,测试没有隔离 `HOME`。
+  - IPC-5 那轮门(并发 14)里又有 4 个套件首轮失败、串行重试通过,逐个核实后都是首次执行扫描。
+    本机除 XProtect 外还装有 Avira 的 Endpoint Security 扩展,也会在首次执行时扫描。内容相同的新副本
+    同样要排队,扫描结果不按内容缓存,所以只能预热**同一个文件**。
+    - `environment-background`:假 `which`(产品时限 3 秒)和假 `docker`(探测 8 秒,测试自己等探测 10 秒)
+      都是第一次在时限内执行。两者先预热;`docker` 加一个 `--phi-warm` 立即退出的分支,预热时不会碰探测闸门。
+    - `omp-bun-executable`、`omp-worker-proxy-env`:新写的 `noisy-sh` 第一次执行就落在产品 5 秒的登录 shell
+      时限里,超时错误被吞掉,读回来的是空值。夹具写完先用 `-c :` 预热。
+    - `envs-application-tools`:新文件由产品自己写出(`.bun/.node.<uuid>.partial`),写完立刻跑 `--version`,
+      测试没法预热。装了这类扫描软件的真实用户同样会被 5 秒卡住,所以**改了产品**(经用户确认):
+      只把这次首次执行的检查放宽到 60 秒(`FIRST_EXEC_VERSION_CHECK_TIMEOUT_MS`),已安装文件的检查仍是 5 秒。
+    - 复现:每个套件 8 份并行 + 20 个 `yes` + 12 个写新脚本的进程。修复前 4 个套件 8/8 失败
+      (`envs-application-tools` 每份 9 例卡在 5,00x 毫秒、被 SIGKILL);修复后 8/8 通过。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 
