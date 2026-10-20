@@ -129,8 +129,25 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
     25 秒,并随父进程结束退出。
   - 复现方法:同一套件并行 6–12 份加 20 个以上 `yes` 占满 CPU,修复前每份必挂,修复后全部通过;
     全量门在 `PHI_TEST_CONCURRENCY=14 --no-retry` 下连跑 3 次(各约 5 分钟),上述套件首轮全过。
-  - 并发 14 下仍有其他固定超时的套件偶发首轮失败,待另行处理:`envs-application-bun`(`bun --version`
-    5 秒)、`mcp-stdio-tools`(stdio capture 用例)、`remote-jupyter-resource-guard`(子进程 10 秒)。
+  - 并发 14 下另有 3 个套件偶发首轮失败,共同根因是 macOS 对**新写出或新复制的可执行文件**首次执行时
+    要做 XProtect 扫描,且全机排队:空闲时一个 sh 脚本约 0.2 秒、复制出的 63 MB bun 约 1 秒;60 个新脚本
+    同时首次执行,中位等 7.4 秒、最长 13.7 秒,再执行一次全部 10 毫秒。门里大量套件同时写假命令,
+    扫描队列就会吃掉固定超时。只用 `yes` 占 CPU 复现不出来,要再加一组不停「写新脚本并执行」的进程。
+    修法(只改测试):`tests/helpers/firstExec.ts` 的 `warmExecutable` 在交给产品计时之前,
+    用 60 秒截止先无副作用地执行一次新文件。
+    - `envs-application-bun`:产品给 `bun --version` 5 秒;假 bun 每次重写、真 bun / node 每次复制后
+      都是新文件。夹具写完或复制完立即用 `--version` 预热。
+    - `mcp-stdio-tools`:`timeoutMs: 1` 被夹到最小 5 秒,预算里包含新写的 `fixture-mcp` 垫片首次执行,
+      负载下服务端还没写出 stderr 就超时,捕获内容为空;同文件其他用例的 15 秒启动等待也被它吃掉。
+      垫片加一个 `--phi-warm` 立即退出的分支,夹具装好后先预热。
+    - `remote-jupyter-resource-guard`:脚本要首次执行 5 个新假命令,再等产品 1 秒的 TERM→KILL 间隔,
+      测试自己的 10 秒子进程上限不够,改为 60 秒。
+    - 复现:每个套件 8 份并行 + 20 个 `yes` + 12 个写新脚本的进程,修复前 jupyter 8/8 失败、
+      mcp 7/8 出现空捕获;修复后全部通过。并发 14 `--no-retry` 全量门连跑 3 次,这 3 个套件都未再失败。
+  - 同样 3 次门里仍有其他套件偶发首轮失败,待另行处理:`envs-application-tools`(产品自己写出
+    `.bun.*.partial` 后给 `--version` 5 秒,同属首次执行扫描,但新文件由产品生成,测试无法预热)、
+    `workspace-host-remote-micromamba`(慢容量探测软超时 5 秒,两次)、`remote-project-download-ownership`
+    (两例 5 秒)、`remote-runtime-root-doctor`、`omp-bridge-model-gateway`(200 毫秒)。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 

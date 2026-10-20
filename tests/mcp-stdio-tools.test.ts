@@ -28,6 +28,7 @@ import {
   resolveConfiguredStdioTimeoutMs
 } from '../src/main/agent/engine/mcp/configured-stdio-request-control'
 import { copyMinimal, installReady, shQuote } from './helpers/fakeEnvironment'
+import { warmExecutable } from './helpers/firstExec'
 
 const bunPath = findBunExecutable()
 const REF = 'phi:python@1'
@@ -36,6 +37,7 @@ const WORKER = join(process.cwd(), 'src/main/agent/engine/in-process/main.ts')
 const SERVER_REQUEST_TIMEOUT_MS = 8_000
 const FIXTURE_STARTUP_TIMEOUT_MS = 15_000
 const FIXTURE_TEST_TIMEOUT_MS = 45_000
+const WARM_ARG = '--phi-warm'
 
 test('configured stdio discovery defaults and clamps only integer main-process deadlines', () => {
   assert.equal(resolveConfiguredStdioTimeoutMs(undefined), 90_000)
@@ -115,9 +117,11 @@ async function fixture(
   }
   const snapshotPath = join(root, 'server.json')
   copyMinimal(join(environment.environmentsDir, 'phi-python'))
-  installReady(environment.root, describeEnvironment(REF, environment), {
-    'fixture-mcp': `#!/bin/sh\nexec ${shQuote(process.execPath)} ${shQuote(SERVER)} "$@"\n`
+  const envId = installReady(environment.root, describeEnvironment(REF, environment), {
+    'fixture-mcp': `#!/bin/sh\n[ "$1" = ${WARM_ARG} ] && exit 0\nexec ${shQuote(process.execPath)} ${shQuote(SERVER)} "$@"\n`
   })
+  // Pay the first-exec scan of the new shim outside the 5 s minimum discovery deadline.
+  warmExecutable(join(environment.root, 'envs', envId, 'bin', 'fixture-mcp'), [WARM_ARG])
   const entry = managedStdioServer({
     ...environment,
     ref: REF,
