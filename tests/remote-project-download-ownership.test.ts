@@ -5,8 +5,14 @@ import test from 'node:test'
 
 import { deferred, remoteDownloadFixture } from './helpers/remoteDownloadFixture'
 
+/**
+ * Generous, loud deadline for a fixture boundary. Reaching the fake curl takes several shell round
+ * trips on a fresh local "SSH" session, which can take seconds on a loaded host.
+ */
+const BOUNDARY_TIMEOUT_MS = 60_000
+
 async function waitFor(predicate: () => boolean): Promise<void> {
-  const until = Date.now() + 5000
+  const until = Date.now() + BOUNDARY_TIMEOUT_MS
   while (!predicate()) {
     assert.ok(Date.now() < until, 'fixture boundary was not reached')
     await new Promise((resolve) => setTimeout(resolve, 10))

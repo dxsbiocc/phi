@@ -8,6 +8,7 @@ import { ensureRemoteProjectAnchor } from '../../src/main/agent/remote-project-a
 import { getFileTransferCoordinator, type TransferEvent } from '../../src/main/agent/transfer'
 import { shellQuote } from '../../src/main/agent/wrappers/remote-ssh-session'
 import type { RemoteExecBoundedOptions } from '../../src/main/agent/wrappers/remote-ssh-session'
+import { warmExecutable } from './firstExec'
 import { createLocalShellSession } from './localShellSession'
 
 type DownloadFixture = {
@@ -84,6 +85,7 @@ export function remoteDownloadFixture(
     curlPath,
     `#!/bin/bash
 set -eu
+if [ "\${1-}" = --phi-warm ]; then exit 0; fi
 head_only=0; headers=; output=; url=
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -110,6 +112,7 @@ printf 200
 `
   )
   chmodSync(curlPath, 0o755)
+  warmExecutable(curlPath, ['--phi-warm'])
   const prefix = [
     `PATH=${shellQuote(`${bin}:${process.env.PATH ?? ''}`)}`,
     `PHI_FIXTURE_SOURCE=${shellQuote(source)}`,

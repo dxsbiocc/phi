@@ -343,7 +343,9 @@ test('installs when a slow capacity probe reaches only its soft sub-timeout', as
         const check = await checkRemoteRuntimeRoot(candidateSession, configuredRoot, {
           capacityProbeDelaySeconds: 2,
           capacityProbeTimeoutSeconds: 1,
-          timeoutMs: 5_000
+          // Only the 1 s soft sub-timeout is under test. The whole check also first-executes a
+          // freshly written probe script, which macOS scans first (see tests/helpers/firstExec.ts).
+          timeoutMs: 60_000
         })
         assert.equal(check.writeCapacity, null)
         return check

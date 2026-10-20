@@ -28,6 +28,26 @@ async function fixture(t: TestContext): Promise<OmpBridge> {
   return bridge
 }
 
+/** Generous, loud deadline for the slow worker's late reply (a new worker must start first). */
+const LATE_REPLY_TIMEOUT_MS = 60_000
+
+/**
+ * The fake worker answers a slow acquisition 120 ms after it reads the request, but under load the
+ * worker process itself may take seconds to start, so a fixed sleep cannot cover the late reply.
+ * Each inspect also re-arms the bridge's 2 s idle stop, keeping the same worker alive meanwhile.
+ */
+async function inspectUntilRevoked(
+  bridge: OmpBridge
+): Promise<{ active: string[]; revoked: string[] }> {
+  const until = Date.now() + LATE_REPLY_TIMEOUT_MS
+  for (;;) {
+    const state = await bridge.request<{ active: string[]; revoked: string[] }>('inspect')
+    if (state.revoked.length > 0) return state
+    assert.ok(Date.now() < until, 'the late worker reply was never revoked')
+    await delay(20)
+  }
+}
+
 test('a gateway lease keeps the worker alive without local sessions and drops unapproved response fields', async (t) => {
   const bridge = await fixture(t)
   const lease = await bridge.createModelGatewayLease(params)
@@ -52,14 +72,9 @@ test('cancelled pending acquisition settles immediately and revokes the late wor
   )
   controller.abort(new Error('cancel preparation'))
   await assert.rejects(acquiring, /cancel preparation/)
-  await delay(180)
-  assert.deepEqual(
-    await bridge
-      .request('inspect')
-      .then((raw) => (raw as { active: string[]; revoked: string[] }).active),
-    []
-  )
-  assert.equal((await bridge.request<{ revoked: string[] }>('inspect')).revoked.length, 1)
+  const state = await inspectUntilRevoked(bridge)
+  assert.deepEqual(state.active, [])
+  assert.equal(state.revoked.length, 1)
 })
 
 test('closing one lease preserves another and the worker; repeated close is idempotent', async (t) => {
