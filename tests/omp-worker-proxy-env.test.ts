@@ -13,6 +13,7 @@ import {
   resolveWorkerProxyEnv,
   type WorkerProxyOptions
 } from '../src/main/agent/engine/worker-proxy-env'
+import { warmExecutable } from './helpers/firstExec'
 
 const SCUTIL_ON = `<dictionary> {
   ExceptionsList : <array> {
@@ -132,6 +133,8 @@ test(
         '#!/bin/sh\necho "welcome banner"\nHTTPS_PROXY=http://from-rc:1 exec /bin/sh "$@"\n'
       )
       chmodSync(shell, 0o755)
+      // Pay the first-exec scan of the new shell outside the product's 5 s login-shell deadline.
+      warmExecutable(shell, ['-c', ':'])
       clearLoginShellEnvCache()
       const values = readLoginShellEnv({ SHELL: shell })
       assert.equal(values.HTTPS_PROXY, 'http://from-rc:1')

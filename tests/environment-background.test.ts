@@ -8,8 +8,10 @@ import test from 'node:test'
 
 import { createBackgroundEnvironment } from '../src/main/agent/environment/background'
 import type { EnvironmentSnapshot } from '../src/shared/environmentTypes'
+import { warmExecutable } from './helpers/firstExec'
 
 const workerUrl = new URL('../src/main/agent/environment/scan-worker.ts', import.meta.url)
+const WARM_ARG = '--phi-warm'
 
 function temporaryEnvironment(): {
   root: string
@@ -43,6 +45,15 @@ async function waitForFile(path: string): Promise<void> {
   }
 }
 
+/**
+ * Pay the first-exec scan of the new fake `which` and `docker` before the scan runs them:
+ * the product gives `which` 3 s and each probe 8 s, and this test's own wait for the probe is 10 s.
+ */
+function warmFakeDocker(binDir: string, dockerPath: string): void {
+  warmExecutable(join(binDir, 'which'), ['docker'])
+  warmExecutable(dockerPath, [WARM_ARG])
+}
+
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -73,12 +84,14 @@ test(
     )
     writeFileSync(
       dockerPath,
-      `#!/bin/sh\nprintf started > '${started}'\nwhile [ ! -f '${released}' ]; do /bin/sleep 0.02; done\nif [ "$1" = info ]; then printf '27.2.1\\n'; else printf 'Docker version 27.2.1\\n'; fi\n`,
+      `#!/bin/sh\n[ "$1" = ${WARM_ARG} ] && exit 0\nprintf started > '${started}'\nwhile [ ! -f '${released}' ]; do /bin/sleep 0.02; done\nif [ "$1" = info ]; then printf '27.2.1\\n'; else printf 'Docker version 27.2.1\\n'; fi\n`,
       { mode: 0o755 }
     )
     writeFileSync(nextflowPath, "#!/bin/sh\nprintf 'nextflow version 26.04.6 build 1\\n'\n", {
       mode: 0o755
     })
+    warmFakeDocker(binDir, dockerPath)
+    warmExecutable(nextflowPath, [])
     const previousPath = process.env.PATH
     const previousHome = process.env.HOME
     process.env.PATH = `${binDir}:/usr/bin:/bin`
@@ -222,13 +235,14 @@ test(
     )
     writeFileSync(
       dockerPath,
-      `#!/bin/sh\nprintf '%s\\n' "$$" > '${probePidFile}'\nwhile [ ! -f '${released}' ]; do /bin/sleep 0.02; done\nprintf 'Docker version 27.2.1\\n'\n`,
+      `#!/bin/sh\n[ "$1" = ${WARM_ARG} ] && exit 0\nprintf '%s\\n' "$$" > '${probePidFile}'\nwhile [ ! -f '${released}' ]; do /bin/sleep 0.02; done\nprintf 'Docker version 27.2.1\\n'\n`,
       { mode: 0o755 }
     )
     writeFileSync(
       entry,
       `import ${JSON.stringify(workerUrl.href)}\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(scanPidFile)}, String(process.pid))\n`
     )
+    warmFakeDocker(binDir, dockerPath)
     const previousPath = process.env.PATH
     const previousHome = process.env.HOME
     process.env.PATH = `${binDir}:/usr/bin:/bin`
