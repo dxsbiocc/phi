@@ -66,6 +66,15 @@ Status: IPC 拆分已完成(IPC-1~7)。`src/main/index.ts` 13,014 → 7,582 行,
 
 主进程门禁已经在 `check-main-boundaries` 里把 `ipcMain.handle` 上限锁在 0,`index.ts` 不能再新增处理函数。
 
+### 第 9 步的设计决定(2026-10-20,用户确认)
+
+- 形态:**封装成带方法的状态类**,不是普通对象。字段私有,读取走 getter,每个写入点变成一个按意图命名的方法,
+  方法体就是原来的语句;不新增行为、默认值或状态。Electron 对象不在类里创建,类只持有引用,便于单元测试。
+- 位置:`src/main/app-state/`,由 `createMainRuntimeContext()` 组装,在原来第一个 `let` 的模块加载位置创建,
+  初始化顺序不变。IPC 模块只拿它需要的那个方法,不拿整个上下文。
+- 切片:RC-1 先做窗口生命周期、工作区服务、应用缓存三组(15 个 `let`);RC-2 再做会话状态 9 个 `let`
+  (风险最高,单独跑门)。
+
 ## 4. 每刀的执行与验收(项目管理约定)
 
 - 实现交给 Codex(`gpt-5.6-sol`、`xhigh`),每刀一个 worktree:`../Phi-worktrees/ipc-<n>-<domain>`,
