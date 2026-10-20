@@ -5248,6 +5248,29 @@ function hasSessionTitleTopic(message: string): boolean {
   )
 }
 
+// The title model follows the conversation: its explicit selection, or else the model the
+// live session already resolved. An explicit selection that no longer resolves is an error.
+async function resolveSessionTitleModel(
+  key: string,
+  selection: ModelSelection | null,
+  signal: AbortSignal
+): Promise<{ modelRuntime: ModelRuntime; model: RuntimeModel | undefined }> {
+  const modelRuntime = await getAuthManager().getRuntime()
+  signal.throwIfAborted()
+  let model = selection ? resolveRuntimeModelSelection(modelRuntime, selection)?.model : undefined
+  if (!selection) {
+    const lifecycle = getLifecycleForKey(key)
+    const record = lifecycle.currentRecord
+    if (record) {
+      const ready = await record.promise
+      if (lifecycle.isCurrent(record)) model = ready.session.model
+    }
+    signal.throwIfAborted()
+  }
+  if (selection && !model) throw new Error('请先为对话配置可用模型')
+  return { modelRuntime, model }
+}
+
 function getSessionTitleGenerator(): SessionTitleGenerator {
   if (runtime.window.cleanupStarted) throw new Error('标题生成服务已关闭')
   const cachedGenerator = runtime.caches.sessionTitleGenerator
@@ -5261,21 +5284,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
         cwd: manifest.cwd,
         permissionMode: manifest.permissionMode
       })
-      const modelRuntime = await getAuthManager().getRuntime()
-      signal.throwIfAborted()
-      let model = selection
-        ? resolveRuntimeModelSelection(modelRuntime, selection)?.model
-        : undefined
-      if (!selection) {
-        const lifecycle = getLifecycleForKey(key)
-        const record = lifecycle.currentRecord
-        if (record) {
-          const ready = await record.promise
-          if (lifecycle.isCurrent(record)) model = ready.session.model
-        }
-        signal.throwIfAborted()
-      }
-      if (selection && !model) throw new Error('请先为对话配置可用模型')
+      const { modelRuntime, model } = await resolveSessionTitleModel(key, selection, signal)
       const cwd = getNoProjectTaskFolder()
       let streamedText = ''
       let replyFailed = false
