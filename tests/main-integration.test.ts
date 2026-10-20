@@ -484,6 +484,7 @@ type BrowserIntegrationView = {
   visibility: boolean[]
 }
 type HarnessResult = {
+  registrationOrder: string[]
   hostHandlers: Map<string, HostHandler>
   setAgentInteractionResponse: (response: Record<string, unknown>) => void
   setBridgeAgentJobs: (jobs: unknown[]) => void
@@ -638,6 +639,7 @@ async function harness(
 ): Promise<HarnessResult> {
   const harnessOptions = options
   const handlers = new Map<string, Handler>()
+  const registrationOrder: string[] = []
   const sessions: FakeSession[] = []
   const deleted: string[] = []
   const events: Array<{ channel: string; data: unknown }> = []
@@ -1793,8 +1795,11 @@ async function harness(
         }
       },
       ipcMain: {
-        on: noop,
+        on: (name: string): void => {
+          registrationOrder.push(name)
+        },
         handle: (name: string, handler: Handler): void => {
+          registrationOrder.push(name)
           handlers.set(name, handler)
         }
       },
@@ -4511,6 +4516,7 @@ async function harness(
   }
   await tick()
   return {
+    registrationOrder,
     invoke: async (channel, ...args): Promise<unknown> => {
       const handler = handlers.get(channel)
       assert.ok(handler, `Missing IPC handler ${channel}`)
@@ -7059,6 +7065,287 @@ test('main IPC: an API key is not saved before the provider verifies it', async 
 test('main startup refreshes managed stdio MCP entries', async () => {
   const app = await harness()
   assert.ok(app.operationLog.some((entry) => entry.type === 'refreshManagedStdioServers'))
+})
+
+test('main startup callback delegates its named phases in order', () => {
+  const source = readFileSync('src/main/index.ts', 'utf8')
+  const callbackStart = source.indexOf('app.whenReady().then(async () => {')
+  const callbackEnd = source.indexOf('\n})', callbackStart) + 3
+  assert.equal(
+    source.slice(callbackStart, callbackEnd),
+    `app.whenReady().then(async () => {
+  prepareStartupInterface()
+  const startupSplashWindow = await openStartupSplash()
+  runtime.window.setStartupSplashWindow(startupSplashWindow)
+  runStartupMaintenance()
+  migrateStartupPluginEnablement()
+  recoverStartupState()
+  configureStartupWindowDefaults()
+  const filesIpcOptions = registerWindowAndFileIpc()
+  const wrappersIpcOptions = registerRemoteFileAndWrapperIpc(filesIpcOptions)
+  registerAgentIpc()
+  registerApplicationAndModelIpc()
+  registerSessionIpc()
+  registerProjectAndAnalysisIpc()
+  registerPluginAndPackageIpc()
+  registerSkillAgentAndMcpIpc(wrappersIpcOptions)
+  registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
+  openInitialWindow()
+  registerAppActivationHandler()
+})`
+  )
+})
+
+const expectedStartupRegistrationOrder = [
+  'ping',
+  'browser:execute',
+  'browser:snapshot',
+  'browser:setViewport',
+  'remote:micromamba',
+  'window:close',
+  'window:minimize',
+  'window:toggle-fullscreen',
+  'window:get-fullscreen',
+  'window:renderer-ready',
+  'menu-bar:consume-action',
+  'files:reveal',
+  'files:openPath',
+  'files:getIcon',
+  'resources:readIcon',
+  'web-link:preview',
+  'files:pickInput',
+  'files:pickLocalUpload',
+  'remoteProjectUploads:prepare',
+  'remoteProjectUploads:start',
+  'remoteProjectUploads:list',
+  'remoteJupyterJobs:list',
+  'remoteProjectUploads:cancel',
+  'remoteProjectUploads:retry',
+  'wrappers:completeInputUpload',
+  'files:saveTextFile',
+  'files:saveMarkdownFile',
+  'files:renameWorkspaceFile',
+  'files:deleteWorkspaceFile',
+  'remoteWorkspace:download',
+  'files:preview',
+  'remoteWorkspace:statPaths',
+  'remoteWorkspace:preview',
+  'remoteWorkspace:listDirectory',
+  'wrapperResults:listDirectory',
+  'wrapperResults:preview',
+  'wrapperResults:readRange',
+  'wrapperResults:cancelRead',
+  'wrapperResults:download',
+  'wrapperResults:cancelDownload',
+  'files:hoverPreview',
+  'files:statLocalPaths',
+  'files:listDirectory',
+  'molecules:renderSvg',
+  'agent:prompt',
+  'agent:readPromptImage',
+  'workspaceChanges:readDiff',
+  'agent:stop',
+  'agent:steerRun',
+  'agent:stopRun',
+  'auth:status',
+  'auth:loginApiKey',
+  'auth:loginOAuth',
+  'auth:logout',
+  'auth:interaction-response',
+  'app:checkForUpdates',
+  'app:openReleasesPage',
+  'settings:get',
+  'settings:update',
+  'settings:webSearch:get',
+  'settings:webSearch:update',
+  'settings:webSearch:searxngEngines',
+  'settings:webSearch:apiKey:set',
+  'settings:webSearch:apiKey:clear',
+  'environment:get',
+  'environment:redetect',
+  'environment:dismissSummary',
+  'environment:setToolPath',
+  'environment:pickBinary',
+  'managedEnvironments:list',
+  'managedEnvironments:build',
+  'managedEnvironments:rebuild',
+  'managedEnvironments:remove',
+  'managedEnvironments:clean',
+  'models:list',
+  'models:select',
+  'models:selected',
+  'thinking:select',
+  'thinking:selected',
+  'sessions:list',
+  'sessions:homeActivity',
+  'sessions:current',
+  'sessions:contextUsage',
+  'sessions:runtimeRecovery',
+  'sessions:resumeRuntime',
+  'sessions:continueRuntimeSummary',
+  'sessions:autoCompactionSettings',
+  'sessions:autoCompactionSettings:set',
+  'sessions:compact',
+  'sessions:updatePermissionMode',
+  'sessions:create',
+  'sessions:fork',
+  'sessions:switch',
+  'sessions:acknowledge',
+  'sessions:delete',
+  'sessions:generateTitle',
+  'sessions:rename',
+  'sessions:export',
+  'projects:list',
+  'projects:pickDirectory',
+  'projects:create',
+  'projects:createRemote',
+  'projects:delete',
+  'projects:updatePermissionMode',
+  'projects:updateDefaults',
+  'projects:updateMemory',
+  'memory:snapshot',
+  'memory:deleteLesson',
+  'memory:clear',
+  'projects:listRemoteHosts',
+  'projects:listRemoteDirectories',
+  'projects:listOpenSshHosts',
+  'projects:saveOpenSshHost',
+  'projects:saveRemoteHost',
+  'projects:deleteRemoteHost',
+  'remote:saveEnvironment',
+  'remote:saveRuntimeRoot',
+  'remote:saveMicromambaMirror',
+  'remote:doctor',
+  'remote:installNextflow',
+  'projects:updateRemoteConnection',
+  'projects:updateRemoteDefaults',
+  'projects:sessions',
+  'projects:sessionsById',
+  'projects:newRemoteSession',
+  'projects:retryRemoteConnection',
+  'projects:newSession',
+  'analysis:listNotebooks',
+  'analysis:initializeProject',
+  'analysis:refreshNotebook',
+  'analysis:openNotebook',
+  'analysis:saveNotebook',
+  'analysis:syncNotebookDraft',
+  'analysis:createNotebook',
+  'analysis:closeNotebook',
+  'analysis:deleteNotebook',
+  'analysis:listKernels',
+  'analysis:jupyterStatus',
+  'analysis:jupyterRuntimeStatus',
+  'analysis:startJupyter',
+  'analysis:stopJupyter',
+  'analysis:notebookSessionStatus',
+  'analysis:ensureNotebookSession',
+  'analysis:closeNotebookSession',
+  'analysis:interruptNotebookExecution',
+  'analysis:completeNotebookCell',
+  'analysis:formatNotebookCell',
+  'analysis:listNotebookAiGenerationJobs',
+  'analysis:generateNotebookCode',
+  'analysis:executeNotebookCell',
+  'tool:approval-response',
+  'agent:interaction-response',
+  'phiPlugins:list',
+  'phiPlugins:pickDirectory',
+  'phiPlugins:previewDirectory',
+  'phiPlugins:installFromDirectory',
+  'phiPlugins:setEnabled',
+  'phiPlugins:uninstall',
+  'packages:pickRegistryDirectory',
+  'packages:pickArchive',
+  'packages:listRegistries',
+  'packages:contentCatalog',
+  'packages:removeRegistry',
+  'sources:previewGithub',
+  'sources:addGithub',
+  'sources:checkGithubUpdate',
+  'sources:applyGithubUpdate',
+  'sources:removeGithub',
+  'sources:listGithub',
+  'packages:registry',
+  'packages:plan',
+  'packages:skillDetail',
+  'packages:wrapperDetail',
+  'packages:install',
+  'packages:removeWrapper',
+  'packages:uninstall',
+  'packages:listInstalled',
+  'packages:previewImport',
+  'packages:import',
+  'packages:listUpdates',
+  'packages:applyUpdate',
+  'packages:applyAllUpdates',
+  'enablement:get',
+  'enablement:set',
+  'skills:list',
+  'skills:read',
+  'skills:setDisabled',
+  'skills:delete',
+  'skills:trustRemoteProject',
+  'skills:revokeRemoteProjectTrust',
+  'agents:list',
+  'agents:trustRemoteProject',
+  'agents:revokeRemoteProjectTrust',
+  'mcp:listServers',
+  'mcp:trustRemoteProject',
+  'mcp:revokeRemoteProjectTrust',
+  'mcp:listConnectorCatalog',
+  'mcp:installConnector',
+  'mcp:uninstallConnector',
+  'mcp:buildConnectorEnvironment',
+  'mcp:addRemoteConnector',
+  'mcp:addLocalConnector',
+  'mcp:startLocalConnectorAdd',
+  'mcp:cancelLocalConnectorAdd',
+  'mcp:retryLocalConnectorAdd',
+  'mcp:listLocalConnectorJobs',
+  'mcp:removeLocalConnector',
+  'mcp:listLocalRuntimes',
+  'mcp:removeRemoteConnector',
+  'mcp:setConnectorEnabled',
+  'mcp:featuredApiKeyStatus',
+  'mcp:setFeaturedApiKey',
+  'mcp:clearFeaturedApiKey',
+  'mcp:featuredTools',
+  'mcp:featuredAuthStatus',
+  'mcp:authorizeFeatured',
+  'mcp:cancelFeaturedAuth',
+  'mcp:authorizeRemoteConnector',
+  'mcp:cancelRemoteAuth',
+  'wrappers:getPlan',
+  'wrappers:retargetPlan',
+  'wrappers:submitPlan',
+  'wrappers:cancelPlan',
+  'wrappers:listCatalog',
+  'wrappers:listCompositionCatalog',
+  'wrappers:getCompositionDag',
+  'wrappers:getCompositionModuleDetails',
+  'wrappers:addCustom',
+  'wrappers:listRuns',
+  'environmentBuilds:list',
+  'environmentBuilds:cancel',
+  'jobs:listAgents',
+  'jobs:listShell',
+  'jobs:stopShell',
+  'wrappers:getRun',
+  'wrappers:cancelRun',
+  'wrappers:getPlanArtifact',
+  'wrappers:exportReproducibility',
+  'persona:getAppName',
+  'persona:isOnboarded',
+  'persona:getMarkdown',
+  'persona:setMarkdown',
+  'persona:skip',
+  'persona:completeOnboarding'
+]
+
+test('main startup registers IPC handlers in a stable order', async () => {
+  const app = await harness()
+  assert.deepEqual(app.registrationOrder, expectedStartupRegistrationOrder)
 })
 
 test(

@@ -5953,7 +5953,7 @@ registerNotebookOutputScheme()
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(async () => {
+function prepareStartupInterface(): void {
   try {
     configureSystemUiLanguage(app.getPreferredSystemLanguages())
   } catch {
@@ -5974,14 +5974,18 @@ app.whenReady().then(async () => {
       quit: () => app.quit()
     })
   )
-  const startupSplashWindow = await createStartupSplashWindow(
+}
+
+function openStartupSplash(): ReturnType<typeof createStartupSplashWindow> {
+  return createStartupSplashWindow(
     (options) => new BrowserWindow(options),
     appIcon.isEmpty() ? '' : appIcon.toDataURL(),
     Date.now,
     readAppSettings().uiLanguage
   )
-  runtime.window.setStartupSplashWindow(startupSplashWindow)
+}
 
+function runStartupMaintenance(): void {
   const removedLogs = cleanupOldLogs()
   try {
     cleanupStalePackageStaging({ agentDir: AGENT_DIR })
@@ -5994,6 +5998,9 @@ app.whenReady().then(async () => {
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
   migrateEnablementFromHistory(['create-wrapper'], { agentDir: AGENT_DIR })
+}
+
+function migrateStartupPluginEnablement(): void {
   try {
     const refreshed = refreshPersistedManagedStdioServers({
       agentDir: AGENT_DIR,
@@ -6053,6 +6060,9 @@ app.whenReady().then(async () => {
       metadata: { error: errorMessage(error) }
     })
   }
+}
+
+function recoverStartupState(): void {
   // Domain packages are installed only after a catalog choice. Core runtime assets remain bundled.
   mkdirSync(sessionState.cwd, { recursive: true })
   recoverInterruptedPhiSessions()
@@ -6111,6 +6121,9 @@ app.whenReady().then(async () => {
         metadata: { error: errorMessage(error) }
       })
     })
+}
+
+function configureStartupWindowDefaults(): void {
   // Set app user model id for windows
   electronApp.setAppUserModelId(APP_ID)
 
@@ -6120,7 +6133,9 @@ app.whenReady().then(async () => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
+}
 
+function registerWindowAndFileIpc(): FilesIpcOptions {
   // IPC test
   registerSystemIpc({ ipcMain })
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
@@ -6172,6 +6187,12 @@ app.whenReady().then(async () => {
     requireMainWindowRenderer
   })
   registerFilePickerIpc(filesIpcOptions)
+  return filesIpcOptions
+}
+
+function registerRemoteFileAndWrapperIpc(
+  filesIpcOptions: FilesIpcOptions
+): Parameters<typeof registerWrapperInputUploadIpc>[0] {
   const remoteProjectUploadsIpcOptions = { ipcMain, uploads: remoteProjectUploads }
   registerRemoteProjectUploadPreparationIpc(remoteProjectUploadsIpcOptions)
   registerRemoteProjectUploadListIpc(remoteProjectUploadsIpcOptions)
@@ -6233,6 +6254,10 @@ app.whenReady().then(async () => {
   })
   registerFileBrowsingIpc(filesIpcOptions)
   registerMoleculesIpc({ ipcMain })
+  return wrappersIpcOptions
+}
+
+function registerAgentIpc(): void {
   const promptTargetControlOptions: PromptTargetControlOptions = {
     state: {
       getCurrentSessionPath: () => sessionState.sessionPath,
@@ -6302,7 +6327,9 @@ app.whenReady().then(async () => {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
+}
 
+function registerApplicationAndModelIpc(): void {
   registerAuthIpc({ ipcMain, invalidateAgentSession })
 
   registerAppIpc({
@@ -6375,8 +6402,10 @@ app.whenReady().then(async () => {
     },
     models: modelSelectionOperations
   })
+}
 
-  const currentContextUsageOptions: CurrentContextUsageOptions = {
+function createCurrentContextUsageOptions(): CurrentContextUsageOptions {
+  return {
     getCurrentPayload: getCurrentSessionPayload,
     getCurrentSessionKey: () => sessionState.sessionKey,
     getCurrentSessionPath: () => sessionState.sessionPath,
@@ -6387,14 +6416,20 @@ app.whenReady().then(async () => {
     getCurrentLifecycle,
     getAgentSession
   }
-  const currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions = {
+}
+
+function createCurrentSessionPayloadMessagesOptions(): CurrentSessionPayloadMessagesOptions {
+  return {
     getCurrentPayload: getCurrentSessionPayload,
     getCurrentSessionKey: () => sessionState.sessionKey,
     getPhiSessionIdForKey,
     getCurrentLifecycle,
     getCurrentResolvedSession
   }
-  const sessionCompactionControlOptions: SessionCompactionControlOptions = {
+}
+
+function createSessionCompactionControlOptions(): SessionCompactionControlOptions {
+  return {
     workspace: { agentDir: AGENT_DIR },
     state: {
       getCurrentPayload: getCurrentSessionPayload,
@@ -6420,7 +6455,51 @@ app.whenReady().then(async () => {
       flushPendingContinuations
     }
   }
-  registerSessionsIpc({
+}
+
+type SessionsIpcOptions = Parameters<typeof registerSessionsIpc>[0]
+
+function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
+  return {
+    state: {
+      getCurrentPayload: getCurrentSessionPayload,
+      getCurrentSessionKey: () => sessionState.sessionKey,
+      getCurrentSessionPath: () => sessionState.sessionPath,
+      getCurrentCwd: () => sessionState.cwd,
+      getCurrentPermissionMode: () => sessionState.permissionMode,
+      isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
+      runtimeRecoveryOperations,
+      runtimeRecoveryFailures,
+      manualCompactionIds,
+      sessionModelSelections,
+      sessionThinkingLevels
+    },
+    identity: {
+      resolveSessionKeyAlias,
+      sameCanonicalSessionKey,
+      getPromptGeneration,
+      advancePromptGeneration
+    },
+    lifecycle: {
+      getLifecycleForKey,
+      hasActivePromptRun,
+      runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
+      cleanupSessionRecord,
+      getAgentSession
+    },
+    projects: { projectRemoteRuntimeRoot },
+    models: { resolveRuntimeModelSelection },
+    sessions: { createRemoteManagedSession, disposeAndSwitchSession },
+    events: { notifySessionChanged }
+  }
+}
+
+function createSessionsIpcOptions(
+  currentContextUsageOptions: CurrentContextUsageOptions,
+  currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions,
+  sessionCompactionControlOptions: SessionCompactionControlOptions
+): SessionsIpcOptions {
+  return {
     ipcMain,
     state: {
       getCurrentSessionKey: () => sessionState.sessionKey,
@@ -6440,38 +6519,7 @@ app.whenReady().then(async () => {
         getCurrentSessionPayloadWithMessages(currentSessionPayloadMessagesOptions),
       getCurrentContextUsage: () => getCurrentContextUsage(currentContextUsageOptions)
     },
-    recovery: {
-      state: {
-        getCurrentPayload: getCurrentSessionPayload,
-        getCurrentSessionKey: () => sessionState.sessionKey,
-        getCurrentSessionPath: () => sessionState.sessionPath,
-        getCurrentCwd: () => sessionState.cwd,
-        getCurrentPermissionMode: () => sessionState.permissionMode,
-        isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
-        runtimeRecoveryOperations,
-        runtimeRecoveryFailures,
-        manualCompactionIds,
-        sessionModelSelections,
-        sessionThinkingLevels
-      },
-      identity: {
-        resolveSessionKeyAlias,
-        sameCanonicalSessionKey,
-        getPromptGeneration,
-        advancePromptGeneration
-      },
-      lifecycle: {
-        getLifecycleForKey,
-        hasActivePromptRun,
-        runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
-        cleanupSessionRecord,
-        getAgentSession
-      },
-      projects: { projectRemoteRuntimeRoot },
-      models: { resolveRuntimeModelSelection },
-      sessions: { createRemoteManagedSession, disposeAndSwitchSession },
-      events: { notifySessionChanged }
-    },
+    recovery: createSessionRecoveryIpcOptions(),
     compaction: {
       getSettings: (target) =>
         getCurrentAutoCompactionSettings(target, sessionCompactionControlOptions),
@@ -6520,7 +6568,23 @@ app.whenReady().then(async () => {
       renameConversation
     },
     windows: { getActiveWindow, requireMainWindowRenderer }
-  })
+  }
+}
+
+function registerSessionIpc(): void {
+  const currentContextUsageOptions = createCurrentContextUsageOptions()
+  const currentSessionPayloadMessagesOptions = createCurrentSessionPayloadMessagesOptions()
+  const sessionCompactionControlOptions = createSessionCompactionControlOptions()
+  registerSessionsIpc(
+    createSessionsIpcOptions(
+      currentContextUsageOptions,
+      currentSessionPayloadMessagesOptions,
+      sessionCompactionControlOptions
+    )
+  )
+}
+
+function registerProjectAndAnalysisIpc(): void {
   const projectsIpcOptions: ProjectsIpcOptions = {
     ipcMain,
     windows: { getActiveWindow, requireMainWindowRenderer },
@@ -6585,6 +6649,9 @@ app.whenReady().then(async () => {
     requireMainWindowRenderer,
     resolveAgentUserInteraction
   })
+}
+
+function registerPluginAndPackageIpc(): void {
   registerPhiPluginIpc({
     ipcMain,
     lifecycle: { invalidateAgentSession, logUnexpectedError },
@@ -6625,6 +6692,11 @@ app.whenReady().then(async () => {
     }
   })
   registerPackageOperationsIpc(packagesIpcOptions)
+}
+
+function registerSkillAgentAndMcpIpc(
+  wrappersIpcOptions: ReturnType<typeof registerRemoteFileAndWrapperIpc>
+): void {
   registerSkillsIpc({
     ipcMain,
     lifecycle: { invalidateAgentSession },
@@ -6673,6 +6745,11 @@ app.whenReady().then(async () => {
     }
   })
   registerWrapperPlanIpc(wrappersIpcOptions)
+}
+
+function registerWrapperJobsAndPersonaIpc(
+  wrappersIpcOptions: ReturnType<typeof registerRemoteFileAndWrapperIpc>
+): void {
   registerEnvironmentBuildsIpc({ ipcMain, environmentBuilds })
   registerJobsIpc({ ipcMain, operations: backgroundJobOperations })
   registerWrapperRunIpc(wrappersIpcOptions)
@@ -6698,10 +6775,14 @@ app.whenReady().then(async () => {
       captureSessionControlTarget
     }
   })
+}
 
+function openInitialWindow(): void {
   createWindow()
   scheduleStartupPackageUpdateCheck()
+}
 
+function registerAppActivationHandler(): void {
   app.on('activate', function () {
     applyDockIcon()
 
@@ -6709,6 +6790,27 @@ app.whenReady().then(async () => {
     // dock icon is clicked and there are no other windows open.
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}
+
+app.whenReady().then(async () => {
+  prepareStartupInterface()
+  const startupSplashWindow = await openStartupSplash()
+  runtime.window.setStartupSplashWindow(startupSplashWindow)
+  runStartupMaintenance()
+  migrateStartupPluginEnablement()
+  recoverStartupState()
+  configureStartupWindowDefaults()
+  const filesIpcOptions = registerWindowAndFileIpc()
+  const wrappersIpcOptions = registerRemoteFileAndWrapperIpc(filesIpcOptions)
+  registerAgentIpc()
+  registerApplicationAndModelIpc()
+  registerSessionIpc()
+  registerProjectAndAnalysisIpc()
+  registerPluginAndPackageIpc()
+  registerSkillAgentAndMcpIpc(wrappersIpcOptions)
+  registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
+  openInitialWindow()
+  registerAppActivationHandler()
 })
 
 app.on(
