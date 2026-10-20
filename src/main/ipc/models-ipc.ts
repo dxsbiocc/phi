@@ -12,7 +12,6 @@ import {
   type ModelSelectionTargetDependencies
 } from '../agent/session/model-selection-target'
 import { findPhiSessionById, updateSessionManifest } from '../agent/session/session-store'
-import { writeLastSelectedModel } from '../agent/app-settings'
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -27,9 +26,7 @@ export interface ModelsIpcOptions {
   }
   requests: {
     nextModelSelectionRequest: () => number
-    getLastRememberedModelSelectionRequest: () => number
-    setLastRememberedModelSelectionRequest: (request: number) => void
-    setSelectedModel: (model: ModelSelection | null) => void
+    rememberModelSelection: (request: number, model: ModelSelection | null) => void
   }
   models: {
     selectableRuntimeModels: (runtime: ModelRuntime) => RuntimeModel[]
@@ -74,10 +71,7 @@ export function registerModelsIpc(options: ModelsIpcOptions): void {
       const request = requests.nextModelSelectionRequest()
       const key = target.phiSessionId ?? selectionTarget.resolveSessionKeyAlias(target.key)
       const rememberSelection = (model: ModelSelection | null): void => {
-        if (request < requests.getLastRememberedModelSelectionRequest()) return
-        writeLastSelectedModel(model)
-        requests.setSelectedModel(model)
-        requests.setLastRememberedModelSelectionRequest(request)
+        requests.rememberModelSelection(request, model)
       }
       const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(
         async () => {

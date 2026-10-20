@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { AppCaches } from '../src/main/app-state/app-caches'
 import { MainWindowState } from '../src/main/app-state/main-window-state'
+import { SessionState } from '../src/main/app-state/session-state'
 import { WorkspaceServicesState } from '../src/main/app-state/workspace-services-state'
 
 function plainObject<T>(value: object): T {
@@ -205,4 +206,218 @@ test('AppCaches stores and disposes the session-title generator without clearing
   caches.disposeSessionTitleGenerator()
   assert.equal(disposeCalls, 1)
   assert.equal(caches.sessionTitleGenerator, generator)
+})
+
+function createSessionState(): SessionState {
+  return new SessionState({
+    freshSessionCounter: 0,
+    cwd: '/initial',
+    selectedModel: { providerId: 'provider-a', modelId: 'model-a' },
+    sessionKey: 'fresh:/initial:0'
+  })
+}
+
+test('SessionState switches a fresh session in statement order and lets explicit permission win', () => {
+  const state = createSessionState()
+  const calls: string[] = []
+  const permissionModes = new Map<string, 'auto' | 'ask' | 'full'>()
+
+  state.switchTo(undefined, '/next', 'full', {
+    createSessionKey: (path, cwd) => {
+      calls.push(`create:${String(path)}:${cwd}:${state.freshSessionCounter}`)
+      return `fresh:${cwd}:${state.freshSessionCounter}`
+    },
+    resolveSessionPermissionMode: (sessionKey, snapshot) => {
+      calls.push(`resolve:${sessionKey}:${String(snapshot.path)}:${snapshot.cwd}`)
+      return 'ask'
+    },
+    resolveSessionKeyAlias: (sessionKey) => {
+      calls.push(`alias:${sessionKey}`)
+      return `alias:${sessionKey}`
+    },
+    sessionPermissionModes: {
+      set: (sessionKey, permissionMode) => {
+        calls.push(`set:${sessionKey}:${permissionMode}`)
+        permissionModes.set(sessionKey, permissionMode)
+        return permissionModes
+      }
+    }
+  })
+
+  assert.equal(state.freshSessionCounter, 1)
+  assert.equal(state.sessionPath, undefined)
+  assert.equal(state.cwd, '/next')
+  assert.equal(state.sessionKey, 'fresh:/next:1')
+  assert.equal(state.permissionMode, 'full')
+  assert.deepEqual(calls, [
+    'create:undefined:/next:1',
+    'resolve:fresh:/next:1:undefined:/next',
+    'alias:fresh:/next:1',
+    'set:alias:fresh:/next:1:full'
+  ])
+})
+
+test('SessionState switches to a materialized path without advancing the fresh counter', () => {
+  const state = createSessionState()
+  const permissionModes = new Map<string, 'auto' | 'ask' | 'full'>()
+
+  state.switchTo('/session.jsonl', '/project', 'full', {
+    createSessionKey: (path, cwd) => `path:${path}:${cwd}`,
+    resolveSessionPermissionMode: () => 'ask',
+    resolveSessionKeyAlias: (sessionKey) => sessionKey,
+    sessionPermissionModes: permissionModes
+  })
+
+  assert.equal(state.freshSessionCounter, 0)
+  assert.equal(state.sessionPath, '/session.jsonl')
+  assert.equal(state.cwd, '/project')
+  assert.equal(state.sessionKey, 'path:/session.jsonl:/project')
+  assert.equal(state.permissionMode, 'ask')
+  assert.equal(permissionModes.size, 0)
+})
+
+test('SessionState re-keys only while the captured key is still canonical', () => {
+  const state = createSessionState()
+  const matches: Array<[string, string]> = []
+  const sameCanonicalSessionKey = (left: string, right: string): boolean => {
+    matches.push([left, right])
+    return left === 'fresh:/initial:0' && right === 'fresh:/initial:0'
+  }
+
+  state.linkPhiManagedSessionKey('stale', '/phi/stale', 'phi:stale', sameCanonicalSessionKey)
+  assert.equal(state.sessionPath, undefined)
+  assert.equal(state.sessionKey, 'fresh:/initial:0')
+
+  state.linkPhiManagedSessionKey(
+    'fresh:/initial:0',
+    '/phi/current',
+    'phi:current',
+    sameCanonicalSessionKey
+  )
+  assert.equal(state.sessionPath, '/phi/current')
+  assert.equal(state.sessionKey, 'phi:current')
+
+  state.linkMaterializedSessionKey('stale', 'path:stale', () => false)
+  assert.equal(state.sessionKey, 'phi:current')
+  state.linkMaterializedSessionKey('phi:current', 'path:current', (left, right) => left === right)
+  assert.equal(state.sessionKey, 'path:current')
+  assert.deepEqual(matches, [
+    ['stale', 'fresh:/initial:0'],
+    ['fresh:/initial:0', 'fresh:/initial:0']
+  ])
+})
+
+test('SessionState records a prompt materialization only for the current canonical session', () => {
+  const state = createSessionState()
+
+  state.recordPromptRunMaterialization('stale', '/phi/stale', () => false)
+  assert.equal(state.sessionPath, undefined)
+  state.recordPromptRunMaterialization(
+    'fresh:/initial:0',
+    '/phi/current',
+    (left, right) => left === right
+  )
+  assert.equal(state.sessionPath, '/phi/current')
+})
+
+test('SessionState updates a created-session path behind generation, canonical, and value guards', () => {
+  const state = createSessionState()
+  const calls: string[] = []
+  const options = {
+    isCurrentGeneration: (generation: number): boolean => generation === 4,
+    sameCanonicalSessionKey: (left: string, right: string): boolean => left === right,
+    uiSessionPathForKey: (_sessionKey: string, path: string | undefined): string | null => {
+      calls.push(`path:${String(path)}`)
+      return path ?? null
+    },
+    notifySessionChanged: (): void => {
+      calls.push('notify')
+    }
+  }
+
+  state.updateCreatedSessionPath('fresh:/initial:0', 3, '/stale-generation', options)
+  state.updateCreatedSessionPath('stale', 4, '/stale-session', options)
+  assert.deepEqual(calls, [])
+
+  state.updateCreatedSessionPath('fresh:/initial:0', 4, undefined, options)
+  assert.deepEqual(calls, ['path:undefined', 'notify'])
+  state.updateCreatedSessionPath('fresh:/initial:0', 4, '/phi/current', options)
+  assert.equal(state.sessionPath, '/phi/current')
+  assert.deepEqual(calls, ['path:undefined', 'notify', 'path:/phi/current', 'notify'])
+})
+
+test('SessionState refreshes and applies permission modes at their original side-effect boundaries', () => {
+  const state = createSessionState()
+  const permissionModes = new Map<string, 'auto' | 'ask' | 'full'>()
+  const calls: string[] = []
+
+  state.refreshPermissionMode((sessionKey, snapshot) => {
+    calls.push(`resolve:${sessionKey}:${String(snapshot.path)}:${snapshot.cwd}`)
+    return 'ask'
+  })
+  assert.equal(state.permissionMode, 'ask')
+  state.setPermissionMode('full')
+  assert.equal(state.permissionMode, 'full')
+
+  state.applyProjectPermissionMode(
+    'project-a',
+    plainObject({ workingDirectory: '/elsewhere' }),
+    'auto',
+    {
+      findPhiManifestForSession: () => ({ projectId: 'project-a' }),
+      resolveSessionKeyAlias: (sessionKey) => `alias:${sessionKey}`,
+      sessionPermissionModes: permissionModes,
+      notifySessionChanged: () => {
+        calls.push('notify')
+      }
+    }
+  )
+  assert.equal(state.permissionMode, 'auto')
+  assert.equal(permissionModes.get('alias:fresh:/initial:0'), 'auto')
+  assert.deepEqual(calls, ['resolve:fresh:/initial:0:undefined:/initial', 'notify'])
+
+  state.applyProjectPermissionMode(
+    'project-b',
+    plainObject({ workingDirectory: '/elsewhere' }),
+    'ask',
+    {
+      findPhiManifestForSession: () => ({ projectId: 'project-a' }),
+      resolveSessionKeyAlias: (sessionKey) => sessionKey,
+      sessionPermissionModes: permissionModes,
+      notifySessionChanged: () => {
+        calls.push('unexpected-notify')
+      }
+    }
+  )
+  assert.equal(state.permissionMode, 'auto')
+  assert.doesNotMatch(calls.join(','), /unexpected/)
+})
+
+test('SessionState model request counters are monotonic and stale remembers cannot overwrite newer ones', () => {
+  const state = createSessionState()
+  const calls: string[] = []
+  const newer = { providerId: 'provider-b', modelId: 'model-b' }
+  const stale = { providerId: 'provider-c', modelId: 'model-c' }
+
+  assert.equal(state.nextModelSelectionRequest(), 1)
+  assert.equal(state.nextModelSelectionRequest(), 2)
+  state.rememberModelSelection(2, newer, (model) => {
+    calls.push(`persist:${model?.modelId ?? 'automatic'}`)
+  })
+  state.rememberModelSelection(1, stale, (model) => {
+    calls.push(`stale:${model?.modelId ?? 'automatic'}`)
+  })
+
+  assert.deepEqual(calls, ['persist:model-b'])
+  assert.equal(state.selectedModel, newer)
+  assert.equal(state.lastRememberedModelSelectionRequest, 2)
+})
+
+test('SessionState session-switch request counter is monotonic', () => {
+  const state = createSessionState()
+
+  assert.equal(state.sessionSwitchRequest, 0)
+  assert.equal(state.nextSessionSwitchRequest(), 1)
+  assert.equal(state.nextSessionSwitchRequest(), 2)
+  assert.equal(state.sessionSwitchRequest, 2)
 })

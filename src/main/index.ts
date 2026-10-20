@@ -359,7 +359,8 @@ import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import {
   configureSystemUiLanguage,
   readAppSettings,
-  readLastSelectedModel
+  readLastSelectedModel,
+  writeLastSelectedModel
 } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import { listProjectNotebooks } from './agent/notebook/analysis-notebooks'
@@ -445,7 +446,6 @@ const MIN_WINDOW_WIDTH = 860
 const MIN_WINDOW_HEIGHT = 560
 const appIcon = nativeImage.createFromPath(icon)
 
-const runtime = createMainRuntimeContext()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
 
@@ -692,16 +692,16 @@ function getTerminalDraftService(): TerminalDraftService {
         createAgentSession,
         createSessionManager: createInMemoryRuntimeSessionManager,
         resolveSession: async (context) => {
-          const runtime = await getAuthManager().getRuntime()
+          const modelRuntime = await getAuthManager().getRuntime()
           const project = context.workspaceKey.startsWith('project:')
             ? getProject(context.workspaceKey.slice('project:'.length))
             : undefined
-          const modelSelection = project?.defaultModel ?? selectedModel
+          const modelSelection = project?.defaultModel ?? sessionState.selectedModel
           const model = modelSelection
-            ? resolveRuntimeModelSelection(runtime, modelSelection)?.model
+            ? resolveRuntimeModelSelection(modelRuntime, modelSelection)?.model
             : undefined
           return {
-            modelRuntime: runtime,
+            modelRuntime,
             model,
             thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
           }
@@ -956,7 +956,11 @@ function getNoProjectTaskFolder(): string {
 function currentRemoteAnalysisProject(
   targetCwd: string
 ): { project: Project; sessionId: string } | null {
-  const manifest = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
+  const manifest = findPhiManifestForSession(
+    sessionState.sessionKey,
+    sessionState.sessionPath,
+    sessionState.cwd
+  )
   const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
   if (!manifest || !project || project.location.kind !== 'ssh') return null
   const accepted = new Set([
@@ -984,7 +988,7 @@ function realDirectoryPath(
 }
 
 function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext | null {
-  const targetCwd = cwd ?? currentCwd
+  const targetCwd = cwd ?? sessionState.cwd
   const remote = currentRemoteAnalysisProject(targetCwd)
   if (remote && remote.project.location.kind === 'ssh') {
     return {
@@ -1016,7 +1020,9 @@ function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext |
   })
   if (!targetRealPath) return null
 
-  const currentCwdRealPath = getProjectByCwd(currentCwd) ? null : realDirectoryPath(currentCwd)
+  const currentCwdRealPath = getProjectByCwd(sessionState.cwd)
+    ? null
+    : realDirectoryPath(sessionState.cwd)
   if (targetRealPath !== noProjectWorkspaceRealPath && targetRealPath !== currentCwdRealPath) {
     return null
   }
@@ -1041,28 +1047,31 @@ function isRemoteAnalysisCwd(cwd: string): boolean {
   })
 }
 
-let freshSessionCounter = 0
 // The session file currently active in the UI. undefined = a fresh, not-yet-persisted
 // chat (nothing appended to it yet, so no file exists and it won't show in the sidebar
 // until the first prompt). Distinct from invalidating the session object below: switching
 // this is a user-visible "change conversation" action, while invalidation just rebuilds
 // the in-memory AgentSession (e.g. after an auth/model/persona change) against whatever
 // conversation was already active.
-let currentSessionPath: string | undefined
+const initialFreshSessionCounter = 0
 // Working directory for the active conversation. A plain "对话" (conversation) uses the
 // user-configurable no-project task folder; a "项目" (project) uses its own folder and
 // carries a permission mode gating bash/edit/write tool calls (see tool-approval.ts).
-let currentCwd: string = getNoProjectTaskFolder()
-let currentPermissionMode: PermissionMode = 'auto'
-let selectedModel: ModelSelection | null | undefined = readLastSelectedModel()
-let modelSelectionRequest = 0
-let lastRememberedModelSelectionRequest = 0
+const initialSessionCwd = getNoProjectTaskFolder()
+const initialSelectedModel = readLastSelectedModel()
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
-let currentSessionKey = createSessionKey(undefined, currentCwd, freshSessionCounter)
-let sessionSwitchRequest = 0
+const runtime = createMainRuntimeContext({
+  session: {
+    freshSessionCounter: initialFreshSessionCounter,
+    cwd: initialSessionCwd,
+    selectedModel: initialSelectedModel,
+    sessionKey: createSessionKey(undefined, initialSessionCwd, initialFreshSessionCounter)
+  }
+})
+const { session: sessionState } = runtime
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
@@ -1404,7 +1413,7 @@ const analysisNotebookCodeGenerator = new AnalysisNotebookCodeGenerator({
   notebookSessionRegistry,
   notebookExecutor,
   models: {
-    selected: () => selectedModel,
+    selected: () => sessionState.selectedModel,
     thinkingLevel: () => selectedThinkingLevel,
     resolve: resolveRuntimeModelSelection,
     label: modelSelectionLabel
@@ -2058,7 +2067,7 @@ getPhiEngine().host.register('library.cancel', (params, context) =>
 )
 
 async function installedPluginNamespace(projectDir?: string): Promise<PluginNamespace> {
-  const resourceCwd = projectDir ?? currentCwd
+  const resourceCwd = projectDir ?? sessionState.cwd
   const pluginSkillRoots = loadedPlugins({
     agentDir: AGENT_DIR,
     ...(projectDir ? { projectDir } : {})
@@ -2607,7 +2616,7 @@ function resolveOriginSession(
   const phiSessionId = origin
     ? getPhiSessionIdForKey(origin.sessionKey)
     : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
-  return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? currentCwd } : undefined
+  return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? sessionState.cwd } : undefined
 }
 
 function currentRuntimeOriginScope(
@@ -4313,7 +4322,7 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
 function createSessionKey(
   path: string | undefined,
   cwd: string,
-  freshId = freshSessionCounter
+  freshId = sessionState.freshSessionCounter
 ): string {
   return path ? `path:${path}` : `fresh:${cwd}:${freshId}`
 }
@@ -4354,10 +4363,7 @@ function linkPhiManagedSessionKey(sessionKey: string, cwd: string, phiSessionId:
   aliasSessionKey(stableKey, sessionKey)
   setPhiSessionIdForKey(sessionKey, phiSessionId)
   setPhiSessionIdForKey(stableKey, phiSessionId)
-  if (sameCanonicalSessionKey(sessionKey, currentSessionKey)) {
-    currentSessionPath = stablePath
-    currentSessionKey = stableKey
-  }
+  sessionState.linkPhiManagedSessionKey(sessionKey, stablePath, stableKey, sameCanonicalSessionKey)
   return stablePath
 }
 
@@ -4420,9 +4426,7 @@ function linkMaterializedRuntimeSessionPath(
     linkPhiManagedSessionKey(sessionKey, cwd, phiSessionId)
     return
   }
-  if (sameCanonicalSessionKey(sessionKey, currentSessionKey)) {
-    currentSessionKey = materializedKey
-  }
+  sessionState.linkMaterializedSessionKey(sessionKey, materializedKey, sameCanonicalSessionKey)
 }
 
 function linkPromptRunRuntimeSessionPath(
@@ -4438,7 +4442,7 @@ function linkPromptRunRuntimeSessionPath(
 }
 
 function getCurrentLifecycle(): SessionLifecycle<AgentSessionResult> {
-  return getLifecycleForKey(currentSessionKey)
+  return getLifecycleForKey(sessionState.sessionKey)
 }
 
 function getLifecycleForKey(sessionKey: string): SessionLifecycle<AgentSessionResult> {
@@ -4954,9 +4958,11 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<{
 
         // A brand-new chat's first prompt is when it actually becomes a file on disk —
         // hand the stable Phi path back so the renderer can refresh and highlight it.
-        if (sameCanonicalSessionKey(runSessionKey, currentSessionKey)) {
-          currentSessionPath = stableSessionPath
-        }
+        sessionState.recordPromptRunMaterialization(
+          runSessionKey,
+          stableSessionPath,
+          sameCanonicalSessionKey
+        )
         promptRun.sessionPath = stableSessionPath
         promptResult = {
           path: stableSessionPath,
@@ -5079,7 +5085,7 @@ function resolveSessionModelSelection(
   }
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   if (manifest?.model !== undefined) return manifest.model
-  return projectForSession(sessionKey, snapshot)?.defaultModel ?? selectedModel ?? null
+  return projectForSession(sessionKey, snapshot)?.defaultModel ?? sessionState.selectedModel ?? null
 }
 
 function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapshot): ThinkingLevel {
@@ -5151,7 +5157,10 @@ function createPhiManagedSession(
   title?: string
 ): { path: string; sessionId: string; permissionMode: PermissionMode } {
   const project = getProjectByCwd(cwd)
-  const model = selectedModel !== undefined ? selectedModel : (project?.defaultModel ?? null)
+  const model =
+    sessionState.selectedModel !== undefined
+      ? sessionState.selectedModel
+      : (project?.defaultModel ?? null)
   const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
     kind: project ? 'project' : 'ordinary',
@@ -5180,8 +5189,9 @@ function createRemoteManagedSession(projectId: string): {
   if (!project || project.location.kind !== 'ssh') throw new Error('远程项目不存在')
   const cwd = ensureRemoteProjectAnchor(project.id)
   const model =
-    selectedModel !== undefined && !(remoteOmpRpcEnabled && selectedModel === null)
-      ? selectedModel
+    sessionState.selectedModel !== undefined &&
+    !(remoteOmpRpcEnabled && sessionState.selectedModel === null)
+      ? sessionState.selectedModel
       : (project.defaultModel ?? null)
   const session = createPhiSession({
     kind: 'project',
@@ -5251,9 +5261,11 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
         cwd: manifest.cwd,
         permissionMode: manifest.permissionMode
       })
-      const runtime = await getAuthManager().getRuntime()
+      const modelRuntime = await getAuthManager().getRuntime()
       signal.throwIfAborted()
-      let model = selection ? resolveRuntimeModelSelection(runtime, selection)?.model : undefined
+      let model = selection
+        ? resolveRuntimeModelSelection(modelRuntime, selection)?.model
+        : undefined
       if (!selection) {
         const lifecycle = getLifecycleForKey(key)
         const record = lifecycle.currentRecord
@@ -5270,7 +5282,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
       const { session } = await createAgentSession(
         {
           cwd,
-          modelRuntime: runtime,
+          modelRuntime,
           ...(model ? { model } : {}),
           thinkingLevel: 'minimal',
           noTools: 'all',
@@ -5377,7 +5389,7 @@ async function renameConversation(
     return
   }
   const current = await getCurrentResolvedSession()
-  if (currentSessionPath === path && current) {
+  if (sessionState.sessionPath === path && current) {
     await current.session.sessionManager.setSessionName(name, source)
   } else {
     await renameSession(path, name)
@@ -5500,14 +5512,15 @@ function notifyAnalysisNotebookFileChanged(change: unknown): void {
 
 function isRemoteResourceScope(cwd?: string): boolean {
   return (
-    isRemoteProjectAnchorPath(currentCwd, AGENT_DIR) ||
+    isRemoteProjectAnchorPath(sessionState.cwd, AGENT_DIR) ||
     (typeof cwd === 'string' && isRemoteProjectAnchorPath(cwd, AGENT_DIR))
   )
 }
 
 function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
-  const target = cwd ?? currentCwd
-  const remote = currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(currentCwd)
+  const target = cwd ?? sessionState.cwd
+  const remote =
+    currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(sessionState.cwd)
   if (!remote) throw new Error('远程项目 Skill 请求缺少有效的当前项目会话')
   return {
     sessionId: remote.sessionId,
@@ -5739,7 +5752,7 @@ function captureSessionControlTarget(
     if (
       (requireSelected &&
         (!now ||
-          !sameCanonicalSessionKey(key, currentSessionKey) ||
+          !sameCanonicalSessionKey(key, sessionState.sessionKey) ||
           now.path !== current.path ||
           now.cwd !== current.cwd ||
           now.phiSessionId !== phiSessionId ||
@@ -5796,27 +5809,30 @@ function captureSessionControlTarget(
 }
 
 function getCurrentSessionPayload(): CurrentSessionPayload {
-  currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, {
-    path: currentSessionPath,
-    cwd: currentCwd
-  })
-  const manifest = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
-  const phiSessionId = manifest?.sessionId ?? getPhiSessionIdForKey(currentSessionKey)
-  const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (currentSessionPath ?? null)
-  const project = manifest?.projectId ? getProject(manifest.projectId) : getProjectByCwd(currentCwd)
+  sessionState.refreshPermissionMode(resolveSessionPermissionMode)
+  const manifest = findPhiManifestForSession(
+    sessionState.sessionKey,
+    sessionState.sessionPath,
+    sessionState.cwd
+  )
+  const phiSessionId = manifest?.sessionId ?? getPhiSessionIdForKey(sessionState.sessionKey)
+  const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (sessionState.sessionPath ?? null)
+  const project = manifest?.projectId
+    ? getProject(manifest.projectId)
+    : getProjectByCwd(sessionState.cwd)
   const projectLocation = manifest?.projectLocation ?? project?.location
   return {
     path,
     ...(phiSessionId ? { phiSessionId } : {}),
-    cwd: currentCwd,
-    displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : currentCwd,
+    cwd: sessionState.cwd,
+    displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : sessionState.cwd,
     ...(manifest?.projectId || project?.id
       ? { projectId: manifest?.projectId ?? project?.id }
       : {}),
     ...(projectLocation ? { projectLocation } : {}),
     sessionGeneration: getCurrentLifecycle().currentGeneration,
-    permissionMode: currentPermissionMode,
-    ...getSessionStatusPayload(currentSessionKey, currentSessionPath, currentCwd)
+    permissionMode: sessionState.permissionMode,
+    ...getSessionStatusPayload(sessionState.sessionKey, sessionState.sessionPath, sessionState.cwd)
   }
 }
 
@@ -5859,12 +5875,12 @@ function requireProject(id: string): Project {
 }
 
 async function invalidateAgentSession(): Promise<void> {
-  const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
+  const phiSessionId = getPhiSessionIdForKey(sessionState.sessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
   const lifecycle = getCurrentLifecycle()
   const previous = lifecycle.advance()
-  advancePromptGeneration(currentSessionKey)
-  const activePromptRun = getActivePromptRun(currentSessionKey)
+  advancePromptGeneration(sessionState.sessionKey)
+  const activePromptRun = getActivePromptRun(sessionState.sessionKey)
   if (activePromptRun) {
     activePromptRun.cancelled = true
     cancelBrowserRun(activePromptRun)
@@ -6000,17 +6016,12 @@ async function disposeAndSwitchSession(
   sessionGeneration: number
   permissionMode: PermissionMode
 }> {
-  if (!path) {
-    freshSessionCounter += 1
-  }
-  currentSessionPath = path
-  currentCwd = cwd
-  currentSessionKey = createSessionKey(path, cwd)
-  currentPermissionMode = resolveSessionPermissionMode(currentSessionKey, { path, cwd })
-  if (!path) {
-    sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-    currentPermissionMode = permissionMode
-  }
+  sessionState.switchTo(path, cwd, permissionMode, {
+    createSessionKey,
+    resolveSessionPermissionMode,
+    resolveSessionKeyAlias,
+    sessionPermissionModes
+  })
   const target = getCurrentSessionPayload()
   try {
     await runtime.workspaceServices.browserWorkspaceRegistry?.setActiveSession(
@@ -6026,11 +6037,11 @@ async function disposeAndSwitchSession(
 }
 
 async function getAgentSession(
-  sessionKey: string = currentSessionKey,
+  sessionKey: string = sessionState.sessionKey,
   snapshot: SessionSnapshot = {
-    path: currentSessionPath,
-    cwd: currentCwd,
-    permissionMode: currentPermissionMode
+    path: sessionState.sessionPath,
+    cwd: sessionState.cwd,
+    permissionMode: sessionState.permissionMode
   },
   control?: import('./agent/engine/types').RuntimeSelectionControl,
   remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
@@ -6143,7 +6154,7 @@ async function getAgentSession(
         ? await loadRemoteProjectInstructions(remoteProject.location)
         : null
       assertCreationCurrent()
-      const runtime = await getAuthManager().getRuntime()
+      const modelRuntime = await getAuthManager().getRuntime()
       assertCreationCurrent()
       const modelSelection =
         remoteRecovery?.replacementModel ??
@@ -6152,7 +6163,7 @@ async function getAgentSession(
         throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
       }
       const resolvedModel = modelSelection
-        ? resolveRuntimeModelSelection(runtime, modelSelection)
+        ? resolveRuntimeModelSelection(modelRuntime, modelSelection)
         : null
       const model = resolvedModel?.model
       if (
@@ -6446,7 +6457,7 @@ async function getAgentSession(
       const result = await createAgentSession(
         {
           ...(remoteRecovery ? { remoteRecovery } : {}),
-          modelRuntime: runtime,
+          modelRuntime,
           thinkingLevel,
           ...(sessionManifest?.autoCompaction
             ? { autoCompaction: sessionManifest.autoCompaction }
@@ -6547,16 +6558,13 @@ async function getAgentSession(
           result.session.sessionFile
         )
       }
-      if (
-        lifecycle.isCurrentGeneration(generation) &&
-        sameCanonicalSessionKey(sessionKey, currentSessionKey)
-      ) {
-        const nextSessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
-        if (currentSessionPath !== nextSessionPath) {
-          currentSessionPath = nextSessionPath ?? undefined
-          notifySessionChanged()
-        }
-      }
+      sessionState.updateCreatedSessionPath(sessionKey, generation, creationSnapshot.path, {
+        isCurrentGeneration: (candidateGeneration) =>
+          lifecycle.isCurrentGeneration(candidateGeneration),
+        sameCanonicalSessionKey,
+        uiSessionPathForKey,
+        notifySessionChanged
+      })
 
       result.session.subscribe((rawSummary) => {
         if (!lifecycle.isCurrentGeneration(generation)) return
@@ -6871,7 +6879,7 @@ app.whenReady().then(async () => {
     })
   }
   // Domain packages are installed only after a catalog choice. Core runtime assets remain bundled.
-  mkdirSync(currentCwd, { recursive: true })
+  mkdirSync(sessionState.cwd, { recursive: true })
   recoverInterruptedPhiSessions()
   // Wrapper packages are installed from the catalogue only after a user choice.
   // Keep legacy user-authored wrappers available without seeding every bundled package.
@@ -6962,14 +6970,14 @@ app.whenReady().then(async () => {
   })
   const localFileAccess = createLocalFileAccessControl({
     agentDir: AGENT_DIR,
-    getCurrentCwd: () => currentCwd
+    getCurrentCwd: () => sessionState.cwd
   })
   const filesIpcOptions: FilesIpcOptions = {
     ipcMain,
     dialog,
     shell,
     agentDir: AGENT_DIR,
-    getCurrentCwd: () => currentCwd,
+    getCurrentCwd: () => sessionState.cwd,
     getActiveWindow,
     getUiLanguage: () => readAppSettings().uiLanguage,
     access: localFileAccess,
@@ -6999,7 +7007,11 @@ app.whenReady().then(async () => {
     lifecycle: { logUnexpectedError },
     workspace: { agentDir: AGENT_DIR },
     session: {
-      getCurrent: () => ({ key: currentSessionKey, path: currentSessionPath, cwd: currentCwd }),
+      getCurrent: () => ({
+        key: sessionState.sessionKey,
+        path: sessionState.sessionPath,
+        cwd: sessionState.cwd
+      }),
       findPhiManifestForSession
     },
     execution: { environmentBuilds, wrapperJobs },
@@ -7016,7 +7028,7 @@ app.whenReady().then(async () => {
     requireLocalWorkspaceRoot: (rootPath) => {
       if (
         isRemoteResourceScope() ||
-        resolve(rootPath) !== resolve(currentCwd) ||
+        resolve(rootPath) !== resolve(sessionState.cwd) ||
         isRemoteProjectAnchorPath(rootPath, AGENT_DIR)
       ) {
         throw new Error('只能修改当前本地工作区中的文件')
@@ -7048,8 +7060,8 @@ app.whenReady().then(async () => {
   registerMoleculesIpc({ ipcMain })
   const promptTargetControlOptions: PromptTargetControlOptions = {
     state: {
-      getCurrentSessionPath: () => currentSessionPath,
-      getCurrentCwd: () => currentCwd,
+      getCurrentSessionPath: () => sessionState.sessionPath,
+      getCurrentCwd: () => sessionState.cwd,
       sessionPermissionModes
     },
     identity: {
@@ -7070,15 +7082,15 @@ app.whenReady().then(async () => {
   const agentIpcOptions: AgentIpcOptions = {
     ipcMain,
     state: {
-      getCurrentSessionKey: () => currentSessionKey,
-      getCurrentSessionPath: () => currentSessionPath,
-      getCurrentCwd: () => currentCwd,
-      getCurrentPermissionMode: () => currentPermissionMode,
+      getCurrentSessionKey: () => sessionState.sessionKey,
+      getCurrentSessionPath: () => sessionState.sessionPath,
+      getCurrentCwd: () => sessionState.cwd,
+      getCurrentPermissionMode: () => sessionState.permissionMode,
       resolveSessionKeyAlias,
       runtimeSessionPath
     },
     prompt: {
-      parseTarget: (input) => parsePromptTarget(input, () => currentCwd),
+      parseTarget: (input) => parsePromptTarget(input, () => sessionState.cwd),
       alignCurrentSessionToTarget: (input) =>
         alignCurrentSessionToPromptTarget(input, promptTargetControlOptions),
       submit: submitPromptRun
@@ -7142,8 +7154,8 @@ app.whenReady().then(async () => {
     builds: environmentBuilds
   })
   const modelSelectionTarget = {
-    getCurrentSessionKey: () => currentSessionKey,
-    getCurrentCwd: () => currentCwd,
+    getCurrentSessionKey: () => sessionState.sessionKey,
+    getCurrentCwd: () => sessionState.cwd,
     resolveSessionKeyAlias,
     getPhiSessionIdForKey,
     findPhiSessionById,
@@ -7154,20 +7166,15 @@ app.whenReady().then(async () => {
     getActiveSessionRun: (sessionId: string) => runnerRegistry.getActiveRun(sessionId)
   }
   const modelSessionState = {
-    getCurrentSessionPath: () => currentSessionPath,
-    getCurrentPermissionMode: () => currentPermissionMode,
+    getCurrentSessionPath: () => sessionState.sessionPath,
+    getCurrentPermissionMode: () => sessionState.permissionMode,
     sessionModelSelections,
     sessionThinkingLevels
   }
   const modelSelectionRequests = {
-    nextModelSelectionRequest: () => ++modelSelectionRequest,
-    getLastRememberedModelSelectionRequest: () => lastRememberedModelSelectionRequest,
-    setLastRememberedModelSelectionRequest: (request: number) => {
-      lastRememberedModelSelectionRequest = request
-    },
-    setSelectedModel: (model: ModelSelection | null) => {
-      selectedModel = model
-    }
+    nextModelSelectionRequest: () => sessionState.nextModelSelectionRequest(),
+    rememberModelSelection: (request: number, model: ModelSelection | null) =>
+      sessionState.rememberModelSelection(request, model, writeLastSelectedModel)
   }
   const modelSelectionOperations = {
     resolveRuntimeModelSelection,
@@ -7196,10 +7203,10 @@ app.whenReady().then(async () => {
 
   const currentContextUsageOptions: CurrentContextUsageOptions = {
     getCurrentPayload: getCurrentSessionPayload,
-    getCurrentSessionKey: () => currentSessionKey,
-    getCurrentSessionPath: () => currentSessionPath,
-    getCurrentCwd: () => currentCwd,
-    getCurrentPermissionMode: () => currentPermissionMode,
+    getCurrentSessionKey: () => sessionState.sessionKey,
+    getCurrentSessionPath: () => sessionState.sessionPath,
+    getCurrentCwd: () => sessionState.cwd,
+    getCurrentPermissionMode: () => sessionState.permissionMode,
     findPhiManifestForSession,
     runtimeSessionPathForSnapshot,
     getCurrentLifecycle,
@@ -7207,7 +7214,7 @@ app.whenReady().then(async () => {
   }
   const currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions = {
     getCurrentPayload: getCurrentSessionPayload,
-    getCurrentSessionKey: () => currentSessionKey,
+    getCurrentSessionKey: () => sessionState.sessionKey,
     getPhiSessionIdForKey,
     getCurrentLifecycle,
     getCurrentResolvedSession
@@ -7216,10 +7223,10 @@ app.whenReady().then(async () => {
     workspace: { agentDir: AGENT_DIR },
     state: {
       getCurrentPayload: getCurrentSessionPayload,
-      getCurrentSessionKey: () => currentSessionKey,
-      getCurrentSessionPath: () => currentSessionPath,
-      getCurrentCwd: () => currentCwd,
-      getCurrentPermissionMode: () => currentPermissionMode,
+      getCurrentSessionKey: () => sessionState.sessionKey,
+      getCurrentSessionPath: () => sessionState.sessionPath,
+      getCurrentCwd: () => sessionState.cwd,
+      getCurrentPermissionMode: () => sessionState.permissionMode,
       manualCompactionIds,
       manualCompactionOperations
     },
@@ -7241,15 +7248,13 @@ app.whenReady().then(async () => {
   registerSessionsIpc({
     ipcMain,
     state: {
-      getCurrentSessionKey: () => currentSessionKey,
-      getCurrentSessionPath: () => currentSessionPath,
-      getCurrentCwd: () => currentCwd,
-      getCurrentPermissionMode: () => currentPermissionMode,
-      setCurrentPermissionMode: (permissionMode) => {
-        currentPermissionMode = permissionMode
-      },
-      nextSessionSwitchRequest: () => ++sessionSwitchRequest,
-      getSessionSwitchRequest: () => sessionSwitchRequest,
+      getCurrentSessionKey: () => sessionState.sessionKey,
+      getCurrentSessionPath: () => sessionState.sessionPath,
+      getCurrentCwd: () => sessionState.cwd,
+      getCurrentPermissionMode: () => sessionState.permissionMode,
+      setCurrentPermissionMode: (permissionMode) => sessionState.setPermissionMode(permissionMode),
+      nextSessionSwitchRequest: () => sessionState.nextSessionSwitchRequest(),
+      getSessionSwitchRequest: () => sessionState.sessionSwitchRequest,
       sessionPermissionModes,
       loadedSkillNamesBySession
     },
@@ -7263,10 +7268,10 @@ app.whenReady().then(async () => {
     recovery: {
       state: {
         getCurrentPayload: getCurrentSessionPayload,
-        getCurrentSessionKey: () => currentSessionKey,
-        getCurrentSessionPath: () => currentSessionPath,
-        getCurrentCwd: () => currentCwd,
-        getCurrentPermissionMode: () => currentPermissionMode,
+        getCurrentSessionKey: () => sessionState.sessionKey,
+        getCurrentSessionPath: () => sessionState.sessionPath,
+        getCurrentCwd: () => sessionState.cwd,
+        getCurrentPermissionMode: () => sessionState.permissionMode,
         isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
         runtimeRecoveryOperations,
         runtimeRecoveryFailures,
@@ -7350,18 +7355,13 @@ app.whenReady().then(async () => {
     },
     projects: {
       requireProject,
-      applyCurrentPermissionMode: (id, project, permissionMode) => {
-        const selected = findPhiManifestForSession(
-          currentSessionKey,
-          currentSessionPath,
-          currentCwd
-        )
-        if (selected?.projectId === id || project.workingDirectory === currentCwd) {
-          currentPermissionMode = permissionMode
-          sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-          notifySessionChanged()
-        }
-      },
+      applyCurrentPermissionMode: (id, project, permissionMode) =>
+        sessionState.applyProjectPermissionMode(id, project, permissionMode, {
+          findPhiManifestForSession,
+          resolveSessionKeyAlias,
+          sessionPermissionModes,
+          notifySessionChanged
+        }),
       resolveRuntimeModelSelection,
       remoteRuntimeRoot: projectRemoteRuntimeRoot
     },
@@ -7395,7 +7395,7 @@ app.whenReady().then(async () => {
       activePathByProjectCwd: activeNotebookPathByProjectCwd
     },
     jupyter: {
-      getCurrentCwd: () => currentCwd,
+      getCurrentCwd: () => sessionState.cwd,
       isRemoteAnalysisCwd,
       serverRegistry: jupyterServerRegistry,
       executor: notebookExecutor,
@@ -7455,7 +7455,7 @@ app.whenReady().then(async () => {
     lifecycle: { invalidateAgentSession },
     workspace: {
       agentDir: AGENT_DIR,
-      getCurrentCwd: () => currentCwd,
+      getCurrentCwd: () => sessionState.cwd,
       isRemoteResourceScope,
       remoteSkillProjectContext,
       listRemoteProjectSkills
@@ -7468,7 +7468,7 @@ app.whenReady().then(async () => {
     workspace: {
       agentDir: AGENT_DIR,
       bundledDir: getBundledAgentsDir(),
-      getCurrentCwd: () => currentCwd,
+      getCurrentCwd: () => sessionState.cwd,
       currentRemoteAnalysisProject,
       isRemoteResourceScope
     }
@@ -7482,7 +7482,7 @@ app.whenReady().then(async () => {
     },
     workspace: {
       agentDir: AGENT_DIR,
-      getCurrentCwd: () => currentCwd,
+      getCurrentCwd: () => sessionState.cwd,
       isRemoteResourceScope,
       resolveRemoteProjectContext: remoteSkillProjectContext
     },
@@ -7509,13 +7509,13 @@ app.whenReady().then(async () => {
     generation: {
       generatePersonaMarkdown: (description, control) =>
         generatePersonaMarkdownForIpc(description, control, {
-          getSelectedModel: () => selectedModel,
+          getSelectedModel: () => sessionState.selectedModel,
           getNoProjectTaskFolder,
           text: { extractAssistantText, extractMessageText, lastAssistantMessageFrom }
         })
     },
     rpc: {
-      getCurrentSessionKey: () => currentSessionKey,
+      getCurrentSessionKey: () => sessionState.sessionKey,
       resolveSessionKeyAlias,
       getPhiSessionIdForKey,
       findPhiSessionById,
