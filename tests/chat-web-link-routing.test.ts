@@ -227,17 +227,23 @@ test('App composes link opening and invalidates it on explicit panel actions', (
     app,
     /const openLocalTrustedOverlay = useCallback\([\s\S]*?enqueueBrowserTrustedOverlay\(\{[\s\S]*?kind: 'local'/
   )
+  // The overlay wiring for bridge events moved into the chat session-event bridge.
+  const bridgeHook = source('src/renderer/src/features/chat/hooks/useSessionEventBridge.ts')
+  const bridge = source('src/renderer/src/features/chat/lib/sessionEventBridge.ts')
+  assert.match(bridgeHook, /rendererApi\.onAuthInteraction\(\(event\) => handleAuthInteraction/)
+  assert.match(bridge, /export function handleAuthInteraction[\s\S]{0,400}kind: 'auth'/)
   assert.match(
-    app,
-    /rendererApi\.onAuthInteraction\([\s\S]*?enqueueBrowserTrustedOverlay\(\{[\s\S]*?kind: 'auth'/
+    bridgeHook,
+    /rendererApi\.onToolApprovalRequest\(\(event\) => handleToolApprovalRequest/
+  )
+  assert.match(bridge, /export function handleToolApprovalRequest[\s\S]{0,400}kind: 'approval'/)
+  assert.match(
+    bridgeHook,
+    /rendererApi\.onAgentUserInteractionRequest\(\(event\) =>[\s\S]{0,40}handleAgentUserInteractionRequest/
   )
   assert.match(
-    app,
-    /rendererApi\.onToolApprovalRequest\([\s\S]*?enqueueBrowserTrustedOverlay\(\{[\s\S]*?kind: 'approval'/
-  )
-  assert.match(
-    app,
-    /rendererApi\.onAgentUserInteractionRequest\([\s\S]*?enqueueBrowserTrustedOverlay\(\{[\s\S]*?kind: 'interaction'/
+    bridge,
+    /export function handleAgentUserInteractionRequest[\s\S]{0,400}kind: 'interaction'/
   )
   assert.match(app, /<ChatView[\s\S]*?onOpenWebUrl=\{onOpenWebUrl\}/)
 })

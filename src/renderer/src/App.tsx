@@ -56,6 +56,7 @@ import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { usePanelRequests } from './lib/app-shell/usePanelRequests'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
+import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import {
   runtimeRecoveryBannerColumnSx,
@@ -114,17 +115,7 @@ import {
   useWorkspaceFileTabs,
   type WorkspaceFileTab
 } from './useWorkspaceFileTabs'
-import {
-  useSessionStore,
-  sessionStateKey,
-  sessionStateKeyFromAgentEvent,
-  sessionStateKeyFromAgentUserInteraction,
-  sessionStateKeyFromToolApproval,
-  sessionRuntimeStates,
-  pendingApprovalsBySession,
-  pendingUserInteractionsBySession,
-  sessionAgentEventStates
-} from './stores/sessionStore'
+import { useSessionStore, sessionStateKey, sessionAgentEventStates } from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
 import { useWindowFullscreen } from './lib/useWindowFullscreen'
 import { WINDOW_TITLEBAR_HEIGHT, windowChromeLayout } from './lib/windowChromeLayout'
@@ -150,12 +141,7 @@ import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { messagesForUserRetry } from './lib/chatRetry'
 import { getAppShortcutAction } from './lib/appShortcuts'
-import {
-  agentEventBelongsToActiveSession,
-  agentEventMaterializesActiveFreshSession
-} from './lib/agentEventRouting'
 import { getPromptReadiness } from './lib/promptReadiness'
-import { shouldRefreshProjectGitStatusForAgentEvent } from './lib/projectGitRefresh'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import { orderSessionsForDisplay } from './lib/sessionOrder'
@@ -185,17 +171,13 @@ import type { ChatResourceMention } from './lib/chatResourceMentions'
 import type { WorkspaceSidePanelMode } from './lib/workspaceSidePanelMode'
 import { useWorkspaceSidePanel } from './lib/app-shell/useWorkspaceSidePanel'
 import {
-  idleSessionRuntimeState,
-  reduceSessionRuntimeState,
   sessionRuntimeStateIsBusy,
   sessionRuntimeStatePausesQueue,
   sessionStatusIsBusy
 } from './lib/sessionRuntimeState'
-import { createAgentEventReducerState, reduceAgentEventState } from './lib/agentEventReducer'
 import { navigationPaneWidth } from './layout'
 import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
-  AgentEventSummary,
   AnalysisNotebookFileChange,
   EnvironmentSnapshot,
   EnvironmentToolId,
@@ -273,21 +255,16 @@ function App(): React.JSX.Element {
     pendingUserInteraction,
     setPendingUserInteraction,
     activeSessionRuntimeState,
-    setActiveSessionRuntimeState,
     draftInputs,
     setDraftInputs,
     getSessionRuntimeState,
-    setVisibleAgentEventState,
     replaceMessages,
     updateMessages,
-    storeSessionRuntimeState,
     mergeSessionSummariesRuntimeState,
     applyCurrentSession,
     acknowledgeActiveSession,
     refreshSessions,
     startFreshChat,
-    scheduleSessionRefresh,
-    cancelScheduledSessionRefresh,
     onRenameSession,
     onRespondToolApproval,
     onRespondAgentUserInteraction
@@ -1452,6 +1429,11 @@ function App(): React.JSX.Element {
   const onGoProviderSettings = useCallback((): void => {
     openSettings('providers')
   }, [openSettings])
+  // A published auth overlay has already hidden the browser viewport; reopening
+  // settings through the browser gate here would queue behind that same overlay.
+  const showSettingsWithoutGate = useCallback((): void => {
+    setIsSettingsOpen(true)
+  }, [setIsSettingsOpen])
 
   const focusPrimaryInput = useCallback((): void => {
     const selector = activeView === 'chat' ? '[data-phi-focus="chat-input"]' : 'input[type="text"]'
@@ -1534,229 +1516,20 @@ function App(): React.JSX.Element {
     }
   }, [navigateToView, onNewChat, openSettings, rendererApi])
 
-  useEffect(() => {
-    const unsubscribe = rendererApi.onAgentEvent((event: AgentEventSummary) => {
-      if (event.sessionPath) {
-        scheduleSessionRefresh()
-      }
-
-      const activeSessionIdentity = {
-        phiSessionId: useSessionStore.getState().activePhiSessionId,
-        path: useSessionStore.getState().activeSessionPath,
-        cwd: useSessionStore.getState().activeCwd,
-        sessionGeneration: useSessionStore.getState().activeSessionGeneration
-      }
-      const materializesActiveFreshSession = agentEventMaterializesActiveFreshSession(
-        event,
-        activeSessionIdentity,
-        isSendingRef.current
-      )
-      const belongsToActiveSession =
-        materializesActiveFreshSession ||
-        agentEventBelongsToActiveSession(event, activeSessionIdentity)
-      const eventStateKey = sessionStateKeyFromAgentEvent(event)
-      if (eventStateKey) {
-        const nextRuntimeState = reduceSessionRuntimeState(
-          sessionRuntimeStates.get(eventStateKey) ?? idleSessionRuntimeState(),
-          event
-        )
-        const runtimeStateChanged = storeSessionRuntimeState(eventStateKey, nextRuntimeState)
-        const baseState =
-          sessionAgentEventStates.get(eventStateKey) ??
-          (belongsToActiveSession
-            ? useSessionStore.getState().agentEventState
-            : createAgentEventReducerState())
-        const nextState = reduceAgentEventState(baseState, event)
-        sessionAgentEventStates.set(eventStateKey, nextState)
-        if (belongsToActiveSession) {
-          useSessionStore.setState({
-            activeAgentEventStateKey: eventStateKey,
-            ...(materializesActiveFreshSession && typeof event.phiSessionId === 'string'
-              ? { activePhiSessionId: event.phiSessionId }
-              : {}),
-            ...(materializesActiveFreshSession && typeof event.sessionPath === 'string'
-              ? { activeSessionPath: event.sessionPath }
-              : {})
-          })
-          setAgentEventState(nextState)
-          setActiveSessionRuntimeState(nextRuntimeState)
-        }
-        if (runtimeStateChanged) {
-          setProjectSessionRefreshKey((key) => key + 1)
-        }
-        if (shouldRefreshProjectGitStatusForAgentEvent(event, projectsRef.current)) {
-          void refreshProjects()
-        }
-        return
-      }
-
-      if (!belongsToActiveSession) return
-      setVisibleAgentEventState((prev) => reduceAgentEventState(prev, event))
-    })
-
-    const unsubscribeAuthInteraction = rendererApi.onAuthInteraction((event) => {
-      enqueueBrowserTrustedOverlay({
-        kind: 'auth',
-        key: event.type === 'prompt' ? event.requestId : `${event.providerId}:${event.event.type}`,
-        onCancel:
-          event.type === 'prompt'
-            ? () => rendererApi.submitAuthInteraction(event.requestId, '')
-            : undefined,
-        publish: () => {
-          if (handleAuthInteractionEvent(event)) {
-            setIsSettingsOpen(true)
-          }
-        }
-      })
-    })
-
-    const unsubscribeToolApproval = rendererApi.onToolApprovalRequest((event) => {
-      enqueueBrowserTrustedOverlay({
-        kind: 'approval',
-        key: event.requestId,
-        onCancel: () => rendererApi.respondToolApproval(event.requestId, false),
-        publish: () => {
-          const approvalStateKey = sessionStateKeyFromToolApproval(
-            event,
-            useSessionStore.getState().activeSessionGeneration
-          )
-          if (approvalStateKey) {
-            pendingApprovalsBySession.set(approvalStateKey, event)
-            const nextRuntimeState = {
-              ...(sessionRuntimeStates.get(approvalStateKey) ?? idleSessionRuntimeState()),
-              status: 'needs_approval' as const,
-              unreadKind: 'approval' as const,
-              currentRunId: event.runId
-            }
-            storeSessionRuntimeState(approvalStateKey, nextRuntimeState)
-            if (approvalStateKey === useSessionStore.getState().activeAgentEventStateKey) {
-              setPendingApproval(event)
-              setActiveSessionRuntimeState(nextRuntimeState)
-            }
-          } else {
-            setPendingApproval(event)
-          }
-          setProjectSessionRefreshKey((key) => key + 1)
-          scheduleSessionRefresh()
-        }
-      })
-    })
-
-    const unsubscribeToolApprovalCancelled = rendererApi.onToolApprovalCancelled((requestId) => {
-      cancelBrowserTrustedOverlay('approval', requestId)
-      if (requestId) {
-        for (const [key, request] of pendingApprovalsBySession) {
-          if (request.requestId === requestId) pendingApprovalsBySession.delete(key)
-        }
-        if (useSessionStore.getState().pendingApproval?.requestId === requestId) {
-          setPendingApproval(null)
-        }
-      } else {
-        pendingApprovalsBySession.clear()
-        setPendingApproval(null)
-      }
-      scheduleSessionRefresh()
-    })
-
-    const unsubscribeAgentUserInteraction = rendererApi.onAgentUserInteractionRequest((event) => {
-      enqueueBrowserTrustedOverlay({
-        kind: 'interaction',
-        key: event.requestId,
-        onCancel: () =>
-          rendererApi.respondAgentUserInteraction(
-            event.requestId,
-            { requestId: event.requestId, answers: [], cancelled: true },
-            true
-          ),
-        publish: () => {
-          const interactionStateKey = sessionStateKeyFromAgentUserInteraction(
-            event,
-            useSessionStore.getState().activeSessionGeneration
-          )
-          if (interactionStateKey) {
-            pendingUserInteractionsBySession.set(interactionStateKey, event)
-            const nextRuntimeState = {
-              ...(sessionRuntimeStates.get(interactionStateKey) ?? idleSessionRuntimeState()),
-              status: 'needs_input' as const,
-              unreadKind: 'input' as const,
-              currentRunId: event.runId
-            }
-            storeSessionRuntimeState(interactionStateKey, nextRuntimeState)
-            if (interactionStateKey === useSessionStore.getState().activeAgentEventStateKey) {
-              setPendingUserInteraction(event)
-              setActiveSessionRuntimeState(nextRuntimeState)
-            }
-          } else {
-            setPendingUserInteraction(event)
-          }
-          setProjectSessionRefreshKey((key) => key + 1)
-          scheduleSessionRefresh()
-        }
-      })
-    })
-
-    const unsubscribeAgentUserInteractionCancelled = rendererApi.onAgentUserInteractionCancelled(
-      () => {
-        cancelBrowserTrustedOverlay('interaction')
-        pendingUserInteractionsBySession.clear()
-        setPendingUserInteraction(null)
-        scheduleSessionRefresh()
-      }
-    )
-
-    const unsubscribeNotebookDraftChanged = rendererApi.onAnalysisNotebookDraftChanged(
-      handleNotebookDraftChanged
-    )
-    const unsubscribeNotebookFileChanged = rendererApi.onAnalysisNotebookFileChanged(
-      handleNotebookFileChangedEvent
-    )
-
-    const unsubscribeSessionChanged = rendererApi.onSessionChanged((session) => {
-      applyCurrentSession(session, undefined, {
-        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-      })
-      setProjectSessionRefreshKey((key) => key + 1)
-      if (workspaceSidebarMode === 'projects') {
-        void refreshProjects()
-      }
-    })
-
-    return () => {
-      unsubscribe()
-      unsubscribeAuthInteraction()
-      unsubscribeToolApproval()
-      unsubscribeToolApprovalCancelled()
-      unsubscribeAgentUserInteraction()
-      unsubscribeAgentUserInteractionCancelled()
-      unsubscribeNotebookDraftChanged()
-      unsubscribeNotebookFileChanged()
-      unsubscribeSessionChanged()
-      cancelScheduledSessionRefresh()
-    }
-  }, [
-    applyCurrentSession,
-    cancelBrowserTrustedOverlay,
-    cancelScheduledSessionRefresh,
-    enqueueBrowserTrustedOverlay,
-    handleAuthInteractionEvent,
-    handleNotebookDraftChanged,
-    handleNotebookFileChangedEvent,
+  useSessionEventBridge({
+    rendererApi,
+    isSendingRef,
     projectsRef,
     refreshProjects,
-    rendererApi,
-    resetAnalysisJupyterRuntimeForCwdChange,
-    scheduleSessionRefresh,
-    setActiveSessionRuntimeState,
-    setAgentEventState,
-    setIsSettingsOpen,
-    setPendingApproval,
-    setPendingUserInteraction,
-    setProjectSessionRefreshKey,
-    setVisibleAgentEventState,
-    showSnackbar,
-    storeSessionRuntimeState,
+    enqueueTrustedOverlay: enqueueBrowserTrustedOverlay,
+    cancelTrustedOverlay: cancelBrowserTrustedOverlay,
+    handleAuthInteractionEvent,
+    showSettings: showSettingsWithoutGate,
+    handleNotebookDraftChanged,
+    handleNotebookFileChangedEvent,
+    resetJupyterRuntimeForCwdChange: resetAnalysisJupyterRuntimeForCwdChange,
     workspaceSidebarMode
-  ])
+  })
 
   useEffect(() => {
     void (async () => {

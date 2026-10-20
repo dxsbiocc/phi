@@ -352,18 +352,31 @@ test('App composes the browser feature through the narrow side-panel seam', () =
     /useBrowserPanelRequests\(\{[\s\S]{0,260}onFailure: showBrowserAppShellFailure/
   )
   assert.match(appSource, /!browserOverlaySuspended/)
+  // Bridge subscriptions moved to the chat session-event bridge; App keeps the gate.
+  const bridgeHook = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/chat/hooks/useSessionEventBridge.ts'),
+    'utf8'
+  )
+  const bridge = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/chat/lib/sessionEventBridge.ts'),
+    'utf8'
+  )
+  assert.match(bridgeHook, /rendererApi\.onAuthInteraction\(\(event\) => handleAuthInteraction/)
+  assert.match(bridge, /export function handleAuthInteraction[\s\S]{0,400}kind: 'auth'/)
   assert.match(
-    appSource,
-    /onAuthInteraction\(\(event\) => \{[\s\S]{0,180}enqueueBrowserTrustedOverlay/
+    bridgeHook,
+    /rendererApi\.onToolApprovalRequest\(\(event\) => handleToolApprovalRequest/
+  )
+  assert.match(bridge, /export function handleToolApprovalRequest[\s\S]{0,400}kind: 'approval'/)
+  assert.match(
+    bridgeHook,
+    /rendererApi\.onAgentUserInteractionRequest\(\(event\) =>[\s\S]{0,40}handleAgentUserInteractionRequest/
   )
   assert.match(
-    appSource,
-    /onToolApprovalRequest\(\(event\) => \{[\s\S]{0,120}enqueueBrowserTrustedOverlay/
+    bridge,
+    /export function handleAgentUserInteractionRequest[\s\S]{0,400}kind: 'interaction'/
   )
-  assert.match(
-    appSource,
-    /onAgentUserInteractionRequest\(\(event\) => \{[\s\S]{0,120}enqueueBrowserTrustedOverlay/
-  )
+  assert.doesNotMatch(appSource, /onAuthInteraction\(/)
   assert.match(appSource, /setIsSettingsOpen=\{setSettingsOpenWithBrowserGate\}/)
   assert.match(
     appSource,
@@ -388,7 +401,10 @@ test('App composes the browser feature through the narrow side-panel seam', () =
 })
 
 test('browser approvals are scoped and presented as one-action decisions in both approval surfaces', () => {
-  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+  const bridge = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/features/chat/lib/sessionEventBridge.ts'),
+    'utf8'
+  )
   const dialogSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/components/ToolApprovalDialog.tsx'),
     'utf8'
@@ -398,10 +414,10 @@ test('browser approvals are scoped and presented as one-action decisions in both
     'utf8'
   )
   assert.match(
-    appSource,
-    /onToolApprovalCancelled\(\(requestId\)[\s\S]{0,260}request\.requestId === requestId/
+    bridge,
+    /export function handleToolApprovalCancelled[\s\S]{0,500}request\.requestId === requestId/
   )
-  assert.match(appSource, /cancelBrowserTrustedOverlay\('approval', requestId\)/)
+  assert.match(bridge, /cancelTrustedOverlay\('approval', requestId\)/)
   for (const source of [dialogSource, permissionSource]) {
     assert.match(source, /get browser\(\) \{[\s\S]{0,100}(?:chatCopy|settingsUi)\.browserAction/)
     assert.match(source, /(?:chatCopy|settingsUi)\.allowOnce/)
