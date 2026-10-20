@@ -4371,11 +4371,14 @@ async function harness(
   const explicitlyLoadedSourceModules = new Set([
     './agent/content/remote-skill-trust-request',
     './agent/enablement-request',
+    './agent/jobs/background-agent-job-listing',
+    './agent/jobs/background-shell-job-operations',
     './agent/mcp/featured-api-key-verification',
     './agent/mcp/remote-mcp-trust-request',
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations',
-    './agent/plugins/phi-plugin-management-view'
+    './agent/plugins/phi-plugin-management-view',
+    './agent/wrappers/remote-result-read-control'
   ])
   const mockProcess = {
     platform: process.platform,

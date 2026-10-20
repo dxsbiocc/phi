@@ -34,7 +34,6 @@ import {
 import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
-import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionOverrides,
   AutoCompactionSettingsPatch,
@@ -45,7 +44,6 @@ import type {
 } from '../shared/contextUsageTypes'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
 import type { PromptAgentSummary } from '../shared/promptAgentTypes'
-import { declaredExternalOutputRoot } from '../shared/wrapperResultTypes'
 import {
   hoverMediaPreviewType,
   mediaPreviewType,
@@ -57,11 +55,7 @@ import {
   registerNotebookOutputScheme
 } from './agent/notebook/notebook-output-protocol'
 import { isPluginSkillPreviewPath } from './agent/plugins/preview'
-import type {
-  WrapperRetargetRequest,
-  WrapperRun,
-  WrapperSubmitConfirmation
-} from '../shared/wrapperTypes'
+import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
 import {
@@ -79,6 +73,14 @@ import {
 import { registerPhiPluginIpc } from './ipc/phi-plugins-ipc'
 import { registerSkillsIpc } from './ipc/skills-ipc'
 import { registerMcpIpc, type PendingCustomMcpAuthorization } from './ipc/mcp-ipc'
+import { registerEnvironmentBuildsIpc } from './ipc/environment-builds-ipc'
+import { registerJobsIpc } from './ipc/jobs-ipc'
+import {
+  registerWrapperInputUploadIpc,
+  registerWrapperPlanIpc,
+  registerWrapperRunIpc
+} from './ipc/wrappers-ipc'
+import { registerWrapperResultsIpc, type WrapperResultDownloads } from './ipc/wrapper-results-ipc'
 import { nativeUiCopy } from './native-ui-copy'
 import {
   createStartupSplashWindow,
@@ -99,8 +101,7 @@ import {
   readdirSync,
   readSync,
   realpathSync,
-  statSync,
-  writeFileSync
+  statSync
 } from 'node:fs'
 import { homedir } from 'node:os'
 import {
@@ -132,7 +133,7 @@ import { TerminalDraftService } from './terminal/terminal-command-draft'
 import { buildTerminalDraftSessionFactory } from './terminal/terminal-draft-session'
 import { TerminalManager } from './terminal/terminal-manager'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
-import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve, sep } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
 import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
@@ -214,7 +215,6 @@ import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websea
 import { createSkippedMcpNotifier } from './agent/mcp/skipped-notice'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
 import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
-import { readColdChildRuns } from './agent/session/child-run-recovery'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
 import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
 import {
@@ -368,17 +368,8 @@ import {
   listSkills,
   readGlobalSkillContent
 } from './agent/resources'
-import {
-  addCustomWrapper,
-  migrateLegacyCustomWrappers,
-  listWrapperCatalog
-} from './agent/wrappers/catalog'
-import {
-  listWrapperCompositionCatalogStatus,
-  readWrapperCompositionDag,
-  readWrapperModuleDetails,
-  resetWrapperCompositionCatalogCache
-} from './agent/wrappers/composition/discovery'
+import { migrateLegacyCustomWrappers } from './agent/wrappers/catalog'
+import { resetWrapperCompositionCatalogCache } from './agent/wrappers/composition/discovery'
 import {
   wrapperJobHostHandlers,
   createWrapperJobHostScope
@@ -389,12 +380,7 @@ import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
 import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run-record'
 import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-resolver'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
-import { listWrapperResultDirectory } from './agent/wrappers/remote-results'
-import { previewWrapperResult, readWrapperResultRange } from './agent/wrappers/remote-result-read'
-import {
-  downloadWrapperResultToPath,
-  validateWrapperResultDownloadRequest
-} from './agent/wrappers/remote-result-download'
+import { createWrapperResultReadControl } from './agent/wrappers/remote-result-read-control'
 import { discoverPhiAgents } from './agent/agents/discovery'
 import {
   loadRemoteAgentCatalog,
@@ -410,16 +396,13 @@ import {
   type ContinuationEvent
 } from './agent/agents/run-continue'
 import { agentRunHostHandlers } from './agent/agents/run-host'
-import { buildWrapperReproducibilityBundle } from './agent/wrappers/reproducibility'
-import { recordWrapperUploadedInput, retargetWrapperRunPlan } from './agent/wrappers/plans'
 import { connectRemoteSshSession } from './agent/wrappers/remote-ssh-session'
-import { cancelWrapperRun, cancelWrapperRunPlan, submitWrapperRunPlan } from './agent/wrappers/runs'
+import { readWrapperRun } from './agent/wrappers/store'
+import { listBackgroundAgentJobs } from './agent/jobs/background-agent-job-listing'
 import {
-  listWrapperRuns,
-  readWrapperPlan,
-  readWrapperPlanArtifact,
-  readWrapperRun
-} from './agent/wrappers/store'
+  listBackgroundShellJobs,
+  stopBackgroundShellJob
+} from './agent/jobs/background-shell-job-operations'
 import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import {
   configureSystemUiLanguage,
@@ -2521,11 +2504,11 @@ remoteProjectUploads.subscribe((job) => {
 remoteJupyterStartJobs.subscribe((job) => {
   sendToAllWindows(IPC.remoteJupyterJobs.changed, job)
 })
-const wrapperResultReadControllers = new Map<string, AbortController>()
-const wrapperResultDownloads = new Map<
-  string,
-  { controller: AbortController; phase: 'downloading' | 'verifying' | 'saving' }
->()
+const wrapperResultReadControl = createWrapperResultReadControl({
+  observeRemote: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
+  remoteRequestProjectId
+})
+const wrapperResultDownloads: WrapperResultDownloads = new Map()
 subscribeRemoteProjectConnection((projectId, state) => {
   sendToAllWindows(IPC.projects.remoteConnectionChanged, { projectId, state })
 })
@@ -2541,37 +2524,6 @@ function remoteSkillContextFromRequest(params: unknown): RemoteProjectSkillConte
   const projectId = optionalStringField(params, 'projectId')
   if (!sessionId || !projectId) throw new Error('远程项目 Skill 读取请求无效')
   return { sessionId, projectId, cwd: '', agentDir: AGENT_DIR }
-}
-async function runWrapperResultRead<T>(
-  request: unknown,
-  read: (request: unknown, options: { signal: AbortSignal }) => Promise<T>
-): Promise<T> {
-  const requestId =
-    typeof request === 'object' && request !== null
-      ? (request as Record<string, unknown>).requestId
-      : undefined
-  if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId)) {
-    throw new Error('Wrapper 结果读取请求 ID 无效')
-  }
-  if (wrapperResultReadControllers.has(requestId)) {
-    throw new Error('Wrapper 结果读取请求 ID 正在使用')
-  }
-  const controller = new AbortController()
-  wrapperResultReadControllers.set(requestId, controller)
-  try {
-    return await remoteConnectionTracker.observe(remoteRequestProjectId(request), async () => {
-      try {
-        const result = await read(request, { signal: controller.signal })
-        controller.signal.throwIfAborted()
-        return result
-      } catch (error) {
-        if (controller.signal.aborted) throw new Error('Wrapper 结果读取已取消')
-        throw error
-      }
-    })
-  } finally {
-    wrapperResultReadControllers.delete(requestId)
-  }
 }
 function scheduleRemoteProjectCheck(sessionId: string, projectId: string): void {
   void remoteConnectionTracker.check(sessionId, projectId).catch((error) => {
@@ -2966,168 +2918,17 @@ getPhiEngine().host.register('browser.cancel', (params, context) => {
   }
   return browserToolHostCoordinator.cancel(params)
 })
-async function listBackgroundAgentJobs(): Promise<BackgroundAgentJob[]> {
-  const raw = await getPhiEngine().agentRuns.list({})
-  if (!Array.isArray(raw)) throw new Error('后台 Agent 状态暂时不可用')
-  const live = raw.flatMap((value): BackgroundAgentJob[] => {
-    if (!isRecord(value)) return []
-    const agentSessionId = optionalStringField(value, 'agentSessionId')
-    const agentRunId = optionalStringField(value, 'agentRunId')
-    const agentName = optionalStringField(value, 'agentName')
-    const state = value.state
-    const startedAt = value.startedAt
-    if (
-      !agentSessionId ||
-      !agentRunId ||
-      !agentName ||
-      (state !== 'queued' &&
-        state !== 'running' &&
-        state !== 'done' &&
-        state !== 'error' &&
-        state !== 'cancelled') ||
-      typeof startedAt !== 'number' ||
-      !Number.isFinite(startedAt)
-    )
-      return []
-    const origin = resolveRecoverableJobOrigin(agentSessionId)
-    if (!origin) return []
-    const manifest = findPhiSessionById(origin.phiSessionId)
-    if (!manifest) return []
-    return [
-      {
-        agentSessionId,
-        agentRunId,
-        sessionId: origin.phiSessionId,
-        sessionPath: phiOnlySessionPath(origin.phiSessionId),
-        sessionTitle: messageContentTitleText(manifest.title) || '新对话',
-        agentName,
-        task: (optionalStringField(value, 'task') ?? '').slice(0, 300),
-        state,
-        background: value.background === true,
-        startedAt: new Date(startedAt).toISOString(),
-        ...(typeof value.completedAt === 'number' && Number.isFinite(value.completedAt)
-          ? { completedAt: new Date(value.completedAt).toISOString() }
-          : {}),
-        ...(optionalStringField(value, 'lastStep')
-          ? { lastStep: optionalStringField(value, 'lastStep')?.slice(0, 160) }
-          : {}),
-        ...(typeof value.toolCalls === 'number' && Number.isFinite(value.toolCalls)
-          ? { toolCalls: Math.max(0, Math.trunc(value.toolCalls)) }
-          : {}),
-        ...(optionalStringField(value, 'toolCallId')
-          ? { toolCallId: optionalStringField(value, 'toolCallId') }
-          : {})
-      }
-    ]
-  })
-  // Only a successful live listing establishes absence. Persisted records never grant control.
-  const liveIds = new Set(live.map((run) => `${run.sessionId}:${run.agentRunId}`))
-  const cold: BackgroundAgentJob[] = []
-  for (const manifest of listPhiSessions()) {
-    if (!manifest.runtimeRef) continue
-    try {
-      const scope = currentRuntimeOriginScope(manifest)
-      if (!scope) continue
-      const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
-      for (const run of readColdChildRuns(
-        { phiSessionId: manifest.sessionId, reference },
-        AGENT_DIR
-      )) {
-        if (!run.background || liveIds.has(`${manifest.sessionId}:${run.id}`)) continue
-        cold.push({
-          agentSessionId: '',
-          agentRunId: run.id,
-          sessionId: manifest.sessionId,
-          sessionPath: phiOnlySessionPath(manifest.sessionId),
-          sessionTitle: messageContentTitleText(manifest.title) || '新对话',
-          agentName: run.agent,
-          task: '',
-          state:
-            run.status === 'completed'
-              ? 'done'
-              : run.status === 'failed'
-                ? 'error'
-                : run.status === 'aborted'
-                  ? 'cancelled'
-                  : 'interrupted',
-          background: true,
-          canControl: false,
-          historyAvailable: false,
-          startedAt: new Date(run.startedAt).toISOString(),
-          ...(run.completedAt !== undefined
-            ? { completedAt: new Date(run.completedAt).toISOString() }
-            : {})
-        })
-      }
-    } catch {
-      writeAppLog({
-        level: 'error',
-        event: 'child_recovery_metadata_unavailable',
-        sessionId: manifest.sessionId
-      })
-    }
-  }
-  return [...live, ...cold]
-    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
-    .slice(0, 50)
+const backgroundAgentJobListingOptions = {
+  agentDir: AGENT_DIR,
+  resolveRecoverableJobOrigin,
+  currentRuntimeOriginScope,
+  optionalStringField
 }
-
-const SHELL_JOB_STATES = new Set(['queued', 'running', 'completed', 'failed', 'cancelled'])
-
-async function listBackgroundShellJobs(): Promise<BackgroundShellJob[]> {
-  const raw = await getPhiEngine().shellJobs.list({})
-  if (!Array.isArray(raw)) return []
-  return raw
-    .flatMap((value): BackgroundShellJob[] => {
-      if (!isRecord(value)) return []
-      const agentSessionId = optionalStringField(value, 'agentSessionId')
-      const jobId = optionalStringField(value, 'jobId')
-      const command = optionalStringField(value, 'command')
-      const state = value.state
-      const startedAt = value.startedAt
-      if (
-        !agentSessionId ||
-        !jobId ||
-        !command ||
-        typeof state !== 'string' ||
-        !SHELL_JOB_STATES.has(state) ||
-        typeof startedAt !== 'number' ||
-        !Number.isFinite(startedAt)
-      )
-        return []
-      const origin = resolveOriginSession(agentSessionId)
-      if (!origin) return []
-      const manifest = findPhiSessionById(origin.phiSessionId)
-      if (!manifest) return []
-      const startedAtIso = new Date(startedAt).toISOString()
-      const output = optionalStringField(value, 'output')?.slice(-160)
-      return [
-        {
-          agentSessionId,
-          jobId,
-          sessionId: origin.phiSessionId,
-          sessionPath: phiOnlySessionPath(origin.phiSessionId),
-          sessionTitle: messageContentTitleText(manifest.title) || '新对话',
-          command: command.slice(0, 300),
-          state: state as BackgroundShellJob['state'],
-          startedAt: startedAtIso,
-          ...(state !== 'queued' && state !== 'running' ? { completedAt: startedAtIso } : {}),
-          ...(output ? { output } : {})
-        }
-      ]
-    })
-    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
-    .slice(0, 50)
-}
-
-async function stopBackgroundShellJob(agentSessionId: unknown, jobId: unknown): Promise<void> {
-  if (typeof agentSessionId !== 'string' || !agentSessionId) throw new Error('缺少会话')
-  if (typeof jobId !== 'string' || !jobId) throw new Error('缺少后台命令编号')
-  const result = await getPhiEngine().shellJobs.cancel({
-    sessionId: agentSessionId,
-    jobId
-  })
-  if (!result?.ok) throw new Error('这个后台命令已经结束')
+const backgroundShellJobOperationsOptions = { resolveOriginSession, optionalStringField }
+const backgroundJobOperations = {
+  listAgentJobs: () => listBackgroundAgentJobs(backgroundAgentJobListingOptions),
+  listShellJobs: () => listBackgroundShellJobs(backgroundShellJobOperationsOptions),
+  stopShellJob: stopBackgroundShellJob
 }
 
 function sendRunEventToWindow(payload: Record<string, unknown>): void {
@@ -9217,42 +9018,19 @@ app.whenReady().then(async () => {
     if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
     return remoteProjectUploads.retry(jobId)
   })
-  ipcMain.handle(
-    IPC.wrappers.completeInputUpload,
-    async (_, jobId: unknown, planId: unknown, inputId: unknown, expectedRevision: unknown) => {
-      if (
-        typeof jobId !== 'string' ||
-        typeof planId !== 'string' ||
-        typeof inputId !== 'string' ||
-        !Number.isSafeInteger(expectedRevision)
-      ) {
-        throw new Error('Wrapper 上传输入绑定无效')
-      }
-      const plan = readWrapperPlan(planId)
-      const projectId = plan?.targetSelection?.projectId
-      if (!projectId || plan.targetSelection?.projectLocation.kind !== 'ssh') {
-        throw new Error('Wrapper 上传输入计划不属于 SSH 项目')
-      }
-      const job = await remoteProjectUploads.wait(projectId, jobId)
-      if (
-        job.status !== 'completed' ||
-        job.sourcePaths.length !== 1 ||
-        !job.files[0]?.destinationPath
-      ) {
-        throw new Error('上传未完成，Wrapper 计划不会启动')
-      }
-      const parts = job.files[0].relativePath.split('/')
-      let remotePath = job.files[0].destinationPath
-      for (let index = 1; index < parts.length; index += 1) remotePath = posix.dirname(remotePath)
-      return recordWrapperUploadedInput({
-        planId,
-        inputId,
-        expectedRevision: expectedRevision as number,
-        localPath: job.sourcePaths[0]!,
-        remotePath
-      })
-    }
-  )
+  const wrappersIpcOptions = {
+    ipcMain,
+    lifecycle: { logUnexpectedError },
+    workspace: { agentDir: AGENT_DIR },
+    session: {
+      getCurrent: () => ({ key: currentSessionKey, path: currentSessionPath, cwd: currentCwd }),
+      findPhiManifestForSession
+    },
+    execution: { environmentBuilds, wrapperJobs },
+    uploads: remoteProjectUploads,
+    windows: { getActiveWindow }
+  }
+  registerWrapperInputUploadIpc(wrappersIpcOptions)
   registerWorkspaceFileIpc({
     ipcMain,
     dialog,
@@ -9291,79 +9069,15 @@ app.whenReady().then(async () => {
       listRemoteWorkspaceDirectory(request)
     )
   )
-  ipcMain.handle(IPC.wrapperResults.listDirectory, async (_, request: unknown) =>
-    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      listWrapperResultDirectory(request)
-    )
-  )
-  ipcMain.handle(IPC.wrapperResults.preview, async (_, request: unknown) =>
-    runWrapperResultRead(request, previewWrapperResult)
-  )
-  ipcMain.handle(IPC.wrapperResults.readRange, async (_, request: unknown) =>
-    runWrapperResultRead(request, readWrapperResultRange)
-  )
-  ipcMain.handle(IPC.wrapperResults.cancelRead, async (_, requestId: unknown) => {
-    if (typeof requestId !== 'string') throw new Error('Wrapper 结果读取请求 ID 无效')
-    const controller = wrapperResultReadControllers.get(requestId)
-    controller?.abort()
-    return controller !== undefined
-  })
-  ipcMain.handle(IPC.wrapperResults.download, async (event, request: unknown) => {
-    requireMainWindowRenderer(event)
-    const checked = validateWrapperResultDownloadRequest(request)
-    const { requestId } = checked
-    if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
-    const name = basename(checked.path!)
-    const window = BrowserWindow.fromWebContents?.(event.sender) ?? getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.SaveDialogOptions = {
-      title: dialogCopy.saveResult,
-      buttonLabel: dialogCopy.save,
-      defaultPath: name && name !== '.' && name !== '..' ? name : 'remote-result'
-    }
-    const chosen = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    if (chosen.canceled || !chosen.filePath) return { status: 'cancelled' as const }
-    if (wrapperResultDownloads.has(requestId)) throw new Error('Wrapper 下载请求 ID 正在使用')
-
-    const controller = new AbortController()
-    const active: {
-      controller: AbortController
-      phase: 'downloading' | 'verifying' | 'saving'
-    } = { controller, phase: 'downloading' }
-    wrapperResultDownloads.set(requestId, active)
-    try {
-      return await remoteConnectionTracker.observe(remoteRequestProjectId(request), async () => {
-        try {
-          return await downloadWrapperResultToPath(checked, chosen.filePath!, {
-            signal: controller.signal,
-            onProgress: (progress) => {
-              active.phase = progress.phase
-              try {
-                if (event.sender.isDestroyed?.()) controller.abort()
-                else event.sender.send?.(IPC.wrapperResults.downloadProgress, progress)
-              } catch {
-                controller.abort()
-              }
-            }
-          })
-        } catch (error) {
-          if (controller.signal.aborted) throw new Error('Wrapper 下载已取消')
-          throw error
-        }
-      })
-    } finally {
-      wrapperResultDownloads.delete(requestId)
-    }
-  })
-  ipcMain.handle(IPC.wrapperResults.cancelDownload, async (event, requestId: unknown) => {
-    requireMainWindowRenderer(event)
-    if (typeof requestId !== 'string') throw new Error('Wrapper 下载请求 ID 无效')
-    const active = wrapperResultDownloads.get(requestId)
-    if (!active || active.phase === 'saving') return false
-    active.controller.abort()
-    return true
+  registerWrapperResultsIpc({
+    ipcMain,
+    windows: { getActiveWindow, requireMainWindowRenderer },
+    remote: {
+      observe: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
+      requestProjectId: remoteRequestProjectId
+    },
+    reads: wrapperResultReadControl,
+    downloads: wrapperResultDownloads
   })
   ipcMain.handle(IPC.files.hoverPreview, async (_, filePath: string) => {
     return createFileHoverPreview(filePath)
@@ -10503,199 +10217,10 @@ app.whenReady().then(async () => {
       configDigest: customMcpConfigDigest
     }
   })
-  ipcMain.handle(IPC.wrappers.getPlan, async (_, planId: string) => readWrapperPlan(planId))
-  ipcMain.handle(IPC.wrappers.retargetPlan, async (_, request: WrapperRetargetRequest) => {
-    if (
-      !request ||
-      typeof request !== 'object' ||
-      Object.keys(request).some(
-        (key) => !['planId', 'target', 'expectedRevision', 'confirmedLocalFallback'].includes(key)
-      ) ||
-      typeof request.planId !== 'string' ||
-      !request.planId ||
-      (request.target !== 'local' && request.target !== 'remote') ||
-      !Number.isSafeInteger(request.expectedRevision) ||
-      request.expectedRevision < 1 ||
-      (request.confirmedLocalFallback !== undefined &&
-        typeof request.confirmedLocalFallback !== 'boolean')
-    ) {
-      throw new Error('Invalid Wrapper target change request')
-    }
-    return retargetWrapperRunPlan(request)
-  })
-  ipcMain.handle(
-    IPC.wrappers.submitPlan,
-    async (
-      _,
-      planId: string,
-      heavyWorkloadAcknowledged?: boolean,
-      confirmation?: WrapperSubmitConfirmation
-    ) => {
-      const plan = readWrapperPlan(planId)
-      const selected = plan?.targetSelection
-      if (selected) {
-        if (
-          !selected.projectLocation ||
-          !['local', 'ssh'].includes(selected.projectLocation.kind)
-        ) {
-          throw new Error('The plan target snapshot is invalid. Create a new plan.')
-        }
-        if (
-          !confirmation ||
-          typeof confirmation !== 'object' ||
-          Object.keys(confirmation).some(
-            (key) =>
-              ![
-                'expectedRevision',
-                'target',
-                'projectId',
-                'hostProfileId',
-                'remoteRoot',
-                'externalOutputRoot'
-              ].includes(key)
-          ) ||
-          confirmation.expectedRevision !== plan.revision ||
-          confirmation.target !== selected.target ||
-          confirmation.projectId !== selected.projectId ||
-          confirmation.hostProfileId !== selected.hostProfileId ||
-          confirmation.remoteRoot !== selected.remoteRoot ||
-          confirmation.externalOutputRoot !==
-            (selected.target === 'remote'
-              ? declaredExternalOutputRoot(selected.remoteRoot, plan.params?.outdir)
-              : undefined)
-        ) {
-          throw new Error(
-            'The plan execution target has changed. Refresh the plan card and confirm again.'
-          )
-        }
-      }
-      if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
-        const manifest = findPhiManifestForSession(
-          currentSessionKey,
-          currentSessionPath,
-          currentCwd
-        )
-        if (
-          manifest?.projectLocation?.kind !== 'ssh' ||
-          plan?.targetSelection?.projectId !== manifest.projectId ||
-          plan.targetSelection.target !== 'remote'
-        ) {
-          throw new Error(
-            'Remote projects can only submit Wrapper plans bound to their server; they will not run locally'
-          )
-        }
-      }
-      if (selected?.target === 'remote' && selected.projectLocation.kind === 'ssh') {
-        const current = listProjects().find((project) => project.id === selected.projectId)
-        if (current?.remoteConnection?.phase !== 'reachable') {
-          throw new Error(
-            current?.remoteConnection?.message ??
-              'The server connection is not ready. Reconnect before submitting.'
-          )
-        }
-      }
-      try {
-        return submitWrapperRunPlan(planId, {
-          heavyWorkloadAcknowledged,
-          externalOutputRoot: confirmation?.externalOutputRoot,
-          nextflowLaunch: { builds: environmentBuilds }
-        })
-      } catch (error) {
-        logUnexpectedError(error)
-        throw error
-      }
-    }
-  )
-  ipcMain.handle(IPC.wrappers.cancelPlan, async (_, planId: string) => {
-    try {
-      return cancelWrapperRunPlan(planId)
-    } catch (error) {
-      logUnexpectedError(error)
-      throw error
-    }
-  })
-  ipcMain.handle(IPC.wrappers.listCatalog, async () => listWrapperCatalog())
-  ipcMain.handle(IPC.wrappers.listCompositionCatalog, async () =>
-    listWrapperCompositionCatalogStatus({ agentDir: AGENT_DIR })
-  )
-  ipcMain.handle(IPC.wrappers.getCompositionDag, async (_, id: string) =>
-    readWrapperCompositionDag(id)
-  )
-  ipcMain.handle(IPC.wrappers.getCompositionModuleDetails, async (_, id: string) =>
-    readWrapperModuleDetails(id)
-  )
-  ipcMain.handle(IPC.wrappers.addCustom, async (_, sourceDir: string) => {
-    try {
-      const entry = addCustomWrapper(sourceDir)
-      writeAppLog({ event: 'wrapper_custom_added', metadata: { sourceDir, id: entry.manifest.id } })
-      return entry
-    } catch (error) {
-      logUnexpectedError(error)
-      writeAppLog({
-        level: 'error',
-        event: 'wrapper_custom_add_failed',
-        metadata: { sourceDir, error: errorMessage(error) }
-      })
-      throw error
-    }
-  })
-  ipcMain.handle(IPC.wrappers.listRuns, async () => listWrapperRuns())
-  ipcMain.handle(IPC.environmentBuilds.list, () => environmentBuilds.list())
-  ipcMain.handle(IPC.environmentBuilds.cancel, (_event, envId: unknown) => {
-    if (typeof envId !== 'string' || envId.length === 0) throw new Error('envId is required')
-    environmentBuilds.cancel(envId)
-  })
-  ipcMain.handle(IPC.jobs.listAgents, listBackgroundAgentJobs)
-  ipcMain.handle(IPC.jobs.listShell, listBackgroundShellJobs)
-  ipcMain.handle(IPC.jobs.stopShell, async (_, agentSessionId: unknown, jobId: unknown) => {
-    await stopBackgroundShellJob(agentSessionId, jobId)
-  })
-  ipcMain.handle(IPC.wrappers.getRun, async (_, runId: string) => readWrapperRun(runId))
-  ipcMain.handle(IPC.wrappers.cancelRun, async (_, runId: string) => {
-    try {
-      // Agent-started (background) runs are owned by the job manager, not the plan executor.
-      if (readWrapperRun(runId)?.origin === 'composition') {
-        const cancelled = await wrapperJobs.cancel(runId)
-        if (!cancelled.ok) throw new Error(cancelled.error)
-        return readWrapperRun(runId)
-      }
-      return cancelWrapperRun(runId)
-    } catch (error) {
-      logUnexpectedError(error)
-      throw error
-    }
-  })
-  ipcMain.handle(IPC.wrappers.getPlanArtifact, async (_, planId: string, fileName: string) =>
-    readWrapperPlanArtifact(planId, fileName)
-  )
-  ipcMain.handle(IPC.wrappers.exportReproducibility, async (_, runId: string) => {
-    try {
-      const bundle = buildWrapperReproducibilityBundle(runId)
-      const window = getActiveWindow()
-      const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-      const options: Electron.SaveDialogOptions = {
-        title: dialogCopy.exportReproducibility,
-        buttonLabel: dialogCopy.save,
-        defaultPath: `phi-wrapper-${runId}-reproducibility.json`,
-        filters: [{ name: 'JSON', extensions: ['json'] }]
-      }
-      const result = window
-        ? await dialog.showSaveDialog(window, options)
-        : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return null
-      writeFileSync(result.filePath, `${JSON.stringify(bundle, null, 2)}\n`, 'utf-8')
-      writeAppLog({ event: 'wrapper_reproducibility_exported', metadata: { runId } })
-      return result.filePath
-    } catch (error) {
-      logUnexpectedError(error)
-      writeAppLog({
-        level: 'error',
-        event: 'wrapper_reproducibility_export_failed',
-        metadata: { runId, error: errorMessage(error) }
-      })
-      throw error
-    }
-  })
+  registerWrapperPlanIpc(wrappersIpcOptions)
+  registerEnvironmentBuildsIpc({ ipcMain, environmentBuilds })
+  registerJobsIpc({ ipcMain, operations: backgroundJobOperations })
+  registerWrapperRunIpc(wrappersIpcOptions)
 
   ipcMain.handle(IPC.persona.getAppName, async () => APP_NAME)
   ipcMain.handle(IPC.persona.isOnboarded, async () => isOnboarded())
