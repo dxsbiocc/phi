@@ -1,7 +1,7 @@
 # Phi 代码整洁度优化方案
 
 Date: 2026-10-18
-Status: 执行中(2026-10-20 复核):P0-1 部分完成、App 拆分进行中,主进程未动;复核补充见第 9 节
+Status: 执行中(2026-10-20):P0-1、P0-2 已完成;主进程 IPC 拆分已开始(IPC-1 notebook 域);App 拆分暂停在会话切换链;复核补充见第 9 节
 依据: Robert C. Martin《代码整洁之道》(Clean Code) + 本仓既有架构契约(`AGENTS.md`、`docs/architecture/frontend-feature-boundaries.md`)
 
 本方案只处理"既有代码的可读性、可测性、可维护性",不新增产品能力,不改动内测范围。
@@ -264,31 +264,24 @@ App shell 拆分正在进行,进度、剩余切片、踩坑记录与「新会话
 
 | 指标                                  | 基线(10-18)  | 当前(10-20)  | 目标           | 采集方式                                   |
 | ------------------------------------- | ------------ | ------------ | -------------- | ------------------------------------------ |
-| `src/main/index.ts` 行数              | 12,902       | 13,002       | ≤ 800          | `wc -l`                                    |
+| `src/main/index.ts` 行数              | 12,902       | 13,014       | ≤ 800          | `wc -l`                                    |
 | `App.tsx` 行数                        | 5,504        | 3,973        | ≤ 1,200        | `wc -l`                                    |
 | > 1,000 行的源文件数(`src/` 全量)     | 6(含例外)    | 10           | 0(数据除外)    | `wc -l`;两个边界检查只覆盖 main / renderer |
 | `isRecord` 定义数                     | 80           | 2            | 1              | `grep -c`                                  |
-| 错误消息 idiom 数                     | 166          | 69           | ≤ 10           | `grep -c`                                  |
+| 错误消息 idiom 数                     | 166          | 5            | ≤ 10           | `grep -c`                                  |
 | 静默吞错(`catch { return 空值 }`)     | 未统计       | 185          | 只降不升       | 见 9.1                                     |
 | 读 `src/` 源码做断言的测试文件数      | 未统计       | 39           | 只降不升       | 见 9.2                                     |
-| 通道字符串手写份数                    | 3            | 3            | 1              | 人工                                       |
+| 通道字符串手写份数                    | 3            | 1            | 1              | 人工                                       |
 | 单测文件数 / 最大单测文件行数         | 844 / 16,560 | 897 / 16,706 | 897+ / ≤ 2,000 | `wc -l`                                    |
 | `main-integration` 单文件 `test()` 数 | 331          | 334          | ≤ 60           | `grep -c`                                  |
-| ESLint `--max-warnings`               | 未设         | 1,467        | 逐版本下调     | `package.json`                             |
+| ESLint `--max-warnings`               | 未设         | 1,462        | 逐版本下调     | `package.json`                             |
+
+`index.ts` 从 13,002 升到 13,014 是 P0-2 把通道字面量换成更长的常量后 prettier 多折的 12 行,
+原因已记录在 `scripts/main-boundaries-baseline.json`;错误消息剩余 5 处是依赖空字符串的有意保留。
 
 基线 10 个 > 1,000 行文件为:`src/main/index.ts`、`App.tsx`、`src/preload/index.ts`、`src/preload/index.d.ts`、
 `NotebookCanvas.tsx`、`icons.ts`(数据)、`useAnalysisNotebookRuntime.ts`、`remote-session-runtime.ts`、
 `facade-session-driver.ts`、`runtime-adapter.ts`。
-
-------------------------------------- | ------------ | -------------- | ---------- |
-| `src/main/index.ts` 行数 | 12,902 | ≤ 800 | `wc -l` |
-| `App.tsx` 行数 | 5,504 | ≤ 1,200 | `wc -l` |
-| > 1,000 行的源文件数 | 6(含例外) | 0 | 新架构检查 |
-| `isRecord` 定义数 | 80 | 1 | `grep -c` |
-| 错误消息 idiom 数 | 166 | ≤ 10 | `grep -c` |
-| 通道字符串手写份数 | 3 | 1 | 人工 |
-| 单测文件数 / 最大单测文件行数 | 844 / 16,560 | 844+ / ≤ 2,000 | `wc -l` |
-| `main-integration` 单文件 `test()` 数 | 331 | ≤ 60 | `grep -c` |
 
 ---
 
@@ -390,6 +383,8 @@ Clean Code 第 9 章要求测试表达行为,而不是绑定实现文本。处�
 
 本文档原状态写「未实施」、看板停在 10-18 基线,与事实不符:`isRecord` 已从 80 降到 2,错误 idiom 从 166 降到 69,
 但 `src/main/errors.ts` 尚未建立,P0-1 只完成一半;`src/shared/ipcChannels.ts`(P0-2)尚未开始。
+(2026-10-20 当日更新:P0-1 改为沿用 `src/shared/errorCodes.ts` 的 `errorMessage`,不再另建 `src/main/errors.ts`,
+69 处降到 5 处;P0-2 已完成,288 个通道收敛到 `src/shared/ipcChannels.ts` 并有契约测试与 ESLint 守卫。)
 状态行与第 5 节看板已于 2026-10-20 更新;今后每完成一个 P0/P1 切片,同步更新看板的「当前」列。
 App 拆分的逐块进度仍以 `app-shell-refactor-handoff.md` 为准。
 

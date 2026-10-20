@@ -115,6 +115,9 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
 - 每个测试文件是独立进程,原来每个进程都要加载 TypeScript 编译器并重新转译共享模块。
   `scripts/test-loader.mjs` 现在把转译结果按「源码 + 编译器版本 + 选项」缓存到
   `node_modules/.cache/phi-test-transpile/`,命中时不加载编译器。200 个小套件:无缓存 27.1 秒 → 命中 9.6 秒。
+- 提速后空闲宿主实测:855 个套件,并发 7,墙钟 **9 分钟**(7,117 例)。并发提高后
+  `jupyter-runtime-backend`、`remote-jupyter-server`、`workspace-host-prelaunch-cancellation`、
+  `remote-nextflow-install-flow` 出现过首轮失败、串行重试通过,属于负载敏感用例,待修隔离。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 
