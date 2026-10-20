@@ -1,7 +1,7 @@
 # 主进程 IPC 拆分:交接文档
 
 Date: 2026-10-20
-Status: IPC 拆分已完成(IPC-1~7)。`src/main/index.ts` 13,014 → 7,582 行,不再注册任何 IPC 处理函数;下一阶段见第 3 节末尾
+Status: IPC 拆分(IPC-1~7)与第 9 步运行时上下文(RC-1、RC-2)已完成。`src/main/index.ts` 13,014 → 7,591 行,不注册 IPC,也没有模块级 `let`;下一步是第 6 步超长函数
 
 给接手这条线的新会话看。读完应能直接派发下一刀,不需要回看之前的对话。
 
@@ -74,6 +74,11 @@ Status: IPC 拆分已完成(IPC-1~7)。`src/main/index.ts` 13,014 → 7,582 行,
   初始化顺序不变。IPC 模块只拿它需要的那个方法,不拿整个上下文。
 - 切片:RC-1 先做窗口生命周期、工作区服务、应用缓存三组(15 个 `let`);RC-2 再做会话状态 9 个 `let`
   (风险最高,单独跑门)。
+- 结果(2026-10-20):RC-1(`aaf12ab5`)、RC-2(`79befe3f`)均已合入,`src/main/app-state/` 下有
+  `MainWindowState`、`WorkspaceServicesState`、`AppCaches`、`SessionState`,`tests/main-app-state.test.ts` 覆盖每个方法。
+  上下文创建点后移到原会话变量位置,以保持初始 cwd、读盘的上次模型、初始会话 key 的加载时机;此前的顶层代码只存回调。
+- 合入后复核告警发现 RC-2 的改名让一个方法越过 80 行;已把标题模型解析提成 `resolveSessionTitleModel`
+  (`c6b0cb8f`),告警 1,434 → 1,431。审查清单补充:**合入后在主仓库重新统计全仓告警**,不采信切片内的计数。
 
 ## 4. 每刀的执行与验收(项目管理约定)
 
