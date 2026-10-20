@@ -24,7 +24,7 @@ const ipcLiteralRestrictions = ipcCallSelectors.flatMap((selector) => [
 ])
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out', '.omx/**'] },
+  { ignores: ['**/node_modules', '**/dist', '**/out', '.omx/**', '.claude/worktrees/**'] },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
