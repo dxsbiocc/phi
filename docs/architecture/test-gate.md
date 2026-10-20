@@ -115,9 +115,22 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
 - 每个测试文件是独立进程,原来每个进程都要加载 TypeScript 编译器并重新转译共享模块。
   `scripts/test-loader.mjs` 现在把转译结果按「源码 + 编译器版本 + 选项」缓存到
   `node_modules/.cache/phi-test-transpile/`,命中时不加载编译器。200 个小套件:无缓存 27.1 秒 → 命中 9.6 秒。
-- 提速后空闲宿主实测:855 个套件,并发 7,墙钟 **9 分钟**(7,117 例)。并发提高后
-  `jupyter-runtime-backend`、`remote-jupyter-server`、`workspace-host-prelaunch-cancellation`、
-  `remote-nextflow-install-flow` 出现过首轮失败、串行重试通过,属于负载敏感用例,待修隔离。
+- 提速后空闲宿主实测:855 个套件,并发 7,墙钟 **9 分钟**(7,117 例)。
+- 并发提高后曾有 4 个套件首轮失败、串行重试通过。根因与修法(只改测试,未改产品与断言):
+  - `jupyter-runtime-backend`、`remote-jupyter-server`(连带 `remote-notebook-tools-e2e`):
+    启动脚本的资源监控每 5 秒用 `ps -eo pgid=,rss=,nlwp=,time=` 采样,读不到就停掉 Jupyter。
+    测试用的假 `ps` 不认这条采样,所以首次采样必然杀掉假 Jupyter;空闲时测试在 5 秒内跑完看不出,
+    负载下启动变慢就会被杀,随后测试自己的 20 秒等待超时。假 `ps` 现在用真实进程表回答采样
+    (macOS 无 nlwp,线程数报 1);测试自己的等待上限放宽到 60 秒,e2e 套件原 2 秒等待同样改为 60 秒。
+  - `workspace-host-prelaunch-cancellation`:等待后台启动写出 `exit_code` 只轮询 2 秒且超时后静默继续,
+    改为 20 秒截止并在超时时明确报错。
+  - `remote-nextflow-install-flow`:探测脚本对每个版本检查有固定 3 秒守卫(`sleep 3`),十个检查同时启动时
+    负载下会误报 "version check timed out"。测试在 PATH 前放一个 `sleep` 垫片,只把这个守卫拉长到最多
+    25 秒,并随父进程结束退出。
+  - 复现方法:同一套件并行 6–12 份加 20 个以上 `yes` 占满 CPU,修复前每份必挂,修复后全部通过;
+    全量门在 `PHI_TEST_CONCURRENCY=14 --no-retry` 下连跑 3 次(各约 5 分钟),上述套件首轮全过。
+  - 并发 14 下仍有其他固定超时的套件偶发首轮失败,待另行处理:`envs-application-bun`(`bun --version`
+    5 秒)、`mcp-stdio-tools`(stdio capture 用例)、`remote-jupyter-resource-guard`(子进程 10 秒)。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 

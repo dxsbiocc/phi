@@ -72,11 +72,31 @@ test('the refreshed profile sees an account-local Nextflow outside PATH', () => 
       mode: 0o755
     }
   )
+  // The probe gives each version check a fixed 3 s guard (`sleep 3`), which a loaded test host
+  // can exceed while ten checks start at once. Stretch only that guard, and end with its parent.
+  const shimDirectory = join(root, 'shim')
+  mkdirSync(shimDirectory)
+  writeFileSync(
+    join(shimDirectory, 'sleep'),
+    [
+      '#!/bin/sh',
+      '[ "$1" = 3 ] || exec /bin/sleep "$@"',
+      'i=0',
+      'while [ "$i" -lt 250 ] && kill -0 "$PPID" 2>/dev/null; do /bin/sleep 0.1; i=$((i + 1)); done',
+      ''
+    ].join('\n'),
+    { mode: 0o755 }
+  )
   try {
     const result = spawnSync('/bin/sh', ['-s'], {
       input: HOST_CAPABILITY_PROBE_SCRIPT,
       encoding: 'utf8',
-      env: { ...process.env, HOME: root, PATH: '/usr/bin:/bin', TMPDIR: runtimeDirectory },
+      env: {
+        ...process.env,
+        HOME: root,
+        PATH: `${shimDirectory}:/usr/bin:/bin`,
+        TMPDIR: runtimeDirectory
+      },
       timeout: 30_000
     })
     assert.equal(result.status, 0, result.stderr)

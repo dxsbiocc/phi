@@ -170,7 +170,7 @@ test('remote port conflicts retry only to the configured limit with fresh ports 
     readyProbe: async (_url, header) => {
       headers.push(header)
       if (new Set(headers).size === 2) throw new Error(`probe failed: ${header}`)
-      await waitFor(async () => (await launchCount(fixture.jupyterArgsPath)) >= 1, 20_000)
+      await waitFor(async () => (await launchCount(fixture.jupyterArgsPath)) >= 1)
       return false
     }
   })
@@ -588,9 +588,11 @@ async function pidIsAlive(pid: number): Promise<boolean> {
   return pidIsRunning(pid)
 }
 
+// Every fake-host step is a fresh bash/perl process; on a loaded gate host each one can take
+// seconds, so the budget is generous. It only bounds how long a real failure takes to surface.
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 20_000
+  timeoutMs = 60_000
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!(await predicate())) {
