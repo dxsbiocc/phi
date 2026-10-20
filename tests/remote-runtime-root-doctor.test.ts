@@ -17,6 +17,15 @@ import {
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
 
+/**
+ * The "remote" host here is this Mac. The runtime-root check writes a new `#!/bin/sh` probe and
+ * executes it, and macOS scans every new executable on its first exec in a machine-wide queue
+ * (see tests/helpers/firstExec.ts), which a Linux server never does. The product's 5 s doctor
+ * budget for this check must not absorb that test-host cost; the probe file is created by the
+ * product script itself, so it cannot be warmed in advance.
+ */
+const RUNTIME_ROOT_CHECK_TIMEOUT_MS = 60_000
+
 function executeWithInput(command: string, input: string): Promise<RemoteExecResult> {
   return new Promise((resolve) => {
     const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -51,6 +60,7 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
       {
         agentDir,
         sftpAvailable: () => true,
+        runtimeRootTimeoutMs: RUNTIME_ROOT_CHECK_TIMEOUT_MS,
         connectImpl: async () => session,
         micromambaProfile: async (_session, configuredRoot) => {
           assert.equal(configuredRoot, runtimeRoot)
@@ -97,6 +107,7 @@ test('remote doctor checks and stores a redacted project runtime-root summary', 
         {
           agentDir,
           sftpAvailable: () => true,
+          runtimeRootTimeoutMs: RUNTIME_ROOT_CHECK_TIMEOUT_MS,
           connectImpl: async () => followupSession,
           // A probe that cannot tell keeps the stored status (as on a platform it cannot check).
           micromambaProfile: async () => undefined,
@@ -133,6 +144,7 @@ test('remote doctor uses and archives the host runtime root when the project ove
       {
         agentDir,
         sftpAvailable: () => true,
+        runtimeRootTimeoutMs: RUNTIME_ROOT_CHECK_TIMEOUT_MS,
         connectImpl: async () => session,
         now: () => new Date('2026-10-09T05:00:00.000Z')
       }
@@ -166,6 +178,7 @@ test('remote doctor uses and archives the default runtime root when overrides ar
       {
         agentDir,
         sftpAvailable: () => true,
+        runtimeRootTimeoutMs: RUNTIME_ROOT_CHECK_TIMEOUT_MS,
         connectImpl: async () => session,
         now: () => new Date('2026-10-09T05:00:00.000Z')
       }
@@ -196,6 +209,7 @@ test('remote doctor falls back from a cleared project runtime root to host and d
   const dependencies = {
     agentDir,
     sftpAvailable: () => true,
+    runtimeRootTimeoutMs: RUNTIME_ROOT_CHECK_TIMEOUT_MS,
     now: () => new Date('2026-10-09T05:00:00.000Z')
   }
 

@@ -144,10 +144,39 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
       测试自己的 10 秒子进程上限不够,改为 60 秒。
     - 复现:每个套件 8 份并行 + 20 个 `yes` + 12 个写新脚本的进程,修复前 jupyter 8/8 失败、
       mcp 7/8 出现空捕获;修复后全部通过。并发 14 `--no-retry` 全量门连跑 3 次,这 3 个套件都未再失败。
-  - 同样 3 次门里仍有其他套件偶发首轮失败,待另行处理:`envs-application-tools`(产品自己写出
-    `.bun.*.partial` 后给 `--version` 5 秒,同属首次执行扫描,但新文件由产品生成,测试无法预热)、
-    `workspace-host-remote-micromamba`(慢容量探测软超时 5 秒,两次)、`remote-project-download-ownership`
-    (两例 5 秒)、`remote-runtime-root-doctor`、`omp-bridge-model-gateway`(200 毫秒)。
+  - 同样 3 次门里另有 5 个套件偶发首轮失败。逐个定位后,4 个只改测试修复,2 处需产品侧决定:
+    - `workspace-host-remote-micromamba`「slow capacity probe」:运行根检查脚本会写出新的
+      `#!/bin/sh` 探针(`.phi-runtime-root-probe-$$`)并执行,首次执行扫描落在测试自己给的 5 秒总上限里。
+      该用例只验证 1 秒软超时,总上限改为 60 秒。压力下修复前 8/8 失败,修复后 8/8 通过。
+    - `remote-runtime-root-doctor`:同一个运行根探针,但上限是产品 doctor 给运行根检查的 5 秒
+      (`runtimeRootTimeoutMs` 默认值)。测试里的「远端」就是本机 Mac,而真实 Linux 服务器没有这种扫描,
+      所以测试通过已有的依赖注入把它设为 60 秒;探针文件名由产品脚本生成,无法预热。
+    - `remote-project-download-ownership`:假 `curl` 每个夹具都重新写出,产品启动下载后首次执行要排队扫描;
+      测试自己的 `waitFor` 只等 5 秒。夹具给假 curl 加 `--phi-warm` 分支并在写出后预热,`waitFor` 改为
+      60 秒且超时明确报错。原「late cancel」用例报的 "Missing expected rejection" 是 `waitFor` 超时后
+      `finally` 里 `await oldRejected` 抛出的错误覆盖了原错误,不是独立问题。压力下修复前 8/8 份各挂 3 例,
+      修复后全部通过。
+    - `omp-bridge-model-gateway`「cancelled pending acquisition」:不是首次执行扫描。假 worker 读到请求
+      120 毫秒后才回复,而 worker 进程要先启动;测试固定 `delay(180)` 后断言已撤销。实测空闲时撤销发生在
+      中止后约 150 毫秒(余量仅 30 毫秒),压力下最长 188 毫秒。改为轮询 `inspect` 直到出现撤销
+      (60 秒截止,明确报错),断言不变;每次 `inspect` 都会重置 bridge 的 2 秒空闲停止,不会换 worker。
+    - 并发 14 `--no-retry` 全量门连跑 3 次(各约 8 分钟),上述 4 个套件都未再失败。
+    - 同样 3 次门里又出现一批偶发首轮失败(单跑全部通过),待另行处理:`omp-worker-proxy-env`、
+      `remote-jupyter-reconciliation`、`remote-kernelspec-adapter`、`remote-workspace-search`(各 3/3)、
+      `wrapper-executor-remote`(`waitUntil` 5 秒)、`remote-ripgrep`、`environment-background`(各 2/3)、
+      `environment-detection`、`omp-bun-executable`(各 1/3)。
+    - 仍需产品侧决定(只报告,未改产品):
+      - `envs-application-tools`:产品写出 `.bun.<uuid>.partial`(或 `.node.*`)后立即给 `--version` 固定
+        5 秒(`src/main/agent/envs/applications/tools.ts`),新文件名由产品生成,测试无法预热也无法注入上限。
+        上述 3 次门里每次都有 5–7 例因此失败。
+        真实用户的 Mac 首次执行新下载的 bun 同样要扫描,负载高时可能超过 5 秒。
+      - `remote-runtime-root-doctor` 在更重的压力下(8 份 + 20 个 `yes` + 12 个写新脚本的进程)仍会失败:
+        快速能力探测(`HOST_CAPABILITY_FAST_PROBE_SCRIPT`)在 `$HOME` 下写出并执行新脚本,上限固定为
+        `min(timeoutMs, 10 秒)`,`remoteDoctor` 没有暴露 `fastTimeoutMs`。同样压力下单独计时这段脚本:
+        原样 9–12.6 秒,只去掉执行新脚本那一行则 0.06–0.09 秒。超时后能力档案不会落盘,后续读取断言失败。
+        需要产品决定是否给 doctor 暴露快速探测上限,或换掉「执行新文件」这种探测方式。
+      - 另外,这个 doctor 套件的「默认运行根」用例实际探测本机真实的 `~/.phi/runtime`,快速探测也会在
+        真实 `$HOME` 下建临时目录,测试没有隔离 `HOME`。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 
