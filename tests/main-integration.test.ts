@@ -4375,6 +4375,7 @@ async function harness(
     './agent/jobs/background-shell-job-operations',
     './agent/mcp/featured-api-key-verification',
     './agent/mcp/remote-mcp-trust-request',
+    './agent/memory/project-memory-access',
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations',
     './agent/plugins/phi-plugin-management-view',

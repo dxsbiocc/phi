@@ -58,10 +58,7 @@ import { isPluginSkillPreviewPath } from './agent/plugins/preview'
 import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
-import {
-  validatePermissionMode,
-  validateSessionPermissionModeUpdate
-} from './agent/session/permission-mode-control'
+import { validateSessionPermissionModeUpdate } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
@@ -81,6 +78,20 @@ import {
   registerWrapperRunIpc
 } from './ipc/wrappers-ipc'
 import { registerWrapperResultsIpc, type WrapperResultDownloads } from './ipc/wrapper-results-ipc'
+import {
+  registerRemoteProjectUploadControlIpc,
+  registerRemoteProjectUploadListIpc,
+  registerRemoteProjectUploadPreparationIpc
+} from './ipc/remote-project-uploads-ipc'
+import { registerRemoteWorkspaceIpc } from './ipc/remote-workspace-ipc'
+import { registerRemoteIpc } from './ipc/remote-ipc'
+import { registerMemoryIpc } from './ipc/memory-ipc'
+import {
+  registerProjectsIpc,
+  registerProjectsRemoteHostsIpc,
+  registerProjectsSessionsIpc,
+  type ProjectsIpcOptions
+} from './ipc/projects-ipc'
 import { nativeUiCopy } from './native-ui-copy'
 import {
   createStartupSplashWindow,
@@ -157,47 +168,22 @@ import {
 } from './agent/session/sessions'
 import { getHomeActivity } from './agent/session/home-activity'
 import {
-  createProject,
-  deleteProject,
   assertProjectPathAvailable,
   getProject,
   getProjectByCwd,
   listLocalProjectAllowRoots,
   listProjects,
   subscribeRemoteProjectConnection,
-  updateProjectPermissionMode,
-  updateProjectDefaults,
-  updateProjectMemory,
-  updateProjectRemoteDefaults,
   type PermissionMode,
   type ModelSelection,
-  type Project,
-  type ProjectRemoteConnection
+  type Project
 } from './agent/projects'
 import {
   isLocalFilePathAllowedByRoots,
   isPathInsideRoot,
   localFileAllowRoots
 } from './agent/local-file-access'
-import {
-  deleteRemoteHostProfile,
-  getRemoteHostProfile,
-  remoteConnectionConfigForProfile,
-  saveRemoteHostProfile
-} from './agent/remote-hosts'
-import {
-  clearRemoteEnvironmentSetting,
-  clearRemoteMicromambaMirrorSetting,
-  clearRemoteRuntimeRootSetting,
-  listRemoteHostsWithRuntimeRoots,
-  remoteHostProfileWithRuntimeRoot,
-  saveRemoteEnvironmentSetting,
-  saveRemoteMicromambaMirrorSetting,
-  saveRemoteRuntimeRootSetting,
-  updateProjectRemoteConnectionRuntimeAware
-} from './agent/remote-runtime-root-settings'
-import { listOpenSshHosts } from './agent/ssh-config-discovery'
-import { saveOpenSshHost } from './agent/ssh-config-editor'
+import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './agent/remote-hosts'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
 import { registerRemoteMicromambaIpc } from './agent/remote-micromamba-ipc'
@@ -221,13 +207,9 @@ import {
   openRemoteRuntimeWorkspace,
   type RemoteRuntimeTarget
 } from './agent/remote-runtime/workspace'
-import { sshConfigHostId, type OpenSshHostInput } from '../shared/remoteHostProfile'
 import { remoteDoctor } from './agent/remote-doctor'
-import { listRemoteProjectDirectories } from './agent/remote-directory-browser'
 import { createCursorH2Bridge } from './agent/cursor-h2-bridge'
-import { installRemoteNextflow } from './agent/remote-nextflow-install'
 import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
-import { createCheckedRemoteProject } from './agent/remote-project-create'
 import { RemoteProjectUploadService } from './agent/remote-project-upload'
 import { remoteTransferHostKey } from './agent/transfer'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
@@ -244,10 +226,6 @@ import {
   resolveRemoteWorkspacePath
 } from './agent/remote-workspace-boundary'
 import { readRemoteWorkspacePath } from './agent/remote-workspace-read'
-import {
-  listRemoteWorkspaceDirectory,
-  previewRemoteWorkspaceFile
-} from './agent/remote-workspace-file-ui'
 import { remoteGlob, remoteGrep } from './agent/remote-workspace-search'
 import { RemoteWorkspaceBashManager, type RemoteBashRequest } from './agent/remote-workspace-bash'
 import { RemoteProjectDownloadManager } from './agent/download/remote-project-download'
@@ -262,12 +240,7 @@ import {
   isRemoteProjectAnchorPath,
   remoteProjectAnchorPath
 } from './agent/remote-project-anchor'
-import type { RemoteDoctorOptions } from '../shared/remoteDoctorTypes'
-import type {
-  RemoteEnvironmentSettingInput,
-  RemoteEnvironmentToolId
-} from '../shared/remoteEnvironmentTypes'
-import type { ProjectLocation, RemoteProjectCreateInput } from '../shared/projectLocation'
+import type { ProjectLocation } from '../shared/projectLocation'
 import { renderMoleculeSvg } from './molecule-renderer'
 import {
   bashApprovalDigest,
@@ -446,10 +419,7 @@ import {
 } from './agent/remote-session-routing'
 import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from './app-update-check'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
-import {
-  normalizeProjectMemorySettings,
-  type ProjectMemorySnapshot
-} from '../shared/projectMemoryTypes'
+import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
 import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
@@ -1251,7 +1221,6 @@ const runtimeRecoveryOperations = new Map<
   { controller: AbortController; done: Promise<void> }
 >()
 const runtimeRecoveryFailures = new Map<string, RuntimeRecoveryIssue>()
-const projectMemoryPolicyUpdates = new Set<string>()
 const manualCompactionIds = new Set<string>()
 const manualCompactionOperations = new Map<
   string,
@@ -7687,29 +7656,6 @@ function requireProject(id: string): Project {
   return project
 }
 
-/** The session manager cwd memory is keyed by: the project directory or the remote anchor. */
-function projectMemoryTarget(project: Project): { agentDir: string; cwd: string } {
-  return {
-    agentDir: AGENT_DIR,
-    cwd:
-      project.location.kind === 'ssh'
-        ? ensureRemoteProjectAnchor(project.id)
-        : project.workingDirectory
-  }
-}
-
-async function projectMemorySnapshot(id: string): Promise<ProjectMemorySnapshot> {
-  const project = requireProject(id)
-  const files = await getPhiEngine().memory.read(projectMemoryTarget(project))
-  return {
-    projectId: id,
-    settings: normalizeProjectMemorySettings(project.memory),
-    summary: files.summary,
-    summaryUpdatedAt: files.summaryUpdatedAt,
-    lessons: files.lessons
-  }
-}
-
 async function invalidateAgentSession(): Promise<void> {
   const phiSessionId = getPhiSessionIdForKey(currentSessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
@@ -8967,57 +8913,11 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? [] : result.filePaths
   })
-  ipcMain.handle(
-    IPC.remoteProjectUploads.prepare,
-    async (_, projectId: unknown, value: unknown) => {
-      if (typeof projectId !== 'string' || !projectId || !isRecord(value)) {
-        throw new Error('远程项目上传请求无效')
-      }
-      const sourcePaths = value.sourcePaths
-      const destinationDirectory = value.destinationDirectory
-      if (
-        Object.keys(value).some((key) => key !== 'sourcePaths' && key !== 'destinationDirectory') ||
-        !Array.isArray(sourcePaths) ||
-        sourcePaths.some((path) => typeof path !== 'string') ||
-        (destinationDirectory !== undefined && typeof destinationDirectory !== 'string')
-      ) {
-        throw new Error('远程项目上传只能包含本机来源和项目内落点')
-      }
-      return remoteProjectUploads.prepare(projectId, {
-        sourcePaths,
-        ...(typeof destinationDirectory === 'string' ? { destinationDirectory } : {})
-      })
-    }
-  )
-  ipcMain.handle(
-    IPC.remoteProjectUploads.start,
-    async (_, projectId: unknown, jobId: unknown, value: unknown) => {
-      if (typeof projectId !== 'string' || !projectId || typeof jobId !== 'string' || !jobId) {
-        throw new Error('远程项目上传任务无效')
-      }
-      if (
-        value !== undefined &&
-        (!isRecord(value) ||
-          Object.keys(value).some((key) => key !== 'confirmed') ||
-          (value.confirmed !== undefined && typeof value.confirmed !== 'boolean'))
-      ) {
-        throw new Error('远程项目上传确认无效')
-      }
-      return remoteProjectUploads.start(projectId, jobId, {
-        confirmed: isRecord(value) && value.confirmed === true
-      })
-    }
-  )
-  ipcMain.handle(IPC.remoteProjectUploads.list, () => remoteProjectUploads.list())
+  const remoteProjectUploadsIpcOptions = { ipcMain, uploads: remoteProjectUploads }
+  registerRemoteProjectUploadPreparationIpc(remoteProjectUploadsIpcOptions)
+  registerRemoteProjectUploadListIpc(remoteProjectUploadsIpcOptions)
   ipcMain.handle(IPC.remoteJupyterJobs.list, () => remoteJupyterStartJobs.list())
-  ipcMain.handle(IPC.remoteProjectUploads.cancel, async (_, jobId: unknown) => {
-    if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
-    await remoteProjectUploads.cancel(jobId)
-  })
-  ipcMain.handle(IPC.remoteProjectUploads.retry, async (_, jobId: unknown) => {
-    if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
-    return remoteProjectUploads.retry(jobId)
-  })
+  registerRemoteProjectUploadControlIpc(remoteProjectUploadsIpcOptions)
   const wrappersIpcOptions = {
     ipcMain,
     lifecycle: { logUnexpectedError },
@@ -9052,23 +8952,14 @@ app.whenReady().then(async () => {
   ipcMain.handle(IPC.files.preview, async (_, filePath: string) => {
     return createFilePreview(filePath)
   })
-  ipcMain.handle(IPC.remoteWorkspace.statPaths, async (_, request: unknown) =>
-    remoteConnectionTracker.observe(remoteRequestProjectId(request), async () =>
-      (await import('./agent/workspace-host/remote-registry')).remoteWorkspaceHosts.statPaths(
-        request
-      )
-    )
-  )
-  ipcMain.handle(IPC.remoteWorkspace.preview, async (_, request: unknown) =>
-    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      previewRemoteWorkspaceFile(request, { connectHost: connectRemoteWorkspaceHost })
-    )
-  )
-  ipcMain.handle(IPC.remoteWorkspace.listDirectory, async (_, request: unknown) =>
-    remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      listRemoteWorkspaceDirectory(request)
-    )
-  )
+  registerRemoteWorkspaceIpc({
+    ipcMain,
+    remote: {
+      observe: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
+      requestProjectId: remoteRequestProjectId,
+      connectWorkspaceHost: connectRemoteWorkspaceHost
+    }
+  })
   registerWrapperResultsIpc({
     ipcMain,
     windows: { getActiveWindow, requireMainWindowRenderer },
@@ -9728,355 +9619,49 @@ app.whenReady().then(async () => {
     return result
   })
 
-  ipcMain.handle(IPC.projects.list, async () => listProjects())
-  ipcMain.handle(IPC.projects.pickDirectory, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectProject,
-      buttonLabel: dialogCopy.select,
-      properties: ['openDirectory', 'createDirectory']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
-  ipcMain.handle(
-    IPC.projects.create,
-    async (_, name: string, workingDirectory: string, permissionMode: PermissionMode) =>
-      createProject({ name, workingDirectory, permissionMode })
-  )
-  ipcMain.handle(IPC.projects.createRemote, async (_, input: RemoteProjectCreateInput) =>
-    createCheckedRemoteProject(input)
-  )
-  ipcMain.handle(IPC.projects.delete, async (_, id: string) => {
-    // A broken terminal host must not make the project undeletable; its shells are already gone.
-    await terminalManager?.closeWorkspace(`project:${id}`).catch(() => {
-      writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
-    })
-    await disposeRemoteNotebookBackend(id)
-    const project = getProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
-    if (project?.memory) {
-      // Memory lives under Phi's own directory, so it would outlive the project otherwise.
-      await getPhiEngine()
-        .memory.clear(projectMemoryTarget(project))
-        .catch(() => writeAppLog({ level: 'error', event: 'project_memory_clear_failed' }))
-    }
-    deleteProject(id)
-  })
-  ipcMain.handle(IPC.projects.updatePermissionMode, async (event, id: string, value: unknown) => {
-    requireMainWindowRenderer(event)
-    const permissionMode = validatePermissionMode(value)
-    const project = updateProjectPermissionMode(id, permissionMode)
-    for (const manifest of listPhiSessions()) {
-      if (manifest.projectId === id) {
-        updateSessionManifest(manifest.sessionId, { permissionMode })
-      }
-    }
-    const selected = findPhiManifestForSession(currentSessionKey, currentSessionPath, currentCwd)
-    if (selected?.projectId === id || project.workingDirectory === currentCwd) {
-      currentPermissionMode = permissionMode
-      sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
-      notifySessionChanged()
-    }
-    return project
-  })
-  ipcMain.handle(
-    IPC.projects.updateDefaults,
-    async (
-      _,
-      id: string,
-      defaults: {
-        defaultModel?: ModelSelection | null
-        defaultThinkingLevel?: ThinkingLevel | null
-      }
-    ) => {
-      if (defaults.defaultModel) {
-        const runtime = await getAuthManager().getRuntime()
-        const resolved = resolveRuntimeModelSelection(runtime, defaults.defaultModel)
-        if (!resolved || resolved.migratedFrom) {
-          throw new Error(
-            `模型不可用: ${defaults.defaultModel.providerId}/${defaults.defaultModel.modelId}`
-          )
-        }
-      }
-      return updateProjectDefaults(id, defaults)
-    }
-  )
-  // Memory settings reach the worker at session creation, so they apply to new conversations.
-  ipcMain.handle(IPC.projects.updateMemory, async (_, id: string, settings: unknown) => {
-    if (projectMemoryPolicyUpdates.has(id)) throw new Error('项目记忆设置正在更新，请稍后重试')
-    const project = requireProject(id)
-    const previous = normalizeProjectMemorySettings(project.memory)
-    const next = normalizeProjectMemorySettings(settings)
-    const currentBinding = (): string => {
-      const current = requireProject(id)
-      const profile =
-        current.location.kind === 'ssh'
-          ? getRemoteHostProfile(current.location.hostProfileId)
-          : undefined
-      return JSON.stringify([
-        current.location,
-        current.workingDirectory,
-        current.workingDirectoryRealPath,
-        normalizeProjectMemorySettings(current.memory),
-        profile ? remoteConnectionConfigForProfile(profile) : null,
-        current.location.kind === 'ssh' ? projectRemoteRuntimeRoot(current) : null
-      ])
-    }
-    const binding = currentBinding()
-    projectMemoryPolicyUpdates.add(id)
-    try {
-      if (previous.enabled !== next.enabled || previous.learn !== next.learn) {
-        await retireDesktopProjectMemoryAdapters(id)
-        if (currentBinding() !== binding) throw new StaleSessionError()
-      }
-      return updateProjectMemory(id, next)
-    } finally {
-      projectMemoryPolicyUpdates.delete(id)
-    }
-  })
-  ipcMain.handle(IPC.memory.snapshot, async (_, id: string) => projectMemorySnapshot(id))
-  ipcMain.handle(IPC.memory.deleteLesson, async (_, id: string, index: unknown, text: unknown) => {
-    const project = requireProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
-    await getPhiEngine().memory.deleteLesson({
-      ...projectMemoryTarget(project),
-      index,
-      text
-    })
-    return projectMemorySnapshot(id)
-  })
-  ipcMain.handle(IPC.memory.clear, async (_, id: string) => {
-    const project = requireProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
-    await getPhiEngine().memory.clear(projectMemoryTarget(project))
-    return projectMemorySnapshot(id)
-  })
-  ipcMain.handle(IPC.projects.listRemoteHosts, async () => listRemoteHostsWithRuntimeRoots())
-  ipcMain.handle(IPC.projects.listRemoteDirectories, async (_, input: unknown) =>
-    listRemoteProjectDirectories(input)
-  )
-  ipcMain.handle(IPC.projects.listOpenSshHosts, async () => listOpenSshHosts())
-  ipcMain.handle(IPC.projects.saveOpenSshHost, async (_, input: OpenSshHostInput) => {
-    if (!input || typeof input !== 'object') throw new Error('SSH 服务器配置无效')
-    if (input.originalAlias) {
-      const id = sshConfigHostId(input.originalAlias)
-      const inUse = listProjects().some(
-        (project) =>
-          (project.location.kind === 'ssh' && project.location.hostProfileId === id) ||
-          project.remoteConnections?.some((connection) => connection.hostProfileId === id)
-      )
-      if (inUse) {
-        const current = (await listOpenSshHosts()).find(
-          (host) => host.alias === input.originalAlias
+  const projectsIpcOptions: ProjectsIpcOptions = {
+    ipcMain,
+    windows: { getActiveWindow, requireMainWindowRenderer },
+    workspace: { agentDir: AGENT_DIR, getTerminalManager: () => terminalManager },
+    projects: {
+      requireProject,
+      applyCurrentPermissionMode: (id, project, permissionMode) => {
+        const selected = findPhiManifestForSession(
+          currentSessionKey,
+          currentSessionPath,
+          currentCwd
         )
-        if (
-          !current ||
-          current.hostname !== input.hostname ||
-          (current.user ?? '') !== (input.user ?? '') ||
-          current.port !== input.port
-        ) {
-          throw new Error('该服务器已绑定项目；更改地址、用户或端口前请先解除项目绑定')
+        if (selected?.projectId === id || project.workingDirectory === currentCwd) {
+          currentPermissionMode = permissionMode
+          sessionPermissionModes.set(resolveSessionKeyAlias(currentSessionKey), permissionMode)
+          notifySessionChanged()
         }
-      }
+      },
+      resolveRuntimeModelSelection,
+      remoteRuntimeRoot: projectRemoteRuntimeRoot
+    },
+    sessions: {
+      createLocal: createPhiManagedSession,
+      createRemote: createRemoteManagedSession,
+      switchTo: disposeAndSwitchSession
+    },
+    notebooks: { disposeRemoteBackend: disposeRemoteNotebookBackend },
+    remote: {
+      checkConnection: (sessionId, projectId, options) =>
+        remoteConnectionTracker.check(sessionId, projectId, options),
+      scheduleProjectCheck: scheduleRemoteProjectCheck
     }
-    const alias = await saveOpenSshHost(input)
-    const profile = getRemoteHostProfile(sshConfigHostId(alias))
-    if (!profile) throw new Error('SSH 配置已保存，但重新读取服务器失败；请刷新列表')
-    return remoteHostProfileWithRuntimeRoot(profile)
+  }
+  registerProjectsIpc(projectsIpcOptions)
+  registerMemoryIpc({
+    ipcMain,
+    workspace: { agentDir: AGENT_DIR },
+    projects: { requireProject },
+    memory: { retireProjectAdapters: retireDesktopProjectMemoryAdapters }
   })
-  ipcMain.handle(
-    IPC.projects.saveRemoteHost,
-    async (
-      _,
-      input: {
-        id?: string
-        label: string
-        hostAlias: string
-        user?: string
-        port?: number
-        identityFile?: string
-      }
-    ) => {
-      const saved = input.id ? getRemoteHostProfile(input.id) : undefined
-      const inUse =
-        input.id &&
-        listProjects().some(
-          (project) =>
-            (project.location.kind === 'ssh' && project.location.hostProfileId === input.id) ||
-            project.remoteConnections?.some((connection) => connection.hostProfileId === input.id)
-        )
-      if (
-        saved &&
-        inUse &&
-        (saved.hostAlias !== input.hostAlias.trim() ||
-          (saved.user ?? '') !== (input.user?.trim() ?? '') ||
-          saved.port !== input.port)
-      ) {
-        throw new Error('该服务器已绑定项目；请先解除项目绑定，再修改地址或认证设置')
-      }
-      return remoteHostProfileWithRuntimeRoot(saveRemoteHostProfile(input))
-    }
-  )
-  ipcMain.handle(IPC.projects.deleteRemoteHost, async (_, id: string) => {
-    if (
-      listProjects().some(
-        (project) =>
-          (project.location.kind === 'ssh' && project.location.hostProfileId === id) ||
-          project.remoteConnections?.some((connection) => connection.hostProfileId === id)
-      )
-    ) {
-      throw new Error('该服务器仍被项目使用，请先移除项目中的远程连接')
-    }
-    clearRemoteMicromambaMirrorSetting(id)
-    clearRemoteEnvironmentSetting(id)
-    clearRemoteRuntimeRootSetting(id)
-    deleteRemoteHostProfile(id)
-  })
-  ipcMain.handle(IPC.remote.saveEnvironment, async (_, hostProfileId: unknown, value: unknown) => {
-    if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
-      throw new Error('SSH 服务器档案 ID 无效')
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error('远程环境配置无效')
-    }
-    const input = value as Record<string, unknown>
-    if (
-      input.runtimeRoot !== undefined &&
-      input.runtimeRoot !== null &&
-      typeof input.runtimeRoot !== 'string'
-    ) {
-      throw new Error('默认运行环境路径无效')
-    }
-    const toolPaths: Partial<Record<RemoteEnvironmentToolId, string>> = {}
-    if (input.toolPaths !== undefined) {
-      if (
-        !input.toolPaths ||
-        typeof input.toolPaths !== 'object' ||
-        Array.isArray(input.toolPaths)
-      ) {
-        throw new Error('远程工具路径无效')
-      }
-      for (const id of ['nextflow', 'jupyter', 'micromamba', 'docker'] as const) {
-        const path = (input.toolPaths as Record<string, unknown>)[id]
-        if (path !== undefined && typeof path !== 'string') {
-          throw new Error(`${id} 路径无效`)
-        }
-        if (typeof path === 'string') toolPaths[id] = path
-      }
-    }
-    return saveRemoteEnvironmentSetting(hostProfileId, {
-      ...(typeof input.runtimeRoot === 'string' ? { runtimeRoot: input.runtimeRoot } : {}),
-      toolPaths
-    } satisfies RemoteEnvironmentSettingInput)
-  })
-  ipcMain.handle(
-    IPC.remote.saveRuntimeRoot,
-    async (_, hostProfileId: unknown, runtimeRoot: unknown) => {
-      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
-        throw new Error('SSH 服务器档案 ID 无效')
-      }
-      if (runtimeRoot !== undefined && runtimeRoot !== null && typeof runtimeRoot !== 'string') {
-        throw new Error('远程运行时根目录无效')
-      }
-      return saveRemoteRuntimeRootSetting(hostProfileId, runtimeRoot)
-    }
-  )
-  ipcMain.handle(
-    IPC.remote.saveMicromambaMirror,
-    async (_, hostProfileId: unknown, downloadMirrorPrefix: unknown) => {
-      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
-        throw new Error('SSH 服务器档案 ID 无效')
-      }
-      if (
-        downloadMirrorPrefix !== undefined &&
-        downloadMirrorPrefix !== null &&
-        typeof downloadMirrorPrefix !== 'string'
-      ) {
-        throw new Error('下载镜像前缀无效')
-      }
-      return saveRemoteMicromambaMirrorSetting(hostProfileId, downloadMirrorPrefix)
-    }
-  )
-  ipcMain.handle(
-    IPC.remote.doctor,
-    async (_, hostProfileId: unknown, remotePath: unknown, options: unknown) => {
-      if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
-        throw new Error('SSH 服务器档案 ID 无效')
-      }
-      if (remotePath !== undefined && typeof remotePath !== 'string') {
-        throw new Error('远程目录路径无效')
-      }
-      return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions, {
-        userInitiated: true
-      })
-    }
-  )
-  ipcMain.handle(IPC.remote.installNextflow, async (_, hostProfileId: unknown) => {
-    if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
-      throw new Error('SSH 服务器档案 ID 无效')
-    }
-    return installRemoteNextflow(hostProfileId)
-  })
-  ipcMain.handle(
-    IPC.projects.updateRemoteConnection,
-    async (_, id: string, connectionId: string, patch: ProjectRemoteConnection | null) =>
-      updateProjectRemoteConnectionRuntimeAware(id, connectionId, patch)
-  )
-  ipcMain.handle(
-    IPC.projects.updateRemoteDefaults,
-    async (
-      _,
-      id: string,
-      defaults: {
-        defaultRemoteConnectionId?: string | null
-        remoteWorkspaceRoot?: string | null
-      }
-    ) => updateProjectRemoteDefaults(id, defaults)
-  )
-  ipcMain.handle(IPC.projects.sessions, async (_, workingDirectory: string) =>
-    listSessions(workingDirectory)
-  )
-  ipcMain.handle(IPC.projects.sessionsById, async (_, projectId: string) => {
-    const project = getProject(projectId)
-    if (!project) throw new Error('项目不存在')
-    const cwd =
-      project.location.kind === 'ssh'
-        ? ensureRemoteProjectAnchor(project.id)
-        : project.workingDirectory
-    return listSessions(cwd)
-  })
-  ipcMain.handle(IPC.projects.newRemoteSession, async (_, projectId: string) => {
-    const session = createRemoteManagedSession(projectId)
-    const current = await disposeAndSwitchSession(session.path, session.cwd, session.permissionMode)
-    scheduleRemoteProjectCheck(session.sessionId, projectId)
-    return current
-  })
-  ipcMain.handle(IPC.projects.retryRemoteConnection, async (_, request: unknown) => {
-    if (
-      !request ||
-      typeof request !== 'object' ||
-      Array.isArray(request) ||
-      Object.keys(request).length !== 2 ||
-      typeof (request as Record<string, unknown>).sessionId !== 'string' ||
-      typeof (request as Record<string, unknown>).projectId !== 'string'
-    ) {
-      throw new Error('远程重连请求必须包含会话和项目 ID')
-    }
-    const { sessionId, projectId } = request as { sessionId: string; projectId: string }
-    return remoteConnectionTracker.check(sessionId, projectId, { userInitiated: true })
-  })
-  ipcMain.handle(
-    IPC.projects.newSession,
-    async (_, workingDirectory: string, permissionMode: PermissionMode) => {
-      assertProjectPathAvailable(workingDirectory)
-      const session = createPhiManagedSession(workingDirectory, permissionMode)
-      return disposeAndSwitchSession(session.path, workingDirectory, session.permissionMode)
-    }
-  )
+  registerProjectsRemoteHostsIpc(projectsIpcOptions)
+  registerRemoteIpc({ ipcMain })
+  registerProjectsSessionsIpc(projectsIpcOptions)
   registerAnalysisIpc({
     ipcMain,
     notebooks: {
