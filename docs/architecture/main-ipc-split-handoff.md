@@ -1,7 +1,7 @@
 # 主进程 IPC 拆分:交接文档
 
 Date: 2026-10-20
-Status: IPC 拆分(IPC-1~7)与第 9 步运行时上下文(RC-1、RC-2)已完成。`src/main/index.ts` 13,014 → 7,591 行,不注册 IPC,也没有模块级 `let`;下一步是第 6 步超长函数
+Status: IPC 拆分(IPC-1 至 IPC-7)、第 9 步运行时上下文(RC-1、RC-2)、第 6 步超长函数(LF-1 至 LF-4)已完成。`src/main/index.ts` 13,014 → 6,859 行,不注册 IPC、无模块级 `let`,四个超长函数已拆成命名阶段
 
 给接手这条线的新会话看。读完应能直接派发下一刀,不需要回看之前的对话。
 
@@ -88,6 +88,22 @@ Status: IPC 拆分(IPC-1~7)与第 9 步运行时上下文(RC-1、RC-2)已完成�
 顺序:LF-1 `persistSessionEvent`(职责最清楚,按事件族拆分、定下模式)→ LF-2 `submitPromptRun` →
 LF-3 `getAgentSession`(风险最高)→ LF-4 启动组装拆成命名阶段。每刀先补特征化测试,再按原顺序拆成 ≤ 80 行、
 复杂度 ≤ 15 的命名函数,原语句只搬不改;同一时间只做一刀(都改 `index.ts`)。
+
+结果(2026-10-20,全部合入,每刀全量门首轮 0 失败):
+
+| 刀   | 函数                       | 之前                   | 之后               | 去向                                                       |
+| ---- | -------------------------- | ---------------------- | ------------------ | ---------------------------------------------------------- |
+| LF-1 | `persistSessionEvent`      | 303 行 / 95            | 11 行分派器 / 3    | `agent/session/session-event-persistence.ts` 等 4 个模块   |
+| LF-2 | `submitPromptRun`          | 335 行(内含 222 + 149) | 11 行协调函数      | 阶段留在 `index.ts`,会话执行进 `prompt-run-execution.ts`   |
+| LF-3 | `getAgentSession` 创建回调 | 548 行 / 131           | 72 行协调函数 / 13 | `SessionCreationContext` 与 5 个 `session-creation-*` 模块 |
+| LF-4 | `app.whenReady` 回调       | 729 行                 | 20 行协调函数 / 1  | 命名启动阶段与 9 个 IPC 注册分组,留在 `index.ts`           |
+
+`index.ts` 6,763 → 6,859 行:LF-4 的命名阶段增加了 102 行组装脚手架,原因记在基线里。全仓告警 1,431 → 1,410;
+`index.ts` 自身剩 15 条(复杂度 8、函数长度 3、嵌套深度 3、文件长度 1)。启动时 247 个通道的注册顺序由
+`main-integration` 快照守住。
+
+下一步候选:`index.ts` 里剩余的复杂度告警函数(`handlePlanReviewRequest`、`presentableRun`、`scopeFor` 等),
+以及把与会话执行无关、只被单一领域使用的辅助函数继续迁出,使 `index.ts` 接近「生命周期 + 组装」。
 
 ## 4. 每刀的执行与验收(项目管理约定)
 
