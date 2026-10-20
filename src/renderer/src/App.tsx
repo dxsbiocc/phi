@@ -54,6 +54,8 @@ import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode
 import { useWorkspaceTabNavigation } from './features/workspace/hooks/useWorkspaceTabNavigation'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { usePanelRequests } from './lib/app-shell/usePanelRequests'
+import { useAppCommands } from './lib/app-shell/useAppCommands'
+import { useAppBootstrap } from './lib/app-shell/useAppBootstrap'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
 import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
@@ -134,6 +136,7 @@ import {
 } from '../../shared/remoteWorkspacePath'
 import { RemoteProjectFileContext } from './lib/remoteProjectFileContext'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
+import { useRemoteConnectionRetry } from './features/project/hooks/useRemoteConnectionRetry'
 import { shouldRetryRemoteReads } from './features/project/lib/remoteConnectionUi'
 import {
   rememberRemoteUploadDestination,
@@ -141,10 +144,8 @@ import {
 } from './lib/remoteUploadDestination'
 import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
-import { getAppShortcutAction } from './lib/appShortcuts'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
-import { orderSessionsForDisplay } from './lib/sessionOrder'
 import {
   isPointerWithinWorkspaceSidebarPreview,
   isWorkspaceSidebarPreviewDialogActive
@@ -1434,86 +1435,19 @@ function App(): React.JSX.Element {
     setIsSettingsOpen(true)
   }, [setIsSettingsOpen])
 
-  const focusPrimaryInput = useCallback((): void => {
-    const selector = activeView === 'chat' ? '[data-phi-focus="chat-input"]' : 'input[type="text"]'
-    const target = document.querySelector<HTMLElement>(selector)
-    target?.focus({ preventScroll: true })
-  }, [activeView])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const action = getAppShortcutAction(event)
-      if (!action) return
-
-      if (action === 'new-chat') {
-        event.preventDefault()
-        navigateToView('chat')
-        void onNewChat()
-        return
-      }
-
-      if (action === 'focus-primary-input') {
-        event.preventDefault()
-        focusPrimaryInput()
-        return
-      }
-
-      if (action === 'close-dialogs') {
-        if (isSettingsOpen || isProviderDialogOpen || isNewProjectDialogOpen) {
-          event.preventDefault()
-          setIsSettingsOpen(false)
-          closeProviderDialog()
-          setIsNewProjectDialogOpen(false)
-        }
-      }
-    }
-
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [
-    closeProviderDialog,
-    focusPrimaryInput,
-    isNewProjectDialogOpen,
-    isProviderDialogOpen,
+  useAppCommands({
+    rendererApi,
+    activeView,
     isSettingsOpen,
-    onNewChat,
-    navigateToView,
+    isProviderDialogOpen,
+    isNewProjectDialogOpen,
+    closeProviderDialog,
+    setIsSettingsOpen,
     setIsNewProjectDialogOpen,
-    setIsSettingsOpen
-  ])
-
-  useEffect(() => {
-    let active = true
-    let consuming = false
-    const consumeMenuBarAction = async (): Promise<void> => {
-      if (consuming) return
-      consuming = true
-      try {
-        const action = await rendererApi.consumeMenuBarAction()
-        if (!active || !action) return
-        if (action === 'new-chat') {
-          navigateToView('chat')
-          await onNewChat()
-        } else if (action === 'open-settings') {
-          openSettings()
-        }
-      } catch {
-        // The main process may be shutting down while a focus event is being handled.
-      } finally {
-        consuming = false
-      }
-    }
-    const onWindowFocus = (): void => {
-      void consumeMenuBarAction()
-    }
-
-    window.addEventListener('focus', onWindowFocus)
-    void consumeMenuBarAction()
-    return () => {
-      active = false
-      window.removeEventListener('focus', onWindowFocus)
-    }
-  }, [navigateToView, onNewChat, openSettings, rendererApi])
+    navigateToView,
+    onNewChat,
+    openSettings
+  })
 
   useSessionEventBridge({
     rendererApi,
@@ -1530,51 +1464,20 @@ function App(): React.JSX.Element {
     workspaceSidebarMode
   })
 
-  useEffect(() => {
-    void (async () => {
-      const [name, onboarded, markdown] = await Promise.all([
-        rendererApi.getAppName(),
-        rendererApi.isOnboarded(),
-        rendererApi.getPersonaMarkdown()
-      ])
-      document.title = name
-      setPersonaMarkdownState(markdown)
-      setShowOnboarding(!onboarded)
-    })()
-  }, [rendererApi, setShowOnboarding])
-
-  useEffect(() => {
-    void (async () => {
-      const [sessionList, current, projectList] = await Promise.all([
-        rendererApi.listSessions(),
-        rendererApi.getCurrentSession(),
-        rendererApi.listProjects()
-      ])
-      setSessions(
-        orderSessionsForDisplay(mergeSessionSummariesRuntimeState(sessionList, current.cwd))
-      )
-      applyCurrentSession(current, undefined, {
-        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-      })
-      if (Array.isArray(current.messages)) {
-        replaceMessages(chatItemsFromSessionMessages(current.messages))
-      }
-      setProjects(projectList)
-      projectsRef.current = projectList
-    })()
-      .catch((error: unknown) => showSnackbarError(error, appCopy.readChatFailed))
-      .finally(() => setIsLoadingHomeSessions(false))
-  }, [
-    applyCurrentSession,
-    mergeSessionSummariesRuntimeState,
-    projectsRef,
+  useAppBootstrap({
     rendererApi,
+    mergeSessionSummariesRuntimeState,
+    applyCurrentSession,
     replaceMessages,
-    resetAnalysisJupyterRuntimeForCwdChange,
     setProjects,
+    projectsRef,
     setSessions,
-    showSnackbarError
-  ])
+    showSnackbarError,
+    resetJupyterRuntimeForCwdChange: resetAnalysisJupyterRuntimeForCwdChange,
+    setPersonaMarkdownState,
+    setShowOnboarding,
+    setIsLoadingHomeSessions
+  })
 
   useEffect(() => {
     void Promise.resolve().then(() => {
@@ -1835,19 +1738,7 @@ function App(): React.JSX.Element {
     openWrapperResultPath
   })
 
-  const onRetryRemoteConnection = useCallback((): void => {
-    const state = useSessionStore.getState()
-    if (!state.activePhiSessionId || !state.activeProjectId) {
-      showSnackbarError(new Error(appCopy.remoteChatUnavailable), appCopy.reconnectFailed)
-      return
-    }
-    void rendererApi
-      .retryRemoteProjectConnection({
-        sessionId: state.activePhiSessionId,
-        projectId: state.activeProjectId
-      })
-      .catch((error) => showSnackbarError(error, appCopy.reconnectFailed))
-  }, [rendererApi, showSnackbarError])
+  const onRetryRemoteConnection = useRemoteConnectionRetry(rendererApi, showSnackbarError)
 
   const onRevealPreviewPathInWorkspace = useCallback(
     (path: string, kind: LocalPathKind = 'file'): void => {
