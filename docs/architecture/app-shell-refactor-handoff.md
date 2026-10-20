@@ -1,7 +1,7 @@
 # App shell 拆分:交接文档
 
 Date: 2026-10-19
-Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 项已完成)
+Status: 第 5 节清单已完成(`App.tsx` 5,569 → 3,973);**目标 ≤ 1,200 未达成**,剩余体积见第 5 节末尾
 
 这份文档是给**接手这个任务的新会话**看的。读完它应当能直接开工,不需要回看之前的对话。
 
@@ -36,10 +36,10 @@ Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 
 
 | 指标                                                            | 值                                                         |
 | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| `App.tsx`                                                       | 4,082 行(`App()` 函数本体 3,872 行,即 210–4,081)           |
-| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 22 / 13 / 104 / 12                                         |
+| `App.tsx`                                                       | 3,973 行(`App()` 函数本体 3,762 行,即 211–3,972)           |
+| `App()` 内 `useState` / `useEffect` / `useCallback` / `useMemo` | 22 / 9 / 102 / 12                                          |
 | ESLint `--max-warnings`                                         | 1,467                                                      |
-| 测试门                                                          | ≈7,122 例,0 失败,12 跳过                                   |
+| 测试门                                                          | ≈7,126 例,0 失败,12 跳过                                   |
 | 主进程边界基线                                                  | `index.ts` 13,002 行,234 通道,4 个超长文件(本次工作未触碰) |
 
 ### 已经抽出的模块(全部已合入)
@@ -69,6 +69,9 @@ Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 
 | `features/chat/lib/promptSend.ts`                       | 263  | 发送管线:守卫、乐观消息、回执、失败恢复  |
 | `features/chat/hooks/usePromptSend.ts`                  | 45   | 稳定身份的发送绑定(latest-ref)           |
 | `features/chat/hooks/useQueuedPromptDrain.ts`           | 97   | 空闲时排空队列的守卫与出队               |
+| `lib/app-shell/useAppCommands.ts`                       | 148  | 快捷键 + 菜单栏命令(共享 applyShortcut)  |
+| `lib/app-shell/useAppBootstrap.ts`                      | 106  | 首帧:标题/onboarding/persona + 初始会话  |
+| `features/project/hooks/useRemoteConnectionRetry.ts`    | 31   | 远程连接重试(点击时读当前项目)           |
 
 计数口径(别再用 `/useState\(/` 这种正则,会漏掉泛型写法):
 `grep -cE '= (useState|useMemo)[<(]' App.tsx`、`grep -cE '= useCallback\(' App.tsx`、
@@ -77,7 +80,7 @@ Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 
 对应的测试:`tests/app-workspace-*.test.ts`、`tests/app-window-chrome.test.ts`、
 `tests/workspace-view-mode.test.ts`、`tests/workspace-tab-navigation.test.ts`、
 `tests/prompt-queue.test.ts`、`tests/file-path-openers.test.ts`、`tests/panel-requests.test.ts`、
-`tests/session-event-bridge.test.ts`、`tests/prompt-send.test.ts`。
+`tests/session-event-bridge.test.ts`、`tests/prompt-send.test.ts`、`tests/app-commands.test.ts`。
 
 ---
 
@@ -152,12 +155,14 @@ Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 
 15. **主机休眠会污染测试门**。本机两次门跑出现 100–980 秒的用例耗时,全部集中在无关的 engine/SDK
     套件;那是机器睡过去,不是回归。跑门前用 `caffeinate -dimsu` 顶住,并把「重跑转绿」和
     「宿主休眠」区分开写进提交说明。
+16. **第 5 节的清单走完 ≠ 目标达成**。五块做完只从 5,569 降到 3,973;1,200 的目标需要另一份清单
+    (会话/项目切换链 + JSX)。交接时把差距和下一轮候选写清楚,不要用「清单已完成」暗示收尾完成。
 
 ---
 
 ## 5. 剩余任务(按建议顺序)
 
-`App.tsx` 现在只剩最后一块(第 1–4 块已合入)。顺序按「依赖面从小到大」排列,不是按行数。
+第 5 节的五块已全部完成。顺序当初按「依赖面从小到大」排列,不是按行数。
 
 | 顺序 | 切片                                                                                                 | 位置                                          | 估算 | 状态   | 备注                                                    |
 | ---- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------- | ---- | ------ | ------------------------------------------------------- |
@@ -165,12 +170,25 @@ Status: 进行中(`App.tsx` 5,569 → 4,082,目标 ≤ 1,200;第 5 节第 1–4 
 | 2    | 文件/笔记本打开链                                                                                    | `features/file-preview/`                      | ~200 | 已完成 | 实际降 208 行;路由做成纯函数 + 显式 targets             |
 | 3    | 请求桥接:`requestedConnectorJobId`/`requestedBackgroundJobKey`/`requestedTerminalInput`              | `features/jobs/` 或 `lib/app-shell/`          | ~120 | 已完成 | 只降 3 行;价值是消费规则和稳定回调,不是行数             |
 | 4    | 巨型回调:`onAgentEvent` 订阅(190 行)、`sendPromptText`(151 行、复杂度 39)                            | `features/chat/hooks/`                        | ~340 | 已完成 | 两个提交共降 396 行;先拆函数再绑定,订阅/发送各一个 hook |
-| 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 待做   | 做完这步 APP 才可能接近 1,200                           |
+| 5    | 应用级编排收尾:`navigateToView`、快捷键、通知、远程连接重试                                          | 看实际情况                                    | ~400 | 已完成 | 只降 109 行;快捷键/菜单栏、首帧加载、远程重试各有其主   |
 
 每完成一块,`App.tsx` 会降 100–300 行。**不要指望一次抽走很多**——JSX 只有 534 行,
 其余全是编排逻辑;这是前面几轮反复验证过的测量结论。
 
-到 1,200 行附近时,额外做两件收尾:
+### 清单走完之后:差距与下一轮候选
+
+五块全部完成后 `App.tsx` 仍有 3,973 行,距 1,200 还差 ~2,800。**不要把这当成「收尾完成」**:
+按行数分布,剩下的主体不是零散编排,而是会话/项目切换的整条链路和 JSX 树。
+
+下一轮如果继续,建议按下面的顺序重新开一份清单(每块仍然单独提交、单独跑门):
+
+1. `openNewChat` / `onSelectSession` / `onDeleteSession` / `onStartProjectChat` 等会话切换链
+   (~300 行,依赖 store、文件标签、草稿与导航,风险最高,先补行为测试再搬)。
+2. 项目侧回调(`onStartProjectChat`、项目默认值、远端连接打开等,~150 行)。
+3. JSX 布局拆分:`workspaceFilePreviewContent`、侧栏/面板的 slot 渲染(~534 行,按 surface 拆组件)。
+4. 侧栏 props 的派生 memo(`workspaceSidebarProps`、标签/标题派生,~150 行)。
+
+只有全部走完并确认 `App()` 只剩编排胶水时,才做这两件收尾:
 
 - 从 `scripts/check-frontend-boundaries.mjs` 的 `legacyOversizedFiles` 删除 `App.tsx`。
 - 若 `App()` 仍然过长但已无可抽的部分,就在方案文档里记录它作为「编排根」的保留理由。
